@@ -25,6 +25,6 @@ async def main():
 
 
 if __name__ == "__main__":
-    flyte.init_from_config("../../config.yaml")
-    run = flyte.run(main)
+    flyte.init_from_config("/Users/ytong/.flyte/config-k3d.yaml")
+    run = flyte.with_runcontext("local").run(main)
     print(run.url)

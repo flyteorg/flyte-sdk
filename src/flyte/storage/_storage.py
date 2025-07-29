@@ -169,8 +169,10 @@ async def put(from_path: str, to_path: Optional[str] = None, recursive: bool = F
     file_system = get_underlying_filesystem(path=to_path)
     from_path = strip_file_header(from_path)
     if isinstance(file_system, AsyncFileSystem):
+        print(f"Putting file async from to {to_path} {kwargs=}", flush=True)
         dst = await file_system._put(from_path, to_path, recursive=recursive, **kwargs)  # pylint: disable=W0212
     else:
+        print(f"Putting file sync from to {to_path} {kwargs=}", flush=True)
         dst = file_system.put(from_path, to_path, recursive=recursive, **kwargs)
     if isinstance(dst, (str, pathlib.Path)):
         return str(dst)

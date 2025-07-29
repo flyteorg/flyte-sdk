@@ -628,7 +628,7 @@ if __name__ == "__main__":
 
     # Remote execution
     # TODO: Replace with your own Flyte config file path
-    flyte.init_from_config("../../../config.yaml")
+    flyte.init_from_config("/Users/ytong/.flyte/config-k3d.yaml")
     run = flyte.run(main)
     print(run.url)
     run.wait(run)
