@@ -74,7 +74,7 @@ uv pip install --prerelease=allow flyte
 # hello.py
 # /// script
 # requires-python = ">=3.10"
-# dependencies = ["flyte>=0.2.0"]
+# dependencies = ["flyte>=2.0.0b0"]
 # ///
 
 import flyte
@@ -330,7 +330,23 @@ We welcome contributions! Whether it's:
 - 📚 **Documentation improvements**
 - 🧪 **Testing enhancements**
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+### Setup & Iteration Cycle
+To get started, make sure you start from a new virtual environment and install this package in editable mode. Feel free
+to use any Python version from 3.10 to 3.13.
+
+```bash
+uv venv --python 3.13
+uv pip install -e .
+```
+
+Installing the package in editable mode will change the definition of the default `Image()` object to use a locally
+build wheel. To build the wheel run the `make` target, followed by the build script.
+
+```bash
+make dist
+python maint_tools/build_default_image.py
+```
+Note that you'll need to 
 
 ## 📄 License
 
