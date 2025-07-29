@@ -149,8 +149,13 @@ async def flush():
         "ContentType": "text/html",  # For s3
         "content_type": "text/html",  # For gcs
     }
-    # fjdklsajfaklds
-    final_path = await storage.put_stream(report_html.encode("utf-8"), to_path=report_path, **content_types)
+    import tempfile
+    with tempfile.NamedTemporaryFile(mode='w', delete=False) as tmp:
+        tmp.write(report_html)
+        print(f"Wrote to tmpfile: {tmp.name}", flush=True)
+        final_path = await storage.put(tmp.name, to_path=report_path, **content_types)
+        print(f"{final_path=}", flush=True)
+    # final_path = await storage.put_stream(report_html.encode("utf-8"), to_path=report_path, **content_types)
     logger.debug(f"Report flushed to {final_path}")
 
 
