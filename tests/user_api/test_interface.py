@@ -1,0 +1,106 @@
+import inspect
+from typing import Tuple
+
+import pytest
+
+import flyte
+from flyte.models import NativeInterface
+from flyte.types import TypeEngine
+
+env = flyte.TaskEnvironment("test")
+
+
+@env.task
+async def my_task(x: int) -> str:
+    return f"Task {x}"
+
+
+@env.task
+async def my_task2(x: int, y: int = 10, z: int | None = None) -> Tuple[str, int]:
+    return f"Task {x}, {y}, {z}", x + y + (z if z is not None else 0)
+
+
+@env.task
+async def main(n: int) -> list[str]:
+    """
+    Run my_task in parallel for the range of n.
+    """
+    return []
+
+
+def test_interface() -> None:
+    """
+    Test the interface of the tasks.
+    """
+    assert my_task.interface.inputs == {"x": (int, inspect.Parameter.empty)}
+    assert my_task.interface.outputs == {"o0": str}
+
+    assert my_task2.interface.inputs == {"x": (int, inspect.Parameter.empty), "y": (int, 10), "z": (int | None, None)}
+    assert my_task2.interface.outputs == {"o0": str, "o1": int}
+
+    assert main.interface.inputs == {"n": (int, inspect.Parameter.empty)}
+    assert main.interface.outputs == {"o0": list[str]}
+
+
+def test_num_required_inputs() -> None:
+    """
+    Test the number of required inputs for the tasks.
+    """
+    assert my_task.interface.num_required_inputs() == 1
+    assert my_task2.interface.num_required_inputs() == 1
+    assert main.interface.num_required_inputs() == 1
+
+
+@pytest.mark.asyncio
+async def test_num_required_inputs_remote_defaults() -> None:
+    """
+    Test the number of required inputs for the tasks with remote defaults.
+    """
+    interface = NativeInterface.from_types(
+        {"x": (int, inspect.Parameter.empty), "y": (int, 10), "z": (int | None, None)},
+        {"o0": str, "o1": int},
+    )
+    assert interface.num_required_inputs() == 1
+
+    interface = NativeInterface.from_types(
+        {"x": (int, inspect.Parameter.empty), "y": (int, NativeInterface.has_default)},
+        {"o0": str},
+        {"y": await TypeEngine.to_literal(10, int, None)},
+    )
+    assert interface.num_required_inputs() == 1
+    assert "y" in interface._remote_defaults
+
+
+@pytest.mark.asyncio
+async def test_native_interface_from_types_missing_defauls() -> None:
+    with pytest.raises(ValueError):
+        NativeInterface.from_types(
+            {"x": (int, inspect.Parameter.empty), "y": (int, NativeInterface.has_default)},
+            {"o0": str},
+        )
+
+    with pytest.raises(ValueError):
+        NativeInterface.from_types(
+            {"x": (int, inspect.Parameter.empty), "y": (int, NativeInterface.has_default)},
+            {"o0": str},
+            {},
+        )
+
+    with pytest.raises(ValueError):
+        NativeInterface.from_types(
+            {"x": (int, inspect.Parameter.empty), "y": (int, NativeInterface.has_default)},
+            {"o0": str},
+            {"x": await flyte.types.TypeEngine.to_literal(10, int, None)},
+        )
+
+
+@pytest.mark.asyncio
+async def test_native_interface_with_union_type() -> None:
+    interface = NativeInterface.from_types(
+        {"x": (int | str, inspect.Parameter.empty)},
+        {"o0": int},
+    )
+    repr = interface.__repr__()
+    assert repr == "(x: int | str) -> o0: int:"
+    assert interface.inputs == {"x": (int | str, inspect.Parameter.empty)}
+    assert interface.outputs == {"o0": int}

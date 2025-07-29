@@ -1,0 +1,3 @@
+flyte==0.2.0b32
+pandas==2.3.1
+scikit-learn==1.7.1

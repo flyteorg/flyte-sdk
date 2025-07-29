@@ -1,0 +1,9 @@
+**/.venv/
+**/build/
+**/.github/
+**/.bashrc
+**/.git/
+**/.benchmarks/
+**/.cache/
+**/Makefile
+**/__pycache__/

@@ -1,0 +1,139 @@
+[project]
+name = "flyte"
+dynamic = ["version"]
+description = "Add your description here"
+readme = "README.md"
+authors = [{ name = "Ketan Umare", email = "kumare3@users.noreply.github.com" }]
+requires-python = ">=3.10"
+dependencies = [
+    "aiofiles>=24.1.0",
+    # 8.2.0 has a bug https://github.com/pallets/click/issues/2897
+    "click>=8.2.1",
+    "flyteidl==1.15.4b0",
+    #    "flyteidl>=1.15.1",
+    "cloudpickle>=3.1.1",
+    "fsspec>=2025.3.0",
+    "grpcio>=1.71.0",
+    "obstore>=0.6.0",
+    "protobuf>=6.30.1",
+    "pydantic>=2.10.6",
+    "pyyaml>=6.0.2",
+    "rich-click>=1.8.9",
+    "httpx>=0.28.1,<1.0.0",
+    "keyring>=25.6.0",
+    "msgpack>=1.1.0",
+    "toml>=0.10.2",
+    "async-lru>=2.0.5",
+    "mashumaro",
+    "dataclasses_json", # TODO: remove this dependency once we remove dataclasses_json from the code
+]
+
+[project.scripts]
+flyte = "flyte.cli.main:main"
+a0 = "flyte._bin.runtime:main"
+
+[build-system]
+requires = ["setuptools", "setuptools_scm"]
+build-backend = "setuptools.build_meta"
+
+[dependency-groups]
+dev = [
+    "build>=1.2.2.post1",
+    "mock>=5.2.0",
+    "pytest>=8.3.5",
+    "pytest-asyncio>=0.26.0",
+    "pytest-benchmark>=5.1.0",
+    "ruff>=0.11.0",
+    "setuptools-scm>=8.2.0",
+    "google-cloud-bigquery>=3.31.0",
+    "pandas",
+    "pyarrow",
+    "orjson",
+    "docstring_parser",
+    "jupyterlab>=4.4.3",
+    "ipywidgets>=8.1.7",
+    "mypy>=1.16.0",
+    "kubernetes",
+]
+
+[tool.setuptools]
+include-package-data = true
+license-files = ["licenses/*.txt", "LICENSE"]
+package-dir = {"" = "src"}
+script-files = [
+    "src/flyte/_bin/runtime.py",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["flyte*"]
+
+[tool.setuptools_scm]
+write_to = "src/flyte/_version.py"
+
+[tool.pytest.ini_options]
+markers = [
+    "integration",
+    "editable",
+    "sandbox"
+]
+norecursedirs = []
+log_cli = true
+log_cli_level = 20
+asyncio_default_fixture_loop_scope = "function"
+
+[tool.coverage.run]
+branch = true
+
+[tool.ruff]
+line-length = 120
+extend-exclude = [
+    "src/flyte/_protos",
+    "src/flyte/remote/client/_protocols.py",
+]
+
+[tool.ruff.lint]
+select = [
+    "E",
+    "W",
+    "F",
+    "I",
+    "PLW",
+    "YTT",
+    "ASYNC",
+    "C4",
+    "T10",
+    "EXE",
+    "ISC",
+    "LOG",
+    "PIE",
+    "Q",
+    "RSE",
+    "FLY",
+    "PGH",
+    "PLC",
+    "PLE",
+    "PLW",
+    "FURB",
+    "RUF",
+]
+ignore = ["PGH003", "PLC0415"]
+
+[tool.ruff.lint.per-file-ignores]
+"examples/*" = ["E402"]
+
+[tool.uv]
+dev-dependencies = [
+    "pytest>=8.3.5",
+]
+
+[tool.mypy]
+disable_error_code = ["import-untyped"]
+exclude = "src/flyte/_protos/.*"
+ignore_missing_imports = true
+
+[tool.ty.rules]
+unused-ignore-comment = "warn"
+redundant-cast = "ignore"
+possibly-unbound-attribute = "error"
+possibly-unbound-import = "error"

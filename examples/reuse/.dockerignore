@@ -1,0 +1,7 @@
+**/target/
+**/build/
+**/functional-tests/
+tests-requirements.txt
+**/.idea/
+**/testing/
+**/.venv/

@@ -1,0 +1,29 @@
+# syntax=docker/dockerfile:1.4
+
+# Declare build arguments
+ARG TARGETPLATFORM
+ARG BUILDPLATFORM
+
+# Use an official base image depending on platform
+FROM python:3.11-slim AS base
+
+# Redefine args inside this stage
+ARG TARGETPLATFORM
+ARG BUILDPLATFORM
+
+# Print the platforms
+RUN echo "Building for TARGETPLATFORM=$TARGETPLATFORM from BUILDPLATFORM=$BUILDPLATFORM"
+
+# Example: set up architecture-specific env var
+RUN case "$TARGETPLATFORM" in \
+      "linux/amd64") export ARCH_ALIAS="x86_64" ;; \
+      "linux/arm64") export ARCH_ALIAS="aarch64" ;; \
+      *) export ARCH_ALIAS="unknown" ;; \
+    esac && echo "ARCH_ALIAS=$ARCH_ALIAS" > /arch_info.txt
+
+# Set working dir
+WORKDIR /app
+
+# Copy source code
+COPY . .
+CMD ["python3", "--version"]
