@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
-from flyteidl.core import execution_pb2
+from flyteidl.core import execution_pb2, interface_pb2, tasks_pb2
 from google.protobuf import timestamp_pb2
 
 from flyte._protos.common import identifier_pb2
@@ -170,6 +170,7 @@ class Action:
         end_time: float,  # Unix timestamp in seconds with fractional seconds
         run_output_base: str,
         report_uri: str | None = None,
+        typed_interface: interface_pb2.TypedInterface | None = None,
     ) -> Action:
         """
         This creates a new action for tracing purposes. It is used to track the execution of a trace.
@@ -181,6 +182,12 @@ class Action:
         et = timestamp_pb2.Timestamp()
         et.FromSeconds(int(end_time))
         et.nanos = int((end_time % 1) * 1e9)
+
+        spec = (
+            task_definition_pb2.TaskSpec(task_template=tasks_pb2.TaskTemplate(interface=typed_interface))
+            if typed_interface
+            else None
+        )
 
         return cls(
             action_id=action_id,
@@ -201,5 +208,6 @@ class Action:
                     output_uri=outputs_uri,
                     report_uri=report_uri,
                 ),
+                spec=spec,
             ),
         )
