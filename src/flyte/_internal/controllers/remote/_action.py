@@ -186,7 +186,7 @@ class Action:
 
         spec = task_definition_pb2.TaskSpec(
             task_template=tasks_pb2.TaskTemplate(interface=typed_interface)
-        )
+        ) if typed_interface else None
 
         return cls(
             action_id=action_id,
@@ -207,6 +207,6 @@ class Action:
                     output_uri=outputs_uri,
                     report_uri=report_uri,
                 ),
-                spec=spec if spec else None,
+                spec=spec,
             ),
         )
