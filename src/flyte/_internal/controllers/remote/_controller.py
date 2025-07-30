@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, AsyncIterable, Awaitable, DefaultDict, Tuple, TypeVar
 
 import flyte
+from flyte._internal.runtime.types_serde import transform_native_to_typed_interface
 import flyte.errors
 import flyte.storage as storage
 import flyte.types as types
@@ -426,6 +427,9 @@ class RemoteController(Controller):
                 await io.upload_error(err.err, sub_run_output_path)
             else:
                 raise flyte.errors.RuntimeSystemError("BadTraceInfo", "Trace info does not have output or error")
+            
+            typed_interface = transform_native_to_typed_interface(info.interface)
+
             trace_action = Action.from_trace(
                 parent_action_name=current_action_id.name,
                 action_id=identifier_pb2.ActionIdentifier(
@@ -444,6 +448,7 @@ class RemoteController(Controller):
                 run_output_base=tctx.run_base_dir,
                 start_time=info.start_time,
                 end_time=info.end_time,
+                typed_interface=typed_interface if typed_interface else None,
             )
             try:
                 logger.info(
