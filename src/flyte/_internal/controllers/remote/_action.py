@@ -13,7 +13,6 @@ from flyte._protos.workflow import (
     state_service_pb2,
     task_definition_pb2,
 )
-from flyte._task import TaskTemplate
 from flyte.models import GroupData
 
 ActionType = Literal["task", "trace"]
@@ -184,9 +183,11 @@ class Action:
         et.FromSeconds(int(end_time))
         et.nanos = int((end_time % 1) * 1e9)
 
-        spec = task_definition_pb2.TaskSpec(
-            task_template=tasks_pb2.TaskTemplate(interface=typed_interface)
-        ) if typed_interface else None
+        spec = (
+            task_definition_pb2.TaskSpec(task_template=tasks_pb2.TaskTemplate(interface=typed_interface))
+            if typed_interface
+            else None
+        )
 
         return cls(
             action_id=action_id,

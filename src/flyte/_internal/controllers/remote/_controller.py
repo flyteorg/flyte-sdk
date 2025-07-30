@@ -10,7 +10,6 @@ from pathlib import Path
 from typing import Any, AsyncIterable, Awaitable, DefaultDict, Tuple, TypeVar
 
 import flyte
-from flyte._internal.runtime.types_serde import transform_native_to_typed_interface
 import flyte.errors
 import flyte.storage as storage
 import flyte.types as types
@@ -22,6 +21,7 @@ from flyte._internal.controllers.remote._core import Controller
 from flyte._internal.controllers.remote._service_protocol import ClientSet
 from flyte._internal.runtime import convert, io
 from flyte._internal.runtime.task_serde import translate_task_to_wire
+from flyte._internal.runtime.types_serde import transform_native_to_typed_interface
 from flyte._logging import logger
 from flyte._protos.common import identifier_pb2
 from flyte._protos.workflow import run_definition_pb2, task_definition_pb2
@@ -427,7 +427,7 @@ class RemoteController(Controller):
                 await io.upload_error(err.err, sub_run_output_path)
             else:
                 raise flyte.errors.RuntimeSystemError("BadTraceInfo", "Trace info does not have output or error")
-            
+
             typed_interface = transform_native_to_typed_interface(info.interface)
 
             trace_action = Action.from_trace(
