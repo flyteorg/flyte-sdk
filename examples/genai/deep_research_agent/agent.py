@@ -156,14 +156,10 @@ async def search_and_summarize(
             result_info.append(result)
 
         # Use return_exceptions=True to prevent exceptions from propagating
-        summarized_contents = await asyncio.gather(
-            *summarization_tasks, return_exceptions=True
-        )
+        summarized_contents = await asyncio.gather(*summarization_tasks, return_exceptions=True)
 
     # Filter out exceptions
-    summarized_contents = [
-        result for result in summarized_contents if not isinstance(result, Exception)
-    ]
+    summarized_contents = [result for result in summarized_contents if not isinstance(result, Exception)]
 
     formatted_results = []
     for result, summarized_content in zip(result_info, summarized_contents):
@@ -180,18 +176,13 @@ async def search_and_summarize(
 
 
 @env.task
-async def search_all_queries(
-    queries: list[str], summarization_model: str, prompts_file: File
-) -> DeepResearchResults:
+async def search_all_queries(queries: list[str], summarization_model: str, prompts_file: File) -> DeepResearchResults:
     """Execute searches for all queries in parallel"""
     tasks = []
     results_list = []
 
     with flyte.group("parallel_search_and_summarize"):
-        tasks = [
-            search_and_summarize(query, prompts_file, summarization_model)
-            for query in queries
-        ]
+        tasks = [search_and_summarize(query, prompts_file, summarization_model) for query in queries]
 
         if tasks:
             res_list = await asyncio.gather(*tasks)
@@ -325,9 +316,7 @@ async def filter_results(
         sources = sources[:max_sources]
 
     # Filter the results based on the source list
-    filtered_results = [
-        results.results[i - 1] for i in sources if i - 1 < len(results.results)
-    ]
+    filtered_results = [results.results[i - 1] for i in sources if i - 1 < len(results.results)]
 
     return DeepResearchResults(results=filtered_results)
 
@@ -456,12 +445,8 @@ async def research_topic(
         logging.info(f"Additional queries: {additional_queries}")
 
         # Expand research with new queries
-        new_results = await search_all_queries(
-            additional_queries, summarization_model, prompts_file
-        )
-        logging.info(
-            f"Follow-up search complete, found {len(new_results.results)} results"
-        )
+        new_results = await search_all_queries(additional_queries, summarization_model, prompts_file)
+        logging.info(f"Follow-up search complete, found {len(new_results.results)} results")
 
         results = results + new_results
         all_queries.extend(additional_queries)
@@ -478,9 +463,7 @@ async def research_topic(
         json_model=json_model,
         max_sources=max_sources,
     )
-    logging.info(
-        f"LLM Filtering complete, kept {len(filtered_results.results)} results"
-    )
+    logging.info(f"LLM Filtering complete, kept {len(filtered_results.results)} results")
 
     # Generate final answer
     answer = await generate_research_answer(
@@ -594,9 +577,7 @@ async def generate_pdf(answer: str, filename: str = "research_report.pdf") -> Fi
         if pisa_status.err:
             raise Exception("xhtml2pdf encountered errors")
         else:
-            print(
-                f"PDF generated successfully using commonmark + xhtml2pdf: {filename}"
-            )
+            print(f"PDF generated successfully using commonmark + xhtml2pdf: {filename}")
             return await File.from_local(filename)
 
     except Exception as alt_error:
@@ -607,9 +588,7 @@ async def generate_pdf(answer: str, filename: str = "research_report.pdf") -> Fi
 
 @env.task
 async def main(
-    topic: str = (
-        "List the essential requirements for a developer-focused agent orchestration system."
-    ),
+    topic: str = ("List the essential requirements for a developer-focused agent orchestration system."),
     prompts_file: File | str = "/root/prompts.yaml",
     budget: int = 2,
     remove_thinking_tags: bool = True,
