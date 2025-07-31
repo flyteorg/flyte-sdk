@@ -305,14 +305,18 @@ def get_secret_mounts_layer(secret_mounts: typing.Tuple[BuildSecret, ...] | None
     for secret_mount in secret_mounts:
         secret = secret_mount.secret
         if isinstance(secret, str):
-            secret_mounts_layer += f"--mount=type=secret,id={hash(secret)},target=/run/secrets/{os.path.basename(secret)}"
+            secret_mounts_layer += (
+                f"--mount=type=secret,id={hash(secret)},target=/run/secrets/{os.path.basename(secret)}"
+            )
         elif isinstance(secret, Secret):
             if secret.mount:
                 secret_mounts_layer += f"--mount=type=secret,id={hash(secret)},target={secret.mount}"
             elif secret.as_env_var:
                 secret_mounts_layer += f"--mount=type=secret,id={hash(secret)},env={secret.as_env_var}"
             else:
-                secret_mounts_layer += f"--mount=type=secret,id={hash(secret)},src=/run/secrets/{secret.group}_{secret.key}"
+                secret_mounts_layer += (
+                    f"--mount=type=secret,id={hash(secret)},src=/run/secrets/{secret.group}_{secret.key}"
+                )
 
     return secret_mounts_layer
 

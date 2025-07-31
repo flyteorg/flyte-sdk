@@ -715,19 +715,26 @@ class Image:
         new_image = self.clone(addl_layer=WorkDir(workdir=workdir))
         return new_image
 
-    def with_requirements(self, file: str | Path) -> Image:
+    def with_requirements(
+        self,
+        file: str | Path,
+        build_secrets: Union[BuildSecret, List[BuildSecret], Tuple[BuildSecret, ...], None] = None,
+    ) -> Image:
         """
         Use this method to create a new image with the specified requirements file layered on top of the current image
         Cannot be used in conjunction with conda
 
         :param file: path to the requirements file, must be a .txt file
+        :param build_secrets: list of BuildSecret objects to use for the build process.
         :return:
         """
         if isinstance(file, str):
             file = Path(file)
         if file.suffix != ".txt":
             raise ValueError(f"Requirements file {file} must have a .txt extension")
-        new_image = self.clone(addl_layer=Requirements(file=file))
+        new_image = self.clone(
+            addl_layer=Requirements(file=file, build_secrets=_ensure_tuple(build_secrets) if build_secrets else None)
+        )
         return new_image
 
     def with_pip_packages(
@@ -736,8 +743,8 @@ class Image:
         index_url: Optional[str] = None,
         extra_index_urls: Union[str, List[str], Tuple[str, ...], None] = None,
         pre: bool = False,
-        build_secrets: Union[BuildSecret, List[BuildSecret], Tuple[BuildSecret, ...], None] = None,
         extra_args: Optional[str] = None,
+        build_secrets: Union[BuildSecret, List[BuildSecret], Tuple[BuildSecret, ...], None] = None,
     ) -> Image:
         """
         Use this method to create a new image with the specified pip packages layered on top of the current image
@@ -758,8 +765,8 @@ class Image:
         :param extra_index_urls: extra index urls to use for pip install, default is None
         :param pre: whether to allow pre-release versions, default is False
         :param extra_args: extra arguments to pass to pip install, default is None
-        :param build_secrets: list of BuildSecret objects to use for the build process.
         :param extra_args: extra arguments to pass to pip install, default is None
+        :param build_secrets: list of BuildSecret objects to use for the build process.
         :return: Image
         """
         new_packages: Optional[Tuple] = packages or None
@@ -770,8 +777,8 @@ class Image:
             index_url=index_url,
             extra_index_urls=new_extra_index_urls,
             pre=pre,
-            build_secrets=_ensure_tuple(build_secrets) if build_secrets else None,
             extra_args=extra_args,
+            build_secrets=_ensure_tuple(build_secrets) if build_secrets else None,
         )
         new_image = self.clone(addl_layer=ll)
         return new_image
@@ -822,6 +829,7 @@ class Image:
         extra_index_urls: Union[List[str], Tuple[str, ...], None] = None,
         pre: bool = False,
         extra_args: Optional[str] = None,
+        build_secrets: Union[BuildSecret, List[BuildSecret], Tuple[BuildSecret, ...], None] = None,
     ) -> Image:
         """
         Use this method to create a new image with the specified uv.lock file layered on top of the current image
@@ -834,6 +842,7 @@ class Image:
         :param extra_index_urls: extra index urls to use for pip install, default is None
         :param pre: whether to allow pre-release versions, default is False
         :param extra_args: extra arguments to pass to pip install, default is None
+        :param build_secrets: list of BuildSecret objects to use for the build process.
         :return: Image
         """
         if not pyproject_file.exists():
@@ -851,6 +860,7 @@ class Image:
                 extra_index_urls=extra_index_urls,
                 pre=pre,
                 extra_args=extra_args,
+                build_secrets=_ensure_tuple(build_secrets) if build_secrets else None,
             )
         )
         return new_image
