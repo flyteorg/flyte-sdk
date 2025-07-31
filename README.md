@@ -78,7 +78,7 @@ uv pip install --prerelease=allow flyte
 import flyte
 
 env = flyte.TaskEnvironment(
-    name="hello_world", 
+    name="hello_world",
     resources=flyte.Resources(memory="250Mi")
 )
 
@@ -86,7 +86,7 @@ env = flyte.TaskEnvironment(
 def calculate(x: int) -> int:
     return x * 2 + 5
 
-@env.task  
+@env.task
 async def main(numbers: list[int]) -> float:
     # Parallel execution across distributed containers
     results = await asyncio.gather(*[
@@ -126,7 +126,7 @@ def train_model(data: flyte.File) -> flyte.File:
     # Runs in configured container with GPU access
     pass
 
-@env.task  
+@env.task
 def evaluate_model(model: flyte.File, test_data: flyte.File) -> dict:
     # Same container configuration, different instance
     pass
@@ -138,7 +138,7 @@ def evaluate_model(model: flyte.File, test_data: flyte.File) -> dict:
 @env.task
 async def dynamic_pipeline(config: dict) -> list[str]:
     results = []
-    
+
     # ✅ Use any Python construct
     for dataset in config["datasets"]:
         try:
@@ -152,7 +152,7 @@ async def dynamic_pipeline(config: dict) -> list[str]:
             # ✅ Custom error recovery
             result = await handle_error(dataset, e)
             results.append(result)
-    
+
     return results
 ```
 
@@ -161,18 +161,18 @@ async def dynamic_pipeline(config: dict) -> list[str]:
 ```python
 @env.task
 async def parallel_training(hyperparams: list[dict]) -> dict:
-    # Each model trains on separate infrastructure  
+    # Each model trains on separate infrastructure
     models = await asyncio.gather(*[
         train_model.aio(params) for params in hyperparams
     ])
-    
+
     # Evaluate all models in parallel
     evaluations = await asyncio.gather(*[
-        evaluate_model.aio(model) for model in models  
+        evaluate_model.aio(model) for model in models
     ])
-    
+
     # Find best model
-    best_idx = max(range(len(evaluations)), 
+    best_idx = max(range(len(evaluations)),
                    key=lambda i: evaluations[i]["accuracy"])
     return {"best_model": models[best_idx], "accuracy": evaluations[best_idx]}
 ```
@@ -193,7 +193,7 @@ async def main_task(inputs: list[str]) -> list[str]:
     results = []
     for inp in inputs:
         # If task fails here, it resumes from the last successful trace
-        result = await expensive_computation(inp)  
+        result = await expensive_computation(inp)
         results.append(result)
     return results
 ```
@@ -211,10 +211,10 @@ spark_task = flyte.remote.Task.get("spark_env.process_data", auto_version="lates
 async def orchestrator(raw_data: flyte.File) -> flyte.File:
     # Execute Spark job on big data cluster
     processed = await spark_task(raw_data)
-    
-    # Execute PyTorch training on GPU cluster  
+
+    # Execute PyTorch training on GPU cluster
     model = await torch_task(processed)
-    
+
     return model
 ```
 
@@ -246,7 +246,7 @@ endpoint: https://my-flyte-instance.com
 project: ml-team
 domain: production
 image:
-  builder: remote
+  builder: local
   registry: ghcr.io/my-org
 auth:
   type: oauth2
@@ -258,7 +258,7 @@ auth:
 # Deploy tasks to remote cluster
 flyte deploy my_workflow.py
 
-# Run deployed workflow  
+# Run deployed workflow
 flyte run my_workflow --input-file params.json
 
 # Monitor execution
@@ -276,17 +276,14 @@ flyte logs <execution-id>
 | `LaunchPlan` schedules | `@env.task(on_schedule=...)` |
 | Workflow failure handlers | Python `try/except` |
 
-
 ## 🤝 Contributing
 
 We welcome contributions! Whether it's:
 
 - 🐛 **Bug fixes**
-- ✨ **New features** 
+- ✨ **New features**
 - 📚 **Documentation improvements**
 - 🧪 **Testing enhancements**
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
 ## 📄 License
 
