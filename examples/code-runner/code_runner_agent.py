@@ -1,7 +1,7 @@
 # /// script
 # requires-python = "==3.13"
 # dependencies = [
-#    "flyte>=0.2.0b16",
+#    "flyte>=2.0.0b0",
 #    "langchain-core==0.3.66",
 #    "langchain-openai==0.3.24",
 #    "langchain-community==0.3.26",
@@ -13,32 +13,33 @@
 import tempfile
 from typing import Optional
 
+from langchain_core.runnables import Runnable
 from pydantic import BaseModel, Field
 
 import flyte
 from flyte.extras import ContainerTask
 from flyte.io import File
 
-REGISTRY = "ghcr.io/flyteorg"
-
 env = flyte.TaskEnvironment(
     name="code_runner",
-    secrets=[flyte.Secret(key="OPENAI_API_KEY", as_env_var="OPENAI_API_KEY")],
-    image=flyte.Image.from_uv_script(
-        __file__,
-        name="code-runner-agent",
-        registry=REGISTRY,
-        arch=("linux/amd64", "linux/arm64"),
-    ),
+    secrets=[flyte.Secret(key="openai_api_key", as_env_var="OPENAI_API_KEY")],
+    image=flyte.Image.from_uv_script(__file__, name="code-runner-agent"),
+    resources=flyte.Resources(cpu=1),
 )
 
 
 class Code(BaseModel):
-    """Schema for code solutions to questions about LCEL."""
+    """Schema for code solutions to questions about Flyte v2."""
 
-    prefix: str = Field(default="", description="Description of the problem and approach")
-    imports: str = Field(default="", description="Code block with just import statements")
-    code: str = Field(default="", description="Code block not including import statements")
+    prefix: str = Field(
+        default="", description="Description of the problem and approach"
+    )
+    imports: str = Field(
+        default="", description="Code block with just import statements"
+    )
+    code: str = Field(
+        default="", description="Code block not including import statements"
+    )
 
 
 class AgentState(BaseModel):
@@ -49,7 +50,7 @@ class AgentState(BaseModel):
     output: Optional[str] = None
 
 
-async def generate_code_gen_chain(debug: bool):
+async def generate_code_gen_chain(debug: bool) -> Runnable:
     from langchain_core.prompts import ChatPromptTemplate
     from langchain_openai import ChatOpenAI
 
@@ -102,19 +103,25 @@ async def docs_retriever(url: str) -> str:
         RecursiveUrlLoader,
     )
 
-    loader = RecursiveUrlLoader(url=url, max_depth=20, extractor=lambda x: BeautifulSoup(x, "html.parser").text)
+    loader = RecursiveUrlLoader(
+        url=url, max_depth=20, extractor=lambda x: BeautifulSoup(x, "html.parser").text
+    )
     docs = loader.load()
 
     # Sort the list based on the URLs and get the text
     d_sorted = sorted(docs, key=lambda x: x.metadata["source"])
     d_reversed = list(reversed(d_sorted))
 
-    concatenated_content = "\n\n\n --- \n\n\n".join([doc.page_content for doc in d_reversed])
+    concatenated_content = "\n\n\n --- \n\n\n".join(
+        [doc.page_content for doc in d_reversed]
+    )
     return concatenated_content
 
 
 @env.task
-async def generate(question: str, state: AgentState, concatenated_content: str, debug: bool) -> AgentState:
+async def generate(
+    question: str, state: AgentState, concatenated_content: str, debug: bool
+) -> AgentState:
     """
     Generate a code solution
 
@@ -152,7 +159,9 @@ async def generate(question: str, state: AgentState, concatenated_content: str, 
     code_solution = code_gen_chain.invoke(
         {
             "context": concatenated_content,
-            "messages": (messages if messages else [{"role": "user", "content": question}]),
+            "messages": (
+                messages if messages else [{"role": "user", "content": question}]
+            ),
         }
     )
 
@@ -174,7 +183,7 @@ async def generate(question: str, state: AgentState, concatenated_content: str, 
 
 code_runner_task = ContainerTask(
     name="run_flyte_v2",
-    image="ghcr.io/flyteorg/flyte:py3.13-v0.2.0b14",
+    image="ghcr.io/flyteorg/flyte:py3.13-v2.0.0b0",
     input_data_dir="/var/inputs",
     output_data_dir="/var/outputs",
     inputs={"script": File},
@@ -188,6 +197,7 @@ code_runner_task = ContainerTask(
             "echo $? > /var/outputs/exit_code"
         ),
     ],
+    resources=flyte.Resources(cpu=1, memory="1Gi"),
 )
 
 
@@ -215,7 +225,9 @@ async def code_check(state: AgentState) -> AgentState:
     code = code_solution.code.strip()
 
     # Create temp file for imports
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as imports_file:
+    with tempfile.NamedTemporaryFile(
+        mode="w", suffix=".py", delete=False
+    ) as imports_file:
         imports_file.write(imports + "\n")
         imports_path = imports_file.name
 
@@ -225,7 +237,9 @@ async def code_check(state: AgentState) -> AgentState:
         code_path = code_file.name
 
     # Check imports
-    import_output, import_exit_code = await code_runner_task(script=await File.from_local(imports_path))
+    import_output, import_exit_code = await code_runner_task(
+        script=await File.from_local(imports_path)
+    )
 
     if import_exit_code.strip() != "0":
         print("---CODE IMPORT CHECK: FAILED---")
@@ -247,7 +261,9 @@ async def code_check(state: AgentState) -> AgentState:
         print("---CODE IMPORT CHECK: PASSED---")
 
     # Check execution
-    code_output, code_exit_code = await code_runner_task(script=await File.from_local(code_path))
+    code_output, code_exit_code = await code_runner_task(
+        script=await File.from_local(code_path)
+    )
 
     if code_exit_code.strip() != "0":
         print("---CODE BLOCK CHECK: FAILED---")
@@ -281,7 +297,9 @@ async def code_check(state: AgentState) -> AgentState:
 
 
 @env.task
-async def reflect(state: AgentState, concatenated_content: str, debug: bool) -> AgentState:
+async def reflect(
+    state: AgentState, concatenated_content: str, debug: bool
+) -> AgentState:
     """
     Reflect on errors
 
@@ -305,7 +323,9 @@ async def reflect(state: AgentState, concatenated_content: str, debug: bool) -> 
     code_gen_chain = await generate_code_gen_chain(debug)
 
     # Add reflection
-    reflections = code_gen_chain.invoke({"context": concatenated_content, "messages": messages})
+    reflections = code_gen_chain.invoke(
+        {"context": concatenated_content, "messages": messages}
+    )
 
     messages += [
         {
@@ -360,12 +380,12 @@ async def main(
 
                 return f"""{prefix}
 
-    {imports}
-    {code}
+{imports}
+{code}
 
-    Result of code execution:
-    {code_output}
-    """
+Result of code execution:
+{code_output}
+"""
             else:
                 print("---DECISION: RE-TRY SOLUTION---")
                 if flag == "reflect":
@@ -373,6 +393,6 @@ async def main(
 
 
 if __name__ == "__main__":
-    flyte.init_from_config("config.yaml")
+    flyte.init_from_config("../config.yaml")
     run = flyte.run(main)
     print(run.url)

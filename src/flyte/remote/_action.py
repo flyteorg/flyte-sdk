@@ -20,7 +20,6 @@ from typing import (
 import grpc
 import rich.pretty
 import rich.repr
-from google.protobuf import timestamp_pb2
 from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
 

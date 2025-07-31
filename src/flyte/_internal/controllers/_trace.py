@@ -1,6 +1,8 @@
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
+from flyteidl.core import interface_pb2
+
 from flyte.models import ActionID, NativeInterface
 
 
@@ -19,6 +21,7 @@ class TraceInfo:
     end_time: float = field(init=False, default=0.0)
     output: Optional[Any] = None
     error: Optional[Exception] = None
+    typed_interface: Optional[interface_pb2.TypedInterface] = None
 
     def add_outputs(self, output: Any, start_time: float, end_time: float):
         """

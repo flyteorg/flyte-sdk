@@ -55,8 +55,9 @@ class TaskEnvironment(Environment):
     :param resources: Resources to allocate for the environment.
     :param env: Environment variables to set for the environment.
     :param secrets: Secrets to inject into the environment.
-    :param depends_on: Environment dependencies to hint, so when you deploy the environment, the dependencies are
-        also deployed. This is useful when you have a set of environments that depend on each other.
+    :param depends_on: Environment dependencies to hint, so when you deploy the environment,
+        the dependencies are also deployed. This is useful when you have a set of environments
+        that depend on each other.
     :param cache: Cache policy for the environment.
     :param reusable: Reuse policy for the environment, if set, a python process may be reused for multiple tasks.
     """
@@ -86,8 +87,18 @@ class TaskEnvironment(Environment):
     ) -> TaskEnvironment:
         """
         Clone the TaskEnvironment with new parameters.
-        besides the base environment parameters, you can override, kwargs like `cache`, `reusable`, etc.
 
+        Besides the base environment parameters, you can override kwargs like `cache`, `reusable`, etc.
+
+        :param name: The name of the environment.
+        :param image: The image to use for the environment.
+        :param resources: The resources to allocate for the environment.
+        :param env: The environment variables to set for the environment.
+        :param secrets: The secrets to inject into the environment.
+        :param depends_on: The environment dependencies to hint, so when you deploy the environment,
+            the dependencies are also deployed. This is useful when you have a set of environments
+            that depend on each other.
+        :param kwargs: Additional parameters to override the environment (e.g., cache, reusable, plugin_config).
         """
         cache = kwargs.pop("cache", None)
         reusable = None
@@ -132,7 +143,10 @@ class TaskEnvironment(Environment):
         report: bool = False,
     ) -> Union[AsyncFunctionTaskTemplate, Callable[P, R]]:
         """
+        Decorate a function to be a task.
+
         :param _func: Optional The function to decorate. If not provided, the decorator will return a callable that
+        accepts a function to be decorated.
         :param name: Optional A friendly name for the task (defaults to the function name)
         :param cache: Optional The cache policy for the task, defaults to auto, which will cache the results of the
         task.
@@ -212,6 +226,10 @@ class TaskEnvironment(Environment):
     def add_task(self, task: TaskTemplate) -> TaskTemplate:
         """
         Add a task to the environment.
+
+        Useful when you want to add a task to an environment that is not defined using the `task` decorator.
+
+        :param task: The TaskTemplate to add to this environment.
         """
         if task.name in self._tasks:
             raise ValueError(f"Task {task.name} already exists in the environment. Task names should be unique.")
