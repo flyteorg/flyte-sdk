@@ -94,8 +94,8 @@ class TaskEnvironment(Environment):
         :param resources: The resources to allocate for the environment.
         :param env: The environment variables to set for the environment.
         :param secrets: The secrets to inject into the environment.
-        :param depends_on: The environment dependencies to hint, so when you deploy the environment, the dependencies are
-            also deployed. This is useful when you have a set of environments that depend on each other.
+        :param depends_on: The environment dependencies to hint, so when you deploy the environment, the dependencies
+            are also deployed. This is useful when you have a set of environments that depend on each other.
         :param kwargs: Additional parameters to override the environment (e.g., cache, reusable, plugin_config).
         """
         cache = kwargs.pop("cache", None)

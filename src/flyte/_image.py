@@ -8,10 +8,13 @@ from abc import abstractmethod
 from dataclasses import asdict, dataclass, field
 from functools import cached_property
 from pathlib import Path
-from typing import Callable, ClassVar, Dict, List, Literal, Optional, Tuple, TypeVar, Union
+from typing import TYPE_CHECKING, Callable, ClassVar, Dict, List, Literal, Optional, Tuple, TypeVar, Union
 
 import rich.repr
 from packaging.version import Version
+
+if TYPE_CHECKING:
+    import flyte
 
 # Supported Python versions
 PYTHON_3_10 = (3, 10)
@@ -71,6 +74,7 @@ class PipOption:
     extra_index_urls: Optional[Tuple[str] | Tuple[str, ...] | List[str]] = None
     pre: bool = False
     extra_args: Optional[str] = None
+    secret_mounts: Optional[List[SecretMount]] = None
 
     def get_pip_install_args(self) -> List[str]:
         pip_install_args = []
@@ -101,6 +105,9 @@ class PipOption:
             hash_input += str(self.pre)
         if self.extra_args:
             hash_input += self.extra_args
+        if self.secret_mounts:
+            for secret_mount in self.secret_mounts:
+                hash_input += str(secret_mount)
 
         hasher.update(hash_input.encode("utf-8"))
 
@@ -109,9 +116,6 @@ class PipOption:
 @dataclass(kw_only=True, frozen=True, repr=True)
 class PipPackages(PipOption, Layer):
     packages: Optional[Tuple[str, ...]] = None
-
-    # todo: to be implemented
-    # secret_mounts: Optional[List[Tuple[str, str]]] = None
 
     def update_hash(self, hasher: hashlib._Hash):
         """
@@ -172,9 +176,15 @@ class UVProject(PipOption, Layer):
 @dataclass(frozen=True, repr=True)
 class AptPackages(Layer):
     packages: Tuple[str, ...]
+    secret_mounts: Optional[List[SecretMount]] = None
 
     def update_hash(self, hasher: hashlib._Hash):
-        hasher.update("".join(self.packages).encode("utf-8"))
+        hash_input = "".join(self.packages)
+
+        if self.secret_mounts:
+            for secret_mount in self.secret_mounts:
+                hash_input += str(secret_mount)
+        hasher.update(hash_input.encode("utf-8"))
 
 
 @rich.repr.auto
@@ -258,6 +268,18 @@ class Env(Layer):
     @classmethod
     def from_dict(cls, envs: Dict[str, str]) -> Env:
         return cls(env_vars=tuple((k, v) for k, v in envs.items()))
+
+
+@rich.repr.auto
+@dataclass(frozen=True, repr=True)
+class SecretMount:
+    """
+    Secret mounts expose secrets to the build containers, as files or environment variables.
+    You can use secret mounts to pass sensitive information to your builds,
+    such as API tokens, passwords, or SSH keys
+    """
+
+    secret: str | flyte.Secret
 
 
 Architecture = Literal["linux/amd64", "linux/arm64"]
@@ -711,6 +733,7 @@ class Image:
         index_url: Optional[str] = None,
         extra_index_urls: Union[str, List[str], Tuple[str, ...], None] = None,
         pre: bool = False,
+        secret_mounts: Optional[List[SecretMount]] = None,
         extra_args: Optional[str] = None,
     ) -> Image:
         """
@@ -732,7 +755,7 @@ class Image:
         :param extra_index_urls: extra index urls to use for pip install, default is None
         :param pre: whether to allow pre-release versions, default is False
         :param extra_args: extra arguments to pass to pip install, default is None
-        # :param secret_mounts: todo
+        :param secret_mounts: list of SecretMount objects to mount secrets as files or environment variables
         :param extra_args: extra arguments to pass to pip install, default is None
         :return: Image
         """
@@ -744,6 +767,7 @@ class Image:
             index_url=index_url,
             extra_index_urls=new_extra_index_urls,
             pre=pre,
+            secret_mounts=secret_mounts,
             extra_args=extra_args,
         )
         new_image = self.clone(addl_layer=ll)
@@ -792,7 +816,7 @@ class Image:
         self,
         pyproject_file: Path,
         index_url: Optional[str] = None,
-        extra_index_urls: Union[str, List[str], Tuple[str, ...], None] = None,
+        extra_index_urls: Union[List[str], Tuple[str, ...], None] = None,
         pre: bool = False,
         extra_args: Optional[str] = None,
     ) -> Image:
@@ -803,7 +827,11 @@ class Image:
         In the Union builders, using this will change the virtual env to /root/.venv
 
         :param pyproject_file: path to the pyproject.toml file, needs to have a corresponding uv.lock file
-        :return:
+        :param index_url: index url to use for pip install, default is None
+        :param extra_index_urls: extra index urls to use for pip install, default is None
+        :param pre: whether to allow pre-release versions, default is False
+        :param extra_args: extra arguments to pass to pip install, default is None
+        :return: Image
         """
         if not pyproject_file.exists():
             raise FileNotFoundError(f"UVLock file {pyproject_file} does not exist")
@@ -812,17 +840,27 @@ class Image:
         lock = pyproject_file.parent / "uv.lock"
         if not lock.exists():
             raise ValueError(f"UVLock file {lock} does not exist")
-        new_image = self.clone(addl_layer=UVProject(pyproject=pyproject_file, uvlock=lock))
+        new_image = self.clone(
+            addl_layer=UVProject(
+                pyproject=pyproject_file,
+                uvlock=lock,
+                index_url=index_url,
+                extra_index_urls=extra_index_urls,
+                pre=pre,
+                extra_args=extra_args,
+            )
+        )
         return new_image
 
-    def with_apt_packages(self, *packages: str) -> Image:
+    def with_apt_packages(self, *packages: str, secret_mounts: Optional[List[SecretMount]] = None) -> Image:
         """
         Use this method to create a new image with the specified apt packages layered on top of the current image
 
         :param packages: list of apt packages to install
+        :param secret_mounts: list of SecretMount objects to mount secrets as files or environment variables
         :return: Image
         """
-        new_image = self.clone(addl_layer=AptPackages(packages=packages))
+        new_image = self.clone(addl_layer=AptPackages(packages=packages, secret_mounts=secret_mounts))
         return new_image
 
     def with_commands(self, commands: List[str]) -> Image:
