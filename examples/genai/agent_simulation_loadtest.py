@@ -49,9 +49,16 @@ async def analyze_text(text: str) -> Dict[str, str]:
 
 
 @flyte.trace
-async def summarize_text(text: str) -> str:
+async def summarize_text(text: str) -> Dict[str, str]:
     await asyncio.sleep(1.0)
-    return f"Summary of: {text}"
+    return {"summary": f"Summary of: {text}"}
+
+
+@flyte.trace
+async def finalize_answer(text: str) -> Dict[str, str]:
+    await asyncio.sleep(1.0)
+    return {"answer": f"Answer of: {text}"}
+
 
 # Research agent that runs a sequence of tools
 @research_assistant_env.task
@@ -64,6 +71,7 @@ async def research_assistant(prompt: str, tool_sequence: List[str]) -> Dict[str,
         "analyze": analyze_text,
         "extract": extract_entities,
         "summarize": summarize_text,
+        "finalize": finalize_answer,
     }
     
     for tool_name in tool_sequence:
@@ -79,7 +87,7 @@ async def resource_coordinator_decision(
     prompt: str,
     num_agents: int,
 ) -> List[Dict[str, str]]:
-    tool_sequence = ["search", "extract", "analyze", "summarize"] * 25
+    tool_sequence = ["search", "extract", "analyze", "summarize", "finalize"] * 10
     
     tasks = []
     for _ in range(num_agents):
