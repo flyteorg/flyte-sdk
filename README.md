@@ -286,22 +286,29 @@ We welcome contributions! Whether it's:
 - 🧪 **Testing enhancements**
 
 ### Setup & Iteration Cycle
-To get started, make sure you start from a new virtual environment and install this package in editable mode. Feel free
-to use any Python version from 3.10 to 3.13.
+To get started, make sure you start from a new virtual environment and install this package in editable mode with any of the supported Python versions, from 3.10 to 3.13.
 
 ```bash
 uv venv --python 3.13
 uv pip install -e .
 ```
 
-Installing the package in editable mode will change the definition of the default `Image()` object to use a locally
-build wheel. To build the wheel run the `make` target, followed by the build script.
+Besides from picking up local code changes, installing the package in editable mode
+also changes the definition of the default `Image()` object to use a locally
+build wheel. You will need to build said wheel by yourself though, with the `make dist` target.
 
 ```bash
 make dist
 python maint_tools/build_default_image.py
 ```
-Note that you'll need to 
+You'll need to have a local docker daemon running for this. The build script does nothing
+more than invoke the local image builder, which will create a buildx builder named `flytex` if not present. Note that only members of the `Flyte Maintainers` group has
+access to push to the default registry. If you don't have access, please make sure to
+specify the registry and name to the build script.
+
+```bash
+python maint_tools/build_default_image.py --registry ghcr.io/my-org --name my-flyte-image
+```
 
 ## 📄 License
 
