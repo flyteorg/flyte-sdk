@@ -14,7 +14,7 @@ import rich.repr
 from packaging.version import Version
 
 if TYPE_CHECKING:
-    import flyte
+    from flyte import Secret
 
 # Supported Python versions
 PYTHON_3_10 = (3, 10)
@@ -26,6 +26,21 @@ PYTHON_3_13 = (3, 13)
 CopyConfigType = Literal[0, 1]
 
 T = TypeVar("T")
+
+
+@rich.repr.auto
+@dataclass(frozen=True, repr=True)
+class SecretMount:
+    """
+    Secret mounts expose secrets to the build containers, as files or environment variables.
+    You can use secret mounts to pass sensitive information to your builds,
+    such as API tokens, passwords, or SSH keys
+    """
+
+    secret: str | Secret
+
+
+BuildSecret = SecretMount  # TODO: Add support ssh mount and git auth
 
 
 def _ensure_tuple(val: Union[T, List[T], Tuple[T, ...]]) -> Tuple[T] | Tuple[T, ...]:
@@ -74,7 +89,7 @@ class PipOption:
     extra_index_urls: Optional[Tuple[str] | Tuple[str, ...] | List[str]] = None
     pre: bool = False
     extra_args: Optional[str] = None
-    secret_mounts: Optional[Tuple[SecretMount]] = None
+    build_secrets: Optional[Tuple[BuildSecret] | Tuple[BuildSecret, ...]] = None
 
     def get_pip_install_args(self) -> List[str]:
         pip_install_args = []
@@ -105,9 +120,9 @@ class PipOption:
             hash_input += str(self.pre)
         if self.extra_args:
             hash_input += self.extra_args
-        if self.secret_mounts:
-            for secret_mount in self.secret_mounts:
-                hash_input += str(secret_mount)
+        if self.build_secrets:
+            for build_secret in self.build_secrets:
+                hash_input += str(build_secret)
 
         hasher.update(hash_input.encode("utf-8"))
 
@@ -176,14 +191,14 @@ class UVProject(PipOption, Layer):
 @dataclass(frozen=True, repr=True)
 class AptPackages(Layer):
     packages: Tuple[str, ...]
-    secret_mounts: Optional[Tuple[SecretMount]] = None
+    build_secrets: Optional[Tuple[BuildSecret, ...]] = None
 
     def update_hash(self, hasher: hashlib._Hash):
         hash_input = "".join(self.packages)
 
-        if self.secret_mounts:
-            for secret_mount in self.secret_mounts:
-                hash_input += str(secret_mount)
+        if self.build_secrets:
+            for build_secret in self.build_secrets:
+                hash_input += str(build_secret)
         hasher.update(hash_input.encode("utf-8"))
 
 
@@ -268,18 +283,6 @@ class Env(Layer):
     @classmethod
     def from_dict(cls, envs: Dict[str, str]) -> Env:
         return cls(env_vars=tuple((k, v) for k, v in envs.items()))
-
-
-@rich.repr.auto
-@dataclass(frozen=True, repr=True)
-class SecretMount:
-    """
-    Secret mounts expose secrets to the build containers, as files or environment variables.
-    You can use secret mounts to pass sensitive information to your builds,
-    such as API tokens, passwords, or SSH keys
-    """
-
-    secret: str | flyte.Secret
 
 
 Architecture = Literal["linux/amd64", "linux/arm64"]
@@ -733,7 +736,7 @@ class Image:
         index_url: Optional[str] = None,
         extra_index_urls: Union[str, List[str], Tuple[str, ...], None] = None,
         pre: bool = False,
-        secret_mounts: Optional[List[SecretMount]] = None,
+        build_secrets: Union[BuildSecret, List[BuildSecret], Tuple[BuildSecret, ...], None] = None,
         extra_args: Optional[str] = None,
     ) -> Image:
         """
@@ -755,7 +758,7 @@ class Image:
         :param extra_index_urls: extra index urls to use for pip install, default is None
         :param pre: whether to allow pre-release versions, default is False
         :param extra_args: extra arguments to pass to pip install, default is None
-        :param secret_mounts: list of SecretMount objects to mount secrets as files or environment variables
+        :param build_secrets: list of BuildSecret objects to use for the build process.
         :param extra_args: extra arguments to pass to pip install, default is None
         :return: Image
         """
@@ -767,7 +770,7 @@ class Image:
             index_url=index_url,
             extra_index_urls=new_extra_index_urls,
             pre=pre,
-            secret_mounts=tuple(secret_mounts) if secret_mounts else None,
+            build_secrets=_ensure_tuple(build_secrets) if build_secrets else None,
             extra_args=extra_args,
         )
         new_image = self.clone(addl_layer=ll)
@@ -852,16 +855,21 @@ class Image:
         )
         return new_image
 
-    def with_apt_packages(self, *packages: str, secret_mounts: Optional[List[SecretMount]] = None) -> Image:
+    def with_apt_packages(
+        self, *packages: str, build_secrets: Union[BuildSecret, List[BuildSecret], Tuple[BuildSecret, ...], None] = None
+    ) -> Image:
         """
         Use this method to create a new image with the specified apt packages layered on top of the current image
 
         :param packages: list of apt packages to install
-        :param secret_mounts: list of SecretMount objects to mount secrets as files or environment variables
+        :param build_secrets: list of BuildSecret objects to use for the build process.
         :return: Image
         """
         new_image = self.clone(
-            addl_layer=AptPackages(packages=packages, secret_mounts=tuple(secret_mounts) if secret_mounts else None)
+            addl_layer=AptPackages(
+                packages=packages,
+                build_secrets=_ensure_tuple(build_secrets) if build_secrets else None,
+            )
         )
         return new_image
 

@@ -14,6 +14,7 @@ import click
 from flyte import Secret
 from flyte._image import (
     AptPackages,
+    BuildSecret,
     Commands,
     CopyConfig,
     DockerIgnore,
@@ -24,7 +25,6 @@ from flyte._image import (
     PipPackages,
     PythonWheels,
     Requirements,
-    SecretMount,
     UVProject,
     WorkDir,
     _DockerLines,
@@ -73,8 +73,8 @@ RUN --mount=type=cache,sharing=locked,mode=0777,target=/root/.cache/uv,id=wheel 
 
 APT_INSTALL_COMMAND_TEMPLATE = Template("""\
 RUN --mount=type=cache,sharing=locked,mode=0777,target=/var/cache/apt,id=apt \
-    apt-get update && apt-get install -y --no-install-recommends \
     $SECRET_MOUNT \
+    apt-get update && apt-get install -y --no-install-recommends \
     $APT_PACKAGES
 """)
 
@@ -87,7 +87,7 @@ RUN --mount=type=cache,sharing=locked,mode=0777,target=/root/.cache/uv,id=uv \
 # uv pip install --python /root/env/bin/python
 # new template
 DOCKER_FILE_UV_BASE_TEMPLATE = Template("""\
-#syntax=docker/dockerfile:1.5
+# syntax=docker/dockerfile:1.10
 FROM ghcr.io/astral-sh/uv:0.6.12 as uv
 FROM $BASE_IMAGE
 
@@ -147,7 +147,7 @@ class PipAndRequirementsHandler:
 
         pip_install_args = layer.get_pip_install_args()
         pip_install_args.extend(["--requirement", "requirements_uv.txt"])
-        secret_mounts = get_secret_mounts_layer(layer.secret_mounts)
+        secret_mounts = get_secret_mounts_layer(layer.build_secrets)
         delta = UV_PACKAGE_INSTALL_COMMAND_TEMPLATE.substitute(
             PIP_INSTALL_ARGS=" ".join(pip_install_args), SECRET_MOUNT=secret_mounts
         )
@@ -162,7 +162,7 @@ class PythonWheelHandler:
         shutil.copytree(layer.wheel_dir, context_path / "dist", dirs_exist_ok=True)
         pip_install_args = layer.get_pip_install_args()
         pip_install_args.extend(["/dist/*.whl"])
-        secret_mounts = get_secret_mounts_layer(layer.secret_mounts)
+        secret_mounts = get_secret_mounts_layer(layer.build_secrets)
         delta = UV_WHEEL_INSTALL_COMMAND_TEMPLATE.substitute(
             PIP_INSTALL_ARGS=" ".join(pip_install_args), SECRET_MOUNT=secret_mounts
         )
@@ -195,7 +195,7 @@ class AptPackagesHandler:
     @staticmethod
     async def handle(layer: AptPackages, _: Path, dockerfile: str) -> str:
         packages = layer.packages
-        secret_mounts = get_secret_mounts_layer(layer.secret_mounts)
+        secret_mounts = get_secret_mounts_layer(layer.build_secrets)
         delta = APT_INSTALL_COMMAND_TEMPLATE.substitute(APT_PACKAGES=" ".join(packages), SECRET_MOUNT=secret_mounts)
         dockerfile += delta
 
@@ -213,7 +213,7 @@ class UVProjectHandler:
         # --no-dev: Omit the development dependency group
         # --no-install-project: Do not install the current project
         additional_pip_install_args = ["--locked", "--no-dev", "--no-install-project"]
-        secret_mounts = get_secret_mounts_layer(layer.secret_mounts)
+        secret_mounts = get_secret_mounts_layer(layer.build_secrets)
         delta = UV_LOCK_INSTALL_TEMPLATE.substitute(
             PIP_INSTALL_ARGS=" ".join(additional_pip_install_args), SECRET_MOUNT=secret_mounts
         )
@@ -292,27 +292,27 @@ def get_secret_commands(layers: typing.Tuple[Layer, ...]) -> typing.List[str]:
 
     for layer in layers:
         if isinstance(layer, (PipOption, AptPackages)):
-            if layer.secret_mounts:
-                for secret_mount in layer.secret_mounts:
-                    commands.extend(_get_secret_command(secret_mount.secret))
+            if layer.build_secrets:
+                for build_secret in layer.build_secrets:
+                    commands.extend(_get_secret_command(build_secret.secret))
     return commands
 
 
-def get_secret_mounts_layer(secret_mounts: typing.List[SecretMount] | None) -> str:
+def get_secret_mounts_layer(secret_mounts: typing.Tuple[BuildSecret, ...] | None) -> str:
     if secret_mounts is None:
         return ""
     secret_mounts_layer = ""
     for secret_mount in secret_mounts:
         secret = secret_mount.secret
         if isinstance(secret, str):
-            secret_mounts_layer += f"--mount=type=secret,id={hash(secret_mount)}"
+            secret_mounts_layer += f"--mount=type=secret,id={hash(secret)},target=/run/secrets/{os.path.basename(secret)}"
         elif isinstance(secret, Secret):
             if secret.mount:
                 secret_mounts_layer += f"--mount=type=secret,id={hash(secret)},target={secret.mount}"
             elif secret.as_env_var:
                 secret_mounts_layer += f"--mount=type=secret,id={hash(secret)},env={secret.as_env_var}"
             else:
-                secret_mounts_layer += f"--mount=type=secret,id={hash(secret)}"
+                secret_mounts_layer += f"--mount=type=secret,id={hash(secret)},src=/run/secrets/{secret.group}_{secret.key}"
 
     return secret_mounts_layer
 

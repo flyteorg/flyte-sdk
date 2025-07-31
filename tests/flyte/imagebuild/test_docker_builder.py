@@ -50,8 +50,8 @@ async def test_image_with_secrets(monkeypatch):
 
     img = (
         Image.from_debian_base(registry="localhost:30000", name="img_with_secrets")
-        .with_apt_packages("vim", secret_mounts=[secret1])
-        .with_pip_packages("requests", secret_mounts=[SecretMount(Secret(group="group", key="key"))])
+        .with_apt_packages("vim", build_secrets=[secret1])
+        .with_pip_packages("requests", build_secrets=[SecretMount(Secret(group="group", key="key"))])
     )
 
     builder = DockerImageBuilder()
