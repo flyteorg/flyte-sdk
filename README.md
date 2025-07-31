@@ -8,6 +8,14 @@
 
 > ⚡ **Pure Python workflows** • 🔄 **Async-first parallelism** • 🛠️ **Zero DSL constraints** • 📊 **Sub-task observability**
 
+## 🌍 Ecosystem & Resources
+
+- **📖 Documentation**: [Docs Link](https://www.union.ai/docs/v2/flyte/user-guide/)
+- **▶️ Getting Started**: [Docs Link](https://www.union.ai/docs/v2/flyte/user-guide/getting-started/)
+- **💬 Community**: [Slack](https://slack.flyte.org/) | [GitHub Discussions](https://github.com/flyteorg/flyte/discussions)  
+- **🎓 Examples**: [GitHub Examples](https://github.com/flyteorg/flyte-sdk/tree/main/examples)
+- **🐛 Issues**: [Bug Reports](https://github.com/flyteorg/flyte/issues)
+
 ## What is Flyte 2?
 
 Flyte 2 represents a fundamental shift from constrained domain-specific languages to **pure Python workflows**. Write data pipelines, ML training jobs, and distributed compute exactly like you write Python—because it *is* Python.
@@ -37,21 +45,11 @@ if __name__ == "__main__":
 
 ## 🌟 Why Flyte 2?
 
-### **No More Workflow DSL**
-- ❌ `@workflow` decorators with Python subset limitations  
-- ✅ **Pure Python**: loops, conditionals, error handling, dynamic structures
-
-### **Async-First Parallelism** 
-- ❌ Custom `map()` functions and workflow-specific parallel constructs
-- ✅ **Native `asyncio`**: `await asyncio.gather()` for distributed parallel execution
-
-### **True Container Reusability**
-- ❌ Cold container starts for every task
-- ✅ **Millisecond scheduling** with warm, reusable container pools
-
-### **Fine-Grained Observability**
-- ❌ Task-level logging only
-- ✅ **Function-level tracing** with `@flyte.trace` for sub-task checkpoints
+| Feature Highlight | Flyte 1 | Flyte 2 |
+|-| ------- | ------- |
+| **No More Workflow DSL** | ❌ `@workflow` decorators with Python subset limitations | ✅ **Pure Python**: loops, conditionals, error handling, dynamic structures |
+| **Async-First Parallelism** | ❌ Custom `map()` functions and workflow-specific parallel constructs | ✅ **Native `asyncio`**: `await asyncio.gather()` for distributed parallel execution |
+| **Fine-Grained Observability** | ❌ Task-level logging only | ✅ **Function-level tracing** with `@flyte.trace` for sub-task checkpoints |
 
 ## 🚀 Quick Start
 
@@ -220,26 +218,6 @@ async def orchestrator(raw_data: flyte.File) -> flyte.File:
     return model
 ```
 
-### **High-Performance Container Reuse**
-
-```python
-env = flyte.TaskEnvironment(
-    name="high_throughput",
-    reusable=flyte.ReusePolicy(
-        replicas=10,      # Keep 10 warm containers
-        idle_ttl=600,     # 10-minute idle timeout
-    ),
-    resources=flyte.Resources(cpu=2, memory="4Gi")
-)
-
-# Tasks scheduled in milliseconds on warm containers
-@env.task
-async def process_thousands(items: list[str]) -> list[str]:
-    return await asyncio.gather(*[
-        process_item.aio(item) for item in items
-    ])
-```
-
 ## 📊 Native Jupyter Integration
 
 Run and monitor workflows directly from notebooks:
@@ -287,7 +265,7 @@ flyte run my_workflow --input-file params.json
 flyte logs <execution-id>
 ```
 
-## 🆚 Migration from Flyte 1
+## Migration from Flyte 1
 
 | Flyte 1 | Flyte 2 |
 |---------|---------|
@@ -298,28 +276,6 @@ flyte logs <execution-id>
 | `LaunchPlan` schedules | `@env.task(on_schedule=...)` |
 | Workflow failure handlers | Python `try/except` |
 
-### Example Migration
-
-```python
-# Flyte 1
-@flytekit.workflow  
-def old_workflow(data: list[str]) -> list[str]:
-    return [process_item(item=item) for item in data]
-
-# Flyte 2  
-@env.task
-async def new_workflow(data: list[str]) -> list[str]:
-    return await asyncio.gather(*[
-        process_item.aio(item) for item in data
-    ])
-```
-
-## 🌍 Ecosystem & Resources
-
-- **📖 Documentation**: [flyte.org/docs](https://flyte.org/docs)
-- **💬 Community**: [Slack](https://flyte.org/slack) | [GitHub Discussions](https://github.com/flyteorg/flyte/discussions)  
-- **🎓 Examples**: [GitHub Examples](https://github.com/flyteorg/flytesnacks)
-- **🐛 Issues**: [Bug Reports](https://github.com/flyteorg/flyte/issues)
 
 ## 🤝 Contributing
 
@@ -335,9 +291,3 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 ## 📄 License
 
 Flyte 2 is licensed under the [Apache 2.0 License](LICENSE).
-
----
-
-**Ready to build the future of distributed computing with pure Python?**
-
-⭐ **Star this repo** | 🚀 **[Get Started Now](https://flyte.org/docs/getting-started)** | 💬 **[Join our Community](https://flyte.org/slack)**
