@@ -74,7 +74,7 @@ class PipOption:
     extra_index_urls: Optional[Tuple[str] | Tuple[str, ...] | List[str]] = None
     pre: bool = False
     extra_args: Optional[str] = None
-    secret_mounts: Optional[List[SecretMount]] = None
+    secret_mounts: Optional[Tuple[SecretMount]] = None
 
     def get_pip_install_args(self) -> List[str]:
         pip_install_args = []
@@ -176,7 +176,7 @@ class UVProject(PipOption, Layer):
 @dataclass(frozen=True, repr=True)
 class AptPackages(Layer):
     packages: Tuple[str, ...]
-    secret_mounts: Optional[List[SecretMount]] = None
+    secret_mounts: Optional[Tuple[SecretMount]] = None
 
     def update_hash(self, hasher: hashlib._Hash):
         hash_input = "".join(self.packages)
@@ -767,7 +767,7 @@ class Image:
             index_url=index_url,
             extra_index_urls=new_extra_index_urls,
             pre=pre,
-            secret_mounts=secret_mounts,
+            secret_mounts=tuple(secret_mounts) if secret_mounts else None,
             extra_args=extra_args,
         )
         new_image = self.clone(addl_layer=ll)
@@ -860,7 +860,7 @@ class Image:
         :param secret_mounts: list of SecretMount objects to mount secrets as files or environment variables
         :return: Image
         """
-        new_image = self.clone(addl_layer=AptPackages(packages=packages, secret_mounts=secret_mounts))
+        new_image = self.clone(addl_layer=AptPackages(packages=packages, secret_mounts=tuple(secret_mounts) if secret_mounts else None))
         return new_image
 
     def with_commands(self, commands: List[str]) -> Image:

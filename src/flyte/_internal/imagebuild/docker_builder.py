@@ -278,14 +278,16 @@ def get_secret_commands(layers: typing.Tuple[Layer, ...]) -> typing.List[str]:
 
     def _get_secret_command(secret: str | Secret) -> typing.List[str]:
         if isinstance(secret, str):
+            if not os.path.exists(secret):
+                raise FileNotFoundError(f"Secret file '{secret}' not found")
             return ["--secret", f"id={hash(secret)},src={secret}"]
         secret_key = "_".join([k.upper() for k in filter(None, (secret.group, secret.key))])
         secret_env = os.getenv(secret_key)
         if secret_env:
             return ["--secret", f"id={hash(secret)},env={secret_env}"]
-        secret_file_path = f"/etc/secrets/{secret.key}"
+        secret_file_path = f"/etc/secrets/{secret_key}"
         if not os.path.exists(secret_file_path):
-            raise FileNotFoundError(f"Secret file '{secret_file_path}' not found")
+            raise FileNotFoundError(f"Secret not found in Env Var {secret_key} or file {secret_file_path}")
         return ["--secret", f"id={hash(secret)},src={secret_file_path}"]
 
     for layer in layers:
@@ -528,6 +530,8 @@ class DockerImageBuilder(ImageBuilder):
                 command.append("--push")
             else:
                 command.append("--load")
+
+            command.extend(get_secret_commands(layers=image._layers))
             command.append(tmp_dir)
 
             concat_command = " ".join(command)

@@ -11,6 +11,7 @@ __all__ = [
     "Device",
     "Environment",
     "Image",
+    "SecretMount",
     "PodTemplate",
     "Resources",
     "RetryStrategy",
@@ -43,7 +44,7 @@ from ._deploy import build_images, deploy
 from ._environment import Environment
 from ._excepthook import custom_excepthook
 from ._group import group
-from ._image import Image
+from ._image import Image, SecretMount
 from ._initialize import init, init_from_config
 from ._map import map
 from ._pod import PodTemplate
