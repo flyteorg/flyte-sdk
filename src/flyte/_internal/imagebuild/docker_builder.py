@@ -308,13 +308,9 @@ def get_secret_mounts_layer(secret_mounts: typing.List[SecretMount] | None) -> s
             secret_mounts_layer += f"--mount=type=secret,id={hash(secret_mount)}"
         elif isinstance(secret, Secret):
             if secret.mount:
-                secret_mounts_layer += (
-                    f"--mount=type=secret,id={hash(secret)},target={secret.mount}"
-                )
+                secret_mounts_layer += f"--mount=type=secret,id={hash(secret)},target={secret.mount}"
             elif secret.as_env_var:
-                secret_mounts_layer += (
-                    f"--mount=type=secret,id={hash(secret)},env={secret.as_env_var}"
-                )
+                secret_mounts_layer += f"--mount=type=secret,id={hash(secret)},env={secret.as_env_var}"
             else:
                 secret_mounts_layer += f"--mount=type=secret,id={hash(secret)}"
 

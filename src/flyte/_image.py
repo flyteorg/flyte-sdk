@@ -860,7 +860,9 @@ class Image:
         :param secret_mounts: list of SecretMount objects to mount secrets as files or environment variables
         :return: Image
         """
-        new_image = self.clone(addl_layer=AptPackages(packages=packages, secret_mounts=tuple(secret_mounts) if secret_mounts else None))
+        new_image = self.clone(
+            addl_layer=AptPackages(packages=packages, secret_mounts=tuple(secret_mounts) if secret_mounts else None)
+        )
         return new_image
 
     def with_commands(self, commands: List[str]) -> Image:
