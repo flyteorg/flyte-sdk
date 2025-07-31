@@ -2,7 +2,6 @@
 # requires-python = "==3.13"
 # dependencies = [
 #     "flyte==2.0.0b0",
-#     "unionai-reuse==0.1.3",
 #     "openai-agents==0.2.4",
 # ]
 # ///
@@ -19,7 +18,6 @@ agent_env = flyte.TaskEnvironment(
     resources=flyte.Resources(cpu=1),
     secrets=[flyte.Secret(key="openai_api_key", as_env_var="OPENAI_API_KEY")],
     image=flyte.Image.from_uv_script(__file__, name="openai-agent", pre=True),
-    reusable=flyte.ReusePolicy(replicas=4, idle_ttl=300),
 )
 
 
@@ -54,7 +52,9 @@ async def spread_jelly(bread: str, jelly: str) -> str:
 
 
 @agent_env.task
-async def assemble_sandwich(pb_bread: Optional[str] = None, j_bread: Optional[str] = None) -> str:
+async def assemble_sandwich(
+    pb_bread: Optional[str] = None, j_bread: Optional[str] = None
+) -> str:
     await asyncio.sleep(1)
     return f"{pb_bread} and {j_bread} combined"
 
@@ -96,7 +96,9 @@ async def spread_jelly_tool(bread: str, jelly: str) -> str:
 
 
 @function_tool
-async def assemble_sandwich_tool(pb_bread: Optional[str] = None, j_bread: Optional[str] = None) -> str:
+async def assemble_sandwich_tool(
+    pb_bread: Optional[str] = None, j_bread: Optional[str] = None
+) -> str:
     """Assemble a sandwich from any combination of components (e.g., peanut butter bread, jelly bread)."""
     return await assemble_sandwich(pb_bread, j_bread)
 
