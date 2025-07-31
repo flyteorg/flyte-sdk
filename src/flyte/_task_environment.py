@@ -55,8 +55,8 @@ class TaskEnvironment(Environment):
     :param resources: Resources to allocate for the environment.
     :param env: Environment variables to set for the environment.
     :param secrets: Secrets to inject into the environment.
-    :param depends_on: Environment dependencies to hint, so when you deploy the environment, the dependencies are
-        also deployed. This is useful when you have a set of environments that depend on each other.
+    :param depends_on: Environment dependencies to hint, so when you deploy the environment,
+        the dependencies are also deployed. This is useful when you have a set of environments that depend on each other.
     :param cache: Cache policy for the environment.
     :param reusable: Reuse policy for the environment, if set, a python process may be reused for multiple tasks.
     """
@@ -148,7 +148,9 @@ class TaskEnvironment(Environment):
 
         if self.reusable is not None:
             if pod_template is not None:
-                raise ValueError("Cannot set pod_template when environment is reusable.")
+                raise ValueError(
+                    "Cannot set pod_template when environment is reusable."
+                )
 
         def decorator(func: FunctionTypes) -> AsyncFunctionTaskTemplate[P, R]:
             friendly_name = name or func.__name__
@@ -164,8 +166,8 @@ class TaskEnvironment(Environment):
             if self.plugin_config is not None:
                 from flyte.extend import TaskPluginRegistry
 
-                task_template_class: type[AsyncFunctionTaskTemplate[P, R]] | None = TaskPluginRegistry.find(
-                    config_type=type(self.plugin_config)
+                task_template_class: type[AsyncFunctionTaskTemplate[P, R]] | None = (
+                    TaskPluginRegistry.find(config_type=type(self.plugin_config))
                 )
                 if task_template_class is None:
                     raise ValueError(
@@ -175,7 +177,9 @@ class TaskEnvironment(Environment):
             else:
                 task_template_class = AsyncFunctionTaskTemplate[P, R]
 
-            task_template_class = cast(type[AsyncFunctionTaskTemplate[P, R]], task_template_class)
+            task_template_class = cast(
+                type[AsyncFunctionTaskTemplate[P, R]], task_template_class
+            )
             tmpl = task_template_class(
                 func=func,
                 name=task_name,
@@ -214,7 +218,9 @@ class TaskEnvironment(Environment):
         Add a task to the environment.
         """
         if task.name in self._tasks:
-            raise ValueError(f"Task {task.name} already exists in the environment. Task names should be unique.")
+            raise ValueError(
+                f"Task {task.name} already exists in the environment. Task names should be unique."
+            )
         self._tasks[task.name] = task
         task.parent_env = weakref.ref(self)
         return task
