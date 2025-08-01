@@ -146,7 +146,7 @@ class PipAndRequirementsHandler:
 
         pip_install_args = layer.get_pip_install_args()
         pip_install_args.extend(["--requirement", "requirements_uv.txt"])
-        secret_mounts = get_secret_mounts_layer(layer.secret_mounts)
+        secret_mounts = _get_secret_mounts_layer(layer.secret_mounts)
         delta = UV_PACKAGE_INSTALL_COMMAND_TEMPLATE.substitute(
             PIP_INSTALL_ARGS=" ".join(pip_install_args), SECRET_MOUNT=secret_mounts
         )
@@ -161,7 +161,7 @@ class PythonWheelHandler:
         shutil.copytree(layer.wheel_dir, context_path / "dist", dirs_exist_ok=True)
         pip_install_args = layer.get_pip_install_args()
         pip_install_args.extend(["/dist/*.whl"])
-        secret_mounts = get_secret_mounts_layer(layer.secret_mounts)
+        secret_mounts = _get_secret_mounts_layer(layer.secret_mounts)
         delta = UV_WHEEL_INSTALL_COMMAND_TEMPLATE.substitute(
             PIP_INSTALL_ARGS=" ".join(pip_install_args), SECRET_MOUNT=secret_mounts
         )
@@ -194,7 +194,7 @@ class AptPackagesHandler:
     @staticmethod
     async def handle(layer: AptPackages, _: Path, dockerfile: str) -> str:
         packages = layer.packages
-        secret_mounts = get_secret_mounts_layer(layer.secret_mounts)
+        secret_mounts = _get_secret_mounts_layer(layer.secret_mounts)
         delta = APT_INSTALL_COMMAND_TEMPLATE.substitute(APT_PACKAGES=" ".join(packages), SECRET_MOUNT=secret_mounts)
         dockerfile += delta
 
@@ -212,7 +212,7 @@ class UVProjectHandler:
         # --no-dev: Omit the development dependency group
         # --no-install-project: Do not install the current project
         additional_pip_install_args = ["--locked", "--no-dev", "--no-install-project"]
-        secret_mounts = get_secret_mounts_layer(layer.secret_mounts)
+        secret_mounts = _get_secret_mounts_layer(layer.secret_mounts)
         delta = UV_LOCK_INSTALL_TEMPLATE.substitute(
             PIP_INSTALL_ARGS=" ".join(additional_pip_install_args), SECRET_MOUNT=secret_mounts
         )
@@ -272,7 +272,7 @@ class WorkDirHandler:
         return dockerfile
 
 
-def get_secret_commands(layers: typing.Tuple[Layer, ...]) -> typing.List[str]:
+def _get_secret_commands(layers: typing.Tuple[Layer, ...]) -> typing.List[str]:
     commands = []
 
     def _get_secret_command(secret: str | Secret) -> typing.List[str]:
@@ -299,7 +299,7 @@ def get_secret_commands(layers: typing.Tuple[Layer, ...]) -> typing.List[str]:
     return commands
 
 
-def get_secret_mounts_layer(secrets: typing.Tuple[str | Secret, ...] | None) -> str:
+def _get_secret_mounts_layer(secrets: typing.Tuple[str | Secret, ...] | None) -> str:
     if secrets is None:
         return ""
     secret_mounts_layer = ""
@@ -419,7 +419,7 @@ class DockerImageBuilder(ImageBuilder):
         else:
             command.append("--load")
 
-        command.extend(get_secret_commands(layers=image._layers))
+        command.extend(_get_secret_commands(layers=image._layers))
 
         concat_command = " ".join(command)
         logger.debug(f"Build command: {concat_command}")
@@ -529,7 +529,7 @@ class DockerImageBuilder(ImageBuilder):
             else:
                 command.append("--load")
 
-            command.extend(get_secret_commands(layers=image._layers))
+            command.extend(_get_secret_commands(layers=image._layers))
             command.append(tmp_dir)
 
             concat_command = " ".join(command)

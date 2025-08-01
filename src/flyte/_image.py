@@ -40,9 +40,6 @@ class SecretMount:
     secret: str | Secret
 
 
-BuildSecret = SecretMount  # TODO: Add support ssh mount and git auth
-
-
 def _ensure_tuple(val: Union[T, List[T], Tuple[T, ...]]) -> Tuple[T] | Tuple[T, ...]:
     """
     Ensure that the input is a tuple. If it is a string, convert it to a tuple with one element.
