@@ -394,8 +394,8 @@ class Image:
         )
         labels_and_user = _DockerLines(
             (
-                "LABEL org.opencontainers.image.authors='Union.AI <sales@union.ai>'",
-                "LABEL org.opencontainers.image.source=https://github.com/unionai/unionv2",
+                "LABEL org.opencontainers.image.authors='Union.AI <info@union.ai>'",
+                "LABEL org.opencontainers.image.source=https://github.com/flyteorg/flyte",
                 "RUN useradd --create-home --shell /bin/bash flytekit &&"
                 " chown -R flytekit /root && chown -R flytekit /home",
                 "WORKDIR /root",

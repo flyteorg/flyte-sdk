@@ -12,9 +12,7 @@ import flyte
 
 env = flyte.TaskEnvironment(
     name="recursion",
-    image=flyte.Image.from_uv_script(
-        __file__, registry="ghcr.io/flyteorg", name="flyte", arch=("linux/amd64", "linux/arm64")
-    ),
+    image=flyte.Image.from_uv_script(__file__, registry="ghcr.io/flyteorg", name="flyte"),
 )
 
 

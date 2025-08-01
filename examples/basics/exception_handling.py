@@ -3,7 +3,7 @@ import asyncio
 import flyte
 import flyte.errors
 
-env = flyte.TaskEnvironment(name="hello_world", resources=flyte.Resources(cpu=1, memory="250Mi"))
+env = flyte.TaskEnvironment(name="exc_handler", resources=flyte.Resources(cpu=1, memory="250Mi"))
 
 
 @env.task

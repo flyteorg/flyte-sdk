@@ -4,6 +4,7 @@ import asyncio
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
 
+import grpc.aio
 import rich.repr
 
 import flyte.errors
@@ -90,27 +91,39 @@ async def _deploy_task(
 
     image_uri = task.image.uri if isinstance(task.image, Image) else task.image
 
-    if dryrun:
-        return translate_task_to_wire(task, serialization_context)
+    try:
+        if dryrun:
+            return translate_task_to_wire(task, serialization_context)
 
-    default_inputs = await convert_upload_default_inputs(task.interface)
-    spec = translate_task_to_wire(task, serialization_context, default_inputs=default_inputs)
+        default_inputs = await convert_upload_default_inputs(task.interface)
+        spec = translate_task_to_wire(task, serialization_context, default_inputs=default_inputs)
 
-    msg = f"Deploying task {task.name}, with image {image_uri} version {serialization_context.version}"
-    if spec.task_template.HasField("container") and spec.task_template.container.args:
-        msg += f" from {spec.task_template.container.args[-3]}.{spec.task_template.container.args[-1]}"
-    logger.info(msg)
-    task_id = task_definition_pb2.TaskIdentifier(
-        org=spec.task_template.id.org,
-        project=spec.task_template.id.project,
-        domain=spec.task_template.id.domain,
-        version=spec.task_template.id.version,
-        name=spec.task_template.id.name,
-    )
+        msg = f"Deploying task {task.name}, with image {image_uri} version {serialization_context.version}"
+        if spec.task_template.HasField("container") and spec.task_template.container.args:
+            msg += f" from {spec.task_template.container.args[-3]}.{spec.task_template.container.args[-1]}"
+        logger.info(msg)
+        task_id = task_definition_pb2.TaskIdentifier(
+            org=spec.task_template.id.org,
+            project=spec.task_template.id.project,
+            domain=spec.task_template.id.domain,
+            version=spec.task_template.id.version,
+            name=spec.task_template.id.name,
+        )
 
-    await get_client().task_service.DeployTask(task_service_pb2.DeployTaskRequest(task_id=task_id, spec=spec))
-    logger.info(f"Deployed task {task.name} with version {task_id.version}")
-    return spec
+        try:
+            await get_client().task_service.DeployTask(task_service_pb2.DeployTaskRequest(task_id=task_id, spec=spec))
+            logger.info(f"Deployed task {task.name} with version {task_id.version}")
+        except grpc.aio.AioRpcError as e:
+            if e.code() == grpc.StatusCode.ALREADY_EXISTS:
+                logger.info(f"Task {task.name} with image {image_uri} already exists, skipping deployment.")
+                return spec
+            raise
+        return spec
+    except Exception as e:
+        logger.error(f"Failed to deploy task {task.name} with image {image_uri}: {e}")
+        raise flyte.errors.DeploymentError(
+            f"Failed to deploy task {task.name} file{task.source_file} with image {image_uri}, Error: {e!s}"
+        ) from e
 
 
 async def _build_image_bg(env_name: str, image: Image) -> Tuple[str, str]:
@@ -187,15 +200,13 @@ async def apply(deployment: DeploymentPlan, copy_style: CopyFiles, dryrun: bool 
     return Deployment(envs=deployment.envs, deployed_tasks=await asyncio.gather(*tasks))
 
 
-def _recursive_discover(
-    planned_envs: Dict[str, Environment], envs: Environment | List[Environment]
-) -> Dict[str, Environment]:
+def _recursive_discover(planned_envs: Dict[str, Environment], *envs: Environment) -> Dict[str, Environment]:
     """
     Recursively deploy the environment and its dependencies, if not already deployed (present in env_tasks) and
     return the updated env_tasks.
     """
     if isinstance(envs, Environment):
-        envs = [envs]
+        envs = (envs,)
     for env in envs:
         # Skip if the environment is already planned
         if env.name in planned_envs:

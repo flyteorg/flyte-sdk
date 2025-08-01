@@ -16,8 +16,7 @@ env = flyte.TaskEnvironment(
     image=flyte.Image.from_uv_script(
         __file__,
         name="flyte",
-        registry="ghcr.io/<your-username>",
-        arch=("linux/amd64", "linux/arm64"),
+        registry="ghcr.io/flyteorg",
     ).with_apt_packages("ca-certificates"),
 )
 

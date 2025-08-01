@@ -10,7 +10,7 @@ env = flyte.TaskEnvironment(
         name="flyte-temp-dockerfile-example",
         registry="ghcr.io/flyteorg",
         platform=("linux/amd64", "linux/arm64"),
-    ).with_apt_packages("ca-certificates"),
+    ),
 )
 
 

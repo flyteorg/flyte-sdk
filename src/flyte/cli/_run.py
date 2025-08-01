@@ -199,7 +199,7 @@ class TaskFiles(common.FileGroup):
         if fp.is_dir():
             return TaskFiles(directory=fp)
         return TaskPerFileGroup(
-            filename=Path(filename),
+            filename=fp,
             run_args=run_args,
             name=filename,
             help=f"Run, functions decorated with `env.task` in {filename}",
