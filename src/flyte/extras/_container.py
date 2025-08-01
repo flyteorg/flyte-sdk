@@ -217,7 +217,7 @@ class ContainerTask(TaskTemplate):
                     with output_path.open("r") as f:
                         output_val = f.read()
                 else:
-                    output_val = output_path
+                    output_val = None
                 parsed = await self._convert_output_val_to_correct_type(output_path, output_val, output_type)
                 output_items.append(parsed)
         # return a tuple so that each element is treated as a separate output.
