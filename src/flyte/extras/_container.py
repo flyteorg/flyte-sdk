@@ -169,7 +169,7 @@ class ContainerTask(TaskTemplate):
             logger.error(f"Failed to pull image {image}: {e!s}")
             raise
 
-    async def _string_to_timedelta(self, s: str):
+    def _string_to_timedelta(self, s: str):
         import datetime
         import re
 
@@ -200,7 +200,7 @@ class ContainerTask(TaskTemplate):
         elif issubclass(output_type, datetime.datetime):
             return datetime.datetime.fromisoformat(output_val)
         elif issubclass(output_type, datetime.timedelta):
-            return await self._string_to_timedelta(output_val)
+            return self._string_to_timedelta(output_val)
         elif issubclass(output_type, File):
             return await File.from_local(output_path)
         elif issubclass(output_type, Dir):
