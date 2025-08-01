@@ -7,8 +7,9 @@ from typing import List, Optional, Union
 @dataclass
 class Secret:
     """
-    Secrets are used to inject sensitive information into tasks. Secrets can be mounted as environment variables or
-    files. The secret key is the name of the secret in the secret store. The group is optional and maybe used with some
+    Secrets are used to inject sensitive information into tasks or image build context.
+    Secrets can be mounted as environment variables or files.
+     The secret key is the name of the secret in the secret store. The group is optional and maybe used with some
     secret stores to organize secrets. The secret_mount is used to specify how the secret should be mounted. If the
     secret_mount is set to "env" the secret will be mounted as an environment variable. If the secret_mount is set to
     "file" the secret will be mounted as a file. The as_env_var is an optional parameter that can be used to specify the

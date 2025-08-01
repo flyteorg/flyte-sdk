@@ -1,7 +1,9 @@
+import tempfile
 from pathlib import Path
 
 import pytest
 
+from flyte import Secret
 from flyte._image import Image
 from flyte._internal.imagebuild.docker_builder import DockerImageBuilder
 
@@ -9,7 +11,9 @@ from flyte._internal.imagebuild.docker_builder import DockerImageBuilder
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_basic_image():
-    img = Image.from_uv_debian("localhost:30000", "test_image").with_pip_packages("requests")
+    img = Image.from_debian_base(registry="localhost:30000", name="test_image", install_flyte=False).with_pip_packages(
+        "requests"
+    )
 
     builder = DockerImageBuilder()
 
@@ -20,12 +24,10 @@ async def test_basic_image():
 @pytest.mark.asyncio
 async def test_image_folders_commands():
     img = (
-        Image.from_uv_debian("localhost:30000", "img_with_more")
+        Image.from_debian_base(registry="localhost:30000", name="img_with_more", install_flyte=False)
         .with_pip_packages("requests")
         .with_source_folder(Path("."), "/root/data/stuff")
-        .with_source_folder(Path("/Users/ytong/temp/fasts/yt_dbg/scratchpad"), "/root/data/stuff")
         .with_commands(["echo hello world", "echo hello world again"])
-        .with_source_file(Path("/Users/ytong/c"))
     )
 
     builder = DockerImageBuilder()
@@ -38,3 +40,19 @@ async def test_doesnt_work_yet():
     default_image = Image.from_debian_base()
     builder = DockerImageBuilder()
     await builder.build_image(default_image, dry_run=False)
+
+
+@pytest.mark.asyncio
+@pytest.mark.integration
+async def test_image_with_secrets(monkeypatch):
+    secret1, _ = tempfile.mkstemp("secret1")
+    monkeypatch.setenv("GROUP_KEY", "test-value")
+
+    img = (
+        Image.from_debian_base(registry="localhost:30000", name="img_with_secrets")
+        .with_apt_packages("vim", secret_mounts=[str(secret1)])
+        .with_pip_packages("requests", secret_mounts=[Secret(group="group", key="key")])
+    )
+
+    builder = DockerImageBuilder()
+    await builder.build_image(img)
