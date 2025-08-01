@@ -148,6 +148,10 @@ class TaskTemplate(Generic[P, R]):
         self.__dict__.update(state)
         self.parent_env = None
 
+    @property
+    def source_file(self) -> Optional[str]:
+        return None
+
     async def pre(self, *args, **kwargs) -> Dict[str, Any]:
         """
         This is the preexecute function that will be
@@ -388,6 +392,15 @@ class AsyncFunctionTaskTemplate(TaskTemplate[P, R]):
         super().__post_init__()
         if not iscoroutinefunction(self.func):
             self._call_as_synchronous = True
+
+    @property
+    def source_file(self) -> Optional[str]:
+        """
+        Returns the source file of the function, if available. This is useful for debugging and tracing.
+        """
+        if hasattr(self.func, "__code__") and self.func.__code__:
+            return self.func.__code__.co_filename
+        return None
 
     def forward(self, *args: P.args, **kwargs: P.kwargs) -> Coroutine[Any, Any, R] | R:
         # In local execution, we want to just call the function. Note we're not awaiting anything here.
