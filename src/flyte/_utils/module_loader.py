@@ -1,5 +1,7 @@
 import glob
 import importlib.util
+import os
+import sys
 from pathlib import Path
 from typing import List, Tuple
 
@@ -76,6 +78,9 @@ def _load_module_from_file(file_path: Path) -> str | None:
 
         # Create and execute the module
         module = importlib.util.module_from_spec(spec)
+        sys.modules[module_name] = module
+        module_path = os.path.dirname(os.path.abspath(file_path))
+        sys.path.append(module_path)
         spec.loader.exec_module(module)
 
         return module_name

@@ -157,7 +157,6 @@ class DeployEnvRecursiveCommand(click.Command):
             raise click.ClickException(
                 f"Failed to load {len(failed_paths)} files. Use --ignore-load-errors to ignore these errors."
             )
-
         # Now start connection and deploy all environments
         obj.init(self.deploy_args.project, self.deploy_args.domain)
         with console.status("Deploying...", spinner="dots"):
