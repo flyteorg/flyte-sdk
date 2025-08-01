@@ -7,6 +7,7 @@ from flyteidl.core import tasks_pb2
 from flyte import Image, storage
 from flyte._logging import logger
 from flyte._task import TaskTemplate
+from flyte.io import Dir, File
 from flyte.models import NativeInterface, SerializationContext
 
 
@@ -191,7 +192,7 @@ class ContainerTask(TaskTemplate):
             microseconds=microseconds,
         )
 
-    def _convert_output_val_to_correct_type(self, output_val: Any, output_type: Type) -> Any:
+    async def _convert_output_val_to_correct_type(self, output_path: pathlib.Path, output_val: Any, output_type: Type) -> Any:
         import datetime
 
         if issubclass(output_type, bool):
@@ -200,17 +201,25 @@ class ContainerTask(TaskTemplate):
             return datetime.datetime.fromisoformat(output_val)
         elif issubclass(output_type, datetime.timedelta):
             return self._string_to_timedelta(output_val)
+        elif issubclass(output_type, File):
+            return await File.from_local(output_path)
+        elif issubclass(output_type, Dir):
+            return await Dir.from_local(output_path)
         else:
             return output_type(output_val)
 
-    def _get_output(self, output_directory: pathlib.Path) -> Tuple[Any]:
+    async def _get_output(self, output_directory: pathlib.Path) -> Tuple[Any]:
         output_items = []
         if self._outputs:
             for k, output_type in self._outputs.items():
                 output_path = output_directory / k
-                with output_path.open("r") as f:
-                    output_val = f.read()
-                output_items.append(self._convert_output_val_to_correct_type(output_val, output_type))
+                if os.path.isfile(output_path):
+                    with output_path.open("r") as f:
+                        output_val = f.read()
+                else:
+                    output_val = None
+                parsed = await self._convert_output_val_to_correct_type(output_path, output_val, output_type)
+                output_items.append(parsed)
         # return a tuple so that each element is treated as a separate output.
         # this allows flyte to map the user-defined output types (dict) to individual values.
         # if we returned a list instead, it would be treated as a single output.
@@ -249,7 +258,7 @@ class ContainerTask(TaskTemplate):
 
         container.wait()
 
-        output = self._get_output(output_directory)
+        output = await self._get_output(output_directory)
         return output
 
     def data_loading_config(self, sctx: SerializationContext) -> tasks_pb2.DataLoadingConfig:
