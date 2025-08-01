@@ -32,31 +32,31 @@ tool_env = coordinator_env.clone_with(name="tool_env", reusable=flyte.ReusePolic
 
 
 # Mock tools that research agents can use
-@tool_env.task
+@flyte.trace
 async def search_web(query: str) -> str:
     # await asyncio.sleep(1.0)  # Simulate API call
     return f"Web results for: {query}"
 
 
-@tool_env.task
+@flyte.trace
 async def extract_entities(text: str) -> List[str]:
     # await asyncio.sleep(1.0)
     return [f"Entity from: {text}"]
 
 
-@tool_env.task
+@flyte.trace
 async def analyze_text(text: str) -> Dict[str, str]:
     # await asyncio.sleep(1.0)
     return {"analysis": f"Analysis of: {text}", "sentiment": "positive"}
 
 
-@tool_env.task
+@flyte.trace
 async def summarize_text(text: str) -> Dict[str, str]:
     # await asyncio.sleep(1.0)
     return {"summary": f"Summary of: {text}"}
 
 
-@tool_env.task
+@flyte.trace
 async def finalize_answer(text: str) -> Dict[str, str]:
     # await asyncio.sleep(1.0)
     return {"answer": f"Answer of: {text}"}
