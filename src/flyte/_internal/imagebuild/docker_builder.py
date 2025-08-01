@@ -281,13 +281,14 @@ def get_secret_commands(layers: typing.Tuple[Layer, ...]) -> typing.List[str]:
             if not os.path.exists(secret):
                 raise FileNotFoundError(f"Secret file '{secret}' not found")
             return ["--secret", f"id={hash(secret)},src={secret}"]
-        secret_key = "_".join([k.upper() for k in filter(None, (secret.group, secret.key))])
-        secret_env = os.getenv(secret_key)
+        secret_env_key = "_".join([k.upper() for k in filter(None, (secret.group, secret.key))])
+        secret_env = os.getenv(secret_env_key)
         if secret_env:
             return ["--secret", f"id={hash(secret)},env={secret_env}"]
-        secret_file_path = f"/etc/secrets/{secret_key}"
+        secret_file_name = "_".join([k for k in filter(None, (secret.group, secret.key))])
+        secret_file_path = f"/etc/secrets/{secret_file_name}"
         if not os.path.exists(secret_file_path):
-            raise FileNotFoundError(f"Secret not found in Env Var {secret_key} or file {secret_file_path}")
+            raise FileNotFoundError(f"Secret not found in Env Var {secret_env_key} or file {secret_file_path}")
         return ["--secret", f"id={hash(secret)},src={secret_file_path}"]
 
     for layer in layers:
@@ -314,8 +315,9 @@ def get_secret_mounts_layer(secret_mounts: typing.Tuple[BuildSecret, ...] | None
             elif secret.as_env_var:
                 secret_mounts_layer += f"--mount=type=secret,id={hash(secret)},env={secret.as_env_var}"
             else:
+                secret_file_name = "_".join([k for k in filter(None, (secret.group, secret.key))])
                 secret_mounts_layer += (
-                    f"--mount=type=secret,id={hash(secret)},src=/run/secrets/{secret.group}_{secret.key}"
+                    f"--mount=type=secret,id={hash(secret)},src=/run/secrets/{secret_file_name}"
                 )
 
     return secret_mounts_layer
