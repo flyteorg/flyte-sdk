@@ -1,7 +1,7 @@
 # /// script
 # requires-python = "==3.13"
 # dependencies = [
-#    "flyte==0.2.0b23",
+#    "flyte>=2.0.0b0",
 #    "pydantic==2.11.5",
 #    "litellm==1.72.2",
 #    "pypandoc==1.15",
@@ -34,22 +34,20 @@ from flyte.io._file import File
 
 TIME_LIMIT_MULTIPLIER = 5
 MAX_COMPLETION_TOKENS = 4096
-REGISTRY = "ghcr.io/flyteorg"
 
 logging = AgentLogger("together.open_deep_research")
 
 env = flyte.TaskEnvironment(
-    name="deep-research-agent",
+    name="deep-researcher",
     secrets=[
         # TODO: Replace with your own secrets
-        flyte.Secret(key="JOE_TOGETHER_API_KEY", as_env_var="TOGETHER_API_KEY"),
-        flyte.Secret(key="JOE_TAVILY_API_KEY", as_env_var="TAVILY_API_KEY"),
+        flyte.Secret(key="together_api_key", as_env_var="TOGETHER_API_KEY"),
+        flyte.Secret(key="tavily_api_key", as_env_var="TAVILY_API_KEY"),
     ],
-    image=flyte.Image.from_uv_script(
-        __file__, name="deep-research-agent", registry=REGISTRY, arch=("linux/amd64", "linux/arm64"), pre=True
-    )
-    .with_apt_packages("ca-certificates", "pandoc", "texlive-xetex")
+    image=flyte.Image.from_uv_script(__file__, name="deep-research-agent", pre=True)
+    .with_apt_packages("pandoc", "texlive-xetex")
     .with_source_file(Path("prompts.yaml"), "/root"),
+    resources=flyte.Resources(cpu=1),
 )
 
 
@@ -124,7 +122,7 @@ async def search_and_summarize(
     prompts_file: File,
     summarization_model: str,
 ) -> DeepResearchResults:
-    """Perform a search for a single query"""
+    """Perform search for a single query"""
 
     if len(query) > 400:
         # NOTE: we are truncating the query to 400 characters to avoid Tavily Search issues
@@ -480,7 +478,7 @@ async def research_topic(
 
 
 @env.task
-async def generate_pdf(answer: str, filename: str = "research_report.pdf") -> str:
+async def generate_pdf(answer: str, filename: str = "research_report.pdf") -> File:
     """
     Generate a PDF report from the markdown formatted research answer.
     Uses the first line of the answer as the title.
@@ -537,7 +535,7 @@ async def generate_pdf(answer: str, filename: str = "research_report.pdf") -> st
             extra_args=pdf_options,
         )
         print(f"PDF generated successfully using pypandoc: {filename}")
-        return filename
+        return await File.from_local(filename)
     except Exception as pandoc_error:
         print(f"Pypandoc conversion failed: {pandoc_error!s}")
         print("Trying alternative conversion methods...")
@@ -580,7 +578,7 @@ async def generate_pdf(answer: str, filename: str = "research_report.pdf") -> st
             raise Exception("xhtml2pdf encountered errors")
         else:
             print(f"PDF generated successfully using commonmark + xhtml2pdf: {filename}")
-            return filename
+            return await File.from_local(filename)
 
     except Exception as alt_error:
         error_msg = f"All PDF conversion methods failed. Last error: {alt_error!s}"
@@ -590,7 +588,7 @@ async def generate_pdf(answer: str, filename: str = "research_report.pdf") -> st
 
 @env.task
 async def main(
-    topic: str = "Top 10 developing countries by GDP in 2024",
+    topic: str = ("List the essential requirements for a developer-focused agent orchestration system."),
     prompts_file: File | str = "/root/prompts.yaml",
     budget: int = 2,
     remove_thinking_tags: bool = True,
@@ -617,8 +615,7 @@ async def main(
         prompts_file=prompts_file,
     )
 
-    filename = await generate_pdf(answer)
-    return File(path=filename)
+    return await generate_pdf(answer)
 
 
 if __name__ == "__main__":
@@ -628,7 +625,7 @@ if __name__ == "__main__":
 
     # Remote execution
     # TODO: Replace with your own Flyte config file path
-    flyte.init_from_config("../../../config.yaml")
+    flyte.init_from_config("../../config.yaml")
     run = flyte.run(main)
     print(run.url)
     run.wait(run)

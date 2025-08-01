@@ -30,7 +30,7 @@ def is_snake_or_kebab_with_numbers(s: str) -> bool:
 
 
 @rich.repr.auto
-@dataclass(init=True, repr=True, unsafe_hash=True)
+@dataclass(init=True, repr=True)
 class Environment:
     """
     :param name: Name of the environment
