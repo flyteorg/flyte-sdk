@@ -1,12 +1,10 @@
 import flyte
-from flyte import Image, Secret, SecretMount
+from flyte import Image, Secret
 
 image = (
     Image.from_debian_base(install_flyte=False)
-    .with_apt_packages("vim", build_secrets=[SecretMount("/tmp/secret1")])
-    .with_pip_packages(
-        "mypy", build_secrets=[SecretMount(Secret(group="aws", key="id", as_env_var="AWS_ACCESS_KEY_ID"))]
-    )
+    .with_apt_packages("vim", secret_mounts=["/tmp/secret1"])
+    .with_pip_packages("mypy", secret_mounts=[(Secret(group="aws", key="id", as_env_var="AWS_ACCESS_KEY_ID"))])
     .with_local_v2()
 )
 

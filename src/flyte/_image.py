@@ -14,7 +14,7 @@ import rich.repr
 from packaging.version import Version
 
 if TYPE_CHECKING:
-    from flyte import Secret
+    from flyte import Secret, SecretRequest
 
 # Supported Python versions
 PYTHON_3_10 = (3, 10)
@@ -89,7 +89,7 @@ class PipOption:
     extra_index_urls: Optional[Tuple[str] | Tuple[str, ...] | List[str]] = None
     pre: bool = False
     extra_args: Optional[str] = None
-    build_secrets: Optional[Tuple[BuildSecret] | Tuple[BuildSecret, ...]] = None
+    secret_mounts: Optional[Tuple[str | Secret, ...]] = None
 
     def get_pip_install_args(self) -> List[str]:
         pip_install_args = []
@@ -120,9 +120,9 @@ class PipOption:
             hash_input += str(self.pre)
         if self.extra_args:
             hash_input += self.extra_args
-        if self.build_secrets:
-            for build_secret in self.build_secrets:
-                hash_input += str(build_secret)
+        if self.secret_mounts:
+            for secret_mount in self.secret_mounts:
+                hash_input += str(secret_mount)
 
         hasher.update(hash_input.encode("utf-8"))
 
@@ -191,14 +191,14 @@ class UVProject(PipOption, Layer):
 @dataclass(frozen=True, repr=True)
 class AptPackages(Layer):
     packages: Tuple[str, ...]
-    build_secrets: Optional[Tuple[BuildSecret, ...]] = None
+    secret_mounts: Optional[Tuple[str | Secret, ...]] = None
 
     def update_hash(self, hasher: hashlib._Hash):
         hash_input = "".join(self.packages)
 
-        if self.build_secrets:
-            for build_secret in self.build_secrets:
-                hash_input += str(build_secret)
+        if self.secret_mounts:
+            for secret_mount in self.secret_mounts:
+                hash_input += str(secret_mount)
         hasher.update(hash_input.encode("utf-8"))
 
 
@@ -718,14 +718,14 @@ class Image:
     def with_requirements(
         self,
         file: str | Path,
-        build_secrets: Union[BuildSecret, List[BuildSecret], Tuple[BuildSecret, ...], None] = None,
+        secret_mounts: Optional[SecretRequest] = None,
     ) -> Image:
         """
         Use this method to create a new image with the specified requirements file layered on top of the current image
         Cannot be used in conjunction with conda
 
         :param file: path to the requirements file, must be a .txt file
-        :param build_secrets: list of BuildSecret objects to use for the build process.
+        :param secret_mounts: list of secret to mount for the build process.
         :return:
         """
         if isinstance(file, str):
@@ -733,7 +733,7 @@ class Image:
         if file.suffix != ".txt":
             raise ValueError(f"Requirements file {file} must have a .txt extension")
         new_image = self.clone(
-            addl_layer=Requirements(file=file, build_secrets=_ensure_tuple(build_secrets) if build_secrets else None)
+            addl_layer=Requirements(file=file, secret_mounts=_ensure_tuple(secret_mounts) if secret_mounts else None)
         )
         return new_image
 
@@ -744,7 +744,7 @@ class Image:
         extra_index_urls: Union[str, List[str], Tuple[str, ...], None] = None,
         pre: bool = False,
         extra_args: Optional[str] = None,
-        build_secrets: Union[BuildSecret, List[BuildSecret], Tuple[BuildSecret, ...], None] = None,
+        secret_mounts: Optional[SecretRequest] = None,
     ) -> Image:
         """
         Use this method to create a new image with the specified pip packages layered on top of the current image
@@ -766,7 +766,7 @@ class Image:
         :param pre: whether to allow pre-release versions, default is False
         :param extra_args: extra arguments to pass to pip install, default is None
         :param extra_args: extra arguments to pass to pip install, default is None
-        :param build_secrets: list of BuildSecret objects to use for the build process.
+        :param secret_mounts: list of secret to mount for the build process.
         :return: Image
         """
         new_packages: Optional[Tuple] = packages or None
@@ -778,7 +778,7 @@ class Image:
             extra_index_urls=new_extra_index_urls,
             pre=pre,
             extra_args=extra_args,
-            build_secrets=_ensure_tuple(build_secrets) if build_secrets else None,
+            secret_mounts=_ensure_tuple(secret_mounts) if secret_mounts else None,
         )
         new_image = self.clone(addl_layer=ll)
         return new_image
@@ -829,7 +829,7 @@ class Image:
         extra_index_urls: Union[List[str], Tuple[str, ...], None] = None,
         pre: bool = False,
         extra_args: Optional[str] = None,
-        build_secrets: Union[BuildSecret, List[BuildSecret], Tuple[BuildSecret, ...], None] = None,
+        secret_mounts: Optional[SecretRequest] = None,
     ) -> Image:
         """
         Use this method to create a new image with the specified uv.lock file layered on top of the current image
@@ -842,7 +842,7 @@ class Image:
         :param extra_index_urls: extra index urls to use for pip install, default is None
         :param pre: whether to allow pre-release versions, default is False
         :param extra_args: extra arguments to pass to pip install, default is None
-        :param build_secrets: list of BuildSecret objects to use for the build process.
+        :param secret_mounts: list of secret mounts to use for the build process.
         :return: Image
         """
         if not pyproject_file.exists():
@@ -860,25 +860,23 @@ class Image:
                 extra_index_urls=extra_index_urls,
                 pre=pre,
                 extra_args=extra_args,
-                build_secrets=_ensure_tuple(build_secrets) if build_secrets else None,
+                secret_mounts=_ensure_tuple(secret_mounts) if secret_mounts else None,
             )
         )
         return new_image
 
-    def with_apt_packages(
-        self, *packages: str, build_secrets: Union[BuildSecret, List[BuildSecret], Tuple[BuildSecret, ...], None] = None
-    ) -> Image:
+    def with_apt_packages(self, *packages: str, secret_mounts: Optional[SecretRequest] = None) -> Image:
         """
         Use this method to create a new image with the specified apt packages layered on top of the current image
 
         :param packages: list of apt packages to install
-        :param build_secrets: list of BuildSecret objects to use for the build process.
+        :param secret_mounts: list of secret mounts to use for the build process.
         :return: Image
         """
         new_image = self.clone(
             addl_layer=AptPackages(
                 packages=packages,
-                build_secrets=_ensure_tuple(build_secrets) if build_secrets else None,
+                secret_mounts=_ensure_tuple(secret_mounts) if secret_mounts else None,
             )
         )
         return new_image

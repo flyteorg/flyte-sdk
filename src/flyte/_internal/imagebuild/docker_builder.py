@@ -14,7 +14,6 @@ import click
 from flyte import Secret
 from flyte._image import (
     AptPackages,
-    BuildSecret,
     Commands,
     CopyConfig,
     DockerIgnore,
@@ -147,7 +146,7 @@ class PipAndRequirementsHandler:
 
         pip_install_args = layer.get_pip_install_args()
         pip_install_args.extend(["--requirement", "requirements_uv.txt"])
-        secret_mounts = get_secret_mounts_layer(layer.build_secrets)
+        secret_mounts = get_secret_mounts_layer(layer.secret_mounts)
         delta = UV_PACKAGE_INSTALL_COMMAND_TEMPLATE.substitute(
             PIP_INSTALL_ARGS=" ".join(pip_install_args), SECRET_MOUNT=secret_mounts
         )
@@ -162,7 +161,7 @@ class PythonWheelHandler:
         shutil.copytree(layer.wheel_dir, context_path / "dist", dirs_exist_ok=True)
         pip_install_args = layer.get_pip_install_args()
         pip_install_args.extend(["/dist/*.whl"])
-        secret_mounts = get_secret_mounts_layer(layer.build_secrets)
+        secret_mounts = get_secret_mounts_layer(layer.secret_mounts)
         delta = UV_WHEEL_INSTALL_COMMAND_TEMPLATE.substitute(
             PIP_INSTALL_ARGS=" ".join(pip_install_args), SECRET_MOUNT=secret_mounts
         )
@@ -195,7 +194,7 @@ class AptPackagesHandler:
     @staticmethod
     async def handle(layer: AptPackages, _: Path, dockerfile: str) -> str:
         packages = layer.packages
-        secret_mounts = get_secret_mounts_layer(layer.build_secrets)
+        secret_mounts = get_secret_mounts_layer(layer.secret_mounts)
         delta = APT_INSTALL_COMMAND_TEMPLATE.substitute(APT_PACKAGES=" ".join(packages), SECRET_MOUNT=secret_mounts)
         dockerfile += delta
 
@@ -213,7 +212,7 @@ class UVProjectHandler:
         # --no-dev: Omit the development dependency group
         # --no-install-project: Do not install the current project
         additional_pip_install_args = ["--locked", "--no-dev", "--no-install-project"]
-        secret_mounts = get_secret_mounts_layer(layer.build_secrets)
+        secret_mounts = get_secret_mounts_layer(layer.secret_mounts)
         delta = UV_LOCK_INSTALL_TEMPLATE.substitute(
             PIP_INSTALL_ARGS=" ".join(additional_pip_install_args), SECRET_MOUNT=secret_mounts
         )
@@ -277,48 +276,45 @@ def get_secret_commands(layers: typing.Tuple[Layer, ...]) -> typing.List[str]:
     commands = []
 
     def _get_secret_command(secret: str | Secret) -> typing.List[str]:
+        secret_id = hash(secret)
         if isinstance(secret, str):
             if not os.path.exists(secret):
                 raise FileNotFoundError(f"Secret file '{secret}' not found")
-            return ["--secret", f"id={hash(secret)},src={secret}"]
+            return ["--secret", f"id={secret_id},src={secret}"]
         secret_env_key = "_".join([k.upper() for k in filter(None, (secret.group, secret.key))])
         secret_env = os.getenv(secret_env_key)
         if secret_env:
-            return ["--secret", f"id={hash(secret)},env={secret_env}"]
-        secret_file_name = "_".join([k for k in filter(None, (secret.group, secret.key))])
+            return ["--secret", f"id={secret_id},env={secret_env}"]
+        secret_file_name = "_".join(list(filter(None, (secret.group, secret.key))))
         secret_file_path = f"/etc/secrets/{secret_file_name}"
         if not os.path.exists(secret_file_path):
             raise FileNotFoundError(f"Secret not found in Env Var {secret_env_key} or file {secret_file_path}")
-        return ["--secret", f"id={hash(secret)},src={secret_file_path}"]
+        return ["--secret", f"id={secret_id},src={secret_file_path}"]
 
     for layer in layers:
         if isinstance(layer, (PipOption, AptPackages)):
-            if layer.build_secrets:
-                for build_secret in layer.build_secrets:
-                    commands.extend(_get_secret_command(build_secret.secret))
+            if layer.secret_mounts:
+                for secret_mount in layer.secret_mounts:
+                    commands.extend(_get_secret_command(secret_mount))
     return commands
 
 
-def get_secret_mounts_layer(secret_mounts: typing.Tuple[BuildSecret, ...] | None) -> str:
-    if secret_mounts is None:
+def get_secret_mounts_layer(secrets: typing.Tuple[str | Secret, ...] | None) -> str:
+    if secrets is None:
         return ""
     secret_mounts_layer = ""
-    for secret_mount in secret_mounts:
-        secret = secret_mount.secret
+    for secret in secrets:
+        secret_id = hash(secret)
         if isinstance(secret, str):
-            secret_mounts_layer += (
-                f"--mount=type=secret,id={hash(secret)},target=/run/secrets/{os.path.basename(secret)}"
-            )
+            secret_mounts_layer += f"--mount=type=secret,id={secret_id},target=/run/secrets/{os.path.basename(secret)}"
         elif isinstance(secret, Secret):
             if secret.mount:
-                secret_mounts_layer += f"--mount=type=secret,id={hash(secret)},target={secret.mount}"
+                secret_mounts_layer += f"--mount=type=secret,id={secret_id},target={secret.mount}"
             elif secret.as_env_var:
-                secret_mounts_layer += f"--mount=type=secret,id={hash(secret)},env={secret.as_env_var}"
+                secret_mounts_layer += f"--mount=type=secret,id={secret_id},env={secret.as_env_var}"
             else:
-                secret_file_name = "_".join([k for k in filter(None, (secret.group, secret.key))])
-                secret_mounts_layer += (
-                    f"--mount=type=secret,id={hash(secret)},src=/run/secrets/{secret_file_name}"
-                )
+                secret_file_name = "_".join(list(filter(None, (secret.group, secret.key))))
+                secret_mounts_layer += f"--mount=type=secret,id={secret_id},src=/run/secrets/{secret_file_name}"
 
     return secret_mounts_layer
 
