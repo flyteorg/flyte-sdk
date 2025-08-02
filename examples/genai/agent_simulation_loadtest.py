@@ -7,15 +7,15 @@
 # ///
 
 import asyncio
-import flyte
-from typing import List, Dict
+from typing import Dict, List
 
+import flyte
 
 coordinator_env = flyte.TaskEnvironment(
     "coordinator_env",
     resources=flyte.Resources(cpu=1, memory="250Mi"),
-    reusable=flyte.ReusePolicy(replicas=2, idle_ttl=30), 
-    image=flyte.Image.from_uv_script(__file__, name="agent_simulation_image")
+    reusable=flyte.ReusePolicy(replicas=2, idle_ttl=30),
+    image=flyte.Image.from_uv_script(__file__, name="agent_simulation_image"),
 )
 
 coordinator_decision_env = coordinator_env.clone_with(
@@ -25,7 +25,7 @@ coordinator_decision_env = coordinator_env.clone_with(
 
 research_assistant_env = coordinator_env.clone_with(
     name="research_assistant_env",
-    reusable=flyte.ReusePolicy(replicas=8, idle_ttl=30), 
+    reusable=flyte.ReusePolicy(replicas=8, idle_ttl=30),
 )
 
 
@@ -65,7 +65,7 @@ async def finalize_answer(text: str) -> Dict[str, str]:
 async def research_assistant(prompt: str, tool_sequence: List[str]) -> Dict[str, str]:
     results = {}
     current_input = prompt
-    
+
     tool_map = {
         "search": search_web,
         "analyze": analyze_text,
@@ -73,14 +73,15 @@ async def research_assistant(prompt: str, tool_sequence: List[str]) -> Dict[str,
         "summarize": summarize_text,
         "finalize": finalize_answer,
     }
-    
+
     for tool_name in tool_sequence:
         tool_fn = tool_map[tool_name]
         result = await tool_fn(current_input)
         results[tool_name] = str(result)
         current_input = str(result)
-        
+
     return results
+
 
 @coordinator_decision_env.task
 async def resource_coordinator_decision(
@@ -88,16 +89,17 @@ async def resource_coordinator_decision(
     num_agents: int,
 ) -> List[Dict[str, str]]:
     tool_sequence = ["search", "extract", "analyze", "summarize", "finalize"] * 10
-    
+
     tasks = []
     for _ in range(num_agents):
         tasks.append(research_assistant(prompt, tool_sequence))
-    
+
     task_results = await asyncio.gather(*tasks)
     return task_results
 
+
 # Research coordinator that spawns multiple agents
-@coordinator_env.task 
+@coordinator_env.task
 async def research_coordinator(
     prompt: str,
     num_rounds: int = 4,
@@ -108,13 +110,14 @@ async def research_coordinator(
     for _ in range(num_rounds):
         # Select tool sequence for this agent
         results.append(await resource_coordinator_decision(prompt, num_agents))
-    
+
     # Gather results from all agents
     return results
 
+
 if __name__ == "__main__":
     flyte.init_from_config("../../config.yaml")
-    
+
     prompt = "What are the latest developments in AI?"
     run = flyte.run(
         research_coordinator,

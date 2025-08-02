@@ -19,10 +19,10 @@ uv run tools.py
 # ]
 # ///
 
-import flyte
+from agents import Agent, Runner, function_tool
 from pydantic import BaseModel
 
-from agents import Agent, Runner, function_tool
+import flyte
 
 
 class Weather(BaseModel):
@@ -32,7 +32,8 @@ class Weather(BaseModel):
 
 
 env = flyte.TaskEnvironment(
-    name="openai_agents_tools", resources=flyte.Resources(cpu=1, memory="250Mi"),
+    name="openai_agents_tools",
+    resources=flyte.Resources(cpu=1, memory="250Mi"),
     image=flyte.Image.from_uv_script(__file__, name="openai_agents_tools"),
     secrets=flyte.Secret("OPENAI_API_KEY", as_env_var="OPENAI_API_KEY"),
 )
@@ -50,6 +51,7 @@ agent = Agent(
     instructions="You are a helpful agent.",
     tools=[get_weather],
 )
+
 
 @env.task
 async def main() -> str:
