@@ -5,14 +5,11 @@ It uses the storage module to handle the actual uploading and downloading of fil
 TODO: Convert to use streaming apis
 """
 
-import logging
-
 from flyteidl.core import errors_pb2, execution_pb2
 
 import flyte.storage as storage
 from flyte._protos.workflow import run_definition_pb2
 
-from ..._logging import log
 from .convert import Inputs, Outputs, _clean_error_code
 
 # ------------------------------- CONSTANTS ------------------------------- #
@@ -55,11 +52,19 @@ async def upload_inputs(inputs: Inputs, input_path: str):
     await storage.put_stream(data_iterable=inputs.proto_inputs.SerializeToString(), to_path=input_path)
 
 
-async def upload_outputs(outputs: Outputs, output_path: str):
+async def upload_outputs(outputs: Outputs, output_path: str, max_bytes: int = -1):
     """
     :param outputs: Outputs
     :param output_path: The path to upload the output file.
+    :param max_bytes: Maximum number of bytes to write to the output file. Default is -1, which means no limit.
     """
+    if max_bytes != -1 and outputs.proto_outputs.ByteSize() > max_bytes:
+        import flyte.errors
+
+        raise flyte.errors.InlineIOMaxBytesBreached(
+            f"Output file at {output_path} exceeds max_bytes limit of {max_bytes},"
+            f" size: {outputs.proto_outputs.ByteSize()}"
+        )
     output_uri = outputs_path(output_path)
     await storage.put_stream(data_iterable=outputs.proto_outputs.SerializeToString(), to_path=output_uri)
 
@@ -85,25 +90,59 @@ async def upload_error(err: execution_pb2.ExecutionError, output_prefix: str):
 
 
 # ------------------------------- DOWNLOAD Methods ------------------------------- #
-@log(level=logging.INFO)
-async def load_inputs(path: str) -> Inputs:
+async def load_inputs(path: str, max_bytes: int = -1) -> Inputs:
     """
     :param path: Input file to be downloaded
+    :param max_bytes: Maximum number of bytes to read from the input file. Default is -1, which means no limit.
     :return: Inputs object
     """
     lm = run_definition_pb2.Inputs()
-    proto_str = b"".join([c async for c in storage.get_stream(path=path)])
+
+    if max_bytes == -1:
+        proto_str = b"".join([c async for c in storage.get_stream(path=path)])
+    else:
+        proto_bytes = []
+        total_bytes = 0
+        async for chunk in storage.get_stream(path=path):
+            if total_bytes + len(chunk) > max_bytes:
+                import flyte.errors
+
+                raise flyte.errors.InlineIOMaxBytesBreached(
+                    f"Input file at {path} exceeds max_bytes limit of {max_bytes}"
+                )
+            proto_bytes.append(chunk)
+            total_bytes += len(chunk)
+        proto_str = b"".join(proto_bytes)
+
     lm.ParseFromString(proto_str)
     return Inputs(proto_inputs=lm)
 
 
-async def load_outputs(path: str) -> Outputs:
+async def load_outputs(path: str, max_bytes: int = -1) -> Outputs:
     """
     :param path: output file to be loaded
+    :param max_bytes: Maximum number of bytes to read from the output file.
+                      If -1, reads the entire file.
     :return: Outputs object
     """
     lm = run_definition_pb2.Outputs()
-    proto_str = b"".join([c async for c in storage.get_stream(path=path)])
+
+    if max_bytes == -1:
+        proto_str = b"".join([c async for c in storage.get_stream(path=path)])
+    else:
+        proto_bytes = []
+        total_bytes = 0
+        async for chunk in storage.get_stream(path=path):
+            if total_bytes + len(chunk) > max_bytes:
+                import flyte.errors
+
+                raise flyte.errors.InlineIOMaxBytesBreached(
+                    f"Output file at {path} exceeds max_bytes limit of {max_bytes}"
+                )
+            proto_bytes.append(chunk)
+            total_bytes += len(chunk)
+        proto_str = b"".join(proto_bytes)
+
     lm.ParseFromString(proto_str)
     return Outputs(proto_outputs=lm)
 

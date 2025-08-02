@@ -192,7 +192,9 @@ class ContainerTask(TaskTemplate):
             microseconds=microseconds,
         )
 
-    async def _convert_output_val_to_correct_type(self, output_path: pathlib.Path, output_val: Any, output_type: Type) -> Any:
+    async def _convert_output_val_to_correct_type(
+        self, output_path: pathlib.Path, output_val: Any, output_type: Type
+    ) -> Any:
         import datetime
 
         if issubclass(output_type, bool):

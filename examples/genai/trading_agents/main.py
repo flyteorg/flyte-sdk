@@ -78,11 +78,7 @@ async def run_analyst(analyst_name, state, online_tools):
     result_state = await run_fn(QUICK_THINKING_LLM, state, online_tools)
 
     # Determine the report key
-    report_key = (
-        "sentiment_report"
-        if analyst_name == "social_media"
-        else f"{analyst_name}_report"
-    )
+    report_key = "sentiment_report" if analyst_name == "social_media" else f"{analyst_name}_report"
     report_value = getattr(result_state, report_key)
 
     return result_state.messages[1:], report_key, report_value
@@ -115,10 +111,7 @@ async def main(
 
     # Run all analysts concurrently
     results = await asyncio.gather(
-        *[
-            run_analyst(analyst, deepcopy(state), online_tools)
-            for analyst in selected_analysts
-        ]
+        *[run_analyst(analyst, deepcopy(state), online_tools) for analyst in selected_analysts]
     )
 
     # Flatten and append all resulting messages into the shared state

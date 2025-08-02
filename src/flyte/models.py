@@ -18,6 +18,9 @@ if TYPE_CHECKING:
     from flyte._internal.imagebuild.image_builder import ImageCache
     from flyte.report import Report
 
+# --- Constants ----
+MAX_INLINE_IO_BYTES = 10 * 1024 * 1024  # 100 MB
+
 
 def generate_random_name() -> str:
     """
