@@ -31,15 +31,9 @@ env = flyte.TaskEnvironment(
 class Code(BaseModel):
     """Schema for code solutions to questions about Flyte v2."""
 
-    prefix: str = Field(
-        default="", description="Description of the problem and approach"
-    )
-    imports: str = Field(
-        default="", description="Code block with just import statements"
-    )
-    code: str = Field(
-        default="", description="Code block not including import statements"
-    )
+    prefix: str = Field(default="", description="Description of the problem and approach")
+    imports: str = Field(default="", description="Code block with just import statements")
+    code: str = Field(default="", description="Code block not including import statements")
 
 
 class AgentState(BaseModel):
@@ -103,25 +97,19 @@ async def docs_retriever(url: str) -> str:
         RecursiveUrlLoader,
     )
 
-    loader = RecursiveUrlLoader(
-        url=url, max_depth=20, extractor=lambda x: BeautifulSoup(x, "html.parser").text
-    )
+    loader = RecursiveUrlLoader(url=url, max_depth=20, extractor=lambda x: BeautifulSoup(x, "html.parser").text)
     docs = loader.load()
 
     # Sort the list based on the URLs and get the text
     d_sorted = sorted(docs, key=lambda x: x.metadata["source"])
     d_reversed = list(reversed(d_sorted))
 
-    concatenated_content = "\n\n\n --- \n\n\n".join(
-        [doc.page_content for doc in d_reversed]
-    )
+    concatenated_content = "\n\n\n --- \n\n\n".join([doc.page_content for doc in d_reversed])
     return concatenated_content
 
 
 @env.task
-async def generate(
-    question: str, state: AgentState, concatenated_content: str, debug: bool
-) -> AgentState:
+async def generate(question: str, state: AgentState, concatenated_content: str, debug: bool) -> AgentState:
     """
     Generate a code solution
 
@@ -159,9 +147,7 @@ async def generate(
     code_solution = code_gen_chain.invoke(
         {
             "context": concatenated_content,
-            "messages": (
-                messages if messages else [{"role": "user", "content": question}]
-            ),
+            "messages": (messages if messages else [{"role": "user", "content": question}]),
         }
     )
 
@@ -225,9 +211,7 @@ async def code_check(state: AgentState) -> AgentState:
     code = code_solution.code.strip()
 
     # Create temp file for imports
-    with tempfile.NamedTemporaryFile(
-        mode="w", suffix=".py", delete=False
-    ) as imports_file:
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as imports_file:
         imports_file.write(imports + "\n")
         imports_path = imports_file.name
 
@@ -237,9 +221,7 @@ async def code_check(state: AgentState) -> AgentState:
         code_path = code_file.name
 
     # Check imports
-    import_output, import_exit_code = await code_runner_task(
-        script=await File.from_local(imports_path)
-    )
+    import_output, import_exit_code = await code_runner_task(script=await File.from_local(imports_path))
 
     if import_exit_code.strip() != "0":
         print("---CODE IMPORT CHECK: FAILED---")
@@ -261,9 +243,7 @@ async def code_check(state: AgentState) -> AgentState:
         print("---CODE IMPORT CHECK: PASSED---")
 
     # Check execution
-    code_output, code_exit_code = await code_runner_task(
-        script=await File.from_local(code_path)
-    )
+    code_output, code_exit_code = await code_runner_task(script=await File.from_local(code_path))
 
     if code_exit_code.strip() != "0":
         print("---CODE BLOCK CHECK: FAILED---")
@@ -297,9 +277,7 @@ async def code_check(state: AgentState) -> AgentState:
 
 
 @env.task
-async def reflect(
-    state: AgentState, concatenated_content: str, debug: bool
-) -> AgentState:
+async def reflect(state: AgentState, concatenated_content: str, debug: bool) -> AgentState:
     """
     Reflect on errors
 
@@ -323,9 +301,7 @@ async def reflect(
     code_gen_chain = await generate_code_gen_chain(debug)
 
     # Add reflection
-    reflections = code_gen_chain.invoke(
-        {"context": concatenated_content, "messages": messages}
-    )
+    reflections = code_gen_chain.invoke({"context": concatenated_content, "messages": messages})
 
     messages += [
         {

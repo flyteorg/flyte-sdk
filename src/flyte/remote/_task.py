@@ -81,6 +81,7 @@ AutoVersioning = Literal["latest", "current"]
 @dataclass
 class TaskDetails:
     pb2: task_definition_pb2.TaskDetails
+    max_inline_io_bytes: int = 10 * 1024 * 1024  # 10 MB
 
     @classmethod
     def get(
@@ -252,7 +253,7 @@ class TaskDetails:
 
             controller = get_controller()
             if controller:
-                return await controller.submit_task_ref(self.pb2, *args, **kwargs)
+                return await controller.submit_task_ref(self.pb2, self.max_inline_io_bytes, *args, **kwargs)
         raise flyte.errors
 
     def override(
@@ -267,6 +268,7 @@ class TaskDetails:
         reusable: Union[flyte.ReusePolicy, Literal["auto"], None] = None,
         env: Optional[Dict[str, str]] = None,
         secrets: Optional[flyte.SecretRequest] = None,
+        max_inline_io_bytes: int | None = None,
         **kwargs: Any,
     ) -> TaskDetails:
         raise NotImplementedError
