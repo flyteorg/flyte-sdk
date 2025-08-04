@@ -14,21 +14,21 @@ import flyte
 coordinator_env = flyte.TaskEnvironment(
     "coordinator_env",
     resources=flyte.Resources(cpu=1, memory="250Mi"),
-    reusable=flyte.ReusePolicy(replicas=2, idle_ttl=300),
+    reusable=flyte.ReusePolicy(replicas=4, idle_ttl=300),
     image=flyte.Image.from_uv_script(__file__, name="agent_simulation_image"),
 )
 
 coordinator_decision_env = coordinator_env.clone_with(
     name="coordinator_decision_env",
-    reusable=flyte.ReusePolicy(replicas=4, idle_ttl=300),
+    reusable=flyte.ReusePolicy(replicas=8, idle_ttl=300),
 )
 
 research_assistant_env = coordinator_env.clone_with(
     name="research_assistant_env",
-    reusable=flyte.ReusePolicy(replicas=8, idle_ttl=300),
+    reusable=flyte.ReusePolicy(replicas=12, idle_ttl=300),
 )
 
-tool_env = coordinator_env.clone_with(name="tool_env", reusable=flyte.ReusePolicy(replicas=8, idle_ttl=300))
+tool_env = coordinator_env.clone_with(name="tool_env", reusable=flyte.ReusePolicy(replicas=12, idle_ttl=300))
 
 
 # Mock tools that research agents can use
@@ -122,7 +122,7 @@ if __name__ == "__main__":
 
     prompt = "What are the latest developments in AI?"
     runs = []
-    for i in range(10):
+    for i in range(50):
         runs.append(
             flyte.run(
                 research_coordinator,
