@@ -28,18 +28,6 @@ CopyConfigType = Literal[0, 1]
 T = TypeVar("T")
 
 
-@rich.repr.auto
-@dataclass(frozen=True, repr=True)
-class SecretMount:
-    """
-    Secret mounts expose secrets to the build containers, as files or environment variables.
-    You can use secret mounts to pass sensitive information to your builds,
-    such as API tokens, passwords, or SSH keys
-    """
-
-    secret: str | Secret
-
-
 def _ensure_tuple(val: Union[T, List[T], Tuple[T, ...]]) -> Tuple[T] | Tuple[T, ...]:
     """
     Ensure that the input is a tuple. If it is a string, convert it to a tuple with one element.
