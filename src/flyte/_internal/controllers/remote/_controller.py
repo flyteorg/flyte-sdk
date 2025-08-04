@@ -168,7 +168,7 @@ class RemoteController(Controller):
         code_bundle = tctx.code_bundle
 
         if code_bundle and code_bundle.pkl:
-            logger.debug("Building new pkl bundle for task {_task.name}")
+            logger.debug(f"Building new pkl bundle for task {_task.name}")
             code_bundle = await build_pkl_bundle(
                 _task,
                 upload_to_controlplane=False,

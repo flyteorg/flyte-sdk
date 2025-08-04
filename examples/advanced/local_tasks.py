@@ -55,9 +55,13 @@ async def main(q: str) -> Tuple[str, str, str]:
 
 @env.task
 async def parallel_main(q: str) -> list[str]:
-    tasks = [call_llm(q) for _ in range(1000)] + [do_echo(q)]
-    results = await asyncio.gather(*tasks)
-    return results
+    r = []
+    for i in range(10):
+        r.append(await call_llm(q))
+    r.append(await do_echo(" ----- ".join(r)))
+    # tasks = [call_llm(q) for _ in range(1000)] + [do_echo(q)]
+    # results = await asyncio.gather(*tasks)
+    return r
 
 
 if __name__ == "__main__":
