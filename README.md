@@ -1,6 +1,6 @@
 # Flyte 2 SDK 🚀
 
-**The next-generation Python SDK for scalable, distributed workflows**
+**Type-safe, distributed orchestration of agents, ML pipelines, and more — in pure Python with async/await or sync!**
 
 [![Version](https://img.shields.io/pypi/v/flyte?label=version&color=blue)](https://pypi.org/project/flyte/)
 [![Python](https://img.shields.io/pypi/pyversions/flyte?color=brightgreen)](https://pypi.org/project/flyte/)

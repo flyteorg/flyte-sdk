@@ -41,7 +41,9 @@ class Controller(Protocol):
         """
         ...
 
-    async def submit_task_ref(self, _task: task_definition_pb2.TaskDetails, *args, **kwargs) -> Any:
+    async def submit_task_ref(
+        self, _task: task_definition_pb2.TaskDetails, max_inline_io_bytes: int, *args, **kwargs
+    ) -> Any:
         """
         Submit a task reference to the controller asynchronously and wait for the result. This is async and will block
         the current coroutine until the result is available.
