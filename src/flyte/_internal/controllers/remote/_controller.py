@@ -153,7 +153,7 @@ class RemoteController(Controller):
             name = task_obj.__name__
         elif hasattr(task_obj, "name"):
             name = task_obj.name
-        logger.warning(f"For action {uniq}, task {name} call sequence is {new_seq}")
+        logger.info(f"For action {uniq}, task {name} call sequence is {new_seq}")
         return new_seq
 
     async def _submit(self, _task_call_seq: int, _task: TaskTemplate, *args, **kwargs) -> Any:
@@ -196,7 +196,7 @@ class RemoteController(Controller):
         sub_action_id, sub_action_output_path = convert.generate_sub_action_id_and_output_path(
             tctx, task_spec, inputs_hash, _task_call_seq
         )
-        logger.warning(f"Sub action {sub_action_id} output path {sub_action_output_path}")
+        logger.info(f"Sub action {sub_action_id} output path {sub_action_output_path}")
 
         serialized_inputs = inputs.proto_inputs.SerializeToString(deterministic=True)
         inputs_uri = io.inputs_path(sub_action_output_path)
@@ -421,17 +421,12 @@ class RemoteController(Controller):
 
         current_action_id = tctx.action
         sub_run_output_path = storage.join(tctx.run_base_dir, info.action.name)
-        print(f"Sub run output path for {info.name} is {sub_run_output_path}", flush=True)
 
         if info.interface.has_outputs():
             outputs_file_path: str = ""
             if info.output:
                 outputs = await convert.convert_from_native_to_outputs(info.output, info.interface)
                 outputs_file_path = io.outputs_path(sub_run_output_path)
-                print(
-                    f"Uploading outputs for {info.name} Outputs file path: {outputs_file_path}",
-                    flush=True,
-                )
                 await io.upload_outputs(outputs, sub_run_output_path, max_bytes=MAX_TRACE_BYTES)
             elif info.error:
                 err = convert.convert_from_native_to_error(info.error)
@@ -461,19 +456,22 @@ class RemoteController(Controller):
                 end_time=info.end_time,
                 typed_interface=typed_interface if typed_interface else None,
             )
-            try:
-                logger.info(
-                    f"Submitting Trace action Run:[{trace_action.run_name}, Parent:[{trace_action.parent_action_name}],"
-                    f" Trace fn:[{info.name}], action:[{info.action.name}]"
-                )
-                await self.submit_action(trace_action)
-                logger.info(f"Trace Action for [{info.name}] action id: {info.action.name}, completed!")
-            except asyncio.CancelledError:
-                # If the action is cancelled, we need to cancel the action on the server as well
-                raise
 
-    async def submit_task_ref(
-        self, _task: task_definition_pb2.TaskDetails, max_inline_io_bytes: int, *args, **kwargs
+            async with self._parent_action_semaphore[unique_action_name(current_action_id)]:
+                try:
+                    logger.info(
+                        f"Submitting Trace action Run:[{trace_action.run_name},"
+                        f" Parent:[{trace_action.parent_action_name}],"
+                        f" Trace fn:[{info.name}], action:[{info.action.name}]"
+                    )
+                    await self.submit_action(trace_action)
+                    logger.info(f"Trace Action for [{info.name}] action id: {info.action.name}, completed!")
+                except asyncio.CancelledError:
+                    # If the action is cancelled, we need to cancel the action on the server as well
+                    raise
+
+    async def _submit_task_ref(
+        self, invoke_seq_num: int, _task: task_definition_pb2.TaskDetails, max_inline_io_bytes: int, *args, **kwargs
     ) -> Any:
         ctx = internal_ctx()
         tctx = ctx.data.task_context
@@ -481,8 +479,6 @@ class RemoteController(Controller):
             raise flyte.errors.RuntimeSystemError("BadContext", "Task context not initialized")
         current_action_id = tctx.action
         task_name = _task.spec.task_template.id.name
-
-        invoke_seq_num = self.generate_task_call_sequence(_task, current_action_id)
 
         native_interface = types.guess_interface(
             _task.spec.task_template.interface, default_inputs=_task.spec.default_inputs
@@ -560,3 +556,15 @@ class RemoteController(Controller):
                 )
             return await load_and_convert_outputs(native_interface, n.realized_outputs_uri, max_inline_io_bytes)
         return None
+
+    async def submit_task_ref(
+        self, _task: task_definition_pb2.TaskDetails, max_inline_io_bytes: int, *args, **kwargs
+    ) -> Any:
+        ctx = internal_ctx()
+        tctx = ctx.data.task_context
+        if tctx is None:
+            raise flyte.errors.RuntimeSystemError("BadContext", "Task context not initialized")
+        current_action_id = tctx.action
+        task_call_seq = self.generate_task_call_sequence(_task, current_action_id)
+        async with self._parent_action_semaphore[unique_action_name(current_action_id)]:
+            return await self._submit_task_ref(task_call_seq, _task, max_inline_io_bytes, *args, **kwargs)
