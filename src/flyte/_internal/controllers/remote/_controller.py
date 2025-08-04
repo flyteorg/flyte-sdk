@@ -168,7 +168,7 @@ class RemoteController(Controller):
         code_bundle = tctx.code_bundle
 
         if code_bundle and code_bundle.pkl:
-            logger.debug(f"Building new pkl bundle for task {_task.name}")
+            logger.debug("Building new pkl bundle for task {_task.name}")
             code_bundle = await build_pkl_bundle(
                 _task,
                 upload_to_controlplane=False,
@@ -196,7 +196,7 @@ class RemoteController(Controller):
         sub_action_id, sub_action_output_path = convert.generate_sub_action_id_and_output_path(
             tctx, task_spec, inputs_hash, _task_call_seq
         )
-        logger.warning(f"Sub action {sub_action_id} output path {sub_action_output_path}")
+        logger.info(f"Sub action {sub_action_id} output path {sub_action_output_path}")
 
         serialized_inputs = inputs.proto_inputs.SerializeToString(deterministic=True)
         inputs_uri = io.inputs_path(sub_action_output_path)
