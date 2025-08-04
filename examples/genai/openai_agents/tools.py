@@ -36,7 +36,7 @@ env = flyte.TaskEnvironment(
     name="openai_agents_tools", resources=flyte.Resources(cpu=1, memory="250Mi"),
     image=(
         flyte.Image.from_debian_base(
-            name="openai_agents_tools_2",
+            name="openai_agents_tools",
             python_version=(3, 13),
         )
         .with_pip_packages(
@@ -47,15 +47,13 @@ env = flyte.TaskEnvironment(
             extra_args="--prerelease=allow",
         )
     ),
-    # image=flyte.Image.from_uv_script(__file__, name="openai_agents_tools"),
     secrets=flyte.Secret("OPENAI_API_KEY", as_env_var="OPENAI_API_KEY"),
 )
 
 
 @function_tool
-# @flyte.trace
 @env.task
-async def get_weather_tool(city: str) -> Weather:
+async def get_weather(city: str) -> Weather:
     """Get the weather for a given city."""
     print("[debug] get_weather tool called")
     print("tool context", flyte.ctx())
@@ -65,26 +63,20 @@ async def get_weather_tool(city: str) -> Weather:
 agent = Agent(
     name="Hello world",
     instructions="You are a helpful agent.",
-    tools=[get_weather_tool],
+    tools=[get_weather],
 )
 
 @env.task
-async def run_agent():
-    # return await helper()
-    print("agent context", flyte.ctx())
-    out =  await get_weather_tool.on_invoke_tool(None, "{\"city\": \"Tokyo\"}")
-    # return out.model_dump_json()
-    # result = await Runner.run(agent, input="What's the weather in Tokyo?")
-    # result = await get_weather_tool("Tokyo")
-    # return result.model_dump_json()
-    # print(result.final_output)
-    # return str(result.final_output)
+async def main() -> str:
+    result = await Runner.run(agent, input="What's the weather in Tokyo?")
+    print(result.final_output)
+    return result.final_output
 
 
 if __name__ == "__main__":
     # import asyncio
-    # asyncio.run(run_agent())
+    # asyncio.run(main())
     flyte.init_from_config("../../../config.yaml")
-    run = flyte.run(run_agent)
+    run = flyte.run(main)
     print(run.url)
     run.wait(run)
