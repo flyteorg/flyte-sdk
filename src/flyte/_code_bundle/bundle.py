@@ -7,6 +7,7 @@ import tempfile
 from pathlib import Path
 from typing import ClassVar, Type
 
+from async_lru import alru_cache
 from flyteidl.core.tasks_pb2 import TaskTemplate
 
 from flyte._logging import log, logger
@@ -109,6 +110,7 @@ async def build_pkl_bundle(
             return CodeBundle(pkl=str(dest), computed_version=str_digest)
 
 
+@alru_cache
 async def build_code_bundle(
     from_dir: Path,
     *ignore: Type[Ignore],

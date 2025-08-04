@@ -109,8 +109,8 @@ class DeployEnvCommand(click.Command):
                 version=self.deploy_args.version,
             )
 
-        console.print(common.get_table("Environments", deployment.env_repr(), simple=obj.simple))
-        console.print(common.get_table("Tasks", deployment.task_repr(), simple=obj.simple))
+        console.print(common.get_table("Environments", deployment[0].env_repr(), simple=obj.simple))
+        console.print(common.get_table("Tasks", deployment[0].task_repr(), simple=obj.simple))
 
 
 class DeployEnvRecursiveCommand(click.Command):
@@ -160,15 +160,19 @@ class DeployEnvRecursiveCommand(click.Command):
         # Now start connection and deploy all environments
         obj.init(self.deploy_args.project, self.deploy_args.domain)
         with console.status("Deploying...", spinner="dots"):
-            deployment = flyte.deploy(
+            deployments = flyte.deploy(
                 *all_envs,
                 dryrun=self.deploy_args.dry_run,
                 copy_style=self.deploy_args.copy_style,
                 version=self.deploy_args.version,
             )
 
-        console.print(common.get_table("Environments", deployment.env_repr(), simple=obj.simple))
-        console.print(common.get_table("Tasks", deployment.task_repr(), simple=obj.simple))
+        console.print(
+            common.get_table("Environments", [env for d in deployments for env in d.env_repr()], simple=obj.simple)
+        )
+        console.print(
+            common.get_table("Tasks", [task for d in deployments for task in d.task_repr()], simple=obj.simple)
+        )
 
 
 class EnvPerFileGroup(common.ObjectsPerFileGroup):
