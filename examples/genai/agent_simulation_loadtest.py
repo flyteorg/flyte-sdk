@@ -89,8 +89,9 @@ async def research_assistant(prompt: str, tool_sequence: List[str]) -> Dict[str,
 async def resource_coordinator_decision(
     prompt: str,
     num_agents: int,
+    num_tool_repeats: int,
 ) -> List[Dict[str, str]]:
-    tool_sequence = ["search", "extract", "analyze", "summarize", "finalize"] * 10
+    tool_sequence = ["search", "extract", "analyze", "summarize", "finalize"] * num_tool_repeats
 
     tasks = []
     for _ in range(num_agents):
@@ -106,27 +107,33 @@ async def research_coordinator(
     prompt: str,
     num_rounds: int = 4,
     num_agents: int = 5,
+    num_tool_repeats: int = 10,
 ) -> List[List[Dict[str, str]]]:
     # Do multiple rounds of research
     results = []
     for _ in range(num_rounds):
         # Select tool sequence for this agent
-        results.append(await resource_coordinator_decision(prompt, num_agents))
+        results.append(await resource_coordinator_decision(prompt, num_agents, num_tool_repeats))
 
     # Gather results from all agents
     return results
 
 
 if __name__ == "__main__":
+    import time
+
     flyte.init_from_config("../../config.yaml")
 
     prompt = "What are the latest developments in AI?"
     runs = []
-    for i in range(50):
-        runs.append(
-            flyte.run(
-                research_coordinator,
-                prompt=prompt,
-            )
+    for i in range(100):
+        run = flyte.run(
+            research_coordinator,
+            prompt=prompt,
+            num_rounds=4,
+            num_agents=5,
+            num_tool_repeats=10,
         )
-    print([run.url for run in runs])
+        runs.append(run)
+        print(f"Run {i} started: {run.url}")
+        time.sleep(0.5)
