@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import typing
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
 
@@ -170,7 +171,6 @@ async def apply(deployment_plan: DeploymentPlan, copy_style: CopyFiles, dryrun: 
     cfg = get_common_config()
 
     image_cache = await _build_images(deployment_plan)
-    print("image_cache.image_lookup", len(image_cache.image_lookup))
 
     version = deployment_plan.version
     if copy_style == "none" and not version:
@@ -223,7 +223,7 @@ def plan_deploy(*envs: Environment, version: Optional[str] = None) -> List[Deplo
     if envs is None:
         return [DeploymentPlan({})]
     deployment_plans = []
-    visited_envs = set()
+    visited_envs: typing.Set[str] = set()
     for env in envs:
         if env.name in visited_envs:
             continue
