@@ -52,9 +52,7 @@ async def spread_jelly(bread: str, jelly: str) -> str:
 
 
 @agent_env.task
-async def assemble_sandwich(
-    pb_bread: Optional[str] = None, j_bread: Optional[str] = None
-) -> str:
+async def assemble_sandwich(pb_bread: Optional[str] = None, j_bread: Optional[str] = None) -> str:
     await asyncio.sleep(1)
     return f"{pb_bread} and {j_bread} combined"
 
@@ -96,9 +94,7 @@ async def spread_jelly_tool(bread: str, jelly: str) -> str:
 
 
 @function_tool
-async def assemble_sandwich_tool(
-    pb_bread: Optional[str] = None, j_bread: Optional[str] = None
-) -> str:
+async def assemble_sandwich_tool(pb_bread: Optional[str] = None, j_bread: Optional[str] = None) -> str:
     """Assemble a sandwich from any combination of components (e.g., peanut butter bread, jelly bread)."""
     return await assemble_sandwich(pb_bread, j_bread)
 

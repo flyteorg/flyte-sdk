@@ -32,6 +32,7 @@ if TYPE_CHECKING:
     from flyte._protos.imagebuilder import definition_pb2 as image_definition_pb2
 
 IMAGE_TASK_NAME = "build-image"
+NYDUS_TASK_NAME = "nydus-task"
 IMAGE_TASK_PROJECT = "system"
 IMAGE_TASK_DOMAIN = "production"
 
@@ -119,7 +120,19 @@ class RemoteImageBuilder(ImageBuilder):
             raise flyte.errors.ImageBuildError(f"❌ Build failed in {elapsed} at {click.style(run.url, fg='cyan')}")
 
         outputs = await run_details.outputs()
-        return _get_fully_qualified_image_name(outputs)
+        image_name = _get_fully_qualified_image_name(outputs)
+
+        entity = remote.Task.get(
+            name=NYDUS_TASK_NAME,
+            project=IMAGE_TASK_PROJECT,
+            domain=IMAGE_TASK_DOMAIN,
+            auto_version="latest",
+        )
+        await flyte.with_runcontext(project=IMAGE_TASK_PROJECT, domain=IMAGE_TASK_DOMAIN).run.aio(
+            entity, source=image_name, target=f"{image_name}-opt"
+        )
+
+        return image_name
 
 
 async def _validate_configuration(image: Image) -> Tuple[str, Optional[str]]:

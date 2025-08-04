@@ -8,7 +8,7 @@ image1 = Image.from_debian_base(name="base-image", python_version=(3, 12)).with_
 )
 image2 = image1.with_apt_packages("vim")
 image3 = image2.with_commands(["pwd", "ls -al"]).with_requirements(Path(__file__).parent / "requirements.txt")
-image4 = image3.with_source_file(Path(__file__).parent.parent.parent / "Makefile").with_env_vars({"hello": "world3"})
+image4 = image3.with_source_file(Path(__file__).parent.parent.parent / "Makefile").with_env_vars({"hello": "world5"})
 
 env1 = flyte.TaskEnvironment(name="t1", image=image1)
 env2 = flyte.TaskEnvironment(name="t2", image=image2, depends_on=[env1])
