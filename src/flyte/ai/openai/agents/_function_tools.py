@@ -1,3 +1,4 @@
+import inspect
 import typing
 import json
 from dataclasses import dataclass, asdict
@@ -23,7 +24,14 @@ else:
 
 
 @dataclass
-class FlyteFunctionTool(OpenAIFunctionTool):
+class FunctionTool(OpenAIFunctionTool):
+    """
+    Flyte-compatible replacement for agents.FunctionTool
+
+    This is a dataclass that includes additional fields that are not present in
+    the OpenAI FunctionTool dataclass so that the tool can be used as a flyte
+    task.
+    """
     task: TaskTemplate | None = None
     native_interface: NativeInterface | None = None
     report: bool = False
@@ -35,7 +43,16 @@ class FlyteFunctionTool(OpenAIFunctionTool):
 def function_tool(
     func: AsyncFunctionTaskTemplate | typing.Callable | None = None,
     **kwargs,
-) -> FlyteFunctionTool | OpenAIFunctionTool:
+) -> FunctionTool | OpenAIFunctionTool:
+    """Flyte-compatible replacement for @agents.function_tool
+
+    **kwargs are forwarded to the underlying @agents.function_tool decorator.
+    For @flyte.trace functions, this just forwards all the arguments to the
+    agents.function_tool decorator.
+
+    For @TaskEnvironment.task functions, this will create a flyte-compatible
+    FunctionTool dataclass that can run tools as flyte tasks.
+    """
     if func is None:
         return partial(function_tool, **kwargs)
 
@@ -49,12 +66,15 @@ def function_tool(
                 else schema.params_pydantic_model()
             )
             args, kwargs_dict = schema.to_call_args(parsed)
-            out = await func(*args, **kwargs_dict)
+            if inspect.iscoroutinefunction(func):
+                out = await func(*args, **kwargs_dict)
+            else:
+                out = func(*args, **kwargs_dict)
             return out
         
         _openai_fn_tool = asdict(openai_function_tool(func.func, **kwargs))
         _openai_fn_tool.pop("on_invoke_tool")
-        return FlyteFunctionTool(
+        return FunctionTool(
             native_interface=func.native_interface,
             task=func,
             report=func.report,
