@@ -1,28 +1,29 @@
 import asyncio
 import pathlib
+import os
 
 import flyte
 import flyte.errors
 
-PATH_TO_FASTTASK_WORKER = pathlib.Path("../../../private/flyte/fasttask/worker-v2")
+PATH_TO_FASTTASK_WORKER = pathlib.Path("/Users/ytong/go/src/github.com/unionai/flyte/fasttask/worker-v2")
 
-# actor_image = (
-#     flyte.Image.from_debian_base(install_flyte=False)
-#     .with_apt_packages("curl", "build-essential", "ca-certificates", "pkg-config", "libssl-dev")
-#     .with_commands(["sh -c 'curl https://sh.rustup.rs -sSf | sh -s -- -y'"])
-#     .with_env_vars({"PATH": "/root/.cargo/bin:${PATH}"})
-#     .with_source_file(pathlib.Path(".dockerignore"))
-#     .with_source_folder(PATH_TO_FASTTASK_WORKER, "/root/fasttask")
-#     .with_pip_packages("uv")
-#     .with_workdir("/root/fasttask")
-#     .with_commands(["uv sync --reinstall --active"])
-#     .with_local_v2()
-# )
-
-actor_image = flyte.Image.from_debian_base().with_pip_packages("unionai-reuse==0.1.3")
+actor_image = (
+    flyte.Image.from_debian_base(install_flyte=False)
+    .with_apt_packages("curl", "build-essential", "ca-certificates", "pkg-config", "libssl-dev")
+    .with_commands(["sh -c 'curl https://sh.rustup.rs -sSf | sh -s -- -y'"])
+    .with_env_vars({"PATH": "/root/.cargo/bin:${PATH}"})
+    .with_source_folder(PATH_TO_FASTTASK_WORKER, "/root/fasttask")
+    .with_pip_packages("uv")
+    .with_workdir("/root/fasttask")
+    .with_commands(["uv sync --reinstall --active"])
+    .with_local_v2()
+)
+# hopefully this makes it not need to be rebuilt every time
+object.__setattr__(actor_image, "_tag", "9043815457d6422e4adb4fb83c5d3c5a")
+# ghcr.io/flyteorg/flyte:9043815457d6422e4adb4fb83c5d3c5a
 
 env = flyte.TaskEnvironment(
-    name="fail_reuse",
+    name="oomer_parent_actor",
     resources=flyte.Resources(cpu=1, memory="250Mi"),
     image=actor_image,
     reusable=flyte.ReusePolicy(
@@ -31,14 +32,22 @@ env = flyte.TaskEnvironment(
     ),
 )
 
+leaf_env = flyte.TaskEnvironment(
+    name="leaf_env",
+    resources=flyte.Resources(cpu=1, memory="250Mi"),
+)
 
-@env.task
+
+@leaf_env.task
 async def oomer(x: int):
+    print("Leaf (oomer) Environment Variables:", os.environ, flush=True)
+    print("About to allocate a large list... should oom", flush=True)
+    await asyncio.sleep(1)
     large_list = [0] * 100000000
     print(len(large_list))
 
 
-@env.task
+@leaf_env.task
 async def always_succeeds() -> int:
     await asyncio.sleep(1)
     return 42
@@ -46,6 +55,7 @@ async def always_succeeds() -> int:
 
 @env.task
 async def failure_recovery() -> int:
+    print("A0 (failure recovery) Environment Variables:", os.environ, flush=True)
     try:
         await oomer(2)
     except flyte.errors.OOMError as e:
@@ -62,7 +72,7 @@ async def failure_recovery() -> int:
 
 
 if __name__ == "__main__":
-    flyte.init_from_config("../../config.yaml")
+    flyte.init_from_config("/Users/ytong/.flyte/config-k3d.yaml")
 
     run = flyte.run(failure_recovery)
     print(run.url)
