@@ -456,6 +456,7 @@ class RemoteController(Controller):
                 end_time=info.end_time,
                 typed_interface=typed_interface if typed_interface else None,
             )
+
             try:
                 logger.info(
                     f"Submitting Trace action Run:[{trace_action.run_name}, Parent:[{trace_action.parent_action_name}],"
@@ -467,8 +468,8 @@ class RemoteController(Controller):
                 # If the action is cancelled, we need to cancel the action on the server as well
                 raise
 
-    async def submit_task_ref(
-        self, _task: task_definition_pb2.TaskDetails, max_inline_io_bytes: int, *args, **kwargs
+    async def _submit_task_ref(
+        self, invoke_seq_num: int, _task: task_definition_pb2.TaskDetails, max_inline_io_bytes: int, *args, **kwargs
     ) -> Any:
         ctx = internal_ctx()
         tctx = ctx.data.task_context
@@ -476,8 +477,6 @@ class RemoteController(Controller):
             raise flyte.errors.RuntimeSystemError("BadContext", "Task context not initialized")
         current_action_id = tctx.action
         task_name = _task.spec.task_template.id.name
-
-        invoke_seq_num = self.generate_task_call_sequence(_task, current_action_id)
 
         native_interface = types.guess_interface(
             _task.spec.task_template.interface, default_inputs=_task.spec.default_inputs
@@ -530,18 +529,19 @@ class RemoteController(Controller):
             cache_key=cache_key,
         )
 
-        try:
-            logger.info(
-                f"Submitting action Run:[{action.run_name}, Parent:[{action.parent_action_name}], "
-                f"task:[{task_name}], action:[{action.name}]"
-            )
-            n = await self.submit_action(action)
-            logger.info(f"Action for task [{task_name}] action id: {action.name}, completed!")
-        except asyncio.CancelledError:
-            # If the action is cancelled, we need to cancel the action on the server as well
-            logger.info(f"Action {action.action_id.name} cancelled, cancelling on server")
-            await self.cancel_action(action)
-            raise
+        async with self._parent_action_semaphore[unique_action_name(current_action_id)]:
+            try:
+                logger.info(
+                    f"Submitting action Run:[{action.run_name}, Parent:[{action.parent_action_name}], "
+                    f"task:[{task_name}], action:[{action.name}]"
+                )
+                n = await self.submit_action(action)
+                logger.info(f"Action for task [{task_name}] action id: {action.name}, completed!")
+            except asyncio.CancelledError:
+                # If the action is cancelled, we need to cancel the action on the server as well
+                logger.info(f"Action {action.action_id.name} cancelled, cancelling on server")
+                await self.cancel_action(action)
+                raise
 
         if n.has_error() or n.phase == run_definition_pb2.PHASE_FAILED:
             exc = await handle_action_failure(action, task_name)
@@ -555,3 +555,15 @@ class RemoteController(Controller):
                 )
             return await load_and_convert_outputs(native_interface, n.realized_outputs_uri, max_inline_io_bytes)
         return None
+
+    async def submit_task_ref(
+        self, _task: task_definition_pb2.TaskDetails, max_inline_io_bytes: int, *args, **kwargs
+    ) -> Any:
+        ctx = internal_ctx()
+        tctx = ctx.data.task_context
+        if tctx is None:
+            raise flyte.errors.RuntimeSystemError("BadContext", "Task context not initialized")
+        current_action_id = tctx.action
+        task_call_seq = self.generate_task_call_sequence(_task, current_action_id)
+        async with self._parent_action_semaphore[unique_action_name(current_action_id)]:
+            return await self._submit_task_ref(task_call_seq, _task, max_inline_io_bytes, *args, **kwargs)
