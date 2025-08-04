@@ -2,7 +2,6 @@
 # requires-python = "==3.13"
 # dependencies = [
 #     "flyte==0.2.0b33",
-#     "unionai-reuse==0.1.3b0",
 #     "backtrader==1.9.78.123",
 #     "boto3==1.39.9",
 #     "chainlit==2.5.5",

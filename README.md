@@ -1,12 +1,20 @@
 # Flyte 2 SDK 🚀
 
-**The next-generation Python SDK for scalable, distributed workflows**
+**Type-safe, distributed orchestration of agents, ML pipelines, and more — in pure Python with async/await or sync!**
 
 [![Version](https://img.shields.io/pypi/v/flyte?label=version&color=blue)](https://pypi.org/project/flyte/)
 [![Python](https://img.shields.io/pypi/pyversions/flyte?color=brightgreen)](https://pypi.org/project/flyte/)
 [![License](https://img.shields.io/badge/license-Apache%202.0-orange)](LICENSE)
 
 > ⚡ **Pure Python workflows** • 🔄 **Async-first parallelism** • 🛠️ **Zero DSL constraints** • 📊 **Sub-task observability**
+
+## 🌍 Ecosystem & Resources
+
+- **📖 Documentation**: [Docs Link](https://www.union.ai/docs/v2/flyte/user-guide/)
+- **▶️ Getting Started**: [Docs Link](https://www.union.ai/docs/v2/flyte/user-guide/getting-started/)
+- **💬 Community**: [Slack](https://slack.flyte.org/) | [GitHub Discussions](https://github.com/flyteorg/flyte/discussions)  
+- **🎓 Examples**: [GitHub Examples](https://github.com/flyteorg/flyte-sdk/tree/main/examples)
+- **🐛 Issues**: [Bug Reports](https://github.com/flyteorg/flyte/issues)
 
 ## What is Flyte 2?
 
@@ -37,21 +45,11 @@ if __name__ == "__main__":
 
 ## 🌟 Why Flyte 2?
 
-### **No More Workflow DSL**
-- ❌ `@workflow` decorators with Python subset limitations  
-- ✅ **Pure Python**: loops, conditionals, error handling, dynamic structures
-
-### **Async-First Parallelism** 
-- ❌ Custom `map()` functions and workflow-specific parallel constructs
-- ✅ **Native `asyncio`**: `await asyncio.gather()` for distributed parallel execution
-
-### **True Container Reusability**
-- ❌ Cold container starts for every task
-- ✅ **Millisecond scheduling** with warm, reusable container pools
-
-### **Fine-Grained Observability**
-- ❌ Task-level logging only
-- ✅ **Function-level tracing** with `@flyte.trace` for sub-task checkpoints
+| Feature Highlight | Flyte 1 | Flyte 2 |
+|-| ------- | ------- |
+| **No More Workflow DSL** | ❌ `@workflow` decorators with Python subset limitations | ✅ **Pure Python**: loops, conditionals, error handling, dynamic structures |
+| **Async-First Parallelism** | ❌ Custom `map()` functions and workflow-specific parallel constructs | ✅ **Native `asyncio`**: `await asyncio.gather()` for distributed parallel execution |
+| **Fine-Grained Observability** | ❌ Task-level logging only | ✅ **Function-level tracing** with `@flyte.trace` for sub-task checkpoints |
 
 ## 🚀 Quick Start
 
@@ -74,13 +72,13 @@ uv pip install --prerelease=allow flyte
 # hello.py
 # /// script
 # requires-python = ">=3.10"
-# dependencies = ["flyte>=0.2.0"]
+# dependencies = ["flyte>=2.0.0b0"]
 # ///
 
 import flyte
 
 env = flyte.TaskEnvironment(
-    name="hello_world", 
+    name="hello_world",
     resources=flyte.Resources(memory="250Mi")
 )
 
@@ -88,7 +86,7 @@ env = flyte.TaskEnvironment(
 def calculate(x: int) -> int:
     return x * 2 + 5
 
-@env.task  
+@env.task
 async def main(numbers: list[int]) -> float:
     # Parallel execution across distributed containers
     results = await asyncio.gather(*[
@@ -128,7 +126,7 @@ def train_model(data: flyte.File) -> flyte.File:
     # Runs in configured container with GPU access
     pass
 
-@env.task  
+@env.task
 def evaluate_model(model: flyte.File, test_data: flyte.File) -> dict:
     # Same container configuration, different instance
     pass
@@ -140,7 +138,7 @@ def evaluate_model(model: flyte.File, test_data: flyte.File) -> dict:
 @env.task
 async def dynamic_pipeline(config: dict) -> list[str]:
     results = []
-    
+
     # ✅ Use any Python construct
     for dataset in config["datasets"]:
         try:
@@ -154,7 +152,7 @@ async def dynamic_pipeline(config: dict) -> list[str]:
             # ✅ Custom error recovery
             result = await handle_error(dataset, e)
             results.append(result)
-    
+
     return results
 ```
 
@@ -163,18 +161,18 @@ async def dynamic_pipeline(config: dict) -> list[str]:
 ```python
 @env.task
 async def parallel_training(hyperparams: list[dict]) -> dict:
-    # Each model trains on separate infrastructure  
+    # Each model trains on separate infrastructure
     models = await asyncio.gather(*[
         train_model.aio(params) for params in hyperparams
     ])
-    
+
     # Evaluate all models in parallel
     evaluations = await asyncio.gather(*[
-        evaluate_model.aio(model) for model in models  
+        evaluate_model.aio(model) for model in models
     ])
-    
+
     # Find best model
-    best_idx = max(range(len(evaluations)), 
+    best_idx = max(range(len(evaluations)),
                    key=lambda i: evaluations[i]["accuracy"])
     return {"best_model": models[best_idx], "accuracy": evaluations[best_idx]}
 ```
@@ -195,7 +193,7 @@ async def main_task(inputs: list[str]) -> list[str]:
     results = []
     for inp in inputs:
         # If task fails here, it resumes from the last successful trace
-        result = await expensive_computation(inp)  
+        result = await expensive_computation(inp)
         results.append(result)
     return results
 ```
@@ -213,31 +211,11 @@ spark_task = flyte.remote.Task.get("spark_env.process_data", auto_version="lates
 async def orchestrator(raw_data: flyte.File) -> flyte.File:
     # Execute Spark job on big data cluster
     processed = await spark_task(raw_data)
-    
-    # Execute PyTorch training on GPU cluster  
+
+    # Execute PyTorch training on GPU cluster
     model = await torch_task(processed)
-    
+
     return model
-```
-
-### **High-Performance Container Reuse**
-
-```python
-env = flyte.TaskEnvironment(
-    name="high_throughput",
-    reusable=flyte.ReusePolicy(
-        replicas=10,      # Keep 10 warm containers
-        idle_ttl=600,     # 10-minute idle timeout
-    ),
-    resources=flyte.Resources(cpu=2, memory="4Gi")
-)
-
-# Tasks scheduled in milliseconds on warm containers
-@env.task
-async def process_thousands(items: list[str]) -> list[str]:
-    return await asyncio.gather(*[
-        process_item.aio(item) for item in items
-    ])
 ```
 
 ## 📊 Native Jupyter Integration
@@ -268,7 +246,7 @@ endpoint: https://my-flyte-instance.com
 project: ml-team
 domain: production
 image:
-  builder: remote
+  builder: local
   registry: ghcr.io/my-org
 auth:
   type: oauth2
@@ -280,14 +258,14 @@ auth:
 # Deploy tasks to remote cluster
 flyte deploy my_workflow.py
 
-# Run deployed workflow  
+# Run deployed workflow
 flyte run my_workflow --input-file params.json
 
 # Monitor execution
 flyte logs <execution-id>
 ```
 
-## 🆚 Migration from Flyte 1
+## Migration from Flyte 1
 
 | Flyte 1 | Flyte 2 |
 |---------|---------|
@@ -298,46 +276,40 @@ flyte logs <execution-id>
 | `LaunchPlan` schedules | `@env.task(on_schedule=...)` |
 | Workflow failure handlers | Python `try/except` |
 
-### Example Migration
-
-```python
-# Flyte 1
-@flytekit.workflow  
-def old_workflow(data: list[str]) -> list[str]:
-    return [process_item(item=item) for item in data]
-
-# Flyte 2  
-@env.task
-async def new_workflow(data: list[str]) -> list[str]:
-    return await asyncio.gather(*[
-        process_item.aio(item) for item in data
-    ])
-```
-
-## 🌍 Ecosystem & Resources
-
-- **📖 Documentation**: [flyte.org/docs](https://flyte.org/docs)
-- **💬 Community**: [Slack](https://flyte.org/slack) | [GitHub Discussions](https://github.com/flyteorg/flyte/discussions)  
-- **🎓 Examples**: [GitHub Examples](https://github.com/flyteorg/flytesnacks)
-- **🐛 Issues**: [Bug Reports](https://github.com/flyteorg/flyte/issues)
-
 ## 🤝 Contributing
 
 We welcome contributions! Whether it's:
 
 - 🐛 **Bug fixes**
-- ✨ **New features** 
+- ✨ **New features**
 - 📚 **Documentation improvements**
 - 🧪 **Testing enhancements**
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+### Setup & Iteration Cycle
+To get started, make sure you start from a new virtual environment and install this package in editable mode with any of the supported Python versions, from 3.10 to 3.13.
+
+```bash
+uv venv --python 3.13
+uv pip install -e .
+```
+
+Besides from picking up local code changes, installing the package in editable mode
+also changes the definition of the default `Image()` object to use a locally
+build wheel. You will need to build said wheel by yourself though, with the `make dist` target.
+
+```bash
+make dist
+python maint_tools/build_default_image.py
+```
+You'll need to have a local docker daemon running for this. The build script does nothing
+more than invoke the local image builder, which will create a buildx builder named `flytex` if not present. Note that only members of the `Flyte Maintainers` group has
+access to push to the default registry. If you don't have access, please make sure to
+specify the registry and name to the build script.
+
+```bash
+python maint_tools/build_default_image.py --registry ghcr.io/my-org --name my-flyte-image
+```
 
 ## 📄 License
 
 Flyte 2 is licensed under the [Apache 2.0 License](LICENSE).
-
----
-
-**Ready to build the future of distributed computing with pure Python?**
-
-⭐ **Star this repo** | 🚀 **[Get Started Now](https://flyte.org/docs/getting-started)** | 💬 **[Join our Community](https://flyte.org/slack)**

@@ -1,7 +1,7 @@
 # /// script
 # requires-python = "==3.13"
 # dependencies = [
-#    "flyte>=0.2.0b16",
+#    "flyte>=2.0.0b0",
 #    "langchain-core==0.3.66",
 #    "langchain-openai==0.3.24",
 #    "langchain-community==0.3.26",
@@ -13,28 +13,23 @@
 import tempfile
 from typing import Optional
 
+from langchain_core.runnables import Runnable
 from pydantic import BaseModel, Field
 
 import flyte
 from flyte.extras import ContainerTask
 from flyte.io import File
 
-REGISTRY = "ghcr.io/flyteorg"
-
 env = flyte.TaskEnvironment(
     name="code_runner",
-    secrets=[flyte.Secret(key="OPENAI_API_KEY", as_env_var="OPENAI_API_KEY")],
-    image=flyte.Image.from_uv_script(
-        __file__,
-        name="code-runner-agent",
-        registry=REGISTRY,
-        arch=("linux/amd64", "linux/arm64"),
-    ),
+    secrets=[flyte.Secret(key="openai_api_key", as_env_var="OPENAI_API_KEY")],
+    image=flyte.Image.from_uv_script(__file__, name="code-runner-agent"),
+    resources=flyte.Resources(cpu=1),
 )
 
 
 class Code(BaseModel):
-    """Schema for code solutions to questions about LCEL."""
+    """Schema for code solutions to questions about Flyte v2."""
 
     prefix: str = Field(default="", description="Description of the problem and approach")
     imports: str = Field(default="", description="Code block with just import statements")
@@ -49,7 +44,7 @@ class AgentState(BaseModel):
     output: Optional[str] = None
 
 
-async def generate_code_gen_chain(debug: bool):
+async def generate_code_gen_chain(debug: bool) -> Runnable:
     from langchain_core.prompts import ChatPromptTemplate
     from langchain_openai import ChatOpenAI
 
@@ -174,7 +169,7 @@ async def generate(question: str, state: AgentState, concatenated_content: str, 
 
 code_runner_task = ContainerTask(
     name="run_flyte_v2",
-    image="ghcr.io/flyteorg/flyte:py3.13-v0.2.0b14",
+    image="ghcr.io/flyteorg/flyte:py3.13-v2.0.0b0",
     input_data_dir="/var/inputs",
     output_data_dir="/var/outputs",
     inputs={"script": File},
@@ -188,6 +183,7 @@ code_runner_task = ContainerTask(
             "echo $? > /var/outputs/exit_code"
         ),
     ],
+    resources=flyte.Resources(cpu=1, memory="1Gi"),
 )
 
 
@@ -360,12 +356,12 @@ async def main(
 
                 return f"""{prefix}
 
-    {imports}
-    {code}
+{imports}
+{code}
 
-    Result of code execution:
-    {code_output}
-    """
+Result of code execution:
+{code_output}
+"""
             else:
                 print("---DECISION: RE-TRY SOLUTION---")
                 if flag == "reflect":
@@ -373,6 +369,6 @@ async def main(
 
 
 if __name__ == "__main__":
-    flyte.init_from_config("config.yaml")
+    flyte.init_from_config("../config.yaml")
     run = flyte.run(main)
     print(run.url)
