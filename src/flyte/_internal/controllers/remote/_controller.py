@@ -457,16 +457,18 @@ class RemoteController(Controller):
                 typed_interface=typed_interface if typed_interface else None,
             )
 
-            try:
-                logger.info(
-                    f"Submitting Trace action Run:[{trace_action.run_name}, Parent:[{trace_action.parent_action_name}],"
-                    f" Trace fn:[{info.name}], action:[{info.action.name}]"
-                )
-                await self.submit_action(trace_action)
-                logger.info(f"Trace Action for [{info.name}] action id: {info.action.name}, completed!")
-            except asyncio.CancelledError:
-                # If the action is cancelled, we need to cancel the action on the server as well
-                raise
+            async with self._parent_action_semaphore[unique_action_name(current_action_id)]:
+                try:
+                    logger.info(
+                        f"Submitting Trace action Run:[{trace_action.run_name},"
+                        f" Parent:[{trace_action.parent_action_name}],"
+                        f" Trace fn:[{info.name}], action:[{info.action.name}]"
+                    )
+                    await self.submit_action(trace_action)
+                    logger.info(f"Trace Action for [{info.name}] action id: {info.action.name}, completed!")
+                except asyncio.CancelledError:
+                    # If the action is cancelled, we need to cancel the action on the server as well
+                    raise
 
     async def _submit_task_ref(
         self, invoke_seq_num: int, _task: task_definition_pb2.TaskDetails, max_inline_io_bytes: int, *args, **kwargs
@@ -529,19 +531,18 @@ class RemoteController(Controller):
             cache_key=cache_key,
         )
 
-        async with self._parent_action_semaphore[unique_action_name(current_action_id)]:
-            try:
-                logger.info(
-                    f"Submitting action Run:[{action.run_name}, Parent:[{action.parent_action_name}], "
-                    f"task:[{task_name}], action:[{action.name}]"
-                )
-                n = await self.submit_action(action)
-                logger.info(f"Action for task [{task_name}] action id: {action.name}, completed!")
-            except asyncio.CancelledError:
-                # If the action is cancelled, we need to cancel the action on the server as well
-                logger.info(f"Action {action.action_id.name} cancelled, cancelling on server")
-                await self.cancel_action(action)
-                raise
+        try:
+            logger.info(
+                f"Submitting action Run:[{action.run_name}, Parent:[{action.parent_action_name}], "
+                f"task:[{task_name}], action:[{action.name}]"
+            )
+            n = await self.submit_action(action)
+            logger.info(f"Action for task [{task_name}] action id: {action.name}, completed!")
+        except asyncio.CancelledError:
+            # If the action is cancelled, we need to cancel the action on the server as well
+            logger.info(f"Action {action.action_id.name} cancelled, cancelling on server")
+            await self.cancel_action(action)
+            raise
 
         if n.has_error() or n.phase == run_definition_pb2.PHASE_FAILED:
             exc = await handle_action_failure(action, task_name)
