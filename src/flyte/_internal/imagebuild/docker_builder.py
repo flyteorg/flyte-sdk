@@ -87,7 +87,7 @@ RUN --mount=type=cache,sharing=locked,mode=0777,target=/root/.cache/uv,id=uv \
 # new template
 DOCKER_FILE_UV_BASE_TEMPLATE = Template("""\
 # syntax=docker/dockerfile:1.10
-FROM ghcr.io/astral-sh/uv:0.6.12 as uv
+FROM ghcr.io/astral-sh/uv:0.6.12 AS uv
 FROM $BASE_IMAGE
 
 USER root

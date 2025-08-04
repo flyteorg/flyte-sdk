@@ -145,7 +145,11 @@ async def flush():
     assert report_html is not None
     assert isinstance(report_html, str)
     report_path = io.report_path(internal_ctx().data.task_context.output_path)
-    final_path = await storage.put_stream(report_html.encode("utf-8"), to_path=report_path)
+    content_types = {
+        "Content-Type": "text/html",  # For s3
+        "content_type": "text/html",  # For gcs
+    }
+    final_path = await storage.put_stream(report_html.encode("utf-8"), to_path=report_path, attributes=content_types)
     logger.debug(f"Report flushed to {final_path}")
 
 
