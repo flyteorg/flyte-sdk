@@ -586,9 +586,6 @@ class Image:
 
         img = cls.from_debian_base(registry=registry, name=name, python_version=python_version, platform=platform)
 
-        # add ca-certificates to the image by default
-        img = img.with_apt_packages("ca-certificates")
-
         return img.clone(addl_layer=ll)
 
     def clone(
