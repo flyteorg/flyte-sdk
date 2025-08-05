@@ -33,6 +33,7 @@ MIN_PACKAGE_VERSION = "0.2.4"
 assert version.parse(agents.__version__) >= version.parse(MIN_PACKAGE_VERSION), \
     f"The agents package needs to be at least version {MIN_PACKAGE_VERSION}, found version {agents.__version__}"
 
+
 @dataclass
 class FunctionTool(OpenAIFunctionTool):
     """
@@ -93,4 +94,6 @@ def function_tool(
 
         )
 
+    # regular callables or flyte.trace-decorated functions should use the
+    # openai-agents function_tool decorator
     return openai_function_tool(func, **kwargs)
