@@ -4,6 +4,7 @@ import json
 from dataclasses import dataclass, asdict
 from functools import partial
 
+from packaging import version
 
 from flyte.models import NativeInterface
 from flyte._task import AsyncFunctionTaskTemplate, TaskTemplate
@@ -16,12 +17,21 @@ if typing.TYPE_CHECKING:
     from agents.function_schema import function_schema
     from agents.tool_context import ToolContext
 else:
-    agents = lazy_module("agents")
-    openai_function_tool = agents.function_tool
-    OpenAIFunctionTool = agents.FunctionTool
-    function_schema = lazy_module("agents.function_schema").function_schema
-    ToolContext = lazy_module("agents.tool_context").ToolContext
+    try:
+        agents = lazy_module("agents")
+        openai_function_tool = agents.function_tool
+        OpenAIFunctionTool = agents.FunctionTool
+        function_schema = lazy_module("agents.function_schema").function_schema
+        ToolContext = lazy_module("agents.tool_context").ToolContext
+    except ImportError as exc:
+        raise ImportError(
+            "The agents package is not installed. Please install the `openai-agents` package."
+        ) from exc
+    
 
+MIN_PACKAGE_VERSION = "0.2.4"
+assert version.parse(agents.__version__) >= version.parse(MIN_PACKAGE_VERSION), \
+    f"The agents package needs to be at least version {MIN_PACKAGE_VERSION}, found version {agents.__version__}"
 
 @dataclass
 class FunctionTool(OpenAIFunctionTool):
@@ -66,7 +76,7 @@ def function_tool(
                 else schema.params_pydantic_model()
             )
             args, kwargs_dict = schema.to_call_args(parsed)
-            if inspect.iscoroutinefunction(func):
+            if inspect.iscoroutinefunction(func.func):
                 out = await func(*args, **kwargs_dict)
             else:
                 out = func(*args, **kwargs_dict)

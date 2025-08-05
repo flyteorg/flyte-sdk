@@ -55,8 +55,6 @@ env = flyte.TaskEnvironment(
 @env.task
 async def get_weather(city: str) -> Weather:
     """Get the weather for a given city."""
-    print("[debug] get_weather tool called")
-    print("tool context", flyte.ctx())
     return Weather(city=city, temperature_range="14-20C", conditions="Sunny with wind.")
 
 
