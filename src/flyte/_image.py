@@ -737,9 +737,23 @@ class Image:
 
         Example:
         ```python
-        @flyte.task(image=(flyte.Image
-                        .ubuntu_python()
-                        .with_pip_packages("requests", "numpy")))
+        @flyte.task(image=(flyte.Image.from_debian_base().with_pip_packages("requests", "numpy")))
+        def my_task(x: int) -> int:
+            import numpy as np
+            return np.sum([x, 1])
+        ```
+
+        To mount secrets during the build process to download private packages, you can use the `secret_mounts`.
+        In the blow example, "pip-secret" will be mounted at /run/secrets/pip-secret,
+         and "apt-secret" will be mounted at /etc/apt/apt-secret.
+        Example:
+        ```python
+        @flyte.task(
+            image=(
+                flyte.Image.from_debian_base()
+                .with_pip_packages("requests", "numpy", secret_mounts=[Secret(key="pip-secret")])
+                .with_apt_packages("git", secret_mounts=[Secret(key="apt-secret", mount="/etc/apt/apt-secret")])
+        )
         def my_task(x: int) -> int:
             import numpy as np
             return np.sum([x, 1])

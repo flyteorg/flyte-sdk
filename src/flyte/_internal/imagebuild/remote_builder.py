@@ -8,7 +8,6 @@ from typing import TYPE_CHECKING, Optional, Tuple, cast
 from uuid import uuid4
 
 import click
-from flyteidl.core import security_pb2
 
 import flyte
 import flyte.errors
@@ -167,7 +166,7 @@ def _get_layers_proto(image: Image, context_path: Path) -> "image_definition_pb2
         if isinstance(layer, AptPackages):
             apt_layer = image_definition_pb2.Layer(
                 apt_packages=image_definition_pb2.AptPackages(packages=layer.packages),
-                secret_mounts = secrets_from_request(layer.secret_mounts) if layer.secret_mounts else None,
+                secret_mounts=secrets_from_request(layer.secret_mounts) if layer.secret_mounts else None,
             )
             layers.append(apt_layer)
         elif isinstance(layer, PythonWheels):

@@ -301,9 +301,8 @@ def _get_secret_mounts_layer(secrets: typing.Tuple[str | Secret, ...] | None) ->
     if secrets is None:
         return ""
     secret_mounts_layer = ""
-    for secret in secrets:
-        if isinstance(secret, str):
-            secret = Secret(key=secret)
+    for s in secrets:
+        secret = Secret(key=s) if isinstance(s, str) else s
         secret_id = hash(secret)
         if secret.mount:
             secret_mounts_layer += f"--mount=type=secret,id={secret_id},target={secret.mount}"

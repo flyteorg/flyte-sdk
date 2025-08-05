@@ -1,4 +1,3 @@
-import tempfile
 from pathlib import Path
 
 import pytest
@@ -45,12 +44,12 @@ async def test_doesnt_work_yet():
 @pytest.mark.asyncio
 @pytest.mark.integration
 async def test_image_with_secrets(monkeypatch):
-    secret1, _ = tempfile.mkstemp("secret1")
+    monkeypatch.setenv("FLYTE", "test-value")
     monkeypatch.setenv("GROUP_KEY", "test-value")
 
     img = (
         Image.from_debian_base(registry="localhost:30000", name="img_with_secrets")
-        .with_apt_packages("vim", secret_mounts=[str(secret1)])
+        .with_apt_packages("vim", secret_mounts="flyte")
         .with_pip_packages("requests", secret_mounts=[Secret(group="group", key="key")])
     )
 
