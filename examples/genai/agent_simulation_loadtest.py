@@ -133,20 +133,20 @@ async def benchmark():
         run: flyte.remote.Run = flyte.run(
             research_coordinator,
             prompt=prompt,
-            num_rounds=10,
-            num_agents=4,
-            num_tool_repeats=5,
+            num_rounds=1,
+            num_agents=1,
+            num_tool_repeats=1,
         )
         print(run.url)
         await run.action.wait()
         return
 
-    num_runs = 10
+    num_runs = 3
     runs = []
     for _ in range(num_runs):
         runs.append(_run())
         # wait for 2 seconds to avoid rate limiting
-        time.sleep(2.0)
+        await asyncio.sleep(2.0)
 
     start = time.time()
     runs = await asyncio.gather(*runs)
