@@ -86,10 +86,7 @@ class Controller:
 
     async def get_action(self, action_id: identifier_pb2.ActionIdentifier, parent_action_name: str) -> Optional[Action]:
         """Get the action from the informer"""
-        informer = await self._informers.get(run_name=action_id.run.name, parent_action_name=parent_action_name)
-        if informer:
-            return await informer.get(action_id.name)
-        return None
+        return await self._run_coroutine_in_controller_thread(self._bg_get_action(action_id, parent_action_name))
 
     @log
     async def cancel_action(self, action: Action):

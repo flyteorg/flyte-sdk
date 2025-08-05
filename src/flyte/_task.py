@@ -33,7 +33,7 @@ from ._retry import RetryStrategy
 from ._reusable_environment import ReusePolicy
 from ._secret import SecretRequest
 from ._timeout import TimeoutType
-from .models import NativeInterface, SerializationContext
+from .models import MAX_INLINE_IO_BYTES, NativeInterface, SerializationContext
 
 if TYPE_CHECKING:
     from flyteidl.core.tasks_pb2 import DataLoadingConfig
@@ -79,6 +79,8 @@ class TaskTemplate(Generic[P, R]):
     :param env: Optional The environment variables to set for the task.
     :param secrets: Optional The secrets that will be injected into the task at runtime.
     :param timeout: Optional The timeout for the task.
+    :param max_inline_io_bytes: Maximum allowed size (in bytes) for all inputs and outputs passed directly to the task
+        (e.g., primitives, strings, dicts). Does not apply to files, directories, or dataframes.
     """
 
     name: str
@@ -100,8 +102,8 @@ class TaskTemplate(Generic[P, R]):
     report: bool = False
 
     parent_env: Optional[weakref.ReferenceType[TaskEnvironment]] = None
-    local: bool = field(default=False, init=False)
     ref: bool = field(default=False, init=False, repr=False, compare=False)
+    max_inline_io_bytes: int = MAX_INLINE_IO_BYTES
 
     # Only used in python 3.10 and 3.11, where we cannot use markcoroutinefunction
     _call_as_synchronous: bool = False
@@ -147,6 +149,10 @@ class TaskTemplate(Generic[P, R]):
         """
         self.__dict__.update(state)
         self.parent_env = None
+
+    @property
+    def source_file(self) -> Optional[str]:
+        return None
 
     async def pre(self, *args, **kwargs) -> Dict[str, Any]:
         """
@@ -315,6 +321,7 @@ class TaskTemplate(Generic[P, R]):
         reusable: Union[ReusePolicy, Literal["off"], None] = None,
         env: Optional[Dict[str, str]] = None,
         secrets: Optional[SecretRequest] = None,
+        max_inline_io_bytes: int | None = None,
         **kwargs: Any,
     ) -> TaskTemplate:
         """
@@ -324,6 +331,8 @@ class TaskTemplate(Generic[P, R]):
         cache = cache or self.cache
         retries = retries or self.retries
         timeout = timeout or self.timeout
+        max_inline_io_bytes = max_inline_io_bytes or self.max_inline_io_bytes
+
         reusable = reusable or self.reusable
         if reusable == "off":
             reusable = None
@@ -371,6 +380,7 @@ class TaskTemplate(Generic[P, R]):
             reusable=cast(Optional[ReusePolicy], reusable),
             env=env,
             secrets=secrets,
+            max_inline_io_bytes=max_inline_io_bytes,
         )
 
 
@@ -388,6 +398,15 @@ class AsyncFunctionTaskTemplate(TaskTemplate[P, R]):
         super().__post_init__()
         if not iscoroutinefunction(self.func):
             self._call_as_synchronous = True
+
+    @property
+    def source_file(self) -> Optional[str]:
+        """
+        Returns the source file of the function, if available. This is useful for debugging and tracing.
+        """
+        if hasattr(self.func, "__code__") and self.func.__code__:
+            return self.func.__code__.co_filename
+        return None
 
     def forward(self, *args: P.args, **kwargs: P.kwargs) -> Coroutine[Any, Any, R] | R:
         # In local execution, we want to just call the function. Note we're not awaiting anything here.

@@ -1,21 +1,16 @@
 # # Spark Example
 import random
 from operator import add
-from pathlib import Path
 
 from flyteplugins.spark.task import Spark
 
-import flyte
 import flyte.remote._action
 from flyte._context import internal_ctx
 
 image = (
     flyte.Image.from_base("apache/spark-py:v3.4.0")
     .clone(name="spark", python_version="3.10")
-    .with_pip_packages("pyspark")
-    .with_source_folder(Path(__file__).parent.parent.parent / "plugins/spark", "./spark")
-    .with_env_vars({"PYTHONPATH": "./spark/src:${PYTHONPATH}"})
-    .with_local_v2()
+    .with_pip_packages("flyteplugins-spark")
 )
 
 task_env = flyte.TaskEnvironment(
@@ -38,8 +33,8 @@ spark_env = flyte.TaskEnvironment(
             # For AWS environments, you can use the following jars:
             # "spark.jars": "https://repo1.maven.org/maven2/org/apache/hadoop/hadoop-aws/3.2.2/hadoop-aws-3.2.2.jar,https://repo1.maven.org/maven2/com/amazonaws/aws-java-sdk-bundle/1.12.262/aws-java-sdk-bundle-1.12.262.jar"
         },
-        executor_path="/opt/union/venv/bin/python",
-        applications_path="local:///opt/union/venv/bin/runtime.py",
+        executor_path="/opt/venv/bin/python",
+        applications_path="local:///opt/venv/bin/runtime.py",
     ),
     image=image,
 )

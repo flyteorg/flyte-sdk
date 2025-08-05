@@ -7,7 +7,7 @@ import threading
 from collections import defaultdict
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any, AsyncIterable, Awaitable, DefaultDict, Tuple, TypeVar
+from typing import Any, Awaitable, DefaultDict, Tuple, TypeVar
 
 import flyte
 import flyte.errors
@@ -27,22 +27,30 @@ from flyte._protos.common import identifier_pb2
 from flyte._protos.workflow import run_definition_pb2, task_definition_pb2
 from flyte._task import TaskTemplate
 from flyte._utils.helpers import _selector_policy
-from flyte.models import ActionID, NativeInterface, SerializationContext
+from flyte.models import MAX_INLINE_IO_BYTES, ActionID, NativeInterface, SerializationContext
 
 R = TypeVar("R")
 
+MAX_TRACE_BYTES = MAX_INLINE_IO_BYTES
 
-async def upload_inputs_with_retry(serialized_inputs: AsyncIterable[bytes] | bytes, inputs_uri: str) -> None:
+
+async def upload_inputs_with_retry(serialized_inputs: bytes, inputs_uri: str, max_bytes: int) -> None:
     """
     Upload inputs to the specified URI with error handling.
 
     Args:
         serialized_inputs: The serialized inputs to upload
         inputs_uri: The destination URI
+        max_bytes: Maximum number of bytes to read from the input stream
 
     Raises:
         RuntimeSystemError: If the upload fails
     """
+    if len(serialized_inputs) > max_bytes:
+        raise flyte.errors.InlineIOMaxBytesBreached(
+            f"Inputs exceed max_bytes limit of {max_bytes / 1024 / 1024} MB,"
+            f" actual size: {len(serialized_inputs) / 1024 / 1024} MB"
+        )
     try:
         # TODO Add retry decorator to this
         await storage.put_stream(serialized_inputs, to_path=inputs_uri)
@@ -80,19 +88,20 @@ async def handle_action_failure(action: Action, task_name: str) -> Exception:
     return exc
 
 
-async def load_and_convert_outputs(iface: NativeInterface, realized_outputs_uri: str) -> Any:
+async def load_and_convert_outputs(iface: NativeInterface, realized_outputs_uri: str, max_bytes: int) -> Any:
     """
     Load outputs from the given URI and convert them to native format.
 
     Args:
         iface: The Native interface
         realized_outputs_uri: The URI where outputs are stored
+        max_bytes: Maximum number of bytes to read from the output file
 
     Returns:
         The converted native outputs
     """
     outputs_file_path = io.outputs_path(realized_outputs_uri)
-    outputs = await io.load_outputs(outputs_file_path)
+    outputs = await io.load_outputs(outputs_file_path, max_bytes=max_bytes)
     return await convert.convert_outputs_to_native(iface, outputs)
 
 
@@ -144,7 +153,7 @@ class RemoteController(Controller):
             name = task_obj.__name__
         elif hasattr(task_obj, "name"):
             name = task_obj.name
-        logger.warning(f"For action {uniq}, task {name} call sequence is {new_seq}")
+        logger.info(f"For action {uniq}, task {name} call sequence is {new_seq}")
         return new_seq
 
     async def _submit(self, _task_call_seq: int, _task: TaskTemplate, *args, **kwargs) -> Any:
@@ -187,11 +196,11 @@ class RemoteController(Controller):
         sub_action_id, sub_action_output_path = convert.generate_sub_action_id_and_output_path(
             tctx, task_spec, inputs_hash, _task_call_seq
         )
-        logger.warning(f"Sub action {sub_action_id} output path {sub_action_output_path}")
+        logger.info(f"Sub action {sub_action_id} output path {sub_action_output_path}")
 
         serialized_inputs = inputs.proto_inputs.SerializeToString(deterministic=True)
         inputs_uri = io.inputs_path(sub_action_output_path)
-        await upload_inputs_with_retry(serialized_inputs, inputs_uri)
+        await upload_inputs_with_retry(serialized_inputs, inputs_uri, max_bytes=_task.max_inline_io_bytes)
 
         md = task_spec.task_template.metadata
         ignored_input_vars = []
@@ -254,7 +263,9 @@ class RemoteController(Controller):
                     "RuntimeError",
                     f"Task {n.action_id.name} did not return an output path, but the task has outputs defined.",
                 )
-            return await load_and_convert_outputs(_task.native_interface, n.realized_outputs_uri)
+            return await load_and_convert_outputs(
+                _task.native_interface, n.realized_outputs_uri, max_bytes=_task.max_inline_io_bytes
+            )
         return None
 
     async def submit(self, _task: TaskTemplate, *args, **kwargs) -> Any:
@@ -357,7 +368,7 @@ class RemoteController(Controller):
         )
 
         inputs_uri = io.inputs_path(sub_action_output_path)
-        await upload_inputs_with_retry(serialized_inputs, inputs_uri)
+        await upload_inputs_with_retry(serialized_inputs, inputs_uri, max_bytes=MAX_TRACE_BYTES)
         # Clear to free memory
         serialized_inputs = None  # type: ignore
 
@@ -388,7 +399,7 @@ class RemoteController(Controller):
                 logger.warning(f"Action {prev_action.action_id.name} failed, but no error was found, re-running trace!")
         elif prev_action.realized_outputs_uri is not None:
             outputs_file_path = io.outputs_path(prev_action.realized_outputs_uri)
-            o = await io.load_outputs(outputs_file_path)
+            o = await io.load_outputs(outputs_file_path, max_bytes=MAX_TRACE_BYTES)
             outputs = await convert.convert_outputs_to_native(_interface, o)
             return (
                 TraceInfo(func_name, sub_action_id, _interface, inputs_uri, output=outputs),
@@ -410,18 +421,13 @@ class RemoteController(Controller):
 
         current_action_id = tctx.action
         sub_run_output_path = storage.join(tctx.run_base_dir, info.action.name)
-        print(f"Sub run output path for {info.name} is {sub_run_output_path}", flush=True)
 
         if info.interface.has_outputs():
             outputs_file_path: str = ""
             if info.output:
                 outputs = await convert.convert_from_native_to_outputs(info.output, info.interface)
                 outputs_file_path = io.outputs_path(sub_run_output_path)
-                print(
-                    f"Uploading outputs for {info.name} Outputs file path: {outputs_file_path}",
-                    flush=True,
-                )
-                await io.upload_outputs(outputs, sub_run_output_path)
+                await io.upload_outputs(outputs, sub_run_output_path, max_bytes=MAX_TRACE_BYTES)
             elif info.error:
                 err = convert.convert_from_native_to_error(info.error)
                 await io.upload_error(err.err, sub_run_output_path)
@@ -450,26 +456,29 @@ class RemoteController(Controller):
                 end_time=info.end_time,
                 typed_interface=typed_interface if typed_interface else None,
             )
-            try:
-                logger.info(
-                    f"Submitting Trace action Run:[{trace_action.run_name}, Parent:[{trace_action.parent_action_name}],"
-                    f" Trace fn:[{info.name}], action:[{info.action.name}]"
-                )
-                await self.submit_action(trace_action)
-                logger.info(f"Trace Action for [{info.name}] action id: {info.action.name}, completed!")
-            except asyncio.CancelledError:
-                # If the action is cancelled, we need to cancel the action on the server as well
-                raise
 
-    async def submit_task_ref(self, _task: task_definition_pb2.TaskDetails, *args, **kwargs) -> Any:
+            async with self._parent_action_semaphore[unique_action_name(current_action_id)]:
+                try:
+                    logger.info(
+                        f"Submitting Trace action Run:[{trace_action.run_name},"
+                        f" Parent:[{trace_action.parent_action_name}],"
+                        f" Trace fn:[{info.name}], action:[{info.action.name}]"
+                    )
+                    await self.submit_action(trace_action)
+                    logger.info(f"Trace Action for [{info.name}] action id: {info.action.name}, completed!")
+                except asyncio.CancelledError:
+                    # If the action is cancelled, we need to cancel the action on the server as well
+                    raise
+
+    async def _submit_task_ref(
+        self, invoke_seq_num: int, _task: task_definition_pb2.TaskDetails, max_inline_io_bytes: int, *args, **kwargs
+    ) -> Any:
         ctx = internal_ctx()
         tctx = ctx.data.task_context
         if tctx is None:
             raise flyte.errors.RuntimeSystemError("BadContext", "Task context not initialized")
         current_action_id = tctx.action
         task_name = _task.spec.task_template.id.name
-
-        invoke_seq_num = self.generate_task_call_sequence(_task, current_action_id)
 
         native_interface = types.guess_interface(
             _task.spec.task_template.interface, default_inputs=_task.spec.default_inputs
@@ -482,7 +491,7 @@ class RemoteController(Controller):
 
         serialized_inputs = inputs.proto_inputs.SerializeToString(deterministic=True)
         inputs_uri = io.inputs_path(sub_action_output_path)
-        await upload_inputs_with_retry(serialized_inputs, inputs_uri)
+        await upload_inputs_with_retry(serialized_inputs, inputs_uri, max_inline_io_bytes)
         # cache key - task name, task signature, inputs, cache version
         cache_key = None
         md = _task.spec.task_template.metadata
@@ -545,5 +554,17 @@ class RemoteController(Controller):
                     "RuntimeError",
                     f"Task {n.action_id.name} did not return an output path, but the task has outputs defined.",
                 )
-            return await load_and_convert_outputs(native_interface, n.realized_outputs_uri)
+            return await load_and_convert_outputs(native_interface, n.realized_outputs_uri, max_inline_io_bytes)
         return None
+
+    async def submit_task_ref(
+        self, _task: task_definition_pb2.TaskDetails, max_inline_io_bytes: int, *args, **kwargs
+    ) -> Any:
+        ctx = internal_ctx()
+        tctx = ctx.data.task_context
+        if tctx is None:
+            raise flyte.errors.RuntimeSystemError("BadContext", "Task context not initialized")
+        current_action_id = tctx.action
+        task_call_seq = self.generate_task_call_sequence(_task, current_action_id)
+        async with self._parent_action_semaphore[unique_action_name(current_action_id)]:
+            return await self._submit_task_ref(task_call_seq, _task, max_inline_io_bytes, *args, **kwargs)

@@ -7,54 +7,60 @@
 # ///
 
 import asyncio
-import flyte
-from typing import List, Dict
+from typing import Dict, List
 
+import flyte
+import flyte.remote
 
 coordinator_env = flyte.TaskEnvironment(
     "coordinator_env",
     resources=flyte.Resources(cpu=1, memory="250Mi"),
-    reusable=flyte.ReusePolicy(replicas=2, idle_ttl=30), 
-    image=flyte.Image.from_uv_script(__file__, name="agent_simulation_image")
+    reusable=flyte.ReusePolicy(replicas=4, idle_ttl=300),
+    image=flyte.Image.from_uv_script(__file__, name="agent_simulation_image"),
 )
 
 coordinator_decision_env = coordinator_env.clone_with(
-    name="coordinator_decision_env",
-    reusable=flyte.ReusePolicy(replicas=4, idle_ttl=30),
+    "coordinator_decision_env",
+    reusable=flyte.ReusePolicy(replicas=8, idle_ttl=300),
 )
 
 research_assistant_env = coordinator_env.clone_with(
-    name="research_assistant_env",
-    reusable=flyte.ReusePolicy(replicas=8, idle_ttl=30), 
+    "research_assistant_env",
+    reusable=flyte.ReusePolicy(replicas=12, idle_ttl=300),
+)
+
+tool_env = coordinator_env.clone_with(
+    "tool_env",
+    reusable=flyte.ReusePolicy(replicas=12, idle_ttl=300),
 )
 
 
 # Mock tools that research agents can use
-@flyte.trace
+@tool_env.task
 async def search_web(query: str) -> str:
     await asyncio.sleep(1.0)  # Simulate API call
     return f"Web results for: {query}"
 
 
-@flyte.trace
+@tool_env.task
 async def extract_entities(text: str) -> List[str]:
     await asyncio.sleep(1.0)
     return [f"Entity from: {text}"]
 
 
-@flyte.trace
+@tool_env.task
 async def analyze_text(text: str) -> Dict[str, str]:
     await asyncio.sleep(1.0)
     return {"analysis": f"Analysis of: {text}", "sentiment": "positive"}
 
 
-@flyte.trace
+@tool_env.task
 async def summarize_text(text: str) -> Dict[str, str]:
     await asyncio.sleep(1.0)
     return {"summary": f"Summary of: {text}"}
 
 
-@flyte.trace
+@tool_env.task
 async def finalize_answer(text: str) -> Dict[str, str]:
     await asyncio.sleep(1.0)
     return {"answer": f"Answer of: {text}"}
@@ -65,7 +71,7 @@ async def finalize_answer(text: str) -> Dict[str, str]:
 async def research_assistant(prompt: str, tool_sequence: List[str]) -> Dict[str, str]:
     results = {}
     current_input = prompt
-    
+
     tool_map = {
         "search": search_web,
         "analyze": analyze_text,
@@ -73,53 +79,81 @@ async def research_assistant(prompt: str, tool_sequence: List[str]) -> Dict[str,
         "summarize": summarize_text,
         "finalize": finalize_answer,
     }
-    
+
     for tool_name in tool_sequence:
         tool_fn = tool_map[tool_name]
         result = await tool_fn(current_input)
         results[tool_name] = str(result)
-        current_input = str(result)
-        
+        # current_input = str(result)
+
     return results
+
 
 @coordinator_decision_env.task
 async def resource_coordinator_decision(
     prompt: str,
     num_agents: int,
+    num_tool_repeats: int,
 ) -> List[Dict[str, str]]:
-    tool_sequence = ["search", "extract", "analyze", "summarize", "finalize"] * 10
-    
+    tool_sequence = ["search", "extract", "analyze", "summarize", "finalize"] * num_tool_repeats
+
     tasks = []
     for _ in range(num_agents):
         tasks.append(research_assistant(prompt, tool_sequence))
-    
+
     task_results = await asyncio.gather(*tasks)
     return task_results
 
+
 # Research coordinator that spawns multiple agents
-@coordinator_env.task 
+@coordinator_env.task
 async def research_coordinator(
     prompt: str,
-    num_rounds: int = 4,
-    num_agents: int = 5,
+    num_rounds: int = 10,
+    num_agents: int = 4,
+    num_tool_repeats: int = 5,
 ) -> List[List[Dict[str, str]]]:
     # Do multiple rounds of research
     results = []
     for _ in range(num_rounds):
         # Select tool sequence for this agent
-        results.append(await resource_coordinator_decision(prompt, num_agents))
-    
+        results.append(await resource_coordinator_decision(prompt, num_agents, num_tool_repeats))
+
     # Gather results from all agents
     return results
 
-if __name__ == "__main__":
+
+async def benchmark():
+    import time
+
     flyte.init_from_config("../../config.yaml")
-    
-    prompt = "What are the latest developments in AI?"
-    run = flyte.run(
-        research_coordinator,
-        prompt=prompt,
-        num_rounds=4,
-        num_agents=5,
-    )
-    print(run.url)
+
+    async def _run() -> None:
+        prompt = "What are the latest developments in AI?"
+        run: flyte.remote.Run = flyte.run(
+            research_coordinator,
+            prompt=prompt,
+            num_rounds=1,
+            num_agents=1,
+            num_tool_repeats=1,
+        )
+        print(run.url)
+        await run.action.wait()
+        return
+
+    num_runs = 3
+    runs = []
+    for _ in range(num_runs):
+        runs.append(_run())
+        # wait for 2 seconds to avoid rate limiting
+        await asyncio.sleep(2.0)
+
+    start = time.time()
+    runs = await asyncio.gather(*runs)
+    end = time.time()
+    print(f"Total runs: {len(runs)}")
+    print(f"Total time: {end - start} seconds")
+
+
+if __name__ == "__main__":
+    asyncio.run(benchmark())

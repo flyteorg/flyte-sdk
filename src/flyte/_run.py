@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import pathlib
 import uuid
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Tuple, Union, cast
 
 import flyte.errors
@@ -36,8 +37,24 @@ if TYPE_CHECKING:
     from flyte.remote._task import LazyEntity
 
     from ._code_bundle import CopyFiles
+    from ._internal.imagebuild.image_builder import ImageCache
 
 Mode = Literal["local", "remote", "hybrid"]
+
+
+@dataclass(frozen=True)
+class _CacheKey:
+    obj_id: int
+    dry_run: bool
+
+
+@dataclass(frozen=True)
+class _CacheValue:
+    code_bundle: CodeBundle | None
+    image_cache: Optional[ImageCache]
+
+
+_RUN_CACHE: Dict[_CacheKey, _CacheValue] = {}
 
 
 async def _get_code_bundle_for_run(name: str) -> CodeBundle | None:
@@ -78,6 +95,7 @@ class _Runner:
         annotations: Dict[str, str] | None = None,
         interruptible: bool = False,
         log_level: int | None = None,
+        disable_run_cache: bool = False,
     ):
         init_config = _get_init_config()
         client = init_config.client if init_config else None
@@ -104,6 +122,7 @@ class _Runner:
         self._annotations = annotations
         self._interruptible = interruptible
         self._log_level = log_level
+        self._disable_run_cache = disable_run_cache
 
     @requires_initialization
     async def _run_remote(self, obj: TaskTemplate[P, R] | LazyEntity, *args: P.args, **kwargs: P.kwargs) -> Run:
@@ -135,24 +154,36 @@ class _Runner:
             if obj.parent_env is None:
                 raise ValueError("Task is not attached to an environment. Please attach the task to an environment")
 
-            image_cache = await build_images.aio(cast(Environment, obj.parent_env()))
-
-            if self._interactive_mode:
-                code_bundle = await build_pkl_bundle(
-                    obj,
-                    upload_to_controlplane=not self._dry_run,
-                    copy_bundle_to=self._copy_bundle_to,
-                )
+            if (
+                not self._disable_run_cache
+                and _RUN_CACHE.get(_CacheKey(obj_id=id(obj), dry_run=self._dry_run)) is not None
+            ):
+                cached_value = _RUN_CACHE[_CacheKey(obj_id=id(obj), dry_run=self._dry_run)]
+                code_bundle = cached_value.code_bundle
+                image_cache = cached_value.image_cache
             else:
-                if self._copy_files != "none":
-                    code_bundle = await build_code_bundle(
-                        from_dir=cfg.root_dir,
-                        dryrun=self._dry_run,
+                image_cache = await build_images.aio(cast(Environment, obj.parent_env()))
+
+                if self._interactive_mode:
+                    code_bundle = await build_pkl_bundle(
+                        obj,
+                        upload_to_controlplane=not self._dry_run,
                         copy_bundle_to=self._copy_bundle_to,
-                        copy_style=self._copy_files,
                     )
                 else:
-                    code_bundle = None
+                    if self._copy_files != "none":
+                        code_bundle = await build_code_bundle(
+                            from_dir=cfg.root_dir,
+                            dryrun=self._dry_run,
+                            copy_bundle_to=self._copy_bundle_to,
+                            copy_style=self._copy_files,
+                        )
+                    else:
+                        code_bundle = None
+            if not self._disable_run_cache:
+                _RUN_CACHE[_CacheKey(obj_id=id(obj), dry_run=self._dry_run)] = _CacheValue(
+                    code_bundle=code_bundle, image_cache=image_cache
+                )
 
             version = self._version or (
                 code_bundle.computed_version if code_bundle and code_bundle.computed_version else None
@@ -516,6 +547,7 @@ def with_runcontext(
     annotations: Dict[str, str] | None = None,
     interruptible: bool = False,
     log_level: int | None = None,
+    disable_run_cache: bool = False,
 ) -> _Runner:
     """
     Launch a new run with the given parameters as the context.
@@ -556,6 +588,7 @@ def with_runcontext(
     :param interruptible: Optional If true, the run can be interrupted by the user.
     :param log_level: Optional Log level to set for the run. If not provided, it will be set to the default log level
         set using `flyte.init()`
+    :param disable_run_cache: Optional If true, the run cache will be disabled. This is useful for testing purposes.
 
     :return: runner
     """
@@ -580,6 +613,7 @@ def with_runcontext(
         project=project,
         domain=domain,
         log_level=log_level,
+        disable_run_cache=disable_run_cache,
     )
 
 

@@ -13,15 +13,16 @@ uv run tools.py
 # /// script
 # requires-python = "==3.13"
 # dependencies = [
-#    "flyte>=2.0.0b1",
+#    "flyte>=2.0.0b4",
 #    "openai-agents==0.2.4",
 #    "pydantic>=2.10.6",
 # ]
 # ///
 
-import flyte
+from agents import Agent, Runner, function_tool
 from pydantic import BaseModel
 
+import flyte
 from agents import Agent, Runner
 from flyte.ai.openai.agents import function_tool
 
@@ -33,20 +34,9 @@ class Weather(BaseModel):
 
 
 env = flyte.TaskEnvironment(
-    name="openai_agents_tools", resources=flyte.Resources(cpu=1, memory="250Mi"),
-    image=(
-        flyte.Image.from_debian_base(
-            name="openai_agents_tools",
-            python_version=(3, 13),
-        )
-        .with_pip_packages(
-            "flyte",
-            "openai-agents==0.2.4",
-            "pydantic>=2.10.6",
-            pre=True,
-            extra_args="--prerelease=allow",
-        )
-    ),
+    name="openai_agents_tools",
+    resources=flyte.Resources(cpu=1, memory="250Mi"),
+    image=flyte.Image.from_uv_script(__file__, name="openai_agents_tools"),
     secrets=flyte.Secret("OPENAI_API_KEY", as_env_var="OPENAI_API_KEY"),
 )
 
@@ -64,6 +54,7 @@ agent = Agent(
     tools=[get_weather],
 )
 
+
 @env.task
 async def main() -> str:
     result = await Runner.run(agent, input="What's the weather in Tokyo?")
@@ -72,8 +63,6 @@ async def main() -> str:
 
 
 if __name__ == "__main__":
-    # import asyncio
-    # asyncio.run(main())
     flyte.init_from_config("../../../config.yaml")
     run = flyte.run(main)
     print(run.url)
