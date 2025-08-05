@@ -237,7 +237,7 @@ async def test_convert_from_native_to_inputs_missing_required_inputs():
 
     interface = NativeInterface.from_callable(func_required)
 
-    with pytest.raises(ValueError, match="Received 1 inputs but interface has 2"):
+    with pytest.raises(ValueError, match="Missing required inputs: y"):
         await convert.convert_from_native_to_inputs(interface, 42)
 
 
@@ -302,7 +302,7 @@ async def test_convert_from_native_to_inputs_missing_required_with_defaults():
     interface = NativeInterface.from_callable(func_missing_required)
 
     # Only provide one required parameter
-    with pytest.raises(ValueError, match="Received 1 inputs but interface has 2 required inputs."):
+    with pytest.raises(ValueError, match="Missing required inputs: required2"):
         await convert.convert_from_native_to_inputs(interface, required1=42)
 
 
