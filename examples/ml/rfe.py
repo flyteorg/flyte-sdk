@@ -20,7 +20,9 @@ import flyte
 worker = flyte.TaskEnvironment(
     "worker",
     image=flyte.Image.from_uv_script(
-        __file__, name="flyte", registry="ghcr.io/flyteorg", arch=("linux/amd64", "linux/arm64")
+        __file__,
+        name="flyte",
+        registry="ghcr.io/flyteorg",
     ).with_apt_packages("ca-certificates"),
 )
 
