@@ -19,11 +19,10 @@ uv run tools.py
 # ]
 # ///
 
-from agents import Agent, Runner, function_tool
+from agents import Agent, Runner
 from pydantic import BaseModel
 
 import flyte
-from agents import Agent, Runner
 from flyte.ai.openai.agents import function_tool
 
 
@@ -36,7 +35,18 @@ class Weather(BaseModel):
 env = flyte.TaskEnvironment(
     name="openai_agents_tools",
     resources=flyte.Resources(cpu=1, memory="250Mi"),
-    image=flyte.Image.from_uv_script(__file__, name="openai_agents_tools"),
+    image=(
+        flyte.Image.from_debian_base(
+            name="openai_agents_tools",
+            python_version=(3, 13),
+        ).with_pip_packages(
+            "flyte",
+            "openai-agents==0.2.4",
+            "pydantic>=2.10.6",
+            pre=True,
+            extra_args="--prerelease=allow",
+        )
+    ),
     secrets=flyte.Secret("OPENAI_API_KEY", as_env_var="OPENAI_API_KEY"),
 )
 

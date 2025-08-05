@@ -15,7 +15,7 @@ import flyte.remote
 coordinator_env = flyte.TaskEnvironment(
     "coordinator_env",
     resources=flyte.Resources(cpu=1, memory="250Mi"),
-    reusable=flyte.ReusePolicy(replicas=4, idle_ttl=300),
+    reusable=flyte.ReusePolicy(replicas=2, idle_ttl=30),
     image=flyte.Image.from_uv_script(__file__, name="agent_simulation_image"),
 )
 
@@ -25,42 +25,37 @@ coordinator_decision_env = coordinator_env.clone_with(
 )
 
 research_assistant_env = coordinator_env.clone_with(
-    "research_assistant_env",
-    reusable=flyte.ReusePolicy(replicas=12, idle_ttl=300),
-)
-
-tool_env = coordinator_env.clone_with(
-    "tool_env",
-    reusable=flyte.ReusePolicy(replicas=12, idle_ttl=300),
+    name="research_assistant_env",
+    reusable=flyte.ReusePolicy(replicas=8, idle_ttl=30),
 )
 
 
 # Mock tools that research agents can use
-@tool_env.task
+@flyte.trace
 async def search_web(query: str) -> str:
     await asyncio.sleep(1.0)  # Simulate API call
     return f"Web results for: {query}"
 
 
-@tool_env.task
+@flyte.trace
 async def extract_entities(text: str) -> List[str]:
     await asyncio.sleep(1.0)
     return [f"Entity from: {text}"]
 
 
-@tool_env.task
+@flyte.trace
 async def analyze_text(text: str) -> Dict[str, str]:
     await asyncio.sleep(1.0)
     return {"analysis": f"Analysis of: {text}", "sentiment": "positive"}
 
 
-@tool_env.task
+@flyte.trace
 async def summarize_text(text: str) -> Dict[str, str]:
     await asyncio.sleep(1.0)
     return {"summary": f"Summary of: {text}"}
 
 
-@tool_env.task
+@flyte.trace
 async def finalize_answer(text: str) -> Dict[str, str]:
     await asyncio.sleep(1.0)
     return {"answer": f"Answer of: {text}"}
@@ -84,7 +79,7 @@ async def research_assistant(prompt: str, tool_sequence: List[str]) -> Dict[str,
         tool_fn = tool_map[tool_name]
         result = await tool_fn(current_input)
         results[tool_name] = str(result)
-        # current_input = str(result)
+        current_input = str(result)
 
     return results
 
