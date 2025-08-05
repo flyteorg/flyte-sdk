@@ -10,6 +10,7 @@ import asyncio
 from typing import Dict, List
 
 import flyte
+import flyte.remote
 
 coordinator_env = flyte.TaskEnvironment(
     "coordinator_env",
@@ -122,14 +123,14 @@ async def research_coordinator(
     return results
 
 
-async def local():
+async def benchmark():
     import time
 
     flyte.init_from_config("../../config.yaml")
 
     async def _run() -> None:
         prompt = "What are the latest developments in AI?"
-        run = flyte.run(
+        run: flyte.remote.Run = flyte.run(
             research_coordinator,
             prompt=prompt,
             num_rounds=10,
@@ -137,14 +138,10 @@ async def local():
             num_tool_repeats=5,
         )
         print(run.url)
-        async for action_details in run.action.watch(wait_for="terminal"):
-            if action_details.done():
-                print("done")
-                break
-            await asyncio.sleep(1.0)
+        await run.action.wait()
         return
 
-    num_runs = 4
+    num_runs = 10
     runs = []
     for _ in range(num_runs):
         runs.append(_run())
@@ -157,4 +154,4 @@ async def local():
 
 
 if __name__ == "__main__":
-    asyncio.run(local())
+    asyncio.run(benchmark())
