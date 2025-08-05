@@ -145,6 +145,8 @@ async def benchmark():
     runs = []
     for _ in range(num_runs):
         runs.append(_run())
+        # wait for 2 seconds to avoid rate limiting
+        time.sleep(2.0)
 
     start = time.time()
     runs = await asyncio.gather(*runs)
