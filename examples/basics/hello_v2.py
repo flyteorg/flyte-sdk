@@ -28,7 +28,11 @@ async def hello_driver(ids: List[int] = [1, 2, 3]) -> List[str]:
 if __name__ == "__main__":
     flyte.init_from_config("../../config.yaml")
 
-    run = flyte.run(hello_driver)
-    print(run.name)
-    print(run.url)
-    run.wait(run)
+    for i in range(10):
+        print(f"Running hello_driver with id {i}")
+        r = flyte.run(hello_driver)
+        print(r.url)
+    # run = flyte.run(hello_driver)
+    # print(run.name)
+    # print(run.url)
+    # run.wait(run)
