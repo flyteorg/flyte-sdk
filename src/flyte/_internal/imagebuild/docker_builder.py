@@ -25,8 +25,10 @@ from flyte._image import (
     PythonWheels,
     Requirements,
     UVProject,
+    UVScript,
     WorkDir,
     _DockerLines,
+    _ensure_tuple,
 )
 from flyte._internal.imagebuild.image_builder import (
     DockerAPIImageChecker,
@@ -324,6 +326,22 @@ async def _process_layer(layer: Layer, context_path: Path, dockerfile: str) -> s
         case PythonWheels():
             # Handle Python wheels
             dockerfile = await PythonWheelHandler.handle(layer, context_path, dockerfile)
+
+        case UVScript():
+            # Handle UV script
+            from flyte._utils import parse_uv_script_file
+
+            header = parse_uv_script_file(layer.script)
+            if header.dependencies:
+                pip = PipPackages(
+                    packages=_ensure_tuple(header.dependencies) if header.dependencies else None,
+                    secret_mounts=layer.secret_mounts,
+                    index_url=layer.index_url,
+                    extra_args=layer.extra_args,
+                    pre=layer.pre,
+                    extra_index_urls=layer.extra_index_urls,
+                )
+                dockerfile = await PipAndRequirementsHandler.handle(pip, context_path, dockerfile)
 
         case Requirements() | PipPackages():
             # Handle pip packages and requirements
