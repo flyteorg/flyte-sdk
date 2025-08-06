@@ -155,5 +155,7 @@ def test_dockerfile():
 
 
 def test_image_uri_consistency_for_uvscript():
-    img = Image.from_uv_script("./agent_simulation_loadtest.py", name="flyte", registry="ghcr.io/flyteorg")
-    assert img.identifier == "8ddvWro_zDpvHCD1ozu3nQ"
+    img = Image.from_uv_script(
+        "./agent_simulation_loadtest.py", name="flyte", registry="ghcr.io/flyteorg", python_version=(3, 12)
+    )
+    assert img.identifier == "i9go9FHsgV7_alA-7lWArg"

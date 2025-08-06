@@ -608,8 +608,12 @@ class Image:
         :param extra_index_urls: extra index urls to use for pip install, default is None
         :param pre: whether to allow pre-release versions, default is False
         :param extra_args: extra arguments to pass to pip install, default is None
+        :param secret_mounts: Secret mounts to use for the image, default is None.
 
         :return: Image
+
+        Args:
+            secret_mounts:
         """
         ll = UVScript(
             script=Path(script),
