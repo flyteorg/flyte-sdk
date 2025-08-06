@@ -152,3 +152,13 @@ def test_dockerfile():
         platform=("linux/amd64", "linux/arm64"),
     )
     assert img_multi.platform == ("linux/amd64", "linux/arm64")
+
+
+def test_image_uri_consistency_for_uvscript():
+    img = Image.from_uv_script(
+        "./agent_simulation_loadtest.py", name="flyte", registry="ghcr.io/flyteorg", python_version=(3, 12)
+    )
+    assert img.base_image == "python:3.12-slim-bookworm", "Base image should be python:3.12-slim-bookworm"
+    # This value should work across python versions in CI because all values have been specified above and are hardcoded
+    # Please don't change this value unless you are sure it's the right thing to do.
+    assert img.identifier == "QGXjjd4scRCaeG14rJyNog", img._layers

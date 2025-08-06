@@ -10,7 +10,7 @@ import flyte
 
 env = flyte.TaskEnvironment(
     name="hello_world",
-    image=flyte.Image.from_uv_script(script=__file__, name="hello_world"),
+    image=flyte.Image.from_uv_script(script=__file__, name="hello_world").with_pip_packages("polars"),
 )
 
 
