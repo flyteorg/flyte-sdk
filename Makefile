@@ -54,3 +54,8 @@ unit_test: ## Test the code with pytest
 	@echo "🚀 Testing code: Running unit tests..."
 	@uv run python -m pytest -k "not integration and not sandbox" tests
 
+
+.PHONY: cli-docs-gen
+cli-docs-gen: ## Generate CLI documentation
+	@echo "📖 Generating CLI documentation..."
+	@uv run flyte gen docs --type markdown
