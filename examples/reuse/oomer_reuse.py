@@ -31,12 +31,13 @@ actor_image = base.clone(addl_layer=wheel_layer)
 
 env = flyte.TaskEnvironment(
     name="oomer_parent_actor",
-    resources=flyte.Resources(cpu=1, memory="250Mi"),
+    # resources=flyte.Resources(cpu=1, memory="250Mi"),
+    resources=flyte.Resources(cpu=1, memory="1Gi"),
     image=actor_image,
     reusable=flyte.ReusePolicy(
         replicas=1,
         idle_ttl=60,
-        concurrency=3
+        concurrency=6,
     ),
 )
 
@@ -51,9 +52,16 @@ async def oomer(x: int):
     print("Leaf (oomer) Environment Variables:", os.environ, flush=True)
     print("About to allocate a large list... should oom", flush=True)
     await asyncio.sleep(1)
-    # large_list = [0] * 100000000
-    large_list = [0] * 100
+    large_list = [0] * 100000000
     print(len(large_list))
+
+
+@env.task
+async def no_oom(x: int):
+    print("Leaf (non-oom) Environment Variables:", os.environ, flush=True)
+    print(f"Non-ooming task got {x=}", flush=True)
+    await asyncio.sleep(1)
+    print(f"Non-ooming task {x=} finishing", flush=True)
 
 
 @env.task
@@ -67,7 +75,12 @@ async def failure_recovery() -> int:
     print("A0 (failure recovery) Environment Variables:", os.environ, flush=True)
     await asyncio.sleep(240)
     try:
-        await oomer(2)
+        # await oomer(2)
+        tasks = []
+        for i in range(5):
+            tasks.append(no_oom(x=i))
+        results = await asyncio.gather(*tasks)
+        print(f"All tasks completed successfully: {results}", flush=True)
     except flyte.errors.OOMError as e:
         print(f"Failed with oom trying with more resources: {e}, of type {type(e)}, {e.code}")
         try:
