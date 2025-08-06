@@ -158,4 +158,5 @@ def test_image_uri_consistency_for_uvscript():
     img = Image.from_uv_script(
         "./agent_simulation_loadtest.py", name="flyte", registry="ghcr.io/flyteorg", python_version=(3, 12)
     )
-    assert img.identifier == "i9go9FHsgV7_alA-7lWArg"
+    assert img.base_image == "python:3.12-slim-bookworm", "Base image should be python:3.12-slim-bookworm"
+    assert img.identifier == "i9go9FHsgV7_alA-7lWArg", img._layers
