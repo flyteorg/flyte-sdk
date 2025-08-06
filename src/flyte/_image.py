@@ -466,6 +466,7 @@ class Image:
             base_image=f"python:{python_version[0]}.{python_version[1]}-slim-bookworm",
             registry=_BASE_REGISTRY,
             name=_DEFAULT_IMAGE_NAME,
+            python_version=python_version,
             platform=("linux/amd64", "linux/arm64") if platform is None else platform,
         )
         labels_and_user = _DockerLines(
