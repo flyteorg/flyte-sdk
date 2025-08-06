@@ -162,7 +162,8 @@ class PythonWheelHandler:
     async def handle(layer: PythonWheels, context_path: Path, dockerfile: str) -> str:
         shutil.copytree(layer.wheel_dir, context_path / "dist", dirs_exist_ok=True)
         pip_install_args = layer.get_pip_install_args()
-        pip_install_args.extend(["--find-links", "/dist", layer.package_name])
+        # pre in case the wheels are beta wheels.
+        pip_install_args.extend(["--pre", "--find-links", "/dist", layer.package_name])
         secret_mounts = _get_secret_mounts_layer(layer.secret_mounts)
         delta = UV_WHEEL_INSTALL_COMMAND_TEMPLATE.substitute(
             PIP_INSTALL_ARGS=" ".join(pip_install_args), SECRET_MOUNT=secret_mounts

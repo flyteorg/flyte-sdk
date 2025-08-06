@@ -4,22 +4,29 @@ import os
 
 import flyte
 import flyte.errors
+from flyte._image import PythonWheels
+from pathlib import Path
 
 PATH_TO_FASTTASK_WORKER = pathlib.Path("/Users/ytong/go/src/github.com/unionai/flyte/fasttask/worker-v2")
 
-actor_image = (
-    flyte.Image.from_debian_base(install_flyte=False)
-    .with_apt_packages("curl", "build-essential", "ca-certificates", "pkg-config", "libssl-dev")
-    .with_commands(["sh -c 'curl https://sh.rustup.rs -sSf | sh -s -- -y'"])
-    .with_env_vars({"PATH": "/root/.cargo/bin:${PATH}"})
-    .with_source_folder(PATH_TO_FASTTASK_WORKER, "/root/fasttask")
-    .with_pip_packages("uv")
-    .with_workdir("/root/fasttask")
-    .with_commands(["uv sync --reinstall --active"])
-    .with_local_v2()
-)
+# actor_image = (
+#     flyte.Image.from_debian_base(install_flyte=False)
+#     .with_apt_packages("curl", "build-essential", "ca-certificates", "pkg-config", "libssl-dev")
+#     .with_commands(["sh -c 'curl https://sh.rustup.rs -sSf | sh -s -- -y'"])
+#     .with_env_vars({"PATH": "/root/.cargo/bin:${PATH}"})
+#     .with_source_folder(PATH_TO_FASTTASK_WORKER, "/root/fasttask")
+#     .with_pip_packages("uv")
+#     .with_workdir("/root/fasttask")
+#     .with_commands(["uv sync --reinstall --active"])
+#     .with_local_v2()
+# )
+actor_dist_folder = Path("/Users/ytong/go/src/github.com/unionai/flyte/fasttask/worker-v2/dist")
+wheel_layer = PythonWheels(wheel_dir=actor_dist_folder, package_name="unionai-reuse", _compute_identifier=lambda x: "/unionai-reuse")
+base = flyte.Image.from_debian_base()
+actor_image = base.clone(addl_layer=wheel_layer)
+
 # hopefully this makes it not need to be rebuilt every time
-object.__setattr__(actor_image, "_tag", "9043815457d6422e4adb4fb83c5d3c5a")
+# object.__setattr__(actor_image, "_tag", "9043815457d6422e4adb4fb83c5d3c5a")
 # ghcr.io/flyteorg/flyte:9043815457d6422e4adb4fb83c5d3c5a
 
 env = flyte.TaskEnvironment(
@@ -27,8 +34,9 @@ env = flyte.TaskEnvironment(
     resources=flyte.Resources(cpu=1, memory="250Mi"),
     image=actor_image,
     reusable=flyte.ReusePolicy(
-        replicas=2,  # Min of 2 replicas are needed to ensure no-starvation of tasks.
+        replicas=1,
         idle_ttl=60,
+        concurrency=3
     ),
 )
 
@@ -43,7 +51,8 @@ async def oomer(x: int):
     print("Leaf (oomer) Environment Variables:", os.environ, flush=True)
     print("About to allocate a large list... should oom", flush=True)
     await asyncio.sleep(1)
-    large_list = [0] * 100000000
+    # large_list = [0] * 100000000
+    large_list = [0] * 100
     print(len(large_list))
 
 
