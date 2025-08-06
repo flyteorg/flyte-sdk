@@ -134,6 +134,7 @@ class PipPackages(PipOption, Layer):
 @dataclass(kw_only=True, frozen=True, repr=True)
 class PythonWheels(PipOption, Layer):
     wheel_dir: Path
+    package_name: str
 
     def update_hash(self, hasher: hashlib._Hash):
         super().update_hash(hasher)
@@ -899,7 +900,7 @@ class Image:
         dist_folder = Path(__file__).parent.parent.parent / "dist"
         # Manually declare the PythonWheel so we can set the hashing
         # used to compute the identifier. Can remove if we ever decide to expose the lambda in with_ commands
-        with_dist = self.clone(addl_layer=PythonWheels(wheel_dir=dist_folder, _compute_identifier=lambda x: "/dist"))
+        with_dist = self.clone(addl_layer=PythonWheels(wheel_dir=dist_folder, package_name="flyte", _compute_identifier=lambda x: "/dist"))
 
         return with_dist
 
