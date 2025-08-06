@@ -4,7 +4,7 @@ from typing import cast
 
 import pytest
 
-from flyte._image import AptPackages, Image, PipPackages
+from flyte._image import Image, PythonWheels, UVScript
 from flyte._internal.imagebuild.docker_builder import PipAndRequirementsHandler
 
 
@@ -84,12 +84,11 @@ def test_image_from_uv_script():
     img = Image.from_uv_script(script_path, name="uvtest", registry="localhost", python_version=(3, 12))
     assert img.uri.startswith("localhost/uvtest:")
     assert img._layers
-    assert isinstance(img._layers[-2], AptPackages)
-    assert isinstance(img._layers[-1], PipPackages)
-    pip_packages: PipPackages = cast(PipPackages, img._layers[-1])
-    assert sorted(pip_packages.packages) == sorted(["numpy", "httpx", "polars"]), (
-        f"Layer {pip_packages} does not contain expected packages"
-    )
+    print(img._layers)
+    assert isinstance(img._layers[-2], PythonWheels)
+    assert isinstance(img._layers[-1], UVScript)
+    script: UVScript = cast(UVScript, img._layers[-1])
+    assert script.script == script_path
     assert img.uri.startswith("localhost/uvtest:")
 
 

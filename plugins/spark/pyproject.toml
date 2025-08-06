@@ -7,6 +7,7 @@ authors = [{ name = "Kevin Su", email = "pingsutw@users.noreply.github.com" }]
 requires-python = ">=3.10"
 dependencies = [
     "pyspark",
+    "flyte"
 ]
 
 [build-system]

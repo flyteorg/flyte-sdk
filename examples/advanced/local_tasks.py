@@ -3,7 +3,7 @@ from typing import AsyncGenerator, AsyncIterator, Tuple
 
 import flyte
 
-env = flyte.TaskEnvironment(name="traces", image=flyte.Image.from_debian_base())
+env = flyte.TaskEnvironment(name="traces", image=flyte.Image.from_debian_base(), resources=flyte.Resources(cpu=1))
 
 
 @flyte.trace
@@ -53,7 +53,18 @@ async def main(q: str) -> Tuple[str, str, str]:
     return e1, await do_echo(" ----- ".join(vals)), await do_echo(" ----- ".join(vals2))
 
 
+@env.task
+async def parallel_main(q: str) -> list[str]:
+    r = []
+    for i in range(10):
+        r.append(await call_llm(q))
+    r.append(await do_echo(" ----- ".join(r)))
+    # tasks = [call_llm(q) for _ in range(1000)] + [do_echo(q)]
+    # results = await asyncio.gather(*tasks)
+    return r
+
+
 if __name__ == "__main__":
     flyte.init_from_config("../../config.yaml")
-    a = flyte.run(main, "hello world")
+    a = flyte.run(parallel_main, "hello world")
     print(a.url)
