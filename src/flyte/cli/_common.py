@@ -265,7 +265,7 @@ class ObjectsPerFileGroup(GroupBase):
 
         spec = importlib.util.spec_from_file_location(module_name, self.filename)
         if spec is None or spec.loader is None:
-            raise click.ClickException(f"Could not load module {module_name} from {self.filename}")
+            raise click.ClickException(f"Could not load module {module_name} from path [{self.filename}]")
 
         module = importlib.util.module_from_spec(spec)
         sys.modules[module_name] = module
@@ -314,6 +314,10 @@ class FileGroup(GroupBase):
         if self._files is None:
             directory = self._dir or Path(".").absolute()
             self._files = [os.fspath(p) for p in directory.glob("*.py") if p.name != "__init__.py"]
+            if not self._files:
+                self._files = [os.fspath(".")] + [
+                    os.fspath(p.name) for p in directory.iterdir() if not p.name.startswith(("_", ".")) and p.is_dir()
+                ]
         return self._files
 
     def list_commands(self, ctx):

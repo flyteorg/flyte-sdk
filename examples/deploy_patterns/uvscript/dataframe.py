@@ -1,6 +1,7 @@
 # /// script
 # dependencies = [
 #    "polars",
+#    "flyte>=2.0.0b5",
 # ]
 # ///
 
@@ -10,9 +11,7 @@ import flyte
 
 env = flyte.TaskEnvironment(
     name="hello_world",
-    image=flyte.Image.from_uv_script(
-        __file__, name="flyte", registry="ghcr.io/flyteorg", arch=("linux/amd64", "linux/arm64")
-    ),
+    image=flyte.Image.from_uv_script(__file__, name="flyte", registry="ghcr.io/flyteorg"),
 )
 
 
@@ -35,6 +34,6 @@ async def workflow():
 
 
 if __name__ == "__main__":
-    flyte.init_from_config("../../config.yaml")
+    flyte.init_from_config("../../../config.yaml")
     r = flyte.run(workflow)
     print(r)

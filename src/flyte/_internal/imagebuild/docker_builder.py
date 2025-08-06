@@ -25,8 +25,10 @@ from flyte._image import (
     PythonWheels,
     Requirements,
     UVProject,
+    UVScript,
     WorkDir,
     _DockerLines,
+    _ensure_tuple,
 )
 from flyte._internal.imagebuild.image_builder import (
     DockerAPIImageChecker,
@@ -87,7 +89,7 @@ RUN --mount=type=cache,sharing=locked,mode=0777,target=/root/.cache/uv,id=uv \
 # new template
 DOCKER_FILE_UV_BASE_TEMPLATE = Template("""\
 # syntax=docker/dockerfile:1.10
-FROM ghcr.io/astral-sh/uv:0.6.12 as uv
+FROM ghcr.io/astral-sh/uv:0.6.12 AS uv
 FROM $BASE_IMAGE
 
 USER root
@@ -160,7 +162,7 @@ class PythonWheelHandler:
     async def handle(layer: PythonWheels, context_path: Path, dockerfile: str) -> str:
         shutil.copytree(layer.wheel_dir, context_path / "dist", dirs_exist_ok=True)
         pip_install_args = layer.get_pip_install_args()
-        pip_install_args.extend(["/dist/*.whl"])
+        pip_install_args.extend(["--find-links", "/dist", layer.package_name])
         secret_mounts = _get_secret_mounts_layer(layer.secret_mounts)
         delta = UV_WHEEL_INSTALL_COMMAND_TEMPLATE.substitute(
             PIP_INSTALL_ARGS=" ".join(pip_install_args), SECRET_MOUNT=secret_mounts
@@ -324,6 +326,22 @@ async def _process_layer(layer: Layer, context_path: Path, dockerfile: str) -> s
         case PythonWheels():
             # Handle Python wheels
             dockerfile = await PythonWheelHandler.handle(layer, context_path, dockerfile)
+
+        case UVScript():
+            # Handle UV script
+            from flyte._utils import parse_uv_script_file
+
+            header = parse_uv_script_file(layer.script)
+            if header.dependencies:
+                pip = PipPackages(
+                    packages=_ensure_tuple(header.dependencies) if header.dependencies else None,
+                    secret_mounts=layer.secret_mounts,
+                    index_url=layer.index_url,
+                    extra_args=layer.extra_args,
+                    pre=layer.pre,
+                    extra_index_urls=layer.extra_index_urls,
+                )
+                dockerfile = await PipAndRequirementsHandler.handle(pip, context_path, dockerfile)
 
         case Requirements() | PipPackages():
             # Handle pip packages and requirements

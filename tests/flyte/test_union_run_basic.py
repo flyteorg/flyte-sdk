@@ -48,10 +48,13 @@ async def test_task1_remote_union_sync(mock_client_class: MagicMock, mock_code_b
 
     inputs = "say test"
 
-    mock_code_bundler.return_value = CodeBundle(
-        computed_version="v1",
-        tgz="test.tgz",
-    )
+    async def get_code_bundle():
+        return CodeBundle(
+            computed_version="v1",
+            tgz="test.tgz",
+        )
+
+    mock_code_bundler.return_value = get_code_bundle()
 
     await _init_for_testing(
         client=mock_client,

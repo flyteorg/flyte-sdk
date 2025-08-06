@@ -6,13 +6,23 @@ from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Union
 
 import rich.repr
 
-from flyte._secret import SecretRequest
-
 from ._image import Image
 from ._resources import Resources
+from ._secret import SecretRequest
 
 if TYPE_CHECKING:
     from kubernetes.client import V1PodTemplate
+
+# Global registry to track all Environment instances in load order
+_ENVIRONMENT_REGISTRY: List[Environment] = []
+
+
+def list_loaded_environments() -> List[Environment]:
+    """
+    Return a list of all Environment objects in the order they were loaded.
+    This is useful for deploying environments in the order they were defined.
+    """
+    return _ENVIRONMENT_REGISTRY
 
 
 def is_snake_or_kebab_with_numbers(s: str) -> bool:
@@ -44,6 +54,8 @@ class Environment:
     def __post_init__(self):
         if not is_snake_or_kebab_with_numbers(self.name):
             raise ValueError(f"Environment name '{self.name}' must be in snake_case or kebab-case format.")
+        # Automatically register this environment instance in load order
+        _ENVIRONMENT_REGISTRY.append(self)
 
     def add_dependency(self, *env: Environment):
         """

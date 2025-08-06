@@ -23,6 +23,7 @@ from flyte._image import (
     PythonWheels,
     Requirements,
     UVProject,
+    UVScript,
 )
 from flyte._internal.imagebuild.image_builder import ImageBuilder, ImageChecker
 from flyte._logging import logger
@@ -196,10 +197,19 @@ def _get_layers_proto(image: Image, context_path: Path) -> "image_definition_pb2
                 )
             )
             layers.append(requirements_layer)
-        elif isinstance(layer, PipPackages):
+        elif isinstance(layer, PipPackages) or isinstance(layer, UVScript):
+            if isinstance(layer, UVScript):
+                from flyte._utils import parse_uv_script_file
+
+                header = parse_uv_script_file(layer.script)
+                if not header.dependencies:
+                    continue
+                packages: typing.Iterable[str] = header.dependencies
+            else:
+                packages = layer.packages or []
             pip_layer = image_definition_pb2.Layer(
                 pip_packages=image_definition_pb2.PipPackages(
-                    packages=layer.packages,
+                    packages=packages,
                     options=image_definition_pb2.PipOptions(
                         index_url=layer.index_url,
                         extra_index_urls=layer.extra_index_urls,

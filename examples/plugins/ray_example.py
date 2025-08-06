@@ -1,6 +1,5 @@
 import asyncio
 import typing
-from pathlib import Path
 
 import ray
 from flyteplugins.ray.task import HeadNodeConfig, RayJobConfig, WorkerNodeConfig
@@ -26,9 +25,7 @@ ray_config = RayJobConfig(
 image = (
     flyte.Image.from_debian_base()
     .with_apt_packages("wget")
-    .with_pip_packages("ray[default]==2.46.0", "pip")
-    .with_source_folder(Path(__file__).parent.parent.parent / "plugins/ray", "./ray")
-    .with_env_vars({"PYTHONPATH": "./ray/src:${PYTHONPATH}", "hello": "world"})
+    .with_pip_packages("ray[default]==2.46.0", "flyteplugins-ray", "pip")
 )
 
 task_env = flyte.TaskEnvironment(
