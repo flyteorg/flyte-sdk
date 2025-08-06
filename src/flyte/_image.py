@@ -5,10 +5,10 @@ import hashlib
 import sys
 import typing
 from abc import abstractmethod
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, fields
 from functools import cached_property
 from pathlib import Path
-from typing import TYPE_CHECKING, Callable, ClassVar, Dict, List, Literal, Optional, Tuple, TypeVar, Union
+from typing import TYPE_CHECKING, ClassVar, Dict, List, Literal, Optional, Tuple, TypeVar, Union
 
 import rich.repr
 from packaging.version import Version
@@ -49,8 +49,6 @@ class Layer:
      layered images programmatically.
     """
 
-    _compute_identifier: Callable[[Layer], str] = field(default=lambda x: x.__str__(), init=True)
-
     @abstractmethod
     def update_hash(self, hasher: hashlib._Hash):
         """
@@ -65,6 +63,27 @@ class Layer:
         Raise any validation errors for the layer
         :return:
         """
+
+    def identifier(self) -> str:
+        """
+        This method computes a unique identifier for the layer based on its properties.
+        It is used to identify the layer in the image cache.
+
+        It is also used to compute a unique identifier for the image itself, which is a combination of all the layers.
+        This identifier is used to look up previously built images in the image cache. So having a consistent
+        identifier is important for the image cache to work correctly.
+
+        :return: A unique identifier for the layer.
+        """
+        ignore_fields = []
+        for f in fields(self):
+            if f.metadata.get("identifier", True) is False:
+                ignore_fields.append(f.name)
+        d = asdict(self)
+        for f in ignore_fields:
+            d.pop(f, None)
+
+        return str(d)
 
 
 @rich.repr.auto
@@ -133,7 +152,11 @@ class PipPackages(PipOption, Layer):
 @rich.repr.auto
 @dataclass(kw_only=True, frozen=True, repr=True)
 class PythonWheels(PipOption, Layer):
-    wheel_dir: Path
+    wheel_dir: Path = field(metadata={"identifier": False})
+    wheel_dir_name: str = field(init=False)
+
+    def __post_init__(self):
+        object.__setattr__(self, "wheel_dir_name", self.wheel_dir.name)
 
     def update_hash(self, hasher: hashlib._Hash):
         super().update_hash(hasher)
@@ -184,7 +207,11 @@ class UVProject(PipOption, Layer):
 @rich.repr.auto
 @dataclass(frozen=True, repr=True)
 class UVScript(PipOption, Layer):
-    script: Path
+    script: Path = field(metadata={"identifier": False})
+    script_name: str = field(init=False)
+
+    def __post_init__(self):
+        object.__setattr__(self, "script_name", self.script.name)
 
     def validate(self):
         if not self.script.exists():
@@ -196,10 +223,13 @@ class UVScript(PipOption, Layer):
         super().validate()
 
     def update_hash(self, hasher: hashlib._Hash):
-        from ._utils import filehash_update
+        from ._utils import parse_uv_script_file
 
+        header = parse_uv_script_file(self.script)
+        h_tuple = _ensure_tuple(header)
+        if h_tuple:
+            hasher.update(h_tuple.__str__().encode("utf-8"))
         super().update_hash(hasher)
-        filehash_update(self.script, hasher)
 
 
 @rich.repr.auto
@@ -247,9 +277,15 @@ class DockerIgnore(Layer):
 @rich.repr.auto
 @dataclass(frozen=True, repr=True)
 class CopyConfig(Layer):
-    path_type: CopyConfigType
-    src: Path
-    dst: str = "."
+    path_type: CopyConfigType = field(metadata={"identifier": True})
+    src: Path = field(metadata={"identifier": True})
+    dst: str
+    src_name: str = field(init=False)
+
+    def __post_init__(self):
+        if self.path_type not in (0, 1):
+            raise ValueError(f"Invalid path_type {self.path_type}, must be 0 (file) or 1 (directory)")
+        object.__setattr__(self, "src_name", self.src.name)
 
     def validate(self):
         if not self.src.exists():
@@ -393,7 +429,7 @@ class Image:
         # across different SDK versions.
         # Layers can specify a _compute_identifier optionally, but the default will just stringify
         image_dict = asdict(self, dict_factory=lambda x: {k: v for (k, v) in x if v is not None and k != "_layers"})
-        layers_str_repr = "".join([layer._compute_identifier(layer) for layer in self._layers])
+        layers_str_repr = "".join([layer.identifier() for layer in self._layers])
         image_dict["layers"] = layers_str_repr
         spec_bytes = image_dict.__str__().encode("utf-8")
         return base64.urlsafe_b64encode(hashlib.md5(spec_bytes).digest()).decode("ascii").rstrip("=")
@@ -801,7 +837,7 @@ class Image:
         :param dst: destination folder in the image
         :return: Image
         """
-        new_image = self.clone(addl_layer=CopyConfig(path_type=1, src=src, dst=dst, _compute_identifier=lambda x: dst))
+        new_image = self.clone(addl_layer=CopyConfig(path_type=1, src=src, dst=dst))
         return new_image
 
     def with_source_file(self, src: Path, dst: str = ".") -> Image:
@@ -813,7 +849,7 @@ class Image:
         :param dst: destination folder in the image
         :return: Image
         """
-        new_image = self.clone(addl_layer=CopyConfig(path_type=0, src=src, dst=dst, _compute_identifier=lambda x: dst))
+        new_image = self.clone(addl_layer=CopyConfig(path_type=0, src=src, dst=dst))
         return new_image
 
     def with_dockerignore(self, path: Path) -> Image:
@@ -899,7 +935,7 @@ class Image:
         dist_folder = Path(__file__).parent.parent.parent / "dist"
         # Manually declare the PythonWheel so we can set the hashing
         # used to compute the identifier. Can remove if we ever decide to expose the lambda in with_ commands
-        with_dist = self.clone(addl_layer=PythonWheels(wheel_dir=dist_folder, _compute_identifier=lambda x: "/dist"))
+        with_dist = self.clone(addl_layer=PythonWheels(wheel_dir=dist_folder))
 
         return with_dist
 

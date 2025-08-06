@@ -152,3 +152,8 @@ def test_dockerfile():
         platform=("linux/amd64", "linux/arm64"),
     )
     assert img_multi.platform == ("linux/amd64", "linux/arm64")
+
+
+def test_image_uri_consistency_for_uvscript():
+    img = Image.from_uv_script("./agent_simulation_loadtest.py", name="flyte", registry="ghcr.io/flyteorg")
+    assert img.identifier == "8ddvWro_zDpvHCD1ozu3nQ"
