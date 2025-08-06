@@ -75,13 +75,13 @@ class Layer:
 
         :return: A unique identifier for the layer.
         """
-        ignore_fields = []
+        ignore_fields: list[str] = []
         for f in fields(self):
             if f.metadata.get("identifier", True) is False:
                 ignore_fields.append(f.name)
         d = asdict(self)
-        for f in ignore_fields:
-            d.pop(f, None)
+        for v in ignore_fields:
+            d.pop(v)
 
         return str(d)
 
