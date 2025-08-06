@@ -65,7 +65,6 @@ def main():
             path_type=1,
             src=tmp_path,
             dst=".",
-            _compute_identifier=lambda x: "/dist",
         )
     )
 
