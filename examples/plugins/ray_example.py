@@ -1,6 +1,5 @@
 import asyncio
 import typing
-from pathlib import Path
 
 import ray
 from flyteplugins.ray.task import HeadNodeConfig, RayJobConfig, WorkerNodeConfig
