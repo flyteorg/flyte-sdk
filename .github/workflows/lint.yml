@@ -39,6 +39,19 @@ jobs:
       - name: mypy
         run: |
           make mypy
+  cli-docs-gen:
+    name: make cli-docs-gen
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fetch the code
+        uses: actions/checkout@v4
+      - name: Set up Python 3.12
+        uses: ./.github/actions/setup-python-env
+        with:
+          python-version: '3.12'
+      - name: Generate docs
+        run: |
+          make cli-docs-gen
 
 #  # Disabled for now, as it is failing
 #  check-import-profile:
