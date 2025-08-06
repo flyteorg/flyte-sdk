@@ -38,7 +38,7 @@ leaf_env = flyte.TaskEnvironment(
 )
 
 
-@leaf_env.task
+@env.task
 async def oomer(x: int):
     print("Leaf (oomer) Environment Variables:", os.environ, flush=True)
     print("About to allocate a large list... should oom", flush=True)
@@ -47,7 +47,7 @@ async def oomer(x: int):
     print(len(large_list))
 
 
-@leaf_env.task
+@env.task
 async def always_succeeds() -> int:
     await asyncio.sleep(1)
     return 42
@@ -56,6 +56,7 @@ async def always_succeeds() -> int:
 @env.task
 async def failure_recovery() -> int:
     print("A0 (failure recovery) Environment Variables:", os.environ, flush=True)
+    await asyncio.sleep(240)
     try:
         await oomer(2)
     except flyte.errors.OOMError as e:
@@ -66,7 +67,8 @@ async def failure_recovery() -> int:
             print(f"Failed with OOM Again giving up: {e}, of type {type(e)}, {e.code}")
             raise e
     finally:
-        await always_succeeds()
+        # await always_succeeds()
+        print("In finally...")
 
     return await always_succeeds()
 
