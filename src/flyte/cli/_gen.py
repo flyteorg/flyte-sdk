@@ -38,6 +38,10 @@ def walk_commands(ctx: click.Context) -> Generator[Tuple[str, click.Command], No
 
     if not isinstance(command, click.Group):
         yield ctx.command_path, command
+    elif isinstance(command, common.FileGroup):
+        # If the command is a FileGroup, yield its file path and the command itself
+        # No need to recurse further into FileGroup as it doesn't have subcommands, they are dynamically generated
+        yield ctx.command_path, command
     else:
         for name in command.list_commands(ctx):
             subcommand = command.get_command(ctx, name)
