@@ -139,7 +139,7 @@ async def run_task(
     action_id = f"{org}/{project}/{domain}/{run_name}/{name}"
 
     logger.info(
-        f"[rusty] TASK_EXECUTION_START: Running task '{task.name}' (action: {action_id})"
+        f"[rusty] Running task '{task.name}' (action: {action_id})"
         f" at {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(start_time))}"
     )
 
