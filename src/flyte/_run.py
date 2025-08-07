@@ -18,7 +18,6 @@ from flyte._initialize import (
     requires_storage,
 )
 from flyte._logging import logger
-from flyte._protos.common import identifier_pb2
 from flyte._task import P, R, TaskTemplate
 from flyte._tools import ipython_check
 from flyte.errors import InitializationError
@@ -411,6 +410,7 @@ class _Runner:
     async def _run_local(self, obj: TaskTemplate[P, R], *args: P.args, **kwargs: P.kwargs) -> Run:
         from flyte._internal.controllers import create_controller
         from flyte._internal.controllers._local_controller import LocalController
+        from flyte._protos.common import identifier_pb2
         from flyte.remote import Run
         from flyte.report import Report
 
