@@ -154,15 +154,6 @@ async def run_task(
             input_path=input_path,
             image_cache=ImageCache.from_transport(image_cache) if image_cache else None,
         )
-
-        end_time = time.time()
-        duration = end_time - start_time
-        logger.info(
-            f"[rusty] Task '{task.name}' (action: {action_id}) completed successfully"
-            f" in {duration:.2f}s, outputs uploaded to '{output_path}'"
-            f" at {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(end_time))}"
-        )
-
     except Exception as e:
         logger.error(f"[rusty] Task failed: {e!s}")
         raise
