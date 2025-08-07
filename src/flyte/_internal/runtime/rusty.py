@@ -59,22 +59,8 @@ def load_task_from_code_bundle(resolver: str, resolver_args: List[str]) -> TaskT
     :param resolver_args: The arguments to pass to the resolver.
     :return: The loaded task template.
     """
-    start_time = time.time()
-    logger.info(
-        f"[rusty] TASK_START: Loading task from code bundle {resolver} with args:"
-        f" {resolver_args} at {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(start_time))}"
-    )
-
-    task_template = load_task(resolver, *resolver_args)
-
-    end_time = time.time()
-    duration = end_time - start_time
-    logger.info(
-        f"[rusty] TASK_COMPLETE: Loaded task '{task_template.name}' from code bundle in"
-        f" {duration:.2f}s at {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(end_time))}"
-    )
-
-    return task_template
+    logger.debug(f"[rusty] Loading task from code bundle {resolver} with args: {resolver_args}")
+    return load_task(resolver, *resolver_args)
 
 
 async def create_controller(
@@ -108,16 +94,7 @@ async def create_controller(
             controller_kwargs["insecure"] = True
         logger.debug(f"[rusty] Using controller endpoint: {endpoint} with kwargs: {controller_kwargs}")
 
-    controller = _create_controller(ct="remote", **controller_kwargs)
-
-    end_time = time.time()
-    duration = end_time - start_time
-    logger.info(
-        f"[rusty] TASK_COMPLETE: Created controller for endpoint {endpoint}"
-        f" in {duration:.2f}s at {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(end_time))}"
-    )
-
-    return controller
+    return _create_controller(ct="remote", **controller_kwargs)
 
 
 async def run_task(
