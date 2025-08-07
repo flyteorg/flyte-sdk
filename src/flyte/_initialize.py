@@ -180,11 +180,13 @@ async def init(
     from flyte._utils import get_cwd_editable_install, org_from_endpoint, sanitize_endpoint
 
     interactive_mode = ipython_check()
-    
+
     if log_level and log_file_dir:
         initialize_logger(log_level=log_level, enable_rich=interactive_mode, stream_logs=stream_logs,log_file_dir=log_file_dir)
     elif log_level:
         initialize_logger(log_level=log_level, enable_rich=interactive_mode, stream_logs=stream_logs)
+    elif log_file_dir:
+        initialize_logger(enable_rich=interactive_mode, stream_logs=stream_logs,log_file_dir=log_file_dir)
     else:
         initialize_logger(enable_rich=interactive_mode, stream_logs=stream_logs)
 
