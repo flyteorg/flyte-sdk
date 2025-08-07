@@ -203,22 +203,24 @@ class AbortInfo(_message.Message):
     def __init__(self, reason: _Optional[str] = ..., aborted_by: _Optional[_Union[_identity_pb2.EnrichedIdentity, _Mapping]] = ...) -> None: ...
 
 class ActionDetails(_message.Message):
-    __slots__ = ["id", "metadata", "status", "error_info", "abort_info", "resolved_task_spec", "attempts"]
+    __slots__ = ["id", "metadata", "status", "error_info", "abort_info", "task", "trace", "attempts"]
     ID_FIELD_NUMBER: _ClassVar[int]
     METADATA_FIELD_NUMBER: _ClassVar[int]
     STATUS_FIELD_NUMBER: _ClassVar[int]
     ERROR_INFO_FIELD_NUMBER: _ClassVar[int]
     ABORT_INFO_FIELD_NUMBER: _ClassVar[int]
-    RESOLVED_TASK_SPEC_FIELD_NUMBER: _ClassVar[int]
+    TASK_FIELD_NUMBER: _ClassVar[int]
+    TRACE_FIELD_NUMBER: _ClassVar[int]
     ATTEMPTS_FIELD_NUMBER: _ClassVar[int]
     id: _identifier_pb2.ActionIdentifier
     metadata: ActionMetadata
     status: ActionStatus
     error_info: ErrorInfo
     abort_info: AbortInfo
-    resolved_task_spec: _task_definition_pb2.TaskSpec
+    task: _task_definition_pb2.TaskSpec
+    trace: _task_definition_pb2.TraceSpec
     attempts: _containers.RepeatedCompositeFieldContainer[ActionAttempt]
-    def __init__(self, id: _Optional[_Union[_identifier_pb2.ActionIdentifier, _Mapping]] = ..., metadata: _Optional[_Union[ActionMetadata, _Mapping]] = ..., status: _Optional[_Union[ActionStatus, _Mapping]] = ..., error_info: _Optional[_Union[ErrorInfo, _Mapping]] = ..., abort_info: _Optional[_Union[AbortInfo, _Mapping]] = ..., resolved_task_spec: _Optional[_Union[_task_definition_pb2.TaskSpec, _Mapping]] = ..., attempts: _Optional[_Iterable[_Union[ActionAttempt, _Mapping]]] = ...) -> None: ...
+    def __init__(self, id: _Optional[_Union[_identifier_pb2.ActionIdentifier, _Mapping]] = ..., metadata: _Optional[_Union[ActionMetadata, _Mapping]] = ..., status: _Optional[_Union[ActionStatus, _Mapping]] = ..., error_info: _Optional[_Union[ErrorInfo, _Mapping]] = ..., abort_info: _Optional[_Union[AbortInfo, _Mapping]] = ..., task: _Optional[_Union[_task_definition_pb2.TaskSpec, _Mapping]] = ..., trace: _Optional[_Union[_task_definition_pb2.TraceSpec, _Mapping]] = ..., attempts: _Optional[_Iterable[_Union[ActionAttempt, _Mapping]]] = ...) -> None: ...
 
 class ActionAttempt(_message.Message):
     __slots__ = ["phase", "start_time", "end_time", "error_info", "attempt", "log_info", "outputs", "logs_available", "cache_status", "cluster_events", "phase_transitions", "cluster"]
@@ -267,7 +269,7 @@ class PhaseTransition(_message.Message):
     def __init__(self, phase: _Optional[_Union[Phase, str]] = ..., start_time: _Optional[_Union[_timestamp_pb2.Timestamp, _Mapping]] = ..., end_time: _Optional[_Union[_timestamp_pb2.Timestamp, _Mapping]] = ...) -> None: ...
 
 class ActionEvent(_message.Message):
-    __slots__ = ["id", "attempt", "phase", "version", "start_time", "updated_time", "end_time", "error_info", "log_info", "log_context", "cluster", "outputs", "cache_status", "cluster_events"]
+    __slots__ = ["id", "attempt", "phase", "version", "start_time", "updated_time", "end_time", "error_info", "log_info", "log_context", "cluster", "outputs", "cache_status", "cluster_events", "reported_time"]
     ID_FIELD_NUMBER: _ClassVar[int]
     ATTEMPT_FIELD_NUMBER: _ClassVar[int]
     PHASE_FIELD_NUMBER: _ClassVar[int]
@@ -282,6 +284,7 @@ class ActionEvent(_message.Message):
     OUTPUTS_FIELD_NUMBER: _ClassVar[int]
     CACHE_STATUS_FIELD_NUMBER: _ClassVar[int]
     CLUSTER_EVENTS_FIELD_NUMBER: _ClassVar[int]
+    REPORTED_TIME_FIELD_NUMBER: _ClassVar[int]
     id: _identifier_pb2.ActionIdentifier
     attempt: int
     phase: Phase
@@ -296,7 +299,8 @@ class ActionEvent(_message.Message):
     outputs: OutputReferences
     cache_status: _catalog_pb2.CatalogCacheStatus
     cluster_events: _containers.RepeatedCompositeFieldContainer[ClusterEvent]
-    def __init__(self, id: _Optional[_Union[_identifier_pb2.ActionIdentifier, _Mapping]] = ..., attempt: _Optional[int] = ..., phase: _Optional[_Union[Phase, str]] = ..., version: _Optional[int] = ..., start_time: _Optional[_Union[_timestamp_pb2.Timestamp, _Mapping]] = ..., updated_time: _Optional[_Union[_timestamp_pb2.Timestamp, _Mapping]] = ..., end_time: _Optional[_Union[_timestamp_pb2.Timestamp, _Mapping]] = ..., error_info: _Optional[_Union[ErrorInfo, _Mapping]] = ..., log_info: _Optional[_Iterable[_Union[_execution_pb2.TaskLog, _Mapping]]] = ..., log_context: _Optional[_Union[_execution_pb2.LogContext, _Mapping]] = ..., cluster: _Optional[str] = ..., outputs: _Optional[_Union[OutputReferences, _Mapping]] = ..., cache_status: _Optional[_Union[_catalog_pb2.CatalogCacheStatus, str]] = ..., cluster_events: _Optional[_Iterable[_Union[ClusterEvent, _Mapping]]] = ...) -> None: ...
+    reported_time: _timestamp_pb2.Timestamp
+    def __init__(self, id: _Optional[_Union[_identifier_pb2.ActionIdentifier, _Mapping]] = ..., attempt: _Optional[int] = ..., phase: _Optional[_Union[Phase, str]] = ..., version: _Optional[int] = ..., start_time: _Optional[_Union[_timestamp_pb2.Timestamp, _Mapping]] = ..., updated_time: _Optional[_Union[_timestamp_pb2.Timestamp, _Mapping]] = ..., end_time: _Optional[_Union[_timestamp_pb2.Timestamp, _Mapping]] = ..., error_info: _Optional[_Union[ErrorInfo, _Mapping]] = ..., log_info: _Optional[_Iterable[_Union[_execution_pb2.TaskLog, _Mapping]]] = ..., log_context: _Optional[_Union[_execution_pb2.LogContext, _Mapping]] = ..., cluster: _Optional[str] = ..., outputs: _Optional[_Union[OutputReferences, _Mapping]] = ..., cache_status: _Optional[_Union[_catalog_pb2.CatalogCacheStatus, str]] = ..., cluster_events: _Optional[_Iterable[_Union[ClusterEvent, _Mapping]]] = ..., reported_time: _Optional[_Union[_timestamp_pb2.Timestamp, _Mapping]] = ...) -> None: ...
 
 class NamedLiteral(_message.Message):
     __slots__ = ["name", "value"]
