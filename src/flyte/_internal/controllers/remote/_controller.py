@@ -254,6 +254,9 @@ class RemoteController(Controller):
             raise
 
         if n.has_error() or n.phase == run_definition_pb2.PHASE_FAILED:
+            print(f"New_log_line {n.action_id.name} n is {n=}, original {action=}")
+            print(f"New_log_line n {n.client_err=} {n.err=}")
+            print(f"New_log_line action {action.client_err=} {action.err=}")
             exc = await handle_action_failure(action, _task.name)
             raise exc
 
