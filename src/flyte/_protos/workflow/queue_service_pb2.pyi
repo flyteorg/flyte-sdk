@@ -47,14 +47,16 @@ class EnqueueActionRequest(_message.Message):
     def __init__(self, action_id: _Optional[_Union[_identifier_pb2.ActionIdentifier, _Mapping]] = ..., parent_action_name: _Optional[str] = ..., run_spec: _Optional[_Union[_run_definition_pb2.RunSpec, _Mapping]] = ..., input_uri: _Optional[str] = ..., run_output_base: _Optional[str] = ..., group: _Optional[str] = ..., subject: _Optional[str] = ..., task: _Optional[_Union[TaskAction, _Mapping]] = ..., trace: _Optional[_Union[TraceAction, _Mapping]] = ..., condition: _Optional[_Union[ConditionAction, _Mapping]] = ...) -> None: ...
 
 class TaskAction(_message.Message):
-    __slots__ = ["id", "spec", "cache_key"]
+    __slots__ = ["id", "spec", "cache_key", "cluster"]
     ID_FIELD_NUMBER: _ClassVar[int]
     SPEC_FIELD_NUMBER: _ClassVar[int]
     CACHE_KEY_FIELD_NUMBER: _ClassVar[int]
+    CLUSTER_FIELD_NUMBER: _ClassVar[int]
     id: _task_definition_pb2.TaskIdentifier
     spec: _task_definition_pb2.TaskSpec
     cache_key: _wrappers_pb2.StringValue
-    def __init__(self, id: _Optional[_Union[_task_definition_pb2.TaskIdentifier, _Mapping]] = ..., spec: _Optional[_Union[_task_definition_pb2.TaskSpec, _Mapping]] = ..., cache_key: _Optional[_Union[_wrappers_pb2.StringValue, _Mapping]] = ...) -> None: ...
+    cluster: str
+    def __init__(self, id: _Optional[_Union[_task_definition_pb2.TaskIdentifier, _Mapping]] = ..., spec: _Optional[_Union[_task_definition_pb2.TaskSpec, _Mapping]] = ..., cache_key: _Optional[_Union[_wrappers_pb2.StringValue, _Mapping]] = ..., cluster: _Optional[str] = ...) -> None: ...
 
 class TraceAction(_message.Message):
     __slots__ = ["name", "phase", "start_time", "end_time", "outputs", "spec"]

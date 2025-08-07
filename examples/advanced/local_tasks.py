@@ -3,7 +3,11 @@ from typing import AsyncGenerator, AsyncIterator, Tuple
 
 import flyte
 
-env = flyte.TaskEnvironment(name="traces", image=flyte.Image.from_debian_base(), resources=flyte.Resources(cpu=1))
+env = flyte.TaskEnvironment(
+    name="traces",
+    image=flyte.Image.from_debian_base(),
+    resources=flyte.Resources(cpu=1),
+)
 
 
 @flyte.trace
@@ -64,7 +68,20 @@ async def parallel_main(q: str) -> list[str]:
     return r
 
 
+@flyte.trace
+async def call_llm_noio():
+    await asyncio.sleep(1)
+    print("Calling LLM without IO", flush=True)
+
+
+@env.task
+async def parallel_main_no_io(q: str):
+    for i in range(60):
+        print(f"Iteration {i}", flush=True)
+        await call_llm_noio()
+
+
 if __name__ == "__main__":
     flyte.init_from_config("../../config.yaml")
-    a = flyte.run(parallel_main, "hello world")
+    a = flyte.run(parallel_main_no_io, "hello world")
     print(a.url)
