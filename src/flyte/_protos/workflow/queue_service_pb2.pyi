@@ -69,8 +69,8 @@ class TraceAction(_message.Message):
     start_time: _timestamp_pb2.Timestamp
     end_time: _timestamp_pb2.Timestamp
     outputs: _run_definition_pb2.OutputReferences
-    spec: _task_definition_pb2.TaskSpec
-    def __init__(self, name: _Optional[str] = ..., phase: _Optional[_Union[_run_definition_pb2.Phase, str]] = ..., start_time: _Optional[_Union[_timestamp_pb2.Timestamp, _Mapping]] = ..., end_time: _Optional[_Union[_timestamp_pb2.Timestamp, _Mapping]] = ..., outputs: _Optional[_Union[_run_definition_pb2.OutputReferences, _Mapping]] = ..., spec: _Optional[_Union[_task_definition_pb2.TaskSpec, _Mapping]] = ...) -> None: ...
+    spec: _task_definition_pb2.TraceSpec
+    def __init__(self, name: _Optional[str] = ..., phase: _Optional[_Union[_run_definition_pb2.Phase, str]] = ..., start_time: _Optional[_Union[_timestamp_pb2.Timestamp, _Mapping]] = ..., end_time: _Optional[_Union[_timestamp_pb2.Timestamp, _Mapping]] = ..., outputs: _Optional[_Union[_run_definition_pb2.OutputReferences, _Mapping]] = ..., spec: _Optional[_Union[_task_definition_pb2.TraceSpec, _Mapping]] = ...) -> None: ...
 
 class ConditionAction(_message.Message):
     __slots__ = ["name", "run_id", "action_id", "type", "prompt", "description"]
