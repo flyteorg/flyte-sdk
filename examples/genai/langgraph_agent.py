@@ -17,7 +17,7 @@ import json
 agent_env = flyte.TaskEnvironment(
     name="agent", 
     secrets=[
-        flyte.Secret(key="VOTTA_ANTHROPIC_API_KEY", as_env_var="ANTHROPIC_API_KEY"),
+        flyte.Secret(key="ANTHROPIC_API_KEY", as_env_var="ANTHROPIC_API_KEY"),
     ],
     image=flyte.Image.from_uv_script(script=__file__, name="langgraph-agent", pre=True),
     resources=flyte.Resources(cpu=1),
@@ -53,8 +53,6 @@ def main(in_str: str) -> list[BaseMessage]:
 
 
 if __name__ == "__main__":
-    # flyte.init()
-    # flyte.run(main, in_str="what is the weather in sf")
 
     flyte.init_from_config("../../config.yaml")
     r = flyte.run(main, in_str="what is the weather in sf")
