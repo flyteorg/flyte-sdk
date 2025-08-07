@@ -21,11 +21,7 @@ async def download_tgz(destination: str, version: str, tgz: str) -> CodeBundle:
     :param version: The version of the task to load.
     :return: The CodeBundle object.
     """
-    start_time = time.time()
-    logger.info(
-        f"[rusty] TASK_START: Downloading tgz code bundle from {tgz} to {destination}"
-        f" with version {version} at {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(start_time))}"
-    )
+    logger.info(f"[rusty] Downloading tgz code bundle from {tgz} to {destination} with version {version}")
     sys.path.insert(0, ".")
 
     code_bundle = CodeBundle(
@@ -33,16 +29,7 @@ async def download_tgz(destination: str, version: str, tgz: str) -> CodeBundle:
         destination=destination,
         computed_version=version,
     )
-    result = await download_code_bundle(code_bundle)
-
-    end_time = time.time()
-    duration = end_time - start_time
-    logger.info(
-        f"[rusty] TASK_COMPLETE: Downloaded tgz code bundle to {destination} in {duration:.2f}s"
-        f" at {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(end_time))}"
-    )
-
-    return result
+    return await download_code_bundle(code_bundle)
 
 
 async def download_load_pkl(destination: str, version: str, pkl: str) -> Tuple[CodeBundle, TaskTemplate]:
@@ -53,11 +40,7 @@ async def download_load_pkl(destination: str, version: str, pkl: str) -> Tuple[C
     :param version: The version of the task to load.
     :return: The CodeBundle object.
     """
-    start_time = time.time()
-    logger.info(
-        f"[rusty] TASK_START: Downloading pkl code bundle from {pkl} to {destination}"
-        f" with version {version} at {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(start_time))}"
-    )
+    logger.info(f"[rusty] Downloading pkl code bundle from {pkl} to {destination} with version {version}")
     sys.path.insert(0, ".")
 
     code_bundle = CodeBundle(
@@ -66,16 +49,7 @@ async def download_load_pkl(destination: str, version: str, pkl: str) -> Tuple[C
         computed_version=version,
     )
     code_bundle = await download_code_bundle(code_bundle)
-    task_template = load_pkl_task(code_bundle)
-
-    end_time = time.time()
-    duration = end_time - start_time
-    logger.info(
-        f"[rusty] TASK_COMPLETE: Downloaded and loaded pkl code bundle to {destination}"
-        f" in {duration:.2f}s at {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(end_time))}"
-    )
-
-    return code_bundle, task_template
+    return code_bundle, load_pkl_task(code_bundle)
 
 
 def load_task_from_code_bundle(resolver: str, resolver_args: List[str]) -> TaskTemplate:
