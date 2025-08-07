@@ -1,4 +1,5 @@
 import sys
+import time
 from typing import Any, List, Tuple
 
 from flyte._context import contextual_run
@@ -77,17 +78,17 @@ async def create_controller(
     logger.info(f"[rusty] Creating controller with endpoint {endpoint}")
     from flyte._initialize import init
 
-    # TODO Currently refrence tasks are not supported in Rusty.
+    # TODO Currently reference tasks are not supported in Rusty.
     await init.aio()
     controller_kwargs: dict[str, Any] = {"insecure": insecure}
     if api_key:
-        logger.info("Using api key from environment")
+        logger.info("[rusty] Using api key from environment")
         controller_kwargs["api_key"] = api_key
     else:
         controller_kwargs["endpoint"] = endpoint
         if "localhost" in endpoint or "docker" in endpoint:
             controller_kwargs["insecure"] = True
-        logger.debug(f"Using controller endpoint: {endpoint} with kwargs: {controller_kwargs}")
+        logger.debug(f"[rusty] Using controller endpoint: {endpoint} with kwargs: {controller_kwargs}")
 
     return _create_controller(ct="remote", **controller_kwargs)
 
@@ -130,22 +131,39 @@ async def run_task(
     :param input_path: Optional input path for the task.
     :return: The loaded task template.
     """
-    logger.info(f"[rusty] Running task {task.name}")
-    await contextual_run(
-        extract_download_run_upload,
-        task,
-        action=ActionID(name=name, org=org, project=project, domain=domain, run_name=run_name),
-        version=version,
-        controller=controller,
-        raw_data_path=RawDataPath(path=raw_data_path),
-        output_path=output_path,
-        run_base_dir=run_base_dir,
-        checkpoints=Checkpoints(prev_checkpoint_path=prev_checkpoint, checkpoint_path=checkpoint_path),
-        code_bundle=code_bundle,
-        input_path=input_path,
-        image_cache=ImageCache.from_transport(image_cache) if image_cache else None,
+    start_time = time.time()
+    action_id = f"{org}/{project}/{domain}/{run_name}/{name}"
+
+    logger.info(
+        f"[rusty] Running task '{task.name}' (action: {action_id})"
+        f" at {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(start_time))}"
     )
-    logger.info(f"[rusty] Finished task {task.name}")
+
+    try:
+        await contextual_run(
+            extract_download_run_upload,
+            task,
+            action=ActionID(name=name, org=org, project=project, domain=domain, run_name=run_name),
+            version=version,
+            controller=controller,
+            raw_data_path=RawDataPath(path=raw_data_path),
+            output_path=output_path,
+            run_base_dir=run_base_dir,
+            checkpoints=Checkpoints(prev_checkpoint_path=prev_checkpoint, checkpoint_path=checkpoint_path),
+            code_bundle=code_bundle,
+            input_path=input_path,
+            image_cache=ImageCache.from_transport(image_cache) if image_cache else None,
+        )
+    except Exception as e:
+        logger.error(f"[rusty] Task failed: {e!s}")
+        raise
+    finally:
+        end_time = time.time()
+        duration = end_time - start_time
+        logger.info(
+            f"[rusty] TASK_EXECUTION_END: Task '{task.name}' (action: {action_id})"
+            f" done after {duration:.2f}s at {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(end_time))}"
+        )
 
 
 async def ping(name: str) -> str:

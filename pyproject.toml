@@ -89,6 +89,7 @@ line-length = 120
 extend-exclude = [
     "src/flyte/_protos",
     "src/flyte/remote/client/_protocols.py",
+    "examples/reports",
 ]
 
 [tool.ruff.lint]
