@@ -168,7 +168,7 @@ async def run_task(
         )
 
     except Exception as e:
-        logger.error(f"[rusty] TASK_ERROR: {e!s}")
+        logger.error(f"[rusty] Task failed: {e!s}")
         raise
     finally:
         end_time = time.time()
