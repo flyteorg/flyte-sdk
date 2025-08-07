@@ -75,14 +75,10 @@ async def create_controller(
     :param api_key:
     :return:
     """
-    start_time = time.time()
-    logger.info(
-        f"[rusty] TASK_START: Creating controller with endpoint {endpoint}"
-        f" at {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(start_time))}"
-    )
+    logger.info(f"[rusty] Creating controller with endpoint {endpoint}")
     from flyte._initialize import init
 
-    # TODO Currently refrence tasks are not supported in Rusty.
+    # TODO Currently reference tasks are not supported in Rusty.
     await init.aio()
     controller_kwargs: dict[str, Any] = {"insecure": insecure}
     if api_key:
