@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Callable, List, Literal, Optional, TypeVar
 from flyte.errors import InitializationError
 from flyte.syncify import syncify
 
-from ._logging import initialize_logger, logger, get_env_log_level, get_logger_default_loc
+from ._logging import initialize_logger, logger
 from ._tools import ipython_check
 
 if TYPE_CHECKING:
@@ -180,10 +180,14 @@ async def init(
     from flyte._utils import get_cwd_editable_install, org_from_endpoint, sanitize_endpoint
 
     interactive_mode = ipython_check()
-    log_level = log_level if log_level else get_env_log_level()
-    log_file_dir =log_file_dir if log_file_dir else get_logger_default_loc()
-    initialize_logger(log_level=log_level, enable_rich=interactive_mode, stream_logs=stream_logs,log_file_dir=log_file_dir)
-        
+    
+    if log_level and log_file_dir:
+        initialize_logger(log_level=log_level, enable_rich=interactive_mode, stream_logs=stream_logs,log_file_dir=log_file_dir)
+    elif log_level:
+        initialize_logger(log_level=log_level, enable_rich=interactive_mode, stream_logs=stream_logs)
+    else:
+        initialize_logger(enable_rich=interactive_mode, stream_logs=stream_logs)
+
     global _init_config  # noqa: PLW0603
 
     endpoint = sanitize_endpoint(endpoint)
