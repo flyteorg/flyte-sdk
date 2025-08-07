@@ -69,19 +69,33 @@ async def parallel_main(q: str) -> list[str]:
 
 
 @flyte.trace
-async def call_llm_noio():
+async def input_trace(a: str):
     await asyncio.sleep(1)
     print("Calling LLM without IO", flush=True)
 
 
+@flyte.trace
+async def output_trace() -> str:
+    await asyncio.sleep(1)
+    print("Calling LLM without IO", flush=True)
+    return "LLM response"
+
+
 @env.task
-async def parallel_main_no_io(q: str):
-    for i in range(60):
-        print(f"Iteration {i}", flush=True)
-        await call_llm_noio()
+def noio_task():
+    print("Running noio_task", flush=True)
+
+
+@env.task
+async def parallel_main_no_io(q: str) -> str:
+    print("Starting parallel_main_no_io", flush=True) 
+    noio_task()
+    await input_trace("hello world")
+    a = await output_trace()
+    return a
 
 
 if __name__ == "__main__":
-    flyte.init_from_config("../../config.yaml")
+    flyte.init_from_config("../../config.yaml", log_level="DEBUG")
     a = flyte.run(parallel_main_no_io, "hello world")
     print(a.url)
