@@ -1,11 +1,11 @@
 import asyncio
-import pathlib
 import os
+import pathlib
+from pathlib import Path
 
 import flyte
 import flyte.errors
 from flyte._image import PythonWheels
-from pathlib import Path
 
 PATH_TO_FASTTASK_WORKER = pathlib.Path("/Users/ytong/go/src/github.com/unionai/flyte/fasttask/worker-v2")
 
@@ -20,6 +20,7 @@ PATH_TO_FASTTASK_WORKER = pathlib.Path("/Users/ytong/go/src/github.com/unionai/f
 #     .with_commands(["uv sync --reinstall --active"])
 #     .with_local_v2()
 # )
+
 actor_dist_folder = Path("/Users/ytong/go/src/github.com/unionai/flyte/fasttask/worker-v2/dist")
 wheel_layer = PythonWheels(wheel_dir=actor_dist_folder, package_name="unionai-reuse")
 base = flyte.Image.from_debian_base()
@@ -28,10 +29,6 @@ actor_image = base.clone(addl_layer=wheel_layer)
 # hopefully this makes it not need to be rebuilt every time
 # object.__setattr__(actor_image, "_tag", "9043815457d6422e4adb4fb83c5d3c5a")
 # ghcr.io/flyteorg/flyte:9043815457d6422e4adb4fb83c5d3c5a
-"""
-  uv pip install --pre --find-links ./dist --no-deps unionai-reuse
-  uv pip install --pre unionai-reuse  # This will install dependencies from PyPI
-"""
 
 env = flyte.TaskEnvironment(
     name="oomer_parent_actor",

@@ -165,14 +165,25 @@ class PythonWheelHandler:
         secret_mounts = _get_secret_mounts_layer(layer.secret_mounts)
 
         # First install: Install the wheel without dependencies using --no-deps
-        pip_install_args_no_deps = pip_install_args + ["--pre", "--find-links", "/dist", "--no-deps", layer.package_name]
+        pip_install_args_no_deps = [
+            *pip_install_args,
+            *[
+                "--pre",
+                "--find-links",
+                "/dist",
+                "--no-deps",
+                "--no-index",
+                layer.package_name,
+            ],
+        ]
+
         delta1 = UV_WHEEL_INSTALL_COMMAND_TEMPLATE.substitute(
             PIP_INSTALL_ARGS=" ".join(pip_install_args_no_deps), SECRET_MOUNT=secret_mounts
         )
         dockerfile += delta1
 
         # Second install: Install dependencies from PyPI
-        pip_install_args_deps = pip_install_args + ["--pre", layer.package_name]
+        pip_install_args_deps = [*pip_install_args, *["--pre", layer.package_name]]
         delta2 = UV_WHEEL_INSTALL_COMMAND_TEMPLATE.substitute(
             PIP_INSTALL_ARGS=" ".join(pip_install_args_deps), SECRET_MOUNT=secret_mounts
         )
