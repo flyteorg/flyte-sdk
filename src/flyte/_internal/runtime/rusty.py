@@ -191,10 +191,6 @@ async def run_task(
         f"[rusty] TASK_EXECUTION_START: Running task '{task.name}' (action: {action_id})"
         f" at {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(start_time))}"
     )
-    logger.info(f"[rusty] TASK_CONFIG: version={version}, input_path={input_path}, output_path={output_path}")
-    logger.info(f"[rusty] TASK_CONFIG: raw_data_path={raw_data_path}, run_base_dir={run_base_dir}")
-    logger.info(f"[rusty] TASK_CONFIG: checkpoint_path={checkpoint_path}, prev_checkpoint={prev_checkpoint}")
-    logger.info(f"[rusty] TASK_CONFIG: image_cache={image_cache}")
 
     try:
         await contextual_run(
@@ -216,9 +212,9 @@ async def run_task(
         duration = end_time - start_time
         logger.info(
             f"[rusty] TASK_EXECUTION_SUCCESS: Task '{task.name}' (action: {action_id}) completed successfully"
-            f" in {duration:.2f}s at {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(end_time))}"
+            f" in {duration:.2f}s, outputs uploaded to '{output_path}'"
+            f" at {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(end_time))}"
         )
-        logger.info(f"[rusty] TASK_OUTPUTS_UPLOADED: Task outputs uploaded to '{output_path}' for task '{task.name}'")
 
     except Exception as e:
         end_time = time.time()
