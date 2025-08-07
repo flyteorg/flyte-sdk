@@ -168,14 +168,15 @@ async def run_task(
         )
 
     except Exception as e:
-        end_time = time.time()
-        duration = end_time - start_time
-        logger.error(
-            f"[rusty] TASK_EXECUTION_FAILED: Task '{task.name}' (action: {action_id})"
-            f" failed after {duration:.2f}s at {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(end_time))}"
-        )
         logger.error(f"[rusty] TASK_ERROR: {e!s}")
         raise
+    finally:
+        end_time = time.time()
+        duration = end_time - start_time
+        logger.info(
+            f"[rusty] TASK_EXECUTION_END: Task '{task.name}' (action: {action_id})"
+            f" done after {duration:.2f}s at {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(end_time))}"
+        )
 
 
 async def ping(name: str) -> str:
