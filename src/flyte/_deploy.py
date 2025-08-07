@@ -5,7 +5,6 @@ import typing
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
 
-import grpc.aio
 import rich.repr
 
 import flyte.errors
@@ -86,6 +85,8 @@ async def _deploy_task(
     Deploy the given task.
     """
     ensure_client()
+    import grpc.aio
+
     from ._internal.runtime.convert import convert_upload_default_inputs
     from ._internal.runtime.task_serde import translate_task_to_wire
     from ._protos.workflow import task_definition_pb2, task_service_pb2
