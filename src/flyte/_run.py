@@ -95,6 +95,8 @@ class _Runner:
         annotations: Dict[str, str] | None = None,
         interruptible: bool = False,
         log_level: int | None = None,
+        stream_logs:bool = True,
+        log_file_dir: str | None = None,
         disable_run_cache: bool = False,
     ):
         init_config = _get_init_config()
@@ -122,6 +124,8 @@ class _Runner:
         self._annotations = annotations
         self._interruptible = interruptible
         self._log_level = log_level
+        self._stream_logs= stream_logs
+        self._log_file_dir=log_file_dir
         self._disable_run_cache = disable_run_cache
 
     @requires_initialization
@@ -547,6 +551,8 @@ def with_runcontext(
     annotations: Dict[str, str] | None = None,
     interruptible: bool = False,
     log_level: int | None = None,
+    stream_logs:bool = True,
+    log_file_dir: str | None = None,
     disable_run_cache: bool = False,
 ) -> _Runner:
     """
@@ -588,6 +594,8 @@ def with_runcontext(
     :param interruptible: Optional If true, the run can be interrupted by the user.
     :param log_level: Optional Log level to set for the run. If not provided, it will be set to the default log level
         set using `flyte.init()`
+    :param stream_logs: Optional streams log to terminal/console, default is set to True. If set false creates a log file in the directory of choice.
+    :param log_file_dir: Optional creates a log file in a specified location (:param stream_logs has to be set as False). If None is passed creates it in the current working directory.
     :param disable_run_cache: Optional If true, the run cache will be disabled. This is useful for testing purposes.
 
     :return: runner
@@ -613,6 +621,8 @@ def with_runcontext(
         project=project,
         domain=domain,
         log_level=log_level,
+        stream_logs=stream_logs,
+        log_file_dir=log_file_dir,
         disable_run_cache=disable_run_cache,
     )
 
