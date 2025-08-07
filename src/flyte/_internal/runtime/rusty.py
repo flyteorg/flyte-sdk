@@ -162,7 +162,7 @@ async def run_task(
         end_time = time.time()
         duration = end_time - start_time
         logger.info(
-            f"[rusty] TASK_EXECUTION_SUCCESS: Task '{task.name}' (action: {action_id}) completed successfully"
+            f"[rusty] Task '{task.name}' (action: {action_id}) completed successfully"
             f" in {duration:.2f}s, outputs uploaded to '{output_path}'"
             f" at {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(end_time))}"
         )
