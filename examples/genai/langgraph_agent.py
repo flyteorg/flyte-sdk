@@ -1,7 +1,7 @@
 # /// script
 # requires-python = "==3.13"
 # dependencies = [
-#     "langgraph==0.6.3",
+#     "langgraph==0.6.4",
 #     "langchain==0.3.27",
 #     "langchain-anthropic==0.3.18",
 #     "flyte==0.1.0",
