@@ -9,18 +9,6 @@ from flyte._image import PythonWheels
 
 PATH_TO_FASTTASK_WORKER = pathlib.Path("/Users/ytong/go/src/github.com/unionai/flyte/fasttask/worker-v2")
 
-# actor_image = (
-#     flyte.Image.from_debian_base(install_flyte=False)
-#     .with_apt_packages("curl", "build-essential", "ca-certificates", "pkg-config", "libssl-dev")
-#     .with_commands(["sh -c 'curl https://sh.rustup.rs -sSf | sh -s -- -y'"])
-#     .with_env_vars({"PATH": "/root/.cargo/bin:${PATH}"})
-#     .with_source_folder(PATH_TO_FASTTASK_WORKER, "/root/fasttask")
-#     .with_pip_packages("uv")
-#     .with_workdir("/root/fasttask")
-#     .with_commands(["uv sync --reinstall --active"])
-#     .with_local_v2()
-# )
-
 actor_dist_folder = Path("/Users/ytong/go/src/github.com/unionai/flyte/fasttask/worker-v2/dist")
 wheel_layer = PythonWheels(wheel_dir=actor_dist_folder, package_name="unionai-reuse")
 base = flyte.Image.from_debian_base()
@@ -38,7 +26,7 @@ env = flyte.TaskEnvironment(
     reusable=flyte.ReusePolicy(
         replicas=1,
         idle_ttl=60,
-        concurrency=6,
+        concurrency=8,
     ),
 )
 
@@ -74,12 +62,19 @@ async def always_succeeds() -> int:
 @env.task
 async def failure_recovery() -> int:
     print("A0 (failure recovery) Environment Variables:", os.environ, flush=True)
-    await asyncio.sleep(240)
     try:
         # await oomer(2)
         tasks = []
-        for i in range(5):
+        for i in range(4):
             tasks.append(no_oom(x=i))
+        import time
+
+        start_time = time.time()
+        print(
+            f"About to gather {len(tasks)} tasks at time index"
+            f" {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(start_time))}",
+            flush=True,
+        )
         results = await asyncio.gather(*tasks)
         print(f"All tasks completed successfully: {results}", flush=True)
     except flyte.errors.OOMError as e:
@@ -91,9 +86,11 @@ async def failure_recovery() -> int:
             raise e
     finally:
         # await always_succeeds()
-        print("In finally...")
+        print("In finally...", flush=True)
 
-    return await always_succeeds()
+    res = await always_succeeds()
+    print("A0 finished!!!!!!!!!!!!!", flush=True)
+    return res
 
 
 if __name__ == "__main__":
