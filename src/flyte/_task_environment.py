@@ -62,7 +62,7 @@ class TaskEnvironment(Environment):
     :param reusable: Reuse policy for the environment, if set, a python process may be reused for multiple tasks.
     """
 
-    cache: Union[CacheRequest] = "disable"
+    cache: CacheRequest = "disable"
     reusable: ReusePolicy | None = None
     plugin_config: Optional[Any] = None
     # TODO Shall we make this union of string or env? This way we can lookup the env by module/file:name
@@ -134,7 +134,7 @@ class TaskEnvironment(Environment):
         _func=None,
         *,
         name: Optional[str] = None,
-        cache: Union[CacheRequest] | None = None,
+        cache: CacheRequest | None = None,
         retries: Union[int, RetryStrategy] = 0,
         timeout: Union[timedelta, int] = 0,
         docs: Optional[Documentation] = None,
