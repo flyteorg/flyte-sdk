@@ -4,7 +4,7 @@
 #     "langgraph==0.6.3",
 #     "langchain==0.3.27",
 #     "langchain-anthropic==0.3.18",
-#     "flyte==2.0.0b4",
+#     "flyte==0.1.0",
 # ]
 # ///
 
