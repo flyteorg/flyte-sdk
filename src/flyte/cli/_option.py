@@ -1,10 +1,12 @@
-from click import Argument, Option, UsageError
+from click import Option, UsageError
 
 
 class MutuallyExclusiveMixin:
     def __init__(self, *args, **kwargs):
         self.mutually_exclusive = set(kwargs.pop("mutually_exclusive", []))
-        self.error_format = kwargs.pop("error_msg", "Illegal usage: options '{name}' and '{invalid}' are mutually exclusive")
+        self.error_format = kwargs.pop(
+            "error_msg", "Illegal usage: options '{name}' and '{invalid}' are mutually exclusive"
+        )
         super().__init__(*args, **kwargs)
 
     def handle_parse_result(self, ctx, opts, args):
