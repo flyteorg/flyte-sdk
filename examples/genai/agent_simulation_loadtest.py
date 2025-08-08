@@ -138,18 +138,23 @@ async def benchmark():
             num_tool_repeats=1,
         )
         print(run.url)
+        return run
+
+    async def _wait(run: flyte.remote.Run):
         await run.action.wait()
-        return
 
     num_runs = 3
     runs = []
-    for _ in range(num_runs):
-        runs.append(_run())
+    print("Starting runs")
+    for i in range(num_runs):
+        run = await _run()
+        runs.append(run)
         # wait for 2 seconds to avoid rate limiting
         await asyncio.sleep(2.0)
 
     start = time.time()
-    runs = await asyncio.gather(*runs)
+    runs = await asyncio.gather(*[_wait(run) for run in runs])
+    print("Runs completed")
     end = time.time()
     print(f"Total runs: {len(runs)}")
     print(f"Total time: {end - start} seconds")
