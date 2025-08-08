@@ -64,6 +64,10 @@ class _BackgroundLoop:
         atexit.register(self.stop)
 
     def _run(self):
+        import flyte.errors
+
+        # Set the exception handler to silence specific gRPC polling errors
+        self.loop.set_exception_handler(flyte.errors.silence_grpc_polling_error)
         asyncio.set_event_loop(self.loop)
         self.loop.run_forever()
 
