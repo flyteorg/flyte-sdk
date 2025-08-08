@@ -23,6 +23,16 @@ from ._informer import InformerCache
 from ._service_protocol import ClientSet, QueueService, StateService
 
 
+def silence_grpc_polling_error(loop, context):
+    """
+    Suppress specific gRPC polling errors in the event loop.
+    """
+    exc = context.get("exception")
+    if isinstance(exc, BlockingIOError) and "PollerCompletionQueue" in str(context.get("message", "")):
+        return  # suppress
+    loop.default_exception_handler(context)
+
+
 class Controller:
     """
     Generic controller with high-level submit API running in a dedicated thread with its own event loop.
@@ -212,6 +222,7 @@ class Controller:
             # Create a new event loop for this thread
             self._loop = asyncio.new_event_loop()
             asyncio.set_event_loop(self._loop)
+            self._loop.set_exception_handler(silence_grpc_polling_error)
             logger.debug(f"Controller thread started with new event loop: {threading.current_thread().name}")
 
             # Create an event to signal the errors were observed in the thread's loop
