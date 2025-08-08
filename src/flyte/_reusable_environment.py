@@ -17,25 +17,22 @@ class ReusePolicy:
 
     :param replicas: Either a single int representing number of replicas or a tuple of two ints representing
      the min and max.
-    :param idle_ttl: The maximum idle duration for an environment replica, specified as either seconds (int) or a
-        timedelta. If not set, the environment's global default will be used.
+    :param idle_ttl: The maximum idle duration for an environment, specified as either seconds (int) or a
+        timedelta, after which all replicas in the environment are shutdown.
+        If not set, the default is configured in the backend (can be as low as 90s).
         When a replica remains idle — meaning no tasks are running — for this duration, it will be automatically
-        terminated.
+        terminated, also referred to as environment idle timeout.
     :param concurrency: The maximum number of tasks that can run concurrently in one instance of the environment.
-          Concurrency of greater than 1 is only supported only for `async` tasks.
-    :param reuse_salt: Optional string used to control environment reuse.
-        If set, the environment will be reused even if the code bundle changes.
-        To force a new environment, either set this to `None` or change its value.
-
-        Example:
-            reuse_salt = "v1"  # Environment is reused
-            reuse_salt = "v2"  # Forces environment recreation
+          Concurrency of greater than 1 is only supported for `async` tasks.
+    :param scaledown_ttl: The minimum time to wait before scaling down each replica, specified as either seconds (int)
+        or a timedelta. This is useful to prevent rapid scaling down of replicas when tasks are running
+        frequently. If not set, the default is configured in the backend.
     """
 
     replicas: Union[int, Tuple[int, int]] = 2
     idle_ttl: Optional[Union[int, timedelta]] = None
-    reuse_salt: str | None = None
     concurrency: int = 1
+    scaledown_ttl: Optional[Union[int, timedelta]] = None
 
     def __post_init__(self):
         if self.replicas is None:
@@ -61,6 +58,14 @@ class ReusePolicy:
                 "that runs child tasks."
             )
 
+        if self.scaledown_ttl:
+            if isinstance(self.scaledown_ttl, int):
+                self.scaledown_ttl = timedelta(seconds=int(self.scaledown_ttl))
+            elif not isinstance(self.scaledown_ttl, timedelta):
+                raise ValueError("scaledown_ttl must be an int (seconds) or a timedelta")
+            if self.replicas[0] == self.replicas[1]:
+                raise ValueError("scaledown_ttl is not supported when replicas are fixed (min == max)")
+
     @property
     def ttl(self) -> timedelta | None:
         """
@@ -71,6 +76,23 @@ class ReusePolicy:
         if isinstance(self.idle_ttl, timedelta):
             return self.idle_ttl
         return timedelta(seconds=self.idle_ttl)
+
+    @property
+    def min_replicas(self) -> int:
+        """
+        Returns the minimum number of replicas.
+        """
+        return self.replicas[0] if isinstance(self.replicas, tuple) else self.replicas
+
+    def get_scaledown_ttl(self) -> timedelta | None:
+        """
+        Returns the scaledown TTL as a timedelta. If scaledown_ttl is not set, returns None.
+        """
+        if self.scaledown_ttl is None:
+            return None
+        if isinstance(self.scaledown_ttl, timedelta):
+            return self.scaledown_ttl
+        return timedelta(seconds=int(self.scaledown_ttl))
 
     @property
     def max_replicas(self) -> int:
