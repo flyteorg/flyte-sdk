@@ -1,4 +1,6 @@
 import asyncio
+import json
+from dataclasses import asdict
 from typing import Tuple, Union
 
 import rich_click as click
@@ -8,6 +10,9 @@ from rich.pretty import pretty_repr
 import flyte.remote._action
 
 from . import _common as common
+
+
+OUTPUT_FORMATS = click.Choice(["table", "json"])
 
 
 @click.group(name="get")
@@ -53,8 +58,17 @@ def project(cfg: common.CLIConfig, name: str | None = None):
 
 @get.command(cls=common.CommandBase)
 @click.argument("name", type=str, required=False)
+@click.option("--limit", type=int, default=100, help="Limit the number of tasks to show.")
+@click.option("--output-format", type=OUTPUT_FORMATS, default="table", help="Output format.")
 @click.pass_obj
-def run(cfg: common.CLIConfig, name: str | None = None, project: str | None = None, domain: str | None = None):
+def run(
+    cfg: common.CLIConfig,
+    name: str | None = None,
+    project: str | None = None,
+    domain: str | None = None,
+    limit: int = 100,
+    output_format: str = "table",
+):
     """
     Get a list of all runs, or details of a specific run by name.
 
@@ -69,21 +83,31 @@ def run(cfg: common.CLIConfig, name: str | None = None, project: str | None = No
     console = Console()
     if name:
         details = RunDetails.get(name=name)
-        console.print(pretty_repr(details))
+        if output_format == "json":
+            console.print(json.dumps(details.to_json_dict(), indent=2))
+        else:
+            console.print(pretty_repr(details))
     else:
-        console.print(common.get_table("Runs", Run.listall(), simple=cfg.simple))
+        details = list(Run.listall(limit=limit))
+        if output_format == "json":
+            details_json = [d.to_json_dict() for d in details]
+            console.print(json.dumps(details_json, indent=2))
+        else:
+            console.print(common.get_table("Runs", details, simple=cfg.simple))
 
 
 @get.command(cls=common.CommandBase)
 @click.argument("name", type=str, required=False)
 @click.argument("version", type=str, required=False)
 @click.option("--limit", type=int, default=100, help="Limit the number of tasks to show.")
+@click.option("--output-format", type=OUTPUT_FORMATS, default="table", help="Output format.")
 @click.pass_obj
 def task(
     cfg: common.CLIConfig,
     name: str | None = None,
-    limit: int = 100,
     version: str | None = None,
+    limit: int = 100,
+    output_format: str = "table",
     project: str | None = None,
     domain: str | None = None,
 ):
@@ -103,21 +127,36 @@ def task(
             if v is None:
                 raise click.BadParameter(f"Task {name} not found.")
             t = v.fetch()
-            console.print(pretty_repr(t))
+            if output_format == "json":
+                console.print(json.dumps(t.to_json_dict(), indent=2))
+            else:
+                console.print(pretty_repr(t))
         else:
-            console.print(common.get_table("Tasks", Task.listall(by_task_name=name, limit=limit), simple=cfg.simple))
+            tasks = Task.listall(by_task_name=name, limit=limit)
+            if output_format == "json":
+                tasks_json = [t.to_json_dict() for t in tasks]
+                console.print(json.dumps(tasks_json, indent=2))
+            else:
+                console.print(common.get_table("Tasks", tasks, simple=cfg.simple))
     else:
-        console.print(common.get_table("Tasks", Task.listall(limit=limit), simple=cfg.simple))
+        tasks = Task.listall(limit=limit)
+        if output_format == "json":
+            tasks_json = [t.to_json_dict() for t in tasks]
+            console.print(json.dumps(tasks_json, indent=2))
+        else:
+            console.print(common.get_table("Tasks", tasks, simple=cfg.simple))
 
 
 @get.command(cls=common.CommandBase)
 @click.argument("run_name", type=str, required=True)
 @click.argument("action_name", type=str, required=False)
+@click.option("--output-format", type=OUTPUT_FORMATS, default="table", help="Output format.")
 @click.pass_obj
 def action(
     cfg: common.CLIConfig,
     run_name: str,
     action_name: str | None = None,
+    output_format: str = "table",
     project: str | None = None,
     domain: str | None = None,
 ):
@@ -129,14 +168,19 @@ def action(
 
     console = Console()
     if action_name:
-        console.print(pretty_repr(flyte.remote._action.Action.get(run_name=run_name, name=action_name)))
+        action = flyte.remote._action.Action.get(run_name=run_name, name=action_name)
+        if output_format == "json":
+            console.print(json.dumps(action.to_json_dict(), indent=2))
+        else:
+            console.print(pretty_repr(action))
     else:
         # List all actions for the run
-        console.print(
-            common.get_table(
-                f"Actions for {run_name}", flyte.remote._action.Action.listall(for_run_name=run_name), simple=cfg.simple
-            )
-        )
+        actions = flyte.remote._action.Action.listall(for_run_name=run_name)
+        if output_format == "json":
+            actions_json = [a.to_json_dict() for a in actions]
+            console.print(json.dumps(actions_json, indent=2))
+        else:
+            console.print(common.get_table(f"Actions for {run_name}", actions, simple=cfg.simple))
 
 
 @get.command(cls=common.CommandBase)
@@ -212,10 +256,12 @@ def logs(
 
 @get.command(cls=common.CommandBase)
 @click.argument("name", type=str, required=False)
+@click.option("--output-format", type=OUTPUT_FORMATS, default="table", help="Output format.")
 @click.pass_obj
 def secret(
     cfg: common.CLIConfig,
     name: str | None = None,
+    output_format: str = "table",
     project: str | None = None,
     domain: str | None = None,
 ):
@@ -228,9 +274,17 @@ def secret(
 
     console = Console()
     if name:
-        console.print(pretty_repr(remote.Secret.get(name)))
+        secret = remote.Secret.get(name)
+        if output_format == "json":
+            console.print(json.dumps(secret.to_json_dict(), indent=2))
+        else:
+            console.print(pretty_repr(secret))
     else:
-        console.print(common.get_table("Secrets", remote.Secret.listall(), simple=cfg.simple))
+        secrets = remote.Secret.listall()
+        if output_format == "json":
+            console.print(json.dumps([s.to_json_dict() for s in secrets], indent=2))
+        else:
+            console.print(common.get_table("Secrets", secrets, simple=cfg.simple))
 
 
 @get.command(cls=common.CommandBase)

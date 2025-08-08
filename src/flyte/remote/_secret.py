@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import AsyncIterator, Literal, Union
 
 import rich.repr
+from google.protobuf.json_format import MessageToDict
 
 from flyte._initialize import ensure_client, get_client, get_common_config
 from flyte._protos.secret import definition_pb2, payload_pb2
@@ -15,6 +16,12 @@ SecretTypes = Literal["regular", "image_pull"]
 @dataclass
 class Secret:
     pb2: definition_pb2.Secret
+
+    def to_json_dict(self) -> dict:
+        """
+        Convert the secret to a JSON dictionary.
+        """
+        return MessageToDict(self.pb2)
 
     @syncify
     @classmethod
