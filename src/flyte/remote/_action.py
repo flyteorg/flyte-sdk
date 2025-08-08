@@ -20,6 +20,7 @@ from typing import (
 import grpc
 import rich.pretty
 import rich.repr
+from google.protobuf.json_format import MessageToDict
 from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
 
@@ -127,6 +128,12 @@ class Action:
 
     pb2: run_definition_pb2.Action
     _details: ActionDetails | None = None
+
+    def to_json_dict(self) -> dict:
+        """
+        Convert the action to a JSON dictionary.
+        """
+        return MessageToDict(self.pb2)
 
     @syncify
     @classmethod

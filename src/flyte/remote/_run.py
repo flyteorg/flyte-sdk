@@ -5,6 +5,7 @@ from typing import AsyncGenerator, AsyncIterator, Literal, Tuple
 
 import grpc
 import rich.repr
+from google.protobuf.json_format import MessageToDict
 
 from flyte._initialize import ensure_client, get_client, get_common_config
 from flyte._protos.common import identifier_pb2, list_pb2
@@ -35,10 +36,17 @@ class Run:
             raise RuntimeError("Run does not have an action")
         self.action = Action(self.pb2.action)
 
+    def to_json_dict(self) -> dict:
+        """
+        Convert the run to a JSON dictionary.
+        """
+        return MessageToDict(self.pb2)
+
     @syncify
     @classmethod
     async def listall(
         cls,
+        limit: int = 100,
         filters: str | None = None,
         sort_by: Tuple[str, Literal["asc", "desc"]] | None = None,
     ) -> AsyncIterator[Run]:
@@ -57,9 +65,10 @@ class Run:
             direction=(list_pb2.Sort.ASCENDING if sort_by[1] == "asc" else list_pb2.Sort.DESCENDING),
         )
         cfg = get_common_config()
+        i = 0
         while True:
             req = list_pb2.ListRequest(
-                limit=100,
+                limit=limit,
                 token=token,
                 sort_by=sort_pb2,
             )
@@ -76,6 +85,9 @@ class Run:
             )
             token = resp.token
             for r in resp.runs:
+                i += 1
+                if i > limit:
+                    return
                 yield cls(r)
             if not token:
                 break
@@ -227,6 +239,12 @@ class RunDetails:
         Initialize the RunDetails object with the given run definition.
         """
         self.action_details = ActionDetails(self.pb2.action)
+
+    def to_json_dict(self) -> dict:
+        """
+        Convert the run details to a JSON dictionary.
+        """
+        return MessageToDict(self.pb2)
 
     @syncify
     @classmethod

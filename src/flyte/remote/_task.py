@@ -7,6 +7,7 @@ from typing import Any, AsyncIterator, Callable, Coroutine, Dict, Iterator, Lite
 
 import rich.repr
 from google.protobuf import timestamp
+from google.protobuf.json_format import MessageToDict
 
 import flyte
 import flyte.errors
@@ -82,6 +83,12 @@ AutoVersioning = Literal["latest", "current"]
 class TaskDetails:
     pb2: task_definition_pb2.TaskDetails
     max_inline_io_bytes: int = 10 * 1024 * 1024  # 10 MB
+
+    def to_json_dict(self) -> dict:
+        """
+        Convert the task details to a JSON dictionary.
+        """
+        return MessageToDict(self.pb2)
 
     @classmethod
     def get(
@@ -299,6 +306,12 @@ class Task:
 
     def __init__(self, pb2: task_definition_pb2.Task):
         self.pb2 = pb2
+
+    def to_json_dict(self) -> dict:
+        """
+        Convert the task to a JSON dictionary.
+        """
+        return MessageToDict(self.pb2)
 
     @property
     def name(self) -> str:
