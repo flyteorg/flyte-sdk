@@ -27,6 +27,7 @@ from flyte._image import (
 )
 from flyte._internal.imagebuild.image_builder import ImageBuilder, ImageChecker
 from flyte._logging import logger
+from flyte._secret import secrets_from_request
 from flyte.remote import ActionOutputs, Run
 
 if TYPE_CHECKING:
@@ -165,7 +166,8 @@ def _get_layers_proto(image: Image, context_path: Path) -> "image_definition_pb2
     for layer in image._layers:
         if isinstance(layer, AptPackages):
             apt_layer = image_definition_pb2.Layer(
-                apt_packages=image_definition_pb2.AptPackages(packages=layer.packages)
+                apt_packages=image_definition_pb2.AptPackages(packages=layer.packages),
+                secret_mounts=secrets_from_request(layer.secret_mounts) if layer.secret_mounts else None,
             )
             layers.append(apt_layer)
         elif isinstance(layer, PythonWheels):
@@ -179,6 +181,7 @@ def _get_layers_proto(image: Image, context_path: Path) -> "image_definition_pb2
                         pre=layer.pre,
                         extra_args=layer.extra_args,
                     ),
+                    secret_mounts=secrets_from_request(layer.secret_mounts) if layer.secret_mounts else None,
                 )
             )
             layers.append(wheel_layer)
@@ -194,6 +197,7 @@ def _get_layers_proto(image: Image, context_path: Path) -> "image_definition_pb2
                         pre=layer.pre,
                         extra_args=layer.extra_args,
                     ),
+                    secret_mounts=secrets_from_request(layer.secret_mounts) if layer.secret_mounts else None,
                 )
             )
             layers.append(requirements_layer)
@@ -216,6 +220,7 @@ def _get_layers_proto(image: Image, context_path: Path) -> "image_definition_pb2
                         pre=layer.pre,
                         extra_args=layer.extra_args,
                     ),
+                    secret_mounts=secrets_from_request(layer.secret_mounts) if layer.secret_mounts else None,
                 )
             )
             layers.append(pip_layer)
