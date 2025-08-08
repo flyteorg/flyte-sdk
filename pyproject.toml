@@ -53,6 +53,7 @@ dev = [
     "ipywidgets>=8.1.7",
     "mypy>=1.16.0",
     "kubernetes",
+    "openai-agents==0.2.4",
 ]
 
 [tool.setuptools]
