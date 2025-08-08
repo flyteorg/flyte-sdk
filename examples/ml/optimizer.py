@@ -4,6 +4,7 @@
 #    "optuna>=4.0.0,<5.0.0",
 #    "flyte>=0.2.0b17",
 #    "scikit-learn==1.7.0",
+#    "unionai-reuse",
 # ]
 # ///
 
@@ -29,7 +30,7 @@ driver = flyte.TaskEnvironment(
         __file__,
         name="optimizer",
         registry="ghcr.io/flyteorg",
-        arch=("linux/amd64", "linux/arm64"),
+        platform=("linux/amd64", "linux/arm64"),
     ),
     reusable=flyte.ReusePolicy(replicas=(1, 5), idle_ttl=300),
 )
@@ -165,6 +166,6 @@ async def optimize(
 
 
 if __name__ == "__main__":
-    flyte.init_from_config("config.yaml")
+    flyte.init_from_config("../../config.yaml")
     run = flyte.run(optimize, 100, 10)
     print(run.url)
