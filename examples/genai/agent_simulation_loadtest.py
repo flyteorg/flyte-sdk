@@ -36,13 +36,13 @@ tool_env = coordinator_env.clone_with(
 
 
 # Mock tools that research agents can use
-@tool_env.task
+@tool_env.task(cache="auto")
 async def search_web(query: str) -> str:
     await asyncio.sleep(1.0)  # Simulate API call
     return f"Web results for: {query}"
 
 
-@tool_env.task
+@tool_env.task(cache="auto")
 async def extract_entities(text: str) -> List[str]:
     await asyncio.sleep(1.0)
     return [f"Entity from: {text}"]
@@ -60,7 +60,7 @@ async def summarize_text(text: str) -> Dict[str, str]:
     return {"summary": f"Summary of: {text}"}
 
 
-@tool_env.task
+@tool_env.task(cache="auto")
 async def finalize_answer(text: str) -> Dict[str, str]:
     await asyncio.sleep(1.0)
     return {"answer": f"Answer of: {text}"}
@@ -135,7 +135,7 @@ async def benchmark():
             prompt=prompt,
             num_rounds=1,
             num_agents=1,
-            num_tool_repeats=1,
+            num_tool_repeats=5,
         )
         print(run.url)
         return run
