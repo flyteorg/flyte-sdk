@@ -90,7 +90,7 @@ async def resource_coordinator_decision(
     prompt: str,
     num_agents: int,
 ) -> List[Dict[str, str]]:
-    tool_sequence = ["search", "extract", "analyze", "summarize", "finalize"] * 10
+    tool_sequence = ["search", "extract", "analyze", "summarize", "finalize"] * 1
 
     tasks = []
     for _ in range(num_agents):
@@ -104,8 +104,8 @@ async def resource_coordinator_decision(
 @coordinator_env.task
 async def research_coordinator(
     prompt: str,
-    num_rounds: int = 4,
-    num_agents: int = 5,
+    num_rounds: int = 1,
+    num_agents: int = 1,
 ) -> List[List[Dict[str, str]]]:
     # Do multiple rounds of research
     results = []
@@ -122,7 +122,7 @@ if __name__ == "__main__":
 
     prompt = "What are the latest developments in AI?"
     runs = []
-    for i in range(50):
+    for i in range(3):
         runs.append(
             flyte.run(
                 research_coordinator,

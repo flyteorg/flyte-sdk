@@ -1,3 +1,7 @@
+"""
+This example demonstrates how to use the Spark environment in Flyte.
+"""
+
 from dataclasses import dataclass
 
 import flyte
