@@ -54,10 +54,10 @@ def extract_unique_id_and_image(
         components += f":{reuse_policy.replicas}"
     if reuse_policy.ttl is not None:
         components += f":{reuse_policy.ttl.total_seconds()}"
-    if reuse_policy.reuse_salt is None and code_bundle is not None:
+    if reuse_policy.get_scaledown_ttl() is not None:
+        components += f":{reuse_policy.get_scaledown_ttl()}"
+    if code_bundle is not None:
         components += f":{code_bundle.computed_version}"
-    else:
-        components += f":{reuse_policy.reuse_salt}"
     if task.security_context is not None:
         security_ctx_str = task.security_context.SerializeToString(deterministic=True)
         components += f":{security_ctx_str}"
@@ -102,6 +102,8 @@ def add_reusable(
         env_name=name, code_bundle=code_bundle, task=task, reuse_policy=reuse_policy
     )
 
+    scaledown_ttl = reuse_policy.get_scaledown_ttl()
+
     task.custom = {
         "name": name,
         "version": version[:15],  # Use only the first 15 characters for the version
@@ -110,8 +112,10 @@ def add_reusable(
             "container_image": image_uri,
             "backlog_length": None,
             "parallelism": reuse_policy.concurrency,
+            "min_replica_count": reuse_policy.min_replicas,
             "replica_count": reuse_policy.max_replicas,
             "ttl_seconds": reuse_policy.ttl.total_seconds() if reuse_policy.ttl else None,
+            "scaledown_ttl_seconds": scaledown_ttl.total_seconds() if scaledown_ttl else None,
         },
     }
 

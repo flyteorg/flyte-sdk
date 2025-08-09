@@ -77,6 +77,17 @@ def reuse_policy():
     )
 
 
+@pytest.fixture
+def reuse_policy_scaledown():
+    """Creates a ReusePolicy."""
+    return ReusePolicy(
+        replicas=(1, 3),  # min, max
+        idle_ttl=datetime.timedelta(seconds=90),  # 90 seconds for idle TTL
+        scaledown_ttl=datetime.timedelta(seconds=30),  # 30 seconds for scaledown TTL
+        concurrency=10,  # Example concurrency setting
+    )
+
+
 def test_extract_unique_id_container(container_task, code_bundle, reuse_policy):
     """Test extracting unique ID from a task with container."""
     unique_id, image = extract_unique_id_and_image(
@@ -179,6 +190,9 @@ def test_add_reusable_container_task(container_task, code_bundle, reuse_policy):
     assert modified_task.custom["spec"]["container_image"] == "test-image:latest"
     assert modified_task.custom["spec"]["replica_count"] == 3
     assert modified_task.custom["spec"]["ttl_seconds"] == 1800  # 30 minutes in seconds
+    assert modified_task.custom["spec"]["min_replica_count"] == 1
+    assert modified_task.custom["spec"]["parallelism"] == 1
+    assert modified_task.custom["spec"]["scaledown_ttl_seconds"] is None  # No scaledown TTL set
 
 
 def test_add_reusable_with_parent_env(container_task, code_bundle, reuse_policy):
@@ -223,3 +237,19 @@ def test_add_reusable_none_policy(container_task, code_bundle):
 
     # Task should be unchanged
     assert modified_task == original_task
+
+
+def test_add_reusable_scaledown_ttl(reuse_policy_scaledown):
+    """Test that scaledown_ttl is correctly set in the reusable task."""
+    task_template = tasks_pb2.TaskTemplate()
+    task_template.id.name = "test-task"
+    task_template.id.version = "v1"
+
+    modified_task = add_reusable(
+        task=task_template,
+        reuse_policy=reuse_policy_scaledown,
+        code_bundle=None,
+    )
+
+    assert modified_task.custom["spec"]["scaledown_ttl_seconds"] == reuse_policy_scaledown.scaledown_ttl.total_seconds()
+    assert modified_task.custom["spec"]["parallelism"] == reuse_policy_scaledown.concurrency
