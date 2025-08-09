@@ -253,6 +253,13 @@ class RemoteController(Controller):
             await self.cancel_action(action)
             raise
 
+        # If the action is aborted, we should abort the controller as well
+        if n.phase == run_definition_pb2.PHASE_ABORTED:
+            logger.warning(f"Action {n.action_id.name} was aborted, aborting current Action{current_action_id.name}")
+            raise flyte.errors.RunAbortedError(
+                f"Action {n.action_id.name} was aborted, aborting current Action {current_action_id.name}"
+            )
+
         if n.has_error() or n.phase == run_definition_pb2.PHASE_FAILED:
             exc = await handle_action_failure(action, _task.name)
             raise exc
