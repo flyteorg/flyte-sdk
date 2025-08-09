@@ -260,6 +260,14 @@ class RemoteController(Controller):
                 f"Action {n.action_id.name} was aborted, aborting current Action {current_action_id.name}"
             )
 
+        if n.phase == run_definition_pb2.PHASE_TIMED_OUT:
+            logger.warning(
+                f"Action {n.action_id.name} timed out, raising timeout exception Action {current_action_id.name}"
+            )
+            raise flyte.errors.TaskTimeoutError(
+                f"Action {n.action_id.name} timed out, raising exception in current Action {current_action_id.name}"
+            )
+
         if n.has_error() or n.phase == run_definition_pb2.PHASE_FAILED:
             exc = await handle_action_failure(action, _task.name)
             raise exc
