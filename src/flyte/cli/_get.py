@@ -53,8 +53,15 @@ def project(cfg: common.CLIConfig, name: str | None = None):
 
 @get.command(cls=common.CommandBase)
 @click.argument("name", type=str, required=False)
+@click.option("--limit", type=int, default=100, help="Limit the number of runs to fetch when listing.")
 @click.pass_obj
-def run(cfg: common.CLIConfig, name: str | None = None, project: str | None = None, domain: str | None = None):
+def run(
+    cfg: common.CLIConfig,
+    name: str | None = None,
+    project: str | None = None,
+    domain: str | None = None,
+    limit: int = 100,
+):
     """
     Get a list of all runs, or details of a specific run by name.
 
@@ -71,13 +78,13 @@ def run(cfg: common.CLIConfig, name: str | None = None, project: str | None = No
         details = RunDetails.get(name=name)
         console.print(pretty_repr(details))
     else:
-        console.print(common.format("Runs", Run.listall(), cfg.output_format))
+        console.print(common.format("Runs", Run.listall(limit=limit), cfg.output_format))
 
 
 @get.command(cls=common.CommandBase)
 @click.argument("name", type=str, required=False)
 @click.argument("version", type=str, required=False)
-@click.option("--limit", type=int, default=100, help="Limit the number of tasks to show.")
+@click.option("--limit", type=int, default=100, help="Limit the number of tasks to fetch.")
 @click.pass_obj
 def task(
     cfg: common.CLIConfig,
