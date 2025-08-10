@@ -48,7 +48,7 @@ def project(cfg: common.CLIConfig, name: str | None = None):
     if name:
         console.print(pretty_repr(Project.get(name)))
     else:
-        console.print(common.get_table("Projects", Project.listall(), simple=cfg.simple))
+        console.print(common.format("Projects", Project.listall(), cfg.output_format))
 
 
 @get.command(cls=common.CommandBase)
@@ -71,7 +71,7 @@ def run(cfg: common.CLIConfig, name: str | None = None, project: str | None = No
         details = RunDetails.get(name=name)
         console.print(pretty_repr(details))
     else:
-        console.print(common.get_table("Runs", Run.listall(), simple=cfg.simple))
+        console.print(common.format("Runs", Run.listall(), cfg.output_format))
 
 
 @get.command(cls=common.CommandBase)
@@ -105,9 +105,9 @@ def task(
             t = v.fetch()
             console.print(pretty_repr(t))
         else:
-            console.print(common.get_table("Tasks", Task.listall(by_task_name=name, limit=limit), simple=cfg.simple))
+            console.print(common.format("Tasks", Task.listall(by_task_name=name, limit=limit), cfg.output_format))
     else:
-        console.print(common.get_table("Tasks", Task.listall(limit=limit), simple=cfg.simple))
+        console.print(common.format("Tasks", Task.listall(limit=limit), cfg.output_format))
 
 
 @get.command(cls=common.CommandBase)
@@ -133,8 +133,8 @@ def action(
     else:
         # List all actions for the run
         console.print(
-            common.get_table(
-                f"Actions for {run_name}", flyte.remote._action.Action.listall(for_run_name=run_name), simple=cfg.simple
+            common.format(
+                f"Actions for {run_name}", flyte.remote._action.Action.listall(for_run_name=run_name), cfg.output_format
             )
         )
 
@@ -230,7 +230,7 @@ def secret(
     if name:
         console.print(pretty_repr(remote.Secret.get(name)))
     else:
-        console.print(common.get_table("Secrets", remote.Secret.listall(), simple=cfg.simple))
+        console.print(common.format("Secrets", remote.Secret.listall(), cfg.output_format))
 
 
 @get.command(cls=common.CommandBase)
@@ -299,7 +299,7 @@ def io(
         common.get_panel(
             "Inputs & Outputs",
             f"[green bold]Inputs[/green bold]\n{inputs}\n\n[blue bold]Outputs[/blue bold]\n{outputs}",
-            simple=cfg.simple,
+            cfg.output_format,
         )
     )
 
