@@ -13,11 +13,12 @@ from flyte.syncify import syncify
 
 from . import Action, ActionDetails, ActionInputs, ActionOutputs
 from ._action import _action_details_rich_repr, _action_rich_repr
+from ._common import ToJSONMixin
 from ._console import get_run_url
 
 
 @dataclass
-class Run:
+class Run(ToJSONMixin):
     """
     A class representing a run of a task. It is used to manage the run of a task and its state on the remote
     Union API.
@@ -41,12 +42,14 @@ class Run:
         cls,
         filters: str | None = None,
         sort_by: Tuple[str, Literal["asc", "desc"]] | None = None,
+        limit: int = 100,
     ) -> AsyncIterator[Run]:
         """
         Get all runs for the current project and domain.
 
         :param filters: The filters to apply to the project list.
         :param sort_by: The sorting criteria for the project list, in the format (field, order).
+        :param limit: The maximum number of runs to return.
         :return: An iterator of runs.
         """
         ensure_client()
@@ -57,9 +60,10 @@ class Run:
             direction=(list_pb2.Sort.ASCENDING if sort_by[1] == "asc" else list_pb2.Sort.DESCENDING),
         )
         cfg = get_common_config()
+        i = 0
         while True:
             req = list_pb2.ListRequest(
-                limit=100,
+                limit=min(100, limit),
                 token=token,
                 sort_by=sort_pb2,
             )
@@ -76,6 +80,9 @@ class Run:
             )
             token = resp.token
             for r in resp.runs:
+                i += 1
+                if i > limit:
+                    return
                 yield cls(r)
             if not token:
                 break
@@ -213,7 +220,7 @@ class Run:
 
 
 @dataclass
-class RunDetails:
+class RunDetails(ToJSONMixin):
     """
     A class representing a run of a task. It is used to manage the run of a task and its state on the remote
     Union API.

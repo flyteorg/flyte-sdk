@@ -109,8 +109,8 @@ class DeployEnvCommand(click.Command):
                 version=self.deploy_args.version,
             )
 
-        console.print(common.get_table("Environments", deployment[0].env_repr(), simple=obj.simple))
-        console.print(common.get_table("Tasks", deployment[0].task_repr(), simple=obj.simple))
+        console.print(common.format("Environments", deployment[0].env_repr(), obj.output_format))
+        console.print(common.format("Tasks", deployment[0].task_repr(), obj.output_format))
 
 
 class DeployEnvRecursiveCommand(click.Command):
@@ -139,7 +139,7 @@ class DeployEnvRecursiveCommand(click.Command):
         if failed_paths:
             console.print(f"Loaded {len(loaded_modules)} modules with, but failed to load {len(failed_paths)} paths:")
             console.print(
-                common.get_table("Modules", [[("Path", p), ("Err", e)] for p, e in failed_paths], simple=obj.simple)
+                common.format("Modules", [[("Path", p), ("Err", e)] for p, e in failed_paths], obj.output_format)
             )
         else:
             console.print(f"Loaded {len(loaded_modules)} modules")
@@ -149,9 +149,7 @@ class DeployEnvRecursiveCommand(click.Command):
         if not all_envs:
             console.print("No environments found to deploy")
             return
-        console.print(
-            common.get_table("Loaded Environments", [[("name", e.name)] for e in all_envs], simple=obj.simple)
-        )
+        console.print(common.format("Loaded Environments", [[("name", e.name)] for e in all_envs], obj.output_format))
 
         if not self.deploy_args.ignore_load_errors and len(failed_paths) > 0:
             raise click.ClickException(
@@ -168,11 +166,9 @@ class DeployEnvRecursiveCommand(click.Command):
             )
 
         console.print(
-            common.get_table("Environments", [env for d in deployments for env in d.env_repr()], simple=obj.simple)
+            common.format("Environments", [env for d in deployments for env in d.env_repr()], obj.output_format)
         )
-        console.print(
-            common.get_table("Tasks", [task for d in deployments for task in d.task_repr()], simple=obj.simple)
-        )
+        console.print(common.format("Tasks", [task for d in deployments for task in d.task_repr()], obj.output_format))
 
 
 class EnvPerFileGroup(common.ObjectsPerFileGroup):
