@@ -8,6 +8,7 @@
 #    "transformers",
 #    "huggingface-hub",
 #    "flyte>=2.0.0b6",
+#    "pyarrow",
 # ]
 # ///
 import asyncio
@@ -47,7 +48,7 @@ main_env = embedding_env.clone_with(
     name="wikipedia_main",
     reusable=None,
     depends_on=[embedding_env],
-    resources=flyte.Resources(memory="4Gi", cpu=3),
+    resources=flyte.Resources(memory="16Gi", cpu=3),
 )
 
 
@@ -108,7 +109,7 @@ async def main(
     logger.info(f"Model: {embedding_model}")
 
     # Stream through dataset partitions using HF Hub
-    async def partition_generator() -> AsyncGenerator[pd.DataFrame, None]:
+    async def partition_generator() -> AsyncGenerator[flyte.io.DataFrame, None]:
         """Download Wikipedia parquet files directly from HuggingFace Hub."""
         logger.info(f"Loading {dataset_name} {dataset_version} from HuggingFace Hub")
 
@@ -119,87 +120,38 @@ async def main(
         try:
             files = list_repo_files(repo_id, revision=revision, repo_type="dataset")
             parquet_files = [f for f in files if f.endswith(".parquet") and "train" in f]
-
             if not parquet_files:
-                # Fallback to a smaller, more accessible dataset
-                logger.warning(f"No parquet files found for {repo_id}, using wikimedia/wikipedia subset")
-                repo_id = "wikimedia/wikipedia"
-                revision = "20231101.en"
-                files = list_repo_files(repo_id, revision=revision, repo_type="dataset")
-                parquet_files = [f for f in files if f.endswith(".parquet")][:4]  # Limit to 4 files for efficiency
+                raise FileNotFoundError(f"No parquet files found in {repo_id}/{revision}")
 
             logger.info(f"Found {len(parquet_files)} parquet files to process")
 
             # Download and yield each parquet file
-            for i, parquet_file in enumerate(parquet_files[:4]):  # Limit for efficiency
-                logger.info(f"Downloading partition {i + 1}/{len(parquet_files[:4])}: {parquet_file}")
-
-                local_path = hf_hub_download(
+            for i, parquet_file in enumerate(parquet_files):  # Limit for efficiency
+                logger.info(f"Processing partition {i + 1}/{len(parquet_files)}: {parquet_file}")
+                # Download the parquet file
+                file_path = hf_hub_download(
                     repo_id=repo_id,
                     filename=parquet_file,
                     revision=revision,
                     repo_type="dataset",
-                    cache_dir="/tmp/hf_cache",
                 )
-
-                # Read parquet and extract text column
-                df = pd.read_parquet(local_path)
-
-                # Wikipedia datasets typically have 'text' column, but let's be flexible
-                text_column = None
-                for col in ["text", "content", "article", "body"]:
-                    if col in df.columns:
-                        text_column = col
-                        break
-
-                if text_column:
-                    # Clean and prepare text data
-                    df = df[[text_column]].rename(columns={text_column: "text"})
-                    df = df.dropna().head(1000)  # Limit rows per partition for efficiency
-                    logger.info(f"Yielding partition with {len(df)} texts")
-                    yield df
-                else:
-                    logger.warning(f"No text column found in {parquet_file}, skipping")
+                yield flyte.io.DataFrame(uri=file_path)
 
         except Exception as e:
             logger.error(f"Error accessing dataset {repo_id}: {e}")
-            # Fallback to a simple accessible dataset
-            logger.info("Using fallback dataset approach")
-
-            # Use a simple, reliable dataset
-            sample_data = {
-                "text": [
-                    "Albert Einstein was a German-born theoretical physicist.",
-                    "The theory of relativity revolutionized physics.",
-                    "Quantum mechanics describes nature at the smallest scales.",
-                    "Machine learning enables computers to learn from data.",
-                ]
-                * 250  # Create reasonable sample size
-            }
-
-            df = pd.DataFrame(sample_data)
-            # Split into multiple partitions
-            partition_size = len(df) // 4
-            for i in range(0, len(df), partition_size):
-                partition_df = df.iloc[i : i + partition_size]
-                if not partition_df.empty:
-                    logger.info(f"Yielding fallback partition with {len(partition_df)} texts")
-                    yield partition_df
-
-        logger.info("Finished streaming partitions")
+            raise
 
     # Process partitions as they become available
     logger.info("Starting partition processing...")
     embedding_tasks = []
     partition_count = 0
 
-    with flyte.group("wikipedia") as g:
+    with flyte.group("wikipedia"):
         # Process each partition
         async for partition_df in partition_generator():
-            if partition_df is None or partition_df.empty:
+            if partition_df is None:
                 break
-
-            logger.info(f"Processing partition with {len(partition_df)} texts")
+            logger.info("Processing partition with texts")
             # Create encoding task for this partition
             encoding_task = encode(partition_df, batch_size, embedding_model)
             embedding_tasks.append(encoding_task)
