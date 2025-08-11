@@ -37,7 +37,11 @@ class ValueCalculator:
         return result
 
 
-# Create a singleton instance for the reusable environment
+# Create a singleton instance for the reusable environment, per replica
+# This is stateful while the container is running, but not across replicas or across restarts.
+# DO NOT USE this pattern for global state like a database. This is for reducing redundant computations,
+# or reusing expensive operations opportunistically, like loading a model or a large dataset to memory or gpu.
+# For global state, use a database or a distributed cache.
 _calculator = ValueCalculator()
 
 
