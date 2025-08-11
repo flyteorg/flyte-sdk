@@ -6,6 +6,7 @@ from the Flyte control plane, at runtime / deploy time.
 This example also demonstrates how "DataClasses" or "pydantic models" can be used as inputs and outputs of tasks,
 whose types are faked in the Flyte SDK to allow for easy access to attributes, even though they are not available
 in the runtime environment.
+
 """
 
 import flyte.remote
