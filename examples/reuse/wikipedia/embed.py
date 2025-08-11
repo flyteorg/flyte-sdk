@@ -6,7 +6,7 @@ import asyncio
 import logging
 import shutil
 from pathlib import Path
-from typing import Dict, Any, AsyncGenerator
+from typing import Any, AsyncGenerator, Dict
 
 import torch
 
@@ -18,17 +18,8 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Create an image with required dependencies for embeddings
-embedding_image = (
-    flyte.Image.from_debian_base()
-    .with_pip_packages(
-        "datasets",
-        "sentence-transformers",
-        "pandas",
-        "torch",
-        "requests>=2.29.0",
-        "transformers",
-        "huggingface-hub"
-    )
+embedding_image = flyte.Image.from_debian_base().with_pip_packages(
+    "datasets", "sentence-transformers", "pandas", "torch", "requests>=2.29.0", "transformers", "huggingface-hub"
 )
 
 # Create a reusable environment for embedding tasks
@@ -49,6 +40,7 @@ download_env = flyte.TaskEnvironment(
     image=embedding_image,
 )
 
+
 @download_env.task
 async def download_model(embedding_model: str) -> flyte.io.Dir:
     """Download and cache the embedding model from HuggingFace."""
@@ -64,10 +56,12 @@ async def download_model(embedding_model: str) -> flyte.io.Dir:
 
     return str(cached_model_dir)
 
+
 async def _load_model(model_path: str) -> str:
     """Helper function to load the model path."""
     # This is a placeholder for any additional logic needed to load the model
     return model_path
+
 
 @embedding_env.task
 async def encode(df: flyte.io.DataFrame, batch_size: int, model_path: str) -> torch.Tensor:
@@ -100,13 +94,15 @@ async def encode(df: flyte.io.DataFrame, batch_size: int, model_path: str) -> to
     logger.info(f"Generated embeddings shape: {embeddings.shape}")
     return embeddings
 
+
 # Main orchestration environment (non-reusable)
 main_env = embedding_env.clone_with(
     name="wikipedia-main",
     reusable=None,
     depends_on=[embedding_env, download_env],
-    resources=flyte.Resources(memory="4Gi", cpu=3, gpu=0)
+    resources=flyte.Resources(memory="4Gi", cpu=3, gpu=0),
 )
+
 
 @main_env.task
 async def main(
@@ -114,16 +110,17 @@ async def main(
     dataset_version: str = "20220301.en",
     embedding_model: str = "BAAI/bge-small-en-v1.5",
     batch_size: int = 128,
-    num_proc: int = 4
+    num_proc: int = 4,
 ) -> Dict[str, Any]:
     """
     Main workflow that processes Wikipedia dataset and creates embeddings.
     Downloads model in parallel while streaming through dataset partitions.
     """
     import pathlib
+
     from datasets import DownloadConfig, load_dataset_builder
 
-    logger.info(f"Starting Wikipedia embedding workflow")
+    logger.info("Starting Wikipedia embedding workflow")
     logger.info(f"Dataset: {dataset_name} {dataset_version}")
     logger.info(f"Model: {embedding_model}")
 
@@ -196,8 +193,9 @@ async def main(
         "embedding_dimension": embedding_dim,
         "model_used": embedding_model,
         "batch_size": batch_size,
-        "dataset": f"{dataset_name}:{dataset_version}"
+        "dataset": f"{dataset_name}:{dataset_version}",
     }
+
 
 if __name__ == "__main__":
     # Example usage
@@ -212,7 +210,7 @@ if __name__ == "__main__":
         dataset_version="20220301.en",
         embedding_model="BAAI/bge-small-en-v1.5",
         batch_size=128,
-        num_proc=4
+        num_proc=4,
     )
     print(f"Workflow URL: {run.url}")
 
@@ -220,7 +218,7 @@ if __name__ == "__main__":
     result = run.wait()
 
     if result:
-        print(f"\n🎉 Results:")
+        print("\n🎉 Results:")
         print(f"📊 Processed {result['partitions_processed']} partitions")
         print(f"🔢 Generated {result['total_embeddings_generated']} embeddings")
         print(f"📐 Embedding dimension: {result['embedding_dimension']}")
