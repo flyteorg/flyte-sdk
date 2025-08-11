@@ -9,15 +9,17 @@ from flyteidl.admin import common_pb2, project_pb2
 from flyte._initialize import ensure_client, get_client
 from flyte.syncify import syncify
 
+from ._common import ToJSONMixin
+
 
 # TODO Add support for orgs again
 @dataclass
-class Project:
+class Project(ToJSONMixin):
     """
     A class representing a project in the Union API.
     """
 
-    _pb2: project_pb2.Project
+    pb2: project_pb2.Project
 
     @syncify
     @classmethod
@@ -76,11 +78,11 @@ class Project:
                 break
 
     def __rich_repr__(self) -> rich.repr.Result:
-        yield "name", self._pb2.name
-        yield "id", self._pb2.id
-        yield "description", self._pb2.description
-        yield "state", project_pb2.Project.ProjectState.Name(self._pb2.state)
+        yield "name", self.pb2.name
+        yield "id", self.pb2.id
+        yield "description", self.pb2.description
+        yield "state", project_pb2.Project.ProjectState.Name(self.pb2.state)
         yield (
             "labels",
-            ", ".join([f"{k}: {v}" for k, v in self._pb2.labels.values.items()]) if self._pb2.labels else None,
+            ", ".join([f"{k}: {v}" for k, v in self.pb2.labels.values.items()]) if self.pb2.labels else None,
         )

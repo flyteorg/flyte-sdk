@@ -8,18 +8,21 @@ from abc import abstractmethod
 from dataclasses import dataclass, replace
 from pathlib import Path
 from types import MappingProxyType, ModuleType
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List, Literal, Optional
 
 import rich.box
 import rich.repr
 import rich_click as click
 from rich.console import Console
 from rich.panel import Panel
+from rich.pretty import pretty_repr
 from rich.table import Table
 from rich.traceback import Traceback
 
 import flyte.errors
 from flyte.config import Config
+
+OutputFormat = Literal["table", "json", "table-simple"]
 
 PREFERRED_BORDER_COLOR = "dim cyan"
 PREFERRED_ACCENT_COLOR = "bold #FFD700"
@@ -99,8 +102,8 @@ class CLIConfig:
     endpoint: str | None = None
     insecure: bool = False
     org: str | None = None
-    simple: bool = False
     auth_type: str | None = None
+    output_format: OutputFormat = "table"
 
     def replace(self, **kwargs) -> CLIConfig:
         """
@@ -327,20 +330,7 @@ class FileGroup(GroupBase):
         raise NotImplementedError
 
 
-def get_table(title: str, vals: Iterable[Any], simple: bool = False) -> Table:
-    """
-    Get a table from a list of values.
-    """
-    if simple:
-        table = Table(title, box=None)
-    else:
-        table = Table(
-            title=title,
-            box=rich.box.SQUARE_DOUBLE_HEAD,
-            header_style=HEADER_STYLE,
-            show_header=True,
-            border_style=PREFERRED_BORDER_COLOR,
-        )
+def _table_format(table: Table, vals: Iterable[Any]) -> Table:
     headers = None
     has_rich_repr = False
     for p in vals:
@@ -357,11 +347,37 @@ def get_table(title: str, vals: Iterable[Any], simple: bool = False) -> Table:
     return table
 
 
-def get_panel(title: str, renderable: Any, simple: bool = False) -> Panel:
+def format(title: str, vals: Iterable[Any], of: OutputFormat = "table") -> Table | Any:
+    """
+    Get a table from a list of values.
+    """
+
+    match of:
+        case "table-simple":
+            return _table_format(Table(title, box=None), vals)
+        case "table":
+            return _table_format(
+                Table(
+                    title=title,
+                    box=rich.box.SQUARE_DOUBLE_HEAD,
+                    header_style=HEADER_STYLE,
+                    show_header=True,
+                    border_style=PREFERRED_BORDER_COLOR,
+                ),
+                vals,
+            )
+        case "json":
+            if not vals:
+                return pretty_repr([])
+            return pretty_repr([v.to_dict() for v in vals])
+    raise click.ClickException("Unknown output format. Supported formats are: table, table-simple, json.")
+
+
+def get_panel(title: str, renderable: Any, of: OutputFormat = "table") -> Panel:
     """
     Get a panel from a list of values.
     """
-    if simple:
+    if of in ["table-simple", "json"]:
         return renderable
     return Panel.fit(
         renderable,

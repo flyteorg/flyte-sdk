@@ -18,6 +18,8 @@ from flyte._protos.workflow import task_definition_pb2, task_service_pb2
 from flyte.models import NativeInterface
 from flyte.syncify import syncify
 
+from ._common import ToJSONMixin
+
 
 def _repr_task_metadata(metadata: task_definition_pb2.TaskMetadata) -> rich.repr.Result:
     """
@@ -79,7 +81,7 @@ AutoVersioning = Literal["latest", "current"]
 
 
 @dataclass
-class TaskDetails:
+class TaskDetails(ToJSONMixin):
     pb2: task_definition_pb2.TaskDetails
     max_inline_io_bytes: int = 10 * 1024 * 1024  # 10 MB
 
@@ -294,7 +296,7 @@ class TaskDetails:
 
 
 @dataclass
-class Task:
+class Task(ToJSONMixin):
     pb2: task_definition_pb2.Task
 
     def __init__(self, pb2: task_definition_pb2.Task):
