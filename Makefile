@@ -24,10 +24,22 @@ dist: clean
     # export SETUPTOOLS_SCM_PRETEND_VERSION_FOR_FLYTE=0.0.1b0 to build with specific version
 	uv run python -m build --wheel --installer uv
 
+.PHONY: dist
+dist-plugins: clean
+	for plugin in plugins/*; do \
+		if [ -d "$$plugin" ]; then \
+			uv run python -m build --wheel --installer uv "$$plugin"; \
+		fi \
+	done
+
+dist-all: dist dist-plugins
+
 .PHONY: clean
 clean: 
 	rm -rf dist/
+	rm -rf plugins/**/dist/
 	rm -rf build/
+	rm -rf plugins/**/build/
 	rm -rf src/flyte.egg-info
 
 .PHONY: update-import-profile
