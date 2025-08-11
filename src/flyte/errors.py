@@ -96,6 +96,9 @@ class TaskTimeoutError(RuntimeUserError):
     This error is raised when the underlying task execution runs for longer than the specified timeout.
     """
 
+    def __init__(self, message: str):
+        super().__init__("TaskTimeoutError", message, "user")
+
 
 class RetriesExhaustedError(RuntimeUserError):
     """
@@ -209,3 +212,12 @@ class InlineIOMaxBytesBreached(RuntimeUserError):
 
     def __init__(self, message: str):
         super().__init__("InlineIOMaxBytesBreached", message, "user")
+
+
+class RunAbortedError(RuntimeUserError):
+    """
+    This error is raised when the run is aborted by the user.
+    """
+
+    def __init__(self, message: str):
+        super().__init__("RunAbortedError", message, "user")

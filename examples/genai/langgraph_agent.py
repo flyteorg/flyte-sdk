@@ -8,20 +8,20 @@
 # ]
 # ///
 
+
+from langchain_core.messages import BaseMessage
+from langgraph.prebuilt import create_react_agent
+
 import flyte
 
-from langgraph.prebuilt import create_react_agent
-from langchain_core.messages import BaseMessage
-import json
-
 agent_env = flyte.TaskEnvironment(
-    name="agent", 
+    name="agent",
     secrets=[
         flyte.Secret(key="ANTHROPIC_API_KEY", as_env_var="ANTHROPIC_API_KEY"),
     ],
     image=flyte.Image.from_uv_script(script=__file__, name="langgraph-agent", pre=True),
     resources=flyte.Resources(cpu=1),
-    )
+)
 
 
 def get_weather_tool(city: str) -> str:
@@ -38,22 +38,17 @@ def get_weather(city: str) -> str:
 def main(in_str: str) -> list[BaseMessage]:
     # Create a React agent with the weather tool
     agent = create_react_agent(
-        model="anthropic:claude-3-7-sonnet-latest",
-        tools=[get_weather_tool],
-        prompt="You are a helpful assistant"
+        model="anthropic:claude-3-7-sonnet-latest", tools=[get_weather_tool], prompt="You are a helpful assistant"
     )
 
     # Run the agent
     print("Running agent...")
-    output = agent.invoke(
-        {"messages": [{"role": "user", "content": in_str}]}
-    )
+    output = agent.invoke({"messages": [{"role": "user", "content": in_str}]})
 
     return output["messages"]
 
 
 if __name__ == "__main__":
-
     flyte.init_from_config("../../config.yaml")
     r = flyte.run(main, in_str="what is the weather in sf")
     print(r.url)
