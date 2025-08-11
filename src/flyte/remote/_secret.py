@@ -7,13 +7,14 @@ import rich.repr
 
 from flyte._initialize import ensure_client, get_client, get_common_config
 from flyte._protos.secret import definition_pb2, payload_pb2
+from flyte.remote._common import ToJSONMixin
 from flyte.syncify import syncify
 
 SecretTypes = Literal["regular", "image_pull"]
 
 
 @dataclass
-class Secret:
+class Secret(ToJSONMixin):
     pb2: definition_pb2.Secret
 
     @syncify
