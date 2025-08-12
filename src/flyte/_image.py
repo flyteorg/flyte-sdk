@@ -499,7 +499,8 @@ class Image:
                     image = image.with_pip_packages(f"flyte=={flyte_version}", pre=True)
                 else:
                     image = image.with_pip_packages(f"flyte=={flyte_version}")
-        object.__setattr__(image, "_tag", preset_tag)
+        if not dev_mode:
+            object.__setattr__(image, "_tag", preset_tag)
         # Set this to auto for all auto images because the meaning of "auto" can change (based on logic inside
         # _get_default_image_for, acts differently in a running task container) so let's make sure it stays auto.
         object.__setattr__(image, "_identifier_override", "auto")
