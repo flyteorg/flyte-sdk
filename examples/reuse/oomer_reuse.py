@@ -18,10 +18,22 @@ actor_image = base.clone(addl_layer=wheel_layer)
 # object.__setattr__(actor_image, "_tag", "9043815457d6422e4adb4fb83c5d3c5a")
 # ghcr.io/flyteorg/flyte:9043815457d6422e4adb4fb83c5d3c5a
 
+# issue 2: OOMKilled pod doesn't get replaced with a new pod
+#   should be fixed with autoscaling feature.
+
+# issue 3: OOM doesn't get treated as a user error, because it gets caught as
+#   task status not updated within grace period.
+#   (if Task A and Task B are running on the same pod, and Task B ooms, do they both
+#   get marked as user error? (we're not able to differentiate))
+
+# issue 4: Logs are not differentiated between a) attempts that land on the same pod
+#   b) different tasks running on the same pod (which wasn't a problem in v1).
+#   someone added time boundaries for v1 to differentiate between attempts???
+
 env = flyte.TaskEnvironment(
     name="oomer_parent_actor",
-    # resources=flyte.Resources(cpu=1, memory="250Mi"),
-    resources=flyte.Resources(cpu=1, memory="1Gi"),
+    resources=flyte.Resources(cpu=1, memory="250Mi"),
+    # resources=flyte.Resources(cpu=1, memory="1Gi"),
     image=actor_image,
     reusable=flyte.ReusePolicy(
         replicas=2,
@@ -38,9 +50,8 @@ leaf_env = flyte.TaskEnvironment(
 
 @env.task
 async def oomer(x: int):
-    print("Leaf (oomer) Environment Variables:", os.environ, flush=True)
     print("About to allocate a large list... should oom", flush=True)
-    await asyncio.sleep(1)
+    await asyncio.sleep(20)
     large_list = [0] * 100000000
     print(len(large_list))
 
@@ -61,24 +72,29 @@ async def always_succeeds() -> int:
 @env.task
 async def failure_recovery() -> int:
     print("Stating oomer_reuse main parent task", flush=True)
+    await asyncio.sleep(60)
+    print("Slept 1 minute, trying oomer now", flush=True)
     try:
-        # await oomer(2)
-        tasks = []
-        for i in range(50):
-            tasks.append(no_oom(x=i))
-        import time
+        await oomer(2)
+        # tasks = []
+        # for i in range(50):
+        #     tasks.append(no_oom(x=i))
 
-        start_time = time.time()
-        print(
-            f"About to gather {len(tasks)} tasks at time index"
-            f" {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(start_time))}",
-            flush=True,
-        )
-        results = await asyncio.gather(*tasks)
-        print(f"All tasks completed successfully: {results}", flush=True)
+        # start_time = time.time()
+        # print(
+        #     f"About to gather {len(tasks)} tasks at time index"
+        #     f" {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(start_time))}",
+        #     flush=True,
+        # )
+        # results = await asyncio.gather(*tasks)
+        print(f"All tasks completed successfully.", flush=True)
     except flyte.errors.OOMError as e:
-        print(f"Failed with oom trying with more resources: {e}, of type {type(e)}, {e.code}")
+        print(f"Failed with oom trying with more resources: {e}, of type {type(e)}, {e.code}", flush=True)
+        await asyncio.sleep(60)
+        print("Waited 60 seconds, trying again with more resources...", flush=True)
         try:
+            # issue 1: this is not creating a separate Actor environment.
+            #   confirm the override shows up in the task_serde output for enqueueaction.
             await oomer.override(resources=flyte.Resources(cpu=1, memory="1Gi"))(5)
         except flyte.errors.OOMError as e:
             print(f"Failed with OOM Again giving up: {e}, of type {type(e)}, {e.code}")
@@ -88,7 +104,7 @@ async def failure_recovery() -> int:
         print("In finally...", flush=True)
 
     res = await always_succeeds()
-    print("A0 finished!!!!!!!!!!!!!", flush=True)
+    print("A0 finished!!!", flush=True)
     return res
 
 
