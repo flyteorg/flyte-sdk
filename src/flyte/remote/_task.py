@@ -10,6 +10,7 @@ from google.protobuf import timestamp
 
 import flyte
 import flyte.errors
+from flyte._cache.cache import CacheBehavior
 from flyte._context import internal_ctx
 from flyte._initialize import ensure_client, get_client, get_common_config
 from flyte._logging import logger
@@ -204,6 +205,7 @@ class TaskDetails(ToJSONMixin):
         The cache policy of the task.
         """
         metadata = self.pb2.spec.task_template.metadata
+        behavior: CacheBehavior
         if not metadata.discoverable:
             behavior = "disable"
         elif metadata.discovery_version:
