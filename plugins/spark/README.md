@@ -5,5 +5,5 @@ Union can execute Spark jobs natively on a Kubernetes Cluster, which manages a v
 To install the plugin, run the following command:
 
 ```bash
-pip install flyteplugins-spark
+pip install --pre flyteplugins-spark
 ```
