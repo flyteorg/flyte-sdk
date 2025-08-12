@@ -48,7 +48,8 @@ def function_tool(
 
     **kwargs are forwarded to the underlying @agents.function_tool decorator.
     For @flyte.trace functions, this just forwards all the arguments to the
-    agents.function_tool decorator.
+    agents.function_tool decorator:
+    https://openai.github.io/openai-agents-python/ref/tool/#agents.tool.function_tool
 
     For @TaskEnvironment.task functions, this will create a flyte-compatible
     FunctionTool dataclass that can run tools as flyte tasks.
