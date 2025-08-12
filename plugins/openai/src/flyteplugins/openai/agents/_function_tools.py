@@ -4,17 +4,14 @@ import typing
 from dataclasses import asdict, dataclass
 from functools import partial
 
-from packaging import version
-
-from flyte._task import AsyncFunctionTaskTemplate, TaskTemplate
-from flyte.models import NativeInterface
-
 import agents
 from agents import FunctionTool as OpenAIFunctionTool
 from agents import function_tool as openai_function_tool
 from agents.function_schema import function_schema
 from agents.tool_context import ToolContext
-
+from flyte._task import AsyncFunctionTaskTemplate, TaskTemplate
+from flyte.models import NativeInterface
+from packaging import version
 
 MIN_PACKAGE_VERSION = "0.2.4"
 assert version.parse(agents.__version__) >= version.parse(MIN_PACKAGE_VERSION), (
