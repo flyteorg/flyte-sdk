@@ -7,5 +7,5 @@ it works on Flyte.
 To install the plugin, run the following command:
 
 ```bash
-pip install flyteplugins-openai
+pip install --pre flyteplugins-openai
 ```
