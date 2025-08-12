@@ -271,7 +271,7 @@ class TaskDetails:
         max_inline_io_bytes: int | None = None,
         **kwargs: Any,
     ) -> TaskDetails:
-        raise NotImplementedError
+        self.pb2.spec
 
     def __rich_repr__(self) -> rich.repr.Result:
         """
