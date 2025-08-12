@@ -6,15 +6,14 @@ import collections
 import types
 import typing
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field, is_dataclass
+from dataclasses import is_dataclass
 from typing import Any, ClassVar, Coroutine, Dict, Generic, List, Optional, Type, Union
 
 import msgpack
 from flyteidl.core import literals_pb2, types_pb2
 from fsspec.utils import get_protocol
-from mashumaro.mixins.json import DataClassJSONMixin
 from mashumaro.types import SerializableType
-from pydantic import model_serializer, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_serializer, model_validator
 from typing_extensions import Annotated, TypeAlias, get_args, get_origin
 
 import flyte.storage as storage
@@ -48,15 +47,16 @@ GENERIC_FORMAT: DataFrameFormat = ""
 GENERIC_PROTOCOL: str = "generic protocol"
 
 
-@dataclass
-class DataFrame(SerializableType, DataClassJSONMixin):
+class DataFrame(BaseModel, SerializableType):
     """
     This is the user facing DataFrame class. Please don't confuse it with the literals.StructuredDataset
     class (that is just a model, a Python class representation of the protobuf).
     """
 
-    uri: typing.Optional[str] = field(default=None)
-    file_format: typing.Optional[str] = field(default=GENERIC_FORMAT)
+    uri: typing.Optional[str] = Field(default=None)
+    file_format: typing.Optional[str] = Field(default=GENERIC_FORMAT)
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
     # loop manager is working better than synchronicity for some reason, was getting an error but may be an easy fix
     def _serialize(self) -> Dict[str, Optional[str]]:
@@ -139,19 +139,32 @@ class DataFrame(SerializableType, DataClassJSONMixin):
         val: typing.Optional[typing.Any] = None,
         uri: typing.Optional[str] = None,
         metadata: typing.Optional[literals_pb2.StructuredDatasetMetadata] = None,
+        file_format: typing.Optional[str] = None,
         **kwargs,
     ):
+        """Initialize DataFrame with backward compatibility for the old constructor signature."""
+        # Handle the legacy 'dataframe' parameter that was used in tests
+        if "dataframe" in kwargs and val is None:
+            val = kwargs.pop("dataframe")
+
+        # Prepare data for Pydantic initialization
+        init_data = {
+            "uri": uri,
+            "file_format": file_format if file_format is not None else GENERIC_FORMAT,
+        }
+
+        # Handle any additional kwargs (like 'file_format' from serialization)
+        for key, value in kwargs.items():
+            if key in ["uri", "file_format"]:
+                init_data[key] = value
+
+        # Initialize the Pydantic model
+        super().__init__(**init_data)
+
+        # Set private attributes that are not part of the Pydantic model
         self._val = val
-        # Make these fields public, so that the dataclass transformer can set a value for it
-        # https://github.com/flyteorg/flytekit/blob/bcc8541bd6227b532f8462563fe8aac902242b21/flytekit/core/type_engine.py#L298
-        self.uri = uri
-        # When dataclass_json runs from_json, we need to set it here, otherwise the format will be empty string
-        self.file_format = kwargs["file_format"] if "file_format" in kwargs else GENERIC_FORMAT
-        # This is a special attribute that indicates if the data was either downloaded or uploaded
         self._metadata = metadata
-        # This is not for users to set, the transformer will set this.
         self._literal_sd: Optional[literals_pb2.StructuredDataset] = None
-        # Not meant for users to set, will be set by an open() call
         self._dataframe_type: Optional[DF] = None  # type: ignore
         self._already_uploaded = False
 
@@ -243,6 +256,9 @@ def flatten_dict(sub_dict: dict, parent_key: str = "") -> typing.Dict:
         elif is_dataclass(value):
             fields = getattr(value, "__dataclass_fields__")
             d = {k: v.type for k, v in fields.items()}
+            result.update(flatten_dict(sub_dict=d, parent_key=current_key))
+        elif hasattr(value, "model_fields"):  # Pydantic model
+            d = {k: v.annotation for k, v in value.model_fields.items()}
             result.update(flatten_dict(sub_dict=d, parent_key=current_key))
         else:
             result[current_key] = value
