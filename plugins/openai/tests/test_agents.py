@@ -1,8 +1,8 @@
 """Unit tests for OpenAI agents package."""
 
+import flyte
 from agents import FunctionTool as OpenAIFunctionTool
 
-import flyte
 from flyteplugins.openai.agents import function_tool
 from flyteplugins.openai.agents._function_tools import FunctionTool
 
@@ -37,4 +37,3 @@ def test_function():
 
     tool = function_tool(my_function)
     assert isinstance(tool, OpenAIFunctionTool)
-    

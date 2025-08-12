@@ -21,10 +21,10 @@ uv run tools.py
 # ///
 
 from agents import Agent, Runner
+from flyteplugins.openai.agents import function_tool
 from pydantic import BaseModel
 
 import flyte
-from flyteplugins.openai.agents import function_tool
 
 
 class Weather(BaseModel):
