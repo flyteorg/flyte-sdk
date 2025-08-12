@@ -28,7 +28,7 @@ dist: clean
 dist-plugins: clean
 	for plugin in plugins/*; do \
 		if [ -d "$$plugin" ]; then \
-			uv run python -m build --wheel --installer uv "$$plugin"; \
+			uv run python -m build --wheel --installer uv --outdir ./dist "$$plugin"; \
 		fi \
 	done
 

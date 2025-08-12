@@ -945,14 +945,6 @@ class Image:
         # used to compute the identifier. Can remove if we ever decide to expose the lambda in with_commands
         with_dist = self.clone(addl_layer=PythonWheels(wheel_dir=dist_folder))
 
-        # Find all wheels in plugins folder
-        plugins_folder = root / "plugins"
-        dist_plugin_folders = list(x.parent for x in plugins_folder.glob("**/dist/*.whl"))
-
-        # Add the wheels to the image
-        for dist_folder in dist_plugin_folders:
-            with_dist = with_dist.clone(addl_layer=PythonWheels(wheel_dir=dist_folder))
-
         return with_dist
 
     def __img_str__(self) -> str:

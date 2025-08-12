@@ -18,6 +18,7 @@ jobs:
           - "."
           - "plugins/ray"
           - "plugins/spark"
+          - "plugins/openai"
     steps:
       - uses: actions/checkout@v4
         with:
