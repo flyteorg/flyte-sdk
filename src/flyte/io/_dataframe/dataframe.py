@@ -13,7 +13,7 @@ import msgpack
 from flyteidl.core import literals_pb2, types_pb2
 from fsspec.utils import get_protocol
 from mashumaro.types import SerializableType
-from pydantic import BaseModel, ConfigDict, Field, model_serializer, model_validator
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, model_serializer, model_validator
 from typing_extensions import Annotated, TypeAlias, get_args, get_origin
 
 import flyte.storage as storage
@@ -57,6 +57,13 @@ class DataFrame(BaseModel, SerializableType):
     file_format: typing.Optional[str] = Field(default=GENERIC_FORMAT)
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    # Private attributes that are not part of the Pydantic model schema
+    _val: typing.Optional[typing.Any] = PrivateAttr(default=None)
+    _metadata: typing.Optional[literals_pb2.StructuredDatasetMetadata] = PrivateAttr(default=None)
+    _literal_sd: Optional[literals_pb2.StructuredDataset] = PrivateAttr(default=None)
+    _dataframe_type: Optional[DF] = PrivateAttr(default=None)
+    _already_uploaded: bool = PrivateAttr(default=False)
 
     # loop manager is working better than synchronicity for some reason, was getting an error but may be an easy fix
     def _serialize(self) -> Dict[str, Optional[str]]:
@@ -134,6 +141,16 @@ class DataFrame(BaseModel, SerializableType):
     def column_names(cls) -> typing.List[str]:
         return [k for k, v in cls.columns().items()]
 
+    @model_validator(mode="before")
+    @classmethod
+    def _handle_legacy_params(cls, data):
+        """Handle backward compatibility for legacy constructor patterns."""
+        if isinstance(data, dict):
+            # Handle legacy 'dataframe' parameter that was used in tests
+            if "dataframe" in data and "val" not in data:
+                data["val"] = data.pop("dataframe")
+        return data
+
     def __init__(
         self,
         val: typing.Optional[typing.Any] = None,
@@ -143,30 +160,74 @@ class DataFrame(BaseModel, SerializableType):
         **kwargs,
     ):
         """Initialize DataFrame with backward compatibility for the old constructor signature."""
+        # Extract private attribute values before Pydantic initialization
+        private_val = val
+        private_metadata = metadata
+
         # Handle the legacy 'dataframe' parameter that was used in tests
         if "dataframe" in kwargs and val is None:
-            val = kwargs.pop("dataframe")
+            private_val = kwargs.pop("dataframe")
 
-        # Prepare data for Pydantic initialization
+        # Prepare data for Pydantic initialization (only public fields)
         init_data = {
             "uri": uri,
             "file_format": file_format if file_format is not None else GENERIC_FORMAT,
         }
 
-        # Handle any additional kwargs (like 'file_format' from serialization)
+        # Handle any additional kwargs (only public fields)
         for key, value in kwargs.items():
             if key in ["uri", "file_format"]:
                 init_data[key] = value
 
-        # Initialize the Pydantic model
+        # Initialize the Pydantic model with public fields only
         super().__init__(**init_data)
 
-        # Set private attributes that are not part of the Pydantic model
-        self._val = val
-        self._metadata = metadata
-        self._literal_sd: Optional[literals_pb2.StructuredDataset] = None
-        self._dataframe_type: Optional[DF] = None  # type: ignore
-        self._already_uploaded = False
+        # Set private attributes after Pydantic initialization
+        self._val = private_val
+        self._metadata = private_metadata
+
+    @classmethod
+    def create(
+        cls,
+        val: typing.Optional[typing.Any] = None,
+        uri: typing.Optional[str] = None,
+        metadata: typing.Optional[literals_pb2.StructuredDatasetMetadata] = None,
+        file_format: typing.Optional[str] = None,
+        **kwargs,
+    ) -> "DataFrame":
+        """
+        Alternative constructor for creating DataFrame instances.
+
+        This is the recommended way to create DataFrame instances going forward,
+        as it follows proper Pydantic patterns.
+        """
+        instance = cls(uri=uri, file_format=file_format or GENERIC_FORMAT, **kwargs)
+        instance._val = val
+        instance._metadata = metadata
+        return instance
+
+    @classmethod
+    def from_val(
+        cls,
+        val: typing.Any,
+        uri: typing.Optional[str] = None,
+        file_format: typing.Optional[str] = None,
+        **kwargs,
+    ) -> "DataFrame":
+        """Create DataFrame from a dataframe value."""
+        instance = cls(uri=uri, file_format=file_format or GENERIC_FORMAT, **kwargs)
+        instance._val = val
+        return instance
+
+    @classmethod
+    def from_uri(
+        cls,
+        uri: str,
+        file_format: typing.Optional[str] = None,
+        **kwargs,
+    ) -> "DataFrame":
+        """Create DataFrame from URI."""
+        return cls(uri=uri, file_format=file_format or GENERIC_FORMAT, **kwargs)
 
     @property
     def val(self) -> Optional[DF]:
