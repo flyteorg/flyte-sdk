@@ -24,9 +24,9 @@ env = flyte.TaskEnvironment(
     resources=flyte.Resources(cpu=1, memory="1Gi"),
     image=actor_image,
     reusable=flyte.ReusePolicy(
-        replicas=1,
+        replicas=2,
         idle_ttl=60,
-        concurrency=8,
+        concurrency=2,
     ),
 )
 
@@ -47,25 +47,24 @@ async def oomer(x: int):
 
 @env.task
 async def no_oom(x: int):
-    print("Leaf (non-oom) Environment Variables:", os.environ, flush=True)
     print(f"Non-ooming task got {x=}", flush=True)
-    await asyncio.sleep(1)
+    # await asyncio.sleep(1)
     print(f"Non-ooming task {x=} finishing", flush=True)
 
 
 @env.task
 async def always_succeeds() -> int:
-    await asyncio.sleep(1)
+    # await asyncio.sleep(1)
     return 42
 
 
 @env.task
 async def failure_recovery() -> int:
-    print("A0 (failure recovery) Environment Variables:", os.environ, flush=True)
+    print("Stating oomer_reuse main parent task", flush=True)
     try:
         # await oomer(2)
         tasks = []
-        for i in range(4):
+        for i in range(50):
             tasks.append(no_oom(x=i))
         import time
 
