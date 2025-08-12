@@ -203,11 +203,19 @@ class TaskDetails(ToJSONMixin):
         """
         The cache policy of the task.
         """
+        metadata = self.pb2.spec.task_template.metadata
+        if not metadata.discoverable:
+            behavior = "disable"
+        elif metadata.discovery_version:
+            behavior = "override"
+        else:
+            behavior = "auto"
+
         return flyte.Cache(
-            behavior="enabled" if self.pb2.spec.task_template.metadata.discoverable else "disable",
-            version_override=self.pb2.spec.task_template.metadata.discovery_version,
-            serialize=self.pb2.spec.task_template.metadata.cache_serializable,
-            ignored_inputs=tuple(self.pb2.spec.task_template.metadata.cache_ignore_input_vars),
+            behavior=behavior,
+            version_override=metadata.discovery_version if metadata.discovery_version else None,
+            serialize=metadata.cache_serializable,
+            ignored_inputs=tuple(metadata.cache_ignore_input_vars),
         )
 
     @property
