@@ -70,10 +70,10 @@ unit_test: ## Test the code with pytest
 # Test plugins with pytest
 # Usage:
 # To run all plugin tests: `make unit_test_plugins`
-# To run a specific plugin test: `make unit_test_plugins FLYTE_PLUGINS=openai`
+# To run a specific plugin test: `FLYTE_PLUGIN=plugins/openai make unit_test_plugins`
 .PHONY: unit_test_plugins
 unit_test_plugins:
-	@for plugin in $${FLYTE_PLUGINS:-plugins/*}; do \
+	@for plugin in $${FLYTE_PLUGIN:-plugins/*}; do \
 		if [ -d "$$plugin/tests" ]; then \
 			echo "🚀 Testing plugin: $$plugin..."; \
 			cd "$$plugin" && uv run python -m pytest tests/ && cd ../../..; \
