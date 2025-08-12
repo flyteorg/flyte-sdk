@@ -10,6 +10,16 @@ from typing import Literal
 ErrorKind = Literal["system", "unknown", "user"]
 
 
+def silence_grpc_polling_error(loop, context):
+    """
+    Suppress specific gRPC polling errors in the event loop.
+    """
+    exc = context.get("exception")
+    if isinstance(exc, BlockingIOError):
+        return  # suppress
+    loop.default_exception_handler(context)
+
+
 class BaseRuntimeError(RuntimeError):
     """
     Base class for all Union runtime errors. These errors are raised when the underlying task execution fails, either
@@ -85,6 +95,9 @@ class TaskTimeoutError(RuntimeUserError):
     """
     This error is raised when the underlying task execution runs for longer than the specified timeout.
     """
+
+    def __init__(self, message: str):
+        super().__init__("TaskTimeoutError", message, "user")
 
 
 class RetriesExhaustedError(RuntimeUserError):
@@ -199,3 +212,12 @@ class InlineIOMaxBytesBreached(RuntimeUserError):
 
     def __init__(self, message: str):
         super().__init__("InlineIOMaxBytesBreached", message, "user")
+
+
+class RunAbortedError(RuntimeUserError):
+    """
+    This error is raised when the run is aborted by the user.
+    """
+
+    def __init__(self, message: str):
+        super().__init__("RunAbortedError", message, "user")

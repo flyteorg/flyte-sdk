@@ -1,3 +1,4 @@
+import asyncio
 import sys
 import time
 from typing import Any, List, Tuple
@@ -76,7 +77,11 @@ async def create_controller(
     :return:
     """
     logger.info(f"[rusty] Creating controller with endpoint {endpoint}")
+    import flyte.errors
     from flyte._initialize import init
+
+    loop = asyncio.get_event_loop()
+    loop.set_exception_handler(flyte.errors.silence_grpc_polling_error)
 
     # TODO Currently reference tasks are not supported in Rusty.
     await init.aio()

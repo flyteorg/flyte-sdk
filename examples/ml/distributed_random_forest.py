@@ -33,7 +33,7 @@ env = flyte.TaskEnvironment(
         __file__,
         name="flyte",
         registry="ghcr.io/flyteorg",
-        arch=("linux/amd64", "linux/arm64"),
+        platform=("linux/amd64", "linux/arm64"),
         python_version=(3, 13),
     ).with_apt_packages("ca-certificates"),
 )
@@ -42,7 +42,7 @@ env = flyte.TaskEnvironment(
 # these constants are tuned such that the entire dataset is too large to fit into
 # a machine with 250Mi of memory, but each partition is small enough to fit into
 # memory.
-N_SAMPLES = 25_000
+N_SAMPLES = 20_000
 N_CLASSES = 2
 N_FEATURES = 10
 N_INFORMATIVE = 5
@@ -204,7 +204,7 @@ async def main(n_estimators: int = 16) -> tuple[File, float]:
 
 
 if __name__ == "__main__":
-    flyte.init_from_config("config.yaml")
+    flyte.init_from_config("../../config.yaml")
     run = flyte.run(main)
     print(run.url)
 
