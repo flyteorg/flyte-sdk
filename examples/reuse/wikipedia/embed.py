@@ -13,6 +13,9 @@
 # ///
 import asyncio
 import logging
+
+# Import our reusable data processing tracker
+import sys
 from pathlib import Path
 from typing import AsyncGenerator, Dict
 
@@ -24,6 +27,9 @@ from sentence_transformers import SentenceTransformer
 
 import flyte
 import flyte.io
+
+sys.path.append(str(Path(__file__).parent.parent.parent))
+from data_processing_tracker import DataProcessingTracker
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -91,7 +97,7 @@ async def encode(df: pd.DataFrame, batch_size: int, model_name: str) -> torch.Te
     return embeddings
 
 
-@main_env.task
+@main_env.task(report=True)
 async def main(
     dataset_name: str = "wikipedia",
     dataset_version: str = "20220301.en",
@@ -108,26 +114,49 @@ async def main(
     logger.info(f"Dataset: {dataset_name} {dataset_version}")
     logger.info(f"Model: {embedding_model}")
 
+    # Get dataset info first to estimate total records
+    repo_id = f"{dataset_name}"
+    revision = dataset_version if dataset_version != "20220301.en" else "main"
+
+    try:
+        files = list_repo_files(repo_id, revision=revision, repo_type="dataset")
+        parquet_files = [f for f in files if f.endswith(".parquet") and "train" in f]
+        if not parquet_files:
+            raise FileNotFoundError(f"No parquet files found in {repo_id}/{revision}")
+
+        # Estimate total records (rough estimate: 10k records per parquet file)
+        estimated_records = len(parquet_files) * 10000
+    except Exception as e:
+        logger.error(f"Error accessing dataset {repo_id}: {e}")
+        raise e
+
+    # Initialize the data processing tracker
+    tracker = DataProcessingTracker(
+        total_records=estimated_records,
+        title="📄 Wikipedia Embeddings Pipeline",
+        description=f"Processing {dataset_name} dataset with {embedding_model} model...",
+    )
+
+    await tracker.initialize()
+    await tracker.log_activity("Starting dataset download and preparation", "info")
+
     # Stream through dataset partitions using HF Hub
     async def partition_generator() -> AsyncGenerator[flyte.io.DataFrame, None]:
         """Download Wikipedia parquet files directly from HuggingFace Hub."""
         logger.info(f"Loading {dataset_name} {dataset_version} from HuggingFace Hub")
 
-        # Get list of parquet files for the dataset
-        repo_id = f"{dataset_name}"
-        revision = dataset_version if dataset_version != "20220301.en" else "main"
-
         try:
-            files = list_repo_files(repo_id, revision=revision, repo_type="dataset")
-            parquet_files = [f for f in files if f.endswith(".parquet") and "train" in f]
-            if not parquet_files:
-                raise FileNotFoundError(f"No parquet files found in {repo_id}/{revision}")
-
             logger.info(f"Found {len(parquet_files)} parquet files to process")
+            await tracker.log_activity(f"Found {len(parquet_files)} data partitions to process", "success")
 
             # Download and yield each parquet file
-            for i, parquet_file in enumerate(parquet_files):  # Limit for efficiency
+            for i, parquet_file in enumerate(parquet_files):
                 logger.info(f"Processing partition {i + 1}/{len(parquet_files)}: {parquet_file}")
+
+                await tracker.log_activity(
+                    f"Downloading partition {i + 1}/{len(parquet_files)}: {parquet_file}", "info"
+                )
+
                 # Download the parquet file
                 file_path = hf_hub_download(
                     repo_id=repo_id,
@@ -135,38 +164,63 @@ async def main(
                     revision=revision,
                     repo_type="dataset",
                 )
+
+                await tracker.log_activity(f"Successfully downloaded partition {i + 1}", "success")
                 yield flyte.io.DataFrame(uri=file_path)
 
         except Exception as e:
-            logger.error(f"Error accessing dataset {repo_id}: {e}")
+            await tracker.log_activity(f"Error accessing dataset: {e}", "error")
             raise
 
     # Process partitions as they become available
     logger.info("Starting partition processing...")
+    await tracker.log_activity("Starting embedding generation for all partitions", "info")
+
     embedding_tasks = []
     partition_count = 0
+    processed_records = 0
 
     with flyte.group("wikipedia"):
         # Process each partition
         async for partition_df in partition_generator():
             if partition_df is None:
                 break
+
+            # Estimate records in this partition (for demo, assume 10k per partition)
+            partition_records = 10000
+
             logger.info("Processing partition with texts")
+            await tracker.log_activity(f"Creating embedding task for partition {partition_count + 1}", "info")
+
             # Create encoding task for this partition
             encoding_task = encode(partition_df, batch_size, embedding_model)
             embedding_tasks.append(encoding_task)
             partition_count += 1
 
+            # Update progress tracker
+            processed_records += partition_records
+            await tracker.update_progress(processed_records)
+
         logger.info(f"Created {len(embedding_tasks)} encoding tasks, waiting for completion...")
+        await tracker.log_activity(
+            f"All {len(embedding_tasks)} embedding tasks created, waiting for completion", "info"
+        )
 
         # Wait for all encoding tasks to complete
         embeddings = await asyncio.gather(*embedding_tasks)
+
+        await tracker.log_activity("All embedding tasks completed successfully", "success")
 
     # Compute final statistics
     total_embeddings = sum(tensor.shape[0] for tensor in embeddings if tensor.numel() > 0)
     embedding_dim = embeddings[0].shape[1] if embeddings and embeddings[0].numel() > 0 else 0
 
     logger.info(f"Workflow complete: {total_embeddings} embeddings generated")
+
+    # Complete the tracking
+    final_stats = await tracker.complete(
+        f"Wikipedia embeddings pipeline completed! Generated {total_embeddings:,} embeddings using {embedding_model}"
+    )
 
     return {
         "partitions_processed": str(len(embeddings)),
