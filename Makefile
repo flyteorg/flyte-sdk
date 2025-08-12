@@ -67,8 +67,12 @@ unit_test: ## Test the code with pytest
 	@uv run python -m pytest -k "not integration and not sandbox" tests
 
 
+# Test plugins with pytest
+# Usage:
+# To run all plugin tests: `make unit_test_plugins`
+# To run a specific plugin test: `make unit_test_plugins FLYTE_PLUGINS=openai`
 .PHONY: unit_test_plugins
-unit_test_plugins:  # Test plugins with pytest
+unit_test_plugins:
 	@for plugin in $${FLYTE_PLUGINS:-plugins/*}; do \
 		if [ -d "$$plugin/tests" ]; then \
 			echo "🚀 Testing plugin: $$plugin..."; \
