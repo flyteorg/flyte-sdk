@@ -135,7 +135,7 @@ def test_base_image_cloned():
 def test_base_image_clone_same():
     default_image = Image.from_debian_base(python_version=(3, 13))
     cloned_default_image = Image.from_debian_base(python_version=(3, 13)).clone(
-        registry="ghcr.io/flyteorg", name="flyte"
+        registry="ghcr.io/flyteorg", name="random"
     )
     # These should not be the same because once cloned, the image loses its special tag
     assert default_image.uri != cloned_default_image.uri
