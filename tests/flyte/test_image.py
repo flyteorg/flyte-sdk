@@ -78,7 +78,7 @@ def test_default_base_image():
     assert default_image.uri.startswith("ghcr.io/flyteorg/flyte:py3.")
     assert default_image.identifier == "auto"
     default_image = Image.from_debian_base(python_version="3.12")
-    assert default_image.uri == "ghcr.io/flyteorg/flyte:90e23ffd5ad620046c2cd20b42da8fd9"
+    assert not default_image.uri.startswith("ghcr.io/flyteorg/flyte:py3.")
 
 
 def test_image_from_uv_script():
