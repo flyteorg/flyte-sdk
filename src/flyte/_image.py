@@ -528,7 +528,6 @@ class Image:
 
         :param python_version: If not specified, will use the current Python version
         :param flyte_version: Union version to use
-        :param flyte_plugins: List of flyte plugins to install in the image
         :param install_flyte: If True, will install the flyte library in the image
         :param registry: Registry to use for the image
         :param name: Name of the image if you want to override the default name
@@ -938,11 +937,9 @@ class Image:
 
         :return: Image
         """
-        root = Path(__file__).parent.parent.parent
-        dist_folder = root / "dist"
-
+        dist_folder = Path(__file__).parent.parent.parent / "dist"
         # Manually declare the PythonWheel so we can set the hashing
-        # used to compute the identifier. Can remove if we ever decide to expose the lambda in with_commands
+        # used to compute the identifier. Can remove if we ever decide to expose the lambda in with_ commands
         with_dist = self.clone(addl_layer=PythonWheels(wheel_dir=dist_folder))
 
         return with_dist
