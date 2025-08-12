@@ -6,7 +6,7 @@ from typing import Optional
 
 from ._tools import ipython_check, is_in_cluster
 
-DEFAULT_LOG_LEVEL = logging.INFO
+DEFAULT_LOG_LEVEL = logging.WARNING
 
 
 def make_hyperlink(label: str, url: str):
