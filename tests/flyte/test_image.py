@@ -74,7 +74,7 @@ def test_with_workdir():
 
 
 def test_default_base_image():
-    default_image = Image.from_debian_base(flyte_version="2.0.0")
+    default_image = Image.from_debian_base(flyte_version="2.0.0", python_version="3.12")
     assert default_image.uri.startswith("ghcr.io/flyteorg/flyte:py3.")
     assert default_image.identifier == "auto"
     default_image = Image.from_debian_base()
