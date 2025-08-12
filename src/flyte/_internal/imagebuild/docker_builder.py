@@ -109,7 +109,7 @@ RUN uv venv $$VIRTUALENV --python=$PYTHON_VERSION
 
 # Adds nvidia just in case it exists
 ENV PATH="$$PATH:/usr/local/nvidia/bin:/usr/local/cuda/bin" \
-    LD_LIBRARY_PATH="/usr/local/nvidia/lib64:$$LD_LIBRARY_PATH"
+    LD_LIBRARY_PATH="/usr/local/nvidia/lib64"
 """)
 
 # This gets added on to the end of the dockerfile
