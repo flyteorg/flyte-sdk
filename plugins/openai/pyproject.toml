@@ -7,12 +7,18 @@ authors = [{ name = "Niels Bantilan", email = "cosmicbboy@users.noreply.github.c
 requires-python = ">=3.10"
 dependencies = [
     "openai-agents>=0.2.4",
-    "flyte"
+    "flyte",
 ]
 
 [build-system]
 requires = ["setuptools", "setuptools_scm"]
 build-backend = "setuptools.build_meta"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3.5",
+    "pytest-asyncio>=0.26.0",
+]
 
 [tool.setuptools]
 include-package-data = true
@@ -67,3 +73,6 @@ ignore = ["PGH003", "PLC0415"]
 
 [tool.ruff.lint.per-file-ignores]
 "examples/*" = ["E402"]
+
+[tool.uv.sources]
+flyte = { path = "../../", editable = true }

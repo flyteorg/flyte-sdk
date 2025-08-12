@@ -67,6 +67,16 @@ unit_test: ## Test the code with pytest
 	@uv run python -m pytest -k "not integration and not sandbox" tests
 
 
+.PHONY: unit_test_plugins
+unit_test_plugins:  # Test plugins with pytest
+	@for plugin in $${FLYTE_PLUGINS:-plugins/*}; do \
+		if [ -d "$$plugin/tests" ]; then \
+			echo "🚀 Testing plugin: $$plugin..."; \
+			cd "$$plugin" && uv run python -m pytest tests/ && cd ../../..; \
+		fi \
+	done
+
+
 .PHONY: cli-docs-gen
 cli-docs-gen: ## Generate CLI documentation
 	@echo "📖 Generating CLI documentation..."
