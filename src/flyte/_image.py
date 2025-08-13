@@ -499,7 +499,8 @@ class Image:
                     image = image.with_pip_packages(f"flyte=={flyte_version}", pre=True)
                 else:
                     image = image.with_pip_packages(f"flyte=={flyte_version}")
-        object.__setattr__(image, "_tag", preset_tag)
+        if not dev_mode:
+            object.__setattr__(image, "_tag", preset_tag)
         # Set this to auto for all auto images because the meaning of "auto" can change (based on logic inside
         # _get_default_image_for, acts differently in a running task container) so let's make sure it stays auto.
         object.__setattr__(image, "_identifier_override", "auto")
@@ -941,7 +942,7 @@ class Image:
         dist_folder = Path(__file__).parent.parent.parent / "dist"
         # Manually declare the PythonWheel so we can set the hashing
         # used to compute the identifier. Can remove if we ever decide to expose the lambda in with_ commands
-        with_dist = self.clone(addl_layer=PythonWheels(wheel_dir=dist_folder, package_name="flyte"))
+        with_dist = self.clone(addl_layer=PythonWheels(wheel_dir=dist_folder, package_name="flyte", pre=True))
 
         return with_dist
 

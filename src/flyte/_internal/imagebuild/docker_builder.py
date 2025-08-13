@@ -168,7 +168,6 @@ class PythonWheelHandler:
         pip_install_args_no_deps = [
             *pip_install_args,
             *[
-                "--pre",
                 "--find-links",
                 "/dist",
                 "--no-deps",
@@ -183,7 +182,7 @@ class PythonWheelHandler:
         dockerfile += delta1
 
         # Second install: Install dependencies from PyPI
-        pip_install_args_deps = [*pip_install_args, *["--pre", layer.package_name]]
+        pip_install_args_deps = [*pip_install_args, layer.package_name]
         delta2 = UV_WHEEL_INSTALL_COMMAND_TEMPLATE.substitute(
             PIP_INSTALL_ARGS=" ".join(pip_install_args_deps), SECRET_MOUNT=secret_mounts
         )
