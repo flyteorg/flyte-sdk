@@ -223,7 +223,7 @@ async def test_pure_dataclasses_with_flyte_types(local_dummy_txt_file, local_dum
 
     @env.task
     async def generate_sd() -> DataFrame:
-        return DataFrame(uri="s3://my-s3-bucket/data/test_sd", file_format="parquet")
+        return DataFrame.from_uri("s3://my-s3-bucket/data/test_sd", file_format="parquet")
 
     @env.task
     async def create_local_dir(path: str) -> Dir:
@@ -580,7 +580,7 @@ async def test_pure_frozen_dataclasses_with_python_types():
 @pytest.mark.asyncio
 @mock.patch("flyte.storage._remote_fs.RemoteFSPathResolver")
 async def test_modify_literal_uris_call(mock_resolver, ctx_with_test_raw_data_path):
-    sd = DataFrame(val=pd.DataFrame({"a": [1, 2], "b": [3, 4]}))
+    sd = DataFrame.from_val(pd.DataFrame({"a": [1, 2], "b": [3, 4]}))
 
     @dataclass
     class DC1:

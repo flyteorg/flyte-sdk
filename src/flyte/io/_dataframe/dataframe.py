@@ -141,50 +141,8 @@ class DataFrame(BaseModel, SerializableType):
     def column_names(cls) -> typing.List[str]:
         return [k for k, v in cls.columns().items()]
 
-    @model_validator(mode="before")
-    @classmethod
-    def _handle_legacy_params(cls, data):
-        """Handle backward compatibility for legacy constructor patterns."""
-        if isinstance(data, dict):
-            # Handle legacy 'dataframe' parameter that was used in tests
-            if "dataframe" in data and "val" not in data:
-                data["val"] = data.pop("dataframe")
-        return data
-
-    def __init__(
-        self,
-        val: typing.Optional[typing.Any] = None,
-        uri: typing.Optional[str] = None,
-        metadata: typing.Optional[literals_pb2.StructuredDatasetMetadata] = None,
-        file_format: typing.Optional[str] = None,
-        **kwargs,
-    ):
-        """Initialize DataFrame with backward compatibility for the old constructor signature."""
-        # Extract private attribute values before Pydantic initialization
-        private_val = val
-        private_metadata = metadata
-
-        # Handle the legacy 'dataframe' parameter that was used in tests
-        if "dataframe" in kwargs and val is None:
-            private_val = kwargs.pop("dataframe")
-
-        # Prepare data for Pydantic initialization (only public fields)
-        init_data = {
-            "uri": uri,
-            "file_format": file_format if file_format is not None else GENERIC_FORMAT,
-        }
-
-        # Handle any additional kwargs (only public fields)
-        for key, value in kwargs.items():
-            if key in ["uri", "file_format"]:
-                init_data[key] = value
-
-        # Initialize the Pydantic model with public fields only
-        super().__init__(**init_data)
-
-        # Set private attributes after Pydantic initialization
-        self._val = private_val
-        self._metadata = private_metadata
+    # Pure Pydantic - no custom __init__ needed!
+    # Use alternative constructors: DataFrame.create(), DataFrame.from_val(), DataFrame.from_uri()
 
     @classmethod
     def create(
@@ -837,7 +795,7 @@ class DataFrameTransformerEngine(TypeTransformer[DataFrame]):
             structured_dataset_type=expected.structured_dataset_type if expected else None
         )
 
-        sd = DataFrame(val=python_val, metadata=meta)
+        sd = DataFrame.create(val=python_val, metadata=meta)
         return await self.encode(sd, python_type, protocol, fmt, sdt)
 
     def _protocol_from_type_or_prefix(self, df_type: Type, uri: Optional[str] = None) -> str:
@@ -1016,9 +974,8 @@ class DataFrameTransformerEngine(TypeTransformer[DataFrame]):
         #   t1(input_a: DataFrame)  # or
         #   t1(input_a: Annotated[DataFrame, my_cols])
         if issubclass(expected_python_type, DataFrame):
-            sd = expected_python_type(
-                dataframe=None,
-                # Note here that the type being passed in
+            sd = expected_python_type.create(
+                val=None,
                 metadata=metad,
             )
             sd._literal_sd = lv.scalar.structured_dataset

@@ -947,7 +947,7 @@ async def test_structured_dataset_in_dataclass(ctx_with_test_raw_data_path):
         a: People
         b: InnerDatasetStruct
 
-    sd = DataFrame(val=df, file_format="parquet")
+    sd = DataFrame.create(val=df, file_format="parquet")
     o = DatasetStruct(a=sd, b=InnerDatasetStruct(a=sd, b=[sd], c={"hello": sd}))
 
     tf = DataclassTransformer()
@@ -2585,7 +2585,7 @@ async def test_structured_dataset_collection(ctx_with_test_raw_data_path):
 
     df = pd.DataFrame({"alcohol": [1.0, 2.0], "malic_acid": [2.0, 3.0]})
 
-    await TypeEngine.to_literal(DataFrame(df), WineType, TypeEngine.to_literal_type(WineType))
+    await TypeEngine.to_literal(DataFrame.from_val(df), WineType, TypeEngine.to_literal_type(WineType))
 
     transformer = TypeEngine.get_transformer(WineTypeListList)
     assert isinstance(transformer, ListTransformer)
@@ -2596,11 +2596,11 @@ async def test_structured_dataset_collection(ctx_with_test_raw_data_path):
     assert cols[1].name == "malic_acid"
     assert cols[1].literal_type.simple == SimpleType.FLOAT
 
-    sd = DataFrame(df, format="parquet")
+    sd = DataFrame.create(val=df, file_format="parquet")
     lv = await TypeEngine.to_literal([[sd]], WineTypeListList, lt)
     assert lv is not None
 
-    lv = await TypeEngine.to_literal([[DataFrame(df)]], WineTypeListList, lt)
+    lv = await TypeEngine.to_literal([[DataFrame.from_val(df)]], WineTypeListList, lt)
     assert lv is not None
 
 
