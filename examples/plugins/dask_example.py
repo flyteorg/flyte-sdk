@@ -1,30 +1,25 @@
 import asyncio
 import typing
-from pathlib import Path
 
 from flyte import Resources
 from flyteplugins.dask import Dask, Scheduler, WorkerGroup
+from distributed import Client
 
 import flyte.remote._action
 import flyte.storage
 
 
-def inc(x):
-    return x + 1
-
-dask_plugins = f"git+https://github.com/flyteorg/flytekit.git@80beb008094d5c7fa4126b33d9bc7ec67c2b8551#subdirectory=plugins/dask"
+dask_plugins = "git+https://github.com/flyteorg/flyte-sdk.git@74145329b4d6e021128cd285d92443dfb0206158#subdirectory=plugins/dask"
 
 image = (
     flyte.Image.from_debian_base(python_version=(3, 12))
     .with_apt_packages("git")
-    .with_pip_packages("dask[distributed]==2024.12.1", dask_plugins)
-    .with_source_folder(Path(__file__).parent.parent.parent / "plugins/dask", "./dask")
-    .with_env_vars({"PYTHONPATH": "./dask/src:${PYTHONPATH}", "hello": "world1"})
+    .with_pip_packages("dask[distributed]", dask_plugins)
 )
 
 dask_config = Dask(
     scheduler=Scheduler(
-        resources=Resources(cpu=(1, 2), memory=("800Mi", "1600Mi"))
+        resources=Resources(cpu="1", memory="1Gi")
     ),
     workers=WorkerGroup(
         number_of_workers=4,
@@ -35,11 +30,11 @@ dask_config = Dask(
 task_env = flyte.TaskEnvironment(
     name="hello_dask", resources=Resources(cpu=(1, 2), memory=("400Mi", "1000Mi")), image=image
 )
-ray_env = flyte.TaskEnvironment(
-    name="ray_env",
+dask_env = flyte.TaskEnvironment(
+    name="dask_env",
     plugin_config=dask_config,
     image=image,
-    resources=Resources(cpu=(1, 2), memory=("800Mi", "1600Mi")),
+    resources=Resources(cpu="1", memory="1Gi"),
 )
 
 
@@ -49,14 +44,12 @@ async def hello_dask():
     print("Hello from the Dask task!")
 
 
-@ray_env.task
+@dask_env.task
 async def hello_dask_nested(n: int = 3) -> typing.List[int]:
-    from distributed import Client
-
     print("running dask task")
     t = asyncio.create_task(hello_dask())
     client = Client()
-    futures = client.map(inc, range(n))
+    futures = client.map(lambda x: x + 1, range(n))
     res = client.gather(futures)
     await t
     return res

@@ -1,8 +1,10 @@
+import os
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional
 
 from flyte import Resources
 from flyte._internal.runtime.resources_serde import get_proto_resources
+from flyte._tools import is_in_cluster
 from flyte.extend import AsyncFunctionTaskTemplate, TaskPluginRegistry
 from flyte.models import SerializationContext
 from flyteidl.plugins.dask_pb2 import DaskJob, DaskScheduler, DaskWorkerGroup
@@ -66,6 +68,16 @@ class DaskTask(AsyncFunctionTaskTemplate):
 
     plugin_config: Dask
     task_type: str = "dask"
+
+    async def pre(self, *args, **kwargs) -> Dict[str, Any]:
+        from distributed.diagnostics.plugin import UploadDirectory
+        from distributed import Client
+
+        working_dir = os.getcwd()
+        client = Client()
+        client.register_plugin(UploadDirectory(working_dir))
+
+        return {}
 
     def custom_config(self, sctx: SerializationContext) -> Dict[str, Any]:
         scheduler = self.plugin_config.scheduler
