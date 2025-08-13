@@ -12,7 +12,6 @@ image = (
     .clone(name="spark", python_version=(3, 10))
     .with_pip_packages("flyteplugins-spark", pre=True)
 )
-image = "us-docker.pkg.dev/dogfood-gcp-dataplane/orgs/dogfood-gcp/spark:91feb34fb2fe8f14415eb667121e2e94-opt"
 
 task_env = flyte.TaskEnvironment(
     name="get_pi", resources=flyte.Resources(cpu=(1, 2), memory=("400Mi", "1000Mi")), image=image

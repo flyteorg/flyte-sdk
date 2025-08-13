@@ -1,5 +1,4 @@
 import flyte
-from flyte import remote
 from flyte.extras import ContainerTask
 
 env = flyte.TaskEnvironment(name="hello_world")
@@ -30,12 +29,5 @@ if __name__ == "__main__":
     import flyte.storage
 
     flyte.init_from_config("../../config.yaml")
-    entity = remote.Task.get(
-        name="echo_and_return_greeting",
-        project="flytesnacks",
-        domain="development",
-        auto_version="latest",
-    ).override(secrets=[flyte.Secret(key="secret-project-domain", as_env_var="OPENAI_API_KEY")])
-
-    run = flyte.with_runcontext(mode="remote").run(entity, "Union")
+    run = flyte.with_runcontext(mode="remote").run(say_hello, "Union")
     print(run.url)
