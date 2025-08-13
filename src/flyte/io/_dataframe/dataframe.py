@@ -54,7 +54,7 @@ class DataFrame(BaseModel, SerializableType):
     """
 
     uri: typing.Optional[str] = Field(default=None)
-    file_format: typing.Optional[str] = Field(default=GENERIC_FORMAT)
+    format: typing.Optional[str] = Field(default=GENERIC_FORMAT)
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
@@ -72,16 +72,16 @@ class DataFrame(BaseModel, SerializableType):
         engine = DataFrameTransformerEngine()
         lv = loop_manager.run_sync(engine.to_literal, self, type(self), lt)
         sd = DataFrame(uri=lv.scalar.structured_dataset.uri)
-        sd.file_format = lv.scalar.structured_dataset.metadata.structured_dataset_type.format
+        sd.format = lv.scalar.structured_dataset.metadata.structured_dataset_type.format
         return {
             "uri": sd.uri,
-            "file_format": sd.file_format,
+            "format": sd.format,
         }
 
     @classmethod
     def _deserialize(cls, value) -> "DataFrame":
         uri = value.get("uri", None)
-        file_format = value.get("file_format", None)
+        format_val = value.get("format", None)
 
         if uri is None:
             raise ValueError("DataFrame's uri and file format should not be None")
@@ -93,7 +93,7 @@ class DataFrame(BaseModel, SerializableType):
                 scalar=literals_pb2.Scalar(
                     structured_dataset=literals_pb2.StructuredDataset(
                         metadata=literals_pb2.StructuredDatasetMetadata(
-                            structured_dataset_type=types_pb2.StructuredDatasetType(format=file_format)
+                            structured_dataset_type=types_pb2.StructuredDatasetType(format=format_val)
                         ),
                         uri=uri,
                     )
@@ -109,7 +109,7 @@ class DataFrame(BaseModel, SerializableType):
         lv = loop_manager.run_sync(sde.to_literal, self, type(self), lt)
         return {
             "uri": lv.scalar.structured_dataset.uri,
-            "file_format": lv.scalar.structured_dataset.metadata.structured_dataset_type.format,
+            "format": lv.scalar.structured_dataset.metadata.structured_dataset_type.format,
         }
 
     @model_validator(mode="after")
@@ -124,7 +124,7 @@ class DataFrame(BaseModel, SerializableType):
                 scalar=literals_pb2.Scalar(
                     structured_dataset=literals_pb2.StructuredDataset(
                         metadata=literals_pb2.StructuredDatasetMetadata(
-                            structured_dataset_type=types_pb2.StructuredDatasetType(format=self.file_format)
+                            structured_dataset_type=types_pb2.StructuredDatasetType(format=self.format)
                         ),
                         uri=self.uri,
                     )
@@ -150,14 +150,14 @@ class DataFrame(BaseModel, SerializableType):
         val: typing.Optional[typing.Any] = None,
         uri: typing.Optional[str] = None,
         metadata: typing.Optional[literals_pb2.StructuredDatasetMetadata] = None,
-        file_format: typing.Optional[str] = None,
+        format: typing.Optional[str] = None,
         **kwargs,
     ) -> "DataFrame":
         """
         Internal constructor for type engine usage.
         For user-facing APIs, use from_val(), from_existing_remote(), or new_remote().
         """
-        instance = cls(uri=uri, file_format=file_format or GENERIC_FORMAT, **kwargs)
+        instance = cls(uri=uri, format=format or GENERIC_FORMAT, **kwargs)
         instance._val = val
         instance._metadata = metadata
         return instance
@@ -167,7 +167,7 @@ class DataFrame(BaseModel, SerializableType):
         cls,
         val: typing.Any,
         remote_destination: typing.Optional[str] = None,
-        file_format: typing.Optional[str] = None,
+        format: typing.Optional[str] = None,
         **kwargs,
     ) -> "DataFrame":
         """
@@ -179,12 +179,12 @@ class DataFrame(BaseModel, SerializableType):
         Args:
             val: The in-memory dataframe (e.g., pandas.DataFrame)
             remote_destination: Optional remote path. If None, a path will be generated.
-            file_format: Format for storage (e.g., "parquet", "csv")
+            format: Format for storage (e.g., "parquet", "csv")
 
         Example:
             ```python
             df = pd.DataFrame({"col1": [1, 2], "col2": [3, 4]})
-            remote_df = await DataFrame.from_val(df, file_format="parquet")
+            remote_df = await DataFrame.from_val(df, format="parquet")
             ```
         """
         from flyte._context import internal_ctx
@@ -194,7 +194,7 @@ class DataFrame(BaseModel, SerializableType):
         remote_path = remote_destination or internal_ctx().raw_data.get_random_remote_path()
 
         # Create temporary DataFrame instance to trigger upload via type engine
-        temp_instance = cls(uri=None, file_format=file_format or GENERIC_FORMAT, **kwargs)
+        temp_instance = cls(uri=None, format=format or GENERIC_FORMAT, **kwargs)
         temp_instance._val = val
 
         # Use the type engine to upload the data
@@ -205,7 +205,7 @@ class DataFrame(BaseModel, SerializableType):
         # Create final instance pointing to uploaded location
         final_instance = cls(
             uri=literal.scalar.structured_dataset.uri,
-            file_format=literal.scalar.structured_dataset.metadata.structured_dataset_type.format,
+            format=literal.scalar.structured_dataset.metadata.structured_dataset_type.format,
             **kwargs,
         )
         final_instance._literal_sd = literal.scalar.structured_dataset
@@ -216,7 +216,7 @@ class DataFrame(BaseModel, SerializableType):
     def from_existing_remote(
         cls,
         remote_path: str,
-        file_format: typing.Optional[str] = None,
+        format: typing.Optional[str] = None,
         **kwargs,
     ) -> "DataFrame":
         """
@@ -224,19 +224,19 @@ class DataFrame(BaseModel, SerializableType):
 
         Args:
             remote_path: The remote path to the existing dataframe
-            file_format: Format of the stored dataframe
+            format: Format of the stored dataframe
 
         Example:
             ```python
-            df = DataFrame.from_existing_remote("s3://bucket/data.parquet", file_format="parquet")
+            df = DataFrame.from_existing_remote("s3://bucket/data.parquet", format="parquet")
             ```
         """
-        return cls(uri=remote_path, file_format=file_format or GENERIC_FORMAT, **kwargs)
+        return cls(uri=remote_path, format=format or GENERIC_FORMAT, **kwargs)
 
     @classmethod
     def new_remote(
         cls,
-        file_format: typing.Optional[str] = None,
+        format: typing.Optional[str] = None,
         **kwargs,
     ) -> "DataFrame":
         """
@@ -247,7 +247,7 @@ class DataFrame(BaseModel, SerializableType):
             @task
             async def my_task() -> DataFrame:
                 df_data = pd.DataFrame({...})
-                remote_df = DataFrame.new_remote(file_format="parquet")
+                remote_df = DataFrame.new_remote(format="parquet")
                 # Write data using DataFrame's serialization mechanisms
                 return remote_df
             ```
@@ -255,7 +255,7 @@ class DataFrame(BaseModel, SerializableType):
         from flyte._context import internal_ctx
 
         ctx = internal_ctx()
-        return cls(uri=ctx.raw_data.get_random_remote_path(), file_format=file_format or GENERIC_FORMAT, **kwargs)
+        return cls(uri=ctx.raw_data.get_random_remote_path(), format=format or GENERIC_FORMAT, **kwargs)
 
     @property
     def val(self) -> Optional[DF]:
@@ -303,7 +303,7 @@ class DataFrame(BaseModel, SerializableType):
 
         @task
         def return_df() -> DataFrame:
-            df = DataFrame(uri="s3://my-s3-bucket/s3_flyte_dir/df.parquet", file_format="parquet")
+            df = DataFrame(uri="s3://my-s3-bucket/s3_flyte_dir/df.parquet", format="parquet")
             df = df.open(pd.DataFrame).all()
             return df
 
@@ -813,7 +813,7 @@ class DataFrameTransformerEngine(TypeTransformer[DataFrame]):
             #       return DataFrame(uri=uri)
             if python_val.val is None:
                 uri = python_val.uri
-                file_format = python_val.file_format
+                format_val = python_val.format
 
                 # Check the user-specified uri
                 if not uri:
@@ -821,8 +821,8 @@ class DataFrameTransformerEngine(TypeTransformer[DataFrame]):
                 if not storage.is_remote(uri):
                     uri = await storage.put(uri)
 
-                # Check the user-specified file_format
-                # When users specify file_format for a DataFrame, the file_format should be retained
+                # Check the user-specified format
+                # When users specify format for a DataFrame, the format should be retained
                 # conditionally. For details, please refer to https://github.com/flyteorg/flyte/issues/6096.
                 # Following illustrates why we can't always copy the user-specified file_format over:
                 #
@@ -830,14 +830,14 @@ class DataFrameTransformerEngine(TypeTransformer[DataFrame]):
                 # def modify_format(df: Annotated[DataFrame, {}, "task-format"]) -> DataFrame:
                 #     return df
                 #
-                # df = DataFrame(uri="s3://my-s3-bucket/df.parquet", file_format="user-format")
+                # df = DataFrame(uri="s3://my-s3-bucket/df.parquet", format="user-format")
                 # df2 = modify_format(df=df)
                 #
-                # In this case, we expect the df2.file_format to be task-format (as shown in Annotated),
-                # not user-format. If we directly copy the user-specified file_format over,
+                # In this case, we expect the df2.format to be task-format (as shown in Annotated),
+                # not user-format. If we directly copy the user-specified format over,
                 # the type hint information will be missing.
-                if sdt.format == GENERIC_FORMAT and file_format != GENERIC_FORMAT:
-                    sdt.format = file_format
+                if sdt.format == GENERIC_FORMAT and format_val != GENERIC_FORMAT:
+                    sdt.format = format_val
 
                 sd_model = literals_pb2.StructuredDataset(
                     uri=uri,
@@ -923,7 +923,7 @@ class DataFrameTransformerEngine(TypeTransformer[DataFrame]):
         self, dict_obj: typing.Dict[str, str], expected_python_type: Type[T] | DataFrame
     ) -> T | DataFrame:
         uri = dict_obj.get("uri", None)
-        file_format = dict_obj.get("file_format", None)
+        format_val = dict_obj.get("format", None)
 
         if uri is None:
             raise ValueError("DataFrame's uri and file format should not be None")
@@ -933,7 +933,7 @@ class DataFrameTransformerEngine(TypeTransformer[DataFrame]):
         # converted back to flyteidl. Hence, _literal_sd must have to_flyte_idl method
         # See https://github.com/flyteorg/flytekit/blob/f938661ff8413219d1bea77f6914a58c302d5c6c/flytekit/bin/entrypoint.py#L326
         # For details, please refer to this issue: https://github.com/flyteorg/flyte/issues/5956.
-        sdt = types_pb2.StructuredDatasetType(format=file_format)
+        sdt = types_pb2.StructuredDatasetType(format=format_val)
         metad = literals_pb2.StructuredDatasetMetadata(structured_dataset_type=sdt)
         sd_literal = literals_pb2.StructuredDataset(uri=uri, metadata=metad)
 
@@ -1049,7 +1049,7 @@ class DataFrameTransformerEngine(TypeTransformer[DataFrame]):
                 metadata=metad,
             )
             sd._literal_sd = lv.scalar.structured_dataset
-            sd.file_format = metad.structured_dataset_type.format
+            sd.format = metad.structured_dataset_type.format
             return sd
 
         # If the requested type was not a StructuredDataset, then it means it was a plain dataframe type, which means

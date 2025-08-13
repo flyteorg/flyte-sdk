@@ -92,7 +92,7 @@ async def test_setting_of_unset_formats():
     custom = typing.Annotated[DataFrame, "parquet"]
     example = custom._create(val=df, uri="/path")
     # It's okay that the annotation is not used here yet.
-    assert example.file_format == ""
+    assert example.format == ""
 
     env = flyte.TaskEnvironment(name="hello_world-test-sd")
 
@@ -110,10 +110,10 @@ async def test_setting_of_unset_formats():
         res = await wf(path=fname)
         # This should be empty because we're not doing flyte.run, which means the encoder/decoder isn't getting
         # called at all.
-        assert res.file_format == ""
+        assert res.format == ""
         res = flyte.run(wf, path=fname)
         # Now that it's passed through an encoder however, it should be set.
-        assert res.outputs().file_format == "parquet"
+        assert res.outputs().format == "parquet"
 
 
 def test_types_pandas():
@@ -309,7 +309,7 @@ def test_slash_register():
 async def test_sd():
     sd = DataFrame._create(val="hi")
     sd.uri = "my uri"
-    assert sd.file_format == ""
+    assert sd.format == ""
 
     with pytest.raises(ValueError, match="No dataframe type set"):
         await sd.all()
@@ -469,7 +469,7 @@ async def test_format_correct(ctx_with_test_raw_data_path):
 
     # pr: this test doesn't work right now, because calling the task just calls the function.
     # res = await t1()
-    # assert res.file_format == "avro"
+    # assert res.format == "avro"
 
 
 def test_protocol_detection(ctx_with_test_raw_data_path):
@@ -552,7 +552,7 @@ async def test_reregister_encoder(ctx_with_test_raw_data_path):
     )
     TypeEngine.lazy_import_transformers()
 
-    sd = DataFrame._create(val=pd.DataFrame({"a": [1, 2], "b": [3, 4]}), uri="bq://blah", file_format="bq")
+    sd = DataFrame._create(val=pd.DataFrame({"a": [1, 2], "b": [3, 4]}), uri="bq://blah", format="bq")
 
     df_literal_type = TypeEngine.to_literal_type(pd.DataFrame)
 
@@ -619,7 +619,7 @@ async def test_read_sd_from_local_uri(local_tmp_pqt_file, ctx_with_test_raw_data
 
     @env.task
     async def read_sd_from_uri(uri: str) -> pd.DataFrame:
-        sd = DataFrame.from_existing_remote(uri, file_format="parquet")
+        sd = DataFrame.from_existing_remote(uri, format="parquet")
         df = await sd.open(pd.DataFrame).all()
 
         return df
@@ -641,7 +641,7 @@ async def test_read_sd_from_local_uri(local_tmp_pqt_file, ctx_with_test_raw_data
 @mock.patch("flyte.storage._remote_fs.RemoteFSPathResolver")
 @mock.patch("flyte.io.DataFrameTransformerEngine.get_encoder")
 async def test_modify_literal_uris_call(mock_get_encoder, mock_resolver):
-    sd = DataFrame._create(val=pd.DataFrame({"a": [1, 2], "b": [3, 4]}), uri="bq://blah", file_format="bq")
+    sd = DataFrame._create(val=pd.DataFrame({"a": [1, 2], "b": [3, 4]}), uri="bq://blah", format="bq")
 
     def mock_resolve_remote_path(flyte_uri: str) -> typing.Optional[str]:
         if flyte_uri == "bq://blah":

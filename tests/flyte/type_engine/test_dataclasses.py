@@ -223,7 +223,7 @@ async def test_pure_dataclasses_with_flyte_types(local_dummy_txt_file, local_dum
 
     @env.task
     async def generate_sd() -> DataFrame:
-        return DataFrame.from_existing_remote("s3://my-s3-bucket/data/test_sd", file_format="parquet")
+        return DataFrame.from_existing_remote("s3://my-s3-bucket/data/test_sd", format="parquet")
 
     @env.task
     async def create_local_dir(path: str) -> Dir:

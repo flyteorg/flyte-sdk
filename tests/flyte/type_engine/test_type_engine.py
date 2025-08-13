@@ -947,7 +947,7 @@ async def test_structured_dataset_in_dataclass(ctx_with_test_raw_data_path):
         a: People
         b: InnerDatasetStruct
 
-    sd = DataFrame._create(val=df, file_format="parquet")
+    sd = DataFrame._create(val=df, format="parquet")
     o = DatasetStruct(a=sd, b=InnerDatasetStruct(a=sd, b=[sd], c={"hello": sd}))
 
     tf = DataclassTransformer()
@@ -971,10 +971,10 @@ async def test_structured_dataset_in_dataclass(ctx_with_test_raw_data_path):
     return_df = await return_df.all()
     assert_frame_equal(df, return_df)
 
-    assert "parquet" == ot.a.file_format
-    assert "parquet" == ot.b.a.file_format
-    assert "parquet" == ot.b.b[0].file_format
-    assert "parquet" == ot.b.c["hello"].file_format
+    assert "parquet" == ot.a.format
+    assert "parquet" == ot.b.a.format
+    assert "parquet" == ot.b.b[0].format
+    assert "parquet" == ot.b.c["hello"].format
 
 
 # Enums should have string values
@@ -2596,7 +2596,7 @@ async def test_structured_dataset_collection(ctx_with_test_raw_data_path):
     assert cols[1].name == "malic_acid"
     assert cols[1].literal_type.simple == SimpleType.FLOAT
 
-    sd = DataFrame._create(val=df, file_format="parquet")
+    sd = DataFrame._create(val=df, format="parquet")
     lv = await TypeEngine.to_literal([[sd]], WineTypeListList, lt)
     assert lv is not None
 
