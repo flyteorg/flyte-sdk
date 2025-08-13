@@ -162,12 +162,31 @@ class PythonWheelHandler:
     async def handle(layer: PythonWheels, context_path: Path, dockerfile: str) -> str:
         shutil.copytree(layer.wheel_dir, context_path / "dist", dirs_exist_ok=True)
         pip_install_args = layer.get_pip_install_args()
-        pip_install_args.extend(["/dist/*.whl"])
         secret_mounts = _get_secret_mounts_layer(layer.secret_mounts)
-        delta = UV_WHEEL_INSTALL_COMMAND_TEMPLATE.substitute(
-            PIP_INSTALL_ARGS=" ".join(pip_install_args), SECRET_MOUNT=secret_mounts
+
+        # First install: Install the wheel without dependencies using --no-deps
+        pip_install_args_no_deps = [
+            *pip_install_args,
+            *[
+                "--find-links",
+                "/dist",
+                "--no-deps",
+                "--no-index",
+                layer.package_name,
+            ],
+        ]
+
+        delta1 = UV_WHEEL_INSTALL_COMMAND_TEMPLATE.substitute(
+            PIP_INSTALL_ARGS=" ".join(pip_install_args_no_deps), SECRET_MOUNT=secret_mounts
         )
-        dockerfile += delta
+        dockerfile += delta1
+
+        # Second install: Install dependencies from PyPI
+        pip_install_args_deps = [*pip_install_args, layer.package_name]
+        delta2 = UV_WHEEL_INSTALL_COMMAND_TEMPLATE.substitute(
+            PIP_INSTALL_ARGS=" ".join(pip_install_args_deps), SECRET_MOUNT=secret_mounts
+        )
+        dockerfile += delta2
 
         return dockerfile
 
