@@ -1,6 +1,13 @@
+import pathlib
+
 import pytest
 
 import flyte
+from flyte import RetryStrategy
+from flyte._internal.runtime.task_serde import get_proto_task, get_security_context
+from flyte._protos.workflow import task_definition_pb2
+from flyte.models import SerializationContext
+from flyte.remote._task import TaskDetails
 
 env = flyte.TaskEnvironment(name="hello_world", resources=flyte.Resources(cpu=1, memory="250Mi"))
 
@@ -97,3 +104,38 @@ def test_override_turn_reuse_off():
 
     # Check if the new task is not the same as the original task
     assert new_task != oomer_with_reuse
+
+
+def test_override_ref_task():
+    context = SerializationContext(
+        project="test-project",
+        domain="test-domain",
+        version="test-version",
+        org="test-org",
+        input_path="/tmp/inputs",
+        output_path="/tmp/outputs",
+        image_cache=None,
+        code_bundle=None,
+        root_dir=pathlib.Path.cwd(),
+    )
+
+    # Generate proto task
+    new_task = oomer_with_reuse.override(reusable="off", resources=flyte.Resources(cpu=2, memory="500Mi"))
+    task_template = get_proto_task(new_task, context)
+
+    task_details_pb2 = task_definition_pb2.TaskDetails(spec=task_definition_pb2.TaskSpec(task_template=task_template))
+    td = TaskDetails(pb2=task_details_pb2)
+
+    secrets = [flyte.Secret(key="openai", as_env_var="OPENAI_API_KEY")]
+    td.override(
+        resources=flyte.Resources(cpu=3, memory="100Mi"),
+        retries=RetryStrategy(5),
+        timeout=100,
+        env={"FOO": "BAR"},
+        secrets=secrets,
+    )
+    assert td.resources[0][0].value == "3"
+    assert td.resources[0][1].value == "100Mi"
+    assert td.pb2.spec.task_template.metadata.retries.retries == 5
+    assert td.pb2.spec.task_template.metadata.timeout.seconds == 100
+    assert td.pb2.spec.task_template.security_context == get_security_context(secrets)

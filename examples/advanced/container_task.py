@@ -29,4 +29,5 @@ if __name__ == "__main__":
     import flyte.storage
 
     flyte.init_from_config("../../config.yaml")
-    flyte.with_runcontext(mode="local").run(say_hello, "Union")
+    run = flyte.with_runcontext(mode="remote").run(say_hello, "Union")
+    print(run.url)
