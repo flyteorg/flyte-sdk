@@ -15,7 +15,6 @@ import asyncio
 import logging
 
 # Import our reusable data processing tracker
-import sys
 from pathlib import Path
 from typing import AsyncGenerator, Dict
 
@@ -27,9 +26,7 @@ from sentence_transformers import SentenceTransformer
 
 import flyte
 import flyte.io
-
-sys.path.append(str(Path(__file__).parent.parent.parent))
-from data_processing_tracker import DataProcessingTracker
+from flyte.report import DataProcessingTracker
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
