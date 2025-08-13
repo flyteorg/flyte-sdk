@@ -116,7 +116,7 @@ class RunTaskCommand(click.Command):
                         "Run",
                         f"[green bold]Created Run: {r.name} [/green bold] "
                         f"(Project: {r.action.action_id.run.project}, Domain: {r.action.action_id.run.domain})\n"
-                        f"➡️  [blue bold]{r.url}[/blue bold]",
+                        f"➡️  [blue bold][link={r.url}]{r.url}[/link][/blue bold]",
                         obj.output_format,
                     )
                 )
