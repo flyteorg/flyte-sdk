@@ -16,9 +16,9 @@ env.add_dependency(torch_env, spark_env)
 if __name__ == "__main__":
     flyte.init_from_config("../../config.yaml", root_dir=Path(__file__).parent)
     v = flyte.deploy(env)
-    print(v.summary_repr())
+    print(v[0].summary_repr())
 
     from root_env import root_task
 
-    r = flyte.with_runcontext(env={"_REF_TASKS": "true"}).run(root_task)
+    r = flyte.run(root_task)
     print(r.url)

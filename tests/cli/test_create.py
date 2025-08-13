@@ -1,8 +1,8 @@
+from unittest.mock import Mock, patch
+
 import pytest
-import click
-from io import BytesIO
 from click.testing import CliRunner
-from unittest.mock import patch, Mock
+
 from flyte.cli.main import main
 
 
@@ -20,7 +20,7 @@ def test_create_secret_no_value(runner: CliRunner):
 @patch("flyte.remote.Secret.create")
 @patch("flyte.cli._common.CLIConfig", return_value=Mock())
 def test_create_secret_value(mock_cli_config, mock_secret_create, runner: CliRunner):
-    mock_secret_create.return_value = None    
+    mock_secret_create.return_value = None
 
     secret_value = "my_value"
 

@@ -10,6 +10,7 @@ from google.protobuf import timestamp
 
 import flyte
 import flyte.errors
+from flyte._cache.cache import CacheBehavior
 from flyte._context import internal_ctx
 from flyte._initialize import ensure_client, get_client, get_common_config
 from flyte._logging import logger
@@ -17,6 +18,8 @@ from flyte._protos.common import identifier_pb2, list_pb2
 from flyte._protos.workflow import task_definition_pb2, task_service_pb2
 from flyte.models import NativeInterface
 from flyte.syncify import syncify
+
+from ._common import ToJSONMixin
 
 
 def _repr_task_metadata(metadata: task_definition_pb2.TaskMetadata) -> rich.repr.Result:
@@ -79,7 +82,7 @@ AutoVersioning = Literal["latest", "current"]
 
 
 @dataclass
-class TaskDetails:
+class TaskDetails(ToJSONMixin):
     pb2: task_definition_pb2.TaskDetails
     max_inline_io_bytes: int = 10 * 1024 * 1024  # 10 MB
 
@@ -201,11 +204,20 @@ class TaskDetails:
         """
         The cache policy of the task.
         """
+        metadata = self.pb2.spec.task_template.metadata
+        behavior: CacheBehavior
+        if not metadata.discoverable:
+            behavior = "disable"
+        elif metadata.discovery_version:
+            behavior = "override"
+        else:
+            behavior = "auto"
+
         return flyte.Cache(
-            behavior="enabled" if self.pb2.spec.task_template.metadata.discoverable else "disable",
-            version_override=self.pb2.spec.task_template.metadata.discovery_version,
-            serialize=self.pb2.spec.task_template.metadata.cache_serializable,
-            ignored_inputs=tuple(self.pb2.spec.task_template.metadata.cache_ignore_input_vars),
+            behavior=behavior,
+            version_override=metadata.discovery_version if metadata.discovery_version else None,
+            serialize=metadata.cache_serializable,
+            ignored_inputs=tuple(metadata.cache_ignore_input_vars),
         )
 
     @property
@@ -294,7 +306,7 @@ class TaskDetails:
 
 
 @dataclass
-class Task:
+class Task(ToJSONMixin):
     pb2: task_definition_pb2.Task
 
     def __init__(self, pb2: task_definition_pb2.Task):

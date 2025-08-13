@@ -117,7 +117,7 @@ class RunTaskCommand(click.Command):
                         f"[green bold]Created Run: {r.name} [/green bold] "
                         f"(Project: {r.action.action_id.run.project}, Domain: {r.action.action_id.run.domain})\n"
                         f"➡️  [blue bold]{r.url}[/blue bold]",
-                        simple=obj.simple,
+                        obj.output_format,
                     )
                 )
                 if self.run_args.follow:
