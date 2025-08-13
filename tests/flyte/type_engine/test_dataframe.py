@@ -90,7 +90,7 @@ async def test_aio_running(ctx_with_test_raw_data_path):
 @pytest.mark.asyncio
 async def test_setting_of_unset_formats():
     custom = typing.Annotated[DataFrame, "parquet"]
-    example = custom.from_val(df, uri="/path")
+    example = custom._create(val=df, uri="/path")
     # It's okay that the annotation is not used here yet.
     assert example.file_format == ""
 
@@ -98,7 +98,7 @@ async def test_setting_of_unset_formats():
 
     @env.task
     async def t2(path: str) -> DataFrame:
-        sd = DataFrame.from_val(df, uri=path)
+        sd = DataFrame._create(val=df, uri=path)
         return sd
 
     @env.task
@@ -232,7 +232,7 @@ async def test_to_literal(ctx_with_test_raw_data_path):
     assert lit.scalar.structured_dataset.metadata.structured_dataset_type.format == PARQUET
     assert lit.scalar.structured_dataset.metadata.structured_dataset_type.format == PARQUET
 
-    sd_with_literal_and_df = DataFrame.from_val(df)
+    sd_with_literal_and_df = DataFrame._create(val=df)
     sd_with_literal_and_df._literal_sd = lit
 
     with pytest.raises(ValueError, match="Shouldn't have specified both literal"):
@@ -242,7 +242,7 @@ async def test_to_literal(ctx_with_test_raw_data_path):
     with pytest.raises(ValueError, match="If dataframe is not specified"):
         await fdt.to_literal(sd_with_nothing, python_type=DataFrame, expected=lt)
 
-    sd_with_uri = DataFrame.from_uri(uri="s3://some/extant/df.parquet")
+    sd_with_uri = DataFrame.from_existing_remote(remote_path="s3://some/extant/df.parquet")
 
     lt = TypeEngine.to_literal_type(typing.Annotated[DataFrame, {}, "new-df-format"])
     lit = await fdt.to_literal(sd_with_uri, python_type=DataFrame, expected=lt)
@@ -269,7 +269,7 @@ async def test_fill_in_literal_type():
     assert lt.structured_dataset_type.format == ""
 
     fdt = DataFrameTransformerEngine()
-    sd = DataFrame.from_val(MyDF())
+    sd = DataFrame._create(val=MyDF())
     literal = await fdt.to_literal(sd, MyDF, lt)
     # Test that the literal type is filled in even though the encode function
     # above doesn't do it.
@@ -307,7 +307,7 @@ def test_slash_register():
 
 @pytest.mark.asyncio
 async def test_sd():
-    sd = DataFrame.from_val("hi")
+    sd = DataFrame._create(val="hi")
     sd.uri = "my uri"
     assert sd.file_format == ""
 
@@ -452,12 +452,12 @@ async def test_format_correct(ctx_with_test_raw_data_path):
     assert df_literal_type.structured_dataset_type.columns[1].literal_type.simple is not None
     assert df_literal_type.structured_dataset_type.format == "avro"
 
-    sd = annotated_sd_type.from_val(df)
+    sd = annotated_sd_type._create(val=df)
     with pytest.raises(ValueError, match="Failed to find a handler"):
         await TypeEngine.to_literal(sd, python_type=annotated_sd_type, expected=df_literal_type)
 
     DataFrameTransformerEngine.register(TempEncoder(), default_for_type=False)
-    sd2 = annotated_sd_type.from_val(df)
+    sd2 = annotated_sd_type._create(val=df)
     sd_literal = await TypeEngine.to_literal(sd2, python_type=annotated_sd_type, expected=df_literal_type)
     assert sd_literal.scalar.structured_dataset.metadata.structured_dataset_type.format == "avro"
 
@@ -465,7 +465,7 @@ async def test_format_correct(ctx_with_test_raw_data_path):
 
     @env.task
     async def t1() -> typing.Annotated[DataFrame, "avro"]:
-        return DataFrame.from_val(df)
+        return DataFrame._create(val=df)
 
     # pr: this test doesn't work right now, because calling the task just calls the function.
     # res = await t1()
@@ -552,7 +552,7 @@ async def test_reregister_encoder(ctx_with_test_raw_data_path):
     )
     TypeEngine.lazy_import_transformers()
 
-    sd = DataFrame.create(val=pd.DataFrame({"a": [1, 2], "b": [3, 4]}), uri="bq://blah", file_format="bq")
+    sd = DataFrame._create(val=pd.DataFrame({"a": [1, 2], "b": [3, 4]}), uri="bq://blah", file_format="bq")
 
     df_literal_type = TypeEngine.to_literal_type(pd.DataFrame)
 
@@ -619,7 +619,7 @@ async def test_read_sd_from_local_uri(local_tmp_pqt_file, ctx_with_test_raw_data
 
     @env.task
     async def read_sd_from_uri(uri: str) -> pd.DataFrame:
-        sd = DataFrame.from_uri(uri, file_format="parquet")
+        sd = DataFrame.from_existing_remote(uri, file_format="parquet")
         df = await sd.open(pd.DataFrame).all()
 
         return df
@@ -641,7 +641,7 @@ async def test_read_sd_from_local_uri(local_tmp_pqt_file, ctx_with_test_raw_data
 @mock.patch("flyte.storage._remote_fs.RemoteFSPathResolver")
 @mock.patch("flyte.io.DataFrameTransformerEngine.get_encoder")
 async def test_modify_literal_uris_call(mock_get_encoder, mock_resolver):
-    sd = DataFrame.create(val=pd.DataFrame({"a": [1, 2], "b": [3, 4]}), uri="bq://blah", file_format="bq")
+    sd = DataFrame._create(val=pd.DataFrame({"a": [1, 2], "b": [3, 4]}), uri="bq://blah", file_format="bq")
 
     def mock_resolve_remote_path(flyte_uri: str) -> typing.Optional[str]:
         if flyte_uri == "bq://blah":

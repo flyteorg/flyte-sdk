@@ -142,10 +142,10 @@ class DataFrame(BaseModel, SerializableType):
         return [k for k, v in cls.columns().items()]
 
     # Pure Pydantic - no custom __init__ needed!
-    # Use alternative constructors: DataFrame.create(), DataFrame.from_val(), DataFrame.from_uri()
+    # Use alternative constructors: DataFrame.from_val(), DataFrame.from_existing_remote(), DataFrame.new_remote()
 
     @classmethod
-    def create(
+    def _create(
         cls,
         val: typing.Optional[typing.Any] = None,
         uri: typing.Optional[str] = None,
@@ -154,10 +154,8 @@ class DataFrame(BaseModel, SerializableType):
         **kwargs,
     ) -> "DataFrame":
         """
-        Alternative constructor for creating DataFrame instances.
-
-        This is the recommended way to create DataFrame instances going forward,
-        as it follows proper Pydantic patterns.
+        Internal constructor for type engine usage.
+        For user-facing APIs, use from_val(), from_existing_remote(), or new_remote().
         """
         instance = cls(uri=uri, file_format=file_format or GENERIC_FORMAT, **kwargs)
         instance._val = val
@@ -165,27 +163,99 @@ class DataFrame(BaseModel, SerializableType):
         return instance
 
     @classmethod
-    def from_val(
+    async def from_val(
         cls,
         val: typing.Any,
-        uri: typing.Optional[str] = None,
+        remote_destination: typing.Optional[str] = None,
         file_format: typing.Optional[str] = None,
         **kwargs,
     ) -> "DataFrame":
-        """Create DataFrame from a dataframe value."""
-        instance = cls(uri=uri, file_format=file_format or GENERIC_FORMAT, **kwargs)
-        instance._val = val
-        return instance
+        """
+        Create a DataFrame by uploading an in-memory dataframe value to remote storage.
+
+        This follows the same pattern as File.from_local() - it immediately uploads
+        the data and returns a DataFrame pointing to the remote location.
+
+        Args:
+            val: The in-memory dataframe (e.g., pandas.DataFrame)
+            remote_destination: Optional remote path. If None, a path will be generated.
+            file_format: Format for storage (e.g., "parquet", "csv")
+
+        Example:
+            ```python
+            df = pd.DataFrame({"col1": [1, 2], "col2": [3, 4]})
+            remote_df = await DataFrame.from_val(df, file_format="parquet")
+            ```
+        """
+        from flyte._context import internal_ctx
+        from flyte.types import TypeEngine
+
+        # Generate remote path if not provided
+        remote_path = remote_destination or internal_ctx().raw_data.get_random_remote_path()
+
+        # Create temporary DataFrame instance to trigger upload via type engine
+        temp_instance = cls(uri=None, file_format=file_format or GENERIC_FORMAT, **kwargs)
+        temp_instance._val = val
+
+        # Use the type engine to upload the data
+        lt = TypeEngine.to_literal_type(cls)
+        engine = DataFrameTransformerEngine()
+        literal = await engine.to_literal(temp_instance, cls, lt)
+
+        # Create final instance pointing to uploaded location
+        final_instance = cls(
+            uri=literal.scalar.structured_dataset.uri,
+            file_format=literal.scalar.structured_dataset.metadata.structured_dataset_type.format,
+            **kwargs,
+        )
+        final_instance._literal_sd = literal.scalar.structured_dataset
+        final_instance._already_uploaded = True
+        return final_instance
 
     @classmethod
-    def from_uri(
+    def from_existing_remote(
         cls,
-        uri: str,
+        remote_path: str,
         file_format: typing.Optional[str] = None,
         **kwargs,
     ) -> "DataFrame":
-        """Create DataFrame from URI."""
-        return cls(uri=uri, file_format=file_format or GENERIC_FORMAT, **kwargs)
+        """
+        Create a DataFrame reference from an existing remote dataframe.
+
+        Args:
+            remote_path: The remote path to the existing dataframe
+            file_format: Format of the stored dataframe
+
+        Example:
+            ```python
+            df = DataFrame.from_existing_remote("s3://bucket/data.parquet", file_format="parquet")
+            ```
+        """
+        return cls(uri=remote_path, file_format=file_format or GENERIC_FORMAT, **kwargs)
+
+    @classmethod
+    def new_remote(
+        cls,
+        file_format: typing.Optional[str] = None,
+        **kwargs,
+    ) -> "DataFrame":
+        """
+        Create a new DataFrame reference for a remote dataframe that will be written to.
+
+        Example:
+            ```python
+            @task
+            async def my_task() -> DataFrame:
+                df_data = pd.DataFrame({...})
+                remote_df = DataFrame.new_remote(file_format="parquet")
+                # Write data using DataFrame's serialization mechanisms
+                return remote_df
+            ```
+        """
+        from flyte._context import internal_ctx
+
+        ctx = internal_ctx()
+        return cls(uri=ctx.raw_data.get_random_remote_path(), file_format=file_format or GENERIC_FORMAT, **kwargs)
 
     @property
     def val(self) -> Optional[DF]:
@@ -795,7 +865,7 @@ class DataFrameTransformerEngine(TypeTransformer[DataFrame]):
             structured_dataset_type=expected.structured_dataset_type if expected else None
         )
 
-        sd = DataFrame.create(val=python_val, metadata=meta)
+        sd = DataFrame._create(val=python_val, metadata=meta)
         return await self.encode(sd, python_type, protocol, fmt, sdt)
 
     def _protocol_from_type_or_prefix(self, df_type: Type, uri: Optional[str] = None) -> str:
@@ -974,7 +1044,7 @@ class DataFrameTransformerEngine(TypeTransformer[DataFrame]):
         #   t1(input_a: DataFrame)  # or
         #   t1(input_a: Annotated[DataFrame, my_cols])
         if issubclass(expected_python_type, DataFrame):
-            sd = expected_python_type.create(
+            sd = expected_python_type._create(
                 val=None,
                 metadata=metad,
             )
