@@ -295,9 +295,8 @@ class TaskDetails(ToJSONMixin):
             template.security_context.CopyFrom(get_security_context(secrets))
         if template.HasField("container"):
             if env:
-                template.container.env = (
-                    [literals_pb2.KeyValuePair(key=k, value=v) for k, v in env.items()] if env else None
-                )
+                template.container.env.clear()
+                template.container.env.extend([literals_pb2.KeyValuePair(key=k, value=v) for k, v in env.items()])
             if resources:
                 template.container.resources.CopyFrom(get_proto_resources(resources))
         if retries:
