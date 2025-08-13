@@ -290,6 +290,11 @@ class TaskDetails(ToJSONMixin):
         secrets: Optional[flyte.SecretRequest] = None,
         **kwargs: Any,
     ) -> TaskDetails:
+        if len(kwargs) > 0:
+            raise ValueError(
+                f"ReferenceTasks [{self.name}] do not support overriding with kwargs: {kwargs}, "
+                f"Check the parameters for override method."
+            )
         template = self.pb2.spec.task_template
         if secrets:
             template.security_context.CopyFrom(get_security_context(secrets))
