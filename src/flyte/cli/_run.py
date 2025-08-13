@@ -218,7 +218,7 @@ flyte run --project my-project --domain development hello.py my_task --arg1 valu
 ```
 
 Arguments to the run command are provided right after the `run` command and before the file name.
-For example, above command specifies the project and domain for the run command.
+For example, the command above specifies the project and domain.
 
 To run a task locally, use the `--local` flag. This will run the task in the local environment instead of the remote
 Flyte environment:
@@ -229,7 +229,7 @@ flyte run --local hello.py my_task --arg1 value1 --arg2 value2
 
 Other arguments to the run command are listed below.
 
-Arguments for the task are provided after the task name and can be retrieved using `--help`. For example:
+Arguments for the task itself are provided after the task name and can be retrieved using `--help`. For example:
 
 ```bash
 flyte run hello.py my_task --help
