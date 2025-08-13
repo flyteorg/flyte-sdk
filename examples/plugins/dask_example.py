@@ -9,7 +9,7 @@ import flyte.remote._action
 import flyte.storage
 
 
-dask_plugins = "git+https://github.com/flyteorg/flyte-sdk.git@74145329b4d6e021128cd285d92443dfb0206158#subdirectory=plugins/dask"
+dask_plugins = "git+https://github.com/flyteorg/flyte-sdk.git@a743389f602418d7bdb572416f6f13ad8393462d#subdirectory=plugins/dask"
 
 image = (
     flyte.Image.from_debian_base(python_version=(3, 12))

@@ -2,6 +2,7 @@ import os
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional
 
+import flyte
 from flyte import Resources
 from flyte._internal.runtime.resources_serde import get_proto_resources
 from flyte._tools import is_in_cluster
@@ -73,7 +74,7 @@ class DaskTask(AsyncFunctionTaskTemplate):
         from distributed.diagnostics.plugin import UploadDirectory
         from distributed import Client
 
-        working_dir = os.getcwd()
+        working_dir = flyte.ctx().code_bundle.destination
         client = Client()
         client.register_plugin(UploadDirectory(working_dir))
 
