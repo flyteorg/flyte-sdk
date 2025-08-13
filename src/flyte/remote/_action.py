@@ -258,6 +258,7 @@ class Action(ToJSONMixin):
         """
         return self.pb2.id
 
+    @syncify
     async def show_logs(
         self,
         attempt: int | None = None,
