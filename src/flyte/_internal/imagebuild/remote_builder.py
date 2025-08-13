@@ -94,12 +94,12 @@ class RemoteImageBuilder(ImageBuilder):
         spec, context = await _validate_configuration(image)
 
         start = datetime.now(timezone.utc)
-        entity = remote.Task.get(
+        entity = await remote.Task.get(
             name=IMAGE_TASK_NAME,
             project=IMAGE_TASK_PROJECT,
             domain=IMAGE_TASK_DOMAIN,
             auto_version="latest",
-        )
+        ).override(resources=flyte.Resources(cpu=(2, 3), memory="400Mi"))
         run = cast(
             Run,
             await flyte.with_runcontext(project=IMAGE_TASK_PROJECT, domain=IMAGE_TASK_DOMAIN).run.aio(
