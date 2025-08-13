@@ -512,7 +512,7 @@ class _Runner:
             raise ValueError("Remote task can only be run in remote mode.")
 
         if not isinstance(task, TaskTemplate) and not isinstance(task, LazyEntity):
-            raise TypeError("On Flyte tasks can be run, not generic functions or methods.")
+            raise TypeError(f"On Flyte tasks can be run, not generic functions or methods '{type(task)}'.")
 
         if self._mode == "remote":
             return await self._run_remote(task, *args, **kwargs)

@@ -548,7 +548,7 @@ class Image:
             platform=platform,
         )
 
-        if registry and name:
+        if registry or name:
             return base_image.clone(registry=registry, name=name)
 
         # # Set this to auto for all auto images because the meaning of "auto" can change (based on logic inside
