@@ -70,31 +70,10 @@ class LazyEntity:
     @syncify
     async def override(
         self,
-        *,
-        resources: Optional[flyte.Resources] = None,
-        retries: Union[int, flyte.RetryStrategy] = 0,
-        timeout: Optional[flyte.TimeoutType] = None,
-        env: Optional[Dict[str, str]] = None,
-        secrets: Optional[flyte.SecretRequest] = None,
         **kwargs: Any,
     ) -> TaskDetails:
         task_details = cast(TaskDetails, await self.fetch.aio())
-        template = task_details.pb2.spec.task_template
-        if secrets:
-            template.security_context.CopyFrom(get_security_context(secrets))
-        if template.HasField("container"):
-            if env:
-                template.container.env = (
-                    [literals_pb2.KeyValuePair(key=k, value=v) for k, v in env.items()] if env else None
-                )
-            if resources:
-                template.container.resources.CopyFrom(get_proto_resources(resources))
-        if retries:
-            template.metadata.retries.CopyFrom(get_proto_retry_strategy(retries))
-        if timeout:
-            template.metadata.timeout.CopyFrom(get_proto_timeout(timeout))
-        print("task_details.pb2", task_details.pb2)
-
+        task_details.override(**kwargs)
         return self
 
     async def __call__(self, *args, **kwargs):
@@ -300,6 +279,33 @@ class TaskDetails(ToJSONMixin):
             if controller:
                 return await controller.submit_task_ref(self.pb2, self.max_inline_io_bytes, *args, **kwargs)
         raise flyte.errors
+
+    def override(
+        self,
+        *,
+        resources: Optional[flyte.Resources] = None,
+        retries: Union[int, flyte.RetryStrategy] = 0,
+        timeout: Optional[flyte.TimeoutType] = None,
+        env: Optional[Dict[str, str]] = None,
+        secrets: Optional[flyte.SecretRequest] = None,
+        **kwargs: Any,
+    ) -> TaskDetails:
+        template = self.pb2.spec.task_template
+        if secrets:
+            template.security_context.CopyFrom(get_security_context(secrets))
+        if template.HasField("container"):
+            if env:
+                template.container.env = (
+                    [literals_pb2.KeyValuePair(key=k, value=v) for k, v in env.items()] if env else None
+                )
+            if resources:
+                template.container.resources.CopyFrom(get_proto_resources(resources))
+        if retries:
+            template.metadata.retries.CopyFrom(get_proto_retry_strategy(retries))
+        if timeout:
+            template.metadata.timeout.CopyFrom(get_proto_timeout(timeout))
+
+        return self
 
     def __rich_repr__(self) -> rich.repr.Result:
         """
