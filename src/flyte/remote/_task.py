@@ -71,7 +71,7 @@ class LazyEntity:
     async def override(
         self,
         **kwargs: Any,
-    ) -> TaskDetails:
+    ) -> LazyEntity:
         task_details = cast(TaskDetails, await self.fetch.aio())
         task_details.override(**kwargs)
         return self
