@@ -125,7 +125,7 @@ class RunTaskCommand(click.Command):
                         "[dim]Log streaming enabled, will wait for task to start running "
                         "and log stream to be available[/dim]"
                     )
-                    await r.show_logs(max_lines=30, show_ts=True, raw=False)
+                    await r.show_logs.aio(max_lines=30, show_ts=True, raw=False)
 
         asyncio.run(_run())
 
