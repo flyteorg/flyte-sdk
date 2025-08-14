@@ -8,7 +8,7 @@ import flyte.errors
 
 # Run this not with an editable install
 # base = flyte.Image.from_debian_base()
-actor_image = flyte.Image.from_debian_base().with_pip_packages("unionai-reuse==0.1.0b2", pre=True)
+actor_image = flyte.Image.from_debian_base().with_pip_packages("unionai-reuse==0.1.0b1", pre=True)
 
 
 actor_env = flyte.TaskEnvironment(
@@ -36,9 +36,9 @@ async def concurrent_leaf(x: int) -> tuple[int, datetime.datetime]:
 
 
 @parent_env.task
-async def map_parent() -> tuple[list[int], list[datetime.datetime]]:
+async def map_parent(n: int) -> tuple[list[int], list[datetime.datetime]]:
     print("Starting concurrency_parent main parent task...", flush=True)
-    tasks = [concurrent_leaf(x=i) for i in range(50)]
+    tasks = [concurrent_leaf(x=i) for i in range(n)]
     print(f"Parent task will run {len(tasks)} concurrent tasks", flush=True)
     start_time = time.time()
     res = await asyncio.gather(*tasks)
@@ -50,6 +50,6 @@ async def map_parent() -> tuple[list[int], list[datetime.datetime]]:
 
 if __name__ == "__main__":
     flyte.init_from_config("/Users/ytong/.flyte/config-k3d.yaml")
-    run = flyte.run(map_parent)
+    run = flyte.run(map_parent, n=50)
     # print(run.url)
     # run.wait(run)
