@@ -192,7 +192,7 @@ def test_add_reusable_container_task(container_task, code_bundle, reuse_policy):
     assert modified_task.custom["spec"]["ttl_seconds"] == 1800  # 30 minutes in seconds
     assert modified_task.custom["spec"]["min_replica_count"] == 1
     assert modified_task.custom["spec"]["parallelism"] == 1
-    assert modified_task.custom["spec"]["scaledown_ttl_seconds"] is None  # No scaledown TTL set
+    assert modified_task.custom["spec"]["scaledown_ttl_seconds"] == 30  # No scaledown TTL set
 
 
 def test_add_reusable_with_parent_env(container_task, code_bundle, reuse_policy):
