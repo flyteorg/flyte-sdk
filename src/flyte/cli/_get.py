@@ -201,7 +201,7 @@ def logs(
 
     async def _run_log_view(_obj):
         task = asyncio.create_task(
-            _obj.show_logs(
+            _obj.show_logs.aio(
                 max_lines=lines, show_ts=show_ts, raw=not pretty, attempt=attempt, filter_system=filter_system
             )
         )

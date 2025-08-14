@@ -30,7 +30,7 @@ def _format_line(logline: payload_pb2.LogLine, show_ts: bool, filter_system: boo
         if logline.originator == payload_pb2.LogLineOriginator.SYSTEM:
             return None
     style = style_map.get(logline.originator, "")
-    if "flyte" in logline.message and "flyte.errors" not in logline.message:
+    if "[flyte]" in logline.message and "flyte.errors" not in logline.message:
         if filter_system:
             return None
         style = "dim"
@@ -101,7 +101,7 @@ class Logs:
         cls,
         action_id: identifier_pb2.ActionIdentifier,
         attempt: int = 1,
-        retry: int = 3,
+        retry: int = 5,
     ) -> AsyncGenerator[payload_pb2.LogLine, None]:
         """
         Tail the logs for a given action ID and attempt.
@@ -135,7 +135,7 @@ class Logs:
                             f"Log stream not available for action {action_id.name} in run {action_id.run.name}."
                         )
                 else:
-                    await asyncio.sleep(1)
+                    await asyncio.sleep(2)
 
     @classmethod
     async def create_viewer(
