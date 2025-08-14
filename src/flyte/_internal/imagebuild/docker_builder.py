@@ -61,7 +61,7 @@ ENV PATH="/root/.venv/bin:$$PATH" \
 
 UV_PACKAGE_INSTALL_COMMAND_TEMPLATE = Template("""\
 RUN --mount=type=cache,sharing=locked,mode=0777,target=/root/.cache/uv,id=uv \
-    --mount=type=bind,target=requirements_uv.txt,src=requirements_uv.txt \
+    $REQUIREMENTS_MOUNT \
     $SECRET_MOUNT \
     uv pip install --python $$UV_PYTHON $PIP_INSTALL_ARGS
 """)
@@ -129,6 +129,8 @@ class Handler(Protocol):
 class PipAndRequirementsHandler:
     @staticmethod
     async def handle(layer: PipPackages, context_path: Path, dockerfile: str) -> str:
+        secret_mounts = _get_secret_mounts_layer(layer.secret_mounts)
+
         # Set pip_install_args based on the layer type - either a requirements file or a list of packages
         if isinstance(layer, Requirements):
             if not layer.file.exists():
@@ -138,17 +140,20 @@ class PipAndRequirementsHandler:
 
             # Copy the requirements file to the context path
             requirements_path = copy_files_to_context(layer.file, context_path)
+            rel_path = str(requirements_path.relative_to(context_path))
             pip_install_args = layer.get_pip_install_args()
-            pip_install_args.extend(["--requirement", str(requirements_path)])
+            pip_install_args.extend(["--requirement", "requirements.txt"])
+            mount = f"--mount=type=bind,target=requirements.txt,src={rel_path}"
         else:
+            mount = ""
             requirements = list(layer.packages) if layer.packages else []
             reqs = " ".join(requirements)
             pip_install_args = layer.get_pip_install_args()
             pip_install_args.append(reqs)
 
-        secret_mounts = _get_secret_mounts_layer(layer.secret_mounts)
         delta = UV_PACKAGE_INSTALL_COMMAND_TEMPLATE.substitute(
             SECRET_MOUNT=secret_mounts,
+            REQUIREMENTS_MOUNT=mount,
             PIP_INSTALL_ARGS=" ".join(pip_install_args),
         )
 
