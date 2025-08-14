@@ -67,6 +67,7 @@ def new(
         automation=automation,
         description=description,
         env=env,
+        inputs=inputs,
         interruptable=interruptable,
         auto_activate=auto_activate,
     )
