@@ -144,22 +144,18 @@ class PipAndRequirementsHandler:
             pip_install_args = layer.get_pip_install_args()
             pip_install_args.extend(["--requirement", "requirements.txt"])
             mount = f"--mount=type=bind,target=requirements.txt,src={rel_path}"
-            delta = UV_PACKAGE_INSTALL_COMMAND_TEMPLATE.substitute(
-                SECRET_MOUNT=secret_mounts,
-                REQUIREMENTS_MOUNT=mount,
-                PIP_INSTALL_ARGS=" ".join(pip_install_args),
-            )
         else:
+            mount = ""
             requirements = list(layer.packages) if layer.packages else []
             reqs = " ".join(requirements)
             pip_install_args = layer.get_pip_install_args()
             pip_install_args.append(reqs)
 
-            delta = UV_PACKAGE_INSTALL_COMMAND_TEMPLATE.substitute(
-                SECRET_MOUNT=secret_mounts,
-                REQUIREMENTS_MOUNT="",
-                PIP_INSTALL_ARGS=" ".join(pip_install_args),
-            )
+        delta = UV_PACKAGE_INSTALL_COMMAND_TEMPLATE.substitute(
+            SECRET_MOUNT=secret_mounts,
+            REQUIREMENTS_MOUNT=mount,
+            PIP_INSTALL_ARGS=" ".join(pip_install_args),
+        )
 
         dockerfile += delta
 
