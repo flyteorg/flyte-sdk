@@ -1,30 +1,27 @@
 import asyncio
 import typing
+from pathlib import Path
 
-from flyte import Resources
-from flyteplugins.dask import Dask, Scheduler, WorkerGroup
 from distributed import Client
+from flyteplugins.dask import Dask, Scheduler, WorkerGroup
 
 import flyte.remote._action
 import flyte.storage
-
-
-dask_plugins = "git+https://github.com/flyteorg/flyte-sdk.git@a743389f602418d7bdb572416f6f13ad8393462d#subdirectory=plugins/dask"
+from flyte import Resources
 
 image = (
     flyte.Image.from_debian_base(python_version=(3, 12))
-    .with_apt_packages("git")
-    .with_pip_packages("dask[distributed]", dask_plugins)
+    .with_env_vars({"UV_COMPILE_BYTECODE": "0"})
+    .with_workdir("/root")
+    .with_apt_packages("wget")
+    .with_pip_packages("dask[distributed]")
+    .with_source_folder(Path(__file__).parent.parent.parent / "plugins/dask", "./dask")
+    .with_env_vars({"PYTHONPATH": "./dask/src:${PYTHONPATH}", "hello": "world2"})
 )
 
 dask_config = Dask(
-    scheduler=Scheduler(
-        resources=Resources(cpu="1", memory="1Gi")
-    ),
-    workers=WorkerGroup(
-        number_of_workers=4,
-        resources=Resources(cpu="1", memory="1Gi")
-    )
+    scheduler=Scheduler(resources=Resources(cpu="1", memory="1Gi")),
+    workers=WorkerGroup(number_of_workers=4, resources=Resources(cpu="1", memory="1Gi")),
 )
 
 task_env = flyte.TaskEnvironment(
@@ -47,6 +44,7 @@ async def hello_dask():
 @dask_env.task
 async def hello_dask_nested(n: int = 3) -> typing.List[int]:
     print("running dask task")
+    # await asyncio.sleep(3600)
     t = asyncio.create_task(hello_dask())
     client = Client()
     futures = client.map(lambda x: x + 1, range(n))
@@ -57,7 +55,7 @@ async def hello_dask_nested(n: int = 3) -> typing.List[int]:
 
 if __name__ == "__main__":
     flyte.init_from_config("../../config.yaml")
-    run = flyte.run(hello_dask_nested)
+    run = flyte.run(hello_dask_nested, n=3)
     print("run name:", run.name)
     print("run url:", run.url)
     run.wait(run)

@@ -1,11 +1,9 @@
-import os
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional
 
 import flyte
 from flyte import Resources
 from flyte._internal.runtime.resources_serde import get_proto_resources
-from flyte._tools import is_in_cluster
 from flyte.extend import AsyncFunctionTaskTemplate, TaskPluginRegistry
 from flyte.models import SerializationContext
 from flyteidl.plugins.dask_pb2 import DaskJob, DaskScheduler, DaskWorkerGroup
@@ -71,8 +69,8 @@ class DaskTask(AsyncFunctionTaskTemplate):
     task_type: str = "dask"
 
     async def pre(self, *args, **kwargs) -> Dict[str, Any]:
-        from distributed.diagnostics.plugin import UploadDirectory
         from distributed import Client
+        from distributed.diagnostics.plugin import UploadDirectory
 
         working_dir = flyte.ctx().code_bundle.destination
         client = Client()
@@ -86,7 +84,9 @@ class DaskTask(AsyncFunctionTaskTemplate):
 
         job = DaskJob(
             scheduler=DaskScheduler(image=scheduler.image, resources=get_proto_resources(scheduler.resources)),
-            workers=DaskWorkerGroup(number_of_workers=wg.number_of_workers, image=wg.image, resources=get_proto_resources(wg.resources))
+            workers=DaskWorkerGroup(
+                number_of_workers=wg.number_of_workers, image=wg.image, resources=get_proto_resources(wg.resources)
+            ),
         )
 
         return MessageToDict(job)
