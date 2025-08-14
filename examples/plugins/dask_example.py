@@ -1,6 +1,5 @@
 import asyncio
 import typing
-from pathlib import Path
 
 from distributed import Client
 from flyteplugins.dask import Dask, Scheduler, WorkerGroup
@@ -9,15 +8,7 @@ import flyte.remote
 import flyte.storage
 from flyte import Resources
 
-image = (
-    flyte.Image.from_debian_base(python_version=(3, 12))
-    .with_env_vars({"UV_COMPILE_BYTECODE": "0"})
-    .with_workdir("/root")
-    .with_apt_packages("wget")
-    .with_pip_packages("dask[distributed]")
-    .with_source_folder(Path(__file__).parent.parent.parent / "plugins/dask", "./dask")
-    .with_env_vars({"PYTHONPATH": "./dask/src:${PYTHONPATH}", "hello": "world2"})
-)
+image = flyte.Image.from_debian_base(python_version=(3, 12)).with_pip_packages("flyteplugins-dask")
 
 dask_config = Dask(
     scheduler=Scheduler(resources=Resources(cpu="1", memory="1Gi")),
