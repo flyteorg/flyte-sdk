@@ -5,7 +5,7 @@ from pathlib import Path
 from distributed import Client
 from flyteplugins.dask import Dask, Scheduler, WorkerGroup
 
-import flyte.remote._action
+import flyte.remote
 import flyte.storage
 from flyte import Resources
 
@@ -37,14 +37,13 @@ dask_env = flyte.TaskEnvironment(
 
 @task_env.task()
 async def hello_dask():
-    await asyncio.sleep(20)
+    await asyncio.sleep(5)
     print("Hello from the Dask task!")
 
 
 @dask_env.task
 async def hello_dask_nested(n: int = 3) -> typing.List[int]:
     print("running dask task")
-    # await asyncio.sleep(3600)
     t = asyncio.create_task(hello_dask())
     client = Client()
     futures = client.map(lambda x: x + 1, range(n))
@@ -60,6 +59,6 @@ if __name__ == "__main__":
     print("run url:", run.url)
     run.wait(run)
 
-    action_details = flyte.remote._action.ActionDetails.get(run_name=run.name, name="a0")
+    action_details = flyte.remote.ActionDetails.get(run_name=run.name, name="a0")
     for log in action_details.pb2.attempts[-1].log_info:
         print(f"{log.name}: {log.uri}")
