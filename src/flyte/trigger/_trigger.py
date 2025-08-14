@@ -33,6 +33,7 @@ class Trigger:
     inputs: Dict[str, Any] | None = None
     env: Dict[str, str] | None = None
     interruptable: bool | None = None
+    auto_activate: bool = True
 
 
 def new(
@@ -40,8 +41,10 @@ def new(
     automation: AutomationType,
     *,
     description: str = "",
+    inputs: Dict[str, Any] | None = None,
     env: Dict[str, str] | None = None,
     interruptable: bool | None = None,
+    auto_activate: bool = True,
 ) -> Trigger:
     """
     Factory function to create a new Trigger instance with default values.
@@ -55,7 +58,15 @@ def new(
         replace the environment variables set in the config of the task.
     :param interruptable: (bool) Whether the trigger is interruptable, default is None. If provided,
      it overrides whatever is set in the config of the task.
+    :param auto_activate: (bool) Whether the trigger should be automatically activated, default is True.
 
     :return Trigger: A new Trigger instance with default name and description.
     """
-    return Trigger(name=name, automation=automation, description=description, env=env, interruptable=interruptable)
+    return Trigger(
+        name=name,
+        automation=automation,
+        description=description,
+        env=env,
+        interruptable=interruptable,
+        auto_activate=auto_activate,
+    )
