@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 from datetime import timedelta
-from typing import Optional, Tuple, Union
+from typing import Tuple, Union
 
 from flyte._logging import logger
 
@@ -30,9 +30,9 @@ class ReusePolicy:
     """
 
     replicas: Union[int, Tuple[int, int]] = 2
-    idle_ttl: Optional[Union[int, timedelta]] = None
+    idle_ttl: Union[int, timedelta] = 30  # seconds
     concurrency: int = 1
-    scaledown_ttl: Optional[Union[int, timedelta]] = None
+    scaledown_ttl: Union[int, timedelta] = 30  # seconds
 
     def __post_init__(self):
         if self.replicas is None:
@@ -44,11 +44,12 @@ class ReusePolicy:
         elif len(self.replicas) != 2:
             raise ValueError("replicas must be an int or a tuple of two ints")
 
-        if self.idle_ttl:
-            if isinstance(self.idle_ttl, int):
-                self.idle_ttl = timedelta(seconds=int(self.idle_ttl))
-            elif not isinstance(self.idle_ttl, timedelta):
-                raise ValueError("idle_ttl must be an int (seconds) or a timedelta")
+        if isinstance(self.idle_ttl, int):
+            self.idle_ttl = timedelta(seconds=int(self.idle_ttl))
+        elif not isinstance(self.idle_ttl, timedelta):
+            raise ValueError("idle_ttl must be an int (seconds) or a timedelta")
+        if self.idle_ttl.total_seconds() < 30:
+            raise ValueError("idle_ttl must be at least 30 seconds")
 
         if self.replicas[1] == 1 and self.concurrency == 1:
             logger.warning(
@@ -58,13 +59,12 @@ class ReusePolicy:
                 "that runs child tasks."
             )
 
-        if self.scaledown_ttl:
-            if isinstance(self.scaledown_ttl, int):
-                self.scaledown_ttl = timedelta(seconds=int(self.scaledown_ttl))
-            elif not isinstance(self.scaledown_ttl, timedelta):
-                raise ValueError("scaledown_ttl must be an int (seconds) or a timedelta")
-            if self.replicas[0] == self.replicas[1]:
-                raise ValueError("scaledown_ttl is not supported when replicas are fixed (min == max)")
+        if isinstance(self.scaledown_ttl, int):
+            self.scaledown_ttl = timedelta(seconds=int(self.scaledown_ttl))
+        elif not isinstance(self.scaledown_ttl, timedelta):
+            raise ValueError("scaledown_ttl must be an int (seconds) or a timedelta")
+        if self.scaledown_ttl.total_seconds() < 30:
+            raise ValueError("scaledown_ttl must be at least 30 seconds")
 
     @property
     def ttl(self) -> timedelta | None:
