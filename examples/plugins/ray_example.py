@@ -23,7 +23,7 @@ ray_config = RayJobConfig(
 )
 
 image = (
-    flyte.Image.from_debian_base()
+    flyte.Image.from_debian_base(name="ray")
     .with_apt_packages("wget")
     .with_pip_packages("ray[default]==2.46.0", "flyteplugins-ray", "pip")
 )

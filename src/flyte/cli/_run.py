@@ -116,8 +116,8 @@ class RunTaskCommand(click.Command):
                         "Run",
                         f"[green bold]Created Run: {r.name} [/green bold] "
                         f"(Project: {r.action.action_id.run.project}, Domain: {r.action.action_id.run.domain})\n"
-                        f"➡️  [blue bold]{r.url}[/blue bold]",
-                        simple=obj.simple,
+                        f"➡️  [blue bold][link={r.url}]{r.url}[/link][/blue bold]",
+                        obj.output_format,
                     )
                 )
                 if self.run_args.follow:
@@ -125,7 +125,7 @@ class RunTaskCommand(click.Command):
                         "[dim]Log streaming enabled, will wait for task to start running "
                         "and log stream to be available[/dim]"
                     )
-                    await r.show_logs(max_lines=30, show_ts=True, raw=False)
+                    await r.show_logs.aio(max_lines=30, show_ts=True, raw=False)
 
         asyncio.run(_run())
 
@@ -212,21 +212,27 @@ run = TaskFiles(
 Run a task from a python file.
 
 Example usage:
-```bash
-flyte run --name examples/basics/hello.py my_task --arg1 value1 --arg2 value2
-```
-Note: all arguments for the run command are provided right after the `run` command and before the file name.
 
-You can also specify the project and domain using the `--project` and `--domain` options, respectively. These
-options can be set in the config file or passed as command line arguments.
-
-Note: The arguments for the task are provided after the task name and can be retrieved using `--help`
-Example:
 ```bash
-flyte run --name examples/basics/hello.py my_task --help
+flyte run --project my-project --domain development hello.py my_task --arg1 value1 --arg2 value2
 ```
+
+Arguments to the run command are provided right after the `run` command and before the file name.
+For example, the command above specifies the project and domain.
 
 To run a task locally, use the `--local` flag. This will run the task in the local environment instead of the remote
- Flyte environment.
+Flyte environment:
+
+```bash
+flyte run --local hello.py my_task --arg1 value1 --arg2 value2
+```
+
+Other arguments to the run command are listed below.
+
+Arguments for the task itself are provided after the task name and can be retrieved using `--help`. For example:
+
+```bash
+flyte run hello.py my_task --help
+```
 """,
 )
