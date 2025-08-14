@@ -1,19 +1,14 @@
 import asyncio
 import datetime
-import pathlib
 from pathlib import Path
 import time
 
 import flyte
 import flyte.errors
-from flyte._image import PythonWheels
 
-PATH_TO_FASTTASK_WORKER = pathlib.Path("/Users/ytong/go/src/github.com/unionai/flyte/fasttask/worker-v2")
-
-actor_dist_folder = Path("/Users/ytong/go/src/github.com/unionai/flyte/fasttask/worker-v2/dist")
-wheel_layer = PythonWheels(wheel_dir=actor_dist_folder, package_name="unionai-reuse")
-base = flyte.Image.from_debian_base()
-actor_image = base.clone(addl_layer=wheel_layer)
+# Run this not with an editable install
+# base = flyte.Image.from_debian_base()
+actor_image = flyte.Image.from_debian_base().with_pip_packages("unionai-reuse==0.1.0b2", pre=True)
 
 
 actor_env = flyte.TaskEnvironment(
