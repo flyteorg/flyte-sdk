@@ -66,6 +66,12 @@ RUN --mount=type=cache,sharing=locked,mode=0777,target=/root/.cache/uv,id=uv \
     uv pip install --python $$UV_PYTHON $PIP_INSTALL_ARGS
 """)
 
+UV_PACKAGES_ONLY_INSTALL_COMMAND_TEMPLATE = Template("""\
+RUN --mount=type=cache,sharing=locked,mode=0777,target=/root/.cache/uv,id=uv \
+    $SECRET_MOUNT \
+    uv pip install --python $$UV_PYTHON $PIP_INSTALL_ARGS
+""")
+
 UV_WHEEL_INSTALL_COMMAND_TEMPLATE = Template("""\
 RUN --mount=type=cache,sharing=locked,mode=0777,target=/root/.cache/uv,id=wheel \
     --mount=source=/dist,target=/dist,type=bind \
@@ -129,6 +135,8 @@ class Handler(Protocol):
 class PipAndRequirementsHandler:
     @staticmethod
     async def handle(layer: PipPackages, context_path: Path, dockerfile: str) -> str:
+        secret_mounts = _get_secret_mounts_layer(layer.secret_mounts)
+
         # Set pip_install_args based on the layer type - either a requirements file or a list of packages
         if isinstance(layer, Requirements):
             if not layer.file.exists():
@@ -140,17 +148,20 @@ class PipAndRequirementsHandler:
             requirements_path = copy_files_to_context(layer.file, context_path)
             pip_install_args = layer.get_pip_install_args()
             pip_install_args.extend(["--requirement", str(requirements_path)])
+            delta = UV_PACKAGE_INSTALL_COMMAND_TEMPLATE.substitute(
+                SECRET_MOUNT=secret_mounts,
+                PIP_INSTALL_ARGS=" ".join(pip_install_args),
+            )
         else:
             requirements = list(layer.packages) if layer.packages else []
             reqs = " ".join(requirements)
             pip_install_args = layer.get_pip_install_args()
             pip_install_args.append(reqs)
 
-        secret_mounts = _get_secret_mounts_layer(layer.secret_mounts)
-        delta = UV_PACKAGE_INSTALL_COMMAND_TEMPLATE.substitute(
-            SECRET_MOUNT=secret_mounts,
-            PIP_INSTALL_ARGS=" ".join(pip_install_args),
-        )
+            delta = UV_PACKAGES_ONLY_INSTALL_COMMAND_TEMPLATE.substitute(
+                SECRET_MOUNT=secret_mounts,
+                PIP_INSTALL_ARGS=" ".join(pip_install_args),
+            )
 
         dockerfile += delta
 
