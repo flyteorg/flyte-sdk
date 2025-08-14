@@ -26,6 +26,7 @@ from flyte._image import (
     UVScript,
 )
 from flyte._internal.imagebuild.image_builder import ImageBuilder, ImageChecker
+from flyte._internal.imagebuild.utils import copy_files_to_context
 from flyte._logging import logger
 from flyte.remote import ActionOutputs, Run
 
@@ -169,7 +170,7 @@ def _get_layers_proto(image: Image, context_path: Path) -> "image_definition_pb2
             )
             layers.append(apt_layer)
         elif isinstance(layer, PythonWheels):
-            dst_path = _copy_files_to_context(layer.wheel_dir, context_path)
+            dst_path = copy_files_to_context(layer.wheel_dir, context_path)
             wheel_layer = image_definition_pb2.Layer(
                 python_wheels=image_definition_pb2.PythonWheels(
                     dir=str(dst_path.relative_to(context_path)),
@@ -184,7 +185,7 @@ def _get_layers_proto(image: Image, context_path: Path) -> "image_definition_pb2
             layers.append(wheel_layer)
 
         elif isinstance(layer, Requirements):
-            dst_path = _copy_files_to_context(layer.file, context_path)
+            dst_path = copy_files_to_context(layer.file, context_path)
             requirements_layer = image_definition_pb2.Layer(
                 requirements=image_definition_pb2.Requirements(
                     file=str(dst_path.relative_to(context_path)),
@@ -240,7 +241,7 @@ def _get_layers_proto(image: Image, context_path: Path) -> "image_definition_pb2
         elif isinstance(layer, DockerIgnore):
             shutil.copy(layer.path, context_path)
         elif isinstance(layer, CopyConfig):
-            dst_path = _copy_files_to_context(layer.src, context_path)
+            dst_path = copy_files_to_context(layer.src, context_path)
 
             copy_layer = image_definition_pb2.Layer(
                 copy_config=image_definition_pb2.CopyConfig(
@@ -262,19 +263,6 @@ def _get_layers_proto(image: Image, context_path: Path) -> "image_definition_pb2
         python_version=f"{image.python_version[0]}.{image.python_version[1]}",
         layers=layers,
     )
-
-
-def _copy_files_to_context(src: Path, context_path: Path) -> Path:
-    if src.is_absolute() or ".." in str(src):
-        dst_path = context_path / str(src.absolute()).replace("/", "./_flyte_abs_context/", 1)
-    else:
-        dst_path = context_path / src
-    dst_path.parent.mkdir(parents=True, exist_ok=True)
-    if src.is_dir():
-        shutil.copytree(src, dst_path, dirs_exist_ok=True)
-    else:
-        shutil.copy(src, dst_path)
-    return dst_path
 
 
 def _get_fully_qualified_image_name(outputs: ActionOutputs) -> str:

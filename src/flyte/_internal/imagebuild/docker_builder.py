@@ -37,6 +37,7 @@ from flyte._internal.imagebuild.image_builder import (
     LocalDockerCommandImageChecker,
     LocalPodmanCommandImageChecker,
 )
+from flyte._internal.imagebuild.utils import copy_files_to_context
 from flyte._logging import logger
 
 _F_IMG_ID = "_F_IMG_ID"
@@ -128,30 +129,29 @@ class Handler(Protocol):
 class PipAndRequirementsHandler:
     @staticmethod
     async def handle(layer: PipPackages, context_path: Path, dockerfile: str) -> str:
+        # Set pip_install_args based on the layer type - either a requirements file or a list of packages
         if isinstance(layer, Requirements):
             if not layer.file.exists():
                 raise FileNotFoundError(f"Requirements file {layer.file} does not exist")
             if not layer.file.is_file():
                 raise ValueError(f"Requirements file {layer.file} is not a file")
 
-            async with aiofiles.open(layer.file) as f:
-                requirements = []
-                async for line in f:
-                    requirement = line
-                    requirements.append(requirement.strip())
+            # Copy the requirements file to the context path
+            requirements_path = copy_files_to_context(layer.file, context_path)
+            pip_install_args = layer.get_pip_install_args()
+            pip_install_args.extend(["--requirement", str(requirements_path)])
         else:
             requirements = list(layer.packages) if layer.packages else []
-        requirements_uv_path = context_path / "requirements_uv.txt"
-        async with aiofiles.open(requirements_uv_path, "w") as f:
-            reqs = "\n".join(requirements)
-            await f.write(reqs)
+            reqs = " ".join(requirements)
+            pip_install_args = layer.get_pip_install_args()
+            pip_install_args.append(reqs)
 
-        pip_install_args = layer.get_pip_install_args()
-        pip_install_args.extend(["--requirement", "requirements_uv.txt"])
         secret_mounts = _get_secret_mounts_layer(layer.secret_mounts)
         delta = UV_PACKAGE_INSTALL_COMMAND_TEMPLATE.substitute(
-            PIP_INSTALL_ARGS=" ".join(pip_install_args), SECRET_MOUNT=secret_mounts
+            SECRET_MOUNT=secret_mounts,
+            PIP_INSTALL_ARGS=" ".join(pip_install_args),
         )
+
         dockerfile += delta
 
         return dockerfile
