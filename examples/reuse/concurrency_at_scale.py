@@ -18,8 +18,8 @@ actor_image = base.clone(addl_layer=wheel_layer)
 
 env = flyte.TaskEnvironment(
     name="oomer_parent_actor",
-    resources=flyte.Resources(cpu=1, memory="250Mi"),
-    # resources=flyte.Resources(cpu=1, memory="1Gi"),
+    # resources=flyte.Resources(cpu=1, memory="250Mi"),
+    resources=flyte.Resources(cpu=1, memory="1Gi"),
     image=actor_image,
     reusable=flyte.ReusePolicy(
         replicas=1,
@@ -28,22 +28,15 @@ env = flyte.TaskEnvironment(
     ),
 )
 
-leaf_env = flyte.TaskEnvironment(
-    name="leaf_env",
-    resources=flyte.Resources(cpu=1, memory="250Mi"),
-)
-
 
 @env.task
 async def concurrent_leaf(x: int):
     print(f"Leaf task got {x=}", flush=True)
-    # await asyncio.sleep(1)
     print(f"Leaf task {x=} finishing", flush=True)
 
 
 @env.task
 async def always_succeeds() -> int:
-    # await asyncio.sleep(1)
     return 42
 
 
@@ -66,8 +59,10 @@ async def concurrency_parent() -> int:
     finally:
         print("In finally...", flush=True)
 
+    last_task_start = time.time()
     res = await always_succeeds()
-    print("A0 finished!!!", flush=True)
+    last_task_end = time.time()
+    print(f"A0 finished!!! {last_task_start} --> {last_task_end}", flush=True)
     return res
 
 
