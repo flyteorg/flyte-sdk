@@ -68,9 +68,9 @@ class DaskTask(AsyncFunctionTaskTemplate):
         from distributed import Client
         from distributed.diagnostics.plugin import UploadDirectory
 
-        working_dir = flyte.ctx().code_bundle.destination
-        client = Client()
-        client.register_plugin(UploadDirectory(working_dir))
+        if flyte.ctx().code_bundle:
+            client = Client()
+            client.register_plugin(UploadDirectory(flyte.ctx().code_bundle.destination))
 
         return {}
 
