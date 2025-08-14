@@ -28,7 +28,7 @@ def main(letter: str) -> dict[str, str]:
     matching_primary_codes: list[str] = []
     for index in range(len(languages)):
         greeting = polyglot_hello.get_by_index(index)
-        all_codes = [greeting.code] + list(greeting.codes or [])
+        all_codes = [greeting.code, *list(greeting.codes or [])]
         all_codes_lower = [c.lower() for c in all_codes]
         if any(c.startswith(letter_lower) for c in all_codes_lower):
             matching_primary_codes.append(greeting.code)
