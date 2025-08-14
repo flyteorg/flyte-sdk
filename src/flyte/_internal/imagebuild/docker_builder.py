@@ -61,13 +61,7 @@ ENV PATH="/root/.venv/bin:$$PATH" \
 
 UV_PACKAGE_INSTALL_COMMAND_TEMPLATE = Template("""\
 RUN --mount=type=cache,sharing=locked,mode=0777,target=/root/.cache/uv,id=uv \
-    --mount=type=bind,target=requirements_uv.txt,src=requirements_uv.txt \
-    $SECRET_MOUNT \
-    uv pip install --python $$UV_PYTHON $PIP_INSTALL_ARGS
-""")
-
-UV_PACKAGES_ONLY_INSTALL_COMMAND_TEMPLATE = Template("""\
-RUN --mount=type=cache,sharing=locked,mode=0777,target=/root/.cache/uv,id=uv \
+    $REQUIREMENTS_MOUNT \
     $SECRET_MOUNT \
     uv pip install --python $$UV_PYTHON $PIP_INSTALL_ARGS
 """)
@@ -146,10 +140,13 @@ class PipAndRequirementsHandler:
 
             # Copy the requirements file to the context path
             requirements_path = copy_files_to_context(layer.file, context_path)
+            rel_path = str(requirements_path.relative_to(context_path))
             pip_install_args = layer.get_pip_install_args()
-            pip_install_args.extend(["--requirement", str(requirements_path)])
+            pip_install_args.extend(["--requirement", "requirements.txt"])
+            mount = f"--mount=type=bind,target=requirements.txt,src={rel_path}"
             delta = UV_PACKAGE_INSTALL_COMMAND_TEMPLATE.substitute(
                 SECRET_MOUNT=secret_mounts,
+                REQUIREMENTS_MOUNT=mount,
                 PIP_INSTALL_ARGS=" ".join(pip_install_args),
             )
         else:
@@ -158,8 +155,9 @@ class PipAndRequirementsHandler:
             pip_install_args = layer.get_pip_install_args()
             pip_install_args.append(reqs)
 
-            delta = UV_PACKAGES_ONLY_INSTALL_COMMAND_TEMPLATE.substitute(
+            delta = UV_PACKAGE_INSTALL_COMMAND_TEMPLATE.substitute(
                 SECRET_MOUNT=secret_mounts,
+                REQUIREMENTS_MOUNT="",
                 PIP_INSTALL_ARGS=" ".join(pip_install_args),
             )
 
