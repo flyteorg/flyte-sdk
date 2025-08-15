@@ -6,7 +6,7 @@ env = flyte.TaskEnvironment(
     name="reuse_concurrency",
     resources=flyte.Resources(cpu=1, memory="1Gi"),
     reusable=flyte.ReusePolicy(
-        replicas=1,
+        replicas=2,
         idle_ttl=60,
         concurrency=60,
         scaledown_ttl=60,
