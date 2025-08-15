@@ -5,7 +5,7 @@ import flyte
 import flyte.errors
 
 env = flyte.TaskEnvironment(
-    "memory_override_for_loops",
+    "memory_override_for_loops_1",
     resources=flyte.Resources(cpu=1, memory="400Mi"),
     cache="disable",
 )

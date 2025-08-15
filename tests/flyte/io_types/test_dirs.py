@@ -1,4 +1,5 @@
 import os
+import os.path
 import pathlib
 import shutil
 import tempfile
@@ -69,9 +70,10 @@ async def test_walk_async_local(tmp_dir_structure):
     dir_obj = Dir(path=tmp_dir_structure)
     files = [f async for f in dir_obj.walk()]
     assert len(files) == 4
-    assert isinstance(files[0], File)
-    assert files[0].path.endswith("root.txt")
-    assert os.path.exists(files[0].path)
+    f = files[0]
+    assert isinstance(f, File)
+    assert f.path.endswith("root.txt")
+    assert os.path.exists(f.path)
 
 
 @pytest.mark.asyncio
