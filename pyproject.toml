@@ -131,6 +131,7 @@ dev-dependencies = [
 disable_error_code = ["import-untyped"]
 exclude = "src/flyte/_protos/.*"
 ignore_missing_imports = true
+check_untyped_defs = true
 
 [tool.ty.rules]
 unused-ignore-comment = "warn"
