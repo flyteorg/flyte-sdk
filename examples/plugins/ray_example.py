@@ -4,7 +4,7 @@ import typing
 import ray
 from flyteplugins.ray.task import HeadNodeConfig, RayJobConfig, WorkerNodeConfig
 
-import flyte.remote._action
+import flyte.remote
 import flyte.storage
 
 
@@ -62,6 +62,6 @@ if __name__ == "__main__":
     print("run url:", run.url)
     run.wait(run)
 
-    action_details = flyte.remote._action.ActionDetails.get(run_name=run.name, name="a0")
+    action_details = flyte.remote.ActionDetails.get(run_name=run.name, name="a0")
     for log in action_details.pb2.attempts[-1].log_info:
         print(f"{log.name}: {log.uri}")
