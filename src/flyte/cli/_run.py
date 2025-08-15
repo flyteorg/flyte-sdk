@@ -289,14 +289,17 @@ class TaskFiles(common.FileGroup):
             return ReferenceTaskGroup(
                 name=cmd_name,
                 run_args=run_args,
-                help=f"Run reference task '{cmd_name}' from the Flyte backend",
+                help=f"Run reference task from the Flyte backend",
             )
 
         fp = Path(cmd_name)
         if not fp.exists():
             raise click.BadParameter(f"File {cmd_name} does not exist")
         if fp.is_dir():
-            return TaskFiles(directory=fp)
+            return TaskFiles(
+                directory=fp,
+                help=f"Run `*.py` file inside in the {fp} directory",
+            )
         return TaskPerFileGroup(
             filename=fp,
             run_args=run_args,

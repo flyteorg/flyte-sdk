@@ -316,19 +316,26 @@ class FileGroup(GroupBase):
     def files(self):
         if self._files is None:
             directory = self._dir or Path(".").absolute()
+            # add python files
             _files = [os.fspath(p) for p in directory.glob("*.py") if p.name != "__init__.py"]
-            if not _files:
-                _files = [os.fspath(".")] + [
-                    os.fspath(p.name) for p in directory.iterdir() if not p.name.startswith(("_", ".")) and p.is_dir()
-                ]
-            _files = [str(Path(f).relative_to(Path.cwd())) for f in _files]
+
+            # add directories
+            _files.extend([os.fspath(".")] + [
+                os.fspath(directory / p.name) for p in directory.iterdir() if not p.name.startswith(("_", ".")) and p.is_dir()
+            ])
             self._files = _files
         return self._files
 
     def list_commands(self, ctx):
+        file_commands = []
+        for f in self.files:
+            if Path(f).is_relative_to(Path.cwd()):
+                file_commands.append(str(Path(f).relative_to(Path.cwd())))
+            else:
+                file_commands.append(f)
         return [
             "reference-task",
-            *self.files,
+            *file_commands,
         ]
 
     def get_command(self, ctx, filename):
