@@ -435,6 +435,12 @@ To run tasks that you've already deployed to Flyte, use the reference-task comma
 flyte run reference-task my_env.my_task --arg1 value1 --arg2 value2
 ```
 
+To run a specific version of a reference task, use the `env.task:version` syntax:
+
+```bash
+flyte run reference-task my_env.my_task:xyz123 --arg1 value1 --arg2 value2
+```
+
 You can specify the `--config` flag to point to a specific Flyte cluster:
 
 ```bash
