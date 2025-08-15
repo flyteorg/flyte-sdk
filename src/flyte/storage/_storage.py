@@ -15,7 +15,7 @@ from obstore.fsspec import register
 from flyte._initialize import get_storage
 from flyte._logging import logger
 
-_OBSTORE_SUPPORTED_PROTOCOLS = ["s3", "gs", "abfs", "abfss", "file", "local"]
+_OBSTORE_SUPPORTED_PROTOCOLS = ["s3", "gs", "abfs", "abfss"]
 
 
 def _is_obstore_supported_protocol(protocol: str) -> bool:

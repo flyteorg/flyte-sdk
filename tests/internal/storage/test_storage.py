@@ -59,8 +59,24 @@ def test_obstore_protocol():
     assert not _is_obstore_supported_protocol("obstore")
 
 
+@pytest.fixture(scope="module")
+def obstore_file():
+    """
+    Fixture to create a temporary obstore file for testing.
+    """
+    import fsspec
+    import fsspec.implementations.local
+    import obstore.fsspec
+
+    obstore.fsspec.register("file", asynchronous=True)
+    try:
+        yield
+    finally:
+        fsspec.register_implementation("file", fsspec.implementations.local.LocalFileSystem, clobber=True)
+
+
 @pytest.mark.asyncio
-async def test_obstore_bypass():
+async def test_obstore_bypass(obstore_file):
     """
     Test that the obstore bypass is working correctly.
     """
@@ -72,7 +88,7 @@ async def test_obstore_bypass():
 
 
 @pytest.mark.asyncio
-async def test_obstore_bypass_with_large_data():
+async def test_obstore_bypass_with_large_data(obstore_file):
     """
     Test that the obstore bypass works with large data.
     """
@@ -84,7 +100,7 @@ async def test_obstore_bypass_with_large_data():
 
 
 @pytest.mark.asyncio
-async def test_obstore_bypass_with_empty_data():
+async def test_obstore_bypass_with_empty_data(obstore_file):
     """
     Test that the obstore bypass works with empty data.
     """
