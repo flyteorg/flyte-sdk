@@ -382,6 +382,7 @@ class Task(ToJSONMixin):
     async def listall(
         cls,
         by_task_name: str | None = None,
+        by_task_env: str | None = None,
         project: str | None = None,
         domain: str | None = None,
         sort_by: Tuple[str, Literal["asc", "desc"]] | None = None,
@@ -391,6 +392,7 @@ class Task(ToJSONMixin):
         Get all runs for the current project and domain.
 
         :param by_task_name: If provided, only tasks with this name will be returned.
+        :param by_task_env: If provided, only tasks with this environment prefix will be returned.
         :param project: The project to filter tasks by. If None, the current project will be used.
         :param domain: The domain to filter tasks by. If None, the current domain will be used.
         :param sort_by: The sorting criteria for the project list, in the format (field, order).
@@ -411,6 +413,15 @@ class Task(ToJSONMixin):
                     function=list_pb2.Filter.Function.EQUAL,
                     field="name",
                     values=[by_task_name],
+                )
+            )
+        if by_task_env:
+            # ideally we should have a STARTS_WITH filter, but it is not supported yet
+            filters.append(
+                list_pb2.Filter(
+                    function=list_pb2.Filter.Function.CONTAINS,
+                    field="name",
+                    values=[f"{by_task_env}."],
                 )
             )
         original_limit = limit
