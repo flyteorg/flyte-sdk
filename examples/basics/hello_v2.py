@@ -5,7 +5,6 @@ import flyte
 
 env = flyte.TaskEnvironment(
     name="hello_v2",
-    image=flyte.Image.from_debian_base().with_pip_packages("flyte", pre=True),
 )
 
 

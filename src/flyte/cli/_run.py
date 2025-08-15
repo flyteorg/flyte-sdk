@@ -172,7 +172,97 @@ class TaskPerFileGroup(common.ObjectsPerFileGroup):
             help=obj.docs.__help__str__() if obj.docs else None,
             run_args=self.run_args,
         )
+    
+class RunReferenceTaskCommand(click.Command):
+    def __init__(self, task_name: str, run_args: RunArguments, *args, **kwargs):
+        self.task_name = task_name
+        self.run_args = run_args
+        super().__init__(*args, **kwargs)
 
+    def invoke(self, ctx: click.Context):
+        obj: CLIConfig = ctx.obj
+
+        async def _run():
+            import flyte
+            import flyte.remote
+
+            task = flyte.remote.Task.get(self.task_name, auto_version="latest")
+
+            r = flyte.with_runcontext(
+                copy_style=self.run_args.copy_style,
+                mode="local" if self.run_args.local else "remote",
+                name=self.run_args.name,
+            ).run(task, **ctx.params)
+            if isinstance(r, Run) and r.action is not None:
+                console = Console()
+                console.print(
+                    common.get_panel(
+                        "Run",
+                        f"[green bold]Created Run: {r.name} [/green bold] "
+                        f"(Project: {r.action.action_id.run.project}, Domain: {r.action.action_id.run.domain})\n"
+                        f"➡️  [blue bold][link={r.url}]{r.url}[/link][/blue bold]",
+                        obj.output_format,
+                    )
+                )
+                if self.run_args.follow:
+                    console.print(
+                        "[dim]Log streaming enabled, will wait for task to start running "
+                        "and log stream to be available[/dim]"
+                    )
+                    await r.show_logs.aio(max_lines=30, show_ts=True, raw=False)
+
+        asyncio.run(_run())
+
+    def get_params(self, ctx: Context) -> List[Parameter]:
+        # Note this function may be called multiple times by click.
+        import flyte.remote
+        from flyte._internal.runtime.types_serde import transform_native_to_typed_interface
+
+        obj: CLIConfig = ctx.obj
+        if obj is None:
+            import flyte.config
+
+            obj = CLIConfig(flyte.config.auto(), ctx)
+
+        obj.init(self.run_args.project, self.run_args.domain)
+
+        task = flyte.remote.Task.get(self.task_name, auto_version="latest")
+        task_details = task.fetch()
+
+        interface = transform_native_to_typed_interface(task_details.interface)
+        if interface is None:
+            return super().get_params(ctx)
+        inputs_interface = task_details.interface.inputs
+
+        params: List[Parameter] = []
+        for name, var in interface.inputs.variables.items():
+            default_val = None
+            if inputs_interface[name][1] is not inspect._empty:
+                default_val = inputs_interface[name][1]
+            params.append(to_click_option(name, var, inputs_interface[name][0], default_val))
+
+        self.params = params
+        return super().get_params(ctx)
+
+
+class ReferenceTaskGroup(common.GroupBase):
+    """
+    Group that creates a command for each reference task in the current directory that is not __init__.py.
+    """
+
+    def __init__(self, name: str, *args, run_args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.name = name
+        self.run_args = run_args
+    
+    def get_command(self, ctx, task_name):
+        return RunReferenceTaskCommand(
+            task_name=task_name,
+            run_args=RunArguments.from_dict(ctx.params),
+            name=task_name,
+            help=f"Run reference task '{task_name}' from the Flyte backend",
+        )
+        
 
 class TaskFiles(common.FileGroup):
     """
@@ -192,18 +282,26 @@ class TaskFiles(common.FileGroup):
         kwargs["params"].extend(RunArguments.options())
         super().__init__(*args, directory=directory, **kwargs)
 
-    def get_command(self, ctx, filename):
+    def get_command(self, ctx, cmd_name):
         run_args = RunArguments.from_dict(ctx.params)
-        fp = Path(filename)
+
+        if cmd_name == "reference-task":
+            return ReferenceTaskGroup(
+                name=cmd_name,
+                run_args=run_args,
+                help=f"Run reference task '{cmd_name}' from the Flyte backend",
+            )
+
+        fp = Path(cmd_name)
         if not fp.exists():
-            raise click.BadParameter(f"File {filename} does not exist")
+            raise click.BadParameter(f"File {cmd_name} does not exist")
         if fp.is_dir():
             return TaskFiles(directory=fp)
         return TaskPerFileGroup(
             filename=fp,
             run_args=run_args,
-            name=filename,
-            help=f"Run functions decorated with `env.task` in {filename}",
+            name=cmd_name,
+            help=f"Run functions decorated with `env.task` in {cmd_name}",
         )
 
 
