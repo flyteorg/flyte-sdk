@@ -204,7 +204,11 @@ async def _put_stream_obstore_bypass(data_iterable: typing.AsyncIterable[bytes] 
         raise NotImplementedError(f"Obstore bypass not supported for {fs.protocol} protocol, methods missing.")
     bucket, path = fs._split_path(to_path)  # pylint: disable=W0212
     store: ObjectStore = fs._construct_store(bucket)
-    buf_file = obstore.open_writer_async(store, path, attributes=kwargs)
+    if "attributes" in kwargs:
+        attributes = kwargs.pop("attributes")
+    else:
+        attributes = {}
+    buf_file = obstore.open_writer_async(store, path, attributes=attributes)
     if isinstance(data_iterable, bytes):
         await buf_file.write(data_iterable)
     else:
