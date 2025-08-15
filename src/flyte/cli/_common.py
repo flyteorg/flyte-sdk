@@ -320,22 +320,24 @@ class FileGroup(GroupBase):
             _files = [os.fspath(p) for p in directory.glob("*.py") if p.name != "__init__.py"]
 
             # add directories
-            _files.extend([os.fspath(".")] + [
+            _files.extend([
                 os.fspath(directory / p.name) for p in directory.iterdir() if not p.name.startswith(("_", ".")) and p.is_dir()
             ])
-            self._files = _files
+
+            # files that are in the current directory or subdirectories of the
+            # current directory should be displayed as relative paths
+            self._files = [
+                str(Path(f).relative_to(Path.cwd()))
+                if Path(f).is_relative_to(Path.cwd())
+                else f
+                for f in _files
+            ]
         return self._files
 
     def list_commands(self, ctx):
-        file_commands = []
-        for f in self.files:
-            if Path(f).is_relative_to(Path.cwd()):
-                file_commands.append(str(Path(f).relative_to(Path.cwd())))
-            else:
-                file_commands.append(f)
         return [
             "reference-task",
-            *file_commands,
+            *self.files,
         ]
 
     def get_command(self, ctx, filename):
