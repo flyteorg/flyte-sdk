@@ -396,7 +396,7 @@ class TaskFiles(common.FileGroup):
         if fp.is_dir():
             return TaskFiles(
                 directory=fp,
-                help=f"Run `*.py` file inside in the {fp} directory",
+                help=f"Run `*.py` file inside the {fp} directory",
             )
         return TaskPerFileGroup(
             filename=fp,
