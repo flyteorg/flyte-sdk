@@ -15,7 +15,7 @@ from obstore.fsspec import register
 from flyte._initialize import get_storage
 from flyte._logging import logger
 
-_OBSTORE_SUPPORTED_PROTOCOLS = ["s3", "gs", "abfs", "abfss"]
+_OBSTORE_SUPPORTED_PROTOCOLS = ["s3", "gs", "abfs", "abfss", "file", "local"]
 
 
 def _is_obstore_supported_protocol(protocol: str) -> bool:
@@ -210,7 +210,7 @@ async def _put_stream_obstore_bypass(data_iterable: typing.AsyncIterable[bytes] 
     else:
         async for data in data_iterable:
             await buf_file.write(data)
-    await buf_file.flush()
+    # await buf_file.flush()
     await buf_file.close()
     return to_path
 
@@ -283,30 +283,15 @@ async def _get_stream_obstore_bypass(path: str, chunk_size, **kwargs) -> AsyncGe
     fs = get_underlying_filesystem(path=path)
     if not hasattr(fs, "_split_path") or not hasattr(fs, "_construct_store"):
         raise NotImplementedError(f"Obstore bypass not supported for {fs.protocol} protocol, methods missing.")
-    bucket, path = fs._split_path(path)  # pylint: disable=W0212
+    bucket, rem_path = fs._split_path(path)  # pylint: disable=W0212
     store: ObjectStore = fs._construct_store(bucket)
-    print(f"Opening obstore reader for {path} in bucket {bucket} with chunk size {chunk_size}", flush=True)
-    buf_file = await obstore.open_reader_async(store, path)
+    buf_file = await obstore.open_reader_async(store, rem_path, buffer_size=chunk_size)
     try:
         while True:
-            try:
-                chunk = await buf_file.read(chunk_size)
-                if not chunk:
-                    print(f"Finished reading {path} in bucket {bucket}")
-                    break
-                yield bytes(chunk)
-            except OSError as e:
-                if "early eof" in str(e).lower():
-                    # Try to read whatever is left
-                    try:
-                        remaining_chunk = await buf_file.read()
-                        if remaining_chunk:
-                            yield bytes(remaining_chunk)
-                    except:
-                        pass
-                    print(f"Reached end of file for {path} in bucket {bucket}")
-                    break
-                raise
+            chunk = await buf_file.read()
+            if not chunk:
+                break
+            yield bytes(chunk)
     finally:
         buf_file.close()
 

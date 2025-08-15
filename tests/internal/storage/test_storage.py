@@ -6,6 +6,11 @@ import pytest
 
 import flyte
 import flyte.storage as storage
+from flyte.storage._storage import (
+    _get_stream_obstore_bypass,
+    _is_obstore_supported_protocol,
+    _put_stream_obstore_bypass,
+)
 
 
 class TestUnionFileSystem(unittest.IsolatedAsyncioTestCase):
@@ -44,3 +49,47 @@ class TestUnionFileSystem(unittest.IsolatedAsyncioTestCase):
 def test_known_protocols(protocol, storage_config_class):
     kwargs = storage.get_configured_fsspec_kwargs(protocol=protocol)
     assert kwargs == storage_config_class.auto().get_fsspec_kwargs()
+
+
+def test_obstore_protocol():
+    assert _is_obstore_supported_protocol("s3")
+    assert _is_obstore_supported_protocol("gs")
+    assert _is_obstore_supported_protocol("abfs")
+    assert _is_obstore_supported_protocol("abfss")
+    assert not _is_obstore_supported_protocol("obstore")
+
+
+@pytest.mark.asyncio
+async def test_obstore_bypass():
+    """
+    Test that the obstore bypass is working correctly.
+    """
+    data = "Hello, world!".encode("utf-8")
+    dst = os.path.join(tempfile.mkdtemp(), "dst")
+    await _put_stream_obstore_bypass(data, to_path=dst)
+    streams = _get_stream_obstore_bypass(dst, chunk_size=10 * 1024 * 1024)  # 10 MB chunk size
+    assert data == b"".join([chunk async for chunk in streams])
+
+
+@pytest.mark.asyncio
+async def test_obstore_bypass_with_large_data():
+    """
+    Test that the obstore bypass works with large data.
+    """
+    data = os.urandom(10 * 1024 * 1024)
+    dst = os.path.join(tempfile.mkdtemp(), "large_dst")
+    await _put_stream_obstore_bypass(data, to_path=dst)
+    streams = _get_stream_obstore_bypass(dst, chunk_size=10 * 1024)
+    assert data == b"".join([chunk async for chunk in streams])
+
+
+@pytest.mark.asyncio
+async def test_obstore_bypass_with_empty_data():
+    """
+    Test that the obstore bypass works with empty data.
+    """
+    data = b""
+    dst = os.path.join(tempfile.mkdtemp(), "empty_dst")
+    await _put_stream_obstore_bypass(data, to_path=dst)
+    streams = _get_stream_obstore_bypass(dst, chunk_size=10 * 1024)
+    assert data == b"".join([chunk async for chunk in streams])
