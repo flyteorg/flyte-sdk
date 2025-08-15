@@ -271,7 +271,7 @@ async def put_stream(
     return str(to_path)
 
 
-async def _get_stream_obstore_bypass(path: str, chunk_size, **kwargs) -> AsyncGenerator[bytes]:
+async def _get_stream_obstore_bypass(path: str, chunk_size, **kwargs) -> AsyncGenerator[bytes, None]:
     """
     NOTE: This can break if obstore changes its API.
     This function is a workaround for obstore's fsspec implementation which does not support async file operations.
@@ -296,7 +296,7 @@ async def _get_stream_obstore_bypass(path: str, chunk_size, **kwargs) -> AsyncGe
         buf_file.close()
 
 
-async def get_stream(path: str, chunk_size=10 * 2**20, **kwargs) -> AsyncGenerator[bytes]:
+async def get_stream(path: str, chunk_size=10 * 2**20, **kwargs) -> AsyncGenerator[bytes, None]:
     """
     Get a stream of data from a remote location.
     This is useful for downloading streaming data from a remote location.
