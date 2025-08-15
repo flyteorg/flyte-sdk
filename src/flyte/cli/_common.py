@@ -320,17 +320,18 @@ class FileGroup(GroupBase):
             _files = [os.fspath(p) for p in directory.glob("*.py") if p.name != "__init__.py"]
 
             # add directories
-            _files.extend([
-                os.fspath(directory / p.name) for p in directory.iterdir() if not p.name.startswith(("_", ".")) and p.is_dir()
-            ])
+            _files.extend(
+                [
+                    os.fspath(directory / p.name)
+                    for p in directory.iterdir()
+                    if not p.name.startswith(("_", ".")) and p.is_dir()
+                ]
+            )
 
             # files that are in the current directory or subdirectories of the
             # current directory should be displayed as relative paths
             self._files = [
-                str(Path(f).relative_to(Path.cwd()))
-                if Path(f).is_relative_to(Path.cwd())
-                else f
-                for f in _files
+                str(Path(f).relative_to(Path.cwd())) if Path(f).is_relative_to(Path.cwd()) else f for f in _files
             ]
         return self._files
 

@@ -32,6 +32,7 @@ def _initialize_config(ctx: Context, project: str, domain: str):
     obj.init(project, domain)
     return obj
 
+
 @lru_cache()
 def _list_tasks(
     ctx: Context,
@@ -44,6 +45,7 @@ def _list_tasks(
 
     _initialize_config(ctx, project, domain)
     return [task.name for task in flyte.remote.Task.listall(by_task_name=by_task_name, by_task_env=by_task_env)]
+
 
 @dataclass
 class RunArguments:
@@ -191,7 +193,8 @@ class TaskPerFileGroup(common.ObjectsPerFileGroup):
             help=obj.docs.__help__str__() if obj.docs else None,
             run_args=self.run_args,
         )
-    
+
+
 class RunReferenceTaskCommand(click.Command):
     def __init__(self, task_name: str, run_args: RunArguments, version: str | None, *args, **kwargs):
         self.task_name = task_name
@@ -258,7 +261,7 @@ class RunReferenceTaskCommand(click.Command):
 
         self.params = params
         return super().get_params(ctx)
-    
+
 
 class ReferenceEnvGroup(common.GroupBase):
     def __init__(self, name: str, *args, run_args, env: str, **kwargs):
@@ -266,7 +269,7 @@ class ReferenceEnvGroup(common.GroupBase):
         self.name = name
         self.env = env
         self.run_args = run_args
-    
+
     def list_commands(self, ctx):
         return _list_tasks(ctx, self.run_args.project, self.run_args.domain, by_task_env=self.env)
 
@@ -308,7 +311,7 @@ class ReferenceTaskGroup(common.GroupBase):
         if not match:
             raise click.BadParameter(f"Invalid task name format: {task_name}")
         return match.group(1), match.group(2), match.group(3)
-    
+
     def _env_is_task(self, ctx: click.Context, env: str) -> bool:
         # check if the env name is the full task name, since sometimes task
         # names don't have an environment prefix
@@ -348,7 +351,6 @@ class ReferenceTaskGroup(common.GroupBase):
                 )
             case env, task, version:
                 task_name = f"{env}.{task}"
-                import ipdb; ipdb.set_trace()
                 return RunReferenceTaskCommand(
                     task_name=task_name,
                     run_args=self.run_args,
@@ -385,7 +387,7 @@ class TaskFiles(common.FileGroup):
             return ReferenceTaskGroup(
                 name=cmd_name,
                 run_args=run_args,
-                help=f"Run reference task from the Flyte backend",
+                help="Run reference task from the Flyte backend",
             )
 
         fp = Path(cmd_name)
