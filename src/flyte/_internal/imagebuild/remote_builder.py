@@ -24,6 +24,7 @@ from flyte._image import (
     Requirements,
     UVProject,
     UVScript,
+    WorkDir,
 )
 from flyte._internal.imagebuild.image_builder import ImageBuilder, ImageChecker
 from flyte._internal.imagebuild.utils import copy_files_to_context
@@ -257,6 +258,11 @@ def _get_layers_proto(image: Image, context_path: Path) -> "image_definition_pb2
                 )
             )
             layers.append(env_layer)
+        elif isinstance(layer, WorkDir):
+            workdir_layer = image_definition_pb2.Layer(
+                workdir=image_definition_pb2.WorkDir(workdir=layer.workdir),
+            )
+            layers.append(workdir_layer)
 
     return image_definition_pb2.ImageSpec(
         base_image=image.base_image,

@@ -279,7 +279,7 @@ class DockerIgnore(Layer):
 @dataclass(frozen=True, repr=True)
 class CopyConfig(Layer):
     path_type: CopyConfigType = field(metadata={"identifier": True})
-    src: Path = field(metadata={"identifier": True})
+    src: Path = field(metadata={"identifier": False})
     dst: str
     src_name: str = field(init=False)
 
