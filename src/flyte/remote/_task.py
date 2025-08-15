@@ -3,20 +3,26 @@ from __future__ import annotations
 import functools
 from dataclasses import dataclass
 from threading import Lock
-from typing import Any, AsyncIterator, Callable, Coroutine, Dict, Iterator, Literal, Optional, Tuple, Union
+from typing import Any, AsyncIterator, Callable, Coroutine, Dict, Iterator, Literal, Optional, Tuple, Union, cast
 
 import rich.repr
+from flyteidl.core import literals_pb2
 from google.protobuf import timestamp
 
 import flyte
 import flyte.errors
+from flyte._cache.cache import CacheBehavior
 from flyte._context import internal_ctx
 from flyte._initialize import ensure_client, get_client, get_common_config
+from flyte._internal.runtime.resources_serde import get_proto_resources
+from flyte._internal.runtime.task_serde import get_proto_retry_strategy, get_proto_timeout, get_security_context
 from flyte._logging import logger
 from flyte._protos.common import identifier_pb2, list_pb2
 from flyte._protos.workflow import task_definition_pb2, task_service_pb2
 from flyte.models import NativeInterface
 from flyte.syncify import syncify
+
+from ._common import ToJSONMixin
 
 
 def _repr_task_metadata(metadata: task_definition_pb2.TaskMetadata) -> rich.repr.Result:
@@ -61,6 +67,15 @@ class LazyEntity:
                 raise RuntimeError(f"Error downloading the task {self._name}, (check original exception...)")
             return self._task
 
+    @syncify
+    async def override(
+        self,
+        **kwargs: Any,
+    ) -> LazyEntity:
+        task_details = cast(TaskDetails, await self.fetch.aio())
+        task_details.override(**kwargs)
+        return self
+
     async def __call__(self, *args, **kwargs):
         """
         Forwards the call to the underlying task. The entity will be fetched if not already present
@@ -79,7 +94,7 @@ AutoVersioning = Literal["latest", "current"]
 
 
 @dataclass
-class TaskDetails:
+class TaskDetails(ToJSONMixin):
     pb2: task_definition_pb2.TaskDetails
     max_inline_io_bytes: int = 10 * 1024 * 1024  # 10 MB
 
@@ -201,11 +216,20 @@ class TaskDetails:
         """
         The cache policy of the task.
         """
+        metadata = self.pb2.spec.task_template.metadata
+        behavior: CacheBehavior
+        if not metadata.discoverable:
+            behavior = "disable"
+        elif metadata.discovery_version:
+            behavior = "override"
+        else:
+            behavior = "auto"
+
         return flyte.Cache(
-            behavior="enabled" if self.pb2.spec.task_template.metadata.discoverable else "disable",
-            version_override=self.pb2.spec.task_template.metadata.discovery_version,
-            serialize=self.pb2.spec.task_template.metadata.cache_serializable,
-            ignored_inputs=tuple(self.pb2.spec.task_template.metadata.cache_ignore_input_vars),
+            behavior=behavior,
+            version_override=metadata.discovery_version if metadata.discovery_version else None,
+            serialize=metadata.cache_serializable,
+            ignored_inputs=tuple(metadata.cache_ignore_input_vars),
         )
 
     @property
@@ -259,19 +283,33 @@ class TaskDetails:
     def override(
         self,
         *,
-        local: Optional[bool] = None,
-        ref: Optional[bool] = None,
         resources: Optional[flyte.Resources] = None,
-        cache: flyte.CacheRequest = "auto",
         retries: Union[int, flyte.RetryStrategy] = 0,
         timeout: Optional[flyte.TimeoutType] = None,
-        reusable: Union[flyte.ReusePolicy, Literal["auto"], None] = None,
         env: Optional[Dict[str, str]] = None,
         secrets: Optional[flyte.SecretRequest] = None,
-        max_inline_io_bytes: int | None = None,
         **kwargs: Any,
     ) -> TaskDetails:
-        raise NotImplementedError
+        if len(kwargs) > 0:
+            raise ValueError(
+                f"ReferenceTasks [{self.name}] do not support overriding with kwargs: {kwargs}, "
+                f"Check the parameters for override method."
+            )
+        template = self.pb2.spec.task_template
+        if secrets:
+            template.security_context.CopyFrom(get_security_context(secrets))
+        if template.HasField("container"):
+            if env:
+                template.container.env.clear()
+                template.container.env.extend([literals_pb2.KeyValuePair(key=k, value=v) for k, v in env.items()])
+            if resources:
+                template.container.resources.CopyFrom(get_proto_resources(resources))
+        if retries:
+            template.metadata.retries.CopyFrom(get_proto_retry_strategy(retries))
+        if timeout:
+            template.metadata.timeout.CopyFrom(get_proto_timeout(timeout))
+
+        return self
 
     def __rich_repr__(self) -> rich.repr.Result:
         """
@@ -294,7 +332,7 @@ class TaskDetails:
 
 
 @dataclass
-class Task:
+class Task(ToJSONMixin):
     pb2: task_definition_pb2.Task
 
     def __init__(self, pb2: task_definition_pb2.Task):
@@ -344,6 +382,7 @@ class Task:
     async def listall(
         cls,
         by_task_name: str | None = None,
+        by_task_env: str | None = None,
         project: str | None = None,
         domain: str | None = None,
         sort_by: Tuple[str, Literal["asc", "desc"]] | None = None,
@@ -353,6 +392,7 @@ class Task:
         Get all runs for the current project and domain.
 
         :param by_task_name: If provided, only tasks with this name will be returned.
+        :param by_task_env: If provided, only tasks with this environment prefix will be returned.
         :param project: The project to filter tasks by. If None, the current project will be used.
         :param domain: The domain to filter tasks by. If None, the current domain will be used.
         :param sort_by: The sorting criteria for the project list, in the format (field, order).
@@ -373,6 +413,15 @@ class Task:
                     function=list_pb2.Filter.Function.EQUAL,
                     field="name",
                     values=[by_task_name],
+                )
+            )
+        if by_task_env:
+            # ideally we should have a STARTS_WITH filter, but it is not supported yet
+            filters.append(
+                list_pb2.Filter(
+                    function=list_pb2.Filter.Function.CONTAINS,
+                    field="name",
+                    values=[f"{by_task_env}."],
                 )
             )
         original_limit = limit

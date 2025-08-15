@@ -23,8 +23,11 @@ from flyte._image import (
     PythonWheels,
     Requirements,
     UVProject,
+    UVScript,
+    WorkDir,
 )
 from flyte._internal.imagebuild.image_builder import ImageBuilder, ImageChecker
+from flyte._internal.imagebuild.utils import copy_files_to_context
 from flyte._logging import logger
 from flyte._secret import secrets_from_request
 from flyte.remote import ActionOutputs, Run
@@ -170,7 +173,7 @@ def _get_layers_proto(image: Image, context_path: Path) -> "image_definition_pb2
             )
             layers.append(apt_layer)
         elif isinstance(layer, PythonWheels):
-            dst_path = _copy_files_to_context(layer.wheel_dir, context_path)
+            dst_path = copy_files_to_context(layer.wheel_dir, context_path)
             wheel_layer = image_definition_pb2.Layer(
                 python_wheels=image_definition_pb2.PythonWheels(
                     dir=str(dst_path.relative_to(context_path)),
@@ -186,7 +189,7 @@ def _get_layers_proto(image: Image, context_path: Path) -> "image_definition_pb2
             layers.append(wheel_layer)
 
         elif isinstance(layer, Requirements):
-            dst_path = _copy_files_to_context(layer.file, context_path)
+            dst_path = copy_files_to_context(layer.file, context_path)
             requirements_layer = image_definition_pb2.Layer(
                 requirements=image_definition_pb2.Requirements(
                     file=str(dst_path.relative_to(context_path)),
@@ -200,10 +203,19 @@ def _get_layers_proto(image: Image, context_path: Path) -> "image_definition_pb2
                 )
             )
             layers.append(requirements_layer)
-        elif isinstance(layer, PipPackages):
+        elif isinstance(layer, PipPackages) or isinstance(layer, UVScript):
+            if isinstance(layer, UVScript):
+                from flyte._utils import parse_uv_script_file
+
+                header = parse_uv_script_file(layer.script)
+                if not header.dependencies:
+                    continue
+                packages: typing.Iterable[str] = header.dependencies
+            else:
+                packages = layer.packages or []
             pip_layer = image_definition_pb2.Layer(
                 pip_packages=image_definition_pb2.PipPackages(
-                    packages=layer.packages,
+                    packages=packages,
                     options=image_definition_pb2.PipOptions(
                         index_url=layer.index_url,
                         extra_index_urls=layer.extra_index_urls,
@@ -235,7 +247,7 @@ def _get_layers_proto(image: Image, context_path: Path) -> "image_definition_pb2
         elif isinstance(layer, DockerIgnore):
             shutil.copy(layer.path, context_path)
         elif isinstance(layer, CopyConfig):
-            dst_path = _copy_files_to_context(layer.src, context_path)
+            dst_path = copy_files_to_context(layer.src, context_path)
 
             copy_layer = image_definition_pb2.Layer(
                 copy_config=image_definition_pb2.CopyConfig(
@@ -251,25 +263,17 @@ def _get_layers_proto(image: Image, context_path: Path) -> "image_definition_pb2
                 )
             )
             layers.append(env_layer)
+        elif isinstance(layer, WorkDir):
+            workdir_layer = image_definition_pb2.Layer(
+                workdir=image_definition_pb2.WorkDir(workdir=layer.workdir),
+            )
+            layers.append(workdir_layer)
 
     return image_definition_pb2.ImageSpec(
         base_image=image.base_image,
         python_version=f"{image.python_version[0]}.{image.python_version[1]}",
         layers=layers,
     )
-
-
-def _copy_files_to_context(src: Path, context_path: Path) -> Path:
-    if src.is_absolute() or ".." in str(src):
-        dst_path = context_path / str(src.absolute()).replace("/", "./_flyte_abs_context/", 1)
-    else:
-        dst_path = context_path / src
-    dst_path.parent.mkdir(parents=True, exist_ok=True)
-    if src.is_dir():
-        shutil.copytree(src, dst_path, dirs_exist_ok=True)
-    else:
-        shutil.copy(src, dst_path)
-    return dst_path
 
 
 def _get_fully_qualified_image_name(outputs: ActionOutputs) -> str:

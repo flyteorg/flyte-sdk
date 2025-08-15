@@ -105,11 +105,9 @@ def is_optional_type(tp) -> bool:
 async def convert_from_native_to_inputs(interface: NativeInterface, *args, **kwargs) -> Inputs:
     kwargs = interface.convert_to_kwargs(*args, **kwargs)
 
-    if len(kwargs) < interface.num_required_inputs():
-        raise ValueError(
-            f"Received {len(kwargs)} inputs but interface has {interface.num_required_inputs()} required inputs. "
-            f"Please provide all required inputs. Inputs received: {kwargs}, interface: {interface}"
-        )
+    missing = [key for key in interface.required_inputs() if key not in kwargs]
+    if missing:
+        raise ValueError(f"Missing required inputs: {', '.join(missing)}")
 
     if len(interface.inputs) == 0:
         return Inputs.empty()

@@ -4,7 +4,7 @@
 #    "scikit-learn==1.6.1",
 #    "pandas",
 #    "pyarrow",
-#    "flyte>=0.2.0b10",
+#    "flyte>=2.0.0b3",
 # ]
 # ///
 

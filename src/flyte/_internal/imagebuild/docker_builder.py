@@ -25,8 +25,10 @@ from flyte._image import (
     PythonWheels,
     Requirements,
     UVProject,
+    UVScript,
     WorkDir,
     _DockerLines,
+    _ensure_tuple,
 )
 from flyte._internal.imagebuild.image_builder import (
     DockerAPIImageChecker,
@@ -35,6 +37,7 @@ from flyte._internal.imagebuild.image_builder import (
     LocalDockerCommandImageChecker,
     LocalPodmanCommandImageChecker,
 )
+from flyte._internal.imagebuild.utils import copy_files_to_context
 from flyte._logging import logger
 
 _F_IMG_ID = "_F_IMG_ID"
@@ -58,7 +61,7 @@ ENV PATH="/root/.venv/bin:$$PATH" \
 
 UV_PACKAGE_INSTALL_COMMAND_TEMPLATE = Template("""\
 RUN --mount=type=cache,sharing=locked,mode=0777,target=/root/.cache/uv,id=uv \
-    --mount=type=bind,target=requirements_uv.txt,src=requirements_uv.txt \
+    $REQUIREMENTS_MOUNT \
     $SECRET_MOUNT \
     uv pip install --python $$UV_PYTHON $PIP_INSTALL_ARGS
 """)
@@ -107,7 +110,7 @@ RUN uv venv $$VIRTUALENV --python=$PYTHON_VERSION
 
 # Adds nvidia just in case it exists
 ENV PATH="$$PATH:/usr/local/nvidia/bin:/usr/local/cuda/bin" \
-    LD_LIBRARY_PATH="/usr/local/nvidia/lib64:$$LD_LIBRARY_PATH"
+    LD_LIBRARY_PATH="/usr/local/nvidia/lib64"
 """)
 
 # This gets added on to the end of the dockerfile
@@ -126,30 +129,34 @@ class Handler(Protocol):
 class PipAndRequirementsHandler:
     @staticmethod
     async def handle(layer: PipPackages, context_path: Path, dockerfile: str) -> str:
+        secret_mounts = _get_secret_mounts_layer(layer.secret_mounts)
+
+        # Set pip_install_args based on the layer type - either a requirements file or a list of packages
         if isinstance(layer, Requirements):
             if not layer.file.exists():
                 raise FileNotFoundError(f"Requirements file {layer.file} does not exist")
             if not layer.file.is_file():
                 raise ValueError(f"Requirements file {layer.file} is not a file")
 
-            async with aiofiles.open(layer.file) as f:
-                requirements = []
-                async for line in f:
-                    requirement = line
-                    requirements.append(requirement.strip())
+            # Copy the requirements file to the context path
+            requirements_path = copy_files_to_context(layer.file, context_path)
+            rel_path = str(requirements_path.relative_to(context_path))
+            pip_install_args = layer.get_pip_install_args()
+            pip_install_args.extend(["--requirement", "requirements.txt"])
+            mount = f"--mount=type=bind,target=requirements.txt,src={rel_path}"
         else:
+            mount = ""
             requirements = list(layer.packages) if layer.packages else []
-        requirements_uv_path = context_path / "requirements_uv.txt"
-        async with aiofiles.open(requirements_uv_path, "w") as f:
-            reqs = "\n".join(requirements)
-            await f.write(reqs)
+            reqs = " ".join(requirements)
+            pip_install_args = layer.get_pip_install_args()
+            pip_install_args.append(reqs)
 
-        pip_install_args = layer.get_pip_install_args()
-        pip_install_args.extend(["--requirement", "requirements_uv.txt"])
-        secret_mounts = _get_secret_mounts_layer(layer.secret_mounts)
         delta = UV_PACKAGE_INSTALL_COMMAND_TEMPLATE.substitute(
-            PIP_INSTALL_ARGS=" ".join(pip_install_args), SECRET_MOUNT=secret_mounts
+            SECRET_MOUNT=secret_mounts,
+            REQUIREMENTS_MOUNT=mount,
+            PIP_INSTALL_ARGS=" ".join(pip_install_args),
         )
+
         dockerfile += delta
 
         return dockerfile
@@ -160,12 +167,31 @@ class PythonWheelHandler:
     async def handle(layer: PythonWheels, context_path: Path, dockerfile: str) -> str:
         shutil.copytree(layer.wheel_dir, context_path / "dist", dirs_exist_ok=True)
         pip_install_args = layer.get_pip_install_args()
-        pip_install_args.extend(["/dist/*.whl"])
         secret_mounts = _get_secret_mounts_layer(layer.secret_mounts)
-        delta = UV_WHEEL_INSTALL_COMMAND_TEMPLATE.substitute(
-            PIP_INSTALL_ARGS=" ".join(pip_install_args), SECRET_MOUNT=secret_mounts
+
+        # First install: Install the wheel without dependencies using --no-deps
+        pip_install_args_no_deps = [
+            *pip_install_args,
+            *[
+                "--find-links",
+                "/dist",
+                "--no-deps",
+                "--no-index",
+                layer.package_name,
+            ],
+        ]
+
+        delta1 = UV_WHEEL_INSTALL_COMMAND_TEMPLATE.substitute(
+            PIP_INSTALL_ARGS=" ".join(pip_install_args_no_deps), SECRET_MOUNT=secret_mounts
         )
-        dockerfile += delta
+        dockerfile += delta1
+
+        # Second install: Install dependencies from PyPI
+        pip_install_args_deps = [*pip_install_args, layer.package_name]
+        delta2 = UV_WHEEL_INSTALL_COMMAND_TEMPLATE.substitute(
+            PIP_INSTALL_ARGS=" ".join(pip_install_args_deps), SECRET_MOUNT=secret_mounts
+        )
+        dockerfile += delta2
 
         return dockerfile
 
@@ -320,6 +346,22 @@ async def _process_layer(layer: Layer, context_path: Path, dockerfile: str) -> s
         case PythonWheels():
             # Handle Python wheels
             dockerfile = await PythonWheelHandler.handle(layer, context_path, dockerfile)
+
+        case UVScript():
+            # Handle UV script
+            from flyte._utils import parse_uv_script_file
+
+            header = parse_uv_script_file(layer.script)
+            if header.dependencies:
+                pip = PipPackages(
+                    packages=_ensure_tuple(header.dependencies) if header.dependencies else None,
+                    secret_mounts=layer.secret_mounts,
+                    index_url=layer.index_url,
+                    extra_args=layer.extra_args,
+                    pre=layer.pre,
+                    extra_index_urls=layer.extra_index_urls,
+                )
+                dockerfile = await PipAndRequirementsHandler.handle(pip, context_path, dockerfile)
 
         case Requirements() | PipPackages():
             # Handle pip packages and requirements

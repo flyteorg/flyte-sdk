@@ -38,6 +38,10 @@ def walk_commands(ctx: click.Context) -> Generator[Tuple[str, click.Command], No
 
     if not isinstance(command, click.Group):
         yield ctx.command_path, command
+    elif isinstance(command, common.FileGroup):
+        # If the command is a FileGroup, yield its file path and the command itself
+        # No need to recurse further into FileGroup as it doesn't have subcommands, they are dynamically generated
+        yield ctx.command_path, command
     else:
         for name in command.list_commands(ctx):
             subcommand = command.get_command(ctx, name)
@@ -63,8 +67,13 @@ def markdown(cfg: common.CLIConfig):
     output_verb_groups: dict[str, list[str]] = {}
     output_noun_groups: dict[str, list[str]] = {}
 
+    processed = []
     commands = [*[("flyte", ctx.command)], *walk_commands(ctx)]
     for cmd_path, cmd in commands:
+        if cmd in processed:
+            # We already processed this command, skip it
+            continue
+        processed.append(cmd)
         output.append("")
 
         cmd_path_parts = cmd_path.split(" ")
@@ -132,7 +141,11 @@ def markdown(cfg: common.CLIConfig):
         output_verb_index.append("| ------ | -- |")
         for verb, nouns in output_verb_groups.items():
             entries = [f"[`{noun}`](#flyte-{verb}-{noun})" for noun in nouns]
-            output_verb_index.append(f"| `{verb}` | {', '.join(entries)}  |")
+            if len(entries) == 0:
+                verb_link = f"[`{verb}`](#flyte-{verb})"
+                output_verb_index.append(f"| {verb_link} | - |")
+            else:
+                output_verb_index.append(f"| `{verb}` | {', '.join(entries)}  |")
 
     output_noun_index = []
 

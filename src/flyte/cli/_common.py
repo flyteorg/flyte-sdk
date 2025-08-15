@@ -8,18 +8,21 @@ from abc import abstractmethod
 from dataclasses import dataclass, replace
 from pathlib import Path
 from types import MappingProxyType, ModuleType
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List, Literal, Optional
 
 import rich.box
 import rich.repr
 import rich_click as click
 from rich.console import Console
 from rich.panel import Panel
+from rich.pretty import pretty_repr
 from rich.table import Table
 from rich.traceback import Traceback
 
 import flyte.errors
 from flyte.config import Config
+
+OutputFormat = Literal["table", "json", "table-simple"]
 
 PREFERRED_BORDER_COLOR = "dim cyan"
 PREFERRED_ACCENT_COLOR = "bold #FFD700"
@@ -99,8 +102,8 @@ class CLIConfig:
     endpoint: str | None = None
     insecure: bool = False
     org: str | None = None
-    simple: bool = False
     auth_type: str | None = None
+    output_format: OutputFormat = "table"
 
     def replace(self, **kwargs) -> CLIConfig:
         """
@@ -313,34 +316,36 @@ class FileGroup(GroupBase):
     def files(self):
         if self._files is None:
             directory = self._dir or Path(".").absolute()
-            self._files = [os.fspath(p) for p in directory.glob("*.py") if p.name != "__init__.py"]
-            if not self._files:
-                self._files = [os.fspath(".")] + [
-                    os.fspath(p.name) for p in directory.iterdir() if not p.name.startswith(("_", ".")) and p.is_dir()
+            # add python files
+            _files = [os.fspath(p) for p in directory.glob("*.py") if p.name != "__init__.py"]
+
+            # add directories
+            _files.extend(
+                [
+                    os.fspath(directory / p.name)
+                    for p in directory.iterdir()
+                    if not p.name.startswith(("_", ".")) and p.is_dir()
                 ]
+            )
+
+            # files that are in the current directory or subdirectories of the
+            # current directory should be displayed as relative paths
+            self._files = [
+                str(Path(f).relative_to(Path.cwd())) if Path(f).is_relative_to(Path.cwd()) else f for f in _files
+            ]
         return self._files
 
     def list_commands(self, ctx):
-        return self.files
+        return [
+            "reference-task",
+            *self.files,
+        ]
 
     def get_command(self, ctx, filename):
         raise NotImplementedError
 
 
-def get_table(title: str, vals: Iterable[Any], simple: bool = False) -> Table:
-    """
-    Get a table from a list of values.
-    """
-    if simple:
-        table = Table(title, box=None)
-    else:
-        table = Table(
-            title=title,
-            box=rich.box.SQUARE_DOUBLE_HEAD,
-            header_style=HEADER_STYLE,
-            show_header=True,
-            border_style=PREFERRED_BORDER_COLOR,
-        )
+def _table_format(table: Table, vals: Iterable[Any]) -> Table:
     headers = None
     has_rich_repr = False
     for p in vals:
@@ -357,11 +362,37 @@ def get_table(title: str, vals: Iterable[Any], simple: bool = False) -> Table:
     return table
 
 
-def get_panel(title: str, renderable: Any, simple: bool = False) -> Panel:
+def format(title: str, vals: Iterable[Any], of: OutputFormat = "table") -> Table | Any:
+    """
+    Get a table from a list of values.
+    """
+
+    match of:
+        case "table-simple":
+            return _table_format(Table(title, box=None), vals)
+        case "table":
+            return _table_format(
+                Table(
+                    title=title,
+                    box=rich.box.SQUARE_DOUBLE_HEAD,
+                    header_style=HEADER_STYLE,
+                    show_header=True,
+                    border_style=PREFERRED_BORDER_COLOR,
+                ),
+                vals,
+            )
+        case "json":
+            if not vals:
+                return pretty_repr([])
+            return pretty_repr([v.to_dict() for v in vals])
+    raise click.ClickException("Unknown output format. Supported formats are: table, table-simple, json.")
+
+
+def get_panel(title: str, renderable: Any, of: OutputFormat = "table") -> Panel:
     """
     Get a panel from a list of values.
     """
-    if simple:
+    if of in ["table-simple", "json"]:
         return renderable
     return Panel.fit(
         renderable,
