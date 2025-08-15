@@ -156,8 +156,9 @@ class TaskPerFileGroup(common.ObjectsPerFileGroup):
     """
 
     def __init__(self, filename: Path, run_args: RunArguments, *args, **kwargs):
-        args = (filename, *args)
-        super().__init__(*args, **kwargs)
+        if filename.is_absolute():
+            filename = filename.relative_to(Path.cwd())
+        super().__init__(*(filename, *args), **kwargs)
         self.run_args = run_args
 
     def _filter_objects(self, module: ModuleType) -> Dict[str, Any]:
@@ -202,7 +203,7 @@ class TaskFiles(common.FileGroup):
             filename=fp,
             run_args=run_args,
             name=filename,
-            help=f"Run, functions decorated with `env.task` in {filename}",
+            help=f"Run functions decorated with `env.task` in {filename}",
         )
 
 

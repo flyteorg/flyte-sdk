@@ -316,11 +316,13 @@ class FileGroup(GroupBase):
     def files(self):
         if self._files is None:
             directory = self._dir or Path(".").absolute()
-            self._files = [os.fspath(p) for p in directory.glob("*.py") if p.name != "__init__.py"]
-            if not self._files:
-                self._files = [os.fspath(".")] + [
+            _files = [os.fspath(p) for p in directory.glob("*.py") if p.name != "__init__.py"]
+            if not _files:
+                _files = [os.fspath(".")] + [
                     os.fspath(p.name) for p in directory.iterdir() if not p.name.startswith(("_", ".")) and p.is_dir()
                 ]
+            _files = [str(Path(f).relative_to(Path.cwd())) for f in _files]
+            self._files = _files
         return self._files
 
     def list_commands(self, ctx):
