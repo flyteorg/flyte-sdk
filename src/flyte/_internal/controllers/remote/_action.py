@@ -184,7 +184,7 @@ class Action:
         et.nanos = int((end_time % 1) * 1e9)
 
         spec = (
-            task_definition_pb2.TaskSpec(task_template=tasks_pb2.TaskTemplate(interface=typed_interface))
+            task_definition_pb2.TraceSpec(interface=typed_interface)
             if typed_interface
             else None
         )

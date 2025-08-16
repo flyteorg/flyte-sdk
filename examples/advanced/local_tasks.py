@@ -3,7 +3,11 @@ from typing import AsyncGenerator, AsyncIterator, Tuple
 
 import flyte
 
-env = flyte.TaskEnvironment(name="traces", image=flyte.Image.from_debian_base(), resources=flyte.Resources(cpu=1))
+env = flyte.TaskEnvironment(
+    name="traces",
+    image=flyte.Image.from_debian_base(),
+    resources=flyte.Resources(cpu=1),
+)
 
 
 @flyte.trace
@@ -64,7 +68,34 @@ async def parallel_main(q: str) -> list[str]:
     return r
 
 
+@flyte.trace
+async def input_trace(a: str):
+    await asyncio.sleep(1)
+    print("Calling LLM without IO", flush=True)
+
+
+@flyte.trace
+async def output_trace() -> str:
+    await asyncio.sleep(1)
+    print("Calling LLM without IO", flush=True)
+    return "LLM response"
+
+
+@env.task
+def noio_task():
+    print("Running noio_task", flush=True)
+
+
+@env.task
+async def parallel_main_no_io(q: str) -> str:
+    print("Starting parallel_main_no_io", flush=True) 
+    noio_task()
+    await input_trace("hello world")
+    a = await output_trace()
+    return a
+
+
 if __name__ == "__main__":
-    flyte.init_from_config("../../config.yaml")
-    a = flyte.run(parallel_main, "hello world")
+    flyte.init_from_config("../../config.yaml", log_level="DEBUG")
+    a = flyte.run(parallel_main_no_io, "hello world")
     print(a.url)
