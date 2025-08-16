@@ -314,6 +314,7 @@ class TaskTemplate(Generic[P, R]):
     def override(
         self,
         *,
+        name: Optional[str] = None,
         resources: Optional[Resources] = None,
         cache: CacheRequest = "auto",
         retries: Union[int, RetryStrategy] = 0,
@@ -322,6 +323,7 @@ class TaskTemplate(Generic[P, R]):
         env: Optional[Dict[str, str]] = None,
         secrets: Optional[SecretRequest] = None,
         max_inline_io_bytes: int | None = None,
+        pod_template: Optional[Union[str, PodTemplate]] = None,
         **kwargs: Any,
     ) -> TaskTemplate:
         """
@@ -361,9 +363,10 @@ class TaskTemplate(Generic[P, R]):
         env = env or self.env
         secrets = secrets or self.secrets
 
+        if name is not None:
+            kwargs.update({"name": name})
+
         for k, v in kwargs.items():
-            if k == "name":
-                raise ValueError("Name cannot be overridden")
             if k == "image":
                 raise ValueError("Image cannot be overridden")
             if k == "docs":
@@ -381,6 +384,8 @@ class TaskTemplate(Generic[P, R]):
             env=env,
             secrets=secrets,
             max_inline_io_bytes=max_inline_io_bytes,
+            pod_template=pod_template,
+            **kwargs
         )
 
 
