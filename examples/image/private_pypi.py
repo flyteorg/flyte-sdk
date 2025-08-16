@@ -4,20 +4,16 @@ import flyte
 from flyte import Image
 
 image = (
-    Image.from_debian_base(install_flyte=False)
-    .with_apt_packages("vim", "wget")
+    Image.from_debian_base(install_flyte=True)
     .with_pip_packages("mypy", pre=True)
-    .with_env_vars({"hello": "world1"})
-    .with_source_folder(Path(__file__).parent.parent.parent)
-    .with_dockerignore(Path(__file__).parent / ".dockerignore")
-    .with_local_v2()
 )
 
-env = flyte.TaskEnvironment(name="t1", image=image)
+env = flyte.TaskEnvironment(name="private_package", image=image)
 
 
 @env.task
 async def t1(data: str = "hello") -> str:
+    import flytex
     return f"Hello {data}"
 
 
