@@ -21,6 +21,9 @@ from ._common import CLIConfig
 from ._params import to_click_option
 
 
+RUN_REMOTE_CMD = "deployed-task"
+
+
 @lru_cache()
 def _initialize_config(ctx: Context, project: str, domain: str):
     obj: CLIConfig | None = ctx.obj
@@ -279,7 +282,7 @@ class ReferenceEnvGroup(common.GroupBase):
             run_args=self.run_args,
             name=name,
             version=None,
-            help=f"Run reference task '{name}' from the Flyte backend",
+            help=f"Run deployed task '{name}' from the Flyte backend",
         )
 
 
@@ -380,10 +383,16 @@ class TaskFiles(common.FileGroup):
         kwargs["params"].extend(RunArguments.options())
         super().__init__(*args, directory=directory, **kwargs)
 
+    def list_commands(self, ctx):
+        return [
+            RUN_REMOTE_CMD,
+            *self.files,
+        ]
+
     def get_command(self, ctx, cmd_name):
         run_args = RunArguments.from_dict(ctx.params)
 
-        if cmd_name == "reference-task":
+        if cmd_name == RUN_REMOTE_CMD:
             return ReferenceTaskGroup(
                 name=cmd_name,
                 run_args=run_args,

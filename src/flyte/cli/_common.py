@@ -336,10 +336,7 @@ class FileGroup(GroupBase):
         return self._files
 
     def list_commands(self, ctx):
-        return [
-            "reference-task",
-            *self.files,
-        ]
+        return self.files
 
     def get_command(self, ctx, filename):
         raise NotImplementedError
