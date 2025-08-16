@@ -4,6 +4,7 @@ from typing import Any, Dict, Optional
 import flyte
 from flyte import Resources
 from flyte._internal.runtime.resources_serde import get_proto_resources
+from flyte._tools import is_in_cluster
 from flyte.extend import AsyncFunctionTaskTemplate, TaskPluginRegistry
 from flyte.models import SerializationContext
 from flyteidl.plugins.dask_pb2 import DaskJob, DaskScheduler, DaskWorkerGroup
@@ -68,7 +69,7 @@ class DaskTask(AsyncFunctionTaskTemplate):
         from distributed import Client
         from distributed.diagnostics.plugin import UploadDirectory
 
-        if flyte.ctx().code_bundle:
+        if is_in_cluster and flyte.ctx().code_bundle:
             client = Client()
             client.register_plugin(UploadDirectory(flyte.ctx().code_bundle.destination))
 
