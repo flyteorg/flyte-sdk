@@ -1,12 +1,15 @@
 import sys
-import flyte
+
 import polyglot_hello
+
+import flyte
 
 env = flyte.TaskEnvironment(
     name="hello_polyglot",
     resources=flyte.Resources(memory="250Mi"),
     image=flyte.Image.from_debian_base().with_pip_packages("polyglot-hello"),
 )
+
 
 @env.task
 def hello_for_code(code: str) -> tuple[str, str, str]:
@@ -17,9 +20,7 @@ def hello_for_code(code: str) -> tuple[str, str, str]:
 @env.task
 def main(letter: str) -> dict[str, str]:
     if not isinstance(letter, str) or len(letter) != 1 or not letter.isalpha():
-        raise ValueError(
-            "letter must be a single alphabetic character, e.g., 'e' or 'S'"
-        )
+        raise ValueError("letter must be a single alphabetic character, e.g., 'e' or 'S'")
 
     letter_lower = letter.lower()
 

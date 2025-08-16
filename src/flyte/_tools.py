@@ -1,4 +1,3 @@
-import os
 
 
 def ipython_check() -> bool:
@@ -22,7 +21,10 @@ def is_in_cluster() -> bool:
     Check if the task is running in a cluster
     :return is_in_cluster (bool): True or False
     """
-    if os.getenv("_UN_CLS"):
+    from flyte._context import internal_ctx
+
+    ctx = internal_ctx()
+    if ctx.data.task_context and ctx.data.task_context.mode == "remote":
         return True
     return False
 
