@@ -13,6 +13,7 @@ __all__ = [
     "Secret",
     "SecretTypes",
     "Task",
+    "Trigger",
     "create_channel",
     "upload_dir",
     "upload_file",
@@ -25,3 +26,4 @@ from ._project import Project
 from ._run import Run, RunDetails
 from ._secret import Secret, SecretTypes
 from ._task import Task
+from ._trigger import Trigger

@@ -37,6 +37,7 @@ class DeploymentPlan:
 class Deployment:
     envs: Dict[str, Environment]
     deployed_tasks: List[task_definition_pb2.TaskSpec] | None = None
+    deployed_triggers: List[task_definition_pb2.Trigger] | None = None
 
     def summary_repr(self) -> str:
         """
@@ -80,7 +81,7 @@ class Deployment:
 
 async def _deploy_task(
     task: TaskTemplate, serialization_context: SerializationContext, dryrun: bool = False
-) -> task_definition_pb2.TaskSpec:
+) -> Tuple[task_definition_pb2.TaskSpec, list[task_definition_pb2.Trigger]]:
     """
     Deploy the given task.
     """
@@ -95,7 +96,7 @@ async def _deploy_task(
 
     try:
         if dryrun:
-            return translate_task_to_wire(task, serialization_context)
+            return (translate_task_to_wire(task, serialization_context), [])
 
         default_inputs = await convert_upload_default_inputs(task.interface)
         spec = translate_task_to_wire(task, serialization_context, default_inputs=default_inputs)
@@ -120,7 +121,23 @@ async def _deploy_task(
                 logger.info(f"Task {task.name} with image {image_uri} already exists, skipping deployment.")
                 return spec
             raise
-        return spec
+        for t in task.triggers:
+            try:
+                await flyte.remote.Trigger.create(
+                    t,
+                    task_name=task_id.name,
+                    task_version=task_id.version,
+                )
+                logger.info(f"Deployed {len(task.triggers)} triggers for task {task.name}")
+            except grpc.aio.AioRpcError as e:
+                if e.code() == grpc.StatusCode.ALREADY_EXISTS:
+                    logger.info(f"Trigger {t.name} for task {task.name} already exists, skipping deployment.")
+                else:
+                    logger.error(f"Failed to deploy trigger {t.name} for task {task.name}: {e}")
+                    raise flyte.errors.DeploymentError(
+                        f"Failed to deploy trigger {t.name} for task {task.name}, Error: {e!s}"
+                    ) from e
+        return spec, list(task.triggers)
     except Exception as e:
         logger.error(f"Failed to deploy task {task.name} with image {image_uri}: {e}")
         raise flyte.errors.DeploymentError(
@@ -165,6 +182,30 @@ async def _build_images(deployment: DeploymentPlan) -> ImageCache:
     return ImageCache(image_lookup=image_identifier_map)
 
 
+async def _deploy_task_env(
+    env: TaskEnvironment, serialization_context: SerializationContext, dryrun: bool = False
+) -> Deployment:
+    """
+    Deploy the given task environment.
+    """
+    ensure_client()
+    task_coros = []
+    for task in env.tasks.values():
+        task_coros.append(_deploy_task(task, serialization_context, dryrun=dryrun))
+    deployed_task_vals = await asyncio.gather(*task_coros)
+    deployed_tasks = []
+    deployed_triggers = []
+    for t, triggers in deployed_task_vals:
+        deployed_tasks.append(t)
+        deployed_triggers.extend(triggers)
+    return Deployment(envs={env.name: env}, deployed_tasks=deployed_tasks, deployed_triggers=deployed_triggers)
+
+
+_ENVTYPE_REGISTRY = {
+    TaskEnvironment: _deploy_task_env,
+}
+
+
 @requires_initialization
 async def apply(deployment_plan: DeploymentPlan, copy_style: CopyFiles, dryrun: bool = False) -> Deployment:
     from ._code_bundle import build_code_bundle
@@ -193,15 +234,20 @@ async def apply(deployment_plan: DeploymentPlan, copy_style: CopyFiles, dryrun: 
         root_dir=cfg.root_dir,
     )
 
-    tasks = []
-
+    deployment_coros = []
     for env_name, env in deployment_plan.envs.items():
         logger.info(f"Deploying environment {env_name}")
         # TODO Make this pluggable based on the environment type
-        if isinstance(env, TaskEnvironment):
-            for task in env.tasks.values():
-                tasks.append(_deploy_task(task, dryrun=dryrun, serialization_context=sc))
-    return Deployment(envs=deployment_plan.envs, deployed_tasks=await asyncio.gather(*tasks))
+        deployer = _ENVTYPE_REGISTRY.get(type(env), _deploy_task_env)
+        deployment_coros.append(deployer(env, serialization_context=sc, dryrun=dryrun))
+    deployments = await asyncio.gather(*deployment_coros)
+    final_deployment = Deployment({}, [], [])
+    for d in deployments:
+        final_deployment.envs.update(d.envs)
+        final_deployment.deployed_tasks.extend(d.deployed_tasks or [])
+        final_deployment.deployed_triggers.extend(d.deployed_triggers or [])
+
+    return final_deployment
 
 
 def _recursive_discover(planned_envs: Dict[str, Environment], env: Environment) -> Dict[str, Environment]:
