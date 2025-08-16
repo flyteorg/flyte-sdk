@@ -321,3 +321,35 @@ def config(cfg: common.CLIConfig):
     """
     console = Console()
     console.print(cfg)
+
+
+@get.command(cls=common.CommandBase)
+@click.argument("task_name", type=str, required=False, help="List triggers for a specific task.")
+@click.argument(
+    "name", type=str, required=False, help="Name of the trigger to get details for, task_name must be provided."
+)
+@click.option("--limit", type=int, default=100, help="Limit the number of triggers to fetch.")
+@click.pass_obj
+def trigger(
+    cfg: common.CLIConfig,
+    task_name: str | None = None,
+    name: str | None = None,
+    limit: int = 100,
+    project: str | None = None,
+    domain: str | None = None,
+):
+    """
+    Get a list of all triggers, or details of a specific trigger by name.
+    """
+    if name and not task_name:
+        raise click.BadParameter("If you provide a trigger name, you must also provide the task name.")
+
+    from flyte.remote import Trigger
+
+    cfg.init(project=project, domain=domain)
+
+    console = Console()
+    if name:
+        console.print(pretty_repr(Trigger.get(name=name, task_name=task_name)))
+    else:
+        console.print(common.format("Triggers", Trigger.listall(task_name=task_name, limit=limit), cfg.output_format))
