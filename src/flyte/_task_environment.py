@@ -134,6 +134,7 @@ class TaskEnvironment(Environment):
         _func=None,
         *,
         name: Optional[str] = None,
+        resources: Optional[Resources] = None,
         cache: CacheRequest | None = None,
         retries: Union[int, RetryStrategy] = 0,
         timeout: Union[timedelta, int] = 0,
@@ -149,6 +150,7 @@ class TaskEnvironment(Environment):
         :param _func: Optional The function to decorate. If not provided, the decorator will return a callable that
         accepts a function to be decorated.
         :param name: Optional A friendly name for the task (defaults to the function name)
+        :param resources: Optional The resources for the task, defaults to the environment resources.
         :param cache: Optional The cache policy for the task, defaults to auto, which will cache the results of the
         task.
         :param retries: Optional The number of retries for the task, defaults to 0, which means no retries.
@@ -197,7 +199,7 @@ class TaskEnvironment(Environment):
                 func=func,
                 name=task_name,
                 image=self.image,
-                resources=self.resources,
+                resources=resources or self.resources,
                 cache=cache or self.cache,
                 retries=retries,
                 timeout=timeout,
