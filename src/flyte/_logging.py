@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-import os
+import os, time
 from typing import Optional
 
 from ._tools import ipython_check, is_in_cluster
@@ -29,6 +29,9 @@ def is_rich_logging_disabled() -> bool:
 
 def get_env_log_level() -> int:
     return int(os.environ.get("LOG_LEVEL", DEFAULT_LOG_LEVEL))
+
+def get_logger_default_loc() -> str:
+    return os.getcwd()
 
 
 def log_format_from_env() -> str:
@@ -82,16 +85,27 @@ def get_default_handler(log_level: int) -> logging.Handler:
     handler.setFormatter(formatter)
     return handler
 
+def get_file_handler(log_level: int,filename:str) -> logging.Handler:
+    handler = logging.FileHandler(filename=filename, encoding='utf-8')
+    handler.setLevel(log_level)
+    formatter = logging.Formatter(
+        fmt="%(asctime)s [%(levelname)s] [%(name)s] %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S"
+    )
+    handler.setFormatter(formatter)
+    return handler
 
-def initialize_logger(log_level: int = get_env_log_level(), enable_rich: bool = False):
+
+def initialize_logger(log_level: int = get_env_log_level(), enable_rich: bool = False,stream_logs: bool = True, log_file_dir: str = os.getcwd()):
     """
     Initializes the global loggers to the default configuration.
     """
     global logger  # noqa: PLW0603
-    logger = _create_logger("flyte", log_level, enable_rich)
+    timestamp = time.time()
+    logger = _create_logger(f"flyte_{timestamp}", log_level, enable_rich, stream_logs, log_file_dir)
 
 
-def _create_logger(name: str, log_level: int = DEFAULT_LOG_LEVEL, enable_rich: bool = False) -> logging.Logger:
+def _create_logger(name: str, log_level: int = DEFAULT_LOG_LEVEL, enable_rich: bool = False, stream_logs: bool = True, log_file_dir: str = os.getcwd() ) -> logging.Logger:
     """
     Creates a logger with the given name and log level.
     """
@@ -99,10 +113,11 @@ def _create_logger(name: str, log_level: int = DEFAULT_LOG_LEVEL, enable_rich: b
     logger.setLevel(log_level)
     handler = None
     logger.handlers = []
-    if enable_rich:
-        handler = get_rich_handler(log_level)
-    if handler is None:
-        handler = get_default_handler(log_level)
+    if stream_logs:
+        handler = get_rich_handler(log_level) if enable_rich else get_default_handler(log_level)
+    else:
+        handler = get_file_handler(log_level,f"{log_file_dir}{os.sep}{name}")
+            
     logger.addHandler(handler)
     return logger
 

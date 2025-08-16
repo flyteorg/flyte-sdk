@@ -118,6 +118,8 @@ async def init(
     domain: str | None = None,
     root_dir: Path | None = None,
     log_level: int | None = None,
+    stream_logs: bool = True,
+    log_file_dir: str | None = None,
     endpoint: str | None = None,
     headless: bool = False,
     insecure: bool = False,
@@ -147,6 +149,8 @@ async def init(
       also use to determine all the code that needs to be copied to the remote location.
       defaults to the editable install directory if the cwd is in a Python editable install, else just the cwd.
     :param log_level: Optional logging level for the logger, default is set using the default initialization policies
+    :param stream_logs: Optional streams log to terminal/console, default is set to True. If set false creates a log file in the directory of choice.
+    :param log_file_dir: Optional creates a log file in a specified location (:param stream_logs has to be set as False). If None is passed creates it in the current working directory.
     :param api_key: Optional API key for authentication
     :param endpoint: Optional API endpoint URL
     :param headless: Optional Whether to run in headless mode
@@ -177,9 +181,14 @@ async def init(
 
     interactive_mode = ipython_check()
 
-    initialize_logger(enable_rich=interactive_mode)
-    if log_level:
-        initialize_logger(log_level=log_level, enable_rich=interactive_mode)
+    if log_level and log_file_dir:
+        initialize_logger(log_level=log_level, enable_rich=interactive_mode, stream_logs=stream_logs,log_file_dir=log_file_dir)
+    elif log_level:
+        initialize_logger(log_level=log_level, enable_rich=interactive_mode, stream_logs=stream_logs)
+    elif log_file_dir:
+        initialize_logger(enable_rich=interactive_mode, stream_logs=stream_logs,log_file_dir=log_file_dir)
+    else:
+        initialize_logger(enable_rich=interactive_mode, stream_logs=stream_logs)
 
     global _init_config  # noqa: PLW0603
 
@@ -223,6 +232,8 @@ async def init_from_config(
     path_or_config: str | Config | None = None,
     root_dir: Path | None = None,
     log_level: int | None = None,
+    stream_logs: bool = True,
+    log_file_dir: str | None = None,
 ) -> None:
     """
     Initialize the Flyte system using a configuration file or Config object. This method should be called before any
@@ -235,6 +246,8 @@ async def init_from_config(
         if not available, the current working directory.
     :param log_level: Optional logging level for the framework logger,
         default is set using the default initialization policies
+    :param stream_logs: Optional streams log to terminal/console, default is set to True. If set false creates a log file in the directory of choice.
+    :param log_file_dir: Optional creates a log file in a specified location (:param stream_logs has to be set as False). If None is passed creates it in the current working directory.
     :return: None
     """
     import flyte.config as config
@@ -273,6 +286,8 @@ async def init_from_config(
         client_credentials_secret=cfg.platform.client_credentials_secret,
         root_dir=root_dir,
         log_level=log_level,
+        stream_logs=stream_logs,
+        log_file_dir=log_file_dir,
         image_builder=cfg.image.builder,
     )
 
