@@ -4,10 +4,10 @@
 #     "langgraph==0.6.4",
 #     "langchain==0.3.27",
 #     "langchain-anthropic==0.3.18",
-#     "flyte==0.1.0",
+#     "flyte>=2.0.0b9",
 # ]
 # ///
-
+import logging
 
 from langchain_core.messages import BaseMessage
 from langgraph.prebuilt import create_react_agent
@@ -49,6 +49,7 @@ def main(in_str: str) -> list[BaseMessage]:
 
 
 if __name__ == "__main__":
-    flyte.init_from_config("../../config.yaml")
+    flyte.init_from_config("../../config.yaml", log_level=logging.DEBUG)
+    # flyte.init()
     r = flyte.run(main, in_str="what is the weather in sf")
     print(r.url)

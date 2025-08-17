@@ -15,7 +15,6 @@ import threading
 import typing
 from abc import ABC, abstractmethod
 from collections import OrderedDict
-from functools import lru_cache
 from types import GenericAlias, NoneType
 from typing import Any, Dict, NamedTuple, Optional, Type, cast
 
@@ -362,15 +361,16 @@ class PydanticTransformer(TypeTransformer[BaseModel]):
 
     def get_literal_type(self, t: Type[BaseModel]) -> LiteralType:
         schema = t.model_json_schema()
-        fields = t.__annotations__.items()
+        # fields = t.__annotations__.items()
+        fields = t.model_fields
 
         literal_type = {}
-        for name, python_type in fields:
+        for name, field_info in fields:
             try:
-                literal_type[name] = TypeEngine.to_literal_type(python_type)
+                literal_type[name] = TypeEngine.to_literal_type(field_info.annotation)
             except Exception as e:
                 logger.warning(
-                    "Field {} of type {} cannot be converted to a literal type. Error: {}".format(name, python_type, e)
+                    "Field {} of type {} cannot be converted to a literal type. Error: {}".format(name, field_info, e)
                 )
 
         # This is for attribute access in FlytePropeller.
@@ -1413,7 +1413,7 @@ class ListTransformer(TypeTransformer[T]):
         raise ValueError(f"List transformer cannot reverse {literal_type}")
 
 
-@lru_cache
+# @lru_cache
 def display_pickle_warning(python_type: str):
     # This is a warning that is only displayed once per python type
     logger.warning(
