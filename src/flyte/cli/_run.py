@@ -20,7 +20,6 @@ from . import _common as common
 from ._common import CLIConfig
 from ._params import to_click_option
 
-
 RUN_REMOTE_CMD = "deployed-task"
 
 

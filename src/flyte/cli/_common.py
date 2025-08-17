@@ -363,7 +363,6 @@ def format(title: str, vals: Iterable[Any], of: OutputFormat = "table") -> Table
     """
     Get a table from a list of values.
     """
-
     match of:
         case "table-simple":
             return _table_format(Table(title, box=None), vals)
