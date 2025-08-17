@@ -54,11 +54,11 @@ def project(cfg: common.CLIConfig, name: str | None = None):
 @click.option("--limit", type=int, default=100, help="Limit the number of runs to fetch when listing.")
 @click.pass_obj
 def run(
-        cfg: common.CLIConfig,
-        name: str | None = None,
-        project: str | None = None,
-        domain: str | None = None,
-        limit: int = 100,
+    cfg: common.CLIConfig,
+    name: str | None = None,
+    project: str | None = None,
+    domain: str | None = None,
+    limit: int = 100,
 ):
     """
     Get a list of all runs, or details of a specific run by name.
@@ -85,12 +85,12 @@ def run(
 @click.option("--limit", type=int, default=100, help="Limit the number of tasks to fetch.")
 @click.pass_obj
 def task(
-        cfg: common.CLIConfig,
-        name: str | None = None,
-        limit: int = 100,
-        version: str | None = None,
-        project: str | None = None,
-        domain: str | None = None,
+    cfg: common.CLIConfig,
+    name: str | None = None,
+    limit: int = 100,
+    version: str | None = None,
+    project: str | None = None,
+    domain: str | None = None,
 ):
     """
     Retrieve a list of all tasks, or details of a specific task by name and version.
@@ -108,7 +108,7 @@ def task(
             if v is None:
                 raise click.BadParameter(f"Task {name} not found.")
             t = v.fetch()
-            console.print(pretty_repr(t))
+            console.print(common.format(f"Task {name}", [t], "json"))
         else:
             console.print(common.format("Tasks", Task.listall(by_task_name=name, limit=limit), cfg.output_format))
     else:
@@ -120,11 +120,11 @@ def task(
 @click.argument("action_name", type=str, required=False)
 @click.pass_obj
 def action(
-        cfg: common.CLIConfig,
-        run_name: str,
-        action_name: str | None = None,
-        project: str | None = None,
-        domain: str | None = None,
+    cfg: common.CLIConfig,
+    run_name: str,
+    action_name: str | None = None,
+    project: str | None = None,
+    domain: str | None = None,
 ):
     """
     Get all actions for a run or details for a specific action.
@@ -136,15 +136,14 @@ def action(
     console = Console()
     if action_name:
         console.print(
-            common.format(f"Action {run_name}.{action_name}",
-                          [remote.Action.get(run_name=run_name, name=action_name)],
-                          "json"))
+            common.format(
+                f"Action {run_name}.{action_name}", [remote.Action.get(run_name=run_name, name=action_name)], "json"
+            )
+        )
     else:
         # List all actions for the run
         console.print(
-            common.format(
-                f"Actions for {run_name}", remote.Action.listall(for_run_name=run_name), cfg.output_format
-            )
+            common.format(f"Actions for {run_name}", remote.Action.listall(for_run_name=run_name), cfg.output_format)
         )
 
 
@@ -165,16 +164,16 @@ def action(
 @click.option("--filter-system", is_flag=True, default=False, help="Filter all system logs from the output.")
 @click.pass_obj
 def logs(
-        cfg: common.CLIConfig,
-        run_name: str,
-        action_name: str | None = None,
-        project: str | None = None,
-        domain: str | None = None,
-        lines: int = 30,
-        show_ts: bool = False,
-        pretty: bool = True,
-        attempt: int | None = None,
-        filter_system: bool = False,
+    cfg: common.CLIConfig,
+    run_name: str,
+    action_name: str | None = None,
+    project: str | None = None,
+    domain: str | None = None,
+    lines: int = 30,
+    show_ts: bool = False,
+    pretty: bool = True,
+    attempt: int | None = None,
+    filter_system: bool = False,
 ):
     """
     Stream logs for the provided run or action.
@@ -213,7 +212,7 @@ def logs(
             task.cancel()
 
     if action_name:
-        obj = flyte.remote._action.Action.get(run_name=run_name, name=action_name)
+        obj = remote.Action.get(run_name=run_name, name=action_name)
     else:
         obj = remote.Run.get(run_name)
     asyncio.run(_run_log_view(obj))
@@ -223,10 +222,10 @@ def logs(
 @click.argument("name", type=str, required=False)
 @click.pass_obj
 def secret(
-        cfg: common.CLIConfig,
-        name: str | None = None,
-        project: str | None = None,
-        domain: str | None = None,
+    cfg: common.CLIConfig,
+    name: str | None = None,
+    project: str | None = None,
+    domain: str | None = None,
 ):
     """
     Get a list of all secrets, or details of a specific secret by name.
@@ -237,7 +236,7 @@ def secret(
 
     console = Console()
     if name:
-        console.print(pretty_repr(remote.Secret.get(name)))
+        console.print(common.format("Secret", [remote.Secret.get(name)], "json"))
     else:
         console.print(common.format("Secrets", remote.Secret.listall(), cfg.output_format))
 
@@ -249,13 +248,13 @@ def secret(
 @click.option("--outputs-only", "-o", is_flag=True, help="Show only outputs")
 @click.pass_obj
 def io(
-        cfg: common.CLIConfig,
-        run_name: str,
-        action_name: str | None = None,
-        project: str | None = None,
-        domain: str | None = None,
-        inputs_only: bool = False,
-        outputs_only: bool = False,
+    cfg: common.CLIConfig,
+    run_name: str,
+    action_name: str | None = None,
+    project: str | None = None,
+    domain: str | None = None,
+    inputs_only: bool = False,
+    outputs_only: bool = False,
 ):
     """
     Get the inputs and outputs of a run or action.
@@ -277,24 +276,25 @@ def io(
         raise click.BadParameter("Cannot use both --inputs-only and --outputs-only")
 
     import flyte.remote as remote
+    from flyte.remote import ActionDetails, ActionInputs, ActionOutputs
 
     cfg.init(project=project, domain=domain)
     console = Console()
     if action_name:
-        obj = flyte.remote._action.ActionDetails.get(run_name=run_name, name=action_name)
+        obj = ActionDetails.get(run_name=run_name, name=action_name)
     else:
         obj = remote.RunDetails.get(run_name)
 
     async def _get_io(
-            details: Union[remote.RunDetails, flyte.remote._action.ActionDetails],
-    ) -> Tuple[flyte.remote._action.ActionInputs | None, flyte.remote._action.ActionOutputs | None | str]:
+        details: Union[remote.RunDetails, ActionDetails],
+    ) -> Tuple[ActionInputs | None, ActionOutputs | None | str]:
         if inputs_only or outputs_only:
             if inputs_only:
                 return await details.inputs(), None
             elif outputs_only:
                 return None, await details.outputs()
         inputs = await details.inputs()
-        outputs: flyte.remote._action.ActionOutputs | None | str = None
+        outputs: ActionOutputs | None | str = None
         try:
             outputs = await details.outputs()
         except Exception:
