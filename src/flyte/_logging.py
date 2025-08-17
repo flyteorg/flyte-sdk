@@ -4,8 +4,6 @@ import logging
 import os
 from typing import Optional
 
-from ._tools import ipython_check, is_in_cluster
-
 DEFAULT_LOG_LEVEL = logging.WARNING
 
 
@@ -42,6 +40,8 @@ def get_rich_handler(log_level: int) -> Optional[logging.Handler]:
     """
     Upgrades the global loggers to use Rich logging.
     """
+    from flyte._tools import ipython_check, is_in_cluster
+
     if is_in_cluster():
         return None
     if not ipython_check() and is_rich_logging_disabled():

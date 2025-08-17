@@ -11,7 +11,6 @@ from flyte.errors import InitializationError
 from flyte.syncify import syncify
 
 from ._logging import initialize_logger, logger
-from ._tools import ipython_check
 
 if TYPE_CHECKING:
     from flyte._internal.imagebuild import ImageBuildEngine
@@ -173,6 +172,7 @@ async def init(
 
     :return: None
     """
+    from flyte._tools import ipython_check
     from flyte._utils import get_cwd_editable_install, org_from_endpoint, sanitize_endpoint
 
     interactive_mode = ipython_check()
