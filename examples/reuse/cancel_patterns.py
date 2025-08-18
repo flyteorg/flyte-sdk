@@ -1,6 +1,13 @@
 import asyncio
+from pathlib import Path
 
 import flyte
+from flyte._image import PythonWheels
+
+actor_dist_folder = Path("/Users/ytong/go/src/github.com/unionai/flyte/fasttask/worker-v2/dist")
+wheel_layer = PythonWheels(wheel_dir=actor_dist_folder, package_name="unionai-reuse")
+base = flyte.Image.from_debian_base()
+actor_image = base.clone(addl_layer=wheel_layer)
 
 actor_env = flyte.TaskEnvironment(
     name="reuse_cancel_patterns",
@@ -11,7 +18,7 @@ actor_env = flyte.TaskEnvironment(
         concurrency=5,
         scaledown_ttl=60,
     ),
-    image=flyte.Image.from_debian_base().with_pip_packages("unionai-reuse==0.1.4b0", pre=True),
+    image=actor_image,
 )
 
 parent_env = flyte.TaskEnvironment(
@@ -21,31 +28,31 @@ parent_env = flyte.TaskEnvironment(
 )
 
 
-
 @actor_env.task
-async def simple(x: int) -> int:
+async def simple(x: int):
     print(f"[Start] Running simple with {x=}", flush=True)
     await asyncio.sleep(20)
     print(f"[End] simple returning", flush=True)
-    return x
 
 
 @actor_env.task
-async def simple_with_cancel(x: int) -> int:
+async def simple_with_cancel(x: int):
     try:
         print(f"[Start] Running simple_with_cancel with {x=}", flush=True)
-        await asyncio.sleep(20)
+        await asyncio.sleep(60)
         print(f"[End] simple_with_cancel returning", flush=True)
     except asyncio.CancelledError:
-        print(f"[Cancelled] simple_with_cancel was cancelled", flush=True)
+        print(f"[Cancelled] simple_with_cancel cancelled, running cleanup", flush=True)
+        await asyncio.sleep(1)
+        print(f"[Cancelled] simple_with_cancel, done", flush=True)
         raise
 
 
 @actor_env.task
-async def simple_with_long_cancel(x: int) -> int:
+async def simple_with_long_cancel(x: int):
     try:
         print(f"[Start] Running simple_with_long_cancel with {x=}", flush=True)
-        await asyncio.sleep(20)
+        await asyncio.sleep(60)
         print(f"[End] simple_with_long_cancel returning", flush=True)
     except asyncio.CancelledError:
         print(f"[Cancelled] simple_with_long_cancel was cancelled", flush=True)
