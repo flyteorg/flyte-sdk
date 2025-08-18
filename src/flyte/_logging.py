@@ -4,10 +4,16 @@ import logging
 import os
 from typing import Optional
 
+<<<<<<< HEAD
 import flyte
 
 from ._tools import ipython_check
 
+||||||| dedf088
+from ._tools import ipython_check, is_in_cluster
+
+=======
+>>>>>>> 60834f8f59b88407b5028c4c71e55ebdaf4686b8
 DEFAULT_LOG_LEVEL = logging.WARNING
 
 
