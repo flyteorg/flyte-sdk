@@ -315,7 +315,7 @@ class TaskTemplate(Generic[P, R]):
         self,
         *,
         resources: Optional[Resources] = None,
-        cache: CacheRequest = "auto",
+        cache: Optional[CacheRequest] = None,
         retries: Union[int, RetryStrategy] = 0,
         timeout: Optional[TimeoutType] = None,
         reusable: Union[ReusePolicy, Literal["off"], None] = None,
