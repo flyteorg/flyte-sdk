@@ -31,7 +31,7 @@ parent_env = flyte.TaskEnvironment(
 @actor_env.task
 async def simple(x: int):
     print(f"[Start] Running simple with {x=}", flush=True)
-    await asyncio.sleep(20)
+    await asyncio.sleep(60)
     print(f"[End] simple returning", flush=True)
 
 
