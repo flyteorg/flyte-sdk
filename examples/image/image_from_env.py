@@ -3,10 +3,11 @@
 First build an image:
 
 ```
-flyte build image_from_env.py build_env
+flyte --config ../../config.yaml build image_from_env.py build_env
 ``
 
-Make sure the built image is publicly accessible.
+Make sure the built image is publicly accessible. This image would be built
+out-of-band, e.g. with the user building/pushing manually, or with CI/CD.
 
 Then take the image uri and export it as an environment variable:
 
@@ -17,7 +18,19 @@ export BASE_IMAGE=...
 Then run the task:
 
 ```
-python image_from_env.py
+flyte --config ../../config.yaml run image_from_env.py main
+```
+
+Deploy the environment:
+
+```python
+flyte --config ../../config.yaml deploy image_from_env.py env
+```
+
+Run the deployed task:
+
+```python
+flyte --config ../../config.yaml run deployed-task image_from_env.main
 ```
 """
 
@@ -36,7 +49,7 @@ build_env = flyte.TaskEnvironment(
 )
 
 image_env_var = "BASE_IMAGE"
-image_uri = os.environ[image_env_var]
+image_uri = os.getenv(image_env_var)
 
 # This task environment uses the BASE_IMAGE environment variable to set the image.
 env = flyte.TaskEnvironment(
