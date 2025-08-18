@@ -335,8 +335,8 @@ def _get_secret_mounts_layer(secrets: typing.Tuple[str | Secret, ...] | None) ->
         elif secret.as_env_var:
             secret_mounts_layer += f"--mount=type=secret,id={secret_id},env={secret.as_env_var}"
         else:
-            secret_file_name = "_".join(list(filter(None, (secret.group, secret.key))))
-            secret_mounts_layer += f"--mount=type=secret,id={secret_id},src=/run/secrets/{secret_file_name}"
+            secret_default_env_key = "_".join(list(filter(None, (secret.group, secret.key))))
+            secret_mounts_layer += f"--mount=type=secret,id={secret_id},env={secret_default_env_key}"
 
     return secret_mounts_layer
 
