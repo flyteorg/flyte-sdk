@@ -19,8 +19,6 @@ from flyte._initialize import (
 )
 from flyte._logging import logger
 from flyte._task import P, R, TaskTemplate
-from flyte._tools import ipython_check
-from flyte.errors import InitializationError
 from flyte.models import (
     ActionID,
     Checkpoints,
@@ -96,6 +94,8 @@ class _Runner:
         log_level: int | None = None,
         disable_run_cache: bool = False,
     ):
+        from flyte._tools import ipython_check
+
         init_config = _get_init_config()
         client = init_config.client if init_config else None
         if not force_mode and client is not None:
@@ -207,7 +207,7 @@ class _Runner:
         if not self._dry_run:
             if get_client() is None:
                 # This can only happen, if the user forces flyte.run(mode="remote") without initializing the client
-                raise InitializationError(
+                raise flyte.errors.InitializationError(
                     "ClientNotInitializedError",
                     "user",
                     "flyte.run requires client to be initialized. "
