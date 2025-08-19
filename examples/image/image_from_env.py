@@ -54,7 +54,7 @@ image_uri = os.getenv(image_env_var)
 # This task environment uses the BASE_IMAGE environment variable to set the image.
 env = flyte.TaskEnvironment(
     name="image_from_env",
-    env={image_env_var: image_uri},
+    env_vars={image_env_var: image_uri},
     image=flyte.Image.from_base(image_uri),
 )
 

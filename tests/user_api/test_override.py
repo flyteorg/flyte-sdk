@@ -63,7 +63,7 @@ def test_oomer_override_with_reuse_incorrect():
 
     with pytest.raises(ValueError):
         oomer_with_reuse.override(
-            env={},
+            env_vars={},
         )
 
     with pytest.raises(ValueError):
@@ -131,7 +131,7 @@ def test_override_ref_task():
         resources=flyte.Resources(cpu=3, memory="100Mi"),
         retries=RetryStrategy(5),
         timeout=100,
-        env={"FOO": "BAR"},
+        env_vars={"FOO": "BAR"},
         secrets=secrets,
     )
     assert td.resources[0][0].value == "3"
