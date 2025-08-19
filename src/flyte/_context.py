@@ -97,7 +97,7 @@ class Context:
     def is_task_context(self) -> bool:
         """
         Returns true if the context is a task context
-        :return:
+        :return: bool
         """
         return self.data.task_context is not None
 
