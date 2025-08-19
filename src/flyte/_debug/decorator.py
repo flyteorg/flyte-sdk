@@ -312,10 +312,10 @@ def prepare_launch_json(ctx: click.Context, pid: int):
     Generate the launch.json and settings.json for users to easily launch interactive debugging and task resumption.
     """
 
-    ctx = internal_ctx()
-    task_function_source_dir = os.path.dirname(ctx.data.task_context.data[TASK_FUNCTION_SOURCE_PATH])
+    # ctx = internal_ctx()
+    # task_function_source_dir = os.path.dirname(ctx.data.task_context.data[TASK_FUNCTION_SOURCE_PATH])
     virtual_venv = os.getenv("VIRTUAL_ENV", "/opt/venv")
-    task_module_name, task_name = task_func.__module__, task_func.__name__
+    # task_module_name, task_name = task_func.__module__, task_func.__name__
 
     launch_json = {
         "version": "0.2.0",
@@ -339,40 +339,40 @@ def prepare_launch_json(ctx: click.Context, pid: int):
                 "args": [
                     "a0",
                     "--inputs",
-                    ctx.data.task_context.input_path,
+                    ctx.params["inputs"],
                     "--outputs-path",
-                    ctx.data.task_context.output_path,
+                    ctx.params["outputs_path"],
                     "--version",
-                    ctx.data.task_context.version,
+                    ctx.params["version"],
                     "--run-base-dir",
-                    ctx.data.task_context.run_base_dir,
+                    ctx.params["run_base_dir"],
                     "--name",
-                    task_name,
+                    ctx.params["name"],
                     "--run-name",
-                    ctx.data.task_context.action.run_name,
+                    ctx.params["run_name"],
                     "--project",
-                    ctx.data.task_context.action.project,
+                    ctx.params["project"],
                     "--domain",
-                    ctx.data.task_context.action.domain,
+                    ctx.params["domain"],
                     "--org",
-                    ctx.data.task_context.action.org,
+                    ctx.params["org"],
                     "--image-cache",
-                    ctx.data.task_context.compiled_image_cache,
+                    ctx.params["image_cache"],
                     "--tgz",
-                    ctx.data.task_context.code_bundle.tgz,
+                    ctx.params["tgz"],
                     # "--pkl",
                     # ctx.data.task_context.pkl,
                     "--dest",
-                    ctx.data.task_context.code_bundle.destination,
-                    # "--resolver",
-                    # ctx.data.task_context.resolver,
-                    # *ctx.data.task_context.resolver_args,
+                    ctx.params["dest"],
+                    "--resolver",
+                    ctx.params["resolver"],
+                    *ctx.params["resolver-args"]
                 ],
             },
         ],
     }
 
-    vscode_directory = os.path.join(task_function_source_dir, ".vscode")
+    vscode_directory = os.path.join(os.getcwd(), ".vscode")
     if not os.path.exists(vscode_directory):
         os.makedirs(vscode_directory)
 
@@ -384,128 +384,39 @@ def prepare_launch_json(ctx: click.Context, pid: int):
         json.dump(settings_json, file, indent=4)
 
 
-VSCODE_TYPE_VALUE = "vscode"
+async def _start_vscode_server(ctx: click.Context):
+    await download_vscode()
+    child_process = multiprocessing.Process(
+        target=lambda cmd: asyncio.run(asyncio.run(execute_command(cmd))),
+        kwargs={
+            "cmd": f"code-server --bind-addr 0.0.0.0:8080"
+                   f" --disable-workspace-trust --auth none {os.getcwd()}"
+        },
+    )
+    child_process.start()
+    prepare_launch_json(ctx, child_process.pid)
 
+    start_time = time.time()
+    check_interval = 60  # Interval for heartbeat checking in seconds
+    last_heartbeat_check = time.time() - check_interval
 
-class vscode(ClassDecorator):
-    def __init__(
-        self,
-        task_function: Optional[Callable] = None,
-        max_idle_seconds: Optional[int] = MAX_IDLE_SECONDS,
-        port: int = 8080,
-        enable: bool = True,
-        run_task_first: bool = False,
-        pre_execute: Optional[Callable] = None,
-        post_execute: Optional[Callable] = None,
-        config: Optional[VscodeConfig] = None,
-    ):
-        """
-        vscode decorator modifies a container to run a VSCode server:
-        1. Overrides the user function with a VSCode setup function.
-        2. Download vscode server and extension from remote to local.
-        3. Prepare the interactive debugging Python script and launch.json.
-        4. Prepare task resumption script.
-        5. Launches and monitors the VSCode server.
-        6. Register signal handler for task resumption.
-        7. Terminates if the server is idle for a set duration or user trigger task resumption.
+    logger.info("waiting for task to resume...")
+    while child_process.is_alive():
+        current_time = time.time()
+        if current_time - last_heartbeat_check >= check_interval:
+            last_heartbeat_check = current_time
+            if not os.path.exists(HEARTBEAT_PATH):
+                delta = current_time - start_time
+                logger.info(f"Code server has not been connected since {delta} seconds ago.")
+                logger.info("Please open the browser to connect to the running server.")
+            else:
+                delta = current_time - os.path.getmtime(HEARTBEAT_PATH)
+                logger.info(f"The latest activity on code server is {delta} seconds ago.")
 
-        Args:
-            task_function (function, optional): The user function to be decorated. Defaults to None.
-            max_idle_seconds (int, optional): The duration in seconds to live after no activity detected.
-            port (int, optional): The port to be used by the VSCode server. Defaults to 8080.
-            enable (bool, optional): Whether to enable the VSCode decorator. Defaults to True.
-            run_task_first (bool, optional): Executes the user's task first when True.
-             Launches the VSCode server only if the user's task fails. Defaults to False.
-            pre_execute (function, optional): The function to be executed before the vscode setup function.
-            post_execute (function, optional): The function to be executed before the vscode is self-terminated.
-            config (VscodeConfig, optional): VSCode config contains default URLs of the VSCode
-             server and extension remote paths.
-        """
+            # If the time from last connection is longer than max idle seconds, terminate the vscode server.
+            if delta > max_idle_seconds:
+                logger.info(f"VSCode server is idle for more than {max_idle_seconds} seconds. Terminating...")
+                terminate_process()
+                sys.exit()
 
-        # these names cannot conflict with base_task method or member variables
-        # otherwise, the base_task method will be overwritten
-        # for example, base_task also has "pre_execute", so we name it "_pre_execute" here
-        self.max_idle_seconds = max_idle_seconds
-        self.port = port
-        self.enable = enable
-        self.run_task_first = run_task_first
-        self._pre_execute = pre_execute
-        self._post_execute = post_execute
-
-        if config is None:
-            config = VscodeConfig()
-        self._config = config
-
-        # arguments are required to be passed in order to access from _wrap_call
-        super().__init__(
-            task_function,
-            max_idle_seconds=max_idle_seconds,
-            port=port,
-            enable=enable,
-            run_task_first=run_task_first,
-            pre_execute=pre_execute,
-            post_execute=post_execute,
-            config=config,
-        )
-
-    async def execute(self, *args, **kwargs):
-        # 1. If the decorator is disabled, we don't launch the VSCode server.
-        # 2. Only when a user uses flyte run --remote to submit the task to cluster, we launch the VSCode server.
-        if not self.enable or not is_in_cluster():
-            return await self.task_function(*args, **kwargs)
-
-        if self.run_task_first:
-            logger.info("Run user's task first")
-            try:
-                return await self.task_function(*args, **kwargs)
-            except Exception as e:
-                logger.error(f"Task Error: {e}")
-                logger.info("Launching VSCode server")
-
-        # 0. Executes the pre_execute function if provided.
-        if self._pre_execute is not None:
-            self._pre_execute()
-            logger.info("Pre execute function executed successfully!")
-
-        # 1. Downloads the VSCode server from Internet to local.
-        await download_vscode()
-
-        # 2. Launches and monitors the VSCode server.
-        #    Run the function in the background.
-        #    Make the task function's source file directory the default directory.
-        task_function_source_dir = os.path.dirname(inspect.getsourcefile(self.task_function))
-        child_process = multiprocessing.Process(
-            target=lambda cmd: asyncio.run(asyncio.run(execute_command(cmd))),
-            kwargs={
-                "cmd": f"code-server --bind-addr 0.0.0.0:{self.port}"
-                f" --disable-workspace-trust --auth none {task_function_source_dir}"
-            },
-        )
-        child_process.start()
-
-        ctx = internal_ctx()
-        tctx = ctx.data.task_context.replace(
-            data={TASK_FUNCTION_SOURCE_PATH: inspect.getsourcefile(self.task_function)}
-        )
-
-        with ctx.replace_task_context(tctx):
-            # 3. Prepare the interactive debugging Python script and launch.json.
-            prepare_interactive_python(self.task_function)  # type: ignore
-
-            # 4. Prepare the task resumption Python script
-            prepare_resume_task_python(child_process.pid)
-
-            # 5. Prepare the launch.json
-            prepare_launch_json(child_process.pid, self.task_function)
-
-            return await exit_handler(
-                child_process=child_process,
-                task_function=self.task_function,
-                args=args,
-                kwargs=kwargs,
-                max_idle_seconds=self.max_idle_seconds,
-                post_execute=self._post_execute,
-            )
-
-    def get_extra_config(self):
-        return {self.LINK_TYPE_KEY: VSCODE_TYPE_VALUE, self.PORT_KEY: str(self.port)}
+        await asyncio.sleep(1)

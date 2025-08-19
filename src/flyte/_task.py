@@ -430,11 +430,10 @@ class AsyncFunctionTaskTemplate(TaskTemplate[P, R]):
         ctx_data = await self.pre(*args, **kwargs)
         tctx = ctx.data.task_context.replace(data=ctx_data)
         with ctx.replace_task_context(tctx):
-            func = decorate_function(self.func)
-            if iscoroutinefunction(self.func) or isinstance(func, ClassDecorator):
-                v = await func(*args, **kwargs)
+            if iscoroutinefunction(self.func):
+                v = await self.func(*args, **kwargs)
             else:
-                v = func(*args, **kwargs)
+                v = self.func(*args, **kwargs)
             await self.post(v)
         return v
 
@@ -490,68 +489,3 @@ class AsyncFunctionTaskTemplate(TaskTemplate[P, R]):
         assert all(isinstance(item, str) for item in args), f"All args should be strings, non string item = {args}"
 
         return args
-
-
-class ClassDecorator(ABC):
-    """
-    Abstract class for class decorators.
-    We can attach config on the decorator class and use it in the upper level.
-    """
-
-    LINK_TYPE_KEY = "link_type"
-    PORT_KEY = "port"
-
-    def __init__(self, task_function=None, **kwargs):
-        """
-        If the decorator is called with arguments, func will be None.
-        If the decorator is called without arguments, func will be function to be decorated.
-        """
-        self.task_function = task_function
-        self.decorator_kwargs = kwargs
-        if task_function:
-            # wraps preserve the function metadata, including type annotations,
-            # from the original function to the decorator.
-            wraps(task_function)(self)
-
-    async def __call__(self, *args, **kwargs):
-        if self.task_function:
-            # Where the actual execution happens.
-            return await self.execute(*args, **kwargs)
-        else:
-            # If self.func is None, it means decorator was called with arguments.
-            # Therefore, __call__ received the actual function to be decorated.
-            # We return a new instance of ClassDecorator with the function and stored arguments.
-            return self.__class__(args[0], **self.decorator_kwargs)
-
-    @abstractmethod
-    async def execute(self, *args, **kwargs):
-        """
-        This method will be called when the decorated function is called.
-        """
-
-    @abstractmethod
-    def get_extra_config(self):
-        """
-        Get the config of the decorator.
-        """
-
-
-def decorate_function(fn: Callable[P, Any]) -> Callable[P, Any]:
-    """
-    Decorates the task with additional functionality if necessary.
-
-    :param fn: python function to decorate.
-    :return: a decorated python function.
-    """
-    from flyte._debug import vscode
-    from flyte._debug.constants import FLYTE_ENABLE_VSCODE_KEY
-
-    logger.info(f"{os.getenv(FLYTE_ENABLE_VSCODE_KEY)}")
-    print("decorating function", flush=True)
-    if str2bool(os.getenv(FLYTE_ENABLE_VSCODE_KEY)) and os.getenv("ACTION_NAME") == "a0":
-        """
-        If the environment variable FLYTE_ENABLE_VSCODE is set to True, then the task is decorated with vscode
-        functionality. This is useful for debugging the task in vscode.
-        """
-        return vscode(task_function=fn)
-    return fn
