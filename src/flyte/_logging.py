@@ -44,7 +44,8 @@ def get_rich_handler(log_level: int) -> Optional[logging.Handler]:
     """
     Upgrades the global loggers to use Rich logging.
     """
-    if flyte.ctx().is_in_cluster():
+    ctx = flyte.ctx()
+    if ctx and ctx.is_in_cluster():
         return None
     if not ipython_check() and is_rich_logging_disabled():
         return None
