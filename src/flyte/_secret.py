@@ -1,9 +1,7 @@
-import logging
 import pathlib
 import re
 from dataclasses import dataclass
 from typing import List, Optional, Union
-from venv import logger
 
 
 @dataclass
@@ -21,7 +19,8 @@ class Secret:
     ```python
     @task(secrets="my-secret")
     async def my_task():
-        os.environ["MY_SECRET"]  # This will be set to the value of the secret. Note: Upper and - replace with _.
+        # This will be set to the value of the secret. Note: The env var is always uppercase, and - is replaced with _.
+        os.environ["MY_SECRET"]
 
     @task(secrets=Secret("my-openai-api-key", as_env_var="OPENAI_API_KEY"))
     async def my_task2():
