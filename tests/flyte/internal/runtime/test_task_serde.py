@@ -46,8 +46,8 @@ def test_get_security_context():
     assert len(security_context.secrets) == 1
     assert security_context.secrets[0].group == "group2"
     assert security_context.secrets[0].key == "key2"
-    assert security_context.secrets[0].mount_requirement == ProtoSecret.MountType.FILE
-    assert security_context.secrets[0].env_var == ""
+    assert security_context.secrets[0].mount_requirement == ProtoSecret.MountType.ENV_VAR
+    assert security_context.secrets[0].env_var == "GROUP2_KEY2"
 
     # Case 4: Multiple secrets
     secrets = [
@@ -63,8 +63,8 @@ def test_get_security_context():
     assert security_context.secrets[0].env_var == "ENV_VAR1"
     assert security_context.secrets[1].group == "group2"
     assert security_context.secrets[1].key == "key2"
-    assert security_context.secrets[1].mount_requirement == ProtoSecret.MountType.FILE
-    assert security_context.secrets[1].env_var == ""
+    assert security_context.secrets[1].mount_requirement == ProtoSecret.MountType.ENV_VAR
+    assert security_context.secrets[1].env_var == "GROUP2_KEY2"
 
     # Case 5: Invalid secret input (not a Secret or list of Secrets)
     with pytest.raises(AttributeError):
