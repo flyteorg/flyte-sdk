@@ -314,14 +314,16 @@ class TaskTemplate(Generic[P, R]):
     def override(
         self,
         *,
+        friendly_name: Optional[str] = None,
         resources: Optional[Resources] = None,
-        cache: CacheRequest = "auto",
+        cache: Optional[CacheRequest] = None,
         retries: Union[int, RetryStrategy] = 0,
         timeout: Optional[TimeoutType] = None,
         reusable: Union[ReusePolicy, Literal["off"], None] = None,
         env_vars: Optional[Dict[str, str]] = None,
         secrets: Optional[SecretRequest] = None,
         max_inline_io_bytes: int | None = None,
+        pod_template: Optional[Union[str, PodTemplate]] = None,
         **kwargs: Any,
     ) -> TaskTemplate:
         """
@@ -373,6 +375,7 @@ class TaskTemplate(Generic[P, R]):
 
         return replace(
             self,
+            friendly_name=friendly_name or self.friendly_name,
             resources=resources,
             cache=cache,
             retries=retries,
@@ -381,6 +384,8 @@ class TaskTemplate(Generic[P, R]):
             env_vars=env_vars,
             secrets=secrets,
             max_inline_io_bytes=max_inline_io_bytes,
+            pod_template=pod_template,
+            **kwargs,
         )
 
 
