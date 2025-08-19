@@ -286,7 +286,7 @@ class TaskDetails(ToJSONMixin):
         resources: Optional[flyte.Resources] = None,
         retries: Union[int, flyte.RetryStrategy] = 0,
         timeout: Optional[flyte.TimeoutType] = None,
-        env: Optional[Dict[str, str]] = None,
+        env_vars: Optional[Dict[str, str]] = None,
         secrets: Optional[flyte.SecretRequest] = None,
         **kwargs: Any,
     ) -> TaskDetails:
@@ -299,9 +299,9 @@ class TaskDetails(ToJSONMixin):
         if secrets:
             template.security_context.CopyFrom(get_security_context(secrets))
         if template.HasField("container"):
-            if env:
+            if env_vars:
                 template.container.env.clear()
-                template.container.env.extend([literals_pb2.KeyValuePair(key=k, value=v) for k, v in env.items()])
+                template.container.env.extend([literals_pb2.KeyValuePair(key=k, value=v) for k, v in env_vars.items()])
             if resources:
                 template.container.resources.CopyFrom(get_proto_resources(resources))
         if retries:
