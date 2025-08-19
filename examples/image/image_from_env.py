@@ -35,16 +35,16 @@ flyte --config ../../config.yaml run deployed-task image_from_env.main
 """
 
 import os
-import flyte
 
+import flyte
 
 # Task environment for building the image
 build_env = flyte.TaskEnvironment(
     name="build_env",
     image=(
-        flyte.Image
-        .from_debian_base(name="base-image", python_version=(3, 12))
-        .with_pip_packages("flyte", pre=True, extra_args="--prerelease=allow")
+        flyte.Image.from_debian_base(name="base-image", python_version=(3, 12)).with_pip_packages(
+            "flyte", pre=True, extra_args="--prerelease=allow"
+        )
     ),
 )
 
@@ -62,6 +62,7 @@ env = flyte.TaskEnvironment(
 @env.task
 async def t1(data: str = "hello") -> str:
     return f"Hello {data}"
+
 
 @env.task
 async def main(data: str = "hello") -> str:
