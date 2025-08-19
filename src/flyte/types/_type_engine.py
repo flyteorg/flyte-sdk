@@ -372,10 +372,10 @@ class PydanticTransformer(TypeTransformer[BaseModel]):
             }
         )
 
+        # The type engine used to publish a type structure for attribute access. As of v2, this is no longer needed.
         return LiteralType(
             simple=SimpleType.STRUCT,
             metadata=schema,
-            # structure=ts,
             annotation=TypeAnnotation(annotations=meta_struct),
         )
 
@@ -615,10 +615,11 @@ class DataclassTransformer(TypeTransformer[object]):
                 }
             }
         )
+
+        # The type engine used to publish a type structure for attribute access. As of v2, this is no longer needed.
         return types_pb2.LiteralType(
             simple=types_pb2.SimpleType.STRUCT,
             metadata=schema,
-            # structure=ts,
             annotation=TypeAnnotation(annotations=meta_struct),
         )
 
