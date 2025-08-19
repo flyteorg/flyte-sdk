@@ -1,9 +1,6 @@
-
-
 import click
 
-from flyte._internal.runtime.convert import Inputs
-from flyte._internal.runtime.io import load_inputs
+from flyte._logging import logger
 
 
 @click.group()
@@ -11,12 +8,12 @@ def _debug():
     """Debug commands for Flyte."""
 
 
-@_debug.command("step-through")
+@_debug.command("interactive")
 @click.option("--task-module-name", "-m", required=True, help="Name of the task module.")
 @click.option("--task-name", "-t", required=True, help="Name of the task function.")
 @click.option("--context-working-dir", "-w", required=True, help="Working directory for the task context.")
 @click.option("--input_path", "-i", required=False, help="Path to the inputs file for the task.")
-def step_through(task_module_name, task_name, context_working_dir, input_path):
+def interactive(task_module_name, task_name, context_working_dir, input_path):
     """
     Step through a Flyte task for debugging purposes.
 
@@ -26,15 +23,21 @@ def step_through(task_module_name, task_name, context_working_dir, input_path):
         context_working_dir (str): Directory path where the input file and module file are located.
         input_path (str): Path to the input file for the task.
     """
-    from flyte._debug.utils import get_task_inputs
-    from flyte._internal.runtime.convert import convert_inputs_to_native
     import asyncio
+    import os
+
+    from flyte._internal.runtime.convert import Inputs, convert_inputs_to_native
+    from flyte._internal.runtime.io import load_inputs
+    from flyte._utils.module_loader import _load_module_from_file
+
+    _, task_module = _load_module_from_file(os.path.join(context_working_dir, f"{task_module_name}.py"))
+    task_def = getattr(task_module, task_name)
 
     inputs = asyncio.run(load_inputs(input_path)) if input_path else Inputs.empty()
-    inputs_kwargs = asyncio.run(convert_inputs_to_native(inputs, task.native_interface))
+    native_inputs = asyncio.run(convert_inputs_to_native(inputs, task_def.native_interface))
 
-    inputs = get_task_inputs(task_module_name, task_name, context_working_dir)
-    print(f"Inputs for {task_name} in {task_module_name}: {inputs}")
+    logger.info(f"Inputs for {task_name} in {task_module_name}: {native_inputs}")
+    task_def(native_inputs)
 
 
 @_debug.command("resume")
@@ -50,11 +53,17 @@ def resume(pid):
     import signal
 
     print("Terminating server and resuming task.")
-    answer = input(
-        "This operation will kill the server. All unsaved data will be lost, and you will no longer be able to connect to it. Do you really want to terminate? (Y/N): ").strip().upper()
-    if answer == 'Y':
+    answer = (
+        input(
+            "This operation will kill the server. All unsaved data will be lost,"
+            " and you will no longer be able to connect to it. Do you really want to terminate? (Y/N): "
+        )
+        .strip()
+        .upper()
+    )
+    if answer == "Y":
         os.kill(pid, signal.SIGTERM)
-        print(f"The server has been terminated and the task has been resumed.")
+        print("The server has been terminated and the task has been resumed.")
     else:
         print("Operation canceled.")
 

@@ -1,6 +1,8 @@
 import importlib
 from typing import List, Optional, Tuple, Type
 
+from async_lru import alru_cache
+
 import flyte.errors
 from flyte._code_bundle import download_bundle
 from flyte._context import contextual_run
@@ -105,6 +107,7 @@ async def download_code_bundle(code_bundle: CodeBundle) -> CodeBundle:
     return code_bundle.with_downloaded_path(downloaded_path)
 
 
+@alru_cache
 async def _download_and_load_task(
     code_bundle: CodeBundle | None, resolver: str | None = None, resolver_args: List[str] | None = None
 ) -> TaskTemplate:

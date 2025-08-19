@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import os
 import weakref
-from abc import abstractmethod, ABC
+from abc import ABC, abstractmethod
 from dataclasses import dataclass, field, replace
 from functools import wraps
 from inspect import iscoroutinefunction

@@ -9,6 +9,7 @@ import subprocess
 import sys
 import tarfile
 import time
+from pathlib import Path
 from typing import Callable, List, Optional
 
 import fsspec
@@ -17,8 +18,6 @@ from flyte._context import internal_ctx
 from flyte._debug.constants import EXIT_CODE_SUCCESS, MAX_IDLE_SECONDS
 from flyte._debug.utils import (
     execute_command,
-    load_module_from_path,
-    run_async_execute_command,
 )
 from flyte._debug.vscode_lib.config import VscodeConfig
 from flyte._debug.vscode_lib.constants import (
@@ -30,8 +29,9 @@ from flyte._debug.vscode_lib.constants import (
     TASK_FUNCTION_SOURCE_PATH,
 )
 from flyte._logging import logger
-from flyte._task import ClassDecorator
+from flyte._task import ClassDecorator, TaskTemplate
 from flyte._tools import is_in_cluster
+from flyte._utils.module_loader import _load_module_from_file
 
 
 async def exit_handler(
@@ -96,8 +96,9 @@ async def exit_handler(
     if ctx.data.task_context is None:
         raise RuntimeError("Task context was not provided.")
     task_function_source_path = ctx.data.task_context.data[TASK_FUNCTION_SOURCE_PATH]
+    _, module = _load_module_from_file(Path(task_function_source_path))
     task = getattr(
-        load_module_from_path(task_function.__module__, task_function_source_path),
+        module,
         task_function.__name__,
     )
 
@@ -307,13 +308,16 @@ if __name__ == "__main__":
         file.write(python_script)
 
 
-def prepare_launch_json(pid: int):
+def prepare_launch_json(pid: int, task_func: TaskTemplate):
     """
     Generate the launch.json and settings.json for users to easily launch interactive debugging and task resumption.
     """
 
     ctx = internal_ctx()
     task_function_source_dir = os.path.dirname(ctx.data.task_context.data[TASK_FUNCTION_SOURCE_PATH])
+    virtual_venv = os.getenv("VIRTUAL_ENV", "/opt/venv")
+    task_module_name, task_name = task_func.__module__, task_func.__name__
+
     launch_json = {
         "version": "0.2.0",
         "configurations": [
@@ -336,14 +340,70 @@ def prepare_launch_json(pid: int):
             {
                 "name": "Resume Task v2",
                 "type": "python",
+                "request": "resume",
+                "program": f"{virtual_venv}/bin/debug.py",
+                "console": "integratedTerminal",
+                "justMyCode": True,
+                "args": ["debug", "--pid", str(pid)],
+            },
+            {
+                "name": "Interactive Debugging v2",
+                "type": "python",
                 "request": "launch",
-                "program": "$VIRTUAL_ENV/bin/debug.py",
+                "program": f"{virtual_venv}/bin/debug.py",
                 "console": "integratedTerminal",
                 "justMyCode": True,
                 "args": [
-                    "--pid",
-                    str(pid)
-                ]
+                    "interactive",
+                    "--task-module-name",
+                    task_module_name,
+                    "--task-name",
+                    task_name,
+                    "--context-working-dir",
+                    os.getcwd(),
+                    "--input_path",
+                    ctx.data.task_context.input_path,
+                ],
+            },
+            {
+                "name": "Interactive Debugging v3",
+                "type": "python",
+                "request": "launch",
+                "program": f"{virtual_venv}/bin/runtime.py",
+                "console": "integratedTerminal",
+                "justMyCode": True,
+                "args": [
+                    "a0",
+                    "--inputs",
+                    ctx.data.task_context.input_path,
+                    "--outputs-path",
+                    ctx.data.task_context.output_path,
+                    "--version",
+                    ctx.data.task_context.version,
+                    "--run-base-dir",
+                    ctx.data.task_context.run_base_dir,
+                    "--name",
+                    task_name,
+                    "--run-name",
+                    ctx.data.task_context.action.run_name,
+                    "--project",
+                    ctx.data.task_context.action.project,
+                    "--domain",
+                    ctx.data.task_context.action.domain,
+                    "--org",
+                    ctx.data.task_context.action.org,
+                    "--image-cache",
+                    ctx.data.task_context.compiled_image_cache,
+                    "--tgz",
+                    ctx.data.task_context.code_bundle.tgz,
+                    # "--pkl",
+                    # ctx.data.task_context.pkl,
+                    "--dest",
+                    ctx.data.task_context.code_bundle.destination,
+                    # "--resolver",
+                    # ctx.data.task_context.resolver,
+                    # *ctx.data.task_context.resolver_args,
+                ],
             },
         ],
     }
@@ -451,7 +511,7 @@ class vscode(ClassDecorator):
         #    Make the task function's source file directory the default directory.
         task_function_source_dir = os.path.dirname(inspect.getsourcefile(self.task_function))
         child_process = multiprocessing.Process(
-            target=run_async_execute_command,
+            target=lambda cmd: asyncio.run(asyncio.run(execute_command(cmd))),
             kwargs={
                 "cmd": f"code-server --bind-addr 0.0.0.0:{self.port}"
                 f" --disable-workspace-trust --auth none {task_function_source_dir}"
@@ -472,7 +532,7 @@ class vscode(ClassDecorator):
             prepare_resume_task_python(child_process.pid)
 
             # 5. Prepare the launch.json
-            prepare_launch_json(child_process.pid)
+            prepare_launch_json(child_process.pid, self.task_function)
 
             return await exit_handler(
                 child_process=child_process,
