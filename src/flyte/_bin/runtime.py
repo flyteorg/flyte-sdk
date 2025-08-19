@@ -6,11 +6,16 @@ Refrain from importing any modules here. If you need to import any modules, do i
 """
 
 import asyncio
+import multiprocessing
 import os
 import sys
 from typing import Any, List
 
 import click
+
+from flyte._debug.constants import FLYTE_ENABLE_VSCODE_KEY
+from flyte._debug.utils import execute_command
+from flyte._debug.vscode_lib.decorator import download_vscode, prepare_launch_json
 
 # Todo: work with pvditt to make these the names
 # ACTION_NAME = "_U_ACTION_NAME"
@@ -49,6 +54,7 @@ def _pass_through():
 @click.option("--project", envvar=PROJECT_NAME, required=False)
 @click.option("--domain", envvar=DOMAIN_NAME, required=False)
 @click.option("--org", envvar=ORG_NAME, required=False)
+@click.option("--debug", envvar=FLYTE_ENABLE_VSCODE_KEY, required=False)
 @click.option("--image-cache", required=False)
 @click.option("--tgz", required=False)
 @click.option("--pkl", required=False)
@@ -59,7 +65,9 @@ def _pass_through():
     type=click.UNPROCESSED,
     nargs=-1,
 )
+@click.pass_context
 def main(
+    ctx: click.Context,
     run_name: str,
     name: str,
     project: str,
@@ -155,6 +163,19 @@ def main(
         await controller.stop()
 
     asyncio.run(_run_and_stop())
+
+
+async def _debug_task(ctx: click.Context):
+    await download_vscode()
+    child_process = multiprocessing.Process(
+        target=lambda cmd: asyncio.run(asyncio.run(execute_command(cmd))),
+        kwargs={
+            "cmd": f"code-server --bind-addr 0.0.0.0:8080"
+                   f" --disable-workspace-trust --auth none {os.getcwd()}"
+        },
+    )
+    child_process.start()
+    prepare_launch_json(ctx, child_process.pid)
 
 
 if __name__ == "__main__":

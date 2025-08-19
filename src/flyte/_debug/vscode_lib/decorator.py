@@ -12,6 +12,7 @@ import time
 from pathlib import Path
 from typing import Callable, List, Optional
 
+import click
 import fsspec
 
 from flyte._context import internal_ctx
@@ -26,7 +27,8 @@ from flyte._debug.vscode_lib.constants import (
     HEARTBEAT_PATH,
     INTERACTIVE_DEBUGGING_FILE_NAME,
     RESUME_TASK_FILE_NAME,
-    TASK_FUNCTION_SOURCE_PATH,
+    TASK_FUNCTION_SOURCE_PATH, DEFAULT_CODE_SERVER_REMOTE_PATHS, DEFAULT_CODE_SERVER_DIR_NAMES,
+    DEFAULT_CODE_SERVER_EXTENSIONS,
 )
 from flyte._logging import logger
 from flyte._task import ClassDecorator, TaskTemplate
@@ -189,12 +191,9 @@ def is_extension_installed(extension: str, installed_extensions: List[str]) -> b
     return any(installed_extension in extension for installed_extension in installed_extensions)
 
 
-async def download_vscode(config: VscodeConfig):
+async def download_vscode():
     """
     Download vscode server and extension from remote to local and add the directory of binary executable to $PATH.
-
-    Args:
-        config (VscodeConfig): VSCode config contains default URLs of the VSCode server and extension remote paths.
     """
     # If the code server already exists in the container, skip downloading
     executable_path = shutil.which(EXECUTABLE_NAME)
@@ -209,7 +208,7 @@ async def download_vscode(config: VscodeConfig):
 
         logger.info(f"Start downloading files to {DOWNLOAD_DIR}")
         # Download remote file to local
-        code_server_remote_path = get_code_server_info(config.code_server_remote_paths)
+        code_server_remote_path = get_code_server_info(DEFAULT_CODE_SERVER_REMOTE_PATHS)
         code_server_tar_path = await download_file(code_server_remote_path, str(DOWNLOAD_DIR))
 
         # Extract the tarball
@@ -217,7 +216,7 @@ async def download_vscode(config: VscodeConfig):
             tar.extractall(path=DOWNLOAD_DIR)
 
     if os.path.exists(DOWNLOAD_DIR):
-        code_server_dir_name = get_code_server_info(config.code_server_dir_names)
+        code_server_dir_name = get_code_server_info(DEFAULT_CODE_SERVER_DIR_NAMES)
         code_server_bin_dir = os.path.join(DOWNLOAD_DIR, code_server_dir_name, "bin")
         # Add the directory of code-server binary to $PATH
         os.environ["PATH"] = code_server_bin_dir + os.pathsep + os.environ["PATH"]
@@ -226,7 +225,7 @@ async def download_vscode(config: VscodeConfig):
     installed_extensions = get_installed_extensions()
     coros = []
 
-    for extension in config.extension_remote_paths:
+    for extension in DEFAULT_CODE_SERVER_EXTENSIONS:
         if not is_extension_installed(extension, installed_extensions):
             coros.append(download_file(extension, str(DOWNLOAD_DIR)))
     extension_paths = await asyncio.gather(*coros)
@@ -308,7 +307,7 @@ if __name__ == "__main__":
         file.write(python_script)
 
 
-def prepare_launch_json(pid: int, task_func: TaskTemplate):
+def prepare_launch_json(ctx: click.Context, pid: int):
     """
     Generate the launch.json and settings.json for users to easily launch interactive debugging and task resumption.
     """
@@ -322,22 +321,6 @@ def prepare_launch_json(pid: int, task_func: TaskTemplate):
         "version": "0.2.0",
         "configurations": [
             {
-                "name": "Interactive Debugging",
-                "type": "python",
-                "request": "launch",
-                "program": os.path.join(task_function_source_dir, INTERACTIVE_DEBUGGING_FILE_NAME),
-                "console": "integratedTerminal",
-                "justMyCode": True,
-            },
-            {
-                "name": "Resume Task",
-                "type": "python",
-                "request": "launch",
-                "program": os.path.join(task_function_source_dir, RESUME_TASK_FILE_NAME),
-                "console": "integratedTerminal",
-                "justMyCode": True,
-            },
-            {
                 "name": "Resume Task v2",
                 "type": "python",
                 "request": "resume",
@@ -348,25 +331,6 @@ def prepare_launch_json(pid: int, task_func: TaskTemplate):
             },
             {
                 "name": "Interactive Debugging v2",
-                "type": "python",
-                "request": "launch",
-                "program": f"{virtual_venv}/bin/debug.py",
-                "console": "integratedTerminal",
-                "justMyCode": True,
-                "args": [
-                    "interactive",
-                    "--task-module-name",
-                    task_module_name,
-                    "--task-name",
-                    task_name,
-                    "--context-working-dir",
-                    os.getcwd(),
-                    "--input_path",
-                    ctx.data.task_context.input_path,
-                ],
-            },
-            {
-                "name": "Interactive Debugging v3",
                 "type": "python",
                 "request": "launch",
                 "program": f"{virtual_venv}/bin/runtime.py",
@@ -504,7 +468,7 @@ class vscode(ClassDecorator):
             logger.info("Pre execute function executed successfully!")
 
         # 1. Downloads the VSCode server from Internet to local.
-        await download_vscode(self._config)
+        await download_vscode()
 
         # 2. Launches and monitors the VSCode server.
         #    Run the function in the background.
