@@ -26,6 +26,60 @@ PROTOS_TO_COPY_CLOUD = (
             "app_logs_service_pb2",
             "replica_definition_pb2",
         ],
+        # "objectstore": [
+        #     "metadata_service_pb2",
+        #     "objectstore_service_pb2",
+        #     "payload_pb2",
+        #     "definition_pb2",
+        # ],
+        # "common": [
+        #     "list_pb2",
+        #     "identifier_pb2",
+        #     "identity_pb2",
+        #     "policy_pb2",
+        #     "runtime_version_pb2",
+        #     "authorization_pb2",
+        #     "role_pb2",
+        #     "deployment_pb2",
+        # ],
+        # "identity": [
+        #     "app_service_pb2",
+        #     "app_payload_pb2",
+        #     "app_definition_pb2",
+        #     "enums_pb2",
+        #     "user_service_pb2",
+        #     "user_payload_pb2",
+        # ],
+        # "secret": [
+        #     "definition_pb2",
+        #     "payload_pb2",
+        #     "secret_pb2",
+        # ],
+        # "imagebuilder": [
+        #     "definition_pb2",
+        #     "payload_pb2",
+        #     "service_pb2",
+        # ],
+        # "logs/dataplane": [
+        #     "payload_pb2",
+        # ],
+        # "workspace": [
+        #     "workspace_definition_pb2",
+        #     "workspace_definition_payload_pb2",
+        #     "workspace_definition_service_pb2",
+        #     "workspace_instance_payload_pb2",
+        #     "workspace_instance_pb2",
+        #     "workspace_instance_service_pb2",
+        # ],
+        # "hooks": [
+        #     "hooks_pb2",
+        #     "payload_pb2",
+        # ],
+        # "authorizer": [
+        #     "authorizer_pb2",
+        #     "definition_pb2",
+        #     "payload_pb2",
+        # ],
     },
 )
 
