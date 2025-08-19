@@ -362,19 +362,6 @@ class PydanticTransformer(TypeTransformer[BaseModel]):
 
     def get_literal_type(self, t: Type[BaseModel]) -> LiteralType:
         schema = t.model_json_schema()
-        # fields = t.__annotations__.items()
-
-        # literal_type = {}
-        # for name, python_type in fields:
-        #     try:
-        #         literal_type[name] = TypeEngine.to_literal_type(python_type)
-        #     except Exception as e:
-        #         logger.warning(
-        #             "Field {} of type {} cannot be converted to a literal type. Error: {}".format(name, python_type, e)
-        #         )
-
-        # This is for attribute access in FlytePropeller.
-        # ts = TypeStructure(tag="", dataclass_type=literal_type)
 
         meta_struct = struct_pb2.Struct()
         meta_struct.update(
@@ -619,24 +606,6 @@ class DataclassTransformer(TypeTransformer[object]):
                 f"Failed to extract schema for object {t}, error: {e}\n"
                 f"Possibly remove `DataClassJsonMixin` and `dataclass_json` decorator from dataclass declaration"
             )
-
-        # Recursively construct the dataclass_type which contains the literal type of each field
-        # literal_type = {}
-
-        # hints = typing.get_type_hints(t)
-        # Get the type of each field from dataclass
-        # for field in t.__dataclass_fields__.values():  # type: ignore
-        #     try:
-        #         name = field.name
-        #         python_type = hints.get(name, field.type)
-        #         literal_type[name] = TypeEngine.to_literal_type(python_type)
-        #     except Exception as e:
-        #         logger.debug(
-        #             f"Field {field.name} of type {field.type} cannot be converted to a literal type. Error: {e}"
-        #         )
-
-        # This is for attribute access in FlytePropeller.
-        # ts = TypeStructure(tag="", dataclass_type=literal_type)
 
         meta_struct = struct_pb2.Struct()
         meta_struct.update(
