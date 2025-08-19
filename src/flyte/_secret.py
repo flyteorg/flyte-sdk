@@ -1,7 +1,9 @@
+import logging
 import pathlib
 import re
 from dataclasses import dataclass
 from typing import List, Optional, Union
+from venv import logger
 
 
 @dataclass
@@ -17,14 +19,13 @@ class Secret:
 
     Example:
     ```python
-    @task(secrets="MY_SECRET")
+    @task(secrets="my-secret")
     async def my_task():
-        os.environ["MY_SECRET"]  # This will be set to the value of the secret
+        os.environ["MY_SECRET"]  # This will be set to the value of the secret. Note: Upper and - replace with _.
 
-    @task(secrets=Secret("MY_SECRET", mount="/path/to/secret"))
+    @task(secrets=Secret("my-openai-api-key", as_env_var="OPENAI_API_KEY"))
     async def my_task2():
-        async with open("/path/to/secret") as f:
-            secret_value = f.read()
+        os.environ["OPENAI_API_KEY"]
     ```
 
     TODO: Add support for secret versioning (some stores) and secret groups (some stores) and mounting as files.
@@ -32,6 +33,7 @@ class Secret:
     :param key: The name of the secret in the secret store.
     :param group: The group of the secret in the secret store.
     :param mount: Use this to specify the path where the secret should be mounted.
+    TODO: support arbitrary mount paths. Today only "/etc/flyte/secrets" is supported
     :param as_env_var: The name of the environment variable that the secret should be mounted as.
     """
 
@@ -41,6 +43,9 @@ class Secret:
     as_env_var: Optional[str] = None
 
     def __post_init__(self):
+        if not self.mount and not self.as_env_var:
+            self.as_env_var = f"{self.group}_{self.key}" if self.group else self.key
+            self.as_env_var = self.as_env_var.replace("-", "_").upper()
         if self.as_env_var is not None:
             pattern = r"^[A-Z_][A-Z0-9_]*$"
             if not re.match(pattern, self.as_env_var):
