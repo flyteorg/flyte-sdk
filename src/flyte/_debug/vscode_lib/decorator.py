@@ -307,7 +307,7 @@ if __name__ == "__main__":
         file.write(python_script)
 
 
-def prepare_launch_json():
+def prepare_launch_json(pid: int):
     """
     Generate the launch.json and settings.json for users to easily launch interactive debugging and task resumption.
     """
@@ -332,6 +332,18 @@ def prepare_launch_json():
                 "program": os.path.join(task_function_source_dir, RESUME_TASK_FILE_NAME),
                 "console": "integratedTerminal",
                 "justMyCode": True,
+            },
+            {
+                "name": "Resume Task v2",
+                "type": "python",
+                "request": "launch",
+                "program": "$VIRTUAL_ENV/bin/debug.py",
+                "console": "integratedTerminal",
+                "justMyCode": True,
+                "args": [
+                    "--pid",
+                    str(pid)
+                ]
             },
         ],
     }
@@ -460,7 +472,7 @@ class vscode(ClassDecorator):
             prepare_resume_task_python(child_process.pid)
 
             # 5. Prepare the launch.json
-            prepare_launch_json()
+            prepare_launch_json(child_process.pid)
 
             return await exit_handler(
                 child_process=child_process,

@@ -22,7 +22,7 @@ def is_in_cluster() -> bool:
     Check if the task is running in a cluster
     :return is_in_cluster (bool): True or False
     """
-    if os.getenv("_UN_CLS"):
+    if os.getenv("_U_ORG_NAME"):
         return True
     return False
 

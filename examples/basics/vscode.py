@@ -4,7 +4,7 @@ import flyte
 
 env = flyte.TaskEnvironment(
     name="hello_world",
-    image=flyte.Image.from_debian_base(name="vscode").with_pip_packages("aiohttp"),
+    image=flyte.Image.from_debian_base(name="vscode").with_pip_packages("aiohttp", "click"),
     resources=flyte.Resources(cpu=1.5, memory="1000Mi"),
 )
 

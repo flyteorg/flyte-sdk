@@ -166,6 +166,7 @@ class TaskContext:
     action: ActionID
     version: str
     raw_data_path: RawDataPath
+    input_path: str
     output_path: str
     run_base_dir: str
     report: Report

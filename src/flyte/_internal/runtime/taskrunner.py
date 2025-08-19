@@ -110,13 +110,13 @@ async def run_task(
 async def convert_and_run(
     *,
     task: TaskTemplate,
-    inputs: Inputs,
     action: ActionID,
     controller: Controller,
     raw_data_path: RawDataPath,
     version: str,
     output_path: str,
     run_base_dir: str,
+    input_path: str | None,
     checkpoints: Checkpoints | None = None,
     code_bundle: CodeBundle | None = None,
     image_cache: ImageCache | None = None,
@@ -130,6 +130,7 @@ async def convert_and_run(
         action=action,
         checkpoints=checkpoints,
         code_bundle=code_bundle,
+        input_path=input_path,
         output_path=output_path,
         run_base_dir=run_base_dir,
         version=version,
@@ -139,6 +140,7 @@ async def convert_and_run(
         mode="remote" if not ctx.data.task_context else ctx.data.task_context.mode,
     )
     with ctx.replace_task_context(tctx):
+        inputs = await load_inputs(input_path) if input_path else Inputs.empty()
         inputs_kwargs = await convert_inputs_to_native(inputs, task.native_interface)
         out, err = await run_task(tctx=tctx, controller=controller, task=task, inputs=inputs_kwargs)
         if err is not None:
@@ -166,10 +168,9 @@ async def extract_download_run_upload(
     This method is invoked from the CLI (urun) and is used to run a task. This assumes that the context tree
     has already been created, and the task has been loaded. It also handles the loading of the task.
     """
-    inputs = await load_inputs(input_path) if input_path else None
     outputs, err = await convert_and_run(
         task=task,
-        inputs=inputs or Inputs.empty(),
+        input_path=input_path,
         action=action,
         controller=controller,
         raw_data_path=raw_data_path,

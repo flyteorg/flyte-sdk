@@ -429,8 +429,8 @@ class AsyncFunctionTaskTemplate(TaskTemplate[P, R]):
         assert ctx.data.task_context is not None, "Function should have already returned if not in a task context"
         ctx_data = await self.pre(*args, **kwargs)
         tctx = ctx.data.task_context.replace(data=ctx_data)
-        func = decorate_function(self.func)
         with ctx.replace_task_context(tctx):
+            func = decorate_function(self.func)
             if iscoroutinefunction(self.func) or isinstance(func, ClassDecorator):
                 v = await func(*args, **kwargs)
             else:
@@ -547,6 +547,7 @@ def decorate_function(fn: Callable[P, Any]) -> Callable[P, Any]:
     from flyte._debug.constants import FLYTE_ENABLE_VSCODE_KEY
 
     logger.info(f"{os.getenv(FLYTE_ENABLE_VSCODE_KEY)}")
+    print("decorating function", flush=True)
     if str2bool(os.getenv(FLYTE_ENABLE_VSCODE_KEY)) and os.getenv("ACTION_NAME") == "a0":
         """
         If the environment variable FLYTE_ENABLE_VSCODE is set to True, then the task is decorated with vscode

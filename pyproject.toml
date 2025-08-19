@@ -61,6 +61,7 @@ license-files = ["licenses/*.txt", "LICENSE"]
 package-dir = {"" = "src"}
 script-files = [
     "src/flyte/_bin/runtime.py",
+    "src/flyte/_bin/debug.py",
 ]
 
 [tool.setuptools.packages.find]
