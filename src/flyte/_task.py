@@ -314,7 +314,7 @@ class TaskTemplate(Generic[P, R]):
     def override(
         self,
         *,
-        name: Optional[str] = None,
+        friendly_name: Optional[str] = None,
         resources: Optional[Resources] = None,
         cache: CacheRequest = "auto",
         retries: Union[int, RetryStrategy] = 0,
@@ -363,10 +363,9 @@ class TaskTemplate(Generic[P, R]):
         env = env or self.env
         secrets = secrets or self.secrets
 
-        if name is not None:
-            kwargs.update({"name": name})
-
         for k, v in kwargs.items():
+            if k == "name":
+                raise ValueError("Name cannot be overridden")
             if k == "image":
                 raise ValueError("Image cannot be overridden")
             if k == "docs":
@@ -376,6 +375,7 @@ class TaskTemplate(Generic[P, R]):
 
         return replace(
             self,
+            friendly_name=friendly_name,
             resources=resources,
             cache=cache,
             retries=retries,

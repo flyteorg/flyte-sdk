@@ -41,14 +41,14 @@ def test_oomer_override():
     )
     # Create a new task with overridden resources
     new_task = oomer.override(
-        resources=flyte.Resources(cpu=2, memory="500Mi"), pod_template=pod_template, name="new_oomer"
+        resources=flyte.Resources(cpu=2, memory="500Mi"), pod_template=pod_template, friendly_name="new_oomer"
     )
 
     # Check if the new task has the correct resources
     assert new_task.resources.cpu == 2
     assert new_task.resources.memory == "500Mi"
     assert new_task.pod_template == pod_template
-    assert new_task.name == "new_oomer"
+    assert new_task.friendly_name == "new_oomer"
     assert isinstance(new_task.cache, flyte.Cache)
 
     # Check if the new task is not the same as the original task
