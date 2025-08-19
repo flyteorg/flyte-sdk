@@ -18,7 +18,8 @@ async def main() -> str:
     """
     This is the entrypoint task that will be displayed in the UI.
     """
-    return await some_task()
+    s = await some_task()
+    return s + await some_task.override(friendly_name="my_name")()
 
 
 if __name__ == "__main__":
