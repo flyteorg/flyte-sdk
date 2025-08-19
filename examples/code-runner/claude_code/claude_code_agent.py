@@ -1,10 +1,4 @@
-# /// script
-# requires-python = "==3.13"
-# dependencies = [
-#    "flyte>=2.0.0b0",
-# ]
-# ///
-
+import pathlib
 import tempfile
 from pathlib import Path
 
@@ -12,16 +6,23 @@ import flyte
 from flyte.extras import ContainerTask
 from flyte.io import Dir
 
-env = flyte.TaskEnvironment(
-    name="claude_code_agent",
-    image=flyte.Image.from_uv_script(__file__, name="claude-code-agent"),
-    resources=flyte.Resources(cpu=1, memory="2Gi"),
+# Create a custom image with Claude Code pre-installed
+claude_code_image = flyte.Image.from_dockerfile(
+    name="flyte",
+    file=pathlib.Path(__file__).parent / "claude-code.Dockerfile",
+    registry="ghcr.io/flyteorg",
+    platform=("linux/amd64", "linux/arm64"),
+)
+
+claude_code_env = flyte.TaskEnvironment(
+    name="claude_code_env",
+    image=claude_code_image,
 )
 
 # Claude Code container task
 claude_code_task = ContainerTask(
     name="run_claude_code",
-    image="node:current-alpine3.22",
+    image=claude_code_image,
     input_data_dir="/var/inputs",
     output_data_dir="/var/outputs",
     inputs={"prompt": str, "working_dir": Dir, "max_turns": int, "budget_limit": float},
@@ -30,13 +31,12 @@ claude_code_task = ContainerTask(
         "/bin/bash",
         "-c",
         (
-            "npm install -g @anthropic-ai/claude-code && "
             "set -o pipefail && "
-            "cd /var/inputs/working_dir && "
+            "cd /var/inputs && "
             "mkdir -p /var/outputs/generated_code && "
             "cp -r . /var/outputs/generated_code/ && "
             "cd /var/outputs/generated_code && "
-            'echo "{{.inputs.prompt}}" | claude-code '
+            'echo "{{.inputs.prompt}}" | claude '
             "--print "
             "--max-turns {{.inputs.max_turns}} "
             "--dangerously-skip-permissions "
@@ -47,6 +47,14 @@ claude_code_task = ContainerTask(
     ],
     secrets=[flyte.Secret(key="anthropic-api-key", as_env_var="ANTHROPIC_API_KEY")],
     resources=flyte.Resources(cpu=2, memory="4Gi"),
+)
+
+claude_code_env.add_task(claude_code_task)
+
+env = flyte.TaskEnvironment(
+    name="claude_code_agent",
+    resources=flyte.Resources(cpu=1, memory="2Gi"),
+    depends_on=[claude_code_env],
 )
 
 
@@ -70,15 +78,14 @@ async def create_working_directory() -> Dir:
 
 
 @env.task
-async def claude_code_generator(
-    prompt: str, working_dir: Dir = None, max_turns: int = 10, budget_limit: float = 5.0, timeout_minutes: int = 30
+async def main(
+        prompt: str, max_turns: int = 10, budget_limit: float = 5.0, timeout_minutes: int = 30
 ) -> tuple[Dir, str, str, bool]:
     """
     Generate code using Claude Code based on the user's prompt.
 
     Args:
         prompt: The user's prompt/request for Claude Code
-        working_dir: Optional working directory, if None a temporary one is created
         max_turns: Maximum number of agentic turns to allow
         budget_limit: Maximum budget in dollars to spend on API calls
         timeout_minutes: Maximum time to allow Claude Code to run
@@ -91,8 +98,7 @@ async def claude_code_generator(
     print(f"Max turns: {max_turns}")
     print(f"Budget limit: ${budget_limit}")
 
-    if working_dir is None:
-        working_dir = await create_working_directory()
+    working_dir = await create_working_directory()
 
     try:
         # Run Claude Code
@@ -105,8 +111,7 @@ async def claude_code_generator(
         if success:
             print("---CLAUDE CODE: SUCCESS---")
         else:
-            print(f"---CLAUDE CODE: FAILED WITH EXIT CODE {exit_code}---")
-            print(f"Log: {log}")
+            raise RuntimeError(f"Claude Code failed with exit code {exit_code.strip()}")
 
         return generated_code, log, exit_code, success
 
@@ -116,74 +121,10 @@ async def claude_code_generator(
         return working_dir, f"Error: {e!s}", "1", False
 
 
-@env.task
-async def main(
-    prompt: str = "Create a simple Python web API using FastAPI that has endpoints for creating, "
-    "reading, updating and deleting users. Include proper error handling and validation.",
-    max_turns: int = 10,
-    budget_limit: float = 5.0,
-    timeout_minutes: int = 30,
-) -> str:
-    """
-    Main task that orchestrates Claude Code execution.
-
-    Args:
-        prompt: The task prompt for Claude Code
-        max_turns: Maximum number of agentic turns to allow (default: 10)
-        budget_limit: Maximum budget in dollars to spend on API calls (default: $5.00)
-        timeout_minutes: Maximum execution time in minutes (default: 30)
-
-    Returns:
-        Summary of the generated code and execution result
-    """
-
-    # Create workspace
-    working_dir = await create_working_directory()
-
-    # Generate code with Claude Code
-    generated_code, log, exit_code, success = await claude_code_generator(
-        prompt=prompt,
-        working_dir=working_dir,
-        max_turns=max_turns,
-        budget_limit=budget_limit,
-        timeout_minutes=timeout_minutes,
-    )
-
-    # Prepare result summary
-    if success:
-        result = f"""✅ Claude Code Successfully Generated Code
-
-Prompt: {prompt}
-Max Turns: {max_turns}
-Budget Limit: ${budget_limit}
-
-Exit Code: {exit_code}
-
-Generated code is available in the output directory.
-The code has been created based on your requirements and should be ready to use.
-
-Execution Log:
-{log[:1000]}{"..." if len(log) > 1000 else ""}
-"""
-    else:
-        result = f"""❌ Claude Code Execution Failed
-
-Prompt: {prompt}
-Max Turns: {max_turns}
-Budget Limit: ${budget_limit}
-
-Exit Code: {exit_code}
-
-Please check the logs and try again with a modified prompt if needed.
-
-Error Log:
-{log[:1000]}{"..." if len(log) > 1000 else ""}
-"""
-
-    return result
-
-
 if __name__ == "__main__":
-    flyte.init_from_config("../../config.yaml")
-    run = flyte.run(main)
+    prompt: str = "Create a simple Python web API using FastAPI that has endpoints for creating, "
+    "reading, updating and deleting users. Include proper error handling and validation."
+    parent = Path(__file__).parent
+    flyte.init_from_config(str(parent / "../../../config.yaml"), root_dir=parent)
+    run = flyte.with_runcontext(copy_style="all").run(main, prompt=prompt)
     print(run.url)
