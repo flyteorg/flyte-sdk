@@ -138,12 +138,14 @@ def test_override_ref_task():
 
     secrets = [flyte.Secret(key="openai", as_env_var="OPENAI_API_KEY")]
     td.override(
+        friendly_name="new_oomer",
         resources=flyte.Resources(cpu=3, memory="100Mi"),
         retries=RetryStrategy(5),
         timeout=100,
         env={"FOO": "BAR"},
         secrets=secrets,
     )
+    assert td.pb2.metadata.short_name == "new_oomer"
     assert td.resources[0][0].value == "3"
     assert td.resources[0][1].value == "100Mi"
     assert td.pb2.spec.task_template.metadata.retries.retries == 5

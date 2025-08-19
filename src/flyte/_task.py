@@ -375,7 +375,7 @@ class TaskTemplate(Generic[P, R]):
 
         return replace(
             self,
-            friendly_name=friendly_name,
+            friendly_name=friendly_name or self.friendly_name,
             resources=resources,
             cache=cache,
             retries=retries,
@@ -385,7 +385,7 @@ class TaskTemplate(Generic[P, R]):
             secrets=secrets,
             max_inline_io_bytes=max_inline_io_bytes,
             pod_template=pod_template,
-            **kwargs
+            **kwargs,
         )
 
 
