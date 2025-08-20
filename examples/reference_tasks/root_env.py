@@ -41,5 +41,5 @@ async def root_task() -> float:
 
 if __name__ == "__main__":
     flyte.init_from_config("../../config.yaml")
-    r = flyte.with_runcontext(env={"_REF_TASKS": "true"}, labels={"x": "y"}, annotations={"x": "y"}).run(root_task)
+    r = flyte.with_runcontext(labels={"x": "y"}, annotations={"x": "y"}).run(root_task)
     print(r.url)

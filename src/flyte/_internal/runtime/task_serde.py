@@ -203,7 +203,9 @@ def _get_urun_container(
     serialize_context: SerializationContext, task_template: TaskTemplate
 ) -> Optional[tasks_pb2.Container]:
     env = (
-        [literals_pb2.KeyValuePair(key=k, value=v) for k, v in task_template.env.items()] if task_template.env else None
+        [literals_pb2.KeyValuePair(key=k, value=v) for k, v in task_template.env_vars.items()]
+        if task_template.env_vars
+        else None
     )
     resources = get_proto_resources(task_template.resources)
     # pr: under what conditions should this return None?

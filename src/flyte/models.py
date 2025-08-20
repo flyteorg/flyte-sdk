@@ -192,6 +192,13 @@ class TaskContext:
     def __getitem__(self, key: str) -> Optional[Any]:
         return self.data.get(key)
 
+    def is_in_cluster(self):
+        """
+        Check if the task is running in a cluster.
+        :return: bool
+        """
+        return self.mode == "remote"
+
 
 @rich.repr.auto
 @dataclass(frozen=True, kw_only=True)
