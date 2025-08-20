@@ -101,16 +101,20 @@ class DeployEnvCommand(click.Command):
         console.print(f"Deploying root - environment: {self.env_name}")
         obj: CLIConfig = ctx.obj
         obj.init(self.deploy_args.project, self.deploy_args.domain)
-        with console.status("Deploying...", spinner="dots"):
-            deployment = flyte.deploy(
-                self.env,
-                dryrun=self.deploy_args.dry_run,
-                copy_style=self.deploy_args.copy_style,
-                version=self.deploy_args.version,
-            )
+        # with console.status("Deploying...", spinner="dots"):
+        deployments = flyte.deploy(
+            self.env,
+            dryrun=self.deploy_args.dry_run,
+            copy_style=self.deploy_args.copy_style,
+            version=self.deploy_args.version,
+        )
 
-        console.print(common.format("Environments", deployment[0].env_repr(), obj.output_format))
-        console.print(common.format("Tasks", deployment[0].task_repr(), obj.output_format))
+        for deployment in deployments:
+            console.print(common.format("Environments", deployment.env_repr(), obj.output_format))
+            if hasattr(deployment, "task_repr"):
+                console.print(common.format("Tasks", deployment.task_repr(), obj.output_format))
+            if hasattr(deployment, "app_repr"):
+                console.print(common.format("Apps", deployment.app_repr(), obj.output_format))
 
 
 class DeployEnvRecursiveCommand(click.Command):

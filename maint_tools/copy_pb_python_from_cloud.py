@@ -32,16 +32,16 @@ PROTOS_TO_COPY_CLOUD = (
         #     "payload_pb2",
         #     "definition_pb2",
         # ],
-        # "common": [
-        #     "list_pb2",
-        #     "identifier_pb2",
-        #     "identity_pb2",
-        #     "policy_pb2",
-        #     "runtime_version_pb2",
-        #     "authorization_pb2",
-        #     "role_pb2",
-        #     "deployment_pb2",
-        # ],
+        "common": [
+            "list_pb2",
+            "identifier_pb2",
+            "identity_pb2",
+            "policy_pb2",
+            "runtime_version_pb2",
+            "authorization_pb2",
+            "role_pb2",
+            "deployment_pb2",
+        ],
         # "identity": [
         #     "app_service_pb2",
         #     "app_payload_pb2",
@@ -84,9 +84,9 @@ PROTOS_TO_COPY_CLOUD = (
 )
 
 PATTERNS_TO_SWITCH = [
-    (re.compile(rf"^from {mod}", flags=re.MULTILINE), f"from union._protos.{mod}")
+    (re.compile(rf"^from {mod}", flags=re.MULTILINE), f"from flyte._protos.{mod}")
     for mod in [path.replace("/", ".") for path in PROTOS_TO_COPY_CLOUD[1]]
-] + [(re.compile(r"^from validate", flags=re.MULTILINE), "from union._protos.validate.validate")]
+] + [(re.compile(r"^from validate", flags=re.MULTILINE), "from flyte._protos.validate.validate")]
 
 PROTOS_TO_COPY = [PROTOS_TO_COPY_CLOUD]
 

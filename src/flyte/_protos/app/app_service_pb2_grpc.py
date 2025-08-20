@@ -2,7 +2,7 @@
 """Client and server classes corresponding to protobuf-defined services."""
 import grpc
 
-from union._protos.app import app_payload_pb2 as app_dot_app__payload__pb2
+from flyte._protos.app import app_payload_pb2 as app_dot_app__payload__pb2
 
 
 class AppServiceStub(object):

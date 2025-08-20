@@ -15,22 +15,21 @@ from typing import Any, Dict, List, Optional, Protocol, Union, runtime_checkable
 from typing import Literal as L
 
 import rich.repr
+
+import flyteidl.core.tasks_pb2 as tasks_pb2
 from flyte._environment import Environment
 from flyte._image import Image
 from flyte._resources import Resources
 from flyte._context import ctx
 from flyte._pod import PodTemplate
+from flyte._secret import Secret
+from flyte._internal.runtime.resources_serde import get_proto_resources, get_proto_extended_resources
 from flyteidl.core.literals_pb2 import KeyValuePair
 from flyteidl.core.tasks_pb2 import Container, ContainerPort, ExtendedResources, K8sObjectMetadata, K8sPod
-from flyteidl.core.tasks_pb2 import Resources as ResourcesIDL
-from flyte._secret import Secret
 from mashumaro.codecs.json import JSONEncoder
 
-from flyte._app._common import (
-    INTERNAL_APP_ENDPOINT_PATTERN_ENV_VAR,
-    _extract_files_loaded_from_cwd,
-)
-from flyte._app._frameworks import _is_fastapi_app
+from flyte.app._common import _extract_files_loaded_from_cwd
+from flyte.app._frameworks import _is_fastapi_app
 from flyte._protos.app.app_definition_pb2 import App as AppIDL
 from flyte._protos.app.app_definition_pb2 import (
     AutoscalingConfig,
@@ -72,8 +71,8 @@ class AppRegistry:
     apps: Dict[str, "App"] = field(default_factory=dict)
 
     def add_app(self, app: "App"):
-        mode = ctx().mode
-        if mode is None and app.name in self.apps:
+        context = ctx()
+        if (context is None or context.mode is None) and app.name in self.apps:
             # This is running in a non execute context, so we check if the app name is already used:
             msg = f"App with name: {app.name} was already used. The latest definition will be used"
             warnings.warn(msg, UserWarning, stacklevel=2)
@@ -188,8 +187,9 @@ class AppSerializationSettings:
     org: str
     project: str
     domain: str
+    version: str
+    image_uri: str
     is_serverless: bool
-
     desired_state: Spec.DesiredState
     materialized_inputs: dict[str, MaterializedInput] = field(default_factory=dict)
     additional_distribution: Optional[str] = None
@@ -353,11 +353,36 @@ class AppEnvironment(Environment):
     :param name: Name of the environment
     :param image: Docker image to use for the environment. If set to "auto", will use the default image.
     :param resources: Resources to allocate for the environment.
-    :param env: Environment variables to set for the environment.
+    :param env_vars: Environment variables to set for the environment.
     :param secrets: Secrets to inject into the environment.
     :param depends_on: Environment dependencies to hint, so when you deploy the environment, the dependencies are
         also deployed. This is useful when you have a set of environments that depend on each other.
     """
+
+    @dataclass
+    class Port:
+        port: int
+        name: Optional[str] = None
+
+    port: Optional[Union[int, Port]] = None
+    args: Optional[Union[List[str], str]] = None
+    min_replicas: int = 0
+    max_replicas: int = 1
+    scaledown_after: Optional[Union[int, timedelta]] = None
+    scaling_metric: Optional[Union[ScalingMetric.Concurrency, ScalingMetric.RequestRate]] = None
+    include: List[str] = field(default_factory=list)
+    inputs: List[Input] = field(default_factory=list)
+    env: dict = field(default_factory=dict)
+    cluster_pool: str = "default"
+    requires_auth: bool = True
+    type: Optional[str] = None
+    description: Optional[str] = None
+    framework_app: Optional[Any] = None
+    config: Optional[AppConfigProtocol] = None
+    subdomain: Optional[str] = None
+    custom_domain: Optional[str] = None
+    links: List[Link] = field(default_factory=list)
+    shared_memory: Optional[Union[L[True], str]] = None
 
     @property
     def app(self) -> "App":
@@ -366,12 +391,29 @@ class AppEnvironment(Environment):
         """
         return App(
             name=self.name,
-            image=self.image,
             resources=self.resources,
-            env=self.env,
+            env=self.env_vars,
             secrets=self.secrets,
-            depends_on=self.depends_on,
-            pod_template=self.pod_template,
+            dependencies=self.depends_on,
+            image=self.pod_template or self.image,
+            port=self.port,
+            args=self.args,
+            min_replicas=self.min_replicas,
+            max_replicas=self.max_replicas,
+            scaledown_after=self.scaledown_after,
+            scaling_metric=self.scaling_metric,
+            include=self.include,
+            inputs=self.inputs,
+            cluster_pool=self.cluster_pool,
+            requires_auth=self.requires_auth,
+            type=self.type,
+            description=self.description,
+            framework_app=self.framework_app,
+            config=self.config,
+            subdomain=self.subdomain,
+            custom_domain=self.custom_domain,
+            links=self.links,
+            shared_memory=self.shared_memory,
         )
 
 
@@ -418,7 +460,7 @@ class App:
         name: Optional[str] = None
 
     name: str
-    image: Union[str, Image]
+    image: Union[str, Image, PodTemplate]
     port: Optional[Union[int, Port]] = None
     resources: Optional[Resources] = None
     secrets: List[Secret] = field(default_factory=list)
@@ -514,15 +556,8 @@ class App:
         if not match_re:
             raise ValueError("App name must consist of lower case alphanumeric characters, '-' or '.'")
 
-        if self.limits is None and self.requests is None:
-            msg = "Either limits or requests must be set"
-            raise ValueError(msg)
-
-        if self.limits and self.limits.ephemeral_storage is None:
-            self.limits.ephemeral_storage = "20Gi"
-
-        if self.requests and self.requests.ephemeral_storage is None:
-            self.requests.ephemeral_storage = "10Gi"
+        if self.resources and self.resources.disk is None:
+            self.resources.disk = "20Gi"
 
         APP_REGISTRY.add_app(self)
 
@@ -664,50 +699,14 @@ class App:
             # args is a list
             return self.command
 
-    def _get_resources(self) -> ResourcesIDL:
-        requests_idl = []
-        limits_idl = []
-
-        # Make sure both limits and requests are set. During __post_init__ we require
-        # either limits or requests to be set
-        limits = self.limits or self.requests
-        requests = self.requests or self.limits
-
-        if requests.cpu is not None:
-            requests_idl.append(ResourcesIDL.ResourceEntry(name=ResourcesIDL.ResourceName.CPU, value=str(requests.cpu)))
-        if requests.mem is not None:
-            requests_idl.append(
-                ResourcesIDL.ResourceEntry(name=ResourcesIDL.ResourceName.MEMORY, value=str(requests.mem))
-            )
-        if requests.gpu is not None:
-            requests_idl.append(ResourcesIDL.ResourceEntry(name=ResourcesIDL.ResourceName.GPU, value=str(requests.gpu)))
-        if requests.ephemeral_storage is not None:
-            requests_idl.append(
-                ResourcesIDL.ResourceEntry(
-                    name=ResourcesIDL.ResourceName.EPHEMERAL_STORAGE, value=str(requests.ephemeral_storage)
-                )
-            )
-
-        if limits.cpu is not None:
-            limits_idl.append(ResourcesIDL.ResourceEntry(name=ResourcesIDL.ResourceName.CPU, value=str(limits.cpu)))
-        if limits.mem is not None:
-            limits_idl.append(ResourcesIDL.ResourceEntry(name=ResourcesIDL.ResourceName.MEMORY, value=str(limits.mem)))
-        if limits.gpu is not None:
-            limits_idl.append(ResourcesIDL.ResourceEntry(name=ResourcesIDL.ResourceName.GPU, value=str(limits.gpu)))
-        if limits.ephemeral_storage is not None:
-            limits_idl.append(
-                ResourcesIDL.ResourceEntry(
-                    name=ResourcesIDL.ResourceName.EPHEMERAL_STORAGE, value=str(limits.ephemeral_storage)
-                )
-            )
-
-        return ResourcesIDL(requests=requests_idl, limits=limits_idl)
+    def _get_resources(self) -> tasks_pb2.Resources:
+        return get_proto_resources(self.resources)
 
     def _get_container(self, settings: AppSerializationSettings) -> Container:
         container_ports = [ContainerPort(container_port=self._port.port, name=self._port.name)]
 
         return Container(
-            image=self._get_image(self.container_image, settings),
+            image=self._get_image(self.image, settings),
             command=self._get_command(settings),
             args=self._get_args(),
             resources=self._get_resources(),
@@ -716,11 +715,9 @@ class App:
         )
 
     def _get_env(self, settings: AppSerializationSettings) -> dict:
-        return self.env
+        return self.env or {}
 
     def _get_extended_resources(self) -> Optional[ExtendedResources]:
-        from flyte._internal.runtime.resources_serde import get_proto_extended_resources
-
         return get_proto_extended_resources(self.resources)
 
     def _to_union_idl(self, settings: AppSerializationSettings) -> AppIDL:
@@ -827,8 +824,8 @@ class App:
         return K8sPod(pod_spec=pod_spec_idl, metadata=metadata)
 
     @staticmethod
-    def _sanitize_resource_name(resource: ResourcesIDL.ResourceEntry) -> str:
-        return ResourcesIDL.ResourceName.Name(resource.name).lower().replace("_", "-")
+    def _sanitize_resource_name(resource: tasks_pb2.Resources.ResourceEntry) -> str:
+        return tasks_pb2.Resources.ResourceName.Name(resource.name).lower().replace("_", "-")
 
     def _serialized_pod_spec(
         self,
@@ -896,23 +893,25 @@ class App:
         :param public: Whether to return the public or internal endpoint.
         :returns: Object representing a URL query.
         """
+        raise NotImplementedError
         return URLQuery(name=self.name, public=public)
 
-    # @property
-    # def endpoint(self) -> str:
-    #     """
-    #     Return endpoint for App.
-    #     """
-    #     pattern = os.getenv(INTERNAL_APP_ENDPOINT_PATTERN_ENV_VAR)
-    #     if pattern is not None:
-    #         # If the pattern exist, we are on remote.
-    #         # NOTE: Should check that the app is in the same namespace as the current app.
-    #         return pattern.replace("{app_fqdn}", self.name)
+    @property
+    def endpoint(self) -> str:
+        """
+        Return endpoint for App.
+        """
+        raise NotImplementedError
+        pattern = os.getenv(INTERNAL_APP_ENDPOINT_PATTERN_ENV_VAR)
+        if pattern is not None:
+            # If the pattern exist, we are on remote.
+            # NOTE: Should check that the app is in the same namespace as the current app.
+            return pattern.replace("{app_fqdn}", self.name)
 
-    #     from union.remote import UnionRemote
+        from union.remote import UnionRemote
 
-    #     remote = UnionRemote()
-    #     app_remote = remote._app_remote
-    #     app_idl = app_remote.get(name=self.name)
-    #     url = app_idl.status.ingress.public_url
-    #     return url
+        remote = UnionRemote()
+        app_remote = remote._app_remote
+        app_idl = app_remote.get(name=self.name)
+        url = app_idl.status.ingress.public_url
+        return url
