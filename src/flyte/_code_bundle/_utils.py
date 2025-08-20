@@ -240,6 +240,7 @@ def list_imported_modules_as_files(source_path: str, modules: List[ModuleType]) 
 
         if not _file_is_in_directory(mod_file, source_path):
             # Only upload files where the module file in the source directory
+            logger.warning(f"{mod_file} is not in {source_path}")
             continue
 
         files.append(mod_file)
