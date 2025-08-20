@@ -14,6 +14,8 @@ from types import ModuleType
 from typing import Any, Dict, List, Optional, Protocol, Union, runtime_checkable
 from typing import Literal as L
 
+import rich.repr
+from flyte._environment import Environment
 from flyte._image import Image
 from flyte._resources import Resources
 from flyte._context import ctx
@@ -342,6 +344,35 @@ class Link:
     path: str
     title: str
     is_relative: bool = False
+
+
+@rich.repr.auto
+@dataclass(init=True, repr=True)
+class AppEnvironment(Environment):
+    """
+    :param name: Name of the environment
+    :param image: Docker image to use for the environment. If set to "auto", will use the default image.
+    :param resources: Resources to allocate for the environment.
+    :param env: Environment variables to set for the environment.
+    :param secrets: Secrets to inject into the environment.
+    :param depends_on: Environment dependencies to hint, so when you deploy the environment, the dependencies are
+        also deployed. This is useful when you have a set of environments that depend on each other.
+    """
+
+    @property
+    def app(self) -> "App":
+        """
+        Return the app in the environment.
+        """
+        return App(
+            name=self.name,
+            image=self.image,
+            resources=self.resources,
+            env=self.env,
+            secrets=self.secrets,
+            depends_on=self.depends_on,
+            pod_template=self.pod_template,
+        )
 
 
 @dataclass
