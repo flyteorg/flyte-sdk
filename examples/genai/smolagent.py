@@ -1,14 +1,24 @@
 import asyncio
-from typing import Any, Callable, Dict, List
+from typing import Any, Callable, Dict, List, Union
 
 import flyte
 
-agent_env = flyte.TaskEnvironment("agent", resources=flyte.Resources(cpu=1))
+agent_env = flyte.TaskEnvironment(
+    "agent",
+    resources=flyte.Resources(cpu=1, memory="1Gi"),
+    reusable=flyte.ReusePolicy(
+        replicas=1,
+        idle_ttl=60,
+        concurrency=10,
+        scaledown_ttl=60,
+    ),
+    image=flyte.Image.from_debian_base().with_pip_packages("unionai-reuse==0.1.4b0", pre=True),
+)
 
 
 # --- Dummy DummyAgent class with dependency-aware planning ---
 @agent_env.task
-async def get_plan(goal: str) -> List[Dict]:
+async def get_plan(goal: str) -> List[Dict[str, Union[str, List[str]]]]:
     # Each step has a name, function ID, and dependencies
     return [
         {"id": "get_bread", "deps": []},
@@ -23,44 +33,37 @@ async def get_plan(goal: str) -> List[Dict]:
 
 # --- Step function definitions ---
 @agent_env.task
-async def get_bread(context: Dict[str, Any]) -> str:
-    await asyncio.sleep(1)
+async def get_bread(context: Dict[str, str]) -> str:
     return "bread"
 
 
 @agent_env.task
-async def get_peanut_butter(context: Dict[str, Any]) -> str:
-    await asyncio.sleep(1)
+async def get_peanut_butter(context: Dict[str, str]) -> str:
     return "peanut butter"
 
 
 @agent_env.task
-async def get_jelly(context: Dict[str, Any]) -> str:
-    await asyncio.sleep(1)
+async def get_jelly(context: Dict[str, str]) -> str:
     return "jelly"
 
 
 @agent_env.task
-async def spread_peanut_butter(context: Dict[str, Any]) -> str:
-    await asyncio.sleep(1)
+async def spread_peanut_butter(context: Dict[str, str]) -> str:
     return f"{context['get_bread']} with {context['get_peanut_butter']}"
 
 
 @agent_env.task
-async def spread_jelly(context: Dict[str, Any]) -> str:
-    await asyncio.sleep(1)
+async def spread_jelly(context: Dict[str, str]) -> str:
     return f"{context['get_bread']} with {context['get_jelly']}"
 
 
 @agent_env.task
-async def assemble_sandwich(context: Dict[str, Any]) -> str:
-    await asyncio.sleep(1)
+async def assemble_sandwich(context: Dict[str, str]) -> str:
     return f"{context['spread_peanut_butter']} and {context['spread_jelly']} combined"
 
 
 @agent_env.task
 async def eat(context: Dict[str, Any]) -> str:
-    await asyncio.sleep(1)
     return f"Ate: {context['assemble_sandwich']} 😋"
 
 
@@ -78,7 +81,7 @@ STEP_FUNCTIONS: Dict[str, Any | Callable[[Dict[str, Any]], Any]] = {
 
 # --- Executor that respects dependencies ---
 @agent_env.task
-async def execute_plan(plan: List[Dict]) -> Dict[str, str]:
+async def execute_plan(plan: List[Dict[str, Union[str, List[str]]]]) -> Dict[str, str]:
     step_funcs = STEP_FUNCTIONS
     results = {}
     remaining = {step["id"]: step for step in plan}
@@ -86,6 +89,7 @@ async def execute_plan(plan: List[Dict]) -> Dict[str, str]:
     i = 0
     while remaining:
         with flyte.group(f"step-set-{i}"):
+            print(f"{results}")
             # Find all steps that are ready to run (no unmet dependencies)
             ready = [step_id for step_id, step in remaining.items() if all(dep in results for dep in step["deps"])]
 

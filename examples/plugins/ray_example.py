@@ -1,11 +1,10 @@
 import asyncio
 import typing
-from pathlib import Path
 
 import ray
 from flyteplugins.ray.task import HeadNodeConfig, RayJobConfig, WorkerNodeConfig
 
-import flyte.remote._action
+import flyte.remote
 import flyte.storage
 
 
@@ -24,11 +23,9 @@ ray_config = RayJobConfig(
 )
 
 image = (
-    flyte.Image.from_debian_base()
+    flyte.Image.from_debian_base(name="ray")
     .with_apt_packages("wget")
-    .with_pip_packages("ray[default]==2.46.0", "pip")
-    .with_source_folder(Path(__file__).parent.parent.parent / "plugins/ray", "./ray")
-    .with_env_vars({"PYTHONPATH": "./ray/src:${PYTHONPATH}", "hello": "world"})
+    .with_pip_packages("ray[default]==2.46.0", "flyteplugins-ray", "pip")
 )
 
 task_env = flyte.TaskEnvironment(
@@ -65,6 +62,6 @@ if __name__ == "__main__":
     print("run url:", run.url)
     run.wait(run)
 
-    action_details = flyte.remote._action.ActionDetails.get(run_name=run.name, name="a0")
+    action_details = flyte.remote.ActionDetails.get(run_name=run.name, name="a0")
     for log in action_details.pb2.attempts[-1].log_info:
         print(f"{log.name}: {log.uri}")

@@ -6,6 +6,7 @@ from the Flyte control plane, at runtime / deploy time.
 This example also demonstrates how "DataClasses" or "pydantic models" can be used as inputs and outputs of tasks,
 whose types are faked in the Flyte SDK to allow for easy access to attributes, even though they are not available
 in the runtime environment.
+
 """
 
 import flyte.remote
@@ -40,5 +41,5 @@ async def root_task() -> float:
 
 if __name__ == "__main__":
     flyte.init_from_config("../../config.yaml")
-    r = flyte.with_runcontext(env={"_REF_TASKS": "true"}, labels={"x": "y"}, annotations={"x": "y"}).run(root_task)
+    r = flyte.with_runcontext(labels={"x": "y"}, annotations={"x": "y"}).run(root_task)
     print(r.url)

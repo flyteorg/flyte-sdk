@@ -1,4 +1,3 @@
-import os
 import ssl
 import typing
 
@@ -15,11 +14,6 @@ from ._authenticators.factory import (
     create_proxy_auth_interceptors,
     get_async_proxy_authenticator,
 )
-
-# Set environment variables for gRPC, this reduces log spew and avoids unnecessary warnings
-if "GRPC_VERBOSITY" not in os.environ:
-    os.environ["GRPC_VERBOSITY"] = "ERROR"
-    os.environ["GRPC_CPP_MIN_LOG_LEVEL"] = "ERROR"
 
 # Initialize gRPC AIO early enough so it can be used in the main thread
 init_grpc_aio()

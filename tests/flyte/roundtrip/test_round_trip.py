@@ -90,7 +90,11 @@ async def setup_dry_run(task, tmp_path, pkl=False):
     Helper function to perform a dry run and return task_spec, inputs, code_bundle, and replaced_args.
     """
     result = await flyte.with_runcontext(
-        mode="remote", dry_run=True, copy_bundle_to=tmp_path, interactive_mode=pkl
+        mode="remote",
+        dry_run=True,
+        copy_bundle_to=tmp_path,
+        interactive_mode=pkl,
+        disable_run_cache=True,
     ).run.aio(task, "test")
     task_spec = result.task_spec
     inputs = result.inputs  # type: ignore

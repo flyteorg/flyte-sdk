@@ -21,7 +21,7 @@ from flyte.models import CodeBundle
 P = ParamSpec("P")
 FuncOut = TypeVar("FuncOut")
 
-CacheBehavior = Literal["auto", "override", "disable", "enabled"]
+CacheBehavior = Literal["auto", "override", "disable"]
 
 
 @dataclass

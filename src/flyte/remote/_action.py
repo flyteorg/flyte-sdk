@@ -28,6 +28,7 @@ from flyte._initialize import ensure_client, get_client, get_common_config
 from flyte._protos.common import identifier_pb2, list_pb2
 from flyte._protos.workflow import run_definition_pb2, run_service_pb2
 from flyte._protos.workflow.run_service_pb2 import WatchActionDetailsResponse
+from flyte.remote._common import ToJSONMixin
 from flyte.remote._logs import Logs
 from flyte.syncify import syncify
 
@@ -120,7 +121,7 @@ def _action_done_check(phase: run_definition_pb2.Phase) -> bool:
 
 
 @dataclass
-class Action:
+class Action(ToJSONMixin):
     """
     A class representing an action. It is used to manage the run of a task and its state on the remote Union API.
     """
@@ -257,6 +258,7 @@ class Action:
         """
         return self.pb2.id
 
+    @syncify
     async def show_logs(
         self,
         attempt: int | None = None,
@@ -411,7 +413,7 @@ class Action:
 
 
 @dataclass
-class ActionDetails:
+class ActionDetails(ToJSONMixin):
     """
     A class representing an action. It is used to manage the run of a task and its state on the remote Union API.
     """
@@ -692,7 +694,7 @@ class ActionDetails:
 
 
 @dataclass
-class ActionInputs(UserDict):
+class ActionInputs(UserDict, ToJSONMixin):
     """
     A class representing the inputs of an action. It is used to manage the inputs of a task and its state on the
     remote Union API.
@@ -709,7 +711,7 @@ class ActionInputs(UserDict):
         return rich.pretty.pretty_repr(types.literal_string_repr(self.pb2))
 
 
-class ActionOutputs(tuple):
+class ActionOutputs(tuple, ToJSONMixin):
     """
     A class representing the outputs of an action. It is used to manage the outputs of a task and its state on the
     remote Union API.

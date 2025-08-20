@@ -148,7 +148,7 @@ async def test_submit_with_outputs():
 
         mock_upload_inputs.assert_called_once()
         mock_submit_action.assert_called_once()
-        mock_load_outputs.assert_called_with("/tmp/outputs/realized/outputs.pb")
+        mock_load_outputs.assert_called_with("/tmp/outputs/realized/outputs.pb", max_bytes=10485760)
         assert result == "test"
 
 

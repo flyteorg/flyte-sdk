@@ -54,7 +54,7 @@ class BuildEnvCommand(click.Command):
         with console.status("Building...", spinner="dots"):
             image_cache = flyte.build_images(self.obj)
 
-        console.print(common.get_table("Images", image_cache.repr(), simple=obj.simple))
+        console.print(common.format("Images", image_cache.repr(), obj.output_format))
 
 
 class EnvPerFileGroup(common.ObjectsPerFileGroup):

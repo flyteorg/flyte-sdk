@@ -16,7 +16,6 @@ from flyte._protos.workflow import (
     queue_service_pb2,
     task_definition_pb2,
 )
-from flyte.errors import RuntimeSystemError
 
 from ._action import Action
 from ._informer import InformerCache
@@ -86,10 +85,7 @@ class Controller:
 
     async def get_action(self, action_id: identifier_pb2.ActionIdentifier, parent_action_name: str) -> Optional[Action]:
         """Get the action from the informer"""
-        informer = await self._informers.get(run_name=action_id.run.name, parent_action_name=parent_action_name)
-        if informer:
-            return await informer.get(action_id.name)
-        return None
+        return await self._run_coroutine_in_controller_thread(self._bg_get_action(action_id, parent_action_name))
 
     @log
     async def cancel_action(self, action: Action):
@@ -128,7 +124,7 @@ class Controller:
     async def watch_for_errors(self):
         """Watch for errors in the background thread"""
         await self._run_coroutine_in_controller_thread(self._bg_watch_for_errors())
-        raise RuntimeSystemError(
+        raise flyte.errors.RuntimeSystemError(
             code="InformerWatchFailure",
             message=f"Controller thread failed with exception: {self._get_exception()}",
         )
@@ -167,7 +163,7 @@ class Controller:
             raise TimeoutError("Controller thread failed to start in time")
 
         if self._get_exception():
-            raise RuntimeSystemError(
+            raise flyte.errors.RuntimeSystemError(
                 type(self._get_exception()).__name__,
                 f"Controller thread startup failed: {self._get_exception()}",
             )
@@ -215,6 +211,7 @@ class Controller:
             # Create a new event loop for this thread
             self._loop = asyncio.new_event_loop()
             asyncio.set_event_loop(self._loop)
+            self._loop.set_exception_handler(flyte.errors.silence_grpc_polling_error)
             logger.debug(f"Controller thread started with new event loop: {threading.current_thread().name}")
 
             # Create an event to signal the errors were observed in the thread's loop

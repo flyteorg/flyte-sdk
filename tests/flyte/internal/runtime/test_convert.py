@@ -155,7 +155,7 @@ async def test_generate_cache_key_hash_consistency(_):
 
     task_name = "test_task"
     cache_key = convert.generate_cache_key_hash(task_name, inputs_hash, typed_interface, "v1", [], inputs.proto_inputs)
-    assert cache_key == "kNWQdez6U7DYsYjqt9CBB07gmPgsaJ1CCUUtiUnDxpk="
+    assert cache_key == "gKUZZV2XwUZbIUl9tfLC7+n8tREvPR9jq9vzPEHqOKg="
 
 
 @pytest.mark.asyncio
@@ -237,7 +237,7 @@ async def test_convert_from_native_to_inputs_missing_required_inputs():
 
     interface = NativeInterface.from_callable(func_required)
 
-    with pytest.raises(ValueError, match="Received 1 inputs but interface has 2"):
+    with pytest.raises(ValueError, match="Missing required inputs: y"):
         await convert.convert_from_native_to_inputs(interface, 42)
 
 
@@ -302,7 +302,7 @@ async def test_convert_from_native_to_inputs_missing_required_with_defaults():
     interface = NativeInterface.from_callable(func_missing_required)
 
     # Only provide one required parameter
-    with pytest.raises(ValueError, match="Received 1 inputs but interface has 2 required inputs."):
+    with pytest.raises(ValueError, match="Missing required inputs: required2"):
         await convert.convert_from_native_to_inputs(interface, required1=42)
 
 
@@ -622,43 +622,6 @@ def test_generate_inputs_hash_from_proto(name, inputs, expected_hash):
             ),
             "FHbQNnyP0k7IJt3Jpp8lfgJ/RU8EZEEcYXPuc2ieV5s=",
         ),
-        # (
-        #     "struct_with_dataclass",
-        #     TypedInterface(
-        #         inputs=VariableMap(
-        #             variables={
-        #                 "input_1": Variable(
-        #                     type=LiteralType(
-        #                         simple=SimpleType.STRUCT,
-        #                         structure=TypeStructure(
-        #                             dataclass_type={
-        #                                 "field1": LiteralType(simple=SimpleType.INTEGER),
-        #                                 "field2": LiteralType(simple=SimpleType.STRING)
-        #                             }
-        #                         )
-        #                     ),
-        #                     description="description",
-        #                 )
-        #             }
-        #         ),
-        #         outputs=VariableMap(
-        #             variables={
-        #                 "output_1": Variable(
-        #                     type=LiteralType(
-        #                         simple=SimpleType.STRUCT,
-        #                         structure=TypeStructure(
-        #                             dataclass_type={
-        #                                 "field1": LiteralType(simple=SimpleType.INTEGER),
-        #                                 "field2": LiteralType(simple=SimpleType.STRING)
-        #                             }
-        #                         )
-        #                     ),
-        #                 )
-        #             }
-        #         )
-        #     ),
-        #     "E91ntwbZiy78sCEB3NXilA1/AFD5N8PX6kftohfMaXU="
-        # ),
         (
             "structured_dataset",
             TypedInterface(

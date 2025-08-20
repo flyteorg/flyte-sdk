@@ -4,7 +4,7 @@ import inspect
 import os
 import pathlib
 from dataclasses import dataclass, field, replace
-from typing import TYPE_CHECKING, Any, Callable, ClassVar, Dict, Literal, Optional, Tuple, Type
+from typing import TYPE_CHECKING, Any, Callable, ClassVar, Dict, List, Literal, Optional, Tuple, Type
 
 import rich.repr
 
@@ -17,6 +17,9 @@ if TYPE_CHECKING:
 
     from flyte._internal.imagebuild.image_builder import ImageCache
     from flyte.report import Report
+
+# --- Constants ----
+MAX_INLINE_IO_BYTES = 10 * 1024 * 1024  # 100 MB
 
 
 def generate_random_name() -> str:
@@ -188,6 +191,13 @@ class TaskContext:
     def __getitem__(self, key: str) -> Optional[Any]:
         return self.data.get(key)
 
+    def is_in_cluster(self):
+        """
+        Check if the task is running in a cluster.
+        :return: bool
+        """
+        return self.mode == "remote"
+
 
 @rich.repr.auto
 @dataclass(frozen=True, kw_only=True)
@@ -266,6 +276,14 @@ class NativeInterface:
         Check if the task has outputs. This is used to determine if the task has outputs or not.
         """
         return self.outputs is not None and len(self.outputs) > 0
+
+    def required_inputs(self) -> List[str]:
+        """
+        Get the names of the required inputs for the task. This is used to determine which inputs are required for the
+        task execution.
+        :return: A list of required input names.
+        """
+        return [k for k, v in self.inputs.items() if v[1] is inspect.Parameter.empty]
 
     def num_required_inputs(self) -> int:
         """

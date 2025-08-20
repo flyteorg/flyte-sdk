@@ -192,5 +192,7 @@ class LocalController:
         assert info.start_time
         assert info.end_time
 
-    async def submit_task_ref(self, _task: task_definition_pb2.TaskDetails, *args, **kwargs) -> Any:
+    async def submit_task_ref(
+        self, _task: task_definition_pb2.TaskDetails, max_inline_io_bytes: int, *args, **kwargs
+    ) -> Any:
         raise flyte.errors.ReferenceTaskError("Reference tasks cannot be executed locally, only remotely.")

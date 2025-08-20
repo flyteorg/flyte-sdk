@@ -5,13 +5,16 @@ import hashlib
 import sys
 import typing
 from abc import abstractmethod
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, fields
 from functools import cached_property
 from pathlib import Path
-from typing import Callable, ClassVar, Dict, List, Literal, Optional, Tuple, TypeVar, Union
+from typing import TYPE_CHECKING, ClassVar, Dict, List, Literal, Optional, Tuple, TypeVar, Union
 
 import rich.repr
 from packaging.version import Version
+
+if TYPE_CHECKING:
+    from flyte import Secret, SecretRequest
 
 # Supported Python versions
 PYTHON_3_10 = (3, 10)
@@ -46,8 +49,6 @@ class Layer:
      layered images programmatically.
     """
 
-    _compute_identifier: Callable[[Layer], str] = field(default=lambda x: x.__str__(), init=True)
-
     @abstractmethod
     def update_hash(self, hasher: hashlib._Hash):
         """
@@ -63,6 +64,27 @@ class Layer:
         :return:
         """
 
+    def identifier(self) -> str:
+        """
+        This method computes a unique identifier for the layer based on its properties.
+        It is used to identify the layer in the image cache.
+
+        It is also used to compute a unique identifier for the image itself, which is a combination of all the layers.
+        This identifier is used to look up previously built images in the image cache. So having a consistent
+        identifier is important for the image cache to work correctly.
+
+        :return: A unique identifier for the layer.
+        """
+        ignore_fields: list[str] = []
+        for f in fields(self):
+            if f.metadata.get("identifier", True) is False:
+                ignore_fields.append(f.name)
+        d = asdict(self)
+        for v in ignore_fields:
+            d.pop(v)
+
+        return str(d)
+
 
 @rich.repr.auto
 @dataclass(kw_only=True, frozen=True, repr=True)
@@ -71,6 +93,7 @@ class PipOption:
     extra_index_urls: Optional[Tuple[str] | Tuple[str, ...] | List[str]] = None
     pre: bool = False
     extra_args: Optional[str] = None
+    secret_mounts: Optional[Tuple[str | Secret, ...]] = None
 
     def get_pip_install_args(self) -> List[str]:
         pip_install_args = []
@@ -101,6 +124,9 @@ class PipOption:
             hash_input += str(self.pre)
         if self.extra_args:
             hash_input += self.extra_args
+        if self.secret_mounts:
+            for secret_mount in self.secret_mounts:
+                hash_input += str(secret_mount)
 
         hasher.update(hash_input.encode("utf-8"))
 
@@ -109,9 +135,6 @@ class PipOption:
 @dataclass(kw_only=True, frozen=True, repr=True)
 class PipPackages(PipOption, Layer):
     packages: Optional[Tuple[str, ...]] = None
-
-    # todo: to be implemented
-    # secret_mounts: Optional[List[Tuple[str, str]]] = None
 
     def update_hash(self, hasher: hashlib._Hash):
         """
@@ -129,7 +152,12 @@ class PipPackages(PipOption, Layer):
 @rich.repr.auto
 @dataclass(kw_only=True, frozen=True, repr=True)
 class PythonWheels(PipOption, Layer):
-    wheel_dir: Path
+    wheel_dir: Path = field(metadata={"identifier": False})
+    wheel_dir_name: str = field(init=False)
+    package_name: str
+
+    def __post_init__(self):
+        object.__setattr__(self, "wheel_dir_name", self.wheel_dir.name)
 
     def update_hash(self, hasher: hashlib._Hash):
         super().update_hash(hasher)
@@ -161,6 +189,15 @@ class UVProject(PipOption, Layer):
     pyproject: Path
     uvlock: Path
 
+    def validate(self):
+        if not self.pyproject.exists():
+            raise FileNotFoundError(f"pyproject.toml file {self.pyproject} does not exist")
+        if not self.pyproject.is_file():
+            raise ValueError(f"Pyproject file {self.pyproject} is not a file")
+        if not self.uvlock.exists():
+            raise ValueError(f"UVLock file {self.uvlock} does not exist")
+        super().validate()
+
     def update_hash(self, hasher: hashlib._Hash):
         from ._utils import filehash_update
 
@@ -170,11 +207,45 @@ class UVProject(PipOption, Layer):
 
 @rich.repr.auto
 @dataclass(frozen=True, repr=True)
-class AptPackages(Layer):
-    packages: Tuple[str, ...]
+class UVScript(PipOption, Layer):
+    script: Path = field(metadata={"identifier": False})
+    script_name: str = field(init=False)
+
+    def __post_init__(self):
+        object.__setattr__(self, "script_name", self.script.name)
+
+    def validate(self):
+        if not self.script.exists():
+            raise FileNotFoundError(f"UV script {self.script} does not exist")
+        if not self.script.is_file():
+            raise ValueError(f"UV script {self.script} is not a file")
+        if not self.script.suffix == ".py":
+            raise ValueError(f"UV script {self.script} must have a .py extension")
+        super().validate()
 
     def update_hash(self, hasher: hashlib._Hash):
-        hasher.update("".join(self.packages).encode("utf-8"))
+        from ._utils import parse_uv_script_file
+
+        header = parse_uv_script_file(self.script)
+        h_tuple = _ensure_tuple(header)
+        if h_tuple:
+            hasher.update(h_tuple.__str__().encode("utf-8"))
+        super().update_hash(hasher)
+
+
+@rich.repr.auto
+@dataclass(frozen=True, repr=True)
+class AptPackages(Layer):
+    packages: Tuple[str, ...]
+    secret_mounts: Optional[Tuple[str | Secret, ...]] = None
+
+    def update_hash(self, hasher: hashlib._Hash):
+        hash_input = "".join(self.packages)
+
+        if self.secret_mounts:
+            for secret_mount in self.secret_mounts:
+                hash_input += str(secret_mount)
+        hasher.update(hash_input.encode("utf-8"))
 
 
 @rich.repr.auto
@@ -207,9 +278,15 @@ class DockerIgnore(Layer):
 @rich.repr.auto
 @dataclass(frozen=True, repr=True)
 class CopyConfig(Layer):
-    path_type: CopyConfigType
-    src: Path
-    dst: str = "."
+    path_type: CopyConfigType = field(metadata={"identifier": True})
+    src: Path = field(metadata={"identifier": False})
+    dst: str
+    src_name: str = field(init=False)
+
+    def __post_init__(self):
+        if self.path_type not in (0, 1):
+            raise ValueError(f"Invalid path_type {self.path_type}, must be 0 (file) or 1 (directory)")
+        object.__setattr__(self, "src_name", self.src.name)
 
     def validate(self):
         if not self.src.exists():
@@ -353,7 +430,7 @@ class Image:
         # across different SDK versions.
         # Layers can specify a _compute_identifier optionally, but the default will just stringify
         image_dict = asdict(self, dict_factory=lambda x: {k: v for (k, v) in x if v is not None and k != "_layers"})
-        layers_str_repr = "".join([layer._compute_identifier(layer) for layer in self._layers])
+        layers_str_repr = "".join([layer.identifier() for layer in self._layers])
         image_dict["layers"] = layers_str_repr
         spec_bytes = image_dict.__str__().encode("utf-8")
         return base64.urlsafe_b64encode(hashlib.md5(spec_bytes).digest()).decode("ascii").rstrip("=")
@@ -374,11 +451,7 @@ class Image:
         # this default image definition may need to be updated once there is a released pypi version
         from flyte._version import __version__
 
-        dev_mode = (
-            (cls._is_editable_install() or (__version__ and "dev" in __version__))
-            and not flyte_version
-            and install_flyte
-        )
+        dev_mode = (__version__ and "dev" in __version__) and not flyte_version and install_flyte
         if install_flyte is False:
             preset_tag = f"py{python_version[0]}.{python_version[1]}"
         else:
@@ -390,12 +463,13 @@ class Image:
             base_image=f"python:{python_version[0]}.{python_version[1]}-slim-bookworm",
             registry=_BASE_REGISTRY,
             name=_DEFAULT_IMAGE_NAME,
+            python_version=python_version,
             platform=("linux/amd64", "linux/arm64") if platform is None else platform,
         )
         labels_and_user = _DockerLines(
             (
-                "LABEL org.opencontainers.image.authors='Union.AI <sales@union.ai>'",
-                "LABEL org.opencontainers.image.source=https://github.com/unionai/unionv2",
+                "LABEL org.opencontainers.image.authors='Union.AI <info@union.ai>'",
+                "LABEL org.opencontainers.image.source=https://github.com/flyteorg/flyte",
                 "RUN useradd --create-home --shell /bin/bash flytekit &&"
                 " chown -R flytekit /root && chown -R flytekit /home",
                 "WORKDIR /root",
@@ -421,19 +495,13 @@ class Image:
                     image = image.with_pip_packages(f"flyte=={flyte_version}", pre=True)
                 else:
                     image = image.with_pip_packages(f"flyte=={flyte_version}")
-        object.__setattr__(image, "_tag", preset_tag)
+        if not dev_mode:
+            object.__setattr__(image, "_tag", preset_tag)
         # Set this to auto for all auto images because the meaning of "auto" can change (based on logic inside
         # _get_default_image_for, acts differently in a running task container) so let's make sure it stays auto.
         object.__setattr__(image, "_identifier_override", "auto")
 
         return image
-
-    @staticmethod
-    def _is_editable_install():
-        """Internal hacky function to see if the current install is editable or not."""
-        curr = Path(__file__)
-        pyproject = curr.parent.parent.parent / "pyproject.toml"
-        return pyproject.exists()
 
     @classmethod
     def from_debian_base(
@@ -469,7 +537,7 @@ class Image:
             platform=platform,
         )
 
-        if registry and name:
+        if registry or name:
             return base_image.clone(registry=registry, name=name)
 
         # # Set this to auto for all auto images because the meaning of "auto" can change (based on logic inside
@@ -501,6 +569,7 @@ class Image:
         pre: bool = False,
         extra_args: Optional[str] = None,
         platform: Optional[Tuple[Architecture, ...]] = None,
+        secret_mounts: Optional[SecretRequest] = None,
     ) -> Image:
         """
         Use this method to create a new image with the specified uv script.
@@ -531,39 +600,25 @@ class Image:
         :param extra_index_urls: extra index urls to use for pip install, default is None
         :param pre: whether to allow pre-release versions, default is False
         :param extra_args: extra arguments to pass to pip install, default is None
+        :param secret_mounts: Secret mounts to use for the image, default is None.
 
         :return: Image
+
+        Args:
+            secret_mounts:
         """
-        from ._utils import parse_uv_script_file
+        ll = UVScript(
+            script=Path(script),
+            index_url=index_url,
+            extra_index_urls=_ensure_tuple(extra_index_urls) if extra_index_urls else None,
+            pre=pre,
+            extra_args=extra_args,
+            secret_mounts=_ensure_tuple(secret_mounts) if secret_mounts else None,
+        )
 
-        if isinstance(script, str):
-            script = Path(script)
-        if not script.exists():
-            raise FileNotFoundError(f"UV script {script} does not exist")
-        if not script.is_file():
-            raise ValueError(f"UV script {script} is not a file")
-        if not script.suffix == ".py":
-            raise ValueError(f"UV script {script} must have a .py extension")
-        header = parse_uv_script_file(script)
-
-        # todo: arch
         img = cls.from_debian_base(registry=registry, name=name, python_version=python_version, platform=platform)
 
-        # add ca-certificates to the image by default
-        img = img.with_apt_packages("ca-certificates")
-
-        if header.dependencies:
-            return img.with_pip_packages(
-                *header.dependencies,
-                index_url=index_url,
-                extra_index_urls=extra_index_urls,
-                pre=pre,
-                extra_args=extra_args,
-            )
-
-        # todo: override the _identifier_override to be the script name or a hash of the script contents
-        # This is needed because inside the image, the identifier will be computed to be something different.
-        return img
+        return img.clone(addl_layer=ll)
 
     def clone(
         self,
@@ -690,19 +745,26 @@ class Image:
         new_image = self.clone(addl_layer=WorkDir(workdir=workdir))
         return new_image
 
-    def with_requirements(self, file: str | Path) -> Image:
+    def with_requirements(
+        self,
+        file: str | Path,
+        secret_mounts: Optional[SecretRequest] = None,
+    ) -> Image:
         """
         Use this method to create a new image with the specified requirements file layered on top of the current image
         Cannot be used in conjunction with conda
 
         :param file: path to the requirements file, must be a .txt file
+        :param secret_mounts: list of secret to mount for the build process.
         :return:
         """
         if isinstance(file, str):
             file = Path(file)
         if file.suffix != ".txt":
             raise ValueError(f"Requirements file {file} must have a .txt extension")
-        new_image = self.clone(addl_layer=Requirements(file=file))
+        new_image = self.clone(
+            addl_layer=Requirements(file=file, secret_mounts=_ensure_tuple(secret_mounts) if secret_mounts else None)
+        )
         return new_image
 
     def with_pip_packages(
@@ -712,6 +774,7 @@ class Image:
         extra_index_urls: Union[str, List[str], Tuple[str, ...], None] = None,
         pre: bool = False,
         extra_args: Optional[str] = None,
+        secret_mounts: Optional[SecretRequest] = None,
     ) -> Image:
         """
         Use this method to create a new image with the specified pip packages layered on top of the current image
@@ -732,8 +795,8 @@ class Image:
         :param extra_index_urls: extra index urls to use for pip install, default is None
         :param pre: whether to allow pre-release versions, default is False
         :param extra_args: extra arguments to pass to pip install, default is None
-        # :param secret_mounts: todo
         :param extra_args: extra arguments to pass to pip install, default is None
+        :param secret_mounts: list of secret to mount for the build process.
         :return: Image
         """
         new_packages: Optional[Tuple] = packages or None
@@ -745,6 +808,7 @@ class Image:
             extra_index_urls=new_extra_index_urls,
             pre=pre,
             extra_args=extra_args,
+            secret_mounts=_ensure_tuple(secret_mounts) if secret_mounts else None,
         )
         new_image = self.clone(addl_layer=ll)
         return new_image
@@ -769,7 +833,7 @@ class Image:
         :param dst: destination folder in the image
         :return: Image
         """
-        new_image = self.clone(addl_layer=CopyConfig(path_type=1, src=src, dst=dst, _compute_identifier=lambda x: dst))
+        new_image = self.clone(addl_layer=CopyConfig(path_type=1, src=src, dst=dst))
         return new_image
 
     def with_source_file(self, src: Path, dst: str = ".") -> Image:
@@ -781,7 +845,7 @@ class Image:
         :param dst: destination folder in the image
         :return: Image
         """
-        new_image = self.clone(addl_layer=CopyConfig(path_type=0, src=src, dst=dst, _compute_identifier=lambda x: dst))
+        new_image = self.clone(addl_layer=CopyConfig(path_type=0, src=src, dst=dst))
         return new_image
 
     def with_dockerignore(self, path: Path) -> Image:
@@ -790,11 +854,13 @@ class Image:
 
     def with_uv_project(
         self,
-        pyproject_file: Path,
+        pyproject_file: str | Path,
+        uvlock: Path | None = None,
         index_url: Optional[str] = None,
-        extra_index_urls: Union[str, List[str], Tuple[str, ...], None] = None,
+        extra_index_urls: Union[List[str], Tuple[str, ...], None] = None,
         pre: bool = False,
         extra_args: Optional[str] = None,
+        secret_mounts: Optional[SecretRequest] = None,
     ) -> Image:
         """
         Use this method to create a new image with the specified uv.lock file layered on top of the current image
@@ -803,26 +869,44 @@ class Image:
         In the Union builders, using this will change the virtual env to /root/.venv
 
         :param pyproject_file: path to the pyproject.toml file, needs to have a corresponding uv.lock file
-        :return:
+        :param uvlock: path to the uv.lock file, if not specified, will use the default uv.lock file in the same
+        directory as the pyproject.toml file. (pyproject.parent / uv.lock)
+        :param index_url: index url to use for pip install, default is None
+        :param extra_index_urls: extra index urls to use for pip install, default is None
+        :param pre: whether to allow pre-release versions, default is False
+        :param extra_args: extra arguments to pass to pip install, default is None
+        :param secret_mounts: list of secret mounts to use for the build process.
+        :return: Image
         """
-        if not pyproject_file.exists():
-            raise FileNotFoundError(f"UVLock file {pyproject_file} does not exist")
-        if not pyproject_file.is_file():
-            raise ValueError(f"UVLock file {pyproject_file} is not a file")
-        lock = pyproject_file.parent / "uv.lock"
-        if not lock.exists():
-            raise ValueError(f"UVLock file {lock} does not exist")
-        new_image = self.clone(addl_layer=UVProject(pyproject=pyproject_file, uvlock=lock))
+        if isinstance(pyproject_file, str):
+            pyproject_file = Path(pyproject_file)
+        new_image = self.clone(
+            addl_layer=UVProject(
+                pyproject=pyproject_file,
+                uvlock=uvlock or (pyproject_file.parent / "uv.lock"),
+                index_url=index_url,
+                extra_index_urls=extra_index_urls,
+                pre=pre,
+                extra_args=extra_args,
+                secret_mounts=_ensure_tuple(secret_mounts) if secret_mounts else None,
+            )
+        )
         return new_image
 
-    def with_apt_packages(self, *packages: str) -> Image:
+    def with_apt_packages(self, *packages: str, secret_mounts: Optional[SecretRequest] = None) -> Image:
         """
         Use this method to create a new image with the specified apt packages layered on top of the current image
 
         :param packages: list of apt packages to install
+        :param secret_mounts: list of secret mounts to use for the build process.
         :return: Image
         """
-        new_image = self.clone(addl_layer=AptPackages(packages=packages))
+        new_image = self.clone(
+            addl_layer=AptPackages(
+                packages=packages,
+                secret_mounts=_ensure_tuple(secret_mounts) if secret_mounts else None,
+            )
+        )
         return new_image
 
     def with_commands(self, commands: List[str]) -> Image:
@@ -847,7 +931,7 @@ class Image:
         dist_folder = Path(__file__).parent.parent.parent / "dist"
         # Manually declare the PythonWheel so we can set the hashing
         # used to compute the identifier. Can remove if we ever decide to expose the lambda in with_ commands
-        with_dist = self.clone(addl_layer=PythonWheels(wheel_dir=dist_folder, _compute_identifier=lambda x: "/dist"))
+        with_dist = self.clone(addl_layer=PythonWheels(wheel_dir=dist_folder, package_name="flyte", pre=True))
 
         return with_dist
 

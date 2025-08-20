@@ -1,3 +1,4 @@
+import asyncio
 import typing
 from abc import abstractmethod
 
@@ -69,8 +70,9 @@ class RemoteClientConfigStore(ClientConfigStore):
         Retrieves the ClientConfig from the given grpc.Channel assuming  AuthMetadataService is available
         """
         metadata_service = AuthMetadataServiceStub(self._unauthenticated_channel)
-        public_client_config = await metadata_service.GetPublicClientConfig(PublicClientAuthConfigRequest())
-        oauth2_metadata = await metadata_service.GetOAuth2Metadata(OAuth2MetadataRequest())
+        oauth2_metadata_task = metadata_service.GetOAuth2Metadata(OAuth2MetadataRequest())
+        public_client_config_task = metadata_service.GetPublicClientConfig(PublicClientAuthConfigRequest())
+        oauth2_metadata, public_client_config = await asyncio.gather(oauth2_metadata_task, public_client_config_task)
         return ClientConfig(
             token_endpoint=oauth2_metadata.token_endpoint,
             authorization_endpoint=oauth2_metadata.authorization_endpoint,

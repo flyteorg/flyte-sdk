@@ -27,7 +27,7 @@ from ._retry import RetryStrategy
 from ._reusable_environment import ReusePolicy
 from ._secret import SecretRequest
 from ._task import AsyncFunctionTaskTemplate, TaskTemplate
-from .models import NativeInterface
+from .models import MAX_INLINE_IO_BYTES, NativeInterface
 
 if TYPE_CHECKING:
     from kubernetes.client import V1PodTemplate
@@ -53,15 +53,16 @@ class TaskEnvironment(Environment):
     :param name: Name of the environment
     :param image: Docker image to use for the environment. If set to "auto", will use the default image.
     :param resources: Resources to allocate for the environment.
-    :param env: Environment variables to set for the environment.
+    :param env_vars: Environment variables to set for the environment.
     :param secrets: Secrets to inject into the environment.
-    :param depends_on: Environment dependencies to hint, so when you deploy the environment, the dependencies are
-        also deployed. This is useful when you have a set of environments that depend on each other.
+    :param depends_on: Environment dependencies to hint, so when you deploy the environment,
+        the dependencies are also deployed. This is useful when you have a set of environments
+        that depend on each other.
     :param cache: Cache policy for the environment.
     :param reusable: Reuse policy for the environment, if set, a python process may be reused for multiple tasks.
     """
 
-    cache: Union[CacheRequest] = "disable"
+    cache: CacheRequest = "disable"
     reusable: ReusePolicy | None = None
     plugin_config: Optional[Any] = None
     # TODO Shall we make this union of string or env? This way we can lookup the env by module/file:name
@@ -79,7 +80,7 @@ class TaskEnvironment(Environment):
         name: str,
         image: Optional[Union[str, Image, Literal["auto"]]] = None,
         resources: Optional[Resources] = None,
-        env: Optional[Dict[str, str]] = None,
+        env_vars: Optional[Dict[str, str]] = None,
         secrets: Optional[SecretRequest] = None,
         depends_on: Optional[List[Environment]] = None,
         **kwargs: Any,
@@ -92,10 +93,11 @@ class TaskEnvironment(Environment):
         :param name: The name of the environment.
         :param image: The image to use for the environment.
         :param resources: The resources to allocate for the environment.
-        :param env: The environment variables to set for the environment.
+        :param env_vars: The environment variables to set for the environment.
         :param secrets: The secrets to inject into the environment.
-        :param depends_on: The environment dependencies to hint, so when you deploy the environment, the dependencies
-         are also deployed. This is useful when you have a set of environments that depend on each other.
+        :param depends_on: The environment dependencies to hint, so when you deploy the environment,
+            the dependencies are also deployed. This is useful when you have a set of environments
+            that depend on each other.
         :param kwargs: Additional parameters to override the environment (e.g., cache, reusable, plugin_config).
         """
         cache = kwargs.pop("cache", None)
@@ -117,8 +119,8 @@ class TaskEnvironment(Environment):
             kwargs["resources"] = resources
         if cache is not None:
             kwargs["cache"] = cache
-        if env is not None:
-            kwargs["env"] = env
+        if env_vars is not None:
+            kwargs["env_vars"] = env_vars
         if reusable_set:
             kwargs["reusable"] = reusable
         if secrets is not None:
@@ -132,13 +134,13 @@ class TaskEnvironment(Environment):
         _func=None,
         *,
         name: Optional[str] = None,
-        cache: Union[CacheRequest] | None = None,
+        cache: CacheRequest | None = None,
         retries: Union[int, RetryStrategy] = 0,
         timeout: Union[timedelta, int] = 0,
         docs: Optional[Documentation] = None,
-        secrets: Optional[SecretRequest] = None,
         pod_template: Optional[Union[str, "V1PodTemplate"]] = None,
         report: bool = False,
+        max_inline_io_bytes: int = MAX_INLINE_IO_BYTES,
     ) -> Union[AsyncFunctionTaskTemplate, Callable[P, R]]:
         """
         Decorate a function to be a task.
@@ -150,11 +152,12 @@ class TaskEnvironment(Environment):
         task.
         :param retries: Optional The number of retries for the task, defaults to 0, which means no retries.
         :param docs: Optional The documentation for the task, if not provided the function docstring will be used.
-        :param secrets: Optional The secrets that will be injected into the task at runtime.
         :param timeout: Optional The timeout for the task.
         :param pod_template: Optional The pod template for the task, if not provided the default pod template will be
         used.
         :param report: Optional Whether to generate the html report for the task, defaults to False.
+        :param max_inline_io_bytes: Maximum allowed size (in bytes) for all inputs and outputs passed directly to the
+         task (e.g., primitives, strings, dicts). Does not apply to files, directories, or dataframes.
         """
         from ._task import P, R
 
@@ -198,14 +201,15 @@ class TaskEnvironment(Environment):
                 timeout=timeout,
                 reusable=self.reusable,
                 docs=docs,
-                env=self.env,
-                secrets=secrets or self.secrets,
+                env_vars=self.env_vars,
+                secrets=self.secrets,
                 pod_template=pod_template or self.pod_template,
                 parent_env=weakref.ref(self),
                 interface=NativeInterface.from_callable(func),
                 report=report,
                 friendly_name=friendly_name,
                 plugin_config=self.plugin_config,
+                max_inline_io_bytes=max_inline_io_bytes,
             )
             self._tasks[task_name] = tmpl
             return tmpl

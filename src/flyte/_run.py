@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import pathlib
 import uuid
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Tuple, Union, cast
 
 import flyte.errors
@@ -17,10 +18,7 @@ from flyte._initialize import (
     requires_storage,
 )
 from flyte._logging import logger
-from flyte._protos.common import identifier_pb2
 from flyte._task import P, R, TaskTemplate
-from flyte._tools import ipython_check
-from flyte.errors import InitializationError
 from flyte.models import (
     ActionID,
     Checkpoints,
@@ -36,8 +34,24 @@ if TYPE_CHECKING:
     from flyte.remote._task import LazyEntity
 
     from ._code_bundle import CopyFiles
+    from ._internal.imagebuild.image_builder import ImageCache
 
 Mode = Literal["local", "remote", "hybrid"]
+
+
+@dataclass(frozen=True)
+class _CacheKey:
+    obj_id: int
+    dry_run: bool
+
+
+@dataclass(frozen=True)
+class _CacheValue:
+    code_bundle: CodeBundle | None
+    image_cache: Optional[ImageCache]
+
+
+_RUN_CACHE: Dict[_CacheKey, _CacheValue] = {}
 
 
 async def _get_code_bundle_for_run(name: str) -> CodeBundle | None:
@@ -73,12 +87,15 @@ class _Runner:
         overwrite_cache: bool = False,
         project: str | None = None,
         domain: str | None = None,
-        env: Dict[str, str] | None = None,
+        env_vars: Dict[str, str] | None = None,
         labels: Dict[str, str] | None = None,
         annotations: Dict[str, str] | None = None,
         interruptible: bool = False,
         log_level: int | None = None,
+        disable_run_cache: bool = False,
     ):
+        from flyte._tools import ipython_check
+
         init_config = _get_init_config()
         client = init_config.client if init_config else None
         if not force_mode and client is not None:
@@ -99,11 +116,12 @@ class _Runner:
         self._overwrite_cache = overwrite_cache
         self._project = project
         self._domain = domain
-        self._env = env
+        self._env_vars = env_vars
         self._labels = labels
         self._annotations = annotations
         self._interruptible = interruptible
         self._log_level = log_level
+        self._disable_run_cache = disable_run_cache
 
     @requires_initialization
     async def _run_remote(self, obj: TaskTemplate[P, R] | LazyEntity, *args: P.args, **kwargs: P.kwargs) -> Run:
@@ -135,24 +153,36 @@ class _Runner:
             if obj.parent_env is None:
                 raise ValueError("Task is not attached to an environment. Please attach the task to an environment")
 
-            image_cache = await build_images.aio(cast(Environment, obj.parent_env()))
-
-            if self._interactive_mode:
-                code_bundle = await build_pkl_bundle(
-                    obj,
-                    upload_to_controlplane=not self._dry_run,
-                    copy_bundle_to=self._copy_bundle_to,
-                )
+            if (
+                not self._disable_run_cache
+                and _RUN_CACHE.get(_CacheKey(obj_id=id(obj), dry_run=self._dry_run)) is not None
+            ):
+                cached_value = _RUN_CACHE[_CacheKey(obj_id=id(obj), dry_run=self._dry_run)]
+                code_bundle = cached_value.code_bundle
+                image_cache = cached_value.image_cache
             else:
-                if self._copy_files != "none":
-                    code_bundle = await build_code_bundle(
-                        from_dir=cfg.root_dir,
-                        dryrun=self._dry_run,
+                image_cache = await build_images.aio(cast(Environment, obj.parent_env()))
+
+                if self._interactive_mode:
+                    code_bundle = await build_pkl_bundle(
+                        obj,
+                        upload_to_controlplane=not self._dry_run,
                         copy_bundle_to=self._copy_bundle_to,
-                        copy_style=self._copy_files,
                     )
                 else:
-                    code_bundle = None
+                    if self._copy_files != "none":
+                        code_bundle = await build_code_bundle(
+                            from_dir=cfg.root_dir,
+                            dryrun=self._dry_run,
+                            copy_bundle_to=self._copy_bundle_to,
+                            copy_style=self._copy_files,
+                        )
+                    else:
+                        code_bundle = None
+            if not self._disable_run_cache:
+                _RUN_CACHE[_CacheKey(obj_id=id(obj), dry_run=self._dry_run)] = _CacheValue(
+                    code_bundle=code_bundle, image_cache=image_cache
+                )
 
             version = self._version or (
                 code_bundle.computed_version if code_bundle and code_bundle.computed_version else None
@@ -168,7 +198,7 @@ class _Runner:
             task_spec = translate_task_to_wire(obj, s_ctx)
             inputs = await convert_from_native_to_inputs(obj.native_interface, *args, **kwargs)
 
-        env = self._env or {}
+        env = self._env_vars or {}
         if self._log_level:
             env["LOG_LEVEL"] = str(self._log_level)
         else:
@@ -177,7 +207,7 @@ class _Runner:
         if not self._dry_run:
             if get_client() is None:
                 # This can only happen, if the user forces flyte.run(mode="remote") without initializing the client
-                raise InitializationError(
+                raise flyte.errors.InitializationError(
                     "ClientNotInitializedError",
                     "user",
                     "flyte.run requires client to be initialized. "
@@ -380,6 +410,7 @@ class _Runner:
     async def _run_local(self, obj: TaskTemplate[P, R], *args: P.args, **kwargs: P.kwargs) -> Run:
         from flyte._internal.controllers import create_controller
         from flyte._internal.controllers._local_controller import LocalController
+        from flyte._protos.common import identifier_pb2
         from flyte.remote import Run
         from flyte.report import Report
 
@@ -481,7 +512,7 @@ class _Runner:
             raise ValueError("Remote task can only be run in remote mode.")
 
         if not isinstance(task, TaskTemplate) and not isinstance(task, LazyEntity):
-            raise TypeError("On Flyte tasks can be run, not generic functions or methods.")
+            raise TypeError(f"On Flyte tasks can be run, not generic functions or methods '{type(task)}'.")
 
         if self._mode == "remote":
             return await self._run_remote(task, *args, **kwargs)
@@ -511,11 +542,12 @@ def with_runcontext(
     overwrite_cache: bool = False,
     project: str | None = None,
     domain: str | None = None,
-    env: Dict[str, str] | None = None,
+    env_vars: Dict[str, str] | None = None,
     labels: Dict[str, str] | None = None,
     annotations: Dict[str, str] | None = None,
     interruptible: bool = False,
     log_level: int | None = None,
+    disable_run_cache: bool = False,
 ) -> _Runner:
     """
     Launch a new run with the given parameters as the context.
@@ -550,12 +582,13 @@ def with_runcontext(
     :param overwrite_cache: Optional If true, the cache will be overwritten for the run
     :param project: Optional The project to use for the run
     :param domain: Optional The domain to use for the run
-    :param env: Optional Environment variables to set for the run
+    :param env_vars: Optional Environment variables to set for the run
     :param labels: Optional Labels to set for the run
     :param annotations: Optional Annotations to set for the run
     :param interruptible: Optional If true, the run can be interrupted by the user.
     :param log_level: Optional Log level to set for the run. If not provided, it will be set to the default log level
         set using `flyte.init()`
+    :param disable_run_cache: Optional If true, the run cache will be disabled. This is useful for testing purposes.
 
     :return: runner
     """
@@ -573,13 +606,14 @@ def with_runcontext(
         raw_data_path=raw_data_path,
         run_base_dir=run_base_dir,
         overwrite_cache=overwrite_cache,
-        env=env,
+        env_vars=env_vars,
         labels=labels,
         annotations=annotations,
         interruptible=interruptible,
         project=project,
         domain=domain,
         log_level=log_level,
+        disable_run_cache=disable_run_cache,
     )
 
 
