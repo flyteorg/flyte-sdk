@@ -11,10 +11,10 @@ from google.protobuf.internal import builder as _builder
 _sym_db = _symbol_database.Default()
 
 
-from union._protos.app import app_definition_pb2 as app_dot_app__definition__pb2
-from union._protos.app import replica_definition_pb2 as app_dot_replica__definition__pb2
+from flyte._protos.app import app_definition_pb2 as app_dot_app__definition__pb2
+from flyte._protos.app import replica_definition_pb2 as app_dot_replica__definition__pb2
 from logs.dataplane import payload_pb2 as logs_dot_dataplane_dot_payload__pb2
-from union._protos.validate.validate import validate_pb2 as validate_dot_validate__pb2
+from flyte._protos.validate.validate import validate_pb2 as validate_dot_validate__pb2
 
 
 DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x1a\x61pp/app_logs_payload.proto\x12\x0c\x63loudidl.app\x1a\x18\x61pp/app_definition.proto\x1a\x1c\x61pp/replica_definition.proto\x1a\x1clogs/dataplane/payload.proto\x1a\x17validate/validate.proto\"\xa9\x01\n\x0fTailLogsRequest\x12;\n\x06\x61pp_id\x18\x01 \x01(\x0b\x32\x18.cloudidl.app.IdentifierB\x08\xfa\x42\x05\x8a\x01\x02\x10\x01H\x00R\x05\x61ppId\x12J\n\nreplica_id\x18\x02 \x01(\x0b\x32\x1f.cloudidl.app.ReplicaIdentifierB\x08\xfa\x42\x05\x8a\x01\x02\x10\x01H\x00R\treplicaIdB\r\n\x06target\x12\x03\xf8\x42\x01\"T\n\x15ReplicaIdentifierList\x12;\n\x08replicas\x18\x01 \x03(\x0b\x32\x1f.cloudidl.app.ReplicaIdentifierR\x08replicas\"\xbb\x01\n\x08LogLines\x12\x18\n\x05lines\x18\x01 \x03(\tB\x02\x18\x01R\x05lines\x12H\n\nreplica_id\x18\x02 \x01(\x0b\x32\x1f.cloudidl.app.ReplicaIdentifierB\x08\xfa\x42\x05\x8a\x01\x02\x10\x01R\treplicaId\x12K\n\x10structured_lines\x18\x03 \x03(\x0b\x32 .cloudidl.logs.dataplane.LogLineR\x0fstructuredLines\";\n\rLogLinesBatch\x12*\n\x04logs\x18\x01 \x03(\x0b\x32\x16.cloudidl.app.LogLinesR\x04logs\"\xfd\x01\n\x10TailLogsResponse\x12K\n\x08replicas\x18\x01 \x01(\x0b\x32#.cloudidl.app.ReplicaIdentifierListB\x08\xfa\x42\x05\x8a\x01\x02\x10\x01H\x00R\x08replicas\x12L\n\tlog_lines\x18\x02 \x01(\x0b\x32!.cloudidl.logs.dataplane.LogLinesB\n\x18\x01\xfa\x42\x05\x8a\x01\x02\x10\x01H\x00R\x08logLines\x12\x41\n\x07\x62\x61tches\x18\x03 \x01(\x0b\x32\x1b.cloudidl.app.LogLinesBatchB\x08\xfa\x42\x05\x8a\x01\x02\x10\x01H\x00R\x07\x62\x61tchesB\x0b\n\x04resp\x12\x03\xf8\x42\x01\x42\xa2\x01\n\x10\x63om.cloudidl.appB\x13\x41ppLogsPayloadProtoH\x02P\x01Z&github.com/unionai/cloud/gen/pb-go/app\xa2\x02\x03\x43\x41X\xaa\x02\x0c\x43loudidl.App\xca\x02\x0c\x43loudidl\\App\xe2\x02\x18\x43loudidl\\App\\GPBMetadata\xea\x02\rCloudidl::Appb\x06proto3')

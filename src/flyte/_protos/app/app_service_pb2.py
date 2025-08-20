@@ -11,7 +11,7 @@ from google.protobuf.internal import builder as _builder
 _sym_db = _symbol_database.Default()
 
 
-from union._protos.app import app_payload_pb2 as app_dot_app__payload__pb2
+from flyte._protos.app import app_payload_pb2 as app_dot_app__payload__pb2
 from google.api import annotations_pb2 as google_dot_api_dot_annotations__pb2
 
 

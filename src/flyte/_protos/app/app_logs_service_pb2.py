@@ -11,7 +11,7 @@ from google.protobuf.internal import builder as _builder
 _sym_db = _symbol_database.Default()
 
 
-from union._protos.app import app_logs_payload_pb2 as app_dot_app__logs__payload__pb2
+from flyte._protos.app import app_logs_payload_pb2 as app_dot_app__logs__payload__pb2
 
 
 DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x1a\x61pp/app_logs_service.proto\x12\x0c\x63loudidl.app\x1a\x1a\x61pp/app_logs_payload.proto2b\n\x0e\x41ppLogsService\x12P\n\x08TailLogs\x12\x1d.cloudidl.app.TailLogsRequest\x1a\x1e.cloudidl.app.TailLogsResponse\"\x03\x90\x02\x01\x30\x01\x42\xa2\x01\n\x10\x63om.cloudidl.appB\x13\x41ppLogsServiceProtoH\x02P\x01Z&github.com/unionai/cloud/gen/pb-go/app\xa2\x02\x03\x43\x41X\xaa\x02\x0c\x43loudidl.App\xca\x02\x0c\x43loudidl\\App\xe2\x02\x18\x43loudidl\\App\\GPBMetadata\xea\x02\rCloudidl::Appb\x06proto3')

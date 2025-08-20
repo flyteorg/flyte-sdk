@@ -1,5 +1,5 @@
-from union._protos.app import app_definition_pb2 as _app_definition_pb2
-from union._protos.validate.validate import validate_pb2 as _validate_pb2
+from flyte._protos.app import app_definition_pb2 as _app_definition_pb2
+from flyte._protos.validate.validate import validate_pb2 as _validate_pb2
 from google.protobuf.internal import containers as _containers
 from google.protobuf import descriptor as _descriptor
 from google.protobuf import message as _message
