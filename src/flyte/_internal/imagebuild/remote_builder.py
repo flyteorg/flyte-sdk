@@ -19,6 +19,7 @@ from flyte._image import (
     CopyConfig,
     DockerIgnore,
     Env,
+    PipOption,
     PipPackages,
     PythonWheels,
     Requirements,
@@ -37,7 +38,7 @@ if TYPE_CHECKING:
     from flyte._protos.imagebuilder import definition_pb2 as image_definition_pb2
 
 IMAGE_TASK_NAME = "build-image"
-OPTIMIZE_TASK_NAME = "optimize_task"
+OPTIMIZE_TASK_NAME = "optimize-task"
 IMAGE_TASK_PROJECT = "system"
 IMAGE_TASK_DOMAIN = "production"
 
@@ -104,7 +105,7 @@ class RemoteImageBuilder(ImageBuilder):
             project=IMAGE_TASK_PROJECT,
             domain=IMAGE_TASK_DOMAIN,
             auto_version="latest",
-        ).override.aio(secrets=Secret("GITHUB_PAT", mount="/etc/flyte/secrets"))
+        ).override.aio(secrets=_get_build_secrets_from_image(image))
         run = cast(
             Run,
             await flyte.with_runcontext(project=IMAGE_TASK_PROJECT, domain=IMAGE_TASK_DOMAIN).run.aio(
@@ -181,11 +182,26 @@ def _get_layers_proto(image: Image, context_path: Path) -> "image_definition_pb2
 
     layers = []
     for layer in image._layers:
+        secret_mounts = None
+        pip_options = None
+
+        if isinstance(layer, PipOption):
+            pip_options = image_definition_pb2.PipOptions(
+                index_url=layer.index_url,
+                extra_index_urls=layer.extra_index_urls,
+                pre=layer.pre,
+                extra_args=layer.extra_args,
+            )
+
+        if hasattr(layer, "secret_mounts"):
+            sc = get_security_context(layer.secret_mounts)
+            secret_mounts = sc.secrets if sc else None
+
         if isinstance(layer, AptPackages):
             apt_layer = image_definition_pb2.Layer(
                 apt_packages=image_definition_pb2.AptPackages(
                     packages=layer.packages,
-                    secret_mounts=get_security_context(layer.secret_mounts).secrets if layer.secret_mounts else None,
+                    secret_mounts=secret_mounts,
                 ),
             )
             layers.append(apt_layer)
@@ -194,13 +210,8 @@ def _get_layers_proto(image: Image, context_path: Path) -> "image_definition_pb2
             wheel_layer = image_definition_pb2.Layer(
                 python_wheels=image_definition_pb2.PythonWheels(
                     dir=str(dst_path.relative_to(context_path)),
-                    options=image_definition_pb2.PipOptions(
-                        index_url=layer.index_url,
-                        extra_index_urls=layer.extra_index_urls,
-                        pre=layer.pre,
-                        extra_args=layer.extra_args,
-                    ),
-                    secret_mounts=get_security_context(layer.secret_mounts).secrets if layer.secret_mounts else None,
+                    options=pip_options,
+                    secret_mounts=secret_mounts,
                 )
             )
             layers.append(wheel_layer)
@@ -210,13 +221,8 @@ def _get_layers_proto(image: Image, context_path: Path) -> "image_definition_pb2
             requirements_layer = image_definition_pb2.Layer(
                 requirements=image_definition_pb2.Requirements(
                     file=str(dst_path.relative_to(context_path)),
-                    options=image_definition_pb2.PipOptions(
-                        index_url=layer.index_url,
-                        extra_index_urls=layer.extra_index_urls,
-                        pre=layer.pre,
-                        extra_args=layer.extra_args,
-                    ),
-                    secret_mounts=get_security_context(layer.secret_mounts).secrets if layer.secret_mounts else None,
+                    options=pip_options,
+                    secret_mounts=secret_mounts,
                 )
             )
             layers.append(requirements_layer)
@@ -233,13 +239,8 @@ def _get_layers_proto(image: Image, context_path: Path) -> "image_definition_pb2
             pip_layer = image_definition_pb2.Layer(
                 pip_packages=image_definition_pb2.PipPackages(
                     packages=packages,
-                    options=image_definition_pb2.PipOptions(
-                        index_url=layer.index_url,
-                        extra_index_urls=layer.extra_index_urls,
-                        pre=layer.pre,
-                        extra_args=layer.extra_args,
-                    ),
-                    secret_mounts=get_security_context(layer.secret_mounts).secrets if layer.secret_mounts else None,
+                    options=pip_options,
+                    secret_mounts=secret_mounts,
                 )
             )
             layers.append(pip_layer)
@@ -260,7 +261,7 @@ def _get_layers_proto(image: Image, context_path: Path) -> "image_definition_pb2
             commands_layer = image_definition_pb2.Layer(
                 commands=image_definition_pb2.Commands(
                     cmd=list(layer.commands),
-                    secret_mounts=get_security_context(layer.secret_mounts).secrets if layer.secret_mounts else None,
+                    secret_mounts=secret_mounts,
                 )
             )
             layers.append(commands_layer)
@@ -300,4 +301,18 @@ def _get_fully_qualified_image_name(outputs: ActionOutputs) -> str:
     return outputs.pb2.literals[0].value.scalar.primitive.string_value
 
 
-def _get_build_secrets_from_image(image: Image) -> Optional[flyte.SecretRequest]: ...
+def _get_build_secrets_from_image(image: Image) -> Optional[typing.List[Secret]]:
+    secrets = []
+    DEFAULT_SECRET_DIR = Path("etc/flyte/secrets")
+    for layer in image._layers:
+        if isinstance(layer, (PipOption, Commands, AptPackages)) and layer.secret_mounts is not None:
+            for secret_mount in layer.secret_mounts:
+                # Mount all the image secrets to a default directory that will be passed to the BuildKit server.
+                if isinstance(secret_mount, Secret):
+                    secrets.append(Secret(key=secret_mount.key, group=secret_mount.group, mount=DEFAULT_SECRET_DIR))
+                elif isinstance(secret_mount, str):
+                    secrets.append(Secret(key=secret_mount, mount=DEFAULT_SECRET_DIR))
+                else:
+                    raise ValueError(f"Unsupported secret_mount type: {type(secret_mount)}")
+
+    return secrets

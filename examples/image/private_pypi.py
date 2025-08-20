@@ -4,13 +4,8 @@ from flyte import Image, Secret
 private_package = "git+https://$GITHUB_PAT@github.com/pingsutw/flytex.git@2e20a2acebfc3877d84af643fdd768edea41d533"
 image = (
     Image.from_debian_base(install_flyte=True)
-    .with_apt_packages("git")
-    .with_pip_packages("mypy", private_package, pre=True, secret_mounts=Secret("GITHUB_PAT"))
-    .with_commands(["env"], secret_mounts=Secret("GITHUB_PAT"))
-    .with_commands(["sh -c 'echo ${GITHUB_PAT}'"], secret_mounts=Secret("GITHUB_PAT"))
-    .with_commands(["echo ${GITHUB_PAT}"], secret_mounts=Secret("GITHUB_PAT"))
-    .with_commands(["echo $GITHUB_PAT"], secret_mounts=Secret("GITHUB_PAT"))
-    .with_commands(["ls /etc/flyte/secrets"], secret_mounts=Secret("GITHUB_PAT", mount="/etc/flyte/secrets"))
+    .with_apt_packages("git", "vim", "curl")
+    .with_pip_packages(private_package, pre=True, secret_mounts=Secret("GITHUB_PAT"))
 )
 
 env = flyte.TaskEnvironment(name="private_package", image=image)
