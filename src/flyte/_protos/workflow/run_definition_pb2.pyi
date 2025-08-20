@@ -323,10 +323,12 @@ class OutputReferences(_message.Message):
     def __init__(self, output_uri: _Optional[str] = ..., report_uri: _Optional[str] = ...) -> None: ...
 
 class Inputs(_message.Message):
-    __slots__ = ["literals"]
+    __slots__ = ["literals", "context"]
     LITERALS_FIELD_NUMBER: _ClassVar[int]
+    CONTEXT_FIELD_NUMBER: _ClassVar[int]
     literals: _containers.RepeatedCompositeFieldContainer[NamedLiteral]
-    def __init__(self, literals: _Optional[_Iterable[_Union[NamedLiteral, _Mapping]]] = ...) -> None: ...
+    context: _containers.RepeatedCompositeFieldContainer[_literals_pb2.KeyValuePair]
+    def __init__(self, literals: _Optional[_Iterable[_Union[NamedLiteral, _Mapping]]] = ..., context: _Optional[_Iterable[_Union[_literals_pb2.KeyValuePair, _Mapping]]] = ...) -> None: ...
 
 class Outputs(_message.Message):
     __slots__ = ["literals"]
