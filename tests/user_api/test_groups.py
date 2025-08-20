@@ -30,6 +30,6 @@ async def test_group_with_run():
     """
     Test the group context manager with runcontext.
     """
-    flyte.init.aio(api_key="")
+    await flyte.init.aio(api_key="")
     await flyte.run.aio(task1)
     assert flyte.ctx() is None

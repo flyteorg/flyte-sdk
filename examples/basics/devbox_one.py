@@ -35,7 +35,14 @@ async def say_hello_nested(data: str = "default string", n: int = 3) -> str:
 
 if __name__ == "__main__":
     flyte.init_from_config("../../config.yaml")
-    run = flyte.with_runcontext(log_level=logging.DEBUG).run(say_hello_nested, data="hello world", n=10)
+    run = flyte.with_runcontext(
+        log_level=logging.DEBUG,
+        env_vars={"KEY": "V"},
+        labels={"Label1": "V1"},
+        annotations={"Ann": "ann"},
+        overwrite_cache=True,
+        interruptible=False,
+    ).run(say_hello_nested, data="hello world", n=10)
     print(run.name)
     print(run.url)
     run.wait()

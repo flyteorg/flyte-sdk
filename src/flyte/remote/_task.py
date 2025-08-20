@@ -283,10 +283,11 @@ class TaskDetails(ToJSONMixin):
     def override(
         self,
         *,
+        friendly_name: Optional[str] = None,
         resources: Optional[flyte.Resources] = None,
         retries: Union[int, flyte.RetryStrategy] = 0,
         timeout: Optional[flyte.TimeoutType] = None,
-        env: Optional[Dict[str, str]] = None,
+        env_vars: Optional[Dict[str, str]] = None,
         secrets: Optional[flyte.SecretRequest] = None,
         **kwargs: Any,
     ) -> TaskDetails:
@@ -296,12 +297,14 @@ class TaskDetails(ToJSONMixin):
                 f"Check the parameters for override method."
             )
         template = self.pb2.spec.task_template
+        if friendly_name:
+            self.pb2.metadata.short_name = friendly_name
         if secrets:
             template.security_context.CopyFrom(get_security_context(secrets))
         if template.HasField("container"):
-            if env:
+            if env_vars:
                 template.container.env.clear()
-                template.container.env.extend([literals_pb2.KeyValuePair(key=k, value=v) for k, v in env.items()])
+                template.container.env.extend([literals_pb2.KeyValuePair(key=k, value=v) for k, v in env_vars.items()])
             if resources:
                 template.container.resources.CopyFrom(get_proto_resources(resources))
         if retries:
@@ -382,6 +385,7 @@ class Task(ToJSONMixin):
     async def listall(
         cls,
         by_task_name: str | None = None,
+        by_task_env: str | None = None,
         project: str | None = None,
         domain: str | None = None,
         sort_by: Tuple[str, Literal["asc", "desc"]] | None = None,
@@ -391,6 +395,7 @@ class Task(ToJSONMixin):
         Get all runs for the current project and domain.
 
         :param by_task_name: If provided, only tasks with this name will be returned.
+        :param by_task_env: If provided, only tasks with this environment prefix will be returned.
         :param project: The project to filter tasks by. If None, the current project will be used.
         :param domain: The domain to filter tasks by. If None, the current domain will be used.
         :param sort_by: The sorting criteria for the project list, in the format (field, order).
@@ -411,6 +416,15 @@ class Task(ToJSONMixin):
                     function=list_pb2.Filter.Function.EQUAL,
                     field="name",
                     values=[by_task_name],
+                )
+            )
+        if by_task_env:
+            # ideally we should have a STARTS_WITH filter, but it is not supported yet
+            filters.append(
+                list_pb2.Filter(
+                    function=list_pb2.Filter.Function.CONTAINS,
+                    field="name",
+                    values=[f"{by_task_env}."],
                 )
             )
         original_limit = limit

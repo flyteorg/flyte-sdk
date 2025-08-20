@@ -1,6 +1,3 @@
-import os
-
-
 def ipython_check() -> bool:
     """
     Check if interface is launching from iPython (not colab)
@@ -15,16 +12,6 @@ def ipython_check() -> bool:
     except (ImportError, NameError):
         pass
     return is_ipython
-
-
-def is_in_cluster() -> bool:
-    """
-    Check if the task is running in a cluster
-    :return is_in_cluster (bool): True or False
-    """
-    if os.getenv("_UN_CLS"):
-        return True
-    return False
 
 
 def ipywidgets_check() -> bool:

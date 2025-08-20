@@ -67,8 +67,13 @@ def markdown(cfg: common.CLIConfig):
     output_verb_groups: dict[str, list[str]] = {}
     output_noun_groups: dict[str, list[str]] = {}
 
+    processed = []
     commands = [*[("flyte", ctx.command)], *walk_commands(ctx)]
     for cmd_path, cmd in commands:
+        if cmd in processed:
+            # We already processed this command, skip it
+            continue
+        processed.append(cmd)
         output.append("")
 
         cmd_path_parts = cmd_path.split(" ")
@@ -136,7 +141,11 @@ def markdown(cfg: common.CLIConfig):
         output_verb_index.append("| ------ | -- |")
         for verb, nouns in output_verb_groups.items():
             entries = [f"[`{noun}`](#flyte-{verb}-{noun})" for noun in nouns]
-            output_verb_index.append(f"| `{verb}` | {', '.join(entries)}  |")
+            if len(entries) == 0:
+                verb_link = f"[`{verb}`](#flyte-{verb})"
+                output_verb_index.append(f"| {verb_link} | - |")
+            else:
+                output_verb_index.append(f"| `{verb}` | {', '.join(entries)}  |")
 
     output_noun_index = []
 

@@ -43,14 +43,14 @@ def test_clone_with_overrides(base_env):
         resources=flyte.Resources(cpu="2", memory="2Gi"),
         cache="custom",
         reusable="yes",
-        env={"A": "B"},
+        env_vars={"A": "B"},
         secrets="sec",
         depends_on=[other],
     )
     assert clone.image == "new_img"
     assert clone.cache == "custom"
     assert clone.reusable == "yes"
-    assert clone.env == {"A": "B"}
+    assert clone.env_vars == {"A": "B"}
     assert clone.secrets == "sec"
     assert clone.depends_on == [other]
 

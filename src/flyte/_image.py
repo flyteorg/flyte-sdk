@@ -279,7 +279,7 @@ class DockerIgnore(Layer):
 @dataclass(frozen=True, repr=True)
 class CopyConfig(Layer):
     path_type: CopyConfigType = field(metadata={"identifier": True})
-    src: Path = field(metadata={"identifier": True})
+    src: Path = field(metadata={"identifier": False})
     dst: str
     src_name: str = field(init=False)
 
@@ -451,11 +451,7 @@ class Image:
         # this default image definition may need to be updated once there is a released pypi version
         from flyte._version import __version__
 
-        dev_mode = (
-            (cls._is_editable_install() or (__version__ and "dev" in __version__))
-            and not flyte_version
-            and install_flyte
-        )
+        dev_mode = (__version__ and "dev" in __version__) and not flyte_version and install_flyte
         if install_flyte is False:
             preset_tag = f"py{python_version[0]}.{python_version[1]}"
         else:
@@ -506,13 +502,6 @@ class Image:
         object.__setattr__(image, "_identifier_override", "auto")
 
         return image
-
-    @staticmethod
-    def _is_editable_install():
-        """Internal hacky function to see if the current install is editable or not."""
-        curr = Path(__file__)
-        pyproject = curr.parent.parent.parent / "pyproject.toml"
-        return pyproject.exists()
 
     @classmethod
     def from_debian_base(

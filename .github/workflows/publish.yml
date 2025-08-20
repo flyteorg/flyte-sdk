@@ -19,6 +19,7 @@ jobs:
           - "plugins/ray"
           - "plugins/spark"
           - "plugins/openai"
+          - "plugins/dask"
     steps:
       - uses: actions/checkout@v4
         with:
@@ -38,7 +39,7 @@ jobs:
       - name: Build and publish
         working-directory: ${{ matrix.workdir }}
         run: |
-          uv run python -m build --wheel --installer uv
+          uv run --prerelease allow python -m build --wheel --installer uv
       - name: Publish
         if: ${{ github.event_name == 'release' }}
         working-directory: ${{ matrix.workdir }}
@@ -49,6 +50,7 @@ jobs:
           uv run python -m twine upload --verbose dist/*
 
   build-and-push-docker-images:
+    needs: pypi
     name: Flyte image for Python ${{ matrix.python-version }}
     runs-on: ubuntu-latest
     strategy:

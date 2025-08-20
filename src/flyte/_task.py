@@ -79,7 +79,7 @@ class TaskTemplate(Generic[P, R]):
     :param reusable: Optional The reusability policy for the task, defaults to None, which means the task environment
     will not be reused across task invocations.
     :param docs: Optional The documentation for the task, if not provided the function docstring will be used.
-    :param env: Optional The environment variables to set for the task.
+    :param env_vars: Optional The environment variables to set for the task.
     :param secrets: Optional The secrets that will be injected into the task at runtime.
     :param timeout: Optional The timeout for the task.
     :param max_inline_io_bytes: Maximum allowed size (in bytes) for all inputs and outputs passed directly to the task
@@ -98,7 +98,7 @@ class TaskTemplate(Generic[P, R]):
     retries: Union[int, RetryStrategy] = 0
     reusable: Union[ReusePolicy, None] = None
     docs: Optional[Documentation] = None
-    env: Optional[Dict[str, str]] = None
+    env_vars: Optional[Dict[str, str]] = None
     secrets: Optional[SecretRequest] = None
     timeout: Optional[TimeoutType] = None
     pod_template: Optional[Union[str, PodTemplate]] = None
@@ -318,14 +318,16 @@ class TaskTemplate(Generic[P, R]):
     def override(
         self,
         *,
+        friendly_name: Optional[str] = None,
         resources: Optional[Resources] = None,
-        cache: CacheRequest = "auto",
+        cache: Optional[CacheRequest] = None,
         retries: Union[int, RetryStrategy] = 0,
         timeout: Optional[TimeoutType] = None,
         reusable: Union[ReusePolicy, Literal["off"], None] = None,
-        env: Optional[Dict[str, str]] = None,
+        env_vars: Optional[Dict[str, str]] = None,
         secrets: Optional[SecretRequest] = None,
         max_inline_io_bytes: int | None = None,
+        pod_template: Optional[Union[str, PodTemplate]] = None,
         **kwargs: Any,
     ) -> TaskTemplate:
         """
@@ -348,7 +350,7 @@ class TaskTemplate(Generic[P, R]):
                     " Reusable tasks will use the parent env's resources. You can disable reusability and"
                     " override resources if needed. (set reusable='off')"
                 )
-            if env is not None:
+            if env_vars is not None:
                 raise ValueError(
                     "Cannot override env when reusable is set."
                     " Reusable tasks will use the parent env's env. You can disable reusability and "
@@ -362,7 +364,7 @@ class TaskTemplate(Generic[P, R]):
                 )
 
         resources = resources or self.resources
-        env = env or self.env
+        env_vars = env_vars or self.env_vars
         secrets = secrets or self.secrets
 
         for k, v in kwargs.items():
@@ -377,14 +379,17 @@ class TaskTemplate(Generic[P, R]):
 
         return replace(
             self,
+            friendly_name=friendly_name or self.friendly_name,
             resources=resources,
             cache=cache,
             retries=retries,
             timeout=timeout,
             reusable=cast(Optional[ReusePolicy], reusable),
-            env=env,
+            env_vars=env_vars,
             secrets=secrets,
             max_inline_io_bytes=max_inline_io_bytes,
+            pod_template=pod_template,
+            **kwargs,
         )
 
 
