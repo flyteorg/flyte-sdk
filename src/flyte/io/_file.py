@@ -104,6 +104,7 @@ class File(BaseModel, Generic[T], SerializableType):
     path: str
     name: Optional[str] = None
     format: str = ""
+    hash: Optional[str] = None
 
     class Config:
         arbitrary_types_allowed = True

@@ -63,9 +63,28 @@ def test_sync_file_read():
     assert "col1,col2" in content
 
 
-@pytest.mark.sandbox
 @pytest.mark.asyncio
 async def test_task_write_file_streaming(ctx_with_test_raw_data_path):
+    flyte.init()
+
+    # Simulate writing a file by streaming it directly to blob storage
+    async def my_task() -> File[pd.DataFrame]:
+        df = pd.DataFrame({"col1": [1, 2], "col2": [3, 4]})
+        file = File.new_remote()
+        async with file.open("wb") as fh:
+            df.to_csv(fh, index=False)
+        return file
+
+    file = await my_task()
+    async with file.open() as f:
+        content = f.read()
+    content = content.decode("utf-8")
+    assert "col1,col2" in content
+
+
+@pytest.mark.sandbox
+@pytest.mark.asyncio
+async def test_task_write_file_streaming_locals3(ctx_with_test_local_s3_stack_raw_data_path):
     flyte.init(storage=S3.for_sandbox())
 
     # Simulate writing a file by streaming it directly to blob storage
