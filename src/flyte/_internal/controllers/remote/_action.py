@@ -208,6 +208,5 @@ class Action:
                     output_uri=outputs_uri,
                     report_uri=report_uri,
                 ),
-                spec=spec,
             ),
         )
