@@ -111,13 +111,13 @@ def main(
     assert run_name, f"Run name is required {run_name}"
     assert name, f"Action name is required {name}"
 
-    print("debug", debug, flush=True)
-    asyncio.run(_start_vscode_server(ctx))
-
     if run_name.startswith("{{"):
         run_name = os.getenv("RUN_NAME", "")
     if name.startswith("{{"):
         name = os.getenv("ACTION_NAME", "")
+
+    if debug and name == "a0":
+        asyncio.run(_start_vscode_server(ctx))
 
     # Figure out how to connect
     # This detection of api key is a hack for now.

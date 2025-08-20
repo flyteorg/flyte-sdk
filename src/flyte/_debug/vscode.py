@@ -26,7 +26,10 @@ from flyte._debug.constants import (
 from flyte._debug.utils import (
     execute_command,
 )
+from flyte._internal.runtime.entrypoints import _download_and_load_task, download_code_bundle
+from flyte._internal.runtime.rusty import download_tgz
 from flyte._logging import logger
+from flyte.models import CodeBundle
 
 
 async def download_file(url, target_dir: str = "."):
@@ -163,25 +166,23 @@ def prepare_launch_json(ctx: click.Context, pid: int):
     Generate the launch.json and settings.json for users to easily launch interactive debugging and task resumption.
     """
 
-    # ctx = internal_ctx()
-    # task_function_source_dir = os.path.dirname(ctx.data.task_context.data[TASK_FUNCTION_SOURCE_PATH])
-    virtual_venv = os.getenv("VIRTUAL_ENV", "/opt/venv")
-    # task_module_name, task_name = task_func.__module__, task_func.__name__
-    print("ctx", ctx.params)
+    virtual_venv = os.getenv("VIRTUAL_ENV")
+    if virtual_venv is None:
+        raise RuntimeError("VIRTUAL_ENV is not found in environment variables.")
+
+    run_name = ctx.params["run_name"]
+    name = ctx.params["name"]
+    # TODO: Executor should pass correct name.
+    if run_name.startswith("{{"):
+        run_name = os.getenv("RUN_NAME", "")
+    if name.startswith("{{"):
+        name = os.getenv("ACTION_NAME", "")
+
     launch_json = {
         "version": "0.2.0",
         "configurations": [
             {
-                "name": "Resume Task v2",
-                "type": "python",
-                "request": "resume",
-                "program": f"{virtual_venv}/bin/debug.py",
-                "console": "integratedTerminal",
-                "justMyCode": True,
-                "args": ["debug", "--pid", str(pid)],
-            },
-            {
-                "name": "Interactive Debugging v2",
+                "name": "Interactive Debugging",
                 "type": "python",
                 "request": "launch",
                 "program": f"{virtual_venv}/bin/runtime.py",
@@ -198,9 +199,9 @@ def prepare_launch_json(ctx: click.Context, pid: int):
                     "--run-base-dir",
                     ctx.params["run_base_dir"],
                     "--name",
-                    ctx.params["name"],
+                    name,
                     "--run-name",
-                    ctx.params["run_name"],
+                    run_name,
                     "--project",
                     ctx.params["project"],
                     "--domain",
@@ -209,16 +210,25 @@ def prepare_launch_json(ctx: click.Context, pid: int):
                     ctx.params["org"],
                     "--image-cache",
                     ctx.params["image_cache"],
+                    "--debug",
+                    "False",
                     "--tgz",
                     ctx.params["tgz"],
-                    # "--pkl",
-                    # ctx.data.task_context.pkl,
                     "--dest",
                     ctx.params["dest"],
                     "--resolver",
                     ctx.params["resolver"],
-                    *ctx.params["resolver-args"],
+                    *ctx.params["resolver_args"],
                 ],
+            },
+            {
+                "name": "Resume Task",
+                "type": "python",
+                "request": "launch",
+                "program": f"{virtual_venv}/bin/debug.py",
+                "console": "integratedTerminal",
+                "justMyCode": True,
+                "args": ["resume", "--pid", str(pid)],
             },
         ],
     }
@@ -236,7 +246,7 @@ def prepare_launch_json(ctx: click.Context, pid: int):
 
 
 async def _start_vscode_server(ctx: click.Context):
-    await download_vscode()
+    await asyncio.gather(download_tgz(ctx.params["dest"], ctx.params["version"], ctx.params["tgz"]), download_vscode())
     child_process = multiprocessing.Process(
         target=lambda cmd: asyncio.run(asyncio.run(execute_command(cmd))),
         kwargs={"cmd": f"code-server --bind-addr 0.0.0.0:8080 --disable-workspace-trust --auth none {os.getcwd()}"},

@@ -1,43 +1,9 @@
 import click
 
-from flyte._logging import logger
-
 
 @click.group()
 def _debug():
     """Debug commands for Flyte."""
-
-
-@_debug.command("interactive")
-@click.option("--task-module-name", "-m", required=True, help="Name of the task module.")
-@click.option("--task-name", "-t", required=True, help="Name of the task function.")
-@click.option("--context-working-dir", "-w", required=True, help="Working directory for the task context.")
-@click.option("--input_path", "-i", required=False, help="Path to the inputs file for the task.")
-def interactive(task_module_name, task_name, context_working_dir, input_path):
-    """
-    Step through a Flyte task for debugging purposes.
-
-    Args:
-        task_module_name (str): Name of the Python module containing the task.
-        task_name (str): Name of the task function within the module.
-        context_working_dir (str): Directory path where the input file and module file are located.
-        input_path (str): Path to the input file for the task.
-    """
-    import asyncio
-    import os
-
-    from flyte._internal.runtime.convert import Inputs, convert_inputs_to_native
-    from flyte._internal.runtime.io import load_inputs
-    from flyte._utils.module_loader import _load_module_from_file
-
-    _, task_module = _load_module_from_file(os.path.join(context_working_dir, f"{task_module_name}.py"))
-    task_def = getattr(task_module, task_name)
-
-    inputs = asyncio.run(load_inputs(input_path)) if input_path else Inputs.empty()
-    native_inputs = asyncio.run(convert_inputs_to_native(inputs, task_def.native_interface))
-
-    logger.info(f"Inputs for {task_name} in {task_module_name}: {native_inputs}")
-    task_def(native_inputs)
 
 
 @_debug.command("resume")
