@@ -12,8 +12,6 @@ from typing import Any, List
 
 import click
 
-from flyte._debug.constants import FLYTE_ENABLE_VSCODE_KEY
-from flyte._debug.vscode import _start_vscode_server
 
 # Todo: work with pvditt to make these the names
 # ACTION_NAME = "_U_ACTION_NAME"
@@ -29,6 +27,7 @@ DOMAIN_NAME = "FLYTE_INTERNAL_TASK_DOMAIN"
 ORG_NAME = "_U_ORG_NAME"
 ENDPOINT_OVERRIDE = "_U_EP_OVERRIDE"
 RUN_OUTPUT_BASE_DIR = "_U_RUN_BASE"
+FLYTE_ENABLE_VSCODE_KEY = "_F_E_VS"
 
 # TODO: Remove this after proper auth is implemented
 _UNION_EAGER_API_KEY_ENV_VAR = "_UNION_EAGER_API_KEY"
@@ -117,6 +116,7 @@ def main(
         name = os.getenv("ACTION_NAME", "")
 
     if debug and name == "a0":
+        from flyte._debug.vscode import _start_vscode_server
         asyncio.run(_start_vscode_server(ctx))
 
     # Figure out how to connect

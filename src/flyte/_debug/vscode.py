@@ -10,8 +10,10 @@ import tarfile
 import time
 from typing import List
 
+import aiofiles
 import click
 import fsspec
+import httpx
 
 from flyte._debug.constants import (
     DEFAULT_CODE_SERVER_DIR_NAMES,
@@ -26,37 +28,34 @@ from flyte._debug.constants import (
 from flyte._debug.utils import (
     execute_command,
 )
-from flyte._internal.runtime.entrypoints import _download_and_load_task, download_code_bundle
 from flyte._internal.runtime.rusty import download_tgz
 from flyte._logging import logger
-from flyte.models import CodeBundle
 
 
-async def download_file(url, target_dir: str = "."):
+async def download_file(url: str, target_dir: str) -> str:
     """
-    Download a file from a given URL using fsspec.
+    Downloads a file from a given URL using HTTPX and saves it locally.
 
     Args:
         url (str): The URL of the file to download.
-        target_dir (str, optional): The directory where the file should be saved. Defaults to current directory.
-
-    Returns:
-        str: The path to the downloaded file.
+        target_dir (str): The directory where the file should be saved. Defaults to current directory.
     """
-    if not url.startswith("http"):
-        raise ValueError(f"URL {url} is not valid. Only http/https is supported.")
+    try:
+        response = httpx.get(url, follow_redirects=True)
+        response.raise_for_status()  # Raise an exception for bad status codes (4xx or 5xx)
 
-    # Derive the local filename from the URL
-    local_file_name = os.path.join(target_dir, os.path.basename(url))
+        filename = os.path.join(target_dir, os.path.basename(url))
+        async with aiofiles.open(filename, "wb") as f:
+            await f.write(response.content)
+        logger.info(f"File '{filename}' downloaded successfully from '{url}'.")
+        return filename
 
-    fs = fsspec.filesystem("http")
-
-    # Use fsspec to get the remote file and save it locally
-    logger.info(f"Downloading {url}... to {os.path.abspath(local_file_name)}")
-    fs.get(url, local_file_name)
-    logger.info("File downloaded successfully!")
-
-    return local_file_name
+    except httpx.RequestError as e:
+        raise RuntimeError(f"An error occurred while requesting '{url}': {e}")
+    except httpx.HTTPStatusError as e:
+        raise RuntimeError(f"HTTP error occurred: {e.response.status_code} - {e.response.text}")
+    except Exception as e:
+        raise RuntimeError(f"An unexpected error occurred: {e}")
 
 
 def get_code_server_info(code_server_info_dict: dict) -> str:
