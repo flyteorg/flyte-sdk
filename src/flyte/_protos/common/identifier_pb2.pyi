@@ -39,6 +39,16 @@ class ClusterConfigIdentifier(_message.Message):
     id: str
     def __init__(self, organization: _Optional[str] = ..., id: _Optional[str] = ...) -> None: ...
 
+class ClusterNodepoolIdentifier(_message.Message):
+    __slots__ = ["organization", "cluster_name", "name"]
+    ORGANIZATION_FIELD_NUMBER: _ClassVar[int]
+    CLUSTER_NAME_FIELD_NUMBER: _ClassVar[int]
+    NAME_FIELD_NUMBER: _ClassVar[int]
+    organization: str
+    cluster_name: str
+    name: str
+    def __init__(self, organization: _Optional[str] = ..., cluster_name: _Optional[str] = ..., name: _Optional[str] = ...) -> None: ...
+
 class UserIdentifier(_message.Message):
     __slots__ = ["subject"]
     SUBJECT_FIELD_NUMBER: _ClassVar[int]

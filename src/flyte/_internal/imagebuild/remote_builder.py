@@ -182,8 +182,10 @@ def _get_layers_proto(image: Image, context_path: Path) -> "image_definition_pb2
     for layer in image._layers:
         if isinstance(layer, AptPackages):
             apt_layer = image_definition_pb2.Layer(
-                apt_packages=image_definition_pb2.AptPackages(packages=layer.packages),
-                secret_mounts=secrets_from_request(layer.secret_mounts) if layer.secret_mounts else None,
+                apt_packages=image_definition_pb2.AptPackages(
+                    packages=layer.packages,
+                    secret_mounts=secrets_from_request(layer.secret_mounts) if layer.secret_mounts else None,
+                ),
             )
             layers.append(apt_layer)
         elif isinstance(layer, PythonWheels):
