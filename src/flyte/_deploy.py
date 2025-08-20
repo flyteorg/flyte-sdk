@@ -14,6 +14,7 @@ import flyte.errors
 from flyte.models import SerializationContext
 from flyte.syncify import syncify
 
+from ._app_environment import AppEnvironment
 from ._environment import Environment
 from ._image import Image
 from ._initialize import ensure_client, get_client, get_common_config, requires_initialization
@@ -23,6 +24,7 @@ from ._task_environment import TaskEnvironment
 
 if TYPE_CHECKING:
     from flyte._protos.workflow import task_definition_pb2
+    from flyte._protos.app import app_definition_pb2
 
     from ._code_bundle import CopyFiles
     from ._internal.imagebuild.image_builder import ImageCache
@@ -129,6 +131,13 @@ async def _deploy_task(
         raise flyte.errors.DeploymentError(
             f"Failed to deploy task {task.name} file{task.source_file} with image {image_uri}, Error: {e!s}"
         ) from e
+    
+
+async def _deploy_app(app: AppEnvironment, serialization_context: SerializationContext) -> app_definition_pb2.App:
+    """
+    Deploy the given app.
+    """
+    import ipdb; ipdb.set_trace()
 
 
 async def _build_image_bg(env_name: str, image: Image) -> Tuple[str, str]:
@@ -204,6 +213,7 @@ async def apply(deployment_plan: DeploymentPlan, copy_style: CopyFiles, dryrun: 
     )
 
     tasks = []
+    apps = []
 
     for env_name, env in deployment_plan.envs.items():
         logger.info(f"Deploying environment {env_name}")
@@ -211,7 +221,9 @@ async def apply(deployment_plan: DeploymentPlan, copy_style: CopyFiles, dryrun: 
         if isinstance(env, TaskEnvironment):
             for task in env.tasks.values():
                 tasks.append(_deploy_task(task, dryrun=dryrun, serialization_context=sc))
-    return Deployment(envs=deployment_plan.envs, deployed_tasks=await asyncio.gather(*tasks))
+        if isinstance(env, AppEnvironment):
+            apps.append(_deploy_app(env.app, dryrun=dryrun, serialization_context=sc))
+    return Deployment(envs=deployment_plan.envs, deployed_tasks=await asyncio.gather(*tasks, *apps))
 
 
 def _recursive_discover(planned_envs: Dict[str, Environment], env: Environment) -> Dict[str, Environment]:
