@@ -8,7 +8,7 @@ env = flyte.TaskEnvironment(
     reusable=flyte.ReusePolicy(
         replicas=10,
         idle_ttl=60,
-        concurrency=5,
+        concurrency=50,
         scaledown_ttl=60,
     ),
     image=flyte.Image.from_debian_base().with_pip_packages("unionai-reuse==0.1.4"),
@@ -17,7 +17,6 @@ env = flyte.TaskEnvironment(
 
 @env.task
 async def noop(x: int) -> int:
-    await asyncio.sleep(1)
     return x
 
 
@@ -30,8 +29,8 @@ async def reuse_concurrency(n: int = 50) -> int:
 
 if __name__ == "__main__":
     flyte.init_from_config("../../config.yaml")
-    run = flyte.with_runcontext().run(reuse_concurrency, n=1000)
-    print(run.name)
-    print(run.url)
-    run.wait()
-    print(run.outputs())
+    runs = []
+    for i in range(10):
+        run = flyte.run(reuse_concurrency, n=1000)
+        runs.append(run.url)
+    print(runs)
