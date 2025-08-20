@@ -78,7 +78,7 @@ jobs:
           uv run python -m twine upload --verbose dist/*
 
   build-and-push-docker-images:
-    needs: pypi
+    needs: flyte-pypi
     name: Flyte image for Python ${{ matrix.python-version }}
     runs-on: ubuntu-latest
     strategy:
