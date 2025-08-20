@@ -14,8 +14,8 @@ import aiofiles
 import click
 import httpx
 
+from flyte import storage
 from flyte._debug.constants import (
-    DEFAULT_CODE_SERVER_DIR_NAMES,
     DEFAULT_CODE_SERVER_EXTENSIONS,
     DEFAULT_CODE_SERVER_REMOTE_PATHS,
     DOWNLOAD_DIR,
@@ -44,8 +44,11 @@ async def download_file(url: str, target_dir: str) -> str:
         response.raise_for_status()  # Raise an exception for bad status codes (4xx or 5xx)
 
         filename = os.path.join(target_dir, os.path.basename(url))
-        async with aiofiles.open(filename, "wb") as f:
-            await f.write(response.content)
+        if url.startswith("http"):
+            async with aiofiles.open(filename, "wb") as f:
+                await f.write(response.content)
+        else:
+            await storage.get(url, filename)
         logger.info(f"File '{filename}' downloaded successfully from '{url}'.")
         return filename
 
@@ -57,7 +60,14 @@ async def download_file(url: str, target_dir: str) -> str:
         raise RuntimeError(f"An unexpected error occurred: {e}")
 
 
-def get_code_server_info(code_server_info_dict: dict) -> str:
+def get_default_extensions() -> List[str]:
+    extensions = os.getenv("FLYTE_DEFAULT_CODE_SERVER_EXTENSIONS")
+    if extensions is not None:
+        return extensions.split(",")
+    return DEFAULT_CODE_SERVER_EXTENSIONS
+
+
+def get_code_server_info() -> str:
     """
     Returns the code server information based on the system's architecture.
 
@@ -65,19 +75,19 @@ def get_code_server_info(code_server_info_dict: dict) -> str:
     code server information from the provided dictionary. The function currently
     supports AMD64 and ARM64 architectures.
 
-    Args:
-        code_server_info_dict (dict): A dictionary containing code server information.
-            The keys should be the architecture type ('amd64' or 'arm64') and the values
-            should be the corresponding code server information.
-
     Returns:
         str: The code server information corresponding to the system's architecture.
 
     Raises:
         ValueError: If the system's architecture is not AMD64 or ARM64.
     """
+    code_server_path = os.getenv("FLYTE_DEFAULT_CODE_SERVER_REMOTE_PATH")
+    if code_server_path is not None:
+        return code_server_path
+
     machine_info = platform.machine()
     logger.info(f"machine type: {machine_info}")
+    code_server_info_dict = DEFAULT_CODE_SERVER_REMOTE_PATHS
 
     if "aarch64" == machine_info:
         return code_server_info_dict["arm64"]
@@ -129,7 +139,7 @@ async def download_vscode():
 
         logger.info(f"Start downloading files to {DOWNLOAD_DIR}")
         # Download remote file to local
-        code_server_remote_path = get_code_server_info(DEFAULT_CODE_SERVER_REMOTE_PATHS)
+        code_server_remote_path = get_code_server_info()
         code_server_tar_path = await download_file(code_server_remote_path, str(DOWNLOAD_DIR))
 
         # Extract the tarball
@@ -137,7 +147,7 @@ async def download_vscode():
             tar.extractall(path=DOWNLOAD_DIR)
 
     if os.path.exists(DOWNLOAD_DIR):
-        code_server_dir_name = get_code_server_info(DEFAULT_CODE_SERVER_DIR_NAMES)
+        code_server_dir_name = os.path.basename(get_code_server_info())
         code_server_bin_dir = os.path.join(DOWNLOAD_DIR, code_server_dir_name, "bin")
         # Add the directory of code-server binary to $PATH
         os.environ["PATH"] = code_server_bin_dir + os.pathsep + os.environ["PATH"]
@@ -146,7 +156,7 @@ async def download_vscode():
     installed_extensions = get_installed_extensions()
     coros = []
 
-    for extension in DEFAULT_CODE_SERVER_EXTENSIONS:
+    for extension in get_default_extensions():
         if not is_extension_installed(extension, installed_extensions):
             coros.append(download_file(extension, str(DOWNLOAD_DIR)))
     extension_paths = await asyncio.gather(*coros)
