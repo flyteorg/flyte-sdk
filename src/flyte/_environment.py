@@ -36,7 +36,7 @@ class Environment:
     :param name: Name of the environment
     :param image: Docker image to use for the environment. If set to "auto", will use the default image.
     :param resources: Resources to allocate for the environment.
-    :param env: Environment variables to set for the environment.
+    :param env_vars: Environment variables to set for the environment.
     :param secrets: Secrets to inject into the environment.
     :param depends_on: Environment dependencies to hint, so when you deploy the environment, the dependencies are
         also deployed. This is useful when you have a set of environments that depend on each other.
@@ -47,7 +47,7 @@ class Environment:
     pod_template: Optional[Union[str, "V1PodTemplate"]] = None
     description: Optional[str] = None
     secrets: Optional[SecretRequest] = None
-    env: Optional[Dict[str, str]] = None
+    env_vars: Optional[Dict[str, str]] = None
     resources: Optional[Resources] = None
     image: Union[str, Image, Literal["auto"]] = "auto"
 
@@ -75,7 +75,7 @@ class Environment:
         name: str,
         image: Optional[Union[str, Image, Literal["auto"]]] = None,
         resources: Optional[Resources] = None,
-        env: Optional[Dict[str, str]] = None,
+        env_vars: Optional[Dict[str, str]] = None,
         secrets: Optional[SecretRequest] = None,
         depends_on: Optional[List[Environment]] = None,
         **kwargs: Any,
@@ -94,8 +94,8 @@ class Environment:
             kwargs["resources"] = self.resources
         if self.secrets is not None:
             kwargs["secrets"] = self.secrets
-        if self.env is not None:
-            kwargs["env"] = self.env
+        if self.env_vars is not None:
+            kwargs["env_vars"] = self.env_vars
         if self.pod_template is not None:
             kwargs["pod_template"] = self.pod_template
         if self.description is not None:
