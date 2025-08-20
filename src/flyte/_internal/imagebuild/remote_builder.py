@@ -28,8 +28,9 @@ from flyte._image import (
 )
 from flyte._internal.imagebuild.image_builder import ImageBuilder, ImageChecker
 from flyte._internal.imagebuild.utils import copy_files_to_context
+from flyte._internal.runtime.task_serde import get_security_context
 from flyte._logging import logger
-from flyte._secret import secrets_from_request
+from flyte._secret import Secret
 from flyte.remote import ActionOutputs, Run
 
 if TYPE_CHECKING:
@@ -98,12 +99,12 @@ class RemoteImageBuilder(ImageBuilder):
         spec, context = await _validate_configuration(image)
 
         start = datetime.now(timezone.utc)
-        entity = remote.Task.get(
+        entity = await remote.Task.get(
             name=IMAGE_TASK_NAME,
             project=IMAGE_TASK_PROJECT,
             domain=IMAGE_TASK_DOMAIN,
             auto_version="latest",
-        )
+        ).override.aio(secrets=Secret("GITHUB_PAT", mount="/etc/flyte/secrets"))
         run = cast(
             Run,
             await flyte.with_runcontext(project=IMAGE_TASK_PROJECT, domain=IMAGE_TASK_DOMAIN).run.aio(
@@ -184,7 +185,7 @@ def _get_layers_proto(image: Image, context_path: Path) -> "image_definition_pb2
             apt_layer = image_definition_pb2.Layer(
                 apt_packages=image_definition_pb2.AptPackages(
                     packages=layer.packages,
-                    secret_mounts=secrets_from_request(layer.secret_mounts) if layer.secret_mounts else None,
+                    secret_mounts=get_security_context(layer.secret_mounts).secrets if layer.secret_mounts else None,
                 ),
             )
             layers.append(apt_layer)
@@ -199,7 +200,7 @@ def _get_layers_proto(image: Image, context_path: Path) -> "image_definition_pb2
                         pre=layer.pre,
                         extra_args=layer.extra_args,
                     ),
-                    secret_mounts=secrets_from_request(layer.secret_mounts) if layer.secret_mounts else None,
+                    secret_mounts=get_security_context(layer.secret_mounts).secrets if layer.secret_mounts else None,
                 )
             )
             layers.append(wheel_layer)
@@ -215,7 +216,7 @@ def _get_layers_proto(image: Image, context_path: Path) -> "image_definition_pb2
                         pre=layer.pre,
                         extra_args=layer.extra_args,
                     ),
-                    secret_mounts=secrets_from_request(layer.secret_mounts) if layer.secret_mounts else None,
+                    secret_mounts=get_security_context(layer.secret_mounts).secrets if layer.secret_mounts else None,
                 )
             )
             layers.append(requirements_layer)
@@ -238,7 +239,7 @@ def _get_layers_proto(image: Image, context_path: Path) -> "image_definition_pb2
                         pre=layer.pre,
                         extra_args=layer.extra_args,
                     ),
-                    secret_mounts=secrets_from_request(layer.secret_mounts) if layer.secret_mounts else None,
+                    secret_mounts=get_security_context(layer.secret_mounts).secrets if layer.secret_mounts else None,
                 )
             )
             layers.append(pip_layer)
@@ -257,7 +258,10 @@ def _get_layers_proto(image: Image, context_path: Path) -> "image_definition_pb2
             layers.append(uv_layer)
         elif isinstance(layer, Commands):
             commands_layer = image_definition_pb2.Layer(
-                commands=image_definition_pb2.Commands(cmd=list(layer.commands))
+                commands=image_definition_pb2.Commands(
+                    cmd=list(layer.commands),
+                    secret_mounts=get_security_context(layer.secret_mounts).secrets if layer.secret_mounts else None,
+                )
             )
             layers.append(commands_layer)
         elif isinstance(layer, DockerIgnore):
@@ -294,3 +298,6 @@ def _get_layers_proto(image: Image, context_path: Path) -> "image_definition_pb2
 
 def _get_fully_qualified_image_name(outputs: ActionOutputs) -> str:
     return outputs.pb2.literals[0].value.scalar.primitive.string_value
+
+
+def _get_build_secrets_from_image(image: Image) -> Optional[flyte.SecretRequest]: ...
