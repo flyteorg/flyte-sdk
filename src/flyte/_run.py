@@ -19,8 +19,6 @@ from flyte._initialize import (
 )
 from flyte._logging import logger
 from flyte._task import P, R, TaskTemplate
-from flyte._tools import ipython_check
-from flyte.errors import InitializationError
 from flyte.models import (
     ActionID,
     Checkpoints,
@@ -89,13 +87,15 @@ class _Runner:
         overwrite_cache: bool = False,
         project: str | None = None,
         domain: str | None = None,
-        env: Dict[str, str] | None = None,
+        env_vars: Dict[str, str] | None = None,
         labels: Dict[str, str] | None = None,
         annotations: Dict[str, str] | None = None,
         interruptible: bool = False,
         log_level: int | None = None,
         disable_run_cache: bool = False,
     ):
+        from flyte._tools import ipython_check
+
         init_config = _get_init_config()
         client = init_config.client if init_config else None
         if not force_mode and client is not None:
@@ -116,7 +116,7 @@ class _Runner:
         self._overwrite_cache = overwrite_cache
         self._project = project
         self._domain = domain
-        self._env = env
+        self._env_vars = env_vars
         self._labels = labels
         self._annotations = annotations
         self._interruptible = interruptible
@@ -198,7 +198,7 @@ class _Runner:
             task_spec = translate_task_to_wire(obj, s_ctx)
             inputs = await convert_from_native_to_inputs(obj.native_interface, *args, **kwargs)
 
-        env = self._env or {}
+        env = self._env_vars or {}
         if self._log_level:
             env["LOG_LEVEL"] = str(self._log_level)
         else:
@@ -207,7 +207,7 @@ class _Runner:
         if not self._dry_run:
             if get_client() is None:
                 # This can only happen, if the user forces flyte.run(mode="remote") without initializing the client
-                raise InitializationError(
+                raise flyte.errors.InitializationError(
                     "ClientNotInitializedError",
                     "user",
                     "flyte.run requires client to be initialized. "
@@ -542,7 +542,7 @@ def with_runcontext(
     overwrite_cache: bool = False,
     project: str | None = None,
     domain: str | None = None,
-    env: Dict[str, str] | None = None,
+    env_vars: Dict[str, str] | None = None,
     labels: Dict[str, str] | None = None,
     annotations: Dict[str, str] | None = None,
     interruptible: bool = False,
@@ -582,7 +582,7 @@ def with_runcontext(
     :param overwrite_cache: Optional If true, the cache will be overwritten for the run
     :param project: Optional The project to use for the run
     :param domain: Optional The domain to use for the run
-    :param env: Optional Environment variables to set for the run
+    :param env_vars: Optional Environment variables to set for the run
     :param labels: Optional Labels to set for the run
     :param annotations: Optional Annotations to set for the run
     :param interruptible: Optional If true, the run can be interrupted by the user.
@@ -606,7 +606,7 @@ def with_runcontext(
         raw_data_path=raw_data_path,
         run_base_dir=run_base_dir,
         overwrite_cache=overwrite_cache,
-        env=env,
+        env_vars=env_vars,
         labels=labels,
         annotations=annotations,
         interruptible=interruptible,

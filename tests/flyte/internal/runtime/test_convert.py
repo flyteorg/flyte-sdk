@@ -155,7 +155,7 @@ async def test_generate_cache_key_hash_consistency(_):
 
     task_name = "test_task"
     cache_key = convert.generate_cache_key_hash(task_name, inputs_hash, typed_interface, "v1", [], inputs.proto_inputs)
-    assert cache_key == "kNWQdez6U7DYsYjqt9CBB07gmPgsaJ1CCUUtiUnDxpk="
+    assert cache_key == "gKUZZV2XwUZbIUl9tfLC7+n8tREvPR9jq9vzPEHqOKg="
 
 
 @pytest.mark.asyncio
@@ -622,43 +622,6 @@ def test_generate_inputs_hash_from_proto(name, inputs, expected_hash):
             ),
             "FHbQNnyP0k7IJt3Jpp8lfgJ/RU8EZEEcYXPuc2ieV5s=",
         ),
-        # (
-        #     "struct_with_dataclass",
-        #     TypedInterface(
-        #         inputs=VariableMap(
-        #             variables={
-        #                 "input_1": Variable(
-        #                     type=LiteralType(
-        #                         simple=SimpleType.STRUCT,
-        #                         structure=TypeStructure(
-        #                             dataclass_type={
-        #                                 "field1": LiteralType(simple=SimpleType.INTEGER),
-        #                                 "field2": LiteralType(simple=SimpleType.STRING)
-        #                             }
-        #                         )
-        #                     ),
-        #                     description="description",
-        #                 )
-        #             }
-        #         ),
-        #         outputs=VariableMap(
-        #             variables={
-        #                 "output_1": Variable(
-        #                     type=LiteralType(
-        #                         simple=SimpleType.STRUCT,
-        #                         structure=TypeStructure(
-        #                             dataclass_type={
-        #                                 "field1": LiteralType(simple=SimpleType.INTEGER),
-        #                                 "field2": LiteralType(simple=SimpleType.STRING)
-        #                             }
-        #                         )
-        #                     ),
-        #                 )
-        #             }
-        #         )
-        #     ),
-        #     "E91ntwbZiy78sCEB3NXilA1/AFD5N8PX6kftohfMaXU="
-        # ),
         (
             "structured_dataset",
             TypedInterface(

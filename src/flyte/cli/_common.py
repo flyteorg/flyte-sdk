@@ -336,10 +336,7 @@ class FileGroup(GroupBase):
         return self._files
 
     def list_commands(self, ctx):
-        return [
-            "reference-task",
-            *self.files,
-        ]
+        return self.files
 
     def get_command(self, ctx, filename):
         raise NotImplementedError
@@ -366,7 +363,6 @@ def format(title: str, vals: Iterable[Any], of: OutputFormat = "table") -> Table
     """
     Get a table from a list of values.
     """
-
     match of:
         case "table-simple":
             return _table_format(Table(title, box=None), vals)

@@ -20,6 +20,8 @@ from . import _common as common
 from ._common import CLIConfig
 from ._params import to_click_option
 
+RUN_REMOTE_CMD = "deployed-task"
+
 
 @lru_cache()
 def _initialize_config(ctx: Context, project: str, domain: str):
@@ -279,7 +281,7 @@ class ReferenceEnvGroup(common.GroupBase):
             run_args=self.run_args,
             name=name,
             version=None,
-            help=f"Run reference task '{name}' from the Flyte backend",
+            help=f"Run deployed task '{name}' from the Flyte backend",
         )
 
 
@@ -380,10 +382,16 @@ class TaskFiles(common.FileGroup):
         kwargs["params"].extend(RunArguments.options())
         super().__init__(*args, directory=directory, **kwargs)
 
+    def list_commands(self, ctx):
+        return [
+            RUN_REMOTE_CMD,
+            *self.files,
+        ]
+
     def get_command(self, ctx, cmd_name):
         run_args = RunArguments.from_dict(ctx.params)
 
-        if cmd_name == "reference-task":
+        if cmd_name == RUN_REMOTE_CMD:
             return ReferenceTaskGroup(
                 name=cmd_name,
                 run_args=run_args,
@@ -408,10 +416,10 @@ class TaskFiles(common.FileGroup):
 
 run = TaskFiles(
     name="run",
-    help="""
-Run a task from a python file or reference a remote task.
+    help=f"""
+Run a task from a python file or deployed task.
 
-To run a remote task that already exists in Flyte, use the reference-task command:
+To run a remote task that already exists in Flyte, use the {RUN_REMOTE_CMD} command:
 
 Example usage:
 
@@ -429,28 +437,28 @@ Flyte environment:
 flyte run --local hello.py my_task --arg1 value1 --arg2 value2
 ```
 
-To run tasks that you've already deployed to Flyte, use the reference-task command:
+To run tasks that you've already deployed to Flyte, use the {RUN_REMOTE_CMD} command:
 
 ```bash
-flyte run reference-task my_env.my_task --arg1 value1 --arg2 value2
+flyte run {RUN_REMOTE_CMD} my_env.my_task --arg1 value1 --arg2 value2
 ```
 
-To run a specific version of a reference task, use the `env.task:version` syntax:
+To run a specific version of a deployed task, use the `env.task:version` syntax:
 
 ```bash
-flyte run reference-task my_env.my_task:xyz123 --arg1 value1 --arg2 value2
+flyte run {RUN_REMOTE_CMD} my_env.my_task:xyz123 --arg1 value1 --arg2 value2
 ```
 
 You can specify the `--config` flag to point to a specific Flyte cluster:
 
 ```bash
-flyte run --config my-config.yaml reference-task ...
+flyte run --config my-config.yaml {RUN_REMOTE_CMD} ...
 ```
 
-You can discover what reference tasks are available by running:
+You can discover what deployed tasks are available by running:
 
 ```bash
-flyte run reference-task
+flyte run {RUN_REMOTE_CMD}
 ```
 
 Other arguments to the run command are listed below.

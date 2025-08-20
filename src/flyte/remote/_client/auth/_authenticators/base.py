@@ -34,6 +34,7 @@ class Authenticator(object):
         http_proxy_url: typing.Optional[str] = None,
         verify: bool = True,
         ca_cert_path: typing.Optional[str] = None,
+        default_header_key: str = "authorization",
         **kwargs,
     ):
         """
@@ -80,6 +81,7 @@ class Authenticator(object):
         self._http_session = http_session or get_async_session(**kwargs)
         # Id for tracking credential refresh state
         self._creds_id = self._creds.id if self._creds else None
+        self._default_header_key = default_header_key
 
     async def _resolve_config(self) -> ClientConfig:
         """
@@ -131,10 +133,14 @@ class Authenticator(object):
         """
         creds = self.get_credentials()
         if creds:
-            cfg = await self._resolve_config()
+            header_key = self._default_header_key
+            if self._resolved_config is not None:
+                # We only resolve the config during authentication flow, to avoid unnecessary network calls
+                # and usually the header_key is consistent.
+                header_key = self._resolved_config.header_key
             return GrpcAuthMetadata(
                 creds_id=creds.id,
-                pairs=Metadata((cfg.header_key, f"Bearer {creds.access_token}")),
+                pairs=Metadata((header_key, f"Bearer {creds.access_token}")),
             )
         return None
 
