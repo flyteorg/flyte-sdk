@@ -1,11 +1,8 @@
 from __future__ import annotations
 
 import asyncio
-import os
 import weakref
-from abc import ABC, abstractmethod
 from dataclasses import dataclass, field, replace
-from functools import wraps
 from inspect import iscoroutinefunction
 from typing import (
     TYPE_CHECKING,
@@ -31,13 +28,11 @@ from ._cache import Cache, CacheRequest
 from ._context import internal_ctx
 from ._doc import Documentation
 from ._image import Image
-from ._logging import logger
 from ._resources import Resources
 from ._retry import RetryStrategy
 from ._reusable_environment import ReusePolicy
 from ._secret import SecretRequest
 from ._timeout import TimeoutType
-from ._utils.helpers import str2bool
 from .models import MAX_INLINE_IO_BYTES, NativeInterface, SerializationContext
 
 if TYPE_CHECKING:

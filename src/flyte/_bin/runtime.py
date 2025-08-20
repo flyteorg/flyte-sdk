@@ -6,18 +6,14 @@ Refrain from importing any modules here. If you need to import any modules, do i
 """
 
 import asyncio
-import multiprocessing
 import os
 import sys
-import time
 from typing import Any, List
 
 import click
 
 from flyte._debug.constants import FLYTE_ENABLE_VSCODE_KEY
-from flyte._debug.utils import execute_command
-from flyte._debug.vscode_lib.decorator import download_vscode, prepare_launch_json
-from flyte._logging import logger
+from flyte._debug.vscode import _start_vscode_server
 
 # Todo: work with pvditt to make these the names
 # ACTION_NAME = "_U_ACTION_NAME"
@@ -56,7 +52,7 @@ def _pass_through():
 @click.option("--project", envvar=PROJECT_NAME, required=False)
 @click.option("--domain", envvar=DOMAIN_NAME, required=False)
 @click.option("--org", envvar=ORG_NAME, required=False)
-@click.option("--debug", envvar=FLYTE_ENABLE_VSCODE_KEY, required=False)
+@click.option("--debug", envvar=FLYTE_ENABLE_VSCODE_KEY, type=click.BOOL, required=False)
 @click.option("--image-cache", required=False)
 @click.option("--tgz", required=False)
 @click.option("--pkl", required=False)
@@ -75,6 +71,7 @@ def main(
     project: str,
     domain: str,
     org: str,
+    debug: bool,
     image_cache: str,
     version: str,
     inputs: str,
@@ -113,6 +110,9 @@ def main(
     assert domain, "Domain is required"
     assert run_name, f"Run name is required {run_name}"
     assert name, f"Action name is required {name}"
+
+    print("debug", debug, flush=True)
+    asyncio.run(_start_vscode_server(ctx))
 
     if run_name.startswith("{{"):
         run_name = os.getenv("RUN_NAME", "")

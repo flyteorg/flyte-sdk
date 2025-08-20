@@ -1,5 +1,4 @@
 import asyncio
-import inspect
 import json
 import multiprocessing
 import os
@@ -9,104 +8,25 @@ import subprocess
 import sys
 import tarfile
 import time
-from pathlib import Path
-from typing import Callable, List, Optional
+from typing import List
 
 import click
 import fsspec
 
-from flyte._context import internal_ctx
-from flyte._debug.constants import EXIT_CODE_SUCCESS, MAX_IDLE_SECONDS
+from flyte._debug.constants import (
+    DEFAULT_CODE_SERVER_DIR_NAMES,
+    DEFAULT_CODE_SERVER_EXTENSIONS,
+    DEFAULT_CODE_SERVER_REMOTE_PATHS,
+    DOWNLOAD_DIR,
+    EXECUTABLE_NAME,
+    EXIT_CODE_SUCCESS,
+    HEARTBEAT_PATH,
+    MAX_IDLE_SECONDS,
+)
 from flyte._debug.utils import (
     execute_command,
 )
-from flyte._debug.vscode_lib.config import VscodeConfig
-from flyte._debug.vscode_lib.constants import (
-    DOWNLOAD_DIR,
-    EXECUTABLE_NAME,
-    HEARTBEAT_PATH,
-    INTERACTIVE_DEBUGGING_FILE_NAME,
-    RESUME_TASK_FILE_NAME,
-    TASK_FUNCTION_SOURCE_PATH, DEFAULT_CODE_SERVER_REMOTE_PATHS, DEFAULT_CODE_SERVER_DIR_NAMES,
-    DEFAULT_CODE_SERVER_EXTENSIONS,
-)
 from flyte._logging import logger
-from flyte._task import ClassDecorator, TaskTemplate
-from flyte._tools import is_in_cluster
-from flyte._utils.module_loader import _load_module_from_file
-
-
-async def exit_handler(
-    child_process: multiprocessing.Process,
-    task_function,
-    args,
-    kwargs,
-    max_idle_seconds: int = 180,
-    post_execute: Optional[Callable] = None,
-):
-    """
-    1. Check the modified time of ~/.local/share/code-server/heartbeat.
-       If it is older than max_idle_second seconds, kill the container.
-       Otherwise, check again every HEARTBEAT_CHECK_SECONDS.
-    2. Wait for user to resume the task. If resume_task is set, terminate the VSCode server,
-     reload the task function, and run it with the input of the task.
-
-    Args:
-        child_process (multiprocessing.Process, optional): The process to be terminated.
-        max_idle_seconds (int, optional): The duration in seconds to live after no activity detected.
-        post_execute (function, optional): The function to be executed before the vscode is self-terminated.
-    """
-
-    def terminate_process():
-        if post_execute is not None:
-            post_execute()
-            logger.info("Post execute function executed successfully!")
-        if child_process.is_alive():
-            child_process.terminate()
-        child_process.join()
-
-    start_time = time.time()
-    check_interval = 60  # Interval for heartbeat checking in seconds
-    last_heartbeat_check = time.time() - check_interval
-
-    logger.info("waiting for task to resume...")
-    while child_process.is_alive():
-        current_time = time.time()
-        if current_time - last_heartbeat_check >= check_interval:
-            last_heartbeat_check = current_time
-            if not os.path.exists(HEARTBEAT_PATH):
-                delta = current_time - start_time
-                logger.info(f"Code server has not been connected since {delta} seconds ago.")
-                logger.info("Please open the browser to connect to the running server.")
-            else:
-                delta = current_time - os.path.getmtime(HEARTBEAT_PATH)
-                logger.info(f"The latest activity on code server is {delta} seconds ago.")
-
-            # If the time from last connection is longer than max idle seconds, terminate the vscode server.
-            if delta > max_idle_seconds:
-                logger.info(f"VSCode server is idle for more than {max_idle_seconds} seconds. Terminating...")
-                terminate_process()
-                sys.exit()
-
-        await asyncio.sleep(1)
-
-    logger.info("User has resumed the task.")
-    terminate_process()
-
-    # Reload the task function since it may be modified.
-    ctx = internal_ctx()
-    if ctx.data.task_context is None:
-        raise RuntimeError("Task context was not provided.")
-    task_function_source_path = ctx.data.task_context.data[TASK_FUNCTION_SOURCE_PATH]
-    _, module = _load_module_from_file(Path(task_function_source_path))
-    task = getattr(
-        module,
-        task_function.__name__,
-    )
-
-    # Get the actual function from the task.
-    task_function = task.func.__wrapped__
-    return await task_function(*args, **kwargs)
 
 
 async def download_file(url, target_dir: str = "."):
@@ -238,75 +158,6 @@ async def download_vscode():
     await asyncio.gather(*coros)
 
 
-def prepare_interactive_python(task_function):
-    """
-    1. Copy the original task file to the context working directory.
-     This ensures that the inputs.pb can be loaded, as loading requires the original task interface.
-       By doing so, even if users change the task interface in their code,
-        we can use the copied task file to load the inputs as native Python objects.
-    2. Generate a Python script and a launch.json for users to debug interactively.
-
-    Args:
-        task_function (function): User's task function.
-    """
-
-    ctx = internal_ctx()
-    task_function_source_path = ctx.data.task_context.data[TASK_FUNCTION_SOURCE_PATH]
-    context_working_dir = os.getcwd()
-
-    # Copy the user's Python file to the working directory.
-    shutil.copy(
-        task_function_source_path,
-        os.path.join(context_working_dir, os.path.basename(task_function_source_path)),
-    )
-
-    # Generate a Python script
-    task_module_name, task_name = task_function.__module__, task_function.__name__
-    python_script = f"""# This file is auto-generated by flytekit
-
-from {task_module_name} import {task_name}
-from flytekit.interactive import get_task_inputs
-
-if __name__ == "__main__":
-    inputs = get_task_inputs(
-        task_module_name="{task_module_name.split(".")[-1]}",
-        task_name="{task_name}",
-        context_working_dir="{context_working_dir}",
-    )
-    # You can modify the inputs! Ex: inputs['a'] = 5
-    print({task_name}(**inputs))
-"""
-
-    task_function_source_dir = os.path.dirname(task_function_source_path)
-    with open(os.path.join(task_function_source_dir, INTERACTIVE_DEBUGGING_FILE_NAME), "w") as file:
-        file.write(python_script)
-
-
-def prepare_resume_task_python(pid: int):
-    """
-    Generate a Python script for users to resume the task.
-    """
-
-    python_script = f"""import os
-import signal
-
-if __name__ == "__main__":
-    print("Terminating server and resuming task.")
-    answer = input("This operation will kill the server. All unsaved data will be lost, and you will no longer be able to connect to it. Do you really want to terminate? (Y/N): ").strip().upper()
-    if answer == 'Y':
-        os.kill({pid}, signal.SIGTERM)
-        print(f"The server has been terminated and the task has been resumed.")
-    else:
-        print("Operation canceled.")
-"""  # noqa: E501
-    ctx = internal_ctx()
-    if ctx.data.task_context is None:
-        raise RuntimeError("Task context was not provided.")
-    task_function_source_dir = os.path.dirname(ctx.data.task_context.data[TASK_FUNCTION_SOURCE_PATH])
-    with open(os.path.join(task_function_source_dir, RESUME_TASK_FILE_NAME), "w") as file:
-        file.write(python_script)
-
-
 def prepare_launch_json(ctx: click.Context, pid: int):
     """
     Generate the launch.json and settings.json for users to easily launch interactive debugging and task resumption.
@@ -316,7 +167,7 @@ def prepare_launch_json(ctx: click.Context, pid: int):
     # task_function_source_dir = os.path.dirname(ctx.data.task_context.data[TASK_FUNCTION_SOURCE_PATH])
     virtual_venv = os.getenv("VIRTUAL_ENV", "/opt/venv")
     # task_module_name, task_name = task_func.__module__, task_func.__name__
-
+    print("ctx", ctx.params)
     launch_json = {
         "version": "0.2.0",
         "configurations": [
@@ -366,7 +217,7 @@ def prepare_launch_json(ctx: click.Context, pid: int):
                     ctx.params["dest"],
                     "--resolver",
                     ctx.params["resolver"],
-                    *ctx.params["resolver-args"]
+                    *ctx.params["resolver-args"],
                 ],
             },
         ],
@@ -388,10 +239,7 @@ async def _start_vscode_server(ctx: click.Context):
     await download_vscode()
     child_process = multiprocessing.Process(
         target=lambda cmd: asyncio.run(asyncio.run(execute_command(cmd))),
-        kwargs={
-            "cmd": f"code-server --bind-addr 0.0.0.0:8080"
-                   f" --disable-workspace-trust --auth none {os.getcwd()}"
-        },
+        kwargs={"cmd": f"code-server --bind-addr 0.0.0.0:8080 --disable-workspace-trust --auth none {os.getcwd()}"},
     )
     child_process.start()
     prepare_launch_json(ctx, child_process.pid)
@@ -399,6 +247,11 @@ async def _start_vscode_server(ctx: click.Context):
     start_time = time.time()
     check_interval = 60  # Interval for heartbeat checking in seconds
     last_heartbeat_check = time.time() - check_interval
+
+    def terminate_process():
+        if child_process.is_alive():
+            child_process.terminate()
+        child_process.join()
 
     logger.info("waiting for task to resume...")
     while child_process.is_alive():
@@ -414,9 +267,13 @@ async def _start_vscode_server(ctx: click.Context):
                 logger.info(f"The latest activity on code server is {delta} seconds ago.")
 
             # If the time from last connection is longer than max idle seconds, terminate the vscode server.
-            if delta > max_idle_seconds:
-                logger.info(f"VSCode server is idle for more than {max_idle_seconds} seconds. Terminating...")
+            if delta > MAX_IDLE_SECONDS:
+                logger.info(f"VSCode server is idle for more than {MAX_IDLE_SECONDS} seconds. Terminating...")
                 terminate_process()
                 sys.exit()
 
         await asyncio.sleep(1)
+
+    logger.info("User has resumed the task.")
+    terminate_process()
+    return

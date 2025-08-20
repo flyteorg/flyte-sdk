@@ -21,6 +21,7 @@ DEFAULT_CODE_SERVER_DIR_NAMES = {
 
 # Duration to pause the checking of the heartbeat file until the next one
 HEARTBEAT_CHECK_SECONDS = 60
+MAX_IDLE_SECONDS = 180
 
 # The path is hardcoded by code-server
 # https://coder.com/docs/code-server/latest/FAQ#what-is-the-heartbeat-file
