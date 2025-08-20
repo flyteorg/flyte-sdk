@@ -121,6 +121,7 @@ async def convert_and_run(
     checkpoints: Checkpoints | None = None,
     code_bundle: CodeBundle | None = None,
     image_cache: ImageCache | None = None,
+    interactive_mode: bool = False,
 ) -> Tuple[Optional[Outputs], Optional[Error]]:
     """
     This method is used to convert the inputs to native types, and run the task. It assumes you are running
@@ -139,6 +140,7 @@ async def convert_and_run(
         compiled_image_cache=image_cache,
         report=flyte.report.Report(name=action.name),
         mode="remote" if not ctx.data.task_context else ctx.data.task_context.mode,
+        interactive_mode=interactive_mode,
     )
     with ctx.replace_task_context(tctx):
         inputs = await load_inputs(input_path) if input_path else inputs
@@ -164,6 +166,7 @@ async def extract_download_run_upload(
     code_bundle: CodeBundle | None = None,
     input_path: str | None = None,
     image_cache: ImageCache | None = None,
+    interactive_mode: bool = False,
 ):
     """
     This method is invoked from the CLI (urun) and is used to run a task. This assumes that the context tree
@@ -181,6 +184,7 @@ async def extract_download_run_upload(
         checkpoints=checkpoints,
         code_bundle=code_bundle,
         image_cache=image_cache,
+        interactive_mode=interactive_mode,
     )
     if err is not None:
         path = await upload_error(err.err, output_path)

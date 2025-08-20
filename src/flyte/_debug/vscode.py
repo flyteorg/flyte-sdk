@@ -210,6 +210,8 @@ def prepare_launch_json(ctx: click.Context, pid: int):
                     ctx.params["image_cache"],
                     "--debug",
                     "False",
+                    "--interactive-mode",
+                    "True",
                     "--tgz",
                     ctx.params["tgz"],
                     "--dest",

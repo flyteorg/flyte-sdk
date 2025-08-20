@@ -51,6 +51,7 @@ def _pass_through():
 @click.option("--domain", envvar=DOMAIN_NAME, required=False)
 @click.option("--org", envvar=ORG_NAME, required=False)
 @click.option("--debug", envvar=FLYTE_ENABLE_VSCODE_KEY, type=click.BOOL, required=False)
+@click.option("--interactive-mode", type=click.BOOL, required=False)
 @click.option("--image-cache", required=False)
 @click.option("--tgz", required=False)
 @click.option("--pkl", required=False)
@@ -70,6 +71,7 @@ def main(
     domain: str,
     org: str,
     debug: bool,
+    interactive_mode: bool,
     image_cache: str,
     version: str,
     inputs: str,
@@ -153,6 +155,7 @@ def main(
         version=version,
         controller=controller,
         image_cache=ic,
+        interactive_mode=interactive_mode or debug,
     )
     # Create a coroutine to watch for errors
     controller_failure = controller.watch_for_errors()
