@@ -2,13 +2,14 @@ import asyncio
 from typing import List
 
 import flyte
+from flyte import Secret
 
 env = flyte.TaskEnvironment(
     name="hello_v2",
 )
 
 
-@env.task()
+@env.task(secrets=[Secret(key="test3")])
 async def hello_worker(id: int) -> str:
     return f"hello, my id is: {id} and I am being run by Action: {flyte.ctx().action}"
 
