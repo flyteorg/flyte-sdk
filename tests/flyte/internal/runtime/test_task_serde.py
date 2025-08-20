@@ -46,8 +46,8 @@ def test_get_security_context():
     assert len(security_context.secrets) == 1
     assert security_context.secrets[0].group == "group2"
     assert security_context.secrets[0].key == "key2"
-    assert security_context.secrets[0].mount_requirement == ProtoSecret.MountType.FILE
-    assert security_context.secrets[0].env_var == ""
+    assert security_context.secrets[0].mount_requirement == ProtoSecret.MountType.ENV_VAR
+    assert security_context.secrets[0].env_var == "GROUP2_KEY2"
 
     # Case 4: Multiple secrets
     secrets = [
@@ -63,8 +63,8 @@ def test_get_security_context():
     assert security_context.secrets[0].env_var == "ENV_VAR1"
     assert security_context.secrets[1].group == "group2"
     assert security_context.secrets[1].key == "key2"
-    assert security_context.secrets[1].mount_requirement == ProtoSecret.MountType.FILE
-    assert security_context.secrets[1].env_var == ""
+    assert security_context.secrets[1].mount_requirement == ProtoSecret.MountType.ENV_VAR
+    assert security_context.secrets[1].env_var == "GROUP2_KEY2"
 
     # Case 5: Invalid secret input (not a Secret or list of Secrets)
     with pytest.raises(AttributeError):
@@ -77,7 +77,7 @@ def test_get_proto_container_task():
         name="test_env",
         image="python:3.10",
         resources=flyte.Resources(cpu="1", memory="2Gi"),
-        env={"ENV1": "val1", "ENV2": "val2"},
+        env_vars={"ENV1": "val1", "ENV2": "val2"},
     )
 
     # Create a task using the environment
@@ -154,7 +154,7 @@ def test_get_proto_task_ignored_cache_inputs():
         name="test_env_cache",
         image="python:3.10",
         resources=flyte.Resources(cpu="1", memory="2Gi"),
-        env={"ENV1": "val1", "ENV2": "val2"},
+        env_vars={"ENV1": "val1", "ENV2": "val2"},
     )
 
     # Create a task using the environment
@@ -206,7 +206,7 @@ def test_get_proto_k8s_pod_task():
         name="test_env",
         image="python:3.10",
         resources=flyte.Resources(cpu="1", memory="2Gi"),
-        env={"ENV1": "val1", "ENV2": "val2"},
+        env_vars={"ENV1": "val1", "ENV2": "val2"},
         pod_template=pod_template1,
     )
 
@@ -275,7 +275,7 @@ def env_task_ctx():
         name="test_env",
         image="python:3.10",
         resources=flyte.Resources(cpu="1", memory="2Gi"),
-        env={"ENV1": "val1", "ENV2": "val2"},
+        env_vars={"ENV1": "val1", "ENV2": "val2"},
     )
 
     # Create a task using the environment

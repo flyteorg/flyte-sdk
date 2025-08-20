@@ -154,6 +154,7 @@ class PipPackages(PipOption, Layer):
 class PythonWheels(PipOption, Layer):
     wheel_dir: Path = field(metadata={"identifier": False})
     wheel_dir_name: str = field(init=False)
+    package_name: str
 
     def __post_init__(self):
         object.__setattr__(self, "wheel_dir_name", self.wheel_dir.name)
@@ -278,7 +279,7 @@ class DockerIgnore(Layer):
 @dataclass(frozen=True, repr=True)
 class CopyConfig(Layer):
     path_type: CopyConfigType = field(metadata={"identifier": True})
-    src: Path = field(metadata={"identifier": True})
+    src: Path = field(metadata={"identifier": False})
     dst: str
     src_name: str = field(init=False)
 
@@ -450,11 +451,7 @@ class Image:
         # this default image definition may need to be updated once there is a released pypi version
         from flyte._version import __version__
 
-        dev_mode = (
-            (cls._is_editable_install() or (__version__ and "dev" in __version__))
-            and not flyte_version
-            and install_flyte
-        )
+        dev_mode = (__version__ and "dev" in __version__) and not flyte_version and install_flyte
         if install_flyte is False:
             preset_tag = f"py{python_version[0]}.{python_version[1]}"
         else:
@@ -498,19 +495,13 @@ class Image:
                     image = image.with_pip_packages(f"flyte=={flyte_version}", pre=True)
                 else:
                     image = image.with_pip_packages(f"flyte=={flyte_version}")
-        object.__setattr__(image, "_tag", preset_tag)
+        if not dev_mode:
+            object.__setattr__(image, "_tag", preset_tag)
         # Set this to auto for all auto images because the meaning of "auto" can change (based on logic inside
         # _get_default_image_for, acts differently in a running task container) so let's make sure it stays auto.
         object.__setattr__(image, "_identifier_override", "auto")
 
         return image
-
-    @staticmethod
-    def _is_editable_install():
-        """Internal hacky function to see if the current install is editable or not."""
-        curr = Path(__file__)
-        pyproject = curr.parent.parent.parent / "pyproject.toml"
-        return pyproject.exists()
 
     @classmethod
     def from_debian_base(
@@ -546,7 +537,7 @@ class Image:
             platform=platform,
         )
 
-        if registry and name:
+        if registry or name:
             return base_image.clone(registry=registry, name=name)
 
         # # Set this to auto for all auto images because the meaning of "auto" can change (based on logic inside
@@ -940,7 +931,7 @@ class Image:
         dist_folder = Path(__file__).parent.parent.parent / "dist"
         # Manually declare the PythonWheel so we can set the hashing
         # used to compute the identifier. Can remove if we ever decide to expose the lambda in with_ commands
-        with_dist = self.clone(addl_layer=PythonWheels(wheel_dir=dist_folder))
+        with_dist = self.clone(addl_layer=PythonWheels(wheel_dir=dist_folder, package_name="flyte", pre=True))
 
         return with_dist
 

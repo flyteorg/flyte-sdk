@@ -4,13 +4,13 @@ from operator import add
 
 from flyteplugins.spark.task import Spark
 
-import flyte.remote._action
+import flyte.remote
 from flyte._context import internal_ctx
 
 image = (
     flyte.Image.from_base("apache/spark-py:v3.4.0")
-    .clone(name="spark", python_version="3.10")
-    .with_pip_packages("flyteplugins-spark")
+    .clone(name="spark", python_version=(3, 10))
+    .with_pip_packages("flyteplugins-spark", pre=True)
 )
 
 task_env = flyte.TaskEnvironment(
@@ -71,6 +71,6 @@ if __name__ == "__main__":
     print("run url:", run.url)
     run.wait(run)
 
-    action_details = flyte.remote._action.ActionDetails.get(run_name=run.name, name="a0")
+    action_details = flyte.remote.ActionDetails.get(run_name=run.name, name="a0")
     for log in action_details.pb2.attempts[-1].log_info:
         print(f"{log.name}: {log.uri}")

@@ -1,5 +1,19 @@
 from __future__ import annotations
 
+import os
+
+# Set environment variables for gRPC, this reduces log spew and avoids unnecessary warnings
+# before importing grpc
+if "GRPC_VERBOSITY" not in os.environ:
+    os.environ["GRPC_VERBOSITY"] = "ERROR"
+    os.environ["GRPC_CPP_MIN_LOG_LEVEL"] = "ERROR"
+    # Disable fork support (stops "skipping fork() handlers")
+    os.environ["GRPC_ENABLE_FORK_SUPPORT"] = "0"
+    # Reduce absl/glog verbosity
+    os.environ["GLOG_minloglevel"] = "2"
+    os.environ["ABSL_LOG"] = "0"
+#### Has to be before grpc
+
 import grpc
 from flyteidl.service import admin_pb2_grpc, dataproxy_pb2_grpc
 
