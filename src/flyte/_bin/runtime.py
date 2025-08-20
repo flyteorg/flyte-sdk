@@ -12,7 +12,6 @@ from typing import Any, List
 
 import click
 
-
 # Todo: work with pvditt to make these the names
 # ACTION_NAME = "_U_ACTION_NAME"
 # RUN_NAME = "_U_RUN_NAME"
@@ -117,6 +116,7 @@ def main(
 
     if debug and name == "a0":
         from flyte._debug.vscode import _start_vscode_server
+
         asyncio.run(_start_vscode_server(ctx))
 
     # Figure out how to connect

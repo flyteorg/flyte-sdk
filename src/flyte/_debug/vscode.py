@@ -12,7 +12,6 @@ from typing import List
 
 import aiofiles
 import click
-import fsspec
 import httpx
 
 from flyte._debug.constants import (
@@ -251,6 +250,8 @@ async def _start_vscode_server(ctx: click.Context):
         kwargs={"cmd": f"code-server --bind-addr 0.0.0.0:8080 --disable-workspace-trust --auth none {os.getcwd()}"},
     )
     child_process.start()
+    if child_process.pid is None:
+        raise RuntimeError("Failed to start vscode server.")
     prepare_launch_json(ctx, child_process.pid)
 
     start_time = time.time()

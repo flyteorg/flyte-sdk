@@ -116,7 +116,8 @@ async def convert_and_run(
     version: str,
     output_path: str,
     run_base_dir: str,
-    input_path: str | None,
+    inputs: Inputs = Inputs.empty(),
+    input_path: str | None = None,
     checkpoints: Checkpoints | None = None,
     code_bundle: CodeBundle | None = None,
     image_cache: ImageCache | None = None,
@@ -140,7 +141,7 @@ async def convert_and_run(
         mode="remote" if not ctx.data.task_context else ctx.data.task_context.mode,
     )
     with ctx.replace_task_context(tctx):
-        inputs = await load_inputs(input_path) if input_path else Inputs.empty()
+        inputs = await load_inputs(input_path) if input_path else inputs
         inputs_kwargs = await convert_inputs_to_native(inputs, task.native_interface)
         out, err = await run_task(tctx=tctx, controller=controller, task=task, inputs=inputs_kwargs)
         if err is not None:

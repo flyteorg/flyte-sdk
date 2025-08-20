@@ -3,7 +3,7 @@ import importlib.util
 import os
 import sys
 from pathlib import Path
-from typing import List, Optional, Tuple, Type
+from typing import List, Tuple
 
 from rich.progress import BarColumn, Progress, TextColumn, TimeElapsedColumn, TimeRemainingColumn
 
@@ -23,7 +23,7 @@ def load_python_modules(path: Path, recursive: bool = False) -> Tuple[List[str],
 
     if path.is_file() and path.suffix == ".py":
         # Single file case
-        module_name, _ = _load_module_from_file(path)
+        module_name = _load_module_from_file(path)
         if module_name:
             loaded_modules.append(module_name)
 
@@ -49,7 +49,7 @@ def load_python_modules(path: Path, recursive: bool = False) -> Tuple[List[str],
                     continue
 
                 try:
-                    module_name, _ = _load_module_from_file(p)
+                    module_name = _load_module_from_file(p)
                     if module_name:
                         loaded_modules.append(module_name)
                 except flyte.errors.ModuleLoadError as e:
@@ -60,7 +60,7 @@ def load_python_modules(path: Path, recursive: bool = False) -> Tuple[List[str],
     return loaded_modules, failed_paths
 
 
-def _load_module_from_file(file_path: Path) -> (Optional[str], Optional[Type]):
+def _load_module_from_file(file_path: Path) -> str | None:
     """
     Load a Python module from a file path.
 
@@ -74,7 +74,7 @@ def _load_module_from_file(file_path: Path) -> (Optional[str], Optional[Type]):
         # Load the module specification
         spec = importlib.util.spec_from_file_location(module_name, file_path)
         if spec is None or spec.loader is None:
-            return None, None
+            return None
 
         # Create and execute the module
         module = importlib.util.module_from_spec(spec)
@@ -83,7 +83,7 @@ def _load_module_from_file(file_path: Path) -> (Optional[str], Optional[Type]):
         sys.path.append(module_path)
         spec.loader.exec_module(module)
 
-        return module_name, module
+        return module_name
 
     except Exception as e:
         raise flyte.errors.ModuleLoadError(f"Failed to load module from {file_path}: {e}") from e
