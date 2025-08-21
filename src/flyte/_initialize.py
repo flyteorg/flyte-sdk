@@ -384,30 +384,6 @@ def ensure_client():
         )
 
 
-def requires_client(func: T) -> T:
-    """
-    Decorator that checks if the client has been initialized before executing the function.
-    Raises InitializationError if the client is not initialized.
-
-    :param func: Function to decorate
-    :return: Decorated function that checks for initialization
-    """
-
-    @functools.wraps(func)
-    async def wrapper(*args, **kwargs) -> T:
-        init_config = _get_init_config()
-        if init_config is None or init_config.client is None:
-            raise InitializationError(
-                "ClientNotInitializedError",
-                "user",
-                f"Function '{func.__name__}' requires client to be initialized. "
-                f"Call flyte.init() with a valid endpoint or api-key before using this function.",
-            )
-        return func(*args, **kwargs)
-
-    return typing.cast(T, wrapper)
-
-
 def requires_storage(func: T) -> T:
     """
     Decorator that checks if the storage has been initialized before executing the function.
