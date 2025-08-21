@@ -30,18 +30,15 @@ import asyncio
 import json
 import logging
 import tempfile
-from dataclasses import dataclass, asdict
+from dataclasses import asdict, dataclass
 from pathlib import Path
 
 import datasets
-import torch
 from async_lru import alru_cache
 from sentence_transformers import SentenceTransformer
 
-
 import flyte
 import flyte.io
-
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -53,15 +50,15 @@ image = flyte.Image.from_uv_script(__file__, name="embed_wikipedia_image")
 driver = flyte.TaskEnvironment(
     name="driver",
     image=image,
-    resources=flyte.Resources(cpu=1, memory="4Gi", disk="16Gi"),
+    resources=flyte.Resources(cpu=1, memory="4Gi", disk="64Gi"),
 )
 
-N_GPUS = 1
+N_GPUS = 8
 worker = flyte.TaskEnvironment(
     name="worker",
     image=image,
     resources=flyte.Resources(cpu=2, memory="4Gi", gpu="T4:1"),
-    reusable=flyte.ReusePolicy(replicas=4, concurrency=8)
+    reusable=flyte.ReusePolicy(replicas=4, concurrency=16),
 )
 
 
@@ -75,6 +72,7 @@ class Article:
 @dataclass
 class ArticleEmbedding(Article):
     """Data structure for article embeddings"""
+
     embedding: list[float]
     text_length: int
     language: str
@@ -82,8 +80,7 @@ class ArticleEmbedding(Article):
 
 @alru_cache(maxsize=32)
 async def load_embedding_model() -> SentenceTransformer:
-    model = SentenceTransformer("nomic-ai/modernbert-embed-base")
-    return model
+    return SentenceTransformer("nomic-ai/modernbert-embed-base")
 
 
 @worker.task
@@ -105,7 +102,7 @@ async def embed_articles(batch: list[Article]) -> list[ArticleEmbedding]:
                 text=batch[i].text,
                 embedding=embedding.tolist(),
                 text_length=len(batch[i].text),
-                language="en"
+                language="en",
             )
         )
     print(f"encoded {len(article_embeddings)} articles")
@@ -114,10 +111,7 @@ async def embed_articles(batch: list[Article]) -> list[ArticleEmbedding]:
 
 async def embedding_to_sink(dir: Path, batch: list[ArticleEmbedding]):
     """Writes embeddings to file"""
-    article_embeddings = [
-        asdict(article_embedding)
-        for article_embedding in await embed_articles(batch)
-    ]
+    article_embeddings = [asdict(article_embedding) for article_embedding in await embed_articles(batch)]
 
     for article_embedding in article_embeddings:
         fname = f"{article_embedding['title']}_{article_embedding['wiki_id']}.json"
@@ -132,10 +126,11 @@ async def embed_wikipedia(
     embedding_group_size: int = 4,
 ) -> flyte.io.Dir:
     dataset = datasets.load_dataset("wikimedia/wikipedia", "20231101.en", streaming=True)
+    print(f"dataset loaded {dataset}")
 
     embedding_tasks = []
     temp_dir = tempfile.mkdtemp()
-    
+
     batch = []
     group_number = 1
     for i, article in enumerate(dataset["train"]):
@@ -143,10 +138,11 @@ async def embed_wikipedia(
             break
         article = Article(title=article["title"], text=article["text"], wiki_id=article["id"])
         batch.append(article)
+
         if len(batch) == batch_size:
             embedding_tasks.append(embedding_to_sink(Path(temp_dir), batch))
             batch = []
-        
+
         if len(embedding_tasks) == embedding_group_size:
             with flyte.group(f"embedding_tasks_{group_number}"):
                 group_number += 1
@@ -174,5 +170,5 @@ if __name__ == "__main__":
     # Run this with limit=-1 to embed all articles in the dataset (~61MM rows)
     # flyte.init()
     flyte.init_from_config("../../config.yaml")
-    run = flyte.run(embed_wikipedia, limit=32, batch_size=8, embedding_group_size=4)
+    run = flyte.run(embed_wikipedia, limit=10000, batch_size=10, embedding_group_size=100)
     print(run.url)
