@@ -54,7 +54,7 @@ def translate_task_to_wire(
     return task_definition_pb2.TaskSpec(
         task_template=tt,
         default_inputs=default_inputs,
-        short_name=task.friendly_name[:_MAX_TASK_SHORT_NAME_LENGTH],
+        short_name=task.short_name[:_MAX_TASK_SHORT_NAME_LENGTH],
         environment=env,
     )
 
@@ -145,7 +145,6 @@ def get_proto_task(task: TaskTemplate, serialize_context: SerializationContext) 
             logger.debug(f"Detected pkl bundle for task {task.name}, using computed version as cache version")
             cache_version = serialize_context.code_bundle.computed_version
         else:
-            version_parameters = None
             if isinstance(task, AsyncFunctionTaskTemplate):
                 version_parameters = VersionParameters(func=task.func, image=task.image)
             else:

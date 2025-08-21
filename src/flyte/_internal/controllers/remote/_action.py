@@ -183,7 +183,7 @@ class Action:
         et.FromSeconds(int(end_time))
         et.nanos = int((end_time % 1) * 1e9)
 
-        spec = (
+        _ = (
             task_definition_pb2.TaskSpec(task_template=tasks_pb2.TaskTemplate(interface=typed_interface))
             if typed_interface
             else None
@@ -208,6 +208,6 @@ class Action:
                     output_uri=outputs_uri,
                     report_uri=report_uri,
                 ),
-                spec=spec,
+                # spec=spec,
             ),
         )

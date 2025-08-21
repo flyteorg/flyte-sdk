@@ -167,7 +167,7 @@ class RemoteController(Controller):
         # It is not allowed to change the code bundle (for regular code bundles) in the middle of a run.
         code_bundle = tctx.code_bundle
 
-        if code_bundle and code_bundle.pkl:
+        if tctx.interactive_mode or (code_bundle and code_bundle.pkl):
             logger.debug(f"Building new pkl bundle for task {_task.name}")
             code_bundle = await build_pkl_bundle(
                 _task,
