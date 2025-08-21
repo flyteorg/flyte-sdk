@@ -93,6 +93,7 @@ async def test_task_write_file_streaming(ctx_with_test_raw_data_path):
         return file
 
     file = await my_task()
+    assert file.hash is None
     async with file.open() as f:
         content = f.read()
     content = content.decode("utf-8")
