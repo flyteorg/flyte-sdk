@@ -253,12 +253,14 @@ async def init_from_config(
 
         if root_dir and path_or_config:
             cfg = config.auto(str(root_dir / path_or_config))
-        elif not Path(path_or_config).exists():
-            raise InitializationError(
-                "ConfigFileNotFoundError",
-                "user",
-                f"Configuration file '{path_or_config}' does not exist., current working directory is {Path.cwd()}",
-            )
+        elif path_or_config:
+            if not Path(path_or_config).exists():
+                raise InitializationError(
+                    "ConfigFileNotFoundError",
+                    "user",
+                    f"Configuration file '{path_or_config}' does not exist., current working directory is {Path.cwd()}",
+                )
+            cfg = config.auto(path_or_config)
         else:
             cfg = config.auto(path_or_config)
     else:
