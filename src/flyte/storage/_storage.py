@@ -82,6 +82,7 @@ def get_configured_fsspec_kwargs(
             case "s3":
                 # If the protocol is s3, we can use the s3 filesystem
                 from flyte.storage import S3
+
                 if storage_config and isinstance(storage_config, S3):
                     return storage_config.get_fsspec_kwargs(anonymous=anonymous)
 
@@ -89,6 +90,7 @@ def get_configured_fsspec_kwargs(
             case "gs":
                 # If the protocol is gs, we can use the gs filesystem
                 from flyte.storage import GCS
+
                 if storage_config and isinstance(storage_config, GCS):
                     return storage_config.get_fsspec_kwargs(anonymous=anonymous)
 
@@ -96,6 +98,7 @@ def get_configured_fsspec_kwargs(
             case "abfs" | "abfss":
                 # If the protocol is abfs or abfss, we can use the abfs filesystem
                 from flyte.storage import ABFS
+
                 if storage_config and isinstance(storage_config, ABFS):
                     return storage_config.get_fsspec_kwargs(anonymous=anonymous)
 
@@ -151,7 +154,6 @@ async def get(from_path: str, to_path: Optional[str | pathlib.Path] = None, recu
         else:
             exists = file_system.exists(from_path)
         if not exists:
-            # TODO: update exception to be more specific
             raise AssertionError(f"Unable to load data from {from_path}")
         file_system = _get_anonymous_filesystem(from_path)
         logger.debug(f"Attempting anonymous get with {file_system}")

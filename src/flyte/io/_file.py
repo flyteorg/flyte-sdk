@@ -27,6 +27,7 @@ import flyte.storage as storage
 from flyte._context import internal_ctx
 from flyte._initialize import requires_initialization
 from flyte._logging import logger
+from flyte.io._hashing_io import AsyncHashingReader, HashingWriter, HashMethod
 from flyte.types import TypeEngine, TypeTransformer, TypeTransformerFailedError
 
 # Type variable for the file format
@@ -105,6 +106,7 @@ class File(BaseModel, Generic[T], SerializableType):
     name: Optional[str] = None
     format: str = ""
     hash: Optional[str] = None
+    hash_method: Optional[HashMethod] = None
 
     class Config:
         arbitrary_types_allowed = True
@@ -140,7 +142,7 @@ class File(BaseModel, Generic[T], SerializableType):
 
     @classmethod
     @requires_initialization
-    def new_remote(cls) -> File[T]:
+    def new_remote(cls, accumulator: Optional[HashMethod] = None) -> File[T]:
         """
         Create a new File reference for a remote file that will be written to.
 
@@ -157,7 +159,7 @@ class File(BaseModel, Generic[T], SerializableType):
         """
         ctx = internal_ctx()
 
-        return cls(path=ctx.raw_data.get_random_remote_path())
+        return cls(path=ctx.raw_data.get_random_remote_path(), accumulator=accumulator)
 
     @classmethod
     def from_existing_remote(cls, remote_path: str) -> File[T]:
@@ -246,7 +248,14 @@ class File(BaseModel, Generic[T], SerializableType):
                     file_handle.close()
 
             with fs.open(self.path, mode) as file_handle:
-                yield file_handle
+                if self.hash_method and self.hash is None:
+                    fh = HashingWriter(file_handle, accumulator=self.hash_method)
+                    yield fh
+                    self.hash = fh.result()
+                    fh.close()
+                else:
+                    yield file_handle
+                    file_handle.close()
 
     def exists_sync(self) -> bool:
         """
@@ -352,7 +361,12 @@ class File(BaseModel, Generic[T], SerializableType):
 
     @classmethod
     @requires_initialization
-    async def from_local(cls, local_path: Union[str, Path], remote_destination: Optional[str] = None) -> File[T]:
+    async def from_local(
+        cls,
+        local_path: Union[str, Path],
+        remote_destination: Optional[str] = None,
+        hash_method: Optional[HashMethod] = None,
+    ) -> File[T]:
         """
         Create a new File object from a local file that will be uploaded to the configured remote store.
 
@@ -377,20 +391,32 @@ class File(BaseModel, Generic[T], SerializableType):
 
         # If remote_destination was not set by the user, and the configured raw data path is also local,
         # then let's optimize by not uploading.
+        hash_value = None
         if "file" in protocol:
             if remote_destination is None:
                 path = str(Path(local_path).absolute())
             else:
                 # Otherwise, actually make a copy of the file
-                async with aiofiles.open(remote_path, "rb") as src:
-                    async with aiofiles.open(local_path, "wb") as dst:
-                        await dst.write(await src.read())
+                async with aiofiles.open(local_path, "rb") as src:
+                    async with aiofiles.open(remote_path, "wb") as dst:
+                        if hash_method:
+                            dst_wrapper = HashingWriter(dst, accumulator=hash_method)
+                            await dst_wrapper.write(await src.read())
+                            hash_value = dst_wrapper.result()
+                        else:
+                            await dst.write(await src.read())
                 path = str(Path(remote_path).absolute())
         else:
             # Otherwise upload to remote using async storage layer
-            path = await storage.put(str(local_path), remote_path)
+            if hash_method:
+                async with aiofiles.open(local_path, "rb") as src:
+                    src_wrapper = AsyncHashingReader(src, accumulator=hash_method)
+                    path = await storage.put_stream(src_wrapper, to_path=remote_path)
+                    hash_value = src_wrapper.result()
+            else:
+                path = await storage.put(str(local_path), remote_path)
 
-        f = cls(path=path, name=filename)
+        f = cls(path=path, name=filename, hash_method=hash_method, hash=hash_value)
         return f
 
 

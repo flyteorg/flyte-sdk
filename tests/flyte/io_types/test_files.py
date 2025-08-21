@@ -8,8 +8,12 @@ import pytest
 
 import flyte
 from flyte.io._file import File, FileTransformer
+from flyte.io._hashing_io import HashlibAccumulator
 from flyte.storage import S3
 from flyte.types import TypeEngine
+
+TEST_CONTENT = "correct test content"
+TEST_SHA256 = "88a884456e029050823d8a0474b8c96986fcc3996a2a2a018b918181633cbe56"
 
 
 @pytest.mark.asyncio
@@ -90,9 +94,11 @@ async def test_task_write_file_streaming_locals3(ctx_with_test_local_s3_stack_ra
     # Simulate writing a file by streaming it directly to blob storage
     async def my_task() -> File[pd.DataFrame]:
         df = pd.DataFrame({"col1": [1, 2], "col2": [3, 4]})
-        file = File.new_remote()
+        a = HashlibAccumulator.from_hash_name("sha256")
+        file = File.new_remote(accumulator=a)
         async with file.open("wb") as fh:
             df.to_csv(fh, index=False)
+            fh.close()  # context manager should also close but this should still work
         return file
 
     file = await my_task()
@@ -123,3 +129,46 @@ async def test_task_write_file_local_then_upload(ctx_with_test_raw_data_path):
         content = fh.read()
     content = content.decode("utf-8")
     assert "col1,col2" in content
+
+
+@pytest.mark.asyncio
+async def test_from_local_with_local_files():
+    flyte.init()
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        local_path = os.path.join(temp_dir, "source.txt")
+        remote_path = os.path.join(temp_dir, "destination.txt")
+
+        test_content = "correct test content"
+        with open(local_path, "w") as f:  # noqa: ASYNC230
+            f.write(test_content)
+
+        result = await File.from_local(local_path, remote_path)
+
+        assert result.path == remote_path
+        async with result.open() as f:
+            content = f.read()
+        content = content.decode("utf-8")
+        assert content == test_content
+
+
+@pytest.mark.sandbox
+@pytest.mark.asyncio
+async def test_from_local_to_s3(ctx_with_test_local_s3_stack_raw_data_path):
+    flyte.init(storage=S3.for_sandbox())
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        local_path = os.path.join(temp_dir, "source.txt")
+
+        with open(local_path, "w") as f:  # noqa: ASYNC230
+            f.write(TEST_CONTENT)
+
+        a = HashlibAccumulator.from_hash_name("sha256")
+        result = await File.from_local(local_path, hash_method=a)
+        assert result.path.startswith("s3://bucket/tests/default_upload/")
+        assert result.hash == TEST_SHA256
+
+        async with result.open() as f:
+            content = f.read()
+        content = content.decode("utf-8")
+        assert content == TEST_CONTENT
