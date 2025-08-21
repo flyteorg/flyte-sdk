@@ -795,7 +795,7 @@ class Image:
         ```
 
         To mount secrets during the build process to download private packages, you can use the `secret_mounts`.
-        In the blow example, "GITHUB_PAT" will be mounted as env var "GITHUB_PAT",
+        In the below example, "GITHUB_PAT" will be mounted as env var "GITHUB_PAT",
          and "apt-secret" will be mounted at /etc/apt/apt-secret.
         Example:
         ```python
