@@ -258,7 +258,7 @@ async def _start_vscode_server(ctx: click.Context):
     await asyncio.gather(download_tgz(ctx.params["dest"], ctx.params["version"], ctx.params["tgz"]), download_vscode())
     child_process = multiprocessing.Process(
         target=lambda cmd: asyncio.run(asyncio.run(execute_command(cmd))),
-        kwargs={"cmd": f"code-server --bind-addr 0.0.0.0:8080 --disable-workspace-trust --auth none {os.getcwd()}"},
+        kwargs={"cmd": f"code-server --bind-addr 0.0.0.0:6666 --disable-workspace-trust --auth none {os.getcwd()}"},
     )
     child_process.start()
     if child_process.pid is None:
@@ -298,3 +298,4 @@ async def _start_vscode_server(ctx: click.Context):
     logger.info("User has resumed the task.")
     terminate_process()
     return
+
