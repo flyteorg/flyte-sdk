@@ -250,7 +250,6 @@ async def init_from_config(
     cfg: config.Config
     if path_or_config is None or isinstance(path_or_config, str):
         # If a string is passed, treat it as a path to the config file
-
         if root_dir and path_or_config:
             cfg = config.auto(str(root_dir / path_or_config))
         elif path_or_config:
@@ -260,8 +259,7 @@ async def init_from_config(
                     "user",
                     f"Configuration file '{path_or_config}' does not exist., current working directory is {Path.cwd()}",
                 )
-        else:
-            cfg = config.auto(path_or_config)
+        cfg = config.auto(path_or_config)
     else:
         # If a Config object is passed, use it directly
         cfg = path_or_config
