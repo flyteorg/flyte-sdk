@@ -60,7 +60,7 @@ async def download_file(url: str, target_dir: str) -> str:
 
 
 def get_default_extensions() -> List[str]:
-    extensions = os.getenv("FLYTE_DEFAULT_CODE_SERVER_EXTENSIONS")
+    extensions = os.getenv("_F_CS_E")
     if extensions is not None:
         return extensions.split(",")
     return DEFAULT_CODE_SERVER_EXTENSIONS
@@ -80,7 +80,7 @@ def get_code_server_info() -> str:
     Raises:
         ValueError: If the system's architecture is not AMD64 or ARM64.
     """
-    code_server_path = os.getenv("FLYTE_DEFAULT_CODE_SERVER_REMOTE_PATH")
+    code_server_path = os.getenv("_F_CS_RP")
     if code_server_path is not None:
         return code_server_path
 
