@@ -21,9 +21,8 @@ from torchvision.datasets import MNIST
 from torchvision.transforms import ToTensor
 
 import flyte
-import flyte.io
 import flyte.errors
-
+import flyte.io
 
 gpu_env = flyte.TaskEnvironment(
     name="gpu_env",
@@ -59,7 +58,7 @@ class MNISTAutoEncoder(L.LightningModule):
     def configure_optimizers(self):
         optimizer = optim.Adam(self.parameters(), lr=1e-3)
         return optimizer
-    
+
 
 class MNISTDataModule(L.LightningDataModule):
     def __init__(self, root_dir, batch_size=64, dataloader_num_workers=0):
@@ -133,7 +132,6 @@ async def gridsearch(
     sweep_name: str,
     batch_sizes: list[int],
 ) -> tuple[flyte.io.Dir, float]:
-
     results = []
     for batch_size in batch_sizes:
         results.append(train_model(sweep_name, batch_size))
