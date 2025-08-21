@@ -205,6 +205,14 @@ async def init(
                 http_proxy_url=http_proxy_url,
             )
 
+        if not root_dir:
+            editable_root = get_cwd_editable_install()
+            if editable_root:
+                logger.info(f"Using editable install as root directory: {editable_root}")
+                root_dir = editable_root
+            else:
+                logger.info("No editable install found, using current working directory as root directory.")
+                root_dir = Path.cwd()
         root_dir = root_dir or get_cwd_editable_install() or Path.cwd()
         _init_config = _InitConfig(
             root_dir=root_dir,
@@ -242,15 +250,16 @@ async def init_from_config(
     cfg: config.Config
     if path_or_config is None or isinstance(path_or_config, str):
         # If a string is passed, treat it as a path to the config file
-        if path_or_config:
+
+        if root_dir and path_or_config:
+            cfg = config.auto(str(root_dir / path_or_config))
+        elif path_or_config:
             if not Path(path_or_config).exists():
                 raise InitializationError(
                     "ConfigFileNotFoundError",
                     "user",
                     f"Configuration file '{path_or_config}' does not exist., current working directory is {Path.cwd()}",
                 )
-        if root_dir and path_or_config:
-            cfg = config.auto(str(root_dir / path_or_config))
         else:
             cfg = config.auto(path_or_config)
     else:
