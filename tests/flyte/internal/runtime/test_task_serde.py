@@ -82,7 +82,7 @@ def test_get_proto_container_task():
 
     # Create a task using the environment
     @env.task(
-        name="real_test_task",
+        short_name="real_test_task",
         cache=flyte.Cache(behavior="auto"),
         retries=3,
         timeout=60,
@@ -159,7 +159,7 @@ def test_get_proto_task_ignored_cache_inputs():
 
     # Create a task using the environment
     @env.task(
-        name="real_test_task",
+        short_name="real_test_task",
         cache=flyte.Cache(behavior="auto", ignored_inputs="my_ignored_input"),
         retries=3,
         timeout=60,
@@ -211,7 +211,7 @@ def test_get_proto_k8s_pod_task():
     )
 
     @env.task(
-        name="real_test_task",
+        short_name="real_test_task",
     )
     async def t1(a: int, b: str) -> str:
         """Test function docstring"""
@@ -258,7 +258,7 @@ def test_get_proto_k8s_pod_task():
     )
 
     @env.task(
-        name="real_test_task",
+        short_name="real_test_task",
     )
     async def t2(a: int, b: str) -> str:
         """Test function docstring"""
@@ -280,7 +280,7 @@ def env_task_ctx():
 
     # Create a task using the environment
     @env.task(
-        name="real_test_task",
+        short_name="real_test_task",
         cache=flyte.Cache(behavior="auto"),
         retries=3,
         timeout=60,
