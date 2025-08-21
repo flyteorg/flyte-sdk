@@ -159,7 +159,7 @@ class File(BaseModel, Generic[T], SerializableType):
         """
         ctx = internal_ctx()
 
-        return cls(path=ctx.raw_data.get_random_remote_path(), accumulator=hash_method)
+        return cls(path=ctx.raw_data.get_random_remote_path(), hash_method=hash_method)
 
     @classmethod
     def from_existing_remote(cls, remote_path: str, known_hash_value: Optional[str] = None) -> File[T]:

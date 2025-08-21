@@ -115,6 +115,7 @@ async def test_task_write_file_streaming_locals3(ctx_with_test_local_s3_stack_ra
         return file
 
     file = await my_task()
+    assert file.hash == "9b0a34a69b639520f1a18e54f85544d9d379f81727eb44b8814e1c4707e1760d"
     async with file.open() as f:
         content = f.read()
     content = content.decode("utf-8")
