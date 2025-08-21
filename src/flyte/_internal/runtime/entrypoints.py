@@ -142,6 +142,7 @@ async def load_and_run_task(
     code_bundle: CodeBundle | None = None,
     input_path: str | None = None,
     image_cache: ImageCache | None = None,
+    interactive_mode: bool = False,
 ):
     """
     This method is invoked from the runtime/CLI and is used to run a task. This creates the context tree,
@@ -159,6 +160,7 @@ async def load_and_run_task(
     :param code_bundle: The code bundle to use for the task.
     :param input_path: The input path to use for the task.
     :param image_cache: Mappings of Image identifiers to image URIs.
+    :param interactive_mode: Whether to run the task in interactive mode.
     """
     task = await _download_and_load_task(code_bundle, resolver, resolver_args)
 
@@ -175,4 +177,5 @@ async def load_and_run_task(
         code_bundle=code_bundle,
         input_path=input_path,
         image_cache=image_cache,
+        interactive_mode=interactive_mode,
     )

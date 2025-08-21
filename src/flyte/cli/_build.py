@@ -3,8 +3,7 @@ from pathlib import Path
 from types import ModuleType
 from typing import Any, Dict, List, cast
 
-import click
-from click import Context
+import rich_click as click
 
 import flyte
 
@@ -44,7 +43,7 @@ class BuildEnvCommand(click.Command):
         self.build_args = build_args
         super().__init__(*args, **kwargs)
 
-    def invoke(self, ctx: Context):
+    def invoke(self, ctx: click.Context):
         from rich.console import Console
 
         console = Console()

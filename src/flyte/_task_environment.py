@@ -133,7 +133,7 @@ class TaskEnvironment(Environment):
         self,
         _func=None,
         *,
-        name: Optional[str] = None,
+        short_name: Optional[str] = None,
         cache: CacheRequest | None = None,
         retries: Union[int, RetryStrategy] = 0,
         timeout: Union[timedelta, int] = 0,
@@ -147,7 +147,7 @@ class TaskEnvironment(Environment):
 
         :param _func: Optional The function to decorate. If not provided, the decorator will return a callable that
         accepts a function to be decorated.
-        :param name: Optional A friendly name for the task (defaults to the function name)
+        :param short_name: Optional A friendly name for the task (defaults to the function name)
         :param cache: Optional The cache policy for the task, defaults to auto, which will cache the results of the
         task.
         :param retries: Optional The number of retries for the task, defaults to 0, which means no retries.
@@ -166,7 +166,7 @@ class TaskEnvironment(Environment):
                 raise ValueError("Cannot set pod_template when environment is reusable.")
 
         def decorator(func: FunctionTypes) -> AsyncFunctionTaskTemplate[P, R]:
-            friendly_name = name or func.__name__
+            short = short_name or func.__name__
             task_name = self.name + "." + func.__name__
 
             if not inspect.iscoroutinefunction(func) and self.reusable is not None:
@@ -207,7 +207,7 @@ class TaskEnvironment(Environment):
                 parent_env=weakref.ref(self),
                 interface=NativeInterface.from_callable(func),
                 report=report,
-                friendly_name=friendly_name,
+                short_name=short,
                 plugin_config=self.plugin_config,
                 max_inline_io_bytes=max_inline_io_bytes,
             )

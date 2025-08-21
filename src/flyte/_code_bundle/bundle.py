@@ -178,9 +178,10 @@ async def download_bundle(bundle: CodeBundle) -> pathlib.Path:
     # TODO make storage apis better to accept pathlib.Path
     if bundle.tgz:
         downloaded_bundle = dest / os.path.basename(bundle.tgz)
+        if downloaded_bundle.exists():
+            return downloaded_bundle.absolute()
         # Download the tgz file
-        path = await storage.get(bundle.tgz, str(downloaded_bundle.absolute()))
-        downloaded_bundle = pathlib.Path(path)
+        await storage.get(bundle.tgz, str(downloaded_bundle.absolute()))
         # NOTE the os.path.join(destination, ''). This is to ensure that the given path is in fact a directory and all
         # downloaded data should be copied into this directory. We do this to account for a difference in behavior in
         # fsspec, which requires a trailing slash in case of pre-existing directory.
@@ -204,8 +205,7 @@ async def download_bundle(bundle: CodeBundle) -> pathlib.Path:
 
         downloaded_bundle = dest / os.path.basename(bundle.pkl)
         # Download the tgz file
-        path = await storage.get(bundle.pkl, str(downloaded_bundle.absolute()))
-        downloaded_bundle = pathlib.Path(path)
+        await storage.get(bundle.pkl, str(downloaded_bundle.absolute()))
         return downloaded_bundle.absolute()
     else:
         raise ValueError("Code bundle should be either tgz or pkl, found neither.")
