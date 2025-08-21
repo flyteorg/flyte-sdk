@@ -259,7 +259,10 @@ async def init_from_config(
                     "user",
                     f"Configuration file '{path_or_config}' does not exist., current working directory is {Path.cwd()}",
                 )
-        cfg = config.auto(path_or_config)
+            cfg = config.auto(path_or_config)
+        else:
+            # If no path is provided, use the default config file
+            cfg = config.auto()
     else:
         # If a Config object is passed, use it directly
         cfg = path_or_config
