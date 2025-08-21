@@ -165,8 +165,8 @@ async def embed_wikipedia(limit: int = 8) -> flyte.io.Dir:
 
 
 if __name__ == "__main__":
-    asyncio.run(embed_wikipedia())
-    # flyte.init()
-    # flyte.init_from_config("../../config.yaml")
-    # run = flyte.run(embed_wikipedia)
-    # print(run.url)
+    # Usage:
+    # Run this with limit=-1 to embed all articles in the dataset (~61MM rows)
+    flyte.init_from_config("../../config.yaml")
+    run = flyte.run(embed_wikipedia)
+    print(run.url)
