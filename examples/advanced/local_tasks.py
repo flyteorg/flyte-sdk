@@ -69,16 +69,16 @@ async def parallel_main(q: str) -> list[str]:
 
 
 @flyte.trace
-async def input_trace(a: str):
+async def input_trace(a: str, b: str, c: int):
     await asyncio.sleep(1)
     print("Calling LLM without IO", flush=True)
 
 
 @flyte.trace
-async def output_trace() -> str:
+async def output_trace() -> int:
     await asyncio.sleep(1)
     print("Calling LLM without IO", flush=True)
-    return "LLM response"
+    return 42
 
 
 @flyte.trace
@@ -93,13 +93,24 @@ def noio_task():
 
 
 @env.task
-async def parallel_main_no_io(q: str) -> str:
+async def parallel_main_no_io(q: str) -> int:
     print("Starting parallel_main_no_io", flush=True)
     noio_task()
-    await input_trace("hello world")
+    await input_trace("hello world", "blah", 42)
     a = await output_trace()
     await noio_trace()
-    return a
+    b = await input_output_trace("hello", "world", 42, "blah")
+    return a + b
+
+
+@flyte.trace
+async def input_output_trace(a: str, b: str, c: int, d: str) -> int:
+    return c
+
+
+@env.task
+async def input_output_task(a: str, b: str, c: int) -> int:
+    return await input_output_trace(a, b, c, "hello")
 
 
 if __name__ == "__main__":
