@@ -53,7 +53,7 @@ image = flyte.Image.from_uv_script(__file__, name="embed_wikipedia_image")
 driver = flyte.TaskEnvironment(
     name="driver",
     image=image,
-    resources=flyte.Resources(cpu=1, memory="1Gi", disk="16Gi"),
+    resources=flyte.Resources(cpu=1, memory="4Gi", disk="16Gi"),
 )
 
 N_GPUS = 1
@@ -92,13 +92,8 @@ async def embed_articles(batch: list[Article]) -> list[ArticleEmbedding]:
     print(f"model loaded {model}")
 
     print(f"encoding {len(batch)} articles")
-    device = None
-    if torch.cuda.is_available():
-        device = ["cuda:{i}" for i in range(N_GPUS)]
-
     embeddings = model.encode(
         [f"{article.title}\n{article.text}" for article in batch],
-        device=device
     )
 
     article_embeddings = []
@@ -131,29 +126,39 @@ async def embedding_to_sink(dir: Path, batch: list[ArticleEmbedding]):
 
 
 @driver.task
-async def embed_wikipedia(limit: int = 8) -> flyte.io.Dir:
+async def embed_wikipedia(
+    limit: int = 8,
+    batch_size: int = 8,
+    embedding_group_size: int = 4,
+) -> flyte.io.Dir:
     dataset = datasets.load_dataset("wikimedia/wikipedia", "20231101.en", streaming=True)
 
-    embeddings = []
+    embedding_tasks = []
     temp_dir = tempfile.mkdtemp()
-    with flyte.group("embed_articles"):
-        batch = []
-        for i, article in enumerate(dataset["train"]):
-            if limit and limit != -1 and i > limit:
-                break
+    
+    batch = []
+    group_number = 1
+    for i, article in enumerate(dataset["train"]):
+        if limit and limit != -1 and i > limit:
+            break
+        article = Article(title=article["title"], text=article["text"], wiki_id=article["id"])
+        batch.append(article)
+        if len(batch) == batch_size:
+            embedding_tasks.append(embedding_to_sink(Path(temp_dir), batch))
+            batch = []
+        
+        if len(embedding_tasks) == embedding_group_size:
+            with flyte.group(f"embedding_tasks_{group_number}"):
+                group_number += 1
+                await asyncio.gather(*embedding_tasks)
+                embedding_tasks = []
 
-            article = Article(
-                title=article["title"],
-                text=article["text"],
-                wiki_id=article["id"]
-            )
-            batch.append(article)
-
-            if len(batch) == N_GPUS:
-                embeddings.append(embedding_to_sink(Path(temp_dir), batch))
-                batch = []
-
-        await asyncio.gather(*embeddings)
+    # embed any remaining articles
+    if batch:
+        embedding_tasks.append(embedding_to_sink(Path(temp_dir), batch))
+    if embedding_tasks:
+        with flyte.group(f"embedding_tasks_{group_number}"):
+            await asyncio.gather(*embedding_tasks)
 
     print(f"Files written to {temp_dir}")
     for file in Path(temp_dir).glob("*.json"):
@@ -167,6 +172,7 @@ async def embed_wikipedia(limit: int = 8) -> flyte.io.Dir:
 if __name__ == "__main__":
     # Usage:
     # Run this with limit=-1 to embed all articles in the dataset (~61MM rows)
+    # flyte.init()
     flyte.init_from_config("../../config.yaml")
-    run = flyte.run(embed_wikipedia)
+    run = flyte.run(embed_wikipedia, limit=32, batch_size=8, embedding_group_size=4)
     print(run.url)
