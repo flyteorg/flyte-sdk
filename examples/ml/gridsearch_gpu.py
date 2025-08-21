@@ -1,7 +1,7 @@
 # /// script
 # requires-python = "==3.13"
 # dependencies = [
-#    "flyte>=0.2.0b36",
+#    "flyte>=2.0.0b13",
 #    "torch==2.7.1",
 #    "torchvision==0.22.1",
 #    "lightning==2.5.2",
