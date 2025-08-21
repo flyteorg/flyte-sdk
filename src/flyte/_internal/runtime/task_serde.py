@@ -145,7 +145,6 @@ def get_proto_task(task: TaskTemplate, serialize_context: SerializationContext) 
             logger.debug(f"Detected pkl bundle for task {task.name}, using computed version as cache version")
             cache_version = serialize_context.code_bundle.computed_version
         else:
-            version_parameters = None
             if isinstance(task, AsyncFunctionTaskTemplate):
                 version_parameters = VersionParameters(func=task.func, image=task.image)
             else:

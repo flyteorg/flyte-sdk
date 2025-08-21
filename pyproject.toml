@@ -61,6 +61,7 @@ license-files = ["licenses/*.txt", "LICENSE"]
 package-dir = {"" = "src"}
 script-files = [
     "src/flyte/_bin/runtime.py",
+    "src/flyte/_bin/debug.py",
 ]
 
 [tool.setuptools.packages.find]
@@ -117,7 +118,7 @@ select = [
     "FURB",
     "RUF",
 ]
-ignore = ["PGH003", "PLC0415"]
+ignore = ["PGH003", "PLC0415", "ASYNC210"]
 
 [tool.ruff.lint.per-file-ignores]
 "examples/*" = ["E402"]

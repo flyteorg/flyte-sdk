@@ -166,6 +166,7 @@ class TaskContext:
     action: ActionID
     version: str
     raw_data_path: RawDataPath
+    input_path: str | None = None
     output_path: str
     run_base_dir: str
     report: Report
@@ -175,6 +176,7 @@ class TaskContext:
     compiled_image_cache: ImageCache | None = None
     data: Dict[str, Any] = field(default_factory=dict)
     mode: Literal["local", "remote", "hybrid"] = "remote"
+    interactive_mode: bool = False
 
     def replace(self, **kwargs) -> TaskContext:
         if "data" in kwargs:
