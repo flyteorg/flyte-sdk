@@ -53,11 +53,11 @@ driver = flyte.TaskEnvironment(
     resources=flyte.Resources(cpu=1, memory="4Gi", disk="64Gi"),
 )
 
-N_GPUS = 8
+N_GPUS = 1
 worker = flyte.TaskEnvironment(
     name="worker",
     image=image,
-    resources=flyte.Resources(cpu=2, memory="4Gi", gpu="T4:1"),
+    resources=flyte.Resources(cpu=2, memory="4Gi", gpu=f"T4:{N_GPUS}"),
     reusable=flyte.ReusePolicy(replicas=4, concurrency=16),
 )
 
@@ -136,8 +136,7 @@ async def embed_wikipedia(
     for i, article in enumerate(dataset["train"]):
         if limit and limit != -1 and i > limit:
             break
-        article = Article(title=article["title"], text=article["text"], wiki_id=article["id"])
-        batch.append(article)
+        batch.append(Article(title=article["title"], text=article["text"], wiki_id=article["id"]))
 
         if len(batch) == batch_size:
             embedding_tasks.append(embedding_to_sink(Path(temp_dir), batch))
@@ -170,5 +169,5 @@ if __name__ == "__main__":
     # Run this with limit=-1 to embed all articles in the dataset (~61MM rows)
     # flyte.init()
     flyte.init_from_config("../../config.yaml")
-    run = flyte.run(embed_wikipedia, limit=10000, batch_size=10, embedding_group_size=100)
+    run = flyte.run(embed_wikipedia, limit=1000, batch_size=1, embedding_group_size=100)
     print(run.url)
