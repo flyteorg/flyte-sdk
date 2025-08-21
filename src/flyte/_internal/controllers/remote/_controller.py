@@ -167,7 +167,7 @@ class RemoteController(Controller):
         # It is not allowed to change the code bundle (for regular code bundles) in the middle of a run.
         code_bundle = tctx.code_bundle
 
-        if code_bundle and code_bundle.pkl:
+        if tctx.interactive_mode or (code_bundle and code_bundle.pkl):
             logger.debug(f"Building new pkl bundle for task {_task.name}")
             code_bundle = await build_pkl_bundle(
                 _task,
@@ -252,6 +252,21 @@ class RemoteController(Controller):
             logger.info(f"Action {action.action_id.name} cancelled, cancelling on server")
             await self.cancel_action(action)
             raise
+
+        # If the action is aborted, we should abort the controller as well
+        if n.phase == run_definition_pb2.PHASE_ABORTED:
+            logger.warning(f"Action {n.action_id.name} was aborted, aborting current Action{current_action_id.name}")
+            raise flyte.errors.RunAbortedError(
+                f"Action {n.action_id.name} was aborted, aborting current Action {current_action_id.name}"
+            )
+
+        if n.phase == run_definition_pb2.PHASE_TIMED_OUT:
+            logger.warning(
+                f"Action {n.action_id.name} timed out, raising timeout exception Action {current_action_id.name}"
+            )
+            raise flyte.errors.TaskTimeoutError(
+                f"Action {n.action_id.name} timed out, raising exception in current Action {current_action_id.name}"
+            )
 
         if n.has_error() or n.phase == run_definition_pb2.PHASE_FAILED:
             exc = await handle_action_failure(action, _task.name)

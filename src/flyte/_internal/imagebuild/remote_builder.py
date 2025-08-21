@@ -19,20 +19,26 @@ from flyte._image import (
     CopyConfig,
     DockerIgnore,
     Env,
+    PipOption,
     PipPackages,
     PythonWheels,
     Requirements,
     UVProject,
     UVScript,
+    WorkDir,
 )
 from flyte._internal.imagebuild.image_builder import ImageBuilder, ImageChecker
+from flyte._internal.imagebuild.utils import copy_files_to_context
+from flyte._internal.runtime.task_serde import get_security_context
 from flyte._logging import logger
+from flyte._secret import Secret
 from flyte.remote import ActionOutputs, Run
 
 if TYPE_CHECKING:
     from flyte._protos.imagebuilder import definition_pb2 as image_definition_pb2
 
 IMAGE_TASK_NAME = "build-image"
+OPTIMIZE_TASK_NAME = "optimize-task"
 IMAGE_TASK_PROJECT = "system"
 IMAGE_TASK_DOMAIN = "production"
 
@@ -94,12 +100,12 @@ class RemoteImageBuilder(ImageBuilder):
         spec, context = await _validate_configuration(image)
 
         start = datetime.now(timezone.utc)
-        entity = remote.Task.get(
+        entity = await remote.Task.get(
             name=IMAGE_TASK_NAME,
             project=IMAGE_TASK_PROJECT,
             domain=IMAGE_TASK_DOMAIN,
             auto_version="latest",
-        )
+        ).override.aio(secrets=_get_build_secrets_from_image(image))
         run = cast(
             Run,
             await flyte.with_runcontext(project=IMAGE_TASK_PROJECT, domain=IMAGE_TASK_DOMAIN).run.aio(
@@ -116,6 +122,19 @@ class RemoteImageBuilder(ImageBuilder):
 
         if run_details.action_details.raw_phase == run_definition_pb2.PHASE_SUCCEEDED:
             logger.warning(click.style(f"✅ Build completed in {elapsed}!", bold=True, fg="green"))
+            try:
+                entity = remote.Task.get(
+                    name=OPTIMIZE_TASK_NAME,
+                    project=IMAGE_TASK_PROJECT,
+                    domain=IMAGE_TASK_DOMAIN,
+                    auto_version="latest",
+                )
+                await flyte.with_runcontext(project=IMAGE_TASK_PROJECT, domain=IMAGE_TASK_DOMAIN).run.aio(
+                    entity, spec=spec, context=context, target_image=image_name
+                )
+            except Exception as e:
+                # Ignore the error if optimize is not enabled in the backend.
+                logger.warning(f"Failed to run optimize task with error: {e}")
         else:
             raise flyte.errors.ImageBuildError(f"❌ Build failed in {elapsed} at {click.style(run.url, fg='cyan')}")
 
@@ -163,37 +182,47 @@ def _get_layers_proto(image: Image, context_path: Path) -> "image_definition_pb2
 
     layers = []
     for layer in image._layers:
+        secret_mounts = None
+        pip_options = None
+
+        if isinstance(layer, PipOption):
+            pip_options = image_definition_pb2.PipOptions(
+                index_url=layer.index_url,
+                extra_index_urls=layer.extra_index_urls,
+                pre=layer.pre,
+                extra_args=layer.extra_args,
+            )
+
+        if hasattr(layer, "secret_mounts"):
+            sc = get_security_context(layer.secret_mounts)
+            secret_mounts = sc.secrets if sc else None
+
         if isinstance(layer, AptPackages):
             apt_layer = image_definition_pb2.Layer(
-                apt_packages=image_definition_pb2.AptPackages(packages=layer.packages)
+                apt_packages=image_definition_pb2.AptPackages(
+                    packages=layer.packages,
+                    secret_mounts=secret_mounts,
+                ),
             )
             layers.append(apt_layer)
         elif isinstance(layer, PythonWheels):
-            dst_path = _copy_files_to_context(layer.wheel_dir, context_path)
+            dst_path = copy_files_to_context(layer.wheel_dir, context_path)
             wheel_layer = image_definition_pb2.Layer(
                 python_wheels=image_definition_pb2.PythonWheels(
                     dir=str(dst_path.relative_to(context_path)),
-                    options=image_definition_pb2.PipOptions(
-                        index_url=layer.index_url,
-                        extra_index_urls=layer.extra_index_urls,
-                        pre=layer.pre,
-                        extra_args=layer.extra_args,
-                    ),
+                    options=pip_options,
+                    secret_mounts=secret_mounts,
                 )
             )
             layers.append(wheel_layer)
 
         elif isinstance(layer, Requirements):
-            dst_path = _copy_files_to_context(layer.file, context_path)
+            dst_path = copy_files_to_context(layer.file, context_path)
             requirements_layer = image_definition_pb2.Layer(
                 requirements=image_definition_pb2.Requirements(
                     file=str(dst_path.relative_to(context_path)),
-                    options=image_definition_pb2.PipOptions(
-                        index_url=layer.index_url,
-                        extra_index_urls=layer.extra_index_urls,
-                        pre=layer.pre,
-                        extra_args=layer.extra_args,
-                    ),
+                    options=pip_options,
+                    secret_mounts=secret_mounts,
                 )
             )
             layers.append(requirements_layer)
@@ -210,12 +239,8 @@ def _get_layers_proto(image: Image, context_path: Path) -> "image_definition_pb2
             pip_layer = image_definition_pb2.Layer(
                 pip_packages=image_definition_pb2.PipPackages(
                     packages=packages,
-                    options=image_definition_pb2.PipOptions(
-                        index_url=layer.index_url,
-                        extra_index_urls=layer.extra_index_urls,
-                        pre=layer.pre,
-                        extra_args=layer.extra_args,
-                    ),
+                    options=pip_options,
+                    secret_mounts=secret_mounts,
                 )
             )
             layers.append(pip_layer)
@@ -234,13 +259,16 @@ def _get_layers_proto(image: Image, context_path: Path) -> "image_definition_pb2
             layers.append(uv_layer)
         elif isinstance(layer, Commands):
             commands_layer = image_definition_pb2.Layer(
-                commands=image_definition_pb2.Commands(cmd=list(layer.commands))
+                commands=image_definition_pb2.Commands(
+                    cmd=list(layer.commands),
+                    secret_mounts=secret_mounts,
+                )
             )
             layers.append(commands_layer)
         elif isinstance(layer, DockerIgnore):
             shutil.copy(layer.path, context_path)
         elif isinstance(layer, CopyConfig):
-            dst_path = _copy_files_to_context(layer.src, context_path)
+            dst_path = copy_files_to_context(layer.src, context_path)
 
             copy_layer = image_definition_pb2.Layer(
                 copy_config=image_definition_pb2.CopyConfig(
@@ -256,6 +284,11 @@ def _get_layers_proto(image: Image, context_path: Path) -> "image_definition_pb2
                 )
             )
             layers.append(env_layer)
+        elif isinstance(layer, WorkDir):
+            workdir_layer = image_definition_pb2.Layer(
+                workdir=image_definition_pb2.WorkDir(workdir=layer.workdir),
+            )
+            layers.append(workdir_layer)
 
     return image_definition_pb2.ImageSpec(
         base_image=image.base_image,
@@ -264,18 +297,22 @@ def _get_layers_proto(image: Image, context_path: Path) -> "image_definition_pb2
     )
 
 
-def _copy_files_to_context(src: Path, context_path: Path) -> Path:
-    if src.is_absolute() or ".." in str(src):
-        dst_path = context_path / str(src.absolute()).replace("/", "./_flyte_abs_context/", 1)
-    else:
-        dst_path = context_path / src
-    dst_path.parent.mkdir(parents=True, exist_ok=True)
-    if src.is_dir():
-        shutil.copytree(src, dst_path, dirs_exist_ok=True)
-    else:
-        shutil.copy(src, dst_path)
-    return dst_path
-
-
 def _get_fully_qualified_image_name(outputs: ActionOutputs) -> str:
     return outputs.pb2.literals[0].value.scalar.primitive.string_value
+
+
+def _get_build_secrets_from_image(image: Image) -> Optional[typing.List[Secret]]:
+    secrets = []
+    DEFAULT_SECRET_DIR = Path("etc/flyte/secrets")
+    for layer in image._layers:
+        if isinstance(layer, (PipOption, Commands, AptPackages)) and layer.secret_mounts is not None:
+            for secret_mount in layer.secret_mounts:
+                # Mount all the image secrets to a default directory that will be passed to the BuildKit server.
+                if isinstance(secret_mount, Secret):
+                    secrets.append(Secret(key=secret_mount.key, group=secret_mount.group, mount=DEFAULT_SECRET_DIR))
+                elif isinstance(secret_mount, str):
+                    secrets.append(Secret(key=secret_mount, mount=DEFAULT_SECRET_DIR))
+                else:
+                    raise ValueError(f"Unsupported secret_mount type: {type(secret_mount)}")
+
+    return secrets

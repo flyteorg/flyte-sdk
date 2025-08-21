@@ -9,15 +9,45 @@ on:
       - 'maint_tools/build_default_image.py'
 
 jobs:
-  pypi:
+  flyte-pypi:
+    name: PyPI package
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: "0"
+      - name: Set up Python
+        uses: actions/setup-python@v1
+        with:
+          python-version: "3.x"
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        id: setup-uv
+      - name: Install dependencies
+        run: |
+          uv venv
+          uv pip install build twine setuptools wheel
+      - name: Build and publish
+        run: |
+          uv run python -m build --wheel --installer uv
+      - name: Publish
+        if: ${{ github.event_name == 'release' }}
+        working-directory: ${{ matrix.workdir }}
+        env:
+          TWINE_USERNAME: ${{ secrets.PYPI_USERNAME }}
+          TWINE_PASSWORD: ${{ secrets.PYPI_PASSWORD }}
+        run: |
+          uv run python -m twine upload --verbose dist/*
+  plugin-pypi:
     name: PyPI package
     runs-on: ubuntu-latest
     strategy:
       matrix:
         workdir:
-          - "."
           - "plugins/ray"
           - "plugins/spark"
+          - "plugins/openai"
+          - "plugins/dask"
     steps:
       - uses: actions/checkout@v4
         with:
@@ -37,7 +67,7 @@ jobs:
       - name: Build and publish
         working-directory: ${{ matrix.workdir }}
         run: |
-          uv run python -m build --wheel --installer uv
+          uv run --prerelease allow python -m build --wheel --installer uv
       - name: Publish
         if: ${{ github.event_name == 'release' }}
         working-directory: ${{ matrix.workdir }}
@@ -48,6 +78,7 @@ jobs:
           uv run python -m twine upload --verbose dist/*
 
   build-and-push-docker-images:
+    needs: flyte-pypi
     name: Flyte image for Python ${{ matrix.python-version }}
     runs-on: ubuntu-latest
     strategy:

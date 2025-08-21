@@ -4,7 +4,7 @@ import typing
 import ray
 from flyteplugins.ray.task import HeadNodeConfig, RayJobConfig, WorkerNodeConfig
 
-import flyte.remote._action
+import flyte.remote
 import flyte.storage
 
 
@@ -23,7 +23,7 @@ ray_config = RayJobConfig(
 )
 
 image = (
-    flyte.Image.from_debian_base()
+    flyte.Image.from_debian_base(name="ray")
     .with_apt_packages("wget")
     .with_pip_packages("ray[default]==2.46.0", "flyteplugins-ray", "pip")
 )
@@ -35,7 +35,7 @@ ray_env = flyte.TaskEnvironment(
     name="ray_env",
     plugin_config=ray_config,
     image=image,
-    resources=flyte.Resources(cpu=(1, 2), memory=("800Mi", "1600Mi")),
+    resources=flyte.Resources(cpu=(3, 4), memory=("1600Mi", "2800Mi")),
 )
 
 
@@ -62,6 +62,6 @@ if __name__ == "__main__":
     print("run url:", run.url)
     run.wait(run)
 
-    action_details = flyte.remote._action.ActionDetails.get(run_name=run.name, name="a0")
+    action_details = flyte.remote.ActionDetails.get(run_name=run.name, name="a0")
     for log in action_details.pb2.attempts[-1].log_info:
         print(f"{log.name}: {log.uri}")

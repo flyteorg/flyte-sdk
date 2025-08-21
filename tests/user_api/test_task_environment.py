@@ -15,7 +15,7 @@ async def sample_task(x: int, y: int) -> int:
     return x + y
 
 
-@env_with_tasks.task(name="test")
+@env_with_tasks.task(short_name="test")
 async def sample_task2(x: int, y: int) -> int:
     return x + y
 
@@ -43,14 +43,14 @@ def test_clone_with_overrides(base_env):
         resources=flyte.Resources(cpu="2", memory="2Gi"),
         cache="custom",
         reusable="yes",
-        env={"A": "B"},
+        env_vars={"A": "B"},
         secrets="sec",
         depends_on=[other],
     )
     assert clone.image == "new_img"
     assert clone.cache == "custom"
     assert clone.reusable == "yes"
-    assert clone.env == {"A": "B"}
+    assert clone.env_vars == {"A": "B"}
     assert clone.secrets == "sec"
     assert clone.depends_on == [other]
 
@@ -120,7 +120,7 @@ def test_task_environment_name_validation():
 def test_env_with_tasks():
     assert len(env_with_tasks.tasks) == 2
     assert list(env_with_tasks.tasks.keys()) == ["env_with_tasks.sample_task", "env_with_tasks.sample_task2"]
-    assert sample_task.friendly_name == "sample_task"
+    assert sample_task.short_name == "sample_task"
     assert sample_task.name == "env_with_tasks.sample_task"
-    assert sample_task2.friendly_name == "test"
+    assert sample_task2.short_name == "test"
     assert sample_task2.name == "env_with_tasks.sample_task2"

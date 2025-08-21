@@ -166,6 +166,7 @@ class TaskContext:
     action: ActionID
     version: str
     raw_data_path: RawDataPath
+    input_path: str | None = None
     output_path: str
     run_base_dir: str
     report: Report
@@ -175,6 +176,7 @@ class TaskContext:
     compiled_image_cache: ImageCache | None = None
     data: Dict[str, Any] = field(default_factory=dict)
     mode: Literal["local", "remote", "hybrid"] = "remote"
+    interactive_mode: bool = False
 
     def replace(self, **kwargs) -> TaskContext:
         if "data" in kwargs:
@@ -190,6 +192,13 @@ class TaskContext:
 
     def __getitem__(self, key: str) -> Optional[Any]:
         return self.data.get(key)
+
+    def is_in_cluster(self):
+        """
+        Check if the task is running in a cluster.
+        :return: bool
+        """
+        return self.mode == "remote"
 
 
 @rich.repr.auto

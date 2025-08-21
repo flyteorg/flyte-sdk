@@ -4,8 +4,8 @@ import tempfile
 from dataclasses import dataclass
 from typing import Any, Dict, Optional
 
+import flyte
 from flyte import PodTemplate
-from flyte._initialize import is_initialized
 from flyte.extend import AsyncFunctionTaskTemplate, TaskPluginRegistry
 from flyte.models import SerializationContext
 from flyteidl.plugins.spark_pb2 import SparkApplication, SparkJob
@@ -56,7 +56,7 @@ class PysparkFunctionTask(AsyncFunctionTaskTemplate):
 
         sess = _pyspark.sql.SparkSession.builder.appName("FlyteSpark").getOrCreate()
 
-        if is_initialized():
+        if flyte.ctx().is_in_cluster():
             base_dir = tempfile.mkdtemp()
             file_name = "flyte_wf"
             file_format = "zip"
