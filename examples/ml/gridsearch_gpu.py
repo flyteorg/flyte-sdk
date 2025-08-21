@@ -91,7 +91,7 @@ class MNISTDataModule(L.LightningDataModule):
         )
 
 
-@driver.task
+@gpu_env.task
 async def train_model(
     sweep_name: str,
     batch_size: int,
