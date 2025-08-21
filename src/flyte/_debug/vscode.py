@@ -40,11 +40,10 @@ async def download_file(url: str, target_dir: str) -> str:
         target_dir (str): The directory where the file should be saved. Defaults to current directory.
     """
     try:
-        response = httpx.get(url, follow_redirects=True)
-        response.raise_for_status()  # Raise an exception for bad status codes (4xx or 5xx)
-
         filename = os.path.join(target_dir, os.path.basename(url))
         if url.startswith("http"):
+            response = httpx.get(url, follow_redirects=True)
+            response.raise_for_status()  # Raise an exception for bad status codes (4xx or 5xx)
             async with aiofiles.open(filename, "wb") as f:
                 await f.write(response.content)
         else:
@@ -147,7 +146,7 @@ async def download_vscode():
             tar.extractall(path=DOWNLOAD_DIR)
 
     if os.path.exists(DOWNLOAD_DIR):
-        code_server_dir_name = os.path.basename(get_code_server_info()).split(".")[0]
+        code_server_dir_name = os.path.basename(get_code_server_info()).removesuffix(".tar.gz")
         code_server_bin_dir = os.path.join(DOWNLOAD_DIR, code_server_dir_name, "bin")
         # Add the directory of code-server binary to $PATH
         os.environ["PATH"] = code_server_bin_dir + os.pathsep + os.environ["PATH"]
