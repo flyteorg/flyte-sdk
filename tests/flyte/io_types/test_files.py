@@ -21,8 +21,21 @@ async def test_transformer_serde():
     f = File(path="s3://bucket/file.txt")
     lt = TypeEngine.to_literal_type(File)
     lv = await FileTransformer().to_literal(f, File, lt)
+    assert not lv.hash
     pv = await FileTransformer().to_python_value(lv, File)
     assert pv == f
+
+
+@pytest.mark.asyncio
+async def test_transformer_serde_with_hash():
+    f = File.from_existing_remote("s3://bucket/file.txt", known_hash_value="abc")
+    lt = TypeEngine.to_literal_type(File)
+    lv = await FileTransformer().to_literal(f, File, lt)
+    assert lv.hash == "abc"
+    pv = await FileTransformer().to_python_value(lv, File)
+    assert pv == f
+    assert pv.hash == "abc"
+    assert pv.path == f.path
 
 
 @pytest.mark.sandbox
@@ -95,7 +108,7 @@ async def test_task_write_file_streaming_locals3(ctx_with_test_local_s3_stack_ra
     async def my_task() -> File[pd.DataFrame]:
         df = pd.DataFrame({"col1": [1, 2], "col2": [3, 4]})
         a = HashlibAccumulator.from_hash_name("sha256")
-        file = File.new_remote(accumulator=a)
+        file = File.new_remote(hash_method=a)
         async with file.open("wb") as fh:
             df.to_csv(fh, index=False)
             fh.close()  # context manager should also close but this should still work
@@ -119,11 +132,11 @@ async def test_task_write_file_local_then_upload(ctx_with_test_raw_data_path):
         local_path = os.path.join(temp_dir, "data.csv")
         df = pd.DataFrame({"col1": [1, 2], "col2": [3, 4]})
         df.to_csv(local_path, index=False)
-        uploaded_file = await File.from_local(local_path, remote_destination="s3://my-s3-bucket/data.csv")
+        uploaded_file = await File.from_local(local_path, remote_destination="s3://bucket/data.csv")
         return uploaded_file
 
     file = await my_task()
-    assert file.path == "s3://my-s3-bucket/data.csv"
+    assert file.path == "s3://bucket/data.csv"
     pv2 = File.from_existing_remote(file.path)
     async with pv2.open() as fh:
         content = fh.read()

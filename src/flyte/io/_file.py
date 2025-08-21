@@ -27,7 +27,7 @@ import flyte.storage as storage
 from flyte._context import internal_ctx
 from flyte._initialize import requires_initialization
 from flyte._logging import logger
-from flyte.io._hashing_io import AsyncHashingReader, HashingWriter, HashMethod
+from flyte.io._hashing_io import AsyncHashingReader, HashingWriter, HashMethod, PrecomputedValue
 from flyte.types import TypeEngine, TypeTransformer, TypeTransformerFailedError
 
 # Type variable for the file format
@@ -142,7 +142,7 @@ class File(BaseModel, Generic[T], SerializableType):
 
     @classmethod
     @requires_initialization
-    def new_remote(cls, accumulator: Optional[HashMethod] = None) -> File[T]:
+    def new_remote(cls, hash_method: Optional[HashMethod] = None) -> File[T]:
         """
         Create a new File reference for a remote file that will be written to.
 
@@ -159,10 +159,10 @@ class File(BaseModel, Generic[T], SerializableType):
         """
         ctx = internal_ctx()
 
-        return cls(path=ctx.raw_data.get_random_remote_path(), accumulator=accumulator)
+        return cls(path=ctx.raw_data.get_random_remote_path(), accumulator=hash_method)
 
     @classmethod
-    def from_existing_remote(cls, remote_path: str) -> File[T]:
+    def from_existing_remote(cls, remote_path: str, known_hash_value: Optional[str] = None) -> File[T]:
         """
         Create a File reference from an existing remote file.
 
@@ -175,8 +175,10 @@ class File(BaseModel, Generic[T], SerializableType):
 
         Args:
             remote_path: The remote path to the existing file
+            known_hash_value: Optional hash value to use for discovery purposes. If not specified, the value of this
+              File object will be hashed (basically the path, not the contents).
         """
-        return cls(path=remote_path)
+        return cls(path=remote_path, hash=known_hash_value)
 
     @asynccontextmanager
     async def open(
@@ -373,6 +375,10 @@ class File(BaseModel, Generic[T], SerializableType):
         Args:
             local_path: Path to the local file
             remote_destination: Optional path to store the file remotely. If None, a path will be generated.
+            hash_method: Optional HashMethod to use for determining a task's cache key if this File object is used as
+              an input to said task. If not specified, the cache key will just be computed based on this object's
+              attributes (i.e. path, name, format, etc.).
+              If there is a set value you want to use, please pass an instance of the PrecomputedValue HashMethod.
 
         Returns:
             A new File instance pointing to the uploaded file
@@ -409,10 +415,15 @@ class File(BaseModel, Generic[T], SerializableType):
         else:
             # Otherwise upload to remote using async storage layer
             if hash_method:
-                async with aiofiles.open(local_path, "rb") as src:
-                    src_wrapper = AsyncHashingReader(src, accumulator=hash_method)
-                    path = await storage.put_stream(src_wrapper, to_path=remote_path)
-                    hash_value = src_wrapper.result()
+                # We can skip the wrapper if the hash method is just a precomputed value
+                if not isinstance(hash_method, PrecomputedValue):
+                    async with aiofiles.open(local_path, "rb") as src:
+                        src_wrapper = AsyncHashingReader(src, accumulator=hash_method)
+                        path = await storage.put_stream(src_wrapper, to_path=remote_path)
+                        hash_value = src_wrapper.result()
+                else:
+                    path = await storage.put(str(local_path), remote_path)
+                    hash_value = hash_method.result()
             else:
                 path = await storage.put(str(local_path), remote_path)
 
@@ -459,7 +470,8 @@ class FileTransformer(TypeTransformer[File]):
                     ),
                     uri=python_val.path,
                 )
-            )
+            ),
+            hash=python_val.hash if python_val.hash else None,
         )
 
     async def to_python_value(
@@ -477,7 +489,8 @@ class FileTransformer(TypeTransformer[File]):
 
         uri = lv.scalar.blob.uri
         filename = Path(uri).name
-        f: File = File(path=uri, name=filename, format=lv.scalar.blob.metadata.type.format)
+        hash_value = lv.hash if lv.hash else None
+        f: File = File(path=uri, name=filename, format=lv.scalar.blob.metadata.type.format, hash=hash_value)
         return f
 
     def guess_python_type(self, literal_type: types_pb2.LiteralType) -> Type[File]:

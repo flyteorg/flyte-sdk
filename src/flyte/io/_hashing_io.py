@@ -14,6 +14,16 @@ class HashMethod(Protocol):
     def reset(self) -> None: ...
 
 
+class PrecomputedValue(HashMethod):
+    def __init__(self, value: str):
+        self._value = value
+
+    def update(self, data: memoryview, /) -> None: ...
+
+    def result(self) -> str:
+        return self._value
+
+
 class HashlibAccumulator(HashMethod):
     """
     Wrap a hashlib-like object to the Accumulator protocol.
