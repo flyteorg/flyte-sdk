@@ -35,7 +35,7 @@ ray_env = flyte.TaskEnvironment(
     name="ray_env",
     plugin_config=ray_config,
     image=image,
-    resources=flyte.Resources(cpu=(1, 2), memory=("800Mi", "1600Mi")),
+    resources=flyte.Resources(cpu=(3, 4), memory=("1600Mi", "2800Mi")),
 )
 
 
@@ -57,7 +57,7 @@ async def hello_ray_nested(n: int = 3) -> typing.List[int]:
 
 if __name__ == "__main__":
     flyte.init_from_config("../../config.yaml")
-    run = flyte.run(hello_ray_nested)
+    run = flyte.with_runcontext(env_vars={"LOG_LEVEL": "10", "_F_E_VS": "True"}).run(hello_ray_nested)
     print("run name:", run.name)
     print("run url:", run.url)
     run.wait(run)
