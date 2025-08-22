@@ -308,15 +308,80 @@ def generate_inputs_hash(serialized_inputs: str | bytes) -> str:
     return hash_data(serialized_inputs)
 
 
+def generate_inputs_repr_for_literal(literal: literals_pb2.Literal) -> bytes:
+    """
+    Generate a byte representation for a single literal that is meant to be hashed as part of the cache key
+    computation for an Action. This function should just serialize the literal deterministically, but will
+    use an existing hash value if present in the Literal.  This is trivial, except we need to handle nested literals
+    (inside collections and maps), that may have the hash property set.
+
+    :param literal: The literal to get a hashable representation for.
+    :return: byte representation of the literal that can be fed into a hash function.
+    """
+    # If the literal has a hash value, use that instead of serializing the full literal
+    if literal.hash:
+        return literal.hash.encode("utf-8")
+
+    if literal.HasField("collection"):
+        buf = bytearray()
+        for nested_literal in literal.collection.literals:
+            if nested_literal.hash:
+                buf += nested_literal.hash.encode("utf-8")
+            else:
+                buf += generate_inputs_repr_for_literal(nested_literal)
+
+        b = bytes(buf)
+        return b
+
+    elif literal.HasField("map"):
+        buf = bytearray()
+        for key, nested_literal in literal.map.literals.items():
+            buf += key.encode("utf-8")
+            if nested_literal.hash:
+                buf += nested_literal.hash.encode("utf-8")
+            else:
+                buf += generate_inputs_repr_for_literal(nested_literal)
+
+        b = bytes(buf)
+        return b
+
+    # For all other cases (scalars, etc.), just serialize the literal normally
+    return literal.SerializeToString(deterministic=True)
+
+
+def generate_inputs_hash_for_named_literals(inputs: list[run_definition_pb2.NamedLiteral]) -> str:
+    """
+    Generate a hash for the inputs using the new literal representation approach that respects
+    hash values already present in literals. This is used to uniquely identify the inputs for a task
+    when some literals may have precomputed hash values.
+
+    :param inputs: List of NamedLiteral inputs to hash.
+    :return: A base64-encoded string representation of the hash.
+    """
+    if not inputs:
+        return ""
+
+    # Build the byte representation by concatenating each literal's representation
+    combined_bytes = b""
+    for named_literal in inputs:
+        # Add the name to ensure order matters
+        name_bytes = named_literal.name.encode("utf-8")
+        literal_bytes = generate_inputs_repr_for_literal(named_literal.value)
+        # Combine name and literal bytes with a separator to avoid collisions
+        combined_bytes += name_bytes + b":" + literal_bytes + b";"
+
+    return hash_data(combined_bytes)
+
+
 def generate_inputs_hash_from_proto(inputs: run_definition_pb2.Inputs) -> str:
     """
     Generate a hash for the inputs. This is used to uniquely identify the inputs for a task.
     :param inputs: The inputs to hash.
     :return: A hexadecimal string representation of the hash.
     """
-    if not inputs:
+    if not inputs.literals:
         return ""
-    return generate_inputs_hash(inputs.SerializeToString(deterministic=True))
+    return generate_inputs_hash_for_named_literals([l for l in inputs.literals])
 
 
 def generate_interface_hash(task_interface: interface_pb2.TypedInterface) -> str:
