@@ -27,13 +27,14 @@ Requirements:
 """
 
 import asyncio
-import json
 import logging
+import pathlib
+import json
 import tempfile
-from dataclasses import asdict, dataclass
-from pathlib import Path
 
 import datasets
+import numpy as np
+import pandas as pd
 from async_lru import alru_cache
 from sentence_transformers import SentenceTransformer
 
@@ -48,120 +49,108 @@ logger = logging.getLogger(__name__)
 image = flyte.Image.from_uv_script(__file__, name="embed_wikipedia_image")
 
 driver = flyte.TaskEnvironment(
-    name="driver",
+    name="embed_wikipedia_driver",
     image=image,
-    resources=flyte.Resources(cpu=1, memory="4Gi", disk="64Gi"),
+    resources=flyte.Resources(cpu=1, memory="4Gi", disk="16Gi"),
+    # reusable=flyte.ReusePolicy(replicas=4, concurrency=8, idle_ttl=60),
 )
 
 N_GPUS = 1
 worker = flyte.TaskEnvironment(
-    name="worker",
+    name="embed_wikipedia_worker",
     image=image,
-    resources=flyte.Resources(cpu=2, memory="4Gi", gpu=f"T4:{N_GPUS}"),
-    reusable=flyte.ReusePolicy(replicas=4, concurrency=16),
+    resources=flyte.Resources(cpu=4, memory="16Gi", disk="16Gi", gpu=f"L4:{N_GPUS}"),
+    # reusable=flyte.ReusePolicy(replicas=4, concurrency=8, idle_ttl=60),
 )
 
 
-@dataclass
-class Article:
-    title: str
-    text: str
-    wiki_id: str
-
-
-@dataclass
-class ArticleEmbedding(Article):
-    """Data structure for article embeddings"""
-
-    embedding: list[float]
-    text_length: int
-    language: str
+@worker.task(cache="auto")
+async def load_partitions(num_proc: int = 4) -> list[flyte.io.DataFrame]:
+    dsb = datasets.load_dataset_builder(
+        "wikimedia/wikipedia",
+        "20231101.en",
+        cache_dir="/tmp/hfds",
+    )
+    dsb.download_and_prepare(
+        file_format="parquet",
+        download_config=datasets.DownloadConfig(disable_tqdm=True, num_proc=num_proc),
+    )
+    path = pathlib.Path(dsb.cache_dir)
+    partitions = []
+    for i, f in enumerate(path.iterdir()):
+        if "parquet" in f.name:
+            print(f"Encoding {i}: {f}")
+            partitions.append(flyte.io.DataFrame(uri=str(f)))
+    return partitions
 
 
 @alru_cache(maxsize=32)
-async def load_embedding_model() -> SentenceTransformer:
-    return SentenceTransformer("nomic-ai/modernbert-embed-base")
+async def load_embedding_model(model_name: str) -> SentenceTransformer:
+    return SentenceTransformer(model_name)
 
 
 @worker.task
-async def embed_articles(batch: list[Article]) -> list[ArticleEmbedding]:
-    model = await load_embedding_model()
+async def embed_batch(batch: list[str], ids: list[str]) -> flyte.io.Dir:
+    model = await load_embedding_model("BAAI/bge-small-en-v1.5")
     print(f"model loaded {model}")
 
-    print(f"encoding {len(batch)} articles")
-    embeddings = model.encode(
-        [f"{article.title}\n{article.text}" for article in batch],
-    )
+    temp_dir = tempfile.mkdtemp()
 
-    article_embeddings = []
+    embeddings: list[np.ndarray] = model.encode(
+        batch,
+        show_progress_bar=True,
+        batch_size=256,
+    )
     for i, embedding in enumerate(embeddings):
-        article_embeddings.append(
-            ArticleEmbedding(
-                title=batch[i].title,
-                wiki_id=batch[i].wiki_id,
-                text=batch[i].text,
-                embedding=embedding.tolist(),
-                text_length=len(batch[i].text),
-                language="en",
+        fname = f"embedding_{ids[i]}.json"
+        fp = pathlib.Path(temp_dir) / fname
+        with fp.open("w") as f:
+            json.dump(embedding.tolist(), f)
+        del embedding
+
+    dir = await flyte.io.Dir.from_local(temp_dir)
+    return dir
+
+
+@driver.task
+async def embed_articles(df: pd.DataFrame, batch_size: int) -> list[flyte.io.Dir]:
+    print(f"encoding {len(df)} articles")
+    embedded_batches = []
+    
+    batches = [df]
+    if len(df) > batch_size:
+        batches = np.array_split(
+            df, len(df) // batch_size + (1 if len(df) % batch_size else 0)
+        )
+
+    for batch in batches:
+        embedded_batches.append(
+            embed_batch(
+                batch["text"].tolist(),
+                batch["id"].tolist(),
             )
         )
-    print(f"encoded {len(article_embeddings)} articles")
-    return article_embeddings
-
-
-async def embedding_to_sink(dir: Path, batch: list[ArticleEmbedding]):
-    """Writes embeddings to file"""
-    article_embeddings = [asdict(article_embedding) for article_embedding in await embed_articles(batch)]
-
-    for article_embedding in article_embeddings:
-        fname = f"{article_embedding['title']}_{article_embedding['wiki_id']}.json"
-        with (dir / fname).open("w") as f:
-            json.dump(article_embedding, f)
+    return await asyncio.gather(*embedded_batches)
 
 
 @driver.task
 async def embed_wikipedia(
     limit: int = 8,
     batch_size: int = 8,
-    embedding_group_size: int = 4,
-) -> flyte.io.Dir:
-    dataset = datasets.load_dataset("wikimedia/wikipedia", "20231101.en", streaming=True)
-    print(f"dataset loaded {dataset}")
+    num_proc: int = 4,
+) -> list[flyte.io.Dir]:
+
+    partitions = await load_partitions(num_proc)
 
     embedding_tasks = []
-    temp_dir = tempfile.mkdtemp()
-
-    batch = []
-    group_number = 1
-    for i, article in enumerate(dataset["train"]):
+    for i, partition in enumerate(partitions):
         if limit and limit != -1 and i > limit:
             break
-        batch.append(Article(title=article["title"], text=article["text"], wiki_id=article["id"]))
+        embedding_tasks.append(embed_articles(partition, batch_size))
 
-        if len(batch) == batch_size:
-            embedding_tasks.append(embedding_to_sink(Path(temp_dir), batch))
-            batch = []
-
-        if len(embedding_tasks) == embedding_group_size:
-            with flyte.group(f"embedding_tasks_{group_number}"):
-                group_number += 1
-                await asyncio.gather(*embedding_tasks)
-                embedding_tasks = []
-
-    # embed any remaining articles
-    if batch:
-        embedding_tasks.append(embedding_to_sink(Path(temp_dir), batch))
-    if embedding_tasks:
-        with flyte.group(f"embedding_tasks_{group_number}"):
-            await asyncio.gather(*embedding_tasks)
-
-    print(f"Files written to {temp_dir}")
-    for file in Path(temp_dir).glob("*.json"):
-        with file.open("r") as f:
-            print(json.load(f))
-
-    dir = await flyte.io.Dir.from_local(temp_dir)
-    return dir
+    embeddings = await asyncio.gather(*embedding_tasks)
+    # Flatten list of lists into single list
+    return [dir for batch in embeddings for dir in batch]
 
 
 if __name__ == "__main__":
@@ -169,5 +158,5 @@ if __name__ == "__main__":
     # Run this with limit=-1 to embed all articles in the dataset (~61MM rows)
     # flyte.init()
     flyte.init_from_config("../../config.yaml")
-    run = flyte.run(embed_wikipedia, limit=1000, batch_size=1, embedding_group_size=100)
+    run = flyte.run(embed_wikipedia, limit=3, batch_size=2500)
     print(run.url)
