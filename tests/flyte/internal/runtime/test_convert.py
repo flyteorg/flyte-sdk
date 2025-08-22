@@ -984,6 +984,122 @@ def test_cache_key_hash_with_file_objects():
         pytest.fail("Cache keys should be valid base64")
 
 
+def test_generate_cache_key_hash_with_ignored_inputs():
+    """
+    Test that generate_cache_key_hash correctly ignores specified input variables.
+    When an input is in ignored_input_vars, changes to its value should not affect the cache key.
+    """
+    # Create a task interface with 3 inputs
+    interface = TypedInterface(
+        inputs=VariableMap(
+            variables={
+                "required_input": Variable(type=LiteralType(simple=SimpleType.STRING)),
+                "ignored_input": Variable(type=LiteralType(simple=SimpleType.INTEGER)),
+                "another_required": Variable(type=LiteralType(simple=SimpleType.BOOLEAN)),
+            }
+        )
+    )
+
+    # Create first set of inputs
+    inputs1 = _run_definition_pb2.Inputs(
+        literals=[
+            _run_definition_pb2.NamedLiteral(
+                name="required_input", value=Literal(scalar=Scalar(primitive=Primitive(string_value="test_value")))
+            ),
+            _run_definition_pb2.NamedLiteral(
+                name="ignored_input", value=Literal(scalar=Scalar(primitive=Primitive(integer=42)))
+            ),
+            _run_definition_pb2.NamedLiteral(
+                name="another_required", value=Literal(scalar=Scalar(primitive=Primitive(boolean=True)))
+            ),
+        ]
+    )
+
+    # Create second set of inputs where only the ignored input changes
+    inputs2 = _run_definition_pb2.Inputs(
+        literals=[
+            _run_definition_pb2.NamedLiteral(
+                name="required_input", value=Literal(scalar=Scalar(primitive=Primitive(string_value="test_value")))
+            ),
+            _run_definition_pb2.NamedLiteral(
+                name="ignored_input",
+                value=Literal(scalar=Scalar(primitive=Primitive(integer=9999))),  # Changed value
+            ),
+            _run_definition_pb2.NamedLiteral(
+                name="another_required", value=Literal(scalar=Scalar(primitive=Primitive(boolean=True)))
+            ),
+        ]
+    )
+
+    # Generate inputs hashes (these will be different due to ignored_input change)
+    inputs_hash1 = convert.generate_inputs_hash_from_proto(inputs1)
+    inputs_hash2 = convert.generate_inputs_hash_from_proto(inputs2)
+    assert inputs_hash1 != inputs_hash2  # Sanity check - hashes are different
+
+    task_name = "test_task_with_ignored_inputs"
+    cache_version = "v1"
+    ignored_vars = ["ignored_input"]
+
+    # Generate cache keys with ignored input
+    cache_key1 = convert.generate_cache_key_hash(
+        task_name, inputs_hash1, interface, cache_version, ignored_vars, inputs1
+    )
+    cache_key2 = convert.generate_cache_key_hash(
+        task_name, inputs_hash2, interface, cache_version, ignored_vars, inputs2
+    )
+
+    # Cache keys should be identical despite different ignored_input values
+    assert cache_key1 == cache_key2
+
+    # Verify cache keys are valid base64
+    import base64
+
+    try:
+        base64.b64decode(cache_key1)
+        base64.b64decode(cache_key2)
+    except Exception:
+        pytest.fail("Cache keys should be valid base64")
+
+    # Test that non-ignored input changes DO affect the cache key
+    inputs3 = _run_definition_pb2.Inputs(
+        literals=[
+            _run_definition_pb2.NamedLiteral(
+                name="required_input",
+                value=Literal(
+                    scalar=Scalar(primitive=Primitive(string_value="different_value"))
+                ),  # Changed non-ignored input
+            ),
+            _run_definition_pb2.NamedLiteral(
+                name="ignored_input", value=Literal(scalar=Scalar(primitive=Primitive(integer=42)))
+            ),
+            _run_definition_pb2.NamedLiteral(
+                name="another_required", value=Literal(scalar=Scalar(primitive=Primitive(boolean=True)))
+            ),
+        ]
+    )
+
+    inputs_hash3 = convert.generate_inputs_hash_from_proto(inputs3)
+    cache_key3 = convert.generate_cache_key_hash(
+        task_name, inputs_hash3, interface, cache_version, ignored_vars, inputs3
+    )
+
+    # This cache key should be different because a non-ignored input changed
+    assert cache_key3 != cache_key1
+    assert cache_key3 != cache_key2
+
+    # Test with no ignored variables - cache keys should be different when any input changes
+    no_ignored_vars = []
+    cache_key_no_ignore1 = convert.generate_cache_key_hash(
+        task_name, inputs_hash1, interface, cache_version, no_ignored_vars, inputs1
+    )
+    cache_key_no_ignore2 = convert.generate_cache_key_hash(
+        task_name, inputs_hash2, interface, cache_version, no_ignored_vars, inputs2
+    )
+
+    # Without ignoring variables, cache keys should be different
+    assert cache_key_no_ignore1 != cache_key_no_ignore2
+
+
 @pytest.mark.asyncio
 def test_generate_interface_hash_order_independence():
     interface1 = TypedInterface(
