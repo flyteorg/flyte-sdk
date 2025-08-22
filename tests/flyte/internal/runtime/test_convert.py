@@ -1100,6 +1100,105 @@ def test_generate_cache_key_hash_with_ignored_inputs():
     assert cache_key_no_ignore1 != cache_key_no_ignore2
 
 
+def test_cache_key_hash_with_dir_objects():
+    """
+    Test cache key generation with Dir objects that have hash values.
+    """
+    from flyteidl.core import literals_pb2, types_pb2
+
+    # Create literals with hash values like Dir objects would produce
+    literal1 = Literal(
+        scalar=Scalar(
+            blob=literals_pb2.Blob(
+                metadata=literals_pb2.BlobMetadata(
+                    type=types_pb2.BlobType(format="", dimensionality=types_pb2.BlobType.BlobDimensionality.MULTIPART)
+                ),
+                uri="s3://bucket/dir1/",
+            )
+        ),
+        hash="dir_content_hash_1",
+    )
+    literal2 = Literal(
+        scalar=Scalar(
+            blob=literals_pb2.Blob(
+                metadata=literals_pb2.BlobMetadata(
+                    type=types_pb2.BlobType(format="", dimensionality=types_pb2.BlobType.BlobDimensionality.MULTIPART)
+                ),
+                uri="s3://bucket/dir2/",
+            )
+        ),
+        hash="dir_content_hash_2",
+    )
+    literal3 = Literal(
+        scalar=Scalar(
+            blob=literals_pb2.Blob(
+                metadata=literals_pb2.BlobMetadata(
+                    type=types_pb2.BlobType(format="", dimensionality=types_pb2.BlobType.BlobDimensionality.MULTIPART)
+                ),
+                uri="s3://bucket/dir3/",
+            )
+        )
+        # no hash for dir3
+    )
+
+    inputs = _run_definition_pb2.Inputs(
+        literals=[
+            _run_definition_pb2.NamedLiteral(name="input_dir1", value=literal1),
+            _run_definition_pb2.NamedLiteral(name="input_dir2", value=literal2),
+            _run_definition_pb2.NamedLiteral(name="input_dir3", value=literal3),
+        ]
+    )
+
+    # Generate cache key
+    inputs_hash = convert.generate_inputs_hash_from_proto(inputs)
+
+    # Create a minimal typed interface for blob types
+    interface = TypedInterface(
+        inputs=VariableMap(
+            variables={
+                "input_dir1": Variable(
+                    type=LiteralType(blob=BlobType(format="", dimensionality=BlobType.BlobDimensionality.MULTIPART))
+                ),
+                "input_dir2": Variable(
+                    type=LiteralType(blob=BlobType(format="", dimensionality=BlobType.BlobDimensionality.MULTIPART))
+                ),
+                "input_dir3": Variable(
+                    type=LiteralType(blob=BlobType(format="", dimensionality=BlobType.BlobDimensionality.MULTIPART))
+                ),
+            }
+        )
+    )
+
+    cache_key = convert.generate_cache_key_hash("dir_processor_task", inputs_hash, interface, "v1", [], inputs)
+
+    # Verify cache key is different when dir hashes change
+    literal1_modified = Literal(scalar=literal1.scalar, hash="different_dir_content_hash_1")
+    inputs_modified = _run_definition_pb2.Inputs(
+        literals=[
+            _run_definition_pb2.NamedLiteral(name="input_dir1", value=literal1_modified),
+            _run_definition_pb2.NamedLiteral(name="input_dir2", value=literal2),
+            _run_definition_pb2.NamedLiteral(name="input_dir3", value=literal3),
+        ]
+    )
+
+    inputs_hash_modified = convert.generate_inputs_hash_from_proto(inputs_modified)
+    cache_key_modified = convert.generate_cache_key_hash(
+        "dir_processor_task", inputs_hash_modified, interface, "v1", [], inputs_modified
+    )
+
+    # Cache keys should be different when hash values change
+    assert cache_key != cache_key_modified
+
+    # But both should be valid base64
+    import base64
+
+    try:
+        base64.b64decode(cache_key)
+        base64.b64decode(cache_key_modified)
+    except Exception:
+        pytest.fail("Cache keys should be valid base64")
+
+
 @pytest.mark.asyncio
 def test_generate_interface_hash_order_independence():
     interface1 = TypedInterface(

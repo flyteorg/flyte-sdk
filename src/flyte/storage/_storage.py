@@ -14,6 +14,7 @@ from obstore.fsspec import register
 
 from flyte._initialize import get_storage
 from flyte._logging import logger
+from flyte.errors import InitializationError
 
 _OBSTORE_SUPPORTED_PROTOCOLS = ["s3", "gs", "abfs", "abfss"]
 
@@ -76,8 +77,13 @@ def get_random_local_directory() -> pathlib.Path:
 def get_configured_fsspec_kwargs(
     protocol: typing.Optional[str] = None, anonymous: bool = False
 ) -> typing.Dict[str, typing.Any]:
-    storage_config = get_storage()
     if protocol:
+        # Try to get storage config safely - may not be initialized for local operations
+        try:
+            storage_config = get_storage()
+        except InitializationError:
+            storage_config = None
+
         match protocol:
             case "s3":
                 # If the protocol is s3, we can use the s3 filesystem
@@ -107,6 +113,7 @@ def get_configured_fsspec_kwargs(
                 return {}
 
     # If no protocol, return args from storage config if set
+    storage_config = get_storage()
     if storage_config:
         return storage_config.get_fsspec_kwargs(anonymous)
 
