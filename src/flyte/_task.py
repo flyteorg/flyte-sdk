@@ -85,7 +85,7 @@ class TaskTemplate(Generic[P, R]):
 
     name: str
     interface: NativeInterface
-    friendly_name: str = ""
+    short_name: str = ""
     task_type: str = "python"
     task_type_version: int = 0
     image: Union[str, Image, Literal["auto"]] = "auto"
@@ -129,9 +129,9 @@ class TaskTemplate(Generic[P, R]):
         if isinstance(self.retries, int):
             self.retries = RetryStrategy(count=self.retries)
 
-        if self.friendly_name == "":
-            # If friendly_name is not set, use the name of the task
-            self.friendly_name = self.name
+        if self.short_name == "":
+            # If short_name is not set, use the name of the task
+            self.short_name = self.name
 
     def __getstate__(self):
         """
@@ -314,7 +314,7 @@ class TaskTemplate(Generic[P, R]):
     def override(
         self,
         *,
-        friendly_name: Optional[str] = None,
+        short_name: Optional[str] = None,
         resources: Optional[Resources] = None,
         cache: Optional[CacheRequest] = None,
         retries: Union[int, RetryStrategy] = 0,
@@ -375,7 +375,7 @@ class TaskTemplate(Generic[P, R]):
 
         return replace(
             self,
-            friendly_name=friendly_name or self.friendly_name,
+            short_name=short_name or self.short_name,
             resources=resources,
             cache=cache,
             retries=retries,

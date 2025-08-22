@@ -45,12 +45,12 @@ async def test_doesnt_work_yet():
 @pytest.mark.asyncio
 @pytest.mark.integration
 async def test_image_with_secrets(monkeypatch):
-    secret1, _ = tempfile.mkstemp("secret1")
+    monkeypatch.setenv("FLYTE", "test-value")
     monkeypatch.setenv("GROUP_KEY", "test-value")
 
     img = (
         Image.from_debian_base(registry="localhost:30000", name="img_with_secrets")
-        .with_apt_packages("vim", secret_mounts=[str(secret1)])
+        .with_apt_packages("vim", secret_mounts="flyte")
         .with_pip_packages("requests", secret_mounts=[Secret(group="group", key="key")])
     )
 
@@ -60,15 +60,15 @@ async def test_image_with_secrets(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_pip_package_handling(monkeypatch):
-    secret1, _ = tempfile.mkstemp("secret1")
-    monkeypatch.setenv("GROUP_KEY", "test-value")
+    secret_mounts = (Secret("my-secret"), Secret("my-secret2"))
+    monkeypatch.setenv("MY_SECRET", "test-value")
 
     # Create a temporary directory to simulate the context
     with tempfile.TemporaryDirectory() as tmpdir:
         context_path = Path(tmpdir)
 
         # raw pip packages
-        pip_packages = PipPackages(packages=("pkg_a", "pkg_b"), secret_mounts=[str(secret1)])
+        pip_packages = PipPackages(packages=("pkg_a", "pkg_b"), secret_mounts=secret_mounts)
         docker_update = await PipAndRequirementsHandler.handle(
             layer=pip_packages, context_path=context_path, dockerfile=""
         )
@@ -78,8 +78,8 @@ async def test_pip_package_handling(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_requirements_handler(monkeypatch):
-    secret1, _ = tempfile.mkstemp("secret1")
-    monkeypatch.setenv("GROUP_KEY", "test-value")
+    secret_mounts = (Secret("my-secret"), Secret("my-secret2"))
+    monkeypatch.setenv("MY_SECRET", "test-value")
 
     # Create a temporary directory to simulate the context
     with tempfile.TemporaryDirectory() as tmp_context:
@@ -91,7 +91,7 @@ async def test_requirements_handler(monkeypatch):
             requirements_file = user_folder / "requirements.txt"
             requirements_file.write_text("pkg_a\npkg_b\n")
 
-            requirements = Requirements(file=requirements_file.absolute(), secret_mounts=[str(secret1)])
+            requirements = Requirements(file=requirements_file.absolute(), secret_mounts=secret_mounts)
             docker_update = await PipAndRequirementsHandler.handle(
                 layer=requirements, context_path=context_path, dockerfile=""
             )

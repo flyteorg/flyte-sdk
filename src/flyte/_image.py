@@ -252,9 +252,15 @@ class AptPackages(Layer):
 @dataclass(frozen=True, repr=True)
 class Commands(Layer):
     commands: Tuple[str, ...]
+    secret_mounts: Optional[Tuple[str | Secret, ...]] = None
 
     def update_hash(self, hasher: hashlib._Hash):
-        hasher.update("".join(self.commands).encode("utf-8"))
+        hash_input = "".join(self.commands)
+
+        if self.secret_mounts:
+            for secret_mount in self.secret_mounts:
+                hash_input += str(secret_mount)
+        hasher.update(hash_input.encode("utf-8"))
 
 
 @rich.repr.auto
@@ -782,9 +788,24 @@ class Image:
 
         Example:
         ```python
-        @flyte.task(image=(flyte.Image
-                        .ubuntu_python()
-                        .with_pip_packages("requests", "numpy")))
+        @flyte.task(image=(flyte.Image.from_debian_base().with_pip_packages("requests", "numpy")))
+        def my_task(x: int) -> int:
+            import numpy as np
+            return np.sum([x, 1])
+        ```
+
+        To mount secrets during the build process to download private packages, you can use the `secret_mounts`.
+        In the below example, "GITHUB_PAT" will be mounted as env var "GITHUB_PAT",
+         and "apt-secret" will be mounted at /etc/apt/apt-secret.
+        Example:
+        ```python
+        private_package = "git+https://$GITHUB_PAT@github.com/flyteorg/flytex.git@2e20a2acebfc3877d84af643fdd768edea41d533"
+        @flyte.task(
+            image=(
+                flyte.Image.from_debian_base()
+                .with_pip_packages("private_package", secret_mounts=[Secret(key="GITHUB_PAT")])
+                .with_apt_packages("git", secret_mounts=[Secret(key="apt-secret", mount="/etc/apt/apt-secret")])
+        )
         def my_task(x: int) -> int:
             import numpy as np
             return np.sum([x, 1])
@@ -909,16 +930,21 @@ class Image:
         )
         return new_image
 
-    def with_commands(self, commands: List[str]) -> Image:
+    def with_commands(self, commands: List[str], secret_mounts: Optional[SecretRequest] = None) -> Image:
         """
         Use this method to create a new image with the specified commands layered on top of the current image
         Be sure not to use RUN in your command.
 
         :param commands: list of commands to run
+        :param secret_mounts: list of secret mounts to use for the build process.
         :return: Image
         """
         new_commands: Tuple = _ensure_tuple(commands)
-        new_image = self.clone(addl_layer=Commands(commands=new_commands))
+        new_image = self.clone(
+            addl_layer=Commands(
+                commands=new_commands, secret_mounts=_ensure_tuple(secret_mounts) if secret_mounts else None
+            )
+        )
         return new_image
 
     def with_local_v2(self) -> Image:

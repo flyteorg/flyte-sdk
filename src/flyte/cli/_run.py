@@ -8,8 +8,7 @@ from pathlib import Path
 from types import ModuleType
 from typing import Any, Dict, List, cast
 
-import click
-from click import Context, Parameter
+import rich_click as click
 from rich.console import Console
 from typing_extensions import get_args
 
@@ -24,7 +23,7 @@ RUN_REMOTE_CMD = "deployed-task"
 
 
 @lru_cache()
-def _initialize_config(ctx: Context, project: str, domain: str):
+def _initialize_config(ctx: click.Context, project: str, domain: str):
     obj: CLIConfig | None = ctx.obj
     if obj is None:
         import flyte.config
@@ -37,7 +36,7 @@ def _initialize_config(ctx: Context, project: str, domain: str):
 
 @lru_cache()
 def _list_tasks(
-    ctx: Context,
+    ctx: click.Context,
     project: str,
     domain: str,
     by_task_name: str | None = None,
@@ -121,7 +120,7 @@ class RunTaskCommand(click.Command):
         kwargs.pop("name", None)
         super().__init__(obj_name, *args, **kwargs)
 
-    def invoke(self, ctx: Context):
+    def invoke(self, ctx: click.Context):
         obj: CLIConfig = _initialize_config(ctx, self.run_args.project, self.run_args.domain)
 
         async def _run():
@@ -152,7 +151,7 @@ class RunTaskCommand(click.Command):
 
         asyncio.run(_run())
 
-    def get_params(self, ctx: Context) -> List[Parameter]:
+    def get_params(self, ctx: click.Context) -> List[click.Parameter]:
         # Note this function may be called multiple times by click.
         task = self.obj
         from .._internal.runtime.types_serde import transform_native_to_typed_interface
@@ -162,7 +161,7 @@ class RunTaskCommand(click.Command):
             return super().get_params(ctx)
         inputs_interface = task.native_interface.inputs
 
-        params: List[Parameter] = []
+        params: List[click.Parameter] = []
         for name, var in interface.inputs.variables.items():
             default_val = None
             if inputs_interface[name][1] is not inspect._empty:
@@ -239,7 +238,7 @@ class RunReferenceTaskCommand(click.Command):
 
         asyncio.run(_run())
 
-    def get_params(self, ctx: Context) -> List[Parameter]:
+    def get_params(self, ctx: click.Context) -> List[click.Parameter]:
         # Note this function may be called multiple times by click.
         import flyte.remote
         from flyte._internal.runtime.types_serde import transform_native_to_typed_interface
@@ -254,7 +253,7 @@ class RunReferenceTaskCommand(click.Command):
             return super().get_params(ctx)
         inputs_interface = task_details.interface.inputs
 
-        params: List[Parameter] = []
+        params: List[click.Parameter] = []
         for name, var in interface.inputs.variables.items():
             default_val = None
             if inputs_interface[name][1] is not inspect._empty:
@@ -322,7 +321,6 @@ class ReferenceTaskGroup(common.GroupBase):
 
     def get_command(self, ctx, name):
         env, task, version = self._parse_task_name(name)
-
         match env, task, version:
             case env, None, None:
                 if self._env_is_task(ctx, env):
@@ -383,10 +381,11 @@ class TaskFiles(common.FileGroup):
         super().__init__(*args, directory=directory, **kwargs)
 
     def list_commands(self, ctx):
-        return [
+        v = [
             RUN_REMOTE_CMD,
-            *self.files,
+            *super().list_commands(ctx),
         ]
+        return v
 
     def get_command(self, ctx, cmd_name):
         run_args = RunArguments.from_dict(ctx.params)
