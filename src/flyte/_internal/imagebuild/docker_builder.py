@@ -177,6 +177,7 @@ class PythonWheelHandler:
                 "/dist",
                 "--no-deps",
                 "--no-index",
+                "--reinstall",
                 layer.package_name,
             ],
         ]

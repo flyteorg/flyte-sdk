@@ -119,6 +119,7 @@ def main(
     if debug and name == "a0":
         from flyte._debug.vscode import _start_vscode_server
 
+        print("debugging ...", flush=True)
         asyncio.run(_start_vscode_server(ctx))
 
     # Figure out how to connect
