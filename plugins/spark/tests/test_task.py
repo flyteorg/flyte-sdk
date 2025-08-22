@@ -3,14 +3,10 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from flyte import PodTemplate
+from flyte.models import SerializationContext
 from kubernetes.client import V1Container, V1EnvVar, V1LocalObjectReference, V1PodSpec
 
 from flyteplugins.spark.task import PysparkFunctionTask, Spark
-
-
-class DummySerializationContext:
-    entrypoint_path = "/main.py"
-    interpreter_path = "/usr/bin/python3"
 
 
 @pytest.mark.parametrize("spark_conf,hadoop_conf", [(None, None), ({"a": "b"}, {"c": "d"})])
@@ -48,6 +44,9 @@ def test_custom_config():
             image_pull_secrets=[V1LocalObjectReference(name="regcred-test")],
         )
     )
+    sctx = SerializationContext(
+        version="123",
+    )
 
     spark = Spark(
         spark_conf={"a": "b"},
@@ -58,7 +57,6 @@ def test_custom_config():
         executor_pod=pod_template,
     )
     task = PysparkFunctionTask(plugin_config=spark, name="n", interface=None, func=lambda: None)
-    sctx = DummySerializationContext()
     result = task.custom_config(sctx)
     assert result["sparkConf"] == {"a": "b"}
     assert result["hadoopConf"] == {"c": "d"}
@@ -66,3 +64,9 @@ def test_custom_config():
     assert result["executorPath"] == "/usr/bin/python3"
     assert "driverPod" in result
     assert "executorPod" in result
+
+    spark = Spark()
+    task1 = PysparkFunctionTask(plugin_config=spark, name="n", interface=None, func=lambda: None)
+    result = task1.custom_config(sctx)
+    assert result["mainApplicationFile"] == "local:///opt/venv/bin/runtime.py"
+    assert result["executorPath"] == "/opt/venv/bin/python"
