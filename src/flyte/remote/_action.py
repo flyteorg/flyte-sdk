@@ -627,8 +627,11 @@ class ActionDetails(ToJSONMixin):
             )
         )
         native_iface = None
-        if self.pb2.resolved_task_spec:
-            iface = self.pb2.resolved_task_spec.task_template.interface
+        if self.pb2.HasField("task"):
+            iface = self.pb2.task.task_template.interface
+            native_iface = types.guess_interface(iface)
+        elif self.pb2.HasField("trace"):
+            iface = self.pb2.trace.interface
             native_iface = types.guess_interface(iface)
 
         if resp.inputs:
