@@ -11,7 +11,7 @@ env = flyte.TaskEnvironment(
         replicas=1,
         concurrency=2,
         idle_ttl=timedelta(minutes=5),
-    )
+    ),
 )
 
 
@@ -49,5 +49,3 @@ if __name__ == "__main__":
     flyte.init_from_config("../../config.yaml")
     run = flyte.run(main_task, duration=timedelta(days=5))
     print(run.url)
-
-
