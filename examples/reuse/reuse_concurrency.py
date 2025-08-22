@@ -1,6 +1,9 @@
 import asyncio
+import logging
 
 import flyte
+
+logger = logging.getLogger(__name__)
 
 env = flyte.TaskEnvironment(
     name="reuse_concurrency",
@@ -17,6 +20,7 @@ env = flyte.TaskEnvironment(
 
 @env.task
 async def noop(x: int) -> int:
+    logger.info(f"Task noop: {x}")
     return x
 
 

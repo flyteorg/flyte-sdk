@@ -135,4 +135,25 @@ def log(fn=None, *, level=logging.DEBUG, entry=True, exit=True):
     return decorator(fn)
 
 
+class GlobalFilter(logging.Filter):
+    """
+    A logging filter that adds the current action's run name and name to the log record.
+    This is useful for identifying logs from different runs or actions in a multi-run, or concurrent environment.
+    """
+
+    def filter(self, record):
+        from flyte._context import ctx
+
+        c = ctx()
+        if c:
+            action = c.action
+            record.msg = f"[{action.run_name}][{action.name}] {record.msg}"
+        return True
+
+
+root = logging.getLogger()
+handler = logging.StreamHandler()
+handler.addFilter(GlobalFilter())
+root.addHandler(handler)
+
 logger = _create_logger("flyte", get_env_log_level())
