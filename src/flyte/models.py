@@ -410,13 +410,15 @@ class SerializationContext:
     code_bundle: Optional[CodeBundle] = None
     input_path: str = "{{.input}}"
     output_path: str = "{{.outputPrefix}}"
-    _entrypoint_path: str = field(default="_bin/runtime.py", init=False)
+    interpreter_path: str = "/opt/venv/bin/python"
     image_cache: ImageCache | None = None
     root_dir: Optional[pathlib.Path] = None
 
-    def get_entrypoint_path(self, interpreter_path: str) -> str:
+    def get_entrypoint_path(self, interpreter_path: Optional[str] = None) -> str:
         """
         Get the entrypoint path for the task. This is used to determine the entrypoint for the task execution.
         :param interpreter_path: The path to the interpreter (python)
         """
-        return os.path.join(os.path.dirname(os.path.dirname(interpreter_path)), self._entrypoint_path)
+        if interpreter_path is None:
+            interpreter_path = self.interpreter_path
+        return os.path.join(os.path.dirname(interpreter_path), "runtime.py")

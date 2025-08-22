@@ -72,8 +72,8 @@ class PysparkFunctionTask(AsyncFunctionTaskTemplate):
         job = SparkJob(
             sparkConf=self.plugin_config.spark_conf,
             hadoopConf=self.plugin_config.hadoop_conf,
-            mainApplicationFile=self.plugin_config.applications_path,
-            executorPath=self.plugin_config.executor_path,
+            mainApplicationFile=self.plugin_config.applications_path or "local://" + sctx.get_entrypoint_path(),
+            executorPath=self.plugin_config.executor_path or sctx.interpreter_path,
             mainClass="",
             applicationType=SparkApplication.PYTHON,
             driverPod=driver_pod,
