@@ -8,6 +8,7 @@ import subprocess
 import sys
 import tarfile
 import time
+from pathlib import Path
 from typing import List
 
 import aiofiles
@@ -173,9 +174,9 @@ def prepare_launch_json(ctx: click.Context, pid: int):
     Generate the launch.json and settings.json for users to easily launch interactive debugging and task resumption.
     """
 
-    virtual_venv = os.getenv("VIRTUAL_ENV", "/opt/venv")
+    virtual_venv = os.getenv("VIRTUAL_ENV", str(Path(sys.executable).parent.parent))
     if virtual_venv is None:
-        raise RuntimeError("VIRTUAL_ENV is not found in environment variablesssssssssssss.")
+        raise RuntimeError("VIRTUAL_ENV is not found in environment variables.")
 
     run_name = ctx.params["run_name"]
     name = ctx.params["name"]
@@ -256,7 +257,6 @@ def prepare_launch_json(ctx: click.Context, pid: int):
 
 async def _start_vscode_server(ctx: click.Context):
     await asyncio.gather(download_tgz(ctx.params["dest"], ctx.params["version"], ctx.params["tgz"]), download_vscode())
-    print("debugging ddddddddddddddd...", flush=True)
     child_process = multiprocessing.Process(
         target=lambda cmd: asyncio.run(asyncio.run(execute_command(cmd))),
         kwargs={"cmd": f"code-server --bind-addr 0.0.0.0:6060 --disable-workspace-trust --auth none {os.getcwd()}"},
@@ -265,7 +265,6 @@ async def _start_vscode_server(ctx: click.Context):
     if child_process.pid is None:
         raise RuntimeError("Failed to start vscode server.")
 
-    print("debugging cccc...", flush=True)
     prepare_launch_json(ctx, child_process.pid)
 
     start_time = time.time()
@@ -278,7 +277,6 @@ async def _start_vscode_server(ctx: click.Context):
         child_process.join()
 
     logger.info("waiting for task to resume...")
-    print("debugging dddddd...", flush=True)
     while child_process.is_alive():
         current_time = time.time()
         if current_time - last_heartbeat_check >= check_interval:

@@ -56,7 +56,7 @@ class PysparkFunctionTask(AsyncFunctionTaskTemplate):
     async def pre(self, *args, **kwargs) -> Dict[str, Any]:
         import pyspark as _pyspark
 
-        sess = _pyspark.sql.SparkSession.builder.appName("FlyteSpark").getOrCreate()
+        sess = _pyspark.sql.SparkSession.builder.appName(DEFAULT_SPARK_CONTEXT_NAME).getOrCreate()
 
         if flyte.ctx().is_in_cluster():
             base_dir = tempfile.mkdtemp()
@@ -87,7 +87,7 @@ class PysparkFunctionTask(AsyncFunctionTaskTemplate):
     async def post(self, return_vals: Any) -> Any:
         import pyspark as _pyspark
 
-        sess = _pyspark.sql.SparkSession.builder.appName("FlyteSpark").getOrCreate()
+        sess = _pyspark.sql.SparkSession.builder.appName(DEFAULT_SPARK_CONTEXT_NAME).getOrCreate()
         sess.stop()
 
 
