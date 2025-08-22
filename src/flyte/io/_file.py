@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager, contextmanager
 from pathlib import Path
 from typing import (
     IO,
+    Annotated,
     Any,
     AsyncGenerator,
     Dict,
@@ -21,7 +22,8 @@ from flyteidl.core import literals_pb2, types_pb2
 from fsspec.asyn import AsyncFileSystem
 from fsspec.utils import get_protocol
 from mashumaro.types import SerializableType
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel, Field, model_validator
+from pydantic.json_schema import SkipJsonSchema
 
 import flyte.storage as storage
 from flyte._context import internal_ctx
@@ -106,7 +108,7 @@ class File(BaseModel, Generic[T], SerializableType):
     name: Optional[str] = None
     format: str = ""
     hash: Optional[str] = None
-    hash_method: Optional[HashMethod] = None
+    hash_method: Annotated[Optional[HashMethod], Field(default=None, exclude=True), SkipJsonSchema()]
 
     class Config:
         arbitrary_types_allowed = True

@@ -5,6 +5,7 @@ import tempfile
 
 import pandas as pd
 import pytest
+from mashumaro.jsonschema.models import JSONSchema
 
 import flyte
 from flyte.io._file import File, FileTransformer
@@ -14,6 +15,14 @@ from flyte.types import TypeEngine
 
 TEST_CONTENT = "correct test content"
 TEST_SHA256 = "88a884456e029050823d8a0474b8c96986fcc3996a2a2a018b918181633cbe56"
+
+
+@pytest.mark.asyncio
+async def test_file_is_schemable():
+    f = File(path="s3://bucket/file.txt")
+
+    pydantic_schema = f.model_json_schema()
+    assert JSONSchema.from_dict(pydantic_schema)
 
 
 @pytest.mark.asyncio
