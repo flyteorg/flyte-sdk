@@ -250,7 +250,6 @@ async def init_from_config(
     cfg: config.Config
     if path_or_config is None or isinstance(path_or_config, str):
         # If a string is passed, treat it as a path to the config file
-
         if root_dir and path_or_config:
             cfg = config.auto(str(root_dir / path_or_config))
         elif path_or_config and not Path(path_or_config).exists():
@@ -259,8 +258,10 @@ async def init_from_config(
                 "user",
                 f"Configuration file '{path_or_config}' does not exist., current working directory is {Path.cwd()}",
             )
-        else:
             cfg = config.auto(path_or_config)
+        else:
+            # If no path is provided, use the default config file
+            cfg = config.auto()
     else:
         # If a Config object is passed, use it directly
         cfg = path_or_config
@@ -380,30 +381,6 @@ def ensure_client():
             "Client has not been initialized. Call flyte.init() with a valid endpoint"
             " or api-key before using this function.",
         )
-
-
-def requires_client(func: T) -> T:
-    """
-    Decorator that checks if the client has been initialized before executing the function.
-    Raises InitializationError if the client is not initialized.
-
-    :param func: Function to decorate
-    :return: Decorated function that checks for initialization
-    """
-
-    @functools.wraps(func)
-    async def wrapper(*args, **kwargs) -> T:
-        init_config = _get_init_config()
-        if init_config is None or init_config.client is None:
-            raise InitializationError(
-                "ClientNotInitializedError",
-                "user",
-                f"Function '{func.__name__}' requires client to be initialized. "
-                f"Call flyte.init() with a valid endpoint or api-key before using this function.",
-            )
-        return func(*args, **kwargs)
-
-    return typing.cast(T, wrapper)
 
 
 def requires_storage(func: T) -> T:

@@ -283,7 +283,7 @@ class TaskDetails(ToJSONMixin):
     def override(
         self,
         *,
-        friendly_name: Optional[str] = None,
+        short_name: Optional[str] = None,
         resources: Optional[flyte.Resources] = None,
         retries: Union[int, flyte.RetryStrategy] = 0,
         timeout: Optional[flyte.TimeoutType] = None,
@@ -297,8 +297,8 @@ class TaskDetails(ToJSONMixin):
                 f"Check the parameters for override method."
             )
         template = self.pb2.spec.task_template
-        if friendly_name:
-            self.pb2.metadata.short_name = friendly_name
+        if short_name:
+            self.pb2.metadata.short_name = short_name
         if secrets:
             template.security_context.CopyFrom(get_security_context(secrets))
         if template.HasField("container"):
@@ -318,7 +318,7 @@ class TaskDetails(ToJSONMixin):
         """
         Rich representation of the task.
         """
-        yield "friendly_name", self.pb2.spec.short_name
+        yield "short_name", self.pb2.spec.short_name
         yield "environment", self.pb2.spec.environment
         yield "default_inputs_keys", self.default_input_args
         yield "required_args", self.required_args
