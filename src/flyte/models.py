@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import inspect
+import os
 import pathlib
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Callable, ClassVar, Dict, List, Literal, Optional, Tuple, Type
@@ -410,6 +411,14 @@ class SerializationContext:
     input_path: str = "{{.input}}"
     output_path: str = "{{.outputPrefix}}"
     interpreter_path: str = "/opt/venv/bin/python"
-    entrypoint_path: str = "/opt/venv/bin/runtime.py"
     image_cache: ImageCache | None = None
     root_dir: Optional[pathlib.Path] = None
+
+    def get_entrypoint_path(self, interpreter_path: Optional[str] = None) -> str:
+        """
+        Get the entrypoint path for the task. This is used to determine the entrypoint for the task execution.
+        :param interpreter_path: The path to the interpreter (python)
+        """
+        if interpreter_path is None:
+            interpreter_path = self.interpreter_path
+        return os.path.join(os.path.dirname(interpreter_path), "runtime.py")
