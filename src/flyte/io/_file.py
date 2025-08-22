@@ -108,7 +108,7 @@ class File(BaseModel, Generic[T], SerializableType):
     name: Optional[str] = None
     format: str = ""
     hash: Optional[str] = None
-    hash_method: Annotated[Optional[HashMethod], Field(default=None, exclude=True), SkipJsonSchema()]
+    hash_method: Annotated[Optional[HashMethod], Field(default=None, exclude=True), SkipJsonSchema()] = None
 
     class Config:
         arbitrary_types_allowed = True
@@ -191,7 +191,7 @@ class File(BaseModel, Generic[T], SerializableType):
         cache_options: Optional[dict] = None,
         compression: Optional[str] = None,
         **kwargs,
-    ) -> AsyncGenerator[IO[Any]]:
+    ) -> AsyncGenerator[Union[IO[Any], "HashingWriter"], None]:
         """
         Asynchronously open the file and return a file-like object.
 
