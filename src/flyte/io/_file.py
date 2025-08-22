@@ -253,6 +253,7 @@ class File(BaseModel, Generic[T], SerializableType):
 
             with fs.open(self.path, mode) as file_handle:
                 if self.hash_method and self.hash is None:
+                    logger.debug(f"Wrapping file handle with hashing writer using {self.hash_method}")
                     fh = HashingWriter(file_handle, accumulator=self.hash_method)
                     yield fh
                     self.hash = fh.result()
