@@ -374,7 +374,7 @@ map_literal = _run_definition_pb2.NamedLiteral(
                     int_literal,
                 ],
             ),
-            "+G832X6Jj7yD8eHKddg8qch8Ks275cSVouLtHO/GBtU=",
+            "QQ0bB11CiHnSVT6lMP7B6iaZsTWu4OLRhkSGyHGyi8g=",
         ),
         (
             "string",
@@ -383,7 +383,7 @@ map_literal = _run_definition_pb2.NamedLiteral(
                     str_literal,
                 ]
             ),
-            "SgmCD8fWRAnYWXz8qD3oLlH4brlZSgbF3rIgryyJoTA=",
+            "zmNQcOIXHHjpbLK58/Q6EP68bNrgJHkEFi8sZ5WKAag=",
         ),
         (
             "collection",
@@ -392,7 +392,7 @@ map_literal = _run_definition_pb2.NamedLiteral(
                     list_literal,
                 ]
             ),
-            "ZzcHFxip4lXwEs4qrLsR0btMhTXrAXRQyUDclhg5mgw=",
+            "rqtpa/1zChc8+90j6ei50OCaYVlPUKnS5E/ch1TMfZA=",
         ),
         (
             "map",
@@ -401,14 +401,14 @@ map_literal = _run_definition_pb2.NamedLiteral(
                     map_literal,
                 ]
             ),
-            "/R0HHuOwV7kageMb5L83BMWly/XrvJftRqAuIHjMuC4=",
+            "CjEtYqweOcxwOMFZPK8+Te9f4RhyQKmU9MBaigmKJBw=",
         ),
         (
             "mixed inputs",
             _run_definition_pb2.Inputs(literals=[int_literal, str_literal, list_literal, map_literal]),
-            "yTrdSRmRJsnEsbSeR3M9IWDI15oue8AFP4YWf7IhpFE=",
+            "/9dLsq0Dg9NN8izGM+UmuaoNxdOi3HAcsasTPKk9KPg=",
         ),
-        ("empty input", _run_definition_pb2.Inputs(), "47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU="),
+        ("empty input", _run_definition_pb2.Inputs(), ""),
         ("nil input", None, ""),
     ],
 )
@@ -755,6 +755,233 @@ def test_generate_interface_hash(name, interface, expected_hash):
     """
     actual = convert.generate_interface_hash(interface)
     assert actual == expected_hash
+
+
+@pytest.mark.asyncio
+def test_generate_inputs_repr_for_literal_with_hash():
+    """
+    Test that generate_inputs_repr_for_literal uses existing hash values when present.
+    """
+    # Create a literal with a hash value
+    literal_with_hash = Literal(scalar=Scalar(primitive=Primitive(string_value="hello")), hash="precomputed_hash_value")
+
+    result = convert.generate_inputs_repr_for_literal(literal_with_hash)
+    expected = b"precomputed_hash_value"
+    assert result == expected
+
+
+@pytest.mark.asyncio
+def test_generate_inputs_repr_for_literal_collection_with_hashes():
+    """
+    Test that generate_inputs_repr_for_literal handles collections with mixed hash scenarios.
+    """
+    # Create a collection with some literals having hashes and others not
+    collection_literal = Literal(
+        collection=LiteralCollection(
+            literals=[
+                Literal(scalar=Scalar(primitive=Primitive(string_value="first")), hash="hash1"),
+                Literal(scalar=Scalar(primitive=Primitive(string_value="second"))),  # no hash
+                Literal(scalar=Scalar(primitive=Primitive(string_value="third")), hash="hash3"),
+            ]
+        )
+    )
+
+    result = convert.generate_inputs_repr_for_literal(collection_literal)
+
+    # Should contain hash1, serialized second literal, and hash3
+    assert b"hash1" in result
+    assert b"hash3" in result
+    # Should contain the serialized form of the second literal since it has no hash
+    second_literal_bytes = Literal(scalar=Scalar(primitive=Primitive(string_value="second"))).SerializeToString(
+        deterministic=True
+    )
+    assert second_literal_bytes in result
+
+
+@pytest.mark.asyncio
+def test_generate_inputs_hash_with_literal_hashes():
+    """
+    Test that generate_inputs_hash_for_named_literals properly incorporates literal hash values.
+    """
+    # Create inputs with some literals having hash values
+    inputs = [
+        _run_definition_pb2.NamedLiteral(
+            name="file1", value=Literal(scalar=Scalar(primitive=Primitive(string_value="path1")), hash="file_hash_1")
+        ),
+        _run_definition_pb2.NamedLiteral(
+            name="file2",
+            value=Literal(scalar=Scalar(primitive=Primitive(string_value="path2"))),  # no hash
+        ),
+        _run_definition_pb2.NamedLiteral(
+            name="file3", value=Literal(scalar=Scalar(primitive=Primitive(string_value="path3")), hash="file_hash_3")
+        ),
+    ]
+
+    result = convert.generate_inputs_hash_for_named_literals(inputs)
+
+    # Should be a valid base64 string
+    import base64
+
+    try:
+        base64.b64decode(result)
+    except Exception:
+        pytest.fail("Result should be valid base64")
+
+    # Different from standard serialization
+    standard_inputs = _run_definition_pb2.Inputs(literals=inputs)
+    standard_hash = convert.generate_inputs_hash_from_proto(standard_inputs)
+    # Note: These will be the same now since generate_inputs_hash_from_proto uses the new function
+    assert result == standard_hash
+
+
+@pytest.mark.asyncio
+def test_generate_inputs_hash_consistency():
+    """
+    Test that the new hash function is consistent with itself.
+    """
+    inputs = [
+        _run_definition_pb2.NamedLiteral(
+            name="consistent_test",
+            value=Literal(scalar=Scalar(primitive=Primitive(string_value="test")), hash="consistent_hash"),
+        ),
+    ]
+
+    result1 = convert.generate_inputs_hash_for_named_literals(inputs)
+    result2 = convert.generate_inputs_hash_for_named_literals(inputs)
+
+    assert result1 == result2
+
+
+@pytest.mark.asyncio
+def test_generate_cache_key_hash_with_literal_hashes():
+    """
+    Test cache key generation works correctly with literal hashes.
+    """
+    interface = NativeInterface.from_types({"file_input": (str, inspect.Parameter.empty)}, {})
+    typed_interface = transform_native_to_typed_interface(interface)
+
+    # Create inputs with hash
+    inputs = _run_definition_pb2.Inputs(
+        literals=[
+            _run_definition_pb2.NamedLiteral(
+                name="file_input",
+                value=Literal(
+                    scalar=Scalar(primitive=Primitive(string_value="s3://bucket/file.txt")), hash="file_content_hash"
+                ),
+            )
+        ]
+    )
+
+    inputs_hash = convert.generate_inputs_hash_from_proto(inputs)
+    cache_key = convert.generate_cache_key_hash("test_task", inputs_hash, typed_interface, "v1", [], inputs)
+
+    # Should be a valid base64 string
+    import base64
+
+    try:
+        base64.b64decode(cache_key)
+    except Exception:
+        pytest.fail("Cache key should be valid base64")
+
+
+def test_cache_key_hash_with_file_objects():
+    """
+    Test cache key generation with File objects that have hash values.
+    This is a larger integration test with multiple File objects.
+    """
+    from flyteidl.core import literals_pb2, types_pb2
+
+    # Create literals with hash values like File objects would produce
+    literal1 = Literal(
+        scalar=Scalar(
+            blob=literals_pb2.Blob(
+                metadata=literals_pb2.BlobMetadata(
+                    type=types_pb2.BlobType(format="", dimensionality=types_pb2.BlobType.BlobDimensionality.SINGLE)
+                ),
+                uri="s3://bucket/file1.txt",
+            )
+        ),
+        hash="content_hash_1",
+    )
+    literal2 = Literal(
+        scalar=Scalar(
+            blob=literals_pb2.Blob(
+                metadata=literals_pb2.BlobMetadata(
+                    type=types_pb2.BlobType(format="", dimensionality=types_pb2.BlobType.BlobDimensionality.SINGLE)
+                ),
+                uri="s3://bucket/file2.txt",
+            )
+        ),
+        hash="content_hash_2",
+    )
+    literal3 = Literal(
+        scalar=Scalar(
+            blob=literals_pb2.Blob(
+                metadata=literals_pb2.BlobMetadata(
+                    type=types_pb2.BlobType(format="", dimensionality=types_pb2.BlobType.BlobDimensionality.SINGLE)
+                ),
+                uri="s3://bucket/file3.txt",
+            )
+        )
+        # no hash for file3
+    )
+
+    inputs = _run_definition_pb2.Inputs(
+        literals=[
+            _run_definition_pb2.NamedLiteral(name="input_file1", value=literal1),
+            _run_definition_pb2.NamedLiteral(name="input_file2", value=literal2),
+            _run_definition_pb2.NamedLiteral(name="input_file3", value=literal3),
+        ]
+    )
+
+    # Generate cache key
+    inputs_hash = convert.generate_inputs_hash_from_proto(inputs)
+
+    # Create a minimal typed interface for blob types
+    interface = TypedInterface(
+        inputs=VariableMap(
+            variables={
+                "input_file1": Variable(
+                    type=LiteralType(blob=BlobType(format="", dimensionality=BlobType.BlobDimensionality.SINGLE))
+                ),
+                "input_file2": Variable(
+                    type=LiteralType(blob=BlobType(format="", dimensionality=BlobType.BlobDimensionality.SINGLE))
+                ),
+                "input_file3": Variable(
+                    type=LiteralType(blob=BlobType(format="", dimensionality=BlobType.BlobDimensionality.SINGLE))
+                ),
+            }
+        )
+    )
+
+    cache_key = convert.generate_cache_key_hash("file_processor_task", inputs_hash, interface, "v1", [], inputs)
+
+    # Verify cache key is different when file hashes change
+    literal1_modified = Literal(scalar=literal1.scalar, hash="different_content_hash_1")
+    inputs_modified = _run_definition_pb2.Inputs(
+        literals=[
+            _run_definition_pb2.NamedLiteral(name="input_file1", value=literal1_modified),
+            _run_definition_pb2.NamedLiteral(name="input_file2", value=literal2),
+            _run_definition_pb2.NamedLiteral(name="input_file3", value=literal3),
+        ]
+    )
+
+    inputs_hash_modified = convert.generate_inputs_hash_from_proto(inputs_modified)
+    cache_key_modified = convert.generate_cache_key_hash(
+        "file_processor_task", inputs_hash_modified, interface, "v1", [], inputs_modified
+    )
+
+    # Cache keys should be different when hash values change
+    assert cache_key != cache_key_modified
+
+    # But both should be valid base64
+    import base64
+
+    try:
+        base64.b64decode(cache_key)
+        base64.b64decode(cache_key_modified)
+    except Exception:
+        pytest.fail("Cache keys should be valid base64")
 
 
 @pytest.mark.asyncio

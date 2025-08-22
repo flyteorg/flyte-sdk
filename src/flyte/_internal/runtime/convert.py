@@ -335,7 +335,9 @@ def generate_inputs_repr_for_literal(literal: literals_pb2.Literal) -> bytes:
 
     elif literal.HasField("map"):
         buf = bytearray()
-        for key, nested_literal in literal.map.literals.items():
+        # Sort keys to ensure deterministic ordering
+        for key in sorted(literal.map.literals.keys()):
+            nested_literal = literal.map.literals[key]
             buf += key.encode("utf-8")
             if nested_literal.hash:
                 buf += nested_literal.hash.encode("utf-8")
@@ -379,9 +381,9 @@ def generate_inputs_hash_from_proto(inputs: run_definition_pb2.Inputs) -> str:
     :param inputs: The inputs to hash.
     :return: A hexadecimal string representation of the hash.
     """
-    if not inputs.literals:
+    if not inputs or not inputs.literals:
         return ""
-    return generate_inputs_hash_for_named_literals([l for l in inputs.literals])
+    return generate_inputs_hash_for_named_literals(list(inputs.literals))
 
 
 def generate_interface_hash(task_interface: interface_pb2.TypedInterface) -> str:

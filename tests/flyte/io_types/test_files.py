@@ -27,7 +27,7 @@ async def test_transformer_serde():
 
 
 @pytest.mark.asyncio
-async def test_transformer_serde_with_hash():
+async def test_transformer_serde_set_hash():
     f = File.from_existing_remote("s3://bucket/file.txt", known_hash_value="abc")
     lt = TypeEngine.to_literal_type(File)
     lv = await FileTransformer().to_literal(f, File, lt)
@@ -187,3 +187,58 @@ async def test_from_local_to_s3(ctx_with_test_local_s3_stack_raw_data_path):
             content = f.read()
         content = content.decode("utf-8")
         assert content == TEST_CONTENT
+
+
+@pytest.mark.asyncio
+async def test_transformer_serde_with_hash():
+    """
+    Test that the FileTransformer correctly serializes and deserializes File objects with hash values.
+    """
+    f = File.from_existing_remote("s3://bucket/file.txt", known_hash_value="abc123")
+    lt = TypeEngine.to_literal_type(File)
+    lv = await FileTransformer().to_literal(f, File, lt)
+
+    # Hash should be preserved in the literal
+    assert lv.hash == "abc123"
+
+    # Convert back to Python
+    pv = await FileTransformer().to_python_value(lv, File)
+    assert pv.path == f.path
+    assert pv.hash == "abc123"
+
+
+@pytest.mark.asyncio
+async def test_multiple_files_with_hashes():
+    """
+    Test handling multiple File objects with different hash scenarios.
+    """
+    # Create multiple files with different hash scenarios
+    file_with_hash = File.from_existing_remote("s3://bucket/file1.txt", known_hash_value="hash1")
+    file_without_hash = File.from_existing_remote("s3://bucket/file2.txt")
+
+    files = [file_with_hash, file_without_hash]
+
+    # Convert to literals
+    transformer = FileTransformer()
+    lt = TypeEngine.to_literal_type(File)
+
+    literals = []
+    for f in files:
+        lv = await transformer.to_literal(f, File, lt)
+        literals.append(lv)
+
+    # First file should have hash, second should not
+    assert literals[0].hash == "hash1"
+    assert not literals[1].hash
+
+    # Convert back to Python objects
+    recovered_files = []
+    for lv in literals:
+        pv = await transformer.to_python_value(lv, File)
+        recovered_files.append(pv)
+
+    # Verify all properties are preserved
+    assert recovered_files[0].path == file_with_hash.path
+    assert recovered_files[0].hash == "hash1"
+    assert recovered_files[1].path == file_without_hash.path
+    assert recovered_files[1].hash is None
