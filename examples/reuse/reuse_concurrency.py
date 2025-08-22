@@ -4,6 +4,7 @@ import logging
 import flyte
 
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)
 
 env = flyte.TaskEnvironment(
     name="reuse_concurrency",
@@ -20,7 +21,7 @@ env = flyte.TaskEnvironment(
 
 @env.task
 async def noop(x: int) -> int:
-    logger.info(f"Task noop: {x}")
+    logger.debug(f"Task noop: {x}")
     return x
 
 
@@ -37,4 +38,3 @@ if __name__ == "__main__":
     print(run.name)
     print(run.url)
     run.wait()
-    print(run.outputs())
