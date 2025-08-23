@@ -1,11 +1,11 @@
 # /// script
 # requires-python = "==3.13"
 # dependencies = [
-#    "flyte",
-#    "async-lru",
+#    "flyte>=2.0.0b17",
 #    "sentence-transformers",
 #    "datasets",
-#    "unionai-reuse",
+#    "huggingface-hub",
+#    "hf-transfer",
 # ]
 # ///
 
@@ -27,12 +27,10 @@ Requirements:
 """
 
 import asyncio
-import logging
-import pathlib
 import json
+import logging
 import tempfile
 
-import datasets
 import numpy as np
 import pandas as pd
 from async_lru import alru_cache
@@ -42,11 +40,10 @@ import flyte
 import flyte.io
 
 # Configure logging
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-image = flyte.Image.from_uv_script(__file__, name="embed_wikipedia_image")
+image = flyte.Image.from_uv_script(__file__, name="embed_wikipedia_image").with_pip_packages("unionai-reuse")
 
 driver = flyte.TaskEnvironment(
     name="embed_wikipedia_driver",
@@ -60,27 +57,24 @@ worker = flyte.TaskEnvironment(
     name="embed_wikipedia_worker",
     image=image,
     resources=flyte.Resources(cpu=4, memory="16Gi", disk="16Gi", gpu=1),
-    reusable=flyte.ReusePolicy(replicas=12, concurrency=1, idle_ttl=60),
+    env_vars={"HF_HUB_ENABLE_HF_TRANSFER": "1"},
+    # reusable=flyte.ReusePolicy(replicas=12, concurrency=1, idle_ttl=60),
 )
 
 
-@worker.task(cache="auto")
+@driver.task(cache="auto")
 async def load_partitions(num_proc: int = 4) -> list[flyte.io.DataFrame]:
-    dsb = datasets.load_dataset_builder(
-        "wikimedia/wikipedia",
-        "20231101.en",
-        cache_dir="/tmp/hfds",
-    )
-    dsb.download_and_prepare(
-        file_format="parquet",
-        download_config=datasets.DownloadConfig(disable_tqdm=True, num_proc=num_proc),
-    )
-    path = pathlib.Path(dsb.cache_dir)
+    from huggingface_hub import HfApi
+
+    api = HfApi()
+    info = api.dataset_info("wikimedia/wikipedia")
+    # Each file is stored in info.siblings
+    parquet_files = [s.rfilename for s in info.siblings if s.rfilename.endswith(".parquet")]
+    print(parquet_files)
     partitions = []
-    for i, f in enumerate(path.iterdir()):
-        if "parquet" in f.name:
-            print(f"Encoding {i}: {f}")
-            partitions.append(flyte.io.DataFrame(uri=str(f)))
+    for i, f in enumerate(parquet_files):
+        print(f"Adding partition {i}: {f} to encoding tasks")
+        partitions.append(flyte.io.DataFrame(uri=str(f)))
     return partitions
 
 
@@ -144,7 +138,6 @@ async def embed_wikipedia(
     batch_size: int = 8,
     num_proc: int = 4,
 ) -> list[flyte.io.File]:
-
     partitions = await load_partitions(num_proc)
 
     embedding_tasks = []
@@ -163,5 +156,5 @@ if __name__ == "__main__":
     # Run this with limit=-1 to embed all articles in the dataset (~61MM rows)
     # flyte.init()
     flyte.init_from_config("../../config.yaml")
-    run = flyte.run(embed_wikipedia, limit=-1, batch_size=1024)
+    run = flyte.run(embed_wikipedia, limit=1, batch_size=50_000)
     print(run.url)

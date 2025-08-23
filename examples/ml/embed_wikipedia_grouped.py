@@ -31,9 +31,7 @@ import asyncio
 import json
 import logging
 import tempfile
-import typing
-from dataclasses import asdict, dataclass
-from pathlib import Path
+from dataclasses import dataclass
 
 import datasets
 import pandas as pd
@@ -133,23 +131,22 @@ async def prepare_batches(
         temp_file = tempfile.NamedTemporaryFile(delete=False)
         pd.DataFrame(batch).to_parquet(temp_file.name)
         return flyte.io.DataFrame(uri=temp_file.name)
-    
+
     for i, article in enumerate(dataset["train"]):
         if limit and limit != -1 and i > limit:
             break
-            
+
         batch.append(dict(title=article["title"], text=article["text"], wiki_id=article["id"]))
-        
+
         if len(batch) == batch_size:
             output.append(create_batch(batch))
             batch = []
-            
+
     # Handle remaining articles in last batch
     if batch:
         output.append(create_batch(batch))
-    
-    return output
 
+    return output
 
 
 @driver.task
@@ -158,7 +155,6 @@ async def embed_wikipedia(
     batch_size: int = 8,
     embedding_group_size: int = 4,
 ) -> list[flyte.io.File]:
-    
     batches = await prepare_batches(limit=limit, batch_size=batch_size)
     embeddings = []
     group_number = 1
