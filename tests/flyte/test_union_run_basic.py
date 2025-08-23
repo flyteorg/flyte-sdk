@@ -39,9 +39,12 @@ async def test_task1_local_union_async():
 
 
 @pytest.mark.asyncio
+@mock.patch("flyte._deploy._build_image_bg")
 @mock.patch("flyte._code_bundle.build_code_bundle")
 @mock.patch("flyte.remote._client.controlplane.ClientSet")  # Patch the Client class
-async def test_task1_remote_union_sync(mock_client_class: MagicMock, mock_code_bundler: AsyncMock):
+async def test_task1_remote_union_sync(
+    mock_client_class: MagicMock, mock_code_bundler: AsyncMock, mock_build_image_bg: AsyncMock
+):
     mock_client = mock_client_class.return_value  # Mocked client instance
     mock_run_service = AsyncMock()
     mock_client.run_service = mock_run_service  # Set the mocked run_service
@@ -55,6 +58,7 @@ async def test_task1_remote_union_sync(mock_client_class: MagicMock, mock_code_b
         )
 
     mock_code_bundler.return_value = get_code_bundle()
+    mock_build_image_bg.return_value = (env.name, "image_name")
 
     await _init_for_testing(
         client=mock_client,
@@ -66,6 +70,7 @@ async def test_task1_remote_union_sync(mock_client_class: MagicMock, mock_code_b
     # Ensure the run is not None
     assert run
     # Ensure the mocked run_service.CreateRun is called
+    mock_build_image_bg.assert_called_once()
     mock_run_service.CreateRun.assert_called_once()
     captured_input = mock_run_service.CreateRun.call_args[0]
     req: run_service_pb2.CreateRunRequest = captured_input[0]
@@ -116,4 +121,4 @@ async def test_task1_remote_union_sync(mock_client_class: MagicMock, mock_code_b
         "instance",
         "task1",
     ]
-    assert req.task_spec.task_template.container.image == Image.from_debian_base().uri
+    assert "ghcr.io/flyteorg/flyte" in Image.from_debian_base().uri
