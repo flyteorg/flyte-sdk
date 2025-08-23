@@ -18,7 +18,7 @@ from typing import (
 
 import rich.repr
 
-from ._cache import CacheRequest
+from ._cache import Cache, CacheRequest
 from ._doc import Documentation
 from ._environment import Environment
 from ._image import Image
@@ -74,6 +74,10 @@ class TaskEnvironment(Environment):
         super().__post_init__()
         if self.reusable is not None and self.plugin_config is not None:
             raise ValueError("Cannot set plugin_config when environment is reusable.")
+        if self.reusable and not isinstance(self.reusable, ReusePolicy):
+            raise TypeError(f"Expected reusable to be of type ReusePolicy, got {type(self.reusable)}")
+        if self.cache and not isinstance(self.cache, (str, Cache)):
+            raise TypeError(f"Expected cache to be of type str or Cache, got {type(self.cache)}")
 
     def clone_with(
         self,
