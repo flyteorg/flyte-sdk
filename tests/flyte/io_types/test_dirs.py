@@ -10,7 +10,6 @@ import flyte
 import flyte.storage as storage
 from flyte.io._dir import Dir, DirTransformer
 from flyte.io._file import File
-from flyte.io._hashing_io import PrecomputedValue
 from flyte.types import TypeEngine
 
 
@@ -126,7 +125,7 @@ async def test_transformer_serde_with_hash():
     """
     Test that the DirTransformer correctly serializes and deserializes Dir objects with hash values.
     """
-    d = Dir.from_existing_remote("s3://bucket/data/", known_hash_value="abc123")
+    d = Dir.from_existing_remote("s3://bucket/data/", dir_cache_key="abc123")
     lt = TypeEngine.to_literal_type(Dir)
     lv = await DirTransformer().to_literal(d, Dir, lt)
 
@@ -150,7 +149,7 @@ async def test_from_existing_remote_with_hash():
     assert d1.path == "s3://bucket/data/"
 
     # With hash
-    d2 = Dir.from_existing_remote("s3://bucket/data/", known_hash_value="dir_hash_123")
+    d2 = Dir.from_existing_remote("s3://bucket/data/", dir_cache_key="dir_hash_123")
     assert d2.hash == "dir_hash_123"
     assert d2.path == "s3://bucket/data/"
 
@@ -163,28 +162,11 @@ async def test_from_local_with_precomputed_hash(tmp_dir_structure, ctx_with_test
     flyte.init()
 
     # Test with PrecomputedValue
-    hash_method = PrecomputedValue("directory_hash_abc123")
-    d = await Dir.from_local(tmp_dir_structure, hash_method=hash_method)
+    d = await Dir.from_local(tmp_dir_structure, dir_cache_key="directory_hash_abc123")
 
     assert d.hash == "directory_hash_abc123"
     assert d.path is not None
     assert d.name is not None
-
-
-@pytest.mark.asyncio
-async def test_from_local_invalid_hash_method(tmp_dir_structure, ctx_with_test_raw_data_path):
-    """
-    Test that Dir.from_local rejects non-PrecomputedValue hash methods.
-    """
-    from flyte.io._hashing_io import HashlibAccumulator
-
-    flyte.init()
-
-    # Should raise ValueError for non-PrecomputedValue hash methods
-    invalid_hash_method = HashlibAccumulator.from_hash_name("sha256")
-
-    with pytest.raises(ValueError, match="only PrecomputedValue hash method is currently supported"):
-        await Dir.from_local(tmp_dir_structure, hash_method=invalid_hash_method)
 
 
 @pytest.mark.asyncio
@@ -193,7 +175,7 @@ async def test_multiple_dirs_with_hashes():
     Test handling multiple Dir objects with different hash scenarios.
     """
     # Create multiple dirs with different hash scenarios
-    dir_with_hash = Dir.from_existing_remote("s3://bucket/dir1/", known_hash_value="hash1")
+    dir_with_hash = Dir.from_existing_remote("s3://bucket/dir1/", dir_cache_key="hash1")
     dir_without_hash = Dir.from_existing_remote("s3://bucket/dir2/")
 
     dirs = [dir_with_hash, dir_without_hash]

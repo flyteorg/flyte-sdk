@@ -37,7 +37,7 @@ async def test_transformer_serde():
 
 @pytest.mark.asyncio
 async def test_transformer_serde_set_hash():
-    f = File.from_existing_remote("s3://bucket/file.txt", known_hash_value="abc")
+    f = File.from_existing_remote("s3://bucket/file.txt", file_cache_key="abc")
     lt = TypeEngine.to_literal_type(File)
     lv = await FileTransformer().to_literal(f, File, lt)
     assert lv.hash == "abc"
@@ -203,7 +203,7 @@ async def test_transformer_serde_with_hash():
     """
     Test that the FileTransformer correctly serializes and deserializes File objects with hash values.
     """
-    f = File.from_existing_remote("s3://bucket/file.txt", known_hash_value="abc123")
+    f = File.from_existing_remote("s3://bucket/file.txt", file_cache_key="abc123")
     lt = TypeEngine.to_literal_type(File)
     lv = await FileTransformer().to_literal(f, File, lt)
 
@@ -222,7 +222,7 @@ async def test_multiple_files_with_hashes():
     Test handling multiple File objects with different hash scenarios.
     """
     # Create multiple files with different hash scenarios
-    file_with_hash = File.from_existing_remote("s3://bucket/file1.txt", known_hash_value="hash1")
+    file_with_hash = File.from_existing_remote("s3://bucket/file1.txt", file_cache_key="hash1")
     file_without_hash = File.from_existing_remote("s3://bucket/file2.txt")
 
     files = [file_with_hash, file_without_hash]
