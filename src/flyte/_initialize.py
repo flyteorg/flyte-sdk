@@ -248,21 +248,22 @@ async def init_from_config(
     import flyte.config as config
 
     cfg: config.Config
-    if path_or_config is None or isinstance(path_or_config, str):
-        # If a string is passed, treat it as a path to the config file
-        if root_dir and path_or_config:
-            cfg = config.auto(str(root_dir / path_or_config))
-        elif path_or_config and not Path(path_or_config).exists():
+    if path_or_config is None:
+        # If no path is provided, use the default config file
+        cfg = config.auto()
+    elif isinstance(path_or_config, str):
+        if root_dir:
+            cfg_path = str(root_dir / path_or_config)
+        else:
+            cfg_path = path_or_config
+        if not Path(cfg_path).exists():
             raise InitializationError(
                 "ConfigFileNotFoundError",
                 "user",
-                f"Configuration file '{path_or_config}' does not exist., current working directory is {Path.cwd()}",
+                f"Configuration file '{cfg_path}' does not exist., current working directory is {Path.cwd()}",
             )
-        else:
-            # If no path is provided, use the default config file
-            cfg = config.auto()
+        cfg = config.auto(cfg_path)
     else:
-        # If a Config object is passed, use it directly
         cfg = path_or_config
 
     logger.debug(f"Flyte config initialized as {cfg}")
