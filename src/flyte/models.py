@@ -342,9 +342,15 @@ class NativeInterface:
         """
         # Convert positional arguments to keyword arguments
         if len(args) > len(self.inputs):
-            raise ValueError(f"Too many positional arguments provided, inputs {self.inputs.keys()}, args {len(args)}")
+            raise ValueError(
+                f"Too many positional arguments provided, expected inputs {self.inputs.keys()}, args {len(args)}"
+            )
         for arg, input_name in zip(args, self.inputs.keys()):
             kwargs[input_name] = arg
+        if len(kwargs) > len(self.inputs):
+            raise ValueError(
+                f"Too many keyword arguments provided, expected inputs {self.inputs.keys()}, args {kwargs.keys()}"
+            )
         return kwargs
 
     def get_input_types(self) -> Dict[str, Type]:
