@@ -125,7 +125,7 @@ task:
         test_root_dir = Path("/workspace")
         nonexistent_relative_path = "configs/missing.yaml"
 
-        with pytest.raises(FileNotFoundError):
+        with pytest.raises(InitializationError):
             await init_from_config.aio(path_or_config=nonexistent_relative_path, root_dir=test_root_dir)
 
     @patch("flyte._initialize.init")
@@ -213,9 +213,13 @@ task:
 
     @patch("flyte._initialize.init")
     @patch("flyte.config.auto")
+    @patch("pathlib.Path.exists")
     @pytest.mark.asyncio
-    async def test_init_from_config_with_symlinked_root_dir(self, mock_config_auto, mock_init, mock_config):
+    async def test_init_from_config_with_symlinked_root_dir(
+        self, mock_exists, mock_config_auto, mock_init, mock_config
+    ):
         """Test init_from_config with symlinked root directory"""
+        mock_exists.return_value = True
         mock_config_auto.return_value = mock_config
         mock_init.aio = AsyncMock()
 
