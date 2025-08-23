@@ -18,7 +18,7 @@ from flyte.io._hashing_io import PrecomputedValue
 env = flyte.TaskEnvironment(name="content-based-caching")
 
 
-@env.task(cache=Cache(behavior="override", version_override="v2"))
+@env.task(cache=Cache(behavior="override", version_override="v3"))
 async def process_file_with_preset_hash(input_file: File) -> str:
     """
     This task processes a file. This task should not run if the set hash for the File is unchanged.
@@ -37,7 +37,7 @@ async def process_file_with_preset_hash(input_file: File) -> str:
         return f"Processed {len(lines)} lines from {input_file.name} - Random: {random_num}"
 
 
-@env.task(cache=Cache(behavior="override", version_override="v2"))
+@env.task(cache=Cache(behavior="override", version_override="v3"))
 async def process_directory_with_preset_hash(input_dir: Dir) -> str:
     """
     This task processes a directory. Should not run if the set hash for the Dir is unchanged.
@@ -78,7 +78,7 @@ async def demo_cache_behavior() -> str:
     with tempfile.TemporaryDirectory() as temp_dir1:
         (Path(temp_dir1) / "file1.txt").write_text("Content of file 1")
         (Path(temp_dir1) / "file2.txt").write_text("Content of file 2")
-        dir1 = await Dir.from_local(temp_dir1, hash_method=PrecomputedValue("dir_hash_67890"))
+        dir1 = await Dir.from_local(temp_dir1, dir_cache_key="dir_hash_67890")
 
     # Process both - these should run normally (first time)
     print("=== First run (should execute tasks) ===")
@@ -100,7 +100,7 @@ async def demo_cache_behavior() -> str:
         (Path(temp_dir2) / "different2.txt").write_text("Another different file")
         (Path(temp_dir2) / "subdir").mkdir()
         (Path(temp_dir2) / "subdir" / "nested.txt").write_text("Nested file")
-        dir2 = await Dir.from_local(temp_dir2, hash_method=PrecomputedValue("dir_hash_67890"))  # Same hash!
+        dir2 = await Dir.from_local(temp_dir2, dir_cache_key="dir_hash_67890")  # Same hash!
 
     # Process both again - these should hit cache (same random numbers)
     print("=== Second run (should hit cache) ===")
