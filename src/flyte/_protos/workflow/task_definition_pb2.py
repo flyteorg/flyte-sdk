@@ -13,6 +13,7 @@ _sym_db = _symbol_database.Default()
 
 from flyte._protos.common import identifier_pb2 as common_dot_identifier__pb2
 from flyte._protos.common import identity_pb2 as common_dot_identity__pb2
+from flyteidl.core import interface_pb2 as flyteidl_dot_core_dot_interface__pb2
 from flyteidl.core import tasks_pb2 as flyteidl_dot_core_dot_tasks__pb2
 from google.protobuf import timestamp_pb2 as google_dot_protobuf_dot_timestamp__pb2
 from flyte._protos.validate.validate import validate_pb2 as validate_dot_validate__pb2
@@ -20,7 +21,7 @@ from flyte._protos.workflow import common_pb2 as workflow_dot_common__pb2
 from flyte._protos.workflow import environment_pb2 as workflow_dot_environment__pb2
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x1eworkflow/task_definition.proto\x12\x11\x63loudidl.workflow\x1a\x17\x63ommon/identifier.proto\x1a\x15\x63ommon/identity.proto\x1a\x19\x66lyteidl/core/tasks.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x17validate/validate.proto\x1a\x15workflow/common.proto\x1a\x1aworkflow/environment.proto\"\x8f\x01\n\x08TaskName\x12\x1b\n\x03org\x18\x01 \x01(\tB\t\xfa\x42\x06r\x04\x10\x01\x18?R\x03org\x12#\n\x07project\x18\x02 \x01(\tB\t\xfa\x42\x06r\x04\x10\x01\x18?R\x07project\x12!\n\x06\x64omain\x18\x03 \x01(\tB\t\xfa\x42\x06r\x04\x10\x01\x18?R\x06\x64omain\x12\x1e\n\x04name\x18\x04 \x01(\tB\n\xfa\x42\x07r\x05\x10\x01\x18\xff\x01R\x04name\"\xba\x01\n\x0eTaskIdentifier\x12\x1b\n\x03org\x18\x01 \x01(\tB\t\xfa\x42\x06r\x04\x10\x01\x18?R\x03org\x12#\n\x07project\x18\x02 \x01(\tB\t\xfa\x42\x06r\x04\x10\x01\x18?R\x07project\x12!\n\x06\x64omain\x18\x03 \x01(\tB\t\xfa\x42\x06r\x04\x10\x01\x18?R\x06\x64omain\x12\x1e\n\x04name\x18\x04 \x01(\tB\n\xfa\x42\x07r\x05\x10\x01\x18\xff\x01R\x04name\x12#\n\x07version\x18\x05 \x01(\tB\t\xfa\x42\x06r\x04\x10\x01\x18?R\x07version\"\xed\x01\n\x0cTaskMetadata\x12L\n\x0b\x64\x65ployed_by\x18\x01 \x01(\x0b\x32!.cloudidl.common.EnrichedIdentityB\x08\xfa\x42\x05\x8a\x01\x02\x10\x01R\ndeployedBy\x12\x1d\n\nshort_name\x18\x02 \x01(\tR\tshortName\x12\x45\n\x0b\x64\x65ployed_at\x18\x03 \x01(\x0b\x32\x1a.google.protobuf.TimestampB\x08\xfa\x42\x05\xb2\x01\x02\x08\x01R\ndeployedAt\x12)\n\x10\x65nvironment_name\x18\x04 \x01(\tR\x0f\x65nvironmentName\"\x93\x01\n\x04Task\x12\x44\n\x07task_id\x18\x01 \x01(\x0b\x32!.cloudidl.workflow.TaskIdentifierB\x08\xfa\x42\x05\x8a\x01\x02\x10\x01R\x06taskId\x12\x45\n\x08metadata\x18\x02 \x01(\x0b\x32\x1f.cloudidl.workflow.TaskMetadataB\x08\xfa\x42\x05\x8a\x01\x02\x10\x01R\x08metadata\"\x8a\x02\n\x08TaskSpec\x12J\n\rtask_template\x18\x01 \x01(\x0b\x32\x1b.flyteidl.core.TaskTemplateB\x08\xfa\x42\x05\x8a\x01\x02\x10\x01R\x0ctaskTemplate\x12H\n\x0e\x64\x65\x66\x61ult_inputs\x18\x02 \x03(\x0b\x32!.cloudidl.workflow.NamedParameterR\rdefaultInputs\x12&\n\nshort_name\x18\x03 \x01(\tB\x07\xfa\x42\x04r\x02\x18?R\tshortName\x12@\n\x0b\x65nvironment\x18\x04 \x01(\x0b\x32\x1e.cloudidl.workflow.EnvironmentR\x0b\x65nvironment\"\xd5\x01\n\x0bTaskDetails\x12\x44\n\x07task_id\x18\x01 \x01(\x0b\x32!.cloudidl.workflow.TaskIdentifierB\x08\xfa\x42\x05\x8a\x01\x02\x10\x01R\x06taskId\x12\x45\n\x08metadata\x18\x02 \x01(\x0b\x32\x1f.cloudidl.workflow.TaskMetadataB\x08\xfa\x42\x05\x8a\x01\x02\x10\x01R\x08metadata\x12\x39\n\x04spec\x18\x03 \x01(\x0b\x32\x1b.cloudidl.workflow.TaskSpecB\x08\xfa\x42\x05\x8a\x01\x02\x10\x01R\x04specB\xc0\x01\n\x15\x63om.cloudidl.workflowB\x13TaskDefinitionProtoH\x02P\x01Z+github.com/unionai/cloud/gen/pb-go/workflow\xa2\x02\x03\x43WX\xaa\x02\x11\x43loudidl.Workflow\xca\x02\x11\x43loudidl\\Workflow\xe2\x02\x1d\x43loudidl\\Workflow\\GPBMetadata\xea\x02\x12\x43loudidl::Workflowb\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x1eworkflow/task_definition.proto\x12\x11\x63loudidl.workflow\x1a\x17\x63ommon/identifier.proto\x1a\x15\x63ommon/identity.proto\x1a\x1d\x66lyteidl/core/interface.proto\x1a\x19\x66lyteidl/core/tasks.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x17validate/validate.proto\x1a\x15workflow/common.proto\x1a\x1aworkflow/environment.proto\"\x8f\x01\n\x08TaskName\x12\x1b\n\x03org\x18\x01 \x01(\tB\t\xfa\x42\x06r\x04\x10\x01\x18?R\x03org\x12#\n\x07project\x18\x02 \x01(\tB\t\xfa\x42\x06r\x04\x10\x01\x18?R\x07project\x12!\n\x06\x64omain\x18\x03 \x01(\tB\t\xfa\x42\x06r\x04\x10\x01\x18?R\x06\x64omain\x12\x1e\n\x04name\x18\x04 \x01(\tB\n\xfa\x42\x07r\x05\x10\x01\x18\xff\x01R\x04name\"\xba\x01\n\x0eTaskIdentifier\x12\x1b\n\x03org\x18\x01 \x01(\tB\t\xfa\x42\x06r\x04\x10\x01\x18?R\x03org\x12#\n\x07project\x18\x02 \x01(\tB\t\xfa\x42\x06r\x04\x10\x01\x18?R\x07project\x12!\n\x06\x64omain\x18\x03 \x01(\tB\t\xfa\x42\x06r\x04\x10\x01\x18?R\x06\x64omain\x12\x1e\n\x04name\x18\x04 \x01(\tB\n\xfa\x42\x07r\x05\x10\x01\x18\xff\x01R\x04name\x12#\n\x07version\x18\x05 \x01(\tB\t\xfa\x42\x06r\x04\x10\x01\x18?R\x07version\"\xed\x01\n\x0cTaskMetadata\x12L\n\x0b\x64\x65ployed_by\x18\x01 \x01(\x0b\x32!.cloudidl.common.EnrichedIdentityB\x08\xfa\x42\x05\x8a\x01\x02\x10\x01R\ndeployedBy\x12\x1d\n\nshort_name\x18\x02 \x01(\tR\tshortName\x12\x45\n\x0b\x64\x65ployed_at\x18\x03 \x01(\x0b\x32\x1a.google.protobuf.TimestampB\x08\xfa\x42\x05\xb2\x01\x02\x08\x01R\ndeployedAt\x12)\n\x10\x65nvironment_name\x18\x04 \x01(\tR\x0f\x65nvironmentName\"\x93\x01\n\x04Task\x12\x44\n\x07task_id\x18\x01 \x01(\x0b\x32!.cloudidl.workflow.TaskIdentifierB\x08\xfa\x42\x05\x8a\x01\x02\x10\x01R\x06taskId\x12\x45\n\x08metadata\x18\x02 \x01(\x0b\x32\x1f.cloudidl.workflow.TaskMetadataB\x08\xfa\x42\x05\x8a\x01\x02\x10\x01R\x08metadata\"\x8a\x02\n\x08TaskSpec\x12J\n\rtask_template\x18\x01 \x01(\x0b\x32\x1b.flyteidl.core.TaskTemplateB\x08\xfa\x42\x05\x8a\x01\x02\x10\x01R\x0ctaskTemplate\x12H\n\x0e\x64\x65\x66\x61ult_inputs\x18\x02 \x03(\x0b\x32!.cloudidl.workflow.NamedParameterR\rdefaultInputs\x12&\n\nshort_name\x18\x03 \x01(\tB\x07\xfa\x42\x04r\x02\x18?R\tshortName\x12@\n\x0b\x65nvironment\x18\x04 \x01(\x0b\x32\x1e.cloudidl.workflow.EnvironmentR\x0b\x65nvironment\"H\n\tTraceSpec\x12;\n\tinterface\x18\x01 \x01(\x0b\x32\x1d.flyteidl.core.TypedInterfaceR\tinterface\"\xd5\x01\n\x0bTaskDetails\x12\x44\n\x07task_id\x18\x01 \x01(\x0b\x32!.cloudidl.workflow.TaskIdentifierB\x08\xfa\x42\x05\x8a\x01\x02\x10\x01R\x06taskId\x12\x45\n\x08metadata\x18\x02 \x01(\x0b\x32\x1f.cloudidl.workflow.TaskMetadataB\x08\xfa\x42\x05\x8a\x01\x02\x10\x01R\x08metadata\x12\x39\n\x04spec\x18\x03 \x01(\x0b\x32\x1b.cloudidl.workflow.TaskSpecB\x08\xfa\x42\x05\x8a\x01\x02\x10\x01R\x04specB\xc0\x01\n\x15\x63om.cloudidl.workflowB\x13TaskDefinitionProtoH\x02P\x01Z+github.com/unionai/cloud/gen/pb-go/workflow\xa2\x02\x03\x43WX\xaa\x02\x11\x43loudidl.Workflow\xca\x02\x11\x43loudidl\\Workflow\xe2\x02\x1d\x43loudidl\\Workflow\\GPBMetadata\xea\x02\x12\x43loudidl::Workflowb\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
@@ -64,16 +65,18 @@ if _descriptor._USE_C_DESCRIPTORS == False:
   _TASKDETAILS.fields_by_name['metadata']._serialized_options = b'\372B\005\212\001\002\020\001'
   _TASKDETAILS.fields_by_name['spec']._options = None
   _TASKDETAILS.fields_by_name['spec']._serialized_options = b'\372B\005\212\001\002\020\001'
-  _globals['_TASKNAME']._serialized_start=238
-  _globals['_TASKNAME']._serialized_end=381
-  _globals['_TASKIDENTIFIER']._serialized_start=384
-  _globals['_TASKIDENTIFIER']._serialized_end=570
-  _globals['_TASKMETADATA']._serialized_start=573
-  _globals['_TASKMETADATA']._serialized_end=810
-  _globals['_TASK']._serialized_start=813
-  _globals['_TASK']._serialized_end=960
-  _globals['_TASKSPEC']._serialized_start=963
-  _globals['_TASKSPEC']._serialized_end=1229
-  _globals['_TASKDETAILS']._serialized_start=1232
-  _globals['_TASKDETAILS']._serialized_end=1445
+  _globals['_TASKNAME']._serialized_start=269
+  _globals['_TASKNAME']._serialized_end=412
+  _globals['_TASKIDENTIFIER']._serialized_start=415
+  _globals['_TASKIDENTIFIER']._serialized_end=601
+  _globals['_TASKMETADATA']._serialized_start=604
+  _globals['_TASKMETADATA']._serialized_end=841
+  _globals['_TASK']._serialized_start=844
+  _globals['_TASK']._serialized_end=991
+  _globals['_TASKSPEC']._serialized_start=994
+  _globals['_TASKSPEC']._serialized_end=1260
+  _globals['_TRACESPEC']._serialized_start=1262
+  _globals['_TRACESPEC']._serialized_end=1334
+  _globals['_TASKDETAILS']._serialized_start=1337
+  _globals['_TASKDETAILS']._serialized_end=1550
 # @@protoc_insertion_point(module_scope)

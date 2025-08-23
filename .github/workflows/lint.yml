@@ -52,7 +52,17 @@ jobs:
       - name: Generate docs
         run: |
           make cli-docs-gen
-
+  uv-lock-check:
+    name: check uv.lock
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fetch the code
+        uses: actions/checkout@v4
+      - name: Set up Python 3.12
+        uses: ./.github/actions/setup-python-env
+      - name: Generate docs
+        run: |
+          uv lock --check
 #  # Disabled for now, as it is failing
 #  check-import-profile:
 #    runs-on: ubuntu-latest

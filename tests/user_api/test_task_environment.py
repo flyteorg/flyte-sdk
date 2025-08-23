@@ -15,7 +15,7 @@ async def sample_task(x: int, y: int) -> int:
     return x + y
 
 
-@env_with_tasks.task(name="test")
+@env_with_tasks.task(short_name="test")
 async def sample_task2(x: int, y: int) -> int:
     return x + y
 
@@ -120,7 +120,7 @@ def test_task_environment_name_validation():
 def test_env_with_tasks():
     assert len(env_with_tasks.tasks) == 2
     assert list(env_with_tasks.tasks.keys()) == ["env_with_tasks.sample_task", "env_with_tasks.sample_task2"]
-    assert sample_task.friendly_name == "sample_task"
+    assert sample_task.short_name == "sample_task"
     assert sample_task.name == "env_with_tasks.sample_task"
-    assert sample_task2.friendly_name == "test"
+    assert sample_task2.short_name == "test"
     assert sample_task2.name == "env_with_tasks.sample_task2"
