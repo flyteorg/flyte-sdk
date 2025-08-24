@@ -75,39 +75,52 @@ def get_rich_handler(log_level: int) -> Optional[logging.Handler]:
     return handler
 
 
-def get_default_handler(log_level: int) -> logging.Handler:
-    handler = logging.StreamHandler()
-    handler.setLevel(log_level)
-    formatter = logging.Formatter(fmt="[%(name)s] %(message)s")
-    if log_format_from_env() == "json":
-        pass
-        # formatter = jsonlogger.JsonFormatter(fmt="%(asctime)s %(name)s %(levelname)s %(message)s")
-    handler.setFormatter(formatter)
-    return handler
-
-
 def initialize_logger(log_level: int = get_env_log_level(), enable_rich: bool = False):
     """
     Initializes the global loggers to the default configuration.
+    When enable_rich=True, upgrades to Rich handler for local CLI usage.
     """
     global logger  # noqa: PLW0603
-    logger = _create_logger("flyte", log_level, enable_rich)
 
+    # Clear existing handlers to reconfigure
+    root = logging.getLogger()
+    root.handlers.clear()
 
-def _create_logger(name: str, log_level: int = DEFAULT_LOG_LEVEL, enable_rich: bool = False) -> logging.Logger:
-    """
-    Creates a logger with the given name and log level.
-    """
-    logger = logging.getLogger(name)
-    logger.setLevel(log_level)
-    handler = None
-    logger.handlers = []
+    flyte_logger = logging.getLogger("flyte")
+    flyte_logger.handlers.clear()
+
+    # Set up root logger handler
+    root_handler = None
     if enable_rich:
-        handler = get_rich_handler(log_level)
-    if handler is None:
-        handler = get_default_handler(log_level)
-    logger.addHandler(handler)
-    return logger
+        root_handler = get_rich_handler(log_level)
+
+    if root_handler is None:
+        root_handler = logging.StreamHandler()
+
+    # Add context filter to root handler for all logging
+    root_handler.addFilter(ContextFilter())
+    root.addHandler(root_handler)
+
+    # Set up Flyte logger handler
+    flyte_handler = None
+    if enable_rich:
+        flyte_handler = get_rich_handler(log_level)
+
+    if flyte_handler is None:
+        flyte_handler = logging.StreamHandler()
+        flyte_handler.setLevel(log_level)
+        formatter = logging.Formatter(fmt="%(message)s")
+        flyte_handler.setFormatter(formatter)
+
+    # Add both filters to Flyte handler
+    flyte_handler.addFilter(FlyteInternalFilter())
+    flyte_handler.addFilter(ContextFilter())
+
+    flyte_logger.addHandler(flyte_handler)
+    flyte_logger.setLevel(log_level)
+    flyte_logger.propagate = False  # Prevent double logging
+
+    logger = flyte_logger
 
 
 def log(fn=None, *, level=logging.DEBUG, entry=True, exit=True):
@@ -135,4 +148,75 @@ def log(fn=None, *, level=logging.DEBUG, entry=True, exit=True):
     return decorator(fn)
 
 
-logger = _create_logger("flyte", get_env_log_level())
+class ContextFilter(logging.Filter):
+    """
+    A logging filter that adds the current action's run name and name to all log records.
+    Applied globally to capture context for both user and Flyte internal logging.
+    """
+
+    def filter(self, record):
+        from flyte._context import ctx
+
+        c = ctx()
+        if c:
+            action = c.action
+            record.msg = f"[{action.run_name}][{action.name}] {record.msg}"
+        return True
+
+
+class FlyteInternalFilter(logging.Filter):
+    """
+    A logging filter that adds [flyte] prefix to internal Flyte logging only.
+    """
+
+    def filter(self, record):
+        if record.name.startswith("flyte"):
+            record.msg = f"[flyte] {record.msg}"
+        return True
+
+
+def _setup_root_logger():
+    """
+    Configure the root logger to capture all logging with context information.
+    This ensures both user code and Flyte internal logging get the context.
+    """
+    root = logging.getLogger()
+    root.handlers.clear()  # Remove any existing handlers to prevent double logging
+
+    # Create a basic handler for the root logger
+    handler = logging.StreamHandler()
+    # Add context filter to ALL logging
+    handler.addFilter(ContextFilter())
+
+    # Simple formatter since filters handle prefixes
+    root.addHandler(handler)
+
+
+def _create_flyte_logger() -> logging.Logger:
+    """
+    Create the internal Flyte logger with [flyte] prefix.
+    """
+    flyte_logger = logging.getLogger("flyte")
+    flyte_logger.setLevel(get_env_log_level())
+
+    # Add a handler specifically for flyte logging with the prefix filter
+    handler = logging.StreamHandler()
+    handler.setLevel(get_env_log_level())
+    handler.addFilter(FlyteInternalFilter())
+    handler.addFilter(ContextFilter())
+
+    formatter = logging.Formatter(fmt="%(message)s")
+    handler.setFormatter(formatter)
+
+    # Prevent propagation to root to avoid double logging
+    flyte_logger.propagate = False
+    flyte_logger.addHandler(handler)
+
+    return flyte_logger
+
+
+# Initialize root logger for global context
+_setup_root_logger()
+
+# Create the Flyte internal logger
+logger = _create_flyte_logger()
