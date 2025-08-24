@@ -69,7 +69,7 @@ def get_model(model_name: str = "all-MiniLM-L6-v2") -> SentenceTransformer:
 
 
 @worker.task(cache="auto", retries=2)
-async def embed_shard_to_file(repo_id: str, filename: str, model_name: str, batch_size: int = 32) -> flyte.io.DataFrame:
+async def embed_shard_to_file(repo_id: str, filename: str, model_name: str, batch_size: int = 32) -> flyte.io.File:
     """
     Stream one parquet shard, embed in batches, write embeddings to a file.
 
@@ -120,7 +120,7 @@ async def embed_shard_to_file(repo_id: str, filename: str, model_name: str, batc
         tensor: torch.Tensor = torch.cat(all_embeddings, dim=0)
         torch.save(tensor, out_path)
 
-    return out_path
+    return await flyte.io.File.from_local(out_path)
 
 
 async def _aiter(sync_iterable) -> AsyncGenerator[Dict[str, Any], None]:
@@ -150,7 +150,7 @@ async def main():
 if __name__ == "__main__":
     # Usage:
     # Run this with limit=-1 to embed all articles in the dataset (~61MM rows)
-    flyte.init()
-    # flyte.init_from_config("../../config.yaml")
+    # flyte.init()
+    flyte.init_from_config("../../config.yaml")
     run = flyte.run(main)
     print(run.url)
