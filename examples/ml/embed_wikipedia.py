@@ -5,6 +5,7 @@
 #    "sentence-transformers",
 #    "huggingface-hub",
 #    "hf-transfer",
+#    "datasets",
 # ]
 # ///
 
