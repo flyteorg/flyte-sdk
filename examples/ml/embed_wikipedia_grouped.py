@@ -60,7 +60,7 @@ worker = flyte.TaskEnvironment(
     name="embed_wiki_grouped_worker",
     image=image,
     resources=flyte.Resources(cpu=8, memory="12Gi", gpu=1),
-    reusable=flyte.ReusePolicy(replicas=8, concurrency=1),
+    reusable=flyte.ReusePolicy(replicas=8, concurrency=4),
 )
 
 
@@ -126,8 +126,7 @@ async def prepare_batches(
     dataset = datasets.load_dataset("wikimedia/wikipedia", "20231101.en", streaming=True)
     print(f"dataset loaded {dataset}")
 
-    output = []
-    batch = []
+    output, batch = [], []
 
     def create_batch(batch: list[dict]) -> flyte.io.DataFrame:
         temp_file = tempfile.NamedTemporaryFile(delete=False)
@@ -176,5 +175,5 @@ if __name__ == "__main__":
     # Run this with limit=-1 to embed all articles in the dataset (~61MM rows)
     # flyte.init()
     flyte.init_from_config("/Users/nielsbantilan/.flyte/config.yaml")
-    run = flyte.run(embed_wikipedia, limit=1_000_000, batch_size=256, embedding_group_size=100)
+    run = flyte.run(embed_wikipedia, limit=-1, batch_size=16384, embedding_group_size=250)
     print(run.url)
