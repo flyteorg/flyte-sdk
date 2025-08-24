@@ -3,7 +3,6 @@
 # dependencies = [
 #    "flyte>=2.0.0b17",
 #    "sentence-transformers",
-#    "datasets",
 #    "huggingface-hub",
 #    "hf-transfer",
 # ]
@@ -27,21 +26,21 @@ Requirements:
 """
 
 import asyncio
-import json
 import logging
+import os
 import tempfile
+from functools import lru_cache
+from typing import Any, AsyncGenerator, Dict
 
-import numpy as np
-import pandas as pd
-from async_lru import alru_cache
+import torch
+from datasets import load_dataset
+from huggingface_hub import hf_hub_url
 from sentence_transformers import SentenceTransformer
 
-import flyte
 import flyte.io
 
 # Configure logging
 logger = logging.getLogger(__name__)
-
 
 image = flyte.Image.from_uv_script(__file__, name="embed_wikipedia_image").with_pip_packages("unionai-reuse")
 
@@ -62,99 +61,95 @@ worker = flyte.TaskEnvironment(
 )
 
 
+@lru_cache(maxsize=1)
+def get_model(model_name: str = "all-MiniLM-L6-v2") -> SentenceTransformer:
+    """Lazily load and cache the SentenceTransformer model."""
+    return SentenceTransformer(model_name)
+
+
+@worker.task(cache="auto", retries=2)
+async def embed_shard_to_file(repo_id: str, filename: str, model_name: str, batch_size: int = 32) -> flyte.io.DataFrame:
+    """
+    Stream one parquet shard, embed in batches, write embeddings to a file.
+
+    Args:
+        repo_id: Hugging Face dataset repo id (e.g. "wikimedia/wikipedia").
+        filename: Path of the shard inside the dataset repo.
+        model_name: SentenceTransformer model name.
+        batch_size: Number of texts per embedding batch.
+
+    Returns:
+        str: Path to the saved `.pt` file containing embeddings (torch.Tensor).
+    """
+    model: SentenceTransformer = get_model(model_name)
+
+    # Get shard URL
+    file_url: str = hf_hub_url(repo_id=repo_id, filename=filename, repo_type="dataset")
+
+    # Stream dataset shard
+    ds = load_dataset("parquet", data_files=file_url, split="train", streaming=True)
+
+    # Prepare output file
+    shard_name: str = filename.replace("/", "_")
+    out_path: str = os.path.join(tempfile.gettempdir(), f"{shard_name}.pt")
+
+    all_embeddings: list[torch.Tensor] = []
+    batch: list[str] = []
+
+    async for row in _aiter(ds):
+        text: str = row.get("text", "")
+        if not text:
+            continue
+        batch.append(text)
+
+        if len(batch) >= batch_size:
+            embeddings: torch.Tensor = await asyncio.to_thread(
+                model.encode, batch, convert_to_tensor=True, show_progress_bar=False
+            )
+            all_embeddings.append(embeddings.cpu())
+            batch = []
+
+    if batch:
+        embeddings: torch.Tensor = await asyncio.to_thread(
+            model.encode, batch, convert_to_tensor=True, show_progress_bar=False
+        )
+        all_embeddings.append(embeddings.cpu())
+
+    if all_embeddings:
+        tensor: torch.Tensor = torch.cat(all_embeddings, dim=0)
+        torch.save(tensor, out_path)
+
+    return out_path
+
+
+async def _aiter(sync_iterable) -> AsyncGenerator[Dict[str, Any], None]:
+    """Wrap a synchronous iterable into an async generator."""
+    loop = asyncio.get_running_loop()
+    for row in sync_iterable:
+        yield await loop.run_in_executor(None, lambda r=row: r)
+
+
 @driver.task(cache="auto")
-async def load_partitions(num_proc: int = 4) -> list[flyte.io.DataFrame]:
+async def main():
     from huggingface_hub import HfApi
+
+    repo_id = "wikimedia/wikipedia"
+    model_name = "all-MiniLM-L6-v2"
 
     api = HfApi()
     info = api.dataset_info("wikimedia/wikipedia")
     # Each file is stored in info.siblings
     parquet_files = [s.rfilename for s in info.siblings if s.rfilename.endswith(".parquet")]
     print(parquet_files)
-    partitions = []
-    for i, f in enumerate(parquet_files):
-        print(f"Adding partition {i}: {f} to encoding tasks")
-        partitions.append(flyte.io.DataFrame(uri=str(f)))
-    return partitions
-
-
-@alru_cache(maxsize=32)
-async def load_embedding_model(model_name: str) -> SentenceTransformer:
-    return SentenceTransformer(model_name)
-
-
-@worker.task(retries=10)
-async def embed_batch(batch: pd.DataFrame, encode_batch_size: int = 256) -> flyte.io.File:
-    model = await load_embedding_model("BAAI/bge-small-en-v1.5")
-    print(f"model loaded {model}")
-
-    temp_file = tempfile.NamedTemporaryFile(delete=False)
-
-    embeddings: list[np.ndarray] = model.encode(
-        batch["text"].tolist(),
-        show_progress_bar=True,
-        batch_size=encode_batch_size,
-    )
-    output = []
-    for i, embedding in enumerate(embeddings):
-        output.append(
-            dict(
-                title=batch["title"].iloc[i],
-                id=batch["id"].iloc[i],
-                embedding=embedding.tolist(),
-            )
-        )
-
-    with open(temp_file.name, "w") as f:
-        json.dump(output, f)
-
-    file = await flyte.io.File.from_local(temp_file.name)
-    return file
-
-
-@driver.task(retries=10)
-async def embed_articles(df: pd.DataFrame, batch_size: int) -> list[flyte.io.File]:
-    print(f"encoding {len(df)} articles")
-    embedded_batches = []
-
-    # Create batch indexes for dataframe
-    n = len(df)
-    indexes = []
-    if n > batch_size:
-        for i in range(0, n, batch_size):
-            end_idx = min(i + batch_size, n)
-            indexes.append((i, end_idx))
-    else:
-        indexes.append((0, n))
-
-    for i, idx in enumerate(indexes):
-        embedded_batches.append(embed_batch(df.iloc[idx[0] : idx[1]]))
-    return await asyncio.gather(*embedded_batches)
-
-
-@driver.task
-async def embed_wikipedia(
-    limit: int = 8,
-    batch_size: int = 8,
-    num_proc: int = 4,
-) -> list[flyte.io.File]:
-    partitions = await load_partitions(num_proc)
-
-    embedding_tasks = []
-    for i, partition in enumerate(partitions):
-        if limit and limit != -1 and i > limit:
-            break
-        embedding_tasks.append(embed_articles(partition, batch_size))
-
-    embeddings = await asyncio.gather(*embedding_tasks)
-    # Flatten list of lists into single list
-    return [file for batch in embeddings for file in batch]
+    filename = parquet_files[0]  # For demo, just process the first shard
+    out_file = await embed_shard_to_file(repo_id, filename, model_name=model_name, batch_size=64)
+    print("✅ Embeddings written to:", out_file)
 
 
 if __name__ == "__main__":
     # Usage:
     # Run this with limit=-1 to embed all articles in the dataset (~61MM rows)
-    # flyte.init()
-    flyte.init_from_config("../../config.yaml")
-    run = flyte.run(embed_wikipedia, limit=1, batch_size=50_000)
+    flyte.init()
+    # flyte.init_from_config("../../config.yaml")
+    run = flyte.run(main)
     print(run.url)
