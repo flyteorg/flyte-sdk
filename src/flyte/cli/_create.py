@@ -191,3 +191,83 @@ def config(
         yaml.dump(d, f)
 
     click.echo(f"Config file written to {output_path}")
+
+
+@create.command(cls=common.CommandBase)
+@click.argument("task_name", type=str, required=True, help="Task name to create a trigger for.")
+@click.argument("name", type=str, required=True, help="Name of the trigger to create.")
+@click.option(
+    "--task-version",
+    type=str,
+    default="latest",
+    help="Version of the task to create a trigger for. Defaults to 'latest'.",
+    show_default=True,
+)
+@click.option(
+    "--schedule",
+    type=str,
+    default="* * * * *",
+    help="Cron schedule for the trigger. Defaults to every minute.",
+    show_default=True,
+)
+@click.option(
+    "--description",
+    type=str,
+    default="",
+    help="Description of the trigger.",
+    show_default=True,
+)
+@click.option(
+    "--auto-activate",
+    is_flag=True,
+    default=True,
+    help="Whether the trigger should not be automatically activated. Defaults to True.",
+    show_default=True,
+)
+@click.option(
+    "--trigger-time-var",
+    type=str,
+    default="trigger_time",
+    help="Variable name for the trigger time in the task inputs. Defaults to 'trigger_time'.",
+    show_default=True,
+)
+@click.pass_obj
+def trigger(
+    cfg: common.CLIConfig,
+    task_name: str,
+    name: str,
+    task_version: str = "latest",
+    trigger_time_var: str = "trigger_time",
+    auto_activate: bool = True,
+    schedule: str = "* * * * *",
+    description: str = "",
+    project: str | None = None,
+    domain: str | None = None,
+):
+    """
+    Create a new trigger for a task. The task name and trigger name are required.
+
+    Example:
+
+    ```bash
+    $ flyte create trigger my_task my_trigger --schedule "0 0 * * *"
+    ```
+
+    This will create a trigger that runs every day at midnight.
+    """
+    from flyte.remote import Trigger
+    from flyte.trigger import Cron, TriggerTime
+    from flyte.trigger import Trigger as TriggerDef
+
+    cfg.init(project, domain)
+
+    trigger = TriggerDef(
+        name=name,
+        automation=Cron(schedule),
+        description=description,
+        auto_activate=auto_activate,
+        inputs={trigger_time_var: TriggerTime},  # Use the trigger time variable in inputs
+        env=None,  # No environment variables set by default
+        interruptable=None,  # No interruptable setting by default
+    )
+    Trigger.create(trigger, task_name=task_name, task_version=task_version)
