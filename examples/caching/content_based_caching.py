@@ -13,12 +13,11 @@ from pathlib import Path
 import flyte
 from flyte import Cache
 from flyte.io import Dir, File
-from flyte.io._hashing_io import PrecomputedValue
 
 env = flyte.TaskEnvironment(name="content-based-caching")
 
 
-@env.task(cache=Cache(behavior="override", version_override="v3"))
+@env.task(cache=Cache(behavior="override", version_override="v4"))
 async def process_file_with_preset_hash(input_file: File) -> str:
     """
     This task processes a file. This task should not run if the set hash for the File is unchanged.
@@ -37,7 +36,7 @@ async def process_file_with_preset_hash(input_file: File) -> str:
         return f"Processed {len(lines)} lines from {input_file.name} - Random: {random_num}"
 
 
-@env.task(cache=Cache(behavior="override", version_override="v3"))
+@env.task(cache=Cache(behavior="override", version_override="v4"))
 async def process_directory_with_preset_hash(input_dir: Dir) -> str:
     """
     This task processes a directory. Should not run if the set hash for the Dir is unchanged.
@@ -72,7 +71,7 @@ async def demo_cache_behavior() -> str:
         temp_file.write(content1)
         temp_path1 = temp_file.name
 
-    file1 = await File.from_local(temp_path1, hash_method=PrecomputedValue(hash_value))
+    file1 = await File.from_local(temp_path1, hash_method=hash_value)
 
     # Create first directory with preset hash
     with tempfile.TemporaryDirectory() as temp_dir1:
@@ -92,7 +91,7 @@ async def demo_cache_behavior() -> str:
         temp_file.write(content2)
         temp_path2 = temp_file.name
 
-    file2 = await File.from_local(temp_path2, hash_method=PrecomputedValue(hash_value))  # Same hash!
+    file2 = await File.from_local(temp_path2, hash_method=hash_value)  # Same hash!
 
     # Create second directory with DIFFERENT content but SAME hash
     with tempfile.TemporaryDirectory() as temp_dir2:

@@ -144,7 +144,7 @@ class File(BaseModel, Generic[T], SerializableType):
 
     @classmethod
     @requires_initialization
-    def new_remote(cls, file_cache_key: Optional[str] = None, hash_method: Optional[HashMethod] = None) -> File[T]:
+    def new_remote(cls, hash_method: Optional[HashMethod | str] = None) -> File[T]:
         """
         Create a new File reference for a remote file that will be written to.
 
@@ -159,12 +159,11 @@ class File(BaseModel, Generic[T], SerializableType):
             return file
         ```
         """
-        if file_cache_key and hash_method:
-            raise ValueError("At most one of hash_method and file_cache_key can be specified.")
-
         ctx = internal_ctx()
+        known_cache_key = hash_method if isinstance(hash_method, str) else None
+        method = hash_method if isinstance(hash_method, HashMethod) else None
 
-        return cls(path=ctx.raw_data.get_random_remote_path(), hash=file_cache_key, hash_method=hash_method)
+        return cls(path=ctx.raw_data.get_random_remote_path(), hash=known_cache_key, hash_method=method)
 
     @classmethod
     def from_existing_remote(cls, remote_path: str, file_cache_key: Optional[str] = None) -> File[T]:
@@ -373,8 +372,7 @@ class File(BaseModel, Generic[T], SerializableType):
         cls,
         local_path: Union[str, Path],
         remote_destination: Optional[str] = None,
-        file_cache_key: Optional[str] = None,
-        hash_method: Optional[HashMethod] = None,
+        hash_method: Optional[HashMethod | str] = None,
     ) -> File[T]:
         """
         Create a new File object from a local file that will be uploaded to the configured remote store.
@@ -382,9 +380,7 @@ class File(BaseModel, Generic[T], SerializableType):
         Args:
             local_path: Path to the local file
             remote_destination: Optional path to store the file remotely. If None, a path will be generated.
-            file_cache_key: If you have a precomputed hash value you want to use when computing cache keys for
-              discoverable tasks that this File is an input to.
-            hash_method: At most one of hash_method and file_cache_key can be specified. HashMethod to use for
+            hash_method: Pass this argument either as a set string or a HashMethod to use for
               determining a task's cache key if this File object is used as an input to said task. If not specified,
               the cache key will just be computed based on this object's attributes (i.e. path, name, format, etc.).
               If there is a set value you want to use, please pass an instance of the PrecomputedValue HashMethod.
@@ -400,16 +396,14 @@ class File(BaseModel, Generic[T], SerializableType):
         if not os.path.exists(local_path):
             raise ValueError(f"File not found: {local_path}")
 
-        if file_cache_key and hash_method:
-            raise ValueError("At most one of hash_method and file_cache_key can be specified.")
-
         remote_path = remote_destination or internal_ctx().raw_data.get_random_remote_path()
         protocol = get_protocol(remote_path)
         filename = Path(local_path).name
 
         # If remote_destination was not set by the user, and the configured raw data path is also local,
         # then let's optimize by not uploading.
-        hash_value = file_cache_key
+        hash_value = hash_method if isinstance(hash_method, str) else None
+        hash_method = hash_method if isinstance(hash_method, HashMethod) else None
         if "file" in protocol:
             if remote_destination is None:
                 path = str(Path(local_path).absolute())
