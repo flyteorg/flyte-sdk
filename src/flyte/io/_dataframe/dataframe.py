@@ -962,6 +962,7 @@ class DataFrameTransformerEngine(TypeTransformer[DataFrame]):
         if issubclass(expected_python_type, DataFrame):
             fdf = DataFrame(format=metad.structured_dataset_type.format)
             fdf._literal_sd = lv.scalar.structured_dataset
+            fdf._metadata = metad
             return fdf
 
         # If the requested type was not a flyte.DataFrame, then it means it was a raw dataframe type, which means
