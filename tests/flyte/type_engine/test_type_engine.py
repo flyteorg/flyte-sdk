@@ -2221,46 +2221,6 @@ async def test_offloaded_literal_with_inferred_type():
         await TypeEngine.to_python_value(offloaded_literal_missing_uri, str)
 
 
-# def test_offloaded_literal_flytefile(tmp_path):
-#     ctx = internal_ctx()
-#     lt = TypeEngine.to_literal_type(FlyteFile)
-#     to_be_offloaded_lv = TypeEngine.to_literal(ctx, "s3://my-file", FlyteFile, lt)
-#
-#     # Write offloaded_lv as bytes to a temp file
-#     with open(f"{tmp_path}/offloaded_proto.pb", "wb") as f:
-#         f.write(to_be_offloaded_lv.to_flyte_idl().SerializeToString())
-#
-#     literal = Literal(
-#         offloaded_metadata=LiteralOffloadedMetadata(
-#             uri=f"{tmp_path}/offloaded_proto.pb",
-#             inferred_type=lt,
-#         ),
-#     )
-#
-#     loaded_pv = TypeEngine.to_python_value(ctx, literal, FlyteFile)
-#     assert loaded_pv._remote_source == "s3://my-file"
-#
-#
-# def test_offloaded_literal_flytedirectory(tmp_path):
-#     ctx = internal_ctx()
-#     lt = TypeEngine.to_literal_type(FlyteDirectory)
-#     to_be_offloaded_lv = TypeEngine.to_literal(ctx, "s3://my-dir", FlyteDirectory, lt)
-#
-#     # Write offloaded_lv as bytes to a temp file
-#     with open(f"{tmp_path}/offloaded_proto.pb", "wb") as f:
-#         f.write(to_be_offloaded_lv.to_flyte_idl().SerializeToString())
-#
-#     literal = Literal(
-#         offloaded_metadata=LiteralOffloadedMetadata(
-#             uri=f"{tmp_path}/offloaded_proto.pb",
-#             inferred_type=lt,
-#         ),
-#     )
-#
-#     loaded_pv: FlyteDirectory = TypeEngine.to_python_value(ctx, literal, FlyteDirectory)
-#     assert loaded_pv._remote_source == "s3://my-dir"
-
-
 @pytest.mark.asyncio
 async def test_dataclass_none_output_input_deserialization():
     from flyte._task_environment import TaskEnvironment
@@ -2316,34 +2276,6 @@ async def test_dataclass_none_output_input_deserialization():
     none_value_output = await outer_workflow(OuterWorkflowInput(input=0.0))
     none_value_output = none_value_output.nullable_output
     assert none_value_output is None, f"None value was {none_value_output}, not None as expected"
-
-
-#
-#
-# @pytest.mark.serial
-# def test_lazy_import_transformers_concurrently():
-#     # Configure the mocks similar to https://stackoverflow.com/questions/29749193/python-unit-testing-with-two-mock-objects-how-to-verify-call-order
-#     after_import_mock, mock_register = mock.Mock(), mock.Mock()
-#     mock_wrapper = mock.Mock()
-#     mock_wrapper.mock_register = mock_register
-#     mock_wrapper.after_import_mock = after_import_mock
-#
-#     with mock.patch.object(StructuredDatasetTransformerEngine, "register", new=mock_register):
-#         def run():
-#             TypeEngine.lazy_import_transformers()
-#             after_import_mock()
-#
-#         N = 5
-#         with ThreadPoolExecutor(max_workers=N) as executor:
-#             futures = [executor.submit(run) for _ in range(N)]
-#             [f.result() for f in futures]
-#
-#         assert mock_wrapper.mock_calls[-1] == mock.call.after_import_mock()
-#         expected_number_of_register_calls = len(mock_wrapper.mock_calls) - N
-#         assert sum([mock_call[0] == "mock_register" for mock_call in mock_wrapper.mock_calls]) \
-#           == expected_number_of_register_calls
-#         assert all([mock_call[0] == "mock_register" for mock_call in
-#                     mock_wrapper.mock_calls[:int(len(mock_wrapper.mock_calls)/N)-1]])
 
 
 @pytest.mark.asyncio
