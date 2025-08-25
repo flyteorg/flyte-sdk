@@ -141,6 +141,7 @@ class Run(ToJSONMixin):
         """
         return self.action.watch(cache_data_on_done=cache_data_on_done)
 
+    @syncify
     async def show_logs(
         self,
         attempt: int | None = None,
@@ -149,7 +150,7 @@ class Run(ToJSONMixin):
         raw: bool = False,
         filter_system: bool = False,
     ):
-        await self.action.show_logs(attempt, max_lines, show_ts, raw, filter_system=filter_system)
+        await self.action.show_logs.aio(attempt, max_lines, show_ts, raw, filter_system=filter_system)
 
     @syncify
     async def details(self) -> RunDetails:

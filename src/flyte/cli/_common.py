@@ -316,11 +316,23 @@ class FileGroup(GroupBase):
     def files(self):
         if self._files is None:
             directory = self._dir or Path(".").absolute()
-            self._files = [os.fspath(p) for p in directory.glob("*.py") if p.name != "__init__.py"]
-            if not self._files:
-                self._files = [os.fspath(".")] + [
-                    os.fspath(p.name) for p in directory.iterdir() if not p.name.startswith(("_", ".")) and p.is_dir()
+            # add python files
+            _files = [os.fspath(p) for p in directory.glob("*.py") if p.name != "__init__.py"]
+
+            # add directories
+            _files.extend(
+                [
+                    os.fspath(directory / p.name)
+                    for p in directory.iterdir()
+                    if not p.name.startswith(("_", ".")) and p.is_dir()
                 ]
+            )
+
+            # files that are in the current directory or subdirectories of the
+            # current directory should be displayed as relative paths
+            self._files = [
+                str(Path(f).relative_to(Path.cwd())) if Path(f).is_relative_to(Path.cwd()) else f for f in _files
+            ]
         return self._files
 
     def list_commands(self, ctx):
@@ -351,7 +363,6 @@ def format(title: str, vals: Iterable[Any], of: OutputFormat = "table") -> Table
     """
     Get a table from a list of values.
     """
-
     match of:
         case "table-simple":
             return _table_format(Table(title, box=None), vals)

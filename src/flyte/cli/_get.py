@@ -5,8 +5,6 @@ import rich_click as click
 from rich.console import Console
 from rich.pretty import pretty_repr
 
-import flyte.remote._action
-
 from . import _common as common
 
 
@@ -76,7 +74,7 @@ def run(
     console = Console()
     if name:
         details = RunDetails.get(name=name)
-        console.print(pretty_repr(details))
+        console.print(common.format(f"Run {name}", [details], "json"))
     else:
         console.print(common.format("Runs", Run.listall(limit=limit), cfg.output_format))
 
@@ -110,7 +108,7 @@ def task(
             if v is None:
                 raise click.BadParameter(f"Task {name} not found.")
             t = v.fetch()
-            console.print(pretty_repr(t))
+            console.print(common.format(f"Task {name}", [t], "json"))
         else:
             console.print(common.format("Tasks", Task.listall(by_task_name=name, limit=limit), cfg.output_format))
     else:
@@ -131,18 +129,21 @@ def action(
     """
     Get all actions for a run or details for a specific action.
     """
+    import flyte.remote as remote
 
     cfg.init(project=project, domain=domain)
 
     console = Console()
     if action_name:
-        console.print(pretty_repr(flyte.remote._action.Action.get(run_name=run_name, name=action_name)))
+        console.print(
+            common.format(
+                f"Action {run_name}.{action_name}", [remote.Action.get(run_name=run_name, name=action_name)], "json"
+            )
+        )
     else:
         # List all actions for the run
         console.print(
-            common.format(
-                f"Actions for {run_name}", flyte.remote._action.Action.listall(for_run_name=run_name), cfg.output_format
-            )
+            common.format(f"Actions for {run_name}", remote.Action.listall(for_run_name=run_name), cfg.output_format)
         )
 
 
@@ -201,7 +202,7 @@ def logs(
 
     async def _run_log_view(_obj):
         task = asyncio.create_task(
-            _obj.show_logs(
+            _obj.show_logs.aio(
                 max_lines=lines, show_ts=show_ts, raw=not pretty, attempt=attempt, filter_system=filter_system
             )
         )
@@ -211,7 +212,7 @@ def logs(
             task.cancel()
 
     if action_name:
-        obj = flyte.remote._action.Action.get(run_name=run_name, name=action_name)
+        obj = remote.Action.get(run_name=run_name, name=action_name)
     else:
         obj = remote.Run.get(run_name)
     asyncio.run(_run_log_view(obj))
@@ -235,7 +236,7 @@ def secret(
 
     console = Console()
     if name:
-        console.print(pretty_repr(remote.Secret.get(name)))
+        console.print(common.format("Secret", [remote.Secret.get(name)], "json"))
     else:
         console.print(common.format("Secrets", remote.Secret.listall(), cfg.output_format))
 
@@ -275,24 +276,25 @@ def io(
         raise click.BadParameter("Cannot use both --inputs-only and --outputs-only")
 
     import flyte.remote as remote
+    from flyte.remote import ActionDetails, ActionInputs, ActionOutputs
 
     cfg.init(project=project, domain=domain)
     console = Console()
     if action_name:
-        obj = flyte.remote._action.ActionDetails.get(run_name=run_name, name=action_name)
+        obj = ActionDetails.get(run_name=run_name, name=action_name)
     else:
         obj = remote.RunDetails.get(run_name)
 
     async def _get_io(
-        details: Union[remote.RunDetails, flyte.remote._action.ActionDetails],
-    ) -> Tuple[flyte.remote._action.ActionInputs | None, flyte.remote._action.ActionOutputs | None | str]:
+        details: Union[remote.RunDetails, ActionDetails],
+    ) -> Tuple[ActionInputs | None, ActionOutputs | None | str]:
         if inputs_only or outputs_only:
             if inputs_only:
                 return await details.inputs(), None
             elif outputs_only:
                 return None, await details.outputs()
         inputs = await details.inputs()
-        outputs: flyte.remote._action.ActionOutputs | None | str = None
+        outputs: ActionOutputs | None | str = None
         try:
             outputs = await details.outputs()
         except Exception:

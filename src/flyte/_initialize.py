@@ -11,7 +11,6 @@ from flyte.errors import InitializationError
 from flyte.syncify import syncify
 
 from ._logging import initialize_logger, logger
-from ._tools import ipython_check
 
 if TYPE_CHECKING:
     from flyte._internal.imagebuild import ImageBuildEngine
@@ -173,6 +172,7 @@ async def init(
 
     :return: None
     """
+    from flyte._tools import ipython_check
     from flyte._utils import get_cwd_editable_install, org_from_endpoint, sanitize_endpoint
 
     interactive_mode = ipython_check()
@@ -205,6 +205,14 @@ async def init(
                 http_proxy_url=http_proxy_url,
             )
 
+        if not root_dir:
+            editable_root = get_cwd_editable_install()
+            if editable_root:
+                logger.info(f"Using editable install as root directory: {editable_root}")
+                root_dir = editable_root
+            else:
+                logger.info("No editable install found, using current working directory as root directory.")
+                root_dir = Path.cwd()
         root_dir = root_dir or get_cwd_editable_install() or Path.cwd()
         _init_config = _InitConfig(
             root_dir=root_dir,
@@ -240,21 +248,22 @@ async def init_from_config(
     import flyte.config as config
 
     cfg: config.Config
-    if path_or_config is None or isinstance(path_or_config, str):
-        # If a string is passed, treat it as a path to the config file
-        if path_or_config:
-            if not Path(path_or_config).exists():
-                raise InitializationError(
-                    "ConfigFileNotFoundError",
-                    "user",
-                    f"Configuration file '{path_or_config}' does not exist., current working directory is {Path.cwd()}",
-                )
-        if root_dir and path_or_config:
-            cfg = config.auto(str(root_dir / path_or_config))
+    if path_or_config is None:
+        # If no path is provided, use the default config file
+        cfg = config.auto()
+    elif isinstance(path_or_config, str):
+        if root_dir:
+            cfg_path = str(root_dir / path_or_config)
         else:
-            cfg = config.auto(path_or_config)
+            cfg_path = path_or_config
+        if not Path(cfg_path).exists():
+            raise InitializationError(
+                "ConfigFileNotFoundError",
+                "user",
+                f"Configuration file '{cfg_path}' does not exist., current working directory is {Path.cwd()}",
+            )
+        cfg = config.auto(cfg_path)
     else:
-        # If a Config object is passed, use it directly
         cfg = path_or_config
 
     logger.debug(f"Flyte config initialized as {cfg}")
@@ -372,30 +381,6 @@ def ensure_client():
             "Client has not been initialized. Call flyte.init() with a valid endpoint"
             " or api-key before using this function.",
         )
-
-
-def requires_client(func: T) -> T:
-    """
-    Decorator that checks if the client has been initialized before executing the function.
-    Raises InitializationError if the client is not initialized.
-
-    :param func: Function to decorate
-    :return: Decorated function that checks for initialization
-    """
-
-    @functools.wraps(func)
-    async def wrapper(*args, **kwargs) -> T:
-        init_config = _get_init_config()
-        if init_config is None or init_config.client is None:
-            raise InitializationError(
-                "ClientNotInitializedError",
-                "user",
-                f"Function '{func.__name__}' requires client to be initialized. "
-                f"Call flyte.init() with a valid endpoint or api-key before using this function.",
-            )
-        return func(*args, **kwargs)
-
-    return typing.cast(T, wrapper)
 
 
 def requires_storage(func: T) -> T:

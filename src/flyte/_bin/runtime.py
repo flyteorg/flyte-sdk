@@ -26,6 +26,7 @@ DOMAIN_NAME = "FLYTE_INTERNAL_TASK_DOMAIN"
 ORG_NAME = "_U_ORG_NAME"
 ENDPOINT_OVERRIDE = "_U_EP_OVERRIDE"
 RUN_OUTPUT_BASE_DIR = "_U_RUN_BASE"
+FLYTE_ENABLE_VSCODE_KEY = "_F_E_VS"
 
 # TODO: Remove this after proper auth is implemented
 _UNION_EAGER_API_KEY_ENV_VAR = "_UNION_EAGER_API_KEY"
@@ -49,6 +50,8 @@ def _pass_through():
 @click.option("--project", envvar=PROJECT_NAME, required=False)
 @click.option("--domain", envvar=DOMAIN_NAME, required=False)
 @click.option("--org", envvar=ORG_NAME, required=False)
+@click.option("--debug", envvar=FLYTE_ENABLE_VSCODE_KEY, type=click.BOOL, required=False)
+@click.option("--interactive-mode", type=click.BOOL, required=False)
 @click.option("--image-cache", required=False)
 @click.option("--tgz", required=False)
 @click.option("--pkl", required=False)
@@ -59,12 +62,16 @@ def _pass_through():
     type=click.UNPROCESSED,
     nargs=-1,
 )
+@click.pass_context
 def main(
+    ctx: click.Context,
     run_name: str,
     name: str,
     project: str,
     domain: str,
     org: str,
+    debug: bool,
+    interactive_mode: bool,
     image_cache: str,
     version: str,
     inputs: str,
@@ -109,6 +116,11 @@ def main(
     if name.startswith("{{"):
         name = os.getenv("ACTION_NAME", "")
 
+    if debug and name == "a0":
+        from flyte._debug.vscode import _start_vscode_server
+
+        asyncio.run(_start_vscode_server(ctx))
+
     # Figure out how to connect
     # This detection of api key is a hack for now.
     controller_kwargs: dict[str, Any] = {"insecure": False}
@@ -143,6 +155,7 @@ def main(
         version=version,
         controller=controller,
         image_cache=ic,
+        interactive_mode=interactive_mode or debug,
     )
     # Create a coroutine to watch for errors
     controller_failure = controller.watch_for_errors()

@@ -123,7 +123,7 @@ class PKCEAuthenticator(Authenticator):
             try:
                 return await self._auth_client.refresh_access_token(self._creds)
             except AccessTokenNotFoundError:
-                logger.warning("Failed to refresh token. Kicking off a full authorization flow.")
+                logger.warning("Logging in...")
 
         return await self._auth_client.get_creds_from_remote()
 
