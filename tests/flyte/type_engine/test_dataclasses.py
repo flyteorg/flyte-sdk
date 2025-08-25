@@ -602,3 +602,20 @@ async def test_modify_literal_uris_call(mock_resolver, ctx_with_test_raw_data_pa
 
     bm_revived = await TypeEngine.to_python_value(lit, DC1)
     assert bm_revived.s.literal.uri == "/my/replaced/val"
+
+
+@pytest.mark.asyncio
+async def test_file_in_dataclassjsonmixin():
+    # There's an equality check below, but ordering might be off so override to compare correctly.
+    @dataclass(eq=False)
+    class TestStruct(DataClassJSONMixin):
+        b: File
+
+        __hash__ = None  # Explicit hashing disabled
+
+        def __eq__(self, other):
+            return self.b == other.b
+
+    tf = DataclassTransformer()
+    lt = tf.get_literal_type(TestStruct)
+    assert lt.HasField("metadata")

@@ -48,6 +48,7 @@ class Dir(BaseModel, Generic[T], SerializableType):
     path: str
     name: Optional[str] = None
     format: str = ""
+    hash: Optional[str] = None
 
     class Config:
         arbitrary_types_allowed = True
@@ -248,13 +249,20 @@ class Dir(BaseModel, Generic[T], SerializableType):
         raise NotImplementedError("Sync download is not implemented for remote paths")
 
     @classmethod
-    async def from_local(cls, local_path: Union[str, Path], remote_path: Optional[str] = None) -> Dir[T]:
+    async def from_local(
+        cls,
+        local_path: Union[str, Path],
+        remote_path: Optional[str] = None,
+        dir_cache_key: Optional[str] = None,
+    ) -> Dir[T]:
         """
         Asynchronously create a new Dir by uploading a local directory to the configured remote store.
 
         Args:
             local_path: Path to the local directory
             remote_path: Optional path to store the directory remotely. If None, a path will be generated.
+            dir_cache_key: If you have a precomputed hash value you want to use when computing cache keys for
+              discoverable tasks that this File is an input to.
 
         Returns:
             A new Dir instance pointing to the uploaded directory
@@ -262,13 +270,34 @@ class Dir(BaseModel, Generic[T], SerializableType):
         Example:
             ```python
             remote_dir = await Dir[DataFrame].from_local('/tmp/data_dir/', 's3://bucket/data/')
+            # With a known hash value you want to use for cache key calculation
+            remote_dir = await Dir[DataFrame].from_local('/tmp/data_dir/', 's3://bucket/data/', dir_cache_key='abc123')
             ```
         """
         local_path_str = str(local_path)
         dirname = os.path.basename(os.path.normpath(local_path_str))
 
         output_path = await storage.put(from_path=local_path_str, to_path=remote_path, recursive=True)
-        return cls(path=output_path, name=dirname)
+        return cls(path=output_path, name=dirname, hash=dir_cache_key)
+
+    @classmethod
+    def from_existing_remote(cls, remote_path: str, dir_cache_key: Optional[str] = None) -> Dir[T]:
+        """
+        Create a Dir reference from an existing remote directory.
+
+        Args:
+            remote_path: The remote path to the existing directory
+            dir_cache_key: Optional hash value to use for cache key computation. If not specified,
+                            the cache key will be computed based on this object's attributes.
+
+        Example:
+            ```python
+            remote_dir = Dir.from_existing_remote("s3://bucket/data/")
+            # With a known hash
+            remote_dir = Dir.from_existing_remote("s3://bucket/data/", dir_cache_key="abc123")
+            ```
+        """
+        return cls(path=remote_path, hash=dir_cache_key)
 
     @classmethod
     def from_local_sync(cls, local_path: Union[str, Path], remote_path: Optional[str] = None) -> Dir[T]:
@@ -414,7 +443,8 @@ class DirTransformer(TypeTransformer[Dir]):
                     ),
                     uri=python_val.path,
                 )
-            )
+            ),
+            hash=python_val.hash if python_val.hash else None,
         )
 
     async def to_python_value(
@@ -432,7 +462,8 @@ class DirTransformer(TypeTransformer[Dir]):
 
         uri = lv.scalar.blob.uri
         filename = Path(uri).name
-        f: Dir = Dir(path=uri, name=filename, format=lv.scalar.blob.metadata.type.format)
+        hash_value = lv.hash if lv.hash else None
+        f: Dir = Dir(path=uri, name=filename, format=lv.scalar.blob.metadata.type.format, hash=hash_value)
         return f
 
     def guess_python_type(self, literal_type: types_pb2.LiteralType) -> Type[Dir]:

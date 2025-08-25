@@ -14,6 +14,7 @@ from obstore.fsspec import register
 
 from flyte._initialize import get_storage
 from flyte._logging import logger
+from flyte.errors import InitializationError
 
 _OBSTORE_SUPPORTED_PROTOCOLS = ["s3", "gs", "abfs", "abfss"]
 
@@ -77,20 +78,35 @@ def get_configured_fsspec_kwargs(
     protocol: typing.Optional[str] = None, anonymous: bool = False
 ) -> typing.Dict[str, typing.Any]:
     if protocol:
+        # Try to get storage config safely - may not be initialized for local operations
+        try:
+            storage_config = get_storage()
+        except InitializationError:
+            storage_config = None
+
         match protocol:
             case "s3":
                 # If the protocol is s3, we can use the s3 filesystem
                 from flyte.storage import S3
+
+                if storage_config and isinstance(storage_config, S3):
+                    return storage_config.get_fsspec_kwargs(anonymous=anonymous)
 
                 return S3.auto().get_fsspec_kwargs(anonymous=anonymous)
             case "gs":
                 # If the protocol is gs, we can use the gs filesystem
                 from flyte.storage import GCS
 
+                if storage_config and isinstance(storage_config, GCS):
+                    return storage_config.get_fsspec_kwargs(anonymous=anonymous)
+
                 return GCS.auto().get_fsspec_kwargs(anonymous=anonymous)
             case "abfs" | "abfss":
                 # If the protocol is abfs or abfss, we can use the abfs filesystem
                 from flyte.storage import ABFS
+
+                if storage_config and isinstance(storage_config, ABFS):
+                    return storage_config.get_fsspec_kwargs(anonymous=anonymous)
 
                 return ABFS.auto().get_fsspec_kwargs(anonymous=anonymous)
             case _:
@@ -145,7 +161,6 @@ async def get(from_path: str, to_path: Optional[str | pathlib.Path] = None, recu
         else:
             exists = file_system.exists(from_path)
         if not exists:
-            # TODO: update exception to be more specific
             raise AssertionError(f"Unable to load data from {from_path}")
         file_system = _get_anonymous_filesystem(from_path)
         logger.debug(f"Attempting anonymous get with {file_system}")

@@ -39,7 +39,6 @@ from pydantic import BaseModel
 from typing_extensions import Annotated, get_args, get_origin
 
 import flyte.storage as storage
-from flyte._hash import HashMethod
 from flyte._logging import logger
 from flyte._utils.helpers import load_proto_from_file
 from flyte.models import NativeInterface
@@ -1097,23 +1096,6 @@ class TypeEngine(typing.Generic[T]):
             raise TypeTransformerFailedError(f"Python value cannot be None, expected {python_type}/{expected}")
 
     @classmethod
-    def calculate_hash(cls, python_val: typing.Any, python_type: Type[T]) -> Optional[str]:
-        # In case the value is an annotated type we inspect the annotations and look for hash-related annotations.
-        hsh = None
-        if is_annotated(python_type):
-            # We are now dealing with one of two cases:
-            # 1. The annotated type is a `HashMethod`, which indicates that we should produce the hash using
-            #    the method indicated in the annotation.
-            # 2. The annotated type is being used for a different purpose other than calculating hash values,
-            #    in which case we should just continue.
-            for annotation in get_args(python_type)[1:]:
-                if not isinstance(annotation, HashMethod):
-                    continue
-                hsh = annotation.calculate(python_val)
-                break
-        return hsh
-
-    @classmethod
     async def to_literal(
         cls, python_val: typing.Any, python_type: Type[T], expected: types_pb2.LiteralType
     ) -> literals_pb2.Literal:
@@ -1125,8 +1107,6 @@ class TypeEngine(typing.Generic[T]):
         lv = await transformer.to_literal(python_val, python_type, expected)
 
         modify_literal_uris(lv)
-        calculated_hash = cls.calculate_hash(python_val, python_type) or ""
-        lv.hash = calculated_hash
         return lv
 
     @classmethod
@@ -1795,7 +1775,6 @@ class DictTransformer(TypeTransformer[dict]):
         for k, v in python_val.items():
             if type(k) is not str:
                 raise ValueError("Flyte MapType expects all keys to be strings")
-            # TODO: log a warning for Annotated objects that contain HashMethod
 
             _, v_type = self.extract_types(python_type)
             lit_map[k] = TypeEngine.to_literal(v, cast(type, v_type), expected.map_value_type)
