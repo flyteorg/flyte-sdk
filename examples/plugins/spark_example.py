@@ -1,4 +1,5 @@
 # # Spark Example
+import asyncio
 import random
 from operator import add
 
@@ -48,6 +49,7 @@ def f(_):
 
 @task_env.task
 async def get_pi(count: int, partitions: int) -> float:
+    await asyncio.sleep(300000)
     return 4.0 * count / partitions
 
 
@@ -66,11 +68,11 @@ async def hello_spark_nested(partitions: int = 3) -> float:
 
 if __name__ == "__main__":
     flyte.init_from_config("../../config.yaml")
-    run = flyte.run(hello_spark_nested)
-    print("run name:", run.name)
-    print("run url:", run.url)
-    run.wait(run)
+    # run = flyte.run(hello_spark_nested)
+    # print("run name:", run.name)
+    # print("run url:", run.url)
+    # run.wait(run)
 
-    action_details = flyte.remote.ActionDetails.get(run_name=run.name, name="a0")
+    action_details = flyte.remote.ActionDetails.get(run_name="rz6szms6h24cnp5dtxth", name="a0")
     for log in action_details.pb2.attempts[-1].log_info:
-        print(f"{log.name}: {log.uri}")
+        print(f"{log.name} ({log.Ready}): {log.uri}")

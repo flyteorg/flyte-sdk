@@ -260,7 +260,7 @@ async def init_from_config(
             )
         else:
             # If no path is provided, use the default config file
-            cfg = config.auto()
+            cfg = config.auto(path_or_config)
     else:
         # If a Config object is passed, use it directly
         cfg = path_or_config
