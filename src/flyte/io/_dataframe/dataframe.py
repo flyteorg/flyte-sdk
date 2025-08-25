@@ -60,7 +60,7 @@ class DataFrame(BaseModel, SerializableType):
     _raw_df: typing.Optional[typing.Any] = PrivateAttr(default=None)
     _metadata: typing.Optional[literals_pb2.StructuredDatasetMetadata] = PrivateAttr(default=None)
     _literal_sd: Optional[literals_pb2.StructuredDataset] = PrivateAttr(default=None)
-    _dataframe_type: Optional[DF] = PrivateAttr(default=None)
+    _dataframe_type: Optional[Type[Any]] = PrivateAttr(default=None)
     _already_uploaded: bool = PrivateAttr(default=False)
 
     # loop manager is working better than synchronicity for some reason, was getting an error but may be an easy fix
