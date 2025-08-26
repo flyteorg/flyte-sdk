@@ -56,7 +56,6 @@ def _filtered_entry_points(*args, **kwargs):
     eps = _original_entry_points(*args, **kwargs)
     excluded_distribution = ["union", "unionai"]
 
-    # Modern API (>=3.10)
     return metadata.EntryPoints(
         ep for ep in eps if ep.dist is None or ep.dist.name not in excluded_distribution
     )
