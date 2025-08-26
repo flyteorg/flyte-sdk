@@ -5,6 +5,8 @@ Flyte SDK for authoring compound AI applications, services and workflows.
 from __future__ import annotations
 
 import sys
+import types
+from importlib import metadata
 
 from ._build import build
 from ._cache import Cache, CachePolicy, CacheRequest
@@ -28,6 +30,7 @@ from ._trace import trace
 from ._version import __version__
 
 sys.excepthook = custom_excepthook
+_original_entry_points = metadata.entry_points
 
 
 def _silence_grpc_warnings():
@@ -48,6 +51,18 @@ def _silence_grpc_warnings():
         os.environ["ABSL_LOG"] = "0"
 
 
+def _filtered_entry_points(*args, **kwargs):
+    """Wrap importlib.metadata.entry_points to exclude a specific distribution."""
+    eps = _original_entry_points(*args, **kwargs)
+    excluded_distribution = []
+
+    # Modern API (>=3.10)
+    return metadata.EntryPoints(
+        ep for ep in eps if ep.dist is None or ep.dist.name not in excluded_distribution
+    )
+
+
+metadata.entry_points = _filtered_entry_points
 _silence_grpc_warnings()
 
 
