@@ -140,7 +140,7 @@ class DataFrame(BaseModel, SerializableType):
         return [k for k, v in cls.columns().items()]
 
     @classmethod
-    def _create(
+    def create_from(
         cls,
         val: typing.Optional[typing.Any] = None,
         uri: typing.Optional[str] = None,
@@ -786,7 +786,7 @@ class DataFrameTransformerEngine(TypeTransformer[DataFrame]):
             structured_dataset_type=expected.structured_dataset_type if expected else None
         )
 
-        fdf = DataFrame._create(val=python_val, metadata=meta)
+        fdf = DataFrame.create_from(val=python_val, metadata=meta)
         return await self.encode(fdf, python_type, protocol, fmt, sdt)
 
     def _protocol_from_type_or_prefix(self, df_type: Type, uri: Optional[str] = None) -> str:
