@@ -6,6 +6,7 @@
 #    "huggingface-hub",
 #    "hf-transfer",
 #    "datasets",
+#    "numpy",
 # ]
 # ///
 
@@ -31,9 +32,9 @@ import logging
 import os
 import tempfile
 from functools import lru_cache
-from typing import Any, AsyncGenerator, Dict
+from typing import Any, AsyncGenerator, Dict, Optional
 
-import torch
+import numpy as np
 from datasets import load_dataset
 from huggingface_hub import hf_hub_url
 from sentence_transformers import SentenceTransformer
@@ -64,6 +65,41 @@ worker = flyte.TaskEnvironment(
 )
 
 
+class _NpyStreamWriter:
+    """Incrementally write embeddings into a .npy file using np.memmap."""
+
+    def __init__(self, out_path: str):
+        self.out_path = out_path
+        self.mmap: Optional[np.memmap] = None
+        self.total_rows: int = 0
+        self.embed_dim: Optional[int] = None
+
+    def append(self, arr: np.ndarray) -> None:
+        """Append a batch of embeddings to the memmap file."""
+        if self.embed_dim is None:
+            self.embed_dim = arr.shape[1]
+            # initialize file with 0 rows (we'll expand as we go)
+            self.mmap = np.memmap(self.out_path, dtype="float32", mode="w+", shape=(0, self.embed_dim))
+
+        # Resize file to fit new rows
+        self.mmap.flush()
+        self.mmap = np.memmap(
+            self.out_path,
+            dtype="float32",
+            mode="r+",
+            shape=(self.total_rows + arr.shape[0], self.embed_dim),
+        )
+        self.mmap[self.total_rows : self.total_rows + arr.shape[0]] = arr
+        self.mmap.flush()
+        self.total_rows += arr.shape[0]
+
+    def close(self) -> None:
+        """Flush and close the memmap."""
+        if self.mmap is not None:
+            self.mmap.flush()
+            del self.mmap  # ensure file is closed
+
+
 @lru_cache(maxsize=1)
 def get_model(model_name: str = "all-MiniLM-L6-v2") -> SentenceTransformer:
     """Lazily load and cache the SentenceTransformer model."""
@@ -92,39 +128,40 @@ async def embed_shard_to_file(repo_id: str, filename: str, model_name: str, batc
     file_url: str = hf_hub_url(repo_id=repo_id, filename=filename, repo_type="dataset")
 
     # Stream dataset shard
-    ds = load_dataset("parquet", data_files=file_url, split="train", streaming=True,
-                      token=os.getenv("HF_HUB_TOKEN"))
+    ds = load_dataset("parquet", data_files=file_url, split="train", streaming=True, token=os.getenv("HF_HUB_TOKEN"))
 
     # Prepare output file
     shard_name: str = filename.replace("/", "_")
-    out_path: str = os.path.join(tempfile.gettempdir(), f"{shard_name}.pt")
 
-    all_embeddings: list[torch.Tensor] = []
-    batch: list[str] = []
+    with tempfile.TemporaryDirectory() as tmpdir:
+        out_path: str = os.path.join(tmpdir, f"{shard_name}.npy")
+        print(f"Writing embeddings to {out_path}", flush=True)
 
-    async for row in _aiter(ds):
-        text: str = row.get("text", "")
-        if not text:
-            continue
-        batch.append(text)
+        # Writer state
+        writer = _NpyStreamWriter(out_path)
 
-        if len(batch) >= batch_size:
-            embeddings = model.encode(batch, convert_to_tensor=True, show_progress_bar=True)
-            all_embeddings.append(embeddings.cpu())
-            batch = []
-            print(f"Collected {len(all_embeddings)} articles so far...")
+        batch: list[str] = []
+        async for row in _aiter(ds):
+            text: str = row.get("text", "")
+            if not text:
+                continue
+            batch.append(text)
 
-    if batch:
-        embeddings = model.encode(batch, convert_to_tensor=True, show_progress_bar=True)
-        all_embeddings.append(embeddings.cpu())
+            if len(batch) >= batch_size:
+                embeddings = model.encode(batch, convert_to_numpy=True, show_progress_bar=True)
+                writer.append(embeddings)
 
-    print(f"Saving {len(all_embeddings)} batches of embeddings to {out_path}")
+            if writer.total_rows % 10000 == 0 and writer.total_rows > 0:
+                print(f"Wrote {writer.total_rows} embeddings so far...", flush=True)
 
-    if all_embeddings:
-        tensor: torch.Tensor = torch.cat(all_embeddings, dim=0)
-        torch.save(tensor, out_path)
+        if batch:
+            embeddings = model.encode(batch, convert_to_numpy=True, show_progress_bar=True)
+            writer.append(embeddings)
 
-    return await flyte.io.File.from_local(out_path)
+        print(f"Wrote total {writer.total_rows} embeddings of dim {writer.embed_dim}", flush=True)
+        writer.close()
+
+        return await flyte.io.File.from_local(out_path)
 
 
 async def _aiter(sync_iterable) -> AsyncGenerator[Dict[str, Any], None]:
@@ -135,7 +172,7 @@ async def _aiter(sync_iterable) -> AsyncGenerator[Dict[str, Any], None]:
 
 
 @driver.task(cache="auto")
-async def main(batch_size: int=64) -> list[flyte.io.File]:
+async def main(batch_size: int = 64) -> list[flyte.io.File]:
     from huggingface_hub import HfApi
 
     repo_id = "wikimedia/wikipedia"
@@ -153,10 +190,7 @@ async def main(batch_size: int=64) -> list[flyte.io.File]:
 
 
 async def high_mem_examples():
-    files = [
-        "20231101.sv/train-00000-of-00005.parquet",
-        "20231101.war/train-00000-of-00001.parquet"
-    ]
+    files = ["20231101.sv/train-00000-of-00005.parquet", "20231101.war/train-00000-of-00001.parquet"]
     large_task = embed_shard_to_file.override(resources=flyte.Resources(cpu=2, memory="64Gi", gpu=1), reusable="off")
 
     coros = []
@@ -166,7 +200,7 @@ async def high_mem_examples():
     results = await asyncio.gather(*coros)
     for r in results:
         print(r.url)
-        print(r.url)
+
 
 if __name__ == "__main__":
     # Usage:
