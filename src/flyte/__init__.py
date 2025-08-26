@@ -54,7 +54,7 @@ def _silence_grpc_warnings():
 def _filtered_entry_points(*args, **kwargs):
     """Wrap importlib.metadata.entry_points to exclude a specific distribution."""
     eps = _original_entry_points(*args, **kwargs)
-    excluded_distribution = []
+    excluded_distribution = ["union", "unionai"]
 
     # Modern API (>=3.10)
     return metadata.EntryPoints(
