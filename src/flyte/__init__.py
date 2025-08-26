@@ -57,7 +57,7 @@ def _filtered_entry_points(*args, **kwargs):
 
     if isinstance(eps, dict):  # Python 3.10/3.11
         return {
-            group: [ep for ep in group_eps if ep.dist is None or ep.dist.name not in excluded_distribution]
+            group: [ep for ep in group_eps if ep.name not in excluded_distribution]
             for group, group_eps in eps.items()
         }
     # Python 3.12/3.13
