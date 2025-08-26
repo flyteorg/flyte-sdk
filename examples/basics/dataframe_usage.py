@@ -25,11 +25,7 @@ env = flyte.TaskEnvironment(
 )
 
 # Simple sample data
-SAMPLE_DATA = {
-    "name": ["Alice", "Bob", "Charlie"],
-    "age": [25, 30, 35],
-    "city": ["NYC", "SF", "LA"]
-}
+SAMPLE_DATA = {"name": ["Alice", "Bob", "Charlie"], "age": [25, 30, 35], "city": ["NYC", "SF", "LA"]}
 
 
 @env.task
@@ -48,27 +44,26 @@ async def create_wrapper_dataframe() -> DataFrame:
     This creates real remote data first, then returns a wrapper reference.
     As a user, you would rarely do this, this is just demonstrating how to handle existing remote data.
     """
-    from flyte._context import internal_ctx
-    import flyte.storage as storage
-    import tempfile
     import os
-    
+    import tempfile
+
+    import flyte.storage as storage
+    from flyte._context import internal_ctx
+
     # Create a different dataset
-    other_data = pd.DataFrame({
-        "product": ["Widget A", "Widget B", "Widget C"],
-        "price": [10.99, 15.50, 8.25],
-        "stock": [100, 50, 75]
-    })
-    
+    other_data = pd.DataFrame(
+        {"product": ["Widget A", "Widget B", "Widget C"], "price": [10.99, 15.50, 8.25], "stock": [100, 50, 75]}
+    )
+
     # Get a random remote path for upload
     remote_path = internal_ctx().raw_data.get_random_remote_path("products.parquet")
-    
+
     # Save to temp file and upload manually using storage layer
     with tempfile.NamedTemporaryFile(suffix=".parquet", delete=False) as tmp_file:
         other_data.to_parquet(tmp_file.name)
         uploaded_uri = await storage.put(tmp_file.name, remote_path)
         os.unlink(tmp_file.name)
-    
+
     # Now create a wrapper reference to the uploaded data
     return DataFrame.from_existing_remote(uploaded_uri, format="parquet")
 
@@ -95,16 +90,16 @@ async def wrapper_to_raw(df: DataFrame) -> pd.DataFrame:
     # DOWNLOAD: wrapper -> raw pandas (I/O occurs)
     pandas_df = await df.open(pd.DataFrame).all()
     print(f"Downloaded pandas dataframe:\n{pandas_df}", flush=True)
-    
+
     # Process the raw dataframe
     pandas_df["processed"] = True
     print(f"With processed column:\n{pandas_df}", flush=True)
-    
+
     # UPLOAD: raw pandas is automatically uploaded at task completion
     return pandas_df
 
 
-@env.task  
+@env.task
 async def wrapper_passthrough(df: DataFrame) -> DataFrame:
     """
     Input: flyte.DataFrame wrapper -> Output: flyte.DataFrame wrapper
@@ -117,14 +112,14 @@ async def wrapper_passthrough(df: DataFrame) -> DataFrame:
 @env.task
 async def raw_to_raw(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Input: raw pd.DataFrame -> Output: raw pd.DataFrame  
+    Input: raw pd.DataFrame -> Output: raw pd.DataFrame
     DOWNLOAD happens: input pandas is downloaded from remote storage
     UPLOAD happens: output pandas is uploaded at task completion
     """
     # Input df is already downloaded raw pandas
     df["doubled_age"] = df["age"] * 2
     print(f"Pandas dataframe with doubled age:\n{df}", flush=True)
-    
+
     # Output will be uploaded automatically
     return df
 
@@ -138,21 +133,21 @@ async def main_workflow() -> dict:
     raw_df = await create_raw_dataframe()
     print(f"Created raw dataframe:\n{raw_df}", flush=True)
 
-    # Pattern 2: Create wrapper dataframe (NO I/O)  
+    # Pattern 2: Create wrapper dataframe (NO I/O)
     wrapped_df_from_existing_data = await create_wrapper_dataframe()
-    print(f"Created wrapper dataframe pointing to: {wrapped_df_from_existing_data.}", flush=True)
-    
+    print("Created wrapper dataframe", flush=True)
+
     # Pattern 3: Wrapper metadata access (NO I/O)
     metadata = await inspect_wrapper_metadata(wrapped_df_from_existing_data)
     print(f"DataFrame wrapper metadata: {metadata}", flush=True)
-    
+
     # Pattern 4: Wrapper -> Raw (DOWNLOAD + UPLOAD)
     processed_raw = await wrapper_to_raw(wrapped_df_from_existing_data)
-    
+
     # Pattern 5: Wrapper -> Wrapper (NO I/O)
     same_wrapper = await wrapper_passthrough(wrapped_df_from_existing_data)
-    
-    # Pattern 6: Raw -> Raw (DOWNLOAD + UPLOAD)  
+
+    # Pattern 6: Raw -> Raw (DOWNLOAD + UPLOAD)
     doubled_raw = await raw_to_raw(raw_df)
 
     return {
@@ -162,14 +157,14 @@ async def main_workflow() -> dict:
         "processed_type": str(type(processed_raw)),
         "passthrough_uri": same_wrapper.uri,
         "doubled_type": str(type(doubled_raw)),
-        "message": "All dataframes uploaded at task completion!"
+        "message": "All dataframes uploaded at task completion!",
     }
 
 
 if __name__ == "__main__":
     # Use local execution mode
     run = flyte.with_runcontext(mode="local").run(main_workflow)
-    
+
     print("DataFrame wrapper vs raw I/O patterns demonstrated!")
     print("Key takeaway: flyte.DataFrame = wrapper (I/O on demand)")
     print("             pd.DataFrame = raw (automatic I/O)")

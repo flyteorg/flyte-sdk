@@ -1,7 +1,6 @@
 import pytest
 
 import flyte
-from flyte._context import internal_ctx
 from flyte.io._dataframe.dataframe import DataFrame
 from flyte.types import TypeEngine
 
@@ -15,22 +14,6 @@ TEST_DATA = {"name": ["Alice", "Bob", "Charlie"], "age": [25, 30, 35], "city": [
 def sample_dataframe():
     """Create a sample pandas DataFrame for testing."""
     return pd.DataFrame(TEST_DATA)
-
-
-@pytest.mark.asyncio
-async def test_create_df_from_memory(sample_dataframe, ctx_with_test_raw_data_path):
-    """
-    Use case 1: Create a DataFrame locally from something in memory.
-    This should upload the data and return a DataFrame pointing to remote location.
-    """
-    # Create DataFrame from in-memory pandas DataFrame
-    df = await DataFrame.from_value(sample_dataframe, format="parquet")
-
-    ctx = internal_ctx()
-    assert ctx.raw_data.path in df.uri
-    assert df.format == "parquet"
-    assert df._already_uploaded is True
-    assert df._literal_sd is not None
 
 
 @pytest.mark.asyncio
@@ -95,18 +78,3 @@ async def test_raw_df_io_triggers_engine(sample_dataframe, ctx_with_test_raw_dat
     run = flyte.with_runcontext("local").run(process_raw_df, sample_dataframe)
     result = run._outputs
     assert result.equals(sample_dataframe)
-
-
-@pytest.mark.asyncio
-async def test_controlled_df_downloading(sample_dataframe, ctx_with_test_raw_data_path):
-    """
-    Use case 4: Take in a DF and control downloading.
-    This tests manual control over when/how DataFrame data is downloaded.
-    """
-    df = await DataFrame.from_value(sample_dataframe, format="parquet")
-    assert df.uri
-    df2 = DataFrame.from_existing_remote(df.uri, format="parquet")
-
-    df2.open(pd.DataFrame)
-    downloaded_data = await df2.all()
-    assert downloaded_data.equals(sample_dataframe)

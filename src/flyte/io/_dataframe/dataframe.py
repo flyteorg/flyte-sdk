@@ -158,62 +158,6 @@ class DataFrame(BaseModel, SerializableType):
         return instance
 
     @classmethod
-    async def from_value(
-        cls,
-        val: typing.Any,
-        remote_destination: typing.Optional[str] = None,
-        format: typing.Optional[str] = None,
-        **kwargs,
-    ) -> DataFrame:
-        """
-        Create a DataFrame by uploading an in-memory dataframe value to remote storage.
-
-        This follows the same pattern as File.from_local() - it immediately uploads
-        the data and returns a DataFrame pointing to the remote location.
-
-        The return object will not need to be uploaded again.
-
-        Args:
-            val: The in-memory dataframe (e.g., pandas.DataFrame)
-            remote_destination: Optional remote path. If None, a path will be generated.
-            format: Format for storage (e.g., "parquet", "csv")
-
-        Example:
-            ```python
-            df = pd.DataFrame({"col1": [1, 2], "col2": [3, 4]})
-            remote_df = await DataFrame.from_val(df, format="parquet")
-            ```
-        """
-        if isinstance(val, DataFrame):
-            raise ValueError(
-                "DataFrame.from_value() expects a raw dataframe, if you already have a flyte.Dataframe,"
-                " just use that directly."
-            )
-        from flyte.types import TypeEngine
-
-        lt = TypeEngine.to_literal_type(type(val))
-
-        # Generate remote path if not provided
-        # remote_path = remote_destination or internal_ctx().raw_data.get_random_remote_path()
-
-        # Create temporary DataFrame instance to trigger upload via type engine
-        # temp_instance = cls(uri=None, format=format or GENERIC_FORMAT, **kwargs)
-        # temp_instance._raw_df = val
-
-        # Use the type engine to upload the data
-        literal = await TypeEngine.to_literal(val, type(val), lt)
-
-        # Create final instance pointing to uploaded location
-        final_instance = cls(
-            uri=literal.scalar.structured_dataset.uri,
-            format=literal.scalar.structured_dataset.metadata.structured_dataset_type.format,
-            **kwargs,
-        )
-        final_instance._literal_sd = literal.scalar.structured_dataset
-        final_instance._already_uploaded = True
-        return final_instance
-
-    @classmethod
     def from_existing_remote(
         cls,
         remote_path: str,
@@ -889,8 +833,9 @@ class DataFrameTransformerEngine(TypeTransformer[DataFrame]):
         lit = literals_pb2.Literal(scalar=literals_pb2.Scalar(structured_dataset=sd_model))
 
         # Because the handler.encode may have uploaded something, and because the sd may end up living inside a
-        # dataclass, we need to modify any uploaded flyte:// urls here.
-        modify_literal_uris(lit)  # todo: verify that this can be removed.
+        # dataclass, we need to modify any uploaded flyte:// urls here. Needed here even though the Type engine
+        # already does this because the DataframeTransformerEngine may be called directly.
+        modify_literal_uris(lit)
         df._literal_sd = sd_model
         df._already_uploaded = True
         return lit

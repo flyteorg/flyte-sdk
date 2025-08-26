@@ -640,7 +640,7 @@ async def test_read_sd_from_local_uri(local_tmp_pqt_file, ctx_with_test_raw_data
 @pytest.mark.asyncio
 @mock.patch("flyte.storage._remote_fs.RemoteFSPathResolver")
 @mock.patch("flyte.io.DataFrameTransformerEngine.get_encoder")
-async def test_modify_literal_uris_call(mock_get_encoder, mock_resolver):
+async def test_modify_literal_uris_call(mock_get_encoder, mock_resolver, ctx_with_test_raw_data_path):
     sd = DataFrame._create(val=pd.DataFrame({"a": [1, 2], "b": [3, 4]}), uri="bq://blah", format="bq")
 
     def mock_resolve_remote_path(flyte_uri: str) -> typing.Optional[str]:
