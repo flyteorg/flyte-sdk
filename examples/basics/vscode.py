@@ -4,7 +4,7 @@ import flyte
 
 env = flyte.TaskEnvironment(
     name="hello_world",
-    image=flyte.Image.from_debian_base(name="vscode").with_env_vars({"hello": "world2222"}),
+    image=flyte.Image.from_debian_base(),
     resources=flyte.Resources(cpu=1.5, memory="1500Mi"),
 )
 
