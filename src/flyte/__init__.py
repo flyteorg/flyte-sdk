@@ -55,6 +55,12 @@ def _filtered_entry_points(*args, **kwargs):
     eps = _original_entry_points(*args, **kwargs)
     excluded_distribution = ["union", "unionai"]
 
+    if isinstance(eps, dict):  # Python 3.10/3.11
+        return {
+            group: [ep for ep in group_eps if ep.dist is None or ep.dist.name not in excluded_distribution]
+            for group, group_eps in eps.items()
+        }
+    # Python 3.12/3.13
     return metadata.EntryPoints(ep for ep in eps if ep.dist is None or ep.dist.name not in excluded_distribution)
 
 
