@@ -5,7 +5,6 @@ Flyte SDK for authoring compound AI applications, services and workflows.
 from __future__ import annotations
 
 import sys
-import types
 from importlib import metadata
 
 from ._build import build
@@ -56,9 +55,7 @@ def _filtered_entry_points(*args, **kwargs):
     eps = _original_entry_points(*args, **kwargs)
     excluded_distribution = ["union", "unionai"]
 
-    return metadata.EntryPoints(
-        ep for ep in eps if ep.dist is None or ep.dist.name not in excluded_distribution
-    )
+    return metadata.EntryPoints(ep for ep in eps if ep.dist is None or ep.dist.name not in excluded_distribution)
 
 
 metadata.entry_points = _filtered_entry_points
