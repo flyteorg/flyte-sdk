@@ -49,6 +49,7 @@ driver = flyte.TaskEnvironment(
     name="embed_wikipedia_driver",
     image=image,
     resources=flyte.Resources(cpu=1, memory="4Gi", disk="16Gi"),
+    secrets="HF_HUB_TOKEN",
     # reusable=flyte.ReusePolicy(replicas=4, concurrency=2, idle_ttl=60),
 )
 
@@ -56,9 +57,10 @@ N_GPUS = 1
 worker = flyte.TaskEnvironment(
     name="embed_wikipedia_worker",
     image=image,
-    resources=flyte.Resources(cpu=4, memory="16Gi", disk="16Gi", gpu=1),
+    resources=flyte.Resources(cpu=4, memory="32Gi", disk="16Gi", gpu=1),
     env_vars={"HF_HUB_ENABLE_HF_TRANSFER": "1"},
-    # reusable=flyte.ReusePolicy(replicas=12, concurrency=1, idle_ttl=60),
+    reusable=flyte.ReusePolicy(replicas=4, concurrency=1, idle_ttl=120, scaledown_ttl=120),
+    secrets="HF_HUB_TOKEN",
 )
 
 
@@ -68,7 +70,7 @@ def get_model(model_name: str = "all-MiniLM-L6-v2") -> SentenceTransformer:
     return SentenceTransformer(model_name)
 
 
-@worker.task(cache="auto", retries=2)
+@worker.task(cache="auto", retries=4)
 async def embed_shard_to_file(repo_id: str, filename: str, model_name: str, batch_size: int = 32) -> flyte.io.File:
     """
     Stream one parquet shard, embed in batches, write embeddings to a file.
@@ -82,13 +84,16 @@ async def embed_shard_to_file(repo_id: str, filename: str, model_name: str, batc
     Returns:
         str: Path to the saved `.pt` file containing embeddings (torch.Tensor).
     """
+    logger.warning(f"Embedding shard {filename} from repo {repo_id} using model {model_name}")
     model: SentenceTransformer = get_model(model_name)
+    logger.warning(f"Model loaded on device: {model.device}")
 
     # Get shard URL
     file_url: str = hf_hub_url(repo_id=repo_id, filename=filename, repo_type="dataset")
 
     # Stream dataset shard
-    ds = load_dataset("parquet", data_files=file_url, split="train", streaming=True)
+    ds = load_dataset("parquet", data_files=file_url, split="train", streaming=True,
+                      token=os.getenv("HF_HUB_TOKEN"))
 
     # Prepare output file
     shard_name: str = filename.replace("/", "_")
@@ -104,17 +109,16 @@ async def embed_shard_to_file(repo_id: str, filename: str, model_name: str, batc
         batch.append(text)
 
         if len(batch) >= batch_size:
-            embeddings: torch.Tensor = await asyncio.to_thread(
-                model.encode, batch, convert_to_tensor=True, show_progress_bar=False
-            )
+            embeddings = model.encode(batch, convert_to_tensor=True, show_progress_bar=True)
             all_embeddings.append(embeddings.cpu())
             batch = []
+            print(f"Collected {len(all_embeddings)} articles so far...")
 
     if batch:
-        embeddings: torch.Tensor = await asyncio.to_thread(
-            model.encode, batch, convert_to_tensor=True, show_progress_bar=False
-        )
+        embeddings = model.encode(batch, convert_to_tensor=True, show_progress_bar=True)
         all_embeddings.append(embeddings.cpu())
+
+    print(f"Saving {len(all_embeddings)} batches of embeddings to {out_path}")
 
     if all_embeddings:
         tensor: torch.Tensor = torch.cat(all_embeddings, dim=0)
@@ -131,26 +135,44 @@ async def _aiter(sync_iterable) -> AsyncGenerator[Dict[str, Any], None]:
 
 
 @driver.task(cache="auto")
-async def main():
+async def main(batch_size: int=64) -> list[flyte.io.File]:
     from huggingface_hub import HfApi
 
     repo_id = "wikimedia/wikipedia"
     model_name = "all-MiniLM-L6-v2"
 
-    api = HfApi()
+    api = HfApi(token=os.getenv("HF_HUB_TOKEN"))
     info = api.dataset_info("wikimedia/wikipedia")
     # Each file is stored in info.siblings
     parquet_files = [s.rfilename for s in info.siblings if s.rfilename.endswith(".parquet")]
-    print(parquet_files)
-    filename = parquet_files[0]  # For demo, just process the first shard
-    out_file = await embed_shard_to_file(repo_id, filename, model_name=model_name, batch_size=64)
-    print("✅ Embeddings written to:", out_file)
+    print(f"Found {len(parquet_files)} parquet files in the dataset", flush=True)
+    coros = []
+    for filename in parquet_files:
+        coros.append(embed_shard_to_file(repo_id, filename, model_name=model_name, batch_size=batch_size))
+    return await asyncio.gather(*coros)
 
+
+async def high_mem_examples():
+    files = [
+        "20231101.sv/train-00000-of-00005.parquet",
+        "20231101.war/train-00000-of-00001.parquet"
+    ]
+    large_task = embed_shard_to_file.override(resources=flyte.Resources(cpu=2, memory="64Gi", gpu=1), reusable="off")
+
+    coros = []
+    for file in files:
+        coros.append(flyte.run.aio(large_task, "wikimedia/wikipedia", file, "all-MiniLM-L6-v2", batch_size=256))
+
+    results = await asyncio.gather(*coros)
+    for r in results:
+        print(r.url)
+        print(r.url)
 
 if __name__ == "__main__":
     # Usage:
     # Run this with limit=-1 to embed all articles in the dataset (~61MM rows)
     # flyte.init()
     flyte.init_from_config("../../config.yaml")
-    run = flyte.run(main)
-    print(run.url)
+    # run = flyte.run(main, 256)
+    # print(run.url)
+    asyncio.run(high_mem_examples())

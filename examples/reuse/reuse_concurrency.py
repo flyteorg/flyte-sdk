@@ -8,7 +8,7 @@ env = flyte.TaskEnvironment(
     reusable=flyte.ReusePolicy(
         replicas=2,
         idle_ttl=60,
-        concurrency=60,
+        concurrency=100,
         scaledown_ttl=60,
     ),
     image=flyte.Image.from_debian_base().with_pip_packages("unionai-reuse==0.1.4b0", pre=True),
@@ -29,7 +29,7 @@ async def reuse_concurrency(n: int = 50) -> int:
 
 if __name__ == "__main__":
     flyte.init_from_config("../../config.yaml")
-    run = flyte.with_runcontext().run(reuse_concurrency, n=50)
+    run = flyte.with_runcontext().run(reuse_concurrency, n=500)
     print(run.name)
     print(run.url)
     run.wait()
