@@ -18,7 +18,7 @@ async def build_auto(registry: str | None = None, name: str | None = None):
     assert (registry and name) or (not registry and not name)
     default_image = Image.from_debian_base(registry=registry, name=name)
 
-    await ImageBuildEngine.build(default_image, force=True)
+    await ImageBuildEngine.build(default_image)
 
 
 if __name__ == "__main__":
