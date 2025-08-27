@@ -383,4 +383,3 @@ async def test_copy_files_recursively_file_not_found():
         
         # Verify empty list is returned when source does not exist
         assert len(copied_files) == 0
-        assert copied_files == []
