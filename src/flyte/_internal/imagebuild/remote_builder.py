@@ -251,8 +251,8 @@ def _get_layers_proto(image: Image, context_path: Path) -> "image_definition_pb2
 
             uv_layer = image_definition_pb2.Layer(
                 uv_project=image_definition_pb2.UVProject(
-                    pyproject=str(copy_files_to_context(layer.pyproject, context_path)),
-                    uvlock=str(copy_files_to_context(layer.uvlock, context_path)),
+                    pyproject=str(copy_files_to_context(layer.pyproject, context_path).relative_to(context_path)),
+                    uvlock=str(copy_files_to_context(layer.uvlock, context_path).relative_to(context_path)),
                     options=pip_options,
                     secret_mounts=secret_mounts,
                 )
