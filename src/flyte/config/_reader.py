@@ -135,6 +135,23 @@ class ConfigFile(object):
         return self._yaml_config
 
 
+def _dot_flyte_config_path() -> pathlib.Path | None:
+    """
+    Get the first `config.yaml` file in a `.flyte` directory, starting from
+    the current working directory and going up to the home directory.
+    """
+    current_dir = Path.cwd()
+    while current_dir != Path.home():
+        if current_dir == Path("/"):
+            break
+        config_path = current_dir / ".flyte" / "config.yaml"
+        if config_path.exists():
+            return config_path
+        current_dir = current_dir.parent
+
+    return None
+
+
 def resolve_config_path() -> pathlib.Path | None:
     """
     Config is read from the following locations in order of precedence:
@@ -146,28 +163,33 @@ def resolve_config_path() -> pathlib.Path | None:
     """
     current_location_config = Path("config.yaml")
     if current_location_config.exists():
+        logger.info(f"Using ./config.yaml at {current_location_config}")
         return current_location_config
     logger.debug("No ./config.yaml found")
 
     uctl_path_from_env = getenv(UCTL_CONFIG_ENV_VAR, None)
     if uctl_path_from_env:
+        logger.info(f"Using UCTL_CONFIG environment variable at {uctl_path_from_env}")
         return pathlib.Path(uctl_path_from_env)
     logger.debug("No UCTL_CONFIG environment variable found, checking FLYTECTL_CONFIG")
 
     flytectl_path_from_env = getenv(FLYTECTL_CONFIG_ENV_VAR, None)
     if flytectl_path_from_env:
+        logger.info(f"Using FLYTECTL_CONFIG environment variable at {flytectl_path_from_env}")
         return pathlib.Path(flytectl_path_from_env)
     logger.debug("No FLYTECTL_CONFIG environment variable found, checking default locations")
 
     home_dir_union_config = Path(Path.home(), ".union", "config.yaml")
     if home_dir_union_config.exists():
+        logger.info(f"Using ~/.union/config.yaml at {home_dir_union_config}")
         return home_dir_union_config
     logger.debug("No ~/.union/config.yaml found, checking current directory")
 
-    home_dir_flytectl_config = Path(Path.home(), ".flyte", "config.yaml")
-    if home_dir_flytectl_config.exists():
-        return home_dir_flytectl_config
-    logger.debug("No ~/.flyte/config.yaml found, checking current directory")
+    dot_flyte_config_path = _dot_flyte_config_path()
+    if dot_flyte_config_path:
+        logger.info(f"Using .flyte/config.yaml at {dot_flyte_config_path}")
+        return dot_flyte_config_path
+    logger.debug("No .flyte/config.yaml found, in directories from current directory to home directory")
 
     return None
 

@@ -98,7 +98,7 @@ def secret(
     "-o",
     "--output",
     type=click.Path(exists=False, writable=True),
-    default=Path.cwd() / "config.yaml",
+    default=Path.cwd() / ".flyte" / "config.yaml",
     help="Path to the output directory where the configuration will be saved. Defaults to current directory.",
     show_default=True,
 )
@@ -146,6 +146,9 @@ def config(
     from flyte._utils import org_from_endpoint, sanitize_endpoint
 
     output_path = Path(output)
+
+    if not output_path.parent.exists():
+        output_path.parent.mkdir(parents=True)
 
     if output_path.exists() and not force:
         force = click.confirm(f"Overwrite [{output_path}]?", default=False)
