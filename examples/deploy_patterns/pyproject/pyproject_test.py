@@ -1,14 +1,19 @@
 import pathlib
 
 import flyte
+import requests
+import pandas
+
 
 env = flyte.TaskEnvironment(
-    name="pyproject_test",
+    name="pyproject_test_0",
     resources=flyte.Resources(memory="250Mi"),
-    image=flyte.Image.from_debian_base().with_uv_project(
-        pyproject_file=pathlib.Path("pyproject.toml"),
-        pre=True,
-    ),
+    image=(
+        flyte.Image.from_debian_base(registry="docker.io/nielsbantilan").with_uv_project(
+            pyproject_file=pathlib.Path("pyproject.toml"),
+            pre=True,
+        )
+    )
 )
 
 
