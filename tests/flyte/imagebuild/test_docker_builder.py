@@ -150,6 +150,57 @@ async def test_copy_config_handler_handle_no_copy_when_empty():
             assert "COPY" not in result
             # Verify original dockerfile content remains unchanged
             assert result == "FROM python:3.9"
+            
+
+@pytest.mark.asyncio
+async def test_copy_files_recursively_single_file():
+    """Test copy_files_recursively method with a single file source."""
+    with tempfile.TemporaryDirectory() as tmp_dst:
+        dst_path = Path(tmp_dst)
+        
+        # Create a temporary file as source
+        src_file_path = Path(tempfile.mktemp(suffix='.txt'))
+        src_file_path.write_text("test content")
+        
+        # Test copying single file with path_type=0
+        empty_ignore = IgnoreGroup(src_file_path.parent)
+        
+        copied_files = CopyConfigHandler.copy_files_recursively(
+            src_file_path, dst_path, 0, empty_ignore, deref_symlinks=False
+        )
+        
+        # Verify file was copied
+        assert len(copied_files) == 1
+        assert copied_files[0] == dst_path.name  # Should be the destination directory name
+        
+        # Verify file actually exists in destination
+        expected_dst_file = dst_path / src_file_path.name
+        assert expected_dst_file.exists()
+
+
+@pytest.mark.asyncio
+async def test_copy_files_recursively_single_file_with_ignore():
+    """Test copy_files_recursively method with a single file source that should be ignored."""
+    with tempfile.TemporaryDirectory() as tmp_dst:
+        dst_path = Path(tmp_dst)
+        
+        # Create a temporary file as source
+        src_file_path = Path(tempfile.mktemp(suffix='.pyc'))
+        src_file_path.write_text("test content")
+        
+        # Test copying single file that should be ignored
+        ignore_group = IgnoreGroup(src_file_path.parent, StandardIgnore)
+        
+        copied_files = CopyConfigHandler.copy_files_recursively(
+            src_file_path, dst_path, 0, ignore_group, deref_symlinks=False
+        )
+        
+        # Verify file was not copied due to ignore pattern
+        assert len(copied_files) == 0
+        
+        # Verify file does not exist in destination
+        expected_dst_file = dst_path / src_file_path.name
+        assert not expected_dst_file.exists()
 
 
 @pytest.mark.asyncio
@@ -172,7 +223,7 @@ async def test_copy_files_recursively_without_ignore():
         from flyte._code_bundle._ignore import IgnoreGroup
 
         empty_ignore = IgnoreGroup(src_path)
-        copied_files = CopyConfigHandler.copy_files_recursively(src_path, dst_path, empty_ignore, deref_symlinks=False)
+        copied_files = CopyConfigHandler.copy_files_recursively(src_path, dst_path, 1, empty_ignore, deref_symlinks=False)
 
         # Verify all files were copied
         assert len(copied_files) == 3
@@ -207,7 +258,7 @@ async def test_copy_files_recursively_with_ignore():
         ignore_group = IgnoreGroup(src_path, *ignores)
 
         # Test with ignore group
-        copied_files = CopyConfigHandler.copy_files_recursively(src_path, dst_path, ignore_group, deref_symlinks=False)
+        copied_files = CopyConfigHandler.copy_files_recursively(src_path, dst_path, 1, ignore_group, deref_symlinks=False)
 
         # Verify only non-ignored files were copied
         assert len(copied_files) == 2, f"Expected 2 files, but got {len(copied_files)}: {copied_files}"
@@ -281,7 +332,7 @@ __pycache__/
 
             # Test with gitignore
             copied_files = CopyConfigHandler.copy_files_recursively(
-                src_path, dst_path, ignore_group, deref_symlinks=False
+                src_path, dst_path, 1, ignore_group, deref_symlinks=False
             )
 
             # Verify only non-ignored files were copied
@@ -302,3 +353,34 @@ __pycache__/
         except (subprocess.CalledProcessError, FileNotFoundError):
             # If git is not available or fails, skip this test
             pytest.skip("Git is not available or failed, skipping gitignore test")
+
+
+@pytest.mark.asyncio
+async def test_copy_files_recursively_file_not_found():
+    """Test copy_files_recursively method when source file/directory does not exist."""
+    with tempfile.TemporaryDirectory() as tmp_dst:
+        dst_path = Path(tmp_dst)
+        
+        # Create a non-existent source path
+        non_existent_path = Path("/non/existent/path")
+        
+        # Test with non-existent file path_type=0
+        from flyte._code_bundle._ignore import IgnoreGroup
+        empty_ignore = IgnoreGroup(Path("/"))
+        
+        copied_files = CopyConfigHandler.copy_files_recursively(
+            non_existent_path, dst_path, 0, empty_ignore, deref_symlinks=False
+        )
+        
+        # Verify empty list is returned when source does not exist
+        assert len(copied_files) == 0
+        assert copied_files == []
+        
+        # Test with non-existent directory path_type=1
+        copied_files = CopyConfigHandler.copy_files_recursively(
+            non_existent_path, dst_path, 1, empty_ignore, deref_symlinks=False
+        )
+        
+        # Verify empty list is returned when source does not exist
+        assert len(copied_files) == 0
+        assert copied_files == []
