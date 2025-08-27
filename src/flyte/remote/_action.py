@@ -329,7 +329,7 @@ class Action(ToJSONMixin):
                     details = await self.details()
                     console.print(
                         f"[bold red]Action '{self.name}' in Run '{self.run_name}'"
-                        f" exited unsuccessfully in state {self.phase} with error: {details.error_info}[/bold red]"
+                        f" exited unsuccessfully in state {self.phase} with error: {details.error_info.message}[/bold red]"
                     )
             return
 
@@ -373,7 +373,7 @@ class Action(ToJSONMixin):
                         else:
                             console.print(
                                 f"[bold red]Run '{self.run_name}' exited unsuccessfully in state {ad.phase}"
-                                f" with error: {ad.error_info}[/bold red]"
+                                f" with error: {ad.error_info.message}[/bold red]"
                             )
                         break
         except asyncio.CancelledError:
