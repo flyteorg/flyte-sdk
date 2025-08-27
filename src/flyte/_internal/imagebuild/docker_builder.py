@@ -13,7 +13,6 @@ import click
 
 from flyte import Secret
 from flyte._code_bundle._ignore import GitIgnore, Ignore, IgnoreGroup, StandardIgnore
-from flyte._code_bundle._packaging import IgnoreGroup
 from flyte._code_bundle._utils import EXCLUDE_DIRS
 from flyte._image import (
     AptPackages,
