@@ -324,6 +324,7 @@ class CopyConfigHandler:
         ignore_group = IgnoreGroup(abs_path, *ignores)
 
         copied_files = CopyConfigHandler.copy_files_recursively(layer.src, dst_path, ignore_group, deref_symlinks)
+        logger.info(f"Files copied from source folder to image: {copied_files}")
         # Add a copy command to the dockerfile
         if copied_files:
             dockerfile += f"\nCOPY {dst_path.relative_to(context_path)} {layer.dst}\n"

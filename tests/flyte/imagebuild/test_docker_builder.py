@@ -1,5 +1,6 @@
 import tempfile
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -101,6 +102,56 @@ async def test_requirements_handler(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_copy_config_handler_handle_adds_copy_command():
+    """Test that CopyConfigHandler.handle method correctly adds COPY command to dockerfile"""
+    from flyte._image import CopyConfig
+    
+    # Create temporary directory as context path
+    with tempfile.TemporaryDirectory() as tmp_context:
+        context_path = Path(tmp_context)
+        
+        # Create temporary source directory
+        with tempfile.TemporaryDirectory() as src_tmpdir:
+            src_path = Path(src_tmpdir)
+            # Create test file
+            (src_path / "test_file.txt").write_text("test content")
+            
+            # Create CopyConfig
+            layer = CopyConfig(path_type=1, src=src_path, dst="/app")
+            dockerfile = "FROM python:3.9"
+            
+            # Call handle method
+            result = await CopyConfigHandler.handle(layer, context_path, dockerfile)
+            
+            # Verify results
+            assert "COPY" in result
+            assert src_path.name in result
+            assert "/app" in result
+
+
+@pytest.mark.asyncio
+async def test_copy_config_handler_handle_no_copy_when_empty():
+    """Test that no COPY command is added when no files are copied"""
+    from flyte._image import CopyConfig
+    
+    with tempfile.TemporaryDirectory() as tmp_context:
+        context_path = Path(tmp_context)
+        
+        with tempfile.TemporaryDirectory() as src_tmpdir:
+            src_path = Path(src_tmpdir)
+            # Create empty directory, no files
+            
+            layer = CopyConfig(path_type=1, src=src_path, dst="/app")
+            dockerfile = "FROM python:3.9"
+            
+            result = await CopyConfigHandler.handle(layer, context_path, dockerfile)
+            
+            # Verify no COPY command is added
+            assert "COPY" not in result
+            # Verify original dockerfile content remains unchanged
+            assert result == "FROM python:3.9"
+
+@pytest.mark.asyncio
 async def test_copy_files_recursively_without_ignore():
     """Test copy_files_recursively method without ignore group."""
     with tempfile.TemporaryDirectory() as tmp_src, tempfile.TemporaryDirectory() as tmp_dst:
@@ -197,48 +248,47 @@ __pycache__/
         """.strip()
         (src_path / ".gitignore").write_text(gitignore_content)
 
-        # Create git repository (simulate git init)
+        # GitIgnore requires a real git repository to work properly
+        # So we need to initialize git and commit files
         import subprocess
-
+        
         try:
             # Initialize git repository
             subprocess.run(["git", "init"], cwd=src_path, capture_output=True, check=True)
-
+            
             # Add all files
             subprocess.run(["git", "add", "."], cwd=src_path, capture_output=True, check=True)
-
+            
             # Configure git user
             subprocess.run(["git", "config", "user.name", "test"], cwd=src_path, capture_output=True, check=True)
-            subprocess.run(
-                ["git", "config", "user.email", "test@example.com"], cwd=src_path, capture_output=True, check=True
-            )
-
+            subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=src_path, capture_output=True, check=True)
+            
             # Commit files
             subprocess.run(["git", "commit", "-m", "initial"], cwd=src_path, capture_output=True, check=True)
-
+            
             # Create ignore group with GitIgnore
             ignore_group = GitIgnore(src_path)
-
+            
             # Test with gitignore
             copied_files = CopyConfigHandler.copy_files_recursively(
                 src_path, dst_path, ignore_group, deref_symlinks=False
             )
-
+            
             # Verify only non-ignored files were copied
             # Note: .gitignore file itself is also copied, so we expect 3 files total
             assert len(copied_files) == 3, f"Expected 3 files, but got {len(copied_files)}: {copied_files}"
             assert "src/main.py" in copied_files
             assert "README.md" in copied_files
             assert ".gitignore" in copied_files
-
+            
             # Verify ignored files were not copied
             assert "tests/test_main.py" not in copied_files
-
+            
             # Verify files actually exist/not exist in destination
             assert (dst_path / "src" / "main.py").exists()
             assert (dst_path / "README.md").exists()
             assert not (dst_path / "tests" / "test_main.py").exists()
-
-        except subprocess.CalledProcessError:
-            # If git is not available, skip this test
-            pytest.skip("Git is not available, skipping gitignore test")
+            
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            # If git is not available or fails, skip this test
+            pytest.skip("Git is not available or failed, skipping gitignore test")
