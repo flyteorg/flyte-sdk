@@ -267,7 +267,7 @@ class CopyConfigHandler:
         """
         copied_files = []
         visited_inodes = set()
-        for root, dirnames, files in src_path.walk(top_down=True, follow_symlinks=deref_symlinks):
+        for root, dirnames, files in os.walk(src_path, topdown=True, followlinks=deref_symlinks):
             # get root / fname first
             dirnames[:] = [d for d in dirnames if d not in EXCLUDE_DIRS]
             if deref_symlinks:
@@ -278,11 +278,11 @@ class CopyConfigHandler:
             files.sort()
             for fname in files:
                 # Calculate the current file's position in the destination path
-                curr_dst_path = dst_path / root.relative_to(src_path)
+                curr_dst_path = Path(dst_path) / os.path.relpath(root, src_path)
                 curr_dst_path.mkdir(parents=True, exist_ok=True)
 
                 # Build the full paths for source and destination files
-                src_file_path = root / fname
+                src_file_path = Path(root) / fname
                 dst_file_path = curr_dst_path / fname
 
                 if not os.path.exists(src_file_path):
