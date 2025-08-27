@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager, contextmanager
 from pathlib import Path
 from typing import (
     IO,
+    Annotated,
     Any,
     AsyncGenerator,
     Dict,
@@ -21,12 +22,14 @@ from flyteidl.core import literals_pb2, types_pb2
 from fsspec.asyn import AsyncFileSystem
 from fsspec.utils import get_protocol
 from mashumaro.types import SerializableType
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel, Field, model_validator
+from pydantic.json_schema import SkipJsonSchema
 
 import flyte.storage as storage
 from flyte._context import internal_ctx
 from flyte._initialize import requires_initialization
 from flyte._logging import logger
+from flyte.io._hashing_io import AsyncHashingReader, HashingWriter, HashMethod, PrecomputedValue
 from flyte.types import TypeEngine, TypeTransformer, TypeTransformerFailedError
 
 # Type variable for the file format
@@ -104,6 +107,8 @@ class File(BaseModel, Generic[T], SerializableType):
     path: str
     name: Optional[str] = None
     format: str = ""
+    hash: Optional[str] = None
+    hash_method: Annotated[Optional[HashMethod], Field(default=None, exclude=True), SkipJsonSchema()] = None
 
     class Config:
         arbitrary_types_allowed = True
@@ -139,7 +144,7 @@ class File(BaseModel, Generic[T], SerializableType):
 
     @classmethod
     @requires_initialization
-    def new_remote(cls) -> File[T]:
+    def new_remote(cls, hash_method: Optional[HashMethod | str] = None) -> File[T]:
         """
         Create a new File reference for a remote file that will be written to.
 
@@ -155,11 +160,13 @@ class File(BaseModel, Generic[T], SerializableType):
         ```
         """
         ctx = internal_ctx()
+        known_cache_key = hash_method if isinstance(hash_method, str) else None
+        method = hash_method if isinstance(hash_method, HashMethod) else None
 
-        return cls(path=ctx.raw_data.get_random_remote_path())
+        return cls(path=ctx.raw_data.get_random_remote_path(), hash=known_cache_key, hash_method=method)
 
     @classmethod
-    def from_existing_remote(cls, remote_path: str) -> File[T]:
+    def from_existing_remote(cls, remote_path: str, file_cache_key: Optional[str] = None) -> File[T]:
         """
         Create a File reference from an existing remote file.
 
@@ -172,8 +179,10 @@ class File(BaseModel, Generic[T], SerializableType):
 
         Args:
             remote_path: The remote path to the existing file
+            file_cache_key: Optional hash value to use for discovery purposes. If not specified, the value of this
+              File object will be hashed (basically the path, not the contents).
         """
-        return cls(path=remote_path)
+        return cls(path=remote_path, hash=file_cache_key)
 
     @asynccontextmanager
     async def open(
@@ -184,7 +193,7 @@ class File(BaseModel, Generic[T], SerializableType):
         cache_options: Optional[dict] = None,
         compression: Optional[str] = None,
         **kwargs,
-    ) -> AsyncGenerator[IO[Any]]:
+    ) -> AsyncGenerator[Union[IO[Any], "HashingWriter"], None]:
         """
         Asynchronously open the file and return a file-like object.
 
@@ -245,7 +254,15 @@ class File(BaseModel, Generic[T], SerializableType):
                     file_handle.close()
 
             with fs.open(self.path, mode) as file_handle:
-                yield file_handle
+                if self.hash_method and self.hash is None:
+                    logger.debug(f"Wrapping file handle with hashing writer using {self.hash_method}")
+                    fh = HashingWriter(file_handle, accumulator=self.hash_method)
+                    yield fh
+                    self.hash = fh.result()
+                    fh.close()
+                else:
+                    yield file_handle
+                    file_handle.close()
 
     def exists_sync(self) -> bool:
         """
@@ -351,13 +368,22 @@ class File(BaseModel, Generic[T], SerializableType):
 
     @classmethod
     @requires_initialization
-    async def from_local(cls, local_path: Union[str, Path], remote_destination: Optional[str] = None) -> File[T]:
+    async def from_local(
+        cls,
+        local_path: Union[str, Path],
+        remote_destination: Optional[str] = None,
+        hash_method: Optional[HashMethod | str] = None,
+    ) -> File[T]:
         """
         Create a new File object from a local file that will be uploaded to the configured remote store.
 
         Args:
             local_path: Path to the local file
             remote_destination: Optional path to store the file remotely. If None, a path will be generated.
+            hash_method: Pass this argument either as a set string or a HashMethod to use for
+              determining a task's cache key if this File object is used as an input to said task. If not specified,
+              the cache key will just be computed based on this object's attributes (i.e. path, name, format, etc.).
+              If there is a set value you want to use, please pass an instance of the PrecomputedValue HashMethod.
 
         Returns:
             A new File instance pointing to the uploaded file
@@ -376,20 +402,38 @@ class File(BaseModel, Generic[T], SerializableType):
 
         # If remote_destination was not set by the user, and the configured raw data path is also local,
         # then let's optimize by not uploading.
+        hash_value = hash_method if isinstance(hash_method, str) else None
+        hash_method = hash_method if isinstance(hash_method, HashMethod) else None
         if "file" in protocol:
             if remote_destination is None:
                 path = str(Path(local_path).absolute())
             else:
                 # Otherwise, actually make a copy of the file
-                async with aiofiles.open(remote_path, "rb") as src:
-                    async with aiofiles.open(local_path, "wb") as dst:
-                        await dst.write(await src.read())
+                async with aiofiles.open(local_path, "rb") as src:
+                    async with aiofiles.open(remote_path, "wb") as dst:
+                        if hash_method:
+                            dst_wrapper = HashingWriter(dst, accumulator=hash_method)
+                            await dst_wrapper.write(await src.read())
+                            hash_value = dst_wrapper.result()
+                        else:
+                            await dst.write(await src.read())
                 path = str(Path(remote_path).absolute())
         else:
             # Otherwise upload to remote using async storage layer
-            path = await storage.put(str(local_path), remote_path)
+            if hash_method:
+                # We can skip the wrapper if the hash method is just a precomputed value
+                if not isinstance(hash_method, PrecomputedValue):
+                    async with aiofiles.open(local_path, "rb") as src:
+                        src_wrapper = AsyncHashingReader(src, accumulator=hash_method)
+                        path = await storage.put_stream(src_wrapper, to_path=remote_path)
+                        hash_value = src_wrapper.result()
+                else:
+                    path = await storage.put(str(local_path), remote_path)
+                    hash_value = hash_method.result()
+            else:
+                path = await storage.put(str(local_path), remote_path)
 
-        f = cls(path=path, name=filename)
+        f = cls(path=path, name=filename, hash_method=hash_method, hash=hash_value)
         return f
 
 
@@ -432,7 +476,8 @@ class FileTransformer(TypeTransformer[File]):
                     ),
                     uri=python_val.path,
                 )
-            )
+            ),
+            hash=python_val.hash if python_val.hash else None,
         )
 
     async def to_python_value(
@@ -450,7 +495,8 @@ class FileTransformer(TypeTransformer[File]):
 
         uri = lv.scalar.blob.uri
         filename = Path(uri).name
-        f: File = File(path=uri, name=filename, format=lv.scalar.blob.metadata.type.format)
+        hash_value = lv.hash if lv.hash else None
+        f: File = File(path=uri, name=filename, format=lv.scalar.blob.metadata.type.format, hash=hash_value)
         return f
 
     def guess_python_type(self, literal_type: types_pb2.LiteralType) -> Type[File]:

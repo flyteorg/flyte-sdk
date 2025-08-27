@@ -118,3 +118,89 @@ async def test_dir_walk_s3(tmp_dir_structure, ctx_with_test_local_s3_stack_raw_d
         root_file = pathlib.Path(tmpdir) / folder_name / "root.txt"
         assert root_file.exists()
         assert root_file.is_file()
+
+
+@pytest.mark.asyncio
+async def test_transformer_serde_with_hash():
+    """
+    Test that the DirTransformer correctly serializes and deserializes Dir objects with hash values.
+    """
+    d = Dir.from_existing_remote("s3://bucket/data/", dir_cache_key="abc123")
+    lt = TypeEngine.to_literal_type(Dir)
+    lv = await DirTransformer().to_literal(d, Dir, lt)
+
+    # Hash should be preserved in the literal
+    assert lv.hash == "abc123"
+
+    # Convert back to Python
+    pv = await DirTransformer().to_python_value(lv, Dir)
+    assert pv.path == d.path
+    assert pv.hash == "abc123"
+
+
+@pytest.mark.asyncio
+async def test_from_existing_remote_with_hash():
+    """
+    Test Dir.from_existing_remote with hash functionality.
+    """
+    # Without hash
+    d1 = Dir.from_existing_remote("s3://bucket/data/")
+    assert d1.hash is None
+    assert d1.path == "s3://bucket/data/"
+
+    # With hash
+    d2 = Dir.from_existing_remote("s3://bucket/data/", dir_cache_key="dir_hash_123")
+    assert d2.hash == "dir_hash_123"
+    assert d2.path == "s3://bucket/data/"
+
+
+@pytest.mark.asyncio
+async def test_from_local_with_precomputed_hash(tmp_dir_structure, ctx_with_test_raw_data_path):
+    """
+    Test Dir.from_local with PrecomputedValue hash method.
+    """
+    flyte.init()
+
+    # Test with PrecomputedValue
+    d = await Dir.from_local(tmp_dir_structure, dir_cache_key="directory_hash_abc123")
+
+    assert d.hash == "directory_hash_abc123"
+    assert d.path is not None
+    assert d.name is not None
+
+
+@pytest.mark.asyncio
+async def test_multiple_dirs_with_hashes():
+    """
+    Test handling multiple Dir objects with different hash scenarios.
+    """
+    # Create multiple dirs with different hash scenarios
+    dir_with_hash = Dir.from_existing_remote("s3://bucket/dir1/", dir_cache_key="hash1")
+    dir_without_hash = Dir.from_existing_remote("s3://bucket/dir2/")
+
+    dirs = [dir_with_hash, dir_without_hash]
+
+    # Convert to literals
+    transformer = DirTransformer()
+    lt = TypeEngine.to_literal_type(Dir)
+
+    literals = []
+    for d in dirs:
+        lv = await transformer.to_literal(d, Dir, lt)
+        literals.append(lv)
+
+    # First dir should have hash, second should not
+    assert literals[0].hash == "hash1"
+    assert not literals[1].hash
+
+    # Convert back to Python objects
+    recovered_dirs = []
+    for lv in literals:
+        pv = await transformer.to_python_value(lv, Dir)
+        recovered_dirs.append(pv)
+
+    # Verify all properties are preserved
+    assert recovered_dirs[0].path == dir_with_hash.path
+    assert recovered_dirs[0].hash == "hash1"
+    assert recovered_dirs[1].path == dir_without_hash.path
+    assert recovered_dirs[1].hash is None

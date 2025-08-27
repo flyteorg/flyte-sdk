@@ -152,7 +152,7 @@ async def _build_images(deployment: DeploymentPlan) -> ImageCache:
             images.append(_build_image_bg(env_name, env.image))
 
         elif env.image == "auto" and "auto" not in image_identifier_map:
-            auto_image = Image.from_debian_base(registry="ghcr.io/flyteorg")
+            auto_image = Image.from_debian_base()
             images.append(_build_image_bg(env_name, auto_image))
     final_images = await asyncio.gather(*images)
 
