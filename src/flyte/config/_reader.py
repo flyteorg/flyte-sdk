@@ -159,7 +159,7 @@ def resolve_config_path() -> pathlib.Path | None:
     2. `UCTL_CONFIG` environment variable
     3. `FLYTECTL_CONFIG` environment variable
     4. ~/.union/config.yaml if it exists
-    5. ~/.flyte/config.yaml if it exists
+    5. .flyte/config.yaml if it exists in the current directory or any parent directory up to the home directory
     """
     current_location_config = Path("config.yaml")
     if current_location_config.exists():
