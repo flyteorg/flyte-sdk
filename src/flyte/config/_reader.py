@@ -14,6 +14,9 @@ from flyte._logging import logger
 FLYTECTL_CONFIG_ENV_VAR = "FLYTECTL_CONFIG"
 UCTL_CONFIG_ENV_VAR = "UCTL_CONFIG"
 
+# This is the maximum number of directories to search for a config file
+DOT_FLYTE_CONFIG_MAX_DEPTH = 30
+
 
 @dataclass
 class YamlConfigEntry(object):
@@ -141,11 +144,17 @@ def _dot_flyte_config_path() -> pathlib.Path | None:
     the current working directory and going up to the home directory.
     """
     current_dir = Path.cwd()
-    while current_dir != Path.home():
+    i = 0
+    while current_dir != Path.home() and i < DOT_FLYTE_CONFIG_MAX_DEPTH:
         if current_dir == Path("/"):
+            # in case somehow there is no home directory
             break
+        i += 1
         config_path = current_dir / ".flyte" / "config.yaml"
         if config_path.exists():
+            if not os.access(config_path, os.R_OK):
+                logger.warning(f"Config file {config_path} is not readable")
+                return None
             return config_path
         current_dir = current_dir.parent
 
