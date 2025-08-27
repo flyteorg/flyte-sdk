@@ -248,12 +248,13 @@ def _get_layers_proto(image: Image, context_path: Path) -> "image_definition_pb2
             for line in layer.pyproject.read_text().splitlines():
                 if "tool.uv.index" in line:
                     raise ValueError("External sources are not supported in pyproject.toml")
-            shutil.copy2(layer.pyproject, context_path / layer.pyproject.name)
 
             uv_layer = image_definition_pb2.Layer(
                 uv_project=image_definition_pb2.UVProject(
-                    pyproject=str(layer.pyproject.name),
-                    uvlock=str(layer.uvlock.name),
+                    pyproject=str(copy_files_to_context(layer.pyproject, context_path)),
+                    uvlock=str(copy_files_to_context(layer.uvlock, context_path)),
+                    options=pip_options,
+                    secret_mounts=secret_mounts,
                 )
             )
             layers.append(uv_layer)
@@ -303,7 +304,7 @@ def _get_fully_qualified_image_name(outputs: ActionOutputs) -> str:
 
 def _get_build_secrets_from_image(image: Image) -> Optional[typing.List[Secret]]:
     secrets = []
-    DEFAULT_SECRET_DIR = Path("etc/flyte/secrets")
+    DEFAULT_SECRET_DIR = Path("/etc/flyte/secrets")
     for layer in image._layers:
         if isinstance(layer, (PipOption, Commands, AptPackages)) and layer.secret_mounts is not None:
             for secret_mount in layer.secret_mounts:
