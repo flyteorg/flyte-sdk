@@ -258,7 +258,7 @@ class DockerIgnoreHandler:
 class CopyConfigHandler:
     @staticmethod
     def copy_files_recursively(
-        src_path: Path, dst_path: Path, path_type: int, ignore_group: typing.Optional[IgnoreGroup] = None, deref_symlinks: bool = False
+        src_path: Path, dst_path: Path, path_type: int, deref_symlinks: bool = False, ignore_group: typing.Optional[IgnoreGroup] = None
     ) -> List[str]:
         """Recursively copy files from source to destination while respecting ignore patterns.
 
@@ -277,7 +277,7 @@ class CopyConfigHandler:
             return copied_files
         
         elif path_type == 1 and src_path.is_dir():
-            # Handle directory copy (existing logic)
+            # Handle directory copy
             visited_inodes = set()
             for root, dirnames, files in os.walk(src_path, topdown=True, followlinks=deref_symlinks):
                 # Filter out excluded directories
@@ -337,7 +337,7 @@ class CopyConfigHandler:
             ignores = (StandardIgnore, GitIgnore)
         ignore_group = IgnoreGroup(abs_path, *ignores)
 
-        copied_files = CopyConfigHandler.copy_files_recursively(layer.src, dst_path, layer.path_type, ignore_group, deref_symlinks)
+        copied_files = CopyConfigHandler.copy_files_recursively(layer.src, dst_path, layer.path_type, deref_symlinks, ignore_group)
         logger.info(f"Files copied from source folder to image: {copied_files}")
         # Add a copy command to the dockerfile
         if copied_files:

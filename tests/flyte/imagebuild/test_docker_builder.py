@@ -166,7 +166,7 @@ async def test_copy_files_recursively_single_file():
         empty_ignore = IgnoreGroup(src_file_path.parent)
         
         copied_files = CopyConfigHandler.copy_files_recursively(
-            src_file_path, dst_path, 0, empty_ignore, deref_symlinks=False
+            src_file_path, dst_path, 0, deref_symlinks=False, ignore_group=empty_ignore
         )
         
         # Verify file was copied
@@ -192,7 +192,7 @@ async def test_copy_files_recursively_single_file_with_ignore():
         ignore_group = IgnoreGroup(src_file_path.parent, StandardIgnore)
         
         copied_files = CopyConfigHandler.copy_files_recursively(
-            src_file_path, dst_path, 0, ignore_group, deref_symlinks=False
+            src_file_path, dst_path, 0, deref_symlinks=False, ignore_group=ignore_group
         )
         
         # Verify file was not copied due to ignore pattern
@@ -223,7 +223,7 @@ async def test_copy_files_recursively_without_ignore():
         from flyte._code_bundle._ignore import IgnoreGroup
 
         empty_ignore = IgnoreGroup(src_path)
-        copied_files = CopyConfigHandler.copy_files_recursively(src_path, dst_path, 1, empty_ignore, deref_symlinks=False)
+        copied_files = CopyConfigHandler.copy_files_recursively(src_path, dst_path, 1, deref_symlinks=False, ignore_group=empty_ignore)
 
         # Verify all files were copied
         assert len(copied_files) == 3
@@ -258,7 +258,7 @@ async def test_copy_files_recursively_with_ignore():
         ignore_group = IgnoreGroup(src_path, *ignores)
 
         # Test with ignore group
-        copied_files = CopyConfigHandler.copy_files_recursively(src_path, dst_path, 1, ignore_group, deref_symlinks=False)
+        copied_files = CopyConfigHandler.copy_files_recursively(src_path, dst_path, 1, deref_symlinks=False, ignore_group=ignore_group)
 
         # Verify only non-ignored files were copied
         assert len(copied_files) == 2, f"Expected 2 files, but got {len(copied_files)}: {copied_files}"
@@ -332,7 +332,7 @@ __pycache__/
 
             # Test with gitignore
             copied_files = CopyConfigHandler.copy_files_recursively(
-                src_path, dst_path, 1, ignore_group, deref_symlinks=False
+                src_path, dst_path, 1, deref_symlinks=False, ignore_group=ignore_group
             )
 
             # Verify only non-ignored files were copied
@@ -369,7 +369,7 @@ async def test_copy_files_recursively_file_not_found():
         empty_ignore = IgnoreGroup(Path("/"))
         
         copied_files = CopyConfigHandler.copy_files_recursively(
-            non_existent_path, dst_path, 0, empty_ignore, deref_symlinks=False
+            non_existent_path, dst_path, 0, deref_symlinks=False, ignore_group=empty_ignore
         )
         
         # Verify empty list is returned when source does not exist
@@ -378,7 +378,7 @@ async def test_copy_files_recursively_file_not_found():
         
         # Test with non-existent directory path_type=1
         copied_files = CopyConfigHandler.copy_files_recursively(
-            non_existent_path, dst_path, 1, empty_ignore, deref_symlinks=False
+            non_existent_path, dst_path, 1, deref_symlinks=False, ignore_group=empty_ignore
         )
         
         # Verify empty list is returned when source does not exist
