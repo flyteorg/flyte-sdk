@@ -327,9 +327,10 @@ class Action(ToJSONMixin):
                     )
                 else:
                     details = await self.details()
+                    error_message = details.error_info.message if details.error_info else ""
                     console.print(
                         f"[bold red]Action '{self.name}' in Run '{self.run_name}'"
-                        f" exited unsuccessfully in state {self.phase} with error: {details.error_info.message}[/bold red]"
+                        f" exited unsuccessfully in state {self.phase} with error: {error_message}[/bold red]"
                     )
             return
 
@@ -371,9 +372,10 @@ class Action(ToJSONMixin):
                         if ad.pb2.status.phase == run_definition_pb2.PHASE_SUCCEEDED:
                             console.print(f"[bold green]Run '{self.run_name}' completed successfully.[/bold green]")
                         else:
+                            error_message = ad.error_info.message if ad.error_info else ""
                             console.print(
                                 f"[bold red]Run '{self.run_name}' exited unsuccessfully in state {ad.phase}"
-                                f" with error: {ad.error_info.message}[/bold red]"
+                                f" with error: {error_message}[/bold red]"
                             )
                         break
         except asyncio.CancelledError:
