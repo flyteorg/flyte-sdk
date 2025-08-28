@@ -239,14 +239,16 @@ class UVProjectHandler:
             delta = UV_LOCK_WITHOUT_PROJECT_INSTALL_TEMPLATE.substitute(
                 UV_LOCK_PATH=uvlock_dst.relative_to(context_path),
                 PYPROJECT_PATH=pyproject_dst.relative_to(context_path),
-                PIP_INSTALL_ARGS=" ".join(layer.get_pip_install_args()), SECRET_MOUNT=secret_mounts
+                PIP_INSTALL_ARGS=" ".join(layer.get_pip_install_args()),
+                SECRET_MOUNT=secret_mounts,
             )
         else:
             # Copy the entire project.
             pyproject_dst = copy_files_to_context(layer.pyproject.parent, context_path)
             delta = UV_LOCK_INSTALL_TEMPLATE.substitute(
                 PYPROJECT_PATH=pyproject_dst.relative_to(context_path),
-                PIP_INSTALL_ARGS=" ".join(layer.get_pip_install_args()), SECRET_MOUNT=secret_mounts
+                PIP_INSTALL_ARGS=" ".join(layer.get_pip_install_args()),
+                SECRET_MOUNT=secret_mounts,
             )
 
         dockerfile += delta
