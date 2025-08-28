@@ -42,3 +42,9 @@ async def main():
 
         print("All Done with sequential tasks", flush=True)
         return vals
+
+
+if __name__ == "__main__":
+    flyte.init_from_config("../../config.yaml")
+    result = flyte.run(main)
+    print(result.url)
