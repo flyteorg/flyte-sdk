@@ -15,7 +15,7 @@ FLYTECTL_CONFIG_ENV_VAR = "FLYTECTL_CONFIG"
 UCTL_CONFIG_ENV_VAR = "UCTL_CONFIG"
 
 # This is the maximum number of directories to search for a config file
-DOT_FLYTE_CONFIG_MAX_DEPTH = 30
+DOT_FLYTE_CONFIG_MAX_DEPTH = 50
 
 
 @dataclass
@@ -145,18 +145,16 @@ def _dot_flyte_config_path() -> pathlib.Path | None:
     """
     current_dir = Path.cwd()
     i = 0
-    while current_dir != Path.home() and i < DOT_FLYTE_CONFIG_MAX_DEPTH:
-        if current_dir == Path("/"):
-            # in case somehow there is no home directory
+    for _dir in [current_dir, *current_dir.parents]:
+        if i > DOT_FLYTE_CONFIG_MAX_DEPTH:
             break
         i += 1
-        config_path = current_dir / ".flyte" / "config.yaml"
+        config_path = _dir / ".flyte" / "config.yaml"
         if config_path.exists():
             if not os.access(config_path, os.R_OK):
                 logger.warning(f"Config file {config_path} is not readable")
                 return None
             return config_path
-        current_dir = current_dir.parent
 
     return None
 
