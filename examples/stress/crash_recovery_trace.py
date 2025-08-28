@@ -27,7 +27,7 @@ async def run(x: int) -> int:
 
 
 @env.task(retries=10)
-async def main():
+async def main() -> list[int]:
     print("Running crash_recovery_trace task", flush=True)
     with flyte.group("sequential-trace-group"):
         vals = []
@@ -35,7 +35,7 @@ async def main():
             print(f"Running crasher {i}", flush=True)
             v = await run(x=i)
             vals.append(v)
-            if i == get_attempt_number() and i < 9:
+            if i == get_attempt_number() and i < 3:
                 raise flyte.errors.RuntimeSystemError(
                     "simulated", f"Simulated failure on attempt {get_attempt_number()} at iteration {i}"
                 )
