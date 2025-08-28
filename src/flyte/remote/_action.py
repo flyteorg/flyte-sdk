@@ -28,6 +28,7 @@ from flyte._initialize import ensure_client, get_client, get_common_config
 from flyte._protos.common import identifier_pb2, list_pb2
 from flyte._protos.workflow import run_definition_pb2, run_service_pb2
 from flyte._protos.workflow.run_service_pb2 import WatchActionDetailsResponse
+from flyte.remote._common import ToJSONMixin
 from flyte.remote._logs import Logs
 from flyte.syncify import syncify
 
@@ -120,7 +121,7 @@ def _action_done_check(phase: run_definition_pb2.Phase) -> bool:
 
 
 @dataclass
-class Action:
+class Action(ToJSONMixin):
     """
     A class representing an action. It is used to manage the run of a task and its state on the remote Union API.
     """
@@ -257,6 +258,7 @@ class Action:
         """
         return self.pb2.id
 
+    @syncify
     async def show_logs(
         self,
         attempt: int | None = None,
@@ -325,9 +327,10 @@ class Action:
                     )
                 else:
                     details = await self.details()
+                    error_message = details.error_info.message if details.error_info else ""
                     console.print(
                         f"[bold red]Action '{self.name}' in Run '{self.run_name}'"
-                        f" exited unsuccessfully in state {self.phase} with error: {details.error_info}[/bold red]"
+                        f" exited unsuccessfully in state {self.phase} with error: {error_message}[/bold red]"
                     )
             return
 
@@ -369,9 +372,10 @@ class Action:
                         if ad.pb2.status.phase == run_definition_pb2.PHASE_SUCCEEDED:
                             console.print(f"[bold green]Run '{self.run_name}' completed successfully.[/bold green]")
                         else:
+                            error_message = ad.error_info.message if ad.error_info else ""
                             console.print(
                                 f"[bold red]Run '{self.run_name}' exited unsuccessfully in state {ad.phase}"
-                                f" with error: {ad.error_info}[/bold red]"
+                                f" with error: {error_message}[/bold red]"
                             )
                         break
         except asyncio.CancelledError:
@@ -411,7 +415,7 @@ class Action:
 
 
 @dataclass
-class ActionDetails:
+class ActionDetails(ToJSONMixin):
     """
     A class representing an action. It is used to manage the run of a task and its state on the remote Union API.
     """
@@ -625,8 +629,11 @@ class ActionDetails:
             )
         )
         native_iface = None
-        if self.pb2.resolved_task_spec:
-            iface = self.pb2.resolved_task_spec.task_template.interface
+        if self.pb2.HasField("task"):
+            iface = self.pb2.task.task_template.interface
+            native_iface = types.guess_interface(iface)
+        elif self.pb2.HasField("trace"):
+            iface = self.pb2.trace.interface
             native_iface = types.guess_interface(iface)
 
         if resp.inputs:
@@ -692,7 +699,7 @@ class ActionDetails:
 
 
 @dataclass
-class ActionInputs(UserDict):
+class ActionInputs(UserDict, ToJSONMixin):
     """
     A class representing the inputs of an action. It is used to manage the inputs of a task and its state on the
     remote Union API.
@@ -709,7 +716,7 @@ class ActionInputs(UserDict):
         return rich.pretty.pretty_repr(types.literal_string_repr(self.pb2))
 
 
-class ActionOutputs(tuple):
+class ActionOutputs(tuple, ToJSONMixin):
     """
     A class representing the outputs of an action. It is used to manage the outputs of a task and its state on the
     remote Union API.

@@ -5,9 +5,9 @@ import typing
 from dataclasses import dataclass
 from typing import Any, Dict, Optional
 
+import flyte
 import yaml
 from flyte import PodTemplate, Resources
-from flyte._tools import is_in_cluster
 from flyte.extend import AsyncFunctionTaskTemplate, TaskPluginRegistry, pod_spec_from_resources
 from flyte.models import SerializationContext
 from flyteidl.plugins.ray_pb2 import HeadGroupSpec, RayCluster, RayJob, WorkerGroupSpec
@@ -66,11 +66,11 @@ class RayFunctionTask(AsyncFunctionTaskTemplate):
     async def pre(self, *args, **kwargs) -> Dict[str, Any]:
         init_params = {"address": self.plugin_config.address}
 
-        if is_in_cluster():
+        if flyte.ctx().is_in_cluster():
             working_dir = os.getcwd()
             init_params["runtime_env"] = {
                 "working_dir": working_dir,
-                "excludes": ["script_mode.tar.gz", "fast*.tar.gz", ".python_history"],
+                "excludes": ["script_mode.tar.gz", "fast*.tar.gz", ".python_history", ".code-server"],
             }
 
         if not ray.is_initialized():

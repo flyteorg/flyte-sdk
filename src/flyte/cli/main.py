@@ -1,4 +1,5 @@
 import rich_click as click
+from typing_extensions import get_args
 
 from flyte._logging import initialize_logger, logger
 
@@ -107,10 +108,13 @@ def _verbosity_to_loglevel(verbosity: int) -> int | None:
     help="Path to the configuration file to use. If not specified, the default configuration file is used.",
 )
 @click.option(
-    "--simple",
-    is_flag=True,
-    default=False,
-    help="Use a simple output format for commands that support it. This is useful for copying, pasting, and scripting.",
+    "--output-format",
+    "-of",
+    type=click.Choice(get_args(common.OutputFormat), case_sensitive=False),
+    default="table",
+    help="Output format for commands that support it. Defaults to 'table'.",
+    show_default=True,
+    required=False,
 )
 @click.rich_config(help_config=help_config)
 @click.pass_context
@@ -121,8 +125,8 @@ def main(
     verbose: int,
     org: str | None,
     config_file: str | None,
-    simple: bool = False,
     auth_type: str | None = None,
+    output_format: common.OutputFormat = "table",
 ):
     """
     The Flyte CLI is the command line interface for working with the Flyte SDK and backend.
@@ -176,8 +180,8 @@ def main(
         org=org,
         config=cfg,
         ctx=ctx,
-        simple=simple,
         auth_type=auth_type,
+        output_format=output_format,
     )
 
 

@@ -167,7 +167,7 @@ class RemoteController(Controller):
         # It is not allowed to change the code bundle (for regular code bundles) in the middle of a run.
         code_bundle = tctx.code_bundle
 
-        if code_bundle and code_bundle.pkl:
+        if tctx.interactive_mode or (code_bundle and code_bundle.pkl):
             logger.debug(f"Building new pkl bundle for task {_task.name}")
             code_bundle = await build_pkl_bundle(
                 _task,
@@ -252,6 +252,21 @@ class RemoteController(Controller):
             logger.info(f"Action {action.action_id.name} cancelled, cancelling on server")
             await self.cancel_action(action)
             raise
+
+        # If the action is aborted, we should abort the controller as well
+        if n.phase == run_definition_pb2.PHASE_ABORTED:
+            logger.warning(f"Action {n.action_id.name} was aborted, aborting current Action{current_action_id.name}")
+            raise flyte.errors.RunAbortedError(
+                f"Action {n.action_id.name} was aborted, aborting current Action {current_action_id.name}"
+            )
+
+        if n.phase == run_definition_pb2.PHASE_TIMED_OUT:
+            logger.warning(
+                f"Action {n.action_id.name} timed out, raising timeout exception Action {current_action_id.name}"
+            )
+            raise flyte.errors.TaskTimeoutError(
+                f"Action {n.action_id.name} timed out, raising exception in current Action {current_action_id.name}"
+            )
 
         if n.has_error() or n.phase == run_definition_pb2.PHASE_FAILED:
             exc = await handle_action_failure(action, _task.name)
@@ -421,54 +436,52 @@ class RemoteController(Controller):
 
         current_action_id = tctx.action
         sub_run_output_path = storage.join(tctx.run_base_dir, info.action.name)
+        outputs_file_path: str = ""
 
         if info.interface.has_outputs():
-            outputs_file_path: str = ""
-            if info.output:
-                outputs = await convert.convert_from_native_to_outputs(info.output, info.interface)
-                outputs_file_path = io.outputs_path(sub_run_output_path)
-                await io.upload_outputs(outputs, sub_run_output_path, max_bytes=MAX_TRACE_BYTES)
-            elif info.error:
+            if info.error:
                 err = convert.convert_from_native_to_error(info.error)
                 await io.upload_error(err.err, sub_run_output_path)
             else:
-                raise flyte.errors.RuntimeSystemError("BadTraceInfo", "Trace info does not have output or error")
+                outputs = await convert.convert_from_native_to_outputs(info.output, info.interface)
+                outputs_file_path = io.outputs_path(sub_run_output_path)
+                await io.upload_outputs(outputs, sub_run_output_path, max_bytes=MAX_TRACE_BYTES)
 
-            typed_interface = transform_native_to_typed_interface(info.interface)
+        typed_interface = transform_native_to_typed_interface(info.interface)
 
-            trace_action = Action.from_trace(
-                parent_action_name=current_action_id.name,
-                action_id=identifier_pb2.ActionIdentifier(
-                    name=info.action.name,
-                    run=identifier_pb2.RunIdentifier(
-                        name=current_action_id.run_name,
-                        project=current_action_id.project,
-                        domain=current_action_id.domain,
-                        org=current_action_id.org,
-                    ),
+        trace_action = Action.from_trace(
+            parent_action_name=current_action_id.name,
+            action_id=identifier_pb2.ActionIdentifier(
+                name=info.action.name,
+                run=identifier_pb2.RunIdentifier(
+                    name=current_action_id.run_name,
+                    project=current_action_id.project,
+                    domain=current_action_id.domain,
+                    org=current_action_id.org,
                 ),
-                inputs_uri=info.inputs_path,
-                outputs_uri=outputs_file_path,
-                friendly_name=info.name,
-                group_data=tctx.group_data,
-                run_output_base=tctx.run_base_dir,
-                start_time=info.start_time,
-                end_time=info.end_time,
-                typed_interface=typed_interface if typed_interface else None,
-            )
+            ),
+            inputs_uri=info.inputs_path,
+            outputs_uri=outputs_file_path,
+            friendly_name=info.name,
+            group_data=tctx.group_data,
+            run_output_base=tctx.run_base_dir,
+            start_time=info.start_time,
+            end_time=info.end_time,
+            typed_interface=typed_interface if typed_interface else None,
+        )
 
-            async with self._parent_action_semaphore[unique_action_name(current_action_id)]:
-                try:
-                    logger.info(
-                        f"Submitting Trace action Run:[{trace_action.run_name},"
-                        f" Parent:[{trace_action.parent_action_name}],"
-                        f" Trace fn:[{info.name}], action:[{info.action.name}]"
-                    )
-                    await self.submit_action(trace_action)
-                    logger.info(f"Trace Action for [{info.name}] action id: {info.action.name}, completed!")
-                except asyncio.CancelledError:
-                    # If the action is cancelled, we need to cancel the action on the server as well
-                    raise
+        async with self._parent_action_semaphore[unique_action_name(current_action_id)]:
+            try:
+                logger.info(
+                    f"Submitting Trace action Run:[{trace_action.run_name},"
+                    f" Parent:[{trace_action.parent_action_name}],"
+                    f" Trace fn:[{info.name}], action:[{info.action.name}]"
+                )
+                await self.submit_action(trace_action)
+                logger.info(f"Trace Action for [{info.name}] action id: {info.action.name}, completed!")
+            except asyncio.CancelledError:
+                # If the action is cancelled, we need to cancel the action on the server as well
+                raise
 
     async def _submit_task_ref(
         self, invoke_seq_num: int, _task: task_definition_pb2.TaskDetails, max_inline_io_bytes: int, *args, **kwargs

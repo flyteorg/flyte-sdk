@@ -9,7 +9,7 @@ dependencies = [
     "aiofiles>=24.1.0",
     # 8.2.0 has a bug https://github.com/pallets/click/issues/2897
     "click>=8.2.1",
-    "flyteidl>=1.15.4b0",
+    "flyteidl>=1.15.4b0,<2.0.0",
     "cloudpickle>=3.1.1",
     "fsspec>=2025.3.0",
     "grpcio>=1.71.0",
@@ -17,7 +17,7 @@ dependencies = [
     "protobuf>=6.30.1",
     "pydantic>=2.10.6",
     "pyyaml>=6.0.2",
-    "rich-click>=1.8.9",
+    "rich-click==1.8.9", # As we are installing flyte in --pre mode, we need to pin rich-click to a stable version
     "httpx>=0.28.1,<1.0.0",
     "keyring>=25.6.0",
     "msgpack>=1.1.0",
@@ -61,6 +61,7 @@ license-files = ["licenses/*.txt", "LICENSE"]
 package-dir = {"" = "src"}
 script-files = [
     "src/flyte/_bin/runtime.py",
+    "src/flyte/_bin/debug.py",
 ]
 
 [tool.setuptools.packages.find]
@@ -89,6 +90,7 @@ line-length = 120
 extend-exclude = [
     "src/flyte/_protos",
     "src/flyte/remote/client/_protocols.py",
+    "examples/reports",
 ]
 
 [tool.ruff.lint]
@@ -116,7 +118,7 @@ select = [
     "FURB",
     "RUF",
 ]
-ignore = ["PGH003", "PLC0415"]
+ignore = ["PGH003", "PLC0415", "ASYNC210"]
 
 [tool.ruff.lint.per-file-ignores]
 "examples/*" = ["E402"]

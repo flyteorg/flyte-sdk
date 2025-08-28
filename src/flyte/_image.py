@@ -5,10 +5,10 @@ import hashlib
 import sys
 import typing
 from abc import abstractmethod
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, fields
 from functools import cached_property
 from pathlib import Path
-from typing import TYPE_CHECKING, Callable, ClassVar, Dict, List, Literal, Optional, Tuple, TypeVar, Union
+from typing import TYPE_CHECKING, ClassVar, Dict, List, Literal, Optional, Tuple, TypeVar, Union
 
 import rich.repr
 from packaging.version import Version
@@ -49,8 +49,6 @@ class Layer:
      layered images programmatically.
     """
 
-    _compute_identifier: Callable[[Layer], str] = field(default=lambda x: x.__str__(), init=True)
-
     @abstractmethod
     def update_hash(self, hasher: hashlib._Hash):
         """
@@ -65,6 +63,27 @@ class Layer:
         Raise any validation errors for the layer
         :return:
         """
+
+    def identifier(self) -> str:
+        """
+        This method computes a unique identifier for the layer based on its properties.
+        It is used to identify the layer in the image cache.
+
+        It is also used to compute a unique identifier for the image itself, which is a combination of all the layers.
+        This identifier is used to look up previously built images in the image cache. So having a consistent
+        identifier is important for the image cache to work correctly.
+
+        :return: A unique identifier for the layer.
+        """
+        ignore_fields: list[str] = []
+        for f in fields(self):
+            if f.metadata.get("identifier", True) is False:
+                ignore_fields.append(f.name)
+        d = asdict(self)
+        for v in ignore_fields:
+            d.pop(v)
+
+        return str(d)
 
 
 @rich.repr.auto
@@ -133,7 +152,12 @@ class PipPackages(PipOption, Layer):
 @rich.repr.auto
 @dataclass(kw_only=True, frozen=True, repr=True)
 class PythonWheels(PipOption, Layer):
-    wheel_dir: Path
+    wheel_dir: Path = field(metadata={"identifier": False})
+    wheel_dir_name: str = field(init=False)
+    package_name: str
+
+    def __post_init__(self):
+        object.__setattr__(self, "wheel_dir_name", self.wheel_dir.name)
 
     def update_hash(self, hasher: hashlib._Hash):
         super().update_hash(hasher)
@@ -184,7 +208,11 @@ class UVProject(PipOption, Layer):
 @rich.repr.auto
 @dataclass(frozen=True, repr=True)
 class UVScript(PipOption, Layer):
-    script: Path
+    script: Path = field(metadata={"identifier": False})
+    script_name: str = field(init=False)
+
+    def __post_init__(self):
+        object.__setattr__(self, "script_name", self.script.name)
 
     def validate(self):
         if not self.script.exists():
@@ -196,10 +224,13 @@ class UVScript(PipOption, Layer):
         super().validate()
 
     def update_hash(self, hasher: hashlib._Hash):
-        from ._utils import filehash_update
+        from ._utils import parse_uv_script_file
 
+        header = parse_uv_script_file(self.script)
+        h_tuple = _ensure_tuple(header)
+        if h_tuple:
+            hasher.update(h_tuple.__str__().encode("utf-8"))
         super().update_hash(hasher)
-        filehash_update(self.script, hasher)
 
 
 @rich.repr.auto
@@ -221,9 +252,15 @@ class AptPackages(Layer):
 @dataclass(frozen=True, repr=True)
 class Commands(Layer):
     commands: Tuple[str, ...]
+    secret_mounts: Optional[Tuple[str | Secret, ...]] = None
 
     def update_hash(self, hasher: hashlib._Hash):
-        hasher.update("".join(self.commands).encode("utf-8"))
+        hash_input = "".join(self.commands)
+
+        if self.secret_mounts:
+            for secret_mount in self.secret_mounts:
+                hash_input += str(secret_mount)
+        hasher.update(hash_input.encode("utf-8"))
 
 
 @rich.repr.auto
@@ -247,9 +284,15 @@ class DockerIgnore(Layer):
 @rich.repr.auto
 @dataclass(frozen=True, repr=True)
 class CopyConfig(Layer):
-    path_type: CopyConfigType
-    src: Path
-    dst: str = "."
+    path_type: CopyConfigType = field(metadata={"identifier": True})
+    src: Path = field(metadata={"identifier": False})
+    dst: str
+    src_name: str = field(init=False)
+
+    def __post_init__(self):
+        if self.path_type not in (0, 1):
+            raise ValueError(f"Invalid path_type {self.path_type}, must be 0 (file) or 1 (directory)")
+        object.__setattr__(self, "src_name", self.src.name)
 
     def validate(self):
         if not self.src.exists():
@@ -393,7 +436,7 @@ class Image:
         # across different SDK versions.
         # Layers can specify a _compute_identifier optionally, but the default will just stringify
         image_dict = asdict(self, dict_factory=lambda x: {k: v for (k, v) in x if v is not None and k != "_layers"})
-        layers_str_repr = "".join([layer._compute_identifier(layer) for layer in self._layers])
+        layers_str_repr = "".join([layer.identifier() for layer in self._layers])
         image_dict["layers"] = layers_str_repr
         spec_bytes = image_dict.__str__().encode("utf-8")
         return base64.urlsafe_b64encode(hashlib.md5(spec_bytes).digest()).decode("ascii").rstrip("=")
@@ -414,11 +457,7 @@ class Image:
         # this default image definition may need to be updated once there is a released pypi version
         from flyte._version import __version__
 
-        dev_mode = (
-            (cls._is_editable_install() or (__version__ and "dev" in __version__))
-            and not flyte_version
-            and install_flyte
-        )
+        dev_mode = (__version__ and "dev" in __version__) and not flyte_version and install_flyte
         if install_flyte is False:
             preset_tag = f"py{python_version[0]}.{python_version[1]}"
         else:
@@ -430,6 +469,7 @@ class Image:
             base_image=f"python:{python_version[0]}.{python_version[1]}-slim-bookworm",
             registry=_BASE_REGISTRY,
             name=_DEFAULT_IMAGE_NAME,
+            python_version=python_version,
             platform=("linux/amd64", "linux/arm64") if platform is None else platform,
         )
         labels_and_user = _DockerLines(
@@ -461,19 +501,13 @@ class Image:
                     image = image.with_pip_packages(f"flyte=={flyte_version}", pre=True)
                 else:
                     image = image.with_pip_packages(f"flyte=={flyte_version}")
-        object.__setattr__(image, "_tag", preset_tag)
+        if not dev_mode:
+            object.__setattr__(image, "_tag", preset_tag)
         # Set this to auto for all auto images because the meaning of "auto" can change (based on logic inside
         # _get_default_image_for, acts differently in a running task container) so let's make sure it stays auto.
         object.__setattr__(image, "_identifier_override", "auto")
 
         return image
-
-    @staticmethod
-    def _is_editable_install():
-        """Internal hacky function to see if the current install is editable or not."""
-        curr = Path(__file__)
-        pyproject = curr.parent.parent.parent / "pyproject.toml"
-        return pyproject.exists()
 
     @classmethod
     def from_debian_base(
@@ -509,7 +543,7 @@ class Image:
             platform=platform,
         )
 
-        if registry and name:
+        if registry or name:
             return base_image.clone(registry=registry, name=name)
 
         # # Set this to auto for all auto images because the meaning of "auto" can change (based on logic inside
@@ -572,8 +606,12 @@ class Image:
         :param extra_index_urls: extra index urls to use for pip install, default is None
         :param pre: whether to allow pre-release versions, default is False
         :param extra_args: extra arguments to pass to pip install, default is None
+        :param secret_mounts: Secret mounts to use for the image, default is None.
 
         :return: Image
+
+        Args:
+            secret_mounts:
         """
         ll = UVScript(
             script=Path(script),
@@ -750,9 +788,24 @@ class Image:
 
         Example:
         ```python
-        @flyte.task(image=(flyte.Image
-                        .ubuntu_python()
-                        .with_pip_packages("requests", "numpy")))
+        @flyte.task(image=(flyte.Image.from_debian_base().with_pip_packages("requests", "numpy")))
+        def my_task(x: int) -> int:
+            import numpy as np
+            return np.sum([x, 1])
+        ```
+
+        To mount secrets during the build process to download private packages, you can use the `secret_mounts`.
+        In the below example, "GITHUB_PAT" will be mounted as env var "GITHUB_PAT",
+         and "apt-secret" will be mounted at /etc/apt/apt-secret.
+        Example:
+        ```python
+        private_package = "git+https://$GITHUB_PAT@github.com/flyteorg/flytex.git@2e20a2acebfc3877d84af643fdd768edea41d533"
+        @flyte.task(
+            image=(
+                flyte.Image.from_debian_base()
+                .with_pip_packages("private_package", secret_mounts=[Secret(key="GITHUB_PAT")])
+                .with_apt_packages("git", secret_mounts=[Secret(key="apt-secret", mount="/etc/apt/apt-secret")])
+        )
         def my_task(x: int) -> int:
             import numpy as np
             return np.sum([x, 1])
@@ -801,7 +854,7 @@ class Image:
         :param dst: destination folder in the image
         :return: Image
         """
-        new_image = self.clone(addl_layer=CopyConfig(path_type=1, src=src, dst=dst, _compute_identifier=lambda x: dst))
+        new_image = self.clone(addl_layer=CopyConfig(path_type=1, src=src, dst=dst))
         return new_image
 
     def with_source_file(self, src: Path, dst: str = ".") -> Image:
@@ -813,7 +866,7 @@ class Image:
         :param dst: destination folder in the image
         :return: Image
         """
-        new_image = self.clone(addl_layer=CopyConfig(path_type=0, src=src, dst=dst, _compute_identifier=lambda x: dst))
+        new_image = self.clone(addl_layer=CopyConfig(path_type=0, src=src, dst=dst))
         return new_image
 
     def with_dockerignore(self, path: Path) -> Image:
@@ -834,7 +887,12 @@ class Image:
         Use this method to create a new image with the specified uv.lock file layered on top of the current image
         Must have a corresponding pyproject.toml file in the same directory
         Cannot be used in conjunction with conda
-        In the Union builders, using this will change the virtual env to /root/.venv
+
+        By default, this method copies the entire project into the image,
+         including files such as pyproject.toml, uv.lock, and the src/ directory.
+
+        If you prefer not to install the current project, you can pass the extra argument --no-install-project.
+         In this case, the image builder will only copy pyproject.toml and uv.lock into the image.
 
         :param pyproject_file: path to the pyproject.toml file, needs to have a corresponding uv.lock file
         :param uvlock: path to the uv.lock file, if not specified, will use the default uv.lock file in the same
@@ -877,16 +935,21 @@ class Image:
         )
         return new_image
 
-    def with_commands(self, commands: List[str]) -> Image:
+    def with_commands(self, commands: List[str], secret_mounts: Optional[SecretRequest] = None) -> Image:
         """
         Use this method to create a new image with the specified commands layered on top of the current image
         Be sure not to use RUN in your command.
 
         :param commands: list of commands to run
+        :param secret_mounts: list of secret mounts to use for the build process.
         :return: Image
         """
         new_commands: Tuple = _ensure_tuple(commands)
-        new_image = self.clone(addl_layer=Commands(commands=new_commands))
+        new_image = self.clone(
+            addl_layer=Commands(
+                commands=new_commands, secret_mounts=_ensure_tuple(secret_mounts) if secret_mounts else None
+            )
+        )
         return new_image
 
     def with_local_v2(self) -> Image:
@@ -899,7 +962,7 @@ class Image:
         dist_folder = Path(__file__).parent.parent.parent / "dist"
         # Manually declare the PythonWheel so we can set the hashing
         # used to compute the identifier. Can remove if we ever decide to expose the lambda in with_ commands
-        with_dist = self.clone(addl_layer=PythonWheels(wheel_dir=dist_folder, _compute_identifier=lambda x: "/dist"))
+        with_dist = self.clone(addl_layer=PythonWheels(wheel_dir=dist_folder, package_name="flyte", pre=True))
 
         return with_dist
 

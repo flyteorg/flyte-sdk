@@ -74,9 +74,11 @@ def test_with_workdir():
 
 
 def test_default_base_image():
-    default_image = Image.from_debian_base()
+    default_image = Image.from_debian_base(flyte_version="2.0.0")
     assert default_image.uri.startswith("ghcr.io/flyteorg/flyte:py3.")
     assert default_image.identifier == "auto"
+    default_image = Image.from_debian_base(python_version="3.12")
+    assert not default_image.uri.startswith("ghcr.io/flyteorg/flyte:py3.")
 
 
 def test_image_from_uv_script():
@@ -133,7 +135,7 @@ def test_base_image_cloned():
 def test_base_image_clone_same():
     default_image = Image.from_debian_base(python_version=(3, 13))
     cloned_default_image = Image.from_debian_base(python_version=(3, 13)).clone(
-        registry="ghcr.io/flyteorg", name="flyte"
+        registry="ghcr.io/flyteorg", name="random"
     )
     # These should not be the same because once cloned, the image loses its special tag
     assert default_image.uri != cloned_default_image.uri
@@ -152,3 +154,13 @@ def test_dockerfile():
         platform=("linux/amd64", "linux/arm64"),
     )
     assert img_multi.platform == ("linux/amd64", "linux/arm64")
+
+
+def test_image_uri_consistency_for_uvscript():
+    img = Image.from_uv_script(
+        "./agent_simulation_loadtest.py", name="flyte", registry="ghcr.io/flyteorg", python_version=(3, 12)
+    )
+    assert img.base_image == "python:3.12-slim-bookworm", "Base image should be python:3.12-slim-bookworm"
+    # This value should work across python versions in CI because all values have been specified above and are hardcoded
+    # Please don't change this value unless you are sure it's the right thing to do.
+    assert img.identifier == "jbBYppyNmLmWb13gy6ts8g", img._layers

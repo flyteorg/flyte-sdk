@@ -5,7 +5,6 @@ import typing
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
 
-import grpc.aio
 import rich.repr
 
 import flyte.errors
@@ -86,6 +85,8 @@ async def _deploy_task(
     Deploy the given task.
     """
     ensure_client()
+    import grpc.aio
+
     from ._internal.runtime.convert import convert_upload_default_inputs
     from ._internal.runtime.task_serde import translate_task_to_wire
     from ._protos.workflow import task_definition_pb2, task_service_pb2
@@ -152,7 +153,7 @@ async def _build_images(deployment: DeploymentPlan) -> ImageCache:
 
         elif env.image == "auto" and "auto" not in image_identifier_map:
             auto_image = Image.from_debian_base()
-            image_identifier_map["auto"] = auto_image.uri
+            images.append(_build_image_bg(env_name, auto_image))
     final_images = await asyncio.gather(*images)
 
     for env_name, image_uri in final_images:
@@ -160,6 +161,8 @@ async def _build_images(deployment: DeploymentPlan) -> ImageCache:
         env = deployment.envs[env_name]
         if isinstance(env.image, Image):
             image_identifier_map[env.image.identifier] = image_uri
+        elif env.image == "auto":
+            image_identifier_map["auto"] = image_uri
 
     return ImageCache(image_lookup=image_identifier_map)
 

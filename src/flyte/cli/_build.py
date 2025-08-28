@@ -3,8 +3,7 @@ from pathlib import Path
 from types import ModuleType
 from typing import Any, Dict, List, cast
 
-import click
-from click import Context
+import rich_click as click
 
 import flyte
 
@@ -44,7 +43,7 @@ class BuildEnvCommand(click.Command):
         self.build_args = build_args
         super().__init__(*args, **kwargs)
 
-    def invoke(self, ctx: Context):
+    def invoke(self, ctx: click.Context):
         from rich.console import Console
 
         console = Console()
@@ -54,7 +53,7 @@ class BuildEnvCommand(click.Command):
         with console.status("Building...", spinner="dots"):
             image_cache = flyte.build_images(self.obj)
 
-        console.print(common.get_table("Images", image_cache.repr(), simple=obj.simple))
+        console.print(common.format("Images", image_cache.repr(), obj.output_format))
 
 
 class EnvPerFileGroup(common.ObjectsPerFileGroup):

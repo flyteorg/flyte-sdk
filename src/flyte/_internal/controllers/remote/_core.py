@@ -16,7 +16,6 @@ from flyte._protos.workflow import (
     queue_service_pb2,
     task_definition_pb2,
 )
-from flyte.errors import RuntimeSystemError
 
 from ._action import Action
 from ._informer import InformerCache
@@ -125,7 +124,7 @@ class Controller:
     async def watch_for_errors(self):
         """Watch for errors in the background thread"""
         await self._run_coroutine_in_controller_thread(self._bg_watch_for_errors())
-        raise RuntimeSystemError(
+        raise flyte.errors.RuntimeSystemError(
             code="InformerWatchFailure",
             message=f"Controller thread failed with exception: {self._get_exception()}",
         )
@@ -159,12 +158,12 @@ class Controller:
         self._thread.start()
 
         # Wait for the thread to be ready
-        logger.info("Waiting for controller thread to be ready...")
         if not self._thread_ready.wait(timeout=self._thread_wait_timeout):
+            logger.warning("Controller thread did not finish within timeout")
             raise TimeoutError("Controller thread failed to start in time")
 
         if self._get_exception():
-            raise RuntimeSystemError(
+            raise flyte.errors.RuntimeSystemError(
                 type(self._get_exception()).__name__,
                 f"Controller thread startup failed: {self._get_exception()}",
             )
@@ -212,6 +211,7 @@ class Controller:
             # Create a new event loop for this thread
             self._loop = asyncio.new_event_loop()
             asyncio.set_event_loop(self._loop)
+            self._loop.set_exception_handler(flyte.errors.silence_grpc_polling_error)
             logger.debug(f"Controller thread started with new event loop: {threading.current_thread().name}")
 
             # Create an event to signal the errors were observed in the thread's loop

@@ -4,6 +4,7 @@ from typing import Any, Dict, get_args
 import rich_click as click
 
 import flyte.cli._common as common
+from flyte.cli._option import MutuallyExclusiveOption
 from flyte.remote import SecretTypes
 
 
@@ -16,8 +17,21 @@ def create():
 
 @create.command(cls=common.CommandBase)
 @click.argument("name", type=str, required=True)
-@click.argument("value", type=str, required=False)
-@click.option("--from-file", type=click.Path(exists=True), help="Path to the file with the binary secret.")
+@click.option(
+    "--value",
+    help="Secret value",
+    prompt="Enter secret value",
+    hide_input=True,
+    cls=MutuallyExclusiveOption,
+    mutually_exclusive=["from_file"],
+)
+@click.option(
+    "--from-file",
+    type=click.Path(exists=True),
+    help="Path to the file with the binary secret.",
+    cls=MutuallyExclusiveOption,
+    mutually_exclusive=["value"],
+)
 @click.option(
     "--type", type=click.Choice(get_args(SecretTypes)), default="regular", help="Type of the secret.", show_default=True
 )
@@ -36,6 +50,14 @@ def secret(
 
     ```bash
     $ flyte create secret my_secret --value my_value
+    ```
+
+    If you don't provide a `--value` flag, you will be prompted to enter the
+    secret value in the terminal.
+
+    ```bash
+    $ flyte create secret my_secret
+    Enter secret value:
     ```
 
     If `--from-file` is specified, the value will be read from the file instead of being provided directly:

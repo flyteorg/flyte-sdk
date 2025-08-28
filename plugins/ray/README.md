@@ -9,5 +9,5 @@ a type of cluster spun up for a specific Ray job and torn down after completion.
 To install the plugin, run the following command:
 
 ```bash
-pip install flyteplguins-ray
+pip install --pre flyteplugins-ray
 ```
