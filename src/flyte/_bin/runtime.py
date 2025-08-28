@@ -101,6 +101,7 @@ def main(
     from flyte._logging import logger
     from flyte.models import ActionID, Checkpoints, CodeBundle, RawDataPath
 
+    logger.warning(f"Flyte runtime started for action {name} with run name {run_name}")
     logger.info("Registering faulthandler for SIGUSR1")
     faulthandler.register(signal.SIGUSR1)
 
@@ -168,6 +169,7 @@ def main(
         await controller.stop()
 
     asyncio.run(_run_and_stop())
+    logger.warning(f"Flyte runtime completed for action {name} with run name {run_name}")
 
 
 if __name__ == "__main__":
