@@ -1,5 +1,7 @@
+import gzip
 import os
 import shutil
+import tarfile
 import tempfile
 import typing
 from datetime import datetime, timezone
@@ -7,11 +9,13 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Optional, Tuple, cast
 from uuid import uuid4
 
+import aiofiles
 import click
 
 import flyte
 import flyte.errors
 from flyte import Image, remote
+from flyte._code_bundle._utils import tar_strip_file_attributes
 from flyte._image import (
     AptPackages,
     Architecture,
@@ -160,17 +164,32 @@ async def _validate_configuration(image: Image) -> Tuple[str, Optional[str]]:
 
     if any(context_path.iterdir()):
         # If there are files in the context directory, upload it
-        archive = Path(shutil.make_archive(str(tmp_path / "context"), "xztar", context_path))
-        st = archive.stat()
-        if st.st_size > 5 * 1024 * 1024:
+        tar_path = tmp_path / "context.tar"
+        with tarfile.open(tar_path, "w", dereference=False) as tar:
+            files: typing.List[str] = os.listdir(context_path)
+            for ws_file in files:
+                tar.add(
+                    os.path.join(context_path, ws_file),
+                    recursive=True,
+                    arcname=ws_file,
+                    filter=tar_strip_file_attributes,
+                )
+        context_dst = Path(f"{tar_path!s}.gz")
+        with gzip.GzipFile(filename=context_dst, mode="wb", mtime=0) as gzipped:
+            with aiofiles.open(tar_path, "rb") as tar_file:
+                content = await tar_file.read()
+                gzipped.write(content)
+
+        context_size = tar_path.stat().st_size
+        if context_size > 5 * 1024 * 1024:
             logger.warning(
                 click.style(
-                    f"Context size is {st.st_size / (1024 * 1024):.2f} MB, which is larger than 5 MB. "
+                    f"Context size is {context_size / (1024 * 1024):.2f} MB, which is larger than 5 MB. "
                     "Upload and build speed will be impacted.",
                     fg="yellow",
                 )
             )
-        _, context_url = await remote.upload_file.aio(archive)
+        _, context_url = await remote.upload_file.aio(context_dst)
     else:
         context_url = ""
 
