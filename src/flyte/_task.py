@@ -15,6 +15,7 @@ from typing import (
     Literal,
     Optional,
     ParamSpec,
+    Tuple,
     TypeAlias,
     TypeVar,
     Union,
@@ -37,6 +38,8 @@ from .models import MAX_INLINE_IO_BYTES, NativeInterface, SerializationContext
 
 if TYPE_CHECKING:
     from flyteidl.core.tasks_pb2 import DataLoadingConfig
+
+    from flyte.trigger import Trigger
 
     from ._task_environment import TaskEnvironment
 
@@ -104,6 +107,7 @@ class TaskTemplate(Generic[P, R]):
     parent_env: Optional[weakref.ReferenceType[TaskEnvironment]] = None
     ref: bool = field(default=False, init=False, repr=False, compare=False)
     max_inline_io_bytes: int = MAX_INLINE_IO_BYTES
+    triggers: Tuple[Trigger] = field(default_factory=tuple)
 
     # Only used in python 3.10 and 3.11, where we cannot use markcoroutinefunction
     _call_as_synchronous: bool = False
