@@ -177,6 +177,7 @@ class PythonWheelHandler:
                 "/dist",
                 "--no-deps",
                 "--no-index",
+                "--reinstall",
                 layer.package_name,
             ],
         ]
@@ -302,11 +303,9 @@ def _get_secret_commands(layers: typing.Tuple[Layer, ...]) -> typing.List[str]:
     commands = []
 
     def _get_secret_command(secret: str | Secret) -> typing.List[str]:
-        secret_id = hash(secret)
         if isinstance(secret, str):
-            if not os.path.exists(secret):
-                raise FileNotFoundError(f"Secret file '{secret}' not found")
-            return ["--secret", f"id={secret_id},src={secret}"]
+            secret = Secret(key=secret)
+        secret_id = hash(secret)
         secret_env_key = "_".join([k.upper() for k in filter(None, (secret.group, secret.key))])
         secret_env = os.getenv(secret_env_key)
         if secret_env:
@@ -329,18 +328,16 @@ def _get_secret_mounts_layer(secrets: typing.Tuple[str | Secret, ...] | None) ->
     if secrets is None:
         return ""
     secret_mounts_layer = ""
-    for secret in secrets:
+    for s in secrets:
+        secret = Secret(key=s) if isinstance(s, str) else s
         secret_id = hash(secret)
-        if isinstance(secret, str):
-            secret_mounts_layer += f"--mount=type=secret,id={secret_id},target=/run/secrets/{os.path.basename(secret)}"
-        elif isinstance(secret, Secret):
-            if secret.mount:
-                secret_mounts_layer += f"--mount=type=secret,id={secret_id},target={secret.mount}"
-            elif secret.as_env_var:
-                secret_mounts_layer += f"--mount=type=secret,id={secret_id},env={secret.as_env_var}"
-            else:
-                secret_file_name = "_".join(list(filter(None, (secret.group, secret.key))))
-                secret_mounts_layer += f"--mount=type=secret,id={secret_id},src=/run/secrets/{secret_file_name}"
+        if secret.mount:
+            secret_mounts_layer += f"--mount=type=secret,id={secret_id},target={secret.mount}"
+        elif secret.as_env_var:
+            secret_mounts_layer += f"--mount=type=secret,id={secret_id},env={secret.as_env_var}"
+        else:
+            secret_default_env_key = "_".join(list(filter(None, (secret.group, secret.key))))
+            secret_mounts_layer += f"--mount=type=secret,id={secret_id},env={secret_default_env_key}"
 
     return secret_mounts_layer
 

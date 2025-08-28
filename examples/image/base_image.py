@@ -8,7 +8,6 @@ image = (
     .with_apt_packages("vim", "wget")
     .with_pip_packages("mypy", pre=True)
     .with_env_vars({"hello": "world1"})
-    .with_source_folder(Path(__file__).parent.parent.parent)
     .with_dockerignore(Path(__file__).parent / ".dockerignore")
     .with_local_v2()
 )

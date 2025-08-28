@@ -87,7 +87,7 @@ class _Runner:
         overwrite_cache: bool = False,
         project: str | None = None,
         domain: str | None = None,
-        env: Dict[str, str] | None = None,
+        env_vars: Dict[str, str] | None = None,
         labels: Dict[str, str] | None = None,
         annotations: Dict[str, str] | None = None,
         interruptible: bool = False,
@@ -116,7 +116,7 @@ class _Runner:
         self._overwrite_cache = overwrite_cache
         self._project = project
         self._domain = domain
-        self._env = env
+        self._env_vars = env_vars
         self._labels = labels
         self._annotations = annotations
         self._interruptible = interruptible
@@ -161,7 +161,12 @@ class _Runner:
                 code_bundle = cached_value.code_bundle
                 image_cache = cached_value.image_cache
             else:
-                image_cache = await build_images.aio(cast(Environment, obj.parent_env()))
+                if not self._dry_run:
+                    image_cache = await build_images.aio(cast(Environment, obj.parent_env()))
+                else:
+                    from ._internal.imagebuild.image_builder import ImageCache
+
+                    image_cache = ImageCache(image_lookup={})
 
                 if self._interactive_mode:
                     code_bundle = await build_pkl_bundle(
@@ -198,7 +203,7 @@ class _Runner:
             task_spec = translate_task_to_wire(obj, s_ctx)
             inputs = await convert_from_native_to_inputs(obj.native_interface, *args, **kwargs)
 
-        env = self._env or {}
+        env = self._env_vars or {}
         if self._log_level:
             env["LOG_LEVEL"] = str(self._log_level)
         else:
@@ -542,7 +547,7 @@ def with_runcontext(
     overwrite_cache: bool = False,
     project: str | None = None,
     domain: str | None = None,
-    env: Dict[str, str] | None = None,
+    env_vars: Dict[str, str] | None = None,
     labels: Dict[str, str] | None = None,
     annotations: Dict[str, str] | None = None,
     interruptible: bool = False,
@@ -582,7 +587,7 @@ def with_runcontext(
     :param overwrite_cache: Optional If true, the cache will be overwritten for the run
     :param project: Optional The project to use for the run
     :param domain: Optional The domain to use for the run
-    :param env: Optional Environment variables to set for the run
+    :param env_vars: Optional Environment variables to set for the run
     :param labels: Optional Labels to set for the run
     :param annotations: Optional Annotations to set for the run
     :param interruptible: Optional If true, the run can be interrupted by the user.
@@ -606,7 +611,7 @@ def with_runcontext(
         raw_data_path=raw_data_path,
         run_base_dir=run_base_dir,
         overwrite_cache=overwrite_cache,
-        env=env,
+        env_vars=env_vars,
         labels=labels,
         annotations=annotations,
         interruptible=interruptible,

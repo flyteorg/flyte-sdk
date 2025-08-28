@@ -1,9 +1,10 @@
 import pathlib
 
 import pytest
+from kubernetes.client import V1Container, V1EnvVar, V1PodSpec
 
 import flyte
-from flyte import RetryStrategy
+from flyte import PodTemplate, RetryStrategy
 from flyte._internal.runtime.task_serde import get_proto_task, get_security_context
 from flyte._protos.workflow import task_definition_pb2
 from flyte.models import SerializationContext
@@ -33,12 +34,21 @@ def test_oomer_override():
     """
     Test the override functionality of the oomer task.
     """
+    pod_template = PodTemplate(
+        pod_spec=V1PodSpec(
+            containers=[V1Container(name="primary", env=[V1EnvVar(name="hello", value="world")])],
+        ),
+    )
     # Create a new task with overridden resources
-    new_task = oomer.override(resources=flyte.Resources(cpu=2, memory="500Mi"))
+    new_task = oomer.override(
+        resources=flyte.Resources(cpu=2, memory="500Mi"), pod_template=pod_template, short_name="new_oomer"
+    )
 
     # Check if the new task has the correct resources
     assert new_task.resources.cpu == 2
     assert new_task.resources.memory == "500Mi"
+    assert new_task.pod_template == pod_template
+    assert new_task.short_name == "new_oomer"
     assert isinstance(new_task.cache, flyte.Cache)
 
     # Check if the new task is not the same as the original task
@@ -63,7 +73,7 @@ def test_oomer_override_with_reuse_incorrect():
 
     with pytest.raises(ValueError):
         oomer_with_reuse.override(
-            env={},
+            env_vars={},
         )
 
     with pytest.raises(ValueError):
@@ -128,12 +138,14 @@ def test_override_ref_task():
 
     secrets = [flyte.Secret(key="openai", as_env_var="OPENAI_API_KEY")]
     td.override(
+        short_name="new_oomer",
         resources=flyte.Resources(cpu=3, memory="100Mi"),
         retries=RetryStrategy(5),
         timeout=100,
-        env={"FOO": "BAR"},
+        env_vars={"FOO": "BAR"},
         secrets=secrets,
     )
+    assert td.pb2.metadata.short_name == "new_oomer"
     assert td.resources[0][0].value == "3"
     assert td.resources[0][1].value == "100Mi"
     assert td.pb2.spec.task_template.metadata.retries.retries == 5

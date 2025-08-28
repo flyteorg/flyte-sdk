@@ -81,7 +81,7 @@ class DeviceCodeAuthenticator(Authenticator):
                     for_endpoint=self._endpoint,
                 )
             except (AuthenticationError, AuthenticationPending):
-                logger.warning("Failed to refresh token. Kicking off a full authorization flow.")
+                logger.warning("Logging in...")
 
         """Fall back to device flow"""
         resp = await token_client.get_device_code(

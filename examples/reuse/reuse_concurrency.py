@@ -1,6 +1,10 @@
 import asyncio
+import logging
 
 import flyte
+
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)
 
 env = flyte.TaskEnvironment(
     name="reuse_concurrency",
@@ -11,12 +15,13 @@ env = flyte.TaskEnvironment(
         concurrency=60,
         scaledown_ttl=60,
     ),
-    image=flyte.Image.from_debian_base().with_pip_packages("unionai-reuse==0.1.4b0", pre=True),
+    image=flyte.Image.from_debian_base().with_pip_packages("unionai-reuse==0.1.4", pre=True),
 )
 
 
 @env.task
 async def noop(x: int) -> int:
+    logger.debug(f"Task noop: {x}")
     return x
 
 
@@ -33,4 +38,3 @@ if __name__ == "__main__":
     print(run.name)
     print(run.url)
     run.wait()
-    print(run.outputs())
