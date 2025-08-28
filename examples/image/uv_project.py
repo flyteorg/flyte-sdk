@@ -5,11 +5,13 @@ from flyte import Image
 
 image = (
     Image.from_debian_base(install_flyte=False)
-    .with_uv_project(uvlock=Path("../../uv.lock"), pyproject_file=Path("../../pyproject.toml"))
-    .with_local_v2()
+    .with_apt_packages("git")
+    .with_env_vars({"hello": "world11122333333"})
+    .with_uv_project(uvlock=Path("../../uv.lock"), pyproject_file=Path("../../pyproject.toml"),)
+    # .with_local_v2()
 )
 
-env = flyte.TaskEnvironment(name="t1", image=image)
+env = flyte.TaskEnvironment(name="uv_project", image=image)
 
 
 @env.task

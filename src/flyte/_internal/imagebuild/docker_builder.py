@@ -44,19 +44,19 @@ _F_IMG_ID = "_F_IMG_ID"
 FLYTE_DOCKER_BUILDER_CACHE_FROM = "FLYTE_DOCKER_BUILDER_CACHE_FROM"
 FLYTE_DOCKER_BUILDER_CACHE_TO = "FLYTE_DOCKER_BUILDER_CACHE_TO"
 
-UV_LOCK_INSTALL_TEMPLATE = Template("""\
-WORKDIR /root
+UV_LOCK_WITHOUT_PROJECT_INSTALL_TEMPLATE = Template("""\
 RUN --mount=type=cache,sharing=locked,mode=0777,target=/root/.cache/uv,id=uv \
-    --mount=type=bind,target=uv.lock,src=uv.lock \
-    --mount=type=bind,target=pyproject.toml,src=pyproject.toml \
+    --mount=type=bind,target=uv.lock,src=$UV_LOCK_PATH \
+    --mount=type=bind,target=pyproject.toml,src=$PYPROJECT_PATH \
     $SECRET_MOUNT \
-    uv sync $PIP_INSTALL_ARGS
-WORKDIR /
+    uv sync --active $PIP_INSTALL_ARGS
+""")
 
-# Update PATH and UV_PYTHON to point to the venv created by uv sync
-ENV PATH="/root/.venv/bin:$$PATH" \
-    VIRTUALENV=/root/.venv \
-    UV_PYTHON=/root/.venv/bin/python
+UV_LOCK_INSTALL_TEMPLATE = Template("""\
+COPY $PYPROJECT_PATH $PYPROJECT_PATH
+RUN --mount=type=cache,sharing=locked,mode=0777,target=/root/.cache/uv,id=uv \
+    $SECRET_MOUNT \
+    uv sync --active $PIP_INSTALL_ARGS --project $PYPROJECT_PATH
 """)
 
 UV_PACKAGE_INSTALL_COMMAND_TEMPLATE = Template("""\
@@ -90,7 +90,7 @@ RUN --mount=type=cache,sharing=locked,mode=0777,target=/root/.cache/uv,id=uv \
 # new template
 DOCKER_FILE_UV_BASE_TEMPLATE = Template("""\
 # syntax=docker/dockerfile:1.10
-FROM ghcr.io/astral-sh/uv:0.6.12 AS uv
+FROM ghcr.io/astral-sh/uv:0.8.13 AS uv
 FROM $BASE_IMAGE
 
 USER root
@@ -231,20 +231,25 @@ class AptPackagesHandler:
 class UVProjectHandler:
     @staticmethod
     async def handle(layer: UVProject, context_path: Path, dockerfile: str) -> str:
-        # copy the two files
-        shutil.copy(layer.pyproject, context_path)
-        shutil.copy(layer.uvlock, context_path)
-
-        # --locked: Assert that the `uv.lock` will remain unchanged
-        # --no-dev: Omit the development dependency group
-        # --no-install-project: Do not install the current project
-        additional_pip_install_args = ["--locked", "--no-dev", "--no-install-project"]
         secret_mounts = _get_secret_mounts_layer(layer.secret_mounts)
-        delta = UV_LOCK_INSTALL_TEMPLATE.substitute(
-            PIP_INSTALL_ARGS=" ".join(additional_pip_install_args), SECRET_MOUNT=secret_mounts
-        )
-        dockerfile += delta
+        if layer.extra_index_urls and "--no-install-project" in layer.extra_index_urls:
+            # Only Copy pyproject.yaml and uv.lock.
+            pyproject_dst = copy_files_to_context(layer.pyproject, context_path)
+            uvlock_dst = copy_files_to_context(layer.uvlock, context_path)
+            delta = UV_LOCK_WITHOUT_PROJECT_INSTALL_TEMPLATE.substitute(
+                UV_LOCK_PATH=uvlock_dst.relative_to(context_path),
+                PYPROJECT_PATH=pyproject_dst.relative_to(context_path),
+                PIP_INSTALL_ARGS=" ".join(layer.get_pip_install_args()), SECRET_MOUNT=secret_mounts
+            )
+        else:
+            # Copy the entire project.
+            pyproject_dst = copy_files_to_context(layer.pyproject.parent, context_path)
+            delta = UV_LOCK_INSTALL_TEMPLATE.substitute(
+                PYPROJECT_PATH=pyproject_dst.relative_to(context_path),
+                PIP_INSTALL_ARGS=" ".join(layer.get_pip_install_args()), SECRET_MOUNT=secret_mounts
+            )
 
+        dockerfile += delta
         return dockerfile
 
 
