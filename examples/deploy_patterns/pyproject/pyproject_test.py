@@ -1,9 +1,6 @@
 import pathlib
 
 import flyte
-import requests
-import pandas
-
 
 env = flyte.TaskEnvironment(
     name="pyproject_test_0",
@@ -13,7 +10,7 @@ env = flyte.TaskEnvironment(
             pyproject_file=pathlib.Path("pyproject.toml"),
             pre=True,
         )
-    )
+    ),
 )
 
 
