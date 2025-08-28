@@ -439,15 +439,13 @@ class RemoteController(Controller):
         outputs_file_path: str = ""
 
         if info.interface.has_outputs():
-            if info.output:
-                outputs = await convert.convert_from_native_to_outputs(info.output, info.interface)
-                outputs_file_path = io.outputs_path(sub_run_output_path)
-                await io.upload_outputs(outputs, sub_run_output_path, max_bytes=MAX_TRACE_BYTES)
-            elif info.error:
+            if info.error:
                 err = convert.convert_from_native_to_error(info.error)
                 await io.upload_error(err.err, sub_run_output_path)
             else:
-                raise flyte.errors.RuntimeSystemError("BadTraceInfo", "Trace info does not have output or error")
+                outputs = await convert.convert_from_native_to_outputs(info.output, info.interface)
+                outputs_file_path = io.outputs_path(sub_run_output_path)
+                await io.upload_outputs(outputs, sub_run_output_path, max_bytes=MAX_TRACE_BYTES)
 
         typed_interface = transform_native_to_typed_interface(info.interface)
 
