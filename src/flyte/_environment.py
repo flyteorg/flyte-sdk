@@ -87,6 +87,7 @@ class Environment:
         env_vars: Optional[Dict[str, str]] = None,
         secrets: Optional[SecretRequest] = None,
         depends_on: Optional[List[Environment]] = None,
+        description: Optional[str] = None,
         **kwargs: Any,
     ) -> Environment:
         raise NotImplementedError

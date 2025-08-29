@@ -97,6 +97,7 @@ AutoVersioning = Literal["latest", "current"]
 class TaskDetails(ToJSONMixin):
     pb2: task_definition_pb2.TaskDetails
     max_inline_io_bytes: int = 10 * 1024 * 1024  # 10 MB
+    overriden_queue: Optional[str] = None
 
     @classmethod
     def get(
@@ -289,6 +290,8 @@ class TaskDetails(ToJSONMixin):
         timeout: Optional[flyte.TimeoutType] = None,
         env_vars: Optional[Dict[str, str]] = None,
         secrets: Optional[flyte.SecretRequest] = None,
+        queue: Optional[str] = None,
+        max_inline_io_bytes: Optional[int] = None,
         **kwargs: Any,
     ) -> TaskDetails:
         if len(kwargs) > 0:
@@ -311,7 +314,9 @@ class TaskDetails(ToJSONMixin):
             template.metadata.retries.CopyFrom(get_proto_retry_strategy(retries))
         if timeout:
             template.metadata.timeout.CopyFrom(get_proto_timeout(timeout))
-
+        self.overriden_queue = queue
+        if max_inline_io_bytes is not None:
+            self.max_inline_io_bytes = max_inline_io_bytes
         return self
 
     def __rich_repr__(self) -> rich.repr.Result:
