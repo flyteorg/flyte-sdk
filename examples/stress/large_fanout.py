@@ -14,7 +14,7 @@ async def my_task(x: int) -> int:
 
 
 @env.task
-async def main(r: int):
+async def main(r: int) -> list[int]:
     """
     A task that fans out to multiple instances of my_task.
     """

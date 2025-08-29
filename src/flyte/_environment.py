@@ -2,16 +2,14 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Union
+from typing import Any, Dict, List, Literal, Optional, Union
 
 import rich.repr
 
 from ._image import Image
+from ._pod import PodTemplate
 from ._resources import Resources
 from ._secret import Secret, SecretRequest
-
-if TYPE_CHECKING:
-    from kubernetes.client import V1PodTemplate
 
 # Global registry to track all Environment instances in load order
 _ENVIRONMENT_REGISTRY: List[Environment] = []
@@ -44,7 +42,7 @@ class Environment:
 
     name: str
     depends_on: List[Environment] = field(default_factory=list)
-    pod_template: Optional[Union[str, "V1PodTemplate"]] = None
+    pod_template: Optional[Union[str, "PodTemplate"]] = None
     description: Optional[str] = None
     secrets: Optional[SecretRequest] = None
     env_vars: Optional[Dict[str, str]] = None
