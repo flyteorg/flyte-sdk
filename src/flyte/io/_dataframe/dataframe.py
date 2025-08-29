@@ -144,7 +144,6 @@ class DataFrame(BaseModel, SerializableType):
         cls,
         val: typing.Optional[typing.Any] = None,
         uri: typing.Optional[str] = None,
-        metadata: typing.Optional[literals_pb2.StructuredDatasetMetadata] = None,
         format: typing.Optional[str] = None,
         **kwargs,
     ) -> DataFrame:
@@ -154,7 +153,6 @@ class DataFrame(BaseModel, SerializableType):
         """
         instance = cls(uri=uri, format=format or GENERIC_FORMAT, **kwargs)
         instance._raw_df = val
-        instance._metadata = metadata
         return instance
 
     @classmethod
