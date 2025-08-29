@@ -176,7 +176,7 @@ async def _validate_configuration(image: Image) -> Tuple[str, Optional[str]]:
                 )
         context_dst = Path(f"{tar_path!s}.gz")
         with gzip.GzipFile(filename=context_dst, mode="wb", mtime=0) as gzipped:
-            with aiofiles.open(tar_path, "rb") as tar_file:
+            async with aiofiles.open(tar_path, "rb") as tar_file:
                 content = await tar_file.read()
                 gzipped.write(content)
 
