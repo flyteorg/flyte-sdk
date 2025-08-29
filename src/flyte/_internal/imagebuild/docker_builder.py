@@ -12,8 +12,6 @@ import aiofiles
 import click
 
 from flyte import Secret
-from flyte._code_bundle._ignore import GitIgnore, Ignore, IgnoreGroup, StandardIgnore
-from flyte._code_bundle._utils import EXCLUDE_DIRS
 from flyte._image import (
     AptPackages,
     Commands,
@@ -257,72 +255,38 @@ class DockerIgnoreHandler:
 
 class CopyConfigHandler:
     @staticmethod
-    def copy_files_recursively(
-        src_path: Path, dst_path: Path, path_type: int, deref_symlinks: bool = False, ignore_group: typing.Optional[IgnoreGroup] = None
-    ) -> List[str]:
-        """Recursively copy files from source to destination while respecting ignore patterns.
+    def list_dockerignore(root_path: Path) -> List[str]:
+        """
+        Parse .dockerignore file and extract ignore patterns.
+
+        Args:
+            root_path: Path to the directory to search for .dockerignore
 
         Returns:
-            List of successfully copied file paths (relative to dst_path)
+            List of ignore patterns from .dockerignore file
         """
-        copied_files = []
-        
-        # Check source path type and handle accordingly
-        if path_type == 0 and src_path.is_file():
-            # Handle single file copy
-            if not ignore_group or not ignore_group.is_ignored(src_path.relative_to(src_path.parent)):
-                dst_path.mkdir(parents=True, exist_ok=True)
-                shutil.copy(src_path, dst_path)
-                copied_files.append(dst_path.name)
-            return copied_files
-        
-        elif path_type == 1 and src_path.is_dir():
-            # Handle directory copy
-            visited_inodes = set()
-            for root, dirnames, files in os.walk(src_path, topdown=True, followlinks=deref_symlinks):
-                # Filter out excluded directories
-                dirnames[:] = [d for d in dirnames if d not in EXCLUDE_DIRS]
-                if deref_symlinks:
-                    inode = os.stat(root).st_ino
-                    if inode in visited_inodes:
-                        continue
-                    visited_inodes.add(inode)
-                files.sort()
-                for fname in files:
-                    # Calculate the current file's position in the destination path
-                    curr_dst_path = dst_path / os.path.relpath(root, src_path)
-                    curr_dst_path.mkdir(parents=True, exist_ok=True)
+        dockerignore_path = root_path / ".dockerignore"
+        patterns = []
 
-                    # Build the full paths for source and destination files
-                    src_file_path = Path(root) / fname
-                    dst_file_path = curr_dst_path / fname
+        if dockerignore_path.exists() and dockerignore_path.is_file():
+            try:
+                with open(dockerignore_path, "r", encoding="utf-8") as f:
+                    for line in f:
+                        striped_line = line.strip()
+                        # Skip empty lines and comments
+                        if not striped_line or striped_line.startswith("#"):
+                            continue
+                        patterns.append(striped_line)
+            except Exception as e:
+                logger.error(f"Failed to read .dockerignore file at {dockerignore_path}: {e}")
 
-                    if not os.path.exists(src_file_path):
-                        logger.info(f"Skipping non-existent file {src_file_path}")
-                        continue
-                    # Check if file should be ignored
-                    if ignore_group and ignore_group.is_ignored(src_file_path.relative_to(src_path)):
-                        continue
-                    # Copy file to destination
-                    shutil.copy(src_file_path, dst_file_path)
-                    # Add successfully copied file to the list
-                    copied_files.append(str(dst_file_path.relative_to(dst_path)))
-                # Remove directories that we've already visited from dirnames
-                if deref_symlinks:
-                    dirnames[:] = [d for d in dirnames if os.stat(os.path.join(root, d)).st_ino not in visited_inodes]
-        else:
-            # Source path does not exist
-            logger.warning(f"Copy source path {src_path} does not exist")
-
-        return copied_files
+        return patterns
 
     @staticmethod
     async def handle(
         layer: CopyConfig,
         context_path: Path,
         dockerfile: str,
-        deref_symlinks: bool = False,
-        *ignores: typing.Type[Ignore],
     ) -> str:
         # Copy the source config file or directory to the context path
         if layer.src.is_absolute() or ".." in str(layer.src):
@@ -333,16 +297,21 @@ class CopyConfigHandler:
         dst_path.parent.mkdir(parents=True, exist_ok=True)
         abs_path = layer.src.absolute()
 
-        if not ignores:
-            ignores = (StandardIgnore, GitIgnore)
-        ignore_group = IgnoreGroup(abs_path, *ignores)
+        if layer.src.is_file():
+            # Copy the file
+            shutil.copy(abs_path, dst_path)
+        elif layer.src.is_dir():
+            # Copy the entire directory
+            docker_ignore_patterns = CopyConfigHandler.list_dockerignore(abs_path)
+            shutil.copytree(
+                abs_path, dst_path, dirs_exist_ok=True, ignore=shutil.ignore_patterns(*docker_ignore_patterns)
+            )
+        else:
+            logger.error(f"Source path not exists: {layer.src}")
+            return dockerfile
 
-        copied_files = CopyConfigHandler.copy_files_recursively(layer.src, dst_path, layer.path_type, deref_symlinks, ignore_group)
-        logger.info(f"Files copied from source folder to image: {copied_files}")
         # Add a copy command to the dockerfile
-        if copied_files:
-            dockerfile += f"\nCOPY {dst_path.relative_to(context_path)} {layer.dst}\n"
-
+        dockerfile += f"\nCOPY {dst_path.relative_to(context_path)} {layer.dst}\n"
         return dockerfile
 
 

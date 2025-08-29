@@ -1,11 +1,9 @@
-import asyncio
 import tempfile
 from pathlib import Path
 
 import pytest
 
 from flyte import Secret
-from flyte._code_bundle._ignore import GitIgnore, IgnoreGroup, StandardIgnore
 from flyte._image import Image, PipPackages, Requirements
 from flyte._internal.imagebuild.docker_builder import CopyConfigHandler, DockerImageBuilder, PipAndRequirementsHandler
 
@@ -102,284 +100,159 @@ async def test_requirements_handler(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_copy_config_handler_handle_adds_copy_command():
-    """Test that CopyConfigHandler.handle method correctly adds COPY command to dockerfile"""
-    from flyte._image import CopyConfig
-
-    # Create temporary directory as context path
+async def test_copy_config_handler():
+    """Test handle method happy path - file exists and gets copied successfully"""
+    # Create a temporary directory for context
     with tempfile.TemporaryDirectory() as tmp_context:
         context_path = Path(tmp_context)
 
-        # Create temporary source directory
-        with tempfile.TemporaryDirectory() as src_tmpdir:
-            src_path = Path(src_tmpdir)
-            # Create test file
-            (src_path / "test_file.txt").write_text("test content")
+        # Create a temporary file that will be copied
+        with tempfile.TemporaryDirectory() as tmp_src_dir:
+            src_dir = Path(tmp_src_dir)
+            test_file = src_dir / "main.py"
+            test_file.write_text("print('hello')")
 
-            # Create CopyConfig
-            layer = CopyConfig(path_type=1, src=src_path, dst="/app")
-            dockerfile = "FROM python:3.9"
+            # Create CopyConfig for the file
+            from flyte._internal.imagebuild.docker_builder import CopyConfig
 
-            # Call handle method
-            result = await CopyConfigHandler.handle(layer, context_path, dockerfile)
+            copy_config = CopyConfig(
+                src=test_file,
+                dst="/app/main.py",
+                path_type=0,  # file
+            )
 
-            # Verify results
+            # Test the handle method
+            result = await CopyConfigHandler.handle(
+                layer=copy_config, context_path=context_path, dockerfile="FROM python:3.9\n"
+            )
+
+            # Should contain COPY command when file is copied
             assert "COPY" in result
-            assert src_path.name in result
-            assert "/app" in result
+            assert "main.py" in result
+            assert "/app/main.py" in result
+            # Should return dockerfile with COPY command added
+            assert result != "FROM python:3.9\n"
+
+            # Verify that the file was actually copied to the correct destination path
+            src_absolute = test_file.absolute()
+            dst_path_str = str(src_absolute).replace("/", "./_flyte_abs_context/", 1)
+            expected_dst_path = context_path / dst_path_str
+
+            # Verify that the file was actually copied to the expected destination
+            assert expected_dst_path.exists(), f"File should be copied to {expected_dst_path}"
+            assert expected_dst_path.read_text() == "print('hello')", "File content should match"
 
 
 @pytest.mark.asyncio
-async def test_copy_config_handler_handle_no_copy_when_empty():
-    """Test that no COPY command is added when no files are copied"""
-    from flyte._image import CopyConfig
-
+async def test_copy_config_handler_skips_dockerignore():
+    """Test that handle method skips copying file when it matches various dockerignore patterns"""
+    # Create a temporary directory for context
     with tempfile.TemporaryDirectory() as tmp_context:
         context_path = Path(tmp_context)
 
+        # Create a single directory structure with both file and folder patterns
         with tempfile.TemporaryDirectory() as src_tmpdir:
-            src_path = Path(src_tmpdir)
-            # Create empty directory, no files
+            from flyte._internal.imagebuild.docker_builder import CopyConfig
 
-            layer = CopyConfig(path_type=1, src=src_path, dst="/app")
-            dockerfile = "FROM python:3.9"
+            src_dir = Path(src_tmpdir)
 
-            result = await CopyConfigHandler.handle(layer, context_path, dockerfile)
+            # Create nested directory structure: src_dir/src/utils/
+            cache_dir = src_dir / ".cache"
+            cache_dir.mkdir(parents=True, exist_ok=True)
+            cache_file = cache_dir / "temp.txt"
+            cache_file.write_text("temp")
 
-            # Verify no COPY command is added
-            assert "COPY" not in result
-            # Verify original dockerfile content remains unchanged
-            assert result == "FROM python:3.9"
-            
+            # Create files in different locations
+            root_file = src_dir / "main.py"
+            root_file.write_text("print('hello from root')")
+            exclude_file = src_dir / "memo.txt"
+            exclude_file.write_text("memo")
 
-@pytest.mark.asyncio
-async def test_copy_files_recursively_single_file():
-    """Test copy_files_recursively method with a single file source."""
-    with tempfile.TemporaryDirectory() as tmp_dst:
-        dst_path = Path(tmp_dst)
-        
-        # Create a temporary file as source
-        src_file_path = Path(tempfile.mktemp(suffix='.txt'))
-        src_file_path.write_text("test content")
-        
-        # Test copying single file with path_type=0
-        empty_ignore = IgnoreGroup(src_file_path.parent)
-        
-        copied_files = CopyConfigHandler.copy_files_recursively(
-            src_file_path, dst_path, 0, deref_symlinks=False, ignore_group=empty_ignore
-        )
-        
-        # Verify file was copied
-        assert len(copied_files) == 1
-        assert copied_files[0] == dst_path.name  # Should be the destination directory name
-        
-        # Verify file actually exists in destination
-        expected_dst_file = dst_path / src_file_path.name
-        assert expected_dst_file.exists()
+            # Create .dockerignore file with both file and folder patterns
+            dockerignore_file = src_dir / ".dockerignore"
+            dockerignore_file.write_text("*.txt\n.cache\n")
 
-
-@pytest.mark.asyncio
-async def test_copy_files_recursively_single_file_with_ignore():
-    """Test copy_files_recursively method with a single file source that should be ignored."""
-    with tempfile.TemporaryDirectory() as tmp_dst:
-        dst_path = Path(tmp_dst)
-        
-        # Create a temporary file as source
-        src_file_path = Path(tempfile.mktemp(suffix='.pyc'))
-        src_file_path.write_text("test content")
-        
-        # Test copying single file that should be ignored
-        ignore_group = IgnoreGroup(src_file_path.parent, StandardIgnore)
-        
-        copied_files = CopyConfigHandler.copy_files_recursively(
-            src_file_path, dst_path, 0, deref_symlinks=False, ignore_group=ignore_group
-        )
-        
-        # Verify file was not copied due to ignore pattern
-        assert len(copied_files) == 0
-        
-        # Verify file does not exist in destination
-        expected_dst_file = dst_path / src_file_path.name
-        assert not expected_dst_file.exists()
-
-
-@pytest.mark.asyncio
-async def test_copy_files_recursively_without_ignore():
-    """Test copy_files_recursively method without ignore group."""
-    with tempfile.TemporaryDirectory() as tmp_src, tempfile.TemporaryDirectory() as tmp_dst:
-        src_path = Path(tmp_src)
-        dst_path = Path(tmp_dst)
-
-        # Create test directory structure
-        (src_path / "subdir").mkdir()
-        (src_path / "subdir" / "nested").mkdir()
-
-        # Create test files
-        (src_path / "file1.txt").write_text("content1")
-        (src_path / "subdir" / "file2.py").write_text("content2")
-        (src_path / "subdir" / "nested" / "file3.json").write_text("content3")
-
-        # Test without ignore group - create an empty ignore group that doesn't ignore anything
-        from flyte._code_bundle._ignore import IgnoreGroup
-
-        empty_ignore = IgnoreGroup(src_path)
-        copied_files = CopyConfigHandler.copy_files_recursively(src_path, dst_path, 1, deref_symlinks=False, ignore_group=empty_ignore)
-
-        # Verify all files were copied
-        assert len(copied_files) == 3
-        assert "file1.txt" in copied_files
-        assert "subdir/file2.py" in copied_files
-        assert "subdir/nested/file3.json" in copied_files
-
-        # Verify files actually exist in destination
-        assert (dst_path / "file1.txt").exists()
-        assert (dst_path / "subdir" / "file2.py").exists()
-        assert (dst_path / "subdir" / "nested" / "file3.json").exists()
-
-
-@pytest.mark.asyncio
-async def test_copy_files_recursively_with_ignore():
-    """Test copy_files_recursively method with ignore group."""
-    with tempfile.TemporaryDirectory() as tmp_src, tempfile.TemporaryDirectory() as tmp_dst:
-        src_path = Path(tmp_src)
-        dst_path = Path(tmp_dst)
-
-        # Create test directory structure
-        (src_path / "subdir").mkdir()
-        (src_path / ".cache").mkdir()
-
-        # Create test files
-        (src_path / "file1.txt").write_text("content1")
-        (src_path / "file2.pyc").write_text("content2")  # This should be ignored
-        (src_path / "subdir" / "file3.py").write_text("content3")
-        (src_path / ".cache" / "temp.dat").write_text("content4")
-
-        ignores = (StandardIgnore, GitIgnore)
-        ignore_group = IgnoreGroup(src_path, *ignores)
-
-        # Test with ignore group
-        copied_files = CopyConfigHandler.copy_files_recursively(src_path, dst_path, 1, deref_symlinks=False, ignore_group=ignore_group)
-
-        # Verify only non-ignored files were copied
-        assert len(copied_files) == 2, f"Expected 2 files, but got {len(copied_files)}: {copied_files}"
-        assert "file1.txt" in copied_files
-        assert "subdir/file3.py" in copied_files
-
-        # Verify ignored files were not copied
-        assert "file2.pyc" not in copied_files
-        assert ".cache/temp.dat" not in copied_files
-
-        # Verify files actually exist/not exist in destination
-        assert (dst_path / "file1.txt").exists()
-        assert (dst_path / "subdir" / "file3.py").exists()
-        assert not (dst_path / "file2.pyc").exists()
-        assert not (dst_path / ".cache" / "temp.dat").exists()
-
-
-@pytest.mark.asyncio
-async def test_copy_files_recursively_with_gitignore():
-    """Test copy_files_recursively method with gitignore patterns."""
-    with tempfile.TemporaryDirectory() as tmp_src, tempfile.TemporaryDirectory() as tmp_dst:
-        src_path = Path(tmp_src)
-        dst_path = Path(tmp_dst)
-
-        # Create test directory structure
-        (src_path / "src").mkdir()
-        (src_path / "tests").mkdir()
-
-        # Create test files
-        (src_path / "src" / "main.py").write_text("content1")
-        (src_path / "tests" / "test_main.py").write_text("content2")
-        (src_path / "README.md").write_text("content3")
-
-        # Create .gitignore file
-        gitignore_content = """
-tests/
-*.pyc
-__pycache__/
-        """.strip()
-        (src_path / ".gitignore").write_text(gitignore_content)
-
-        # GitIgnore requires a real git repository to work properly
-        # So we need to initialize git and commit files
-        import subprocess
-
-        async def run_git_command(cmd, cwd):
-            """Execute git command asynchronously"""
-            process = await asyncio.create_subprocess_exec(
-                *cmd, cwd=cwd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
-            )
-            await process.wait()
-            if process.returncode != 0:
-                raise subprocess.CalledProcessError(process.returncode, cmd)
-
-        try:
-            # Initialize git repository
-            await run_git_command(["git", "init"], src_path)
-
-            # Add all files
-            await run_git_command(["git", "add", "."], src_path)
-
-            # Configure git user
-            await run_git_command(["git", "config", "user.name", "test"], src_path)
-            await run_git_command(["git", "config", "user.email", "test@example.com"], src_path)
-
-            # Commit files
-            await run_git_command(["git", "commit", "-m", "initial"], src_path)
-
-            # Create ignore group with GitIgnore
-            ignore_group = GitIgnore(src_path)
-
-            # Test with gitignore
-            copied_files = CopyConfigHandler.copy_files_recursively(
-                src_path, dst_path, 1, deref_symlinks=False, ignore_group=ignore_group
+            # Test copying the entire directory (path_type=1)
+            copy_config = CopyConfig(
+                src=src_dir,
+                dst=".",
+                path_type=1,  # directory
             )
 
-            # Verify only non-ignored files were copied
-            # Note: .gitignore file itself is also copied, so we expect 3 files total
-            assert len(copied_files) == 3, f"Expected 3 files, but got {len(copied_files)}: {copied_files}"
-            assert "src/main.py" in copied_files
-            assert "README.md" in copied_files
-            assert ".gitignore" in copied_files
+            result = await CopyConfigHandler.handle(
+                layer=copy_config, context_path=context_path, dockerfile="FROM python:3.9\n"
+            )
 
-            # Verify ignored files were not copied
-            assert "tests/test_main.py" not in copied_files
+            # Should contain COPY command for the directory
+            assert "COPY" in result
+            # main.py should be excluded by *.py pattern
+            # Calculate the expected destination path using the same logic as handle method
+            src_absolute = src_dir.absolute()
+            dst_path_str = str(src_absolute).replace("/", "./_flyte_abs_context/", 1)
+            expected_dst_path = context_path / dst_path_str
 
-            # Verify files actually exist/not exist in destination
-            assert (dst_path / "src" / "main.py").exists()
-            assert (dst_path / "README.md").exists()
-            assert not (dst_path / "tests" / "test_main.py").exists()
-
-        except (subprocess.CalledProcessError, FileNotFoundError):
-            # If git is not available or fails, skip this test
-            pytest.skip("Git is not available or failed, skipping gitignore test")
+            # Verify that the directory was copied and ignored files are excluded
+            assert expected_dst_path.exists(), f"Directory should be copied to {expected_dst_path}"
+            assert expected_dst_path.is_dir(), "Should be a directory"
+            assert (expected_dst_path / "main.py").exists(), "main.py should be included"
+            assert not (expected_dst_path / "memo.txt").exists(), "memo.txt should be excluded by *.txt pattern"
+            assert not (expected_dst_path / ".cache").exists(), ".cache directory should be excluded by .cache/ pattern"
 
 
 @pytest.mark.asyncio
-async def test_copy_files_recursively_file_not_found():
-    """Test copy_files_recursively method when source file/directory does not exist."""
-    with tempfile.TemporaryDirectory() as tmp_dst:
-        dst_path = Path(tmp_dst)
-        
-        # Create a non-existent source path
-        non_existent_path = Path("/non/existent/path")
-        
-        # Test with non-existent file path_type=0
-        from flyte._code_bundle._ignore import IgnoreGroup
-        empty_ignore = IgnoreGroup(Path("/"))
-        
-        copied_files = CopyConfigHandler.copy_files_recursively(
-            non_existent_path, dst_path, 0, deref_symlinks=False, ignore_group=empty_ignore
+async def test_copy_config_handler_file_not_exists():
+    """Test that handle method returns original dockerfile without COPY when source file does not exist"""
+    # Create a temporary directory for context
+    with tempfile.TemporaryDirectory() as tmp_context:
+        context_path = Path(tmp_context)
+
+        # Create a path to a non-existent file
+        non_existent_file = Path("/tmp/non_existent_file.py")
+
+        # Create CopyConfig for the non-existent file
+        from flyte._internal.imagebuild.docker_builder import CopyConfig
+
+        copy_config = CopyConfig(
+            src=non_existent_file,
+            dst="/app/non_existent_file.py",
+            path_type=0,  # file
         )
-        
-        # Verify empty list is returned when source does not exist
-        assert len(copied_files) == 0
-        assert copied_files == []
-        
-        # Test with non-existent directory path_type=1
-        copied_files = CopyConfigHandler.copy_files_recursively(
-            non_existent_path, dst_path, 1, deref_symlinks=False, ignore_group=empty_ignore
+
+        # Test that the handle method returns original dockerfile without COPY
+        result = await CopyConfigHandler.handle(
+            layer=copy_config, context_path=context_path, dockerfile="FROM python:3.9\n"
         )
-        
-        # Verify empty list is returned when source does not exist
-        assert len(copied_files) == 0
+
+        # Should not contain COPY command when file does not exist
+        assert "COPY" not in result
+        # Should return original dockerfile unchanged
+        assert result == "FROM python:3.9\n"
+
+
+def test_list_dockerignore_found():
+    """Test list_dockerignore method when .dockerignore file exists"""
+    with tempfile.TemporaryDirectory() as tmp_context:
+        src_dir = Path(tmp_context)
+
+        # Create .dockerignore file with various patterns
+        dockerignore_file = src_dir / ".dockerignore"
+        dockerignore_file.write_text("*.py\nsrc/\n.cache\n# This is a comment\n\n*.txt\n \n  \n\t\n")
+
+        # Test the method
+        patterns = CopyConfigHandler.list_dockerignore(src_dir)
+
+        # Should return expected patterns, excluding comments and empty lines
+        expected_patterns = ["*.py", "src/", ".cache", "*.txt"]
+        assert patterns == expected_patterns
+
+
+def test_list_dockerignore_not_found():
+    """Test list_dockerignore method when .dockerignore file does not exist"""
+    with tempfile.TemporaryDirectory() as tmp_context:
+        src_dir = Path(tmp_context)
+
+        # Test the method
+        patterns = CopyConfigHandler.list_dockerignore(src_dir)
+
+        # Should return empty list when .dockerignore doesn't exist
+        assert patterns == []
