@@ -6,7 +6,7 @@ import tempfile
 import typing
 from pathlib import Path
 from string import Template
-from typing import ClassVar, Optional, Protocol, cast
+from typing import ClassVar, List, Optional, Protocol, cast
 
 import aiofiles
 import click
@@ -263,7 +263,39 @@ class DockerIgnoreHandler:
 
 class CopyConfigHandler:
     @staticmethod
-    async def handle(layer: CopyConfig, context_path: Path, dockerfile: str) -> str:
+    def list_dockerignore(root_path: Path) -> List[str]:
+        """
+        Parse .dockerignore file and extract ignore patterns.
+
+        Args:
+            root_path: Path to the directory to search for .dockerignore
+
+        Returns:
+            List of ignore patterns from .dockerignore file
+        """
+        dockerignore_path = root_path / ".dockerignore"
+        patterns = []
+
+        if dockerignore_path.exists() and dockerignore_path.is_file():
+            try:
+                with open(dockerignore_path, "r", encoding="utf-8") as f:
+                    for line in f:
+                        striped_line = line.strip()
+                        # Skip empty lines and comments
+                        if not striped_line or striped_line.startswith("#"):
+                            continue
+                        patterns.append(striped_line)
+            except Exception as e:
+                logger.error(f"Failed to read .dockerignore file at {dockerignore_path}: {e}")
+
+        return patterns
+
+    @staticmethod
+    async def handle(
+        layer: CopyConfig,
+        context_path: Path,
+        dockerfile: str,
+    ) -> str:
         # Copy the source config file or directory to the context path
         if layer.src.is_absolute() or ".." in str(layer.src):
             dst_path = context_path / str(layer.src.absolute()).replace("/", "./_flyte_abs_context/", 1)
@@ -272,18 +304,22 @@ class CopyConfigHandler:
 
         dst_path.parent.mkdir(parents=True, exist_ok=True)
         abs_path = layer.src.absolute()
+
         if layer.src.is_file():
             # Copy the file
             shutil.copy(abs_path, dst_path)
         elif layer.src.is_dir():
             # Copy the entire directory
-            shutil.copytree(abs_path, dst_path, dirs_exist_ok=True)
+            docker_ignore_patterns = CopyConfigHandler.list_dockerignore(abs_path)
+            shutil.copytree(
+                abs_path, dst_path, dirs_exist_ok=True, ignore=shutil.ignore_patterns(*docker_ignore_patterns)
+            )
         else:
-            raise ValueError(f"Source path is neither file nor directory: {layer.src}")
+            logger.error(f"Source path not exists: {layer.src}")
+            return dockerfile
 
         # Add a copy command to the dockerfile
         dockerfile += f"\nCOPY {dst_path.relative_to(context_path)} {layer.dst}\n"
-
         return dockerfile
 
 
