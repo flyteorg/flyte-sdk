@@ -42,7 +42,7 @@ class Environment:
 
     name: str
     depends_on: List[Environment] = field(default_factory=list)
-    pod_template: Optional[Union[str, "PodTemplate"]] = None
+    pod_template: Optional[Union[str, PodTemplate]] = None
     description: Optional[str] = None
     secrets: Optional[SecretRequest] = None
     env_vars: Optional[Dict[str, str]] = None
