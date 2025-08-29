@@ -23,7 +23,8 @@ def copy_files_to_context(src: Path, context_path: Path) -> Path:
         dst_path = context_path / src
     dst_path.parent.mkdir(parents=True, exist_ok=True)
     if src.is_dir():
-        shutil.copytree(src, dst_path, dirs_exist_ok=True)
+        # TODO: Add support dockerignore
+        shutil.copytree(src, dst_path, dirs_exist_ok=True, ignore=shutil.ignore_patterns(".idea", ".venv"))
     else:
         shutil.copy(src, dst_path)
     return dst_path
