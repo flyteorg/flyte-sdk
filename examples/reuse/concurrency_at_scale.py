@@ -8,13 +8,12 @@ import flyte
 import flyte.errors
 from flyte._image import PythonWheels
 
-PATH_TO_FASTTASK_WORKER = pathlib.Path("/Users/ytong/go/src/github.com/unionai/flyte/fasttask/worker-v2")
 
 actor_dist_folder = Path("/Users/ytong/go/src/github.com/unionai/flyte/fasttask/worker-v2/dist")
 wheel_layer = PythonWheels(wheel_dir=actor_dist_folder, package_name="unionai-reuse")
 base = flyte.Image.from_debian_base()
 actor_image = base.clone(addl_layer=wheel_layer)
-
+# actor_image = flyte.Image.from_debian_base().with_pip_packages("unionai-reuse==0.1.4", pre=True)
 
 env = flyte.TaskEnvironment(
     name="oomer_parent_actor",
@@ -24,7 +23,7 @@ env = flyte.TaskEnvironment(
     reusable=flyte.ReusePolicy(
         replicas=1,
         idle_ttl=60,
-        concurrency=200,
+        concurrency=100,
     ),
 )
 
@@ -37,12 +36,14 @@ async def concurrent_leaf(x: int):
 
 @env.task
 async def always_succeeds() -> int:
+    # await asyncio.sleep(60)
     return 42
 
 
 @env.task
 async def concurrency_parent() -> int:
     print("Stating concurrency_parent main parent task", flush=True)
+    # await asyncio.sleep(10)
     try:
         tasks = []
         for i in range(50):

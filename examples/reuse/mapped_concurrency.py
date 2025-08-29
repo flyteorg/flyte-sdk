@@ -8,7 +8,7 @@ import flyte.errors
 
 # Run this not with an editable install
 # base = flyte.Image.from_debian_base()
-actor_image = flyte.Image.from_debian_base().with_pip_packages("unionai-reuse==0.1.0b1", pre=True)
+actor_image = flyte.Image.from_debian_base().with_pip_packages("unionai-reuse==0.1.5b0", pre=True)
 
 
 actor_env = flyte.TaskEnvironment(
