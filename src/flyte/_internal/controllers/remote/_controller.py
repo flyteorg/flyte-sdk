@@ -413,8 +413,7 @@ class RemoteController(Controller):
             else:
                 logger.warning(f"Action {prev_action.action_id.name} failed, but no error was found, re-running trace!")
         elif prev_action.realized_outputs_uri is not None:
-            outputs_file_path = io.outputs_path(prev_action.realized_outputs_uri)
-            o = await io.load_outputs(outputs_file_path, max_bytes=MAX_TRACE_BYTES)
+            o = await io.load_outputs(prev_action.realized_outputs_uri, max_bytes=MAX_TRACE_BYTES)
             outputs = await convert.convert_outputs_to_native(_interface, o)
             return (
                 TraceInfo(func_name, sub_action_id, _interface, inputs_uri, output=outputs),
