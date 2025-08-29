@@ -15,7 +15,7 @@ env = flyte.TaskEnvironment(
         concurrency=100,
         scaledown_ttl=60,
     ),
-    image=flyte.Image.from_debian_base().with_pip_packages("unionai-reuse==0.1.4", pre=True),
+    image=flyte.Image.from_debian_base().with_pip_packages("unionai-reuse==0.1.5b0", pre=True),
 )
 
 

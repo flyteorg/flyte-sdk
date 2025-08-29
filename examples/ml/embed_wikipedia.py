@@ -30,6 +30,7 @@ import asyncio
 import logging
 import os
 import tempfile
+from collections import defaultdict
 from functools import lru_cache
 from typing import Any, AsyncGenerator, Dict
 
@@ -43,21 +44,23 @@ import flyte.io
 # Configure logging
 logger = logging.getLogger(__name__)
 
-image = flyte.Image.from_uv_script(__file__, name="embed_wikipedia_image").with_pip_packages("unionai-reuse")
+image = flyte.Image.from_uv_script(__file__, name="embed_wikipedia_image").with_pip_packages(
+    "unionai-reuse>=0.1.5b0",
+    pre=True,
+)
 
 driver = flyte.TaskEnvironment(
     name="embed_wikipedia_driver",
     image=image,
     resources=flyte.Resources(cpu=1, memory="4Gi", disk="16Gi"),
     secrets="HF_HUB_TOKEN",
-    # reusable=flyte.ReusePolicy(replicas=4, concurrency=2, idle_ttl=60),
 )
 
 N_GPUS = 1
 worker = flyte.TaskEnvironment(
     name="embed_wikipedia_worker",
     image=image,
-    resources=flyte.Resources(cpu=4, memory="32Gi", disk="16Gi", gpu=1),
+    resources=flyte.Resources(cpu=2, memory="8Gi", gpu=1),
     env_vars={"HF_HUB_ENABLE_HF_TRANSFER": "1"},
     reusable=flyte.ReusePolicy(replicas=4, concurrency=1, idle_ttl=120, scaledown_ttl=120),
     secrets="HF_HUB_TOKEN",
@@ -92,8 +95,7 @@ async def embed_shard_to_file(repo_id: str, filename: str, model_name: str, batc
     file_url: str = hf_hub_url(repo_id=repo_id, filename=filename, repo_type="dataset")
 
     # Stream dataset shard
-    ds = load_dataset("parquet", data_files=file_url, split="train", streaming=True,
-                      token=os.getenv("HF_HUB_TOKEN"))
+    ds = load_dataset("parquet", data_files=file_url, split="train", streaming=True, token=os.getenv("HF_HUB_TOKEN"))
 
     # Prepare output file
     shard_name: str = filename.replace("/", "_")
@@ -135,7 +137,7 @@ async def _aiter(sync_iterable) -> AsyncGenerator[Dict[str, Any], None]:
 
 
 @driver.task(cache="auto")
-async def main(batch_size: int=64) -> list[flyte.io.File]:
+async def main(batch_size: int = 64) -> list[flyte.io.File]:
     from huggingface_hub import HfApi
 
     repo_id = "wikimedia/wikipedia"
@@ -146,18 +148,25 @@ async def main(batch_size: int=64) -> list[flyte.io.File]:
     # Each file is stored in info.siblings
     parquet_files = [s.rfilename for s in info.siblings if s.rfilename.endswith(".parquet")]
     print(f"Found {len(parquet_files)} parquet files in the dataset", flush=True)
-    coros = []
+    grouped_coros = defaultdict(list)
     for filename in parquet_files:
-        coros.append(embed_shard_to_file(repo_id, filename, model_name=model_name, batch_size=batch_size))
-    return await asyncio.gather(*coros)
+        shard_id = filename.split("/")[0]
+        grouped_coros[shard_id].append(
+            embed_shard_to_file(repo_id, filename, model_name=model_name, batch_size=batch_size)
+        )
+
+    tasks = []
+    for shard_id, coros in grouped_coros.items():
+        print(f"Processing shard {shard_id} with {len(coros)} files", flush=True)
+        with flyte.group(f"shard-{shard_id}"):
+            shard_tasks = [asyncio.create_task(coro) for coro in coros]
+            tasks.extend(shard_tasks)
+    return await asyncio.gather(*tasks)
 
 
 async def high_mem_examples():
-    files = [
-        "20231101.sv/train-00000-of-00005.parquet",
-        "20231101.war/train-00000-of-00001.parquet"
-    ]
-    large_task = embed_shard_to_file.override(resources=flyte.Resources(cpu=2, memory="64Gi", gpu=1), reusable="off")
+    files = ["20231101.sv/train-00000-of-00005.parquet", "20231101.war/train-00000-of-00001.parquet"]
+    large_task = embed_shard_to_file.override(resources=flyte.Resources(cpu=2, memory="8Gi", gpu=1), reusable="off")
 
     coros = []
     for file in files:
@@ -168,11 +177,12 @@ async def high_mem_examples():
         print(r.url)
         print(r.url)
 
+
 if __name__ == "__main__":
     # Usage:
     # Run this with limit=-1 to embed all articles in the dataset (~61MM rows)
     # flyte.init()
     flyte.init_from_config("../../config.yaml")
-    # run = flyte.run(main, 256)
-    # print(run.url)
-    asyncio.run(high_mem_examples())
+    run = flyte.run(main, 256)
+    print(run.url)
+    # asyncio.run(high_mem_examples())
