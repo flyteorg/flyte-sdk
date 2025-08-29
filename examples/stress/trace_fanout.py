@@ -23,5 +23,5 @@ async def compute_squares(n: int) -> list[int]:
 
 if __name__ == "__main__":
     flyte.init_from_config("../../config.yaml")
-    r = flyte.run(compute_squares, n=1000)
+    r = flyte.run(compute_squares, n=10000)
     print(r.url)
