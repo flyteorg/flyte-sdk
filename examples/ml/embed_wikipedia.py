@@ -45,8 +45,7 @@ import flyte.io
 logger = logging.getLogger(__name__)
 
 image = flyte.Image.from_uv_script(__file__, name="embed_wikipedia_image").with_pip_packages(
-    "unionai-reuse>=0.1.5b0",
-    pre=True,
+    "unionai-reuse>=0.1.5",
 )
 
 driver = flyte.TaskEnvironment(
