@@ -1,11 +1,17 @@
 import tempfile
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
 from flyte import Secret
-from flyte._image import Image, PipPackages, Requirements
-from flyte._internal.imagebuild.docker_builder import CopyConfigHandler, DockerImageBuilder, PipAndRequirementsHandler
+from flyte._image import DockerIgnore, Image, PipPackages, Requirements
+from flyte._internal.imagebuild.docker_builder import (
+    CopyConfig,
+    CopyConfigHandler,
+    DockerImageBuilder,
+    PipAndRequirementsHandler,
+)
 
 
 @pytest.mark.integration
@@ -113,8 +119,6 @@ async def test_copy_config_handler():
             test_file.write_text("print('hello')")
 
             # Create CopyConfig for the file
-            from flyte._internal.imagebuild.docker_builder import CopyConfig
-
             copy_config = CopyConfig(
                 src=test_file,
                 dst="/app/main.py",
@@ -123,7 +127,7 @@ async def test_copy_config_handler():
 
             # Test the handle method
             result = await CopyConfigHandler.handle(
-                layer=copy_config, context_path=context_path, dockerfile="FROM python:3.9\n"
+                layer=copy_config, context_path=context_path, dockerfile="FROM python:3.9\n", layers=(copy_config,)
             )
 
             # Should contain COPY command when file is copied
@@ -150,7 +154,7 @@ async def test_copy_config_handler_skips_dockerignore():
     with tempfile.TemporaryDirectory() as tmp_context:
         context_path = Path(tmp_context)
 
-        # Create a single directory structure with both file and folder patterns
+        # Create a temporary directory structure with both file and folder patterns
         with tempfile.TemporaryDirectory() as src_tmpdir:
             from flyte._internal.imagebuild.docker_builder import CopyConfig
 
@@ -168,65 +172,124 @@ async def test_copy_config_handler_skips_dockerignore():
             exclude_file = src_dir / "memo.txt"
             exclude_file.write_text("memo")
 
-            # Create .dockerignore file with both file and folder patterns
+            # Create .dockerignore file in the root directory (not in src_dir)
             dockerignore_file = src_dir / ".dockerignore"
             dockerignore_file.write_text("*.txt\n.cache\n")
 
-            # Test copying the entire directory (path_type=1)
-            copy_config = CopyConfig(
-                src=src_dir,
-                dst=".",
-                path_type=1,  # directory
-            )
+            # Mock _get_init_config().root_dir to return src_dir
+            with patch("flyte._initialize._get_init_config") as mock_get_config:
+                mock_config = mock_get_config.return_value
+                mock_config.root_dir = src_dir
 
-            result = await CopyConfigHandler.handle(
-                layer=copy_config, context_path=context_path, dockerfile="FROM python:3.9\n"
-            )
+                # Test copying the entire directory (path_type=1)
+                copy_config = CopyConfig(
+                    src=src_dir,
+                    dst=".",
+                    path_type=1,  # directory
+                )
 
-            # Should contain COPY command for the directory
-            assert "COPY" in result
-            # main.py should be excluded by *.py pattern
-            # Calculate the expected destination path using the same logic as handle method
-            src_absolute = src_dir.absolute()
-            dst_path_str = str(src_absolute).replace("/", "./_flyte_abs_context/", 1)
-            expected_dst_path = context_path / dst_path_str
+                result = await CopyConfigHandler.handle(
+                    layer=copy_config, context_path=context_path, dockerfile="FROM python:3.9\n", layers=(copy_config,)
+                )
 
-            # Verify that the directory was copied and ignored files are excluded
-            assert expected_dst_path.exists(), f"Directory should be copied to {expected_dst_path}"
-            assert expected_dst_path.is_dir(), "Should be a directory"
-            assert (expected_dst_path / "main.py").exists(), "main.py should be included"
-            assert not (expected_dst_path / "memo.txt").exists(), "memo.txt should be excluded by *.txt pattern"
-            assert not (expected_dst_path / ".cache").exists(), ".cache directory should be excluded by .cache/ pattern"
+                # Should contain COPY command for the directory
+                assert "COPY" in result
 
+                # Calculate the expected destination path using the same logic as handle method
+                src_absolute = src_dir.absolute()
+                dst_path_str = str(src_absolute).replace("/", "./_flyte_abs_context/", 1)
+                expected_dst_path = context_path / dst_path_str
+
+                # Verify that the directory was copied and ignored files are excluded
+                assert expected_dst_path.exists(), f"Directory should be copied to {expected_dst_path}"
+                assert expected_dst_path.is_dir(), "Should be a directory"
+                assert (expected_dst_path / "main.py").exists(), "main.py should be included"
+                assert not (expected_dst_path / "memo.txt").exists(), "memo.txt should be excluded by *.txt pattern"
+                assert not (expected_dst_path / ".cache").exists(), (
+                    ".cache directory should be excluded by .cache/ pattern"
+                )
 
 @pytest.mark.asyncio
-async def test_copy_config_handler_file_not_exists():
-    """Test that handle method returns original dockerfile without COPY when source file does not exist"""
-    # Create a temporary directory for context
+async def test_copy_config_handler_with_dockerignore_layer():
+    """Test CopyConfigHandler.handle respects DockerIgnore layer patterns"""
+    # Create separate temporary directories for source and context
+    with tempfile.TemporaryDirectory() as src_tmpdir:
+        with tempfile.TemporaryDirectory() as context_tmpdir:
+            src_dir = Path(src_tmpdir)
+            context_path = Path(context_tmpdir)
+
+            # Create test directory structure
+            cache_dir = src_dir / ".cache"
+            cache_dir.mkdir(parents=True, exist_ok=True)
+            cache_file = cache_dir / "temp.txt"
+            cache_file.write_text("temp")
+
+            root_file = src_dir / "main.py"
+            root_file.write_text("print('hello from root')")
+            exclude_file = src_dir / "memo.txt"
+            exclude_file.write_text("memo")
+
+            # Create .dockerignore file for DockerIgnore layer
+            layer_dockerignore = src_dir / "custom.dockerignore"
+            layer_dockerignore.write_text("*.txt\n.cache\n")
+            docker_ignore_layer = DockerIgnore(path=layer_dockerignore)
+
+            # Mock _get_init_config().root_dir to return src_dir
+            with patch("flyte._initialize._get_init_config") as mock_get_config:
+                mock_config = mock_get_config.return_value
+                mock_config.root_dir = src_dir
+
+                # Create CopyConfig with DockerIgnore layer
+                copy_config = CopyConfig(
+                    src=src_dir,
+                    dst=".",
+                    path_type=1,  # directory
+                )
+                layers = (docker_ignore_layer, copy_config)
+
+                result = await CopyConfigHandler.handle(
+                    layer=copy_config, context_path=context_path, dockerfile="FROM python:3.9\n", layers=layers
+                )
+
+                # Verify COPY command exists
+                assert "COPY" in result
+
+                # Calculate expected destination path
+                src_absolute = src_dir.absolute()
+                dst_path_str = str(src_absolute).replace("/", "./_flyte_abs_context/", 1)
+                expected_dst_path = context_path / dst_path_str
+
+                # Verify directory copy results and file exclusions
+                assert expected_dst_path.exists(), f"Directory should be copied to {expected_dst_path}"
+                assert expected_dst_path.is_dir(), "Should be a directory"
+                assert (expected_dst_path / "main.py").exists(), "main.py should be included"
+                assert not (expected_dst_path / "memo.txt").exists(), "memo.txt should be excluded by *.txt pattern"
+                assert not (expected_dst_path / ".cache").exists(), ".cache directory should be excluded by .cache pattern"
+            
+
+def test_list_dockerignore_layer_priority():
+    """Test list_dockerignore method prioritizes DockerIgnore layer over local .dockerignore"""
     with tempfile.TemporaryDirectory() as tmp_context:
-        context_path = Path(tmp_context)
+        src_dir = Path(tmp_context)
 
-        # Create a path to a non-existent file
-        non_existent_file = Path("/tmp/non_existent_file.py")
+        # Create local .dockerignore file
+        local_dockerignore = src_dir / ".dockerignore"
+        local_dockerignore.write_text("*.py\nsrc/\n")
 
-        # Create CopyConfig for the non-existent file
-        from flyte._internal.imagebuild.docker_builder import CopyConfig
+        # Create another .dockerignore file to be used as DockerIgnore layer
+        layer_dockerignore = src_dir / "custom.dockerignore"
+        layer_dockerignore.write_text("*.txt\n.cache\n")
 
-        copy_config = CopyConfig(
-            src=non_existent_file,
-            dst="/app/non_existent_file.py",
-            path_type=0,  # file
-        )
+        # Create layers tuple containing DockerIgnore layer
+        docker_ignore_layer = DockerIgnore(path=layer_dockerignore)
+        layers = (docker_ignore_layer,)
 
-        # Test that the handle method returns original dockerfile without COPY
-        result = await CopyConfigHandler.handle(
-            layer=copy_config, context_path=context_path, dockerfile="FROM python:3.9\n"
-        )
+        # Test list_dockerignore method
+        patterns = CopyConfigHandler.list_dockerignore(src_dir, layers)
 
-        # Should not contain COPY command when file does not exist
-        assert "COPY" not in result
-        # Should return original dockerfile unchanged
-        assert result == "FROM python:3.9\n"
+        # Should return patterns from DockerIgnore layer instead of local .dockerignore
+        expected_patterns = ["*.txt", ".cache"]
+        assert patterns == expected_patterns
 
 
 def test_list_dockerignore_found():
@@ -239,7 +302,7 @@ def test_list_dockerignore_found():
         dockerignore_file.write_text("*.py\nsrc/\n.cache\n# This is a comment\n\n*.txt\n \n  \n\t\n")
 
         # Test the method
-        patterns = CopyConfigHandler.list_dockerignore(src_dir)
+        patterns = CopyConfigHandler.list_dockerignore(src_dir, ())
 
         # Should return expected patterns, excluding comments and empty lines
         expected_patterns = ["*.py", "src/", ".cache", "*.txt"]
@@ -252,7 +315,7 @@ def test_list_dockerignore_not_found():
         src_dir = Path(tmp_context)
 
         # Test the method
-        patterns = CopyConfigHandler.list_dockerignore(src_dir)
+        patterns = CopyConfigHandler.list_dockerignore(src_dir, ())
 
         # Should return empty list when .dockerignore doesn't exist
         assert patterns == []

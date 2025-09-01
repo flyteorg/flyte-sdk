@@ -6,7 +6,7 @@ import tempfile
 import typing
 from pathlib import Path
 from string import Template
-from typing import ClassVar, List, Optional, Protocol, cast
+from typing import ClassVar, List, Optional, Protocol, Tuple, cast
 
 import aiofiles
 import click
@@ -255,39 +255,36 @@ class DockerIgnoreHandler:
 
 class CopyConfigHandler:
     @staticmethod
-    def list_dockerignore(root_path: Path) -> List[str]:
-        """
-        Parse .dockerignore file and extract ignore patterns.
-
-        Args:
-            root_path: Path to the directory to search for .dockerignore
-
-        Returns:
-            List of ignore patterns from .dockerignore file
-        """
+    def list_dockerignore(root_path: Path, layers: Tuple[Layer, ...]) -> List[str]:
         dockerignore_path = root_path / ".dockerignore"
-        patterns = []
+        # DockerIgnore layer should be first priority
+        for layer in layers:
+            if isinstance(layer, DockerIgnore):
+                dockerignore_path = layer.path
+                break
 
-        if dockerignore_path.exists() and dockerignore_path.is_file():
-            try:
-                with open(dockerignore_path, "r", encoding="utf-8") as f:
-                    for line in f:
-                        striped_line = line.strip()
-                        # Skip empty lines and comments
-                        if not striped_line or striped_line.startswith("#"):
-                            continue
-                        patterns.append(striped_line)
-            except Exception as e:
-                logger.error(f"Failed to read .dockerignore file at {dockerignore_path}: {e}")
+        # Return empty list if no .dockerignore file found
+        if not dockerignore_path.exists() or not dockerignore_path.is_file():
+            logger.info(f".dockerignore file not found at path: {dockerignore_path}")
+            return []
+
+        patterns = []
+        try:
+            with open(dockerignore_path, "r", encoding="utf-8") as f:
+                for line in f:
+                    stripped_line = line.strip()
+                    # Skip empty lines, whitespace-only lines, and comments
+                    if not stripped_line or stripped_line.startswith("#"):
+                        continue
+                    patterns.append(stripped_line)
+        except Exception as e:
+            logger.error(f"Failed to read .dockerignore file at {dockerignore_path}: {e}")
+            return []
 
         return patterns
 
     @staticmethod
-    async def handle(
-        layer: CopyConfig,
-        context_path: Path,
-        dockerfile: str,
-    ) -> str:
+    async def handle(layer: CopyConfig, context_path: Path, dockerfile: str, layers: Tuple[Layer, ...]) -> str:
         # Copy the source config file or directory to the context path
         if layer.src.is_absolute() or ".." in str(layer.src):
             dst_path = context_path / str(layer.src.absolute()).replace("/", "./_flyte_abs_context/", 1)
@@ -302,7 +299,10 @@ class CopyConfigHandler:
             shutil.copy(abs_path, dst_path)
         elif layer.src.is_dir():
             # Copy the entire directory
-            docker_ignore_patterns = CopyConfigHandler.list_dockerignore(abs_path)
+            from flyte._initialize import _get_init_config
+
+            root_path = _get_init_config().root_dir
+            docker_ignore_patterns = CopyConfigHandler.list_dockerignore(root_path, layers)
             shutil.copytree(
                 abs_path, dst_path, dirs_exist_ok=True, ignore=shutil.ignore_patterns(*docker_ignore_patterns)
             )
@@ -381,7 +381,7 @@ def _get_secret_mounts_layer(secrets: typing.Tuple[str | Secret, ...] | None) ->
     return secret_mounts_layer
 
 
-async def _process_layer(layer: Layer, context_path: Path, dockerfile: str) -> str:
+async def _process_layer(layer: Layer, context_path: Path, dockerfile: str, layers: Tuple[Layer, ...]) -> str:
     match layer:
         case PythonWheels():
             # Handle Python wheels
@@ -417,7 +417,7 @@ async def _process_layer(layer: Layer, context_path: Path, dockerfile: str) -> s
 
         case CopyConfig():
             # Handle local files and folders
-            dockerfile = await CopyConfigHandler.handle(layer, context_path, dockerfile)
+            dockerfile = await CopyConfigHandler.handle(layer, context_path, dockerfile, layers)
 
         case Commands():
             # Handle commands
@@ -574,7 +574,7 @@ class DockerImageBuilder(ImageBuilder):
             )
 
             for layer in image._layers:
-                dockerfile = await _process_layer(layer, tmp_path, dockerfile)
+                dockerfile = await _process_layer(layer, tmp_path, dockerfile, image._layers)
 
             dockerfile += DOCKER_FILE_BASE_FOOTER.substitute(F_IMG_ID=image.uri)
 
