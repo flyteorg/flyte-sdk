@@ -256,14 +256,14 @@ class DockerIgnoreHandler:
 class CopyConfigHandler:
     @staticmethod
     def list_dockerignore(root_path: Optional[Path], layers: Tuple[Layer, ...]) -> List[str]:
-        patterns = []
-        dockerignore_path = None
+        patterns: List[str] = []
+        dockerignore_path: Optional[Path] = None
         if root_path:
             dockerignore_path = root_path / ".dockerignore"
         # DockerIgnore layer should be first priority
         for layer in layers:
             if isinstance(layer, DockerIgnore):
-                dockerignore_path = layer.path
+                dockerignore_path = Path(layer.path)
                 break
 
         # Return empty list if no .dockerignore file found
