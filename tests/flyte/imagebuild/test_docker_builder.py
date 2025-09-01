@@ -204,10 +204,9 @@ async def test_copy_config_handler_skips_dockerignore():
                 assert expected_dst_path.exists(), f"Directory should be copied to {expected_dst_path}"
                 assert expected_dst_path.is_dir(), "Should be a directory"
                 assert (expected_dst_path / "main.py").exists(), "main.py should be included"
-                assert not (expected_dst_path / "memo.txt").exists(), "memo.txt should be excluded by *.txt pattern"
-                assert not (expected_dst_path / ".cache").exists(), (
-                    ".cache directory should be excluded by .cache/ pattern"
-                )
+                assert not (expected_dst_path / "memo.txt").exists(), "memo.txt should be excluded"
+                assert not (expected_dst_path / ".cache").exists(), ".cache directory should be excluded"
+
 
 @pytest.mark.asyncio
 async def test_copy_config_handler_with_dockerignore_layer():
@@ -263,9 +262,9 @@ async def test_copy_config_handler_with_dockerignore_layer():
                 assert expected_dst_path.exists(), f"Directory should be copied to {expected_dst_path}"
                 assert expected_dst_path.is_dir(), "Should be a directory"
                 assert (expected_dst_path / "main.py").exists(), "main.py should be included"
-                assert not (expected_dst_path / "memo.txt").exists(), "memo.txt should be excluded by *.txt pattern"
-                assert not (expected_dst_path / ".cache").exists(), ".cache directory should be excluded by .cache pattern"
-            
+                assert not (expected_dst_path / "memo.txt").exists(), "memo.txt should be excluded"
+                assert not (expected_dst_path / ".cache").exists(), ".cache directory should be excluded"
+
 
 def test_list_dockerignore_layer_priority():
     """Test list_dockerignore method prioritizes DockerIgnore layer over local .dockerignore"""

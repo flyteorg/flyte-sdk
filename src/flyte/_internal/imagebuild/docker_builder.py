@@ -255,8 +255,11 @@ class DockerIgnoreHandler:
 
 class CopyConfigHandler:
     @staticmethod
-    def list_dockerignore(root_path: Path, layers: Tuple[Layer, ...]) -> List[str]:
-        dockerignore_path = root_path / ".dockerignore"
+    def list_dockerignore(root_path: Optional[Path], layers: Tuple[Layer, ...]) -> List[str]:
+        patterns = []
+        dockerignore_path = None
+        if root_path:
+            dockerignore_path = root_path / ".dockerignore"
         # DockerIgnore layer should be first priority
         for layer in layers:
             if isinstance(layer, DockerIgnore):
@@ -264,11 +267,10 @@ class CopyConfigHandler:
                 break
 
         # Return empty list if no .dockerignore file found
-        if not dockerignore_path.exists() or not dockerignore_path.is_file():
+        if not dockerignore_path or not dockerignore_path.exists() or not dockerignore_path.is_file():
             logger.info(f".dockerignore file not found at path: {dockerignore_path}")
-            return []
+            return patterns
 
-        patterns = []
         try:
             with open(dockerignore_path, "r", encoding="utf-8") as f:
                 for line in f:
@@ -301,7 +303,8 @@ class CopyConfigHandler:
             # Copy the entire directory
             from flyte._initialize import _get_init_config
 
-            root_path = _get_init_config().root_dir
+            init_config = _get_init_config()
+            root_path = init_config.root_dir if init_config else None
             docker_ignore_patterns = CopyConfigHandler.list_dockerignore(root_path, layers)
             shutil.copytree(
                 abs_path, dst_path, dirs_exist_ok=True, ignore=shutil.ignore_patterns(*docker_ignore_patterns)
