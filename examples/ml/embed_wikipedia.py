@@ -61,7 +61,7 @@ worker = flyte.TaskEnvironment(
     image=image,
     resources=flyte.Resources(cpu=2, memory="8Gi", gpu=1),
     env_vars={"HF_HUB_ENABLE_HF_TRANSFER": "1"},
-    reusable=flyte.ReusePolicy(replicas=4, concurrency=1, idle_ttl=120, scaledown_ttl=120),
+    reusable=flyte.ReusePolicy(replicas=16, concurrency=1, idle_ttl=120, scaledown_ttl=120),
     secrets="HF_HUB_TOKEN",
 )
 
@@ -136,7 +136,7 @@ async def _aiter(sync_iterable) -> AsyncGenerator[Dict[str, Any], None]:
 
 
 @driver.task(cache="auto")
-async def main(batch_size: int = 64) -> list[flyte.io.File]:
+async def main(batch_size: int = 64, shard: str = "all") -> list[flyte.io.File]:
     from huggingface_hub import HfApi
 
     repo_id = "wikimedia/wikipedia"
@@ -154,13 +154,21 @@ async def main(batch_size: int = 64) -> list[flyte.io.File]:
             embed_shard_to_file(repo_id, filename, model_name=model_name, batch_size=batch_size)
         )
 
-    tasks = []
-    for shard_id, coros in grouped_coros.items():
-        print(f"Processing shard {shard_id} with {len(coros)} files", flush=True)
-        with flyte.group(f"shard-{shard_id}"):
-            shard_tasks = [asyncio.create_task(coro) for coro in coros]
-            tasks.extend(shard_tasks)
-    return await asyncio.gather(*tasks)
+    if shard == "all":
+        tasks = []
+        for shard_id, coros in grouped_coros.items():
+            print(f"Processing shard {shard_id} with {len(coros)} files", flush=True)
+            with flyte.group(f"shard-{shard_id}"):
+                shard_tasks = [asyncio.create_task(coro) for coro in coros]
+                tasks.extend(shard_tasks)
+        return await asyncio.gather(*tasks)
+    else:
+        if shard not in grouped_coros:
+            raise ValueError(f"Shard {shard} not found. Available shards: {list(grouped_coros.keys())}")
+        print(f"Processing only shard {shard} with {len(grouped_coros[shard])} files", flush=True)
+        with flyte.group(f"shard-{shard}"):
+            tasks = [asyncio.create_task(coro) for coro in grouped_coros[shard]]
+            return await asyncio.gather(*tasks)
 
 
 async def high_mem_examples():
@@ -182,6 +190,6 @@ if __name__ == "__main__":
     # Run this with limit=-1 to embed all articles in the dataset (~61MM rows)
     # flyte.init()
     flyte.init_from_config("../../config.yaml")
-    run = flyte.run(main, 256)
+    run = flyte.run(main, 256, shard="20231101.en")
     print(run.url)
     # asyncio.run(high_mem_examples())
