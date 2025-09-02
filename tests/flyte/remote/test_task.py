@@ -116,8 +116,9 @@ class TestLazyEntity:
         # Verify override was called on the task details
         mock_task_details.override.assert_called_once_with(short_name="new_name", retries=3)
 
-        # Verify it returns the same LazyEntity instance
-        assert result is lazy_entity
+        # Verify it returns the different LazyEntity instance
+        assert result is not lazy_entity
+        assert result.name is lazy_entity.name
 
     @pytest.mark.asyncio
     async def test_override_fetches_task_if_not_cached(self, mock_getter, mock_task_details):
@@ -146,7 +147,8 @@ class TestLazyEntity:
 
         # Test the sync version of override
         result = lazy_entity.override(short_name="new_name")
-        assert result is lazy_entity
+        assert result is not lazy_entity
+        assert result.name == lazy_entity.name
         mock_task_details.override.assert_called_once_with(short_name="new_name")
 
 
