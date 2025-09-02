@@ -63,8 +63,8 @@ class LazyEntity:
         async with self._mutex:
             if self._task is None:
                 self._task = await self._getter()
-            if self._task is None:
-                raise RuntimeError(f"Error downloading the task {self._name}, (check original exception...)")
+                if self._task is None:
+                    raise RuntimeError(f"Error downloading the task {self._name}, (check original exception...)")
             return self._task
 
     @syncify
