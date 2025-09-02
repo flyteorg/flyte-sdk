@@ -137,7 +137,7 @@ def test_override_ref_task():
     td = TaskDetails(pb2=task_details_pb2)
 
     secrets = [flyte.Secret(key="openai", as_env_var="OPENAI_API_KEY")]
-    td.override(
+    new_td = td.override(
         short_name="new_oomer",
         resources=flyte.Resources(cpu=3, memory="100Mi"),
         retries=RetryStrategy(5),
@@ -145,9 +145,11 @@ def test_override_ref_task():
         env_vars={"FOO": "BAR"},
         secrets=secrets,
     )
-    assert td.pb2.metadata.short_name == "new_oomer"
-    assert td.resources[0][0].value == "3"
-    assert td.resources[0][1].value == "100Mi"
-    assert td.pb2.spec.task_template.metadata.retries.retries == 5
-    assert td.pb2.spec.task_template.metadata.timeout.seconds == 100
-    assert td.pb2.spec.task_template.security_context == get_security_context(secrets)
+    assert new_td is not td
+    assert new_td is not None
+    assert new_td.pb2.metadata.short_name == "new_oomer"
+    assert new_td.resources[0][0].value == "3"
+    assert new_td.resources[0][1].value == "100Mi"
+    assert new_td.pb2.spec.task_template.metadata.retries.retries == 5
+    assert new_td.pb2.spec.task_template.metadata.timeout.seconds == 100
+    assert new_td.pb2.spec.task_template.security_context == get_security_context(secrets)
