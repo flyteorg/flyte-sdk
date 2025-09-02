@@ -5,8 +5,8 @@ import asyncio
 import flyte
 from flyte._internal.controllers.remote._client import ControllerClient
 from flyte._internal.runtime.task_serde import translate_task_to_wire
-from flyte._protos.common import identifier_pb2
-from flyte._protos.workflow import (
+from flyteidl2.common import identifier_pb2
+from flyteidl2.workflow import (
     queue_service_pb2,
     task_definition_pb2,
 )

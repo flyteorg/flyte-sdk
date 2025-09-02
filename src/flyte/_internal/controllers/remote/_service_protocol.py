@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import AsyncIterator, Protocol
 
-from flyte._protos.workflow import queue_service_pb2, state_service_pb2
+from flyteidl2.workflow import queue_service_pb2, state_service_pb2
 
 
 class StateService(Protocol):

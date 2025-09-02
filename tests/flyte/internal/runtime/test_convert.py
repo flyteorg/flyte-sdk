@@ -24,8 +24,8 @@ from flyteidl.core.types_pb2 import (
 import flyte._internal.runtime.convert as convert
 from flyte._internal.runtime.convert import Inputs, generate_sub_action_id_and_output_path
 from flyte._internal.runtime.types_serde import transform_native_to_typed_interface
-from flyte._protos.workflow import run_definition_pb2
-from flyte._protos.workflow import run_definition_pb2 as _run_definition_pb2
+from flyteidl2.workflow import run_definition_pb2
+from flyteidl2.workflow import run_definition_pb2 as _run_definition_pb2
 from flyte.models import ActionID, NativeInterface, RawDataPath, TaskContext
 from flyte.report import Report
 from flyte.types import TypeEngine

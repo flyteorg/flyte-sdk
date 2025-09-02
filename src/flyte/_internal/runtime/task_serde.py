@@ -15,7 +15,7 @@ import flyte.errors
 from flyte._cache.cache import VersionParameters, cache_from_request
 from flyte._logging import logger
 from flyte._pod import _PRIMARY_CONTAINER_NAME_FIELD, PodTemplate
-from flyte._protos.workflow import common_pb2, environment_pb2, task_definition_pb2
+from flyteidl2.workflow import common_pb2, environment_pb2, task_definition_pb2
 from flyte._secret import SecretRequest, secrets_from_request
 from flyte._task import AsyncFunctionTaskTemplate, TaskTemplate
 from flyte.models import CodeBundle, SerializationContext

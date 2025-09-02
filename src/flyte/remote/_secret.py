@@ -6,7 +6,7 @@ from typing import AsyncIterator, Literal, Union
 import rich.repr
 
 from flyte._initialize import ensure_client, get_client, get_common_config
-from flyte._protos.secret import definition_pb2, payload_pb2
+from flyteidl2.secret import definition_pb2, payload_pb2
 from flyte.remote._common import ToJSONMixin
 from flyte.syncify import syncify
 

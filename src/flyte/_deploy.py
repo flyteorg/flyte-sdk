@@ -19,7 +19,7 @@ from ._task import TaskTemplate
 from ._task_environment import TaskEnvironment
 
 if TYPE_CHECKING:
-    from flyte._protos.workflow import task_definition_pb2
+    from flyteidl2.workflow import task_definition_pb2
 
     from ._code_bundle import CopyFiles
     from ._internal.imagebuild.image_builder import ImageCache

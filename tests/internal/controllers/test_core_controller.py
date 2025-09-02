@@ -14,8 +14,8 @@ from flyte._internal.controllers.remote._service_protocol import (
     StateService,
 )
 from flyte._logging import logger
-from flyte._protos.common import identifier_pb2
-from flyte._protos.workflow import (
+from flyteidl2.common import identifier_pb2
+from flyteidl2.workflow import (
     queue_service_pb2,
     run_definition_pb2,
     state_service_pb2,
