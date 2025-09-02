@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 import functools
 from dataclasses import dataclass
-from threading import Lock
 from typing import Any, AsyncIterator, Callable, Coroutine, Dict, Iterator, Literal, Optional, Tuple, Union, cast
 
 import rich.repr
@@ -49,7 +49,7 @@ class LazyEntity:
         self._task: Optional[TaskDetails] = None
         self._getter = getter
         self._name = name
-        self._mutex = Lock()
+        self._mutex = asyncio.Lock()
 
     @property
     def name(self) -> str:
@@ -60,11 +60,11 @@ class LazyEntity:
         """
         Forwards all other attributes to task, causing the task to be fetched!
         """
-        with self._mutex:
+        async with self._mutex:
             if self._task is None:
                 self._task = await self._getter()
-            if self._task is None:
-                raise RuntimeError(f"Error downloading the task {self._name}, (check original exception...)")
+                if self._task is None:
+                    raise RuntimeError(f"Error downloading the task {self._name}, (check original exception...)")
             return self._task
 
     @syncify
@@ -93,7 +93,7 @@ class LazyEntity:
 AutoVersioning = Literal["latest", "current"]
 
 
-@dataclass
+@dataclass(frozen=True)
 class TaskDetails(ToJSONMixin):
     pb2: task_definition_pb2.TaskDetails
     max_inline_io_bytes: int = 10 * 1024 * 1024  # 10 MB
@@ -262,12 +262,6 @@ class TaskDetails(ToJSONMixin):
                 f"Reference task {self.name} does not support positional arguments"
                 f"currently. Please use keyword arguments."
             )
-        if len(self.required_args) > 0:
-            if len(args) + len(kwargs) < len(self.required_args):
-                raise ValueError(
-                    f"Task {self.name} requires at least {self.required_args} arguments, "
-                    f"but only received args:{args}  kwargs{kwargs}."
-                )
 
         ctx = internal_ctx()
         if ctx.is_task_context():
@@ -277,9 +271,17 @@ class TaskDetails(ToJSONMixin):
             from flyte._internal.controllers import get_controller
 
             controller = get_controller()
+            if len(self.required_args) > 0:
+                if len(args) + len(kwargs) < len(self.required_args):
+                    raise ValueError(
+                        f"Task {self.name} requires at least {self.required_args} arguments, "
+                        f"but only received args:{args}  kwargs{kwargs}."
+                    )
             if controller:
-                return await controller.submit_task_ref(self.pb2, self.max_inline_io_bytes, *args, **kwargs)
-        raise flyte.errors
+                return await controller.submit_task_ref(self, *args, **kwargs)
+        raise flyte.errors.ReferenceTaskError(
+            f"Reference tasks [{self.name}] cannot be executed locally, only remotely."
+        )
 
     def override(
         self,
@@ -290,8 +292,9 @@ class TaskDetails(ToJSONMixin):
         timeout: Optional[flyte.TimeoutType] = None,
         env_vars: Optional[Dict[str, str]] = None,
         secrets: Optional[flyte.SecretRequest] = None,
-        queue: Optional[str] = None,
         max_inline_io_bytes: Optional[int] = None,
+        cache: Optional[flyte.Cache] = None,
+        queue: Optional[str] = None,
         **kwargs: Any,
     ) -> TaskDetails:
         if len(kwargs) > 0:
@@ -299,25 +302,51 @@ class TaskDetails(ToJSONMixin):
                 f"ReferenceTasks [{self.name}] do not support overriding with kwargs: {kwargs}, "
                 f"Check the parameters for override method."
             )
-        template = self.pb2.spec.task_template
+        pb2 = task_definition_pb2.TaskDetails()
+        pb2.CopyFrom(self.pb2)
+
         if short_name:
-            self.pb2.metadata.short_name = short_name
+            pb2.metadata.short_name = short_name
+
+        template = pb2.spec.task_template
         if secrets:
             template.security_context.CopyFrom(get_security_context(secrets))
+
         if template.HasField("container"):
             if env_vars:
                 template.container.env.clear()
                 template.container.env.extend([literals_pb2.KeyValuePair(key=k, value=v) for k, v in env_vars.items()])
             if resources:
                 template.container.resources.CopyFrom(get_proto_resources(resources))
+
+        md = template.metadata
         if retries:
-            template.metadata.retries.CopyFrom(get_proto_retry_strategy(retries))
+            md.retries.CopyFrom(get_proto_retry_strategy(retries))
+
         if timeout:
-            template.metadata.timeout.CopyFrom(get_proto_timeout(timeout))
-        self.overriden_queue = queue
-        if max_inline_io_bytes is not None:
-            self.max_inline_io_bytes = max_inline_io_bytes
-        return self
+            md.timeout.CopyFrom(get_proto_timeout(timeout))
+
+        if cache:
+            if cache.behavior == "disable":
+                md.discoverable = False
+                md.discovery_version = ""
+            elif cache.behavior == "override":
+                md.discoverable = True
+                if not cache.version_override:
+                    raise ValueError("cache.version_override must be set when cache.behavior is 'override'")
+                md.discovery_version = cache.version_override
+            else:
+                if cache.behavior == "auto":
+                    raise ValueError("cache.behavior must be 'disable' or 'override' for reference tasks")
+                raise ValueError(f"Invalid cache behavior: {cache.behavior}.")
+            md.cache_serializable = cache.serialize
+            md.cache_ignore_input_vars[:] = list(cache.ignored_inputs or ())
+
+        return TaskDetails(
+            pb2,
+            max_inline_io_bytes=max_inline_io_bytes or self.max_inline_io_bytes,
+            overriden_queue=queue,
+        )
 
     def __rich_repr__(self) -> rich.repr.Result:
         """
