@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 import functools
 from dataclasses import dataclass
-from threading import Lock
 from typing import Any, AsyncIterator, Callable, Coroutine, Dict, Iterator, Literal, Optional, Tuple, Union, cast
 
 import rich.repr
@@ -49,7 +49,7 @@ class LazyEntity:
         self._task: Optional[TaskDetails] = None
         self._getter = getter
         self._name = name
-        self._mutex = Lock()
+        self._mutex = asyncio.Lock()
 
     @property
     def name(self) -> str:
@@ -60,7 +60,7 @@ class LazyEntity:
         """
         Forwards all other attributes to task, causing the task to be fetched!
         """
-        with self._mutex:
+        async with self._mutex:
             if self._task is None:
                 self._task = await self._getter()
             if self._task is None:

@@ -1,4 +1,4 @@
-from threading import Lock
+import asyncio
 from unittest.mock import AsyncMock, Mock
 
 import pytest
@@ -38,7 +38,7 @@ class TestLazyEntity:
         """Test LazyEntity proper initialization."""
         assert lazy_entity.name == "test_task"
         assert lazy_entity._task is None
-        assert isinstance(lazy_entity._mutex, Lock)
+        assert isinstance(lazy_entity._mutex, asyncio.Lock)
         assert callable(lazy_entity._getter)
 
     @pytest.mark.asyncio
