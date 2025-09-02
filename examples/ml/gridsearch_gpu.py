@@ -141,10 +141,11 @@ async def gridsearch(
     return best_model, best_train_loss
 
 
-if __name__ == "__main__":
+if __name__ == "__main__": 
+    from pathlib import Path
     from datetime import datetime
 
-    flyte.init_from_config("../../config.yaml")
+    flyte.init_from_config(str(Path(__file__).parents[2] / "config.yaml"))
     sweep_name = f"hpo-gpu-sweep-{datetime.now().strftime('%Y%m%d%H%M%S')}"
     run = flyte.run(gridsearch, sweep_name, batch_sizes=[4, 8, 16])
     print(run.url)
