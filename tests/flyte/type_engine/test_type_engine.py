@@ -947,7 +947,7 @@ async def test_structured_dataset_in_dataclass(ctx_with_test_raw_data_path):
         a: People
         b: InnerDatasetStruct
 
-    sd = DataFrame.create_from(val=df, format="parquet")
+    sd = DataFrame.create_from(val=df)
     o = DatasetStruct(a=sd, b=InnerDatasetStruct(a=sd, b=[sd], c={"hello": sd}))
 
     tf = DataclassTransformer()
@@ -2444,7 +2444,7 @@ async def test_structured_dataset_collection(ctx_with_test_raw_data_path):
     assert cols[1].name == "malic_acid"
     assert cols[1].literal_type.simple == SimpleType.FLOAT
 
-    sd = DataFrame.create_from(val=df, format="parquet")
+    sd = DataFrame.create_from(val=df)
     lv = await TypeEngine.to_literal([[sd]], WineTypeListList, lt)
     assert lv is not None
 

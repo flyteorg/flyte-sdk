@@ -420,7 +420,7 @@ async def test_reregister_encoder(ctx_with_test_raw_data_path):
     )
     TypeEngine.lazy_import_transformers()
 
-    sd = DataFrame.create_from(val=pd.DataFrame({"a": [1, 2], "b": [3, 4]}), uri="bq://blah", format="bq")
+    sd = DataFrame.create_from(val=pd.DataFrame({"a": [1, 2], "b": [3, 4]}), uri="bq://blah")
 
     df_literal_type = TypeEngine.to_literal_type(pd.DataFrame)
 
@@ -509,7 +509,7 @@ async def test_read_sd_from_local_uri(local_tmp_pqt_file, ctx_with_test_raw_data
 @mock.patch("flyte.storage._remote_fs.RemoteFSPathResolver")
 @mock.patch("flyte.io.DataFrameTransformerEngine.get_encoder")
 async def test_modify_literal_uris_call(mock_get_encoder, mock_resolver, ctx_with_test_raw_data_path):
-    sd = DataFrame.create_from(val=pd.DataFrame({"a": [1, 2], "b": [3, 4]}), uri="bq://blah", format="bq")
+    sd = DataFrame.create_from(val=pd.DataFrame({"a": [1, 2], "b": [3, 4]}), uri="bq://blah")
 
     def mock_resolve_remote_path(flyte_uri: str) -> typing.Optional[str]:
         if flyte_uri == "bq://blah":

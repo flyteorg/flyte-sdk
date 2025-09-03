@@ -87,7 +87,15 @@ class CSVToPandasDecodingHandler(DataFrameDecoder):
         if current_task_metadata.structured_dataset_type and current_task_metadata.structured_dataset_type.columns:
             columns = [c.name for c in current_task_metadata.structured_dataset_type.columns]
         try:
-            return pd.read_csv(csv_file, usecols=columns, storage_options=kwargs)
+            import io
+
+            buf = io.BytesIO()
+            async for chunk in storage.get_stream(csv_file):
+                buf.write(chunk)
+            buf.seek(0)
+            df = pd.read_csv(buf)
+            return df
+
         except Exception as exc:
             if exc.__class__.__name__ == "NoCredentialsError":
                 logger.debug("S3 source detected, attempting anonymous S3 access")

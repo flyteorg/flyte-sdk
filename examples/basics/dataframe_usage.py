@@ -55,7 +55,7 @@ async def create_raw_dataframe() -> pd.DataFrame:
 
 
 @env.task
-async def create_flyte_dataframe() -> flyte.io.DataFrame:  # Annotated[flyte.io.DataFrame, "csv"]:
+async def create_flyte_dataframe() -> Annotated[flyte.io.DataFrame, "csv"]:
     """
     This task creates a Flyte DataFrame with compensation and project data.
     Because there's no generic type in Python that means any dataframe type, Flyte ships with its own. The
