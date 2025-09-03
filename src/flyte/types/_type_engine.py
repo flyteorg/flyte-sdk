@@ -455,35 +455,6 @@ class DataclassTransformer(TypeTransformer[object]):
     2. Deserialization: The dataclass transformer converts the MessagePack Bytes back to a dataclass.
         (1) Convert MessagePack Bytes to a dataclass using mashumaro.
         (2) Handle dataclass attributes to ensure they are of the correct types.
-
-    TODO: Update the example using mashumaro instead of the older library
-
-    Example
-
-    .. code-block:: python
-
-        @dataclass
-        class Test:
-           a: int
-           b: str
-
-        t = Test(a=10,b="e")
-        JSONSchema().dump(t.schema())
-
-    Output will look like
-
-    .. code-block:: json
-
-        {'$schema': 'http://json-schema.org/draft-07/schema#',
-         'definitions': {'TestSchema': {'properties': {'a': {'title': 'a',
-             'type': 'number',
-             'format': 'integer'},
-            'b': {'title': 'b', 'type': 'string'}},
-           'type': 'object',
-           'additionalProperties': False}},
-         '$ref': '#/definitions/TestSchema'}
-
-
     """
 
     def __init__(self) -> None:
@@ -615,7 +586,7 @@ class DataclassTransformer(TypeTransformer[object]):
             }
         )
 
-        # The type engine used to publish a type structure for attribute access. As of v2, this is no longer needed.
+        # The type engine used to publish the type `structure` for attribute access. As of v2, this is no longer needed.
         return types_pb2.LiteralType(
             simple=types_pb2.SimpleType.STRUCT,
             metadata=schema,
