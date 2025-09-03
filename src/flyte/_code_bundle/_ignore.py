@@ -105,9 +105,10 @@ class IgnoreGroup(Ignore):
 
     def list_ignored(self) -> List[str]:
         ignored = []
-        for dir, _, files in self.root.walk():
+        for dir, _, files in os.walk(self.root):
+            dir_path = Path(dir)
             for file in files:
-                abs_path = dir / file
+                abs_path = dir_path / file
                 if self.is_ignored(abs_path):
                     ignored.append(str(abs_path.relative_to(self.root)))
         return ignored
