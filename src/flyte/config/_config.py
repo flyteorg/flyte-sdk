@@ -192,7 +192,7 @@ class Config(object):
         )
 
     @classmethod
-    def auto(cls, config_file: typing.Union[str, ConfigFile, None] = None) -> "Config":
+    def auto(cls, config_file: typing.Union[str, pathlib.Path, ConfigFile, None] = None) -> "Config":
         """
         Automatically constructs the Config Object. The order of precedence is as follows
           1. first try to find any env vars that match the config vars specified in the FLYTE_CONFIG format.
@@ -225,7 +225,7 @@ def set_if_exists(d: dict, k: str, val: typing.Any) -> dict:
     return d
 
 
-def auto(config_file: typing.Union[str, ConfigFile, None] = None) -> Config:
+def auto(config_file: typing.Union[str, pathlib.Path, ConfigFile, None] = None) -> Config:
     """
     Automatically constructs the Config Object. The order of precedence is as follows
       1. If specified, read the config from the provided file path.
