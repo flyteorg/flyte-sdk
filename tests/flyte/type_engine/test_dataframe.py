@@ -116,138 +116,7 @@ async def test_setting_of_unset_formats():
         assert res.outputs().format == "parquet"
 
 
-def test_types_pandas():
-    pt = pd.DataFrame
-    lt = TypeEngine.to_literal_type(pt)
-    assert lt.structured_dataset_type is not None
-    assert lt.structured_dataset_type.format == ""
-    assert lt.structured_dataset_type.columns == []
-
-    pt = typing.Annotated[pd.DataFrame, "csv"]
-    lt = TypeEngine.to_literal_type(pt)
-    assert lt.structured_dataset_type.format == "csv"
-
-
-def test_annotate_extraction():
-    xyz = typing.Annotated[pd.DataFrame, "myformat"]
-    a, b, c, d = extract_cols_and_format(xyz)
-    assert a is pd.DataFrame
-    assert b is None
-    assert c == "myformat"
-    assert d is None
-
-    a, b, c, d = extract_cols_and_format(pd.DataFrame)
-    assert a is pd.DataFrame
-    assert b is None
-    assert c == ""
-    assert d is None
-
-
-def test_types_annotated():
-    pt = typing.Annotated[pd.DataFrame, my_cols]
-    lt = TypeEngine.to_literal_type(pt)
-    assert len(lt.structured_dataset_type.columns) == 4
-    assert (
-        lt.structured_dataset_type.columns[0].literal_type.map_value_type.map_value_type.simple
-        == types_pb2.SimpleType.INTEGER
-    )
-    assert (
-        lt.structured_dataset_type.columns[1].literal_type.collection_type.collection_type.simple
-        == types_pb2.SimpleType.INTEGER
-    )
-    assert lt.structured_dataset_type.columns[2].literal_type.simple == types_pb2.SimpleType.INTEGER
-    assert lt.structured_dataset_type.columns[3].literal_type.simple == types_pb2.SimpleType.STRING
-
-    pt = typing.Annotated[pd.DataFrame, PARQUET, arrow_schema]
-    lt = TypeEngine.to_literal_type(pt)
-    assert lt.structured_dataset_type.external_schema_type == "arrow"
-    assert "some_string" in str(lt.structured_dataset_type.external_schema_bytes)
-
-    pt = typing.Annotated[pd.DataFrame, OrderedDict(a=None)]
-    with pytest.raises(AssertionError, match="type None is currently not supported by DataFrame"):
-        TypeEngine.to_literal_type(pt)
-
-
-def test_types_sd():
-    pt = DataFrame
-    lt = TypeEngine.to_literal_type(pt)
-    assert lt.structured_dataset_type is not None
-
-    pt = typing.Annotated[DataFrame, my_cols]
-    lt = TypeEngine.to_literal_type(pt)
-    assert len(lt.structured_dataset_type.columns) == 4
-
-    pt = typing.Annotated[DataFrame, my_cols, "csv"]
-    lt = TypeEngine.to_literal_type(pt)
-    assert len(lt.structured_dataset_type.columns) == 4
-    assert lt.structured_dataset_type.format == "csv"
-
-    pt = typing.Annotated[DataFrame, {}, "csv"]
-    lt = TypeEngine.to_literal_type(pt)
-    assert len(lt.structured_dataset_type.columns) == 0
-    assert lt.structured_dataset_type.format == "csv"
-
-
 class MyDF(pd.DataFrame): ...
-
-
-def test_retrieving():
-    assert DataFrameTransformerEngine.get_encoder(pd.DataFrame, "file", PARQUET) is not None
-    # Asking for a generic means you're okay with any one registered for that
-    # type assuming there's just one.
-    assert DataFrameTransformerEngine.get_encoder(pd.DataFrame, "file", "") is DataFrameTransformerEngine.get_encoder(
-        pd.DataFrame, "file", PARQUET
-    )
-
-    class TempEncoder(DataFrameEncoder):
-        def __init__(self, protocol):
-            super().__init__(MyDF, protocol)
-
-        def encode(self): ...
-
-    DataFrameTransformerEngine.register(TempEncoder("gs"), default_for_type=False)
-    with pytest.raises(ValueError):
-        DataFrameTransformerEngine.register(TempEncoder("gs://"), default_for_type=False)
-
-    with pytest.raises(ValueError, match="Use None instead"):
-        e = TempEncoder("")
-        e._protocol = ""
-        DataFrameTransformerEngine.register(e)
-
-    class TempEncoder:
-        pass
-
-    with pytest.raises(TypeError, match="We don't support this type of handler"):
-        DataFrameTransformerEngine.register(TempEncoder, default_for_type=False)
-
-
-@pytest.mark.asyncio
-async def test_to_literal(ctx_with_test_raw_data_path):
-    lt = TypeEngine.to_literal_type(pd.DataFrame)
-    df = generate_pandas()
-
-    fdt = DataFrameTransformerEngine()
-
-    lit = await fdt.to_literal(df, python_type=pd.DataFrame, expected=lt)
-    assert lit.scalar.structured_dataset.metadata.structured_dataset_type.format == PARQUET
-    assert lit.scalar.structured_dataset.metadata.structured_dataset_type.format == PARQUET
-
-    sd_with_literal_and_df = DataFrame.create_from(val=df)
-    sd_with_literal_and_df._literal_sd = lit
-
-    with pytest.raises(ValueError, match="Shouldn't have specified both literal"):
-        await fdt.to_literal(sd_with_literal_and_df, python_type=DataFrame, expected=lt)
-
-    sd_with_nothing = DataFrame()
-    with pytest.raises(ValueError, match="If dataframe is not specified"):
-        await fdt.to_literal(sd_with_nothing, python_type=DataFrame, expected=lt)
-
-    sd_with_uri = DataFrame.from_existing_remote(remote_path="s3://some/extant/df.parquet")
-
-    lt = TypeEngine.to_literal_type(typing.Annotated[DataFrame, {}, "new-df-format"])
-    lit = await fdt.to_literal(sd_with_uri, python_type=DataFrame, expected=lt)
-    assert lit.scalar.structured_dataset.uri == "s3://some/extant/df.parquet"
-    assert lit.scalar.structured_dataset.metadata.structured_dataset_type.format == "new-df-format"
 
 
 @pytest.mark.asyncio
@@ -688,3 +557,34 @@ def test_schema():
 
     ss = BM.model_json_schema()
     assert json.dumps(ss, indent=2)
+
+
+
+def test_retrieving():
+    assert DataFrameTransformerEngine.get_encoder(pd.DataFrame, "file", PARQUET) is not None
+    # Asking for a generic means you're okay with any one registered for that
+    # type assuming there's just one.
+    assert DataFrameTransformerEngine.get_encoder(pd.DataFrame, "file", "") is DataFrameTransformerEngine.get_encoder(
+        pd.DataFrame, "file", PARQUET
+    )
+
+    class TempEncoder(DataFrameEncoder):
+        def __init__(self, protocol):
+            super().__init__(MyDF, protocol)
+
+        def encode(self): ...
+
+    DataFrameTransformerEngine.register(TempEncoder("gs"), default_for_type=False)
+    with pytest.raises(ValueError):
+        DataFrameTransformerEngine.register(TempEncoder("gs://"), default_for_type=False)
+
+    with pytest.raises(ValueError, match="Use None instead"):
+        e = TempEncoder("")
+        e._protocol = ""
+        DataFrameTransformerEngine.register(e)
+
+    class TempEncoder:
+        pass
+
+    with pytest.raises(TypeError, match="We don't support this type of handler"):
+        DataFrameTransformerEngine.register(TempEncoder, default_for_type=False)

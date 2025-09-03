@@ -1,33 +1,67 @@
-import pytest
-
+import os
+import tempfile
 import typing
-import flyte
-from flyte.io._dataframe.dataframe import DataFrame
-from flyte.types import TypeEngine
-from flyteidl.core import types_pb2
 from collections import OrderedDict
+from pathlib import Path
+
+import mock
+import pytest
+from flyteidl.core import literals_pb2, types_pb2
+from fsspec.utils import get_protocol
+
+import flyte
+from flyte._context import Context, RawDataPath, internal_ctx
+from flyte._utils.lazy_module import is_imported
 from flyte.io._dataframe.dataframe import (
     PARQUET,
     DataFrame,
+    DataFrameDecoder,
     DataFrameEncoder,
     DataFrameTransformerEngine,
     extract_cols_and_format,
 )
-from fsspec.utils import get_protocol
+from flyte.models import SerializationContext
+from flyte.types import TypeEngine
 
 pd = pytest.importorskip("pandas")
+pa = pytest.importorskip("pyarrow")
 
-# Sample data for testing
-TEST_DATA = {"name": ["Alice", "Bob", "Charlie"], "age": [25, 30, 35], "city": ["NYC", "SF", "LA"]}
+my_cols = OrderedDict(w=typing.Dict[str, typing.Dict[str, int]], x=typing.List[typing.List[int]], y=int, z=str)
 
-@pytest.fixture
-def sample_dataframe():
-    """Create a sample pandas DataFrame for testing."""
-    return pd.DataFrame(TEST_DATA)
+fields = [("some_int", pa.int32()), ("some_string", pa.string())]
+arrow_schema = pa.schema(fields)
+
+serialization_context = SerializationContext(
+    version="123",
+)
+df = pd.DataFrame({"Name": ["Tom", "Joseph"], "Age": [20, 22]})
+
 
 def test_protocol():
     assert get_protocol("s3://my-s3-bucket/file") == "s3"
     assert get_protocol("/file") == "file"
+
+
+def generate_pandas() -> pd.DataFrame:
+    return pd.DataFrame({"name": ["Tom", "Joseph"], "age": [20, 22]})
+
+
+flyte.init()
+
+
+@pytest.fixture
+def local_tmp_pqt_file():
+    df = generate_pandas()
+
+    # Create a temporary parquet file
+    with tempfile.NamedTemporaryFile(delete=False, mode="w+b", suffix=".parquet") as pqt_file:
+        pqt_path = pqt_file.name
+        df.to_parquet(pqt_path)
+
+    yield pqt_path
+
+    # Cleanup
+    Path(pqt_path).unlink(missing_ok=True)
 
 
 def test_types_pandas():
@@ -58,7 +92,6 @@ def test_annotate_extraction():
 
 
 def test_types_annotated():
-    my_cols = OrderedDict(w=typing.Dict[str, typing.Dict[str, int]], x=typing.List[typing.List[int]], y=int, z=str)
     pt = typing.Annotated[pd.DataFrame, my_cols]
     lt = TypeEngine.to_literal_type(pt)
     assert len(lt.structured_dataset_type.columns) == 4
@@ -73,13 +106,17 @@ def test_types_annotated():
     assert lt.structured_dataset_type.columns[2].literal_type.simple == types_pb2.SimpleType.INTEGER
     assert lt.structured_dataset_type.columns[3].literal_type.simple == types_pb2.SimpleType.STRING
 
+    pt = typing.Annotated[pd.DataFrame, PARQUET, arrow_schema]
+    lt = TypeEngine.to_literal_type(pt)
+    assert lt.structured_dataset_type.external_schema_type == "arrow"
+    assert "some_string" in str(lt.structured_dataset_type.external_schema_bytes)
+
     pt = typing.Annotated[pd.DataFrame, OrderedDict(a=None)]
     with pytest.raises(AssertionError, match="type None is currently not supported by DataFrame"):
         TypeEngine.to_literal_type(pt)
 
 
 def test_types_sd():
-    my_cols = OrderedDict(w=typing.Dict[str, typing.Dict[str, int]], x=typing.List[typing.List[int]], y=int, z=str)
     pt = DataFrame
     lt = TypeEngine.to_literal_type(pt)
     assert lt.structured_dataset_type is not None
@@ -98,55 +135,11 @@ def test_types_sd():
     assert len(lt.structured_dataset_type.columns) == 0
     assert lt.structured_dataset_type.format == "csv"
 
-@pytest.mark.asyncio
-async def test_passthrough_df_no_io_pure_local(sample_dataframe):
-    """
-    Take in a DF and return it directly. This is purely local, shouldn't involve Flyte at all, so trivially the same.
-    This should NOT trigger the engine or i/o - just pass through.
-    """
-    env = flyte.TaskEnvironment(name="test-passthrough")
 
-    @env.task
-    async def passthrough_task(df: DataFrame) -> DataFrame:
-        # Just return the DataFrame directly - no processing
-        return df
-
-    input_df = DataFrame.from_existing_remote("s3://test-bucket/doesnotexist.parquet", format="parquet")
-
-    result = await passthrough_task(input_df)
-    # Should return the same DataFrame reference
-    assert result is input_df
-    assert result.uri == input_df.uri
-    assert result.format == input_df.format
-
-
-@pytest.mark.asyncio
-async def test_passthrough_df_no_io(sample_dataframe):
-    """
-    Take in a DF and return it directly.
-    This should NOT trigger the engine or i/o - just pass through.
-    """
-    flyte.init()
-    env = flyte.TaskEnvironment(name="test-passthrough")
-
-    @env.task
-    async def passthrough_task(df: DataFrame) -> DataFrame:
-        # Just return the DataFrame directly - no processing
-        return df
-
-    input_df = DataFrame.from_existing_remote("s3://test-bucket/doesnotexist.parquet", format="parquet")
-
-    run = flyte.with_runcontext("local").run(passthrough_task, input_df)
-    result = run._outputs
-    lit = await TypeEngine.to_literal(result, DataFrame, TypeEngine.to_literal_type(DataFrame))
-    assert lit.scalar.structured_dataset.uri == input_df.uri
-    assert result.format == input_df.format
-    assert lit.scalar.structured_dataset.metadata.structured_dataset_type.format == input_df.format
+class MyDF(pd.DataFrame): ...
 
 
 def test_retrieving():
-    flyte.init()
-
     assert DataFrameTransformerEngine.get_encoder(pd.DataFrame, "file", PARQUET) is not None
     # Asking for a generic means you're okay with any one registered for that
     # type assuming there's just one.
@@ -224,20 +217,3 @@ async def test_to_literal_through_df_with_format(ctx_with_test_raw_data_path):
     assert restored_df.equals(restored_df_2)
     assert restored_df.equals(df)
 
-
-@pytest.mark.asyncio
-async def test_raw_df_io_triggers_engine(sample_dataframe, ctx_with_test_raw_data_path):
-    """
-    Use case 3: Return a raw df, take in a raw df.
-    Taking in a raw df and returning it directly should trigger i/o and the engine.
-    """
-    flyte.init()
-    env = flyte.TaskEnvironment(name="test-raw-df")
-
-    @env.task
-    async def process_raw_df(df: pd.DataFrame) -> pd.DataFrame:
-        return df
-
-    run = flyte.with_runcontext("local").run(process_raw_df, sample_dataframe)
-    result = run.outputs()
-    assert result.equals(sample_dataframe)

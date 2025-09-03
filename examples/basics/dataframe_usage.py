@@ -1,15 +1,7 @@
-"""
-Basic DataFrame Usage Examples
-
-This example demonstrates how flyte.DataFrame is a wrapper around raw dataframes.
-
-Key principles:
-- Working with raw dataframes (pd.DataFrame) = automatic upload/download
-- Working with flyte.DataFrame = I/O only when you explicitly request it
-- At task completion: all dataframes are uploaded to remote storage
-"""
+from typing import Annotated
 
 import pandas as pd
+import numpy as np
 import flyte.io
 
 
@@ -24,70 +16,55 @@ env = flyte.TaskEnvironment(
 )
 
 # Simple sample data
-SAMPLE_DATA = {"name": ["Alice", "Bob", "Charlie"], "age": [25, 30, 35], "city": ["NYC", "SF", "LA"]}
+SAMPLE_DATA = {
+    "employee_id": range(1001, 1009),
+    "name": ["Alice", "Bob", "Charlie", "Diana", "Ethan", "Fiona", "George", "Hannah"],
+    "department": ["HR", "Engineering", "Engineering", "Marketing", "Finance", "Finance", "HR", "Engineering"],
+    "hire_date": pd.to_datetime([
+        "2018-01-15", "2019-03-22", "2020-07-10", "2017-11-01",
+        "2021-06-05", "2018-09-13", "2022-01-07", "2020-12-30"
+    ]),
+    "salary": [55000, 75000, 72000, 50000, 68000, 70000, np.nan, 80000],
+    "bonus_pct": [0.05, 0.10, 0.07, 0.04, np.nan, 0.08, 0.03, 0.09],
+    "full_time": [True, True, True, False, True, True, False, True],
+    "projects": [
+        ["Recruiting", "Onboarding"],
+        ["Platform", "API"],
+        ["API", "Data Pipeline"],
+        ["SEO", "Ads"],
+        ["Budget", "Forecasting"],
+        ["Auditing"],
+        [],
+        ["Platform", "Security", "Data Pipeline"]
+    ]
+}
 
 
 @env.task
 async def create_raw_dataframe() -> pd.DataFrame:
     """
-    Task returns raw dataframe (pd.DataFrame).
-    Uploading of the parquet happens at the end of the task, the TypeEngine uploads from memory to blob store.
+    This is the most basic use-case of how to pass dataframes (of all kinds, not just pandas). Create the dataframe
+    as normal, and return it. Note that the output signature is of the dataframe library type.
+    Uploading of the actual bits of the dataframe (which for pandas is serialized to parquet) happens at the
+    end of the task, the TypeEngine uploads from memory to blob store.
     """
     return pd.DataFrame(SAMPLE_DATA)
 
 
 # create a flyte dataframe object, and show what controls can be done (change the format)
-
-
-# declare that columns are a subset of an upstream dataframe
-
 @env.task
-async def create_wrapper_dataframe() -> flyte.io.DataFrame:
+async def create_flyte_dataframe() -> Annotated[flyte.io.DataFrame, "csv"]:
     """
-    Task returns WRAPPER dataframe (flyte.DataFrame).
-    This creates real remote data first, then returns a wrapper reference.
-    As a user, you would rarely do this, this is just demonstrating how to handle existing remote data.
+    Flyte ships with its own dataframe type.
     """
-    import os
-    import tempfile
+    pd_df = pd.DataFrame(SAMPLE_DATA)
 
-    import flyte.storage as storage
-    from flyte._context import internal_ctx
-
-    # Create a different dataset
-    other_data = pd.DataFrame(
-        {"product": ["Widget A", "Widget B", "Widget C"], "price": [10.99, 15.50, 8.25], "stock": [100, 50, 75]}
-    )
-
-    # Get a random remote path for upload
-    remote_path = internal_ctx().raw_data.get_random_remote_path("products.parquet")
-
-    # Save to temp file and upload manually using storage layer
-    with tempfile.NamedTemporaryFile(suffix=".parquet", delete=False) as tmp_file:
-        other_data.to_parquet(tmp_file.name)
-        uploaded_uri = await storage.put(tmp_file.name, remote_path)
-        os.unlink(tmp_file.name)
-
-    # Now create a wrapper reference to the uploaded data
-    return DataFrame.from_existing_remote(uploaded_uri, format="parquet")
-
-
+    fdf = flyte.io.DataFrame.create_from(pd_df)
+    return fdf
 
 
 @env.task
-async def inspect_wrapper_metadata(df: DataFrame) -> dict:
-    """
-    Working with flyte.DataFrame wrapper - NO I/O happens.
-    Just accessing metadata from the wrapper.
-    """
-    return {
-        "uri": df.uri,
-        "format": df.format,
-    }
-
-
-@env.task
-async def wrapper_to_raw(df: DataFrame) -> pd.DataFrame:
+async def wrapper_to_raw(df: flyte.io.DataFrame) -> pd.DataFrame:
     """
     Input: flyte.DataFrame wrapper -> Output: raw pd.DataFrame
     DOWNLOAD happens: df.open().all() downloads remote data to pandas
@@ -106,7 +83,7 @@ async def wrapper_to_raw(df: DataFrame) -> pd.DataFrame:
 
 
 @env.task
-async def wrapper_passthrough(df: DataFrame) -> DataFrame:
+async def wrapper_passthrough(df: flyte.io.DataFrame) -> flyte.io.DataFrame:
     """
     Input: flyte.DataFrame wrapper -> Output: flyte.DataFrame wrapper
     If you happen to not perform any operations on the DataFrame, no I/O happens.
