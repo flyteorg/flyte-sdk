@@ -36,7 +36,7 @@ async def test_structured_dataset_in_dataclass(ctx_with_test_raw_data_path):
         a: People
         b: InnerDatasetStruct
 
-    sd = DataFrame.create_from(val=df)
+    sd = DataFrame.from_df(val=df)
     o = DatasetStruct(a=sd, b=InnerDatasetStruct(a=sd, b=[sd], c={"hello": sd}))
 
     tf = DataclassTransformer()
@@ -84,7 +84,7 @@ async def test_structured_dataset_in_pydantic(ctx_with_test_raw_data_path):
         a: People
         b: InnerDatasetStruct
 
-    sd = DataFrame.create_from(val=df)
+    sd = DataFrame.from_df(val=df)
     o = DatasetStruct(a=sd, b=InnerDatasetStruct(a=sd, b=[sd], c={"hello": sd}))
 
     tf = PydanticTransformer()

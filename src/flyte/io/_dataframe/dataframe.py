@@ -140,7 +140,7 @@ class DataFrame(BaseModel, SerializableType):
         return [k for k, v in cls.columns().items()]
 
     @classmethod
-    def create_from(
+    def from_df(
         cls,
         val: typing.Optional[typing.Any] = None,
         uri: typing.Optional[str] = None,
@@ -784,7 +784,7 @@ class DataFrameTransformerEngine(TypeTransformer[DataFrame]):
             structured_dataset_type=expected.structured_dataset_type if expected else None
         )
 
-        fdf = DataFrame.create_from(val=python_val)
+        fdf = DataFrame.from_df(val=python_val)
         fdf._metadata = meta
         return await self.encode(fdf, python_type, protocol, fmt, sdt)
 

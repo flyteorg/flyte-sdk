@@ -63,7 +63,7 @@ async def create_flyte_dataframe() -> Annotated[flyte.io.DataFrame, "csv"]:
     """
     pd_df = pd.DataFrame(ADDL_EMPLOYEE_DATA)
 
-    fdf = flyte.io.DataFrame.create_from(pd_df)
+    fdf = flyte.io.DataFrame.from_df(pd_df)
     return fdf
 
 

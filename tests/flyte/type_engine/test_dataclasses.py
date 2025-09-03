@@ -580,7 +580,7 @@ async def test_pure_frozen_dataclasses_with_python_types():
 @pytest.mark.asyncio
 @mock.patch("flyte.storage._remote_fs.RemoteFSPathResolver")
 async def test_modify_literal_uris_call(mock_resolver, ctx_with_test_raw_data_path):
-    sd = DataFrame.create_from(val=pd.DataFrame({"a": [1, 2], "b": [3, 4]}))
+    sd = DataFrame.from_df(val=pd.DataFrame({"a": [1, 2], "b": [3, 4]}))
 
     @dataclass
     class DC1:

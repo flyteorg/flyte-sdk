@@ -192,7 +192,7 @@ async def test_to_literal(ctx_with_test_raw_data_path, sample_dataframe):
     assert lit.scalar.structured_dataset.metadata.structured_dataset_type.format == PARQUET
     assert lit.scalar.structured_dataset.metadata.structured_dataset_type.format == PARQUET
 
-    sd_with_literal_and_df = DataFrame.create_from(val=sample_dataframe)
+    sd_with_literal_and_df = DataFrame.from_df(val=sample_dataframe)
     sd_with_literal_and_df._literal_sd = lit
 
     with pytest.raises(ValueError, match="Shouldn't have specified both literal"):
@@ -213,7 +213,7 @@ async def test_to_literal(ctx_with_test_raw_data_path, sample_dataframe):
 @pytest.mark.asyncio
 async def test_to_literal_through_df_with_format(ctx_with_test_raw_data_path, sample_dataframe):
     lt = TypeEngine.to_literal_type(typing.Annotated[pd.DataFrame, "csv"])
-    fdf = DataFrame.create_from(val=sample_dataframe)
+    fdf = DataFrame.from_df(val=sample_dataframe)
 
     fdt = DataFrameTransformerEngine()
 
