@@ -92,11 +92,11 @@ class ConfigEntry(object):
 
 
 class ConfigFile(object):
-    def __init__(self, location: str):
+    def __init__(self, location: str | pathlib.Path):
         """
         Load the config from this location
         """
-        self._location = location
+        self._location = str(location)
         self._yaml_config = self._read_yaml_config(location)
 
     @property
@@ -173,13 +173,13 @@ def resolve_config_path() -> pathlib.Path | None:
 
 
 @lru_cache
-def get_config_file(c: typing.Union[str, ConfigFile, None]) -> ConfigFile | None:
+def get_config_file(c: typing.Union[str, pathlib.Path, ConfigFile, None]) -> ConfigFile | None:
     """
     Checks if the given argument is a file or a configFile and returns a loaded configFile else returns None
     """
-    if isinstance(c, str):
+    if isinstance(c, (str, pathlib.Path)):
         logger.debug(f"Using specified config file at {c}")
-        return ConfigFile(c)
+        return ConfigFile(str(c))
     elif isinstance(c, ConfigFile):
         return c
     config_path = resolve_config_path()

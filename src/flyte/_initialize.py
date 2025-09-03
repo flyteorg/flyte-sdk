@@ -228,7 +228,7 @@ async def init(
 
 @syncify
 async def init_from_config(
-    path_or_config: str | Config | None = None,
+    path_or_config: str | Path | Config | None = None,
     root_dir: Path | None = None,
     log_level: int | None = None,
 ) -> None:
