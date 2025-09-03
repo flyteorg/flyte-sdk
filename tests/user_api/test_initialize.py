@@ -230,7 +230,7 @@ task:
         await init_from_config.aio(path_or_config=config_path, root_dir=symlinked_root)
 
         expected_path = symlinked_root / config_path
-        mock_config_auto.assert_called_once_with(str(expected_path))
+        mock_config_auto.assert_called_once_with(expected_path)
 
         mock_init.aio.assert_called_once()
         call_kwargs = mock_init.aio.call_args[1]

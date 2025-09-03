@@ -32,14 +32,14 @@ class Controller:
     """
 
     def __init__(
-        self,
-        client_coro: Awaitable[ClientSet],
-        workers: int = 20,
-        max_system_retries: int = 10,
-        resource_log_interval_sec: float = 10.0,
-        min_backoff_on_err_sec: float = 0.1,
-        thread_wait_timeout_sec: float = 5.0,
-        enqueue_timeout_sec: float = 5.0,
+            self,
+            client_coro: Awaitable[ClientSet],
+            workers: int = 20,
+            max_system_retries: int = 10,
+            resource_log_interval_sec: float = 10.0,
+            min_backoff_on_err_sec: float = 0.1,
+            thread_wait_timeout_sec: float = 5.0,
+            enqueue_timeout_sec: float = 5.0,
     ):
         """
         Create a new controller instance.
@@ -96,10 +96,10 @@ class Controller:
         return await self._run_coroutine_in_controller_thread(self._bg_cancel_action(action))
 
     async def _finalize_parent_action(
-        self,
-        run_id: identifier_pb2.RunIdentifier,
-        parent_action_name: str,
-        timeout: Optional[float] = None,
+            self,
+            run_id: identifier_pb2.RunIdentifier,
+            parent_action_name: str,
+            timeout: Optional[float] = None,
     ):
         """Finalize the parent run"""
         await self._run_coroutine_in_controller_thread(
@@ -231,7 +231,7 @@ class Controller:
             logger.debug(f"Controller thread exiting: {threading.current_thread().name}")
 
     async def _bg_get_action(
-        self, action_id: identifier_pb2.ActionIdentifier, parent_action_name: str
+            self, action_id: identifier_pb2.ActionIdentifier, parent_action_name: str
     ) -> Optional[Action]:
         """Get the action from the informer"""
         # Ensure the informer is created and wait for it to be ready
@@ -248,10 +248,10 @@ class Controller:
         return None
 
     async def _bg_finalize_informer(
-        self,
-        run_id: identifier_pb2.RunIdentifier,
-        parent_action_name: str,
-        timeout: Optional[float] = None,
+            self,
+            run_id: identifier_pb2.RunIdentifier,
+            parent_action_name: str,
+            timeout: Optional[float] = None,
     ):
         informer = await self._informers.remove(run_name=run_id.name, parent_action_name=parent_action_name)
         if informer:
@@ -374,21 +374,12 @@ class Controller:
                 if e.code() == grpc.StatusCode.ALREADY_EXISTS:
                     logger.info(f"Action {action.name} already exists, continuing to monitor.")
                     return
-                if e.code() == grpc.StatusCode.RESOURCE_EXHAUSTED:
-                    logger.warning(f"Resource exhausted when launching action: {action.name}, backing off...")
-                    raise flyte.errors.SlowDownError(f"Resource exhausted: {e.details()}") from e
-                if e.code() == grpc.StatusCode.NOT_FOUND:
-                    raise flyte.errors.RuntimeSystemError("NotFound", f"Entity not found: {e.details()}") from e
-                if e.code() == grpc.StatusCode.FAILED_PRECONDITION:
+                if e.code() in [grpc.StatusCode.FAILED_PRECONDITION, grpc.StatusCode.INVALID_ARGUMENT,
+                                grpc.StatusCode.NOT_FOUND]:
                     raise flyte.errors.RuntimeSystemError(
-                        "FailedPrecondition", f"Precondition failed: {e.details()}"
+                        e.code().name, f"Precondition failed: {e.details()}"
                     ) from e
-                if e.code() == grpc.StatusCode.UNAVAILABLE:
-                    logger.warning(f"Service unavailable when launching action: {action.name}, backing off...")
-                    raise flyte.errors.SlowDownError(f"Service unavailable: {e.details()}") from e
-                if e.code() == grpc.StatusCode.DEADLINE_EXCEEDED:
-                    logger.warning(f"Deadline exceeded when launching action: {action.name}, backing off...")
-                    raise flyte.errors.SlowDownError(f"Deadline exceeded: {e.details()}") from e
+                # For all other errors, we will retry with backoff
                 logger.exception(
                     f"Failed to launch action: {action.name}, Code: {e.code()}, Details {e.details()} backing off..."
                 )
@@ -413,9 +404,9 @@ class Controller:
         """Periodically log resource stats if debug is enabled"""
         while self._running:
             async for (
-                started,
-                pending,
-                terminal,
+                    started,
+                    pending,
+                    terminal,
             ) in self._informers.count_started_pending_terminal_actions():
                 logger.info(f"Resource stats: Started={started}, Pending={pending}, Terminal={terminal}")
             await asyncio.sleep(self._resource_log_interval)

@@ -4,8 +4,7 @@ from pathlib import Path
 from types import ModuleType
 from typing import Any, Dict, List, cast, get_args
 
-import click
-from click import Context
+import rich_click as click
 
 import flyte
 
@@ -87,14 +86,14 @@ class DeployArguments:
         return [common.get_option_from_metadata(f.metadata) for f in fields(cls) if f.metadata]
 
 
-class DeployEnvCommand(click.Command):
+class DeployEnvCommand(click.RichCommand):
     def __init__(self, env_name: str, env: Any, deploy_args: DeployArguments, *args, **kwargs):
         self.env_name = env_name
         self.env = env
         self.deploy_args = deploy_args
         super().__init__(*args, **kwargs)
 
-    def invoke(self, ctx: Context):
+    def invoke(self, ctx: click.Context):
         from rich.console import Console
 
         console = Console()
@@ -125,7 +124,7 @@ class DeployEnvRecursiveCommand(click.Command):
         self.deploy_args = deploy_args
         super().__init__(*args, **kwargs)
 
-    def invoke(self, ctx: Context):
+    def invoke(self, ctx: click.Context):
         from rich.console import Console
 
         from flyte._environment import list_loaded_environments

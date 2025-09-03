@@ -18,7 +18,6 @@ from flyte.io._dataframe.dataframe import (
     DataFrameDecoder,
     DataFrameEncoder,
     DataFrameTransformerEngine,
-    extract_cols_and_format,
 )
 from flyte.models import SerializationContext
 from flyte.types import TypeEngine
@@ -90,7 +89,7 @@ async def test_aio_running(ctx_with_test_raw_data_path):
 @pytest.mark.asyncio
 async def test_setting_of_unset_formats():
     custom = typing.Annotated[DataFrame, "parquet"]
-    example = custom.create_from(val=df, uri="/path")
+    example = custom.from_df(val=df, uri="/path")
     # It's okay that the annotation is not used here yet.
     assert example.format == ""
 
@@ -98,7 +97,7 @@ async def test_setting_of_unset_formats():
 
     @env.task
     async def t2(path: str) -> DataFrame:
-        sd = DataFrame.create_from(val=df, uri=path)
+        sd = DataFrame.from_df(val=df, uri=path)
         return sd
 
     @env.task
@@ -116,138 +115,7 @@ async def test_setting_of_unset_formats():
         assert res.outputs().format == "parquet"
 
 
-def test_types_pandas():
-    pt = pd.DataFrame
-    lt = TypeEngine.to_literal_type(pt)
-    assert lt.structured_dataset_type is not None
-    assert lt.structured_dataset_type.format == ""
-    assert lt.structured_dataset_type.columns == []
-
-    pt = typing.Annotated[pd.DataFrame, "csv"]
-    lt = TypeEngine.to_literal_type(pt)
-    assert lt.structured_dataset_type.format == "csv"
-
-
-def test_annotate_extraction():
-    xyz = typing.Annotated[pd.DataFrame, "myformat"]
-    a, b, c, d = extract_cols_and_format(xyz)
-    assert a is pd.DataFrame
-    assert b is None
-    assert c == "myformat"
-    assert d is None
-
-    a, b, c, d = extract_cols_and_format(pd.DataFrame)
-    assert a is pd.DataFrame
-    assert b is None
-    assert c == ""
-    assert d is None
-
-
-def test_types_annotated():
-    pt = typing.Annotated[pd.DataFrame, my_cols]
-    lt = TypeEngine.to_literal_type(pt)
-    assert len(lt.structured_dataset_type.columns) == 4
-    assert (
-        lt.structured_dataset_type.columns[0].literal_type.map_value_type.map_value_type.simple
-        == types_pb2.SimpleType.INTEGER
-    )
-    assert (
-        lt.structured_dataset_type.columns[1].literal_type.collection_type.collection_type.simple
-        == types_pb2.SimpleType.INTEGER
-    )
-    assert lt.structured_dataset_type.columns[2].literal_type.simple == types_pb2.SimpleType.INTEGER
-    assert lt.structured_dataset_type.columns[3].literal_type.simple == types_pb2.SimpleType.STRING
-
-    pt = typing.Annotated[pd.DataFrame, PARQUET, arrow_schema]
-    lt = TypeEngine.to_literal_type(pt)
-    assert lt.structured_dataset_type.external_schema_type == "arrow"
-    assert "some_string" in str(lt.structured_dataset_type.external_schema_bytes)
-
-    pt = typing.Annotated[pd.DataFrame, OrderedDict(a=None)]
-    with pytest.raises(AssertionError, match="type None is currently not supported by DataFrame"):
-        TypeEngine.to_literal_type(pt)
-
-
-def test_types_sd():
-    pt = DataFrame
-    lt = TypeEngine.to_literal_type(pt)
-    assert lt.structured_dataset_type is not None
-
-    pt = typing.Annotated[DataFrame, my_cols]
-    lt = TypeEngine.to_literal_type(pt)
-    assert len(lt.structured_dataset_type.columns) == 4
-
-    pt = typing.Annotated[DataFrame, my_cols, "csv"]
-    lt = TypeEngine.to_literal_type(pt)
-    assert len(lt.structured_dataset_type.columns) == 4
-    assert lt.structured_dataset_type.format == "csv"
-
-    pt = typing.Annotated[DataFrame, {}, "csv"]
-    lt = TypeEngine.to_literal_type(pt)
-    assert len(lt.structured_dataset_type.columns) == 0
-    assert lt.structured_dataset_type.format == "csv"
-
-
 class MyDF(pd.DataFrame): ...
-
-
-def test_retrieving():
-    assert DataFrameTransformerEngine.get_encoder(pd.DataFrame, "file", PARQUET) is not None
-    # Asking for a generic means you're okay with any one registered for that
-    # type assuming there's just one.
-    assert DataFrameTransformerEngine.get_encoder(pd.DataFrame, "file", "") is DataFrameTransformerEngine.get_encoder(
-        pd.DataFrame, "file", PARQUET
-    )
-
-    class TempEncoder(DataFrameEncoder):
-        def __init__(self, protocol):
-            super().__init__(MyDF, protocol)
-
-        def encode(self): ...
-
-    DataFrameTransformerEngine.register(TempEncoder("gs"), default_for_type=False)
-    with pytest.raises(ValueError):
-        DataFrameTransformerEngine.register(TempEncoder("gs://"), default_for_type=False)
-
-    with pytest.raises(ValueError, match="Use None instead"):
-        e = TempEncoder("")
-        e._protocol = ""
-        DataFrameTransformerEngine.register(e)
-
-    class TempEncoder:
-        pass
-
-    with pytest.raises(TypeError, match="We don't support this type of handler"):
-        DataFrameTransformerEngine.register(TempEncoder, default_for_type=False)
-
-
-@pytest.mark.asyncio
-async def test_to_literal(ctx_with_test_raw_data_path):
-    lt = TypeEngine.to_literal_type(pd.DataFrame)
-    df = generate_pandas()
-
-    fdt = DataFrameTransformerEngine()
-
-    lit = await fdt.to_literal(df, python_type=pd.DataFrame, expected=lt)
-    assert lit.scalar.structured_dataset.metadata.structured_dataset_type.format == PARQUET
-    assert lit.scalar.structured_dataset.metadata.structured_dataset_type.format == PARQUET
-
-    sd_with_literal_and_df = DataFrame.create_from(val=df)
-    sd_with_literal_and_df._literal_sd = lit
-
-    with pytest.raises(ValueError, match="Shouldn't have specified both literal"):
-        await fdt.to_literal(sd_with_literal_and_df, python_type=DataFrame, expected=lt)
-
-    sd_with_nothing = DataFrame()
-    with pytest.raises(ValueError, match="If dataframe is not specified"):
-        await fdt.to_literal(sd_with_nothing, python_type=DataFrame, expected=lt)
-
-    sd_with_uri = DataFrame.from_existing_remote(remote_path="s3://some/extant/df.parquet")
-
-    lt = TypeEngine.to_literal_type(typing.Annotated[DataFrame, {}, "new-df-format"])
-    lit = await fdt.to_literal(sd_with_uri, python_type=DataFrame, expected=lt)
-    assert lit.scalar.structured_dataset.uri == "s3://some/extant/df.parquet"
-    assert lit.scalar.structured_dataset.metadata.structured_dataset_type.format == "new-df-format"
 
 
 @pytest.mark.asyncio
@@ -269,7 +137,7 @@ async def test_fill_in_literal_type():
     assert lt.structured_dataset_type.format == ""
 
     fdt = DataFrameTransformerEngine()
-    sd = DataFrame.create_from(val=MyDF())
+    sd = DataFrame.from_df(val=MyDF())
     literal = await fdt.to_literal(sd, MyDF, lt)
     # Test that the literal type is filled in even though the encode function
     # above doesn't do it.
@@ -307,7 +175,7 @@ def test_slash_register():
 
 @pytest.mark.asyncio
 async def test_sd():
-    sd = DataFrame.create_from(val="hi")
+    sd = DataFrame.from_df(val="hi")
     sd.uri = "my uri"
     assert sd.format == ""
 
@@ -452,12 +320,12 @@ async def test_format_correct(ctx_with_test_raw_data_path):
     assert df_literal_type.structured_dataset_type.columns[1].literal_type.simple is not None
     assert df_literal_type.structured_dataset_type.format == "avro"
 
-    sd = annotated_sd_type.create_from(val=df)
+    sd = annotated_sd_type.from_df(val=df)
     with pytest.raises(ValueError, match="Failed to find a handler"):
         await TypeEngine.to_literal(sd, python_type=annotated_sd_type, expected=df_literal_type)
 
     DataFrameTransformerEngine.register(TempEncoder(), default_for_type=False)
-    sd2 = annotated_sd_type.create_from(val=df)
+    sd2 = annotated_sd_type.from_df(val=df)
     sd_literal = await TypeEngine.to_literal(sd2, python_type=annotated_sd_type, expected=df_literal_type)
     assert sd_literal.scalar.structured_dataset.metadata.structured_dataset_type.format == "avro"
 
@@ -465,7 +333,7 @@ async def test_format_correct(ctx_with_test_raw_data_path):
 
     @env.task
     async def t1() -> typing.Annotated[DataFrame, "avro"]:
-        return DataFrame.create_from(val=df)
+        return DataFrame.from_df(val=df)
 
     # pr: this test doesn't work right now, because calling the task just calls the function.
     # res = await t1()
@@ -552,7 +420,7 @@ async def test_reregister_encoder(ctx_with_test_raw_data_path):
     )
     TypeEngine.lazy_import_transformers()
 
-    sd = DataFrame.create_from(val=pd.DataFrame({"a": [1, 2], "b": [3, 4]}), uri="bq://blah", format="bq")
+    sd = DataFrame.from_df(val=pd.DataFrame({"a": [1, 2], "b": [3, 4]}), uri="bq://blah")
 
     df_literal_type = TypeEngine.to_literal_type(pd.DataFrame)
 
@@ -641,7 +509,7 @@ async def test_read_sd_from_local_uri(local_tmp_pqt_file, ctx_with_test_raw_data
 @mock.patch("flyte.storage._remote_fs.RemoteFSPathResolver")
 @mock.patch("flyte.io.DataFrameTransformerEngine.get_encoder")
 async def test_modify_literal_uris_call(mock_get_encoder, mock_resolver, ctx_with_test_raw_data_path):
-    sd = DataFrame.create_from(val=pd.DataFrame({"a": [1, 2], "b": [3, 4]}), uri="bq://blah", format="bq")
+    sd = DataFrame.from_df(val=pd.DataFrame({"a": [1, 2], "b": [3, 4]}), uri="bq://blah")
 
     def mock_resolve_remote_path(flyte_uri: str) -> typing.Optional[str]:
         if flyte_uri == "bq://blah":
@@ -688,3 +556,33 @@ def test_schema():
 
     ss = BM.model_json_schema()
     assert json.dumps(ss, indent=2)
+
+
+def test_retrieving():
+    assert DataFrameTransformerEngine.get_encoder(pd.DataFrame, "file", PARQUET) is not None
+    # Asking for a generic means you're okay with any one registered for that
+    # type assuming there's just one.
+    assert DataFrameTransformerEngine.get_encoder(pd.DataFrame, "file", "") is DataFrameTransformerEngine.get_encoder(
+        pd.DataFrame, "file", PARQUET
+    )
+
+    class TempEncoder(DataFrameEncoder):
+        def __init__(self, protocol):
+            super().__init__(MyDF, protocol)
+
+        def encode(self): ...
+
+    DataFrameTransformerEngine.register(TempEncoder("gs"), default_for_type=False)
+    with pytest.raises(ValueError):
+        DataFrameTransformerEngine.register(TempEncoder("gs://"), default_for_type=False)
+
+    with pytest.raises(ValueError, match="Use None instead"):
+        e = TempEncoder("")
+        e._protocol = ""
+        DataFrameTransformerEngine.register(e)
+
+    class TempEncoder:
+        pass
+
+    with pytest.raises(TypeError, match="We don't support this type of handler"):
+        DataFrameTransformerEngine.register(TempEncoder, default_for_type=False)

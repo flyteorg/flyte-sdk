@@ -140,21 +140,19 @@ class DataFrame(BaseModel, SerializableType):
         return [k for k, v in cls.columns().items()]
 
     @classmethod
-    def create_from(
+    def from_df(
         cls,
         val: typing.Optional[typing.Any] = None,
         uri: typing.Optional[str] = None,
-        metadata: typing.Optional[literals_pb2.StructuredDatasetMetadata] = None,
-        format: typing.Optional[str] = None,
-        **kwargs,
     ) -> DataFrame:
         """
-        Internal constructor for type engine usage.
-        For user-facing APIs, use from_val(), from_existing_remote(), or new_remote().
+        Wrapper to create a DataFrame from a dataframe.
+        The reason this is implemented as a wrapper instead of a full translation invoking
+        the type engine and the encoders is because there's too much information in the type
+        signature of the task that we don't want the user to have to replicate.
         """
-        instance = cls(uri=uri, format=format or GENERIC_FORMAT, **kwargs)
+        instance = cls(uri=uri)
         instance._raw_df = val
-        instance._metadata = metadata
         return instance
 
     @classmethod
@@ -786,7 +784,8 @@ class DataFrameTransformerEngine(TypeTransformer[DataFrame]):
             structured_dataset_type=expected.structured_dataset_type if expected else None
         )
 
-        fdf = DataFrame.create_from(val=python_val, metadata=meta)
+        fdf = DataFrame.from_df(val=python_val)
+        fdf._metadata = meta
         return await self.encode(fdf, python_type, protocol, fmt, sdt)
 
     def _protocol_from_type_or_prefix(self, df_type: Type, uri: Optional[str] = None) -> str:
