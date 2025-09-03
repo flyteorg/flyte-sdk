@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import os
+import random
 import sys
 import threading
 from asyncio import Event
@@ -32,8 +34,8 @@ class Controller:
     def __init__(
         self,
         client_coro: Awaitable[ClientSet],
-        workers: int = 2,
-        max_system_retries: int = 5,
+        workers: int = 20,
+        max_system_retries: int = 10,
         resource_log_interval_sec: float = 10.0,
         min_backoff_on_err_sec: float = 0.1,
         thread_wait_timeout_sec: float = 5.0,
@@ -52,15 +54,17 @@ class Controller:
         self._shared_queue: asyncio.Queue[Action] = asyncio.Queue(maxsize=10000)
         self._running = False
         self._resource_log_task = None
-        self._workers = workers
-        self._max_retries = max_system_retries
+        self._workers = int(os.getenv("_F_CNTRL_WORKERS", workers))
+        self._max_retries = int(os.getenv("_F_MAX_RETRIES", max_system_retries))
         self._resource_log_interval = resource_log_interval_sec
         self._min_backoff_on_err = min_backoff_on_err_sec
+        self._max_backoff_on_err = 10.0
         self._thread_wait_timeout = thread_wait_timeout_sec
         self._client_coro = client_coro
         self._failure_event: Event | None = None
         self._enqueue_timeout = enqueue_timeout_sec
         self._informer_start_wait_timeout = thread_wait_timeout_sec
+        self._backoff_event = asyncio.Event()
 
         # Thread management
         self._thread = None
@@ -320,6 +324,9 @@ class Controller:
         Attempt to launch an action.
         """
         if not action.is_started():
+            if self._backoff_event.is_set():
+                await asyncio.sleep(random.uniform(self._max_backoff_on_err, self._max_backoff_on_err))
+                self._backoff_event.clear()
             task: queue_service_pb2.TaskAction | None = None
             trace: queue_service_pb2.TraceAction | None = None
             if action.type == "task":
@@ -367,9 +374,26 @@ class Controller:
                 if e.code() == grpc.StatusCode.ALREADY_EXISTS:
                     logger.info(f"Action {action.name} already exists, continuing to monitor.")
                     return
-                logger.exception(f"Failed to launch action: {action.name} backing off...")
+                if e.code() == grpc.StatusCode.RESOURCE_EXHAUSTED:
+                    logger.warning(f"Resource exhausted when launching action: {action.name}, backing off...")
+                    raise flyte.errors.SlowDownError(f"Resource exhausted: {e.details()}") from e
+                if e.code() == grpc.StatusCode.NOT_FOUND:
+                    raise flyte.errors.RuntimeSystemError("NotFound", f"Entity not found: {e.details()}") from e
+                if e.code() == grpc.StatusCode.FAILED_PRECONDITION:
+                    raise flyte.errors.RuntimeSystemError(
+                        "FailedPrecondition", f"Precondition failed: {e.details()}"
+                    ) from e
+                if e.code() == grpc.StatusCode.UNAVAILABLE:
+                    logger.warning(f"Service unavailable when launching action: {action.name}, backing off...")
+                    raise flyte.errors.SlowDownError(f"Service unavailable: {e.details()}") from e
+                if e.code() == grpc.StatusCode.DEADLINE_EXCEEDED:
+                    logger.warning(f"Deadline exceeded when launching action: {action.name}, backing off...")
+                    raise flyte.errors.SlowDownError(f"Deadline exceeded: {e.details()}") from e
+                logger.exception(
+                    f"Failed to launch action: {action.name}, Code: {e.code()}, Details {e.details()} backing off..."
+                )
                 logger.debug(f"Action details: {action}")
-                raise e
+                raise flyte.errors.SlowDownError(f"Failed to launch action: {e.details()}") from e
 
     @log
     async def _bg_process(self, action: Action):
@@ -405,27 +429,27 @@ class Controller:
             logger.debug(f"{threading.current_thread().name} Got resource {action.name}")
             try:
                 await self._bg_process(action)
+            except flyte.errors.SlowDownError as e:
+                action.retries += 1
+                logger.warning(f"Backing off on action {action.name} due to error: {e}, retry {action.retries}")
+                if action.retries > self._max_retries:
+                    raise
+                self._backoff_event.set()
+                await self._shared_queue.put(action)
             except Exception as e:
                 logger.error(f"Error in controller loop: {e}")
-                # TODO we need a better way of handling backoffs currently the entire worker coroutine backs off
-                await asyncio.sleep(self._min_backoff_on_err)
-                action.increment_retries()
-                if action.retries > self._max_retries:
-                    err = flyte.errors.RuntimeSystemError(
-                        code=type(e).__name__,
-                        message=f"Controller failed, system retries {action.retries}"
-                        f" crossed threshold {self._max_retries}",
-                    )
-                    err.__cause__ = e
-                    action.set_client_error(err)
-                    informer = await self._informers.get(
-                        run_name=action.run_name,
-                        parent_action_name=action.parent_action_name,
-                    )
-                    if informer:
-                        await informer.fire_completion_event(action.name)
-                else:
-                    await self._shared_queue.put(action)
+                err = flyte.errors.RuntimeSystemError(
+                    code=type(e).__name__,
+                    message=f"Controller failed, system retries {action.retries} crossed threshold {self._max_retries}",
+                )
+                err.__cause__ = e
+                action.set_client_error(err)
+                informer = await self._informers.get(
+                    run_name=action.run_name,
+                    parent_action_name=action.parent_action_name,
+                )
+                if informer:
+                    await informer.fire_completion_event(action.name)
             finally:
                 self._shared_queue.task_done()
 

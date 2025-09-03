@@ -117,16 +117,12 @@ class RemoteController(Controller):
     def __init__(
         self,
         client_coro: Awaitable[ClientSet],
-        workers: int,
-        max_system_retries: int,
-        default_parent_concurrency: int = 100,
     ):
         """ """
         super().__init__(
             client_coro=client_coro,
-            workers=workers,
-            max_system_retries=max_system_retries,
         )
+        default_parent_concurrency = int(os.getenv("_F_P_CNC", "100"))
         self._default_parent_concurrency = default_parent_concurrency
         self._parent_action_semaphore: DefaultDict[str, asyncio.Semaphore] = defaultdict(
             lambda: asyncio.Semaphore(default_parent_concurrency)
