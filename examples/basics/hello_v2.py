@@ -13,7 +13,7 @@ async def hello_worker(id: int) -> str:
     return f"hello, my id is: {id} and I am being run by Action: {flyte.ctx().action}"
 
 
-@env.task()
+@env.task(queue="dogfood-2")
 async def hello_driver(ids: List[int] = [1, 2, 3]) -> List[str]:
     coros = []
     with flyte.group("fanout-group"):
