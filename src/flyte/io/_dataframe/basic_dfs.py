@@ -88,6 +88,7 @@ class CSVToPandasDecodingHandler(DataFrameDecoder):
             columns = [c.name for c in current_task_metadata.structured_dataset_type.columns]
         try:
             import io
+
             # The pattern used here is a bit wonky because of obstore issues with csv, getting early eof error.
             buf = io.BytesIO()
             async for chunk in storage.get_stream(csv_file):
