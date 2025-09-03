@@ -77,18 +77,6 @@ jobs:
         run: |
           uv run python -m twine upload --verbose dist/*
 
-  wait-for-flyte-pypi:
-    needs: flyte-pypi
-    runs-on: ubuntu-latest
-    steps:
-      - name: Wait for 1 minute
-        run: sleep 60
-      - name: Install uv
-        uses: astral-sh/setup-uv@v6
-      - name: Try to install flyte
-        run: |
-          uv pip install flyte==$(python -c "import flyte; print(flyte.__version__)")
-
   build-and-push-docker-images:
     needs: flyte-pypi
     name: Flyte image for Python ${{ matrix.python-version }}
