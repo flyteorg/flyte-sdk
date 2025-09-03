@@ -96,7 +96,7 @@ class ConfigFile(object):
         """
         Load the config from this location
         """
-        self._location = str(location)
+        self._location = location
         self._yaml_config = self._read_yaml_config(location)
 
     @property
