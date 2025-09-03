@@ -251,7 +251,7 @@ async def init_from_config(
     if path_or_config is None:
         # If no path is provided, use the default config file
         cfg = config.auto()
-    elif isinstance(path_or_config, str):
+    elif isinstance(path_or_config, (str, Path)):
         if root_dir:
             cfg_path = str(root_dir / path_or_config)
         else:
