@@ -58,16 +58,16 @@ class PandasToCSVEncodingHandler(DataFrameEncoder):
 
         if not storage.is_remote(uri):
             Path(uri).mkdir(parents=True, exist_ok=True)
-        path = os.path.join(uri, ".csv")
+        csv_file = storage.join(uri, "data.csv")
         df = typing.cast(pd.DataFrame, dataframe.val)
         df.to_csv(
-            path,
+            csv_file,
             index=False,
-            storage_options=get_pandas_storage_options(uri=path),
+            storage_options=get_pandas_storage_options(uri=csv_file),
         )
         structured_dataset_type.format = CSV
         return literals_pb2.StructuredDataset(
-            uri=uri, metadata=literals_pb2.StructuredDatasetMetadata(structured_dataset_type)
+            uri=uri, metadata=literals_pb2.StructuredDatasetMetadata(structured_dataset_type=structured_dataset_type)
         )
 
 
@@ -83,16 +83,24 @@ class CSVToPandasDecodingHandler(DataFrameDecoder):
         uri = proto_value.uri
         columns = None
         kwargs = get_pandas_storage_options(uri=uri)
-        path = os.path.join(uri, ".csv")
+        csv_file = storage.join(uri, "data.csv")
         if current_task_metadata.structured_dataset_type and current_task_metadata.structured_dataset_type.columns:
             columns = [c.name for c in current_task_metadata.structured_dataset_type.columns]
         try:
-            return pd.read_csv(path, usecols=columns, storage_options=kwargs)
+            import io
+            # The pattern used here is a bit wonky because of obstore issues with csv, getting early eof error.
+            buf = io.BytesIO()
+            async for chunk in storage.get_stream(csv_file):
+                buf.write(chunk)
+            buf.seek(0)
+            df = pd.read_csv(buf)
+            return df
+
         except Exception as exc:
             if exc.__class__.__name__ == "NoCredentialsError":
                 logger.debug("S3 source detected, attempting anonymous S3 access")
                 kwargs = get_pandas_storage_options(uri=uri, anonymous=True)
-                return pd.read_csv(path, usecols=columns, storage_options=kwargs)
+                return pd.read_csv(csv_file, usecols=columns, storage_options=kwargs)
             else:
                 raise
 
