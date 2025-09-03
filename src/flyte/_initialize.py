@@ -253,9 +253,9 @@ async def init_from_config(
         cfg = config.auto()
     elif isinstance(path_or_config, (str, Path)):
         if root_dir:
-            cfg_path = str(root_dir / path_or_config)
+            cfg_path = root_dir / path_or_config
         else:
-            cfg_path = path_or_config
+            cfg_path = Path(path_or_config)
         if not Path(cfg_path).exists():
             raise InitializationError(
                 "ConfigFileNotFoundError",
