@@ -92,7 +92,7 @@ class ConfigEntry(object):
 
 
 class ConfigFile(object):
-    def __init__(self, location: str | pathlib.Path):
+    def __init__(self, location: str):
         """
         Load the config from this location
         """
@@ -108,7 +108,7 @@ class ConfigFile(object):
         return pathlib.Path(self._location)
 
     @staticmethod
-    def _read_yaml_config(location: str | pathlib.Path) -> typing.Optional[typing.Dict[str, typing.Any]]:
+    def _read_yaml_config(location: str) -> typing.Optional[typing.Dict[str, typing.Any]]:
         with open(location, "r") as fh:
             try:
                 yaml_contents = yaml.safe_load(fh)
