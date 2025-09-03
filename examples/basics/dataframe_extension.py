@@ -1,8 +1,6 @@
-import pyarrow
 import geopandas as gpd
-
-
-from flytekit import FlyteContext, lazy_module
+import pyarrow
+from flytekit import FlyteContext
 from flytekit.models import literals
 from flytekit.models.literals import StructuredDatasetMetadata
 from flytekit.models.types import StructuredDatasetType
@@ -13,7 +11,6 @@ from flytekit.types.structured.structured_dataset import (
     StructuredDatasetEncoder,
     StructuredDatasetTransformerEngine,
 )
-
 
 
 class GeoPandasDataFrameRenderer:

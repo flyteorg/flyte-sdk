@@ -18,7 +18,6 @@ from flyte.io._dataframe.dataframe import (
     DataFrameDecoder,
     DataFrameEncoder,
     DataFrameTransformerEngine,
-    extract_cols_and_format,
 )
 from flyte.models import SerializationContext
 from flyte.types import TypeEngine
@@ -557,7 +556,6 @@ def test_schema():
 
     ss = BM.model_json_schema()
     assert json.dumps(ss, indent=2)
-
 
 
 def test_retrieving():

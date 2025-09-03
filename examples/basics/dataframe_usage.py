@@ -1,9 +1,9 @@
 from typing import Annotated
 
-import pandas as pd
 import numpy as np
-import flyte.io
+import pandas as pd
 
+import flyte.io
 
 # Create task environment with required dependencies
 img = flyte.Image.from_debian_base()
@@ -20,10 +20,9 @@ SAMPLE_DATA = {
     "employee_id": range(1001, 1009),
     "name": ["Alice", "Bob", "Charlie", "Diana", "Ethan", "Fiona", "George", "Hannah"],
     "department": ["HR", "Engineering", "Engineering", "Marketing", "Finance", "Finance", "HR", "Engineering"],
-    "hire_date": pd.to_datetime([
-        "2018-01-15", "2019-03-22", "2020-07-10", "2017-11-01",
-        "2021-06-05", "2018-09-13", "2022-01-07", "2020-12-30"
-    ]),
+    "hire_date": pd.to_datetime(
+        ["2018-01-15", "2019-03-22", "2020-07-10", "2017-11-01", "2021-06-05", "2018-09-13", "2022-01-07", "2020-12-30"]
+    ),
     "salary": [55000, 75000, 72000, 50000, 68000, 70000, np.nan, 80000],
     "bonus_pct": [0.05, 0.10, 0.07, 0.04, np.nan, 0.08, 0.03, 0.09],
     "full_time": [True, True, True, False, True, True, False, True],
@@ -35,8 +34,8 @@ SAMPLE_DATA = {
         ["Budget", "Forecasting"],
         ["Auditing"],
         [],
-        ["Platform", "Security", "Data Pipeline"]
-    ]
+        ["Platform", "Security", "Data Pipeline"],
+    ],
 }
 
 

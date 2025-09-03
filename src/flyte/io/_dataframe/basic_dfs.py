@@ -92,7 +92,7 @@ class CSVToPandasDecodingHandler(DataFrameDecoder):
             if exc.__class__.__name__ == "NoCredentialsError":
                 logger.debug("S3 source detected, attempting anonymous S3 access")
                 kwargs = get_pandas_storage_options(uri=uri, anonymous=True)
-                return pd.read_csv(path, usecols=columns, storage_options=kwargs)
+                return pd.read_csv(csv_file, usecols=columns, storage_options=kwargs)
             else:
                 raise
 

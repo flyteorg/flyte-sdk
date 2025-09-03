@@ -1,11 +1,12 @@
-import pytest
-
 import typing
-import flyte
-from flyte.io._dataframe.dataframe import DataFrame
-from flyte.types import TypeEngine
-from flyteidl.core import types_pb2
 from collections import OrderedDict
+
+import pytest
+from flyteidl.core import types_pb2
+from fsspec.utils import get_protocol
+
+import flyte
+from flyte.io._dataframe import lazy_import_dataframe_handler
 from flyte.io._dataframe.dataframe import (
     PARQUET,
     DataFrame,
@@ -13,17 +14,21 @@ from flyte.io._dataframe.dataframe import (
     DataFrameTransformerEngine,
     extract_cols_and_format,
 )
-from fsspec.utils import get_protocol
+from flyte.types import TypeEngine
+
+lazy_import_dataframe_handler()
 
 pd = pytest.importorskip("pandas")
 
 # Sample data for testing
 TEST_DATA = {"name": ["Alice", "Bob", "Charlie"], "age": [25, 30, 35], "city": ["NYC", "SF", "LA"]}
 
+
 @pytest.fixture
 def sample_dataframe():
     """Create a sample pandas DataFrame for testing."""
     return pd.DataFrame(TEST_DATA)
+
 
 def test_protocol():
     assert get_protocol("s3://my-s3-bucket/file") == "s3"
@@ -98,6 +103,7 @@ def test_types_sd():
     assert len(lt.structured_dataset_type.columns) == 0
     assert lt.structured_dataset_type.format == "csv"
 
+
 @pytest.mark.asyncio
 async def test_passthrough_df_no_io_pure_local(sample_dataframe):
     """
@@ -145,7 +151,7 @@ async def test_passthrough_df_no_io(sample_dataframe):
 
 
 def test_retrieving():
-    flyte.init()
+    class MyDF(pd.DataFrame): ...
 
     assert DataFrameTransformerEngine.get_encoder(pd.DataFrame, "file", PARQUET) is not None
     # Asking for a generic means you're okay with any one registered for that
@@ -177,17 +183,16 @@ def test_retrieving():
 
 
 @pytest.mark.asyncio
-async def test_to_literal(ctx_with_test_raw_data_path):
+async def test_to_literal(ctx_with_test_raw_data_path, sample_dataframe):
     lt = TypeEngine.to_literal_type(pd.DataFrame)
-    df = generate_pandas()
 
     fdt = DataFrameTransformerEngine()
 
-    lit = await fdt.to_literal(df, python_type=pd.DataFrame, expected=lt)
+    lit = await fdt.to_literal(sample_dataframe, python_type=pd.DataFrame, expected=lt)
     assert lit.scalar.structured_dataset.metadata.structured_dataset_type.format == PARQUET
     assert lit.scalar.structured_dataset.metadata.structured_dataset_type.format == PARQUET
 
-    sd_with_literal_and_df = DataFrame.create_from(val=df)
+    sd_with_literal_and_df = DataFrame.create_from(val=sample_dataframe)
     sd_with_literal_and_df._literal_sd = lit
 
     with pytest.raises(ValueError, match="Shouldn't have specified both literal"):
@@ -206,10 +211,9 @@ async def test_to_literal(ctx_with_test_raw_data_path):
 
 
 @pytest.mark.asyncio
-async def test_to_literal_through_df_with_format(ctx_with_test_raw_data_path):
+async def test_to_literal_through_df_with_format(ctx_with_test_raw_data_path, sample_dataframe):
     lt = TypeEngine.to_literal_type(typing.Annotated[pd.DataFrame, "csv"])
-    df = generate_pandas()
-    fdf = DataFrame.create_from(val=df)
+    fdf = DataFrame.create_from(val=sample_dataframe)
 
     fdt = DataFrameTransformerEngine()
 
@@ -222,7 +226,7 @@ async def test_to_literal_through_df_with_format(ctx_with_test_raw_data_path):
 
     restored_df_2 = await fdt.to_python_value(lit, expected_python_type=pd.DataFrame)
     assert restored_df.equals(restored_df_2)
-    assert restored_df.equals(df)
+    assert restored_df.equals(sample_dataframe)
 
 
 @pytest.mark.asyncio
