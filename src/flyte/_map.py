@@ -1,5 +1,6 @@
 import asyncio
 import functools
+import logging
 from typing import Any, AsyncGenerator, AsyncIterator, Generic, Iterable, Iterator, List, Union, cast
 
 from flyte.syncify import syncify
@@ -57,13 +58,16 @@ class MapAsyncIterator(Generic[P, R]):
             return result
         except Exception as e:
             self._exception_count += 1
-            logger.debug(f"Task {self._current_index - 1} failed with exception: {e}")
+            logger.debug(
+                f"Task {self._current_index - 1} failed with exception: {e}, return_exceptions={self.return_exceptions}"
+            )
             if self.return_exceptions:
                 return e
             else:
                 # Cancel remaining tasks
                 for remaining_task in self._tasks[self._current_index + 1 :]:
                     remaining_task.cancel()
+                logger.warning("Exception raising is `ON`, raising exception and cancelling remaining tasks")
                 raise e
 
     async def _initialize(self):
@@ -77,11 +81,12 @@ class MapAsyncIterator(Generic[P, R]):
             base_func = cast(TaskTemplate, self.func.func)
             bound_args = self.func.args
             bound_kwargs = self.func.keywords or {}
-            
+
             for arg_tuple in zip(*self.args):
                 # Merge bound positional args with mapped args
                 merged_args = bound_args + arg_tuple
-                logger.warning(f"Running {base_func.name} with args: {merged_args} and kwargs: {bound_kwargs}")
+                if logger.isEnabledFor(logging.DEBUG):
+                    logger.debug(f"Running {base_func.name} with args: {merged_args} and kwargs: {bound_kwargs}")
                 task = asyncio.create_task(base_func.aio(*merged_args, **bound_kwargs))
                 tasks.append(task)
                 task_count += 1
@@ -220,7 +225,7 @@ class _Mapper(Generic[P, R]):
                     *args,
                     name=name,
                     concurrency=concurrency,
-                    return_exceptions=True,
+                    return_exceptions=return_exceptions,
                 ),
             ):
                 logger.debug(f"Mapped {x}, task {i}")
