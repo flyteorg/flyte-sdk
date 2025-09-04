@@ -236,6 +236,33 @@ task:
         call_kwargs = mock_init.aio.call_args[1]
         assert call_kwargs["root_dir"] == symlinked_root
 
+    @pytest.mark.parametrize(
+        "path_arg, expected_path",
+        [
+            ("~/.flyte/config.yaml", Path.home() / ".flyte" / "config.yaml"),
+            (Path.home() / ".flyte" / "config.yaml", Path.home() / ".flyte" / "config.yaml"),
+            ("../../config.yaml", Path("..") / ".." / "config.yaml"),
+            (Path("..") / ".." / "config.yaml", Path("..") / ".." / "config.yaml"),
+        ]
+    )
+    @patch("flyte._initialize.init")
+    @patch("flyte.config.auto")
+    @patch("pathlib.Path.exists")
+    @pytest.mark.asyncio
+    async def test_init_from_config_paths(
+        self, mock_exists, mock_config_auto, mock_init, mock_config, path_arg, expected_path
+    ):
+        """Test init_from_config with home directory"""
+        mock_exists.return_value = True
+        mock_config_auto.return_value = mock_config
+        mock_init.aio = AsyncMock()
+
+        await init_from_config.aio(path_or_config=path_arg)
+        mock_config_auto.assert_called_once_with(expected_path)
+        mock_init.aio.assert_called_once()
+        call_kwargs = mock_init.aio.call_args[1]
+        assert call_kwargs["root_dir"] is None
+
 
 class TestInitialization:
     """Test cases for core initialization functions"""
