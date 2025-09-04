@@ -94,3 +94,51 @@ def test_map_partials_unhappy():
     with pytest.raises(flyte.errors.RuntimeUserError) as excinfo:
         flyte.with_runcontext(mode="local").run(main)
     assert excinfo.value.code == "TypeError", excinfo.value
+
+
+@pytest.mark.asyncio
+async def test_map_async_iterator_initialize_with_partial():
+    from functools import partial
+    from unittest.mock import AsyncMock, Mock
+    from flyte._map import MapAsyncIterator
+
+    # Create a mock TaskTemplate
+    mock_task = Mock()
+    mock_task.name = "test_task"
+    mock_task.aio = AsyncMock()
+    
+    # Create a partial with bound arguments (func attribute is automatically set)
+    partial_func = partial(mock_task, "bound_arg1", constant="bound_value")
+    
+    # Test data for mapping
+    map_args = ([1, 2, 3],)  # One iterable to map over
+    
+    # Create MapAsyncIterator with partial function
+    iterator = MapAsyncIterator(
+        func=partial_func,
+        args=map_args,
+        name="test_group",
+        concurrency=0,
+        return_exceptions=True
+    )
+    
+    # Initialize the iterator
+    await iterator._initialize()
+    
+    # Verify that the correct number of tasks were created
+    assert len(iterator._tasks) == 3
+    assert iterator._task_count == 3
+    
+    # Verify that aio was called with merged arguments for each mapped value
+    expected_calls = [
+        (("bound_arg1", 1), {"constant": "bound_value"}),
+        (("bound_arg1", 2), {"constant": "bound_value"}),
+        (("bound_arg1", 3), {"constant": "bound_value"}),
+    ]
+    
+    assert mock_task.aio.call_count == 3
+    for i, call in enumerate(mock_task.aio.call_args_list):
+        args, kwargs = call
+        expected_args, expected_kwargs = expected_calls[i]
+        assert args == expected_args
+        assert kwargs == expected_kwargs

@@ -1,3 +1,4 @@
+import logging
 from functools import partial
 
 import flyte
@@ -16,24 +17,31 @@ def my_task_correct(batch_id: int, name: str, constant_param: str) -> str:
     print(name, constant_param, batch_id)
     return name
 
+@env.task
+def single_param_task(a: int) -> str:
+    return f"{a}"
 
 @env.task
 def main():
     compounds = [str(i) for i in range(3)]
     constant_param = "shared_config"
-    task_with_constant = partial(my_task, constant_param=constant_param, name="daniel")
+
+    # print(list(flyte.map(single_param_task, range(3))), flush=True)
 
     task_with_constant_correct = partial(my_task_correct, constant_param=constant_param, name="daniel")
-    # This should work
-    list(flyte.map(task_with_constant_correct, compounds))
+    # This should work, as batch_id is the first parameter and the only one left for mapping
+    v = list(flyte.map(task_with_constant_correct, compounds))
+    print(v, flush=True)
 
-    try:
-        list(flyte.map(task_with_constant, compounds))
-    except TypeError as e:
-        print(f"Caught expected TypeError: {e}")
+    # try:
+    #     # This should raise a TypeError, as batch_id is not the first parameter
+    #     task_with_constant = partial(my_task, constant_param=constant_param, name="daniel")
+    #     list(flyte.map(task_with_constant, compounds))
+    # except TypeError as e:
+    #     print(f"Caught expected TypeError: {e}")
 
 
 if __name__ == "__main__":
-    flyte.init_from_config("../../config.yaml")
+    flyte.init_from_config("../../config.yaml", log_level=logging.DEBUG)
     run = flyte.run(main)
     print(run.url)

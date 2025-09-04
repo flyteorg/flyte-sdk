@@ -81,6 +81,7 @@ class MapAsyncIterator(Generic[P, R]):
             for arg_tuple in zip(*self.args):
                 # Merge bound positional args with mapped args
                 merged_args = bound_args + arg_tuple
+                logger.warning(f"Running {base_func.name} with args: {merged_args} and kwargs: {bound_kwargs}")
                 task = asyncio.create_task(base_func.aio(*merged_args, **bound_kwargs))
                 tasks.append(task)
                 task_count += 1
