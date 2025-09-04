@@ -2,7 +2,7 @@ import asyncio
 from typing import Any, AsyncGenerator, AsyncIterator, Generic, Iterable, Iterator, List, Union, cast
 
 from flyte.syncify import syncify
-
+import functools
 from ._group import group
 from ._logging import logger
 from ._task import P, R, TaskTemplate
@@ -128,7 +128,11 @@ class _Mapper(Generic[P, R]):
         if not args:
             return
 
-        name = self._get_name(func.name, group_name)
+        f = func
+        if isinstance(func, functools.partial):
+            f = func.func
+
+        name = self._get_name(f.name, group_name)
         logger.debug(f"Blocking Map for {name}")
         with group(name):
             import flyte
