@@ -5,11 +5,12 @@ from typing import TYPE_CHECKING, Any, Callable, Literal, Optional, Protocol, Tu
 from flyte._task import TaskTemplate
 from flyte.models import ActionID, NativeInterface
 
+if TYPE_CHECKING:
+    from flyte.remote._task import TaskDetails
+
 from ._trace import TraceInfo
 
 __all__ = ["Controller", "ControllerType", "TraceInfo", "create_controller", "get_controller"]
-
-from ..._protos.workflow import task_definition_pb2
 
 if TYPE_CHECKING:
     import concurrent.futures
@@ -41,9 +42,7 @@ class Controller(Protocol):
         """
         ...
 
-    async def submit_task_ref(
-        self, _task: task_definition_pb2.TaskDetails, max_inline_io_bytes: int, *args, **kwargs
-    ) -> Any:
+    async def submit_task_ref(self, _task: "TaskDetails", *args, **kwargs) -> Any:
         """
         Submit a task reference to the controller asynchronously and wait for the result. This is async and will block
         the current coroutine until the result is available.

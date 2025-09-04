@@ -26,7 +26,7 @@ import flyte.io
 
 gpu_env = flyte.TaskEnvironment(
     name="gpu_env",
-    resources=flyte.Resources(cpu=8, memory="1Gi", gpu="T4:8"),
+    resources=flyte.Resources(cpu=8, memory="4Gi", gpu="L40s:4"),
     image=flyte.Image.from_uv_script(__file__, name="optimizer-gpu"),
     reusable=flyte.ReusePolicy(replicas=3, idle_ttl=300),
     secrets=flyte.Secret(key="NIELS_WANDB_API_KEY", as_env_var="WANDB_API_KEY"),
@@ -123,8 +123,8 @@ async def train_model(
     run.log({"train_loss": train_loss, "batch_size": batch_size})
     run.finish()
 
-    dir = await flyte.io.Dir.from_local(path=str(model_dir))
-    return dir, train_loss
+    dir = await flyte.io.Dir.from_local(local_path=str(model_dir))
+    return dir, float(train_loss.item())
 
 
 @driver.task
@@ -133,8 +133,8 @@ async def gridsearch(
     batch_sizes: list[int],
 ) -> tuple[flyte.io.Dir, float]:
     results = []
-    for batch_size in batch_sizes:
-        results.append(train_model(sweep_name, batch_size))
+    for i, batch_size in enumerate(batch_sizes):
+        results.append(train_model(f"{sweep_name}-{i}", batch_size))
 
     results = await asyncio.gather(*results)
     best_model, best_train_loss = min(results, key=lambda x: x[1])
@@ -143,8 +143,9 @@ async def gridsearch(
 
 if __name__ == "__main__":
     from datetime import datetime
+    from pathlib import Path
 
-    flyte.init_from_config("../../config.yaml")
+    flyte.init_from_config(str(Path(__file__).parents[2] / "config.yaml"))
     sweep_name = f"hpo-gpu-sweep-{datetime.now().strftime('%Y%m%d%H%M%S')}"
     run = flyte.run(gridsearch, sweep_name, batch_sizes=[4, 8, 16])
     print(run.url)

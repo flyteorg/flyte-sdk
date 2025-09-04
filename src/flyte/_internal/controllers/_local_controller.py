@@ -11,10 +11,10 @@ from flyte._internal.controllers import TraceInfo
 from flyte._internal.runtime import convert
 from flyte._internal.runtime.entrypoints import direct_dispatch
 from flyte._logging import log, logger
-from flyte._protos.workflow import task_definition_pb2
 from flyte._task import TaskTemplate
 from flyte._utils.helpers import _selector_policy
 from flyte.models import ActionID, NativeInterface
+from flyte.remote._task import TaskDetails
 
 R = TypeVar("R")
 
@@ -192,7 +192,7 @@ class LocalController:
         assert info.start_time
         assert info.end_time
 
-    async def submit_task_ref(
-        self, _task: task_definition_pb2.TaskDetails, max_inline_io_bytes: int, *args, **kwargs
-    ) -> Any:
-        raise flyte.errors.ReferenceTaskError("Reference tasks cannot be executed locally, only remotely.")
+    async def submit_task_ref(self, _task: TaskDetails, max_inline_io_bytes: int, *args, **kwargs) -> Any:
+        raise flyte.errors.ReferenceTaskError(
+            f"Reference tasks cannot be executed locally, only remotely. Found remote task {_task.name}"
+        )

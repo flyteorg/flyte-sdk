@@ -158,8 +158,8 @@ class Controller:
         self._thread.start()
 
         # Wait for the thread to be ready
-        logger.info("Waiting for controller thread to be ready...")
         if not self._thread_ready.wait(timeout=self._thread_wait_timeout):
+            logger.warning("Controller thread did not finish within timeout")
             raise TimeoutError("Controller thread failed to start in time")
 
         if self._get_exception():
