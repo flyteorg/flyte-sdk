@@ -12,13 +12,25 @@ def my_task(name: str, constant_param: str, batch_id: int) -> str:
 
 
 @env.task
-def main():
-    compounds = [str(i) for i in range(100)]
-    constant_param = "shared_config"
+def my_task_correct(batch_id: int, name: str, constant_param: str) -> str:
+    print(name, constant_param, batch_id)
+    return name
 
+
+@env.task
+def main():
+    compounds = [str(i) for i in range(3)]
+    constant_param = "shared_config"
     task_with_constant = partial(my_task, constant_param=constant_param, name="daniel")
 
-    list(flyte.map(task_with_constant, compounds))
+    task_with_constant_correct = partial(my_task_correct, constant_param=constant_param, name="daniel")
+    # This should work
+    list(flyte.map(task_with_constant_correct, compounds))
+
+    try:
+        list(flyte.map(task_with_constant, compounds))
+    except TypeError as e:
+        print(f"Caught expected TypeError: {e}")
 
 
 if __name__ == "__main__":

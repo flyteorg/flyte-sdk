@@ -72,10 +72,24 @@ class MapAsyncIterator(Generic[P, R]):
         tasks = []
         task_count = 0
 
-        for arg_tuple in zip(*self.args):
-            task = asyncio.create_task(self.func.aio(*arg_tuple))
-            tasks.append(task)
-            task_count += 1
+        if isinstance(self.func, functools.partial):
+            # Handle partial functions by merging bound args/kwargs with mapped args
+            base_func = cast(TaskTemplate, self.func.func)
+            bound_args = self.func.args
+            bound_kwargs = self.func.keywords or {}
+            
+            for arg_tuple in zip(*self.args):
+                # Merge bound positional args with mapped args
+                merged_args = bound_args + arg_tuple
+                task = asyncio.create_task(base_func.aio(*merged_args, **bound_kwargs))
+                tasks.append(task)
+                task_count += 1
+        else:
+            # Handle regular TaskTemplate functions
+            for arg_tuple in zip(*self.args):
+                task = asyncio.create_task(self.func.aio(*arg_tuple))
+                tasks.append(task)
+                task_count += 1
 
         if task_count == 0:
             logger.info(f"Group '{self.name}' has no tasks to process")
