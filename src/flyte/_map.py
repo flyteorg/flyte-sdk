@@ -11,7 +11,8 @@ from ._task import P, R, TaskTemplate
 class MapAsyncIterator(Generic[P, R]):
     """AsyncIterator implementation for the map function results"""
 
-    def __init__(self, func: TaskTemplate[P, R], args: tuple, name: str, concurrency: int, return_exceptions: bool):
+    def __init__(self, func: TaskTemplate[P, R] | functools.partial, args: tuple, name: str, concurrency: int,
+                 return_exceptions: bool):
         self.func = func
         self.args = args
         self.name = name
@@ -54,7 +55,7 @@ class MapAsyncIterator(Generic[P, R]):
                 return e
             else:
                 # Cancel remaining tasks
-                for remaining_task in self._tasks[self._current_index + 1 :]:
+                for remaining_task in self._tasks[self._current_index + 1:]:
                     remaining_task.cancel()
                 raise e
 
@@ -108,12 +109,12 @@ class _Mapper(Generic[P, R]):
         return f"{task_name}_{group_name or 'map'}"
 
     def __call__(
-        self,
-        func: TaskTemplate[P, R],
-        *args: Iterable[Any],
-        group_name: str | None = None,
-        concurrency: int = 0,
-        return_exceptions: bool = True,
+            self,
+            func: TaskTemplate[P, R],
+            *args: Iterable[Any],
+            group_name: str | None = None,
+            concurrency: int = 0,
+            return_exceptions: bool = True,
     ) -> Iterator[Union[R, Exception]]:
         """
         Map a function over the provided arguments with concurrent execution.
@@ -131,6 +132,29 @@ class _Mapper(Generic[P, R]):
         f = func
         if isinstance(func, functools.partial):
             f = func.func
+            import inspect
+            params = inspect.signature(f).parameters
+            # We ensure that the partial function if using keywords then only the first parameter is left for map
+            # and the rest are keywords. If any of the earlier parameters are specified as keywords, then we raise
+            # TypeError
+            if len(func.args) + len(func.keywords or {}) + 1 < len(params):
+                raise TypeError(
+                    f"Partial function {func} does not have enough arguments provided. "
+                    f"When using partial functions with map, only the first parameter can be left "
+                    f"unspecified for mapping."
+                )
+            if func.keywords:
+                # All parameters except the first one should be in keywords or args
+                for i, (name, param) in enumerate(params.items()):
+                    if i == 0:
+                        continue
+                    if name not in func.keywords and (i - 1) >= len(func.args):
+                        raise TypeError(
+                            f"Partial function {f.name} has keyword argument '{name}' which is not provided. "
+                            f"When using partial functions with map, only the first parameter can be left "
+                            f"unspecified for mapping."
+                        )
+
 
         name = self._get_name(f.name, group_name)
         logger.debug(f"Blocking Map for {name}")
@@ -152,26 +176,26 @@ class _Mapper(Generic[P, R]):
 
             i = 0
             for x in cast(
-                Iterator[R],
-                _map(
-                    func,
-                    *args,
-                    name=name,
-                    concurrency=concurrency,
-                    return_exceptions=True,
-                ),
+                    Iterator[R],
+                    _map(
+                        func,
+                        *args,
+                        name=name,
+                        concurrency=concurrency,
+                        return_exceptions=True,
+                    ),
             ):
                 logger.debug(f"Mapped {x}, task {i}")
                 i += 1
                 yield x
 
     async def aio(
-        self,
-        func: TaskTemplate[P, R],
-        *args: Iterable[Any],
-        group_name: str | None = None,
-        concurrency: int = 0,
-        return_exceptions: bool = True,
+            self,
+            func: TaskTemplate[P, R],
+            *args: Iterable[Any],
+            group_name: str | None = None,
+            concurrency: int = 0,
+            return_exceptions: bool = True,
     ) -> AsyncGenerator[Union[R, Exception], None]:
         if not args:
             return
@@ -192,22 +216,22 @@ class _Mapper(Generic[P, R]):
                             raise e
                 return
             async for x in _map.aio(
-                func,
-                *args,
-                name=name,
-                concurrency=concurrency,
-                return_exceptions=return_exceptions,
+                    func,
+                    *args,
+                    name=name,
+                    concurrency=concurrency,
+                    return_exceptions=return_exceptions,
             ):
                 yield cast(Union[R, Exception], x)
 
 
 @syncify
 async def _map(
-    func: TaskTemplate[P, R],
-    *args: Iterable[Any],
-    name: str = "map",
-    concurrency: int = 0,
-    return_exceptions: bool = True,
+        func: TaskTemplate[P, R] | functools.partial,
+        *args: Iterable[Any],
+        name: str = "map",
+        concurrency: int = 0,
+        return_exceptions: bool = True,
 ) -> AsyncIterator[Union[R, Exception]]:
     iter = MapAsyncIterator(
         func=func, args=args, name=name, concurrency=concurrency, return_exceptions=return_exceptions
