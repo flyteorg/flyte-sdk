@@ -243,7 +243,7 @@ task:
             (Path.home() / ".flyte" / "config.yaml", Path.home() / ".flyte" / "config.yaml"),
             ("../../config.yaml", Path("..") / ".." / "config.yaml"),
             (Path("..") / ".." / "config.yaml", Path("..") / ".." / "config.yaml"),
-        ]
+        ],
     )
     @patch("flyte._initialize.init")
     @patch("flyte.config.auto")

@@ -10,7 +10,7 @@ def config_from_root(path: pathlib.Path | str = ".flyte/config.yaml") -> flyte.c
     By default, the config file is expected to be in `.flyte/config.yaml` in the git root directory.
     """
 
-    result = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True)
+    result = subprocess.run(["git", "rev-parse", "--show-toplevel"], check=False, capture_output=True, text=True)
     if result.returncode != 0:
         raise RuntimeError(f"Failed to get git root directory: {result.stderr}")
     root = pathlib.Path(result.stdout.strip())
