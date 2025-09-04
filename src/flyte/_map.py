@@ -124,10 +124,9 @@ class _Mapper(Generic[P, R]):
         :param func: partial function to validate
         :raises TypeError: if the partial function is not valid for mapping
         """
-        import inspect
-
-        sig = inspect.signature(func.func)
-        params = list(sig.parameters.values())
+        f = cast(TaskTemplate, func.func)
+        inputs = f.native_interface.inputs
+        params = list(inputs.keys())
         total_params = len(params)
         provided_args = len(func.args)
         provided_kwargs = len(func.keywords or {})
@@ -135,18 +134,18 @@ class _Mapper(Generic[P, R]):
         # Calculate how many parameters are left unspecified
         unspecified_count = total_params - provided_args - provided_kwargs
 
-        f = cast(TaskTemplate, func.func)
         # Exactly one parameter should be left for mapping
         if unspecified_count != 1:
             raise TypeError(
                 f"Partial function must leave exactly one parameter unspecified for mapping. "
-                f"Found {unspecified_count} unspecified parameters in {f.name}."
+                f"Found {unspecified_count} unspecified parameters in {f.name}, "
+                f"params: {inputs.keys()}"
             )
 
         # Validate that no parameter is both in args and keywords
         if func.keywords:
-            param_names = list(sig.parameters.keys())
-            for i, arg_name in enumerate(param_names[:provided_args]):
+            param_names = list(inputs.keys())
+            for i, arg_name in enumerate(param_names[: provided_args + 1]):
                 if arg_name in func.keywords:
                     raise TypeError(
                         f"Parameter '{arg_name}' is provided both as positional argument and keyword argument "

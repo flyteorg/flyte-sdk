@@ -36,10 +36,14 @@ def test_partial_validation():
 
     from flyte._map import _Mapper
 
+    env = flyte.TaskEnvironment(name="map-test")
+
+    @env.task
     def my_task(name: str, constant_param: str, batch_id: int) -> str:
         print(name, constant_param, batch_id)
         return name
 
+    @env.task
     def three_param_task(a: int, b: str, c: float) -> str:
         return f"{a}-{b}-{c}"
 
@@ -89,4 +93,4 @@ def test_map_partials_unhappy():
     flyte.init()
     with pytest.raises(flyte.errors.RuntimeUserError) as excinfo:
         flyte.with_runcontext(mode="local").run(main)
-    assert excinfo.value.code == "TypeError"
+    assert excinfo.value.code == "TypeError", excinfo.value
