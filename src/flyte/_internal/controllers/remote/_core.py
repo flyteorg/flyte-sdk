@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import os
-import random
 import sys
 import threading
 from asyncio import Event
@@ -32,14 +31,14 @@ class Controller:
     """
 
     def __init__(
-            self,
-            client_coro: Awaitable[ClientSet],
-            workers: int = 20,
-            max_system_retries: int = 10,
-            resource_log_interval_sec: float = 10.0,
-            min_backoff_on_err_sec: float = 0.1,
-            thread_wait_timeout_sec: float = 5.0,
-            enqueue_timeout_sec: float = 5.0,
+        self,
+        client_coro: Awaitable[ClientSet],
+        workers: int = 20,
+        max_system_retries: int = 10,
+        resource_log_interval_sec: float = 10.0,
+        min_backoff_on_err_sec: float = 0.1,
+        thread_wait_timeout_sec: float = 5.0,
+        enqueue_timeout_sec: float = 5.0,
     ):
         """
         Create a new controller instance.
@@ -64,7 +63,6 @@ class Controller:
         self._failure_event: Event | None = None
         self._enqueue_timeout = enqueue_timeout_sec
         self._informer_start_wait_timeout = thread_wait_timeout_sec
-        self._backoff_event = asyncio.Event()
 
         # Thread management
         self._thread = None
@@ -96,10 +94,10 @@ class Controller:
         return await self._run_coroutine_in_controller_thread(self._bg_cancel_action(action))
 
     async def _finalize_parent_action(
-            self,
-            run_id: identifier_pb2.RunIdentifier,
-            parent_action_name: str,
-            timeout: Optional[float] = None,
+        self,
+        run_id: identifier_pb2.RunIdentifier,
+        parent_action_name: str,
+        timeout: Optional[float] = None,
     ):
         """Finalize the parent run"""
         await self._run_coroutine_in_controller_thread(
@@ -202,7 +200,7 @@ class Controller:
         if sys.version_info >= (3, 11):
             async with asyncio.TaskGroup() as tg:
                 for i in range(self._workers):
-                    tg.create_task(self._bg_run())
+                    tg.create_task(self._bg_run(f"worker-{i}"))
         else:
             tasks = []
             for i in range(self._workers):
@@ -231,7 +229,7 @@ class Controller:
             logger.debug(f"Controller thread exiting: {threading.current_thread().name}")
 
     async def _bg_get_action(
-            self, action_id: identifier_pb2.ActionIdentifier, parent_action_name: str
+        self, action_id: identifier_pb2.ActionIdentifier, parent_action_name: str
     ) -> Optional[Action]:
         """Get the action from the informer"""
         # Ensure the informer is created and wait for it to be ready
@@ -248,10 +246,10 @@ class Controller:
         return None
 
     async def _bg_finalize_informer(
-            self,
-            run_id: identifier_pb2.RunIdentifier,
-            parent_action_name: str,
-            timeout: Optional[float] = None,
+        self,
+        run_id: identifier_pb2.RunIdentifier,
+        parent_action_name: str,
+        timeout: Optional[float] = None,
     ):
         informer = await self._informers.remove(run_name=run_id.name, parent_action_name=parent_action_name)
         if informer:
@@ -324,9 +322,6 @@ class Controller:
         Attempt to launch an action.
         """
         if not action.is_started():
-            if self._backoff_event.is_set():
-                await asyncio.sleep(random.uniform(self._max_backoff_on_err, self._max_backoff_on_err))
-                self._backoff_event.clear()
             task: queue_service_pb2.TaskAction | None = None
             trace: queue_service_pb2.TraceAction | None = None
             if action.type == "task":
@@ -374,11 +369,12 @@ class Controller:
                 if e.code() == grpc.StatusCode.ALREADY_EXISTS:
                     logger.info(f"Action {action.name} already exists, continuing to monitor.")
                     return
-                if e.code() in [grpc.StatusCode.FAILED_PRECONDITION, grpc.StatusCode.INVALID_ARGUMENT,
-                                grpc.StatusCode.NOT_FOUND]:
-                    raise flyte.errors.RuntimeSystemError(
-                        e.code().name, f"Precondition failed: {e.details()}"
-                    ) from e
+                if e.code() in [
+                    grpc.StatusCode.FAILED_PRECONDITION,
+                    grpc.StatusCode.INVALID_ARGUMENT,
+                    grpc.StatusCode.NOT_FOUND,
+                ]:
+                    raise flyte.errors.RuntimeSystemError(e.code().name, f"Precondition failed: {e.details()}") from e
                 # For all other errors, we will retry with backoff
                 logger.exception(
                     f"Failed to launch action: {action.name}, Code: {e.code()}, Details {e.details()} backing off..."
@@ -404,16 +400,17 @@ class Controller:
         """Periodically log resource stats if debug is enabled"""
         while self._running:
             async for (
-                    started,
-                    pending,
-                    terminal,
+                started,
+                pending,
+                terminal,
             ) in self._informers.count_started_pending_terminal_actions():
                 logger.info(f"Resource stats: Started={started}, Pending={pending}, Terminal={terminal}")
             await asyncio.sleep(self._resource_log_interval)
 
     @log
-    async def _bg_run(self):
+    async def _bg_run(self, worker_id: str):
         """Run loop with resource status logging"""
+        logger.info(f"Worker {worker_id} started")
         while self._running:
             logger.debug(f"{threading.current_thread().name} Waiting for resource")
             action = await self._shared_queue.get()
@@ -422,16 +419,20 @@ class Controller:
                 await self._bg_process(action)
             except flyte.errors.SlowDownError as e:
                 action.retries += 1
-                logger.warning(f"Backing off on action {action.name} due to error: {e}, retry {action.retries}")
                 if action.retries > self._max_retries:
                     raise
-                self._backoff_event.set()
+                backoff = min(self._min_backoff_on_err * (2 ** (action.retries - 1)), self._max_backoff_on_err)
+                logger.warning(
+                    f"[{worker_id}] Backing off on action {action.name} due to error: {e}, retry {action.retries}"
+                )
+                await asyncio.sleep(backoff)
                 await self._shared_queue.put(action)
             except Exception as e:
-                logger.error(f"Error in controller loop: {e}")
+                logger.error(f"[{worker_id}] Error in controller loop: {e}")
                 err = flyte.errors.RuntimeSystemError(
                     code=type(e).__name__,
                     message=f"Controller failed, system retries {action.retries} crossed threshold {self._max_retries}",
+                    worker=worker_id,
                 )
                 err.__cause__ = e
                 action.set_client_error(err)
