@@ -101,7 +101,6 @@ def main(
     from flyte._logging import logger
     from flyte.models import ActionID, Checkpoints, CodeBundle, RawDataPath
 
-    logger.warning(f"Flyte runtime started for action {name} with run name {run_name}")
     logger.info("Registering faulthandler for SIGUSR1")
     faulthandler.register(signal.SIGUSR1)
 
@@ -116,6 +115,8 @@ def main(
         run_name = os.getenv("RUN_NAME", "")
     if name.startswith("{{"):
         name = os.getenv("ACTION_NAME", "")
+
+    logger.warning(f"Flyte runtime started for action {name} with run name {run_name}")
 
     if debug and name == "a0":
         from flyte._debug.vscode import _start_vscode_server
