@@ -1,16 +1,19 @@
-import logging
+import asyncio
 import os
 
-from basics.hello import main, env
+from basics.hello import main
 
 import flyte
 
-integration_test_env = flyte.TaskEnvironment(name="integration_tests", depends_on=[env])
 
-
-@integration_test_env.task
-async def integration_tests() -> None:
-    main([1, 2, 3])
+async def integration_tests():
+    tests = [
+        flyte.run.aio(main, x_list=[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]),
+    ]
+    runs = await asyncio.gather(*tests)
+    for r in runs:
+        print(r.url)
+        r.wait()
 
 
 if __name__ == "__main__":
@@ -24,8 +27,4 @@ if __name__ == "__main__":
         project="flyte-sdk",
         domain="development",
     )
-    run = flyte.with_runcontext(log_level=logging.DEBUG).run(integration_tests)
-
-    print(run.name)
-    print(run.url)
-    run.wait(run)
+    asyncio.run(integration_tests())
