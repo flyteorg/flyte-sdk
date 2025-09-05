@@ -117,10 +117,14 @@ class RemoteController(Controller):
     def __init__(
         self,
         client_coro: Awaitable[ClientSet],
+        workers: int = 20,
+        max_system_retries: int = 10,
     ):
         """ """
         super().__init__(
             client_coro=client_coro,
+            workers=workers,
+            max_system_retries=max_system_retries,
         )
         default_parent_concurrency = int(os.getenv("_F_P_CNC", "100"))
         self._default_parent_concurrency = default_parent_concurrency
