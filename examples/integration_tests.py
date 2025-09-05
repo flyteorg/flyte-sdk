@@ -24,7 +24,7 @@ if __name__ == "__main__":
         project="flyte-sdk",
         domain="development",
     )
-    run = flyte.with_runcontext(log_level=logging.DEBUG, copy_style="all").run(integration_tests)
+    run = flyte.with_runcontext(log_level=logging.DEBUG).run(integration_tests)
 
     print(run.name)
     print(run.url)

@@ -29,5 +29,5 @@ jobs:
           make dist
       - name: Run integration tests
         env:
-          FLYTE_SDK_CI_TOKEN="${{ secrets.FLYTE_SDK_CI_TOKEN }}"
+          FLYTE_SDK_CI_TOKEN: "${{ secrets.FLYTE_SDK_CI_TOKEN }}"
         run: uv run --directory examples python integration_tests.py
