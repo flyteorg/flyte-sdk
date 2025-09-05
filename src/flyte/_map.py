@@ -1,4 +1,6 @@
 import asyncio
+import functools
+import logging
 from typing import Any, AsyncGenerator, AsyncIterator, Generic, Iterable, Iterator, List, Union, cast
 
 from flyte.syncify import syncify
@@ -11,7 +13,14 @@ from ._task import P, R, TaskTemplate
 class MapAsyncIterator(Generic[P, R]):
     """AsyncIterator implementation for the map function results"""
 
-    def __init__(self, func: TaskTemplate[P, R], args: tuple, name: str, concurrency: int, return_exceptions: bool):
+    def __init__(
+        self,
+        func: TaskTemplate[P, R] | functools.partial[R],
+        args: tuple,
+        name: str,
+        concurrency: int,
+        return_exceptions: bool,
+    ):
         self.func = func
         self.args = args
         self.name = name
@@ -49,13 +58,16 @@ class MapAsyncIterator(Generic[P, R]):
             return result
         except Exception as e:
             self._exception_count += 1
-            logger.debug(f"Task {self._current_index - 1} failed with exception: {e}")
+            logger.debug(
+                f"Task {self._current_index - 1} failed with exception: {e}, return_exceptions={self.return_exceptions}"
+            )
             if self.return_exceptions:
                 return e
             else:
                 # Cancel remaining tasks
                 for remaining_task in self._tasks[self._current_index + 1 :]:
                     remaining_task.cancel()
+                logger.warning("Exception raising is `ON`, raising exception and cancelling remaining tasks")
                 raise e
 
     async def _initialize(self):
@@ -64,10 +76,26 @@ class MapAsyncIterator(Generic[P, R]):
         tasks = []
         task_count = 0
 
-        for arg_tuple in zip(*self.args):
-            task = asyncio.create_task(self.func.aio(*arg_tuple))
-            tasks.append(task)
-            task_count += 1
+        if isinstance(self.func, functools.partial):
+            # Handle partial functions by merging bound args/kwargs with mapped args
+            base_func = cast(TaskTemplate, self.func.func)
+            bound_args = self.func.args
+            bound_kwargs = self.func.keywords or {}
+
+            for arg_tuple in zip(*self.args):
+                # Merge bound positional args with mapped args
+                merged_args = bound_args + arg_tuple
+                if logger.isEnabledFor(logging.DEBUG):
+                    logger.debug(f"Running {base_func.name} with args: {merged_args} and kwargs: {bound_kwargs}")
+                task = asyncio.create_task(base_func.aio(*merged_args, **bound_kwargs))
+                tasks.append(task)
+                task_count += 1
+        else:
+            # Handle regular TaskTemplate functions
+            for arg_tuple in zip(*self.args):
+                task = asyncio.create_task(self.func.aio(*arg_tuple))
+                tasks.append(task)
+                task_count += 1
 
         if task_count == 0:
             logger.info(f"Group '{self.name}' has no tasks to process")
@@ -107,9 +135,46 @@ class _Mapper(Generic[P, R]):
         """Get the name of the group, defaulting to 'map' if not provided."""
         return f"{task_name}_{group_name or 'map'}"
 
+    @staticmethod
+    def validate_partial(func: functools.partial[R]):
+        """
+        This method validates that the provided partial function is valid for mapping, i.e. only the one argument
+        is left for mapping and the rest are provided as keywords or args.
+
+        :param func: partial function to validate
+        :raises TypeError: if the partial function is not valid for mapping
+        """
+        f = cast(TaskTemplate, func.func)
+        inputs = f.native_interface.inputs
+        params = list(inputs.keys())
+        total_params = len(params)
+        provided_args = len(func.args)
+        provided_kwargs = len(func.keywords or {})
+
+        # Calculate how many parameters are left unspecified
+        unspecified_count = total_params - provided_args - provided_kwargs
+
+        # Exactly one parameter should be left for mapping
+        if unspecified_count != 1:
+            raise TypeError(
+                f"Partial function must leave exactly one parameter unspecified for mapping. "
+                f"Found {unspecified_count} unspecified parameters in {f.name}, "
+                f"params: {inputs.keys()}"
+            )
+
+        # Validate that no parameter is both in args and keywords
+        if func.keywords:
+            param_names = list(inputs.keys())
+            for i, arg_name in enumerate(param_names[: provided_args + 1]):
+                if arg_name in func.keywords:
+                    raise TypeError(
+                        f"Parameter '{arg_name}' is provided both as positional argument and keyword argument "
+                        f"in partial function {f.name}."
+                    )
+
     def __call__(
         self,
-        func: TaskTemplate[P, R],
+        func: TaskTemplate[P, R] | functools.partial[R],
         *args: Iterable[Any],
         group_name: str | None = None,
         concurrency: int = 0,
@@ -128,7 +193,13 @@ class _Mapper(Generic[P, R]):
         if not args:
             return
 
-        name = self._get_name(func.name, group_name)
+        if isinstance(func, functools.partial):
+            f = cast(TaskTemplate, func.func)
+            self.validate_partial(func)
+        else:
+            f = cast(TaskTemplate, func)
+
+        name = self._get_name(f.name, group_name)
         logger.debug(f"Blocking Map for {name}")
         with group(name):
             import flyte
@@ -154,7 +225,7 @@ class _Mapper(Generic[P, R]):
                     *args,
                     name=name,
                     concurrency=concurrency,
-                    return_exceptions=True,
+                    return_exceptions=return_exceptions,
                 ),
             ):
                 logger.debug(f"Mapped {x}, task {i}")
@@ -163,7 +234,7 @@ class _Mapper(Generic[P, R]):
 
     async def aio(
         self,
-        func: TaskTemplate[P, R],
+        func: TaskTemplate[P, R] | functools.partial[R],
         *args: Iterable[Any],
         group_name: str | None = None,
         concurrency: int = 0,
@@ -171,7 +242,14 @@ class _Mapper(Generic[P, R]):
     ) -> AsyncGenerator[Union[R, Exception], None]:
         if not args:
             return
-        name = self._get_name(func.name, group_name)
+
+        if isinstance(func, functools.partial):
+            f = cast(TaskTemplate, func.func)
+            self.validate_partial(func)
+        else:
+            f = cast(TaskTemplate, func)
+
+        name = self._get_name(f.name, group_name)
         with group(name):
             import flyte
 
@@ -199,7 +277,7 @@ class _Mapper(Generic[P, R]):
 
 @syncify
 async def _map(
-    func: TaskTemplate[P, R],
+    func: TaskTemplate[P, R] | functools.partial[R],
     *args: Iterable[Any],
     name: str = "map",
     concurrency: int = 0,

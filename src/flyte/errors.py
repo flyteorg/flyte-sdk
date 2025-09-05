@@ -132,7 +132,9 @@ class CustomError(RuntimeUserError):
         Create a CustomError from an exception. The exception's class name is used as the error code and the exception
         message is used as the error message.
         """
-        return cls(e.__class__.__name__, str(e))
+        new_exc = cls(e.__class__.__name__, str(e))
+        new_exc.__cause__ = e
+        return new_exc
 
 
 class NotInTaskContextError(RuntimeUserError):
