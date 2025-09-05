@@ -1,13 +1,14 @@
+import logging
 import os
 
-from basics.hello import main
+from basics.hello import main, env
 
 import flyte
 
-env = flyte.TaskEnvironment(name="integration_tests")
+integration_test_env = flyte.TaskEnvironment(name="integration_tests", depends_on=[env])
 
 
-@env.task
+@integration_test_env.task
 async def integration_tests() -> None:
     main([1, 2, 3])
 
@@ -23,7 +24,7 @@ if __name__ == "__main__":
         project="flyte-sdk",
         domain="development",
     )
-    run = flyte.run(integration_tests)
+    run = flyte.with_runcontext(log_level=logging.DEBUG, copy_style="all").run(integration_tests)
 
     print(run.name)
     print(run.url)
