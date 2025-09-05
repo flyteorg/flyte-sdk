@@ -20,7 +20,7 @@ from flyte._internal.runtime.task_serde import (
     get_security_context,
     translate_task_to_wire,
 )
-from flyte._protos.workflow import common_pb2, environment_pb2
+from flyteidl2.workflow import common_pb2, environment_pb2
 from flyte._secret import Secret
 from flyte.models import SerializationContext
 

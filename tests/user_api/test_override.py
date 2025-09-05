@@ -6,7 +6,7 @@ from kubernetes.client import V1Container, V1EnvVar, V1PodSpec
 import flyte
 from flyte import PodTemplate, RetryStrategy
 from flyte._internal.runtime.task_serde import get_proto_task, get_security_context
-from flyte._protos.workflow import task_definition_pb2
+from flyteidl2.workflow import task_definition_pb2
 from flyte.models import SerializationContext
 from flyte.remote._task import TaskDetails
 

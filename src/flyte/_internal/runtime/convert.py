@@ -12,7 +12,7 @@ from flyteidl.core import execution_pb2, interface_pb2, literals_pb2
 
 import flyte.errors
 import flyte.storage as storage
-from flyte._protos.workflow import common_pb2, run_definition_pb2, task_definition_pb2
+from flyteidl2.workflow import common_pb2, run_definition_pb2, task_definition_pb2
 from flyte.models import ActionID, NativeInterface, TaskContext
 from flyte.types import TypeEngine, TypeTransformerFailedError
 

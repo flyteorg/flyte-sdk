@@ -39,7 +39,7 @@ from flyte._secret import Secret
 from flyte.remote import ActionOutputs, Run
 
 if TYPE_CHECKING:
-    from flyte._protos.imagebuilder import definition_pb2 as image_definition_pb2
+    from flyteidl2.imagebuilder import definition_pb2 as image_definition_pb2
 
 IMAGE_TASK_NAME = "build-image"
 OPTIMIZE_TASK_NAME = "optimize-task"
@@ -71,9 +71,9 @@ class RemoteImageChecker(ImageChecker):
 
         try:
             from flyte._initialize import _get_init_config
-            from flyte._protos.imagebuilder import definition_pb2 as image_definition__pb2
-            from flyte._protos.imagebuilder import payload_pb2 as image_payload__pb2
-            from flyte._protos.imagebuilder import service_pb2_grpc as image_service_pb2_grpc
+            from flyteidl2.imagebuilder import definition_pb2 as image_definition__pb2
+            from flyteidl2.imagebuilder import payload_pb2 as image_payload__pb2
+            from flyteidl2.imagebuilder import service_pb2_grpc as image_service_pb2_grpc
 
             cfg = _get_init_config()
             if cfg is None:
@@ -98,7 +98,7 @@ class RemoteImageBuilder(ImageBuilder):
         return [RemoteImageChecker]
 
     async def build_image(self, image: Image, dry_run: bool = False) -> str:
-        from flyte._protos.workflow import run_definition_pb2
+        from flyteidl2.workflow import run_definition_pb2
 
         image_name = f"{image.name}:{image._final_tag}"
         spec, context = await _validate_configuration(image)
@@ -197,7 +197,7 @@ async def _validate_configuration(image: Image) -> Tuple[str, Optional[str]]:
 
 
 def _get_layers_proto(image: Image, context_path: Path) -> "image_definition_pb2.ImageSpec":
-    from flyte._protos.imagebuilder import definition_pb2 as image_definition_pb2
+    from flyteidl2.imagebuilder import definition_pb2 as image_definition_pb2
 
     layers = []
     for layer in image._layers:

@@ -10,8 +10,8 @@ from flyte._internal.controllers.remote._action import Action
 from flyte._internal.controllers.remote._controller import RemoteController
 from flyte._internal.controllers.remote._service_protocol import ClientSet
 from flyte._internal.runtime.convert import Outputs
-from flyte._protos.common import identifier_pb2
-from flyte._protos.workflow import run_definition_pb2
+from flyteidl2.common import identifier_pb2
+from flyteidl2.workflow import run_definition_pb2
 from flyte.models import ActionID, CodeBundle, RawDataPath, TaskContext
 from flyte.types import TypeEngine
 

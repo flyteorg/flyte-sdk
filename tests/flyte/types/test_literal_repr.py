@@ -10,7 +10,7 @@ from google.protobuf.json_format import MessageToDict
 from google.protobuf.struct_pb2 import Struct
 from google.protobuf.timestamp_pb2 import Timestamp
 
-from flyte._protos.workflow import run_definition_pb2
+from flyteidl2.workflow import run_definition_pb2
 from flyte.types._string_literals import literal_string_repr
 
 

@@ -415,7 +415,7 @@ class _Runner:
     async def _run_local(self, obj: TaskTemplate[P, R], *args: P.args, **kwargs: P.kwargs) -> Run:
         from flyte._internal.controllers import create_controller
         from flyte._internal.controllers._local_controller import LocalController
-        from flyte._protos.common import identifier_pb2
+        from flyteidl2.common import identifier_pb2
         from flyte.remote import Run
         from flyte.report import Report
 
@@ -453,7 +453,7 @@ class _Runner:
 
         class _LocalRun(Run):
             def __init__(self, outputs: Tuple[Any, ...] | Any):
-                from flyte._protos.workflow import run_definition_pb2
+                from flyteidl2.workflow import run_definition_pb2
 
                 self._outputs = outputs
                 super().__init__(

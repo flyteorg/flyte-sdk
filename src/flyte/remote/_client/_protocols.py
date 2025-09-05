@@ -5,8 +5,8 @@ from flyteidl.service import dataproxy_pb2
 from grpc.aio import UnaryStreamCall
 from grpc.aio._typing import RequestType
 
-from flyte._protos.secret import payload_pb2
-from flyte._protos.workflow import run_logs_service_pb2, run_service_pb2, task_service_pb2
+from flyteidl2.secret import payload_pb2
+from flyteidl2.workflow import run_logs_service_pb2, run_service_pb2, task_service_pb2
 
 
 class MetadataServiceProtocol(Protocol):
