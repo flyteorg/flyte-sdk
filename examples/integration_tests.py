@@ -13,8 +13,6 @@ async def integration_tests() -> None:
 
 
 if __name__ == "__main__":
-    import flyte.git
-
     flyte.init(
         endpoint="dns:///playground.canary.unionai.cloud",
         auth_type="ClientSecret",
@@ -23,7 +21,7 @@ if __name__ == "__main__":
         insecure=False,
         image_builder="remote",
         project="flyte-sdk",
-        domain="development"
+        domain="development",
     )
     run = flyte.run(integration_tests)
 

@@ -24,8 +24,9 @@ jobs:
         uses: ./.github/actions/setup-python-env
         with:
           python-version: ${{ matrix.python-version }}
-      - name: Build wheel
+      - name: Install flyte & Build wheel
         run: |
+          uv pip install e .
           make dist
       - name: Run integration tests
         run: python examples/integration_tests.py
