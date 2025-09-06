@@ -6,7 +6,7 @@ import tempfile
 import typing
 from pathlib import Path
 from string import Template
-from typing import ClassVar, List, Optional, Protocol, Tuple, cast
+from typing import ClassVar, List, Optional, Protocol, cast
 
 import aiofiles
 import click
@@ -255,16 +255,14 @@ class DockerIgnoreHandler:
 
 class CopyConfigHandler:
     @staticmethod
-    def list_dockerignore(root_path: Optional[Path], layers: Tuple[Layer, ...]) -> List[str]:
+    def list_dockerignore(root_path: Optional[Path], docker_ignore_file_path: Optional[Path]) -> List[str]:
         patterns: List[str] = []
         dockerignore_path: Optional[Path] = None
         if root_path:
             dockerignore_path = root_path / ".dockerignore"
         # DockerIgnore layer should be first priority
-        for layer in layers:
-            if isinstance(layer, DockerIgnore):
-                dockerignore_path = Path(layer.path)
-                break
+        if docker_ignore_file_path:
+            dockerignore_path = docker_ignore_file_path
 
         # Return empty list if no .dockerignore file found
         if not dockerignore_path or not dockerignore_path.exists() or not dockerignore_path.is_file():
@@ -282,11 +280,12 @@ class CopyConfigHandler:
         except Exception as e:
             logger.error(f"Failed to read .dockerignore file at {dockerignore_path}: {e}")
             return []
-
         return patterns
 
     @staticmethod
-    async def handle(layer: CopyConfig, context_path: Path, dockerfile: str, layers: Tuple[Layer, ...]) -> str:
+    async def handle(
+        layer: CopyConfig, context_path: Path, dockerfile: str, docker_ignore_file_path: Optional[Path]
+    ) -> str:
         # Copy the source config file or directory to the context path
         if layer.src.is_absolute() or ".." in str(layer.src):
             dst_path = context_path / str(layer.src.absolute()).replace("/", "./_flyte_abs_context/", 1)
@@ -305,7 +304,7 @@ class CopyConfigHandler:
 
             init_config = _get_init_config()
             root_path = init_config.root_dir if init_config else None
-            docker_ignore_patterns = CopyConfigHandler.list_dockerignore(root_path, layers)
+            docker_ignore_patterns = CopyConfigHandler.list_dockerignore(root_path, docker_ignore_file_path)
             shutil.copytree(
                 abs_path, dst_path, dirs_exist_ok=True, ignore=shutil.ignore_patterns(*docker_ignore_patterns)
             )
@@ -384,7 +383,9 @@ def _get_secret_mounts_layer(secrets: typing.Tuple[str | Secret, ...] | None) ->
     return secret_mounts_layer
 
 
-async def _process_layer(layer: Layer, context_path: Path, dockerfile: str, layers: Tuple[Layer, ...]) -> str:
+async def _process_layer(
+    layer: Layer, context_path: Path, dockerfile: str, docker_ignore_file_path: Optional[Path]
+) -> str:
     match layer:
         case PythonWheels():
             # Handle Python wheels
@@ -420,7 +421,7 @@ async def _process_layer(layer: Layer, context_path: Path, dockerfile: str, laye
 
         case CopyConfig():
             # Handle local files and folders
-            dockerfile = await CopyConfigHandler.handle(layer, context_path, dockerfile, layers)
+            dockerfile = await CopyConfigHandler.handle(layer, context_path, dockerfile, docker_ignore_file_path)
 
         case Commands():
             # Handle commands
@@ -547,6 +548,15 @@ class DockerImageBuilder(ImageBuilder):
         else:
             logger.info("Buildx builder already exists.")
 
+    def get_docker_ignore(self, image: Image) -> Optional[Path]:
+        """Get the .dockerignore file path from the image layers."""
+        # Look for DockerIgnore layer in the image layers
+        for layer in image._layers:
+            if isinstance(layer, DockerIgnore) and layer.path.strip():
+                return Path(layer.path)
+
+        return None
+
     async def _build_image(self, image: Image, *, push: bool = True, dry_run: bool = False) -> str:
         """
         if default image (only base image and locked), raise an error, don't have a dockerfile
@@ -576,8 +586,9 @@ class DockerImageBuilder(ImageBuilder):
                 PYTHON_VERSION=f"{image.python_version[0]}.{image.python_version[1]}",
             )
 
+            docker_ignore_file_path = self.get_docker_ignore(image)
             for layer in image._layers:
-                dockerfile = await _process_layer(layer, tmp_path, dockerfile, image._layers)
+                dockerfile = await _process_layer(layer, tmp_path, dockerfile, docker_ignore_file_path)
 
             dockerfile += DOCKER_FILE_BASE_FOOTER.substitute(F_IMG_ID=image.uri)
 

@@ -5,7 +5,7 @@ from unittest.mock import patch
 import pytest
 
 from flyte import Secret
-from flyte._image import DockerIgnore, Image, PipPackages, Requirements
+from flyte._image import Image, PipPackages, Requirements
 from flyte._internal.imagebuild.docker_builder import (
     CopyConfig,
     CopyConfigHandler,
@@ -127,7 +127,10 @@ async def test_copy_config_handler():
 
             # Test the handle method
             result = await CopyConfigHandler.handle(
-                layer=copy_config, context_path=context_path, dockerfile="FROM python:3.9\n", layers=(copy_config,)
+                layer=copy_config,
+                context_path=context_path,
+                dockerfile="FROM python:3.9\n",
+                docker_ignore_file_path=None,
             )
 
             # Should contain COPY command when file is copied
@@ -189,7 +192,10 @@ async def test_copy_config_handler_skips_dockerignore():
                 )
 
                 result = await CopyConfigHandler.handle(
-                    layer=copy_config, context_path=context_path, dockerfile="FROM python:3.9\n", layers=(copy_config,)
+                    layer=copy_config,
+                    context_path=context_path,
+                    dockerfile="FROM python:3.9\n",
+                    docker_ignore_file_path=None,
                 )
 
                 # Should contain COPY command for the directory
@@ -231,7 +237,6 @@ async def test_copy_config_handler_with_dockerignore_layer():
             # Create .dockerignore file for DockerIgnore layer
             layer_dockerignore = src_dir / "custom.dockerignore"
             layer_dockerignore.write_text("*.txt\n.cache\n")
-            docker_ignore_layer = DockerIgnore(path=layer_dockerignore)
 
             # Mock _get_init_config().root_dir to return src_dir
             with patch("flyte._initialize._get_init_config") as mock_get_config:
@@ -244,10 +249,12 @@ async def test_copy_config_handler_with_dockerignore_layer():
                     dst=".",
                     path_type=1,  # directory
                 )
-                layers = (docker_ignore_layer, copy_config)
 
                 result = await CopyConfigHandler.handle(
-                    layer=copy_config, context_path=context_path, dockerfile="FROM python:3.9\n", layers=layers
+                    layer=copy_config,
+                    context_path=context_path,
+                    dockerfile="FROM python:3.9\n",
+                    docker_ignore_file_path=layer_dockerignore,
                 )
 
                 # Verify COPY command exists
@@ -279,12 +286,8 @@ def test_list_dockerignore_layer_priority():
         layer_dockerignore = src_dir / "custom.dockerignore"
         layer_dockerignore.write_text("*.txt\n.cache\n")
 
-        # Create layers tuple containing DockerIgnore layer
-        docker_ignore_layer = DockerIgnore(path=layer_dockerignore)
-        layers = (docker_ignore_layer,)
-
-        # Test list_dockerignore method
-        patterns = CopyConfigHandler.list_dockerignore(src_dir, layers)
+        # Test list_dockerignore method with DockerIgnore layer path
+        patterns = CopyConfigHandler.list_dockerignore(src_dir, layer_dockerignore)
 
         # Should return patterns from DockerIgnore layer instead of local .dockerignore
         expected_patterns = ["*.txt", ".cache"]
@@ -301,7 +304,7 @@ def test_list_dockerignore_found():
         dockerignore_file.write_text("*.py\nsrc/\n.cache\n# This is a comment\n\n*.txt\n \n  \n\t\n")
 
         # Test the method
-        patterns = CopyConfigHandler.list_dockerignore(src_dir, ())
+        patterns = CopyConfigHandler.list_dockerignore(src_dir, None)
 
         # Should return expected patterns, excluding comments and empty lines
         expected_patterns = ["*.py", "src/", ".cache", "*.txt"]
@@ -314,7 +317,7 @@ def test_list_dockerignore_not_found():
         src_dir = Path(tmp_context)
 
         # Test the method
-        patterns = CopyConfigHandler.list_dockerignore(src_dir, ())
+        patterns = CopyConfigHandler.list_dockerignore(src_dir, None)
 
         # Should return empty list when .dockerignore doesn't exist
         assert patterns == []
