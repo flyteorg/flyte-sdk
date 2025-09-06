@@ -35,15 +35,17 @@ async def main(sleep: float = 1.0, n: int = 10) -> Tuple[List[str], int]:
     """
     A task that fans out to multiple instances of sleeper.
     """
+    # Run CPU hog in parallel with sleeper tasks
+    cpu_hog_task = asyncio.create_task(cpu_hog())
+    print("CPU hog task started...", flush=True)
+
     results = []
     for i in range(n):
         results.append(asyncio.create_task(sleeper(sleep=sleep)))
 
     print(f"Launching {n} sleeper tasks with {sleep} seconds each...", flush=True)
     await asyncio.sleep(0.2)  # Allow some time for tasks to start
-    # Run CPU hog in parallel with sleeper tasks
-    cpu_hog_task = asyncio.create_task(cpu_hog())
-    print("CPU hog task started...", flush=True)
+
     v = await asyncio.gather(*results)
     print("All sleeper tasks completed.", flush=True)
     return v, await cpu_hog_task

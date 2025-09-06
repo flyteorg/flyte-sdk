@@ -54,7 +54,5 @@ def create_remote_controller(
 
     controller = RemoteController(
         client_coro=client_coro,
-        workers=10,
-        max_system_retries=5,
     )
     return controller
