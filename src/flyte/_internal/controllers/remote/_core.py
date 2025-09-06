@@ -8,6 +8,7 @@ from asyncio import Event
 from typing import Awaitable, Coroutine, Optional
 
 import grpc.aio
+from aiolimiter import AsyncLimiter
 from google.protobuf.wrappers_pb2 import StringValue
 
 import flyte.errors
@@ -53,7 +54,7 @@ class Controller:
         self._shared_queue: asyncio.Queue[Action] = asyncio.Queue(maxsize=10000)
         self._running = False
         self._resource_log_task = None
-        self._workers = int(os.getenv("_F_CNTRL_WORKERS", workers))
+        self._workers = workers
         self._max_retries = int(os.getenv("_F_MAX_RETRIES", max_system_retries))
         self._resource_log_interval = resource_log_interval_sec
         self._min_backoff_on_err = min_backoff_on_err_sec
@@ -63,6 +64,8 @@ class Controller:
         self._failure_event: Event | None = None
         self._enqueue_timeout = enqueue_timeout_sec
         self._informer_start_wait_timeout = thread_wait_timeout_sec
+        max_qps = int(os.getenv("_F_MAX_QPS", "100"))
+        self._rate_limiter = AsyncLimiter(max_qps, 60.0)
 
         # Thread management
         self._thread = None
@@ -294,21 +297,22 @@ class Controller:
         started = action.is_started()
         action.mark_cancelled()
         if started:
-            logger.info(f"Cancelling action: {action.name}")
-            try:
-                # TODO add support when the queue service supports aborting actions
-                # await self._queue_service.AbortQueuedAction(
-                #     queue_service_pb2.AbortQueuedActionRequest(action_id=action.action_id),
-                #     wait_for_ready=True,
-                # )
-                logger.info(f"Successfully cancelled action: {action.name}")
-            except grpc.aio.AioRpcError as e:
-                if e.code() in [
-                    grpc.StatusCode.NOT_FOUND,
-                    grpc.StatusCode.FAILED_PRECONDITION,
-                ]:
-                    logger.info(f"Action {action.name} not found, assumed completed or cancelled.")
-                    return
+            async with self._rate_limiter:
+                logger.info(f"Cancelling action: {action.name}")
+                try:
+                    # TODO add support when the queue service supports aborting actions
+                    # await self._queue_service.AbortQueuedAction(
+                    #     queue_service_pb2.AbortQueuedActionRequest(action_id=action.action_id),
+                    #     wait_for_ready=True,
+                    # )
+                    logger.info(f"Successfully cancelled action: {action.name}")
+                except grpc.aio.AioRpcError as e:
+                    if e.code() in [
+                        grpc.StatusCode.NOT_FOUND,
+                        grpc.StatusCode.FAILED_PRECONDITION,
+                    ]:
+                        logger.info(f"Action {action.name} not found, assumed completed or cancelled.")
+                        return
         else:
             # If the action is not started, we have to ensure it does not get launched
             logger.info(f"Action {action.name} is not started, no need to cancel.")
@@ -322,65 +326,69 @@ class Controller:
         Attempt to launch an action.
         """
         if not action.is_started():
-            task: queue_service_pb2.TaskAction | None = None
-            trace: queue_service_pb2.TraceAction | None = None
-            if action.type == "task":
-                if action.task is None:
-                    raise flyte.errors.RuntimeSystemError(
-                        "NoTaskSpec", "Task Spec not found, cannot launch Task Action."
+            async with self._rate_limiter:
+                task: queue_service_pb2.TaskAction | None = None
+                trace: queue_service_pb2.TraceAction | None = None
+                if action.type == "task":
+                    if action.task is None:
+                        raise flyte.errors.RuntimeSystemError(
+                            "NoTaskSpec", "Task Spec not found, cannot launch Task Action."
+                        )
+                    cache_key = None
+                    logger.info(f"Action {action.name} has cache version {action.cache_key}")
+                    if action.cache_key:
+                        cache_key = StringValue(value=action.cache_key)
+
+                    task = queue_service_pb2.TaskAction(
+                        id=task_definition_pb2.TaskIdentifier(
+                            version=action.task.task_template.id.version,
+                            org=action.task.task_template.id.org,
+                            project=action.task.task_template.id.project,
+                            domain=action.task.task_template.id.domain,
+                            name=action.task.task_template.id.name,
+                        ),
+                        spec=action.task,
+                        cache_key=cache_key,
                     )
-                cache_key = None
-                logger.info(f"Action {action.name} has cache version {action.cache_key}")
-                if action.cache_key:
-                    cache_key = StringValue(value=action.cache_key)
+                elif action.type == "trace":
+                    trace = action.trace
 
-                task = queue_service_pb2.TaskAction(
-                    id=task_definition_pb2.TaskIdentifier(
-                        version=action.task.task_template.id.version,
-                        org=action.task.task_template.id.org,
-                        project=action.task.task_template.id.project,
-                        domain=action.task.task_template.id.domain,
-                        name=action.task.task_template.id.name,
-                    ),
-                    spec=action.task,
-                    cache_key=cache_key,
-                )
-            elif action.type == "trace":
-                trace = action.trace
-
-            logger.debug(f"Attempting to launch action: {action.name}")
-            try:
-                await self._queue_service.EnqueueAction(
-                    queue_service_pb2.EnqueueActionRequest(
-                        action_id=action.action_id,
-                        parent_action_name=action.parent_action_name,
-                        task=task,
-                        trace=trace,
-                        input_uri=action.inputs_uri,
-                        run_output_base=action.run_output_base,
-                        group=action.group.name if action.group else None,
-                        # Subject is not used in the current implementation
-                    ),
-                    wait_for_ready=True,
-                    timeout=self._enqueue_timeout,
-                )
-                logger.info(f"Successfully launched action: {action.name}")
-            except grpc.aio.AioRpcError as e:
-                if e.code() == grpc.StatusCode.ALREADY_EXISTS:
-                    logger.info(f"Action {action.name} already exists, continuing to monitor.")
-                    return
-                if e.code() in [
-                    grpc.StatusCode.FAILED_PRECONDITION,
-                    grpc.StatusCode.INVALID_ARGUMENT,
-                    grpc.StatusCode.NOT_FOUND,
-                ]:
-                    raise flyte.errors.RuntimeSystemError(e.code().name, f"Precondition failed: {e.details()}") from e
-                # For all other errors, we will retry with backoff
-                logger.exception(
-                    f"Failed to launch action: {action.name}, Code: {e.code()}, Details {e.details()} backing off..."
-                )
-                logger.debug(f"Action details: {action}")
-                raise flyte.errors.SlowDownError(f"Failed to launch action: {e.details()}") from e
+                logger.debug(f"Attempting to launch action: {action.name}")
+                try:
+                    await self._queue_service.EnqueueAction(
+                        queue_service_pb2.EnqueueActionRequest(
+                            action_id=action.action_id,
+                            parent_action_name=action.parent_action_name,
+                            task=task,
+                            trace=trace,
+                            input_uri=action.inputs_uri,
+                            run_output_base=action.run_output_base,
+                            group=action.group.name if action.group else None,
+                            # Subject is not used in the current implementation
+                        ),
+                        wait_for_ready=True,
+                        timeout=self._enqueue_timeout,
+                    )
+                    logger.info(f"Successfully launched action: {action.name}")
+                except grpc.aio.AioRpcError as e:
+                    if e.code() == grpc.StatusCode.ALREADY_EXISTS:
+                        logger.info(f"Action {action.name} already exists, continuing to monitor.")
+                        return
+                    if e.code() in [
+                        grpc.StatusCode.FAILED_PRECONDITION,
+                        grpc.StatusCode.INVALID_ARGUMENT,
+                        grpc.StatusCode.NOT_FOUND,
+                    ]:
+                        raise flyte.errors.RuntimeSystemError(
+                            e.code().name, f"Precondition failed: {e.details()}"
+                        ) from e
+                    # For all other errors, we will retry with backoff
+                    logger.exception(
+                        f"Failed to launch action: {action.name}, Code: {e.code()}, "
+                        f"Details {e.details()} backing off..."
+                    )
+                    logger.debug(f"Action details: {action}")
+                    raise flyte.errors.SlowDownError(f"Failed to launch action: {e.details()}") from e
 
     @log
     async def _bg_process(self, action: Action):
