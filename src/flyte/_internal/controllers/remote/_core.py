@@ -65,7 +65,7 @@ class Controller:
         self._enqueue_timeout = enqueue_timeout_sec
         self._informer_start_wait_timeout = thread_wait_timeout_sec
         max_qps = int(os.getenv("_F_MAX_QPS", "100"))
-        self._rate_limiter = AsyncLimiter(max_qps, 60.0)
+        self._rate_limiter = AsyncLimiter(max_qps, 1.0)
 
         # Thread management
         self._thread = None
