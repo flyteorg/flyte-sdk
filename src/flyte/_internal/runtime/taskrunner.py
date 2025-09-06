@@ -144,14 +144,23 @@ async def convert_and_run(
         interactive_mode=interactive_mode,
     )
     with ctx.replace_task_context(tctx):
-        inputs = await load_inputs(input_path) if input_path else inputs
+        if task.reusable and task.reusable.data_cache_size > 0:
+            async def getter():
+                return await load_inputs(input_path)
+            inputs = await controller._data_cache.get(input_path, getter)
+        else:
+            inputs = await load_inputs(input_path) if input_path else inputs
         inputs_kwargs = await convert_inputs_to_native(inputs, task.native_interface)
         out, err = await run_task(tctx=tctx, controller=controller, task=task, inputs=inputs_kwargs)
         if err is not None:
             return None, convert_from_native_to_error(err)
         if task.report:
             await flyte.report.flush.aio()
-        return await convert_from_native_to_outputs(out, task.native_interface, task.name), None
+        op = await convert_from_native_to_outputs(out, task.native_interface, task.name)
+        if task.reusable and task.reusable.data_cache_size > 0:
+            from . import io
+            await controller._data_cache.set(io.outputs_path(output_path), op)
+        return op, None
 
 
 async def extract_download_run_upload(

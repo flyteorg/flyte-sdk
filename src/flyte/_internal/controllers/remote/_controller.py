@@ -25,6 +25,7 @@ from flyte._logging import logger
 from flyte._protos.common import identifier_pb2
 from flyte._protos.workflow import run_definition_pb2
 from flyte._task import TaskTemplate
+from flyte._utils import AsyncLRUCache
 from flyte._utils.helpers import _selector_policy
 from flyte.models import MAX_INLINE_IO_BYTES, ActionID, NativeInterface, SerializationContext
 from flyte.remote._task import TaskDetails
@@ -119,9 +120,8 @@ class RemoteController(Controller):
         client_coro: Awaitable[ClientSet],
         workers: int,
         max_system_retries: int,
-        default_parent_concurrency: int = 100,
+        default_parent_concurrency: int = 1000,
     ):
-        """ """
         super().__init__(
             client_coro=client_coro,
             workers=workers,
@@ -136,6 +136,7 @@ class RemoteController(Controller):
         )
         self._submit_loop: asyncio.AbstractEventLoop | None = None
         self._submit_thread: threading.Thread | None = None
+        self._data_cache = AsyncLRUCache[str, io.Outputs | io.Inputs](maxsize=10000, ttl=60)
 
     def generate_task_call_sequence(self, task_obj: object, action_id: ActionID) -> int:
         """
@@ -201,6 +202,10 @@ class RemoteController(Controller):
         serialized_inputs = inputs.proto_inputs.SerializeToString(deterministic=True)
         inputs_uri = io.inputs_path(sub_action_output_path)
         await upload_inputs_with_retry(serialized_inputs, inputs_uri, max_bytes=_task.max_inline_io_bytes)
+
+        if _task.reusable:
+            if _task.reusable.data_cache_size > 0:
+                await self._data_cache.set(inputs_uri, inputs)
 
         md = task_spec.task_template.metadata
         ignored_input_vars = []
@@ -278,6 +283,13 @@ class RemoteController(Controller):
                     "RuntimeError",
                     f"Task {n.action_id.name} did not return an output path, but the task has outputs defined.",
                 )
+            if _task.reusable:
+                if _task.reusable.data_cache_size > 0:
+                    out_path = io.outputs_path(n.realized_outputs_uri)
+                    async def getter() -> io.Outputs:
+                        return await io.load_outputs(out_path, max_bytes=_task.max_inline_io_bytes)
+                    op = await self._data_cache.get(out_path, getter)
+                    return await convert.convert_outputs_to_native(_task.native_interface, op)
             return await load_and_convert_outputs(
                 _task.native_interface, n.realized_outputs_uri, max_bytes=_task.max_inline_io_bytes
             )

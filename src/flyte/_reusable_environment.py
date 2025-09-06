@@ -33,6 +33,7 @@ class ReusePolicy:
     idle_ttl: Union[int, timedelta] = 30  # seconds
     concurrency: int = 1
     scaledown_ttl: Union[int, timedelta] = 30  # seconds
+    data_cache_size: int = 0  # in MB, 0 means no cache
 
     def __post_init__(self):
         if self.replicas is None:

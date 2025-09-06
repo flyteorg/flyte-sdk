@@ -52,6 +52,7 @@ def extract_unique_id_and_image(
         components += f":{reuse_policy.replicas[0]}:{reuse_policy.replicas[1]}"
     else:
         components += f":{reuse_policy.replicas}"
+    components += f":{reuse_policy.data_cache_size}"
     if reuse_policy.ttl is not None:
         components += f":{reuse_policy.ttl.total_seconds()}"
     if reuse_policy.get_scaledown_ttl() is not None:
