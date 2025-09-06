@@ -58,7 +58,7 @@ class Controller:
         self._max_retries = int(os.getenv("_F_MAX_RETRIES", max_system_retries))
         self._resource_log_interval = resource_log_interval_sec
         self._min_backoff_on_err = min_backoff_on_err_sec
-        self._max_backoff_on_err = 10.0
+        self._max_backoff_on_err = float(os.getenv("_F_MAX_BFF_ON_ERR", "10.0"))
         self._thread_wait_timeout = thread_wait_timeout_sec
         self._client_coro = client_coro
         self._failure_event: Event | None = None
