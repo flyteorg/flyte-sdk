@@ -59,3 +59,25 @@ def test_ignore_group_list_ignored():
         assert "test.py" not in ignored_set, "test.py should not be ignored"
         assert "config.json" not in ignored_set, "config.json should not be ignored"
         assert "src/module.py" not in ignored_set, "src/module.py should not be ignored"
+
+
+def test_standard_ignore_valueerror_handling():
+    """Test that StandardIgnore handles ValueError when path is not under root"""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        root_path = Path(tmpdir)
+        
+        # Create a file outside the root directory
+        outside_file = Path(tmpdir).parent / "outside_file.txt"
+        outside_file.write_text("outside content")
+        
+        # Create StandardIgnore instance
+        ignore_patterns = ["*.txt"]
+        standard_ignore = StandardIgnore(root_path, ignore_patterns)
+        
+        # Test that ValueError is handled gracefully
+        # The path outside the root should not be ignored (since it's not under root)
+        is_ignored = standard_ignore.is_ignored(outside_file)
+        assert not is_ignored, "File outside root should not be ignored"
+        
+        # Clean up
+        outside_file.unlink()

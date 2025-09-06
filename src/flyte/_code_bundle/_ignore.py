@@ -83,8 +83,15 @@ class StandardIgnore(Ignore):
         self.patterns = patterns if patterns else STANDARD_IGNORE_PATTERNS
 
     def _is_ignored(self, path: pathlib.Path) -> bool:
+        # Convert to relative path for pattern matching
+        try:
+            rel_path = path.relative_to(self.root)
+        except ValueError:
+            # If path is not under root, don't ignore it
+            return False
+        
         for pattern in self.patterns:
-            if fnmatch(str(path), pattern):
+            if fnmatch(str(rel_path), pattern):
                 return True
         return False
 
