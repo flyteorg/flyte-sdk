@@ -11,12 +11,12 @@ from rich.text import Text
 
 from flyte._initialize import ensure_client, get_client
 from flyte._logging import logger
-from flyteidl2.common import identifier_pb2
-from flyteidl2.logs.dataplane import payload_pb2
-from flyteidl2.workflow import run_logs_service_pb2
 from flyte._tools import ipython_check, ipywidgets_check
 from flyte.errors import LogsNotYetAvailableError
 from flyte.syncify import syncify
+from flyteidl2.common import identifier_pb2
+from flyteidl2.logs.dataplane import payload_pb2
+from flyteidl2.workflow import run_logs_service_pb2
 
 style_map = {
     payload_pb2.LogLineOriginator.SYSTEM: "bold magenta",

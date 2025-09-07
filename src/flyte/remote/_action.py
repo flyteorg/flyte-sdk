@@ -25,12 +25,12 @@ from rich.progress import Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
 
 from flyte import types
 from flyte._initialize import ensure_client, get_client, get_common_config
-from flyteidl2.common import identifier_pb2, list_pb2
-from flyteidl2.workflow import run_definition_pb2, run_service_pb2
-from flyteidl2.workflow.run_service_pb2 import WatchActionDetailsResponse
 from flyte.remote._common import ToJSONMixin
 from flyte.remote._logs import Logs
 from flyte.syncify import syncify
+from flyteidl2.common import identifier_pb2, list_pb2
+from flyteidl2.workflow import run_definition_pb2, run_service_pb2
+from flyteidl2.workflow.run_service_pb2 import WatchActionDetailsResponse
 
 WaitFor = Literal["terminal", "running", "logs-ready"]
 

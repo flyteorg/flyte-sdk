@@ -4,15 +4,15 @@ from dataclasses import dataclass
 from typing import Awaitable, Optional, Tuple, Union
 
 import pytest
-from flyteidl.core.interface_pb2 import TypedInterface, Variable, VariableMap
-from flyteidl.core.literals_pb2 import (
+from flyteidl2.core.interface_pb2 import TypedInterface, Variable, VariableMap
+from flyteidl2.core.literals_pb2 import (
     Literal,
     LiteralCollection,
     LiteralMap,
     Primitive,
     Scalar,
 )
-from flyteidl.core.types_pb2 import (
+from flyteidl2.core.types_pb2 import (
     BlobType,
     EnumType,
     LiteralType,
@@ -24,11 +24,11 @@ from flyteidl.core.types_pb2 import (
 import flyte._internal.runtime.convert as convert
 from flyte._internal.runtime.convert import Inputs, generate_sub_action_id_and_output_path
 from flyte._internal.runtime.types_serde import transform_native_to_typed_interface
-from flyteidl2.workflow import run_definition_pb2
-from flyteidl2.workflow import run_definition_pb2 as _run_definition_pb2
 from flyte.models import ActionID, NativeInterface, RawDataPath, TaskContext
 from flyte.report import Report
 from flyte.types import TypeEngine
+from flyteidl2.workflow import run_definition_pb2
+from flyteidl2.workflow import run_definition_pb2 as _run_definition_pb2
 
 test_cases = [
     (None, "cc6zwnxnmf3chm008fxfwv9g8"),
@@ -889,7 +889,7 @@ def test_cache_key_hash_with_file_objects():
     Test cache key generation with File objects that have hash values.
     This is a larger integration test with multiple File objects.
     """
-    from flyteidl.core import literals_pb2, types_pb2
+    from flyteidl2.core import literals_pb2, types_pb2
 
     # Create literals with hash values like File objects would produce
     literal1 = Literal(
@@ -1104,7 +1104,7 @@ def test_cache_key_hash_with_dir_objects():
     """
     Test cache key generation with Dir objects that have hash values.
     """
-    from flyteidl.core import literals_pb2, types_pb2
+    from flyteidl2.core import literals_pb2, types_pb2
 
     # Create literals with hash values like Dir objects would produce
     literal1 = Literal(

@@ -3,7 +3,7 @@ import json
 from typing import Any, Dict, Union
 
 import msgpack
-from flyteidl.core import literals_pb2
+from flyteidl2.core import literals_pb2
 from google.protobuf.json_format import MessageToDict
 
 from flyteidl2.workflow import run_definition_pb2

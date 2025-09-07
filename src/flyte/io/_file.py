@@ -18,7 +18,7 @@ from typing import (
 )
 
 import aiofiles
-from flyteidl.core import literals_pb2, types_pb2
+from flyteidl2.core import literals_pb2, types_pb2
 from fsspec.asyn import AsyncFileSystem
 from fsspec.utils import get_protocol
 from mashumaro.types import SerializableType

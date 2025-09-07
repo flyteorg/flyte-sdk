@@ -7,9 +7,9 @@ import grpc
 import rich.repr
 
 from flyte._initialize import ensure_client, get_client, get_common_config
+from flyte.syncify import syncify
 from flyteidl2.common import identifier_pb2, list_pb2
 from flyteidl2.workflow import run_definition_pb2, run_service_pb2
-from flyte.syncify import syncify
 
 from . import Action, ActionDetails, ActionInputs, ActionOutputs
 from ._action import _action_details_rich_repr, _action_rich_repr

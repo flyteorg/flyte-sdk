@@ -36,7 +36,7 @@ from ._timeout import TimeoutType
 from .models import MAX_INLINE_IO_BYTES, NativeInterface, SerializationContext
 
 if TYPE_CHECKING:
-    from flyteidl.core.tasks_pb2 import DataLoadingConfig
+    from flyteidl2.core.tasks_pb2 import DataLoadingConfig
 
     from ._task_environment import TaskEnvironment
 

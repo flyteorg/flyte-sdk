@@ -6,9 +6,9 @@ from kubernetes.client import V1Container, V1EnvVar, V1PodSpec
 import flyte
 from flyte import PodTemplate, RetryStrategy
 from flyte._internal.runtime.task_serde import get_proto_task, get_security_context
-from flyteidl2.workflow import task_definition_pb2
 from flyte.models import SerializationContext
 from flyte.remote._task import TaskDetails
+from flyteidl2.task import task_definition_pb2
 
 env = flyte.TaskEnvironment(name="hello_world", resources=flyte.Resources(cpu=1, memory="250Mi"))
 

@@ -8,17 +8,17 @@ import typing
 from datetime import timedelta
 from typing import Optional, cast
 
-from flyteidl.core import identifier_pb2, literals_pb2, security_pb2, tasks_pb2
+from flyteidl2.core import identifier_pb2, literals_pb2, security_pb2, tasks_pb2
 from google.protobuf import duration_pb2, wrappers_pb2
 
 import flyte.errors
 from flyte._cache.cache import VersionParameters, cache_from_request
 from flyte._logging import logger
 from flyte._pod import _PRIMARY_CONTAINER_NAME_FIELD, PodTemplate
-from flyteidl2.workflow import common_pb2, environment_pb2, task_definition_pb2
 from flyte._secret import SecretRequest, secrets_from_request
 from flyte._task import AsyncFunctionTaskTemplate, TaskTemplate
 from flyte.models import CodeBundle, SerializationContext
+from flyteidl2.task import task_definition_pb2, common_pb2, environment_pb2
 
 from ... import ReusePolicy
 from ..._retry import RetryStrategy
