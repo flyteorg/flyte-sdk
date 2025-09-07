@@ -89,7 +89,6 @@ branch = true
 [tool.ruff]
 line-length = 120
 extend-exclude = [
-    "src/flyte/_protos",
     "src/flyte/remote/client/_protocols.py",
     "examples/reports",
 ]
@@ -131,7 +130,6 @@ dev-dependencies = [
 
 [tool.mypy]
 disable_error_code = ["import-untyped"]
-exclude = "src/flyte/_protos/.*"
 ignore_missing_imports = true
 
 [tool.ty.rules]

@@ -89,7 +89,8 @@ async def _deploy_task(
 
     from ._internal.runtime.convert import convert_upload_default_inputs
     from ._internal.runtime.task_serde import translate_task_to_wire
-    from ._protos.workflow import task_definition_pb2, task_service_pb2
+    from flyteidl2.task import task_definition_pb2
+    from flyteidl2.task import task_service_pb2
 
     image_uri = task.image.uri if isinstance(task.image, Image) else task.image
 

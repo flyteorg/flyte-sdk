@@ -136,8 +136,8 @@ class _Runner:
         from ._deploy import build_images
         from ._internal.runtime.convert import convert_from_native_to_inputs
         from ._internal.runtime.task_serde import translate_task_to_wire
-        from ._protos.common import identifier_pb2
-        from ._protos.workflow import run_definition_pb2, run_service_pb2
+        from flyteidl2.common import identifier_pb2
+        from flyteidl2.workflow import run_definition_pb2, run_service_pb2
 
         cfg = get_common_config()
         project = self._project or cfg.project
