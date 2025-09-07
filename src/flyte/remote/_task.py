@@ -73,8 +73,10 @@ class LazyEntity:
         **kwargs: Any,
     ) -> LazyEntity:
         task_details = cast(TaskDetails, await self.fetch.aio())
-        task_details.override(**kwargs)
-        return self
+        new_task_details = task_details.override(**kwargs)
+        new_entity = LazyEntity(self._name, self._getter)
+        new_entity._task = new_task_details
+        return new_entity
 
     async def __call__(self, *args, **kwargs):
         """

@@ -258,6 +258,9 @@ class TaskTemplate(Generic[P, R]):
             else:
                 raise RuntimeSystemError("BadContext", "Controller is not initialized.")
         else:
+            from flyte._logging import logger
+
+            logger.warning(f"Task {self.name} running aio outside of a task context.")
             # Local execute, just stay out of the way, but because .aio is used, we want to return an awaitable,
             # even for synchronous tasks. This is to support migration.
             return self.forward(*args, **kwargs)
