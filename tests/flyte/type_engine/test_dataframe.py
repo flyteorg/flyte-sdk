@@ -6,7 +6,7 @@ from pathlib import Path
 
 import mock
 import pytest
-from flyteidl.core import literals_pb2, types_pb2
+from flyteidl2.core import literals_pb2, types_pb2
 from fsspec.utils import get_protocol
 
 import flyte

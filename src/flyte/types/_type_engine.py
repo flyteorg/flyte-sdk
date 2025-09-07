@@ -20,9 +20,9 @@ from types import GenericAlias, NoneType
 from typing import Any, Dict, NamedTuple, Optional, Type, cast
 
 import msgpack
-from flyteidl.core import interface_pb2, literals_pb2, types_pb2
-from flyteidl.core.literals_pb2 import Binary, Literal, LiteralCollection, LiteralMap, Primitive, Scalar, Union, Void
-from flyteidl.core.types_pb2 import LiteralType, SimpleType, TypeAnnotation, TypeStructure, UnionType
+from flyteidl2.core import interface_pb2, literals_pb2, types_pb2
+from flyteidl2.core.literals_pb2 import Binary, Literal, LiteralCollection, LiteralMap, Primitive, Scalar, Union, Void
+from flyteidl2.core.types_pb2 import LiteralType, SimpleType, TypeAnnotation, TypeStructure, UnionType
 from fsspec.asyn import _run_coros_in_chunks  # pylint: disable=W0212
 from google.protobuf import json_format as _json_format
 from google.protobuf import struct_pb2

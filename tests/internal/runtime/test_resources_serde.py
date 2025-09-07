@@ -1,5 +1,5 @@
 import pytest
-from flyteidl.core import tasks_pb2
+from flyteidl2.core import tasks_pb2
 
 from flyte._internal.runtime.resources_serde import (
     ACCELERATOR_DEVICE_MAP,

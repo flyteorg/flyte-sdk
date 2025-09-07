@@ -2,7 +2,7 @@ import os
 import pathlib
 from typing import Any, Dict, List, Literal, Optional, Tuple, Type, Union
 
-from flyteidl.core import tasks_pb2
+from flyteidl2.core import tasks_pb2
 
 from flyte import Image, storage
 from flyte._logging import logger

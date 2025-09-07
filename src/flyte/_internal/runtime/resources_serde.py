@@ -1,6 +1,6 @@
 from typing import List, Optional, Tuple
 
-from flyteidl.core import tasks_pb2
+from flyteidl2.core import tasks_pb2
 
 from flyte._resources import CPUBaseType, Resources
 

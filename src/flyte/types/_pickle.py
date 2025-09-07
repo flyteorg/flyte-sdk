@@ -5,7 +5,7 @@ from typing import Type
 
 import aiofiles
 import cloudpickle
-from flyteidl.core import literals_pb2, types_pb2
+from flyteidl2.core import literals_pb2, types_pb2
 
 import flyte.storage as storage
 
