@@ -1,8 +1,8 @@
 import flyte
 from flyte.extras import ContainerTask
 
-actor_image = flyte.Image.from_debian_base().with_pip_packages("unionai-reuse").with_local_v2()
-env = flyte.TaskEnvironment(name="reusable_container_task_env")
+actor_image = flyte.Image.from_debian_base().with_pip_packages("mypy")
+env = flyte.TaskEnvironment(name="reusable_container_task_env", image=actor_image)
 
 reusable_container_task = ContainerTask(
     name="reusable_container_task",
@@ -20,5 +20,5 @@ env.add_task(reusable_container_task)
 
 if __name__ == "__main__":
     flyte.init_from_config("../../config.yaml")
-    run = flyte.with_runcontext(mode="remote").run(reusable_container_task, "Union")
+    run = flyte.with_runcontext(mode="remote").run(reusable_container_task, "Flyte")
     print(run.url)
