@@ -283,13 +283,17 @@ class UnionParamType(click.ParamType):
     A composite type that allows for multiple types to be specified. This is used for union types.
     """
 
-    def __init__(self, types: typing.List[click.ParamType]):
+    def __init__(self, types: typing.List[click.ParamType | None]):
         super().__init__()
         self._types = self._sort_precedence(types)
-        self.name = "|".join([t.name for t in self._types])
+        self.name = "|".join([t.name for t in self._types if t is not None])
+        self.optional = False
+        if None in types:
+            self.name = f"Optional[{self.name}]"
+            self.optional = True
 
     @staticmethod
-    def _sort_precedence(tp: typing.List[click.ParamType]) -> typing.List[click.ParamType]:
+    def _sort_precedence(tp: typing.List[click.ParamType | None]) -> typing.List[click.ParamType]:
         unprocessed = []
         str_types = []
         others = []
@@ -311,6 +315,8 @@ class UnionParamType(click.ParamType):
         """
         for p in self._types:
             try:
+                if p is None and value is None:
+                    return None
                 return p.convert(value, param, ctx)
             except Exception as e:
                 logger.debug(f"Ignoring conversion error for type {p} trying other variants in Union. Error: {e}")
@@ -433,7 +439,10 @@ def literal_type_to_click_type(lt: LiteralType, python_type: typing.Type) -> cli
         for i in range(len(lt.union_type.variants)):
             variant = lt.union_type.variants[i]
             variant_python_type = typing.get_args(python_type)[i]
-            cts.append(literal_type_to_click_type(variant, variant_python_type))
+            if variant_python_type is type(None):
+                cts.append(None)
+            else:
+                cts.append(literal_type_to_click_type(variant, variant_python_type))
         return UnionParamType(cts)
 
     if lt.HasField("enum_type"):
@@ -460,6 +469,9 @@ class FlyteLiteralConverter(object):
 
     def is_bool(self) -> bool:
         return self.click_type == click.BOOL
+
+    def is_optional(self) -> bool:
+        return isinstance(self.click_type, UnionParamType) and self.click_type.optional
 
     def convert(
         self, ctx: click.Context, param: typing.Optional[click.Parameter], value: typing.Any
@@ -525,6 +537,8 @@ def to_click_option(
     if literal_converter.is_bool():
         required = False
         is_flag = True
+    if literal_converter.is_optional():
+        required = False
 
     return click.Option(
         param_decls=[f"--{input_name}"],

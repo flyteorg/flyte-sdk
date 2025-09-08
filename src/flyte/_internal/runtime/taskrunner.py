@@ -4,6 +4,7 @@ invoked within a context tree.
 """
 
 import pathlib
+import time
 from typing import Any, Dict, List, Optional, Tuple
 
 import flyte.report
@@ -172,6 +173,8 @@ async def extract_download_run_upload(
     This method is invoked from the CLI (urun) and is used to run a task. This assumes that the context tree
     has already been created, and the task has been loaded. It also handles the loading of the task.
     """
+    t = time.time()
+    logger.warning(f"Task {action.name} started at {t}")
     outputs, err = await convert_and_run(
         task=task,
         input_path=input_path,
@@ -194,4 +197,4 @@ async def extract_download_run_upload(
         logger.info(f"Task {task.name} completed successfully, no outputs")
         return
     await upload_outputs(outputs, output_path) if output_path else None
-    logger.info(f"Task {task.name} completed successfully, uploaded outputs to {output_path}")
+    logger.warning(f"Task {task.name} completed successfully, uploaded outputs to {output_path} in {time.time() - t}s")

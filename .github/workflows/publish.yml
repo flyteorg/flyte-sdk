@@ -122,4 +122,4 @@ jobs:
           FLYTE_DOCKER_BUILDER_CACHE_FROM: "type=gha"
           FLYTE_DOCKER_BUILDER_CACHE_TO: "type=gha,mode=max"
         run: |
-          uv run python maint_tools/build_default_image.py 
+          uv run python maint_tools/build_default_image.py

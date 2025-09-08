@@ -887,7 +887,12 @@ class Image:
         Use this method to create a new image with the specified uv.lock file layered on top of the current image
         Must have a corresponding pyproject.toml file in the same directory
         Cannot be used in conjunction with conda
-        In the Union builders, using this will change the virtual env to /root/.venv
+
+        By default, this method copies the entire project into the image,
+         including files such as pyproject.toml, uv.lock, and the src/ directory.
+
+        If you prefer not to install the current project, you can pass the extra argument --no-install-project.
+         In this case, the image builder will only copy pyproject.toml and uv.lock into the image.
 
         :param pyproject_file: path to the pyproject.toml file, needs to have a corresponding uv.lock file
         :param uvlock: path to the uv.lock file, if not specified, will use the default uv.lock file in the same

@@ -1,5 +1,7 @@
+import gzip
 import os
 import shutil
+import tarfile
 import tempfile
 import typing
 from datetime import datetime, timezone
@@ -7,11 +9,13 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Optional, Tuple, cast
 from uuid import uuid4
 
+import aiofiles
 import click
 
 import flyte
 import flyte.errors
 from flyte import Image, remote
+from flyte._code_bundle._utils import tar_strip_file_attributes
 from flyte._image import (
     AptPackages,
     Architecture,
@@ -130,7 +134,7 @@ class RemoteImageBuilder(ImageBuilder):
                     auto_version="latest",
                 )
                 await flyte.with_runcontext(project=IMAGE_TASK_PROJECT, domain=IMAGE_TASK_DOMAIN).run.aio(
-                    entity, spec=spec, context=context, target_image=image_name
+                    entity, target_image=image_name
                 )
             except Exception as e:
                 # Ignore the error if optimize is not enabled in the backend.
@@ -160,17 +164,32 @@ async def _validate_configuration(image: Image) -> Tuple[str, Optional[str]]:
 
     if any(context_path.iterdir()):
         # If there are files in the context directory, upload it
-        archive = Path(shutil.make_archive(str(tmp_path / "context"), "xztar", context_path))
-        st = archive.stat()
-        if st.st_size > 5 * 1024 * 1024:
+        tar_path = tmp_path / "context.tar"
+        with tarfile.open(tar_path, "w", dereference=False) as tar:
+            files: typing.List[str] = os.listdir(context_path)
+            for ws_file in files:
+                tar.add(
+                    os.path.join(context_path, ws_file),
+                    recursive=True,
+                    arcname=ws_file,
+                    filter=tar_strip_file_attributes,
+                )
+        context_dst = Path(f"{tar_path!s}.gz")
+        with gzip.GzipFile(filename=context_dst, mode="wb", mtime=0) as gzipped:
+            async with aiofiles.open(tar_path, "rb") as tar_file:
+                content = await tar_file.read()
+                gzipped.write(content)
+
+        context_size = tar_path.stat().st_size
+        if context_size > 5 * 1024 * 1024:
             logger.warning(
                 click.style(
-                    f"Context size is {st.st_size / (1024 * 1024):.2f} MB, which is larger than 5 MB. "
+                    f"Context size is {context_size / (1024 * 1024):.2f} MB, which is larger than 5 MB. "
                     "Upload and build speed will be impacted.",
                     fg="yellow",
                 )
             )
-        _, context_url = await remote.upload_file.aio(archive)
+        _, context_url = await remote.upload_file.aio(context_dst)
     else:
         context_url = ""
 
@@ -248,12 +267,20 @@ def _get_layers_proto(image: Image, context_path: Path) -> "image_definition_pb2
             for line in layer.pyproject.read_text().splitlines():
                 if "tool.uv.index" in line:
                     raise ValueError("External sources are not supported in pyproject.toml")
-            shutil.copy2(layer.pyproject, context_path / layer.pyproject.name)
+
+            if layer.extra_index_urls and "--no-install-project" in layer.extra_index_urls:
+                # Copy pyproject itself
+                pyproject_dst = copy_files_to_context(layer.pyproject, context_path)
+            else:
+                # Copy the entire project
+                pyproject_dst = copy_files_to_context(layer.pyproject.parent, context_path)
 
             uv_layer = image_definition_pb2.Layer(
                 uv_project=image_definition_pb2.UVProject(
-                    pyproject=str(layer.pyproject.name),
-                    uvlock=str(layer.uvlock.name),
+                    pyproject=str(pyproject_dst.relative_to(context_path)),
+                    uvlock=str(copy_files_to_context(layer.uvlock, context_path).relative_to(context_path)),
+                    options=pip_options,
+                    secret_mounts=secret_mounts,
                 )
             )
             layers.append(uv_layer)
@@ -303,7 +330,7 @@ def _get_fully_qualified_image_name(outputs: ActionOutputs) -> str:
 
 def _get_build_secrets_from_image(image: Image) -> Optional[typing.List[Secret]]:
     secrets = []
-    DEFAULT_SECRET_DIR = Path("etc/flyte/secrets")
+    DEFAULT_SECRET_DIR = Path("/etc/flyte/secrets")
     for layer in image._layers:
         if isinstance(layer, (PipOption, Commands, AptPackages)) and layer.secret_mounts is not None:
             for secret_mount in layer.secret_mounts:

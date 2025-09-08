@@ -108,7 +108,7 @@ class ConfigFile(object):
         return pathlib.Path(self._location)
 
     @staticmethod
-    def _read_yaml_config(location: str) -> typing.Optional[typing.Dict[str, typing.Any]]:
+    def _read_yaml_config(location: str | pathlib.Path) -> typing.Optional[typing.Dict[str, typing.Any]]:
         with open(location, "r") as fh:
             try:
                 yaml_contents = yaml.safe_load(fh)
@@ -139,15 +139,21 @@ def resolve_config_path() -> pathlib.Path | None:
     """
     Config is read from the following locations in order of precedence:
     1. ./config.yaml if it exists
-    2. `UCTL_CONFIG` environment variable
-    3. `FLYTECTL_CONFIG` environment variable
-    4. ~/.union/config.yaml if it exists
-    5. ~/.flyte/config.yaml if it exists
+    2. ./.flyte/config.yaml if it exists
+    3. `UCTL_CONFIG` environment variable
+    4. `FLYTECTL_CONFIG` environment variable
+    5. ~/.union/config.yaml if it exists
+    6. ~/.flyte/config.yaml if it exists
     """
     current_location_config = Path("config.yaml")
     if current_location_config.exists():
         return current_location_config
     logger.debug("No ./config.yaml found")
+
+    dot_flyte_config = Path(".flyte", "config.yaml")
+    if dot_flyte_config.exists():
+        return dot_flyte_config
+    logger.debug("No ./.flyte/config.yaml found")
 
     uctl_path_from_env = getenv(UCTL_CONFIG_ENV_VAR, None)
     if uctl_path_from_env:
@@ -173,13 +179,13 @@ def resolve_config_path() -> pathlib.Path | None:
 
 
 @lru_cache
-def get_config_file(c: typing.Union[str, ConfigFile, None]) -> ConfigFile | None:
+def get_config_file(c: typing.Union[str, pathlib.Path, ConfigFile, None]) -> ConfigFile | None:
     """
     Checks if the given argument is a file or a configFile and returns a loaded configFile else returns None
     """
-    if isinstance(c, str):
+    if isinstance(c, (str, pathlib.Path)):
         logger.debug(f"Using specified config file at {c}")
-        return ConfigFile(c)
+        return ConfigFile(str(c))
     elif isinstance(c, ConfigFile):
         return c
     config_path = resolve_config_path()

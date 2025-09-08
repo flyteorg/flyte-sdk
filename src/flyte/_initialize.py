@@ -228,7 +228,7 @@ async def init(
 
 @syncify
 async def init_from_config(
-    path_or_config: str | Config | None = None,
+    path_or_config: str | Path | Config | None = None,
     root_dir: Path | None = None,
     log_level: int | None = None,
 ) -> None:
@@ -251,11 +251,11 @@ async def init_from_config(
     if path_or_config is None:
         # If no path is provided, use the default config file
         cfg = config.auto()
-    elif isinstance(path_or_config, str):
+    elif isinstance(path_or_config, (str, Path)):
         if root_dir:
-            cfg_path = str(root_dir / path_or_config)
+            cfg_path = root_dir.expanduser() / path_or_config
         else:
-            cfg_path = path_or_config
+            cfg_path = Path(path_or_config).expanduser()
         if not Path(cfg_path).exists():
             raise InitializationError(
                 "ConfigFileNotFoundError",

@@ -116,6 +116,8 @@ def main(
     if name.startswith("{{"):
         name = os.getenv("ACTION_NAME", "")
 
+    logger.warning(f"Flyte runtime started for action {name} with run name {run_name}")
+
     if debug and name == "a0":
         from flyte._debug.vscode import _start_vscode_server
 
@@ -168,6 +170,7 @@ def main(
         await controller.stop()
 
     asyncio.run(_run_and_stop())
+    logger.warning(f"Flyte runtime completed for action {name} with run name {run_name}")
 
 
 if __name__ == "__main__":
