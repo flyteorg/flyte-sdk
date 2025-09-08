@@ -30,7 +30,9 @@ def run_af2(sequence: str) -> list[str]:
 
 
 if __name__ == "__main__":
-    flyte.init_from_config("../../../config.yaml", root_dir=pathlib.Path(__file__).parent, log_level=logging.INFO)
+    import flyte.git
+
+    flyte.init_from_config(flyte.git.config_from_root(), root_dir=pathlib.Path(__file__).parent, log_level=logging.INFO)
     r = flyte.run(run_af2, "AAGGTTCCAA")
     print(r.url)
     # print(r.outputs())

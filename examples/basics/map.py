@@ -56,7 +56,9 @@ async def async_to_sync_main(n: int) -> List[str]:
 
 
 if __name__ == "__main__":
-    flyte.init_from_config("../../config.yaml")
+    import flyte.git
+
+    flyte.init_from_config(flyte.git.config_from_root())
     # flyte.init()
     run = flyte.run(async_to_sync_main, 10)
     print(run.url)

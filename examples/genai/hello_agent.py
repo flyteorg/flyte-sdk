@@ -32,7 +32,9 @@ async def lead_agent(state: ResearchState, num_subagents: int = 3) -> ResearchSt
 
 
 if __name__ == "__main__":
-    flyte.init_from_config("../../config.yaml")
+    import flyte.git
+
+    flyte.init_from_config(flyte.git.config_from_root())
     state = ResearchState(query="AI agent companies 2025")
     run = flyte.run(lead_agent, state)
     print(run.url)

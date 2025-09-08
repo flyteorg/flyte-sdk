@@ -50,9 +50,9 @@ async def group_dynamic(x: int) -> List[int]:
 
 
 if __name__ == "__main__":
-    import flyte.config
+    import flyte.git
 
-    flyte.init_from_config("../../config.yaml")
+    flyte.init_from_config(flyte.git.config_from_root())
 
     run = flyte.run(group_dynamic, x=10)
     print(run.url)

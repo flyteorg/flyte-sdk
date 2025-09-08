@@ -60,6 +60,8 @@ def error_handling_main(n: int):
 
 
 if __name__ == "__main__":
-    flyte.init_from_config("../../config.yaml")
+    import flyte.git
+
+    flyte.init_from_config(flyte.git.config_from_root())
     run = flyte.run(main)
     print(run.url)

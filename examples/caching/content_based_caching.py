@@ -114,7 +114,8 @@ async def demo_cache_behavior() -> str:
 
 
 if __name__ == "__main__":
-    # flyte.init_from_config("../../config.yaml")
-    flyte.init()
+    import flyte.git
+
+    flyte.init_from_config(flyte.git.config_from_root())
     result = flyte.with_runcontext("local").run(demo_cache_behavior)
     print(f"\nFinal result: {result}")

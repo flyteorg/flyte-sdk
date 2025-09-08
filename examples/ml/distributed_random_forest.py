@@ -204,7 +204,9 @@ async def main(n_estimators: int = 16) -> tuple[File, float]:
 
 
 if __name__ == "__main__":
-    flyte.init_from_config("../../config.yaml")
+    import flyte.git
+
+    flyte.init_from_config(flyte.git.config_from_root())
     run = flyte.run(main)
     print(run.url)
 
