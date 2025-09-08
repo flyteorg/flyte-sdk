@@ -1,7 +1,7 @@
 import flyte
 from flyte.extras import ContainerTask
 
-actor_image = flyte.Image.from_debian_base().with_pip_packages("mypy")
+actor_image = flyte.Image.from_debian_base()
 env = flyte.TaskEnvironment(name="reusable_container_task_env", image=actor_image)
 
 reusable_container_task = ContainerTask(
