@@ -1,7 +1,7 @@
 # /// script
 # requires-python = "==3.13"
 # dependencies = [
-#    "flyte>=2.0.0b0",
+#    "flyte>=2.0.0b6",
 #    "pydantic==2.11.5",
 #    "litellm==1.72.2",
 #    "pypandoc==1.15",
@@ -41,8 +41,8 @@ env = flyte.TaskEnvironment(
     name="deep-researcher",
     secrets=[
         # TODO: Replace with your own secrets
-        flyte.Secret(key="together_api_key", as_env_var="TOGETHER_API_KEY"),
-        flyte.Secret(key="tavily_api_key", as_env_var="TAVILY_API_KEY"),
+        flyte.Secret(key="VOTTA_TOGETHER_API_KEY", as_env_var="TOGETHER_API_KEY"),
+        flyte.Secret(key="VOTTA_TAVILY_API_KEY", as_env_var="TAVILY_API_KEY"),
     ],
     image=flyte.Image.from_uv_script(__file__, name="deep-research-agent", pre=True)
     .with_apt_packages("pandoc", "texlive-xetex")
@@ -625,7 +625,7 @@ if __name__ == "__main__":
 
     # Remote execution
     # TODO: Replace with your own Flyte config file path
-    flyte.init_from_config("../../config.yaml")
+    flyte.init_from_config("../../../config.yaml")
     run = flyte.run(main)
     print(run.url)
     run.wait(run)
