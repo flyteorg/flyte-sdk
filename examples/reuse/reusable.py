@@ -18,7 +18,7 @@ import flyte
 #     .with_local_v2()
 # )
 
-actor_image = flyte.Image.from_debian_base()  # .with_pip_packages("unionai-reuse")
+actor_image = flyte.Image.from_debian_base().with_pip_packages("unionai-reuse==0.1.3")
 
 env = flyte.TaskEnvironment(
     name="reusable",
