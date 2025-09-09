@@ -1,8 +1,15 @@
 """
 This example shows how to tune and cache optimial resource configurations for a task.
 
-It builds on the `multi_loops.py` example by adding a tune_memory step that
+It builds on the `multi_loops.py` example by adding a `tune_memory` step that
 runs and caches the optimal memory configuration for a task-input combination.
+
+When the `main` driver task is run for the first time, it will run the `tune_memory`
+step for a given set of inputs and return the optimal memory configuration for each input.
+The tasks will be run again in the `main` task with the optimal memory configuration.
+
+When the `main` task is run on subsequent times with the same inputs, it will
+skip the `tune_memory` step and use the cached optimal memory configuration.
 """
 
 import asyncio
