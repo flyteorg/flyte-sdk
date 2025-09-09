@@ -21,6 +21,7 @@ from flyte._protos.workflow import (
     state_service_pb2,
     task_definition_pb2,
 )
+from flyte._utils import run_coros
 
 
 class DummyService(QueueService, StateService, ClientSet):
@@ -171,15 +172,19 @@ async def test_basic_end_to_end_one_task():
         run_output_base="output_uri",
     )
     c = Controller(client_coro=service, workers=2, max_system_retries=2)
-    final_node = await c.submit_action(input_node)
-    assert final_node.started
-    assert final_node.phase == run_definition_pb2.Phase.PHASE_SUCCEEDED, (
-        f"Expected phase to be PHASE_SUCCEEDED, found {run_definition_pb2.Phase.Name(final_node.phase)},"
-        f" for {final_node.action_id.name}"
-    )
-    assert final_node.realized_outputs_uri == "s3://bucket/run-id/sub-action/1"
-    await c._finalize_parent_action(run_id=run_id, parent_action_name=parent_action_name)
-    await c.stop()
+
+    async def _run():
+        final_node = await c.submit_action(input_node)
+        assert final_node.started
+        assert final_node.phase == run_definition_pb2.Phase.PHASE_SUCCEEDED, (
+            f"Expected phase to be PHASE_SUCCEEDED, found {run_definition_pb2.Phase.Name(final_node.phase)},"
+            f" for {final_node.action_id.name}"
+        )
+        assert final_node.realized_outputs_uri == "s3://bucket/run-id/sub-action/1"
+        await c._finalize_parent_action(run_id=run_id, parent_action_name=parent_action_name)
+        await c.stop()
+
+    await run_coros(_run(), c.watch_for_errors())
 
 
 @pytest.mark.asyncio

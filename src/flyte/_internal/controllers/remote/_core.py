@@ -199,15 +199,16 @@ class Controller:
         # We will wait for this to signal that the thread is ready
         # Signal the main thread that we're ready
         logger.debug("Background thread initialization complete")
-        self._thread_ready.set()
         if sys.version_info >= (3, 11):
             async with asyncio.TaskGroup() as tg:
                 for i in range(self._workers):
                     tg.create_task(self._bg_run(f"worker-{i}"))
+                self._thread_ready.set()
         else:
             tasks = []
             for i in range(self._workers):
-                tasks.append(asyncio.create_task(self._bg_run()))
+                tasks.append(asyncio.create_task(self._bg_run(f"worker-{i}")))
+            self._thread_ready.set()
             await asyncio.gather(*tasks)
 
     def _bg_thread_target(self):
@@ -226,6 +227,7 @@ class Controller:
         except Exception as e:
             logger.error(f"Controller thread encountered an exception: {e}")
             self._set_exception(e)
+            self._failure_event.set()
         finally:
             if self._loop and self._loop.is_running():
                 self._loop.close()
