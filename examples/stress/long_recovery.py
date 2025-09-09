@@ -39,7 +39,7 @@ async def main() -> typing.List[int]:
             result = asyncio.create_task(stressor_task(x=i, y=i + 1, z=i + 2, a=i + 3, b=i + 4))
             results.append(result)
             await asyncio.sleep(5)
-            if get_attempt_number() == 0:
+            if get_attempt_number() == 0 or (get_attempt_number() == 1 and i == 4):
                 raise flyte.errors.RuntimeSystemError(
                     "simulated", f"Simulated failure on attempt {get_attempt_number()}"
                 )
@@ -47,7 +47,7 @@ async def main() -> typing.List[int]:
         print("Waiting for parallel tasks to complete", flush=True)
         _ = await asyncio.gather(*results)
 
-    if get_attempt_number() == 1:
+    if get_attempt_number() == 2:
         raise flyte.errors.RuntimeSystemError("simulated", f"Simulated failure on attempt {get_attempt_number()}")
     # Collect results
     # Run more in sequential and fail after n
@@ -57,13 +57,14 @@ async def main() -> typing.List[int]:
             print("Running stressor_task sequentially with parameters:", i, i + 1, i + 2, i + 3, i + 4, flush=True)
             v = await stressor_task(x=i, y=i + 1, z=i + 2, a=i + 3, b=i + 4)
             vals.append(v)
-            if i == 10 and get_attempt_number() == 2:
+            if i == 30 and get_attempt_number() == 3:
                 raise flyte.errors.RuntimeSystemError(
                     "simulated", f"Simulated failure on attempt {get_attempt_number()} at iteration {i}"
                 )
-            # if i == 80 and get_attempt_number() == 3:
-            #     raise flyte.errors.RuntimeSystemError("simulated",
-            #         f"Simulated failure on attempt {get_attempt_number()} at iteration {i}")
+            if i == 90 and get_attempt_number() == 4:
+                raise flyte.errors.RuntimeSystemError(
+                    "simulated", f"Simulated failure on attempt {get_attempt_number()} at iteration {i}"
+                )
 
         print("All Done with sequential tasks", flush=True)
         return vals
