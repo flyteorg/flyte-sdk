@@ -28,5 +28,7 @@ env.add_task(version_task)
 
 
 if __name__ == "__main__":
-    flyte.init_from_config("../config.yaml")
+    import flyte.git
+
+    flyte.init_from_config(flyte.git.config_from_root())
     print(flyte.run(version_task))

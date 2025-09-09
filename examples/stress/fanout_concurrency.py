@@ -28,7 +28,9 @@ async def reuse_concurrency(n: int = 50) -> int:
 
 
 if __name__ == "__main__":
-    flyte.init_from_config("../../config.yaml")
+    import flyte.git
+
+    flyte.init_from_config(flyte.git.config_from_root())
     runs = []
     for i in range(10):
         run = flyte.run(reuse_concurrency, n=1000)

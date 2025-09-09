@@ -34,7 +34,9 @@ async def say_hello_nested(data: str = "default string", n: int = 3) -> str:
 
 
 if __name__ == "__main__":
-    flyte.init_from_config("../../config.yaml")
+    import flyte.git
+
+    flyte.init_from_config(flyte.git.config_from_root())
     run = flyte.with_runcontext(
         log_level=logging.DEBUG,
         env_vars={"KEY": "V"},

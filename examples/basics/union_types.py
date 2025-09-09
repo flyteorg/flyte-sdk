@@ -9,7 +9,9 @@ def complex_task(data: dict[str, list[str] | None] | None) -> dict[str, list[str
 
 
 if __name__ == "__main__":
-    flyte.init_from_config("../../config.yaml")
+    import flyte.git
+
+    flyte.init_from_config(flyte.git.config_from_root())
     run = flyte.run(complex_task, data={"key": ["value1", "value2"]})
     print(run)
     print(run.url)

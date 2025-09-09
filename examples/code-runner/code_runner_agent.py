@@ -61,7 +61,9 @@ Use the following pattern to execute the code:
 
 ```
 if __name__ == "__main__":
-    flyte.init()
+    import flyte.git
+
+    flyte.init_from_config(flyte.git.config_from_root())
     print(flyte.run(...))
 ```
 
@@ -369,6 +371,8 @@ Result of code execution:
 
 
 if __name__ == "__main__":
-    flyte.init_from_config("../../config.yaml")
+    import flyte.git
+
+    flyte.init_from_config(flyte.git.config_from_root())
     run = flyte.run(main)
     print(run.url)

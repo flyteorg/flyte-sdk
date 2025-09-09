@@ -734,7 +734,9 @@ def generate_sample_data():
 
 
 if __name__ == "__main__":
-    flyte.init_from_config("../../config.yaml")
+    import flyte.git
+
+    flyte.init_from_config(flyte.git.config_from_root())
     run = flyte.run(generate_interactive_dashboard)
     print(run.name)
     print(run.url)

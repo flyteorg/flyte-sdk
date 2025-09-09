@@ -74,7 +74,9 @@ async def spark_overrider(executor_instances: int = 3, partitions: int = 4) -> f
 # You can execute the code locally as if it was a normal Python script.
 
 if __name__ == "__main__":
-    flyte.init_from_config("../../config.yaml")
+    import flyte.git
+
+    flyte.init_from_config(flyte.git.config_from_root())
     # run = flyte.run(hello_spark_nested)
     # print("run name:", run.name)
     # print("run url:", run.url)
