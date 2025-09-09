@@ -21,18 +21,13 @@ To run this example:
 """
 
 import asyncio
-from concurrent.futures import ThreadPoolExecutor
-from typing import Dict, List
-
+from typing import List
 
 import flyte
 import nest_asyncio
 from gql import Client, gql
 from gql.transport.aiohttp import AIOHTTPTransport
 from gql.transport.httpx import HTTPXTransport
-
-
-nest_asyncio.apply()
 
 
 env = flyte.TaskEnvironment(
