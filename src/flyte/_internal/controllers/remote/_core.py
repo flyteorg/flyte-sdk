@@ -437,6 +437,7 @@ class Controller:
                     f"on action {action.name} due to error: {e}"
                 )
                 await asyncio.sleep(backoff)
+                logger.warning(f"[{worker_id}] Retrying action {action.name} after backoff")
                 await self._shared_queue.put(action)
             except Exception as e:
                 logger.error(f"[{worker_id}] Error in controller loop: {e}")
