@@ -37,7 +37,7 @@ class Controller:
         workers: int = 20,
         max_system_retries: int = 10,
         resource_log_interval_sec: float = 10.0,
-        min_backoff_on_err_sec: float = 0.1,
+        min_backoff_on_err_sec: float = 0.5,
         thread_wait_timeout_sec: float = 5.0,
         enqueue_timeout_sec: float = 5.0,
     ):
@@ -433,9 +433,11 @@ class Controller:
                     raise
                 backoff = min(self._min_backoff_on_err * (2 ** (action.retries - 1)), self._max_backoff_on_err)
                 logger.warning(
-                    f"[{worker_id}] Backing off on action {action.name} due to error: {e}, retry {action.retries}"
+                    f"[{worker_id}] Backing off for {backoff} [retry {action.retries}/{self._max_retries}] "
+                    f"on action {action.name} due to error: {e}"
                 )
                 await asyncio.sleep(backoff)
+                logger.warning(f"[{worker_id}] Retrying action {action.name} after backoff")
                 await self._shared_queue.put(action)
             except Exception as e:
                 logger.error(f"[{worker_id}] Error in controller loop: {e}")

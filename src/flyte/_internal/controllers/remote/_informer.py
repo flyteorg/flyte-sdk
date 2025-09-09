@@ -223,6 +223,8 @@ class Informer:
                 )
                 raise last_exc
             try:
+                if retries >= 1:
+                    logger.warning(f"Informer watch retrying, attempt {retries}/{self._max_watch_retries}")
                 watcher = self._client.Watch(
                     state_service_pb2.WatchRequest(
                         parent_action_id=identifier_pb2.ActionIdentifier(
