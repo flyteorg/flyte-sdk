@@ -1,11 +1,18 @@
+"""
+This example shows how to tune and cache optimial resource configurations for a task.
+
+It builds on the `multi_loops.py` example by adding a tune_memory step that
+runs and caches the optimal memory configuration for a task-input combination.
+"""
+
 import asyncio
-from typing import List
 
 import flyte
 import flyte.errors
 
+
 env = flyte.TaskEnvironment(
-    "memory_override_for_loops_1",
+    "resource_tuner",
     resources=flyte.Resources(cpu=1, memory="400Mi"),
     cache="disable",
 )
@@ -13,7 +20,7 @@ env = flyte.TaskEnvironment(
 MEM_OVERRIDES = ["200Mi", "400Mi", "600Mi", "1000Mi"]
 
 
-@env.task
+@env.task(cache="disable")
 async def memory_hogger(x: int) -> int:
     size_mb = (x + 1) * 200  # 200MB per level
     print(f"Allocating {size_mb} MB of memory")
@@ -27,15 +34,18 @@ async def memory_hogger(x: int) -> int:
     return x
 
 
-async def retry_with_more_mem(x: int) -> int:
+@env.task(cache="auto")
+async def tune_memory(x: int) -> str:
     """
     Retry foo with more memory if it fails.
     """
-    with flyte.group(f"retry-group-{x}"):
-        i = 0
+    i = 0
+    with flyte.group(f"tune-memory-{x}"):
         while i < len(MEM_OVERRIDES):
             try:
-                return await memory_hogger.override(cache="disable", resources=flyte.Resources(cpu=1, memory=MEM_OVERRIDES[i]))(x)
+                mem = MEM_OVERRIDES[i]
+                await memory_hogger.override(resources=flyte.Resources(cpu=1, memory=mem), cache="disable")(x)
+                return mem
             except flyte.errors.OOMError as e:
                 print(f"OOMError encountered: {e}, retrying with more memory")
                 i += 1
@@ -44,20 +54,26 @@ async def retry_with_more_mem(x: int) -> int:
                     raise e
 
 
+@env.task(cache="auto")
+async def tuning_step(inputs: list[int]) -> dict[int, str]:
+    tuned_memories = await asyncio.gather(*[
+        tune_memory.override(short_name=f"tune_memory_{i}")(i) for i in inputs
+    ])
+    return dict(zip(inputs, tuned_memories))
+
+
 @env.task
-async def main(n: int) -> List[int]:
+async def main(n: int) -> list[int]:
     """
     Run foo in a nested loop structure.
     """
-    coros = []
-    for i in range(n):
-        coros.append(retry_with_more_mem(i))
-    result = await asyncio.gather(*coros, return_exceptions=True)
+    inputs = list(range(n))
+    tuned_mem = await tuning_step(inputs)
 
-    for res in result:
-        if isinstance(res, Exception):
-            print(f"Error encountered: {res}")
-            raise res
+    coros = []
+    for i in inputs:
+        coros.append(memory_hogger.override(resources=flyte.Resources(cpu=1, memory=tuned_mem[i]), cache="disable")(i))
+    result = await asyncio.gather(*coros)
     return result
 
 
