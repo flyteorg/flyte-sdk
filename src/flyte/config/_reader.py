@@ -139,7 +139,10 @@ def _config_path_from_git_root() -> pathlib.Path | None:
     from flyte.git import config_from_root
 
     try:
-        return config_from_root().source
+        path = config_from_root().source
+        if path.exists():
+            return path
+        return None
     except RuntimeError:
         return None
 
