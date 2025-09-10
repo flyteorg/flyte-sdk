@@ -35,7 +35,9 @@ async def retry_with_more_mem(x: int) -> int:
         i = 0
         while i < len(MEM_OVERRIDES):
             try:
-                return await memory_hogger.override(cache="disable", resources=flyte.Resources(cpu=1, memory=MEM_OVERRIDES[i]))(x)
+                return await memory_hogger.override(
+                    cache="disable", resources=flyte.Resources(cpu=1, memory=MEM_OVERRIDES[i])
+                )(x)
             except flyte.errors.OOMError as e:
                 print(f"OOMError encountered: {e}, retrying with more memory")
                 i += 1

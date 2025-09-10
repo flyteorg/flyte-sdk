@@ -143,7 +143,6 @@ async def gridsearch(
 
 if __name__ == "__main__":
     from datetime import datetime
-    from pathlib import Path
 
     flyte.init_from_config()
     sweep_name = f"hpo-gpu-sweep-{datetime.now().strftime('%Y%m%d%H%M%S')}"
