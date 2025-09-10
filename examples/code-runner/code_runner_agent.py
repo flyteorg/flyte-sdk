@@ -61,7 +61,7 @@ Use the following pattern to execute the code:
 
 ```
 if __name__ == "__main__":
-    flyte.init()
+    flyte.init_from_config()
     print(flyte.run(...))
 ```
 
@@ -369,6 +369,6 @@ Result of code execution:
 
 
 if __name__ == "__main__":
-    flyte.init_from_config("../../config.yaml")
+    flyte.init_from_config()
     run = flyte.run(main)
     print(run.url)

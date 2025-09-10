@@ -240,5 +240,5 @@ async def main(datasets: list[str] = ["together-search-bench"], limit: int | Non
 
 
 if __name__ == "__main__":
-    flyte.init()
+    flyte.init_from_config()
     flyte.with_runcontext(raw_data_path="data").run(main)

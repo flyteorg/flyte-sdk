@@ -118,7 +118,7 @@ async def research_coordinator(
 
 
 if __name__ == "__main__":
-    flyte.init_from_config("../../config.yaml")
+    flyte.init_from_config()
 
     prompt = "What are the latest developments in AI?"
     runs = []

@@ -356,7 +356,7 @@ async def main():
 
 
 if __name__ == "__main__":
-    flyte.init_from_config("../../config.yaml")
+    flyte.init_from_config()
     run = flyte.run(main)
     print(f"Run Name: {run.name}", flush=True)
     print(f"Run URL: {run.url}", flush=True)
