@@ -163,4 +163,9 @@ def test_image_uri_consistency_for_uvscript():
     assert img.base_image == "python:3.12-slim-bookworm", "Base image should be python:3.12-slim-bookworm"
     # This value should work across python versions in CI because all values have been specified above and are hardcoded
     # Please don't change this value unless you are sure it's the right thing to do.
-    assert img.identifier == "jbBYppyNmLmWb13gy6ts8g", img._layers
+    assert img.identifier == "ymxz6JlYRNMt5gqSOuEcSw", img._layers
+
+    img_no_py_version = Image.from_uv_script(
+        "./agent_simulation_loadtest.py", name="flyte", registry="ghcr.io/flyteorg"
+    )
+    assert img_no_py_version.identifier == img.identifier, img._layers
