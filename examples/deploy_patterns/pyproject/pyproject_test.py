@@ -35,7 +35,7 @@ def main(x_list: list[int]) -> float:
 
 if __name__ == "__main__":
     # Establish a remote connection from within your script.
-    flyte.init_from_config("../../../config.yaml")
+    flyte.init_from_config()
 
     # Run your tasks remotely inline and pass parameter data.
     run = flyte.run(main, x_list=list(range(10)))

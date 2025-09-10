@@ -114,6 +114,6 @@ async def input_output_task(a: str, b: str, c: int) -> int:
 
 
 if __name__ == "__main__":
-    flyte.init_from_config("../../config.yaml", log_level="DEBUG")
+    flyte.init_from_config(log_level="DEBUG")
     a = flyte.run(parallel_main_no_io, "hello world")
     print(a.url)

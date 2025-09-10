@@ -49,6 +49,6 @@ def main(in_str: str) -> list[BaseMessage]:
 
 
 if __name__ == "__main__":
-    flyte.init_from_config("../../config.yaml")
+    flyte.init_from_config()
     r = flyte.run(main, in_str="what is the weather in sf")
     print(r.url)
