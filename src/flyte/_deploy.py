@@ -12,7 +12,7 @@ from flyte.models import SerializationContext
 from flyte.syncify import syncify
 
 from ._environment import Environment
-from ._image import Image, AVAIL_PY_VERSIONS
+from ._image import Image
 from ._initialize import ensure_client, get_client, get_common_config, requires_initialization
 from ._logging import logger
 from ._task import TaskTemplate

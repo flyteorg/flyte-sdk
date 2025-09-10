@@ -4,7 +4,7 @@ import sys
 import pytest
 
 from flyte._deploy import DeploymentPlan, _build_images
-from flyte._image import AVAIL_PY_VERSIONS, Image
+from flyte._image import Image
 from flyte._task_environment import TaskEnvironment
 
 

@@ -22,9 +22,6 @@ PYTHON_3_11 = (3, 11)
 PYTHON_3_12 = (3, 12)
 PYTHON_3_13 = (3, 13)
 
-# Available Python versions list
-AVAIL_PY_VERSIONS = ["3.10", "3.11", "3.12", "3.13"]
-
 # 0 is a file, 1 is a directory
 CopyConfigType = Literal[0, 1]
 
