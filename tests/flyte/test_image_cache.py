@@ -5,8 +5,8 @@ from flyte._internal.imagebuild.image_builder import ImageCache
 def test_image_cache_serialization_round_trip():
     original_data = {
         "image_lookup": {
-            "auto": Image.from_debian_base().uri,
-            "abcdev": "cr.flyte.org/img2:latest",
+            "auto": {"3.10": Image.from_debian_base().uri},
+            "abcdev": {"3.10": "cr.flyte.org/img2:latest"},
         }
     }
 
@@ -22,7 +22,7 @@ def test_image_cache_serialization_round_trip():
 
     # Check that the deserialized data matches the original
     assert restored_cache.image_lookup == original_data["image_lookup"]
-    assert restored_cache.image_lookup["abcdev"] == "cr.flyte.org/img2:latest"
+    assert restored_cache.image_lookup["abcdev"]["3.10"] == "cr.flyte.org/img2:latest"
     assert restored_cache.serialized_form
 
 
