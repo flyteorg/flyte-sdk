@@ -16,12 +16,11 @@ from flyte._task_environment import TaskEnvironment
 async def test_create_image_cache_lookup(python_version, expected_py_version):
     """Test that _build_images creates the correct nested dictionary structure for ImageCache."""
 
-    # Create image with different Python versions
     if python_version is None:
         mock_image = Image.from_debian_base().with_pip_packages("numpy")
     else:
         mock_image = Image.from_debian_base(python_version=python_version).with_pip_packages("numpy")
-    
+
     mock_image_identifier = f"test_identifier_{expected_py_version.replace('.', '_')}"
     fake_image_uri = f"registry.example.com/test-py{expected_py_version}:latest"
 
