@@ -2,8 +2,6 @@
 # requires-python = "==3.13"
 # dependencies = [
 #    "gql>=3.4.1",
-#    "nest-asyncio>=1.6.0",
-#    "aiohttp>=3.8.0",
 #    "flyte>=0.2.0b20",
 # ]
 # ///
@@ -20,13 +18,10 @@ To run this example:
 2. Run: flyte run graphql_sync.py fetch_countries_workflow
 """
 
-import asyncio
 from typing import List
 
 import flyte
-import nest_asyncio
 from gql import Client, gql
-from gql.transport.aiohttp import AIOHTTPTransport
 from gql.transport.httpx import HTTPXTransport
 
 
@@ -58,14 +53,7 @@ def fetch_countries() -> List[dict]:
     """)
     
     # Create the transport and client
-
-    # ❌ This raises an error:
-    # Cannot run client.execute(query) if an asyncio loop is running. Use 'await client.execute_async(query)' instead.
-    transport = AIOHTTPTransport(url="https://countries.trevorblades.com/")
-
-    # ✅ This works:
-    # Using httpx transport instead of aiohttp fixes the issue
-    # transport = HTTPXTransport(url="https://countries.trevorblades.com/")
+    transport = HTTPXTransport(url="https://countries.trevorblades.com/")
     client = Client(transport=transport, fetch_schema_from_transport=True)
 
     result = client.execute(query)
@@ -123,9 +111,6 @@ def fetch_countries_workflow() -> dict:
 
 
 if __name__ == "__main__":
-    # import flyte.git
-
-    # flyte.init_from_config(flyte.git.config_from_root())
-    flyte.init()
+    flyte.init_from_config()
     run = flyte.run(fetch_countries_workflow)
     print(run.url)
