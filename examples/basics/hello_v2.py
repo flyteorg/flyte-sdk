@@ -26,9 +26,7 @@ async def hello_driver(ids: List[int] = [1, 2, 3]) -> List[str]:
 
 
 if __name__ == "__main__":
-    import flyte.git
-
-    flyte.init_from_config(flyte.git.config_from_root())
+    flyte.init_from_config()
 
     run = flyte.run(hello_driver)
     print(run.name)

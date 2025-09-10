@@ -17,7 +17,6 @@ import asyncio
 import flyte
 import flyte.errors
 
-
 env = flyte.TaskEnvironment(
     "resource_tuner",
     resources=flyte.Resources(cpu=1, memory="400Mi"),
@@ -63,9 +62,7 @@ async def tune_memory(x: int) -> str:
 
 @env.task(cache="auto")
 async def tuning_step(inputs: list[int]) -> dict[int, str]:
-    tuned_memories = await asyncio.gather(*[
-        tune_memory.override(short_name=f"tune_memory_{i}")(i) for i in inputs
-    ])
+    tuned_memories = await asyncio.gather(*[tune_memory.override(short_name=f"tune_memory_{i}")(i) for i in inputs])
     return dict(zip(inputs, tuned_memories))
 
 
@@ -85,9 +82,7 @@ async def main(n: int) -> list[int]:
 
 
 if __name__ == "__main__":
-    import flyte.git
-
-    flyte.init_from_config(flyte.git.config_from_root())
+    flyte.init_from_config()
     run = flyte.run(main, n=3)
     print(run.name)
     print(run.url)

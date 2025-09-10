@@ -69,9 +69,7 @@ async def main(n: int) -> list[int]:
 
 
 if __name__ == "__main__":
-    import flyte.git
-
-    flyte.init_from_config(flyte.git.config_from_root())  # establish remote connection from within your script.
+    flyte.init_from_config()  # establish remote connection from within your script.
     run = flyte.run(main, n=30)  # run remotely inline and pass data.
     print(run.url)
     run.wait()  # wait for the run to finish.

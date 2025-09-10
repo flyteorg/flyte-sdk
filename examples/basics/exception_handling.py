@@ -46,7 +46,5 @@ async def failure_recovery() -> int:
 
 
 if __name__ == "__main__":
-    import flyte.git
-
-    flyte.init_from_config(flyte.git.config_from_root())
+    flyte.init_from_config()
     print(flyte.run(failure_recovery))

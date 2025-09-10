@@ -20,9 +20,7 @@ def union_type_simple_task(input_val: Union[str, None] = None) -> str:
 
 
 if __name__ == "__main__":
-    import flyte.git
-
-    flyte.init_from_config(flyte.git.config_from_root())
+    flyte.init_from_config()
     run = flyte.run(union_type_simple_task, input_val="hello world")
     print(run.name)
     print(run.url)

@@ -25,8 +25,6 @@ async def say_hello(name: str = "flyte") -> str:
 
 
 if __name__ == "__main__":
-    import flyte.git
-
-    flyte.init_from_config(flyte.git.config_from_root())
+    flyte.init_from_config()
     run = flyte.with_runcontext(mode="remote").run(say_hello, "Union")
     print(run.url)

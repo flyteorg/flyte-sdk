@@ -129,8 +129,6 @@ async def main(queue_arn: str = DEFAULT_QUEUE_ARN, max_messages: int = 10) -> Li
 
 
 if __name__ == "__main__":
-    import flyte.git
-
-    flyte.init_from_config(flyte.git.config_from_root())  # establish remote connection from within your script.
+    flyte.init_from_config()  # establish remote connection from within your script.
     run = flyte.run(main, queue_arn=DEFAULT_QUEUE_ARN, max_messages=10)  # run remotely inline and pass data.
     print(run.url)

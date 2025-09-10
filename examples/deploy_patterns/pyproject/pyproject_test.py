@@ -35,9 +35,7 @@ def main(x_list: list[int]) -> float:
 
 if __name__ == "__main__":
     # Establish a remote connection from within your script.
-    import flyte.git
-
-    flyte.init_from_config(flyte.git.config_from_root())
+    flyte.init_from_config()
 
     # Run your tasks remotely inline and pass parameter data.
     run = flyte.run(main, x_list=list(range(10)))

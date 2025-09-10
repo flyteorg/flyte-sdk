@@ -266,7 +266,7 @@ async def init_from_config(
     else:
         cfg = path_or_config
 
-    logger.debug(f"Flyte config initialized as {cfg}")
+    logger.info(f"Flyte config initialized as {cfg}")
     await init.aio(
         org=cfg.task.org,
         project=cfg.task.project,

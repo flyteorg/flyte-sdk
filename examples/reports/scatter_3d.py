@@ -117,9 +117,7 @@ async def generate_scatter_3d():
 
 
 if __name__ == "__main__":
-    import flyte.git
-
-    flyte.init_from_config(flyte.git.config_from_root())
+    flyte.init_from_config()
     run = flyte.run(generate_scatter_3d)
     print(run.name)
     print(run.url)

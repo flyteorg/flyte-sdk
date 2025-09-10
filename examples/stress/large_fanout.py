@@ -25,8 +25,6 @@ async def main(r: int) -> list[int]:
 
 
 if __name__ == "__main__":
-    import flyte.git
-
-    flyte.init_from_config(flyte.git.config_from_root())
+    flyte.init_from_config()
     r = flyte.run(main, r=1000)  # Adjust the number of fanouts as needed
     print(r.url)
