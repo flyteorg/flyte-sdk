@@ -12,7 +12,7 @@ from flyte.models import SerializationContext
 from flyte.syncify import syncify
 
 from ._environment import Environment
-from ._image import Image
+from ._image import Image, AVAIL_PY_VERSIONS
 from ._initialize import ensure_client, get_client, get_common_config, requires_initialization
 from ._logging import logger
 from ._task import TaskTemplate
@@ -160,9 +160,14 @@ async def _build_images(deployment: DeploymentPlan) -> ImageCache:
         logger.warning(f"Built Image for environment {env_name}, image: {image_uri}")
         env = deployment.envs[env_name]
         if isinstance(env.image, Image):
-            image_identifier_map[env.image.identifier] = image_uri
+            image_identifier_map[env.image.identifier] = {}
+            # Add entity for all python versions
+            for py_version in AVAIL_PY_VERSIONS:
+                image_identifier_map[env.image.identifier][py_version] = image_uri
         elif env.image == "auto":
-            image_identifier_map["auto"] = image_uri
+            image_identifier_map["auto"] = {}
+            for py_version in AVAIL_PY_VERSIONS:
+                image_identifier_map["auto"][py_version] = image_uri
 
     return ImageCache(image_lookup=image_identifier_map)
 

@@ -6,6 +6,7 @@ It includes a Resolver interface for loading tasks, and functions to load classe
 import copy
 import typing
 from datetime import timedelta
+import sys
 from typing import Optional, cast
 
 from flyteidl.core import identifier_pb2, literals_pb2, security_pb2, tasks_pb2
@@ -226,7 +227,13 @@ def _get_urun_container(
             f"Ensure both environments use the same Flyte SDK version to avoid inconsistencies in image resolution."
         )
     else:
-        img_uri = serialize_context.image_cache.image_lookup[image_id]
+        python_version_str = "{}.{}".format(sys.version_info.major, sys.version_info.minor)
+        version_lookup = serialize_context.image_cache.image_lookup[image_id]
+        if python_version_str in version_lookup:
+            img_uri = version_lookup[python_version_str]
+        else:
+            # Fallback: try to get any available version
+            img_uri = next(iter(version_lookup.values())) if version_lookup else task_template.image.uri
 
     return tasks_pb2.Container(
         image=img_uri,

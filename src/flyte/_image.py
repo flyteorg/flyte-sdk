@@ -22,6 +22,9 @@ PYTHON_3_11 = (3, 11)
 PYTHON_3_12 = (3, 12)
 PYTHON_3_13 = (3, 13)
 
+# Available Python versions list
+AVAIL_PY_VERSIONS = ["3.10", "3.11", "3.12", "3.13"]
+
 # 0 is a file, 1 is a directory
 CopyConfigType = Literal[0, 1]
 
@@ -435,10 +438,13 @@ class Image:
         # Only get the non-None values in the Image to ensure the hash is consistent
         # across different SDK versions.
         # Layers can specify a _compute_identifier optionally, but the default will just stringify
-        image_dict = asdict(self, dict_factory=lambda x: {k: v for (k, v) in x if v is not None and k != "_layers"})
+        image_dict = asdict(
+            self,
+            dict_factory=lambda x: {k: v for (k, v) in x if v is not None and k not in ("_layers", "python_version")},
+        )
         layers_str_repr = "".join([layer.identifier() for layer in self._layers])
         image_dict["layers"] = layers_str_repr
-        spec_bytes = image_dict.__str__().encode("utf-8")
+        spec_bytes = image_dict.str().encode("utf-8")
         return base64.urlsafe_b64encode(hashlib.md5(spec_bytes).digest()).decode("ascii").rstrip("=")
 
     def validate(self):
