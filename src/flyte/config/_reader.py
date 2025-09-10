@@ -135,15 +135,25 @@ class ConfigFile(object):
         return self._yaml_config
 
 
+def _config_path_from_git_root() -> pathlib.Path | None:
+    from flyte.git import config_from_root
+    try:
+        return config_from_root().source
+    except RuntimeError:
+        return None
+
+
+
 def resolve_config_path() -> pathlib.Path | None:
     """
     Config is read from the following locations in order of precedence:
     1. ./config.yaml if it exists
     2. ./.flyte/config.yaml if it exists
-    3. `UCTL_CONFIG` environment variable
-    4. `FLYTECTL_CONFIG` environment variable
-    5. ~/.union/config.yaml if it exists
-    6. ~/.flyte/config.yaml if it exists
+    3. <git_root>/.flyte/config.yaml if it exists
+    4. `UCTL_CONFIG` environment variable
+    5. `FLYTECTL_CONFIG` environment variable
+    6. ~/.union/config.yaml if it exists
+    7. ~/.flyte/config.yaml if it exists
     """
     current_location_config = Path("config.yaml")
     if current_location_config.exists():
@@ -154,6 +164,11 @@ def resolve_config_path() -> pathlib.Path | None:
     if dot_flyte_config.exists():
         return dot_flyte_config
     logger.debug("No ./.flyte/config.yaml found")
+
+    git_root_config = _config_path_from_git_root()
+    if git_root_config:
+        return git_root_config
+    logger.debug("No .flyte/config.yaml found in git repo root")
 
     uctl_path_from_env = getenv(UCTL_CONFIG_ENV_VAR, None)
     if uctl_path_from_env:

@@ -624,9 +624,7 @@ if __name__ == "__main__":
     # flyte.run(main)
 
     # Remote execution
-    import flyte.git
-
-    flyte.init_from_config(flyte.git.config_from_root())
+    flyte.init_from_config()
     run = flyte.run(main)
     print(run.url)
     run.wait(run)

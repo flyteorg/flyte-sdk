@@ -35,9 +35,7 @@ def main(x: int) -> int:
 if __name__ == "__main__":
     from pathlib import Path
 
-    import flyte.git
-
-    flyte.init_from_config(flyte.git.config_from_root())
+    flyte.init_from_config()
 
     run = flyte.run(main, x=10)
     print(run.url)

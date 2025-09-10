@@ -23,9 +23,7 @@ def wf(name: str):
 
 
 if __name__ == "__main__":
-    import flyte.git
-
-    flyte.init_from_config(flyte.git.config_from_root(), log_level=logging.DEBUG)
+    flyte.init_from_config(log_level=logging.DEBUG)
     run = flyte.with_runcontext(log_level=logging.DEBUG).run(wf, name="flyte")
     print(run.name)
     print(run.url)

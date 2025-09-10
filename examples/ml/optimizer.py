@@ -166,8 +166,6 @@ async def optimize(
 
 
 if __name__ == "__main__":
-    import flyte.git
-
-    flyte.init_from_config(flyte.git.config_from_root())
+    flyte.init_from_config()
     run = flyte.run(optimize, 100, 10)
     print(run.url)

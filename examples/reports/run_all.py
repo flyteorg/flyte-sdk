@@ -30,9 +30,7 @@ async def main():
 
 
 if __name__ == "__main__":
-    import flyte.git
-
-    flyte.init_from_config(flyte.git.config_from_root(), root_dir=pathlib.Path(__file__).parent)
+    flyte.init_from_config(root_dir=pathlib.Path(__file__).parent)
     run = flyte.run(main)
     print(run.name)
     print(run.url)

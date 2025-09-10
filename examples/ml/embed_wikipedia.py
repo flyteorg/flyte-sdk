@@ -188,10 +188,8 @@ async def high_mem_examples():
 if __name__ == "__main__":
     # Usage:
     # Run this with limit=-1 to embed all articles in the dataset (~61MM rows)
-    import flyte.git
-
     # flyte.init()
-    flyte.init_from_config(flyte.git.config_from_root())
+    flyte.init_from_config()
     run = flyte.run(main, 256, shard="20231101.en")
     print(run.url)
     # asyncio.run(high_mem_examples())

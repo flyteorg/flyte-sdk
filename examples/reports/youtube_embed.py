@@ -477,9 +477,7 @@ async def generate_youtube_embed():
 
 
 if __name__ == "__main__":
-    import flyte.git
-
-    flyte.init_from_config(flyte.git.config_from_root())
+    flyte.init_from_config()
     run = flyte.run(generate_youtube_embed)
     print(run.name)
     print(run.url)

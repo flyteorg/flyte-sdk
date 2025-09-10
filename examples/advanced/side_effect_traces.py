@@ -87,9 +87,7 @@ async def traces_complex(n: int = 3) -> int:
 
 
 if __name__ == "__main__":
-    import flyte.git
-
-    flyte.init_from_config(flyte.git.config_from_root())
+    flyte.init_from_config()
     run = flyte.with_runcontext().run(traces_complex, n=5)
     print(run.name)
     print(run.url)
