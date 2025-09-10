@@ -159,15 +159,13 @@ async def _build_images(deployment: DeploymentPlan) -> ImageCache:
     for env_name, image_uri in final_images:
         logger.warning(f"Built Image for environment {env_name}, image: {image_uri}")
         env = deployment.envs[env_name]
+        py_version = "{}.{}".format(*env.image.python_version)
         if isinstance(env.image, Image):
             image_identifier_map[env.image.identifier] = {}
-            # Add entity for all python versions
-            for py_version in AVAIL_PY_VERSIONS:
-                image_identifier_map[env.image.identifier][py_version] = image_uri
+            image_identifier_map[env.image.identifier][py_version] = image_uri
         elif env.image == "auto":
             image_identifier_map["auto"] = {}
-            for py_version in AVAIL_PY_VERSIONS:
-                image_identifier_map["auto"][py_version] = image_uri
+            image_identifier_map["auto"][py_version] = image_uri
 
     return ImageCache(image_lookup=image_identifier_map)
 

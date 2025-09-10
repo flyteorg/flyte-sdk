@@ -1,5 +1,6 @@
 from unittest.mock import AsyncMock, patch
 
+import sys
 import pytest
 
 from flyte._deploy import DeploymentPlan, _build_images
@@ -7,13 +8,22 @@ from flyte._image import AVAIL_PY_VERSIONS, Image
 from flyte._task_environment import TaskEnvironment
 
 
+@pytest.mark.parametrize("python_version,expected_py_version", [
+    (None, "{}.{}".format(sys.version_info.major, sys.version_info.minor)),  # Use local python version
+    ((3, 10), "3.10"),
+])
 @pytest.mark.asyncio
-async def test_build_images_creates_correct_image_lookup_structure():
+async def test_create_image_cache_lookup(python_version, expected_py_version):
     """Test that _build_images creates the correct nested dictionary structure for ImageCache."""
 
-    mock_image = Image.from_debian_base().with_pip_packages("numpy")
-    mock_image_identifier = "test_identifier_123"
-    fake_image_uri = "registry.example.com/test:latest"
+    # Create image with different Python versions
+    if python_version is None:
+        mock_image = Image.from_debian_base().with_pip_packages("numpy")
+    else:
+        mock_image = Image.from_debian_base(python_version=python_version).with_pip_packages("numpy")
+    
+    mock_image_identifier = f"test_identifier_{expected_py_version.replace('.', '_')}"
+    fake_image_uri = f"registry.example.com/test-py{expected_py_version}:latest"
 
     with patch.object(
         type(mock_image), "identifier", new_callable=lambda: property(lambda self: mock_image_identifier)
@@ -26,12 +36,11 @@ async def test_build_images_creates_correct_image_lookup_structure():
 
             image_cache = await _build_images(deployment_plan)
 
-            # Check out identifier presented in the image_lookup dict
+            # Check that identifier is present in the image_lookup dict
             assert mock_image_identifier in image_cache.image_lookup
 
-            # Check the image_lookup dict contains all supported python version
+            # Check the image_lookup dict contains the expected python version
             version_lookup = image_cache.image_lookup[mock_image_identifier]
-            assert isinstance(version_lookup, dict)
-            for py_version in AVAIL_PY_VERSIONS:
-                assert py_version in version_lookup
-                assert version_lookup[py_version] == fake_image_uri
+            # Make sure there's only one python version presented
+            assert len(version_lookup) == 1
+            assert version_lookup[expected_py_version] == fake_image_uri

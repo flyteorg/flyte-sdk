@@ -444,7 +444,7 @@ class Image:
         )
         layers_str_repr = "".join([layer.identifier() for layer in self._layers])
         image_dict["layers"] = layers_str_repr
-        spec_bytes = image_dict.str().encode("utf-8")
+        spec_bytes = image_dict.__str__().encode("utf-8")
         return base64.urlsafe_b64encode(hashlib.md5(spec_bytes).digest()).decode("ascii").rstrip("=")
 
     def validate(self):
