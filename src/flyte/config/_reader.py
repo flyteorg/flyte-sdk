@@ -140,7 +140,7 @@ def _config_path_from_git_root() -> pathlib.Path | None:
 
     try:
         path = config_from_root().source
-        if path.exists():
+        if path and path.exists():
             return path
         return None
     except RuntimeError:
