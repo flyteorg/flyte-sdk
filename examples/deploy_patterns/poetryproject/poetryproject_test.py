@@ -8,11 +8,13 @@ import flyte
 env = flyte.TaskEnvironment(
     name="poetry",
     resources=flyte.Resources(cpu=1, memory="1Gi"),
-    image=flyte.Image.from_debian_base().with_env_vars({"hello": "worldeeeeeeeeee"})
+    image=flyte.Image.from_debian_base()
     .with_poetry_project(
         pyproject_file=pathlib.Path("pyproject.toml"),
-        pre=True,),
+        pre=True,
+    ),
 )
+
 
 @env.task
 async def say_hello(data: str, lt: List[int]) -> str:
@@ -50,4 +52,3 @@ if __name__ == "__main__":
     print(run.name)
     print(run.url)
     run.wait()
-
