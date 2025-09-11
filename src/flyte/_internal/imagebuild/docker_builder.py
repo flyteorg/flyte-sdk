@@ -86,7 +86,11 @@ RUN --mount=type=cache,sharing=locked,mode=0777,target=/tmp/poetry_cache,id=poet
     --mount=type=bind,target=poetry.lock,src=poetry.lock \
     --mount=type=bind,target=pyproject.toml,src=pyproject.toml \
     $SECRET_MOUNT \
+<<<<<<< HEAD
     poetry install $POETRY_INSTALL_ARGS
+=======
+    poetry install $PIP_INSTALL_ARGS
+>>>>>>> 685ec06 (feature: add poetry layer to local image builder)
 """)
 
 UV_PACKAGE_INSTALL_COMMAND_TEMPLATE = Template("""\
