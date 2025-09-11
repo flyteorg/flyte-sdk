@@ -1,0 +1,21 @@
+[tool.poetry]
+name = "flyte"
+version = "0.1.0"
+description = "A simple Python project managed by Poetry"
+authors = ["Alex Wu <alex@union.ai>"]
+license = "MIT"
+package-mode = false
+
+[tool.poetry.dependencies]
+python = "^3.13"
+
+[tool.poetry.dev-dependencies]
+pytest = "^8.0.0"
+
+[tool.setuptools.packages.find]
+where = ["../../../../src"]
+include = ["flyte*"]
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
