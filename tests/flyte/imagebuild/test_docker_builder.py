@@ -4,8 +4,12 @@ from pathlib import Path
 import pytest
 
 from flyte import Secret
-from flyte._image import Image, PipPackages, Requirements
-from flyte._internal.imagebuild.docker_builder import DockerImageBuilder, PipAndRequirementsHandler
+from flyte._image import Image, PipPackages, PoetryProject, Requirements
+from flyte._internal.imagebuild.docker_builder import (
+    DockerImageBuilder,
+    PipAndRequirementsHandler,
+    PoetryProjectHandler,
+)
 
 
 @pytest.mark.integration
@@ -97,3 +101,69 @@ async def test_requirements_handler(monkeypatch):
             )
             assert "--mount=type=secret" in docker_update
             assert "_flyte_abs_context" + str(requirements_file.absolute()) in docker_update
+
+
+@pytest.mark.asyncio
+async def test_poetry_handler_without_project_install():
+    with tempfile.TemporaryDirectory() as tmp_context:
+        context_path = Path(tmp_context)
+
+        with tempfile.TemporaryDirectory() as tmp_user_folder:
+            user_folder = Path(tmp_user_folder)
+            pyproject_file = user_folder / "pyproject.toml"
+            pyproject_file.write_text("[tool.poetry]\nname = 'test-project'")
+
+            poetry_lock_file = user_folder / "poetry.lock"
+            poetry_lock_file.write_text("[[package]]\nname = 'requests'\nversion = '2.28.0'")
+
+            poetry_project = PoetryProject(
+                pyproject=pyproject_file.absolute(),
+                poetry_lock=poetry_lock_file.absolute(),
+                extra_index_urls=["--no-install-project"],
+                secret_mounts=None,
+            )
+
+            initial_dockerfile = "FROM python:3.9\n"
+            result = await PoetryProjectHandler.handel(poetry_project, context_path, initial_dockerfile)
+
+            assert "RUN --mount=type=cache,sharing=locked,mode=0777,target=/root/.cache/uv,id=uv" in result
+            assert "--mount=type=bind,target=uv.lock,src=" in result
+            assert "--mount=type=bind,target=pyproject.toml,src=" in result
+            assert "uv pip install poetry" in result
+            assert "ENV POETRY_CACHE_DIR=/tmp/poetry_cache" in result
+            assert "POETRY_VIRTUALENVS_IN_PROJECT=true" in result
+            assert "WORKDIR /root" in result
+            assert "poetry install --no-root" in result
+
+            # Should not contain COPY command for entire project
+            assert "COPY" not in result
+
+
+@pytest.mark.asyncio
+async def test_poetry_handler_with_project_install():
+    with tempfile.TemporaryDirectory() as tmp_context:
+        context_path = Path(tmp_context)
+
+        with tempfile.TemporaryDirectory() as tmp_user_folder:
+            user_folder = Path(tmp_user_folder)
+            pyproject_file = user_folder / "pyproject.toml"
+            pyproject_file.write_text("[tool.poetry]\nname = 'test-project'")
+            poetry_lock_file = user_folder / "poetry.lock"
+            poetry_lock_file.write_text("[[package]]\nname = 'requests'\nversion = '2.28.0'")
+
+            # Create PoetryProject without --no-install-project flag
+            poetry_project = PoetryProject(pyproject=pyproject_file.absolute(), poetry_lock=None)
+
+            initial_dockerfile = "FROM python:3.9\n"
+            result = await PoetryProjectHandler.handel(poetry_project, context_path, initial_dockerfile)
+
+            assert result.startswith(initial_dockerfile)
+
+            assert "COPY" in result
+            assert "pyproject.toml" in result
+            assert "RUN --mount=type=cache,sharing=locked,mode=0777,target=/root/.cache/uv,id=uv" in result
+            assert "uv pip install poetry" in result
+            assert "ENV POETRY_CACHE_DIR=/tmp/poetry_cache" in result
+            assert "POETRY_VIRTUALENVS_IN_PROJECT=true" in result
+            assert "WORKDIR /root" in result
+            assert "poetry install --no-root" in result
