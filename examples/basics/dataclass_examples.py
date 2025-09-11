@@ -91,7 +91,7 @@ async def dc_wf(batch: BatchRequest):
 if __name__ == "__main__":
     # result_one = asyncio.run(predict_one(InferenceRequest(feature_a=1.0, feature_b=2.0)))
     # print(f"Prediction for single request: {result_one}")
-    flyte.init_from_config("config.yaml")
+    flyte.init_from_config()
     # Can run programmatically
     # run = flyte.run(predict_one, InferenceRequest(feature_a=1.0, feature_b=2.0))
     # print(run.url)

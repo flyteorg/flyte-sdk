@@ -14,4 +14,6 @@ def config_from_root(path: pathlib.Path | str = ".flyte/config.yaml") -> flyte.c
     if result.returncode != 0:
         raise RuntimeError(f"Failed to get git root directory: {result.stderr}")
     root = pathlib.Path(result.stdout.strip())
+    if not (root / path).exists():
+        raise RuntimeError(f"Config file {root / path} does not exist")
     return flyte.config.auto(root / path)

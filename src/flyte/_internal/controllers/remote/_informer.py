@@ -132,8 +132,10 @@ class Informer:
         parent_action_name: str,
         shared_queue: Queue,
         client: Optional[StateService] = None,
-        watch_backoff_interval_sec: float = 1.0,
+        min_watch_backoff: float = 1.0,
+        max_watch_backoff: float = 30.0,
         watch_conn_timeout_sec: float = 5.0,
+        max_watch_retries: int = 10,
     ):
         self.name = self.mkname(run_name=run_id.name, parent_action_name=parent_action_name)
         self.parent_action_name = parent_action_name
@@ -144,8 +146,10 @@ class Informer:
         self._running = False
         self._watch_task: asyncio.Task | None = None
         self._ready = asyncio.Event()
-        self._watch_backoff_interval_sec = watch_backoff_interval_sec
+        self._min_watch_backoff = min_watch_backoff
+        self._max_watch_backoff = max_watch_backoff
         self._watch_conn_timeout_sec = watch_conn_timeout_sec
+        self._max_watch_retries = max_watch_retries
 
     @classmethod
     def mkname(cls, *, run_name: str, parent_action_name: str) -> str:
@@ -211,13 +215,16 @@ class Informer:
         """
         # sentinel = False
         retries = 0
-        max_retries = 5
         last_exc = None
         while self._running:
-            if retries >= max_retries:
-                logger.error(f"Informer watch failure retries crossed threshold {retries}/{max_retries}, exiting!")
+            if retries >= self._max_watch_retries:
+                logger.error(
+                    f"Informer watch failure retries crossed threshold {retries}/{self._max_watch_retries}, exiting!"
+                )
                 raise last_exc
             try:
+                if retries >= 1:
+                    logger.warning(f"Informer watch retrying, attempt {retries}/{self._max_watch_retries}")
                 watcher = self._client.Watch(
                     state_service_pb2.WatchRequest(
                         parent_action_id=identifier_pb2.ActionIdentifier(
@@ -252,7 +259,9 @@ class Informer:
                 logger.exception(f"Watch error: {self.name}", exc_info=e)
                 last_exc = e
                 retries += 1
-            await asyncio.sleep(self._watch_backoff_interval_sec)
+            backoff = min(self._min_watch_backoff * (2**retries), self._max_watch_backoff)
+            logger.warning(f"Watch for {self.name} failed, retrying in {backoff} seconds...")
+            await asyncio.sleep(backoff)
 
     @log
     async def start(self, timeout: Optional[float] = None) -> asyncio.Task:

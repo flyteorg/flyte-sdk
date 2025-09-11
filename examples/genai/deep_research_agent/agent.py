@@ -624,8 +624,7 @@ if __name__ == "__main__":
     # flyte.run(main)
 
     # Remote execution
-    # TODO: Replace with your own Flyte config file path
-    flyte.init_from_config("../../config.yaml")
+    flyte.init_from_config()
     run = flyte.run(main)
     print(run.url)
     run.wait(run)
