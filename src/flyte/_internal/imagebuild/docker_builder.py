@@ -86,7 +86,7 @@ RUN --mount=type=cache,sharing=locked,mode=0777,target=/tmp/poetry_cache,id=poet
     --mount=type=bind,target=poetry.lock,src=poetry.lock \
     --mount=type=bind,target=pyproject.toml,src=pyproject.toml \
     $SECRET_MOUNT \
-    poetry install $PIP_INSTALL_ARGS
+    poetry install $POETRY_INSTALL_ARGS
 """)
 
 UV_PACKAGE_INSTALL_COMMAND_TEMPLATE = Template("""\
@@ -307,7 +307,7 @@ class PoetryProjectHandler:
             )
         poetry_install_args = ["--no-root"]
         delta += POETRY_LOCK_INSTALL_TEMPLATE.substitute(
-            PIP_INSTALL_ARGS=" ".join(poetry_install_args),
+            POETRY_INSTALL_ARGS=" ".join(poetry_install_args),
             SECRET_MOUNT=secret_mounts,
         )
         dockerfile += delta
