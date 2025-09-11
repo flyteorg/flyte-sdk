@@ -1,6 +1,6 @@
+import sys
 from unittest.mock import AsyncMock, patch
 
-import sys
 import pytest
 
 from flyte._deploy import DeploymentPlan, _build_images

@@ -4,9 +4,9 @@ It includes a Resolver interface for loading tasks, and functions to load classe
 """
 
 import copy
+import sys
 import typing
 from datetime import timedelta
-import sys
 from typing import Optional, cast
 
 from flyteidl.core import identifier_pb2, literals_pb2, security_pb2, tasks_pb2
