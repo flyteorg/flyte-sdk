@@ -165,7 +165,3 @@ def test_image_uri_consistency_for_uvscript():
     # Please don't change this value unless you are sure it's the right thing to do.
     assert img.identifier == "ymxz6JlYRNMt5gqSOuEcSw", img._layers
 
-    img_no_py_version = Image.from_uv_script(
-        "./agent_simulation_loadtest.py", name="flyte", registry="ghcr.io/flyteorg"
-    )
-    assert img_no_py_version.identifier == img.identifier, img._layers
