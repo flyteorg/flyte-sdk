@@ -12,7 +12,7 @@ class _TestSimplePlainTextKeyring(SimplePlainTextKeyring):
 
     @property
     def file_path(self) -> Path:
-        return self.home_root / ".union" / "keyring.cfg"
+        return self.home_root / ".flyte" / "keyring.cfg"
 
 
 def test_password_create_cycle(tmp_path):
