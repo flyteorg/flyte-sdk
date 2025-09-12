@@ -143,7 +143,6 @@ async def gridsearch(
 
 if __name__ == "__main__":
     from datetime import datetime
-    from pathlib import Path
 
     import flyte.git
 

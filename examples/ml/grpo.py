@@ -22,7 +22,7 @@ import json
 import logging
 import os
 import random
-from dataclasses import dataclass, asdict
+from dataclasses import asdict, dataclass
 from typing import List
 
 from async_lru import alru_cache
@@ -39,6 +39,7 @@ logger = logging.getLogger(__name__)
 # =============================================================================
 # 1. DATA STRUCTURES
 # =============================================================================
+
 
 @dataclass
 class GRPOConfig:
@@ -65,14 +66,16 @@ class TrainingResults:
 # 2. vLLM ENGINE
 # =============================================================================
 
+
 class VLLMEngine:
     def __init__(self):
         self.engine = None
 
     async def initialize(self, model_name: str):
         """Initialize vLLM async engine"""
-        from vllm.engine.async_llm_engine import AsyncLLMEngine
         from vllm.engine.arg_utils import AsyncEngineArgs
+        from vllm.engine.async_llm_engine import AsyncLLMEngine
+
         if self.engine is None:
             logger.info(f"Initializing vLLM engine with model: {model_name}")
 
@@ -81,7 +84,7 @@ class VLLMEngine:
                 tensor_parallel_size=1,
                 trust_remote_code=True,
                 max_model_len=2048,
-                gpu_memory_utilization=0.8
+                gpu_memory_utilization=0.8,
             )
 
             self.engine = AsyncLLMEngine.from_engine_args(engine_args)
@@ -91,6 +94,7 @@ class VLLMEngine:
         """Generate multiple responses for a prompt using vLLM"""
         from vllm import SamplingParams
         from vllm.utils import random_uuid
+
         await self.initialize(config.model_name)
 
         sampling_params = SamplingParams(
@@ -98,7 +102,7 @@ class VLLMEngine:
             top_p=config.top_p,
             max_tokens=config.max_tokens,
             n=config.group_size,
-            use_beam_search=False
+            use_beam_search=False,
         )
 
         request_id = f"grpo_{random_uuid()}"
@@ -145,13 +149,13 @@ async def load_prompts(data_path: str) -> List[str]:
     """Load training prompts from file or return defaults"""
     try:
         if os.path.exists(data_path):
-            with open(data_path, 'r') as f:
-                if data_path.endswith('.json'):
+            with open(data_path, "r") as f:
+                if data_path.endswith(".json"):
                     data = json.load(f)
                     if isinstance(data, list):
                         return data
-                    elif isinstance(data, dict) and 'prompts' in data:
-                        return data['prompts']
+                    elif isinstance(data, dict) and "prompts" in data:
+                        return data["prompts"]
                 else:
                     return [line.strip() for line in f if line.strip()]
     except Exception as e:
@@ -166,7 +170,7 @@ async def load_prompts(data_path: str) -> List[str]:
         "What is the importance of biodiversity?",
         "Explain quantum computing to a beginner.",
         "What is climate change and its impacts?",
-        "Describe the structure of DNA."
+        "Describe the structure of DNA.",
     ]
 
 
@@ -191,6 +195,7 @@ async def generate_responses(prompts: List[str], config: GRPOConfig) -> List[Lis
 async def compute_rewards(responses: List[List[str]]) -> List[List[float]]:
     """Score each response for quality using multiple heuristics"""
     import numpy as np
+
     all_rewards = []
 
     for response_group in responses:
@@ -217,14 +222,11 @@ async def compute_rewards(responses: List[List[str]]) -> List[List[float]]:
             complexity_score = min(avg_word_length / 10, 1.0)
 
             # Coherence reward (sentence structure)
-            sentences = response.count('.') + response.count('!') + response.count('?')
+            sentences = response.count(".") + response.count("!") + response.count("?")
             coherence_score = min(sentences / len(words) * 50, 1.0) if words else 0.0
 
             # Combine scores
-            reward = (0.4 * length_score +
-                      0.3 * diversity_score +
-                      0.2 * complexity_score +
-                      0.1 * coherence_score)
+            reward = 0.4 * length_score + 0.3 * diversity_score + 0.2 * complexity_score + 0.1 * coherence_score
 
             rewards.append(max(0.0, reward))
 
@@ -237,6 +239,7 @@ async def compute_rewards(responses: List[List[str]]) -> List[List[float]]:
 async def compute_advantages(rewards: List[List[float]], gamma: float = 1.0) -> List[List[float]]:
     """Compare each response to its group average"""
     import numpy as np
+
     all_advantages = []
 
     for reward_group in rewards:
@@ -256,7 +259,7 @@ async def update_model(advantages: List[List[float]], config: GRPOConfig) -> flo
     """Update the model based on advantages (simplified)"""
     # In a real implementation, this would:
     # 1. Compute policy gradients from advantages
-    # 2. Apply PPO clipping 
+    # 2. Apply PPO clipping
     # 3. Add KL penalty with beta coefficient
     # 4. Update model weights with optimizer
 
@@ -268,8 +271,10 @@ async def update_model(advantages: List[List[float]], config: GRPOConfig) -> flo
     positive_advantages = [adv for adv in flat_advantages if adv > 0]
     improvement = sum(positive_advantages) * config.learning_rate
 
-    logger.info(f"Model update: {len(positive_advantages)}/{len(flat_advantages)} positive advantages, "
-                f"improvement: {improvement:.6f}")
+    logger.info(
+        f"Model update: {len(positive_advantages)}/{len(flat_advantages)} positive advantages, "
+        f"improvement: {improvement:.6f}"
+    )
 
     return improvement
 
@@ -282,7 +287,7 @@ async def save_results(results: TrainingResults, output_dir: str = "/tmp") -> Fi
     # Convert to dict for JSON serialization
     results_dict = asdict(results)
 
-    with open(output_path, 'w') as f:
+    with open(output_path, "w") as f:
         json.dump(results_dict, f, indent=2)
 
     logger.info(f"Results saved to: {output_path}")
@@ -292,6 +297,7 @@ async def save_results(results: TrainingResults, output_dir: str = "/tmp") -> Fi
 # =============================================================================
 # 4. GRPO TRAINING STEP
 # =============================================================================
+
 
 async def grpo_training_step(prompts: List[str], config: GRPOConfig, step: int) -> float:
     """One step of GRPO training - calls tasks like normal functions"""
@@ -323,15 +329,16 @@ async def grpo_training_step(prompts: List[str], config: GRPOConfig, step: int) 
 # 5. MAIN WORKFLOW
 # =============================================================================
 
+
 @env.task
 async def grpo_workflow(
-        data_path: str = "prompts.txt",
-        num_steps: int = 5,
-        group_size: int = 4,
-        learning_rate: float = 1e-5,
-        model_name: str = "microsoft/DialoGPT-medium",
-        temperature: float = 0.8,
-        batch_size: int = 4
+    data_path: str = "prompts.txt",
+    num_steps: int = 5,
+    group_size: int = 4,
+    learning_rate: float = 1e-5,
+    model_name: str = "microsoft/DialoGPT-medium",
+    temperature: float = 0.8,
+    batch_size: int = 4,
 ) -> TrainingResults:
     """Complete GRPO training workflow"""
 
@@ -346,7 +353,7 @@ async def grpo_workflow(
         learning_rate=learning_rate,
         model_name=model_name,
         temperature=temperature,
-        batch_size=batch_size
+        batch_size=batch_size,
     )
 
     logger.info(f"Starting GRPO training with config: {asdict(config)}")
@@ -373,11 +380,10 @@ async def grpo_workflow(
         reward_history=reward_history,
         num_steps=num_steps,
         config=config,
-        total_responses=total_responses
+        total_responses=total_responses,
     )
 
-    logger.info(f"Training completed! Final reward: {final_reward:.4f}, "
-                f"Total responses: {total_responses}")
+    logger.info(f"Training completed! Final reward: {final_reward:.4f}, Total responses: {total_responses}")
 
     return results
 
@@ -401,7 +407,7 @@ if __name__ == "__main__":
         model_name=model_name,
         batch_size=2,
         temperature=0.8,
-        learning_rate=1e-5
+        learning_rate=1e-5,
     )
 
     print(f"GRPO training started: {run.url}")
