@@ -92,7 +92,7 @@ class DeviceCodeAuthenticator(Authenticator):
         )
 
         full_uri = f"{resp.verification_uri}?user_code={resp.user_code}"
-        text = f"To Authenticate, navigate in a browser to the following URL: [blue]{full_uri}[/blue]"
+        text = f"To Authenticate, navigate in a browser to the following URL: [blue link={full_uri}]{full_uri}[/blue link]"
         logger.warning(text)
         try:
             token, refresh_token, expires_in = await token_client.poll_token_endpoint(
