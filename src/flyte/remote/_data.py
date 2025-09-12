@@ -101,7 +101,7 @@ async def _upload_single_file(
         extra_headers.update({"Content-Length": str(content_length), "Content-MD5": encoded_md5.decode("utf-8")})
         async with httpx.AsyncClient(verify=verify) as aclient:
             put_resp = await aclient.put(resp.signed_url, headers=extra_headers, content=file)
-            if put_resp.status_code != 200:
+            if put_resp.status_code not in [200, 201, 204]:
                 raise RuntimeSystemError(
                     "UploadFailed",
                     f"Failed to upload {fp} to {resp.signed_url}, status code: {put_resp.status_code}, "
