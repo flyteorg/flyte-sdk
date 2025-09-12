@@ -1,5 +1,6 @@
+import enum
 import inspect
-from typing import Tuple
+from typing import Literal, Tuple, Union, get_args, get_origin
 
 import pytest
 
@@ -104,3 +105,24 @@ async def test_native_interface_with_union_type() -> None:
     assert repr == "(x: int | str) -> o0: int:"
     assert interface.inputs == {"x": (int | str, inspect.Parameter.empty)}
     assert interface.outputs == {"o0": int}
+
+
+Intensity = Literal["low", "medium", "high"]
+
+
+def call_test(i: Intensity) -> str:
+    return f"Intensity is {i}"
+
+
+def test_native_interface_literal():
+    interface = NativeInterface.from_callable(call_test)
+    repr = interface.__repr__()
+    assert repr == "(i: Union) -> o0: str:"
+    assert interface.inputs is not None
+    assert "i" in interface.inputs
+    assert get_origin(interface.inputs["i"][0]) is Union
+    assert interface.outputs == {"o0": str}
+    args = get_args(interface.inputs["i"][0])
+    assert len(args) == 2
+    assert issubclass(args[0], str)
+    assert issubclass(args[1], enum.Enum)

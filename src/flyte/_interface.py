@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import inspect
-from typing import Dict, Generator, Tuple, Type, TypeVar, Union, cast, get_args, get_type_hints
+from typing import Dict, Generator, Literal, Tuple, Type, TypeVar, Union, cast, get_args, get_origin, get_type_hints
 
 
 def default_output_name(index: int = 0) -> str:
@@ -79,4 +79,26 @@ def extract_return_annotation(return_annotation: Union[Type, Tuple, None]) -> Di
     else:
         # Handle all other single return types
         # Task returns unnamed native tuple
+        if get_origin(return_annotation) is Literal:
+            return {default_output_name(): literal_to_union_enum(cast(Type, return_annotation))}
         return {default_output_name(): cast(Type, return_annotation)}
+
+
+def literal_to_union_enum(literal_type: Type) -> Type:
+    """Convert a Literal[...] into Union[str, Enum]."""
+    from enum import Enum
+
+    if get_origin(literal_type) is not Literal:
+        raise TypeError(f"{literal_type} is not a Literal")
+
+    values = get_args(literal_type)
+    # Deduplicate & keep order
+    seen = set()
+    unique_values = [v for v in values if not (v in seen or seen.add(v))]
+
+    # Dynamically create an Enum
+    enum_name = "LiteralEnum"
+    enum_dict = {str(v).upper(): v for v in unique_values}
+    literal_enum = Enum(enum_name, enum_dict)
+
+    return Union[str, literal_enum]
