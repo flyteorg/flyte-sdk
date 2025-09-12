@@ -1,5 +1,6 @@
-import flyte
 import pathlib
+
+import flyte
 
 GROUP = "arn:aws:secretsmanager:us-east-2:XXXXXXXXXX:secret"
 KEY = "V2_SECRET_TEST"

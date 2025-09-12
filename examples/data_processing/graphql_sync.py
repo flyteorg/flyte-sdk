@@ -20,10 +20,10 @@ To run this example:
 
 from typing import List
 
-import flyte
 from gql import Client, gql
 from gql.transport.httpx import HTTPXTransport
 
+import flyte
 
 env = flyte.TaskEnvironment(
     name="graphql_sync",
@@ -35,7 +35,7 @@ env = flyte.TaskEnvironment(
 def fetch_countries() -> List[dict]:
     """
     Fetch all countries from the Countries GraphQL API.
-    
+
     Returns:
         List of country dictionaries containing code, name, and continent
     """
@@ -51,22 +51,18 @@ def fetch_countries() -> List[dict]:
             }
         }
     """)
-    
+
     # Create the transport and client
     transport = HTTPXTransport(url="https://countries.trevorblades.com/")
     client = Client(transport=transport, fetch_schema_from_transport=True)
 
     result = client.execute(query)
-    
+
     # Extract and format the countries data
     countries = []
     for country in result["countries"]:
-        countries.append({
-            "code": country["code"],
-            "name": country["name"],
-            "continent": country["continent"]["name"]
-        })
-    
+        countries.append({"code": country["code"], "name": country["name"], "continent": country["continent"]["name"]})
+
     return countries
 
 
@@ -74,39 +70,36 @@ def fetch_countries() -> List[dict]:
 def analyze_countries(countries: List[dict]) -> dict:
     """
     Analyze the countries data and return statistics.
-    
+
     Args:
         countries: List of country dictionaries
-        
+
     Returns:
         Dictionary containing analysis results
     """
     continent_counts = {}
     total_countries = len(countries)
-    
+
     for country in countries:
         continent = country["continent"]
         continent_counts[continent] = continent_counts.get(continent, 0) + 1
-    
-    return {
-        "total_countries": total_countries,
-        "continent_distribution": continent_counts
-    }
+
+    return {"total_countries": total_countries, "continent_distribution": continent_counts}
 
 
 @env.task
 def fetch_countries_workflow() -> dict:
     """
     Main workflow that fetches countries and analyzes them.
-    
+
     Returns:
         Analysis results dictionary
     """
     # Fetch all countries
     countries = fetch_countries()
-    
+
     # Analyze the data
-    analysis = analyze_countries(countries)    
+    analysis = analyze_countries(countries)
     return analysis
 
 
