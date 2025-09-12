@@ -1,7 +1,7 @@
 import flyte
 import pathlib
 
-GROUP = "arn:aws:secretsmanager:us-east-2:356633062068:secret"
+GROUP = "arn:aws:secretsmanager:us-east-2:XXXXXXXXXX:secret"
 KEY = "V2_SECRET_TEST"
 SECRET_PATH = "/etc/flyte/secrets"
 
