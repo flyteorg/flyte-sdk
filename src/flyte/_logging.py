@@ -68,6 +68,7 @@ def get_rich_handler(log_level: int) -> Optional[logging.Handler]:
         log_time_format="%H:%M:%S.%f",
         console=Console(width=width),
         level=log_level,
+        markup=True,
     )
 
     formatter = logging.Formatter(fmt="%(filename)s:%(lineno)d - %(message)s")

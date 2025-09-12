@@ -110,6 +110,15 @@ async def _initialize_client(
     )
 
 
+def _initialize_logger(log_level: int | None = None):
+    from flyte._tools import ipython_check
+
+    # interactive_mode = not ipython_check()
+    initialize_logger(enable_rich=True)
+    if log_level:
+        initialize_logger(log_level=log_level, enable_rich=True)
+
+
 @syncify
 async def init(
     org: str | None = None,
@@ -172,14 +181,9 @@ async def init(
 
     :return: None
     """
-    from flyte._tools import ipython_check
     from flyte._utils import get_cwd_editable_install, org_from_endpoint, sanitize_endpoint
 
-    interactive_mode = ipython_check()
-
-    initialize_logger(enable_rich=interactive_mode)
-    if log_level:
-        initialize_logger(log_level=log_level, enable_rich=interactive_mode)
+    _initialize_logger(log_level=log_level)
 
     global _init_config  # noqa: PLW0603
 
@@ -265,6 +269,8 @@ async def init_from_config(
         cfg = config.auto(cfg_path)
     else:
         cfg = path_or_config
+
+    _initialize_logger(log_level=log_level)
 
     logger.info(f"Flyte config initialized as {cfg}")
     await init.aio(

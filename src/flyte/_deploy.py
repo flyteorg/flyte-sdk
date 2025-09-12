@@ -5,6 +5,7 @@ import typing
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
 
+import rich.markup
 import rich.repr
 
 import flyte.errors
@@ -157,7 +158,7 @@ async def _build_images(deployment: DeploymentPlan) -> ImageCache:
     final_images = await asyncio.gather(*images)
 
     for env_name, image_uri in final_images:
-        logger.warning(f"Built Image for environment {env_name}, image: {image_uri}")
+        logger.warning(f"Built Image for environment {env_name}, image: {rich.markup.escape(image_uri)}")
         env = deployment.envs[env_name]
         if isinstance(env.image, Image):
             image_identifier_map[env.image.identifier] = image_uri
