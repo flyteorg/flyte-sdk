@@ -250,7 +250,7 @@ async def init_from_config(
     :return: None
     """
     import flyte.config as config
-
+    from rich.highlighter import ReprHighlighter
     cfg: config.Config
     if path_or_config is None:
         # If no path is provided, use the default config file
@@ -272,7 +272,7 @@ async def init_from_config(
 
     _initialize_logger(log_level=log_level)
 
-    logger.info(f"Flyte config initialized as {cfg}")
+    logger.info(f"Flyte config initialized as {cfg}", extra={"highlighter": ReprHighlighter()})
     await init.aio(
         org=cfg.task.org,
         project=cfg.task.project,

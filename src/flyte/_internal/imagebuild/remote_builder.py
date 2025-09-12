@@ -10,7 +10,6 @@ from typing import TYPE_CHECKING, Optional, Tuple, cast
 from uuid import uuid4
 
 import aiofiles
-import rich.markup
 
 import flyte
 import flyte.errors
@@ -88,7 +87,7 @@ class RemoteImageChecker(ImageChecker):
             logger.warning(f"[blue]Image {resp.image.fqin} found. Skip building.[/blue]")
             return resp.image.fqin
         except Exception:
-            logger.warning(f"Image {image_name} was not found or has expired.", extra={"markup": False})
+            logger.warning(f"[blue]Image {image_name} was not found or has expired.[/blue]", extra={"highlight": False})
             return None
 
 
@@ -139,7 +138,7 @@ class RemoteImageBuilder(ImageBuilder):
                 )
             except Exception as e:
                 # Ignore the error if optimize is not enabled in the backend.
-                logger.warning(f"Failed to run optimize task with error: {e}")
+                logger.debug(f"Failed to run optimize task with error: {e}")
         else:
             raise flyte.errors.ImageBuildError(f"❌ Build failed in {elapsed} at [cyan]{run.url}[/cyan]")
 
