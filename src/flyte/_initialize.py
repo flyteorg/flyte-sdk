@@ -111,9 +111,6 @@ async def _initialize_client(
 
 
 def _initialize_logger(log_level: int | None = None):
-    from flyte._tools import ipython_check
-
-    # interactive_mode = not ipython_check()
     initialize_logger(enable_rich=True)
     if log_level:
         initialize_logger(log_level=log_level, enable_rich=True)
