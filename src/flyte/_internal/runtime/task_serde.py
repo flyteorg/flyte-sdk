@@ -218,22 +218,25 @@ def _get_urun_container(
         img_uri = task_template.image.uri
     elif serialize_context.image_cache and image_id not in serialize_context.image_cache.image_lookup:
         img_uri = task_template.image.uri
-        from flyte._version import __version__
 
         logger.warning(
-            f"Image {task_template.image} not found in the image cache: {serialize_context.image_cache.image_lookup}.\n"
-            f"This typically occurs when the Flyte SDK version (`{__version__}`) used in the task environment "
-            f"differs from the version used to compile or deploy it.\n"
-            f"Ensure both environments use the same Flyte SDK version to avoid inconsistencies in image resolution."
+            f"Image {task_template.image} not found in the image cache: {serialize_context.image_cache.image_lookup}."
         )
     else:
         python_version_str = "{}.{}".format(sys.version_info.major, sys.version_info.minor)
         version_lookup = serialize_context.image_cache.image_lookup[image_id]
         if python_version_str in version_lookup:
             img_uri = version_lookup[python_version_str]
-        else:
+        elif version_lookup:
             # Fallback: try to get any available version
-            img_uri = next(iter(version_lookup.values())) if version_lookup else task_template.image.uri
+            fallback_py_version, img_uri = next(iter(version_lookup.items()))
+            logger.warning(
+                f"Image {task_template.image} for python version {python_version_str} "
+                f"not found in the image cache: {serialize_context.image_cache.image_lookup}.\n"
+                f"Fall back using image {img_uri} for python version {fallback_py_version} ."
+            )
+        else:
+            img_uri = task_template.image.uri
 
     return tasks_pb2.Container(
         image=img_uri,
