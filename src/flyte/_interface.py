@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import inspect
+from enum import Enum
 from typing import Dict, Generator, Literal, Tuple, Type, TypeVar, Union, cast, get_args, get_origin, get_type_hints
 
 
@@ -69,7 +70,15 @@ def extract_return_annotation(return_annotation: Union[Type, Tuple, None]) -> Di
         if len(return_annotation.__args__) == 1:  # type: ignore
             raise TypeError("Tuples should be used to indicate multiple return values, found only one return variable.")
         ra = get_args(return_annotation)
-        return dict(zip(list(output_name_generator(len(ra))), ra))
+        annotations = {}
+        for i, r in enumerate(ra):
+            if r is Ellipsis:
+                raise TypeError("Variable length tuples are not supported as return types.")
+            if get_origin(r) is Literal:
+                annotations[default_output_name(i)] = literal_to_enum(cast(Type, r))
+            else:
+                annotations[default_output_name(i)] = r
+        return annotations
 
     elif isinstance(return_annotation, tuple):
         if len(return_annotation) == 1:
@@ -80,25 +89,21 @@ def extract_return_annotation(return_annotation: Union[Type, Tuple, None]) -> Di
         # Handle all other single return types
         # Task returns unnamed native tuple
         if get_origin(return_annotation) is Literal:
-            return {default_output_name(): literal_to_union_enum(cast(Type, return_annotation))}
+            return {default_output_name(): literal_to_enum(cast(Type, return_annotation))}
         return {default_output_name(): cast(Type, return_annotation)}
 
 
-def literal_to_union_enum(literal_type: Type) -> Type:
+def literal_to_enum(literal_type: Type) -> Type[Enum]:
     """Convert a Literal[...] into Union[str, Enum]."""
-    from enum import Enum
 
     if get_origin(literal_type) is not Literal:
         raise TypeError(f"{literal_type} is not a Literal")
 
     values = get_args(literal_type)
     # Deduplicate & keep order
-    seen = set()
-    unique_values = [v for v in values if not (v in seen or seen.add(v))]
+    enum_dict = {str(v).upper(): v for v in values}
 
     # Dynamically create an Enum
-    enum_name = "LiteralEnum"
-    enum_dict = {str(v).upper(): v for v in unique_values}
-    literal_enum = Enum(enum_name, enum_dict)
+    literal_enum = Enum("LiteralEnum", enum_dict)  # type: ignore
 
-    return Union[str, literal_enum]
+    return literal_enum  # type: ignore

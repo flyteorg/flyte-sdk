@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any, Callable, ClassVar, Dict, List, Literal, 
 import rich.repr
 
 from flyte._docstring import Docstring
-from flyte._interface import extract_return_annotation, literal_to_union_enum
+from flyte._interface import extract_return_annotation, literal_to_enum
 from flyte._logging import logger
 
 if TYPE_CHECKING:
@@ -331,7 +331,7 @@ class NativeInterface:
                     f"Function {func.__name__} has parameter {name} without type annotation. Data will be pickled."
                 )
             if typing.get_origin(param.annotation) is Literal:
-                param_info[name] = (literal_to_union_enum(param.annotation), param.default)
+                param_info[name] = (literal_to_enum(param.annotation), param.default)
             else:
                 param_info[name] = (param.annotation, param.default)
 
