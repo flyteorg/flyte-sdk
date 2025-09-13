@@ -786,6 +786,13 @@ class EnumTransformer(TypeTransformer[enum.Enum]):
         return LiteralType(enum_type=types_pb2.EnumType(values=values))
 
     async def to_literal(self, python_val: enum.Enum, python_type: Type[T], expected: LiteralType) -> Literal:
+        if isinstance(python_val, str):
+            # this is the case when python Literals are used as enums
+            if python_val not in expected.enum_type.values:
+                raise TypeTransformerFailedError(
+                    f"Value {python_val} is not valid value, expected - {expected.enum_type.values}"
+                )
+            return Literal(scalar=Scalar(primitive=Primitive(string_value=python_val)))  # type: ignore
         if type(python_val).__class__ != enum.EnumMeta:
             raise TypeTransformerFailedError("Expected an enum")
         if type(python_val.value) is not str:
