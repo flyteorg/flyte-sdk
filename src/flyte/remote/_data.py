@@ -91,7 +91,7 @@ async def _upload_single_file(
             raise RuntimeSystemError(e.code().value, f"Failed to get signed url for {fp}: {e.details()}")
     except Exception as e:
         raise RuntimeSystemError(type(e).__name__, f"Failed to get signed url for {fp}.") from e
-    logger.debug(f"Uploading to {make_hyperlink('signed url', resp.signed_url)} for {fp}")
+    logger.debug(f"Uploading to [link={resp.signed_url}]signed url[/link] for [link=file://{fp}]{fp}[/link]")
     extra_headers = get_extra_headers_for_protocol(resp.native_url)
     extra_headers.update(resp.headers)
     encoded_md5 = b64encode(md5_bytes)
