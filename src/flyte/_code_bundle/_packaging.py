@@ -14,10 +14,9 @@ import typing
 from typing import List, Optional, Tuple, Union
 
 import click
-from rich import print as rich_print
 from rich.tree import Tree
 
-from flyte._logging import logger
+from flyte._logging import logger, _get_console
 
 from ._ignore import Ignore, IgnoreGroup
 from ._utils import CopyFiles, _filehash_update, _pathhash_update, ls_files, tar_strip_file_attributes
@@ -27,10 +26,10 @@ FAST_FILEENDING = ".tar.gz"
 
 
 def print_ls_tree(source: os.PathLike, ls: typing.List[str]):
-    click.secho("Files to be copied for fast registration...", fg="bright_blue")
+    logger.info("Files to be copied for fast registration...") # noqa: T201
 
     tree_root = Tree(
-        f":open_file_folder: [link file://{source}]{source} (detected source root)",
+        f"File structure:\n:open_file_folder: {source}",
         guide_style="bold bright_blue",
     )
     trees = {pathlib.Path(source): tree_root}
@@ -49,7 +48,12 @@ def print_ls_tree(source: os.PathLike, ls: typing.List[str]):
                 else:
                     current = trees[current_path]
         trees[fpp.parent].add(f"{fpp.name}", guide_style="bold bright_blue")
-    rich_print(tree_root)
+
+    console = _get_console()
+    with console.capture() as capture:
+        console.print(tree_root, overflow="ignore", no_wrap=True, crop=False)
+    logger.info(f"Root directory: [link=file://{source}]{source}[/link]")
+    logger.info(capture.get(), extra={"console": console})
 
 
 def _compress_tarball(source: pathlib.Path, output: pathlib.Path) -> None:
