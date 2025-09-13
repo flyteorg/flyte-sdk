@@ -66,8 +66,8 @@ def get_rich_handler(log_level: int) -> Optional[logging.Handler]:
         return None
 
     import click
-    from rich.logging import RichHandler
     from rich.highlighter import NullHighlighter
+    from rich.logging import RichHandler
 
     handler = RichHandler(
         tracebacks_suppress=[click],
