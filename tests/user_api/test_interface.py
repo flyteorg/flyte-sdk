@@ -125,3 +125,23 @@ def test_native_interface_literal():
     assert get_origin(interface.outputs["o0"]) is None
     assert issubclass(interface.outputs["o0"], enum.Enum)
     assert issubclass(interface.outputs["o1"], str)
+
+
+IntLiteral = Literal[1, 2, 3]
+
+
+def call_test_int(i: IntLiteral) -> Tuple[IntLiteral, str]:
+    return i, f"Intensity is {i}"
+
+
+def test_native_interface_int_literal():
+    interface = NativeInterface.from_callable(call_test_int)
+    assert interface.__repr__() == "(i: LiteralEnum) -> (o0: LiteralEnum, o1: str):"
+    assert interface.inputs is not None
+    assert "i" in interface.inputs
+    assert get_origin(interface.inputs["i"][0]) is None
+    assert issubclass(interface.inputs["i"][0], enum.Enum)
+
+    assert get_origin(interface.outputs["o0"]) is None
+    assert issubclass(interface.outputs["o0"], enum.Enum)
+    assert issubclass(interface.outputs["o1"], str)

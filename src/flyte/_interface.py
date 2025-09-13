@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import inspect
+import typing
 from enum import Enum
 from typing import Dict, Generator, Literal, Tuple, Type, TypeVar, Union, cast, get_args, get_origin, get_type_hints
+
+from flyte._logging import logger
 
 
 def default_output_name(index: int = 0) -> str:
@@ -93,13 +96,16 @@ def extract_return_annotation(return_annotation: Union[Type, Tuple, None]) -> Di
         return {default_output_name(): cast(Type, return_annotation)}
 
 
-def literal_to_enum(literal_type: Type) -> Type[Enum]:
+def literal_to_enum(literal_type: Type) -> Type[Enum | typing.Any]:
     """Convert a Literal[...] into Union[str, Enum]."""
 
     if get_origin(literal_type) is not Literal:
         raise TypeError(f"{literal_type} is not a Literal")
 
     values = get_args(literal_type)
+    if not all(isinstance(v, str) for v in values):
+        logger.warning(f"Literal type {literal_type} contains non-string values, using Any instead of Enum")
+        return typing.Any
     # Deduplicate & keep order
     enum_dict = {str(v).upper(): v for v in values}
 

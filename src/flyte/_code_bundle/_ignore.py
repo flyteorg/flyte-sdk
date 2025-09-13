@@ -89,7 +89,7 @@ class StandardIgnore(Ignore):
         except ValueError:
             # If path is not under root, don't ignore it
             return False
-        
+
         for pattern in self.patterns:
             if fnmatch(str(rel_path), pattern):
                 return True
