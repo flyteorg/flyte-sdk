@@ -1,17 +1,24 @@
 # # Torch Example
+from pathlib import Path
+
 import torch
 import torch.nn as nn
 import torch.optim as optim
 from flyteplugins.pytorch.task import MasterNodeConfig, TorchJobConfig, WorkerNodeConfig
+from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DataLoader, DistributedSampler, TensorDataset
 
 import flyte
 from flyte._context import internal_ctx
 
 image = (
-    flyte.Image.from_base("debian:slim")
-    .clone(name="spark", python_version=(3, 10))
-    .with_pip_packages("flyteplugins-spark", pre=True)
+    flyte.Image.from_base("pytorch/pytorch:2.8.0-cuda12.9-cudnn9-runtime")
+    .clone(name="torch", python_version=(3, 10))
+    # .with_pip_packages("flyteplugins-pytorch", pre=True)
+    .with_pip_packages("torch==2.8.0", "numpy", "pandas")
+    .with_source_folder(Path(__file__).parent.parent.parent / "plugins/pytorch", "./pytorch")
+    .with_env_vars({"PYTHONPATH": "./pytorch/src:${PYTHONPATH}"})
+    .with_local_v2()
 )
 
 
@@ -21,10 +28,11 @@ task_env = flyte.TaskEnvironment(
 
 torch_env = flyte.TaskEnvironment(
     name="torch_env",
-    resources=flyte.Resources(cpu=(1, 2), memory=("400Mi", "1000Mi"), gpu=(1, 1)),
+    resources=flyte.Resources(cpu=(1, 2), memory=("400Mi", "1000Mi")),
     plugin_config=TorchJobConfig(
-        worker_node_config=WorkerNodeConfig(image="pytorch/pytorch:2.3.0-cuda11.8-cudnn8-runtime", replicas=2),
+        worker_node_config=WorkerNodeConfig(image="pytorch/pytorch:2.8.0-cuda12.9-cudnn9-runtime", replicas=2),
         master_node_config=MasterNodeConfig(replicas=1),
+        nproc_per_node=2,
     ),
     image=image,
 )
@@ -55,8 +63,15 @@ def prepare_dataloader(rank: int, world_size: int, batch_size: int = 2) -> DataL
     return DataLoader(dataset, batch_size=batch_size, sampler=sampler)
 
 
-@task_env.task
-async def train_loop(model: nn.Module, rank: int, world_size: int, epochs: int = 200) -> float:
+def train_loop(epochs: int = 200) -> float:
+    """
+    A simple training loop for linear regression.
+    """
+    model = DDP(LinearRegressionModel())
+
+    rank = torch.distributed.get_rank()
+    world_size = torch.distributed.get_world_size()
+
     dataloader = prepare_dataloader(
         rank=rank,
         world_size=world_size,
@@ -78,21 +93,23 @@ async def train_loop(model: nn.Module, rank: int, world_size: int, epochs: int =
             optimizer.step()
 
             final_loss = loss.item()
+        if torch.distributed.get_rank() == 0:
             print(f"Loss: {final_loss}")
 
     return final_loss
 
 
 @torch_env.task
-async def hello_torch_nested() -> float:
-    model = LinearRegressionModel()
+def hello_torch_nested() -> None:
+    """
+    A nested task that sets up a simple distributed training job using PyTorch's
+    """
     ctx = internal_ctx()
-
-    rank = ctx.data.task_context.data["rank"]
-    world_size = ctx.data.task_context.data["world_size"]
-    ddp_model = ctx.data.task_context.data["ddp_model"]
-
-    return await train_loop(ddp_model(model), rank, world_size)
+    launcher = ctx.data.task_context.data["elastic_launcher"]
+    print("starting launcher")
+    out = launcher(train_loop)
+    print("Training complete")
+    print("Final loss:", out)
 
 
 if __name__ == "__main__":
