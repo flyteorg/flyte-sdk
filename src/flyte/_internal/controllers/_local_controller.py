@@ -10,11 +10,13 @@ from flyte._context import internal_ctx
 from flyte._internal.controllers import TraceInfo
 from flyte._internal.runtime import convert
 from flyte._internal.runtime.entrypoints import direct_dispatch
+from flyte._internal.runtime.types_serde import transform_native_to_typed_interface
 from flyte._logging import log, logger
 from flyte._task import TaskTemplate
 from flyte._utils.helpers import _selector_policy
 from flyte.models import ActionID, NativeInterface
 from flyte.remote._task import TaskDetails
+from flyte.storage._local_cache import LocalTaskCache
 
 R = TypeVar("R")
 
@@ -81,31 +83,45 @@ class LocalController:
             raise flyte.errors.RuntimeSystemError("BadContext", "Task context not initialized")
 
         inputs = await convert.convert_from_native_to_inputs(_task.native_interface, *args, **kwargs)
+        inputs_hash = convert.generate_inputs_hash_from_proto(inputs.proto_inputs)
         serialized_inputs = inputs.proto_inputs.SerializeToString(deterministic=True)
+        task_interface = transform_native_to_typed_interface(_task.interface)
 
         sub_action_id, sub_action_output_path = convert.generate_sub_action_id_and_output_path(
             tctx, _task.name, serialized_inputs, 0
         )
         sub_action_raw_data_path = tctx.raw_data_path
 
-        out, err = await direct_dispatch(
-            _task,
-            controller=self,
-            action=sub_action_id,
-            raw_data_path=sub_action_raw_data_path,
-            inputs=inputs,
-            version=tctx.version,
-            checkpoints=tctx.checkpoints,
-            code_bundle=tctx.code_bundle,
-            output_path=sub_action_output_path,
-            run_base_dir=tctx.run_base_dir,
+        out = await LocalTaskCache.get(
+            _task.name, inputs_hash, inputs, task_interface, tctx.version, list(_task.cache.ignored_inputs)
         )
-        if err:
-            exc = convert.convert_error_to_native(err)
-            if exc:
-                raise exc
-            else:
-                raise flyte.errors.RuntimeSystemError("BadError", "Unknown error")
+
+        if out is None:
+            out, err = await direct_dispatch(
+                _task,
+                controller=self,
+                action=sub_action_id,
+                raw_data_path=sub_action_raw_data_path,
+                inputs=inputs,
+                version=tctx.version,
+                checkpoints=tctx.checkpoints,
+                code_bundle=tctx.code_bundle,
+                output_path=sub_action_output_path,
+                run_base_dir=tctx.run_base_dir,
+            )
+
+            if err:
+                exc = convert.convert_error_to_native(err)
+                if exc:
+                    raise exc
+                else:
+                    raise flyte.errors.RuntimeSystemError("BadError", "Unknown error")
+
+            # store into cache
+            await LocalTaskCache.set(
+                _task.name, inputs_hash, inputs, task_interface, tctx.version, list(_task.cache.ignored_inputs), out
+            )
+
         if _task.native_interface.outputs:
             if out is None:
                 raise flyte.errors.RuntimeSystemError("BadOutput", "Task output not captured.")
