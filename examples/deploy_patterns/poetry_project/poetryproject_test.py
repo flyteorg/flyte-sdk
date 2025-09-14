@@ -9,10 +9,8 @@ env = flyte.TaskEnvironment(
     name="poetry",
     resources=flyte.Resources(cpu=1, memory="1Gi"),
     image=flyte.Image.from_debian_base()
-    .with_env_vars({"key": "valuee"})
     .with_poetry_project(
         pyproject_file=pathlib.Path("pyproject.toml"),
-        extra_args="--no-root"
     ),
 )
 
