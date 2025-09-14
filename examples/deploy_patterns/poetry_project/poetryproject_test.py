@@ -9,9 +9,10 @@ env = flyte.TaskEnvironment(
     name="poetry",
     resources=flyte.Resources(cpu=1, memory="1Gi"),
     image=flyte.Image.from_debian_base()
+    .with_env_vars({"key": "valuee"})
     .with_poetry_project(
         pyproject_file=pathlib.Path("pyproject.toml"),
-        pre=True,
+        extra_args="--no-root"
     ),
 )
 
@@ -43,11 +44,6 @@ if __name__ == "__main__":
     flyte.init_from_config()
     run = flyte.with_runcontext(
         log_level=logging.DEBUG,
-        env_vars={"KEY": "V"},
-        labels={"Label1": "V1"},
-        annotations={"Ann": "ann"},
-        overwrite_cache=True,
-        interruptible=False,
     ).run(say_hello_nested, data="hello world", n=10)
     print(run.name)
     print(run.url)
