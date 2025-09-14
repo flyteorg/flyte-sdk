@@ -338,7 +338,7 @@ async def test_poetry_handler_without_project_install():
             poetry_project = PoetryProject(
                 pyproject=pyproject_file.absolute(),
                 poetry_lock=poetry_lock_file.absolute(),
-                extra_index_urls=["--no-install-project"],
+                extra_args="--no-root",
                 secret_mounts=None,
             )
 
@@ -385,4 +385,3 @@ async def test_poetry_handler_with_project_install():
             assert "ENV POETRY_CACHE_DIR=/tmp/poetry_cache" in result
             assert "POETRY_VIRTUALENVS_IN_PROJECT=true" in result
             assert "WORKDIR /root" in result
-            assert "poetry install --no-root" in result

@@ -293,7 +293,7 @@ class PoetryProjectHandler:
     @staticmethod
     async def handel(layer: PoetryProject, context_path: Path, dockerfile: str) -> str:
         secret_mounts = _get_secret_mounts_layer(layer.secret_mounts)
-        if layer.extra_index_urls and "--no-install-project" in layer.extra_index_urls:
+        if layer.extra_args and "--no-root" in layer.extra_args:
             # Only Copy pyproject.yaml and poetry.lock.
             pyproject_dst = copy_files_to_context(layer.pyproject, context_path)
             poetry_lock_dst = copy_files_to_context(layer.poetry_lock, context_path)
@@ -309,9 +309,8 @@ class PoetryProjectHandler:
                 PYPROJECT_PATH=pyproject_dst.relative_to(context_path),
                 SECRET_MOUNT=secret_mounts,
             )
-        poetry_install_args = ["--no-root"]
         delta += POETRY_LOCK_INSTALL_TEMPLATE.substitute(
-            POETRY_INSTALL_ARGS=" ".join(poetry_install_args),
+            POETRY_INSTALL_ARGS=" ".join(layer.get_poetry_install_args()),
             SECRET_MOUNT=secret_mounts,
         )
         dockerfile += delta

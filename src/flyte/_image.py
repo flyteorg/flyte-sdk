@@ -207,9 +207,11 @@ class UVProject(PipOption, Layer):
 
 @rich.repr.auto
 @dataclass(frozen=True, repr=True)
-class PoetryProject(PipOption, Layer):
+class PoetryProject(Layer):
     pyproject: Path
     poetry_lock: Path
+    extra_args: Optional[str] = None
+    secret_mounts: Optional[Tuple[str | Secret, ...]] = None
 
     def validate(self):
         if not self.pyproject.exists():
@@ -225,6 +227,12 @@ class PoetryProject(PipOption, Layer):
 
         super().update_hash(hasher)
         filehash_update(self.poetry_lock, hasher)
+
+    def get_poetry_install_args(self) -> List[str]:
+        poetry_install_args = []
+        if self.extra_args:
+            poetry_install_args.append(self.extra_args)
+        return poetry_install_args
 
 
 @rich.repr.auto
@@ -945,9 +953,6 @@ class Image:
         self,
         pyproject_file: str | Path,
         poetry_lock: Path | None = None,
-        index_url: Optional[str] = None,
-        extra_index_urls: Union[List[str], Tuple[str, ...], None] = None,
-        pre: bool = False,
         extra_args: Optional[str] = None,
         secret_mounts: Optional[SecretRequest] = None,
     ):
@@ -960,16 +965,13 @@ class Image:
         including files such as pyproject.toml, poetry.lock, and the src/ directory.
 
         If you prefer not to install the current project, you can pass the extra argument
-        `--no-install-project`. In this case, the image builder will only copy pyproject.toml
-        and poetry.lock into the image.
+        `--no-root`. In this case, the image builder will only copy pyproject.toml and poetry.lock
+        into the image.
 
         :param pyproject_file: Path to the pyproject.toml file. A poetry.lock file must exist in the same directory
             unless `poetry_lock` is explicitly provided.
         :param poetry_lock: Path to the poetry.lock file. If not specified, the default is the file named
             'poetry.lock' in the same directory as `pyproject_file` (pyproject.parent / "poetry.lock").
-        :param index_url: Base index URL to use for dependency resolution, default is None.
-        :param extra_index_urls: Additional index URLs to use for dependency resolution, default is None.
-        :param pre: Whether to allow pre-release versions, default is False.
         :param extra_args: Extra arguments to pass through to the package installer/resolver, default is None.
         :param secret_mounts: Secrets to make available during dependency resolution/build (e.g., private indexes).
         :return: Image
@@ -980,9 +982,6 @@ class Image:
             addl_layer=PoetryProject(
                 pyproject=pyproject_file,
                 poetry_lock=poetry_lock or (pyproject_file.parent / "poetry.lock"),
-                index_url=index_url,
-                extra_index_urls=extra_index_urls,
-                pre=pre,
                 extra_args=extra_args,
                 secret_mounts=_ensure_tuple(secret_mounts) if secret_mounts else None,
             )
