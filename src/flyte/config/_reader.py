@@ -144,6 +144,7 @@ def _config_path_from_git_root() -> pathlib.Path | None:
         return None
 
 
+@lru_cache
 def resolve_config_path() -> pathlib.Path | None:
     """
     Config is read from the following locations in order of precedence:
