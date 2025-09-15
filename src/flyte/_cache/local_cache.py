@@ -86,7 +86,9 @@ class LocalTaskCache(object):
             if cached_output is None:
                 return None
             # Convert the cached output bytes to literal
-            return run_definition_pb2.Outputs.ParseFromString(cached_output.output_literal)
+            outputs = run_definition_pb2.Outputs()
+            outputs.ParseFromString(cached_output.output_literal)
+            return outputs
 
     @staticmethod
     async def set(
