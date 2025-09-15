@@ -110,6 +110,12 @@ async def _initialize_client(
     )
 
 
+def _initialize_logger(log_level: int | None = None):
+    initialize_logger(enable_rich=True)
+    if log_level:
+        initialize_logger(log_level=log_level, enable_rich=True)
+
+
 @syncify
 async def init(
     org: str | None = None,
@@ -172,14 +178,9 @@ async def init(
 
     :return: None
     """
-    from flyte._tools import ipython_check
     from flyte._utils import get_cwd_editable_install, org_from_endpoint, sanitize_endpoint
 
-    interactive_mode = ipython_check()
-
-    initialize_logger(enable_rich=interactive_mode)
-    if log_level:
-        initialize_logger(log_level=log_level, enable_rich=interactive_mode)
+    _initialize_logger(log_level=log_level)
 
     global _init_config  # noqa: PLW0603
 
@@ -245,6 +246,8 @@ async def init_from_config(
         default is set using the default initialization policies
     :return: None
     """
+    from rich.highlighter import ReprHighlighter
+
     import flyte.config as config
 
     cfg: config.Config
@@ -266,7 +269,9 @@ async def init_from_config(
     else:
         cfg = path_or_config
 
-    logger.info(f"Flyte config initialized as {cfg}")
+    _initialize_logger(log_level=log_level)
+
+    logger.info(f"Flyte config initialized as {cfg}", extra={"highlighter": ReprHighlighter()})
     await init.aio(
         org=cfg.task.org,
         project=cfg.task.project,
