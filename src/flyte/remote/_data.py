@@ -16,7 +16,6 @@ from flyteidl.service import dataproxy_pb2
 from google.protobuf import duration_pb2
 
 from flyte._initialize import CommonInit, ensure_client, get_client, get_common_config
-from flyte._logging import make_hyperlink
 from flyte.errors import InitializationError, RuntimeSystemError
 from flyte.syncify import syncify
 
