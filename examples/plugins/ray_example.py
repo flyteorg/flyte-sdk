@@ -57,7 +57,7 @@ async def hello_ray_nested(n: int = 3) -> typing.List[int]:
 
 if __name__ == "__main__":
     flyte.init_from_config()
-    run = flyte.with_runcontext(env_vars={"LOG_LEVEL": "10", "_F_E_VS": "True"}).run(hello_ray_nested)
+    run = flyte.run(hello_ray_nested)
     print("run name:", run.name)
     print("run url:", run.url)
     run.wait(run)
