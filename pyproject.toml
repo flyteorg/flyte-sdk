@@ -26,6 +26,10 @@ dependencies = [
     "mashumaro",
     "dataclasses_json", # TODO: remove this dependency once we remove dataclasses_json from the code
     "aiolimiter>=1.2.1",
+    "protovalidate>=0.15.0",
+    "flyteidl2",
+    "bufbuild-protovalidate-protocolbuffers-pyi==32.1.0.1.20240401165935+b983156c5e99",
+    "bufbuild-protovalidate-protocolbuffers-python==32.0.0.1.20250912141014+52f32327d4b0",
 ]
 
 [project.scripts]
@@ -38,6 +42,9 @@ flyte_keyring_file = "flyte._keyring.file"
 [build-system]
 requires = ["setuptools", "setuptools_scm"]
 build-backend = "setuptools.build_meta"
+
+[[tool.uv.index]]
+url = "https://buf.build/gen/python"
 
 [dependency-groups]
 dev = [
