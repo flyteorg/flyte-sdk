@@ -6,6 +6,7 @@ import threading
 from typing import Any, Callable, Tuple, TypeVar
 
 import flyte.errors
+from flyte._cache.local_cache import LocalTaskCache
 from flyte._context import internal_ctx
 from flyte._internal.controllers import TraceInfo
 from flyte._internal.runtime import convert
@@ -16,7 +17,6 @@ from flyte._task import TaskTemplate
 from flyte._utils.helpers import _selector_policy
 from flyte.models import ActionID, NativeInterface
 from flyte.remote._task import TaskDetails
-from flyte.storage._local_cache import LocalTaskCache
 
 R = TypeVar("R")
 
