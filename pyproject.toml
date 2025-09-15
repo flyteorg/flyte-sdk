@@ -28,6 +28,7 @@ dependencies = [
     "aiolimiter>=1.2.1",
     "aiosqlite>=0.21.0",
     "greenlet>=3.2.4",
+    "sqlalchemy>=2.0.43",
 ]
 
 [project.scripts]
