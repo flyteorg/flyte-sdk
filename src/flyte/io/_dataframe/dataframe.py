@@ -904,7 +904,8 @@ class DataFrameTransformerEngine(TypeTransformer[DataFrame]):
         #   t1(input_a: DataFrame)  # or
         #   t1(input_a: Annotated[DataFrame, my_cols])
         if issubclass(expected_python_type, DataFrame):
-            fdf = DataFrame(format=metad.structured_dataset_type.format)
+            fdf = DataFrame(format=metad.structured_dataset_type.format, uri=lv.scalar.structured_dataset.uri)
+            fdf._already_uploaded = True
             fdf._literal_sd = lv.scalar.structured_dataset
             fdf._metadata = metad
             return fdf
@@ -1012,7 +1013,7 @@ class DataFrameTransformerEngine(TypeTransformer[DataFrame]):
     def guess_python_type(self, literal_type: types_pb2.LiteralType) -> Type[DataFrame]:
         # todo: technically we should return the dataframe type specified in the constructor, but to do that,
         #   we'd have to store that, which we don't do today. See possibly #1363
-        if literal_type.HasField("dataframe_type"):
+        if literal_type.HasField("structured_dataset_type"):
             return DataFrame
         raise ValueError(f"DataFrameTransformerEngine cannot reverse {literal_type}")
 
