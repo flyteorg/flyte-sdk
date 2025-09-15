@@ -263,12 +263,12 @@ def load_models(config: GRPOConfig) -> Tuple[AutoModelForCausalLM, AutoModelForC
 
     # Load policy model (will be trained)
     model = AutoModelForCausalLM.from_pretrained(
-        config.model_name, torch_dtype=dtype, device_map="auto" if config.device == "cuda" else None
+        config.model_name, dtype=dtype, device_map="auto" if config.device == "cuda" else None
     )
 
     # Load reference model (stays frozen)
     ref_model = AutoModelForCausalLM.from_pretrained(
-        config.model_name, torch_dtype=dtype, device_map="auto" if config.device == "cuda" else None
+        config.model_name, dtype=dtype, device_map="auto" if config.device == "cuda" else None
     )
     ref_model.eval()
 
