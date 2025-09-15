@@ -13,7 +13,8 @@ import flyte.storage as storage
 from ._type_engine import TypeEngine, TypeTransformer
 
 T = typing.TypeVar("T")
-DEFAULT_PICKLE_BYTES_LIMIT = 2**10*10  # 10KB
+DEFAULT_PICKLE_BYTES_LIMIT = 2**10 * 10  # 10KB
+
 
 class FlytePickle(typing.Generic[T]):
     """
@@ -100,9 +101,13 @@ class FlytePickleTransformer(TypeTransformer[FlytePickle]):
         )
         if sys.getsizeof(python_val) > DEFAULT_PICKLE_BYTES_LIMIT:
             remote_path = await FlytePickle.to_pickle(python_val)
-            return literals_pb2.Literal(scalar=literals_pb2.Scalar(blob=literals_pb2.Blob(metadata=meta, uri=remote_path)))
+            return literals_pb2.Literal(
+                scalar=literals_pb2.Scalar(blob=literals_pb2.Blob(metadata=meta, uri=remote_path))
+            )
         else:
-            return literals_pb2.Literal(scalar=literals_pb2.Scalar(binary=literals_pb2.Binary(value=cloudpickle.dumps(python_val))))
+            return literals_pb2.Literal(
+                scalar=literals_pb2.Scalar(binary=literals_pb2.Binary(value=cloudpickle.dumps(python_val)))
+            )
 
     def guess_python_type(self, literal_type: types_pb2.LiteralType) -> typing.Type[FlytePickle[typing.Any]]:
         if (
