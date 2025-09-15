@@ -1,7 +1,4 @@
-from unittest.mock import patch
-
 import pytest
-import pytest_asyncio
 from flyteidl.core.interface_pb2 import TypedInterface, Variable, VariableMap
 from flyteidl.core.literals_pb2 import Literal, Primitive, Scalar
 from flyteidl.core.types_pb2 import LiteralType, SimpleType
@@ -11,19 +8,8 @@ from flyte._internal.runtime import convert
 from flyte._protos.workflow import run_definition_pb2
 
 
-@pytest_asyncio.fixture
-async def cache_setup(tmp_path):
-    with patch.object(LocalTaskCache, "_db_path", str(tmp_path / "test_cache.db")):
-        LocalTaskCache._initialized = False
-        await LocalTaskCache.initialize()
-        yield
-        if LocalTaskCache._engine:
-            await LocalTaskCache._engine.dispose()
-        LocalTaskCache._initialized = False
-
-
 @pytest.mark.asyncio
-async def test_set_and_get_cache(cache_setup):
+async def test_set_and_get_cache():
     task_name = "test_task"
     cache_version = "v1"
     ignore_input_vars = []
@@ -64,7 +50,7 @@ async def test_set_and_get_cache(cache_setup):
 
 
 @pytest.mark.asyncio
-async def test_set_overwrites_existing(cache_setup):
+async def test_set_overwrites_existing():
     task_name = "test_task"
     cache_version = "v1"
     ignore_input_vars = []
@@ -116,7 +102,7 @@ async def test_set_overwrites_existing(cache_setup):
 
 
 @pytest.mark.asyncio
-async def test_clear_cache(cache_setup):
+async def test_clear_cache():
     task_name = "test_task"
     cache_version = "v1"
     ignore_input_vars = []
