@@ -348,7 +348,7 @@ async def test_poetry_handler_without_project_install():
             result = await PoetryProjectHandler.handel(poetry_project, context_path, initial_dockerfile)
 
             assert "RUN --mount=type=cache,sharing=locked,mode=0777,target=/root/.cache/uv,id=uv" in result
-            assert "--mount=type=bind,target=uv.lock,src=" in result
+            assert "--mount=type=bind,target=poetry.lock,src=" in result
             assert "--mount=type=bind,target=pyproject.toml,src=" in result
             assert "uv pip install poetry" in result
             assert "ENV POETRY_CACHE_DIR=/tmp/poetry_cache" in result

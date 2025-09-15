@@ -62,7 +62,7 @@ RUN --mount=type=cache,sharing=locked,mode=0777,target=/root/.cache/uv,id=uv \
 
 POETRY_WITHOUT_PROJECT_INSTALL_TEMPLATE = Template("""\
 RUN --mount=type=cache,sharing=locked,mode=0777,target=/root/.cache/uv,id=uv \
-    --mount=type=bind,target=uv.lock,src=$POETRY_LOCK_PATH \
+    --mount=type=bind,target=poetry.lock,src=$POETRY_LOCK_PATH \
     --mount=type=bind,target=pyproject.toml,src=$PYPROJECT_PATH \
     $SECRET_MOUNT \
     uv pip install poetry
@@ -71,7 +71,6 @@ RUN --mount=type=cache,sharing=locked,mode=0777,target=/root/.cache/uv,id=uv \
 POETRY_INSTALL_TEMPLATE = Template("""\
 COPY $PYPROJECT_PATH $PYPROJECT_PATH
 RUN --mount=type=cache,sharing=locked,mode=0777,target=/root/.cache/uv,id=uv \
-    --mount=from=uv,source=/uv,target=/usr/bin/uv \
     $SECRET_MOUNT \
     uv pip install poetry
 """)
