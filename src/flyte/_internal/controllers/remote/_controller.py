@@ -238,6 +238,7 @@ class RemoteController(Controller):
             inputs_uri=inputs_uri,
             run_output_base=tctx.run_base_dir,
             cache_key=cache_key,
+            queue=_task.queue,
         )
 
         try:
@@ -539,6 +540,7 @@ class RemoteController(Controller):
             inputs_uri=inputs_uri,
             run_output_base=tctx.run_base_dir,
             cache_key=cache_key,
+            queue=None,
         )
 
         try:
