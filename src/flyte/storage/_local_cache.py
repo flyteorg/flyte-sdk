@@ -1,7 +1,24 @@
+from pathlib import Path
+
 from flyteidl.core import interface_pb2
+from sqlalchemy import Column, LargeBinary, String, delete
+from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import sessionmaker
 
 from flyte._internal.runtime import convert
 from flyte._protos.workflow import run_definition_pb2
+
+CACHE_LOCATION = "~/.flyte/local-cache"
+
+Base = declarative_base()
+
+
+class CachedOutput(Base):
+    __tablename__ = "cached_outputs"
+
+    id = Column(String, primary_key=True)
+    output_literal = Column(LargeBinary, nullable=False)
 
 
 class LocalTaskCache(object):
@@ -9,60 +26,67 @@ class LocalTaskCache(object):
     This class implements a persistent store able to cache the result of local task executions.
     """
 
-    _cache: None  # Cache  # Should use the sqlite
+    _engine = None
+    _session_factory = None
     _initialized: bool = False
+    _db_path: str = None
+
+    @staticmethod
+    def _get_cache_path() -> str:
+        """Get the cache database path, creating directory if needed."""
+        if LocalTaskCache._db_path is None:
+            cache_dir = Path(CACHE_LOCATION).expanduser()
+            cache_dir.mkdir(parents=True, exist_ok=True)
+            LocalTaskCache._db_path = str(cache_dir / "cache.db")
+        return LocalTaskCache._db_path
 
     @staticmethod
     async def initialize():
-        """Initialize the cache."""
-        LocalTaskCache._cache = None  # Use sqlalchemy here # Cache(CACHE_LOCATION)
-        LocalTaskCache._initialized = True
+        """Initialize the cache with database connection."""
+        if not LocalTaskCache._initialized:
+            db_path = LocalTaskCache._get_cache_path()
+            LocalTaskCache._engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}")
+            LocalTaskCache._session_factory = sessionmaker(
+                bind=LocalTaskCache._engine, class_=AsyncSession, expire_on_commit=False
+            )
+
+            async with LocalTaskCache._engine.begin() as conn:
+                await conn.run_sync(Base.metadata.create_all)
+
+            LocalTaskCache._initialized = True
 
     @staticmethod
     async def clear():
+        """Clear all cache entries."""
         if not LocalTaskCache._initialized:
-            LocalTaskCache.initialize()
-        # See how we can clear the sqlite through sqlalchemy
-        LocalTaskCache._cache.clear()
+            await LocalTaskCache.initialize()
+
+        async with LocalTaskCache._session_factory() as session:
+            await session.execute(delete(CachedOutput))
+            await session.commit()
 
     @staticmethod
     async def get(
         task_name: str,
-        input_hash: str,
+        inputs_hash: str,
         proto_inputs: run_definition_pb2.Inputs,
         task_interface: interface_pb2.TypedInterface,
         cache_version: str,
         ignore_input_vars: list[str],
     ) -> run_definition_pb2.Outputs | None:
         if not LocalTaskCache._initialized:
-            LocalTaskCache.initialize()
+            await LocalTaskCache.initialize()
 
-        cached_output = LocalTaskCache._cache.get(
-            convert.generate_cache_key_hash(
-                task_name, input_hash, task_interface, cache_version, ignore_input_vars, proto_inputs
-            )
+        cache_key = convert.generate_cache_key_hash(
+            task_name, inputs_hash, task_interface, cache_version, ignore_input_vars, proto_inputs
         )
 
-        if cached_output is None:
-            return None
-
-        return cached_output
-
-        """
-        # If the serialized object is a model file, first convert it back to a proto object (which will force it to
-        # use the installed flyteidl proto messages) and then convert it to a model object. This will guarantee
-        # that the object is in the correct format.
-        # if isinstance(serialized_obj, ModelLiteralMap):
-        #     return ModelLiteralMap.from_flyte_idl(ModelLiteralMap.to_flyte_idl(serialized_obj))
-        elif isinstance(serialized_obj, bytes):
-            # If it is a bytes object, then it is a serialized proto object.
-            # We need to convert it to a model object first.o
-            pb_literal_map = LiteralMap()
-            pb_literal_map.ParseFromString(serialized_obj)
-            return ModelLiteralMap.from_flyte_idl(pb_literal_map)
-        else:
-            raise ValueError(f"Unexpected object type {type(serialized_obj)}")
-        """
+        async with LocalTaskCache._session_factory() as session:
+            cached_output = await session.get(CachedOutput, cache_key)
+            if cached_output is None:
+                return None
+            # Convert the cached output bytes to literal
+            return run_definition_pb2.Outputs.ParseFromString(cached_output.output_literal)
 
     @staticmethod
     async def set(
@@ -75,15 +99,20 @@ class LocalTaskCache(object):
         value: run_definition_pb2.Outputs,
     ) -> None:
         if not LocalTaskCache._initialized:
-            LocalTaskCache.initialize()
-        LocalTaskCache._cache.set(
-            convert.generate_cache_key_hash(
-                task_name,
-                inputs_hash,
-                task_interface,
-                cache_version,
-                ignore_input_vars,
-                proto_inputs,
-            ),
-            value.SerializeToString(),
+            await LocalTaskCache.initialize()
+
+        cache_key = convert.generate_cache_key_hash(
+            task_name, inputs_hash, task_interface, cache_version, ignore_input_vars, proto_inputs
         )
+
+        async with LocalTaskCache._session_factory() as session:
+            existing = await session.get(CachedOutput, cache_key)
+
+            # NOTE: We will directly update the value in cache if it already exists
+            if existing:
+                existing.output_literal = value.SerializeToString()
+            else:
+                new_cache = CachedOutput(id=cache_key, output_literal=value.SerializeToString())
+                session.add(new_cache)
+
+            await session.commit()
