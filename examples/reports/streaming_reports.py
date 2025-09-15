@@ -356,9 +356,7 @@ async def main():
 
 
 if __name__ == "__main__":
-    import flyte.git
-
-    flyte.init_from_config(flyte.git.config_from_root())
+    flyte.init_from_config()
     run = flyte.run(main)
     print(f"Run Name: {run.name}", flush=True)
     print(f"Run URL: {run.url}", flush=True)

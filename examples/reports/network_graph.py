@@ -329,9 +329,7 @@ def generate_network_data():
 
 
 if __name__ == "__main__":
-    import flyte.git
-
-    flyte.init_from_config(flyte.git.config_from_root())
+    flyte.init_from_config()
     run = flyte.run(generate_network_graph)
     print(run.name)
     print(run.url)

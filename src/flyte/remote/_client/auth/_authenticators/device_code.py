@@ -1,4 +1,4 @@
-import click
+from rich import print as rich_print
 
 from flyte._logging import logger
 from flyte.remote._client.auth import _token_client as token_client
@@ -93,11 +93,8 @@ class DeviceCodeAuthenticator(Authenticator):
         )
 
         full_uri = f"{resp.verification_uri}?user_code={resp.user_code}"
-        text = (
-            f"To Authenticate, navigate in a browser to the following URL: "
-            f"{click.style(full_uri, fg='blue', underline=True)}"
-        )
-        click.secho(text)
+        text = f"To Authenticate, navigate in a browser to the following URL: [blue link={full_uri}]{full_uri}[/blue link]"
+        rich_print(text)
         try:
             token, refresh_token, expires_in = await token_client.poll_token_endpoint(
                 resp,

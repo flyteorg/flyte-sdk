@@ -41,9 +41,7 @@ async def outer_task() -> str:
 
 
 if __name__ == "__main__":
-    import flyte.git
-
-    flyte.init_from_config(flyte.git.config_from_root())
+    flyte.init_from_config()
     run = flyte.run(outer_task)
     print(run.name)
     print(run.url)

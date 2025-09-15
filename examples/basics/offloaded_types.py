@@ -59,7 +59,5 @@ async def create_and_check_dir():
 
 
 if __name__ == "__main__":
-    import flyte.git
-
-    flyte.init_from_config(flyte.git.config_from_root())
+    flyte.init_from_config()
     flyte.run(create_and_check_dir)

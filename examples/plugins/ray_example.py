@@ -56,9 +56,7 @@ async def hello_ray_nested(n: int = 3) -> typing.List[int]:
 
 
 if __name__ == "__main__":
-    import flyte.git
-
-    flyte.init_from_config(flyte.git.config_from_root())
+    flyte.init_from_config()
     run = flyte.run(hello_ray_nested)
     print("run name:", run.name)
     print("run url:", run.url)

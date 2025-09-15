@@ -144,9 +144,7 @@ async def gridsearch(
 if __name__ == "__main__":
     from datetime import datetime
 
-    import flyte.git
-
-    flyte.init_from_config(flyte.git.config_from_root())
+    flyte.init_from_config()
     sweep_name = f"hpo-gpu-sweep-{datetime.now().strftime('%Y%m%d%H%M%S')}"
     run = flyte.run(gridsearch, sweep_name, batch_sizes=[4, 8, 16])
     print(run.url)

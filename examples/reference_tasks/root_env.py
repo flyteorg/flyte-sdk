@@ -40,8 +40,6 @@ async def root_task() -> float:
 
 
 if __name__ == "__main__":
-    import flyte.git
-
-    flyte.init_from_config(flyte.git.config_from_root())
+    flyte.init_from_config()
     r = flyte.with_runcontext(labels={"x": "y"}, annotations={"x": "y"}).run(root_task)
     print(r.url)
