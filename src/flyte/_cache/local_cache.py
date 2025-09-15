@@ -18,7 +18,7 @@ class CachedOutput(Base):
     __tablename__ = "cached_outputs"
 
     id = Column(String, primary_key=True)
-    output_literal = Column(LargeBinary, nullable=False)
+    output_bytes = Column(LargeBinary, nullable=False)
 
 
 class LocalTaskCache(object):
@@ -87,7 +87,7 @@ class LocalTaskCache(object):
                 return None
             # Convert the cached output bytes to literal
             outputs = run_definition_pb2.Outputs()
-            outputs.ParseFromString(cached_output.output_literal)
+            outputs.ParseFromString(cached_output.output_bytes)
             return outputs
 
     @staticmethod
@@ -112,9 +112,9 @@ class LocalTaskCache(object):
 
             # NOTE: We will directly update the value in cache if it already exists
             if existing:
-                existing.output_literal = value.SerializeToString()
+                existing.output_bytes = value.SerializeToString()
             else:
-                new_cache = CachedOutput(id=cache_key, output_literal=value.SerializeToString())
+                new_cache = CachedOutput(id=cache_key, output_bytes=value.SerializeToString())
                 session.add(new_cache)
 
             await session.commit()
