@@ -69,16 +69,16 @@ class LocalTaskCache(object):
     async def get(
         task_name: str,
         inputs_hash: str,
-        proto_inputs: run_definition_pb2.Inputs,
+        proto_inputs: convert.Inputs,
         task_interface: interface_pb2.TypedInterface,
         cache_version: str,
         ignore_input_vars: list[str],
-    ) -> run_definition_pb2.Outputs | None:
+    ) -> convert.Outputs | None:
         if not LocalTaskCache._initialized:
             await LocalTaskCache.initialize()
 
         cache_key = convert.generate_cache_key_hash(
-            task_name, inputs_hash, task_interface, cache_version, ignore_input_vars, proto_inputs
+            task_name, inputs_hash, task_interface, cache_version, ignore_input_vars, proto_inputs.proto_inputs
         )
 
         async with LocalTaskCache._session_factory() as session:
@@ -88,23 +88,23 @@ class LocalTaskCache(object):
             # Convert the cached output bytes to literal
             outputs = run_definition_pb2.Outputs()
             outputs.ParseFromString(cached_output.output_bytes)
-            return outputs
+            return convert.Outputs(proto_outputs=outputs)
 
     @staticmethod
     async def set(
         task_name: str,
         inputs_hash: str,
-        proto_inputs: run_definition_pb2.Inputs,
+        proto_inputs: convert.Inputs,
         task_interface: interface_pb2.TypedInterface,
         cache_version: str,
         ignore_input_vars: list[str],
-        value: run_definition_pb2.Outputs,
+        value: convert.Outputs,
     ) -> None:
         if not LocalTaskCache._initialized:
             await LocalTaskCache.initialize()
 
         cache_key = convert.generate_cache_key_hash(
-            task_name, inputs_hash, task_interface, cache_version, ignore_input_vars, proto_inputs
+            task_name, inputs_hash, task_interface, cache_version, ignore_input_vars, proto_inputs.proto_inputs
         )
 
         async with LocalTaskCache._session_factory() as session:
@@ -112,9 +112,9 @@ class LocalTaskCache(object):
 
             # NOTE: We will directly update the value in cache if it already exists
             if existing:
-                existing.output_bytes = value.SerializeToString()
+                existing.output_bytes = value.proto_outputs.SerializeToString()
             else:
-                new_cache = CachedOutput(id=cache_key, output_bytes=value.SerializeToString())
+                new_cache = CachedOutput(id=cache_key, output_bytes=value.proto_outputs.SerializeToString())
                 session.add(new_cache)
 
             await session.commit()

@@ -14,23 +14,27 @@ async def test_set_and_get_cache():
     cache_version = "v1"
     ignore_input_vars = []
 
-    proto_inputs = run_definition_pb2.Inputs(
-        literals=[
-            run_definition_pb2.NamedLiteral(name="x", value=Literal(scalar=Scalar(primitive=Primitive(integer=42))))
-        ]
+    proto_inputs = convert.Inputs(
+        proto_inputs=run_definition_pb2.Inputs(
+            literals=[
+                run_definition_pb2.NamedLiteral(name="x", value=Literal(scalar=Scalar(primitive=Primitive(integer=42))))
+            ]
+        )
     )
-    inputs_hash = convert.generate_inputs_hash_from_proto(proto_inputs)
+    inputs_hash = convert.generate_inputs_hash_from_proto(proto_inputs.proto_inputs)
 
     task_interface = TypedInterface(
         inputs=VariableMap(variables={"x": Variable(type=LiteralType(simple=SimpleType.INTEGER))})
     )
 
-    expected_output = run_definition_pb2.Outputs(
-        literals=[
-            run_definition_pb2.NamedLiteral(
-                name="result", value=Literal(scalar=Scalar(primitive=Primitive(string_value="cached_result")))
-            )
-        ]
+    expected_output = convert.Outputs(
+        proto_outputs=run_definition_pb2.Outputs(
+            literals=[
+                run_definition_pb2.NamedLiteral(
+                    name="result", value=Literal(scalar=Scalar(primitive=Primitive(string_value="cached_result")))
+                )
+            ]
+        )
     )
 
     cached_output = await LocalTaskCache.get(
@@ -55,31 +59,37 @@ async def test_set_overwrites_existing():
     cache_version = "v1"
     ignore_input_vars = []
 
-    proto_inputs = run_definition_pb2.Inputs(
-        literals=[
-            run_definition_pb2.NamedLiteral(name="x", value=Literal(scalar=Scalar(primitive=Primitive(integer=42))))
-        ]
+    proto_inputs = convert.Inputs(
+        proto_inputs=run_definition_pb2.Inputs(
+            literals=[
+                run_definition_pb2.NamedLiteral(name="x", value=Literal(scalar=Scalar(primitive=Primitive(integer=42))))
+            ]
+        )
     )
-    inputs_hash = convert.generate_inputs_hash_from_proto(proto_inputs)
+    inputs_hash = convert.generate_inputs_hash_from_proto(proto_inputs.proto_inputs)
 
     task_interface = TypedInterface(
         inputs=VariableMap(variables={"x": Variable(type=LiteralType(simple=SimpleType.INTEGER))})
     )
 
-    first_output = run_definition_pb2.Outputs(
-        literals=[
-            run_definition_pb2.NamedLiteral(
-                name="result", value=Literal(scalar=Scalar(primitive=Primitive(string_value="first_result")))
-            )
-        ]
+    first_output = convert.Outputs(
+        proto_outputs=run_definition_pb2.Outputs(
+            literals=[
+                run_definition_pb2.NamedLiteral(
+                    name="result", value=Literal(scalar=Scalar(primitive=Primitive(string_value="first_result")))
+                )
+            ]
+        )
     )
 
-    second_output = run_definition_pb2.Outputs(
-        literals=[
-            run_definition_pb2.NamedLiteral(
-                name="result", value=Literal(scalar=Scalar(primitive=Primitive(string_value="second_result")))
-            )
-        ]
+    second_output = convert.Outputs(
+        proto_outputs=run_definition_pb2.Outputs(
+            literals=[
+                run_definition_pb2.NamedLiteral(
+                    name="result", value=Literal(scalar=Scalar(primitive=Primitive(string_value="second_result")))
+                )
+            ]
+        )
     )
 
     # Set the cache for the first time
@@ -107,23 +117,27 @@ async def test_clear_cache():
     cache_version = "v1"
     ignore_input_vars = []
 
-    proto_inputs = run_definition_pb2.Inputs(
-        literals=[
-            run_definition_pb2.NamedLiteral(name="x", value=Literal(scalar=Scalar(primitive=Primitive(integer=42))))
-        ]
+    proto_inputs = convert.Inputs(
+        proto_inputs=run_definition_pb2.Inputs(
+            literals=[
+                run_definition_pb2.NamedLiteral(name="x", value=Literal(scalar=Scalar(primitive=Primitive(integer=42))))
+            ]
+        )
     )
-    inputs_hash = convert.generate_inputs_hash_from_proto(proto_inputs)
+    inputs_hash = convert.generate_inputs_hash_from_proto(proto_inputs.proto_inputs)
 
     task_interface = TypedInterface(
         inputs=VariableMap(variables={"x": Variable(type=LiteralType(simple=SimpleType.INTEGER))})
     )
 
-    output = run_definition_pb2.Outputs(
-        literals=[
-            run_definition_pb2.NamedLiteral(
-                name="result", value=Literal(scalar=Scalar(primitive=Primitive(string_value="test_result")))
-            )
-        ]
+    output = convert.Outputs(
+        proto_outputs=run_definition_pb2.Outputs(
+            literals=[
+                run_definition_pb2.NamedLiteral(
+                    name="result", value=Literal(scalar=Scalar(primitive=Primitive(string_value="test_result")))
+                )
+            ]
+        )
     )
 
     await LocalTaskCache.set(
