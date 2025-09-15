@@ -25,9 +25,6 @@ async def say_hello(name: str = "flyte") -> str:
 
 
 if __name__ == "__main__":
-    # asyncio.run(say_hello("Union"))
-    import flyte.storage
-
-    flyte.init_from_config("../../config.yaml")
+    flyte.init_from_config()
     run = flyte.with_runcontext(mode="remote").run(say_hello, "Union")
     print(run.url)

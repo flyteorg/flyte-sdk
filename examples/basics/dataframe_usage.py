@@ -79,6 +79,6 @@ async def get_employee_data() -> pd.DataFrame:
 
 if __name__ == "__main__":
     # Use local execution mode
-    flyte.init()
+    flyte.init_from_config()
     run = flyte.with_runcontext(mode="local").run(get_employee_data)
     print("Results:", run.outputs())

@@ -126,7 +126,7 @@ async def research_coordinator(
 async def benchmark():
     import time
 
-    flyte.init_from_config("../../config.yaml")
+    flyte.init_from_config()
 
     async def _run() -> None:
         prompt = "What are the latest developments in AI?"

@@ -27,21 +27,21 @@ class Dir(BaseModel, Generic[T], SerializableType):
     The generic type T represents the format of the files in the directory.
 
     Example:
-        ```python
-        # Async usage
-        from pandas import DataFrame
-        data_dir = Dir[DataFrame](path="s3://my-bucket/data/")
+    ```python
+    # Async usage
+    from pandas import DataFrame
+    data_dir = Dir[DataFrame](path="s3://my-bucket/data/")
 
-        # Walk through files
-        async for file in data_dir.walk():
-            async with file.open() as f:
-                content = await f.read()
+    # Walk through files
+    async for file in data_dir.walk():
+        async with file.open() as f:
+            content = await f.read()
 
-        # Sync alternative
-        for file in data_dir.walk_sync():
-            with file.open_sync() as f:
-                content = f.read()
-        ```
+    # Sync alternative
+    for file in data_dir.walk_sync():
+        with file.open_sync() as f:
+            content = f.read()
+    ```
     """
 
     # Represents either a local or remote path.
@@ -94,11 +94,11 @@ class Dir(BaseModel, Generic[T], SerializableType):
             File objects for each file found in the directory
 
         Example:
-            ```python
-            async for file in directory.walk():
-                local_path = await file.download()
-                # Process the file
-            ```
+        ```python
+        async for file in directory.walk():
+            local_path = await file.download()
+            # Process the file
+        ```
         """
         fs = storage.get_underlying_filesystem(path=self.path)
         if recursive is False:
@@ -134,11 +134,11 @@ class Dir(BaseModel, Generic[T], SerializableType):
             File objects for each file found in the directory
 
         Example:
-            ```python
-            for file in directory.walk_sync():
-                local_path = file.download_sync()
-                # Process the file
-            ```
+        ```python
+        for file in directory.walk_sync():
+            local_path = file.download_sync()
+            # Process the file
+        ```
         """
         fs = storage.get_underlying_filesystem(path=self.path)
         for parent, _, files in fs.walk(self.path, maxdepth=max_depth):
@@ -157,11 +157,11 @@ class Dir(BaseModel, Generic[T], SerializableType):
             A list of File objects
 
         Example:
-            ```python
-            files = await directory.list_files()
-            for file in files:
-                # Process the file
-            ```
+        ```python
+        files = await directory.list_files()
+        for file in files:
+            # Process the file
+        ```
         """
         # todo: this should probably also just defer to fsspec.find()
         files = []
@@ -177,11 +177,11 @@ class Dir(BaseModel, Generic[T], SerializableType):
             A list of File objects
 
         Example:
-            ```python
-            files = directory.list_files_sync()
-            for file in files:
-                # Process the file
-            ```
+        ```python
+        files = directory.list_files_sync()
+        for file in files:
+            # Process the file
+        ```
         """
         return list(self.walk_sync(recursive=False))
 
@@ -197,9 +197,9 @@ class Dir(BaseModel, Generic[T], SerializableType):
             The path to the downloaded directory
 
         Example:
-            ```python
-            local_dir = await directory.download('/tmp/my_data/')
-            ```
+        ```python
+        local_dir = await directory.download('/tmp/my_data/')
+        ```
         """
         local_dest = str(local_path) if local_path else str(storage.get_random_local_path())
         if not storage.is_remote(self.path):
@@ -230,9 +230,9 @@ class Dir(BaseModel, Generic[T], SerializableType):
             The path to the downloaded directory
 
         Example:
-            ```python
-            local_dir = directory.download_sync('/tmp/my_data/')
-            ```
+        ```python
+        local_dir = directory.download_sync('/tmp/my_data/')
+        ```
         """
         local_dest = str(local_path) if local_path else str(storage.get_random_local_path())
         if not storage.is_remote(self.path):
@@ -268,11 +268,11 @@ class Dir(BaseModel, Generic[T], SerializableType):
             A new Dir instance pointing to the uploaded directory
 
         Example:
-            ```python
-            remote_dir = await Dir[DataFrame].from_local('/tmp/data_dir/', 's3://bucket/data/')
-            # With a known hash value you want to use for cache key calculation
-            remote_dir = await Dir[DataFrame].from_local('/tmp/data_dir/', 's3://bucket/data/', dir_cache_key='abc123')
-            ```
+        ```python
+        remote_dir = await Dir[DataFrame].from_local('/tmp/data_dir/', 's3://bucket/data/')
+        # With a known hash value you want to use for cache key calculation
+        remote_dir = await Dir[DataFrame].from_local('/tmp/data_dir/', 's3://bucket/data/', dir_cache_key='abc123')
+        ```
         """
         local_path_str = str(local_path)
         dirname = os.path.basename(os.path.normpath(local_path_str))
@@ -291,11 +291,11 @@ class Dir(BaseModel, Generic[T], SerializableType):
                             the cache key will be computed based on this object's attributes.
 
         Example:
-            ```python
-            remote_dir = Dir.from_existing_remote("s3://bucket/data/")
-            # With a known hash
-            remote_dir = Dir.from_existing_remote("s3://bucket/data/", dir_cache_key="abc123")
-            ```
+        ```python
+        remote_dir = Dir.from_existing_remote("s3://bucket/data/")
+        # With a known hash
+        remote_dir = Dir.from_existing_remote("s3://bucket/data/", dir_cache_key="abc123")
+        ```
         """
         return cls(path=remote_path, hash=dir_cache_key)
 
@@ -312,9 +312,9 @@ class Dir(BaseModel, Generic[T], SerializableType):
             A new Dir instance pointing to the uploaded directory
 
         Example:
-            ```python
-            remote_dir = Dir[DataFrame].from_local_sync('/tmp/data_dir/', 's3://bucket/data/')
-            ```
+        ```python
+        remote_dir = Dir[DataFrame].from_local_sync('/tmp/data_dir/', 's3://bucket/data/')
+        ```
         """
         # Implement this after we figure out the final sync story
         raise NotImplementedError("Sync upload is not implemented for remote paths")
@@ -327,10 +327,10 @@ class Dir(BaseModel, Generic[T], SerializableType):
             True if the directory exists, False otherwise
 
         Example:
-            ```python
-            if await directory.exists():
-                # Process the directory
-            ```
+        ```python
+        if await directory.exists():
+            # Process the directory
+        ```
         """
         fs = storage.get_underlying_filesystem(path=self.path)
         if isinstance(fs, AsyncFileSystem):
@@ -346,10 +346,10 @@ class Dir(BaseModel, Generic[T], SerializableType):
             True if the directory exists, False otherwise
 
         Example:
-            ```python
-            if directory.exists_sync():
-                # Process the directory
-            ```
+        ```python
+        if directory.exists_sync():
+            # Process the directory
+        ```
         """
         fs = storage.get_underlying_filesystem(path=self.path)
         return fs.exists(self.path)
@@ -365,11 +365,11 @@ class Dir(BaseModel, Generic[T], SerializableType):
             A File instance if the file exists, None otherwise
 
         Example:
-            ```python
-            file = await directory.get_file("data.csv")
-            if file:
-                # Process the file
-            ```
+        ```python
+        file = await directory.get_file("data.csv")
+        if file:
+            # Process the file
+        ```
         """
         fs = storage.get_underlying_filesystem(path=self.path)
         file_path = fs.sep.join([self.path, file_name])
@@ -390,11 +390,11 @@ class Dir(BaseModel, Generic[T], SerializableType):
             A File instance if the file exists, None otherwise
 
         Example:
-            ```python
-            file = directory.get_file_sync("data.csv")
-            if file:
-                # Process the file
-            ```
+        ```python
+        file = directory.get_file_sync("data.csv")
+        if file:
+            # Process the file
+        ```
         """
         file_path = os.path.join(self.path, file_name)
         file = File[T](path=file_path)

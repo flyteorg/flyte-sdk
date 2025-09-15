@@ -1,5 +1,3 @@
-import logging
-
 import flyte
 
 env = flyte.TaskEnvironment(
@@ -21,7 +19,7 @@ async def say_hello_nested(data: str = "default string") -> str:
 
 
 if __name__ == "__main__":
-    flyte.init_from_config("../../config.yaml", log_level=logging.DEBUG)
+    flyte.init_from_config()
     run = flyte.with_runcontext(env_vars={"LOG_LEVEL": "10", "_F_E_VS": "True"}).run(
         say_hello_nested, data="hello world"
     )

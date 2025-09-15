@@ -35,6 +35,6 @@ def main(x: int) -> int:
 if __name__ == "__main__":
     from pathlib import Path
 
-    flyte.init_from_config(str(Path(__file__).parent.parent.parent.parent.parent / "config.yaml"))
+    flyte.init_from_config()
     run = flyte.run(main, x=10)
     print(run.url)
