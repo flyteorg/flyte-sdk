@@ -125,14 +125,14 @@ async def get_models(model_name: str) -> Tuple[Any, Any, Any]:
     # Load policy model (trainable)
     policy_model = AutoModelForCausalLM.from_pretrained(
         model_name,
-        torch_dtype=dtype,
+        dtype=dtype,
         device_map="auto" if torch.cuda.is_available() else None
     )
 
     # Load reference model (frozen)
     ref_model = AutoModelForCausalLM.from_pretrained(
         model_name,
-        torch_dtype=dtype,
+        dtype=dtype,
         device_map="auto" if torch.cuda.is_available() else None
     )
     ref_model.eval()
@@ -559,9 +559,9 @@ if __name__ == "__main__":
     ]
 
     # Run training workflow
-    run = flyte.run(
+    run = flyte.with_runcontext(mode="local").run(
         grpo_training_workflow,
-        config_dict=training_config,
+        config=config,
         train_prompts=custom_prompts,
         checkpoint_every=1
     )
