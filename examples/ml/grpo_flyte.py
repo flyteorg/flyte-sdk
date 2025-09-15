@@ -7,9 +7,8 @@ Maintains algorithmic fidelity with the paper while leveraging Flyte's distribut
 
 import asyncio
 import logging
-import pickle
 from dataclasses import dataclass, asdict
-from typing import Dict, List, Tuple, Any
+from typing import Dict, List, Tuple, Any, Optional
 
 import numpy as np
 import torch
@@ -76,8 +75,8 @@ class TrainingState:
 @dataclass
 class ModelCheckpoint:
     """Model checkpoint data"""
-    state_dict: bytes  # Pickled model state dict
-    optimizer_state: bytes  # Pickled optimizer state
+    state_dict: Dict[str, Any]  # Model state dict (Flyte will handle serialization)
+    optimizer_state: Optional[Dict[str, Any]]  # Optimizer state (optional)
     training_state: TrainingState
 
 
@@ -152,15 +151,14 @@ async def get_models(model_name: str) -> Tuple[Any, Any, Any]:
 async def generate_response_batch(
         prompts: List[str],
         config: GRPOConfig,
-        model_state: bytes = None  # Optional updated model state
+        model_state: Optional[Dict[str, Any]] = None  # Optional updated model state
 ) -> List[List[ModelResponse]]:
     """Generate responses for a batch of prompts on GPU"""
     policy_model, ref_model, tokenizer = await get_models(config.model_name)
 
     # Update model state if provided (for fine-tuning)
     if model_state:
-        state_dict = pickle.loads(model_state)
-        policy_model.load_state_dict(state_dict)
+        policy_model.load_state_dict(model_state)
 
     policy_model.eval()  # Set to eval for generation
     device = torch.device(config.device)
@@ -225,15 +223,14 @@ async def generate_response_batch(
 async def compute_grpo_gradients(
         training_batch: TrainingBatch,
         config: GRPOConfig,
-        model_state: bytes = None
-) -> Tuple[bytes, float]:
+        model_state: Optional[Dict[str, Any]] = None
+) -> Tuple[Dict[str, Any], float]:
     """Compute GRPO gradients on GPU and return gradient updates"""
     policy_model, ref_model, tokenizer = await get_models(config.model_name)
 
     # Update model state if provided
     if model_state:
-        state_dict = pickle.loads(model_state)
-        policy_model.load_state_dict(state_dict)
+        policy_model.load_state_dict(model_state)
 
     policy_model.train()
     device = torch.device(config.device)
@@ -293,8 +290,7 @@ async def compute_grpo_gradients(
         # Compute KL divergence
         kl_div = (policy_log_probs_sum - ref_log_probs_sum)
 
-        # Convert rewards and advantages to tensors
-        rewards_tensor = torch.tensor(rewards, device=device, dtype=torch.float32)
+        # Convert advantages to tensors
         advantages_tensor = torch.tensor(advantages, device=device, dtype=torch.float32)
 
         # GRPO objective: maximize reward while minimizing KL divergence
@@ -315,7 +311,7 @@ async def compute_grpo_gradients(
     optimizer.zero_grad()
 
     # Return updated model state
-    updated_state = pickle.dumps(policy_model.state_dict())
+    updated_state = policy_model.state_dict()
     avg_loss = total_loss / len(training_batch.prompts)
 
     return updated_state, avg_loss
@@ -387,35 +383,28 @@ async def compute_batch_advantages(
 # 5. TRAINING ORCHESTRATION
 # =============================================================================
 
+@cpu_env.task
 async def save_checkpoint(
-        model_state: bytes,
-        training_state: TrainingState,
-        output_dir: str = "/tmp"
-) -> File:
-    """Save training checkpoint"""
-    import os
-
+        model_state: Dict[str, Any],
+        training_state: TrainingState
+) -> ModelCheckpoint:
+    """Save training checkpoint - Flyte handles serialization automatically"""
     checkpoint = ModelCheckpoint(
         state_dict=model_state,
-        optimizer_state=b"",  # Could add optimizer state if needed
+        optimizer_state=None,  # Could add optimizer state if needed
         training_state=training_state
     )
 
-    checkpoint_path = os.path.join(output_dir, f"grpo_checkpoint_epoch_{training_state.epoch}.pkl")
-
-    with open(checkpoint_path, 'wb') as f:
-        pickle.dump(checkpoint, f)
-
-    logger.info(f"Checkpoint saved: {checkpoint_path}")
-    return File(path=checkpoint_path)
+    logger.info(f"Checkpoint created for epoch {training_state.epoch}")
+    return checkpoint
 
 
 async def train_epoch(
         prompts: List[str],
         config: GRPOConfig,
-        model_state: bytes,
+        model_state: Optional[Dict[str, Any]],
         epoch: int
-) -> Tuple[bytes, List[float]]:
+) -> Tuple[Optional[Dict[str, Any]], List[float]]:
     """Train one epoch with proper GPU/CPU task distribution"""
 
     # Split prompts into batches
@@ -464,8 +453,8 @@ async def grpo_training_workflow(
         config: GRPOConfig,
         train_prompts: List[str] = None,
         checkpoint_every: int = 1
-) -> File:
-    """Main GRPO training workflow"""
+) -> ModelCheckpoint:
+    """Main GRPO training workflow - leverages Flyte's native serialization for model states"""
 
     # Default prompts if none provided
     if train_prompts is None:
@@ -482,24 +471,24 @@ async def grpo_training_workflow(
 
     logger.info(f"Starting GRPO training with config: {asdict(config)}")
 
-    # Initialize model state (empty at start)
-    current_model_state = b""  # Will be loaded in first task
+    # Initialize model state (None at start - will be loaded from base model in first task)
+    current_model_state: Optional[Dict[str, Any]] = None
     all_losses = []
 
-    # Training loop
+    # Training loop - Flyte handles model state serialization automatically
     for epoch in range(config.num_epochs):
         logger.info(f"Starting epoch {epoch + 1}/{config.num_epochs}")
 
-        # Train one epoch
+        # Train one epoch - model loading/saving handled internally
         current_model_state, epoch_losses = await train_epoch(
             train_prompts, config, current_model_state, epoch
         )
 
         all_losses.extend(epoch_losses)
-        avg_epoch_loss = np.mean(epoch_losses)
+        avg_epoch_loss = float(np.mean(epoch_losses))
         logger.info(f"Epoch {epoch + 1} completed. Average loss: {avg_epoch_loss:.4f}")
 
-        # Save checkpoint
+        # Save checkpoint periodically
         if epoch % checkpoint_every == 0:
             training_state = TrainingState(
                 epoch=epoch,
@@ -509,16 +498,16 @@ async def grpo_training_workflow(
                 config=config
             )
 
-            checkpoint_file = await save_checkpoint(
+            checkpoint = await save_checkpoint(
                 current_model_state, training_state
             )
-            logger.info(f"Checkpoint saved at epoch {epoch + 1}")
+            logger.info(f"Checkpoint created at epoch {epoch + 1}: {checkpoint.training_state.total_loss:.4f} loss")
 
     # Final checkpoint
     final_training_state = TrainingState(
         epoch=config.num_epochs,
         batch_idx=0,
-        total_loss=np.mean(all_losses[-10:]) if all_losses else 0.0,
+        total_loss=float(np.mean(all_losses[-10:])) if all_losses else 0.0,
         losses_history=all_losses,
         config=config
     )
