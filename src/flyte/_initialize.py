@@ -246,8 +246,10 @@ async def init_from_config(
         default is set using the default initialization policies
     :return: None
     """
-    import flyte.config as config
     from rich.highlighter import ReprHighlighter
+
+    import flyte.config as config
+
     cfg: config.Config
     if path_or_config is None:
         # If no path is provided, use the default config file
