@@ -40,6 +40,21 @@ def log_format_from_env() -> str:
     return os.environ.get("LOG_FORMAT", "json")
 
 
+def _get_console():
+    """
+    Get the console.
+    """
+    from rich.console import Console
+
+    try:
+        width = os.get_terminal_size().columns
+    except Exception as e:
+        logger.debug(f"Failed to get terminal size: {e}")
+        width = 160
+
+    return Console(width=width)
+
+
 def get_rich_handler(log_level: int) -> Optional[logging.Handler]:
     """
     Upgrades the global loggers to use Rich logging.
@@ -51,14 +66,8 @@ def get_rich_handler(log_level: int) -> Optional[logging.Handler]:
         return None
 
     import click
-    from rich.console import Console
+    from rich.highlighter import NullHighlighter
     from rich.logging import RichHandler
-
-    try:
-        width = os.get_terminal_size().columns
-    except Exception as e:
-        logger.debug(f"Failed to get terminal size: {e}")
-        width = 160
 
     handler = RichHandler(
         tracebacks_suppress=[click],
@@ -66,8 +75,10 @@ def get_rich_handler(log_level: int) -> Optional[logging.Handler]:
         omit_repeated_times=False,
         show_path=False,
         log_time_format="%H:%M:%S.%f",
-        console=Console(width=width),
+        console=_get_console(),
         level=log_level,
+        highlighter=NullHighlighter(),
+        markup=True,
     )
 
     formatter = logging.Formatter(fmt="%(filename)s:%(lineno)d - %(message)s")
