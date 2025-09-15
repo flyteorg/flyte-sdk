@@ -22,6 +22,7 @@ from flyte._image import (
     Layer,
     PipOption,
     PipPackages,
+    PoetryProject,
     PythonWheels,
     Requirements,
     UVProject,
@@ -57,6 +58,34 @@ COPY $PYPROJECT_PATH $PYPROJECT_PATH
 RUN --mount=type=cache,sharing=locked,mode=0777,target=/root/.cache/uv,id=uv \
     $SECRET_MOUNT \
     uv sync --active $PIP_INSTALL_ARGS --project $PYPROJECT_PATH
+""")
+
+POETRY_WITHOUT_PROJECT_INSTALL_TEMPLATE = Template("""\
+RUN --mount=type=cache,sharing=locked,mode=0777,target=/root/.cache/uv,id=uv \
+    --mount=type=bind,target=poetry.lock,src=$POETRY_LOCK_PATH \
+    --mount=type=bind,target=pyproject.toml,src=$PYPROJECT_PATH \
+    $SECRET_MOUNT \
+    uv pip install poetry
+""")
+
+POETRY_INSTALL_TEMPLATE = Template("""\
+COPY $PYPROJECT_PATH $PYPROJECT_PATH
+RUN --mount=type=cache,sharing=locked,mode=0777,target=/root/.cache/uv,id=uv \
+    $SECRET_MOUNT \
+    uv pip install poetry
+""")
+
+POETRY_LOCK_INSTALL_TEMPLATE = Template("""\
+ENV POETRY_CACHE_DIR=/tmp/poetry_cache \
+    POETRY_VIRTUALENVS_IN_PROJECT=true
+
+# poetry install does not work running in /, so we move to /root to create the venv
+WORKDIR /root
+RUN --mount=type=cache,sharing=locked,mode=0777,target=/tmp/poetry_cache,id=poetry \
+    --mount=type=bind,target=poetry.lock,src=poetry.lock \
+    --mount=type=bind,target=pyproject.toml,src=pyproject.toml \
+    $SECRET_MOUNT \
+    poetry install $POETRY_INSTALL_ARGS
 """)
 
 UV_PACKAGE_INSTALL_COMMAND_TEMPLATE = Template("""\
@@ -255,6 +284,34 @@ class UVProjectHandler:
         return dockerfile
 
 
+class PoetryProjectHandler:
+    @staticmethod
+    async def handel(layer: PoetryProject, context_path: Path, dockerfile: str) -> str:
+        secret_mounts = _get_secret_mounts_layer(layer.secret_mounts)
+        if layer.extra_args and "--no-root" in layer.extra_args:
+            # Only Copy pyproject.yaml and poetry.lock.
+            pyproject_dst = copy_files_to_context(layer.pyproject, context_path)
+            poetry_lock_dst = copy_files_to_context(layer.poetry_lock, context_path)
+            delta = POETRY_WITHOUT_PROJECT_INSTALL_TEMPLATE.substitute(
+                POETRY_LOCK_PATH=poetry_lock_dst.relative_to(context_path),
+                PYPROJECT_PATH=pyproject_dst.relative_to(context_path),
+                SECRET_MOUNT=secret_mounts,
+            )
+        else:
+            # Copy the entire project.
+            pyproject_dst = copy_files_to_context(layer.pyproject.parent, context_path)
+            delta = POETRY_INSTALL_TEMPLATE.substitute(
+                PYPROJECT_PATH=pyproject_dst.relative_to(context_path),
+                SECRET_MOUNT=secret_mounts,
+            )
+        delta += POETRY_LOCK_INSTALL_TEMPLATE.substitute(
+            POETRY_INSTALL_ARGS=" ".join(layer.get_poetry_install_args()),
+            SECRET_MOUNT=secret_mounts,
+        )
+        dockerfile += delta
+        return dockerfile
+
+
 class DockerIgnoreHandler:
     @staticmethod
     async def handle(layer: DockerIgnore, context_path: Path, _: str):
@@ -422,6 +479,10 @@ async def _process_layer(
         case UVProject():
             # Handle UV project
             dockerfile = await UVProjectHandler.handle(layer, context_path, dockerfile)
+
+        case PoetryProject():
+            # Handle Poetry project
+            dockerfile = await PoetryProjectHandler.handel(layer, context_path, dockerfile)
 
         case CopyConfig():
             # Handle local files and folders

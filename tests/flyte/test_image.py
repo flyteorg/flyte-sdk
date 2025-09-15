@@ -164,3 +164,16 @@ def test_image_uri_consistency_for_uvscript():
     # This value should work across python versions in CI because all values have been specified above and are hardcoded
     # Please don't change this value unless you are sure it's the right thing to do.
     assert img.identifier == "jbBYppyNmLmWb13gy6ts8g", img._layers
+
+def test_poetry_project_validate_missing_pyproject():
+    import tempfile
+
+    from flyte._image import PoetryProject
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        non_existent_pyproject = Path(tmpdir) / "non_existent_pyproject.toml"
+        non_existent_poetry_lock = Path(tmpdir) / "non_existent_poetry.lock"
+        poetry_project = PoetryProject(pyproject=non_existent_pyproject, poetry_lock=non_existent_poetry_lock)
+
+        with pytest.raises(FileNotFoundError, match="pyproject.toml file .* does not exist"):
+            poetry_project.validate()

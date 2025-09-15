@@ -16,7 +16,7 @@ from typing import List, Optional, Tuple, Union
 import click
 from rich.tree import Tree
 
-from flyte._logging import logger, _get_console
+from flyte._logging import _get_console, logger
 
 from ._ignore import Ignore, IgnoreGroup
 from ._utils import CopyFiles, _filehash_update, _pathhash_update, ls_files, tar_strip_file_attributes
@@ -26,7 +26,7 @@ FAST_FILEENDING = ".tar.gz"
 
 
 def print_ls_tree(source: os.PathLike, ls: typing.List[str]):
-    logger.info("Files to be copied for fast registration...") # noqa: T201
+    logger.info("Files to be copied for fast registration...")
 
     tree_root = Tree(
         f"File structure:\n:open_file_folder: {source}",
