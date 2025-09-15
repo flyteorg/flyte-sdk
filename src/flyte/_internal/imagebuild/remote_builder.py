@@ -42,7 +42,6 @@ if TYPE_CHECKING:
     from flyte._protos.imagebuilder import definition_pb2 as image_definition_pb2
 
 IMAGE_TASK_NAME = "build-image"
-OPTIMIZE_TASK_NAME = "optimize-task"
 IMAGE_TASK_PROJECT = "system"
 IMAGE_TASK_DOMAIN = "production"
 
@@ -126,19 +125,6 @@ class RemoteImageBuilder(ImageBuilder):
 
         if run_details.action_details.raw_phase == run_definition_pb2.PHASE_SUCCEEDED:
             logger.warning(click.style(f"✅ Build completed in {elapsed}!", bold=True, fg="green"))
-            try:
-                entity = remote.Task.get(
-                    name=OPTIMIZE_TASK_NAME,
-                    project=IMAGE_TASK_PROJECT,
-                    domain=IMAGE_TASK_DOMAIN,
-                    auto_version="latest",
-                )
-                await flyte.with_runcontext(project=IMAGE_TASK_PROJECT, domain=IMAGE_TASK_DOMAIN).run.aio(
-                    entity, target_image=image_name
-                )
-            except Exception as e:
-                # Ignore the error if optimize is not enabled in the backend.
-                logger.warning(f"Failed to run optimize task with error: {e}")
         else:
             raise flyte.errors.ImageBuildError(f"❌ Build failed in {elapsed} at {click.style(run.url, fg='cyan')}")
 
