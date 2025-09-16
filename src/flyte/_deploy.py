@@ -3,11 +3,10 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import typing
-
-import cloudpickle
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
 
+import cloudpickle
 import rich.repr
 
 import flyte.errors
