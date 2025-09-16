@@ -2,16 +2,17 @@ from pathlib import Path
 
 from flyteidl.core import interface_pb2
 from sqlalchemy import Column, LargeBinary, String, delete
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.orm import DeclarativeBase
 
 from flyte._internal.runtime import convert
 from flyte._protos.workflow import run_definition_pb2
 
 CACHE_LOCATION = "~/.flyte/local-cache"
 
-Base = declarative_base()
+
+class Base(DeclarativeBase):
+    pass
 
 
 class CachedOutput(Base):
@@ -26,10 +27,10 @@ class LocalTaskCache(object):
     This class implements a persistent store able to cache the result of local task executions.
     """
 
-    _engine = None
-    _session_factory = None
+    _engine: AsyncEngine | None = None
+    _session_factory: async_sessionmaker[AsyncSession] | None = None
     _initialized: bool = False
-    _db_path: str = None
+    _db_path: str | None = None
 
     @staticmethod
     def _get_cache_path() -> str:
@@ -46,7 +47,7 @@ class LocalTaskCache(object):
         if not LocalTaskCache._initialized:
             db_path = LocalTaskCache._get_cache_path()
             LocalTaskCache._engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}")
-            LocalTaskCache._session_factory = sessionmaker(
+            LocalTaskCache._session_factory = async_sessionmaker(
                 bind=LocalTaskCache._engine, class_=AsyncSession, expire_on_commit=False
             )
 
@@ -61,7 +62,7 @@ class LocalTaskCache(object):
         if not LocalTaskCache._initialized:
             await LocalTaskCache.initialize()
 
-        async with LocalTaskCache._session_factory() as session:
+        async with LocalTaskCache._session_factory() as session:  # type: ignore[misc]
             await session.execute(delete(CachedOutput))
             await session.commit()
 
@@ -81,13 +82,13 @@ class LocalTaskCache(object):
             task_name, inputs_hash, task_interface, cache_version, ignore_input_vars, proto_inputs.proto_inputs
         )
 
-        async with LocalTaskCache._session_factory() as session:
+        async with LocalTaskCache._session_factory() as session:  # type: ignore[misc]
             cached_output = await session.get(CachedOutput, cache_key)
             if cached_output is None:
                 return None
             # Convert the cached output bytes to literal
             outputs = run_definition_pb2.Outputs()
-            outputs.ParseFromString(cached_output.output_bytes)
+            outputs.ParseFromString(cached_output.output_bytes)  # type: ignore[arg-type]
             return convert.Outputs(proto_outputs=outputs)
 
     @staticmethod
@@ -107,12 +108,12 @@ class LocalTaskCache(object):
             task_name, inputs_hash, task_interface, cache_version, ignore_input_vars, proto_inputs.proto_inputs
         )
 
-        async with LocalTaskCache._session_factory() as session:
+        async with LocalTaskCache._session_factory() as session:  # type: ignore[misc]
             existing = await session.get(CachedOutput, cache_key)
 
             # NOTE: We will directly update the value in cache if it already exists
             if existing:
-                existing.output_bytes = value.proto_outputs.SerializeToString()
+                existing.output_bytes = value.proto_outputs.SerializeToString()  # type: ignore[assignment]
             else:
                 new_cache = CachedOutput(id=cache_key, output_bytes=value.proto_outputs.SerializeToString())
                 session.add(new_cache)

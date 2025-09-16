@@ -84,17 +84,17 @@ class LocalController:
 
         inputs = await convert.convert_from_native_to_inputs(_task.native_interface, *args, **kwargs)
         inputs_hash = convert.generate_inputs_hash_from_proto(inputs.proto_inputs)
-        serialized_inputs = inputs.proto_inputs.SerializeToString(deterministic=True)
         task_interface = transform_native_to_typed_interface(_task.interface)
 
         sub_action_id, sub_action_output_path = convert.generate_sub_action_id_and_output_path(
-            tctx, _task.name, serialized_inputs, 0
+            tctx, _task.name, inputs_hash, 0
         )
         sub_action_raw_data_path = tctx.raw_data_path
 
-        out = await LocalTaskCache.get(
-            _task.name, inputs_hash, inputs, task_interface, tctx.version, list(_task.cache.ignored_inputs)
-        )
+        from flyte._cache.cache import Cache
+
+        ignored_inputs = list(_task.cache.get_ignored_inputs()) if isinstance(_task.cache, Cache) else []
+        out = await LocalTaskCache.get(_task.name, inputs_hash, inputs, task_interface, tctx.version, ignored_inputs)
 
         if out is None:
             out, err = await direct_dispatch(
@@ -118,9 +118,10 @@ class LocalController:
                     raise flyte.errors.RuntimeSystemError("BadError", "Unknown error")
 
             # store into cache
-            await LocalTaskCache.set(
-                _task.name, inputs_hash, inputs, task_interface, tctx.version, list(_task.cache.ignored_inputs), out
-            )
+            if out is not None:
+                await LocalTaskCache.set(
+                    _task.name, inputs_hash, inputs, task_interface, tctx.version, ignored_inputs, out
+                )
 
         if _task.native_interface.outputs:
             if out is None:
@@ -167,11 +168,11 @@ class LocalController:
             converted_inputs = await convert.convert_from_native_to_inputs(_interface, *args, **kwargs)
             assert converted_inputs
 
-        serialized_inputs = converted_inputs.proto_inputs.SerializeToString(deterministic=True)
+        inputs_hash = convert.generate_inputs_hash_from_proto(converted_inputs.proto_inputs)
         action_id, action_output_path = convert.generate_sub_action_id_and_output_path(
             tctx,
             _func.__name__,
-            serialized_inputs,
+            inputs_hash,
             0,
         )
         assert action_output_path
