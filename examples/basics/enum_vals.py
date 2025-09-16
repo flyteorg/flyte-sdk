@@ -61,6 +61,7 @@ async def literal_echo(
 
 @env.task
 async def literal_task(i: Intensity, j: IntLiteral, k: MixedLiteral) -> str:
+    assert i in ("low", "medium", "high")
     return f"Intensity is {i}, IntLiteral is {j}, MixedLiteral is {k}"
 
 
