@@ -43,6 +43,16 @@ class DeployArguments:
             )
         },
     )
+    root_dir: str | None = field(
+        default=None,
+        metadata={
+            "click.option": click.Option(
+                ["--root-dir"],
+                type=str,
+                help="Override the root source directory, helpful when working with monorepos.",
+            )
+        },
+    )
     recursive: bool = field(
         default=False,
         metadata={
@@ -99,7 +109,7 @@ class DeployEnvCommand(click.RichCommand):
         console = Console()
         console.print(f"Deploying root - environment: {self.env_name}")
         obj: CLIConfig = ctx.obj
-        obj.init(self.deploy_args.project, self.deploy_args.domain)
+        obj.init(self.deploy_args.project, self.deploy_args.domain, root_dir=self.deploy_args.root_dir)
         with console.status("Deploying...", spinner="dots"):
             deployment = flyte.deploy(
                 self.env,
