@@ -25,6 +25,7 @@ from flyte._image import (
     PipOption,
     PipPackages,
     PythonWheels,
+    PoetryProject,
     Requirements,
     UVProject,
     UVScript,
@@ -281,6 +282,27 @@ def _get_layers_proto(image: Image, context_path: Path) -> "image_definition_pb2
                 )
             )
             layers.append(uv_layer)
+        elif isinstance(layer, PoetryProject):
+            for line in layer.pyproject.read_text().splitlines():
+                if "tool.poetry.source" in line:
+                    raise ValueError("External sources are not supported in pyproject.toml")
+
+            if layer.extra_args and "--no-root" in layer.extra_args:
+                # Copy pyproject itself
+                pyproject_dst = copy_files_to_context(layer.pyproject, context_path)
+            else:
+                # Copy the entire project
+                pyproject_dst = copy_files_to_context(layer.pyproject.parent, context_path)
+
+            poetry_layer = image_definition_pb2.Layer(
+                poetry_project=image_definition_pb2.PoetryProject(
+                    pyproject=str(pyproject_dst.relative_to(context_path)),
+                    poetry_lock=str(copy_files_to_context(layer.poetry_lock, context_path).relative_to(context_path)),
+                    extra_args=layer.extra_args,
+                    secret_mounts=secret_mounts,
+                )
+            )
+            layers.append(poetry_layer)
         elif isinstance(layer, Commands):
             commands_layer = image_definition_pb2.Layer(
                 commands=image_definition_pb2.Commands(

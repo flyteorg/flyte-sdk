@@ -1,5 +1,5 @@
 from flyteidl.core import security_pb2 as _security_pb2
-from flyte._protos.validate.validate import validate_pb2 as _validate_pb2
+from validate import validate_pb2 as _validate_pb2
 from google.protobuf.internal import containers as _containers
 from google.protobuf import descriptor as _descriptor
 from google.protobuf import message as _message
@@ -119,16 +119,16 @@ class Env(_message.Message):
     def __init__(self, env_variables: _Optional[_Mapping[str, str]] = ...) -> None: ...
 
 class PoetryProject(_message.Message):
-    __slots__ = ["pyproject", "poetry_lock", "options", "secret_mounts"]
+    __slots__ = ["pyproject", "poetry_lock", "extra_args", "secret_mounts"]
     PYPROJECT_FIELD_NUMBER: _ClassVar[int]
     POETRY_LOCK_FIELD_NUMBER: _ClassVar[int]
-    OPTIONS_FIELD_NUMBER: _ClassVar[int]
+    EXTRA_ARGS_FIELD_NUMBER: _ClassVar[int]
     SECRET_MOUNTS_FIELD_NUMBER: _ClassVar[int]
     pyproject: str
     poetry_lock: str
-    options: PipOptions
+    extra_args: str
     secret_mounts: _containers.RepeatedCompositeFieldContainer[_security_pb2.Secret]
-    def __init__(self, pyproject: _Optional[str] = ..., poetry_lock: _Optional[str] = ..., options: _Optional[_Union[PipOptions, _Mapping]] = ..., secret_mounts: _Optional[_Iterable[_Union[_security_pb2.Secret, _Mapping]]] = ...) -> None: ...
+    def __init__(self, pyproject: _Optional[str] = ..., poetry_lock: _Optional[str] = ..., extra_args: _Optional[str] = ..., secret_mounts: _Optional[_Iterable[_Union[_security_pb2.Secret, _Mapping]]] = ...) -> None: ...
 
 class Layer(_message.Message):
     __slots__ = ["apt_packages", "pip_packages", "commands", "requirements", "python_wheels", "workdir", "copy_config", "uv_project", "env", "poetry_project"]
