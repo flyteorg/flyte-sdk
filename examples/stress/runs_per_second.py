@@ -49,7 +49,7 @@ async def runs_per_second(max_rps: int = 50, n: int = 500):
     timestamps = []
 
     # Create report tabs
-    overview_tab = flyte.report.get_tab("Overview")
+    overview_tab = flyte.report.get_tab("main")
     performance_tab = flyte.report.get_tab("Performance Charts")
     raw_data_tab = flyte.report.get_tab("Raw Data")
 
