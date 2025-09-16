@@ -148,7 +148,7 @@ class TaskEnvironment(Environment):
 
     def task(
         self,
-        _func=None,
+        _func: Callable[P, R] | None = None,
         *,
         short_name: Optional[str] = None,
         cache: CacheRequest | None = None,
