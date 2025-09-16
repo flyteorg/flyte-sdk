@@ -165,6 +165,7 @@ def test_image_uri_consistency_for_uvscript():
     # Please don't change this value unless you are sure it's the right thing to do.
     assert img.identifier == "jbBYppyNmLmWb13gy6ts8g", img._layers
 
+
 def test_poetry_project_validate_missing_pyproject():
     import tempfile
 

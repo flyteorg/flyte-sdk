@@ -157,9 +157,25 @@ class Run(ToJSONMixin):
         """
         Get the details of the run. This is a placeholder for getting the run details.
         """
-        if self._details is None:
+        if self._details is None or not self._details.done():
             self._details = await RunDetails.get_details.aio(self.pb2.action.id.run)
         return self._details
+
+    @syncify
+    async def inputs(self) -> ActionInputs:
+        """
+        Get the inputs of the run. This is a placeholder for getting the run inputs.
+        """
+        details = await self.details.aio()
+        return await details.inputs()
+
+    @syncify
+    async def outputs(self) -> ActionOutputs:
+        """
+        Get the outputs of the run. This is a placeholder for getting the run outputs.
+        """
+        details = await self.details.aio()
+        return await details.outputs()
 
     @property
     def url(self) -> str:
