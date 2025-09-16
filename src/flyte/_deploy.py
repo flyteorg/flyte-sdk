@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import typing
+
+import cloudpickle
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
 
@@ -176,15 +179,18 @@ async def apply(deployment_plan: DeploymentPlan, copy_style: CopyFiles, dryrun: 
 
     image_cache = await _build_images(deployment_plan)
 
-    version = deployment_plan.version
-    if copy_style == "none" and not version:
+    if copy_style == "none" and not deployment_plan.version:
         raise flyte.errors.DeploymentError("Version must be set when copy_style is none")
     else:
         code_bundle = await build_code_bundle(from_dir=cfg.root_dir, dryrun=dryrun, copy_style=copy_style)
-        version = version or code_bundle.computed_version
-        # TODO we should update the version to include the image cache digest and code bundle digest. This is
-        # to ensure that changes in image dependencies, cause an update to the deployment version.
-        # TODO Also hash the environment and tasks to ensure that changes in the environment or tasks
+        if deployment_plan.version:
+            version = deployment_plan.version
+        else:
+            h = hashlib.md5()
+            h.update(cloudpickle.dumps(deployment_plan.envs))
+            h.update(code_bundle.computed_version.encode("utf-8"))
+            h.update(cloudpickle.dumps(image_cache))
+            version = h.hexdigest()
 
     sc = SerializationContext(
         project=cfg.project,
