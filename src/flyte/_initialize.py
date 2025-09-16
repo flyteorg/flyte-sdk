@@ -7,6 +7,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable, List, Literal, Optional, TypeVar
 
+from flyte._image import Image
 from flyte.errors import InitializationError
 from flyte.syncify import syncify
 
@@ -41,6 +42,7 @@ class _InitConfig(CommonInit):
     client: Optional[ClientSet] = None
     storage: Optional[Storage] = None
     image_builder: "ImageBuildEngine.ImageBuilderType" = "local"
+    images: typing.Dict[str, Image] | None = None
 
     def replace(self, **kwargs) -> _InitConfig:
         return replace(self, **kwargs)
@@ -141,6 +143,7 @@ async def init(
     storage: Storage | None = None,
     batch_size: int = 1000,
     image_builder: ImageBuildEngine.ImageBuilderType = "local",
+    images: typing.Dict[str, Image] | None = None,
     source_config_path: Optional[Path] = None,
 ) -> None:
     """
@@ -177,6 +180,7 @@ async def init(
     :param batch_size: Optional batch size for operations that use listings, defaults to 1000, so limit larger than
       batch_size will be split into multiple requests.
     :param image_builder: Optional image builder configuration, if not provided, the default image builder will be used.
+    :param images: Optional dict of images that can be used by referencing the image name.
     :param source_config_path: Optional path to the source configuration file (This is only used for documentation)
     :return: None
     """
@@ -226,6 +230,7 @@ async def init(
             org=org or org_from_endpoint(endpoint),
             batch_size=batch_size,
             image_builder=image_builder,
+            images=images,
             source_config_path=source_config_path,
         )
 
@@ -294,6 +299,7 @@ async def init_from_config(
         root_dir=root_dir,
         log_level=log_level,
         image_builder=cfg.image.builder,
+        images=cfg.image.images,
         storage=storage,
         source_config_path=cfg_path,
     )

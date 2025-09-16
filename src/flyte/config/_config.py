@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 
 import rich.repr
 
+from flyte import Image
 from flyte._logging import logger
 from flyte.config import _internal
 from flyte.config._reader import ConfigFile, get_config_file, read_file_if_exists
@@ -148,6 +149,7 @@ class ImageConfig(object):
     """
 
     builder: str | None = None
+    images: typing.Dict[str, Image] = field(default_factory=dict)
 
     @classmethod
     def auto(cls, config_file: typing.Optional[typing.Union[str, ConfigFile]] = None) -> "ImageConfig":
@@ -159,7 +161,15 @@ class ImageConfig(object):
         config_file = get_config_file(config_file)
         kwargs: typing.Dict[str, typing.Any] = {}
         kwargs = set_if_exists(kwargs, "builder", _internal.Image.BUILDER.read(config_file))
+        # TODO: We can add support for setting images in the config file
         return ImageConfig(**kwargs)
+
+    @classmethod
+    def add_image(cls, name: str, image: Image) -> None:
+        """
+        Adds an image to the ImageConfig.
+        """
+        cls.images[name] = image
 
 
 @rich.repr.auto
