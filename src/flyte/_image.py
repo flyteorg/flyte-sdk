@@ -203,6 +203,7 @@ class UVProject(PipOption, Layer):
 
         super().update_hash(hasher)
         filehash_update(self.uvlock, hasher)
+        filehash_update(self.pyproject, hasher)
 
 
 @rich.repr.auto
