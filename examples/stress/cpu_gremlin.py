@@ -52,6 +52,6 @@ async def main(sleep: float = 1.0, n: int = 10) -> Tuple[List[str], int]:
 
 
 if __name__ == "__main__":
-    flyte.init_from_config("../../config.yaml")
+    flyte.init_from_config()
     r = flyte.run(main, sleep=5.0, n=50)  # Adjust the number of sleeper tasks as needed
     print(r.url)

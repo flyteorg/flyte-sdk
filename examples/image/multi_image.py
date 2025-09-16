@@ -22,7 +22,7 @@ async def t4(data: str = "hello") -> str:
 
 
 if __name__ == "__main__":
-    flyte.init_from_config("../../config.yaml")
+    flyte.init_from_config()
     run = flyte.run(t4, data="hello world")
     print(run.name)
     print(run.url)

@@ -33,6 +33,7 @@ class CommonInit:
     project: str | None = None
     domain: str | None = None
     batch_size: int = 1000
+    source_config_path: Optional[Path] = None  # Only used for documentation
 
 
 @dataclass(init=True, kw_only=True, repr=True, eq=True, frozen=True)
@@ -110,6 +111,12 @@ async def _initialize_client(
     )
 
 
+def _initialize_logger(log_level: int | None = None):
+    initialize_logger(enable_rich=True)
+    if log_level:
+        initialize_logger(log_level=log_level, enable_rich=True)
+
+
 @syncify
 async def init(
     org: str | None = None,
@@ -134,6 +141,7 @@ async def init(
     storage: Storage | None = None,
     batch_size: int = 1000,
     image_builder: ImageBuildEngine.ImageBuilderType = "local",
+    source_config_path: Optional[Path] = None,
 ) -> None:
     """
     Initialize the Flyte system with the given configuration. This method should be called before any other Flyte
@@ -169,17 +177,12 @@ async def init(
     :param batch_size: Optional batch size for operations that use listings, defaults to 1000, so limit larger than
       batch_size will be split into multiple requests.
     :param image_builder: Optional image builder configuration, if not provided, the default image builder will be used.
-
+    :param source_config_path: Optional path to the source configuration file (This is only used for documentation)
     :return: None
     """
-    from flyte._tools import ipython_check
     from flyte._utils import get_cwd_editable_install, org_from_endpoint, sanitize_endpoint
 
-    interactive_mode = ipython_check()
-
-    initialize_logger(enable_rich=interactive_mode)
-    if log_level:
-        initialize_logger(log_level=log_level, enable_rich=interactive_mode)
+    _initialize_logger(log_level=log_level)
 
     global _init_config  # noqa: PLW0603
 
@@ -223,6 +226,7 @@ async def init(
             org=org or org_from_endpoint(endpoint),
             batch_size=batch_size,
             image_builder=image_builder,
+            source_config_path=source_config_path,
         )
 
 
@@ -231,6 +235,7 @@ async def init_from_config(
     path_or_config: str | Path | Config | None = None,
     root_dir: Path | None = None,
     log_level: int | None = None,
+    storage: Storage | None = None,
 ) -> None:
     """
     Initialize the Flyte system using a configuration file or Config object. This method should be called before any
@@ -243,11 +248,15 @@ async def init_from_config(
         if not available, the current working directory.
     :param log_level: Optional logging level for the framework logger,
         default is set using the default initialization policies
+    :param storage: Optional blob store (S3, GCS, Azure) configuration if needed to access (i.e. using Minio)
     :return: None
     """
+    from rich.highlighter import ReprHighlighter
+
     import flyte.config as config
 
     cfg: config.Config
+    cfg_path: Optional[Path] = None
     if path_or_config is None:
         # If no path is provided, use the default config file
         cfg = config.auto()
@@ -266,7 +275,9 @@ async def init_from_config(
     else:
         cfg = path_or_config
 
-    logger.debug(f"Flyte config initialized as {cfg}")
+    _initialize_logger(log_level=log_level)
+
+    logger.info(f"Flyte config initialized as {cfg}", extra={"highlighter": ReprHighlighter()})
     await init.aio(
         org=cfg.task.org,
         project=cfg.task.project,
@@ -283,6 +294,8 @@ async def init_from_config(
         root_dir=root_dir,
         log_level=log_level,
         image_builder=cfg.image.builder,
+        storage=storage,
+        source_config_path=cfg_path,
     )
 
 

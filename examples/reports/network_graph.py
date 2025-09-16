@@ -329,7 +329,7 @@ def generate_network_data():
 
 
 if __name__ == "__main__":
-    flyte.init_from_config("../../config.yaml")
+    flyte.init_from_config()
     run = flyte.run(generate_network_graph)
     print(run.name)
     print(run.url)

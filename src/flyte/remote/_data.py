@@ -16,7 +16,6 @@ from flyteidl.service import dataproxy_pb2
 from google.protobuf import duration_pb2
 
 from flyte._initialize import CommonInit, ensure_client, get_client, get_common_config
-from flyte._logging import make_hyperlink
 from flyte.errors import InitializationError, RuntimeSystemError
 from flyte.syncify import syncify
 
@@ -91,7 +90,7 @@ async def _upload_single_file(
             raise RuntimeSystemError(e.code().value, f"Failed to get signed url for {fp}: {e.details()}")
     except Exception as e:
         raise RuntimeSystemError(type(e).__name__, f"Failed to get signed url for {fp}.") from e
-    logger.debug(f"Uploading to {make_hyperlink('signed url', resp.signed_url)} for {fp}")
+    logger.debug(f"Uploading to [link={resp.signed_url}]signed url[/link] for [link=file://{fp}]{fp}[/link]")
     extra_headers = get_extra_headers_for_protocol(resp.native_url)
     extra_headers.update(resp.headers)
     encoded_md5 = b64encode(md5_bytes)
@@ -101,7 +100,7 @@ async def _upload_single_file(
         extra_headers.update({"Content-Length": str(content_length), "Content-MD5": encoded_md5.decode("utf-8")})
         async with httpx.AsyncClient(verify=verify) as aclient:
             put_resp = await aclient.put(resp.signed_url, headers=extra_headers, content=file)
-            if put_resp.status_code != 200:
+            if put_resp.status_code not in [200, 201, 204]:
                 raise RuntimeSystemError(
                     "UploadFailed",
                     f"Failed to upload {fp} to {resp.signed_url}, status code: {put_resp.status_code}, "

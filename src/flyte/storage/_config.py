@@ -61,6 +61,7 @@ class S3(Storage):
     endpoint: typing.Optional[str] = None
     access_key_id: typing.Optional[str] = None
     secret_access_key: typing.Optional[str] = None
+    region: typing.Optional[str] = None
 
     _KEY_ENV_VAR_MAPPING: ClassVar[typing.Dict[str, str]] = {
         "endpoint": "FLYTE_AWS_ENDPOINT",
@@ -76,7 +77,7 @@ class S3(Storage):
     _KEY_SKIP_SIGNATURE: ClassVar = "skip_signature"
 
     @classmethod
-    def auto(cls) -> S3:
+    def auto(cls, region: str | None = None) -> S3:
         """
         :return: Config
         """
@@ -88,6 +89,7 @@ class S3(Storage):
         kwargs = set_if_exists(kwargs, "endpoint", endpoint)
         kwargs = set_if_exists(kwargs, "access_key_id", access_key_id)
         kwargs = set_if_exists(kwargs, "secret_access_key", secret_access_key)
+        kwargs = set_if_exists(kwargs, "region", region)
 
         return S3(**kwargs)
 
@@ -141,6 +143,8 @@ class S3(Storage):
             kwargs["config"] = config
         kwargs["client_options"] = client_options or None
         kwargs["retry_config"] = retry_config or None
+        if self.region:
+            kwargs["region"] = self.region
 
         return kwargs
 

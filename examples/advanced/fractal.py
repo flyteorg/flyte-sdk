@@ -43,7 +43,7 @@ async def main_builder():
 
 
 async def main():
-    await flyte.init_from_config.aio("../../config.yaml")
+    await flyte.init_from_config.aio()
     out = await flyte.run.aio(tree, max_depth=2, n_children=2)
 
     print(f"Total nodes in the tree: {out}")

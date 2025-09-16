@@ -750,7 +750,7 @@ def generate_globe_data():
 
 
 if __name__ == "__main__":
-    flyte.init_from_config("../../config.yaml")
+    flyte.init_from_config()
     run = flyte.run(generate_globe_visualization)
     print(run.name)
     print(run.url)
