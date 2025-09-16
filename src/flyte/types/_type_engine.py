@@ -803,6 +803,12 @@ class EnumTransformer(TypeTransformer[enum.Enum]):
     async def to_python_value(self, lv: Literal, expected_python_type: Type[T]) -> T:
         if lv.HasField("scalar") and lv.scalar.HasField("binary"):
             return self.from_binary_idl(lv.scalar.binary, expected_python_type)  # type: ignore
+        from flyte._interface import LITERAL_ENUM
+
+        if expected_python_type.__name__ is LITERAL_ENUM:
+            # This is the case when python Literal types are used as enums. The class name is always LiteralEnum an
+            # hardcoded in flyte.models
+            return lv.scalar.primitive.string_value
         return expected_python_type(lv.scalar.primitive.string_value)  # type: ignore
 
     def guess_python_type(self, literal_type: LiteralType) -> Type[enum.Enum]:
