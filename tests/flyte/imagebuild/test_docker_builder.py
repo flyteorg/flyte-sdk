@@ -348,6 +348,7 @@ async def test_poetry_handler_without_project_install():
             result = await PoetryProjectHandler.handel(poetry_project, context_path, initial_dockerfile)
 
             assert "RUN --mount=type=cache,sharing=locked,mode=0777,target=/root/.cache/uv,id=uv" in result
+            assert "RUN --mount=type=cache,sharing=locked,mode=0777,target=/tmp/poetry_cache,id=poetry" in result
             assert "--mount=type=bind,target=poetry.lock,src=" in result
             assert "--mount=type=bind,target=pyproject.toml,src=" in result
             assert "uv pip install poetry" in result
@@ -372,7 +373,7 @@ async def test_poetry_handler_with_project_install():
             poetry_lock_file = user_folder / "poetry.lock"
             poetry_lock_file.write_text("[[package]]\nname = 'requests'\nversion = '2.28.0'")
 
-            # Create PoetryProject without --no-install-project flag
+            # Create PoetryProject without --no-root flag
             poetry_project = PoetryProject(pyproject=pyproject_file.absolute(), poetry_lock=None)
 
             initial_dockerfile = "FROM python:3.9\n"
@@ -383,6 +384,7 @@ async def test_poetry_handler_with_project_install():
             assert "COPY" in result
             assert "pyproject.toml" in result
             assert "RUN --mount=type=cache,sharing=locked,mode=0777,target=/root/.cache/uv,id=uv" in result
+            assert "RUN --mount=type=cache,sharing=locked,mode=0777,target=/tmp/poetry_cache,id=poetry" in result
             assert "uv pip install poetry" in result
             assert "ENV POETRY_CACHE_DIR=/tmp/poetry_cache" in result
             assert "POETRY_VIRTUALENVS_IN_PROJECT=true" in result

@@ -47,72 +47,80 @@ FLYTE_DOCKER_BUILDER_CACHE_TO = "FLYTE_DOCKER_BUILDER_CACHE_TO"
 
 UV_LOCK_WITHOUT_PROJECT_INSTALL_TEMPLATE = Template("""\
 RUN --mount=type=cache,sharing=locked,mode=0777,target=/root/.cache/uv,id=uv \
-    --mount=type=bind,target=uv.lock,src=$UV_LOCK_PATH \
-    --mount=type=bind,target=pyproject.toml,src=$PYPROJECT_PATH \
-    $SECRET_MOUNT \
-    uv sync --active $PIP_INSTALL_ARGS
+   --mount=type=bind,target=uv.lock,src=$UV_LOCK_PATH \
+   --mount=type=bind,target=pyproject.toml,src=$PYPROJECT_PATH \
+   $SECRET_MOUNT \
+   uv sync --active $PIP_INSTALL_ARGS
 """)
 
 UV_LOCK_INSTALL_TEMPLATE = Template("""\
 COPY $PYPROJECT_PATH $PYPROJECT_PATH
 RUN --mount=type=cache,sharing=locked,mode=0777,target=/root/.cache/uv,id=uv \
-    $SECRET_MOUNT \
-    uv sync --active $PIP_INSTALL_ARGS --project $PYPROJECT_PATH
+   $SECRET_MOUNT \
+   uv sync --active $PIP_INSTALL_ARGS --project $PYPROJECT_PATH
 """)
 
-POETRY_WITHOUT_PROJECT_INSTALL_TEMPLATE = Template("""\
+POETRY_lOCK_WITHOUT_PROJECT_INSTALL_TEMPLATE = Template("""\
 RUN --mount=type=cache,sharing=locked,mode=0777,target=/root/.cache/uv,id=uv \
-    --mount=type=bind,target=poetry.lock,src=$POETRY_LOCK_PATH \
-    --mount=type=bind,target=pyproject.toml,src=$PYPROJECT_PATH \
-    $SECRET_MOUNT \
-    uv pip install poetry
-""")
+   $SECRET_MOUNT \
+   uv pip install poetry
 
-POETRY_INSTALL_TEMPLATE = Template("""\
-COPY $PYPROJECT_PATH $PYPROJECT_PATH
-RUN --mount=type=cache,sharing=locked,mode=0777,target=/root/.cache/uv,id=uv \
-    $SECRET_MOUNT \
-    uv pip install poetry
-""")
-
-POETRY_LOCK_INSTALL_TEMPLATE = Template("""\
 ENV POETRY_CACHE_DIR=/tmp/poetry_cache \
-    POETRY_VIRTUALENVS_IN_PROJECT=true
+   POETRY_VIRTUALENVS_IN_PROJECT=true
 
 # poetry install does not work running in /, so we move to /root to create the venv
 WORKDIR /root
 RUN --mount=type=cache,sharing=locked,mode=0777,target=/tmp/poetry_cache,id=poetry \
-    --mount=type=bind,target=poetry.lock,src=poetry.lock \
-    --mount=type=bind,target=pyproject.toml,src=pyproject.toml \
-    $SECRET_MOUNT \
-    poetry install $POETRY_INSTALL_ARGS
+   --mount=type=bind,target=poetry.lock,src=$POETRY_LOCK_PATH \
+   --mount=type=bind,target=pyproject.toml,src=$PYPROJECT_PATH \
+   $SECRET_MOUNT \
+   poetry install $POETRY_INSTALL_ARGS
+""")
+
+POETRY_LOCK_INSTALL_TEMPLATE = Template("""\
+RUN --mount=type=cache,sharing=locked,mode=0777,target=/root/.cache/uv,id=uv \
+   $SECRET_MOUNT \
+   uv pip install poetry
+
+COPY $PYPROJECT_PATH $PYPROJECT_PATH
+
+ENV POETRY_CACHE_DIR=/tmp/poetry_cache \
+   POETRY_VIRTUALENVS_IN_PROJECT=true
+
+# poetry install does not work running in /, so we move to /root to create the venv
+WORKDIR /root
+RUN --mount=type=cache,sharing=locked,mode=0777,target=/tmp/poetry_cache,id=poetry \
+   --mount=type=bind,target=poetry.lock,src=poetry.lock \
+   --mount=type=bind,target=pyproject.toml,src=pyproject.toml \
+   $SECRET_MOUNT \
+   poetry install $POETRY_INSTALL_ARGS
 """)
 
 UV_PACKAGE_INSTALL_COMMAND_TEMPLATE = Template("""\
 RUN --mount=type=cache,sharing=locked,mode=0777,target=/root/.cache/uv,id=uv \
-    $REQUIREMENTS_MOUNT \
-    $SECRET_MOUNT \
-    uv pip install --python $$UV_PYTHON $PIP_INSTALL_ARGS
+   $REQUIREMENTS_MOUNT \
+   $SECRET_MOUNT \
+   uv pip install --python $$UV_PYTHON $PIP_INSTALL_ARGS
 """)
 
 UV_WHEEL_INSTALL_COMMAND_TEMPLATE = Template("""\
 RUN --mount=type=cache,sharing=locked,mode=0777,target=/root/.cache/uv,id=wheel \
-    --mount=source=/dist,target=/dist,type=bind \
-    $SECRET_MOUNT \
-    uv pip install --python $$UV_PYTHON $PIP_INSTALL_ARGS
+   --mount=source=/dist,target=/dist,type=bind \
+   $SECRET_MOUNT \
+   uv pip install --python $$UV_PYTHON $PIP_INSTALL_ARGS
 """)
 
 APT_INSTALL_COMMAND_TEMPLATE = Template("""\
 RUN --mount=type=cache,sharing=locked,mode=0777,target=/var/cache/apt,id=apt \
-    $SECRET_MOUNT \
-    apt-get update && apt-get install -y --no-install-recommends \
-    $APT_PACKAGES
+   $SECRET_MOUNT \
+   apt-get update && apt-get install -y --no-install-recommends \
+   $APT_PACKAGES
 """)
 
 UV_PYTHON_INSTALL_COMMAND = Template("""\
 RUN --mount=type=cache,sharing=locked,mode=0777,target=/root/.cache/uv,id=uv \
-    $SECRET_MOUNT \
-    uv pip install $PIP_INSTALL_ARGS
+   $SECRET_MOUNT \
+   uv pip install $PIP_INSTALL_ARGS
 """)
 
 # uv pip install --python /root/env/bin/python
@@ -122,24 +130,29 @@ DOCKER_FILE_UV_BASE_TEMPLATE = Template("""\
 FROM ghcr.io/astral-sh/uv:0.8.13 AS uv
 FROM $BASE_IMAGE
 
+
 USER root
+
 
 # Copy in uv so that later commands don't have to mount it in
 COPY --from=uv /uv /usr/bin/uv
 
+
 # Configure default envs
 ENV UV_COMPILE_BYTECODE=1 \
-    UV_LINK_MODE=copy \
-    VIRTUALENV=/opt/venv \
-    UV_PYTHON=/opt/venv/bin/python \
-    PATH="/opt/venv/bin:$$PATH"
+   UV_LINK_MODE=copy \
+   VIRTUALENV=/opt/venv \
+   UV_PYTHON=/opt/venv/bin/python \
+   PATH="/opt/venv/bin:$$PATH"
+
 
 # Create a virtualenv with the user specified python version
 RUN uv venv $$VIRTUALENV --python=$PYTHON_VERSION
 
+
 # Adds nvidia just in case it exists
 ENV PATH="$$PATH:/usr/local/nvidia/bin:/usr/local/cuda/bin" \
-    LD_LIBRARY_PATH="/usr/local/nvidia/lib64"
+   LD_LIBRARY_PATH="/usr/local/nvidia/lib64"
 """)
 
 # This gets added on to the end of the dockerfile
@@ -288,26 +301,25 @@ class PoetryProjectHandler:
     @staticmethod
     async def handel(layer: PoetryProject, context_path: Path, dockerfile: str) -> str:
         secret_mounts = _get_secret_mounts_layer(layer.secret_mounts)
+        poetry_install_args = " ".join(layer.get_poetry_install_args())
         if layer.extra_args and "--no-root" in layer.extra_args:
             # Only Copy pyproject.yaml and poetry.lock.
             pyproject_dst = copy_files_to_context(layer.pyproject, context_path)
             poetry_lock_dst = copy_files_to_context(layer.poetry_lock, context_path)
-            delta = POETRY_WITHOUT_PROJECT_INSTALL_TEMPLATE.substitute(
+            delta = POETRY_lOCK_WITHOUT_PROJECT_INSTALL_TEMPLATE.substitute(
                 POETRY_LOCK_PATH=poetry_lock_dst.relative_to(context_path),
                 PYPROJECT_PATH=pyproject_dst.relative_to(context_path),
+                POETRY_INSTALL_ARGS=poetry_install_args,
                 SECRET_MOUNT=secret_mounts,
             )
         else:
             # Copy the entire project.
             pyproject_dst = copy_files_to_context(layer.pyproject.parent, context_path)
-            delta = POETRY_INSTALL_TEMPLATE.substitute(
+            delta = POETRY_LOCK_INSTALL_TEMPLATE.substitute(
                 PYPROJECT_PATH=pyproject_dst.relative_to(context_path),
+                POETRY_INSTALL_ARGS=poetry_install_args,
                 SECRET_MOUNT=secret_mounts,
             )
-        delta += POETRY_LOCK_INSTALL_TEMPLATE.substitute(
-            POETRY_INSTALL_ARGS=" ".join(layer.get_poetry_install_args()),
-            SECRET_MOUNT=secret_mounts,
-        )
         dockerfile += delta
         return dockerfile
 
@@ -629,6 +641,7 @@ class DockerImageBuilder(ImageBuilder):
         in the main case, get the default Dockerfile template
           - start from the base image
           - use python to create a default venv and export variables
+
 
           Then for the layers
           - for each layer
