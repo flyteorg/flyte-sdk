@@ -568,7 +568,7 @@ class Image:
         from ._initialize import _get_init_config
 
         cfg = _get_init_config()
-        if name in cfg.images:
+        if cfg and name in cfg.images:
             img = cls._new(name=name, base_image=cfg.images[name])
         else:
             img = cls._new()

@@ -3,7 +3,7 @@ from __future__ import annotations
 import functools
 import threading
 import typing
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable, List, Literal, Optional, TypeVar
 
@@ -42,7 +42,7 @@ class _InitConfig(CommonInit):
     client: Optional[ClientSet] = None
     storage: Optional[Storage] = None
     image_builder: "ImageBuildEngine.ImageBuilderType" = "local"
-    images: typing.Dict[str, Image] | None = None
+    images: typing.Dict[str, str] = field(default_factory=dict)
 
     def replace(self, **kwargs) -> _InitConfig:
         return replace(self, **kwargs)
@@ -230,7 +230,7 @@ async def init(
             org=org or org_from_endpoint(endpoint),
             batch_size=batch_size,
             image_builder=image_builder,
-            images=images,
+            images=images or {},
             source_config_path=source_config_path,
         )
 

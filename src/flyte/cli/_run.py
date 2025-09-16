@@ -181,12 +181,10 @@ class RunTaskCommand(click.RichCommand):
         for value in values:
             if "=" in value:
                 image_name, image_uri = value.split("=", 1)
-                image = Image.from_base(image_uri)
-                cfg.images[image_name] = image
+                cfg.images[image_name] = image_uri
             else:
                 # If no name specified, use "default" as the name
-                image = Image.from_base(value)
-                cfg.images["default"] = image
+                cfg.images["default"] = value
 
     def get_params(self, ctx: click.Context) -> List[click.Parameter]:
         # Note this function may be called multiple times by click.
