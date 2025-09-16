@@ -21,6 +21,13 @@ image = (
     .with_local_v2()
 )
 
+torch_config = TorchJobConfig(
+    worker_node_config=WorkerNodeConfig(image="pytorch/pytorch:2.8.0-cuda12.9-cudnn9-runtime", replicas=2),
+    master_node_config=MasterNodeConfig(replicas=1),
+    nproc_per_node=2,
+    nnodes=2,
+)
+
 
 task_env = flyte.TaskEnvironment(
     name="task_env", resources=flyte.Resources(cpu=(1, 2), memory=("400Mi", "1000Mi")), image=image
@@ -28,12 +35,8 @@ task_env = flyte.TaskEnvironment(
 
 torch_env = flyte.TaskEnvironment(
     name="torch_env",
-    resources=flyte.Resources(cpu=(1, 2), memory=("400Mi", "1000Mi")),
-    plugin_config=TorchJobConfig(
-        worker_node_config=WorkerNodeConfig(image="pytorch/pytorch:2.8.0-cuda12.9-cudnn9-runtime", replicas=2),
-        master_node_config=MasterNodeConfig(replicas=1),
-        nproc_per_node=2,
-    ),
+    resources=flyte.Resources(cpu=(1, 2), memory=("1Gi", "2Gi")),
+    plugin_config=torch_config,
     image=image,
 )
 
@@ -117,4 +120,3 @@ if __name__ == "__main__":
     run = flyte.run(hello_torch_nested)
     print("run name:", run.name)
     print("run url:", run.url)
-    run.wait(run)
