@@ -111,7 +111,7 @@ class CLIConfig:
         """
         return replace(self, **kwargs)
 
-    def init(self, project: str | None = None, domain: str | None = None):
+    def init(self, project: str | None = None, domain: str | None = None, root_dir: str | None = None):
         from flyte.config._config import TaskConfig
 
         task_cfg = TaskConfig(
@@ -131,7 +131,7 @@ class CLIConfig:
 
         updated_config = self.config.with_params(platform_cfg, task_cfg)
 
-        flyte.init_from_config(updated_config, log_level=self.log_level)
+        flyte.init_from_config(updated_config, log_level=self.log_level, root_dir=root_dir)
 
 
 class InvokeBaseMixin:
