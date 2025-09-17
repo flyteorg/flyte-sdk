@@ -11,6 +11,9 @@ from flyte._internal.runtime import io
 from flyte._internal.runtime.convert import convert_from_native_to_inputs, convert_outputs_to_native
 from flyte._internal.runtime.entrypoints import load_and_run_task
 from flyte.models import ActionID, RawDataPath
+import flyte._utils as utils
+from flyte._internal.runtime import entrypoints
+
 
 env = flyte.TaskEnvironment(name="test")
 
@@ -67,3 +70,38 @@ async def test_parent_action_controller_mock(tmp_path):
     result = await io.load_outputs(path=str(outputs_path))
     native_result = await convert_outputs_to_native(parent_task.native_interface, outputs=result)
     assert native_result == ["Hello, world 0!", "Hello, world 1!", "Hello, world 2!"]
+
+
+# find out: if the task coroutine fails, what happens, what does the exception return?
+# flyte._internal.runtime.entrypoints._download_and_load_task
+@pytest.mark.asyncio
+async def test_parent_afdsafdsction_controller_mock(tmp_path, monkeypatch):
+    def fake_download_and_load_task(*args, **kwargs):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(entrypoints, "_download_and_load_task", fake_download_and_load_task)
+    await flyte.init.aio()
+    inputs = await convert_from_native_to_inputs(parent_task.native_interface, 3)
+    input_path = tmp_path / "inputs.pb"
+    async with aiofiles.open(input_path, "wb") as f:
+        await f.write(inputs.proto_inputs.SerializeToString())
+
+    async def _main_task_coroutine():
+        await asyncio.sleep(0.05)
+        await load_and_run_task(
+            resolver="flyte._internal.resolvers.default.DefaultTaskResolver",
+            resolver_args=["mod", "tests.flyte.test_parent_action", "instance", "parent_task"],
+            action=ActionID(name="test_run", run_name="test_root"),
+            raw_data_path=RawDataPath(path="raw_data_path"),
+            input_path=str(input_path),
+            output_path=str(tmp_path),
+            run_base_dir=str(tmp_path),
+            version="v1",
+            controller=create_controller("local"),
+        )
+    task_coroutine = _main_task_coroutine()
+
+    async def _other_async_fn():
+        await asyncio.sleep(10)
+
+    await utils.run_coros(task_coroutine, _other_async_fn())

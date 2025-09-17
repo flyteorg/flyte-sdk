@@ -165,7 +165,7 @@ async def load_and_run_task(
     task = await _download_and_load_task(code_bundle, resolver, resolver_args)
 
     await contextual_run(
-        extract_download_run_upload,
+        extract_download_run_upload,  # this call shared with rusty
         task,
         action=action,
         version=version,

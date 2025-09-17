@@ -169,7 +169,18 @@ def main(
         await utils.run_coros(controller_failure, task_coroutine)
         await controller.stop()
 
-    asyncio.run(_run_and_stop())
+    try:
+        asyncio.run(_run_and_stop())
+    except flyte.errors.RuntimeSystemError as e:
+        # write error file with system error and upload
+        from flyte._internal.runtime.io import upload_error
+
+        logger.error(f"Flyte runtime failed for action {name} with run name {run_name}, error: {e}")
+
+        path = await upload_error(err.err, outputs_path)
+        logger.error(f"Task {task.name} failed with error: {err}. Uploaded error to {path}")
+        return
+
     logger.warning(f"Flyte runtime completed for action {name} with run name {run_name}")
 
 
