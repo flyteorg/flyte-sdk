@@ -30,6 +30,6 @@ flyte.run(main, x=flyte.remote.Artifact.list("name_prefix", partition_match="x")
 ```
 """
 
-from ._wrapper import Metadata, new
+from ._wrapper import Artifact, Metadata, new
 
-__all__ = ["Metadata", "new"]
+__all__ = ["Artifact", "Metadata", "new"]

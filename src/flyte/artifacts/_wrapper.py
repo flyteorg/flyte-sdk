@@ -3,8 +3,9 @@ from typing import Any, Optional, Protocol, TypeVar, runtime_checkable
 
 from typing_extensions import ParamSpec
 
-T = TypeVar("T", contravariant=True)
-P = ParamSpec("P", bound=Any)
+T_co = TypeVar("T_co", covariant=True)
+T = TypeVar("T")
+P = ParamSpec("P")
 
 
 @dataclass
@@ -12,13 +13,13 @@ class Metadata:
     """Structured metadata for Flyte artifacts."""
 
     # Core tracking fields
-    name: Optional[str] = None
+    name: str
     version: Optional[str] = None
     description: Optional[str] = None
 
 
 @runtime_checkable
-class Artifact(Protocol[T]):
+class Artifact(Protocol[T_co]):
     """Protocol for objects wrapped with Flyte metadata."""
 
     _flyte_metadata: Metadata
@@ -33,7 +34,7 @@ class ArtifactWrapper:
 
     __slots__ = ("_flyte_metadata", "_obj")
 
-    def __init__(self, obj: T, metadata: Metadata) -> None:
+    def __init__(self, obj: T_co, metadata: Metadata) -> None:
         object.__setattr__(self, "_obj", obj)
         object.__setattr__(self, "_flyte_metadata", metadata)
 
@@ -51,10 +52,27 @@ class ArtifactWrapper:
             raise AttributeError(f"Cannot delete {name}")
         delattr(self._obj, name)
 
-    @property
-    def __class__(self):
-        """Make isinstance checks work with the wrapped object's type."""
-        return type(self._obj)
+    def __getattribute__(self, name: str) -> Any:
+        """Override attribute access to make __class__ return the wrapped object's type."""
+        if name == "__class__":
+            return type(object.__getattribute__(self, "_obj"))
+        elif name in (
+            "_obj",
+            "_flyte_metadata",
+            "get_flyte_metadata",
+            "__call__",
+            "__repr__",
+            "__str__",
+            "__bool__",
+            "__len__",
+            "__iter__",
+            "__getitem__",
+            "__setitem__",
+            "__contains__",
+        ):
+            return object.__getattribute__(self, name)
+        else:
+            return getattr(object.__getattribute__(self, "_obj"), name)
 
     def get_flyte_metadata(self) -> Metadata:
         """Get a copy of the Flyte metadata."""
@@ -78,7 +96,7 @@ class ArtifactWrapper:
     def __iter__(self):
         return iter(self._obj)
 
-    def __call__(self, *args: P.args, **kwargs: P.kwargs):
+    def __call__(self, *args: Any, **kwargs: Any):
         return self._obj(*args, **kwargs)
 
     def __getitem__(self, key):
@@ -91,7 +109,7 @@ class ArtifactWrapper:
         return item in self._obj
 
 
-def new(obj: T, metadata: Metadata | None = None) -> T:
+def new(obj: T, metadata: Metadata) -> T:
     """
     Wrap an object with Flyte metadata while preserving its type interface.
 
@@ -103,5 +121,5 @@ def new(obj: T, metadata: Metadata | None = None) -> T:
         A zero-copy wrapper that behaves exactly like the original object
         but carries additional Flyte metadata accessible via get_flyte_metadata()
     """
-    wrapper = ArtifactWrapper(obj, metadata or Metadata())
+    wrapper = ArtifactWrapper(obj, metadata)
     return wrapper  # type: ignore[return-value]
