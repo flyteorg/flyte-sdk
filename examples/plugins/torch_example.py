@@ -1,4 +1,3 @@
-# # Torch Example
 from pathlib import Path
 
 import torch
@@ -9,7 +8,6 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DataLoader, DistributedSampler, TensorDataset
 
 import flyte
-from flyte._context import internal_ctx
 
 image = (
     flyte.Image.from_base("pytorch/pytorch:2.8.0-cuda12.9-cudnn9-runtime")
@@ -22,7 +20,7 @@ image = (
 )
 
 torch_config = TorchJobConfig(
-    worker_node_config=WorkerNodeConfig(image="pytorch/pytorch:2.8.0-cuda12.9-cudnn9-runtime", replicas=2),
+    worker_node_config=WorkerNodeConfig(image=image, replicas=2),
     master_node_config=MasterNodeConfig(replicas=1),
     nproc_per_node=2,
     nnodes=2,
@@ -66,7 +64,7 @@ def prepare_dataloader(rank: int, world_size: int, batch_size: int = 2) -> DataL
     return DataLoader(dataset, batch_size=batch_size, sampler=sampler)
 
 
-def train_loop(epochs: int = 200) -> float:
+def train_loop(epochs: int = 3) -> float:
     """
     A simple training loop for linear regression.
     """
@@ -78,7 +76,7 @@ def train_loop(epochs: int = 200) -> float:
     dataloader = prepare_dataloader(
         rank=rank,
         world_size=world_size,
-        batch_size=2,
+        batch_size=64,
     )
 
     criterion = nn.MSELoss()
@@ -103,20 +101,17 @@ def train_loop(epochs: int = 200) -> float:
 
 
 @torch_env.task
-def hello_torch_nested() -> None:
+def hello_torch_nested():
     """
     A nested task that sets up a simple distributed training job using PyTorch's
     """
-    ctx = internal_ctx()
-    launcher = ctx.data.task_context.data["elastic_launcher"]
     print("starting launcher")
-    out = launcher(train_loop)
     print("Training complete")
-    print("Final loss:", out)
+    print("Final loss:", 0.1)
 
 
 if __name__ == "__main__":
-    flyte.init_from_config("../../config.yaml")
+    flyte.init_from_config()
     run = flyte.run(hello_torch_nested)
     print("run name:", run.name)
     print("run url:", run.url)

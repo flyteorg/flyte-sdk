@@ -1,7 +1,6 @@
 # from unittest.mock import MagicMock, patch
 
 import flyte
-import pytest
 from flyte.models import SerializationContext
 
 from flyteplugins.pytorch.task import (
@@ -54,12 +53,16 @@ def test_custom_config():
         "workerReplicas": {
             "replicas": 2,
             "resources": {"requests": [{"name": "CPU", "value": "1"}, {"name": "MEMORY", "value": "1Gi"}]},
-            "image": "Image(base_image='pytorch/pytorch:2.8.0-cuda12.9-cudnn9-runtime', dockerfile=None, registry=None, name=None, platform=('linux/amd64',), python_version=(3, 13), _identifier_override=None, _layers=(), _tag=None)",
+            "image": "Image(base_image='pytorch/pytorch:2.8.0-cuda12.9-cudnn9-runtime', dockerfile=None,"
+            " registry=None, name=None, platform=('linux/amd64',), python_version=(3, 13),"
+            " _identifier_override=None, _layers=(), _tag=None)",
             "restartPolicy": "RESTART_POLICY_ON_FAILURE",
         },
         "masterReplicas": {
             "replicas": 1,
-            "image": "Image(base_image='pytorch/pytorch:2.8.0-cuda12.9-cudnn9-runtime', dockerfile=None, registry=None, name=None, platform=('linux/amd64',), python_version=(3, 13), _identifier_override=None, _layers=(), _tag=None)",
+            "image": "Image(base_image='pytorch/pytorch:2.8.0-cuda12.9-cudnn9-runtime', dockerfile=None, registry=None,"
+            " name=None, platform=('linux/amd64',), python_version=(3, 13),"
+            " _identifier_override=None, _layers=(), _tag=None)",
             "resources": {"requests": [{"name": "CPU", "value": "1"}, {"name": "MEMORY", "value": "1Gi"}]},
             "restartPolicy": "RESTART_POLICY_ON_FAILURE",
         },

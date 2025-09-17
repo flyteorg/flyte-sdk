@@ -2,12 +2,15 @@ import os
 import typing
 from dataclasses import dataclass, field
 from enum import Enum
-from functools import partial, update_wrapper
 from typing import Any, Dict, Optional, Union
 
+import flyte
 import torch
+from cloudpickle import cloudpickle
 from flyte import PodTemplate
 from flyte._internal.runtime.resources_serde import get_proto_resources
+from flyte._logging import logger
+from flyte._task import P, R
 from flyte.extend import AsyncFunctionTaskTemplate, TaskPluginRegistry
 from flyte.models import SerializationContext
 from flyteidl.plugins import common_pb2 as _common_pb2
@@ -18,12 +21,8 @@ from flyteidl.plugins.kubeflow.pytorch_pb2 import (
     ElasticConfig,
 )
 from google.protobuf.json_format import MessageToDict
+from torch.distributed import run
 from torch.distributed.launcher.api import LaunchConfig, elastic_launch
-
-if typing.TYPE_CHECKING:
-    pass
-
-TORCH_IMPORT_ERROR_MESSAGE = "PyTorch is not installed"
 
 
 class RestartPolicy(Enum):
@@ -62,10 +61,10 @@ class WorkerNodeConfig:
 
 @dataclass
 class TorchJobConfig:
+    worker_node_config: WorkerNodeConfig
+    master_node_config: MasterNodeConfig
     rdzv_backend: str = "c10d"
     backend: str = "gloo"
-    worker_node_config: typing.Optional[WorkerNodeConfig] = None
-    master_node_config: typing.Optional[MasterNodeConfig] = None
     nnodes: Union[int, str] = 1
     nproc_per_node: int = 1
     run_policy: Optional[RunPolicy] = None
@@ -100,69 +99,110 @@ class TorchFunctionTask(AsyncFunctionTaskTemplate):
     """
 
     task_type: str = "torch"
-    plugin_config: TorchJobConfig = field(default_factory=TorchJobConfig)
+    plugin_config: TorchJobConfig
+
+    def __post_init__(self):
+        super().__post_init__()
+        self.min_nodes, self.max_nodes = run.parse_min_max_nnodes(str(self.plugin_config.nnodes))
+        self.rdzv_backend = "c10d"
 
     async def pre(self, *args, **kwargs) -> Dict[str, Any]:
         """
         Pre execution setup for TorchFunctionTask.
         """
 
-        try:
-            from torch.distributed import run
-        except ImportError:
-            raise ImportError(TORCH_IMPORT_ERROR_MESSAGE)
+    async def execute(self, *args: P.args, **kwargs: P.kwargs) -> R:
+        dist_env_vars_set = os.environ.get("PET_NNODES") is not None
+        if not dist_env_vars_set and self.min_nodes > 1:
+            logger.warning(
+                (
+                    f"`nnodes` is set to {self.plugin_config.nnodes} in elastic task but execution appears "
+                    "to not run in a `PyTorchJob`. Rendezvous might timeout."
+                )
+            )
 
-        min_nodes, max_nodes = run.parse_min_max_nnodes(str(self.plugin_config.nnodes))
-
-        if self.plugin_config is None:
-            raise ValueError("Plugin config must be provided for TorchFunctionTask")
+        # If OMP_NUM_THREADS is not set, set it to 1 to avoid overloading the system.
+        # Doing so to copy the default behavior of torchrun.
+        # See https://github.com/pytorch/pytorch/blob/eea4ece256d74c6f25c1f4eab37b3f2f4aeefd4d/torch/distributed/run.py#L791
+        if "OMP_NUM_THREADS" not in os.environ and self.plugin_config.nproc_per_node > 1:
+            omp_num_threads = 1
+            logger.warning(
+                "\n*****************************************\n"
+                "Setting OMP_NUM_THREADS environment variable for each process to be "
+                "%s in default, to avoid your system being overloaded, "
+                "please further tune the variable for optimal performance in "
+                "your application as needed. \n"
+                "*****************************************",
+                omp_num_threads,
+            )
+            os.environ["OMP_NUM_THREADS"] = str(omp_num_threads)
 
         config = LaunchConfig(
-            run_id=self.name,
-            min_nodes=min_nodes,
-            max_nodes=max_nodes,
+            run_id=flyte.ctx().action.run_name,
+            min_nodes=self.min_nodes,
+            max_nodes=self.max_nodes,
             nproc_per_node=self.plugin_config.nproc_per_node,
-            rdzv_backend=self.plugin_config.rdzv_backend,
+            rdzv_backend=self.rdzv_backend,  # rdzv settings
             rdzv_configs=self.plugin_config.rdzv_configs,
-            rdzv_endpoint=os.environ.get("PET_RDZV_ENDPOINT", "localhost:29500"),
+            rdzv_endpoint=os.environ.get("PET_RDZV_ENDPOINT", "localhost:0"),
             max_restarts=self.plugin_config.max_restarts,
             monitor_interval=self.plugin_config.monitor_interval,
             start_method=self.plugin_config.start_method,
         )
 
-        def wrapper(entrypoint, *a, **kw):
-            wrapped = partial(_distributed_entrypoint, entrypoint, backend=self.plugin_config.backend)
-            update_wrapper(wrapped, entrypoint)
+        if self.plugin_config.start_method == "spawn":
+            """
+            We use cloudpickle to serialize the non-pickleable task function.
+            The torch elastic launcher then launches the spawn_helper function (which is pickleable)
+            instead of the task function. This helper function, in the child-process, then deserializes
+            the task function, again with cloudpickle, and executes it.
+            """
 
-            return elastic_launch(config=config, entrypoint=wrapped)(*a, **kw)
+            async def launcher_target_func(fn: bytes, **kwargs):
+                fn = cloudpickle.loads(fn)
+                return await fn(**kwargs)
 
-        return {"elastic_launcher": wrapper}
+            dumped_target_function = cloudpickle.dumps(self.func)
+
+            launcher_args = (
+                dumped_target_function,
+                kwargs,
+            )
+        elif self.plugin_config.start_method == "fork":
+            """
+            The torch elastic launcher doesn't support passing kwargs to the target function,
+            only args. Flyte only works with kwargs. Thus, we create a closure which already has
+            the task kwargs bound. We tell the torch elastic launcher to start this function in
+            the child processes.
+            """
+
+            async def launcher_target_func():
+                """Closure of the task function with kwargs already bound."""
+                return await self.func(**kwargs)
+
+            launcher_args = ()
+        else:
+            raise ValueError(f"Unsupported start method {self.plugin_config.start_method}")
+
+        out = elastic_launch(config=config, entrypoint=launcher_target_func)(*launcher_args)
+
+        # `out` is a dictionary of rank (not local rank) -> result
+        # Rank 0 returns the result of the task function
+        if 0 in out:
+            return out[0].return_value
+        return None
 
     def custom_config(self, sctx: SerializationContext) -> Any:
         """
         Converts the TorchJobConfig to a DistributedPyTorchTrainingTask
         """
-
-        try:
-            from torch.distributed import run
-        except ImportError:
-            raise ImportError(TORCH_IMPORT_ERROR_MESSAGE)
-
-        min_nodes, max_nodes = run.parse_min_max_nnodes(str(self.plugin_config.nnodes))
-
         elastic_config = ElasticConfig(
             rdzv_backend=self.plugin_config.rdzv_backend,
-            min_replicas=min_nodes,
-            max_replicas=max_nodes,
+            min_replicas=self.min_nodes,
+            max_replicas=self.max_nodes,
             nproc_per_node=self.plugin_config.nproc_per_node,
             max_restarts=self.plugin_config.max_restarts,
         )
-
-        if self.plugin_config.master_node_config is None:
-            raise ValueError("Master node configuration must be provided")
-
-        if self.plugin_config.worker_node_config is None:
-            raise ValueError("Worker node configuration must be provided")
 
         policy = (
             _convert_run_policy_to_flyte_idl(self.plugin_config.run_policy) if self.plugin_config.run_policy else None

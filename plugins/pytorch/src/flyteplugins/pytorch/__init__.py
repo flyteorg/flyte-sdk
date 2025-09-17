@@ -1,3 +1,3 @@
-__all__ = ["TorchFunctionTask", "TorchJobConfig", "MasterNodeConfig", "WorkerNodeConfig"]
+__all__ = ["MasterNodeConfig", "TorchFunctionTask", "TorchJobConfig", "WorkerNodeConfig"]
 
-from flyteplugins.pytorch.task import TorchFunctionTask, TorchJobConfig, MasterNodeConfig, WorkerNodeConfig
+from flyteplugins.pytorch.task import MasterNodeConfig, TorchFunctionTask, TorchJobConfig, WorkerNodeConfig
