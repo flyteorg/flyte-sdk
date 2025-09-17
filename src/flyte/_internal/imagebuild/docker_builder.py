@@ -290,6 +290,9 @@ class UVProjectHandler:
         else:
             # Copy the entire project.
             pyproject_dst = copy_files_to_context(layer.pyproject.parent, context_path)
+            if layer.uvlock:
+                # Sometimes the uv.lock file is in a different folder, if it's specified, let's copy it there explicitly
+                shutil.copy(layer.uvlock, pyproject_dst)
             delta = UV_LOCK_INSTALL_TEMPLATE.substitute(
                 PYPROJECT_PATH=pyproject_dst.relative_to(context_path),
                 PIP_INSTALL_ARGS=" ".join(layer.get_pip_install_args()),
