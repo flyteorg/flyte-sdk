@@ -1,15 +1,14 @@
+import re
 from dataclasses import dataclass
 from typing import Any, Dict, Optional, Type
-import re
-
-from google.cloud import bigquery
-from google.protobuf import json_format
-from google.protobuf.struct_pb2 import Struct
-from flyteidl.core import tasks_pb2
 
 from flyte._task import TaskTemplate
 from flyte.io import DataFrame
 from flyte.models import SerializationContext
+from flyteidl.core import tasks_pb2
+from google.cloud import bigquery
+from google.protobuf import json_format
+from google.protobuf.struct_pb2 import Struct
 
 
 @dataclass
@@ -17,6 +16,7 @@ class BigQueryConfig(object):
     """
     BigQueryConfig should be used to configure a BigQuery Task.
     """
+
     ProjectID: str
     Location: Optional[str] = None
     QueryJobConfig: Optional[bigquery.QueryJobConfig] = None
@@ -38,10 +38,12 @@ class BigQueryTask(TaskTemplate):
         To be used to query BigQuery Tables.
 
         :param name: The Name of this task, should be unique in the project
-        :param query_template: The actual query to run. We use Flyte's Golang templating format for Query templating. Refer to the templating documentation
+        :param query_template: The actual query to run. We use Flyte's Golang templating format for Query templating.
+         Refer to the templating documentation
         :param plugin_config: BigQueryConfig object
         :param inputs: Name and type of inputs specified as an ordered dictionary
-        :param output_dataframe_type: If some data is produced by this query, then you can specify the output dataframe type
+        :param output_dataframe_type: If some data is produced by this query, then you can specify the
+         output dataframe type.
         """
         outputs = None
         if output_dataframe_type is not None:

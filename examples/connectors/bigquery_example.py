@@ -1,7 +1,7 @@
-import flyte
-from flyte.io import DataFrame
 from flyteplugins.connectors.bigquery.task import BigQueryConfig, BigQueryTask
 
+import flyte
+from flyte.io import DataFrame
 
 bigquery_env = flyte.TaskEnvironment(
     name="bigquery_env",
