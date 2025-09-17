@@ -1,0 +1,107 @@
+from dataclasses import dataclass
+from typing import Any, Optional, Protocol, TypeVar, runtime_checkable
+
+from typing_extensions import ParamSpec
+
+T = TypeVar("T", contravariant=True)
+P = ParamSpec("P", bound=Any)
+
+
+@dataclass
+class Metadata:
+    """Structured metadata for Flyte artifacts."""
+
+    # Core tracking fields
+    name: Optional[str] = None
+    version: Optional[str] = None
+    description: Optional[str] = None
+
+
+@runtime_checkable
+class Artifact(Protocol[T]):
+    """Protocol for objects wrapped with Flyte metadata."""
+
+    _flyte_metadata: Metadata
+
+    def get_flyte_metadata(self) -> Metadata:
+        """Get the Flyte metadata associated with this artifact."""
+        ...
+
+
+class ArtifactWrapper:
+    """Zero-copy wrapper that preserves the original object interface."""
+
+    __slots__ = ("_flyte_metadata", "_obj")
+
+    def __init__(self, obj: T, metadata: Metadata) -> None:
+        object.__setattr__(self, "_obj", obj)
+        object.__setattr__(self, "_flyte_metadata", metadata)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._obj, name)
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        if name in ("_obj", "_flyte_metadata"):
+            object.__setattr__(self, name, value)
+        else:
+            setattr(self._obj, name, value)
+
+    def __delattr__(self, name: str) -> None:
+        if name in ("_obj", "_flyte_metadata"):
+            raise AttributeError(f"Cannot delete {name}")
+        delattr(self._obj, name)
+
+    @property
+    def __class__(self):
+        """Make isinstance checks work with the wrapped object's type."""
+        return type(self._obj)
+
+    def get_flyte_metadata(self) -> Metadata:
+        """Get a copy of the Flyte metadata."""
+        import copy
+
+        return copy.deepcopy(self._flyte_metadata)
+
+    # Forward common special methods for better compatibility
+    def __str__(self) -> str:
+        return str(self._obj)
+
+    def __repr__(self) -> str:
+        return f"Artifact[{type(self._obj).__name__}]({self._obj})"
+
+    def __bool__(self) -> bool:
+        return bool(self._obj)
+
+    def __len__(self) -> int:
+        return len(self._obj)
+
+    def __iter__(self):
+        return iter(self._obj)
+
+    def __call__(self, *args: P.args, **kwargs: P.kwargs):
+        return self._obj(*args, **kwargs)
+
+    def __getitem__(self, key):
+        return self._obj[key]
+
+    def __setitem__(self, key, value):
+        self._obj[key] = value
+
+    def __contains__(self, item):
+        return item in self._obj
+
+
+def new(obj: T, metadata: Metadata | None = None) -> T:
+    """
+    Wrap an object with Flyte metadata while preserving its type interface.
+
+    Args:
+        obj: The object to wrap
+        metadata: Metadata to associate with the object
+
+    Returns:
+        A zero-copy wrapper that behaves exactly like the original object
+        but carries additional Flyte metadata accessible via get_flyte_metadata()
+    """
+    wrapper = ArtifactWrapper(obj, metadata or Metadata())
+    return wrapper  # type: ignore[return-value]

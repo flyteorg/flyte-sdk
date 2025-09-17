@@ -27,12 +27,14 @@ def test_image_cache_serialization_round_trip():
 
 
 def test_image_cache_deserialize():
-    test_data = ImageCache(image_lookup={
-        "auto": {"3.12": "registry.example.com/auto:latest"},
-        "test_id": {"3.11": "registry.example.com/test:latest"}
-    })
+    test_data = ImageCache(
+        image_lookup={
+            "auto": {"3.12": "registry.example.com/auto:latest"},
+            "test_id": {"3.11": "registry.example.com/test:latest"},
+        }
+    )
     serialized = test_data.to_transport
-    
+
     restored = ImageCache.from_transport(serialized)
     assert "auto" in restored.image_lookup
     assert isinstance(restored.image_lookup["auto"], dict)
