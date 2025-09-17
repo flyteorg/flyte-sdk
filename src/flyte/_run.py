@@ -443,13 +443,25 @@ class _Runner:
             mode="local",
         )
         with ctx.replace_task_context(tctx):
+            new_kwargs = {}
+            if kwargs:
+                from flyte.remote import Artifact
+
+                for k, v in kwargs.items():
+                    if isinstance(v, Artifact):
+                        new_kwargs[k] = v.pb2["data"]
+                    elif isinstance(v, list) and len(v) > 0:
+                        new_kwargs[k] = [item.pb2["data"] if isinstance(item, Artifact) else item for item in v]
+                    else:
+                        new_kwargs[k] = v
+                print(new_kwargs)
             # make the local version always runs on a different thread, returns a wrapped future.
             if obj._call_as_synchronous:
-                fut = controller.submit_sync(obj, *args, **kwargs)
+                fut = controller.submit_sync(obj, *args, **new_kwargs)
                 awaitable = asyncio.wrap_future(fut)
                 outputs = await awaitable
             else:
-                outputs = await controller.submit(obj, *args, **kwargs)
+                outputs = await controller.submit(obj, *args, **new_kwargs)
 
         class _LocalRun(Run):
             def __init__(self, outputs: Tuple[Any, ...] | Any):

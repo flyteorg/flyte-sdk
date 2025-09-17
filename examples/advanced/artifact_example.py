@@ -47,6 +47,6 @@ if __name__ == "__main__":
     v3 = flyte.run(use_multiple_artifacts, v=artifact_list)
     print(v3.outputs())
 
-    artifact_list_via_prefix = Artifact.list("my_artifact", partition_match="1.0")
+    artifact_list_via_prefix = list(Artifact.listall("my_artifact", version="1.0"))
     v4 = flyte.run(use_multiple_artifacts, v=artifact_list_via_prefix)
     print(v4.outputs())
