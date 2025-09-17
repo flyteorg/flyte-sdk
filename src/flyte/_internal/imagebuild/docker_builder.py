@@ -64,6 +64,9 @@ POETRY_lOCK_WITHOUT_PROJECT_INSTALL_TEMPLATE = Template("""\
 RUN --mount=type=cache,sharing=locked,mode=0777,target=/root/.cache/uv,id=uv \
    $SECRET_MOUNT \
    uv pip install poetry
+   
+COPY $POETRY_LOCK_PATH ./poetry.lock
+COPY $PYPROJECT_PATH ./pyproject.toml
 
 ENV POETRY_CACHE_DIR=/tmp/poetry_cache \
    POETRY_VIRTUALENVS_IN_PROJECT=true

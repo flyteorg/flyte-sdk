@@ -226,7 +226,13 @@ class PoetryProject(Layer):
     def update_hash(self, hasher: hashlib._Hash):
         from ._utils import filehash_update
 
-        super().update_hash(hasher)
+        hash_input = ""
+        if self.extra_args:
+            hash_input += self.extra_args
+        if self.secret_mounts:
+            for secret_mount in self.secret_mounts:
+                hash_input += str(secret_mount)
+        hasher.update(hash_input.encode("utf-8"))
         filehash_update(self.poetry_lock, hasher)
 
     def get_poetry_install_args(self) -> List[str]:
