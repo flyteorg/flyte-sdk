@@ -354,11 +354,7 @@ async def test_poetry_handler_without_project_install():
             assert "uv pip install poetry" in result
             assert "ENV POETRY_CACHE_DIR=/tmp/poetry_cache" in result
             assert "POETRY_VIRTUALENVS_IN_PROJECT=true" in result
-            assert "WORKDIR /root" in result
             assert "poetry install --no-root" in result
-
-            # Should not contain COPY command for entire project
-            assert "COPY" not in result
 
 
 @pytest.mark.asyncio
@@ -388,4 +384,3 @@ async def test_poetry_handler_with_project_install():
             assert "uv pip install poetry" in result
             assert "ENV POETRY_CACHE_DIR=/tmp/poetry_cache" in result
             assert "POETRY_VIRTUALENVS_IN_PROJECT=true" in result
-            assert "WORKDIR /root" in result

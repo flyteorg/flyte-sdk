@@ -189,4 +189,3 @@ def test_ids_for_different_python_version():
     object.__setattr__(ex_12, "base_image", "python:3.10-slim-bookworm")
     assert ex_10.identifier == ex_11.identifier
     assert ex_11.identifier == ex_12.identifier
-

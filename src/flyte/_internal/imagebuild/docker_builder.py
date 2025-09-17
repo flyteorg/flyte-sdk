@@ -64,15 +64,10 @@ POETRY_lOCK_WITHOUT_PROJECT_INSTALL_TEMPLATE = Template("""\
 RUN --mount=type=cache,sharing=locked,mode=0777,target=/root/.cache/uv,id=uv \
    $SECRET_MOUNT \
    uv pip install poetry
-   
-COPY $POETRY_LOCK_PATH ./poetry.lock
-COPY $PYPROJECT_PATH ./pyproject.toml
 
 ENV POETRY_CACHE_DIR=/tmp/poetry_cache \
    POETRY_VIRTUALENVS_IN_PROJECT=true
 
-# poetry install does not work running in /, so we move to /root to create the venv
-WORKDIR /root
 RUN --mount=type=cache,sharing=locked,mode=0777,target=/tmp/poetry_cache,id=poetry \
    --mount=type=bind,target=poetry.lock,src=$POETRY_LOCK_PATH \
    --mount=type=bind,target=pyproject.toml,src=$PYPROJECT_PATH \
@@ -90,8 +85,6 @@ COPY $PYPROJECT_PATH $PYPROJECT_PATH
 ENV POETRY_CACHE_DIR=/tmp/poetry_cache \
    POETRY_VIRTUALENVS_IN_PROJECT=true
 
-# poetry install does not work running in /, so we move to /root to create the venv
-WORKDIR /root
 RUN --mount=type=cache,sharing=locked,mode=0777,target=/tmp/poetry_cache,id=poetry \
    --mount=type=bind,target=poetry.lock,src=poetry.lock \
    --mount=type=bind,target=pyproject.toml,src=pyproject.toml \

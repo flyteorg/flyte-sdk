@@ -8,10 +8,13 @@ from flyte._image import Image
 from flyte._task_environment import TaskEnvironment
 
 
-@pytest.mark.parametrize("python_version,expected_py_version", [
-    (None, "{}.{}".format(sys.version_info.major, sys.version_info.minor)),  # Use local python version
-    ((3, 10), "3.10"),
-])
+@pytest.mark.parametrize(
+    "python_version,expected_py_version",
+    [
+        (None, "{}.{}".format(sys.version_info.major, sys.version_info.minor)),  # Use local python version
+        ((3, 10), "3.10"),
+    ],
+)
 @pytest.mark.asyncio
 async def test_create_image_cache_lookup(python_version, expected_py_version):
     """Test that _build_images creates the correct nested dictionary structure for ImageCache."""
