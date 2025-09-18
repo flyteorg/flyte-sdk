@@ -234,6 +234,7 @@ class PoetryProject(Layer):
                 hash_input += str(secret_mount)
         hasher.update(hash_input.encode("utf-8"))
         filehash_update(self.poetry_lock, hasher)
+        filehash_update(self.pyproject, hasher)
 
     def get_poetry_install_args(self) -> List[str]:
         poetry_install_args = []
