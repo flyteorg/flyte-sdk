@@ -1,3 +1,4 @@
+import inspect
 import os
 import typing
 from dataclasses import dataclass, field
@@ -60,9 +61,7 @@ class WorkerNodeConfig:
 
 
 @dataclass
-class TorchJobConfig:
-    worker_node_config: WorkerNodeConfig
-    master_node_config: MasterNodeConfig
+class Elastic:
     rdzv_backend: str = "c10d"
     backend: str = "gloo"
     nnodes: Union[int, str] = 1
@@ -98,12 +97,14 @@ class TorchFunctionTask(AsyncFunctionTaskTemplate):
     Plugin to transform local python code for execution as a PyTorch job.
     """
 
-    task_type: str = "torch"
-    plugin_config: TorchJobConfig
+    task_type: str = "pytorch"
+    plugin_config: Elastic
 
     def __post_init__(self):
         super().__post_init__()
+        self.task_type = "python-task" if self.plugin_config.nnodes == 1 else "pytorch"
         self.min_nodes, self.max_nodes = run.parse_min_max_nnodes(str(self.plugin_config.nnodes))
+        print("min_nodes", self.min_nodes, "max_nodes", self.max_nodes)
         self.rdzv_backend = "c10d"
 
     async def pre(self, *args, **kwargs) -> Dict[str, Any]:
@@ -150,47 +151,15 @@ class TorchFunctionTask(AsyncFunctionTaskTemplate):
             start_method=self.plugin_config.start_method,
         )
 
-        if self.plugin_config.start_method == "spawn":
-            """
-            We use cloudpickle to serialize the non-pickleable task function.
-            The torch elastic launcher then launches the spawn_helper function (which is pickleable)
-            instead of the task function. This helper function, in the child-process, then deserializes
-            the task function, again with cloudpickle, and executes it.
-            """
-
-            async def launcher_target_func(fn: bytes, **kwargs):
-                fn = cloudpickle.loads(fn)
-                return await fn(**kwargs)
-
-            dumped_target_function = cloudpickle.dumps(self.func)
-
-            launcher_args = (
-                dumped_target_function,
-                kwargs,
-            )
-        elif self.plugin_config.start_method == "fork":
-            """
-            The torch elastic launcher doesn't support passing kwargs to the target function,
-            only args. Flyte only works with kwargs. Thus, we create a closure which already has
-            the task kwargs bound. We tell the torch elastic launcher to start this function in
-            the child processes.
-            """
-
-            async def launcher_target_func():
-                """Closure of the task function with kwargs already bound."""
-                return await self.func(**kwargs)
-
-            launcher_args = ()
-        else:
-            raise ValueError(f"Unsupported start method {self.plugin_config.start_method}")
-
-        out = elastic_launch(config=config, entrypoint=launcher_target_func)(*launcher_args)
+        sig = inspect.signature(self.func)
+        # Order parameters according to the function signature since torch elastic launcher
+        # doesn't support passing kwargs to the target function
+        args = tuple(kwargs[p.name] for p in sig.parameters.values())
+        out = elastic_launch(config=config, entrypoint=self.func)(*args)
 
         # `out` is a dictionary of rank (not local rank) -> result
         # Rank 0 returns the result of the task function
-        if 0 in out:
-            return out[0].return_value
-        return None
+        return out[0]
 
     def custom_config(self, sctx: SerializationContext) -> Any:
         """
@@ -209,41 +178,44 @@ class TorchFunctionTask(AsyncFunctionTaskTemplate):
         )
 
         torch_job = DistributedPyTorchTrainingTask(
-            worker_replicas=self._create_worker_spec(),
-            master_replicas=self._create_master_spec(),
+            worker_replicas=DistributedPyTorchTrainingReplicaSpec(
+                replicas=self.max_nodes,
+            ),
+            # master_replicas=self._create_master_spec(),
             run_policy=policy,
             elastic_config=elastic_config,
         )
 
+        print("job", torch_job)
         return MessageToDict(torch_job)
 
-    def _create_worker_spec(self) -> DistributedPyTorchTrainingReplicaSpec:
-        if self.plugin_config.worker_node_config is None:
-            raise ValueError("Worker node configuration must be provided")
-
-        if self.image is None:
-            raise ValueError("Either task image or worker node image must be provided")
-
-        return DistributedPyTorchTrainingReplicaSpec(
-            replicas=self.plugin_config.worker_node_config.replicas,
-            image=str(self.image),
-            resources=get_proto_resources(self.resources),
-            restart_policy=_common_pb2.RestartPolicy.RESTART_POLICY_ON_FAILURE,
-        )
-
-    def _create_master_spec(self) -> DistributedPyTorchTrainingReplicaSpec:
-        if self.plugin_config.master_node_config is None:
-            raise ValueError("Master node configuration must be provided")
-
-        if self.image is None:
-            raise ValueError("Either task image or master node image must be provided")
-
-        return DistributedPyTorchTrainingReplicaSpec(
-            replicas=1,
-            image=str(self.image),
-            resources=get_proto_resources(self.resources),
-            restart_policy=_common_pb2.RestartPolicy.RESTART_POLICY_ON_FAILURE,
-        )
+    # def _create_worker_spec(self) -> DistributedPyTorchTrainingReplicaSpec:
+    #     if self.plugin_config.worker_node_config is None:
+    #         raise ValueError("Worker node configuration must be provided")
+    #
+    #     if self.image is None:
+    #         raise ValueError("Either task image or worker node image must be provided")
+    #
+    #     return DistributedPyTorchTrainingReplicaSpec(
+    #         replicas=self.plugin_config.worker_node_config.replicas,
+    #         image=str(self.image),
+    #         resources=get_proto_resources(self.resources),
+    #         restart_policy=_common_pb2.RestartPolicy.RESTART_POLICY_ON_FAILURE,
+    #     )
+    #
+    # def _create_master_spec(self) -> DistributedPyTorchTrainingReplicaSpec:
+    #     if self.plugin_config.master_node_config is None:
+    #         raise ValueError("Master node configuration must be provided")
+    #
+    #     if self.image is None:
+    #         raise ValueError("Either task image or master node image must be provided")
+    #
+    #     return DistributedPyTorchTrainingReplicaSpec(
+    #         replicas=1,
+    #         image=str(self.image),
+    #         resources=get_proto_resources(self.resources),
+    #         restart_policy=_common_pb2.RestartPolicy.RESTART_POLICY_ON_FAILURE,
+    #     )
 
     async def post(self, return_vals: Any) -> Any:
         """
@@ -256,4 +228,4 @@ class TorchFunctionTask(AsyncFunctionTaskTemplate):
         return return_vals
 
 
-TaskPluginRegistry.register(config_type=TorchJobConfig, plugin=TorchFunctionTask)
+TaskPluginRegistry.register(config_type=Elastic, plugin=TorchFunctionTask)

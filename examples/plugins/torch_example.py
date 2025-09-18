@@ -3,7 +3,7 @@ from pathlib import Path
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from flyteplugins.pytorch.task import MasterNodeConfig, TorchJobConfig, WorkerNodeConfig
+from flyteplugins.pytorch.task import Elastic
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DataLoader, DistributedSampler, TensorDataset
 
@@ -19,10 +19,8 @@ image = (
     .with_local_v2()
 )
 
-torch_config = TorchJobConfig(
-    worker_node_config=WorkerNodeConfig(image=image, replicas=2),
-    master_node_config=MasterNodeConfig(replicas=1),
-    nproc_per_node=2,
+torch_config = Elastic(
+    nproc_per_node=1,
     nnodes=2,
 )
 
@@ -101,17 +99,19 @@ def train_loop(epochs: int = 3) -> float:
 
 
 @torch_env.task
-def hello_torch_nested():
+def hello_torch_nested(epochs: int) -> int:
     """
     A nested task that sets up a simple distributed training job using PyTorch's
     """
     print("starting launcher")
     print("Training complete")
     print("Final loss:", 0.1)
+    print(epochs)
+    return 3
 
 
 if __name__ == "__main__":
     flyte.init_from_config()
-    run = flyte.run(hello_torch_nested)
+    run = flyte.with_runcontext(mode="remote").run(hello_torch_nested, epochs=3)
     print("run name:", run.name)
     print("run url:", run.url)
