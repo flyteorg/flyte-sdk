@@ -240,7 +240,7 @@ def _get_urun_container(
 
     return tasks_pb2.Container(
         image=img_uri,
-        command=[],
+        command=[""],
         args=task_template.container_args(serialize_context),
         resources=resources,
         env=env,
