@@ -119,9 +119,9 @@ def _initialize_logger(log_level: int | None = None):
 
 @syncify
 async def init(
-    project: str,
-    domain: str,
     org: str | None = None,
+    project: str | None = None,
+    domain: str | None = None,
     root_dir: Path | None = None,
     log_level: int | None = None,
     endpoint: str | None = None,
@@ -180,26 +180,20 @@ async def init(
     :param source_config_path: Optional path to the source configuration file (This is only used for documentation)
     :return: None
     """
-    if endpoint is None and api_key is None:
-        raise ValueError(
-            "Either endpoint or api_key must be provided to initialize the client. "
-            "Please set 'endpoint' in the 'admin' section of your config file, "
-            "or pass it directly to flyte.init(endpoint='your-flyte-endpoint')."
-        )
+    if endpoint or api_key:
+        if project is None:
+            raise ValueError(
+                "Project must be provided to initialize the client. "
+                "Please set 'project' in the 'task' section of your config file, "
+                "or pass it directly to flyte.init(project='your-project-name')."
+            )
 
-    if project is None:
-        raise ValueError(
-            "Project must be provided to initialize the client. "
-            "Please set 'project' in the 'task' section of your config file, "
-            "or pass it directly to flyte.init(project='your-project-name')."
-        )
-
-    if domain is None:
-        raise ValueError(
-            "Domain must be provided to initialize the client. "
-            "Please set 'domain' in the 'task' section of your config file, "
-            "or pass it directly to flyte.init(domain='your-domain-name')."
-        )
+        if domain is None:
+            raise ValueError(
+                "Domain must be provided to initialize the client. "
+                "Please set 'domain' in the 'task' section of your config file, "
+                "or pass it directly to flyte.init(domain='your-domain-name')."
+            )
 
     from flyte._utils import get_cwd_editable_install, org_from_endpoint, sanitize_endpoint
 
@@ -299,27 +293,6 @@ async def init_from_config(
     _initialize_logger(log_level=log_level)
 
     logger.info(f"Flyte config initialized as {cfg}", extra={"highlighter": ReprHighlighter()})
-
-    config_source = cfg.source or cfg_path or "config file"
-    if cfg.task.project is None:
-        raise ValueError(
-            "Project must be provided to initialize the client. "
-            f"Please add 'project: your-project-name' under the 'task' section in {config_source}. "
-            "Example config structure:\n"
-            "task:\n"
-            "  project: your-project-name\n"
-            "  domain: development"
-        )
-
-    if cfg.task.domain is None:
-        raise ValueError(
-            "Domain must be provided to initialize the client. "
-            f"Please add 'domain: your-domain-name' under the 'task' section in {config_source}. "
-            "Example config structure:\n"
-            "task:\n"
-            "  project: flytesnacks\n"
-            "  domain: your-domain-name"
-        )
 
     await init.aio(
         org=cfg.task.org,
