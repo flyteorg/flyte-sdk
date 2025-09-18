@@ -4,7 +4,7 @@ import os
 from pathlib import Path
 from typing import AsyncIterator, Dict, Generic, Iterator, List, Optional, Type, TypeVar, Union
 
-from flyteidl.core import literals_pb2, types_pb2
+from flyteidl2.core import literals_pb2, types_pb2
 from fsspec.asyn import AsyncFileSystem
 from mashumaro.types import SerializableType
 from pydantic import BaseModel, model_validator

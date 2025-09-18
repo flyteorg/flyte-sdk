@@ -5,10 +5,11 @@ It uses the storage module to handle the actual uploading and downloading of fil
 TODO: Convert to use streaming apis
 """
 
-from flyteidl.core import errors_pb2, execution_pb2
+from flyteidl.core import errors_pb2
+from flyteidl2.core import execution_pb2
 
 import flyte.storage as storage
-from flyte._protos.workflow import run_definition_pb2
+from flyteidl2.workflow import run_definition_pb2
 
 from .convert import Inputs, Outputs, _clean_error_code
 

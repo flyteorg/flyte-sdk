@@ -14,7 +14,7 @@ from flyte._interface import extract_return_annotation, literal_to_enum
 from flyte._logging import logger
 
 if TYPE_CHECKING:
-    from flyteidl.core import literals_pb2
+    from flyteidl2.core import literals_pb2
 
     from flyte._internal.imagebuild.image_builder import ImageCache
     from flyte.report import Report

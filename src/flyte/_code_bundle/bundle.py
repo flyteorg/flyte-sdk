@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import ClassVar, Type
 
 from async_lru import alru_cache
-from flyteidl.core.tasks_pb2 import TaskTemplate
+from flyteidl2.core.tasks_pb2 import TaskTemplate
 
 from flyte._logging import log, logger
 from flyte._utils import AsyncLRUCache

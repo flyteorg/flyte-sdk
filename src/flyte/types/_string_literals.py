@@ -3,10 +3,10 @@ import json
 from typing import Any, Dict, Union
 
 import msgpack
-from flyteidl.core import literals_pb2
+from flyteidl2.core import literals_pb2
 from google.protobuf.json_format import MessageToDict
 
-from flyte._protos.workflow import run_definition_pb2
+from flyteidl2.workflow import run_definition_pb2
 
 
 def _primitive_to_string(primitive: literals_pb2.Primitive) -> Any:

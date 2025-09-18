@@ -126,7 +126,7 @@ class _Runner:
     @requires_initialization
     async def _run_remote(self, obj: TaskTemplate[P, R] | LazyEntity, *args: P.args, **kwargs: P.kwargs) -> Run:
         import grpc
-        from flyteidl.core import literals_pb2
+        from flyteidl2.core import literals_pb2
         from google.protobuf import wrappers_pb2
 
         from flyte.remote import Run
@@ -136,8 +136,8 @@ class _Runner:
         from ._deploy import build_images
         from ._internal.runtime.convert import convert_from_native_to_inputs
         from ._internal.runtime.task_serde import translate_task_to_wire
-        from ._protos.common import identifier_pb2
-        from ._protos.workflow import run_definition_pb2, run_service_pb2
+        from flyteidl2.common import identifier_pb2
+        from flyteidl2.workflow import run_definition_pb2, run_service_pb2
 
         cfg = get_common_config()
         project = self._project or cfg.project
@@ -415,9 +415,9 @@ class _Runner:
     async def _run_local(self, obj: TaskTemplate[P, R], *args: P.args, **kwargs: P.kwargs) -> Run:
         from flyte._internal.controllers import create_controller
         from flyte._internal.controllers._local_controller import LocalController
-        from flyte._protos.common import identifier_pb2
         from flyte.remote import Run
         from flyte.report import Report
+        from flyteidl2.common import identifier_pb2
 
         controller = cast(LocalController, create_controller("local"))
 
@@ -453,7 +453,7 @@ class _Runner:
 
         class _LocalRun(Run):
             def __init__(self, outputs: Tuple[Any, ...] | Any):
-                from flyte._protos.workflow import run_definition_pb2
+                from flyteidl2.workflow import run_definition_pb2
 
                 self._outputs = outputs
                 super().__init__(
