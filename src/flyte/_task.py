@@ -90,7 +90,7 @@ class TaskTemplate(Generic[P, R]):
     task_type_version: int = 0
     image: Union[str, Image, Literal["auto"]] = "auto"
     resources: Optional[Resources] = None
-    cache: CacheRequest = "auto"
+    cache: CacheRequest = "disable"
     interruptable: Optional[bool] = None
     retries: Union[int, RetryStrategy] = 0
     reusable: Union[ReusePolicy, None] = None
