@@ -207,10 +207,11 @@ class _Runner:
             inputs = await convert_from_native_to_inputs(obj.native_interface, *args, **kwargs)
 
         env = self._env_vars or {}
-        if self._log_level:
-            env["LOG_LEVEL"] = str(self._log_level)
-        else:
-            env["LOG_LEVEL"] = str(logger.getEffectiveLevel())
+        if env.get("LOG_LEVEL") is None:
+            if self._log_level:
+                env["LOG_LEVEL"] = str(self._log_level)
+            else:
+                env["LOG_LEVEL"] = str(logger.getEffectiveLevel())
 
         if not self._dry_run:
             if get_client() is None:
