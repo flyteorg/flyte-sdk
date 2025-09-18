@@ -31,11 +31,13 @@ async def main() -> list[int]:
     print("Running crash_recovery_trace task", flush=True)
     with flyte.group("sequential-trace-group"):
         vals = []
-        for i in range(11):
+        for i in range(1000):
             print(f"Running crasher {i}", flush=True)
             v = await run(x=i)
             vals.append(v)
-            if i == get_attempt_number() and i < 3:
+            attempt_number = get_attempt_number()
+            # Fail at attempts 0, 1, and 2 at for i = 100, 200, 300 respectively, then succeed
+            if i == (attempt_number + 1) * 100 and attempt_number < 3:
                 raise flyte.errors.RuntimeSystemError(
                     "simulated", f"Simulated failure on attempt {get_attempt_number()} at iteration {i}"
                 )
@@ -45,6 +47,6 @@ async def main() -> list[int]:
 
 
 if __name__ == "__main__":
-    flyte.init_from_config("../../config.yaml")
+    flyte.init_from_config()
     result = flyte.run(main)
     print(result.url)

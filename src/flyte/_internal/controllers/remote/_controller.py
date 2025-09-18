@@ -118,15 +118,16 @@ class RemoteController(Controller):
     def __init__(
         self,
         client_coro: Awaitable[ClientSet],
-        workers: int,
-        max_system_retries: int,
-        default_parent_concurrency: int = 1000,
+        workers: int = 20,
+        max_system_retries: int = 10,
     ):
+        """ """
         super().__init__(
             client_coro=client_coro,
             workers=workers,
             max_system_retries=max_system_retries,
         )
+        default_parent_concurrency = int(os.getenv("_F_P_CNC", "1000"))
         self._default_parent_concurrency = default_parent_concurrency
         self._parent_action_semaphore: DefaultDict[str, asyncio.Semaphore] = defaultdict(
             lambda: asyncio.Semaphore(default_parent_concurrency)
@@ -283,13 +284,6 @@ class RemoteController(Controller):
                     "RuntimeError",
                     f"Task {n.action_id.name} did not return an output path, but the task has outputs defined.",
                 )
-            if _task.reusable:
-                if _task.reusable.data_cache_size > 0:
-                    out_path = io.outputs_path(n.realized_outputs_uri)
-                    async def getter() -> io.Outputs:
-                        return await io.load_outputs(out_path, max_bytes=_task.max_inline_io_bytes)
-                    op = await self._data_cache.get(out_path, getter)
-                    return await convert.convert_outputs_to_native(_task.native_interface, op)
             return await load_and_convert_outputs(
                 _task.native_interface, n.realized_outputs_uri, max_bytes=_task.max_inline_io_bytes
             )

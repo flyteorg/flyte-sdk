@@ -3,13 +3,14 @@ from __future__ import annotations
 import inspect
 import os
 import pathlib
+import typing
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Callable, ClassVar, Dict, List, Literal, Optional, Tuple, Type
 
 import rich.repr
 
 from flyte._docstring import Docstring
-from flyte._interface import extract_return_annotation
+from flyte._interface import extract_return_annotation, literal_to_enum
 from flyte._logging import logger
 
 if TYPE_CHECKING:
@@ -329,7 +330,10 @@ class NativeInterface:
                 logger.warning(
                     f"Function {func.__name__} has parameter {name} without type annotation. Data will be pickled."
                 )
-            param_info[name] = (param.annotation, param.default)
+            if typing.get_origin(param.annotation) is Literal:
+                param_info[name] = (literal_to_enum(param.annotation), param.default)
+            else:
+                param_info[name] = (param.annotation, param.default)
 
         # Get return type
         outputs = extract_return_annotation(sig.return_annotation)

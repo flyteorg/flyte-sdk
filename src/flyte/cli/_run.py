@@ -23,14 +23,14 @@ RUN_REMOTE_CMD = "deployed-task"
 
 
 @lru_cache()
-def _initialize_config(ctx: click.Context, project: str, domain: str):
+def _initialize_config(ctx: click.Context, project: str, domain: str, root_dir: str | None = None):
     obj: CLIConfig | None = ctx.obj
     if obj is None:
         import flyte.config
 
         obj = CLIConfig(flyte.config.auto(), ctx)
 
-    obj.init(project, domain)
+    obj.init(project, domain, root_dir)
     return obj
 
 
@@ -74,6 +74,16 @@ class RunArguments:
                 type=click.Choice(get_args(CopyFiles)),
                 default="loaded_modules",
                 help="Copy style to use when running the task",
+            )
+        },
+    )
+    root_dir: str | None = field(
+        default=None,
+        metadata={
+            "click.option": click.Option(
+                ["--root-dir"],
+                type=str,
+                help="Override the root source directory, helpful when working with monorepos.",
             )
         },
     )
@@ -121,7 +131,7 @@ class RunTaskCommand(click.RichCommand):
         super().__init__(obj_name, *args, **kwargs)
 
     def invoke(self, ctx: click.Context):
-        obj: CLIConfig = _initialize_config(ctx, self.run_args.project, self.run_args.domain)
+        obj: CLIConfig = _initialize_config(ctx, self.run_args.project, self.run_args.domain, self.run_args.root_dir)
 
         async def _run():
             import flyte

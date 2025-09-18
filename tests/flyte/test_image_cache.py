@@ -5,8 +5,8 @@ from flyte._internal.imagebuild.image_builder import ImageCache
 def test_image_cache_serialization_round_trip():
     original_data = {
         "image_lookup": {
-            "auto": Image.from_debian_base().uri,
-            "abcdev": "cr.flyte.org/img2:latest",
+            "auto": {"3.10": Image.from_debian_base().uri},
+            "abcdev": {"3.10": "cr.flyte.org/img2:latest"},
         }
     }
 
@@ -22,14 +22,20 @@ def test_image_cache_serialization_round_trip():
 
     # Check that the deserialized data matches the original
     assert restored_cache.image_lookup == original_data["image_lookup"]
-    assert restored_cache.image_lookup["abcdev"] == "cr.flyte.org/img2:latest"
+    assert restored_cache.image_lookup["abcdev"]["3.10"] == "cr.flyte.org/img2:latest"
     assert restored_cache.serialized_form
 
 
 def test_image_cache_deserialize():
-    serialized = (
-        "H4sIAAAAAAAC/wXBQQ6EIAwAwL/07kK6miqfMZUWJbp0Y0QPxr87c0P+8azjZrbWP4QbuB4GAeYl7p9s7sqbNFpE+b"
-        "Td1ZKtYJDed8qClNKkSPSdfGx1YIyUPArB87zeIf0fWQAAAA=="
+    test_data = ImageCache(
+        image_lookup={
+            "auto": {"3.12": "registry.example.com/auto:latest"},
+            "test_id": {"3.11": "registry.example.com/test:latest"},
+        }
     )
+    serialized = test_data.to_transport
+
     restored = ImageCache.from_transport(serialized)
     assert "auto" in restored.image_lookup
+    assert isinstance(restored.image_lookup["auto"], dict)
+    assert "3.12" in restored.image_lookup["auto"]

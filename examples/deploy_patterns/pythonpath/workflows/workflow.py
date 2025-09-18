@@ -15,6 +15,6 @@ async def greet(name: str) -> str:
 
 if __name__ == "__main__":
     current_dir = pathlib.Path(__file__).parent
-    flyte.init_from_config("../../../config.yaml", root_dir=current_dir.parent)
+    flyte.init_from_config(root_dir=current_dir.parent)
     r = flyte.run(greet, name="World")
     print(r.url)
