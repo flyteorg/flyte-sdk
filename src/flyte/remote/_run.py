@@ -7,6 +7,7 @@ import grpc
 import rich.repr
 
 from flyte._initialize import ensure_client, get_client, get_common_config
+from flyte._logging import logger
 from flyte._protos.common import identifier_pb2, list_pb2
 from flyte._protos.workflow import run_definition_pb2, run_service_pb2
 from flyte.syncify import syncify
@@ -15,6 +16,11 @@ from . import Action, ActionDetails, ActionInputs, ActionOutputs
 from ._action import _action_details_rich_repr, _action_rich_repr
 from ._common import ToJSONMixin
 from ._console import get_run_url
+
+# @kumare3 is sadpanda, because we have to create a mirror of phase types here, because protobuf phases are ghastly
+Phase = Literal[
+    "queued", "waiting_for_resources", "initializing", "running", "succeeded", "failed", "aborted", "timed_out"
+]
 
 
 @dataclass
@@ -40,14 +46,16 @@ class Run(ToJSONMixin):
     @classmethod
     async def listall(
         cls,
-        filters: str | None = None,
+        in_phase: Tuple[Phase] | None = None,
+        created_by_subject: str | None = None,
         sort_by: Tuple[str, Literal["asc", "desc"]] | None = None,
         limit: int = 100,
     ) -> AsyncIterator[Run]:
         """
         Get all runs for the current project and domain.
 
-        :param filters: The filters to apply to the project list.
+        :param in_phase: Filter runs by one or more phases.
+        :param created_by_subject: Filter runs by the subject that created them. (this is not username, but the subject)
         :param sort_by: The sorting criteria for the project list, in the format (field, order).
         :param limit: The maximum number of runs to return.
         :return: An iterator of runs.
@@ -59,6 +67,36 @@ class Run(ToJSONMixin):
             key=sort_by[0],
             direction=(list_pb2.Sort.ASCENDING if sort_by[1] == "asc" else list_pb2.Sort.DESCENDING),
         )
+        filters = []
+        if in_phase:
+            phases = [str(run_definition_pb2.Phase.Value(f"PHASE_{p.upper()}")) for p in in_phase]
+            logger.debug(f"Fetching run phases: {phases}")
+            if len(phases) > 1:
+                filters.append(
+                    list_pb2.Filter(
+                        function=list_pb2.Filter.Function.VALUE_IN,
+                        field="phase",
+                        values=phases,
+                    ),
+                )
+            else:
+                filters.append(
+                    list_pb2.Filter(
+                        function=list_pb2.Filter.Function.EQUAL,
+                        field="phase",
+                        values=phases[0],
+                    ),
+                )
+        if created_by_subject:
+            logger.debug(f"Fetching runs created by: {created_by_subject}")
+            filters.append(
+                list_pb2.Filter(
+                    function=list_pb2.Filter.Function.EQUAL,
+                    field="created_by",
+                    values=[created_by_subject],
+                ),
+            )
+
         cfg = get_common_config()
         i = 0
         while True:
@@ -66,6 +104,7 @@ class Run(ToJSONMixin):
                 limit=min(100, limit),
                 token=token,
                 sort_by=sort_pb2,
+                filters=filters,
             )
             resp = await get_client().run_service.ListRuns(
                 run_service_pb2.ListRunsRequest(
