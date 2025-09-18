@@ -264,6 +264,7 @@ class Run(ToJSONMixin):
         """
         Rich representation of the Run object.
         """
+        yield "url", f"[blue bold][link={self.url}]link[/link][/blue bold]"
         yield from _action_rich_repr(self.pb2.action)
 
     def __repr__(self) -> str:
