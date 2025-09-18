@@ -2,8 +2,6 @@ import os
 import typing
 
 import ray
-
-from flyte.remote import Run
 from flyteplugins.ray.task import HeadNodeConfig, RayJobConfig, WorkerNodeConfig
 
 import flyte.storage
