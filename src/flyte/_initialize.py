@@ -180,6 +180,8 @@ async def init(
     :param source_config_path: Optional path to the source configuration file (This is only used for documentation)
     :return: None
     """
+    from flyte._utils import get_cwd_editable_install, org_from_endpoint, sanitize_endpoint
+
     if endpoint or api_key:
         if project is None:
             raise ValueError(
@@ -195,7 +197,12 @@ async def init(
                 "or pass it directly to flyte.init(domain='your-domain-name')."
             )
 
-    from flyte._utils import get_cwd_editable_install, org_from_endpoint, sanitize_endpoint
+        if org is None and org_from_endpoint(endpoint) is None:
+            raise ValueError(
+                "Organization must be provided to initialize the client. "
+                "Please set 'org' in the 'task' section of your config file, "
+                "or pass it directly to flyte.init(org='your-org-name')."
+            )
 
     _initialize_logger(log_level=log_level)
 
