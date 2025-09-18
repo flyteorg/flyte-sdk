@@ -440,10 +440,11 @@ class Controller:
                 logger.warning(f"[{worker_id}] Retrying action {action.name} after backoff")
                 await self._shared_queue.put(action)
             except Exception as e:
-                logger.error(f"[{worker_id}] Error in controller loop: {e}")
+                logger.error(f"[{worker_id}] Error in controller loop for {action.name}: {e}")
                 err = flyte.errors.RuntimeSystemError(
                     code=type(e).__name__,
-                    message=f"Controller failed, system retries {action.retries} crossed threshold {self._max_retries}",
+                    message=f"Controller failed, system retries {action.retries} / {self._max_retries} "
+                    f"crossed threshold, for action {action.name}: {e}",
                     worker=worker_id,
                 )
                 err.__cause__ = e
