@@ -300,9 +300,8 @@ async def init_from_config(
 
     logger.info(f"Flyte config initialized as {cfg}", extra={"highlighter": ReprHighlighter()})
 
-    # Enhanced validation with helpful error messages
+    config_source = cfg.source or cfg_path or "config file"
     if cfg.task.project is None:
-        config_source = cfg.source or cfg_path or "config file"
         raise ValueError(
             "Project must be provided to initialize the client. "
             f"Please add 'project: your-project-name' under the 'task' section in {config_source}. "
@@ -313,7 +312,6 @@ async def init_from_config(
         )
 
     if cfg.task.domain is None:
-        config_source = cfg.source or cfg_path or "config file"
         raise ValueError(
             "Domain must be provided to initialize the client. "
             f"Please add 'domain: your-domain-name' under the 'task' section in {config_source}. "
