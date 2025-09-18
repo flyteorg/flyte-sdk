@@ -4,7 +4,7 @@ from typing import Any, Dict, Optional, Type
 
 from flyte._task import TaskTemplate
 from flyte.io import DataFrame
-from flyte.models import SerializationContext
+from flyte.models import NativeInterface, SerializationContext
 from flyteidl.core import tasks_pb2
 from google.cloud import bigquery
 from google.protobuf import json_format
@@ -52,12 +52,11 @@ class BigQueryTask(TaskTemplate):
             }
         super().__init__(
             name=name,
-            plugin_config=plugin_config,
-            inputs=inputs,
-            outputs=outputs,
+            interface=NativeInterface({k: (v, None) for k, v in inputs.items()} if inputs else {}, outputs or {}),
             task_type=self._TASK_TYPE,
             **kwargs,
         )
+        self.output_dataframe_type = output_dataframe_type
         self.plugin_config = plugin_config
         self.query_template = re.sub(r"\s+", " ", query_template.replace("\n", " ").replace("\t", " ")).strip()
 

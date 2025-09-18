@@ -11,9 +11,9 @@ bigquery_env = flyte.TaskEnvironment(
 bigquery_task = BigQueryTask(
     name="bigquery",
     inputs={"version": int},
-    output_dataFrame_type=DataFrame,
-    plugin_config=BigQueryConfig(ProjectID="flyte"),
-    query_template="SELECT * from dataset.flyte;",
+    output_dataframe_type=DataFrame,
+    plugin_config=BigQueryConfig(ProjectID="dogfood-gcp-dataplane"),
+    query_template="SELECT * from dataset.flyte_table3;",
 )
 
 bigquery_env.add_task(bigquery_task)
