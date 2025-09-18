@@ -12,7 +12,6 @@ DEFAULT_CODE_SERVER_REMOTE_PATHS = {
 }
 DEFAULT_CODE_SERVER_EXTENSIONS = [
     "https://raw.githubusercontent.com/flyteorg/flytetools/master/flytekitplugins/flyin/ms-python.python-2023.20.0.vsix",
-    "https://raw.githubusercontent.com/flyteorg/flytetools/master/flytekitplugins/flyin/ms-toolsai.jupyter-2023.9.100.vsix",
 ]
 
 # Duration to pause the checking of the heartbeat file until the next one
