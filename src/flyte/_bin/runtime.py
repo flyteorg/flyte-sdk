@@ -136,7 +136,9 @@ def main(
             controller_kwargs["insecure"] = True
         logger.debug(f"Using controller endpoint: {ep} with kwargs: {controller_kwargs}")
 
-    bundle = CodeBundle(tgz=tgz, pkl=pkl, destination=dest, computed_version=version)
+    bundle = None
+    if tgz or pkl:
+        bundle = CodeBundle(tgz=tgz, pkl=pkl, destination=dest, computed_version=version)
     init(org=org, project=project, domain=domain, image_builder="remote", **controller_kwargs)
     # Controller is created with the same kwargs as init, so that it can be used to run tasks
     controller = create_controller(ct="remote", **controller_kwargs)

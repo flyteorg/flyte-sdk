@@ -605,6 +605,8 @@ def with_runcontext(
     """
     if mode == "hybrid" and not name and not run_base_dir:
         raise ValueError("Run name and run base dir are required for hybrid mode")
+    if copy_style == "none" and not version:
+        raise ValueError("Version is required when copy_style is 'none'")
     return _Runner(
         force_mode=mode,
         name=name,
