@@ -332,8 +332,9 @@ class CommandsHandler:
     @staticmethod
     async def handle(layer: Commands, _: Path, dockerfile: str) -> str:
         # Append raw commands to the dockerfile
+        secret_mounts = _get_secret_mounts_layer(layer.secret_mounts)
         for command in layer.commands:
-            dockerfile += f"\nRUN {command}\n"
+            dockerfile += f"\nRUN {secret_mounts} {command}\n"
 
         return dockerfile
 
@@ -365,7 +366,7 @@ def _get_secret_commands(layers: typing.Tuple[Layer, ...]) -> typing.List[str]:
         return ["--secret", f"id={secret_id},src={secret_file_path}"]
 
     for layer in layers:
-        if isinstance(layer, (PipOption, AptPackages)):
+        if isinstance(layer, (PipOption, AptPackages, Commands)):
             if layer.secret_mounts:
                 for secret_mount in layer.secret_mounts:
                     commands.extend(_get_secret_command(secret_mount))
