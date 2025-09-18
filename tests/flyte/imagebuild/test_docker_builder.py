@@ -123,6 +123,7 @@ async def test_copy_config_handler():
                 src=test_file,
                 dst="/app/main.py",
                 path_type=0,  # file
+                src_name=test_file.name,
             )
 
             # Test the handle method
@@ -189,6 +190,7 @@ async def test_copy_config_handler_skips_dockerignore():
                     src=src_dir,
                     dst=".",
                     path_type=1,  # directory
+                    src_name=src_dir.name,
                 )
 
                 result = await CopyConfigHandler.handle(
@@ -248,6 +250,7 @@ async def test_copy_config_handler_with_dockerignore_layer():
                     src=src_dir,
                     dst=".",
                     path_type=1,  # directory
+                    src_name=src_dir.name,
                 )
 
                 result = await CopyConfigHandler.handle(
