@@ -356,9 +356,8 @@ def _get_secret_commands(layers: typing.Tuple[Layer, ...]) -> typing.List[str]:
             secret = Secret(key=secret)
         secret_id = hash(secret)
         secret_env_key = "_".join([k.upper() for k in filter(None, (secret.group, secret.key))])
-        secret_env = os.getenv(secret_env_key)
-        if secret_env:
-            return ["--secret", f"id={secret_id},env={secret_env}"]
+        if os.getenv(secret_env_key):
+            return ["--secret", f"id={secret_id},env={secret_env_key}"]
         secret_file_name = "_".join(list(filter(None, (secret.group, secret.key))))
         secret_file_path = f"/etc/secrets/{secret_file_name}"
         if not os.path.exists(secret_file_path):
