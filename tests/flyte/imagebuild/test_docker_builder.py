@@ -64,11 +64,11 @@ async def test_image_with_secrets(monkeypatch):
     builder = DockerImageBuilder()
     await builder.build_image(img)
 
+
 @pytest.mark.asyncio
 @pytest.mark.integration
 @pytest.mark.parametrize("secret_mounts", [["flyte"], [Secret(group="group", key="key")]])
 async def test_image_with_secrets_fails_if_secret_missing(secret_mounts):
-
     base = Image.from_debian_base(registry="localhost:30000", name="img_with_missing_secrets")
     builder = DockerImageBuilder()
 

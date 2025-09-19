@@ -31,6 +31,6 @@ if __name__ == "__main__":
     flyte.init_from_config()
     runs = []
     for i in range(20):
-        run = flyte.run(reuse_concurrency, n=25000)
+        run = flyte.run(reuse_concurrency, n=10000)
         runs.append(run.url)
     print(runs)
