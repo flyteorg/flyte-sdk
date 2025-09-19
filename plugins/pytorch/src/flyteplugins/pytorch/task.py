@@ -4,7 +4,6 @@ from enum import Enum
 from typing import Any, Dict, Optional, Union
 
 import flyte
-import torch
 from cloudpickle import cloudpickle
 from flyte._logging import logger
 from flyte._task import P, R
@@ -47,7 +46,7 @@ class Elastic:
     rdzv_configs: Dict[str, Any] = field(default_factory=lambda: {"timeout": 900, "join_timeout": 900})
 
 
-def launcher_target_func(fn: bytes, kwargs: dict):
+def launcher_entrypoint(fn: bytes, kwargs: dict):
     fn = cloudpickle.loads(fn)
     return fn(**kwargs)
 
@@ -66,10 +65,9 @@ class TorchFunctionTask(AsyncFunctionTaskTemplate):
         super().__post_init__()
         self.task_type = "python-task" if self.plugin_config.nnodes == 1 else "pytorch"
         self.min_nodes, self.max_nodes = run.parse_min_max_nnodes(str(self.plugin_config.nnodes))
-        print("min_nodes", self.min_nodes, "max_nodes", self.max_nodes)
         self.rdzv_backend = "c10d"
 
-    async def execute(self, *args: P.args, **kwargs: P.kwargs) -> R:
+    async def pre(self, *args: P.args, **kwargs: P.kwargs) -> Dict[str, Any]:
         # If OMP_NUM_THREADS is not set, set it to 1 to avoid overloading the system.
         # Doing so to copy the default behavior of torchrun.
         # See https://github.com/pytorch/pytorch/blob/eea4ece256d74c6f25c1f4eab37b3f2f4aeefd4d/torch/distributed/run.py#L791
@@ -85,7 +83,9 @@ class TorchFunctionTask(AsyncFunctionTaskTemplate):
                 omp_num_threads,
             )
             os.environ["OMP_NUM_THREADS"] = str(omp_num_threads)
+        return {}
 
+    async def execute(self, *args: P.args, **kwargs: P.kwargs) -> R:
         config = LaunchConfig(
             run_id=flyte.ctx().action.run_name,
             min_nodes=self.min_nodes,
@@ -97,7 +97,7 @@ class TorchFunctionTask(AsyncFunctionTaskTemplate):
             max_restarts=self.plugin_config.max_restarts,
             monitor_interval=self.plugin_config.monitor_interval,
         )
-        out = elastic_launch(config=config, entrypoint=launcher_target_func)(cloudpickle.dumps(self.func), kwargs)
+        out = elastic_launch(config=config, entrypoint=launcher_entrypoint)(cloudpickle.dumps(self.func), kwargs)
 
         # `out` is a dictionary of rank (not local rank) -> result
         # Rank 0 returns the result of the task function
@@ -139,16 +139,6 @@ class TorchFunctionTask(AsyncFunctionTaskTemplate):
         )
 
         return MessageToDict(torch_job)
-
-    async def post(self, return_vals: Any) -> Any:
-        """
-        Post execution cleanup for TorchFunctionTask.
-        Make sure to destroy the process group if we are in a cluster environment.
-        """
-        if torch.distributed.is_initialized():
-            torch.distributed.destroy_process_group()
-
-        return return_vals
 
 
 TaskPluginRegistry.register(config_type=Elastic, plugin=TorchFunctionTask)

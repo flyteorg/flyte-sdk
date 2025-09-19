@@ -2,6 +2,7 @@ import typing
 from pathlib import Path
 
 import torch
+import torch.distributed
 import torch.nn as nn
 import torch.optim as optim
 from flyteplugins.pytorch.task import Elastic
@@ -20,20 +21,13 @@ image = (
     .with_local_v2()
 )
 
-torch_config = Elastic(
-    nproc_per_node=2,
-    nnodes=3,
-)
-
-
-task_env = flyte.TaskEnvironment(
-    name="task_env", resources=flyte.Resources(cpu=(1, 2), memory=("400Mi", "1000Mi")), image=image
-)
-
 torch_env = flyte.TaskEnvironment(
     name="torch_env",
     resources=flyte.Resources(cpu=(1, 2), memory=("1Gi", "2Gi")),
-    plugin_config=torch_config,
+    plugin_config=Elastic(
+        nproc_per_node=1,
+        nnodes=2,
+    ),
     image=image,
 )
 
@@ -67,6 +61,7 @@ def train_loop(epochs: int = 3) -> float:
     """
     A simple training loop for linear regression.
     """
+    torch.distributed.init_process_group("gloo")
     model = DDP(LinearRegressionModel())
 
     rank = torch.distributed.get_rank()
@@ -100,15 +95,14 @@ def train_loop(epochs: int = 3) -> float:
 
 
 @torch_env.task
-def hello_torch_nested(epochs: int) -> typing.Optional[int]:
+def hello_torch_nested(epochs: int) -> typing.Optional[float]:
     """
     A nested task that sets up a simple distributed training job using PyTorch's
     """
     print("starting launcher")
+    loss = train_loop(epochs=epochs)
     print("Training complete")
-    print("Final loss:", 0.1)
-    print(epochs)
-    return 3
+    return loss
 
 
 if __name__ == "__main__":

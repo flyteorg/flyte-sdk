@@ -1,3 +1,3 @@
-__all__ = ["Elastic", "MasterNodeConfig", "TorchFunctionTask", "WorkerNodeConfig"]
+__all__ = ["Elastic"]
 
-from flyteplugins.pytorch.task import Elastic, MasterNodeConfig, TorchFunctionTask, WorkerNodeConfig
+from flyteplugins.pytorch.task import Elastic
