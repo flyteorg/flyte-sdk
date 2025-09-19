@@ -6,9 +6,10 @@ import tempfile
 import typing
 from pathlib import Path
 from string import Template
-from typing import ClassVar, List, Optional, Protocol, cast
+from typing import ClassVar, ContextManager, List, Optional, Protocol, cast
 
 import aiofiles
+import contextlib
 import click
 
 from flyte import Secret
@@ -460,6 +461,10 @@ class DockerImageBuilder(ImageBuilder):
     """Image builder using Docker and buildkit."""
 
     builder_type: ClassVar = "docker"
+    # A context manager that can be used to initialize resources necessary for the build
+    # (e.g. log into a registry, hydrate env vars or files with secrets, etc...)
+    build_ctx_manager: ClassVar[Optional[ContextManager]] = None
+
     _builder_name: ClassVar = "flytex"
 
     def get_checkers(self) -> Optional[typing.List[typing.Type[ImageChecker]]]:
@@ -467,19 +472,20 @@ class DockerImageBuilder(ImageBuilder):
         return [LocalDockerCommandImageChecker, LocalPodmanCommandImageChecker, DockerAPIImageChecker]
 
     async def build_image(self, image: Image, dry_run: bool = False) -> str:
-        if image.dockerfile:
-            # If a dockerfile is provided, use it directly
-            return await self._build_from_dockerfile(image, push=True)
+        with DockerImageBuilder.build_ctx_manager or contextlib.nullcontext():
+            if image.dockerfile:
+                # If a dockerfile is provided, use it directly
+                return await self._build_from_dockerfile(image, push=True)
 
-        if len(image._layers) == 0:
-            logger.warning("No layers to build, returning the image URI as is.")
-            return image.uri
+            if len(image._layers) == 0:
+                logger.warning("No layers to build, returning the image URI as is.")
+                return image.uri
 
-        return await self._build_image(
-            image,
-            push=True,
-            dry_run=dry_run,
-        )
+            return await self._build_image(
+                image,
+                push=True,
+                dry_run=dry_run,
+            )
 
     async def _build_from_dockerfile(self, image: Image, push: bool) -> str:
         """
