@@ -978,7 +978,7 @@ class Image:
         By default, this method copies the entire project into the image,
         including files such as pyproject.toml, poetry.lock, and the src/ directory.
 
-        If you prefer not to install the current project, you can pass the extra_args
+        If you prefer not to install the current project, you can pass through `extra_args`
         `--no-root`. In this case, the image builder will only copy pyproject.toml and poetry.lock
         into the image.
 
