@@ -69,8 +69,8 @@ class TaskTemplate(Generic[P, R]):
     version with flyte installed
     :param resources: Optional The resources to use for the task
     :param cache: Optional The cache policy for the task, defaults to auto, which will cache the results of the task.
-    :param interruptable: Optional The interruptable policy for the task, defaults to False, which means the task
-     will not be scheduled on interruptable nodes. If set to True, the task will be scheduled on interruptable nodes,
+    :param interruptible: Optional The interruptible policy for the task, defaults to False, which means the task
+     will not be scheduled on interruptible nodes. If set to True, the task will be scheduled on interruptible nodes,
      and the code should handle interruptions and resumptions.
     :param retries: Optional The number of retries for the task, defaults to 0, which means no retries.
     :param reusable: Optional The reusability policy for the task, defaults to None, which means the task environment
@@ -91,7 +91,7 @@ class TaskTemplate(Generic[P, R]):
     image: Union[str, Image, Literal["auto"]] = "auto"
     resources: Optional[Resources] = None
     cache: CacheRequest = "disable"
-    interruptable: bool = False
+    interruptible: bool = False
     retries: Union[int, RetryStrategy] = 0
     reusable: Union[ReusePolicy, None] = None
     docs: Optional[Documentation] = None
@@ -327,7 +327,7 @@ class TaskTemplate(Generic[P, R]):
         secrets: Optional[SecretRequest] = None,
         max_inline_io_bytes: int | None = None,
         pod_template: Optional[Union[str, PodTemplate]] = None,
-        interruptable: Optional[bool] = None,
+        interruptible: Optional[bool] = None,
         **kwargs: Any,
     ) -> TaskTemplate:
         """
@@ -367,7 +367,7 @@ class TaskTemplate(Generic[P, R]):
         env_vars = env_vars or self.env_vars
         secrets = secrets or self.secrets
 
-        interruptable = interruptable if interruptable is not None else self.interruptable
+        interruptible = interruptible if interruptible is not None else self.interruptible
 
         for k, v in kwargs.items():
             if k == "name":
@@ -391,7 +391,7 @@ class TaskTemplate(Generic[P, R]):
             secrets=secrets,
             max_inline_io_bytes=max_inline_io_bytes,
             pod_template=pod_template,
-            interruptable=interruptable,
+            interruptible=interruptible,
             **kwargs,
         )
 

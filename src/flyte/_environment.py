@@ -38,7 +38,7 @@ class Environment:
     :param secrets: Secrets to inject into the environment.
     :param pod_template: Pod template to use for the environment.
     :param description: Description of the environment.
-    :param interruptable: Whether the environment is interruptable and can be scheduled on spot/preemptible instances
+    :param interruptible: Whether the environment is interruptible and can be scheduled on spot/preemptible instances
     :param depends_on: Environment dependencies to hint, so when you deploy the environment, the dependencies are
         also deployed. This is useful when you have a set of environments that depend on each other.
     """
@@ -50,7 +50,7 @@ class Environment:
     secrets: Optional[SecretRequest] = None
     env_vars: Optional[Dict[str, str]] = None
     resources: Optional[Resources] = None
-    interruptable: bool = False
+    interruptible: bool = False
     image: Union[str, Image, Literal["auto"]] = "auto"
 
     def __post_init__(self):
