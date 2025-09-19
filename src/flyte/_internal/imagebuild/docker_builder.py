@@ -60,9 +60,8 @@ RUN --mount=type=cache,sharing=locked,mode=0777,target=/root/.cache/uv,id=uv \
    uv sync --active $PIP_INSTALL_ARGS --project $PYPROJECT_PATH
 """)
 
-POETRY_lOCK_WITHOUT_PROJECT_INSTALL_TEMPLATE = Template("""\
+POETRY_LOCK_WITHOUT_PROJECT_INSTALL_TEMPLATE = Template("""\
 RUN --mount=type=cache,sharing=locked,mode=0777,target=/root/.cache/uv,id=uv \
-   $SECRET_MOUNT \
    uv pip install poetry
 
 ENV POETRY_CACHE_DIR=/tmp/poetry_cache \
@@ -77,7 +76,6 @@ RUN --mount=type=cache,sharing=locked,mode=0777,target=/tmp/poetry_cache,id=poet
 
 POETRY_LOCK_INSTALL_TEMPLATE = Template("""\
 RUN --mount=type=cache,sharing=locked,mode=0777,target=/root/.cache/uv,id=uv \
-   $SECRET_MOUNT \
    uv pip install poetry
 
 COPY $PYPROJECT_PATH $PYPROJECT_PATH
@@ -305,7 +303,7 @@ class PoetryProjectHandler:
             # Only Copy pyproject.yaml and poetry.lock.
             pyproject_dst = copy_files_to_context(layer.pyproject, context_path)
             poetry_lock_dst = copy_files_to_context(layer.poetry_lock, context_path)
-            delta = POETRY_lOCK_WITHOUT_PROJECT_INSTALL_TEMPLATE.substitute(
+            delta = POETRY_LOCK_WITHOUT_PROJECT_INSTALL_TEMPLATE.substitute(
                 POETRY_LOCK_PATH=poetry_lock_dst.relative_to(context_path),
                 PYPROJECT_PATH=pyproject_dst.relative_to(context_path),
                 POETRY_INSTALL_ARGS=poetry_install_args,

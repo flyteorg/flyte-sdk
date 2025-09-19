@@ -209,6 +209,9 @@ class UVProject(PipOption, Layer):
 @rich.repr.auto
 @dataclass(frozen=True, repr=True)
 class PoetryProject(Layer):
+    """
+    Poetry does not use pip options, so the PoetryProject class do not inherits PipOption class
+    """
     pyproject: Path
     poetry_lock: Path
     extra_args: Optional[str] = None
@@ -968,14 +971,14 @@ class Image:
         secret_mounts: Optional[SecretRequest] = None,
     ):
         """
-        Use this method to create a new image with the specified poetry.lock layered on top of the current image.
+        Use this method to create a new image with the specified pyproject.toml layered on top of the current image.
         Must have a corresponding pyproject.toml file in the same directory.
         Cannot be used in conjunction with conda.
 
         By default, this method copies the entire project into the image,
         including files such as pyproject.toml, poetry.lock, and the src/ directory.
 
-        If you prefer not to install the current project, you can pass the extra argument
+        If you prefer not to install the current project, you can pass the extra_args
         `--no-root`. In this case, the image builder will only copy pyproject.toml and poetry.lock
         into the image.
 
