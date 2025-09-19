@@ -1,6 +1,4 @@
-import inspect
 import os
-import typing
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Dict, Optional, Union
@@ -8,14 +6,11 @@ from typing import Any, Dict, Optional, Union
 import flyte
 import torch
 from cloudpickle import cloudpickle
-from flyte import PodTemplate
-from flyte._internal.runtime.resources_serde import get_proto_resources
 from flyte._logging import logger
 from flyte._task import P, R
 from flyte.extend import AsyncFunctionTaskTemplate, TaskPluginRegistry
 from flyte.models import SerializationContext
-from flyteidl.plugins import common_pb2 as _common_pb2
-from flyteidl.plugins.kubeflow import common_pb2 as _kubeflow_common
+from flyteidl.plugins.kubeflow import common_pb2
 from flyteidl.plugins.kubeflow.pytorch_pb2 import (
     DistributedPyTorchTrainingReplicaSpec,
     DistributedPyTorchTrainingTask,
@@ -26,16 +21,10 @@ from torch.distributed import run
 from torch.distributed.launcher.api import LaunchConfig, elastic_launch
 
 
-class RestartPolicy(Enum):
-    ALWAYS = _kubeflow_common.RESTART_POLICY_ALWAYS
-    FAILURE = _kubeflow_common.RESTART_POLICY_ON_FAILURE
-    NEVER = _kubeflow_common.RESTART_POLICY_NEVER
-
-
 class CleanPodPolicy(Enum):
-    NONE = _kubeflow_common.CLEANPOD_POLICY_NONE
-    ALL = _kubeflow_common.CLEANPOD_POLICY_ALL
-    RUNNING = _kubeflow_common.CLEANPOD_POLICY_RUNNING
+    NONE = common_pb2.CLEANPOD_POLICY_NONE
+    ALL = common_pb2.CLEANPOD_POLICY_ALL
+    RUNNING = common_pb2.CLEANPOD_POLICY_RUNNING
 
 
 @dataclass
@@ -44,20 +33,6 @@ class RunPolicy:
     ttl_seconds_after_finished: Optional[int] = None
     active_deadline_seconds: Optional[int] = None
     backoff_limit: Optional[int] = None
-
-
-@dataclass
-class MasterNodeConfig:
-    image: Optional[str] = None
-    replicas: Optional[int] = 1
-    pod_template: typing.Optional[PodTemplate] = None
-
-
-@dataclass
-class WorkerNodeConfig:
-    image: Optional[str] = None
-    replicas: Optional[int] = None
-    restart_policy: Optional[_common_pb2.RestartPolicy] = None
 
 
 @dataclass
@@ -70,25 +45,11 @@ class Elastic:
     monitor_interval: int = 3
     max_restarts: int = 3
     rdzv_configs: Dict[str, Any] = field(default_factory=lambda: {"timeout": 900, "join_timeout": 900})
-    start_method: str = "spawn"
 
 
-def _distributed_entrypoint(user_entrypoint, backend="gloo", *args, **kwargs):
-    if not torch.distributed.is_initialized():
-        torch.distributed.init_process_group(backend=backend)
-
-    return user_entrypoint(*args, **kwargs)
-
-
-def _convert_run_policy_to_flyte_idl(
-    run_policy: RunPolicy,
-) -> _kubeflow_common.RunPolicy:
-    return _kubeflow_common.RunPolicy(
-        clean_pod_policy=(run_policy.clean_pod_policy.value if run_policy.clean_pod_policy else None),
-        ttl_seconds_after_finished=run_policy.ttl_seconds_after_finished,
-        active_deadline_seconds=run_policy.active_deadline_seconds,
-        backoff_limit=run_policy.backoff_limit,
-    )
+def launcher_target_func(fn: bytes, kwargs: dict):
+    fn = cloudpickle.loads(fn)
+    return fn(**kwargs)
 
 
 @dataclass(kw_only=True)
@@ -98,6 +59,7 @@ class TorchFunctionTask(AsyncFunctionTaskTemplate):
     """
 
     task_type: str = "pytorch"
+    task_type_version: int = 1
     plugin_config: Elastic
 
     def __post_init__(self):
@@ -107,21 +69,7 @@ class TorchFunctionTask(AsyncFunctionTaskTemplate):
         print("min_nodes", self.min_nodes, "max_nodes", self.max_nodes)
         self.rdzv_backend = "c10d"
 
-    async def pre(self, *args, **kwargs) -> Dict[str, Any]:
-        """
-        Pre execution setup for TorchFunctionTask.
-        """
-
     async def execute(self, *args: P.args, **kwargs: P.kwargs) -> R:
-        dist_env_vars_set = os.environ.get("PET_NNODES") is not None
-        if not dist_env_vars_set and self.min_nodes > 1:
-            logger.warning(
-                (
-                    f"`nnodes` is set to {self.plugin_config.nnodes} in elastic task but execution appears "
-                    "to not run in a `PyTorchJob`. Rendezvous might timeout."
-                )
-            )
-
         # If OMP_NUM_THREADS is not set, set it to 1 to avoid overloading the system.
         # Doing so to copy the default behavior of torchrun.
         # See https://github.com/pytorch/pytorch/blob/eea4ece256d74c6f25c1f4eab37b3f2f4aeefd4d/torch/distributed/run.py#L791
@@ -143,27 +91,23 @@ class TorchFunctionTask(AsyncFunctionTaskTemplate):
             min_nodes=self.min_nodes,
             max_nodes=self.max_nodes,
             nproc_per_node=self.plugin_config.nproc_per_node,
-            rdzv_backend=self.rdzv_backend,  # rdzv settings
+            rdzv_backend=self.rdzv_backend,
             rdzv_configs=self.plugin_config.rdzv_configs,
             rdzv_endpoint=os.environ.get("PET_RDZV_ENDPOINT", "localhost:0"),
             max_restarts=self.plugin_config.max_restarts,
             monitor_interval=self.plugin_config.monitor_interval,
-            start_method=self.plugin_config.start_method,
         )
-
-        sig = inspect.signature(self.func)
-        # Order parameters according to the function signature since torch elastic launcher
-        # doesn't support passing kwargs to the target function
-        args = tuple(kwargs[p.name] for p in sig.parameters.values())
-        out = elastic_launch(config=config, entrypoint=self.func)(*args)
+        out = elastic_launch(config=config, entrypoint=launcher_target_func)(cloudpickle.dumps(self.func), kwargs)
 
         # `out` is a dictionary of rank (not local rank) -> result
         # Rank 0 returns the result of the task function
-        return out[0]
+        if 0 in out:
+            return out[0]
+        return None
 
-    def custom_config(self, sctx: SerializationContext) -> Any:
+    def custom_config(self, sctx: SerializationContext) -> Optional[Dict[str, Any]]:
         """
-        Converts the TorchJobConfig to a DistributedPyTorchTrainingTask
+        Converts the ElasticConfig to a DistributedPyTorchTrainingTask
         """
         elastic_config = ElasticConfig(
             rdzv_backend=self.plugin_config.rdzv_backend,
@@ -173,49 +117,28 @@ class TorchFunctionTask(AsyncFunctionTaskTemplate):
             max_restarts=self.plugin_config.max_restarts,
         )
 
-        policy = (
-            _convert_run_policy_to_flyte_idl(self.plugin_config.run_policy) if self.plugin_config.run_policy else None
-        )
+        policy = None
+        if self.plugin_config.run_policy:
+            policy = common_pb2.RunPolicy(
+                clean_pod_policy=(
+                    self.plugin_config.run_policy.clean_pod_policy.value
+                    if self.plugin_config.run_policy.clean_pod_policy
+                    else None
+                ),
+                ttl_seconds_after_finished=self.plugin_config.run_policy.ttl_seconds_after_finished,
+                active_deadline_seconds=self.plugin_config.run_policy.active_deadline_seconds,
+                backoff_limit=self.plugin_config.run_policy.backoff_limit,
+            )
 
         torch_job = DistributedPyTorchTrainingTask(
             worker_replicas=DistributedPyTorchTrainingReplicaSpec(
                 replicas=self.max_nodes,
             ),
-            # master_replicas=self._create_master_spec(),
             run_policy=policy,
             elastic_config=elastic_config,
         )
 
-        print("job", torch_job)
         return MessageToDict(torch_job)
-
-    # def _create_worker_spec(self) -> DistributedPyTorchTrainingReplicaSpec:
-    #     if self.plugin_config.worker_node_config is None:
-    #         raise ValueError("Worker node configuration must be provided")
-    #
-    #     if self.image is None:
-    #         raise ValueError("Either task image or worker node image must be provided")
-    #
-    #     return DistributedPyTorchTrainingReplicaSpec(
-    #         replicas=self.plugin_config.worker_node_config.replicas,
-    #         image=str(self.image),
-    #         resources=get_proto_resources(self.resources),
-    #         restart_policy=_common_pb2.RestartPolicy.RESTART_POLICY_ON_FAILURE,
-    #     )
-    #
-    # def _create_master_spec(self) -> DistributedPyTorchTrainingReplicaSpec:
-    #     if self.plugin_config.master_node_config is None:
-    #         raise ValueError("Master node configuration must be provided")
-    #
-    #     if self.image is None:
-    #         raise ValueError("Either task image or master node image must be provided")
-    #
-    #     return DistributedPyTorchTrainingReplicaSpec(
-    #         replicas=1,
-    #         image=str(self.image),
-    #         resources=get_proto_resources(self.resources),
-    #         restart_policy=_common_pb2.RestartPolicy.RESTART_POLICY_ON_FAILURE,
-    #     )
 
     async def post(self, return_vals: Any) -> Any:
         """

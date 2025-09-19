@@ -1,3 +1,4 @@
+import typing
 from pathlib import Path
 
 import torch
@@ -20,8 +21,8 @@ image = (
 )
 
 torch_config = Elastic(
-    nproc_per_node=1,
-    nnodes=2,
+    nproc_per_node=2,
+    nnodes=3,
 )
 
 
@@ -99,7 +100,7 @@ def train_loop(epochs: int = 3) -> float:
 
 
 @torch_env.task
-def hello_torch_nested(epochs: int) -> int:
+def hello_torch_nested(epochs: int) -> typing.Optional[int]:
     """
     A nested task that sets up a simple distributed training job using PyTorch's
     """
