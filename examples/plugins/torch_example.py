@@ -12,8 +12,7 @@ from torch.utils.data import DataLoader, DistributedSampler, TensorDataset
 import flyte
 
 image = (
-    flyte.Image.from_base("pytorch/pytorch:2.8.0-cuda12.9-cudnn9-runtime")
-    .clone(name="torch", python_version=(3, 10))
+    flyte.Image.from_debian_base(name="torch")
     # .with_pip_packages("flyteplugins-pytorch", pre=True)
     .with_pip_packages("torch==2.8.0", "numpy", "pandas")
     .with_source_folder(Path(__file__).parent.parent.parent / "plugins/pytorch", "./pytorch")

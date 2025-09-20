@@ -56,6 +56,7 @@ class TorchFunctionTask(AsyncFunctionTaskTemplate):
     """
     Plugin to transform local python code for execution as a PyTorch job.
     """
+
     task_type: str = "pytorch"
     task_type_version: int = 1
     plugin_config: Elastic
