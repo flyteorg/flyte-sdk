@@ -256,7 +256,12 @@ def prepare_launch_json(ctx: click.Context, pid: int):
 
 
 async def _start_vscode_server(ctx: click.Context):
-    await asyncio.gather(download_tgz(ctx.params["dest"], ctx.params["version"], ctx.params["tgz"]), download_vscode())
+    if ctx.params["tgz"] is None:
+        await download_vscode()
+    else:
+        await asyncio.gather(
+            download_tgz(ctx.params["dest"], ctx.params["version"], ctx.params["tgz"]), download_vscode()
+        )
     child_process = multiprocessing.Process(
         target=lambda cmd: asyncio.run(asyncio.run(execute_command(cmd))),
         kwargs={"cmd": f"code-server --bind-addr 0.0.0.0:6060 --disable-workspace-trust --auth none {os.getcwd()}"},
