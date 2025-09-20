@@ -171,7 +171,7 @@ def get_proto_task(task: TaskTemplate, serialize_context: SerializationContext) 
             retries=get_proto_retry_strategy(task.retries),
             timeout=get_proto_timeout(task.timeout),
             pod_template_name=(task.pod_template if task.pod_template and isinstance(task.pod_template, str) else None),
-            interruptible=task.interruptable,
+            interruptible=task.interruptible,
             generates_deck=wrappers_pb2.BoolValue(value=task.report),
         ),
         interface=transform_native_to_typed_interface(task.native_interface),
