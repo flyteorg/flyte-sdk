@@ -13,6 +13,7 @@ from ._deploy import deploy
 from ._gen import gen
 from ._get import get
 from ._run import run
+from ._user import whoami
 
 help_config = click.RichHelpConfiguration(
     use_markdown=True,
@@ -193,3 +194,4 @@ main.add_command(abort)  # type: ignore
 main.add_command(gen)  # type: ignore
 main.add_command(delete)  # type: ignore
 main.add_command(build)
+main.add_command(whoami)  # type: ignore

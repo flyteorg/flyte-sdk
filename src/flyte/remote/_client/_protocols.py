@@ -1,7 +1,7 @@
 from typing import AsyncIterator, Protocol
 
 from flyteidl.admin import project_attributes_pb2, project_pb2, version_pb2
-from flyteidl.service import dataproxy_pb2
+from flyteidl.service import dataproxy_pb2, identity_pb2
 from grpc.aio import UnaryStreamCall
 from grpc.aio._typing import RequestType
 
@@ -131,3 +131,7 @@ class SecretService(Protocol):
     async def ListSecrets(self, request: payload_pb2.ListSecretsRequest) -> payload_pb2.ListSecretsResponse: ...
 
     async def DeleteSecret(self, request: payload_pb2.DeleteSecretRequest) -> payload_pb2.DeleteSecretResponse: ...
+
+
+class IdentityService(Protocol):
+    async def UserInfo(self, request: identity_pb2.UserInfoRequest) -> identity_pb2.UserInfoResponse: ...

@@ -332,8 +332,9 @@ class CommandsHandler:
     @staticmethod
     async def handle(layer: Commands, _: Path, dockerfile: str) -> str:
         # Append raw commands to the dockerfile
+        secret_mounts = _get_secret_mounts_layer(layer.secret_mounts)
         for command in layer.commands:
-            dockerfile += f"\nRUN {command}\n"
+            dockerfile += f"\nRUN {secret_mounts} {command}\n"
 
         return dockerfile
 
@@ -355,9 +356,8 @@ def _get_secret_commands(layers: typing.Tuple[Layer, ...]) -> typing.List[str]:
             secret = Secret(key=secret)
         secret_id = hash(secret)
         secret_env_key = "_".join([k.upper() for k in filter(None, (secret.group, secret.key))])
-        secret_env = os.getenv(secret_env_key)
-        if secret_env:
-            return ["--secret", f"id={secret_id},env={secret_env}"]
+        if os.getenv(secret_env_key):
+            return ["--secret", f"id={secret_id},env={secret_env_key}"]
         secret_file_name = "_".join(list(filter(None, (secret.group, secret.key))))
         secret_file_path = f"/etc/secrets/{secret_file_name}"
         if not os.path.exists(secret_file_path):
@@ -365,7 +365,7 @@ def _get_secret_commands(layers: typing.Tuple[Layer, ...]) -> typing.List[str]:
         return ["--secret", f"id={secret_id},src={secret_file_path}"]
 
     for layer in layers:
-        if isinstance(layer, (PipOption, AptPackages)):
+        if isinstance(layer, (PipOption, AptPackages, Commands)):
             if layer.secret_mounts:
                 for secret_mount in layer.secret_mounts:
                     commands.extend(_get_secret_command(secret_mount))

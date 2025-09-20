@@ -41,7 +41,7 @@ This ensures that environments are built in the correct order and that deploymen
 For example, in our AlphaFold workflow, the orchestrating task that calls the preprocessing, prediction, and visualization tasks needs access to all their dependencies:
 
 ```python
-@flyte.workflow
+@env.task
 def alphafold_workflow(sequence_data):
     preprocessed = preprocess_data(sequence_data)
     prediction = run_alphafold(preprocessed)

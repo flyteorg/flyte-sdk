@@ -7,6 +7,7 @@ __all__ = [
     "ActionDetails",
     "ActionInputs",
     "ActionOutputs",
+    "Phase",
     "Artifact",
     "Project",
     "Run",
@@ -14,6 +15,7 @@ __all__ = [
     "Secret",
     "SecretTypes",
     "Task",
+    "User",
     "create_channel",
     "upload_dir",
     "upload_file",
@@ -24,6 +26,7 @@ from ._artifact import Artifact
 from ._client.auth import create_channel
 from ._data import upload_dir, upload_file
 from ._project import Project
-from ._run import Run, RunDetails
+from ._run import Phase, Run, RunDetails
 from ._secret import Secret, SecretTypes
 from ._task import Task
+from ._user import User

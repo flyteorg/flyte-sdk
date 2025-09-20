@@ -136,7 +136,9 @@ def main(
             controller_kwargs["insecure"] = True
         logger.debug(f"Using controller endpoint: {ep} with kwargs: {controller_kwargs}")
 
-    bundle = CodeBundle(tgz=tgz, pkl=pkl, destination=dest, computed_version=version)
+    bundle = None
+    if tgz or pkl:
+        bundle = CodeBundle(tgz=tgz, pkl=pkl, destination=dest, computed_version=version)
     init(org=org, project=project, domain=domain, image_builder="remote", **controller_kwargs)
     # Controller is created with the same kwargs as init, so that it can be used to run tasks
     controller = create_controller(ct="remote", **controller_kwargs)
@@ -166,8 +168,20 @@ def main(
     async def _run_and_stop():
         loop = asyncio.get_event_loop()
         loop.set_exception_handler(flyte.errors.silence_grpc_polling_error)
-        await utils.run_coros(controller_failure, task_coroutine)
-        await controller.stop()
+        try:
+            await utils.run_coros(controller_failure, task_coroutine)
+            await controller.stop()
+        except flyte.errors.RuntimeSystemError as e:
+            logger.error(f"Runtime system error: {e}")
+            from flyte._internal.runtime.convert import convert_from_native_to_error
+            from flyte._internal.runtime.io import upload_error
+
+            logger.error(f"Flyte runtime failed for action {name} with run name {run_name}, error: {e}")
+            err = convert_from_native_to_error(e)
+            path = await upload_error(err.err, outputs_path)
+            logger.error(f"Run {run_name} Action {name} failed with error: {err}. Uploaded error to {path}")
+            await controller.stop()
+            raise
 
     asyncio.run(_run_and_stop())
     logger.warning(f"Flyte runtime completed for action {name} with run name {run_name}")

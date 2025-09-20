@@ -118,13 +118,14 @@ class Controller:
                     raise RuntimeError("Failure event not initialized")
                 self._failure_event.set()
         except asyncio.CancelledError:
-            pass
+            raise
 
     async def _bg_watch_for_errors(self):
         if self._failure_event is None:
             raise RuntimeError("Failure event not initialized")
         await self._failure_event.wait()
         logger.warning(f"Failure event received: {self._failure_event}, cleaning up informers and exiting.")
+        self._running = False
 
     async def watch_for_errors(self):
         """Watch for errors in the background thread"""
@@ -440,10 +441,11 @@ class Controller:
                 logger.warning(f"[{worker_id}] Retrying action {action.name} after backoff")
                 await self._shared_queue.put(action)
             except Exception as e:
-                logger.error(f"[{worker_id}] Error in controller loop: {e}")
+                logger.error(f"[{worker_id}] Error in controller loop for {action.name}: {e}")
                 err = flyte.errors.RuntimeSystemError(
                     code=type(e).__name__,
-                    message=f"Controller failed, system retries {action.retries} crossed threshold {self._max_retries}",
+                    message=f"Controller failed, system retries {action.retries} / {self._max_retries} "
+                    f"crossed threshold, for action {action.name}: {e}",
                     worker=worker_id,
                 )
                 err.__cause__ = e
