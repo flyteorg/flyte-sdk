@@ -90,7 +90,7 @@ class _Runner:
         env_vars: Dict[str, str] | None = None,
         labels: Dict[str, str] | None = None,
         annotations: Dict[str, str] | None = None,
-        interruptible: bool = False,
+        interruptible: bool | None = None,
         log_level: int | None = None,
         disable_run_cache: bool = False,
     ):
@@ -264,7 +264,9 @@ class _Runner:
                         inputs=inputs.proto_inputs,
                         run_spec=run_definition_pb2.RunSpec(
                             overwrite_cache=self._overwrite_cache,
-                            interruptible=wrappers_pb2.BoolValue(value=self._interruptible),
+                            interruptible=wrappers_pb2.BoolValue(value=self._interruptible)
+                            if self._interruptible is not None
+                            else None,
                             annotations=annotations,
                             labels=labels,
                             envs=env_kv,
@@ -551,7 +553,7 @@ def with_runcontext(
     env_vars: Dict[str, str] | None = None,
     labels: Dict[str, str] | None = None,
     annotations: Dict[str, str] | None = None,
-    interruptible: bool = False,
+    interruptible: bool | None = None,
     log_level: int | None = None,
     disable_run_cache: bool = False,
 ) -> _Runner:
@@ -591,7 +593,9 @@ def with_runcontext(
     :param env_vars: Optional Environment variables to set for the run
     :param labels: Optional Labels to set for the run
     :param annotations: Optional Annotations to set for the run
-    :param interruptible: Optional If true, the run can be interrupted by the user.
+    :param interruptible: Optional If true, the run can be scheduled on interruptible instances and false implies
+        that all tasks in the run should only be scheduled on non-interruptible instances. If not specified the
+        original setting on all tasks is retained.
     :param log_level: Optional Log level to set for the run. If not provided, it will be set to the default log level
         set using `flyte.init()`
     :param disable_run_cache: Optional If true, the run cache will be disabled. This is useful for testing purposes.
