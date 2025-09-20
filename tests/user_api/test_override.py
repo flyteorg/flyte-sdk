@@ -41,14 +41,14 @@ def test_oomer_override():
     )
     # Create a new task with overridden resources
     new_task = oomer.override(
-        resources=flyte.Resources(cpu=2, memory="500Mi"), pod_template=pod_template, friendly_name="new_oomer"
+        resources=flyte.Resources(cpu=2, memory="500Mi"), pod_template=pod_template, short_name="new_oomer"
     )
 
     # Check if the new task has the correct resources
     assert new_task.resources.cpu == 2
     assert new_task.resources.memory == "500Mi"
     assert new_task.pod_template == pod_template
-    assert new_task.friendly_name == "new_oomer"
+    assert new_task.short_name == "new_oomer"
     assert isinstance(new_task.cache, flyte.Cache)
 
     # Check if the new task is not the same as the original task
@@ -137,17 +137,19 @@ def test_override_ref_task():
     td = TaskDetails(pb2=task_details_pb2)
 
     secrets = [flyte.Secret(key="openai", as_env_var="OPENAI_API_KEY")]
-    td.override(
-        friendly_name="new_oomer",
+    new_td = td.override(
+        short_name="new_oomer",
         resources=flyte.Resources(cpu=3, memory="100Mi"),
         retries=RetryStrategy(5),
         timeout=100,
         env_vars={"FOO": "BAR"},
         secrets=secrets,
     )
-    assert td.pb2.metadata.short_name == "new_oomer"
-    assert td.resources[0][0].value == "3"
-    assert td.resources[0][1].value == "100Mi"
-    assert td.pb2.spec.task_template.metadata.retries.retries == 5
-    assert td.pb2.spec.task_template.metadata.timeout.seconds == 100
-    assert td.pb2.spec.task_template.security_context == get_security_context(secrets)
+    assert new_td is not td
+    assert new_td is not None
+    assert new_td.pb2.metadata.short_name == "new_oomer"
+    assert new_td.resources[0][0].value == "3"
+    assert new_td.resources[0][1].value == "100Mi"
+    assert new_td.pb2.spec.task_template.metadata.retries.retries == 5
+    assert new_td.pb2.spec.task_template.metadata.timeout.seconds == 100
+    assert new_td.pb2.spec.task_template.security_context == get_security_context(secrets)

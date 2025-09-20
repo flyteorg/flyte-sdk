@@ -238,3 +238,186 @@ async def test_defaultdict():
     controller = RemoteController(client_coro=make_client(), workers=2, max_system_retries=2)
 
     assert controller._parent_action_semaphore["test_key"] is not None
+
+
+@pytest.mark.asyncio
+async def test_record_trace_with_int_zero_output():
+    """Test record_trace when trace info has output as int = 0"""
+    await flyte.init.aio()
+
+    async def make_client() -> ClientSet:
+        return AsyncMock()  # type: ignore
+
+    with (
+        patch("flyte._internal.runtime.io.upload_outputs", new_callable=AsyncMock) as mock_upload_outputs,
+        patch(
+            "flyte._internal.controllers.remote._controller.RemoteController.submit_action", new_callable=AsyncMock
+        ) as mock_submit_action,
+        patch("flyte._initialize.get_common_config") as mock_get_common_config,
+    ):
+        mock_get_common_config.return_value.root_dir = pathlib.Path(__file__).parent
+
+        # Create a simple interface with int output
+        from flyte.models import NativeInterface
+
+        interface = NativeInterface(inputs={}, outputs={"result": int})
+
+        # Create trace info with int output = 0
+        from flyte._internal.controllers import TraceInfo
+        from flyte.models import ActionID
+
+        trace_info = TraceInfo(
+            name="test_function",
+            action=ActionID(name="test_action"),
+            interface=interface,
+            inputs_path="/tmp/inputs",
+            output=0,  # Test with int = 0
+        )
+
+        this_dir_str = str(pathlib.Path(__file__).parent.absolute())
+        ctx = internal_ctx()
+        tctx = TaskContext(
+            action=ActionID(name="parent_action"),
+            raw_data_path=RawDataPath(path="test"),
+            output_path="/tmp",
+            version="v1",
+            run_base_dir="/tmp/outputs/base",
+            report=flyte.report.Report(name="test_report"),
+            code_bundle=CodeBundle(
+                computed_version="vcode-bundle",
+                destination=this_dir_str,
+                tgz="dummy.tgz",
+            ),
+        )
+
+        with ctx.replace_task_context(tctx):
+            controller = RemoteController(client_coro=make_client(), workers=2, max_system_retries=2)
+            await controller.record_trace(trace_info)
+
+        # Verify that convert_from_native_to_outputs was called with 0
+        mock_upload_outputs.assert_called_once()
+        mock_submit_action.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_record_trace_with_optional_none_output():
+    """Test record_trace when trace info has optional return value as None"""
+    await flyte.init.aio()
+
+    async def make_client() -> ClientSet:
+        return AsyncMock()  # type: ignore
+
+    with (
+        patch("flyte._internal.runtime.io.upload_outputs", new_callable=AsyncMock) as mock_upload_outputs,
+        patch(
+            "flyte._internal.controllers.remote._controller.RemoteController.submit_action", new_callable=AsyncMock
+        ) as mock_submit_action,
+        patch("flyte._initialize.get_common_config") as mock_get_common_config,
+    ):
+        mock_get_common_config.return_value.root_dir = pathlib.Path(__file__).parent
+
+        # Create interface with optional output
+        from typing import Optional
+
+        from flyte.models import NativeInterface
+
+        interface = NativeInterface(inputs={}, outputs={"result": Optional[str]})
+
+        # Create trace info with None output
+        from flyte._internal.controllers import TraceInfo
+        from flyte.models import ActionID
+
+        trace_info = TraceInfo(
+            name="test_function_optional",
+            action=ActionID(name="test_action_optional"),
+            interface=interface,
+            inputs_path="/tmp/inputs",
+            output=None,  # Test with None output
+        )
+
+        this_dir_str = str(pathlib.Path(__file__).parent.absolute())
+        ctx = internal_ctx()
+        tctx = TaskContext(
+            action=ActionID(name="parent_action"),
+            raw_data_path=RawDataPath(path="test"),
+            output_path="/tmp",
+            version="v1",
+            run_base_dir="/tmp/outputs/base",
+            report=flyte.report.Report(name="test_report"),
+            code_bundle=CodeBundle(
+                computed_version="vcode-bundle",
+                destination=this_dir_str,
+                tgz="dummy.tgz",
+            ),
+        )
+
+        with ctx.replace_task_context(tctx):
+            controller = RemoteController(client_coro=make_client(), workers=2, max_system_retries=2)
+            await controller.record_trace(trace_info)
+
+        # Verify that convert_from_native_to_outputs was called with None
+        mock_upload_outputs.assert_called_once()
+        mock_submit_action.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_record_trace_with_error():
+    """Test record_trace when trace info contains an error"""
+    await flyte.init.aio()
+
+    async def make_client() -> ClientSet:
+        return AsyncMock()  # type: ignore
+
+    with (
+        patch("flyte._internal.runtime.convert.convert_from_native_to_error") as mock_convert_error,
+        patch("flyte._internal.runtime.io.upload_error", new_callable=AsyncMock) as mock_upload_error,
+        patch(
+            "flyte._internal.controllers.remote._controller.RemoteController.submit_action", new_callable=AsyncMock
+        ) as mock_submit_action,
+        patch("flyte._initialize.get_common_config") as mock_get_common_config,
+    ):
+        mock_get_common_config.return_value.root_dir = pathlib.Path(__file__).parent
+        mock_convert_error.return_value = AsyncMock(err=AsyncMock())
+
+        # Create interface with output
+        from flyte.models import NativeInterface
+
+        interface = NativeInterface(inputs={}, outputs={"result": str})
+
+        # Create trace info with error
+        from flyte._internal.controllers import TraceInfo
+        from flyte.models import ActionID
+
+        test_error = ValueError("Test error")
+        trace_info = TraceInfo(
+            name="test_function_with_error",
+            action=ActionID(name="test_action_with_error"),
+            interface=interface,
+            inputs_path="/tmp/inputs",
+            error=test_error,  # Test with error instead of output
+        )
+
+        this_dir_str = str(pathlib.Path(__file__).parent.absolute())
+        ctx = internal_ctx()
+        tctx = TaskContext(
+            action=ActionID(name="parent_action"),
+            raw_data_path=RawDataPath(path="test"),
+            output_path="/tmp",
+            version="v1",
+            run_base_dir="/tmp/outputs/base",
+            report=flyte.report.Report(name="test_report"),
+            code_bundle=CodeBundle(
+                computed_version="vcode-bundle",
+                destination=this_dir_str,
+                tgz="dummy.tgz",
+            ),
+        )
+
+        with ctx.replace_task_context(tctx):
+            controller = RemoteController(client_coro=make_client(), workers=2, max_system_retries=2)
+            await controller.record_trace(trace_info)
+
+        # Verify that convert_from_native_to_error was called with the error
+        mock_convert_error.assert_called_once_with(test_error)
+        mock_upload_error.assert_called_once()
+        mock_submit_action.assert_called_once()

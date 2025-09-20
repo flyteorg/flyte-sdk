@@ -39,7 +39,6 @@ from pydantic import BaseModel
 from typing_extensions import Annotated, get_args, get_origin
 
 import flyte.storage as storage
-from flyte._hash import HashMethod
 from flyte._logging import logger
 from flyte._utils.helpers import load_proto_from_file
 from flyte.models import NativeInterface
@@ -456,35 +455,6 @@ class DataclassTransformer(TypeTransformer[object]):
     2. Deserialization: The dataclass transformer converts the MessagePack Bytes back to a dataclass.
         (1) Convert MessagePack Bytes to a dataclass using mashumaro.
         (2) Handle dataclass attributes to ensure they are of the correct types.
-
-    TODO: Update the example using mashumaro instead of the older library
-
-    Example
-
-    .. code-block:: python
-
-        @dataclass
-        class Test:
-           a: int
-           b: str
-
-        t = Test(a=10,b="e")
-        JSONSchema().dump(t.schema())
-
-    Output will look like
-
-    .. code-block:: json
-
-        {'$schema': 'http://json-schema.org/draft-07/schema#',
-         'definitions': {'TestSchema': {'properties': {'a': {'title': 'a',
-             'type': 'number',
-             'format': 'integer'},
-            'b': {'title': 'b', 'type': 'string'}},
-           'type': 'object',
-           'additionalProperties': False}},
-         '$ref': '#/definitions/TestSchema'}
-
-
     """
 
     def __init__(self) -> None:
@@ -616,7 +586,7 @@ class DataclassTransformer(TypeTransformer[object]):
             }
         )
 
-        # The type engine used to publish a type structure for attribute access. As of v2, this is no longer needed.
+        # The type engine used to publish the type `structure` for attribute access. As of v2, this is no longer needed.
         return types_pb2.LiteralType(
             simple=types_pb2.SimpleType.STRUCT,
             metadata=schema,
@@ -816,6 +786,13 @@ class EnumTransformer(TypeTransformer[enum.Enum]):
         return LiteralType(enum_type=types_pb2.EnumType(values=values))
 
     async def to_literal(self, python_val: enum.Enum, python_type: Type[T], expected: LiteralType) -> Literal:
+        if isinstance(python_val, str):
+            # this is the case when python Literals are used as enums
+            if python_val not in expected.enum_type.values:
+                raise TypeTransformerFailedError(
+                    f"Value {python_val} is not valid value, expected - {expected.enum_type.values}"
+                )
+            return Literal(scalar=Scalar(primitive=Primitive(string_value=python_val)))  # type: ignore
         if type(python_val).__class__ != enum.EnumMeta:
             raise TypeTransformerFailedError("Expected an enum")
         if type(python_val.value) is not str:
@@ -826,6 +803,12 @@ class EnumTransformer(TypeTransformer[enum.Enum]):
     async def to_python_value(self, lv: Literal, expected_python_type: Type[T]) -> T:
         if lv.HasField("scalar") and lv.scalar.HasField("binary"):
             return self.from_binary_idl(lv.scalar.binary, expected_python_type)  # type: ignore
+        from flyte._interface import LITERAL_ENUM
+
+        if expected_python_type.__name__ is LITERAL_ENUM:
+            # This is the case when python Literal types are used as enums. The class name is always LiteralEnum an
+            # hardcoded in flyte.models
+            return lv.scalar.primitive.string_value
         return expected_python_type(lv.scalar.primitive.string_value)  # type: ignore
 
     def guess_python_type(self, literal_type: LiteralType) -> Type[enum.Enum]:
@@ -1097,23 +1080,6 @@ class TypeEngine(typing.Generic[T]):
             raise TypeTransformerFailedError(f"Python value cannot be None, expected {python_type}/{expected}")
 
     @classmethod
-    def calculate_hash(cls, python_val: typing.Any, python_type: Type[T]) -> Optional[str]:
-        # In case the value is an annotated type we inspect the annotations and look for hash-related annotations.
-        hsh = None
-        if is_annotated(python_type):
-            # We are now dealing with one of two cases:
-            # 1. The annotated type is a `HashMethod`, which indicates that we should produce the hash using
-            #    the method indicated in the annotation.
-            # 2. The annotated type is being used for a different purpose other than calculating hash values,
-            #    in which case we should just continue.
-            for annotation in get_args(python_type)[1:]:
-                if not isinstance(annotation, HashMethod):
-                    continue
-                hsh = annotation.calculate(python_val)
-                break
-        return hsh
-
-    @classmethod
     async def to_literal(
         cls, python_val: typing.Any, python_type: Type[T], expected: types_pb2.LiteralType
     ) -> literals_pb2.Literal:
@@ -1125,8 +1091,6 @@ class TypeEngine(typing.Generic[T]):
         lv = await transformer.to_literal(python_val, python_type, expected)
 
         modify_literal_uris(lv)
-        calculated_hash = cls.calculate_hash(python_val, python_type) or ""
-        lv.hash = calculated_hash
         return lv
 
     @classmethod
@@ -1795,7 +1759,6 @@ class DictTransformer(TypeTransformer[dict]):
         for k, v in python_val.items():
             if type(k) is not str:
                 raise ValueError("Flyte MapType expects all keys to be strings")
-            # TODO: log a warning for Annotated objects that contain HashMethod
 
             _, v_type = self.extract_types(python_type)
             lit_map[k] = TypeEngine.to_literal(v, cast(type, v_type), expected.map_value_type)

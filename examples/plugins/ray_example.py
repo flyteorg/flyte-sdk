@@ -25,7 +25,7 @@ ray_config = RayJobConfig(
 image = (
     flyte.Image.from_debian_base(name="ray")
     .with_apt_packages("wget")
-    .with_pip_packages("ray[default]==2.46.0", "flyteplugins-ray", "pip")
+    .with_pip_packages("ray[default]==2.46.0", "flyteplugins-ray", "pip", "mypy")
 )
 
 task_env = flyte.TaskEnvironment(
@@ -35,7 +35,7 @@ ray_env = flyte.TaskEnvironment(
     name="ray_env",
     plugin_config=ray_config,
     image=image,
-    resources=flyte.Resources(cpu=(1, 2), memory=("800Mi", "1600Mi")),
+    resources=flyte.Resources(cpu=(3, 4), memory=("3000Mi", "5000Mi")),
 )
 
 
@@ -56,7 +56,7 @@ async def hello_ray_nested(n: int = 3) -> typing.List[int]:
 
 
 if __name__ == "__main__":
-    flyte.init_from_config("../../config.yaml")
+    flyte.init_from_config()
     run = flyte.run(hello_ray_nested)
     print("run name:", run.name)
     print("run url:", run.url)

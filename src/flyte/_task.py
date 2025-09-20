@@ -88,12 +88,12 @@ class TaskTemplate(Generic[P, R]):
 
     name: str
     interface: NativeInterface
-    friendly_name: str = ""
+    short_name: str = ""
     task_type: str = "python"
     task_type_version: int = 0
     image: Union[str, Image, Literal["auto"]] = "auto"
     resources: Optional[Resources] = None
-    cache: CacheRequest = "auto"
+    cache: CacheRequest = "disable"
     interruptable: bool = False
     retries: Union[int, RetryStrategy] = 0
     reusable: Union[ReusePolicy, None] = None
@@ -133,9 +133,9 @@ class TaskTemplate(Generic[P, R]):
         if isinstance(self.retries, int):
             self.retries = RetryStrategy(count=self.retries)
 
-        if self.friendly_name == "":
-            # If friendly_name is not set, use the name of the task
-            self.friendly_name = self.name
+        if self.short_name == "":
+            # If short_name is not set, use the name of the task
+            self.short_name = self.name
 
     def __getstate__(self):
         """
@@ -262,6 +262,9 @@ class TaskTemplate(Generic[P, R]):
             else:
                 raise RuntimeSystemError("BadContext", "Controller is not initialized.")
         else:
+            from flyte._logging import logger
+
+            logger.warning(f"Task {self.name} running aio outside of a task context.")
             # Local execute, just stay out of the way, but because .aio is used, we want to return an awaitable,
             # even for synchronous tasks. This is to support migration.
             return self.forward(*args, **kwargs)
@@ -318,7 +321,7 @@ class TaskTemplate(Generic[P, R]):
     def override(
         self,
         *,
-        friendly_name: Optional[str] = None,
+        short_name: Optional[str] = None,
         resources: Optional[Resources] = None,
         cache: Optional[CacheRequest] = None,
         retries: Union[int, RetryStrategy] = 0,
@@ -379,7 +382,7 @@ class TaskTemplate(Generic[P, R]):
 
         return replace(
             self,
-            friendly_name=friendly_name or self.friendly_name,
+            short_name=short_name or self.short_name,
             resources=resources,
             cache=cache,
             retries=retries,

@@ -203,6 +203,7 @@ class UVProject(PipOption, Layer):
 
         super().update_hash(hasher)
         filehash_update(self.uvlock, hasher)
+        filehash_update(self.pyproject, hasher)
 
 
 @rich.repr.auto
@@ -252,9 +253,15 @@ class AptPackages(Layer):
 @dataclass(frozen=True, repr=True)
 class Commands(Layer):
     commands: Tuple[str, ...]
+    secret_mounts: Optional[Tuple[str | Secret, ...]] = None
 
     def update_hash(self, hasher: hashlib._Hash):
-        hasher.update("".join(self.commands).encode("utf-8"))
+        hash_input = "".join(self.commands)
+
+        if self.secret_mounts:
+            for secret_mount in self.secret_mounts:
+                hash_input += str(secret_mount)
+        hasher.update(hash_input.encode("utf-8"))
 
 
 @rich.repr.auto
@@ -281,12 +288,11 @@ class CopyConfig(Layer):
     path_type: CopyConfigType = field(metadata={"identifier": True})
     src: Path = field(metadata={"identifier": False})
     dst: str
-    src_name: str = field(init=False)
+    src_name: str
 
     def __post_init__(self):
         if self.path_type not in (0, 1):
             raise ValueError(f"Invalid path_type {self.path_type}, must be 0 (file) or 1 (directory)")
-        object.__setattr__(self, "src_name", self.src.name)
 
     def validate(self):
         if not self.src.exists():
@@ -429,7 +435,10 @@ class Image:
         # Only get the non-None values in the Image to ensure the hash is consistent
         # across different SDK versions.
         # Layers can specify a _compute_identifier optionally, but the default will just stringify
-        image_dict = asdict(self, dict_factory=lambda x: {k: v for (k, v) in x if v is not None and k != "_layers"})
+        image_dict = asdict(
+            self,
+            dict_factory=lambda x: {k: v for (k, v) in x if v is not None and k not in ("_layers", "python_version")},
+        )
         layers_str_repr = "".join([layer.identifier() for layer in self._layers])
         image_dict["layers"] = layers_str_repr
         spec_bytes = image_dict.__str__().encode("utf-8")
@@ -782,9 +791,24 @@ class Image:
 
         Example:
         ```python
-        @flyte.task(image=(flyte.Image
-                        .ubuntu_python()
-                        .with_pip_packages("requests", "numpy")))
+        @flyte.task(image=(flyte.Image.from_debian_base().with_pip_packages("requests", "numpy")))
+        def my_task(x: int) -> int:
+            import numpy as np
+            return np.sum([x, 1])
+        ```
+
+        To mount secrets during the build process to download private packages, you can use the `secret_mounts`.
+        In the below example, "GITHUB_PAT" will be mounted as env var "GITHUB_PAT",
+         and "apt-secret" will be mounted at /etc/apt/apt-secret.
+        Example:
+        ```python
+        private_package = "git+https://$GITHUB_PAT@github.com/flyteorg/flytex.git@2e20a2acebfc3877d84af643fdd768edea41d533"
+        @flyte.task(
+            image=(
+                flyte.Image.from_debian_base()
+                .with_pip_packages("private_package", secret_mounts=[Secret(key="GITHUB_PAT")])
+                .with_apt_packages("git", secret_mounts=[Secret(key="apt-secret", mount="/etc/apt/apt-secret")])
+        )
         def my_task(x: int) -> int:
             import numpy as np
             return np.sum([x, 1])
@@ -824,16 +848,23 @@ class Image:
         new_image = self.clone(addl_layer=Env.from_dict(env_vars))
         return new_image
 
-    def with_source_folder(self, src: Path, dst: str = ".") -> Image:
+    def with_source_folder(self, src: Path, dst: str = ".", copy_contents_only: bool = False) -> Image:
         """
         Use this method to create a new image with the specified local directory layered on top of the current image.
         If dest is not specified, it will be copied to the working directory of the image
 
         :param src: root folder of the source code from the build context to be copied
         :param dst: destination folder in the image
+        :param copy_contents_only: If True, will copy the contents of the source folder to the destination folder,
+            instead of the folder itself. Default is False.
         :return: Image
         """
-        new_image = self.clone(addl_layer=CopyConfig(path_type=1, src=src, dst=dst))
+        src_name = src.name
+        if copy_contents_only:
+            src_name = "."
+        else:
+            dst = str("./" + src_name)
+        new_image = self.clone(addl_layer=CopyConfig(path_type=1, src=src, dst=dst, src_name=src_name))
         return new_image
 
     def with_source_file(self, src: Path, dst: str = ".") -> Image:
@@ -845,7 +876,7 @@ class Image:
         :param dst: destination folder in the image
         :return: Image
         """
-        new_image = self.clone(addl_layer=CopyConfig(path_type=0, src=src, dst=dst))
+        new_image = self.clone(addl_layer=CopyConfig(path_type=0, src=src, dst=dst, src_name=src.name))
         return new_image
 
     def with_dockerignore(self, path: Path) -> Image:
@@ -866,7 +897,12 @@ class Image:
         Use this method to create a new image with the specified uv.lock file layered on top of the current image
         Must have a corresponding pyproject.toml file in the same directory
         Cannot be used in conjunction with conda
-        In the Union builders, using this will change the virtual env to /root/.venv
+
+        By default, this method copies the entire project into the image,
+         including files such as pyproject.toml, uv.lock, and the src/ directory.
+
+        If you prefer not to install the current project, you can pass the extra argument --no-install-project.
+         In this case, the image builder will only copy pyproject.toml and uv.lock into the image.
 
         :param pyproject_file: path to the pyproject.toml file, needs to have a corresponding uv.lock file
         :param uvlock: path to the uv.lock file, if not specified, will use the default uv.lock file in the same
@@ -909,16 +945,21 @@ class Image:
         )
         return new_image
 
-    def with_commands(self, commands: List[str]) -> Image:
+    def with_commands(self, commands: List[str], secret_mounts: Optional[SecretRequest] = None) -> Image:
         """
         Use this method to create a new image with the specified commands layered on top of the current image
         Be sure not to use RUN in your command.
 
         :param commands: list of commands to run
+        :param secret_mounts: list of secret mounts to use for the build process.
         :return: Image
         """
         new_commands: Tuple = _ensure_tuple(commands)
-        new_image = self.clone(addl_layer=Commands(commands=new_commands))
+        new_image = self.clone(
+            addl_layer=Commands(
+                commands=new_commands, secret_mounts=_ensure_tuple(secret_mounts) if secret_mounts else None
+            )
+        )
         return new_image
 
     def with_local_v2(self) -> Image:

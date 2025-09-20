@@ -15,7 +15,7 @@ async def sample_task(x: int, y: int) -> int:
     return x + y
 
 
-@env_with_tasks.task(name="test")
+@env_with_tasks.task(short_name="test")
 async def sample_task2(x: int, y: int) -> int:
     return x + y
 
@@ -42,14 +42,14 @@ def test_clone_with_overrides(base_env):
         image="new_img",
         resources=flyte.Resources(cpu="2", memory="2Gi"),
         cache="custom",
-        reusable="yes",
+        reusable=flyte.ReusePolicy(replicas=1),
         env_vars={"A": "B"},
         secrets="sec",
         depends_on=[other],
     )
     assert clone.image == "new_img"
     assert clone.cache == "custom"
-    assert clone.reusable == "yes"
+    assert clone.reusable == flyte.ReusePolicy(replicas=1)
     assert clone.env_vars == {"A": "B"}
     assert clone.secrets == "sec"
     assert clone.depends_on == [other]
@@ -120,7 +120,35 @@ def test_task_environment_name_validation():
 def test_env_with_tasks():
     assert len(env_with_tasks.tasks) == 2
     assert list(env_with_tasks.tasks.keys()) == ["env_with_tasks.sample_task", "env_with_tasks.sample_task2"]
-    assert sample_task.friendly_name == "sample_task"
+    assert sample_task.short_name == "sample_task"
     assert sample_task.name == "env_with_tasks.sample_task"
-    assert sample_task2.friendly_name == "test"
+    assert sample_task2.short_name == "test"
     assert sample_task2.name == "env_with_tasks.sample_task2"
+
+
+def test_task_evironment_typechecks():
+    with pytest.raises(TypeError, match="Expected image to be of type str or Image, got <class 'int'>"):
+        flyte.TaskEnvironment(name="bad_image", image=123)
+
+    with pytest.raises(TypeError, match="Expected secrets to be of type SecretRequest, got <class 'int'>"):
+        flyte.TaskEnvironment(name="bad_secrets", image="img", secrets=123)
+
+    with pytest.raises(TypeError, match="Expected depends_on to be of type List\\[Environment\\], got <class 'int'>"):
+        flyte.TaskEnvironment(name="bad_depends", image="img", depends_on=[123])
+
+    with pytest.raises(TypeError, match="Expected resources to be of type Resources, got <class 'int'>"):
+        flyte.TaskEnvironment(name="bad_resources", image="img", resources=123)
+
+    with pytest.raises(TypeError, match="Expected env_vars to be of type Dict\\[str, str\\], got <class 'int'>"):
+        flyte.TaskEnvironment(name="bad_env_vars", image="img", env_vars=123)
+
+    with pytest.raises(TypeError, match="Expected Environment, got <class 'int'>"):
+        env = flyte.TaskEnvironment(name="test_env", image="img")
+        env.add_dependency(123)
+
+    # check cache request and reusable request type checks
+    with pytest.raises(TypeError, match="Expected cache to be of type str or Cache, got <class 'int'>"):
+        flyte.TaskEnvironment(name="bad_cache", image="img", cache=123)
+
+    with pytest.raises(TypeError, match="Expected reusable to be of type ReusePolicy, got <class 'int'>"):
+        flyte.TaskEnvironment(name="bad_reusable", image="img", reusable=123)

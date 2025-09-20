@@ -9,13 +9,65 @@ on:
       - 'maint_tools/build_default_image.py'
 
 jobs:
-  pypi:
+  flyte-pypi:
+    name: PyPI package
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: "0"
+      - name: Set up Python
+        uses: actions/setup-python@v1
+        with:
+          python-version: "3.x"
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        id: setup-uv
+      - name: Install dependencies
+        run: |
+          uv venv
+          uv pip install build twine setuptools wheel
+      - name: Build and publish
+        run: |
+          uv run python -m build --wheel --installer uv
+      - name: Publish
+        if: ${{ github.event_name == 'release' }}
+        working-directory: ${{ matrix.workdir }}
+        env:
+          TWINE_USERNAME: ${{ secrets.PYPI_USERNAME }}
+          TWINE_PASSWORD: ${{ secrets.PYPI_PASSWORD }}
+        run: |
+          uv run python -m twine upload --verbose dist/*
+      - name: Sleep until pypi is available
+        id: pypiwait
+        run: |
+          # from 'refs/tags/v1.2.3 get 1.2.3' and make sure it's not an empty string
+          VERSION=$(echo $GITHUB_REF | sed 's|refs/tags/v||')
+          if [ -z "$VERSION" ]
+          then
+            echo "No tagged version found, exiting"
+            exit 1
+          fi
+          sleep 120
+          LINK="https://pypi.org/project/flyte/${VERSION}/"
+          for i in {1..60}; do
+            result=$(curl -L -I -s -f ${LINK})
+            if [ $? -eq 0 ]; then
+              echo "Found pypi for $LINK"
+              exit 0
+            else
+              echo "Did not find - Retrying in 10 seconds..."
+              sleep 10
+            fi
+          done
+          exit 1
+        shell: bash
+  plugin-pypi:
     name: PyPI package
     runs-on: ubuntu-latest
     strategy:
       matrix:
         workdir:
-          - "."
           - "plugins/ray"
           - "plugins/spark"
           - "plugins/openai"
@@ -50,7 +102,7 @@ jobs:
           uv run python -m twine upload --verbose dist/*
 
   build-and-push-docker-images:
-    needs: pypi
+    needs: flyte-pypi
     name: Flyte image for Python ${{ matrix.python-version }}
     runs-on: ubuntu-latest
     strategy:
@@ -94,4 +146,4 @@ jobs:
           FLYTE_DOCKER_BUILDER_CACHE_FROM: "type=gha"
           FLYTE_DOCKER_BUILDER_CACHE_TO: "type=gha,mode=max"
         run: |
-          uv run python maint_tools/build_default_image.py 
+          uv run python maint_tools/build_default_image.py

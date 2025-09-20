@@ -3,7 +3,11 @@ from typing import AsyncGenerator, AsyncIterator, Tuple
 
 import flyte
 
-env = flyte.TaskEnvironment(name="traces", image=flyte.Image.from_debian_base(), resources=flyte.Resources(cpu=1))
+env = flyte.TaskEnvironment(
+    name="traces",
+    image=flyte.Image.from_debian_base(),
+    resources=flyte.Resources(cpu=1),
+)
 
 
 @flyte.trace
@@ -64,7 +68,52 @@ async def parallel_main(q: str) -> list[str]:
     return r
 
 
+@flyte.trace
+async def input_trace(a: str, b: str, c: int):
+    await asyncio.sleep(1)
+    print("Calling LLM without IO", flush=True)
+
+
+@flyte.trace
+async def output_trace() -> int:
+    await asyncio.sleep(1)
+    print("Calling LLM without IO", flush=True)
+    return 42
+
+
+@flyte.trace
+async def noio_trace():
+    await asyncio.sleep(1)
+    print("Calling LLM without IO", flush=True)
+
+
+@env.task
+def noio_task():
+    print("Running noio_task", flush=True)
+
+
+@env.task
+async def parallel_main_no_io(q: str) -> int:
+    print("Starting parallel_main_no_io", flush=True)
+    noio_task()
+    await input_trace("hello world", "blah", 42)
+    a = await output_trace()
+    await noio_trace()
+    b = await input_output_trace("hello", "world", 42, "blah")
+    return a + b
+
+
+@flyte.trace
+async def input_output_trace(a: str, b: str, c: int, d: str) -> int:
+    return c
+
+
+@env.task
+async def input_output_task(a: str, b: str, c: int) -> int:
+    return await input_output_trace(a, b, c, "hello")
+
+
 if __name__ == "__main__":
-    flyte.init_from_config("../../config.yaml")
-    a = flyte.run(parallel_main, "hello world")
+    flyte.init_from_config(log_level="DEBUG")
+    a = flyte.run(parallel_main_no_io, "hello world")
     print(a.url)

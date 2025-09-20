@@ -1,10 +1,7 @@
 import flyte
 
 env = flyte.TaskEnvironment(
-    name="squarer",
-    resources=flyte.Resources(
-        cpu=1,
-    ),
+    name="from_scratch",
 )
 
 
@@ -14,20 +11,14 @@ def square(x: int) -> int:
 
 
 @env.task
-def main(n: int) -> list[int]:
-    """
-    Calculate the square of numbers from 0 to n-1.
-
-    Args:
-        n: The upper limit (exclusive) for the range of numbers to square.
-
-    Returns:
-        A list of squared numbers.
-    """
-    return list(flyte.map(square, range(n)))
+def main(n: int = 10) -> int:
+    results = list(flyte.map(square, range(n)))
+    return sum(results)
 
 
 if __name__ == "__main__":
-    flyte.init_from_config("../../config.yaml")
-    run = flyte.run(main, n=10)
-    print(run.url)
+    import flyte.git
+
+    flyte.init_from_config(flyte.git.config_from_root())
+    r = flyte.run(main, 10)
+    print(r.url)

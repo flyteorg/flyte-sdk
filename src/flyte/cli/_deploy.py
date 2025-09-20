@@ -4,8 +4,7 @@ from pathlib import Path
 from types import ModuleType
 from typing import Any, Dict, List, cast, get_args
 
-import click
-from click import Context
+import rich_click as click
 
 import flyte
 
@@ -41,6 +40,16 @@ class DeployArguments:
                 type=click.Choice(get_args(CopyFiles)),
                 default="loaded_modules",
                 help="Copy style to use when running the task",
+            )
+        },
+    )
+    root_dir: str | None = field(
+        default=None,
+        metadata={
+            "click.option": click.Option(
+                ["--root-dir"],
+                type=str,
+                help="Override the root source directory, helpful when working with monorepos.",
             )
         },
     )
@@ -87,20 +96,20 @@ class DeployArguments:
         return [common.get_option_from_metadata(f.metadata) for f in fields(cls) if f.metadata]
 
 
-class DeployEnvCommand(click.Command):
+class DeployEnvCommand(click.RichCommand):
     def __init__(self, env_name: str, env: Any, deploy_args: DeployArguments, *args, **kwargs):
         self.env_name = env_name
         self.env = env
         self.deploy_args = deploy_args
         super().__init__(*args, **kwargs)
 
-    def invoke(self, ctx: Context):
+    def invoke(self, ctx: click.Context):
         from rich.console import Console
 
         console = Console()
         console.print(f"Deploying root - environment: {self.env_name}")
         obj: CLIConfig = ctx.obj
-        obj.init(self.deploy_args.project, self.deploy_args.domain)
+        obj.init(self.deploy_args.project, self.deploy_args.domain, root_dir=self.deploy_args.root_dir)
         with console.status("Deploying...", spinner="dots"):
             deployment = flyte.deploy(
                 self.env,
@@ -125,7 +134,7 @@ class DeployEnvRecursiveCommand(click.Command):
         self.deploy_args = deploy_args
         super().__init__(*args, **kwargs)
 
-    def invoke(self, ctx: Context):
+    def invoke(self, ctx: click.Context):
         from rich.console import Console
 
         from flyte._environment import list_loaded_environments

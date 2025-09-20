@@ -3,13 +3,14 @@ from __future__ import annotations
 import inspect
 import os
 import pathlib
+import typing
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Callable, ClassVar, Dict, List, Literal, Optional, Tuple, Type
 
 import rich.repr
 
 from flyte._docstring import Docstring
-from flyte._interface import extract_return_annotation
+from flyte._interface import extract_return_annotation, literal_to_enum
 from flyte._logging import logger
 
 if TYPE_CHECKING:
@@ -166,6 +167,7 @@ class TaskContext:
     action: ActionID
     version: str
     raw_data_path: RawDataPath
+    input_path: str | None = None
     output_path: str
     run_base_dir: str
     report: Report
@@ -175,6 +177,7 @@ class TaskContext:
     compiled_image_cache: ImageCache | None = None
     data: Dict[str, Any] = field(default_factory=dict)
     mode: Literal["local", "remote", "hybrid"] = "remote"
+    interactive_mode: bool = False
 
     def replace(self, **kwargs) -> TaskContext:
         if "data" in kwargs:
@@ -327,7 +330,10 @@ class NativeInterface:
                 logger.warning(
                     f"Function {func.__name__} has parameter {name} without type annotation. Data will be pickled."
                 )
-            param_info[name] = (param.annotation, param.default)
+            if typing.get_origin(param.annotation) is Literal:
+                param_info[name] = (literal_to_enum(param.annotation), param.default)
+            else:
+                param_info[name] = (param.annotation, param.default)
 
         # Get return type
         outputs = extract_return_annotation(sig.return_annotation)
@@ -340,9 +346,15 @@ class NativeInterface:
         """
         # Convert positional arguments to keyword arguments
         if len(args) > len(self.inputs):
-            raise ValueError(f"Too many positional arguments provided, inputs {self.inputs.keys()}, args {len(args)}")
+            raise ValueError(
+                f"Too many positional arguments provided, expected inputs {self.inputs.keys()}, args {len(args)}"
+            )
         for arg, input_name in zip(args, self.inputs.keys()):
             kwargs[input_name] = arg
+        if len(kwargs) > len(self.inputs):
+            raise ValueError(
+                f"Too many keyword arguments provided, expected inputs {self.inputs.keys()}, args {kwargs.keys()}"
+            )
         return kwargs
 
     def get_input_types(self) -> Dict[str, Type]:
@@ -408,13 +420,15 @@ class SerializationContext:
     code_bundle: Optional[CodeBundle] = None
     input_path: str = "{{.input}}"
     output_path: str = "{{.outputPrefix}}"
-    _entrypoint_path: str = field(default="_bin/runtime.py", init=False)
+    interpreter_path: str = "/opt/venv/bin/python"
     image_cache: ImageCache | None = None
     root_dir: Optional[pathlib.Path] = None
 
-    def get_entrypoint_path(self, interpreter_path: str) -> str:
+    def get_entrypoint_path(self, interpreter_path: Optional[str] = None) -> str:
         """
         Get the entrypoint path for the task. This is used to determine the entrypoint for the task execution.
         :param interpreter_path: The path to the interpreter (python)
         """
-        return os.path.join(os.path.dirname(os.path.dirname(interpreter_path)), self._entrypoint_path)
+        if interpreter_path is None:
+            interpreter_path = self.interpreter_path
+        return os.path.join(os.path.dirname(interpreter_path), "runtime.py")

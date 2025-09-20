@@ -2,16 +2,14 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Union
+from typing import Any, Dict, List, Literal, Optional, Union
 
 import rich.repr
 
 from ._image import Image
+from ._pod import PodTemplate
 from ._resources import Resources
-from ._secret import SecretRequest
-
-if TYPE_CHECKING:
-    from kubernetes.client import V1PodTemplate
+from ._secret import Secret, SecretRequest
 
 # Global registry to track all Environment instances in load order
 _ENVIRONMENT_REGISTRY: List[Environment] = []
@@ -44,7 +42,7 @@ class Environment:
 
     name: str
     depends_on: List[Environment] = field(default_factory=list)
-    pod_template: Optional[Union[str, "V1PodTemplate"]] = None
+    pod_template: Optional[Union[str, PodTemplate]] = None
     description: Optional[str] = None
     secrets: Optional[SecretRequest] = None
     env_vars: Optional[Dict[str, str]] = None
@@ -54,6 +52,17 @@ class Environment:
     def __post_init__(self):
         if not is_snake_or_kebab_with_numbers(self.name):
             raise ValueError(f"Environment name '{self.name}' must be in snake_case or kebab-case format.")
+        if not isinstance(self.image, (Image, str)):
+            raise TypeError(f"Expected image to be of type str or Image, got {type(self.image)}")
+        if self.secrets and not isinstance(self.secrets, (str, Secret, List)):
+            raise TypeError(f"Expected secrets to be of type SecretRequest, got {type(self.secrets)}")
+        for dep in self.depends_on:
+            if not isinstance(dep, Environment):
+                raise TypeError(f"Expected depends_on to be of type List[Environment], got {type(dep)}")
+        if self.resources is not None and not isinstance(self.resources, Resources):
+            raise TypeError(f"Expected resources to be of type Resources, got {type(self.resources)}")
+        if self.env_vars is not None and not isinstance(self.env_vars, dict):
+            raise TypeError(f"Expected env_vars to be of type Dict[str, str], got {type(self.env_vars)}")
         # Automatically register this environment instance in load order
         _ENVIRONMENT_REGISTRY.append(self)
 

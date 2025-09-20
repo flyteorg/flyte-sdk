@@ -21,11 +21,12 @@ import click
 
 ACTION_NAME = "ACTION_NAME"
 RUN_NAME = "RUN_NAME"
-PROJECT_NAME = "FLYTE_INTERNAL_TASK_PROJECT"
-DOMAIN_NAME = "FLYTE_INTERNAL_TASK_DOMAIN"
+PROJECT_NAME = "FLYTE_INTERNAL_EXECUTION_PROJECT"
+DOMAIN_NAME = "FLYTE_INTERNAL_EXECUTION_DOMAIN"
 ORG_NAME = "_U_ORG_NAME"
 ENDPOINT_OVERRIDE = "_U_EP_OVERRIDE"
 RUN_OUTPUT_BASE_DIR = "_U_RUN_BASE"
+FLYTE_ENABLE_VSCODE_KEY = "_F_E_VS"
 
 # TODO: Remove this after proper auth is implemented
 _UNION_EAGER_API_KEY_ENV_VAR = "_UNION_EAGER_API_KEY"
@@ -49,6 +50,8 @@ def _pass_through():
 @click.option("--project", envvar=PROJECT_NAME, required=False)
 @click.option("--domain", envvar=DOMAIN_NAME, required=False)
 @click.option("--org", envvar=ORG_NAME, required=False)
+@click.option("--debug", envvar=FLYTE_ENABLE_VSCODE_KEY, type=click.BOOL, required=False)
+@click.option("--interactive-mode", type=click.BOOL, required=False)
 @click.option("--image-cache", required=False)
 @click.option("--tgz", required=False)
 @click.option("--pkl", required=False)
@@ -59,12 +62,16 @@ def _pass_through():
     type=click.UNPROCESSED,
     nargs=-1,
 )
+@click.pass_context
 def main(
+    ctx: click.Context,
     run_name: str,
     name: str,
     project: str,
     domain: str,
     org: str,
+    debug: bool,
+    interactive_mode: bool,
     image_cache: str,
     version: str,
     inputs: str,
@@ -109,6 +116,13 @@ def main(
     if name.startswith("{{"):
         name = os.getenv("ACTION_NAME", "")
 
+    logger.warning(f"Flyte runtime started for action {name} with run name {run_name}")
+
+    if debug and name == "a0":
+        from flyte._debug.vscode import _start_vscode_server
+
+        asyncio.run(_start_vscode_server(ctx))
+
     # Figure out how to connect
     # This detection of api key is a hack for now.
     controller_kwargs: dict[str, Any] = {"insecure": False}
@@ -122,8 +136,10 @@ def main(
             controller_kwargs["insecure"] = True
         logger.debug(f"Using controller endpoint: {ep} with kwargs: {controller_kwargs}")
 
-    bundle = CodeBundle(tgz=tgz, pkl=pkl, destination=dest, computed_version=version)
-    init(org=org, project=project, domain=domain, **controller_kwargs)
+    bundle = None
+    if tgz or pkl:
+        bundle = CodeBundle(tgz=tgz, pkl=pkl, destination=dest, computed_version=version)
+    init(org=org, project=project, domain=domain, image_builder="remote", **controller_kwargs)
     # Controller is created with the same kwargs as init, so that it can be used to run tasks
     controller = create_controller(ct="remote", **controller_kwargs)
 
@@ -143,6 +159,7 @@ def main(
         version=version,
         controller=controller,
         image_cache=ic,
+        interactive_mode=interactive_mode or debug,
     )
     # Create a coroutine to watch for errors
     controller_failure = controller.watch_for_errors()
@@ -151,10 +168,23 @@ def main(
     async def _run_and_stop():
         loop = asyncio.get_event_loop()
         loop.set_exception_handler(flyte.errors.silence_grpc_polling_error)
-        await utils.run_coros(controller_failure, task_coroutine)
-        await controller.stop()
+        try:
+            await utils.run_coros(controller_failure, task_coroutine)
+            await controller.stop()
+        except flyte.errors.RuntimeSystemError as e:
+            logger.error(f"Runtime system error: {e}")
+            from flyte._internal.runtime.convert import convert_from_native_to_error
+            from flyte._internal.runtime.io import upload_error
+
+            logger.error(f"Flyte runtime failed for action {name} with run name {run_name}, error: {e}")
+            err = convert_from_native_to_error(e)
+            path = await upload_error(err.err, outputs_path)
+            logger.error(f"Run {run_name} Action {name} failed with error: {err}. Uploaded error to {path}")
+            await controller.stop()
+            raise
 
     asyncio.run(_run_and_stop())
+    logger.warning(f"Flyte runtime completed for action {name} with run name {run_name}")
 
 
 if __name__ == "__main__":

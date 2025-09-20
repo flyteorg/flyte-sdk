@@ -235,7 +235,7 @@ class ImageBuildEngine:
 
 
 class ImageCache(BaseModel):
-    image_lookup: Dict[str, str]
+    image_lookup: Dict[str, Dict[str, str]]
     serialized_form: str | None = None
 
     @property
@@ -273,10 +273,11 @@ class ImageCache(BaseModel):
         """
         tuples = []
         for k, v in self.image_lookup.items():
-            tuples.append(
-                [
-                    ("Name", k),
-                    ("image", v),
-                ]
-            )
+            for py_version, image_uri in v.items():
+                tuples.append(
+                    [
+                        ("Name", f"{k} (py{py_version})"),
+                        ("image", image_uri),
+                    ]
+                )
         return tuples

@@ -161,7 +161,12 @@ class _Runner:
                 code_bundle = cached_value.code_bundle
                 image_cache = cached_value.image_cache
             else:
-                image_cache = await build_images.aio(cast(Environment, obj.parent_env()))
+                if not self._dry_run:
+                    image_cache = await build_images.aio(cast(Environment, obj.parent_env()))
+                else:
+                    from ._internal.imagebuild.image_builder import ImageCache
+
+                    image_cache = ImageCache(image_lookup={})
 
                 if self._interactive_mode:
                     code_bundle = await build_pkl_bundle(
@@ -199,10 +204,11 @@ class _Runner:
             inputs = await convert_from_native_to_inputs(obj.native_interface, *args, **kwargs)
 
         env = self._env_vars or {}
-        if self._log_level:
-            env["LOG_LEVEL"] = str(self._log_level)
-        else:
-            env["LOG_LEVEL"] = str(logger.getEffectiveLevel())
+        if env.get("LOG_LEVEL") is None:
+            if self._log_level:
+                env["LOG_LEVEL"] = str(self._log_level)
+            else:
+                env["LOG_LEVEL"] = str(logger.getEffectiveLevel())
 
         if not self._dry_run:
             if get_client() is None:
@@ -594,6 +600,8 @@ def with_runcontext(
     """
     if mode == "hybrid" and not name and not run_base_dir:
         raise ValueError("Run name and run base dir are required for hybrid mode")
+    if copy_style == "none" and not version:
+        raise ValueError("Version is required when copy_style is 'none'")
     return _Runner(
         force_mode=mode,
         name=name,

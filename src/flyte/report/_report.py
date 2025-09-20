@@ -4,7 +4,6 @@ import string
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Dict, List, Union
 
-from flyte._internal.runtime import io
 from flyte._logging import logger
 from flyte._tools import ipython_check
 from flyte.syncify import syncify
@@ -133,6 +132,7 @@ async def flush():
     """
     import flyte.storage as storage
     from flyte._context import internal_ctx
+    from flyte._internal.runtime import io
 
     if not internal_ctx().is_task_context():
         return

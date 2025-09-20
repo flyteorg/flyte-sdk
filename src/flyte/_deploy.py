@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import sys
 import typing
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
 
+import cloudpickle
 import rich.repr
 
 import flyte.errors
@@ -170,14 +173,18 @@ async def _build_images(deployment: DeploymentPlan) -> ImageCache:
 
         elif env.image == "auto" and "auto" not in image_identifier_map:
             auto_image = Image.from_debian_base()
-            image_identifier_map["auto"] = auto_image.uri
+            images.append(_build_image_bg(env_name, auto_image))
     final_images = await asyncio.gather(*images)
 
     for env_name, image_uri in final_images:
         logger.warning(f"Built Image for environment {env_name}, image: {image_uri}")
         env = deployment.envs[env_name]
         if isinstance(env.image, Image):
-            image_identifier_map[env.image.identifier] = image_uri
+            py_version = "{}.{}".format(*env.image.python_version)
+            image_identifier_map[env.image.identifier] = {py_version: image_uri}
+        elif env.image == "auto":
+            py_version = "{}.{}".format(sys.version_info.major, sys.version_info.minor)
+            image_identifier_map["auto"] = {py_version: image_uri}
 
     return ImageCache(image_lookup=image_identifier_map)
 
@@ -214,15 +221,18 @@ async def apply(deployment_plan: DeploymentPlan, copy_style: CopyFiles, dryrun: 
 
     image_cache = await _build_images(deployment_plan)
 
-    version = deployment_plan.version
-    if copy_style == "none" and not version:
+    if copy_style == "none" and not deployment_plan.version:
         raise flyte.errors.DeploymentError("Version must be set when copy_style is none")
     else:
         code_bundle = await build_code_bundle(from_dir=cfg.root_dir, dryrun=dryrun, copy_style=copy_style)
-        version = version or code_bundle.computed_version
-        # TODO we should update the version to include the image cache digest and code bundle digest. This is
-        # to ensure that changes in image dependencies, cause an update to the deployment version.
-        # TODO Also hash the environment and tasks to ensure that changes in the environment or tasks
+        if deployment_plan.version:
+            version = deployment_plan.version
+        else:
+            h = hashlib.md5()
+            h.update(cloudpickle.dumps(deployment_plan.envs))
+            h.update(code_bundle.computed_version.encode("utf-8"))
+            h.update(cloudpickle.dumps(image_cache))
+            version = h.hexdigest()
 
     sc = SerializationContext(
         project=cfg.project,

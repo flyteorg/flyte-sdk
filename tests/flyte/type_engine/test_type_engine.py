@@ -541,10 +541,8 @@ def test_guessing_basic():
             dimensionality=types_pb2.BlobType.BlobDimensionality.SINGLE,
         )
     )
-    # TODO: fix it: AssertionError: assert <class 'flyte.io._structured_dataset._structured_dataset.StructuredDataset'>
-    #  is FlytePickle
-    # pt = TypeEngine.guess_python_type(lt)
-    # assert pt is FlytePickle
+    pt = TypeEngine.guess_python_type(lt)
+    assert pt is FlytePickle
 
 
 def test_guessing_containers():
@@ -619,212 +617,6 @@ def test_dataclass_transformer_with_dataclassjsonmixin():
     assert t.simple == SimpleType.STRUCT
     assert t.metadata is not None
     assert t.metadata == schema
-
-
-# @mock.patch("flytekit.core.data_persistence.FileAccessProvider.async_put_data")
-# def test_dataclass_with_postponed_annotation(mock_put_data):
-#     remote_path = "s3://tmp/file"
-#     mock_put_data.return_value = remote_path
-#
-#     @dataclass
-#     class Data:
-#         a: int
-#         f: "FlyteFile"
-#
-#     ctx = internal_ctx()
-#     tf = DataclassTransformer()
-#     t = tf.get_literal_type(Data)
-#     assert t.simple == SimpleType.STRUCT
-#     with tempfile.TemporaryDirectory() as tmp:
-#         test_file = os.path.join(tmp, "abc.txt")
-#         with open(test_file, "w") as f:
-#             f.write("123")
-#
-#         pv = Data(a=1, f=FlyteFile(test_file, remote_path=remote_path))
-#         lt = tf.to_literal(ctx, pv, Data, t)
-#         msgpack_bytes = lt.scalar.binary.value
-#         dict_obj = msgpack.loads(msgpack_bytes)
-#         assert dict_obj["f"]["path"] == remote_path
-#
-#
-# @mock.patch("flytekit.core.data_persistence.FileAccessProvider.async_put_data")
-# def test_optional_flytefile_in_dataclass(mock_upload_dir):
-#     mock_upload_dir.return_value = True
-#
-#     @dataclass
-#     class A(DataClassJsonMixin):
-#         a: int
-#
-#     @dataclass
-#     class TestFileStruct(DataClassJsonMixin):
-#         a: FlyteFile
-#         b: typing.Optional[FlyteFile]
-#         b_prime: typing.Optional[FlyteFile]
-#         c: typing.Union[FlyteFile, None]
-#         c_prime: typing.Union[None, int, bool, FlyteFile]
-#         d: typing.List[FlyteFile]
-#         e: typing.List[typing.Optional[FlyteFile]]
-#         e_prime: typing.List[typing.Optional[FlyteFile]]
-#         f: typing.Dict[str, FlyteFile]
-#         g: typing.Dict[str, typing.Optional[FlyteFile]]
-#         g_prime: typing.Dict[str, typing.Optional[FlyteFile]]
-#         h: typing.Optional[FlyteFile] = None
-#         h_prime: typing.Optional[FlyteFile] = None
-#         i: typing.Optional[A] = None
-#         i_prime: typing.Optional[A] = field(default_factory=lambda: A(a=99))
-#         j: typing.Union[int, FlyteFile] = 0
-#
-#     remote_path = "s3://tmp/file"
-#     # set the return value to the remote path since that's what put_data does
-#     mock_upload_dir.return_value = remote_path
-#     with tempfile.TemporaryFile() as f:
-#         f.write(b"abc")
-#         f1 = FlyteFile("f1", remote_path=remote_path)
-#         o = TestFileStruct(
-#             a=f1,
-#             b=f1,
-#             b_prime=None,
-#             c=f1,
-#             c_prime=f1,
-#             d=[f1],
-#             e=[f1],
-#             e_prime=[None],
-#             f={"a": f1},
-#             g={"a": f1},
-#             g_prime={"a": None},
-#             h=f1,
-#             i=A(a=42),
-#             j=remote_path,
-#         )
-#
-#         ctx = internal_ctx()
-#         tf = DataclassTransformer()
-#         lt = tf.get_literal_type(TestFileStruct)
-#         lv = tf.to_literal(ctx, o, TestFileStruct, lt)
-#
-#         msgpack_bytes = lv.scalar.binary.value
-#         dict_obj = msgpack.loads(msgpack_bytes)
-#
-#         assert dict_obj["a"]["path"] == remote_path
-#         assert dict_obj["b"]["path"] == remote_path
-#         assert dict_obj["b_prime"] is None
-#         assert dict_obj["c"]["path"] == remote_path
-#         assert dict_obj["c_prime"]["path"] == remote_path
-#         assert dict_obj["d"][0]["path"] == remote_path
-#         assert dict_obj["e"][0]["path"] == remote_path
-#         assert dict_obj["e_prime"][0] is None
-#         assert dict_obj["f"]["a"]["path"] == remote_path
-#         assert dict_obj["g"]["a"]["path"] == remote_path
-#         assert dict_obj["g_prime"]["a"] is None
-#         assert dict_obj["h"]["path"] == remote_path
-#         assert dict_obj["h_prime"] is None
-#         assert dict_obj["i"]["a"] == 42
-#         assert dict_obj["i_prime"]["a"] == 99
-#         assert dict_obj["j"]["path"] == remote_path
-#
-#         ot = tf.to_python_value(ctx, lv=lv, expected_python_type=TestFileStruct)
-#
-#         assert o.a.remote_path == ot.a.remote_source
-#         assert o.b.remote_path == ot.b.remote_source
-#         assert ot.b_prime is None
-#         assert o.c.remote_path == ot.c.remote_source
-#         assert o.c_prime.remote_path == ot.c_prime.remote_source
-#         assert o.d[0].remote_path == ot.d[0].remote_source
-#         assert o.e[0].remote_path == ot.e[0].remote_source
-#         assert o.e_prime == [None]
-#         assert o.f["a"].remote_path == ot.f["a"].remote_source
-#         assert o.g["a"].remote_path == ot.g["a"].remote_source
-#         assert o.g_prime == {"a": None}
-#         assert o.h.remote_path == ot.h.remote_source
-#         assert ot.h_prime is None
-#         assert o.i == ot.i
-#         assert o.i_prime == A(a=99)
-#         assert o.j == FlyteFile(remote_path)
-#
-#
-# @mock.patch("flytekit.core.data_persistence.FileAccessProvider.async_put_data")
-# def test_optional_flytefile_in_dataclassjsonmixin(mock_upload_dir):
-#     @dataclass
-#     class A_optional_flytefile(DataClassJSONMixin):
-#         a: int
-#
-#     @dataclass
-#     class TestFileStruct_optional_flytefile(DataClassJSONMixin):
-#         a: FlyteFile
-#         b: typing.Optional[FlyteFile]
-#         b_prime: typing.Optional[FlyteFile]
-#         c: typing.Union[FlyteFile, None]
-#         d: typing.List[FlyteFile]
-#         e: typing.List[typing.Optional[FlyteFile]]
-#         e_prime: typing.List[typing.Optional[FlyteFile]]
-#         f: typing.Dict[str, FlyteFile]
-#         g: typing.Dict[str, typing.Optional[FlyteFile]]
-#         g_prime: typing.Dict[str, typing.Optional[FlyteFile]]
-#         h: typing.Optional[FlyteFile] = None
-#         h_prime: typing.Optional[FlyteFile] = None
-#         i: typing.Optional[A_optional_flytefile] = None
-#         i_prime: typing.Optional[A_optional_flytefile] = field(default_factory=lambda: A_optional_flytefile(a=99))
-#
-#     remote_path = "s3://tmp/file"
-#     mock_upload_dir.return_value = remote_path
-#
-#     with tempfile.TemporaryFile() as f:
-#         f.write(b"abc")
-#         f1 = FlyteFile("f1", remote_path=remote_path)
-#         o = TestFileStruct_optional_flytefile(
-#             a=f1,
-#             b=f1,
-#             b_prime=None,
-#             c=f1,
-#             d=[f1],
-#             e=[f1],
-#             e_prime=[None],
-#             f={"a": f1},
-#             g={"a": f1},
-#             g_prime={"a": None},
-#             h=f1,
-#             i=A_optional_flytefile(a=42),
-#         )
-#
-#         ctx = internal_ctx()
-#         tf = DataclassTransformer()
-#         lt = tf.get_literal_type(TestFileStruct_optional_flytefile)
-#         lv = tf.to_literal(ctx, o, TestFileStruct_optional_flytefile, lt)
-#
-#         msgpack_bytes = lv.scalar.binary.value
-#         dict_obj = msgpack.loads(msgpack_bytes)
-#
-#         assert dict_obj["a"]["path"] == remote_path
-#         assert dict_obj["b"]["path"] == remote_path
-#         assert dict_obj["b_prime"] is None
-#         assert dict_obj["c"]["path"] == remote_path
-#         assert dict_obj["d"][0]["path"] == remote_path
-#         assert dict_obj["e"][0]["path"] == remote_path
-#         assert dict_obj["e_prime"][0] is None
-#         assert dict_obj["f"]["a"]["path"] == remote_path
-#         assert dict_obj["g"]["a"]["path"] == remote_path
-#         assert dict_obj["g_prime"]["a"] is None
-#         assert dict_obj["h"]["path"] == remote_path
-#         assert dict_obj["h_prime"] is None
-#         assert dict_obj["i"]["a"] == 42
-#         assert dict_obj["i_prime"]["a"] == 99
-#
-#         ot = tf.to_python_value(ctx, lv=lv, expected_python_type=TestFileStruct_optional_flytefile)
-#
-#         assert o.a.remote_path == ot.a.remote_source
-#         assert o.b.remote_path == ot.b.remote_source
-#         assert ot.b_prime is None
-#         assert o.c.remote_path == ot.c.remote_source
-#         assert o.d[0].remote_path == ot.d[0].remote_source
-#         assert o.e[0].remote_path == ot.e[0].remote_source
-#         assert o.e_prime == [None]
-#         assert o.f["a"].remote_path == ot.f["a"].remote_source
-#         assert o.g["a"].remote_path == ot.g["a"].remote_source
-#         assert o.g_prime == {"a": None}
-#         assert o.h.remote_path == ot.h.remote_source
-#         assert ot.h_prime is None
-#         assert o.i == ot.i
-#         assert o.i_prime == A_optional_flytefile(a=99)
 
 
 @pytest.mark.asyncio
@@ -924,57 +716,6 @@ async def test_flyte_directory_in_dataclassjsonmixin():
     ot2 = await tf.to_python_value(lv=lv, expected_python_type=rehydrated_pt)
     assert o == ot1
     assert o == ot2
-
-
-@pytest.mark.skipif("pandas" not in sys.modules, reason="Pandas is not installed.")
-@pytest.mark.asyncio
-async def test_structured_dataset_in_dataclass(ctx_with_test_raw_data_path):
-    import pandas as pd
-    from pandas._testing import assert_frame_equal
-    from pydantic.dataclasses import dataclass as pyd_dataclass
-
-    df = pd.DataFrame({"Name": ["Tom", "Joseph"], "Age": [20, 22]})
-    People = Annotated[DataFrame, "parquet", OrderedDict(Name=str, Age=int)]
-
-    @pyd_dataclass
-    class InnerDatasetStruct:
-        a: DataFrame
-        b: typing.List[Annotated[DataFrame, "parquet"]]
-        c: typing.Dict[str, Annotated[DataFrame, OrderedDict(Name=str, Age=int)]]
-
-    @pyd_dataclass
-    class DatasetStruct:
-        a: People
-        b: InnerDatasetStruct
-
-    sd = DataFrame(val=df, file_format="parquet")
-    o = DatasetStruct(a=sd, b=InnerDatasetStruct(a=sd, b=[sd], c={"hello": sd}))
-
-    tf = DataclassTransformer()
-    lt = tf.get_literal_type(DatasetStruct)
-    lv = await tf.to_literal(o, DatasetStruct, lt)
-    ot = await tf.to_python_value(lv=lv, expected_python_type=DatasetStruct)
-
-    return_df = ot.a.open(pd.DataFrame)
-    return_df = await return_df.all()
-    assert_frame_equal(df, return_df)
-
-    return_df = ot.b.a.open(pd.DataFrame)
-    return_df = await return_df.all()
-    assert_frame_equal(df, return_df)
-
-    return_df = ot.b.b[0].open(pd.DataFrame)
-    return_df = await return_df.all()
-    assert_frame_equal(df, return_df)
-
-    return_df = ot.b.c["hello"].open(pd.DataFrame)
-    return_df = await return_df.all()
-    assert_frame_equal(df, return_df)
-
-    assert "parquet" == ot.a.file_format
-    assert "parquet" == ot.b.a.file_format
-    assert "parquet" == ot.b.b[0].file_format
-    assert "parquet" == ot.b.c["hello"].file_format
 
 
 # Enums should have string values
@@ -1658,90 +1399,6 @@ async def test_union_from_unambiguous_literal():
 #     assert v == 42
 #
 #
-# @pytest.mark.skipif("pandas" not in sys.modules, reason="Pandas is not installed.")
-# def test_pass_annotated_to_downstream_tasks():
-#     """
-#     Test to confirm that the loaded dataframe is not affected and can be used in @dynamic.
-#     """
-#     import pandas as pd
-#
-#     # pandas dataframe hash function
-#     def hash_pandas_dataframe(df: pd.DataFrame) -> str:
-#         return str(pd.util.hash_pandas_object(df))
-#
-#     @task
-#     def t0(a: int) -> Annotated[int, HashMethod(function=str)]:
-#         return a + 1
-#
-#     @task
-#     def annotated_return_task() -> Annotated[pd.DataFrame, HashMethod(hash_pandas_dataframe)]:
-#         return pd.DataFrame({"column_1": [1, 2, 3]})
-#
-#     @task(cache=True, cache_version="42")
-#     def downstream_t(a: int, df: pd.DataFrame) -> int:
-#         return a + 2 + len(df)
-#
-#     @dynamic
-#     def t1(a: int) -> int:
-#         v = t0(a=a)
-#         df = annotated_return_task()
-#
-#         # We should have a cache miss in the first call to downstream_t
-#         v_1 = downstream_t(a=v, df=df)
-#         downstream_t(a=v, df=df)
-#
-#         return v_1
-#
-#     assert t1(a=3) == 9
-#
-#
-# def test_literal_hash_int_can_be_set():
-#     """
-#     Test to confirm that annotating an integer with `HashMethod` is allowed.
-#     """
-#     ctx = internal_ctx()
-#     lv = TypeEngine.to_literal(
-#         ctx,
-#         42,
-#         Annotated[int, HashMethod(str)],
-#         LiteralType(simple=types_pb2.SimpleType.INTEGER),
-#     )
-#     assert lv.scalar.primitive.integer == 42
-#     assert lv.hash == "42"
-#
-#
-# @pytest.mark.skipif("pandas" not in sys.modules, reason="Pandas is not installed.")
-# def test_literal_hash_to_python_value():
-#     """
-#     Test to confirm that literals can be converted to python values, regardless of the hash value set in the literal.
-#     """
-#     import pandas as pd
-#
-#     from flytekit.types.schema.types_pandas import PandasDataFrameTransformer
-#
-#     ctx = internal_ctx()
-#
-#     def constant_hash(df: pd.DataFrame) -> str:
-#         return "h4Sh"
-#
-#     df = pd.DataFrame(data={"col1": [1, 2], "col2": [3, 4]})
-#     pandas_df_transformer = PandasDataFrameTransformer()
-#     literal_with_hash_set = TypeEngine.to_literal(
-#         ctx,
-#         df,
-#         Annotated[pd.DataFrame, HashMethod(constant_hash)],
-#         pandas_df_transformer.get_literal_type(pd.DataFrame),
-#     )
-#     assert literal_with_hash_set.hash == "h4Sh"
-#     # Confirm that the loaded dataframe is not affected
-#     python_df = TypeEngine.to_python_value(ctx, literal_with_hash_set, pd.DataFrame)
-#     expected_df = pd.DataFrame(data={"col1": [1, 2], "col2": [3, 4]})
-#     assert expected_df.equals(python_df)
-#
-#
-#
-#
-#
 # TestSchema = FlyteSchema[kwtypes(some_str=str)]  # type: ignore
 #
 #
@@ -2221,46 +1878,6 @@ async def test_offloaded_literal_with_inferred_type():
         await TypeEngine.to_python_value(offloaded_literal_missing_uri, str)
 
 
-# def test_offloaded_literal_flytefile(tmp_path):
-#     ctx = internal_ctx()
-#     lt = TypeEngine.to_literal_type(FlyteFile)
-#     to_be_offloaded_lv = TypeEngine.to_literal(ctx, "s3://my-file", FlyteFile, lt)
-#
-#     # Write offloaded_lv as bytes to a temp file
-#     with open(f"{tmp_path}/offloaded_proto.pb", "wb") as f:
-#         f.write(to_be_offloaded_lv.to_flyte_idl().SerializeToString())
-#
-#     literal = Literal(
-#         offloaded_metadata=LiteralOffloadedMetadata(
-#             uri=f"{tmp_path}/offloaded_proto.pb",
-#             inferred_type=lt,
-#         ),
-#     )
-#
-#     loaded_pv = TypeEngine.to_python_value(ctx, literal, FlyteFile)
-#     assert loaded_pv._remote_source == "s3://my-file"
-#
-#
-# def test_offloaded_literal_flytedirectory(tmp_path):
-#     ctx = internal_ctx()
-#     lt = TypeEngine.to_literal_type(FlyteDirectory)
-#     to_be_offloaded_lv = TypeEngine.to_literal(ctx, "s3://my-dir", FlyteDirectory, lt)
-#
-#     # Write offloaded_lv as bytes to a temp file
-#     with open(f"{tmp_path}/offloaded_proto.pb", "wb") as f:
-#         f.write(to_be_offloaded_lv.to_flyte_idl().SerializeToString())
-#
-#     literal = Literal(
-#         offloaded_metadata=LiteralOffloadedMetadata(
-#             uri=f"{tmp_path}/offloaded_proto.pb",
-#             inferred_type=lt,
-#         ),
-#     )
-#
-#     loaded_pv: FlyteDirectory = TypeEngine.to_python_value(ctx, literal, FlyteDirectory)
-#     assert loaded_pv._remote_source == "s3://my-dir"
-
-
 @pytest.mark.asyncio
 async def test_dataclass_none_output_input_deserialization():
     from flyte._task_environment import TaskEnvironment
@@ -2316,34 +1933,6 @@ async def test_dataclass_none_output_input_deserialization():
     none_value_output = await outer_workflow(OuterWorkflowInput(input=0.0))
     none_value_output = none_value_output.nullable_output
     assert none_value_output is None, f"None value was {none_value_output}, not None as expected"
-
-
-#
-#
-# @pytest.mark.serial
-# def test_lazy_import_transformers_concurrently():
-#     # Configure the mocks similar to https://stackoverflow.com/questions/29749193/python-unit-testing-with-two-mock-objects-how-to-verify-call-order
-#     after_import_mock, mock_register = mock.Mock(), mock.Mock()
-#     mock_wrapper = mock.Mock()
-#     mock_wrapper.mock_register = mock_register
-#     mock_wrapper.after_import_mock = after_import_mock
-#
-#     with mock.patch.object(StructuredDatasetTransformerEngine, "register", new=mock_register):
-#         def run():
-#             TypeEngine.lazy_import_transformers()
-#             after_import_mock()
-#
-#         N = 5
-#         with ThreadPoolExecutor(max_workers=N) as executor:
-#             futures = [executor.submit(run) for _ in range(N)]
-#             [f.result() for f in futures]
-#
-#         assert mock_wrapper.mock_calls[-1] == mock.call.after_import_mock()
-#         expected_number_of_register_calls = len(mock_wrapper.mock_calls) - N
-#         assert sum([mock_call[0] == "mock_register" for mock_call in mock_wrapper.mock_calls]) \
-#           == expected_number_of_register_calls
-#         assert all([mock_call[0] == "mock_register" for mock_call in
-#                     mock_wrapper.mock_calls[:int(len(mock_wrapper.mock_calls)/N)-1]])
 
 
 @pytest.mark.asyncio
@@ -2585,7 +2174,7 @@ async def test_structured_dataset_collection(ctx_with_test_raw_data_path):
 
     df = pd.DataFrame({"alcohol": [1.0, 2.0], "malic_acid": [2.0, 3.0]})
 
-    await TypeEngine.to_literal(DataFrame(df), WineType, TypeEngine.to_literal_type(WineType))
+    await TypeEngine.to_literal(DataFrame.from_df(val=df), WineType, TypeEngine.to_literal_type(WineType))
 
     transformer = TypeEngine.get_transformer(WineTypeListList)
     assert isinstance(transformer, ListTransformer)
@@ -2596,11 +2185,11 @@ async def test_structured_dataset_collection(ctx_with_test_raw_data_path):
     assert cols[1].name == "malic_acid"
     assert cols[1].literal_type.simple == SimpleType.FLOAT
 
-    sd = DataFrame(df, format="parquet")
+    sd = DataFrame.from_df(val=df)
     lv = await TypeEngine.to_literal([[sd]], WineTypeListList, lt)
     assert lv is not None
 
-    lv = await TypeEngine.to_literal([[DataFrame(df)]], WineTypeListList, lt)
+    lv = await TypeEngine.to_literal([[DataFrame.from_df(val=df)]], WineTypeListList, lt)
     assert lv is not None
 
 

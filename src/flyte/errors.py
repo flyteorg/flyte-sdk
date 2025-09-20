@@ -132,7 +132,9 @@ class CustomError(RuntimeUserError):
         Create a CustomError from an exception. The exception's class name is used as the error code and the exception
         message is used as the error message.
         """
-        return cls(e.__class__.__name__, str(e))
+        new_exc = cls(e.__class__.__name__, str(e))
+        new_exc.__cause__ = e
+        return new_exc
 
 
 class NotInTaskContextError(RuntimeUserError):
@@ -221,3 +223,12 @@ class RunAbortedError(RuntimeUserError):
 
     def __init__(self, message: str):
         super().__init__("RunAbortedError", message, "user")
+
+
+class SlowDownError(RuntimeUserError):
+    """
+    This error is raised when the user tries to access a resource that does not exist or is invalid.
+    """
+
+    def __init__(self, message: str):
+        super().__init__("SlowDownError", message, "user")

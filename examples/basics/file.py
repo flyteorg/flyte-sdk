@@ -1,6 +1,9 @@
 import flyte
 from flyte.io import File
 
+# To control how offloaded types like Files and Dirs behave with respect to caching, please see the
+# content_based_caching.py example.
+
 env = flyte.TaskEnvironment(name="file")
 
 
@@ -29,5 +32,5 @@ async def main() -> None:
 
 
 if __name__ == "__main__":
-    flyte.init_from_config("../../config.yaml")
+    flyte.init_from_config()
     print(flyte.run(main))
