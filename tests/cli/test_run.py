@@ -5,6 +5,8 @@ import pathlib
 import pytest
 from click.testing import CliRunner
 
+from flyte import Image
+from flyte._initialize import _get_init_config
 from flyte.cli._run import run
 
 TEST_CODE_PATH = pathlib.Path(__file__).parent
@@ -87,3 +89,42 @@ def test_run_complex_inputs(runner):
         ],
     )
     assert result.exit_code == 0, result.output
+
+
+def test_run_with_multiple_images_from_name(runner):
+    """Test that multiple --image parameters work correctly with Image.from_name()"""
+    from pathlib import Path
+
+    import flyte
+
+    # Initialize flyte to set up the config
+    flyte.init(root_dir=Path.cwd())
+
+    # Test with multiple images
+    cmd = [
+        "--local",
+        "--image",
+        "custom=my-custom-registry/custom-image:v2.0",
+        "--image",
+        "my-default-registry/default-image:v3.0",  # will assign name "default" to it
+        str(HELLO_WORLD_PY),
+        "say_hello",
+        "--name",
+        "World",
+    ]
+    result = runner.invoke(run, cmd)
+    assert result.exit_code == 0, result.output
+
+    # Verify that both images were registered in the config
+    cfg = _get_init_config()
+    assert cfg is not None, "Config should be initialized"
+    assert cfg.images is not None, "Images dict should exist"
+    assert "custom" in cfg.images
+    assert "default" in cfg.images
+
+    # Test that Image.from_name() returns the correct images
+    custom_image = Image.from_name("custom")
+    default_image = Image.from_name("default")
+
+    assert custom_image.base_image == "my-custom-registry/custom-image:v2.0"
+    assert default_image.base_image == "my-default-registry/default-image:v3.0"
