@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from curses import raw
 import pathlib
 import uuid
 from dataclasses import dataclass
@@ -127,6 +128,7 @@ class _Runner:
     async def _run_remote(self, obj: TaskTemplate[P, R] | LazyEntity, *args: P.args, **kwargs: P.kwargs) -> Run:
         import grpc
         from flyteidl.core import literals_pb2
+        from flyteidl.admin import common_pb2
         from google.protobuf import wrappers_pb2
 
         from flyte.remote import Run
@@ -253,6 +255,8 @@ class _Runner:
             env_kv = run_definition_pb2.Envs(values=kv_pairs)
             annotations = run_definition_pb2.Annotations(values=self._annotations)
             labels = run_definition_pb2.Labels(values=self._labels)
+            print(f"the raw output is {self._raw_data_path}")
+            raw_output_data_config = common_pb2.RawOutputDataConfig(output_location_prefix=self._raw_data_path)
 
             try:
                 resp = await get_client().run_service.CreateRun(
@@ -267,6 +271,7 @@ class _Runner:
                             annotations=annotations,
                             labels=labels,
                             envs=env_kv,
+                            raw_output_data_config=raw_output_data_config
                         ),
                     ),
                 )

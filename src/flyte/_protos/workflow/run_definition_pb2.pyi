@@ -1,12 +1,14 @@
-from flyte._protos.common import identifier_pb2 as _identifier_pb2
-from flyte._protos.common import identity_pb2 as _identity_pb2
+from common import identifier_pb2 as _identifier_pb2
+from common import identity_pb2 as _identity_pb2
+from flyteidl.admin import common_pb2 as _common_pb2
 from flyteidl.core import catalog_pb2 as _catalog_pb2
 from flyteidl.core import execution_pb2 as _execution_pb2
 from flyteidl.core import literals_pb2 as _literals_pb2
+from flyteidl.core import security_pb2 as _security_pb2
 from google.protobuf import timestamp_pb2 as _timestamp_pb2
 from google.protobuf import wrappers_pb2 as _wrappers_pb2
-from flyte._protos.validate.validate import validate_pb2 as _validate_pb2
-from flyte._protos.workflow import task_definition_pb2 as _task_definition_pb2
+from validate import validate_pb2 as _validate_pb2
+from workflow import task_definition_pb2 as _task_definition_pb2
 from google.protobuf.internal import containers as _containers
 from google.protobuf.internal import enum_type_wrapper as _enum_type_wrapper
 from google.protobuf import descriptor as _descriptor
@@ -80,20 +82,24 @@ class Envs(_message.Message):
     def __init__(self, values: _Optional[_Iterable[_Union[_literals_pb2.KeyValuePair, _Mapping]]] = ...) -> None: ...
 
 class RunSpec(_message.Message):
-    __slots__ = ["labels", "annotations", "envs", "interruptible", "overwrite_cache", "cluster"]
+    __slots__ = ["labels", "annotations", "envs", "interruptible", "overwrite_cache", "cluster", "raw_output_data_config", "security_context"]
     LABELS_FIELD_NUMBER: _ClassVar[int]
     ANNOTATIONS_FIELD_NUMBER: _ClassVar[int]
     ENVS_FIELD_NUMBER: _ClassVar[int]
     INTERRUPTIBLE_FIELD_NUMBER: _ClassVar[int]
     OVERWRITE_CACHE_FIELD_NUMBER: _ClassVar[int]
     CLUSTER_FIELD_NUMBER: _ClassVar[int]
+    RAW_OUTPUT_DATA_CONFIG_FIELD_NUMBER: _ClassVar[int]
+    SECURITY_CONTEXT_FIELD_NUMBER: _ClassVar[int]
     labels: Labels
     annotations: Annotations
     envs: Envs
     interruptible: _wrappers_pb2.BoolValue
     overwrite_cache: bool
     cluster: str
-    def __init__(self, labels: _Optional[_Union[Labels, _Mapping]] = ..., annotations: _Optional[_Union[Annotations, _Mapping]] = ..., envs: _Optional[_Union[Envs, _Mapping]] = ..., interruptible: _Optional[_Union[_wrappers_pb2.BoolValue, _Mapping]] = ..., overwrite_cache: bool = ..., cluster: _Optional[str] = ...) -> None: ...
+    raw_output_data_config: _common_pb2.RawOutputDataConfig
+    security_context: _security_pb2.SecurityContext
+    def __init__(self, labels: _Optional[_Union[Labels, _Mapping]] = ..., annotations: _Optional[_Union[Annotations, _Mapping]] = ..., envs: _Optional[_Union[Envs, _Mapping]] = ..., interruptible: _Optional[_Union[_wrappers_pb2.BoolValue, _Mapping]] = ..., overwrite_cache: bool = ..., cluster: _Optional[str] = ..., raw_output_data_config: _Optional[_Union[_common_pb2.RawOutputDataConfig, _Mapping]] = ..., security_context: _Optional[_Union[_security_pb2.SecurityContext, _Mapping]] = ...) -> None: ...
 
 class Run(_message.Message):
     __slots__ = ["action"]
