@@ -25,6 +25,7 @@ torch_env = flyte.TaskEnvironment(
     resources=flyte.Resources(cpu=(1, 2), memory=("1Gi", "2Gi")),
     plugin_config=Elastic(
         nproc_per_node=1,
+        # if you want to do local testing set nnodes=1
         nnodes=2,
     ),
     image=image,
