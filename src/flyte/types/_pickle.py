@@ -116,14 +116,24 @@ class FlytePickleTransformer(TypeTransformer[FlytePickle]):
             and literal_type.blob.format == FlytePickleTransformer.PYTHON_PICKLE_FORMAT
         ):
             return FlytePickle
+        if literal_type.simple == types_pb2.SimpleType.BINARY:
+            return FlytePickle
 
         raise ValueError(f"Transformer {self} cannot reverse {literal_type}")
 
     def get_literal_type(self, t: Type[T]) -> types_pb2.LiteralType:
         lt = types_pb2.LiteralType(
-            blob=types_pb2.BlobType(
-                format=self.PYTHON_PICKLE_FORMAT, dimensionality=types_pb2.BlobType.BlobDimensionality.SINGLE
-            )
+            union_type=types_pb2.UnionType(
+                variants=[
+                    types_pb2.LiteralType(
+                        blob=types_pb2.BlobType(
+                            format=self.PYTHON_PICKLE_FORMAT,
+                            dimensionality=types_pb2.BlobType.BlobDimensionality.SINGLE,
+                        )
+                    ),
+                    types_pb2.LiteralType(simple=types_pb2.SimpleType.BINARY),
+                ]
+            ),
         )
         lt.metadata = {"python_class_name": str(t)}
         return lt
