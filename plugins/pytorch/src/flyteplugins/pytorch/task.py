@@ -21,6 +21,10 @@ from torch.distributed.launcher.api import LaunchConfig, elastic_launch
 
 
 class CleanPodPolicy(Enum):
+    """
+    CleanPodPolicy defines how pods are cleaned up after a PyTorchJob completes.
+    """
+
     NONE = common_pb2.CLEANPOD_POLICY_NONE
     ALL = common_pb2.CLEANPOD_POLICY_ALL
     RUNNING = common_pb2.CLEANPOD_POLICY_RUNNING
@@ -28,7 +32,23 @@ class CleanPodPolicy(Enum):
 
 @dataclass
 class RunPolicy:
-    clean_pod_policy: CleanPodPolicy = None
+    """
+    RunPolicy describes some policy to apply to the execution of a kubeflow job.
+
+    Args:
+        clean_pod_policy (CleanPodPolicy): Defines the policy for cleaning up pods after
+            the PyTorchJob completes. Defaults to None.
+        ttl_seconds_after_finished (int, optional): Defines the TTL (in seconds) for cleaning
+            up finished PyTorchJobs. Defaults to None.
+        active_deadline_seconds (int, optional): Specifies the duration (in seconds) since
+            startTime during which the job can remain active before it is terminated.
+            Must be a positive integer. Applies only to pods where restartPolicy is
+            OnFailure or Always. Defaults to None.
+        backoff_limit (int, optional): Number of retries before marking this job as failed.
+            Defaults to None.
+    """
+
+    clean_pod_policy: Optional[CleanPodPolicy] = None
     ttl_seconds_after_finished: Optional[int] = None
     active_deadline_seconds: Optional[int] = None
     backoff_limit: Optional[int] = None
@@ -36,6 +56,26 @@ class RunPolicy:
 
 @dataclass
 class Elastic:
+    """
+    Elastic defines the configuration for running a PyTorch elastic job using torch.distributed.
+
+    Args:
+        rdzv_backend (str): Rendezvous backend to use. Typically "c10d". Defaults to "c10d".
+        backend (str): Communication backend to use. Common values are "gloo" or "nccl".
+            Defaults to "gloo".
+        nnodes (Union[int, str]): Number of nodes to use. Can be a fixed int or a range
+            string (e.g., "2:4" for elastic training). Defaults to 1.
+        nproc_per_node (int): Number of processes to launch per node. Defaults to 1.
+        run_policy (RunPolicy, optional): Run policy applied to the job execution.
+            Defaults to None.
+        monitor_interval (int): Interval (in seconds) to monitor the job's state.
+            Defaults to 3.
+        max_restarts (int): Maximum number of worker group restarts before failing the job.
+            Defaults to 3.
+        rdzv_configs (Dict[str, Any]): Rendezvous configuration key-value pairs.
+            Defaults to {"timeout": 900, "join_timeout": 900}.
+    """
+
     rdzv_backend: str = "c10d"
     backend: str = "gloo"
     nnodes: Union[int, str] = 1
@@ -47,8 +87,8 @@ class Elastic:
 
 
 def launcher_entrypoint(fn: bytes, kwargs: dict):
-    fn = cloudpickle.loads(fn)
-    return fn(**kwargs)
+    func = cloudpickle.loads(fn)
+    return func(**kwargs)
 
 
 @dataclass(kw_only=True)
@@ -65,7 +105,6 @@ class TorchFunctionTask(AsyncFunctionTaskTemplate):
         super().__post_init__()
         self.task_type = "python-task" if self.plugin_config.nnodes == 1 else "pytorch"
         self.min_nodes, self.max_nodes = run.parse_min_max_nnodes(str(self.plugin_config.nnodes))
-        self.rdzv_backend = "c10d"
 
     async def pre(self, *args: P.args, **kwargs: P.kwargs) -> Dict[str, Any]:
         # If OMP_NUM_THREADS is not set, set it to 1 to avoid overloading the system.
@@ -91,7 +130,7 @@ class TorchFunctionTask(AsyncFunctionTaskTemplate):
             min_nodes=self.min_nodes,
             max_nodes=self.max_nodes,
             nproc_per_node=self.plugin_config.nproc_per_node,
-            rdzv_backend=self.rdzv_backend,
+            rdzv_backend=self.plugin_config.rdzv_backend,
             rdzv_configs=self.plugin_config.rdzv_configs,
             rdzv_endpoint=os.environ.get("PET_RDZV_ENDPOINT", "localhost:0"),
             max_restarts=self.plugin_config.max_restarts,
