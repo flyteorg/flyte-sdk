@@ -90,6 +90,7 @@ class TaskEnvironment(Environment):
         env_vars: Optional[Dict[str, str]] = None,
         secrets: Optional[SecretRequest] = None,
         depends_on: Optional[List[Environment]] = None,
+        interruptible: Optional[bool] = None,
         **kwargs: Any,
     ) -> TaskEnvironment:
         """
@@ -134,6 +135,8 @@ class TaskEnvironment(Environment):
             kwargs["secrets"] = secrets
         if depends_on is not None:
             kwargs["depends_on"] = depends_on
+        if interruptible is not None:
+            kwargs["interruptible"] = interruptible
         return replace(self, **kwargs)
 
     def task(
@@ -147,6 +150,7 @@ class TaskEnvironment(Environment):
         docs: Optional[Documentation] = None,
         pod_template: Optional[Union[str, "V1PodTemplate"]] = None,
         report: bool = False,
+        interruptible: bool | None = None,
         max_inline_io_bytes: int = MAX_INLINE_IO_BYTES,
         triggers: Tuple[Trigger, ...] | Trigger = (),
     ) -> Union[AsyncFunctionTaskTemplate, Callable[P, R]]:
@@ -168,6 +172,8 @@ class TaskEnvironment(Environment):
          task (e.g., primitives, strings, dicts). Does not apply to files, directories, or dataframes.
         :param triggers: Optional A tuple of triggers to associate with the task. This allows the task to be run on a
          schedule or in response to events. Triggers can be defined using the `flyte.trigger` module.
+        :param interruptible: Optional Whether the task is interruptible, defaults to environment setting.
+
         :return: A TaskTemplate that can be used to deploy the task.
         """
         from ._task import P, R
@@ -221,6 +227,7 @@ class TaskEnvironment(Environment):
                 short_name=short,
                 plugin_config=self.plugin_config,
                 max_inline_io_bytes=max_inline_io_bytes,
+                interruptible=interruptible if interruptible is not None else self.interruptible,
                 triggers=triggers,
             )
             self._tasks[task_name] = tmpl
