@@ -228,7 +228,7 @@ class TaskEnvironment(Environment):
                 plugin_config=self.plugin_config,
                 max_inline_io_bytes=max_inline_io_bytes,
                 interruptible=interruptible if interruptible is not None else self.interruptible,
-                triggers=triggers,
+                triggers=triggers if isinstance(triggers, tuple) else (triggers, ),
             )
             self._tasks[task_name] = tmpl
             return tmpl
