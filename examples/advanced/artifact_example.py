@@ -1,3 +1,5 @@
+from typing import Tuple
+
 import flyte
 import flyte.artifacts as artifacts
 
@@ -14,10 +16,37 @@ def create_artifact() -> str:
 
 
 @env.task
-def call_artifact() -> str:
+def model_artifact() -> str:
+    result = "This is my model artifact content"
+    card = artifacts.Card.create_from(
+        content="<h1>Model Card</h1><p>This is a sample model card.</p>",
+        format="html",
+        card_type="model",
+    )
+
+    metadata = artifacts.Metadata.create_model_metadata(
+        name="my_model_artifact",
+        version="1.0",
+        description="An example model artifact created in model_artifact task",
+        framework="PyTorch",
+        model_type="Neural Network",
+        architecture="ResNet50",
+        task="Image Classification",
+        modality=("image",),
+        serial_format="pt",
+        short_description="A ResNet50 model for image classification tasks.",
+        card=card,
+    )
+    return artifacts.new(result, metadata)
+
+
+@env.task
+def call_artifact() -> Tuple[str, str]:
     x = create_artifact()
     print(x)
-    return x
+    y = model_artifact()
+    print(y)
+    return x, y
 
 
 @env.task
