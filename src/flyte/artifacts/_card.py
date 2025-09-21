@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 import flyte
-from flyte import storage
+from flyte import storage, syncify
 
 CardType = Literal["model", "data", "generic"]
 CardFormat = Literal["html", "md", "json", "yaml", "csv", "tsv", "png", "jpg", "jpeg"]
@@ -18,6 +18,7 @@ class Card(object):
     format: CardFormat = "html"
     card_type: CardType = "generic"
 
+    @syncify.syncify
     @classmethod
     async def create_from(
         cls,
@@ -52,7 +53,7 @@ async def _upload_card_from_local(
     # Implement upload. If in task context, upload to current metadata location, if not, upload using control plane.
     uri = ""
     ctx = flyte.ctx()
-    if ctx and ctx.is_in_cluster():
+    if ctx:
         output_path = ctx.output_path + "/" + f"{card_type}.{format}"
         uri = await storage.put(str(local_path), output_path)
     else:
