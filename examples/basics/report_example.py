@@ -25,6 +25,8 @@ async def main():
 
 
 if __name__ == "__main__":
-    flyte.init_from_config()
-    run = flyte.run(main)
+    import flyte.git
+
+    flyte.init_from_config(flyte.git.config_from_root())
+    run = flyte.with_runcontext("local").run(main)
     print(run.url)
