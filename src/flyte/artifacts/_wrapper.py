@@ -1,36 +1,12 @@
-import typing
-from dataclasses import dataclass
-from typing import Any, Optional, Protocol, TypeVar, runtime_checkable, Tuple
+from typing import Any, Protocol, TypeVar, runtime_checkable
 
 from typing_extensions import ParamSpec
+
+from ._metadata import Metadata
 
 T_co = TypeVar("T_co", covariant=True)
 T = TypeVar("T")
 P = ParamSpec("P")
-
-
-@dataclass(frozen=True, kw_only=True)
-class Metadata:
-    """Structured metadata for Flyte artifacts."""
-
-    # Core tracking fields
-    name: str
-    version: Optional[str] = None
-    description: Optional[str] = None
-    data: Optional[typing.Mapping[str, str]] = None
-    card: Optional[Card] = None
-
-
-@dataclass(frozen=True, kw_only=True)
-class ModelMetadata(Metadata):
-    """Metadata specific to machine learning models."""
-    framework: Optional[str] = None
-    model_type: Optional[str] = None
-    architecture: Optional[str] = None
-    task: Optional[str] = None
-    modality: Tuple[str, ...] = ("text",)
-    serial_format: str = "safetensors"
-    short_description: Optional[str] = None
 
 
 @runtime_checkable
@@ -72,18 +48,18 @@ class ArtifactWrapper:
         if name == "__class__":
             return type(object.__getattribute__(self, "_obj"))
         elif name in (
-                "_obj",
-                "_flyte_metadata",
-                "get_flyte_metadata",
-                "__call__",
-                "__repr__",
-                "__str__",
-                "__bool__",
-                "__len__",
-                "__iter__",
-                "__getitem__",
-                "__setitem__",
-                "__contains__",
+            "_obj",
+            "_flyte_metadata",
+            "get_flyte_metadata",
+            "__call__",
+            "__repr__",
+            "__str__",
+            "__bool__",
+            "__len__",
+            "__iter__",
+            "__getitem__",
+            "__setitem__",
+            "__contains__",
         ):
             return object.__getattribute__(self, name)
         else:
