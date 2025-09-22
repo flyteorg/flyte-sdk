@@ -252,16 +252,32 @@ class TaskEnvironment(Environment):
         """
         return self._tasks
 
-    def add_task(self, task: TaskTemplate) -> TaskTemplate:
+    @classmethod
+    def from_task(cls, name: str, *tasks: TaskTemplate) -> TaskEnvironment:
         """
-        Add a task to the environment.
+        Create a TaskEnvironment from a list of tasks. All tasks should have the same image or no Image defined.
+        Similarity of Image is determined by the python reference, not by value.
 
-        Useful when you want to add a task to an environment that is not defined using the `task` decorator.
+        If images are different, an error is raised. If no image is defined, the image is set to "auto".
 
-        :param task: The TaskTemplate to add to this environment.
+        For any other tasks that need to be use these tasks, the returned environment can be used in the `depends_on`
+        attribute of the other TaskEnvironment.
+
+        :param name: The name of the environment.
+        :param tasks: The list of tasks to create the environment from.
+
+        :raises ValueError: If tasks are assigned to multiple environments or have different images.
+        :return: The created TaskEnvironment.
         """
-        if task.name in self._tasks:
-            raise ValueError(f"Task {task.name} already exists in the environment. Task names should be unique.")
-        self._tasks[task.name] = task
-        task.parent_env = weakref.ref(self)
-        return task
+        envs = [t.parent_env() for t in tasks if t.parent_env and t.parent_env() is not None]
+        if envs:
+            raise ValueError("Tasks cannot assigned to multiple environments.")
+        images = {t.image for t in tasks}
+        if len(images) > 1:
+            raise ValueError("Tasks must have the same image to be in the same environment.")
+        image: Union[str, Image] = images.pop() if images else "auto"
+        env = cls(name, image=image)
+        for t in tasks:
+            env._tasks[t.name] = t
+            t.parent_env = weakref.ref(env)
+        return env
