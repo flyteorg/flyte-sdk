@@ -6,6 +6,14 @@ readme = "README.md"
 authors = [{ name = "Kevin Su", email = "pingsutw@users.noreply.github.com" }]
 requires-python = ">=3.10"
 dependencies = [
+    "flyte",
+    "flyteidl"
+]
+
+[project.optional-dependencies]
+bigquery = [
+    "google-cloud-bigquery",
+    "google-cloud-bigquery-storage",
 ]
 
 [build-system]
