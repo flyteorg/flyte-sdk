@@ -12,7 +12,7 @@ from flyteidl.core import tasks_pb2
 from flyteidl.core.execution_pb2 import TaskExecution, TaskLog
 from flyteidl.core.literals_pb2 import LiteralMap
 from google.protobuf import json_format
-from google.protobuf.internal.well_known_types import Struct
+from google.protobuf.struct_pb2 import Struct
 
 from flyte._context import internal_ctx
 from flyte._initialize import get_common_config
@@ -188,20 +188,22 @@ class ConnectorRegistry(object):
         return ConnectorRegistry._METADATA[name]
 
 
-class AsyncConnectorExecutorMixin:
+class AsyncConnectorExecutorMixin(TaskTemplate):
     """
     This mixin class is used to run the connector task locally, and it's only used for local execution.
     Task should inherit from this class if the task can be run in the connector.
     """
 
-    T = typing.TypeVar("T", TaskTemplate, "AsyncConnectorExecutorMixin")
-
-    async def execute(self: T, **kwargs) -> Any:
+    async def execute(self, **kwargs) -> Any:
         connector = ConnectorRegistry.get_connector(self.task_type, self.task_type_version)
 
         ctx = internal_ctx()
         tctx = internal_ctx().data.task_context
         cfg = get_common_config()
+
+        if tctx is None:
+            raise RuntimeError("Task context is not set.")
+
         sc = SerializationContext(
             project=tctx.action.project,
             domain=tctx.action.domain,
@@ -239,9 +241,9 @@ def is_terminal_phase(phase: TaskExecution.Phase) -> bool:
 
 
 async def get_resource_proto(resource: Resource) -> agent_pb2.Resource:
-    outputs = await TypeEngine.dict_to_literal_map(resource.outputs)
+    outputs = await TypeEngine.dict_to_literal_map(resource.outputs) if resource.outputs else None
 
-    return Resource(
+    return agent_pb2.Resource(
         phase=resource.phase,
         message=resource.message,
         log_links=resource.log_links,
