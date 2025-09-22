@@ -129,9 +129,12 @@ class FlytePickleTransformer(TypeTransformer[FlytePickle]):
                         blob=types_pb2.BlobType(
                             format=self.PYTHON_PICKLE_FORMAT,
                             dimensionality=types_pb2.BlobType.BlobDimensionality.SINGLE,
-                        )
+                        ),
+                        structure=types_pb2.TypeStructure(tag=self.name),
                     ),
-                    types_pb2.LiteralType(simple=types_pb2.SimpleType.BINARY),
+                    types_pb2.LiteralType(
+                        simple=types_pb2.SimpleType.BINARY, structure=types_pb2.TypeStructure(tag=self.name)
+                    ),
                 ]
             ),
         )
