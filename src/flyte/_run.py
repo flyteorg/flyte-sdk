@@ -585,8 +585,8 @@ def with_runcontext(
     :param interactive_mode: Optional, can be forced to True or False.
          If not provided, it will be set based on the current environment. For example Jupyter notebooks are considered
          interactive mode, while scripts are not. This is used to determine how the code bundle is created.
-    :param raw_data_path: Use this path to store the raw data for the run. Currently only supported for local runs,
-      and can be used to store raw data in specific locations. TODO coming soon for remote runs as well.
+    :param raw_data_path: Use this path to store the raw data for the run for local and remote, and can be used to
+         store raw data in specific locations.
     :param run_base_dir: Optional The base directory to use for the run. This is used to store the metadata for the run,
      that is passed between tasks.
     :param overwrite_cache: Optional If true, the cache will be overwritten for the run
