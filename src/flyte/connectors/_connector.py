@@ -1,39 +1,32 @@
 import asyncio
-import inspect
 import json
-import sys
-import time
 import typing
 from abc import ABC, abstractmethod
-from collections import OrderedDict
 from dataclasses import asdict, dataclass
-from functools import partial
-from types import FrameType
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional
 
+from flyteidl.admin import agent_pb2
 from flyteidl.admin.agent_pb2 import Agent, GetTaskLogsResponse, GetTaskMetricsResponse, TaskExecutionMetadata
-from flyteidl.admin.agent_pb2 import Resource as _Resource
 from flyteidl.admin.agent_pb2 import TaskCategory as _TaskCategory
-from flyteidl.core import literals_pb2
+from flyteidl.core import tasks_pb2
 from flyteidl.core.execution_pb2 import TaskExecution, TaskLog
 from flyteidl.core.literals_pb2 import LiteralMap
 from google.protobuf import json_format
-from google.protobuf.struct_pb2 import Struct
-from rich.logging import RichHandler
-from rich.progress import Progress
+from google.protobuf.internal.well_known_types import Struct
+
+from flyte._context import internal_ctx
+from flyte._initialize import get_common_config
+from flyte._internal.runtime.task_serde import get_proto_task
 from flyte._logging import logger
-
 from flyte._task import TaskTemplate
-from flyte.types._type_engine import dataclass_from_dict, TypeEngine
-
-# It's used to force connector to run in the same event loop in the local execution.
-local_connector_loop = asyncio.new_event_loop()
+from flyte.models import SerializationContext
+from flyte.types._type_engine import TypeEngine, dataclass_from_dict
 
 
-@dataclass(frozen=True)
-class TaskCategory:
-    name: str
-    version: int = 0
+@dataclass
+class ConnectorRegistryKey:
+    task_type_name: str
+    task_type_version: int
 
 
 @dataclass
@@ -78,20 +71,18 @@ class Resource:
     phase: TaskExecution.Phase
     message: Optional[str] = None
     log_links: Optional[List[TaskLog]] = None
-    outputs: Optional[Union[LiteralMap, typing.Dict[str, Any]]] = None
+    outputs: Optional[typing.Dict[str, Any]] = None
     custom_info: Optional[typing.Dict[str, Any]] = None
 
 
 class AsyncConnector(ABC):
     """
-    This is the base class for all async connectors.
-    It defines the interface that all connectors must implement.
-    The connector service is responsible for invoking connectors. The propeller will communicate with the connector service
-    to create tasks, get the status of tasks, and delete tasks.
+    This is the base class for all async connectors, and it defines the interface that all connectors must implement.
+    The connector service is responsible for invoking connectors.
+    The executor will communicate with the connector service to create tasks, get the status of tasks, and delete tasks.
 
     All the connectors should be registered in the ConnectorRegistry.
-    Connector Service
-    will look up the connector based on the task type. Every task type can only have one connector.
+    Connector Service will look up the connector based on the task type and version.
     """
 
     name = "Async Connector"
@@ -99,17 +90,13 @@ class AsyncConnector(ABC):
     task_type_version: int = 0
     metadata_type: ResourceMeta
 
-    @property
-    def task_category(self) -> TaskCategory:
-        return TaskCategory(name=self.task_type_name, version=self.task_type_version)
-
     @abstractmethod
-    def create(
+    async def create(
         self,
-        task_template: TaskTemplate,
+        task_template: tasks_pb2.TaskTemplate,
         output_prefix: str,
-        inputs: Optional[LiteralMap],
-        task_execution_metadata: Optional[TaskExecutionMetadata],
+        inputs: Optional[LiteralMap] = None,
+        task_execution_metadata: Optional[TaskExecutionMetadata] = None,
         **kwargs,
     ) -> ResourceMeta:
         """
@@ -118,7 +105,7 @@ class AsyncConnector(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def get(self, resource_meta: ResourceMeta, **kwargs) -> Resource:
+    async def get(self, resource_meta: ResourceMeta, **kwargs) -> Resource:
         """
         Return the status of the task, and return the outputs in some cases. For example, bigquery job
         can't write the structured dataset to the output location, so it returns the output literals to the propeller,
@@ -127,19 +114,19 @@ class AsyncConnector(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def delete(self, resource_meta: ResourceMeta, **kwargs):
+    async def delete(self, resource_meta: ResourceMeta, **kwargs):
         """
         Delete the task. This call should be idempotent. It should raise an error if fails to delete the task.
         """
         raise NotImplementedError
 
-    def get_metrics(self, resource_meta: ResourceMeta, **kwargs) -> GetTaskMetricsResponse:
+    async def get_metrics(self, resource_meta: ResourceMeta, **kwargs) -> GetTaskMetricsResponse:
         """
         Return the metrics for the task.
         """
         raise NotImplementedError
 
-    def get_logs(self, resource_meta: ResourceMeta, **kwargs) -> GetTaskLogsResponse:
+    async def get_logs(self, resource_meta: ResourceMeta, **kwargs) -> GetTaskLogsResponse:
         """
         Return the metrics for the task.
         """
@@ -149,20 +136,25 @@ class AsyncConnector(ABC):
 class ConnectorRegistry(object):
     """
     This is the registry for all connectors.
-    The connector service will look up the connector registry based on the task type.
-    The connector metadata service will look up the connector metadata based on the connector name.
+    The connector service will look up the connector registry based on the task type and version.
     """
 
-    _REGISTRY: Dict[TaskCategory, AsyncConnector] = {}
-    _METADATA: Dict[str, Agent] = {}
+    _REGISTRY: typing.ClassVar[Dict[ConnectorRegistryKey, AsyncConnector]] = {}
+    _METADATA: typing.ClassVar[Dict[str, Agent]] = {}
 
     @staticmethod
     def register(connector: AsyncConnector, override: bool = False):
-        if connector.task_category in ConnectorRegistry._REGISTRY and override is False:
-            raise ValueError(f"Duplicate connector for task type: {connector.task_category}")
-        ConnectorRegistry._REGISTRY[connector.task_category] = connector
+        key = ConnectorRegistryKey(
+            task_type_name=connector.task_type_name, task_type_version=connector.task_type_version
+        )
+        if key in ConnectorRegistry._REGISTRY and override is False:
+            raise ValueError(
+                f"Duplicate connector for task type: {connector.task_type_name}"
+                f" and version: {connector.task_type_version}"
+            )
+        ConnectorRegistry._REGISTRY[key] = connector
 
-        task_category = _TaskCategory(name=connector.task_category.name, version=connector.task_category.version)
+        task_category = _TaskCategory(name=connector.task_type_name, version=connector.task_type_version)
 
         if connector.name in ConnectorRegistry._METADATA:
             connector_metadata = ConnectorRegistry.get_connector_metadata(connector.name)
@@ -178,10 +170,12 @@ class ConnectorRegistry(object):
 
     @staticmethod
     def get_connector(task_type_name: str, task_type_version: int = 0) -> AsyncConnector:
-        task_category = TaskCategory(name=task_type_name, version=task_type_version)
-        if task_category not in ConnectorRegistry._REGISTRY:
-            raise ValueError(f"Cannot find connector for task category: {task_category}.")
-        return ConnectorRegistry._REGISTRY[task_category]
+        key = ConnectorRegistryKey(task_type_name=task_type_name, task_type_version=task_type_version)
+        if key not in ConnectorRegistry._REGISTRY:
+            raise FlyteConnectorNotFound(
+                f"Cannot find connector for task type: {task_type_name} and version: {task_type_version}"
+            )
+        return ConnectorRegistry._REGISTRY[key]
 
     @staticmethod
     def list_connectors() -> List[Agent]:
@@ -190,121 +184,70 @@ class ConnectorRegistry(object):
     @staticmethod
     def get_connector_metadata(name: str) -> Agent:
         if name not in ConnectorRegistry._METADATA:
-            raise ValueError(f"Cannot find connector for name: {name}.")
+            raise FlyteConnectorNotFound(f"Cannot find connector for name: {name}.")
         return ConnectorRegistry._METADATA[name]
 
 
 class AsyncConnectorExecutorMixin:
     """
-    This mixin class is used to run the async task locally, and it's only used for local execution.
+    This mixin class is used to run the connector task locally, and it's only used for local execution.
     Task should inherit from this class if the task can be run in the connector.
-
-    Asynchronous tasks are tasks that take a long time to complete, such as running a query.
     """
 
-    T = typing.TypeVar("T", PythonTask, "AsyncConnectorExecutorMixin")
+    T = typing.TypeVar("T", TaskTemplate, "AsyncConnectorExecutorMixin")
 
-    _clean_up_task: bool = False
-    _connector: AsyncConnectorBase = None
-    resource_meta = None
+    async def execute(self: T, **kwargs) -> Any:
+        connector = ConnectorRegistry.get_connector(self.task_type, self.task_type_version)
 
-    def execute(self: T, **kwargs) -> LiteralMap:
-        ctx = FlyteContext.current_context()
-        ss = ctx.serialization_settings or SerializationSettings(ImageConfig())
-        output_prefix = ctx.file_access.get_random_remote_directory()
-        from flytekit.tools.translator import get_serializable
-
-        task_template = get_serializable(OrderedDict(), ss, self).template
-        if task_template.metadata.timeout:
-            logger.info("Timeout is not supported for local execution.\n" "Ignoring the timeout.")
-        self._connector = ConnectorRegistry.get_connector(task_template.type, task_template.task_type_version)
-
-        resource_meta = local_connector_loop.run_until_complete(
-            self._create(task_template=task_template, output_prefix=output_prefix, inputs=kwargs)
+        ctx = internal_ctx()
+        tctx = internal_ctx().data.task_context
+        cfg = get_common_config()
+        sc = SerializationContext(
+            project=tctx.action.project,
+            domain=tctx.action.domain,
+            org=tctx.action.org,
+            code_bundle=tctx.code_bundle,
+            version=tctx.version,
+            image_cache=tctx.compiled_image_cache,
+            root_dir=cfg.root_dir,
         )
-        resource = local_connector_loop.run_until_complete(self._get(resource_meta=resource_meta))
+        tt = get_proto_task(self, sc)
+        resource_meta = await connector.create(task_template=tt, output_prefix=ctx.raw_data.path, inputs=kwargs)
+        resource = Resource(phase=TaskExecution.RUNNING)
+
+        while not is_terminal_phase(resource.phase):
+            resource = await connector.get(resource_meta=resource_meta)
+
+            if resource.log_links:
+                for link in resource.log_links:
+                    logger.info(f"{link.name}: {link.uri}")
+            await asyncio.sleep(1)
 
         if resource.phase != TaskExecution.SUCCEEDED:
             raise RuntimeError(f"Failed to run the task {self.name} with error: {resource.message}")
 
-        # Read the literals from a remote file if the connector doesn't return the output literals.
-        if task_template.interface.outputs and resource.outputs is None:
-            local_outputs_file = ctx.file_access.get_random_local_path()
-            ctx.file_access.get_data(f"{output_prefix}/outputs.pb", local_outputs_file)
-            output_proto = utils.load_proto_from_file(literals_pb2.LiteralMap, local_outputs_file)
-            return LiteralMap.from_flyte_idl(output_proto)
+        # TODO: Support abort
 
-        if resource.outputs and not isinstance(resource.outputs, LiteralMap):
-            return TypeEngine.dict_to_literal_map(ctx, resource.outputs)  # type: ignore
-
-        # TODO: return
         return resource.outputs
 
-    async def _create(
-        self: T, task_template: TaskTemplate, output_prefix: str, inputs: Dict[str, Any] = None
-    ) -> ResourceMeta:
-        ctx = FlyteContext.current_context()
-        if isinstance(self, PythonFunctionTask):
-            es = ctx.new_execution_state().with_params(mode=ExecutionState.Mode.TASK_EXECUTION)
-            cb = ctx.new_builder().with_execution_state(es)
 
-            with FlyteContextManager.with_context(cb) as ctx:
-                # Write the inputs to a remote file, so that the remote task can read the inputs from this file.
-                literal_map = await TypeEngine._dict_to_literal_map(ctx, inputs or {}, self.get_input_types())
-                path = ctx.file_access.get_random_local_path()
-                utils.write_proto_to_file(literal_map.to_flyte_idl(), path)
-                await ctx.file_access.async_put_data(path, f"{output_prefix}/inputs.pb")
-                task_template = render_task_template(task_template, output_prefix)
-        else:
-            literal_map = TypeEngine.dict_to_literal_map(ctx, inputs or {}, self.get_input_types())
+def is_terminal_phase(phase: TaskExecution.Phase) -> bool:
+    """
+    Return true if the phase is terminal.
+    """
+    return phase in [TaskExecution.SUCCEEDED, TaskExecution.ABORTED, TaskExecution.FAILED]
 
-        resource_meta = await mirror_async_methods(
-            self._connector.create,
-            task_template=task_template,
-            inputs=literal_map,
-            output_prefix=output_prefix,
-        )
 
-        FlyteContextManager.add_signal_handler(partial(self.connector_signal_handler, resource_meta))
-        self.resource_meta = resource_meta
-        return resource_meta
+async def get_resource_proto(resource: Resource) -> agent_pb2.Resource:
+    outputs = await TypeEngine.dict_to_literal_map(resource.outputs)
 
-    async def _get(self: T, resource_meta: ResourceMeta) -> Resource:
-        phase = TaskExecution.RUNNING
+    return Resource(
+        phase=resource.phase,
+        message=resource.message,
+        log_links=resource.log_links,
+        outputs=outputs,
+        custom_info=(json_format.Parse(json.dumps(resource.custom_info), Struct()) if resource.custom_info else None),
+    )
 
-        progress = Progress(transient=True)
-        set_flytekit_log_properties(RichHandler(log_time_format="%H:%M:%S.%f"), None, None)
-        task = progress.add_task(f"[cyan]Running Task {self.name}...", total=None)
-        task_phase = progress.add_task("[cyan]Task phase: RUNNING, Phase message: ", total=None, visible=False)
-        task_log_links = progress.add_task("[cyan]Log Links: ", total=None, visible=False)
-        with progress:
-            while not is_terminal_phase(phase):
-                progress.start_task(task)
-                time.sleep(1)
-                resource = await mirror_async_methods(self._connector.get, resource_meta=resource_meta)
-                if self._clean_up_task:
-                    sys.exit(1)
 
-                phase = resource.phase
-                progress.update(
-                    task_phase,
-                    description=f"[cyan]Task phase: {TaskExecution.Phase.Name(phase)}, Phase message: {resource.message}",
-                    visible=True,
-                )
-                if resource.log_links:
-                    log_links = ""
-                    for link in resource.log_links:
-                        log_links += f"{link.name}: {link.uri}\n"
-                    if log_links:
-                        progress.update(task_log_links, description=f"[cyan]{log_links}", visible=True)
-
-        return resource
-
-    def connector_signal_handler(self, resource_meta: ResourceMeta, signum: int, frame: FrameType) -> Any:
-        if inspect.iscoroutinefunction(self._connector.delete):
-            # Use asyncio.run to run the async function in the main thread since the loop manager is killed when the
-            # signal is received.
-            asyncio.run(self._connector.delete(resource_meta=resource_meta))
-        else:
-            self._connector.delete(resource_meta)
-        self._clean_up_task = True
+class FlyteConnectorNotFound(ValueError): ...
