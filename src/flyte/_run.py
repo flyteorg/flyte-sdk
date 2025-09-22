@@ -436,9 +436,11 @@ class _Runner:
         else:
             metadata_path = pathlib.Path(metadata_path) / action.name
         output_path = metadata_path / "a0"
-        raw_data_path = self._raw_data_path
-        if raw_data_path is None:
-            raw_data_path = str(pathlib.Path("/") / "tmp" / "flyte" / "raw_data" / action.name)
+        if self._raw_data_path is None:
+            path = pathlib.Path("/") / "tmp" / "flyte" / "raw_data" / action.name
+            raw_data_path = RawDataPath(path=str(path))
+        else:
+            raw_data_path = RawDataPath(path=self._raw_data_path)
 
         ctx = internal_ctx()
         tctx = TaskContext(
@@ -451,7 +453,7 @@ class _Runner:
             output_path=str(output_path),
             run_base_dir=str(metadata_path),
             version="na",
-            raw_data_path=internal_ctx().raw_data,
+            raw_data_path=raw_data_path,
             compiled_image_cache=None,
             report=Report(name=action.name),
             mode="local",
