@@ -93,7 +93,11 @@ class LocalController:
         sub_action_raw_data_path = tctx.raw_data_path
 
         ignored_inputs = list(_task.cache.ignored_inputs) if isinstance(_task.cache, Cache) else []
-        out = await LocalTaskCache.get(_task.name, inputs_hash, inputs, task_interface, tctx.version, ignored_inputs)
+        cache_key = convert.generate_cache_key_hash(
+            _task.name, inputs_hash, inputs, task_interface, tctx.version, ignored_inputs, inputs.proto_inputs
+        )
+
+        out = await LocalTaskCache.get(cache_key)
 
         if out is None:
             out, err = await direct_dispatch(
@@ -118,9 +122,7 @@ class LocalController:
 
             # store into cache
             if out is not None:
-                await LocalTaskCache.set(
-                    _task.name, inputs_hash, inputs, task_interface, tctx.version, ignored_inputs, out
-                )
+                await LocalTaskCache.set(cache_key, out)
 
         if _task.native_interface.outputs:
             if out is None:

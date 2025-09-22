@@ -37,18 +37,16 @@ async def test_set_and_get_cache():
         )
     )
 
-    cached_output = await LocalTaskCache.get(
-        task_name, inputs_hash, proto_inputs, task_interface, cache_version, ignore_input_vars
+    cache_key = convert.generate_cache_key_hash(
+        task_name, inputs_hash, task_interface, cache_version, ignore_input_vars, proto_inputs.proto_inputs
     )
+
+    cached_output = await LocalTaskCache.get(cache_key)
     assert cached_output is None
 
-    await LocalTaskCache.set(
-        task_name, inputs_hash, proto_inputs, task_interface, cache_version, ignore_input_vars, expected_output
-    )
+    await LocalTaskCache.set(cache_key, expected_output)
 
-    cached_output = await LocalTaskCache.get(
-        task_name, inputs_hash, proto_inputs, task_interface, cache_version, ignore_input_vars
-    )
+    cached_output = await LocalTaskCache.get(cache_key)
     assert cached_output is not None
     assert cached_output == expected_output
 
@@ -92,22 +90,18 @@ async def test_set_overwrites_existing():
         )
     )
 
+    cache_key = convert.generate_cache_key_hash(
+        task_name, inputs_hash, task_interface, cache_version, ignore_input_vars, proto_inputs.proto_inputs
+    )
+
     # Set the cache for the first time
-    await LocalTaskCache.set(
-        task_name, inputs_hash, proto_inputs, task_interface, cache_version, ignore_input_vars, first_output
-    )
-    result = await LocalTaskCache.get(
-        task_name, inputs_hash, proto_inputs, task_interface, cache_version, ignore_input_vars
-    )
+    await LocalTaskCache.set(cache_key, first_output)
+    result = await LocalTaskCache.get(cache_key)
     assert result == first_output
 
     # Set the cache with same key, should overwrite the original value
-    await LocalTaskCache.set(
-        task_name, inputs_hash, proto_inputs, task_interface, cache_version, ignore_input_vars, second_output
-    )
-    result = await LocalTaskCache.get(
-        task_name, inputs_hash, proto_inputs, task_interface, cache_version, ignore_input_vars
-    )
+    await LocalTaskCache.set(cache_key, second_output)
+    result = await LocalTaskCache.get(cache_key)
     assert result == second_output
 
 
@@ -140,19 +134,17 @@ async def test_clear_cache():
         )
     )
 
-    await LocalTaskCache.set(
-        task_name, inputs_hash, proto_inputs, task_interface, cache_version, ignore_input_vars, output
+    cache_key = convert.generate_cache_key_hash(
+        task_name, inputs_hash, task_interface, cache_version, ignore_input_vars, proto_inputs.proto_inputs
     )
 
-    result = await LocalTaskCache.get(
-        task_name, inputs_hash, proto_inputs, task_interface, cache_version, ignore_input_vars
-    )
+    await LocalTaskCache.set(cache_key, output)
+
+    result = await LocalTaskCache.get(cache_key)
     assert result is not None
 
     await LocalTaskCache.clear()
 
     # Ensure the cache is cleared
-    result = await LocalTaskCache.get(
-        task_name, inputs_hash, proto_inputs, task_interface, cache_version, ignore_input_vars
-    )
+    result = await LocalTaskCache.get(cache_key)
     assert result is None
