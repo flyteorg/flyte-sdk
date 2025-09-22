@@ -2,6 +2,7 @@ import asyncio
 import atexit
 import concurrent.futures
 import os
+import pathlib
 import threading
 from typing import Any, Callable, Tuple, TypeVar
 
@@ -87,6 +88,9 @@ class LocalController:
             tctx, _task.name, serialized_inputs, 0
         )
         sub_action_raw_data_path = tctx.raw_data_path
+        # Make sure the output path exists
+        pathlib.Path(sub_action_output_path).mkdir(parents=True, exist_ok=True)
+        pathlib.Path(sub_action_raw_data_path.path).mkdir(parents=True, exist_ok=True)
 
         out, err = await direct_dispatch(
             _task,

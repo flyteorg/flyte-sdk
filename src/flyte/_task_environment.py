@@ -87,6 +87,7 @@ class TaskEnvironment(Environment):
         env_vars: Optional[Dict[str, str]] = None,
         secrets: Optional[SecretRequest] = None,
         depends_on: Optional[List[Environment]] = None,
+        interruptible: Optional[bool] = None,
         **kwargs: Any,
     ) -> TaskEnvironment:
         """
@@ -102,6 +103,8 @@ class TaskEnvironment(Environment):
         :param depends_on: The environment dependencies to hint, so when you deploy the environment,
             the dependencies are also deployed. This is useful when you have a set of environments
             that depend on each other.
+        :param interruptible: Whether the environment is interruptible and can be scheduled on spot/preemptible
+            instances.
         :param kwargs: Additional parameters to override the environment (e.g., cache, reusable, plugin_config).
         """
         cache = kwargs.pop("cache", None)
@@ -131,6 +134,8 @@ class TaskEnvironment(Environment):
             kwargs["secrets"] = secrets
         if depends_on is not None:
             kwargs["depends_on"] = depends_on
+        if interruptible is not None:
+            kwargs["interruptible"] = interruptible
         return replace(self, **kwargs)
 
     def task(
@@ -144,6 +149,7 @@ class TaskEnvironment(Environment):
         docs: Optional[Documentation] = None,
         pod_template: Optional[Union[str, "V1PodTemplate"]] = None,
         report: bool = False,
+        interruptible: bool | None = None,
         max_inline_io_bytes: int = MAX_INLINE_IO_BYTES,
     ) -> Union[AsyncFunctionTaskTemplate, Callable[P, R]]:
         """
@@ -162,6 +168,7 @@ class TaskEnvironment(Environment):
         :param report: Optional Whether to generate the html report for the task, defaults to False.
         :param max_inline_io_bytes: Maximum allowed size (in bytes) for all inputs and outputs passed directly to the
          task (e.g., primitives, strings, dicts). Does not apply to files, directories, or dataframes.
+        :param interruptible: Optional Whether the task is interruptible, defaults to environment setting.
         """
         from ._task import P, R
 
@@ -214,6 +221,7 @@ class TaskEnvironment(Environment):
                 short_name=short,
                 plugin_config=self.plugin_config,
                 max_inline_io_bytes=max_inline_io_bytes,
+                interruptible=interruptible if interruptible is not None else self.interruptible,
             )
             self._tasks[task_name] = tmpl
             return tmpl
