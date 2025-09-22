@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Iterable
 
-from flyte._protos.workflow import run_definition_pb2
+from flyte._protos.workflow import trigger_definition_pb2, trigger_service_pb2
 from flyte.syncify import syncify
 from flyte.trigger import Trigger as TriggerDef
 
@@ -12,8 +12,31 @@ from ._common import ToJSONMixin
 
 
 @dataclass
+class TriggerDetails(ToJSONMixin):
+    pb2: trigger_definition_pb2.TriggerDetails
+
+    @syncify
+    @classmethod
+    async def get(cls, *, name: str) -> TriggerDetails:
+        """
+        Retrieve detailed information about a specific trigger by its name.
+        """
+        ensure_client()
+        cfg = get_common_config()
+        resp = await get_client().triggers_service.GetTriggerDetails(  # type: ignore
+            request=trigger_service_pb2.GetTriggerDetailsRequest(
+                name=name,
+                project=cfg.project,
+                domain=cfg.domain,
+                organization=cfg.org,
+            )
+        )
+        return cls(pb2=resp.trigger)
+
+
+@dataclass
 class Trigger(ToJSONMixin):
-    pb2: run_definition_pb2.Trigger
+    pb2: trigger_definition_pb2.Trigger
 
     @syncify
     @classmethod
@@ -35,9 +58,9 @@ class Trigger(ToJSONMixin):
         triggers = []
         for t in trigger:
             triggers.append(
-                run_definition_pb2.TriggerSpec(
+                trigger_definition_pb2.TriggerSpec(
                     name=trigger.name,
-                    automation=run_definition_pb2.CronAutomation(  # this should be a oneof the automation types
+                    automation=trigger_definition_pb2.CronAutomation(  # this should be a oneof the automation types
                         expression=trigger.automation.expression,
                     ),
                     description=trigger.description,
@@ -48,14 +71,14 @@ class Trigger(ToJSONMixin):
                 )
             )
         resp = await get_client().triggers_service.CreateTrigger(  # type: ignore
-            request=run_definition_pb2.CreateTriggerRequest(
+            request=trigger_service_pb2.SaveTriggerRequest(
                 trigger=triggers,  # Note multiple triggers can be created at once
                 task_name=task_name,
                 task_version=task_version,
                 project=cfg.project,
                 domain=cfg.domain,
                 organization=cfg.org,
-                replace_mode=run_definition_pb2.Trigger.ReplaceMode.REPLACE_MODE_All,
+                replace_mode=trigger_definition_pb2.Trigger.ReplaceMode.REPLACE_MODE_All,
                 # replace all existing triggers (this can be future too)
             )
         )
@@ -73,7 +96,7 @@ class Trigger(ToJSONMixin):
         ensure_client()
         cfg = get_common_config()
         resp = await get_client().triggers_service.GetTrigger(  # type: ignore
-            request=run_definition_pb2.GetTriggerRequest(
+            request=trigger_service_pb2.GetTriggerRequest(
                 name=name,
                 task_name=task_name,
                 project=cfg.project,
@@ -94,7 +117,7 @@ class Trigger(ToJSONMixin):
         token = None
         while True:
             resp = await get_client().triggers_service.ListTriggers(  # type: ignore
-                request=run_definition_pb2.ListTriggersRequest(
+                request=trigger_service_pb2.ListTriggersRequest(
                     project=cfg.project,
                     domain=cfg.domain,
                     organization=cfg.org,
@@ -117,8 +140,8 @@ class Trigger(ToJSONMixin):
         """
         ensure_client()
         cfg = get_common_config()
-        await get_client().triggers_service.PauseTrigger(  # type: ignore
-            request=run_definition_pb2.PauseTriggerRequest(
+        await get_client().triggers_service.UpdateTrigger(  # type: ignore
+            request=trigger_service_pb2.UpdateTriggersRequest(
                 name=name,
                 task_name=task_name,
                 project=cfg.project,
@@ -135,8 +158,8 @@ class Trigger(ToJSONMixin):
         """
         ensure_client()
         cfg = get_common_config()
-        await get_client().triggers_service.ResumeTrigger(  # type: ignore
-            request=run_definition_pb2.ResumeTriggerRequest(
+        await get_client().triggers_service.UpdateTrigger(  # type: ignore
+            request=trigger_service_pb2.UpdateTriggersRequest(
                 name=name,
                 task_name=task_name,
                 project=cfg.project,
@@ -147,7 +170,10 @@ class Trigger(ToJSONMixin):
         )
         return
 
-    def _rich_automation(self, automation: run_definition_pb2.CronAutomation):
+    async def details(self) -> TriggerDetails:
+        pass
+
+    def _rich_automation(self, automation: trigger_definition_pb2.CronAutomation):
         yield "cron", automation.expression
 
     def __rich_repr__(self):

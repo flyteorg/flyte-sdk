@@ -3,9 +3,8 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import sys
-import typing
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Callable, Coroutine, Dict, List, Optional, Set, Tuple, Type
 
 import cloudpickle
 import rich.repr
@@ -22,7 +21,7 @@ from ._task import TaskTemplate
 from ._task_environment import TaskEnvironment
 
 if TYPE_CHECKING:
-    from flyte._protos.workflow import task_definition_pb2
+    from flyte._protos.workflow import task_definition_pb2, trigger_definition_pb2
 
     from ._code_bundle import CopyFiles
     from ._internal.imagebuild.image_builder import ImageCache
@@ -40,7 +39,7 @@ class DeploymentPlan:
 class Deployment:
     envs: Dict[str, Environment]
     deployed_tasks: List[task_definition_pb2.TaskSpec] | None = None
-    deployed_triggers: List[task_definition_pb2.Trigger] | None = None
+    deployed_triggers: List[trigger_definition_pb2.TriggerDetails] | None = None
 
     def summary_repr(self) -> str:
         """
@@ -84,7 +83,7 @@ class Deployment:
 
 async def _deploy_task(
     task: TaskTemplate, serialization_context: SerializationContext, dryrun: bool = False
-) -> Tuple[task_definition_pb2.TaskSpec, list[task_definition_pb2.Trigger]]:
+) -> Tuple[task_definition_pb2.TaskSpec, list[trigger_definition_pb2.TriggerDetails]]:
     """
     Deploy the given task.
     """
@@ -124,13 +123,16 @@ async def _deploy_task(
                 logger.info(f"Task {task.name} with image {image_uri} already exists, skipping deployment.")
                 return spec
             raise
+
+        deployed_triggers = []
         for t in task.triggers:
             try:
-                await flyte.remote.Trigger.create(
+                resp = await flyte.remote.Trigger.create(
                     t,
                     task_name=task_id.name,
                     task_version=task_id.version,
                 )
+                deployed_triggers.append(resp)
                 logger.info(f"Deployed {len(task.triggers)} triggers for task {task.name}")
             except grpc.aio.AioRpcError as e:
                 if e.code() == grpc.StatusCode.ALREADY_EXISTS:
@@ -140,7 +142,7 @@ async def _deploy_task(
                     raise flyte.errors.DeploymentError(
                         f"Failed to deploy trigger {t.name} for task {task.name}, Error: {e!s}"
                     ) from e
-        return spec, list(task.triggers)
+        return spec, deployed_triggers
     except Exception as e:
         logger.error(f"Failed to deploy task {task.name} with image {image_uri}: {e}")
         raise flyte.errors.DeploymentError(
@@ -208,7 +210,9 @@ async def _deploy_task_env(
     return Deployment(envs={env.name: env}, deployed_tasks=deployed_tasks, deployed_triggers=deployed_triggers)
 
 
-_ENVTYPE_REGISTRY = {
+_ENVTYPE_REGISTRY: Dict[
+    Type[Environment], Callable[[Environment, SerializationContext, bool], Coroutine[Any, Any, Deployment]]
+] = {
     TaskEnvironment: _deploy_task_env,
 }
 
@@ -249,15 +253,17 @@ async def apply(deployment_plan: DeploymentPlan, copy_style: CopyFiles, dryrun: 
         logger.info(f"Deploying environment {env_name}")
         # TODO Make this pluggable based on the environment type
         deployer = _ENVTYPE_REGISTRY.get(type(env), _deploy_task_env)
-        deployment_coros.append(deployer(env, serialization_context=sc, dryrun=dryrun))
+        deployment_coros.append(deployer(env, sc, dryrun))
     deployments = await asyncio.gather(*deployment_coros)
-    final_deployment = Deployment({}, [], [])
+    envs = {}
+    deployed_tasks = []
+    deployed_triggers = []
     for d in deployments:
-        final_deployment.envs.update(d.envs)
-        final_deployment.deployed_tasks.extend(d.deployed_tasks or [])
-        final_deployment.deployed_triggers.extend(d.deployed_triggers or [])
+        envs.update(d.envs)
+        deployed_tasks.extend(d.deployed_tasks or [])
+        deployed_triggers.extend(d.deployed_triggers or [])
 
-    return final_deployment
+    return Deployment(envs, deployed_tasks, deployed_triggers)
 
 
 def _recursive_discover(planned_envs: Dict[str, Environment], env: Environment) -> Dict[str, Environment]:
@@ -280,7 +286,7 @@ def plan_deploy(*envs: Environment, version: Optional[str] = None) -> List[Deplo
     if envs is None:
         return [DeploymentPlan({})]
     deployment_plans = []
-    visited_envs: typing.Set[str] = set()
+    visited_envs: Set[str] = set()
     for env in envs:
         if env.name in visited_envs:
             continue
