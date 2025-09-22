@@ -6,7 +6,7 @@ import threading
 from typing import Any, Callable, Tuple, TypeVar
 
 import flyte.errors
-from flyte._cache.cache import Cache
+from flyte._cache.cache import cache_from_request
 from flyte._cache.local_cache import LocalTaskCache
 from flyte._context import internal_ctx
 from flyte._internal.controllers import TraceInfo
@@ -92,12 +92,20 @@ class LocalController:
         )
         sub_action_raw_data_path = tctx.raw_data_path
 
-        ignored_inputs = list(_task.cache.ignored_inputs) if isinstance(_task.cache, Cache) else []
+        task_cache = cache_from_request(_task.cache)
+        cache_enabled = task_cache.is_enabled()
         cache_key = convert.generate_cache_key_hash(
-            _task.name, inputs_hash, inputs, task_interface, tctx.version, ignored_inputs, inputs.proto_inputs
+            _task.name,
+            inputs_hash,
+            task_interface,
+            task_cache.get_version(),
+            list(task_cache.get_ignored_inputs()),
+            inputs.proto_inputs,
         )
 
-        out = await LocalTaskCache.get(cache_key)
+        out = None
+        if cache_enabled:
+            out = await LocalTaskCache.get(cache_key)
 
         if out is None:
             out, err = await direct_dispatch(
@@ -106,7 +114,7 @@ class LocalController:
                 action=sub_action_id,
                 raw_data_path=sub_action_raw_data_path,
                 inputs=inputs,
-                version=tctx.version,
+                version=task_cache.get_version(),
                 checkpoints=tctx.checkpoints,
                 code_bundle=tctx.code_bundle,
                 output_path=sub_action_output_path,
@@ -121,7 +129,7 @@ class LocalController:
                     raise flyte.errors.RuntimeSystemError("BadError", "Unknown error")
 
             # store into cache
-            if out is not None:
+            if cache_enabled and out is not None:
                 await LocalTaskCache.set(cache_key, out)
 
         if _task.native_interface.outputs:

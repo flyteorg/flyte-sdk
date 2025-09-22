@@ -7,7 +7,6 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Tuple, Union, cast
 
 import flyte.errors
-from flyte._code_bundle import build_pkl_bundle
 from flyte._context import contextual_run, internal_ctx
 from flyte._environment import Environment
 from flyte._initialize import (
@@ -430,15 +429,6 @@ class _Runner:
         else:
             action = ActionID(name=self._name)
 
-        # Generate the version
-        code_bundle = await build_pkl_bundle(
-            obj,
-            upload_to_controlplane=False,
-        )
-        version = self._version or (
-            code_bundle.computed_version if code_bundle and code_bundle.computed_version else None
-        )
-
         ctx = internal_ctx()
         tctx = TaskContext(
             action=action,
@@ -449,7 +439,7 @@ class _Runner:
             code_bundle=None,
             output_path=self._metadata_path,
             run_base_dir=self._metadata_path,
-            version=version if version else "na",
+            version="na",
             raw_data_path=internal_ctx().raw_data,
             compiled_image_cache=None,
             report=Report(name=action.name),
