@@ -12,8 +12,8 @@ class LocalTaskCache(object):
     This class implements a persistent store able to cache the result of local task executions.
     """
 
-    _conn: sqlite3.Connection = None
-    _cursor: sqlite3.Cursor = None
+    _conn: sqlite3.Connection | None = None
+    _cursor: sqlite3.Cursor | None = None
     _initialized: bool = False
     _db_path: str | None = None
 
@@ -52,6 +52,8 @@ class LocalTaskCache(object):
         """Clear all cache entries."""
         if not LocalTaskCache._initialized:
             await LocalTaskCache.initialize()
+        if LocalTaskCache._cursor is None or LocalTaskCache._conn is None:
+            raise RuntimeError("Cache not properly initialized")
         LocalTaskCache._cursor.execute("DELETE FROM task_cache")
         LocalTaskCache._conn.commit()
 
@@ -59,6 +61,8 @@ class LocalTaskCache(object):
     async def get(cache_key: str) -> convert.Outputs | None:
         if not LocalTaskCache._initialized:
             await LocalTaskCache.initialize()
+        if LocalTaskCache._cursor is None or LocalTaskCache._conn is None:
+            raise RuntimeError("Cache not properly initialized")
 
         LocalTaskCache._cursor.execute("SELECT value FROM task_cache WHERE key = ?", (cache_key,))
         row = LocalTaskCache._cursor.fetchone()
@@ -78,6 +82,8 @@ class LocalTaskCache(object):
     ) -> None:
         if not LocalTaskCache._initialized:
             await LocalTaskCache.initialize()
+        if LocalTaskCache._cursor is None or LocalTaskCache._conn is None:
+            raise RuntimeError("Cache not properly initialized")
 
         # Check if cache entry already exists
         existing = await LocalTaskCache.get(cache_key)
