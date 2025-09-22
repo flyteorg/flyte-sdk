@@ -111,8 +111,8 @@ class _Runner:
         self._copy_bundle_to = copy_bundle_to
         self._interactive_mode = interactive_mode if interactive_mode else ipython_check()
         self._raw_data_path = raw_data_path
-        self._metadata_path = metadata_path or "/tmp"
-        self._run_base_dir = run_base_dir or "/tmp/base"
+        self._metadata_path = metadata_path
+        self._run_base_dir = run_base_dir
         self._overwrite_cache = overwrite_cache
         self._project = project
         self._domain = domain
@@ -388,6 +388,7 @@ class _Runner:
                 " flyte.with_runcontext(run_base_dir='s3://bucket/metadata/outputs')",
             )
         output_path = self._run_base_dir
+        run_base_dir = self._run_base_dir
         raw_data_path = f"{output_path}/rd/{random_id}"
         raw_data_path_obj = RawDataPath(path=raw_data_path)
         checkpoint_path = f"{raw_data_path}/checkpoint"
@@ -404,7 +405,7 @@ class _Runner:
                 version=version if version else "na",
                 raw_data_path=raw_data_path_obj,
                 compiled_image_cache=image_cache,
-                run_base_dir=self._run_base_dir,
+                run_base_dir=run_base_dir,
                 report=flyte.report.Report(name=action.name),
             )
             async with ctx.replace_task_context(tctx):
@@ -429,6 +430,18 @@ class _Runner:
         else:
             action = ActionID(name=self._name)
 
+        metadata_path = self._metadata_path
+        if metadata_path is None:
+            metadata_path = pathlib.Path("/") / "tmp" / "flyte" / "metadata" / action.name
+        else:
+            metadata_path = pathlib.Path(metadata_path) / action.name
+        output_path = metadata_path / "a0"
+        if self._raw_data_path is None:
+            path = pathlib.Path("/") / "tmp" / "flyte" / "raw_data" / action.name
+            raw_data_path = RawDataPath(path=str(path))
+        else:
+            raw_data_path = RawDataPath(path=self._raw_data_path)
+
         ctx = internal_ctx()
         tctx = TaskContext(
             action=action,
@@ -437,10 +450,10 @@ class _Runner:
                 checkpoint_path=internal_ctx().raw_data.path,
             ),
             code_bundle=None,
-            output_path=self._metadata_path,
-            run_base_dir=self._metadata_path,
+            output_path=str(output_path),
+            run_base_dir=str(metadata_path),
             version="na",
-            raw_data_path=internal_ctx().raw_data,
+            raw_data_path=raw_data_path,
             compiled_image_cache=None,
             report=Report(name=action.name),
             mode="local",
@@ -472,7 +485,7 @@ class _Runner:
 
             @property
             def url(self) -> str:
-                return "local-run"
+                return str(metadata_path)
 
             def wait(
                 self,
