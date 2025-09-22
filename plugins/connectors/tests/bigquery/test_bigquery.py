@@ -1,5 +1,4 @@
 import pathlib
-from unittest.mock import Mock
 
 import pytest
 from flyte.io import DataFrame
@@ -39,11 +38,7 @@ class TestBigQueryConfig:
 
     def test_bigquery_config_creation_with_job_config(self):
         job_config = bigquery.QueryJobConfig(use_query_cache=False)
-        config = BigQueryConfig(
-            ProjectID="test-project",
-            Location="EU",
-            QueryJobConfig=job_config
-        )
+        config = BigQueryConfig(ProjectID="test-project", Location="EU", QueryJobConfig=job_config)
         assert config.ProjectID == "test-project"
         assert config.Location == "EU"
         assert config.QueryJobConfig == job_config
@@ -52,11 +47,7 @@ class TestBigQueryConfig:
 class TestBigQueryTask:
     def test_bigquery_task_creation_minimal(self):
         config = BigQueryConfig(ProjectID="test-project")
-        task = BigQueryTask(
-            name="test_task",
-            query_template="SELECT * FROM table",
-            plugin_config=config
-        )
+        task = BigQueryTask(name="test_task", query_template="SELECT * FROM table", plugin_config=config)
 
         assert task.name == "test_task"
         assert task.query_template == "SELECT * FROM table"
@@ -72,7 +63,7 @@ class TestBigQueryTask:
             name="test_task",
             query_template="SELECT * FROM table WHERE user_id = {{ .user_id }}",
             plugin_config=config,
-            inputs=inputs
+            inputs=inputs,
         )
 
         assert task.name == "test_task"
@@ -87,7 +78,7 @@ class TestBigQueryTask:
             name="test_task",
             query_template="SELECT * FROM table",
             plugin_config=config,
-            output_dataframe_type=DataFrame
+            output_dataframe_type=DataFrame,
         )
 
         assert task.output_dataframe_type == DataFrame
@@ -100,17 +91,12 @@ class TestBigQueryTask:
         # Test query with multiple spaces, tabs, and newlines
         query_with_whitespace = """
         SELECT
-            col1,    col2,
-        	col3
-        FROM   table
-        WHERE  condition = 1
+            col1, col2, col3
+        FROM table
+        WHERE condition = 1
         """
 
-        task = BigQueryTask(
-            name="test_task",
-            query_template=query_with_whitespace,
-            plugin_config=config
-        )
+        task = BigQueryTask(name="test_task", query_template=query_with_whitespace, plugin_config=config)
 
         # Should normalize whitespace to single spaces
         expected = "SELECT col1, col2, col3 FROM table WHERE condition = 1"
@@ -118,54 +104,26 @@ class TestBigQueryTask:
 
     def test_bigquery_task_custom_config_minimal(self, serialization_context):
         config = BigQueryConfig(ProjectID="test-project")
-        task = BigQueryTask(
-            name="test_task",
-            query_template="SELECT * FROM table",
-            plugin_config=config
-        )
+        task = BigQueryTask(name="test_task", query_template="SELECT * FROM table", plugin_config=config)
 
         custom_config = task.custom_config(serialization_context)
 
-        expected = {
-            "Location": None,
-            "ProjectID": "test-project",
-            "Domain": "test-domain"
-        }
+        expected = {"Location": None, "ProjectID": "test-project", "Domain": "test-domain"}
         assert custom_config == expected
 
     def test_bigquery_task_custom_config_with_location(self, serialization_context):
         config = BigQueryConfig(ProjectID="test-project", Location="US")
-        task = BigQueryTask(
-            name="test_task",
-            query_template="SELECT * FROM table",
-            plugin_config=config
-        )
+        task = BigQueryTask(name="test_task", query_template="SELECT * FROM table", plugin_config=config)
 
         custom_config = task.custom_config(serialization_context)
 
-        expected = {
-            "Location": "US",
-            "ProjectID": "test-project",
-            "Domain": "test-domain"
-        }
+        expected = {"Location": "US", "ProjectID": "test-project", "Domain": "test-domain"}
         assert custom_config == expected
 
     def test_bigquery_task_custom_config_with_job_config(self, serialization_context):
-        job_config = bigquery.QueryJobConfig(
-            use_query_cache=False,
-            use_legacy_sql=True,
-            maximum_bytes_billed=1000000
-        )
-        config = BigQueryConfig(
-            ProjectID="test-project",
-            Location="EU",
-            QueryJobConfig=job_config
-        )
-        task = BigQueryTask(
-            name="test_task",
-            query_template="SELECT * FROM table",
-            plugin_config=config
-        )
+        job_config = bigquery.QueryJobConfig(use_query_cache=False, use_legacy_sql=True, maximum_bytes_billed=1000000)
+        config = BigQueryConfig(ProjectID="test-project", Location="EU", QueryJobConfig=job_config)
+        task = BigQueryTask(name="test_task", query_template="SELECT * FROM table", plugin_config=config)
 
         custom_config = task.custom_config(serialization_context)
 
@@ -181,11 +139,7 @@ class TestBigQueryTask:
         config = BigQueryConfig(ProjectID="test-project")
         query = "SELECT * FROM dataset.table WHERE id = {{ .user_id }}"
 
-        task = BigQueryTask(
-            name="test_task",
-            query_template=query,
-            plugin_config=config
-        )
+        task = BigQueryTask(name="test_task", query_template=query, plugin_config=config)
 
         sql_proto = task.sql(serialization_context)
 
@@ -195,12 +149,7 @@ class TestBigQueryTask:
 
     def test_bigquery_task_with_complex_inputs_and_outputs(self):
         config = BigQueryConfig(ProjectID="test-project", Location="US")
-        inputs = {
-            "user_id": int,
-            "start_date": str,
-            "end_date": str,
-            "limit": int
-        }
+        inputs = {"user_id": int, "start_date": str, "end_date": str, "limit": int}
 
         task = BigQueryTask(
             name="analytics_task",
@@ -215,7 +164,7 @@ class TestBigQueryTask:
             """,
             plugin_config=config,
             inputs=inputs,
-            output_dataframe_type=DataFrame
+            output_dataframe_type=DataFrame,
         )
 
         assert task.name == "analytics_task"
@@ -229,11 +178,7 @@ class TestBigQueryTask:
 
     def test_bigquery_task_type_constant(self):
         config = BigQueryConfig(ProjectID="test-project")
-        task = BigQueryTask(
-            name="test_task",
-            query_template="SELECT 1",
-            plugin_config=config
-        )
+        task = BigQueryTask(name="test_task", query_template="SELECT 1", plugin_config=config)
 
         assert task._TASK_TYPE == "bigquery_query_job_task"
         assert task.task_type == "bigquery_query_job_task"
@@ -241,21 +186,13 @@ class TestBigQueryTask:
     def test_bigquery_task_empty_query_template(self):
         config = BigQueryConfig(ProjectID="test-project")
 
-        task = BigQueryTask(
-            name="test_task",
-            query_template="",
-            plugin_config=config
-        )
+        task = BigQueryTask(name="test_task", query_template="", plugin_config=config)
 
         assert task.query_template == ""
 
     def test_bigquery_task_query_template_with_only_whitespace(self):
         config = BigQueryConfig(ProjectID="test-project")
 
-        task = BigQueryTask(
-            name="test_task",
-            query_template="   \n\t   ",
-            plugin_config=config
-        )
+        task = BigQueryTask(name="test_task", query_template="   \n\t   ", plugin_config=config)
 
         assert task.query_template == ""
