@@ -1,5 +1,6 @@
 import tempfile
 from pathlib import Path
+from unittest import mock
 from unittest.mock import patch
 
 import pytest
@@ -80,6 +81,22 @@ async def test_image_with_secrets_fails_if_secret_missing(secret_mounts):
         layered = func(base)
         with pytest.raises(FileNotFoundError, match="Secret not found"):
             await builder.build_image(layered)
+
+@pytest.mark.asyncio
+@pytest.mark.integration
+async def test_local_build_ctx_manager():
+    dummy_ctx_manager = mock.MagicMock()
+    try:
+        DockerImageBuilder.build_ctx_manager = dummy_ctx_manager
+        img = Image.from_debian_base(registry="localhost:30000", name="test_image")
+        builder = DockerImageBuilder()
+        await builder.build_image(img, dry_run=True)
+        assert dummy_ctx_manager.__enter__.call_count == 1
+        assert dummy_ctx_manager.__exit__.call_count == 1
+    finally:
+        # Just reset the context manager to None to avoid affecting other tests
+        DockerImageBuilder.build_ctx_manager = None
+
 
 
 @pytest.mark.asyncio
@@ -293,7 +310,6 @@ async def test_copy_config_handler_with_dockerignore_layer():
                 assert not (expected_dst_path / "memo.txt").exists(), "memo.txt should be excluded"
                 assert not (expected_dst_path / ".cache").exists(), ".cache directory should be excluded"
 
-
 def test_list_dockerignore_layer_priority():
     """Test list_dockerignore method prioritizes DockerIgnore layer over local .dockerignore"""
     with tempfile.TemporaryDirectory() as tmp_context:
@@ -342,3 +358,4 @@ def test_list_dockerignore_not_found():
 
         # Should return empty list when .dockerignore doesn't exist
         assert patterns == []
+
