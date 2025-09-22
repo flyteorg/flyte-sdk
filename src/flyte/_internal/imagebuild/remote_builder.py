@@ -10,7 +10,6 @@ from typing import TYPE_CHECKING, Optional, Tuple, cast
 from uuid import uuid4
 
 import aiofiles
-import click
 
 import flyte
 import flyte.errors
@@ -42,7 +41,6 @@ if TYPE_CHECKING:
     from flyte._protos.imagebuilder import definition_pb2 as image_definition_pb2
 
 IMAGE_TASK_NAME = "build-image"
-OPTIMIZE_TASK_NAME = "optimize-task"
 IMAGE_TASK_PROJECT = "system"
 IMAGE_TASK_DOMAIN = "production"
 
@@ -85,10 +83,10 @@ class RemoteImageChecker(ImageChecker):
                     raise ValueError("remote client should not be None")
                 cls._images_client = image_service_pb2_grpc.ImageServiceStub(cfg.client._channel)
             resp = await cls._images_client.GetImage(req)
-            logger.warning(click.style(f"Image {resp.image.fqin} found. Skip building.", fg="blue"))
+            logger.warning(f"[blue]Image {resp.image.fqin} found. Skip building.[/blue]")
             return resp.image.fqin
         except Exception:
-            logger.warning(click.style(f"Image {image_name} was not found or has expired.", fg="blue"))
+            logger.warning(f"[blue]Image {image_name} was not found or has expired.[/blue]", extra={"highlight": False})
             return None
 
 
@@ -110,37 +108,25 @@ class RemoteImageBuilder(ImageBuilder):
             domain=IMAGE_TASK_DOMAIN,
             auto_version="latest",
         ).override.aio(secrets=_get_build_secrets_from_image(image))
+
+        logger.warning("[bold blue]🐳 Submitting a new build...[/bold blue]")
         run = cast(
             Run,
             await flyte.with_runcontext(project=IMAGE_TASK_PROJECT, domain=IMAGE_TASK_DOMAIN).run.aio(
                 entity, spec=spec, context=context, target_image=image_name
             ),
         )
-        logger.warning(click.style("🐳 Submitting a new build...", fg="blue", bold=True))
+        logger.warning(f"⏳ Waiting for build to finish at: [bold cyan link={run.url}]{run.url}[/bold cyan link]")
 
-        logger.warning(click.style("⏳ Waiting for build to finish at: " + click.style(run.url, fg="cyan"), bold=True))
         await run.wait.aio(quiet=True)
         run_details = await run.details.aio()
 
         elapsed = str(datetime.now(timezone.utc) - start).split(".")[0]
 
         if run_details.action_details.raw_phase == run_definition_pb2.PHASE_SUCCEEDED:
-            logger.warning(click.style(f"✅ Build completed in {elapsed}!", bold=True, fg="green"))
-            try:
-                entity = remote.Task.get(
-                    name=OPTIMIZE_TASK_NAME,
-                    project=IMAGE_TASK_PROJECT,
-                    domain=IMAGE_TASK_DOMAIN,
-                    auto_version="latest",
-                )
-                await flyte.with_runcontext(project=IMAGE_TASK_PROJECT, domain=IMAGE_TASK_DOMAIN).run.aio(
-                    entity, target_image=image_name
-                )
-            except Exception as e:
-                # Ignore the error if optimize is not enabled in the backend.
-                logger.warning(f"Failed to run optimize task with error: {e}")
+            logger.warning(f"[bold green]✅ Build completed in {elapsed}![/bold green]")
         else:
-            raise flyte.errors.ImageBuildError(f"❌ Build failed in {elapsed} at {click.style(run.url, fg='cyan')}")
+            raise flyte.errors.ImageBuildError(f"❌ Build failed in {elapsed} at [cyan]{run.url}[/cyan]")
 
         outputs = await run_details.outputs()
         return _get_fully_qualified_image_name(outputs)
@@ -183,11 +169,8 @@ async def _validate_configuration(image: Image) -> Tuple[str, Optional[str]]:
         context_size = tar_path.stat().st_size
         if context_size > 5 * 1024 * 1024:
             logger.warning(
-                click.style(
-                    f"Context size is {context_size / (1024 * 1024):.2f} MB, which is larger than 5 MB. "
-                    "Upload and build speed will be impacted.",
-                    fg="yellow",
-                )
+                f"[yellow]Context size is {context_size / (1024 * 1024):.2f} MB, which is larger than 5 MB. "
+                "Upload and build speed will be impacted.[/yellow]",
             )
         _, context_url = await remote.upload_file.aio(context_dst)
     else:

@@ -1,7 +1,13 @@
 from __future__ import annotations
 
 import inspect
-from typing import Dict, Generator, Tuple, Type, TypeVar, Union, cast, get_args, get_type_hints
+import typing
+from enum import Enum
+from typing import Dict, Generator, Literal, Tuple, Type, TypeVar, Union, cast, get_args, get_origin, get_type_hints
+
+from flyte._logging import logger
+
+LITERAL_ENUM = "LiteralEnum"
 
 
 def default_output_name(index: int = 0) -> str:
@@ -69,7 +75,15 @@ def extract_return_annotation(return_annotation: Union[Type, Tuple, None]) -> Di
         if len(return_annotation.__args__) == 1:  # type: ignore
             raise TypeError("Tuples should be used to indicate multiple return values, found only one return variable.")
         ra = get_args(return_annotation)
-        return dict(zip(list(output_name_generator(len(ra))), ra))
+        annotations = {}
+        for i, r in enumerate(ra):
+            if r is Ellipsis:
+                raise TypeError("Variable length tuples are not supported as return types.")
+            if get_origin(r) is Literal:
+                annotations[default_output_name(i)] = literal_to_enum(cast(Type, r))
+            else:
+                annotations[default_output_name(i)] = r
+        return annotations
 
     elif isinstance(return_annotation, tuple):
         if len(return_annotation) == 1:
@@ -79,4 +93,25 @@ def extract_return_annotation(return_annotation: Union[Type, Tuple, None]) -> Di
     else:
         # Handle all other single return types
         # Task returns unnamed native tuple
+        if get_origin(return_annotation) is Literal:
+            return {default_output_name(): literal_to_enum(cast(Type, return_annotation))}
         return {default_output_name(): cast(Type, return_annotation)}
+
+
+def literal_to_enum(literal_type: Type) -> Type[Enum | typing.Any]:
+    """Convert a Literal[...] into Union[str, Enum]."""
+
+    if get_origin(literal_type) is not Literal:
+        raise TypeError(f"{literal_type} is not a Literal")
+
+    values = get_args(literal_type)
+    if not all(isinstance(v, str) for v in values):
+        logger.warning(f"Literal type {literal_type} contains non-string values, using Any instead of Enum")
+        return typing.Any
+    # Deduplicate & keep order
+    enum_dict = {str(v).upper(): v for v in values}
+
+    # Dynamically create an Enum
+    literal_enum = Enum(LITERAL_ENUM, enum_dict)  # type: ignore
+
+    return literal_enum  # type: ignore

@@ -478,7 +478,7 @@ class TestInitFunction:
         editable_root = Path("/editable/install/root")
         mock_get_editable.return_value = editable_root
 
-        await init.aio(endpoint="test.flyte.example.com")
+        await init.aio(endpoint="test.flyte.example.com", project="test-project", domain="test-domain", org="test-org")
 
         config = _get_init_config()
         assert config is not None
@@ -501,7 +501,7 @@ class TestInitFunction:
         mock_init_client.return_value = mock_client
         mock_get_editable.return_value = None  # No editable install found
 
-        await init.aio(endpoint="test.flyte.example.com")
+        await init.aio(endpoint="test.flyte.example.com", project="test-project", domain="test-domain", org="test-org")
 
         config = _get_init_config()
         assert config is not None
