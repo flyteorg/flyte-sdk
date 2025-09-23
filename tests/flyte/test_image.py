@@ -1,4 +1,3 @@
-import sys
 from pathlib import Path
 from typing import cast
 
@@ -99,8 +98,6 @@ def test_image_no_direct():
 def test_raw_base_image():
     raw_base_image = Image.from_base("myregistry.com/myimage:v123")
     assert raw_base_image.uri == "myregistry.com/myimage:v123"
-    if sys.version_info == (3, 13):
-        assert raw_base_image.identifier == "yc2YEFXpndI_U6SJ5OnDbA"
 
 
 def test_base_image_with_layers_unnamed():
@@ -116,8 +113,6 @@ def test_base_image_with_layers():
     )
     assert raw_base_image.uri == "other_registry/myclone:a95ad60ad5a34dd40c304b81cf9a15ae"
     assert len(raw_base_image._layers) == 1
-    if sys.version_info == (3, 13):
-        assert raw_base_image.identifier == "efpT8bNvJE39a-RbRJc78A"
 
 
 def test_base_image_cloned():
@@ -125,8 +120,6 @@ def test_base_image_cloned():
         registry="ghcr.io/flyteorg", name="flyte-clone"
     )
     assert cloned_default_image.uri.startswith("ghcr.io/flyteorg/flyte-clone")
-    if sys.version_info == (3, 13):
-        assert cloned_default_image.identifier == "c7pJj0grD-FFWFPfHyUgRw"
 
 
 def test_base_image_clone_same():

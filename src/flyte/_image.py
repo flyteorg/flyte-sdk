@@ -4,7 +4,7 @@ import hashlib
 import sys
 import typing
 from abc import abstractmethod
-from dataclasses import asdict, dataclass, field, fields
+from dataclasses import dataclass, field
 from functools import cached_property
 from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar, Dict, List, Literal, Optional, Tuple, TypeVar, Union
@@ -55,34 +55,12 @@ class Layer:
 
         :param hasher: The hash object to update with the layer's data.
         """
-        print("hash hash")
 
     def validate(self):
         """
         Raise any validation errors for the layer
         :return:
         """
-
-    def identifier(self) -> str:
-        """
-        This method computes a unique identifier for the layer based on its properties.
-        It is used to identify the layer in the image cache.
-
-        It is also used to compute a unique identifier for the image itself, which is a combination of all the layers.
-        This identifier is used to look up previously built images in the image cache. So having a consistent
-        identifier is important for the image cache to work correctly.
-
-        :return: A unique identifier for the layer.
-        """
-        ignore_fields: list[str] = []
-        for f in fields(self):
-            if f.metadata.get("identifier", True) is False:
-                ignore_fields.append(f.name)
-        d = asdict(self)
-        for v in ignore_fields:
-            d.pop(v)
-
-        return str(d)
 
 
 @rich.repr.auto
@@ -151,7 +129,7 @@ class PipPackages(PipOption, Layer):
 @rich.repr.auto
 @dataclass(kw_only=True, frozen=True, repr=True)
 class PythonWheels(PipOption, Layer):
-    wheel_dir: Path = field(metadata={"identifier": False})
+    wheel_dir: Path
     wheel_dir_name: str = field(init=False)
     package_name: str
 
@@ -243,7 +221,7 @@ class PoetryProject(Layer):
 @rich.repr.auto
 @dataclass(frozen=True, repr=True)
 class UVScript(PipOption, Layer):
-    script: Path = field(metadata={"identifier": False})
+    script: Path
     script_name: str = field(init=False)
 
     def __post_init__(self):
@@ -319,8 +297,8 @@ class DockerIgnore(Layer):
 @rich.repr.auto
 @dataclass(frozen=True, repr=True)
 class CopyConfig(Layer):
-    path_type: CopyConfigType = field(metadata={"identifier": True})
-    src: Path = field(metadata={"identifier": False})
+    path_type: CopyConfigType
+    src: Path
     dst: str
     src_name: str
 
