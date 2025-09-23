@@ -20,7 +20,10 @@ def secret(cfg: common.CLIConfig, name: str, project: str | None = None, domain:
     from flyte.remote import Secret
 
     cfg.init(project, domain)
-    Secret.delete(name=name)
+    console = common.get_console()
+    with console.status(f"Deleting secret {name}..."):
+        Secret.delete(name=name)
+    console.print(f"Successfully deleted secret {name}.")
 
 
 @delete.command(cls=common.CommandBase)
@@ -34,4 +37,9 @@ def trigger(cfg: common.CLIConfig, name: str, task_name: str, project: str | Non
     from flyte.remote import Trigger
 
     cfg.init(project, domain)
-    Trigger.delete(name=name, task_name=task_name)
+    console = common.get_console()
+
+    with console.status(f"Deleting trigger {name}..."):
+        Trigger.delete(name=name, task_name=task_name)
+
+    console.log(f"[green]Successfully deleted trigger {name}[/green]")

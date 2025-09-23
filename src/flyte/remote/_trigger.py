@@ -128,7 +128,6 @@ class Trigger(ToJSONMixin):
         """
         return await TriggerDetails.get(name=name)
 
-
     @syncify
     @classmethod
     async def listall(cls, task_name: str | None = None, limit: int = 100) -> AsyncIterator[Trigger]:

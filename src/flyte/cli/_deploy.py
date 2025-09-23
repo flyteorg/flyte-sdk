@@ -7,8 +7,8 @@ from typing import Any, Dict, List, cast, get_args
 import rich_click as click
 
 import flyte
+from flyte._code_bundle._utils import CopyFiles
 
-from .._code_bundle._utils import CopyFiles
 from . import _common as common
 from ._common import CLIConfig
 
@@ -104,9 +104,7 @@ class DeployEnvCommand(click.RichCommand):
         super().__init__(*args, **kwargs)
 
     def invoke(self, ctx: click.Context):
-        from rich.console import Console
-
-        console = Console()
+        console = common.get_console()
         console.print(f"Deploying root - environment: {self.env_name}")
         obj: CLIConfig = ctx.obj
         obj.init(self.deploy_args.project, self.deploy_args.domain, root_dir=self.deploy_args.root_dir)
@@ -135,13 +133,11 @@ class DeployEnvRecursiveCommand(click.Command):
         super().__init__(*args, **kwargs)
 
     def invoke(self, ctx: click.Context):
-        from rich.console import Console
-
         from flyte._environment import list_loaded_environments
         from flyte._utils import load_python_modules
 
-        console = Console()
         obj: CLIConfig = ctx.obj
+        console = common.get_console()
 
         # Load all python modules
         loaded_modules, failed_paths = load_python_modules(self.path, self.deploy_args.recursive)
