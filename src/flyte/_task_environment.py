@@ -28,12 +28,11 @@ from ._retry import RetryStrategy
 from ._reusable_environment import ReusePolicy
 from ._secret import SecretRequest
 from ._task import AsyncFunctionTaskTemplate, TaskTemplate
+from ._trigger import Trigger
 from .models import MAX_INLINE_IO_BYTES, NativeInterface
 
 if TYPE_CHECKING:
     from kubernetes.client import V1PodTemplate
-
-    from flyte.trigger import Trigger
 
     from ._task import FunctionTypes, P, R
 

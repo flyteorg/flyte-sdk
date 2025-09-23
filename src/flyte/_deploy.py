@@ -115,8 +115,18 @@ async def _deploy_task(
             name=spec.task_template.id.name,
         )
 
+        deployable_triggers = []
+        for t in task.triggers:
+            deployable_triggers.append()
+
         try:
-            await get_client().task_service.DeployTask(task_service_pb2.DeployTaskRequest(task_id=task_id, spec=spec))
+            await get_client().task_service.DeployTask(
+                task_service_pb2.DeployTaskRequest(
+                    task_id=task_id,
+                    spec=spec,
+                    triggers=deployable_triggers,
+                )
+            )
             logger.info(f"Deployed task {task.name} with version {task_id.version}")
         except grpc.aio.AioRpcError as e:
             if e.code() == grpc.StatusCode.ALREADY_EXISTS:
@@ -124,25 +134,7 @@ async def _deploy_task(
                 return spec
             raise
 
-        deployed_triggers = []
-        for t in task.triggers:
-            try:
-                resp = await flyte.remote.Trigger.create(
-                    t,
-                    task_name=task_id.name,
-                    task_version=task_id.version,
-                )
-                deployed_triggers.append(resp)
-                logger.info(f"Deployed {len(task.triggers)} triggers for task {task.name}")
-            except grpc.aio.AioRpcError as e:
-                if e.code() == grpc.StatusCode.ALREADY_EXISTS:
-                    logger.info(f"Trigger {t.name} for task {task.name} already exists, skipping deployment.")
-                else:
-                    logger.error(f"Failed to deploy trigger {t.name} for task {task.name}: {e}")
-                    raise flyte.errors.DeploymentError(
-                        f"Failed to deploy trigger {t.name} for task {task.name}, Error: {e!s}"
-                    ) from e
-        return spec, deployed_triggers
+        return spec, deployable_triggers
     except Exception as e:
         logger.error(f"Failed to deploy task {task.name} with image {image_uri}: {e}")
         raise flyte.errors.DeploymentError(
