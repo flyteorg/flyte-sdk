@@ -239,12 +239,6 @@ class PoetryProject(Layer):
         filehash_update(self.poetry_lock, hasher)
         filehash_update(self.pyproject, hasher)
 
-    def get_poetry_install_args(self) -> List[str]:
-        poetry_install_args = []
-        if self.extra_args:
-            poetry_install_args.append(self.extra_args)
-        return poetry_install_args
-
 
 @rich.repr.auto
 @dataclass(frozen=True, repr=True)
