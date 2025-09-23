@@ -49,6 +49,4 @@ async def isolate_local_cache(tmp_path):
     with patch.object(LocalTaskCache, "_get_cache_path", return_value=str(tmp_path / "test_cache.db")):
         LocalTaskCache._initialized = False
         yield
-        if LocalTaskCache._conn:
-            LocalTaskCache._conn.close()
-        LocalTaskCache._initialized = False
+        await LocalTaskCache.close()

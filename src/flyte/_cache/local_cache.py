@@ -106,3 +106,11 @@ class LocalTaskCache(object):
             )
 
         await LocalTaskCache._conn.commit()
+
+    @staticmethod
+    async def close():
+        """Close the database connection."""
+        if LocalTaskCache._conn:
+            await LocalTaskCache._conn.close()
+            LocalTaskCache._conn = None
+        LocalTaskCache._initialized = False

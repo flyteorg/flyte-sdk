@@ -164,7 +164,7 @@ class LocalController:
         pass
 
     async def stop(self):
-        pass
+        await LocalTaskCache.close()
 
     async def watch_for_errors(self):
         pass
