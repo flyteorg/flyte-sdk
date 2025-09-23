@@ -95,7 +95,7 @@ def train_loop(epochs: int = 3) -> float:
 
 
 @torch_env.task
-def hello_torch_nested(epochs: int) -> typing.Optional[float]:
+def torch_distributed_train(epochs: int) -> typing.Optional[float]:
     """
     A nested task that sets up a simple distributed training job using PyTorch's
     """
