@@ -3,11 +3,6 @@ from flyteplugins.connectors.bigquery.task import BigQueryConfig, BigQueryTask
 import flyte
 from flyte.io import DataFrame
 
-bigquery_env = flyte.TaskEnvironment(
-    name="bigquery_env",
-)
-
-
 bigquery_task = BigQueryTask(
     name="bigquery",
     inputs={"version": int},
@@ -16,7 +11,7 @@ bigquery_task = BigQueryTask(
     query_template="SELECT * from dataset.flyte_table3;",
 )
 
-bigquery_env.add_task(bigquery_task)
+flyte.TaskEnvironment.from_task("bigquery_env", bigquery_task)
 
 
 if __name__ == "__main__":
