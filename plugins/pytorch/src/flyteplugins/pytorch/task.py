@@ -60,11 +60,11 @@ class Elastic:
     Elastic defines the configuration for running a PyTorch elastic job using torch.distributed.
 
     Args:
+        nnodes (Union[int, str]): Number of nodes to use. Can be a fixed int or a range
+            string (e.g., "2:4" for elastic training). Defaults to 1.
         rdzv_backend (literal): Rendezvous backend to use. Typically "c10d". Defaults to "c10d".
         backend (literal): Communication backend to use. Common values are "gloo" or "nccl".
             Defaults to "gloo".
-        nnodes (Union[int, str]): Number of nodes to use. Can be a fixed int or a range
-            string (e.g., "2:4" for elastic training). Defaults to 1.
         nproc_per_node (int): Number of processes to launch per node. Defaults to 1.
         run_policy (RunPolicy, optional): Run policy applied to the job execution.
             Defaults to None.
@@ -76,9 +76,9 @@ class Elastic:
             Defaults to {"timeout": 900, "join_timeout": 900}.
     """
 
+    nnodes: Union[int, str]
     rdzv_backend: Literal["c10d"] = "c10d"
     backend: Literal["gloo", "nccl", "mpi"] = "gloo"
-    nnodes: Union[int, str] = 1
     nproc_per_node: int = 1
     run_policy: Optional[RunPolicy] = None
     monitor_interval: int = 3
