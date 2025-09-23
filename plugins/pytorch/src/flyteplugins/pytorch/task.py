@@ -1,7 +1,7 @@
 import os
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Dict, Optional, Union
+from typing import Any, Dict, Literal, Optional, Union
 
 import flyte
 from cloudpickle import cloudpickle
@@ -60,8 +60,8 @@ class Elastic:
     Elastic defines the configuration for running a PyTorch elastic job using torch.distributed.
 
     Args:
-        rdzv_backend (str): Rendezvous backend to use. Typically "c10d". Defaults to "c10d".
-        backend (str): Communication backend to use. Common values are "gloo" or "nccl".
+        rdzv_backend (literal): Rendezvous backend to use. Typically "c10d". Defaults to "c10d".
+        backend (literal): Communication backend to use. Common values are "gloo" or "nccl".
             Defaults to "gloo".
         nnodes (Union[int, str]): Number of nodes to use. Can be a fixed int or a range
             string (e.g., "2:4" for elastic training). Defaults to 1.
@@ -76,8 +76,8 @@ class Elastic:
             Defaults to {"timeout": 900, "join_timeout": 900}.
     """
 
-    rdzv_backend: str = "c10d"
-    backend: str = "gloo"
+    rdzv_backend: Literal["c10d", "etcd", "static"] = "c10d"
+    backend: Literal["gloo", "nccl", "mpi"] = "gloo"
     nnodes: Union[int, str] = 1
     nproc_per_node: int = 1
     run_policy: Optional[RunPolicy] = None
