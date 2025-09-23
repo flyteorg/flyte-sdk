@@ -239,6 +239,7 @@ class PoetryProject(Layer):
         filehash_update(self.poetry_lock, hasher)
         filehash_update(self.pyproject, hasher)
 
+
 @rich.repr.auto
 @dataclass(frozen=True, repr=True)
 class UVScript(PipOption, Layer):
