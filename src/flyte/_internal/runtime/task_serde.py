@@ -120,7 +120,7 @@ def get_proto_task(task: TaskTemplate, serialize_context: SerializationContext) 
         version=serialize_context.version,
     )
 
-    # TODO Add support for SQL, extra_config, custom
+    # TODO Add support for extra_config, custom
     extra_config: typing.Dict[str, str] = {}
 
     if task.pod_template and not isinstance(task.pod_template, str):
@@ -133,7 +133,7 @@ def get_proto_task(task: TaskTemplate, serialize_context: SerializationContext) 
 
     custom = task.custom_config(serialize_context)
 
-    sql = None
+    sql = task.sql(serialize_context)
 
     # -------------- CACHE HANDLING ----------------------
     task_cache = cache_from_request(task.cache)
