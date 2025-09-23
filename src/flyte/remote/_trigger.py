@@ -7,11 +7,11 @@ from typing import AsyncIterator
 import flyte
 from flyte._initialize import ensure_client, get_client, get_common_config
 from flyte._internal.runtime import trigger_serde
+from flyte._protos.common import identifier_pb2, list_pb2
 from flyte._protos.workflow import task_definition_pb2, trigger_definition_pb2, trigger_service_pb2
 from flyte.syncify import syncify
 
 from ._common import ToJSONMixin
-from .._protos.common import identifier_pb2
 
 
 @dataclass
@@ -86,10 +86,10 @@ class Trigger(ToJSONMixin):
     @syncify
     @classmethod
     async def create(
-            cls,
-            trigger: flyte.Trigger,
-            task_name: str,
-            task_version: str | None = None,
+        cls,
+        trigger: flyte.Trigger,
+        task_name: str,
+        task_version: str | None = None,
     ) -> Trigger:
         """
         Create a new trigger in the Flyte platform.
@@ -116,9 +116,9 @@ class Trigger(ToJSONMixin):
             )
         )
 
-        return cls(
-            pb2=trigger_definition_pb2.Trigger(automation_spec=resp.trigger.automation_spec), details=resp.trigger
-        )
+        details = TriggerDetails(pb2=resp.trigger)
+
+        return cls(pb2=details.trigger, details=details)
 
     @syncify
     @classmethod
@@ -126,16 +126,9 @@ class Trigger(ToJSONMixin):
         """
         Retrieve a trigger by its name and associated task name.
         """
-        details = TriggerDetails.get.aio(name=name)
+        details = await TriggerDetails.get(name=name)
         return cls(
-            pb2=trigger_definition_pb2.Trigger(
-                id=details.id,
-                task_id=details.task_id,
-                automation_spec=details.details.automation_spec,
-                meta=details.meta,
-                status=details.status,
-                active=details.is_active,
-            ),
+            pb2=details.trigger,
             details=details,
         )
 
@@ -151,11 +144,16 @@ class Trigger(ToJSONMixin):
         while True:
             resp = await get_client().trigger_service.ListTriggers(
                 request=trigger_service_pb2.ListTriggersRequest(
-                    organization=cfg.org,
-                    project=cfg.project,
-                    domain=cfg.domain,
-                    token=token,
-                    limit=limit,
+                    org=cfg.org,
+                    project_id=identifier_pb2.ProjectIdentifier(
+                        organization=cfg.org,
+                        domain=cfg.domain,
+                        name=cfg.project,
+                    ),
+                    request=list_pb2.ListRequest(
+                        limit=limit,
+                        token=token,
+                    ),
                 )
             )
             token = resp.token
@@ -174,11 +172,15 @@ class Trigger(ToJSONMixin):
         cfg = get_common_config()
         await get_client().trigger_service.UpdateTriggers(
             request=trigger_service_pb2.UpdateTriggersRequest(
-                organization=cfg.org,
-                project=cfg.project,
-                domain=cfg.domain,
-                name=name,
-                state=trigger_definition_pb2.TriggerState.TRIGGER_STATE_PAUSED,
+                names=[
+                    identifier_pb2.TriggerName(
+                        org=cfg.org,
+                        project=cfg.project,
+                        domain=cfg.domain,
+                        name=name,
+                    )
+                ],
+                active=False,
             )
         )
 
@@ -192,11 +194,15 @@ class Trigger(ToJSONMixin):
         cfg = get_common_config()
         await get_client().trigger_service.UpdateTriggers(
             request=trigger_service_pb2.UpdateTriggersRequest(
-                organization=cfg.org,
-                project=cfg.project,
-                domain=cfg.domain,
-                name=name,
-                state=trigger_definition_pb2.TriggerState.TRIGGER_STATE_ACTIVE,
+                names=[
+                    identifier_pb2.TriggerName(
+                        org=cfg.org,
+                        project=cfg.project,
+                        domain=cfg.domain,
+                        name=name,
+                    )
+                ],
+                active=True,
             )
         )
 
@@ -210,33 +216,59 @@ class Trigger(ToJSONMixin):
         cfg = get_common_config()
         await get_client().trigger_service.DeleteTriggers(
             request=trigger_service_pb2.DeleteTriggersRequest(
-                organization=cfg.org,
-                project=cfg.project,
-                domain=cfg.domain,
-                name=name,
+                names=[
+                    identifier_pb2.TriggerName(
+                        org=cfg.org,
+                        project=cfg.project,
+                        domain=cfg.domain,
+                        name=name,
+                    )
+                ],
             )
         )
+
+    @property
+    def id(self) -> identifier_pb2.TriggerIdentifier:
+        return self.pb2.id
+
+    @property
+    def name(self) -> str:
+        return self.id.name.name
+
+    @property
+    def automation_spec(self) -> trigger_definition_pb2.TriggerAutomationSpec:
+        return self.pb2.automation_spec
 
     async def get_details(self) -> TriggerDetails:
         """
         Get detailed information about this trigger.
         """
-        return await TriggerDetails.get(name=self.pb2.name)
+        if not self.details:
+            details = await TriggerDetails.get.aio(name=self.pb2.id.name.name)
+            self.details = details
+        return self.details
 
-    def _rich_automation(self, automation: trigger_definition_pb2.CronAutomation):
-        yield "cron", automation.expression
+    @property
+    def is_active(self) -> bool:
+        return self.pb2.active
+
+    def _rich_automation(self, automation: trigger_definition_pb2.TriggerAutomationSpec):
+        if automation.type == trigger_definition_pb2.TriggerAutomationSpec.TYPE_NONE:
+            yield "none", None
+        elif automation.type == trigger_definition_pb2.TriggerAutomationSpec.TYPE_SCHEDULE:
+            if automation.WhichOneof("schedule_type") == "fixed_rate":
+                r = automation.schedule.rate
+                yield (
+                    "fixed_rate",
+                    (
+                        f"Every [{r.value}] {r.unit.name} starting at "
+                        f"{r.start_time.ToDatetime() if automation.HasField('start_time') else 'now'}"
+                    ),
+                )
+        else:
+            yield "cron", automation.schedule.cron_expression
 
     def __rich_repr__(self):
-        yield "name", self.pb2.name
-        yield from self._rich_automation(self.pb2.automation)
-        yield "description", self.pb2.description
-        yield "inputs", self.pb2.inputs
-        yield "env", self.pb2.env
-        yield "interruptable", self.pb2.interruptable
-        yield "auto_activate", self.pb2.auto_activate
-        yield "created_at", self.pb2.created_at.ToDatetime() if self.pb2.HasField("created_at") else None
-        yield "updated_at", self.pb2.updated_at.ToDatetime() if self.pb2.HasField("updated_at") else None
-        yield "revision", self.pb2.revision
-        yield "task_name", self.pb2.task_name
-        yield "task_version", self.pb2.task_version
-        yield "state", self.pb2.state  # paused, active, etc.
+        yield "name", self.name
+        yield from self._rich_automation(self.pb2.automation_spec)
+        yield "auto_activate", self.is_active
