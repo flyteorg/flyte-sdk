@@ -111,17 +111,14 @@ async def setup_dry_run(task, tmp_path, pkl=False):
     assert inputs is not None
 
     files = list(tmp_path.iterdir())
-    # Include code bundle file and SQLite DB file for local cache
-    assert len(files) == 2
+    assert len(files) == 1
 
     if not pkl:
         assert code_bundle.tgz, "Code bundle should be a tgz file"
-        gz_files = [f for f in files if f.suffix == ".gz"]
-        assert str(gz_files[0]) == code_bundle.tgz
+        assert str(files[0]) == code_bundle.tgz
     else:
         assert code_bundle.pkl, "Code bundle should be a pkl file"
-        gz_files = [f for f in files if f.suffix == ".gz"]
-        assert str(gz_files[0]) == code_bundle.pkl
+        assert str(files[0]) == code_bundle.pkl
 
     replaced_args = taskrunner.replace_task_cli(args, inputs, tmp_path, ActionID.create_random())
     assert replaced_args is not None
