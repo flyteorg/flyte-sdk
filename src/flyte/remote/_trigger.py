@@ -3,11 +3,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Iterable
 
-from flyte._protos.workflow import trigger_definition_pb2, trigger_service_pb2
+import flyte
+from flyte._initialize import ensure_client, get_client, get_common_config
+from flyte._internal.runtime import trigger_serde
+from flyte._protos.workflow import task_definition_pb2, trigger_definition_pb2, trigger_service_pb2
 from flyte.syncify import syncify
-from flyte.trigger import Trigger as TriggerDef
 
-from .._initialize import ensure_client, get_client, get_common_config
 from ._common import ToJSONMixin
 
 
@@ -37,55 +38,44 @@ class TriggerDetails(ToJSONMixin):
 @dataclass
 class Trigger(ToJSONMixin):
     pb2: trigger_definition_pb2.Trigger
+    details: trigger_definition_pb2.TriggerDetails | None = None
 
     @syncify
     @classmethod
     async def create(
         cls,
-        *trigger: TriggerDef,
-        task_name: str | None = None,
+        trigger: flyte.Trigger,
+        task_name: str,
         task_version: str | None = None,
-    ):
+    ) -> Trigger:
         """
         Create a new trigger in the Flyte platform.
 
-        :param trigger: The TriggerDef object containing the trigger definition.
+        :param trigger: The flyte.Trigger object containing the trigger definition.
         :param task_name: Optional name of the task to associate with the trigger.
         :param task_version: Optional version of the task to associate with the trigger.
         """
         ensure_client()
         cfg = get_common_config()
-        triggers = []
-        for t in trigger:
-            triggers.append(
-                trigger_definition_pb2.TriggerSpec(
-                    name=trigger.name,
-                    automation=trigger_definition_pb2.CronAutomation(  # this should be a oneof the automation types
-                        expression=trigger.automation.expression,
-                    ),
-                    description=trigger.description,
-                    inputs=trigger.inputs or {},
-                    env=trigger.env or {},
-                    interruptable=trigger.interruptable,
-                    auto_activate=trigger.auto_activate,
-                )
-            )
-        resp = await get_client().triggers_service.CreateTrigger(  # type: ignore
-            request=trigger_service_pb2.SaveTriggerRequest(
-                trigger=triggers,  # Note multiple triggers can be created at once
-                task_name=task_name,
-                task_version=task_version,
+        trigger_details = trigger_serde.to_trigger_details(
+            task_id=task_definition_pb2.TaskIdentifier(
+                name=task_name,
                 project=cfg.project,
                 domain=cfg.domain,
-                organization=cfg.org,
-                replace_mode=trigger_definition_pb2.Trigger.ReplaceMode.REPLACE_MODE_All,
-                # replace all existing triggers (this can be future too)
+                org=cfg.org,
+                version=task_version,
+            ),
+            t=trigger,
+        )
+        resp = await get_client().trigger_service.SaveTrigger(
+            request=trigger_service_pb2.SaveTriggerRequest(
+                trigger=trigger_details,
             )
         )
 
-        return [
-            cls(pb2=t) for t in resp.triggers
-        ]  # Each Trigger should have name, revision and associated task name/version, created at
+        return cls(
+            pb2=trigger_definition_pb2.Trigger(automation_spec=resp.trigger.automation_spec), details=resp.trigger
+        )
 
     @syncify
     @classmethod

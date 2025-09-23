@@ -92,6 +92,7 @@ async def _deploy_task(
 
     from ._internal.runtime.convert import convert_upload_default_inputs
     from ._internal.runtime.task_serde import translate_task_to_wire
+    from ._internal.runtime.trigger_serde import to_trigger_details
     from ._protos.workflow import task_definition_pb2, task_service_pb2
 
     image_uri = task.image.uri if isinstance(task.image, Image) else task.image
@@ -117,7 +118,7 @@ async def _deploy_task(
 
         deployable_triggers = []
         for t in task.triggers:
-            deployable_triggers.append()
+            deployable_triggers.append(to_trigger_details(task_id=task_id, t=t))
 
         try:
             await get_client().task_service.DeployTask(
@@ -131,7 +132,7 @@ async def _deploy_task(
         except grpc.aio.AioRpcError as e:
             if e.code() == grpc.StatusCode.ALREADY_EXISTS:
                 logger.info(f"Task {task.name} with image {image_uri} already exists, skipping deployment.")
-                return spec
+                return spec, deployable_triggers
             raise
 
         return spec, deployable_triggers
@@ -203,7 +204,8 @@ async def _deploy_task_env(
 
 
 _ENVTYPE_REGISTRY: Dict[
-    Type[Environment], Callable[[Environment, SerializationContext, bool], Coroutine[Any, Any, Deployment]]
+    Type[Environment],
+    Callable[[Environment | TaskEnvironment, SerializationContext, bool], Coroutine[Any, Any, Deployment]],
 ] = {
     TaskEnvironment: _deploy_task_env,
 }
@@ -243,7 +245,6 @@ async def apply(deployment_plan: DeploymentPlan, copy_style: CopyFiles, dryrun: 
     deployment_coros = []
     for env_name, env in deployment_plan.envs.items():
         logger.info(f"Deploying environment {env_name}")
-        # TODO Make this pluggable based on the environment type
         deployer = _ENVTYPE_REGISTRY.get(type(env), _deploy_task_env)
         deployment_coros.append(deployer(env, sc, dryrun))
     deployments = await asyncio.gather(*deployment_coros)
