@@ -146,7 +146,6 @@ async def convert_and_run(
     with ctx.replace_task_context(tctx):
         inputs = await load_inputs(input_path) if input_path else inputs
         inputs_kwargs = await convert_inputs_to_native(inputs, task.native_interface)
-        import ipdb; ipdb.set_trace()
         out, err = await run_task(tctx=tctx, controller=controller, task=task, inputs=inputs_kwargs)
         if err is not None:
             return None, convert_from_native_to_error(err)

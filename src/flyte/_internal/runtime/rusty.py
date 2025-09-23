@@ -67,9 +67,7 @@ def load_task_from_code_bundle(resolver: str, resolver_args: List[str]) -> TaskT
     logger.debug(f"[rusty] Loading task from code bundle {resolver} with args: {resolver_args}")
     print(f"[rusty!!] Loading task from code bundle {resolver} with args: {resolver_args}", flush=True)
     # temporary debugging
-    from basics.devbox_one import say_hello_nested
-    return say_hello_nested
-    # return load_task(resolver, *resolver_args)
+    return load_task(resolver, *resolver_args)
 
 
 async def create_controller(
@@ -104,6 +102,15 @@ async def create_controller(
         logger.debug(f"[rusty] Using controller endpoint: {endpoint} with kwargs: {controller_kwargs}")
 
     return _create_controller(ct="remote", **controller_kwargs)
+
+
+def debugger():
+    import asyncio
+    import ipdb; ipdb.set_trace()
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        ipdb.set_trace()
 
 
 async def run_task(
