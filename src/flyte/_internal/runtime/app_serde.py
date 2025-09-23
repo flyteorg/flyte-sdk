@@ -3,19 +3,16 @@ import tarfile
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-import flyte._protos.common.runtime_version_pb2 as runtime_version_pb2
 import flyte._protos.app.app_definition_pb2 as app_definition_pb2
-from flyte.app._app_environment import App, AppSerializationSettings, ScalingMetric
+import flyte._protos.common.runtime_version_pb2 as runtime_version_pb2
 from flyte._image import Image
 from flyte._pod import PodTemplate
-
+from flyte.app._app_environment import App, AppSerializationSettings, ScalingMetric
 
 FILES_TAR_FILE_NAME = "include-files.tar.gz"
 
 
-
 async def upload_include_files(app: App) -> str | None:
-                  
     import flyte.remote
 
     with TemporaryDirectory() as temp_dir:
@@ -29,8 +26,7 @@ async def upload_include_files(app: App) -> str | None:
 
 
 def translate_app_to_wire(app: App, settings: AppSerializationSettings) -> app_definition_pb2.App:
-    from flyteidl.core import tasks_pb2
-    from flyteidl.core import literals_pb2
+    from flyteidl.core import literals_pb2, tasks_pb2
 
     if app.config is not None:
         app.config.before_to_union_idl(app, settings)
@@ -107,7 +103,10 @@ def translate_app_to_wire(app: App, settings: AppSerializationSettings) -> app_d
                 short_description=app.description,
             ),
             links=(
-                [app_definition_pb2.Link(path=link.path, title=link.title, is_relative=link.is_relative) for link in app.links]
+                [
+                    app_definition_pb2.Link(path=link.path, title=link.title, is_relative=link.is_relative)
+                    for link in app.links
+                ]
                 if app.links
                 else None
             ),

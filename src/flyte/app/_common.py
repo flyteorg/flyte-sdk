@@ -4,7 +4,6 @@ import site
 import sys
 from pathlib import Path
 
-
 INTERNAL_APP_ENDPOINT_PATTERN_ENV_VAR = "INTERNAL_APP_ENDPOINT_PATTERN"
 
 

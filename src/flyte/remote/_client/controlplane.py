@@ -17,11 +17,12 @@ if "GRPC_VERBOSITY" not in os.environ:
 import grpc
 from flyteidl.service import admin_pb2_grpc, dataproxy_pb2_grpc, identity_pb2_grpc
 
+from flyte._protos.app import app_service_pb2_grpc
 from flyte._protos.secret import secret_pb2_grpc
 from flyte._protos.workflow import run_logs_service_pb2_grpc, run_service_pb2_grpc, task_service_pb2_grpc
-from flyte._protos.app import app_service_pb2_grpc
 
 from ._protocols import (
+    AppService,
     DataProxyService,
     IdentityService,
     MetadataServiceProtocol,
@@ -30,7 +31,6 @@ from ._protocols import (
     RunService,
     SecretService,
     TaskService,
-    AppService,
 )
 from .auth import create_channel
 
@@ -93,7 +93,7 @@ class ClientSet:
     @property
     def task_service(self) -> TaskService:
         return self._task_service
-    
+
     @property
     def app_service(self) -> AppService:
         return self._app_service

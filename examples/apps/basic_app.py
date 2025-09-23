@@ -9,7 +9,6 @@ flyte -c ../../config.yaml deploy
 import flyte
 import flyte.app
 
-
 image = (
     flyte.Image.from_debian_base(python_version=(3, 12))
     .with_pip_packages("union-runtime>=0.1.11", "streamlit==1.41.1")

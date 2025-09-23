@@ -5,9 +5,9 @@ from flyteidl.service import dataproxy_pb2, identity_pb2
 from grpc.aio import UnaryStreamCall
 from grpc.aio._typing import RequestType
 
+from flyte._protos.app import app_payload_pb2
 from flyte._protos.secret import payload_pb2
 from flyte._protos.workflow import run_logs_service_pb2, run_service_pb2, task_service_pb2
-from flyte._protos.app import app_payload_pb2
 
 
 class MetadataServiceProtocol(Protocol):
@@ -69,7 +69,9 @@ class AppService(Protocol):
 
     async def Update(self, request: app_payload_pb2.UpdateRequest) -> app_payload_pb2.UpdateResponse: ...
 
-    async def UpdateStatus(self, request: app_payload_pb2.UpdateStatusRequest) -> app_payload_pb2.UpdateStatusResponse: ...
+    async def UpdateStatus(
+        self, request: app_payload_pb2.UpdateStatusRequest
+    ) -> app_payload_pb2.UpdateStatusResponse: ...
 
     async def Delete(self, request: app_payload_pb2.DeleteRequest) -> app_payload_pb2.DeleteResponse: ...
 

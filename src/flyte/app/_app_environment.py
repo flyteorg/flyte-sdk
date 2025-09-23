@@ -14,22 +14,17 @@ from types import ModuleType
 from typing import Any, Dict, List, Optional, Protocol, Union, runtime_checkable
 from typing import Literal as L
 
-import rich.repr
-
 import flyteidl.core.tasks_pb2 as tasks_pb2
-from flyte._environment import Environment
-from flyte._image import Image
-from flyte._resources import Resources
-from flyte._context import ctx
-from flyte._pod import PodTemplate
-from flyte._secret import Secret
-from flyte._internal.runtime.resources_serde import get_proto_resources, get_proto_extended_resources
+import rich.repr
 from flyteidl.core.literals_pb2 import KeyValuePair
 from flyteidl.core.tasks_pb2 import Container, ContainerPort, ExtendedResources, K8sObjectMetadata, K8sPod
 from mashumaro.codecs.json import JSONEncoder
 
-from flyte.app._common import _extract_files_loaded_from_cwd
-from flyte.app._frameworks import _is_fastapi_app
+from flyte._context import ctx
+from flyte._environment import Environment
+from flyte._image import Image
+from flyte._internal.runtime.resources_serde import get_proto_extended_resources, get_proto_resources
+from flyte._pod import PodTemplate
 from flyte._protos.app.app_definition_pb2 import App as AppIDL
 from flyte._protos.app.app_definition_pb2 import (
     AutoscalingConfig,
@@ -44,6 +39,10 @@ from flyte._protos.app.app_definition_pb2 import Concurrency as ConcurrencyIDL
 from flyte._protos.app.app_definition_pb2 import Link as LinkIDL
 from flyte._protos.app.app_definition_pb2 import RequestRate as RequestRateIDL
 from flyte._protos.app.app_definition_pb2 import ScalingMetric as ScalingMetricIDL
+from flyte._resources import Resources
+from flyte._secret import Secret
+from flyte.app._common import _extract_files_loaded_from_cwd
+from flyte.app._frameworks import _is_fastapi_app
 
 
 def is_union_image(image: str):
@@ -902,16 +901,3 @@ class App:
         Return endpoint for App.
         """
         raise NotImplementedError
-        pattern = os.getenv(INTERNAL_APP_ENDPOINT_PATTERN_ENV_VAR)
-        if pattern is not None:
-            # If the pattern exist, we are on remote.
-            # NOTE: Should check that the app is in the same namespace as the current app.
-            return pattern.replace("{app_fqdn}", self.name)
-
-        from union.remote import UnionRemote
-
-        remote = UnionRemote()
-        app_remote = remote._app_remote
-        app_idl = app_remote.get(name=self.name)
-        url = app_idl.status.ingress.public_url
-        return url
