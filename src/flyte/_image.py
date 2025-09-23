@@ -209,6 +209,9 @@ class UVProject(PipOption, Layer):
 @rich.repr.auto
 @dataclass(frozen=True, repr=True)
 class PoetryProject(Layer):
+    """
+    Poetry does not use pip options, so the PoetryProject class do not inherits PipOption class
+    """
     pyproject: Path
     poetry_lock: Path
     extra_args: Optional[str] = None
@@ -234,13 +237,7 @@ class PoetryProject(Layer):
                 hash_input += str(secret_mount)
         hasher.update(hash_input.encode("utf-8"))
         filehash_update(self.poetry_lock, hasher)
-
-    def get_poetry_install_args(self) -> List[str]:
-        poetry_install_args = []
-        if self.extra_args:
-            poetry_install_args.append(self.extra_args)
-        return poetry_install_args
-
+        filehash_update(self.pyproject, hasher)
 
 @rich.repr.auto
 @dataclass(frozen=True, repr=True)
@@ -324,12 +321,11 @@ class CopyConfig(Layer):
     path_type: CopyConfigType = field(metadata={"identifier": True})
     src: Path = field(metadata={"identifier": False})
     dst: str
-    src_name: str = field(init=False)
+    src_name: str
 
     def __post_init__(self):
         if self.path_type not in (0, 1):
             raise ValueError(f"Invalid path_type {self.path_type}, must be 0 (file) or 1 (directory)")
-        object.__setattr__(self, "src_name", self.src.name)
 
     def validate(self):
         if not self.src.exists():
@@ -885,16 +881,23 @@ class Image:
         new_image = self.clone(addl_layer=Env.from_dict(env_vars))
         return new_image
 
-    def with_source_folder(self, src: Path, dst: str = ".") -> Image:
+    def with_source_folder(self, src: Path, dst: str = ".", copy_contents_only: bool = False) -> Image:
         """
         Use this method to create a new image with the specified local directory layered on top of the current image.
         If dest is not specified, it will be copied to the working directory of the image
 
         :param src: root folder of the source code from the build context to be copied
         :param dst: destination folder in the image
+        :param copy_contents_only: If True, will copy the contents of the source folder to the destination folder,
+            instead of the folder itself. Default is False.
         :return: Image
         """
-        new_image = self.clone(addl_layer=CopyConfig(path_type=1, src=src, dst=dst))
+        src_name = src.name
+        if copy_contents_only:
+            src_name = "."
+        else:
+            dst = str("./" + src_name)
+        new_image = self.clone(addl_layer=CopyConfig(path_type=1, src=src, dst=dst, src_name=src_name))
         return new_image
 
     def with_source_file(self, src: Path, dst: str = ".") -> Image:
@@ -906,7 +909,7 @@ class Image:
         :param dst: destination folder in the image
         :return: Image
         """
-        new_image = self.clone(addl_layer=CopyConfig(path_type=0, src=src, dst=dst))
+        new_image = self.clone(addl_layer=CopyConfig(path_type=0, src=src, dst=dst, src_name=src.name))
         return new_image
 
     def with_dockerignore(self, path: Path) -> Image:
@@ -967,14 +970,14 @@ class Image:
         secret_mounts: Optional[SecretRequest] = None,
     ):
         """
-        Use this method to create a new image with the specified poetry.lock layered on top of the current image.
+        Use this method to create a new image with the specified pyproject.toml layered on top of the current image.
         Must have a corresponding pyproject.toml file in the same directory.
         Cannot be used in conjunction with conda.
 
         By default, this method copies the entire project into the image,
         including files such as pyproject.toml, poetry.lock, and the src/ directory.
 
-        If you prefer not to install the current project, you can pass the extra argument
+        If you prefer not to install the current project, you can pass through `extra_args`
         `--no-root`. In this case, the image builder will only copy pyproject.toml and poetry.lock
         into the image.
 

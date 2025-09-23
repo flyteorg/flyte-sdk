@@ -178,6 +178,20 @@ def test_poetry_project_validate_missing_pyproject():
         with pytest.raises(FileNotFoundError, match="pyproject.toml file .* does not exist"):
             poetry_project.validate()
 
+def test_poetry_project_validate_missing_pyproject():
+    import tempfile
+
+    from flyte._image import PoetryProject
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        non_existent_pyproject = Path(tmpdir) / "non_existent_pyproject.toml"
+        non_existent_poetry_lock = Path(tmpdir) / "non_existent_poetry.lock"
+        poetry_project = PoetryProject(pyproject=non_existent_pyproject, poetry_lock=non_existent_poetry_lock)
+
+        with pytest.raises(FileNotFoundError, match="pyproject.toml file .* does not exist"):
+            poetry_project.validate()
+
+
 def test_ids_for_different_python_version():
     ex_10 = Image.from_debian_base(python_version=(3, 10), install_flyte=False).with_source_file(Path(__file__))
     ex_11 = Image.from_debian_base(python_version=(3, 11), install_flyte=False).with_source_file(Path(__file__))

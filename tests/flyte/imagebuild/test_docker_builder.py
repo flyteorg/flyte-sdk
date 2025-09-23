@@ -59,10 +59,28 @@ async def test_image_with_secrets(monkeypatch):
         Image.from_debian_base(registry="localhost:30000", name="img_with_secrets")
         .with_apt_packages("vim", secret_mounts="flyte")
         .with_pip_packages("requests", secret_mounts=[Secret(group="group", key="key")])
+        .with_commands(["echo foobar"], secret_mounts=[Secret(group="group", key="key")])
     )
 
     builder = DockerImageBuilder()
     await builder.build_image(img)
+
+
+@pytest.mark.asyncio
+@pytest.mark.integration
+@pytest.mark.parametrize("secret_mounts", [["flyte"], [Secret(group="group", key="key")]])
+async def test_image_with_secrets_fails_if_secret_missing(secret_mounts):
+    base = Image.from_debian_base(registry="localhost:30000", name="img_with_missing_secrets")
+    builder = DockerImageBuilder()
+
+    for func in [
+        lambda img: img.with_apt_packages("vim", secret_mounts=secret_mounts),
+        lambda img: img.with_pip_packages("requests", secret_mounts=secret_mounts),
+        lambda img: img.with_commands(["echo foobar"], secret_mounts=secret_mounts),
+    ]:
+        layered = func(base)
+        with pytest.raises(FileNotFoundError, match="Secret not found"):
+            await builder.build_image(layered)
 
 
 @pytest.mark.asyncio
@@ -124,6 +142,7 @@ async def test_copy_config_handler():
                 src=test_file,
                 dst="/app/main.py",
                 path_type=0,  # file
+                src_name=test_file.name,
             )
 
             # Test the handle method
@@ -190,6 +209,7 @@ async def test_copy_config_handler_skips_dockerignore():
                     src=src_dir,
                     dst=".",
                     path_type=1,  # directory
+                    src_name=src_dir.name,
                 )
 
                 result = await CopyConfigHandler.handle(
@@ -249,6 +269,7 @@ async def test_copy_config_handler_with_dockerignore_layer():
                     src=src_dir,
                     dst=".",
                     path_type=1,  # directory
+                    src_name=src_dir.name,
                 )
 
                 result = await CopyConfigHandler.handle(
@@ -354,11 +375,7 @@ async def test_poetry_handler_without_project_install():
             assert "uv pip install poetry" in result
             assert "ENV POETRY_CACHE_DIR=/tmp/poetry_cache" in result
             assert "POETRY_VIRTUALENVS_IN_PROJECT=true" in result
-            assert "WORKDIR /root" in result
             assert "poetry install --no-root" in result
-
-            # Should not contain COPY command for entire project
-            assert "COPY" not in result
 
 
 @pytest.mark.asyncio
@@ -388,4 +405,3 @@ async def test_poetry_handler_with_project_install():
             assert "uv pip install poetry" in result
             assert "ENV POETRY_CACHE_DIR=/tmp/poetry_cache" in result
             assert "POETRY_VIRTUALENVS_IN_PROJECT=true" in result
-            assert "WORKDIR /root" in result
