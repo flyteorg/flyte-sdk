@@ -1,5 +1,6 @@
-import sqlite3
 from pathlib import Path
+
+import aiosqlite
 
 from flyte._internal.runtime import convert
 from flyte._logging import logger
@@ -15,8 +16,7 @@ class LocalTaskCache(object):
     This class implements a persistent store able to cache the result of local task executions.
     """
 
-    _conn: sqlite3.Connection | None = None
-    _cursor: sqlite3.Cursor | None = None
+    _conn: aiosqlite.Connection | None = None
     _initialized: bool = False
 
     @staticmethod
@@ -39,20 +39,18 @@ class LocalTaskCache(object):
         """Initialize the cache with database connection."""
         if not LocalTaskCache._initialized:
             db_path = LocalTaskCache._get_cache_path()
-            conn = sqlite3.connect(db_path)
-            cursor = conn.cursor()
+            conn = await aiosqlite.connect(db_path)
 
             # Create the task_cache table if it doesn't exist
-            cursor.execute("""
+            await conn.execute("""
                 CREATE TABLE IF NOT EXISTS task_cache (
                     key TEXT PRIMARY KEY,
                     value BLOB
                 )
             """)
-            conn.commit()
+            await conn.commit()
 
             LocalTaskCache._conn = conn
-            LocalTaskCache._cursor = cursor
             LocalTaskCache._initialized = True
 
     @staticmethod
@@ -60,26 +58,25 @@ class LocalTaskCache(object):
         """Clear all cache entries."""
         if not LocalTaskCache._initialized:
             await LocalTaskCache.initialize()
-        if LocalTaskCache._cursor is None or LocalTaskCache._conn is None:
+        if LocalTaskCache._conn is None:
             raise RuntimeError("Cache not properly initialized")
-        LocalTaskCache._cursor.execute("DELETE FROM task_cache")
-        LocalTaskCache._conn.commit()
+        await LocalTaskCache._conn.execute("DELETE FROM task_cache")
+        await LocalTaskCache._conn.commit()
 
     @staticmethod
     async def get(cache_key: str) -> convert.Outputs | None:
         if not LocalTaskCache._initialized:
             await LocalTaskCache.initialize()
-        if LocalTaskCache._cursor is None or LocalTaskCache._conn is None:
+        if LocalTaskCache._conn is None:
             raise RuntimeError("Cache not properly initialized")
 
-        LocalTaskCache._cursor.execute("SELECT value FROM task_cache WHERE key = ?", (cache_key,))
-        row = LocalTaskCache._cursor.fetchone()
-
-        if row:
-            outputs_bytes = row[0]
-            outputs = run_definition_pb2.Outputs()
-            outputs.ParseFromString(outputs_bytes)
-            return convert.Outputs(proto_outputs=outputs)
+        async with LocalTaskCache._conn.execute("SELECT value FROM task_cache WHERE key = ?", (cache_key,)) as cursor:
+            row = await cursor.fetchone()
+            if row:
+                outputs_bytes = row[0]
+                outputs = run_definition_pb2.Outputs()
+                outputs.ParseFromString(outputs_bytes)
+                return convert.Outputs(proto_outputs=outputs)
 
         return None
 
@@ -88,7 +85,9 @@ class LocalTaskCache(object):
         cache_key: str,
         value: convert.Outputs,
     ) -> None:
-        if LocalTaskCache._cursor is None or LocalTaskCache._conn is None:
+        if not LocalTaskCache._initialized:
+            await LocalTaskCache.initialize()
+        if LocalTaskCache._conn is None:
             raise RuntimeError("Cache not properly initialized")
 
         # Check if cache entry already exists
@@ -98,10 +97,12 @@ class LocalTaskCache(object):
 
         # NOTE: We will directly update the value in cache if it already exists
         if existing:
-            LocalTaskCache._cursor.execute("UPDATE task_cache SET value = ? WHERE key = ?", (output_bytes, cache_key))
+            await LocalTaskCache._conn.execute(
+                "UPDATE task_cache SET value = ? WHERE key = ?", (output_bytes, cache_key)
+            )
         else:
-            LocalTaskCache._cursor.execute(
+            await LocalTaskCache._conn.execute(
                 "INSERT INTO task_cache (key, value) VALUES (?, ?)", (cache_key, output_bytes)
             )
 
-        LocalTaskCache._conn.commit()
+        await LocalTaskCache._conn.commit()
