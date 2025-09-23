@@ -164,7 +164,7 @@ async def _build_images(deployment: DeploymentPlan) -> ImageCache:
         env = deployment.envs[env_name]
         if isinstance(env.image, Image):
             py_version = "{}.{}".format(*env.image.python_version)
-            image_identifier_map[env.image.identifier] = {py_version: image_uri}
+            image_identifier_map[env_name] = {py_version: image_uri}
         elif env.image == "auto":
             py_version = "{}.{}".format(sys.version_info.major, sys.version_info.minor)
             image_identifier_map["auto"] = {py_version: image_uri}
