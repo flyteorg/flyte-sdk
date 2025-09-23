@@ -188,6 +188,7 @@ async def download_bundle(bundle: CodeBundle) -> pathlib.Path:
         process = await asyncio.create_subprocess_exec(
             "tar",
             "-xvf",
+            "--overwrite",
             str(downloaded_bundle),
             "-C",
             str(dest),
