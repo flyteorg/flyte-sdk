@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import base64
 import hashlib
 import sys
 import typing
@@ -212,6 +211,7 @@ class PoetryProject(Layer):
     """
     Poetry does not use pip options, so the PoetryProject class do not inherits PipOption class
     """
+
     pyproject: Path
     poetry_lock: Path
     extra_args: Optional[str] = None
@@ -449,34 +449,6 @@ class Image:
         object.__setattr__(obj, "_guard", cls._token)  # set guard to prevent direct construction
         cls.__init__(obj, **kwargs)  # run dataclass generated __init__
         return obj
-
-    @cached_property
-    def identifier(self) -> str:
-        """
-        This identifier is a hash of the layers and properties of the image. It is used to look up previously built
-        images. Why is this useful? For example, if a user has Image.from_uv_base().with_source_file("a/local/file"),
-        it's not necessarily the case that that file exists within the image (further commands may have removed/changed
-        it), and certainly not the case that the path to the file, inside the image (which is used as part of the layer
-        hash computation), is the same. That is, inside the image when a task runs, as we come across the same Image
-        declaration, we need a way of identifying the image and its uri, without hashing all the layers again. This
-        is what this identifier is for. See the ImageCache object for additional information.
-
-        :return: A unique identifier of the Image
-        """
-        if self._identifier_override:
-            return self._identifier_override
-
-        # Only get the non-None values in the Image to ensure the hash is consistent
-        # across different SDK versions.
-        # Layers can specify a _compute_identifier optionally, but the default will just stringify
-        image_dict = asdict(
-            self,
-            dict_factory=lambda x: {k: v for (k, v) in x if v is not None and k not in ("_layers", "python_version")},
-        )
-        layers_str_repr = "".join([layer.identifier() for layer in self._layers])
-        image_dict["layers"] = layers_str_repr
-        spec_bytes = image_dict.__str__().encode("utf-8")
-        return base64.urlsafe_b64encode(hashlib.md5(spec_bytes).digest()).decode("ascii").rstrip("=")
 
     def validate(self):
         for layer in self._layers:

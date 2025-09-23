@@ -12,7 +12,6 @@ def test_base():
     img = Image.from_debian_base(name="test-image", registry="localhost:30000")
     assert img.name == "test-image"
     assert img.platform == ("linux/amd64", "linux/arm64")
-    assert img.identifier
 
 
 @pytest.mark.asyncio
@@ -28,7 +27,6 @@ async def test_with_requirements(tmp_path):
         .with_requirements(file)
         .with_source_folder(Path("."))
     )
-    assert img.identifier
     assert img._layers[-2].file == file
 
 
@@ -76,7 +74,6 @@ def test_with_workdir():
 def test_default_base_image():
     default_image = Image.from_debian_base(flyte_version="2.0.0")
     assert default_image.uri.startswith("ghcr.io/flyteorg/flyte:py3.")
-    assert default_image.identifier == "auto"
     default_image = Image.from_debian_base(python_version="3.12")
     assert not default_image.uri.startswith("ghcr.io/flyteorg/flyte:py3.")
 
@@ -161,9 +158,6 @@ def test_image_uri_consistency_for_uvscript():
         "./agent_simulation_loadtest.py", name="flyte", registry="ghcr.io/flyteorg", python_version=(3, 12)
     )
     assert img.base_image == "python:3.12-slim-bookworm", "Base image should be python:3.12-slim-bookworm"
-    # This value should work across python versions in CI because all values have been specified above and are hardcoded
-    # Please don't change this value unless you are sure it's the right thing to do.
-    assert img.identifier == "ymxz6JlYRNMt5gqSOuEcSw", img._layers
 
 
 def test_poetry_project_validate_missing_pyproject():
@@ -181,11 +175,8 @@ def test_poetry_project_validate_missing_pyproject():
 
 
 def test_ids_for_different_python_version():
-    ex_10 = Image.from_debian_base(python_version=(3, 10), install_flyte=False).with_source_file(Path(__file__))
     ex_11 = Image.from_debian_base(python_version=(3, 11), install_flyte=False).with_source_file(Path(__file__))
     ex_12 = Image.from_debian_base(python_version=(3, 12), install_flyte=False).with_source_file(Path(__file__))
     # Override base images to be the same for testing that the identifier does not depends on python version
     object.__setattr__(ex_11, "base_image", "python:3.10-slim-bookworm")
     object.__setattr__(ex_12, "base_image", "python:3.10-slim-bookworm")
-    assert ex_10.identifier == ex_11.identifier
-    assert ex_11.identifier == ex_12.identifier
