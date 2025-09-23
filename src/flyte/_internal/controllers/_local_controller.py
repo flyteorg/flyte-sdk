@@ -6,7 +6,7 @@ import threading
 from typing import Any, Callable, Tuple, TypeVar
 
 import flyte.errors
-from flyte._cache.cache import cache_from_request
+from flyte._cache.cache import VersionParameters, cache_from_request
 from flyte._cache.local_cache import LocalTaskCache
 from flyte._context import internal_ctx
 from flyte._internal.controllers import TraceInfo
@@ -14,7 +14,7 @@ from flyte._internal.runtime import convert
 from flyte._internal.runtime.entrypoints import direct_dispatch
 from flyte._internal.runtime.types_serde import transform_native_to_typed_interface
 from flyte._logging import log, logger
-from flyte._task import TaskTemplate
+from flyte._task import AsyncFunctionTaskTemplate, TaskTemplate
 from flyte._utils.helpers import _selector_policy
 from flyte.models import ActionID, NativeInterface
 from flyte.remote._task import TaskDetails
@@ -94,11 +94,16 @@ class LocalController:
 
         task_cache = cache_from_request(_task.cache)
         cache_enabled = task_cache.is_enabled()
+        if isinstance(_task, AsyncFunctionTaskTemplate):
+            version_parameters = VersionParameters(func=_task.func, image=_task.image)
+        else:
+            version_parameters = VersionParameters(func=None, image=_task.image)
+        cache_version = task_cache.get_version(version_parameters)
         cache_key = convert.generate_cache_key_hash(
             _task.name,
             inputs_hash,
             task_interface,
-            task_cache.get_version(),
+            cache_version,
             list(task_cache.get_ignored_inputs()),
             inputs.proto_inputs,
         )
@@ -106,6 +111,10 @@ class LocalController:
         out = None
         if cache_enabled:
             out = await LocalTaskCache.get(cache_key)
+            if out is not None:
+                logger.info(
+                    f"Cache hit for task '{_task.name}' (version: {cache_version}), getting result from cache..."
+                )
 
         if out is None:
             out, err = await direct_dispatch(
@@ -114,7 +123,7 @@ class LocalController:
                 action=sub_action_id,
                 raw_data_path=sub_action_raw_data_path,
                 inputs=inputs,
-                version=task_cache.get_version(),
+                version=cache_version,
                 checkpoints=tctx.checkpoints,
                 code_bundle=tctx.code_bundle,
                 output_path=sub_action_output_path,
