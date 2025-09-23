@@ -84,11 +84,6 @@ class LocalTaskCache(object):
         cache_key: str,
         value: convert.Outputs,
     ) -> None:
-        if not LocalTaskCache._initialized:
-            await LocalTaskCache.initialize()
-        if LocalTaskCache._cursor is None or LocalTaskCache._conn is None:
-            raise RuntimeError("Cache not properly initialized")
-
         # Check if cache entry already exists
         existing = await LocalTaskCache.get(cache_key)
 
