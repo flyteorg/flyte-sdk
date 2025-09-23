@@ -1284,3 +1284,10 @@ async def test_convert_upload_default_inputs_remote_interface():
             value=await TypeEngine.to_literal("hello", str, TypeEngine.to_literal_type(str)),
         ),
     ]
+
+
+def test_load_andfdsafdsa_print_inputs():
+    inputs = run_definition_pb2.Inputs()
+    with open("/Users/ytong/actor_debugging/inputs.pb", "rb") as f:
+        inputs.ParseFromString(f.read())
+    print(inputs)

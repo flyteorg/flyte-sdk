@@ -24,6 +24,8 @@ async def square(i: int = 3) -> int:
 
 @env.task
 async def say_hello_nested(data: str = "default string", n: int = 3) -> str:
+    print("In the parent task!!!!!!!, sleeping...", flush=True)
+    await asyncio.sleep(1000)
     print(f"Hello, nested! - {flyte.ctx().action}")
     coros = []
     for i in range(n):

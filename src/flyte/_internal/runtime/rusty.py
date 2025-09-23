@@ -30,6 +30,9 @@ async def download_tgz(destination: str, version: str, tgz: str) -> CodeBundle:
         destination=destination,
         computed_version=version,
     )
+    if tgz == "/tmp/test-tgz/canonical-test.tar.gz":
+        print("[rusty] Short-circuiting tgz download for testing purposes")
+        return CodeBundle(computed_version="tst-version-123", tgz="/tmp/test-tgz/canonical-test.tar.gz")
     return await download_code_bundle(code_bundle)
 
 
@@ -60,8 +63,13 @@ def load_task_from_code_bundle(resolver: str, resolver_args: List[str]) -> TaskT
     :param resolver_args: The arguments to pass to the resolver.
     :return: The loaded task template.
     """
+    # called by actor_environment::get_or_load_task
     logger.debug(f"[rusty] Loading task from code bundle {resolver} with args: {resolver_args}")
-    return load_task(resolver, *resolver_args)
+    print(f"[rusty!!] Loading task from code bundle {resolver} with args: {resolver_args}", flush=True)
+    # temporary debugging
+    from basics.devbox_one import say_hello_nested
+    return say_hello_nested
+    # return load_task(resolver, *resolver_args)
 
 
 async def create_controller(

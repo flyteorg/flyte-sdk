@@ -161,6 +161,8 @@ async def get(from_path: str, to_path: Optional[str | pathlib.Path] = None, recu
         else:
             exists = file_system.exists(from_path)
         if not exists:
+            import traceback
+            traceback.print_stack()
             raise AssertionError(f"Unable to load data from {from_path}")
         file_system = _get_anonymous_filesystem(from_path)
         logger.debug(f"Attempting anonymous get with {file_system}")
