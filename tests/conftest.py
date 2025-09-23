@@ -46,7 +46,7 @@ async def isolate_local_cache(tmp_path):
     Global fixture to isolate LocalTaskCache for each test.
     Uses temporary directory to avoid polluting local development cache.
     """
-    with patch.object(LocalTaskCache, "_db_path", str(tmp_path / "test_cache.db")):
+    with patch.object(LocalTaskCache, "_get_cache_path", return_value=str(tmp_path / "test_cache.db")):
         LocalTaskCache._initialized = False
         yield
         if LocalTaskCache._conn:

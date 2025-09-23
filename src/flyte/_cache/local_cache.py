@@ -3,8 +3,10 @@ from pathlib import Path
 
 from flyte._internal.runtime import convert
 from flyte._protos.workflow import run_definition_pb2
+from flyte.config import auto
 
-CACHE_LOCATION = "~/.flyte/local-cache"
+DEFAILT_CACHE_DIR = "~/.flyte"
+CACHE_LOCATION = "cache.db"
 
 
 class LocalTaskCache(object):
@@ -15,16 +17,18 @@ class LocalTaskCache(object):
     _conn: sqlite3.Connection | None = None
     _cursor: sqlite3.Cursor | None = None
     _initialized: bool = False
-    _db_path: str | None = None
 
     @staticmethod
     def _get_cache_path() -> str:
         """Get the cache database path, creating directory if needed."""
-        if LocalTaskCache._db_path is None:
-            cache_dir = Path(CACHE_LOCATION).expanduser()
+        config = auto()
+        if config.source:
+            cache_dir = config.source.parent
+        else:
+            cache_dir = Path(DEFAILT_CACHE_DIR).expanduser()
             cache_dir.mkdir(parents=True, exist_ok=True)
-            LocalTaskCache._db_path = str(cache_dir / "cache.db")
-        return LocalTaskCache._db_path
+        cache_path = cache_dir / CACHE_LOCATION
+        return str(cache_path)
 
     @staticmethod
     async def initialize():
