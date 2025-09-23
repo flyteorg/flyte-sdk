@@ -122,15 +122,12 @@ class Trigger(ToJSONMixin):
 
     @syncify
     @classmethod
-    async def get(cls, *, name: str, task_name: str) -> Trigger:
+    async def get(cls, *, name: str, task_name: str) -> TriggerDetails:
         """
         Retrieve a trigger by its name and associated task name.
         """
-        details = await TriggerDetails.get(name=name)
-        return cls(
-            pb2=details.trigger,
-            details=details,
-        )
+        return await TriggerDetails.get(name=name)
+
 
     @syncify
     @classmethod

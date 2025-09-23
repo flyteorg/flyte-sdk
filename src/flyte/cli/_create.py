@@ -2,7 +2,9 @@ from pathlib import Path
 from typing import Any, Dict, get_args
 
 import rich_click as click
+from rich import Console
 
+import flyte
 import flyte.cli._common as common
 from flyte.cli._option import MutuallyExclusiveOption
 from flyte.remote import SecretTypes
@@ -37,13 +39,13 @@ def create():
 )
 @click.pass_obj
 def secret(
-    cfg: common.CLIConfig,
-    name: str,
-    value: str | bytes | None = None,
-    from_file: str | None = None,
-    type: SecretTypes = "regular",
-    project: str | None = None,
-    domain: str | None = None,
+        cfg: common.CLIConfig,
+        name: str,
+        value: str | bytes | None = None,
+        from_file: str | None = None,
+        type: SecretTypes = "regular",
+        project: str | None = None,
+        domain: str | None = None,
 ):
     """
     Create a new secret. The name of the secret is required. For example:
@@ -126,15 +128,15 @@ def secret(
     required=False,
 )
 def config(
-    output: str,
-    endpoint: str | None = None,
-    insecure: bool = False,
-    org: str | None = None,
-    project: str | None = None,
-    domain: str | None = None,
-    force: bool = False,
-    image_builder: str | None = None,
-    auth_type: str | None = None,
+        output: str,
+        endpoint: str | None = None,
+        insecure: bool = False,
+        org: str | None = None,
+        project: str | None = None,
+        domain: str | None = None,
+        force: bool = False,
+        image_builder: str | None = None,
+        auth_type: str | None = None,
 ):
     """
     Creates a configuration file for Flyte CLI.
@@ -236,16 +238,16 @@ def config(
 )
 @click.pass_obj
 def trigger(
-    cfg: common.CLIConfig,
-    task_name: str,
-    name: str,
-    task_version: str = "latest",
-    trigger_time_var: str = "trigger_time",
-    auto_activate: bool = True,
-    schedule: str = "* * * * *",
-    description: str = "",
-    project: str | None = None,
-    domain: str | None = None,
+        cfg: common.CLIConfig,
+        task_name: str,
+        name: str,
+        task_version: str = "latest",
+        trigger_time_var: str = "trigger_time",
+        auto_activate: bool = True,
+        schedule: str = "* * * * *",
+        description: str = "",
+        project: str | None = None,
+        domain: str | None = None,
 ):
     """
     Create a new trigger for a task. The task name and trigger name are required.
@@ -259,18 +261,19 @@ def trigger(
     This will create a trigger that runs every day at midnight.
     """
     from flyte.remote import Trigger
-    from flyte.trigger import Cron, TriggerTime
-    from flyte.trigger import Trigger as TriggerDef
 
     cfg.init(project, domain)
+    console = Console()
 
-    trigger = TriggerDef(
+    trigger = flyte.Trigger(
         name=name,
-        automation=Cron(schedule),
+        automation=flyte.Cron(schedule),
         description=description,
         auto_activate=auto_activate,
-        inputs={trigger_time_var: TriggerTime},  # Use the trigger time variable in inputs
-        env=None,  # No environment variables set by default
-        interruptable=None,  # No interruptable setting by default
+        inputs={trigger_time_var: flyte.TriggerTime},  # Use the trigger time variable in inputs
+        env_vars=None,
+        interruptible=None,
     )
-    Trigger.create(trigger, task_name=task_name, task_version=task_version)
+    with console.status("Creating trigger..."):
+        v = Trigger.create(trigger, task_name=task_name, task_version=task_version)
+    console.print(f"[bold green]Trigger {v.name} created successfully![/bold green]")
