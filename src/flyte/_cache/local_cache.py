@@ -2,11 +2,12 @@ import sqlite3
 from pathlib import Path
 
 from flyte._internal.runtime import convert
+from flyte._logging import logger
 from flyte._protos.workflow import run_definition_pb2
 from flyte.config import auto
 
 DEFAILT_CACHE_DIR = "~/.flyte"
-CACHE_LOCATION = "cache.db"
+CACHE_LOCATION = "local-cache/cache.db"
 
 
 class LocalTaskCache(object):
@@ -26,8 +27,11 @@ class LocalTaskCache(object):
             cache_dir = config.source.parent
         else:
             cache_dir = Path(DEFAILT_CACHE_DIR).expanduser()
-            cache_dir.mkdir(parents=True, exist_ok=True)
+
         cache_path = cache_dir / CACHE_LOCATION
+        # Ensure the directory exists
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        logger.info(f"Use local cache path: {cache_path}")
         return str(cache_path)
 
     @staticmethod
