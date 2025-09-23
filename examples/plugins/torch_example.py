@@ -1,5 +1,4 @@
 import typing
-from pathlib import Path
 
 import torch
 import torch.distributed
@@ -11,14 +10,7 @@ from torch.utils.data import DataLoader, DistributedSampler, TensorDataset
 
 import flyte
 
-image = (
-    flyte.Image.from_debian_base(name="torch")
-    # .with_pip_packages("flyteplugins-pytorch", pre=True)
-    .with_pip_packages("torch==2.8.0", "numpy", "pandas")
-    .with_source_folder(Path(__file__).parent.parent.parent / "plugins/pytorch", "./pytorch")
-    .with_env_vars({"PYTHONPATH": "./pytorch/src:${PYTHONPATH}"})
-    .with_local_v2()
-)
+image = flyte.Image.from_debian_base(name="torch").with_pip_packages("flyteplugins-pytorch", pre=True)
 
 torch_env = flyte.TaskEnvironment(
     name="torch_env",
@@ -107,6 +99,6 @@ def torch_distributed_train(epochs: int) -> typing.Optional[float]:
 
 if __name__ == "__main__":
     flyte.init_from_config()
-    run = flyte.with_runcontext(mode="remote").run(hello_torch_nested, epochs=3)
+    run = flyte.with_runcontext(mode="remote").run(torch_distributed_train, epochs=3)
     print("run name:", run.name)
     print("run url:", run.url)

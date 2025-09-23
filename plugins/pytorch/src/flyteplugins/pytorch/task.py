@@ -76,7 +76,7 @@ class Elastic:
             Defaults to {"timeout": 900, "join_timeout": 900}.
     """
 
-    rdzv_backend: Literal["c10d", "etcd", "static"] = "c10d"
+    rdzv_backend: Literal["c10d"] = "c10d"
     backend: Literal["gloo", "nccl", "mpi"] = "gloo"
     nnodes: Union[int, str] = 1
     nproc_per_node: int = 1
