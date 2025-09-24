@@ -150,8 +150,8 @@ async def _build_images(deployment: DeploymentPlan) -> ImageCache:
 
     images = []
     image_identifier_map = {}
+    cfg = _get_init_config()
     for env_name, env in deployment.envs.items():
-        cfg = _get_init_config()
         if not isinstance(env.image, str):
             if env.image.name is not None and env.image.name in cfg.images:
                 # try to see if the image is set in the config. If so, directly use the image uri
