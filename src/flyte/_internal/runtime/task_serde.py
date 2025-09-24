@@ -212,8 +212,12 @@ def _get_urun_container(
     if isinstance(task_template.image, str):
         raise flyte.errors.RuntimeSystemError("BadConfig", "Image is not a valid image")
 
-    task_env = task_template.parent_env()
-    image_id = task_env.name
+    image_id = ""
+    if task_template.parent_env and (task_env := task_template.parent_env()):
+        image_id = task_env.name
+    else:
+        raise flyte.errors.RuntimeSystemError("BadConfig", "Task template has no parent environment")
+
     if not serialize_context.image_cache:
         # This computes the image uri, computing hashes as necessary so can fail if done remotely.
         img_uri = task_template.image.uri
