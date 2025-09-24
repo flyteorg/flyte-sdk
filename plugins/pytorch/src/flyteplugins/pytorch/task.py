@@ -4,11 +4,14 @@ from enum import Enum
 from typing import Any, Dict, Literal, Optional, Union
 
 import flyte
+import flyte.report
 from cloudpickle import cloudpickle
+from flyte._context import internal_ctx
+from flyte._initialize import _get_init_config
 from flyte._logging import logger
 from flyte._task import P, R
 from flyte.extend import AsyncFunctionTaskTemplate, TaskPluginRegistry
-from flyte.models import SerializationContext
+from flyte.models import SerializationContext, TaskContext
 from flyteidl.plugins.kubeflow import common_pb2
 from flyteidl.plugins.kubeflow.pytorch_pb2 import (
     DistributedPyTorchTrainingReplicaSpec,
@@ -83,9 +86,20 @@ class Elastic:
     rdzv_configs: Dict[str, Any] = field(default_factory=lambda: {"timeout": 900, "join_timeout": 900})
 
 
-def launcher_entrypoint(fn: bytes, kwargs: dict):
+def launcher_entrypoint(tctx: TaskContext, endpoint: str, insecure: bool, fn: bytes, kwargs: dict):
     func = cloudpickle.loads(fn)
-    return func(**kwargs)
+    flyte.init(
+        org=tctx.action.org,
+        project=tctx.action.project,
+        domain=tctx.action.domain,
+        root_dir=tctx.run_base_dir,
+        insecure=insecure,
+        endpoint=endpoint,
+        api_key=os.getenv("_UNION_EAGER_API_KEY"),
+    )
+
+    with internal_ctx().replace_task_context(tctx):
+        return func(**kwargs)
 
 
 @dataclass(kw_only=True)
@@ -122,6 +136,10 @@ class TorchFunctionTask(AsyncFunctionTaskTemplate):
         return {}
 
     async def execute(self, *args: P.args, **kwargs: P.kwargs) -> R:
+        tctx = internal_ctx().data.task_context
+        if tctx.mode == "local":
+            return self.func(**kwargs)
+
         config = LaunchConfig(
             run_id=flyte.ctx().action.run_name,
             min_nodes=self.min_nodes,
@@ -133,7 +151,15 @@ class TorchFunctionTask(AsyncFunctionTaskTemplate):
             max_restarts=self.plugin_config.max_restarts,
             monitor_interval=self.plugin_config.monitor_interval,
         )
-        out = elastic_launch(config=config, entrypoint=launcher_entrypoint)(cloudpickle.dumps(self.func), kwargs)
+
+        cfg = _get_init_config()
+        out = elastic_launch(config=config, entrypoint=launcher_entrypoint)(
+            tctx,
+            cfg.client.endpoint,
+            cfg.client.insecure,
+            cloudpickle.dumps(self.func),
+            kwargs,
+        )
 
         # `out` is a dictionary of rank (not local rank) -> result
         # Rank 0 returns the result of the task function
