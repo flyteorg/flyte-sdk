@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import logging
 import os
 import sys
@@ -22,7 +23,7 @@ from rich.traceback import Traceback
 import flyte.errors
 from flyte.config import Config
 
-OutputFormat = Literal["table", "json", "table-simple"]
+OutputFormat = Literal["table", "json", "table-simple", "json-raw"]
 
 PREFERRED_BORDER_COLOR = "dim cyan"
 PREFERRED_ACCENT_COLOR = "bold #FFD700"
@@ -111,7 +112,7 @@ class CLIConfig:
         """
         return replace(self, **kwargs)
 
-    def init(self, project: str | None = None, domain: str | None = None):
+    def init(self, project: str | None = None, domain: str | None = None, root_dir: str | None = None):
         from flyte.config._config import TaskConfig
 
         task_cfg = TaskConfig(
@@ -131,7 +132,7 @@ class CLIConfig:
 
         updated_config = self.config.with_params(platform_cfg, task_cfg)
 
-        flyte.init_from_config(updated_config, log_level=self.log_level)
+        flyte.init_from_config(updated_config, log_level=self.log_level, root_dir=root_dir)
 
 
 class InvokeBaseMixin:
@@ -381,6 +382,11 @@ def format(title: str, vals: Iterable[Any], of: OutputFormat = "table") -> Table
             if not vals:
                 return pretty_repr([])
             return pretty_repr([v.to_dict() for v in vals])
+        case "json-raw":
+            if not vals:
+                return []
+            return json.dumps([v.to_dict() for v in vals])
+
     raise click.ClickException("Unknown output format. Supported formats are: table, table-simple, json.")
 
 

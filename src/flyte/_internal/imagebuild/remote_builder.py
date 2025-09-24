@@ -41,7 +41,6 @@ if TYPE_CHECKING:
     from flyte._protos.imagebuilder import definition_pb2 as image_definition_pb2
 
 IMAGE_TASK_NAME = "build-image"
-OPTIMIZE_TASK_NAME = "optimize-task"
 IMAGE_TASK_PROJECT = "system"
 IMAGE_TASK_DOMAIN = "production"
 
@@ -126,19 +125,6 @@ class RemoteImageBuilder(ImageBuilder):
 
         if run_details.action_details.raw_phase == run_definition_pb2.PHASE_SUCCEEDED:
             logger.warning(f"[bold green]✅ Build completed in {elapsed}![/bold green]")
-            try:
-                entity = remote.Task.get(
-                    name=OPTIMIZE_TASK_NAME,
-                    project=IMAGE_TASK_PROJECT,
-                    domain=IMAGE_TASK_DOMAIN,
-                    auto_version="latest",
-                )
-                await flyte.with_runcontext(project=IMAGE_TASK_PROJECT, domain=IMAGE_TASK_DOMAIN).run.aio(
-                    entity, target_image=image_name
-                )
-            except Exception as e:
-                # Ignore the error if optimize is not enabled in the backend.
-                logger.debug(f"Failed to run optimize task with error: {e}")
         else:
             raise flyte.errors.ImageBuildError(f"❌ Build failed in {elapsed} at [cyan]{run.url}[/cyan]")
 
@@ -195,6 +181,11 @@ async def _validate_configuration(image: Image) -> Tuple[str, Optional[str]]:
 
 def _get_layers_proto(image: Image, context_path: Path) -> "image_definition_pb2.ImageSpec":
     from flyte._protos.imagebuilder import definition_pb2 as image_definition_pb2
+
+    if image.dockerfile is not None:
+        raise flyte.errors.ImageBuildError(
+            "Custom Dockerfile is not supported with remote image builder.You can use local image builder instead."
+        )
 
     layers = []
     for layer in image._layers:

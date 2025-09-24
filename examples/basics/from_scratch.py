@@ -1,16 +1,24 @@
-from typing import Optional
-
 import flyte
 
-env = flyte.TaskEnvironment(name="test_env")
+env = flyte.TaskEnvironment(
+    name="from_scratch",
+)
 
 
 @env.task
-def main(name: Optional[str] = None):
-    print(f"Hello {name}")
+def square(x: int) -> int:
+    return x * x
+
+
+@env.task
+def main(n: int = 10) -> int:
+    results = list(flyte.map(square, range(n)))
+    return sum(results)
 
 
 if __name__ == "__main__":
-    flyte.init_from_config()
-    run = flyte.run(main, "xyz")
-    print(run.url)
+    import flyte.git
+
+    flyte.init_from_config(flyte.git.config_from_root())
+    r = flyte.run(main, 10)
+    print(r.url)

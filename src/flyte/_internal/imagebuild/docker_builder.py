@@ -22,6 +22,7 @@ from flyte._image import (
     Layer,
     PipOption,
     PipPackages,
+    PoetryProject,
     PythonWheels,
     Requirements,
     UVProject,
@@ -46,44 +47,74 @@ FLYTE_DOCKER_BUILDER_CACHE_TO = "FLYTE_DOCKER_BUILDER_CACHE_TO"
 
 UV_LOCK_WITHOUT_PROJECT_INSTALL_TEMPLATE = Template("""\
 RUN --mount=type=cache,sharing=locked,mode=0777,target=/root/.cache/uv,id=uv \
-    --mount=type=bind,target=uv.lock,src=$UV_LOCK_PATH \
-    --mount=type=bind,target=pyproject.toml,src=$PYPROJECT_PATH \
-    $SECRET_MOUNT \
-    uv sync --active $PIP_INSTALL_ARGS
+   --mount=type=bind,target=uv.lock,src=$UV_LOCK_PATH \
+   --mount=type=bind,target=pyproject.toml,src=$PYPROJECT_PATH \
+   $SECRET_MOUNT \
+   uv sync --active $PIP_INSTALL_ARGS
 """)
 
 UV_LOCK_INSTALL_TEMPLATE = Template("""\
 COPY $PYPROJECT_PATH $PYPROJECT_PATH
 RUN --mount=type=cache,sharing=locked,mode=0777,target=/root/.cache/uv,id=uv \
-    $SECRET_MOUNT \
-    uv sync --active $PIP_INSTALL_ARGS --project $PYPROJECT_PATH
+   $SECRET_MOUNT \
+   uv sync --active $PIP_INSTALL_ARGS --project $PYPROJECT_PATH
+""")
+
+POETRY_LOCK_WITHOUT_PROJECT_INSTALL_TEMPLATE = Template("""\
+RUN --mount=type=cache,sharing=locked,mode=0777,target=/root/.cache/uv,id=uv \
+   uv pip install poetry
+
+ENV POETRY_CACHE_DIR=/tmp/poetry_cache \
+   POETRY_VIRTUALENVS_IN_PROJECT=true
+
+RUN --mount=type=cache,sharing=locked,mode=0777,target=/tmp/poetry_cache,id=poetry \
+   --mount=type=bind,target=poetry.lock,src=$POETRY_LOCK_PATH \
+   --mount=type=bind,target=pyproject.toml,src=$PYPROJECT_PATH \
+   $SECRET_MOUNT \
+   poetry install $POETRY_INSTALL_ARGS
+""")
+
+POETRY_LOCK_INSTALL_TEMPLATE = Template("""\
+RUN --mount=type=cache,sharing=locked,mode=0777,target=/root/.cache/uv,id=uv \
+   uv pip install poetry
+
+COPY $PYPROJECT_PATH $PYPROJECT_PATH
+
+ENV POETRY_CACHE_DIR=/tmp/poetry_cache \
+   POETRY_VIRTUALENVS_IN_PROJECT=true
+
+RUN --mount=type=cache,sharing=locked,mode=0777,target=/tmp/poetry_cache,id=poetry \
+   --mount=type=bind,target=poetry.lock,src=poetry.lock \
+   --mount=type=bind,target=pyproject.toml,src=pyproject.toml \
+   $SECRET_MOUNT \
+   poetry install $POETRY_INSTALL_ARGS
 """)
 
 UV_PACKAGE_INSTALL_COMMAND_TEMPLATE = Template("""\
 RUN --mount=type=cache,sharing=locked,mode=0777,target=/root/.cache/uv,id=uv \
-    $REQUIREMENTS_MOUNT \
-    $SECRET_MOUNT \
-    uv pip install --python $$UV_PYTHON $PIP_INSTALL_ARGS
+   $REQUIREMENTS_MOUNT \
+   $SECRET_MOUNT \
+   uv pip install --python $$UV_PYTHON $PIP_INSTALL_ARGS
 """)
 
 UV_WHEEL_INSTALL_COMMAND_TEMPLATE = Template("""\
 RUN --mount=type=cache,sharing=locked,mode=0777,target=/root/.cache/uv,id=wheel \
-    --mount=source=/dist,target=/dist,type=bind \
-    $SECRET_MOUNT \
-    uv pip install --python $$UV_PYTHON $PIP_INSTALL_ARGS
+   --mount=source=/dist,target=/dist,type=bind \
+   $SECRET_MOUNT \
+   uv pip install --python $$UV_PYTHON $PIP_INSTALL_ARGS
 """)
 
 APT_INSTALL_COMMAND_TEMPLATE = Template("""\
 RUN --mount=type=cache,sharing=locked,mode=0777,target=/var/cache/apt,id=apt \
-    $SECRET_MOUNT \
-    apt-get update && apt-get install -y --no-install-recommends \
-    $APT_PACKAGES
+   $SECRET_MOUNT \
+   apt-get update && apt-get install -y --no-install-recommends \
+   $APT_PACKAGES
 """)
 
 UV_PYTHON_INSTALL_COMMAND = Template("""\
 RUN --mount=type=cache,sharing=locked,mode=0777,target=/root/.cache/uv,id=uv \
-    $SECRET_MOUNT \
-    uv pip install $PIP_INSTALL_ARGS
+   $SECRET_MOUNT \
+   uv pip install $PIP_INSTALL_ARGS
 """)
 
 # uv pip install --python /root/env/bin/python
@@ -93,24 +124,29 @@ DOCKER_FILE_UV_BASE_TEMPLATE = Template("""\
 FROM ghcr.io/astral-sh/uv:0.8.13 AS uv
 FROM $BASE_IMAGE
 
+
 USER root
+
 
 # Copy in uv so that later commands don't have to mount it in
 COPY --from=uv /uv /usr/bin/uv
 
+
 # Configure default envs
 ENV UV_COMPILE_BYTECODE=1 \
-    UV_LINK_MODE=copy \
-    VIRTUALENV=/opt/venv \
-    UV_PYTHON=/opt/venv/bin/python \
-    PATH="/opt/venv/bin:$$PATH"
+   UV_LINK_MODE=copy \
+   VIRTUALENV=/opt/venv \
+   UV_PYTHON=/opt/venv/bin/python \
+   PATH="/opt/venv/bin:$$PATH"
+
 
 # Create a virtualenv with the user specified python version
 RUN uv venv $$VIRTUALENV --python=$PYTHON_VERSION
 
+
 # Adds nvidia just in case it exists
 ENV PATH="$$PATH:/usr/local/nvidia/bin:/usr/local/cuda/bin" \
-    LD_LIBRARY_PATH="/usr/local/nvidia/lib64"
+   LD_LIBRARY_PATH="/usr/local/nvidia/lib64"
 """)
 
 # This gets added on to the end of the dockerfile
@@ -245,12 +281,41 @@ class UVProjectHandler:
         else:
             # Copy the entire project.
             pyproject_dst = copy_files_to_context(layer.pyproject.parent, context_path)
+            if layer.uvlock:
+                # Sometimes the uv.lock file is in a different folder, if it's specified, let's copy it there explicitly
+                shutil.copy(layer.uvlock, pyproject_dst)
             delta = UV_LOCK_INSTALL_TEMPLATE.substitute(
                 PYPROJECT_PATH=pyproject_dst.relative_to(context_path),
                 PIP_INSTALL_ARGS=" ".join(layer.get_pip_install_args()),
                 SECRET_MOUNT=secret_mounts,
             )
 
+        dockerfile += delta
+        return dockerfile
+
+
+class PoetryProjectHandler:
+    @staticmethod
+    async def handel(layer: PoetryProject, context_path: Path, dockerfile: str) -> str:
+        secret_mounts = _get_secret_mounts_layer(layer.secret_mounts)
+        if layer.extra_args and "--no-root" in layer.extra_args:
+            # Only Copy pyproject.yaml and poetry.lock.
+            pyproject_dst = copy_files_to_context(layer.pyproject, context_path)
+            poetry_lock_dst = copy_files_to_context(layer.poetry_lock, context_path)
+            delta = POETRY_LOCK_WITHOUT_PROJECT_INSTALL_TEMPLATE.substitute(
+                POETRY_LOCK_PATH=poetry_lock_dst.relative_to(context_path),
+                PYPROJECT_PATH=pyproject_dst.relative_to(context_path),
+                POETRY_INSTALL_ARGS=layer.extra_args or "",
+                SECRET_MOUNT=secret_mounts,
+            )
+        else:
+            # Copy the entire project.
+            pyproject_dst = copy_files_to_context(layer.pyproject.parent, context_path)
+            delta = POETRY_LOCK_INSTALL_TEMPLATE.substitute(
+                PYPROJECT_PATH=pyproject_dst.relative_to(context_path),
+                POETRY_INSTALL_ARGS=layer.extra_args or "",
+                SECRET_MOUNT=secret_mounts,
+            )
         dockerfile += delta
         return dockerfile
 
@@ -329,8 +394,9 @@ class CommandsHandler:
     @staticmethod
     async def handle(layer: Commands, _: Path, dockerfile: str) -> str:
         # Append raw commands to the dockerfile
+        secret_mounts = _get_secret_mounts_layer(layer.secret_mounts)
         for command in layer.commands:
-            dockerfile += f"\nRUN {command}\n"
+            dockerfile += f"\nRUN {secret_mounts} {command}\n"
 
         return dockerfile
 
@@ -352,9 +418,8 @@ def _get_secret_commands(layers: typing.Tuple[Layer, ...]) -> typing.List[str]:
             secret = Secret(key=secret)
         secret_id = hash(secret)
         secret_env_key = "_".join([k.upper() for k in filter(None, (secret.group, secret.key))])
-        secret_env = os.getenv(secret_env_key)
-        if secret_env:
-            return ["--secret", f"id={secret_id},env={secret_env}"]
+        if os.getenv(secret_env_key):
+            return ["--secret", f"id={secret_id},env={secret_env_key}"]
         secret_file_name = "_".join(list(filter(None, (secret.group, secret.key))))
         secret_file_path = f"/etc/secrets/{secret_file_name}"
         if not os.path.exists(secret_file_path):
@@ -362,7 +427,7 @@ def _get_secret_commands(layers: typing.Tuple[Layer, ...]) -> typing.List[str]:
         return ["--secret", f"id={secret_id},src={secret_file_path}"]
 
     for layer in layers:
-        if isinstance(layer, (PipOption, AptPackages)):
+        if isinstance(layer, (PipOption, AptPackages, Commands)):
             if layer.secret_mounts:
                 for secret_mount in layer.secret_mounts:
                     commands.extend(_get_secret_command(secret_mount))
@@ -422,6 +487,10 @@ async def _process_layer(
         case UVProject():
             # Handle UV project
             dockerfile = await UVProjectHandler.handle(layer, context_path, dockerfile)
+
+        case PoetryProject():
+            # Handle Poetry project
+            dockerfile = await PoetryProjectHandler.handel(layer, context_path, dockerfile)
 
         case CopyConfig():
             # Handle local files and folders
@@ -568,6 +637,7 @@ class DockerImageBuilder(ImageBuilder):
         in the main case, get the default Dockerfile template
           - start from the base image
           - use python to create a default venv and export variables
+
 
           Then for the layers
           - for each layer

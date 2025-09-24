@@ -203,6 +203,41 @@ class UVProject(PipOption, Layer):
 
         super().update_hash(hasher)
         filehash_update(self.uvlock, hasher)
+        filehash_update(self.pyproject, hasher)
+
+
+@rich.repr.auto
+@dataclass(frozen=True, repr=True)
+class PoetryProject(Layer):
+    """
+    Poetry does not use pip options, so the PoetryProject class do not inherits PipOption class
+    """
+    pyproject: Path
+    poetry_lock: Path
+    extra_args: Optional[str] = None
+    secret_mounts: Optional[Tuple[str | Secret, ...]] = None
+
+    def validate(self):
+        if not self.pyproject.exists():
+            raise FileNotFoundError(f"pyproject.toml file {self.pyproject} does not exist")
+        if not self.pyproject.is_file():
+            raise ValueError(f"Pyproject file {self.pyproject} is not a file")
+        if not self.poetry_lock.exists():
+            raise ValueError(f"poetry.lock file {self.poetry_lock} does not exist")
+        super().validate()
+
+    def update_hash(self, hasher: hashlib._Hash):
+        from ._utils import filehash_update
+
+        hash_input = ""
+        if self.extra_args:
+            hash_input += self.extra_args
+        if self.secret_mounts:
+            for secret_mount in self.secret_mounts:
+                hash_input += str(secret_mount)
+        hasher.update(hash_input.encode("utf-8"))
+        filehash_update(self.poetry_lock, hasher)
+        filehash_update(self.pyproject, hasher)
 
 
 @rich.repr.auto
@@ -287,12 +322,11 @@ class CopyConfig(Layer):
     path_type: CopyConfigType = field(metadata={"identifier": True})
     src: Path = field(metadata={"identifier": False})
     dst: str
-    src_name: str = field(init=False)
+    src_name: str
 
     def __post_init__(self):
         if self.path_type not in (0, 1):
             raise ValueError(f"Invalid path_type {self.path_type}, must be 0 (file) or 1 (directory)")
-        object.__setattr__(self, "src_name", self.src.name)
 
     def validate(self):
         if not self.src.exists():
@@ -435,7 +469,10 @@ class Image:
         # Only get the non-None values in the Image to ensure the hash is consistent
         # across different SDK versions.
         # Layers can specify a _compute_identifier optionally, but the default will just stringify
-        image_dict = asdict(self, dict_factory=lambda x: {k: v for (k, v) in x if v is not None and k != "_layers"})
+        image_dict = asdict(
+            self,
+            dict_factory=lambda x: {k: v for (k, v) in x if v is not None and k not in ("_layers", "python_version")},
+        )
         layers_str_repr = "".join([layer.identifier() for layer in self._layers])
         image_dict["layers"] = layers_str_repr
         spec_bytes = image_dict.__str__().encode("utf-8")
@@ -845,16 +882,23 @@ class Image:
         new_image = self.clone(addl_layer=Env.from_dict(env_vars))
         return new_image
 
-    def with_source_folder(self, src: Path, dst: str = ".") -> Image:
+    def with_source_folder(self, src: Path, dst: str = ".", copy_contents_only: bool = False) -> Image:
         """
         Use this method to create a new image with the specified local directory layered on top of the current image.
         If dest is not specified, it will be copied to the working directory of the image
 
         :param src: root folder of the source code from the build context to be copied
         :param dst: destination folder in the image
+        :param copy_contents_only: If True, will copy the contents of the source folder to the destination folder,
+            instead of the folder itself. Default is False.
         :return: Image
         """
-        new_image = self.clone(addl_layer=CopyConfig(path_type=1, src=src, dst=dst))
+        src_name = src.name
+        if copy_contents_only:
+            src_name = "."
+        else:
+            dst = str("./" + src_name)
+        new_image = self.clone(addl_layer=CopyConfig(path_type=1, src=src, dst=dst, src_name=src_name))
         return new_image
 
     def with_source_file(self, src: Path, dst: str = ".") -> Image:
@@ -866,7 +910,7 @@ class Image:
         :param dst: destination folder in the image
         :return: Image
         """
-        new_image = self.clone(addl_layer=CopyConfig(path_type=0, src=src, dst=dst))
+        new_image = self.clone(addl_layer=CopyConfig(path_type=0, src=src, dst=dst, src_name=src.name))
         return new_image
 
     def with_dockerignore(self, path: Path) -> Image:
@@ -913,6 +957,45 @@ class Image:
                 index_url=index_url,
                 extra_index_urls=extra_index_urls,
                 pre=pre,
+                extra_args=extra_args,
+                secret_mounts=_ensure_tuple(secret_mounts) if secret_mounts else None,
+            )
+        )
+        return new_image
+
+    def with_poetry_project(
+        self,
+        pyproject_file: str | Path,
+        poetry_lock: Path | None = None,
+        extra_args: Optional[str] = None,
+        secret_mounts: Optional[SecretRequest] = None,
+    ):
+        """
+        Use this method to create a new image with the specified pyproject.toml layered on top of the current image.
+        Must have a corresponding pyproject.toml file in the same directory.
+        Cannot be used in conjunction with conda.
+
+        By default, this method copies the entire project into the image,
+        including files such as pyproject.toml, poetry.lock, and the src/ directory.
+
+        If you prefer not to install the current project, you can pass through `extra_args`
+        `--no-root`. In this case, the image builder will only copy pyproject.toml and poetry.lock
+        into the image.
+
+        :param pyproject_file: Path to the pyproject.toml file. A poetry.lock file must exist in the same directory
+            unless `poetry_lock` is explicitly provided.
+        :param poetry_lock: Path to the poetry.lock file. If not specified, the default is the file named
+            'poetry.lock' in the same directory as `pyproject_file` (pyproject.parent / "poetry.lock").
+        :param extra_args: Extra arguments to pass through to the package installer/resolver, default is None.
+        :param secret_mounts: Secrets to make available during dependency resolution/build (e.g., private indexes).
+        :return: Image
+        """
+        if isinstance(pyproject_file, str):
+            pyproject_file = Path(pyproject_file)
+        new_image = self.clone(
+            addl_layer=PoetryProject(
+                pyproject=pyproject_file,
+                poetry_lock=poetry_lock or (pyproject_file.parent / "poetry.lock"),
                 extra_args=extra_args,
                 secret_mounts=_ensure_tuple(secret_mounts) if secret_mounts else None,
             )
