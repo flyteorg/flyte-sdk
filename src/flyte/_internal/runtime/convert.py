@@ -22,8 +22,8 @@ class Inputs:
     proto_inputs: run_definition_pb2.Inputs
 
     @classmethod
-    def empty(cls) -> "Inputs":
-        return cls(proto_inputs=run_definition_pb2.Inputs())
+    def empty(cls, context: list[literals_pb2.KeyValuePair] | None = None) -> "Inputs":
+        return cls(proto_inputs=run_definition_pb2.Inputs(context=context))
 
 
 @dataclass(frozen=True)
@@ -102,15 +102,19 @@ def is_optional_type(tp) -> bool:
     return NoneType in get_args(tp)  # fastest check
 
 
-async def convert_from_native_to_inputs(interface: NativeInterface, *args, **kwargs) -> Inputs:
+async def convert_from_native_to_inputs(context: Dict[str, str], interface: NativeInterface, *args, **kwargs) -> Inputs:
     kwargs = interface.convert_to_kwargs(*args, **kwargs)
 
     missing = [key for key in interface.required_inputs() if key not in kwargs]
     if missing:
         raise ValueError(f"Missing required inputs: {', '.join(missing)}")
 
+    serialized_context = None
+    if context and len(context) > 0:
+        serialized_context = [literals_pb2.KeyValuePair(key=k, value=v) for k, v in context.items()]
+
     if len(interface.inputs) == 0:
-        return Inputs.empty()
+        return Inputs.empty(context=serialized_context)
 
     # fill in defaults if missing
     type_hints: Dict[str, type] = {}
@@ -145,11 +149,13 @@ async def convert_from_native_to_inputs(interface: NativeInterface, *args, **kwa
             copied_literals[k] = v
         literal_map = literals_pb2.LiteralMap(literals=copied_literals)
     # Make sure we the interface, not literal_map or kwargs, because those may have a different order
+
     return Inputs(
         proto_inputs=run_definition_pb2.Inputs(
             literals=[
                 run_definition_pb2.NamedLiteral(name=k, value=literal_map.literals[k]) for k in interface.inputs.keys()
-            ]
+            ],
+            context=serialized_context,
         )
     )
 
