@@ -109,7 +109,8 @@ class LocalController:
         )
 
         out = None
-        if cache_enabled:
+        # We only get output from cache if the cache behavior is set to auto
+        if task_cache.behavior == "auto":
             out = await LocalTaskCache.get(cache_key)
             if out is not None:
                 logger.info(
