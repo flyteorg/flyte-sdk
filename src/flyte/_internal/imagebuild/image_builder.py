@@ -135,8 +135,6 @@ class ImageBuildEngine:
 
     ImageBuilderType = typing.Literal["local", "remote"]
 
-    _SEEN_IMAGES: typing.ClassVar[typing.Dict[str, str]]
-
     @staticmethod
     @alru_cache
     async def image_exists(image: Image) -> Optional[str]:
