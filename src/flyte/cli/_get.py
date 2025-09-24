@@ -337,10 +337,8 @@ def config(cfg: common.CLIConfig):
 
 
 @get.command(cls=common.CommandBase)
-@click.argument("task_name", type=str, required=False, help="List triggers for a specific task.")
-@click.argument(
-    "name", type=str, required=False, help="Name of the trigger to get details for, task_name must be provided."
-)
+@click.argument("task_name", type=str, required=False)
+@click.argument("name", type=str, required=False)
 @click.option("--limit", type=int, default=100, help="Limit the number of triggers to fetch.")
 @click.pass_obj
 def trigger(

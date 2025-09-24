@@ -198,8 +198,8 @@ def config(
 
 
 @create.command(cls=common.CommandBase)
-@click.argument("task_name", type=str, required=True, help="Task name to create a trigger for.")
-@click.argument("name", type=str, required=True, help="Name of the trigger to create.")
+@click.argument("task_name", type=str, required=True)
+@click.argument("name", type=str, required=True)
 @click.option(
     "--task-version",
     type=str,

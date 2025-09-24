@@ -117,7 +117,7 @@ class DeployEnvCommand(click.RichCommand):
             )
 
         console.print(common.format("Environments", deployment[0].env_repr(), obj.output_format))
-        console.print(common.format("Tasks", deployment[0].task_repr(), obj.output_format))
+        console.print(common.format("Tasks", deployment[0].table_repr(), obj.output_format))
 
 
 class DeployEnvRecursiveCommand(click.Command):
@@ -173,7 +173,7 @@ class DeployEnvRecursiveCommand(click.Command):
         console.print(
             common.format("Environments", [env for d in deployments for env in d.env_repr()], obj.output_format)
         )
-        console.print(common.format("Tasks", [task for d in deployments for task in d.task_repr()], obj.output_format))
+        console.print(common.format("Tasks", [task for d in deployments for task in d.table_repr()], obj.output_format))
 
 
 class EnvPerFileGroup(common.ObjectsPerFileGroup):

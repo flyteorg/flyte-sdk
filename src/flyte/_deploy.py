@@ -4,7 +4,7 @@ import asyncio
 import hashlib
 import sys
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Callable, Coroutine, Dict, List, Optional, Set, Tuple, Type
+from typing import TYPE_CHECKING, Dict, List, Optional, Protocol, Set, Tuple, Type
 
 import cloudpickle
 import rich.repr
@@ -36,54 +36,110 @@ class DeploymentPlan:
 
 @rich.repr.auto
 @dataclass
-class Deployment:
-    envs: Dict[str, Environment]
-    deployed_tasks: List[task_definition_pb2.TaskSpec] | None = None
-    deployed_triggers: List[trigger_definition_pb2.TriggerDetails] | None = None
+class DeploymentContext:
+    """
+    Context for deployment operations.
+    """
+
+    environment: Environment | TaskEnvironment
+    serialization_context: SerializationContext
+    dryrun: bool = False
+
+
+@rich.repr.auto
+@dataclass
+class DeployedTask:
+    deployed_task: task_definition_pb2.TaskSpec
+    deployed_triggers: List[trigger_definition_pb2.TriggerDetails]
+
+    def summary_repr(self) -> str:
+        """
+        Returns a summary representation of the deployed task.
+        """
+        return (
+            f"DeployedTask(name={self.deployed_task.task_template.id.name}, "
+            f"version={self.deployed_task.task_template.id.version})"
+        )
+
+    def table_repr(self) -> List[Tuple[str, ...]]:
+        """
+        Returns a table representation of the deployed task.
+        """
+        return [
+            ("name", self.deployed_task.task_template.id.name),
+            ("version", self.deployed_task.task_template.id.version),
+            ("# triggers", str(len(self.deployed_triggers))),
+        ]
+
+
+@rich.repr.auto
+@dataclass
+class DeployedEnv:
+    env: Environment
+    deployed_entities: List[DeployedTask]
 
     def summary_repr(self) -> str:
         """
         Returns a summary representation of the deployment.
         """
-        env_names = ", ".join(self.envs.keys())
-        task_names_versions = ", ".join(
-            f"{task.task_template.id.name} (v{task.task_template.id.version})" for task in self.deployed_tasks or []
-        )
-        return f"Deployment(envs=[{env_names}], tasks=[{task_names_versions}])"
+        entities = ", ".join(f"{e.summary_repr()}" for e in self.deployed_entities or [])
+        return f"Deployment(env=[{self.env.name}], entities=[{entities}])"
 
-    def task_repr(self) -> List[List[Tuple[str, str]]]:
+    def table_repr(self) -> List[List[Tuple[str, ...]]]:
         """
         Returns a detailed representation of the deployed tasks.
         """
         tuples = []
-        if self.deployed_tasks:
-            for task in self.deployed_tasks:
-                tuples.append(
-                    [
-                        ("name", task.task_template.id.name),
-                        ("version", task.task_template.id.version),
-                    ]
-                )
+        if self.deployed_entities:
+            for e in self.deployed_entities:
+                tuples.append(e.table_repr())
         return tuples
 
-    def env_repr(self) -> List[List[Tuple[str, str]]]:
+    def env_repr(self) -> List[Tuple[str, ...]]:
+        """
+        Returns a detailed representation of the deployed environments.
+        """
+        env = self.env
+        return [
+            ("environment", env.name),
+            ("image", env.image.uri if isinstance(env.image, Image) else env.image or ""),
+        ]
+
+
+@rich.repr.auto
+@dataclass(frozen=True)
+class Deployment:
+    envs: Dict[str, DeployedEnv]
+
+    def summary_repr(self) -> str:
+        """
+        Returns a summary representation of the deployment.
+        """
+        envs = ", ".join(f"{e.summary_repr()}" for e in self.envs.values() or [])
+        return f"Deployment(envs=[{envs}])"
+
+    def table_repr(self) -> List[List[Tuple[str, ...]]]:
+        """
+        Returns a detailed representation of the deployed tasks.
+        """
+        tuples = []
+        for d in self.envs.values():
+            tuples.extend(d.table_repr())
+        return tuples
+
+    def env_repr(self) -> List[List[Tuple[str, ...]]]:
         """
         Returns a detailed representation of the deployed environments.
         """
         tuples = []
-        for env_name, env in self.envs.items():
-            tuples.append(
-                [
-                    ("environment", env_name),
-                    ("image", env.image.uri if isinstance(env.image, Image) else env.image or ""),
-                ]
-            )
+        for d in self.envs.values():
+            tuples.append(d.env_repr())
         return tuples
 
 
 async def _deploy_task(
     task: TaskTemplate, serialization_context: SerializationContext, dryrun: bool = False
-) -> Tuple[task_definition_pb2.TaskSpec, list[trigger_definition_pb2.TriggerDetails]]:
+) -> DeployedTask:
     """
     Deploy the given task.
     """
@@ -99,7 +155,7 @@ async def _deploy_task(
 
     try:
         if dryrun:
-            return (translate_task_to_wire(task, serialization_context), [])
+            return DeployedTask(translate_task_to_wire(task, serialization_context), [])
 
         default_inputs = await convert_upload_default_inputs(task.interface)
         spec = translate_task_to_wire(task, serialization_context, default_inputs=default_inputs)
@@ -132,10 +188,10 @@ async def _deploy_task(
         except grpc.aio.AioRpcError as e:
             if e.code() == grpc.StatusCode.ALREADY_EXISTS:
                 logger.info(f"Task {task.name} with image {image_uri} already exists, skipping deployment.")
-                return spec, deployable_triggers
+                return DeployedTask(spec, deployable_triggers)
             raise
 
-        return spec, deployable_triggers
+        return DeployedTask(spec, deployable_triggers)
     except Exception as e:
         logger.error(f"Failed to deploy task {task.name} with image {image_uri}: {e}")
         raise flyte.errors.DeploymentError(
@@ -184,31 +240,70 @@ async def _build_images(deployment: DeploymentPlan) -> ImageCache:
     return ImageCache(image_lookup=image_identifier_map)
 
 
-async def _deploy_task_env(
-    env: TaskEnvironment, serialization_context: SerializationContext, dryrun: bool = False
-) -> Deployment:
+class Deployer(Protocol):
+    """
+    Protocol for deployment callables.
+    """
+
+    async def __call__(self, context: DeploymentContext) -> DeployedEnv:
+        """
+        Deploy the environment described in the context.
+
+        Args:
+            context: Deployment context containing environment, serialization context, and dryrun flag
+
+        Returns:
+            Deployment result
+        """
+        ...
+
+
+async def _deploy_task_env(context: DeploymentContext) -> DeployedEnv:
     """
     Deploy the given task environment.
     """
     ensure_client()
+    env = context.environment
+    if not isinstance(env, TaskEnvironment):
+        raise ValueError(f"Expected TaskEnvironment, got {type(env)}")
+
     task_coros = []
     for task in env.tasks.values():
-        task_coros.append(_deploy_task(task, serialization_context, dryrun=dryrun))
+        task_coros.append(_deploy_task(task, context.serialization_context, dryrun=context.dryrun))
     deployed_task_vals = await asyncio.gather(*task_coros)
     deployed_tasks = []
-    deployed_triggers = []
-    for t, triggers in deployed_task_vals:
+    for t in deployed_task_vals:
         deployed_tasks.append(t)
-        deployed_triggers.extend(triggers)
-    return Deployment(envs={env.name: env}, deployed_tasks=deployed_tasks, deployed_triggers=deployed_triggers)
+    return DeployedEnv(env=env, deployed_entities=deployed_tasks)
 
 
-_ENVTYPE_REGISTRY: Dict[
-    Type[Environment],
-    Callable[[Environment | TaskEnvironment, SerializationContext, bool], Coroutine[Any, Any, Deployment]],
-] = {
+_ENVTYPE_REGISTRY: Dict[Type[Environment | TaskEnvironment], Deployer] = {
     TaskEnvironment: _deploy_task_env,
 }
+
+
+def register_deployer(env_type: Type[Environment | TaskEnvironment], deployer: Deployer) -> None:
+    """
+    Register a deployer for a specific environment type.
+
+    Args:
+        env_type: Type of environment this deployer handles
+        deployer: Deployment callable that conforms to the Deployer protocol
+    """
+    _ENVTYPE_REGISTRY[env_type] = deployer
+
+
+def get_deployer(env_type: Type[Environment | TaskEnvironment]) -> Deployer:
+    """
+    Get the registered deployer for an environment type.
+
+    Args:
+        env_type: Type of environment to get deployer for
+
+    Returns:
+        Deployer for the environment type, defaults to task environment deployer
+    """
+    return _ENVTYPE_REGISTRY.get(env_type)
 
 
 @requires_initialization
@@ -245,18 +340,15 @@ async def apply(deployment_plan: DeploymentPlan, copy_style: CopyFiles, dryrun: 
     deployment_coros = []
     for env_name, env in deployment_plan.envs.items():
         logger.info(f"Deploying environment {env_name}")
-        deployer = _ENVTYPE_REGISTRY.get(type(env), _deploy_task_env)
-        deployment_coros.append(deployer(env, sc, dryrun))
-    deployments = await asyncio.gather(*deployment_coros)
+        deployer = get_deployer(type(env))
+        context = DeploymentContext(environment=env, serialization_context=sc, dryrun=dryrun)
+        deployment_coros.append(deployer(context))
+    deployed_envs = await asyncio.gather(*deployment_coros)
     envs = {}
-    deployed_tasks = []
-    deployed_triggers = []
-    for d in deployments:
-        envs.update(d.envs)
-        deployed_tasks.extend(d.deployed_tasks or [])
-        deployed_triggers.extend(d.deployed_triggers or [])
+    for d in deployed_envs:
+        envs[d.env.name] = d
 
-    return Deployment(envs, deployed_tasks, deployed_triggers)
+    return Deployment(envs)
 
 
 def _recursive_discover(planned_envs: Dict[str, Environment], env: Environment) -> Dict[str, Environment]:
