@@ -11,7 +11,8 @@ from flyte._context import internal_ctx
 image = (
     flyte.Image.from_base("apache/spark-py:v3.4.0")
     .clone(name="spark", python_version=(3, 10), registry="ghcr.io/flyteorg")
-    .with_pip_packages("flyteplugins-spark>=2.0.0b20", pre=True)
+    .with_env_vars({"hello": "world1"})
+    .with_pip_packages("flyteplugins-spark>=2.0.0b22", pre=True)
 )
 
 task_env = flyte.TaskEnvironment(
@@ -80,6 +81,6 @@ if __name__ == "__main__":
     # print("run url:", run.url)
     run.wait()
 
-    action_details = flyte.remote.ActionDetails.get(run_name=run.name, name="a0")
+    action_details = flyte.remote.ActionDetails.get(run_name="rpwsthl6rjqw8dm2vsnr", name="a0")
     for log in action_details.pb2.attempts[-1].log_info:
         print(f"{log.name}: {log.uri}")
