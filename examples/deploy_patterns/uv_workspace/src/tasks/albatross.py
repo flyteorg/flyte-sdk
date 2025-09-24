@@ -24,5 +24,5 @@ async def albatross_task() -> str:
 if __name__ == "__main__":
     current_dir = Path(__file__).parent
     flyte.init_from_config(root_dir=current_dir.parent)
-    run = flyte.run(albatross_task)
+    run = flyte.with_runcontext(copy_style="none", version="x").run(albatross_task)
     print(run.url)
