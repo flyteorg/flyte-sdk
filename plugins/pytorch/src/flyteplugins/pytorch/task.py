@@ -61,11 +61,9 @@ class Elastic:
 
     Args:
         nnodes (Union[int, str]): Number of nodes to use. Can be a fixed int or a range
-            string (e.g., "2:4" for elastic training). Defaults to 1.
+            string (e.g., "2:4" for elastic training).
+        nproc_per_node (int): Number of processes to launch per node.
         rdzv_backend (literal): Rendezvous backend to use. Typically "c10d". Defaults to "c10d".
-        backend (literal): Communication backend to use. Common values are "gloo" or "nccl".
-            Defaults to "gloo".
-        nproc_per_node (int): Number of processes to launch per node. Defaults to 1.
         run_policy (RunPolicy, optional): Run policy applied to the job execution.
             Defaults to None.
         monitor_interval (int): Interval (in seconds) to monitor the job's state.
@@ -77,9 +75,8 @@ class Elastic:
     """
 
     nnodes: Union[int, str]
-    rdzv_backend: Literal["c10d"] = "c10d"
-    backend: Literal["gloo", "nccl", "mpi"] = "gloo"
-    nproc_per_node: int = 1
+    nproc_per_node: int
+    rdzv_backend: Literal["c10d", "etcd", "etcd-v2"] = "c10d"
     run_policy: Optional[RunPolicy] = None
     monitor_interval: int = 3
     max_restarts: int = 3
