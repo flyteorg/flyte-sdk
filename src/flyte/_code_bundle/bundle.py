@@ -187,6 +187,7 @@ async def download_bundle(bundle: CodeBundle) -> pathlib.Path:
         # fsspec, which requires a trailing slash in case of pre-existing directory.
         process = await asyncio.create_subprocess_exec(
             "tar",
+            "--overwrite",
             "-xvf",
             str(downloaded_bundle),
             "-C",
