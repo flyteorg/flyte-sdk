@@ -30,6 +30,7 @@ from flyte._image import (
     UVScript,
     WorkDir,
 )
+from flyte._internal.imagebuild.docker_builder import CopyConfigHandler, DockerImageBuilder
 from flyte._internal.imagebuild.image_builder import ImageBuilder, ImageChecker
 from flyte._internal.imagebuild.utils import copy_files_to_context
 from flyte._internal.runtime.task_serde import get_security_context
@@ -182,6 +183,9 @@ async def _validate_configuration(image: Image) -> Tuple[str, Optional[str]]:
 def _get_layers_proto(image: Image, context_path: Path) -> "image_definition_pb2.ImageSpec":
     from flyte._protos.imagebuilder import definition_pb2 as image_definition_pb2
 
+    docker_ignore_file_path: Optional[Path] = None
+    docker_ignore_file_path = DockerImageBuilder.get_docker_ignore(image)
+
     if image.dockerfile is not None:
         raise flyte.errors.ImageBuildError(
             "Custom Dockerfile is not supported with remote image builder.You can use local image builder instead."
@@ -261,7 +265,10 @@ def _get_layers_proto(image: Image, context_path: Path) -> "image_definition_pb2
                 pyproject_dst = copy_files_to_context(layer.pyproject, context_path)
             else:
                 # Copy the entire project
-                pyproject_dst = copy_files_to_context(layer.pyproject.parent, context_path)
+                docker_ignore_patterns = CopyConfigHandler.list_dockerignore(
+                    layer.pyproject.parent, docker_ignore_file_path
+                )
+                pyproject_dst = copy_files_to_context(layer.pyproject.parent, context_path, docker_ignore_patterns)
 
             uv_layer = image_definition_pb2.Layer(
                 uv_project=image_definition_pb2.UVProject(

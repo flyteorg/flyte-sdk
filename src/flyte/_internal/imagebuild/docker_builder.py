@@ -266,7 +266,9 @@ class AptPackagesHandler:
 
 class UVProjectHandler:
     @staticmethod
-    async def handle(layer: UVProject, context_path: Path, dockerfile: str) -> str:
+    async def handle(
+        layer: UVProject, context_path: Path, dockerfile: str, docker_ignore_file_path: Optional[Path]
+    ) -> str:
         secret_mounts = _get_secret_mounts_layer(layer.secret_mounts)
         if layer.extra_index_urls and "--no-install-project" in layer.extra_index_urls:
             # Only Copy pyproject.yaml and uv.lock.
@@ -280,7 +282,10 @@ class UVProjectHandler:
             )
         else:
             # Copy the entire project.
-            pyproject_dst = copy_files_to_context(layer.pyproject.parent, context_path)
+            docker_ignore_patterns = CopyConfigHandler.list_dockerignore(
+                layer.pyproject.parent, docker_ignore_file_path
+            )
+            pyproject_dst = copy_files_to_context(layer.pyproject.parent, context_path, docker_ignore_patterns)
             if layer.uvlock:
                 # Sometimes the uv.lock file is in a different folder, if it's specified, let's copy it there explicitly
                 shutil.copy(layer.uvlock, pyproject_dst)
@@ -296,7 +301,9 @@ class UVProjectHandler:
 
 class PoetryProjectHandler:
     @staticmethod
-    async def handel(layer: PoetryProject, context_path: Path, dockerfile: str) -> str:
+    async def handel(
+        layer: PoetryProject, context_path: Path, dockerfile: str, docker_ignore_file_path: Optional[Path]
+    ) -> str:
         secret_mounts = _get_secret_mounts_layer(layer.secret_mounts)
         if layer.extra_args and "--no-root" in layer.extra_args:
             # Only Copy pyproject.yaml and poetry.lock.
@@ -310,7 +317,10 @@ class PoetryProjectHandler:
             )
         else:
             # Copy the entire project.
-            pyproject_dst = copy_files_to_context(layer.pyproject.parent, context_path)
+            docker_ignore_patterns = CopyConfigHandler.list_dockerignore(
+                layer.pyproject.parent, docker_ignore_file_path
+            )
+            pyproject_dst = copy_files_to_context(layer.pyproject.parent, context_path, docker_ignore_patterns)
             delta = POETRY_LOCK_INSTALL_TEMPLATE.substitute(
                 PYPROJECT_PATH=pyproject_dst.relative_to(context_path),
                 POETRY_INSTALL_ARGS=layer.extra_args or "",
@@ -486,11 +496,11 @@ async def _process_layer(
 
         case UVProject():
             # Handle UV project
-            dockerfile = await UVProjectHandler.handle(layer, context_path, dockerfile)
+            dockerfile = await UVProjectHandler.handle(layer, context_path, dockerfile, docker_ignore_file_path)
 
         case PoetryProject():
             # Handle Poetry project
-            dockerfile = await PoetryProjectHandler.handel(layer, context_path, dockerfile)
+            dockerfile = await PoetryProjectHandler.handel(layer, context_path, dockerfile, docker_ignore_file_path)
 
         case CopyConfig():
             # Handle local files and folders
@@ -621,7 +631,8 @@ class DockerImageBuilder(ImageBuilder):
         else:
             logger.info("Buildx builder already exists.")
 
-    def get_docker_ignore(self, image: Image) -> Optional[Path]:
+    @staticmethod
+    def get_docker_ignore(image: Image) -> Optional[Path]:
         """Get the .dockerignore file path from the image layers."""
         # Look for DockerIgnore layer in the image layers
         for layer in image._layers:
@@ -660,7 +671,7 @@ class DockerImageBuilder(ImageBuilder):
                 PYTHON_VERSION=f"{image.python_version[0]}.{image.python_version[1]}",
             )
 
-            docker_ignore_file_path = self.get_docker_ignore(image)
+            docker_ignore_file_path = DockerImageBuilder.get_docker_ignore(image)
             for layer in image._layers:
                 dockerfile = await _process_layer(layer, tmp_path, dockerfile, docker_ignore_file_path)
 

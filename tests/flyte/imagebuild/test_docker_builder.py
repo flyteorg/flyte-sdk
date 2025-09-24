@@ -12,6 +12,7 @@ from flyte._internal.imagebuild.docker_builder import (
     DockerImageBuilder,
     PipAndRequirementsHandler,
     PoetryProjectHandler,
+    UVProjectHandler,
 )
 
 
@@ -366,7 +367,7 @@ async def test_poetry_handler_without_project_install():
             )
 
             initial_dockerfile = "FROM python:3.9\n"
-            result = await PoetryProjectHandler.handel(poetry_project, context_path, initial_dockerfile)
+            result = await PoetryProjectHandler.handel(poetry_project, context_path, initial_dockerfile, None)
 
             assert "RUN --mount=type=cache,sharing=locked,mode=0777,target=/root/.cache/uv,id=uv" in result
             assert "RUN --mount=type=cache,sharing=locked,mode=0777,target=/tmp/poetry_cache,id=poetry" in result
@@ -393,8 +394,21 @@ async def test_poetry_handler_with_project_install():
             # Create PoetryProject without --no-root flag
             poetry_project = PoetryProject(pyproject=pyproject_file.absolute(), poetry_lock=None)
 
+            dockerignore_file = user_folder / ".dockerignore"
+            dockerignore_file.write_text("*.txt\n.cache\n")
+            cache_dir = user_folder / ".cache"
+            cache_dir.mkdir(parents=True, exist_ok=True)
+            cache_file = cache_dir / "temp.txt"
+            cache_file.write_text("temp")
+            exclude_file = user_folder / "memo.txt"
+            exclude_file.write_text("memo")
+            # Create a file that should be included
+            (user_folder / "main.py").write_text("print('hello')")
+
             initial_dockerfile = "FROM python:3.9\n"
-            result = await PoetryProjectHandler.handel(poetry_project, context_path, initial_dockerfile)
+            result = await PoetryProjectHandler.handel(
+                poetry_project, context_path, initial_dockerfile, dockerignore_file
+            )
 
             assert result.startswith(initial_dockerfile)
 
@@ -405,3 +419,61 @@ async def test_poetry_handler_with_project_install():
             assert "uv pip install poetry" in result
             assert "ENV POETRY_CACHE_DIR=/tmp/poetry_cache" in result
             assert "POETRY_VIRTUALENVS_IN_PROJECT=true" in result
+
+            # Calculate expected destination path
+            src_absolute = user_folder.absolute()
+            dst_path_str = str(src_absolute).replace("/", "./_flyte_abs_context/", 1)
+            expected_dst_path = context_path / dst_path_str
+
+            # Verify directory copy results and file exclusions
+            assert expected_dst_path.exists(), f"Directory should be copied to {expected_dst_path}"
+            assert expected_dst_path.is_dir(), "Should be a directory"
+            assert (expected_dst_path / "main.py").exists(), "main.py should be included"
+            assert not (expected_dst_path / "memo.txt").exists(), "memo.txt should be excluded"
+            assert not (expected_dst_path / ".cache").exists(), ".cache directory should be excluded"
+
+
+@pytest.mark.asyncio
+async def test_uvproject_handler_with_project_install():
+    with tempfile.TemporaryDirectory() as tmp_context:
+        context_path = Path(tmp_context)
+
+        with tempfile.TemporaryDirectory() as tmp_user_folder:
+            user_folder = Path(tmp_user_folder)
+            pyproject_file = user_folder / "pyproject.toml"
+            pyproject_file.write_text("[project]\nname = 'test-project'\nversion='0.1.0'")
+
+            # Create UVProject installing the whole project
+            from flyte._image import UVProject
+
+            uv_project = UVProject(pyproject=pyproject_file.absolute(), uvlock=None)
+
+            dockerignore_file = user_folder / ".dockerignore"
+            dockerignore_file.write_text("*.txt\n.cache\n")
+            cache_dir = user_folder / ".cache"
+            cache_dir.mkdir(parents=True, exist_ok=True)
+            (cache_dir / "temp.txt").write_text("temp")
+            (user_folder / "memo.txt").write_text("memo")
+            (user_folder / "main.py").write_text("print('hello')")
+
+            initial_dockerfile = "FROM python:3.9\n"
+            result = await UVProjectHandler.handle(
+                uv_project, context_path, initial_dockerfile, dockerignore_file,
+            )
+
+            assert result.startswith(initial_dockerfile)
+            assert "COPY" in result
+            assert "RUN --mount=type=cache,sharing=locked,mode=0777,target=/root/.cache/uv,id=uv" in result
+            assert "uv sync" in result
+
+            # Calculate expected destination path
+            src_absolute = user_folder.absolute()
+            dst_path_str = str(src_absolute).replace("/", "./_flyte_abs_context/", 1)
+            expected_dst_path = context_path / dst_path_str
+
+            # Verify directory copy results and file exclusions
+            assert expected_dst_path.exists(), f"Directory should be copied to {expected_dst_path}"
+            assert expected_dst_path.is_dir(), "Should be a directory"
+            assert (expected_dst_path / "main.py").exists(), "main.py should be included"
+            assert not (expected_dst_path / "memo.txt").exists(), "memo.txt should be excluded"
+            assert not (expected_dst_path / ".cache").exists(), ".cache directory should be excluded"
