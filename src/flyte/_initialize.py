@@ -186,6 +186,28 @@ async def init(
     """
     from flyte._utils import get_cwd_editable_install, org_from_endpoint, sanitize_endpoint
 
+    if endpoint or api_key:
+        if project is None:
+            raise ValueError(
+                "Project must be provided to initialize the client. "
+                "Please set 'project' in the 'task' section of your config file, "
+                "or pass it directly to flyte.init(project='your-project-name')."
+            )
+
+        if domain is None:
+            raise ValueError(
+                "Domain must be provided to initialize the client. "
+                "Please set 'domain' in the 'task' section of your config file, "
+                "or pass it directly to flyte.init(domain='your-domain-name')."
+            )
+
+        if org is None and org_from_endpoint(endpoint) is None:
+            raise ValueError(
+                "Organization must be provided to initialize the client. "
+                "Please set 'org' in the 'task' section of your config file, "
+                "or pass it directly to flyte.init(org='your-org-name')."
+            )
+
     _initialize_logger(log_level=log_level)
 
     global _init_config  # noqa: PLW0603
@@ -283,6 +305,7 @@ async def init_from_config(
     _initialize_logger(log_level=log_level)
 
     logger.info(f"Flyte config initialized as {cfg}", extra={"highlighter": ReprHighlighter()})
+
     await init.aio(
         org=cfg.task.org,
         project=cfg.task.project,

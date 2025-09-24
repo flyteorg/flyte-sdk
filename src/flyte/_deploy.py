@@ -2,12 +2,12 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import sys
 import typing
-
-import cloudpickle
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
 
+import cloudpickle
 import rich.repr
 
 import flyte.errors
@@ -163,9 +163,11 @@ async def _build_images(deployment: DeploymentPlan) -> ImageCache:
         logger.warning(f"Built Image for environment {env_name}, image: {image_uri}")
         env = deployment.envs[env_name]
         if isinstance(env.image, Image):
-            image_identifier_map[env.image.identifier] = image_uri
+            py_version = "{}.{}".format(*env.image.python_version)
+            image_identifier_map[env.image.identifier] = {py_version: image_uri}
         elif env.image == "auto":
-            image_identifier_map["auto"] = image_uri
+            py_version = "{}.{}".format(sys.version_info.major, sys.version_info.minor)
+            image_identifier_map["auto"] = {py_version: image_uri}
 
     return ImageCache(image_lookup=image_identifier_map)
 
