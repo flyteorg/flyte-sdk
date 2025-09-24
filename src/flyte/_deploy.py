@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import sys
 import typing
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
@@ -163,11 +162,9 @@ async def _build_images(deployment: DeploymentPlan) -> ImageCache:
         logger.warning(f"Built Image for environment {env_name}, image: {image_uri}")
         env = deployment.envs[env_name]
         if isinstance(env.image, Image):
-            py_version = "{}.{}".format(*env.image.python_version)
-            image_identifier_map[env_name] = {py_version: image_uri}
+            image_identifier_map[env_name] = image_uri
         elif env.image == "auto":
-            py_version = "{}.{}".format(sys.version_info.major, sys.version_info.minor)
-            image_identifier_map["auto"] = {py_version: image_uri}
+            image_identifier_map["auto"] = image_uri
 
     return ImageCache(image_lookup=image_identifier_map)
 

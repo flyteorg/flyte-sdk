@@ -235,7 +235,7 @@ class ImageBuildEngine:
 
 
 class ImageCache(BaseModel):
-    image_lookup: Dict[str, Dict[str, str]]
+    image_lookup: Dict[str, str]
     serialized_form: str | None = None
 
     @property

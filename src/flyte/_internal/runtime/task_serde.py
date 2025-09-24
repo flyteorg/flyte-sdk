@@ -4,7 +4,6 @@ It includes a Resolver interface for loading tasks, and functions to load classe
 """
 
 import copy
-import sys
 import typing
 from datetime import timedelta
 from typing import Optional, cast
@@ -225,20 +224,7 @@ def _get_urun_container(
             f"Image {task_template.image} not found in the image cache: {serialize_context.image_cache.image_lookup}."
         )
     else:
-        python_version_str = "{}.{}".format(sys.version_info.major, sys.version_info.minor)
-        version_lookup = serialize_context.image_cache.image_lookup[image_id]
-        if python_version_str in version_lookup:
-            img_uri = version_lookup[python_version_str]
-        elif version_lookup:
-            # Fallback: try to get any available version
-            fallback_py_version, img_uri = next(iter(version_lookup.items()))
-            logger.warning(
-                f"Image {task_template.image} for python version {python_version_str} "
-                f"not found in the image cache: {serialize_context.image_cache.image_lookup}.\n"
-                f"Fall back using image {img_uri} for python version {fallback_py_version} ."
-            )
-        else:
-            img_uri = task_template.image.uri
+        img_uri = serialize_context.image_cache.image_lookup[image_id]
 
     return tasks_pb2.Container(
         image=img_uri,
