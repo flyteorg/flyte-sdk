@@ -352,6 +352,7 @@ class Controller:
                         ),
                         spec=action.task,
                         cache_key=cache_key,
+                        cluster=action.queue,
                     )
                 elif action.type == "trace":
                     trace = action.trace
