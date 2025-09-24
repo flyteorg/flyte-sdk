@@ -161,10 +161,7 @@ async def _build_images(deployment: DeploymentPlan) -> ImageCache:
     for env_name, image_uri in final_images:
         logger.warning(f"Built Image for environment {env_name}, image: {image_uri}")
         env = deployment.envs[env_name]
-        if isinstance(env.image, Image):
-            image_identifier_map[env_name] = image_uri
-        elif env.image == "auto":
-            image_identifier_map["auto"] = image_uri
+        image_identifier_map[env_name] = image_uri
 
     return ImageCache(image_lookup=image_identifier_map)
 

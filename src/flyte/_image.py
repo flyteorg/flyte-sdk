@@ -393,9 +393,6 @@ class Image:
     platform: Tuple[Architecture, ...] = field(default=("linux/amd64",))
     python_version: Tuple[int, int] = field(default_factory=_detect_python_version)
 
-    # For .auto() images. Don't compute an actual identifier.
-    _identifier_override: Optional[str] = field(default=None, init=False)
-
     # Layers to be added to the image. In init, because frozen, but users shouldn't access, so underscore.
     _layers: Tuple[Layer, ...] = field(default_factory=tuple)
 
@@ -490,9 +487,6 @@ class Image:
                     image = image.with_pip_packages(f"flyte=={flyte_version}")
         if not dev_mode:
             object.__setattr__(image, "_tag", preset_tag)
-        # Set this to auto for all auto images because the meaning of "auto" can change (based on logic inside
-        # _get_default_image_for, acts differently in a running task container) so let's make sure it stays auto.
-        object.__setattr__(image, "_identifier_override", "auto")
 
         return image
 
@@ -533,9 +527,6 @@ class Image:
         if registry or name:
             return base_image.clone(registry=registry, name=name)
 
-        # # Set this to auto for all auto images because the meaning of "auto" can change (based on logic inside
-        # # _get_default_image_for, acts differently in a running task container) so let's make sure it stays auto.
-        # object.__setattr__(base_image, "_identifier_override", "auto")
         return base_image
 
     @classmethod

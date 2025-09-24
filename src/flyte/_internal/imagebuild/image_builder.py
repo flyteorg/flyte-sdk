@@ -135,10 +135,7 @@ class ImageBuildEngine:
 
     ImageBuilderType = typing.Literal["local", "remote"]
 
-    _SEEN_IMAGES: typing.ClassVar[typing.Dict[str, str]] = {
-        # Set default for the auto container. See Image._identifier_override for more info.
-        "auto": Image.from_debian_base().uri,
-    }
+    _SEEN_IMAGES: typing.ClassVar[typing.Dict[str, str]]
 
     @staticmethod
     @alru_cache
