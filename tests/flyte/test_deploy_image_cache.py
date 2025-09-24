@@ -38,8 +38,5 @@ async def test_create_image_cache_lookup(python_version, expected_py_version):
         # Check that environment name is present in the image_lookup dict
         assert env_name in image_cache.image_lookup
 
-        # Check the image_lookup dict contains the expected python version
-        version_lookup = image_cache.image_lookup[env_name]
-        # Make sure there's only one python version presented
-        assert len(version_lookup) == 1
-        assert version_lookup[expected_py_version] == fake_image_uri
+        # Check the image_lookup dict contains the expected image URI
+        assert image_cache.image_lookup[env_name] == fake_image_uri

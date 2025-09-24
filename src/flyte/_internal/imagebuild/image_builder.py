@@ -273,11 +273,10 @@ class ImageCache(BaseModel):
         """
         tuples = []
         for k, v in self.image_lookup.items():
-            for py_version, image_uri in v.items():
-                tuples.append(
-                    [
-                        ("Name", f"{k} (py{py_version})"),
-                        ("image", image_uri),
-                    ]
-                )
+            tuples.append(
+                [
+                    ("Name", k),
+                    ("image", v),
+                ]
+            )
         return tuples
