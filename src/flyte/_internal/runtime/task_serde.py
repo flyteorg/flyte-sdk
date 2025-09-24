@@ -213,8 +213,10 @@ def _get_urun_container(
         raise flyte.errors.RuntimeSystemError("BadConfig", "Image is not a valid image")
 
     image_id = ""
-    if task_template.parent_env and (task_env := task_template.parent_env()):
-        image_id = task_env.name
+    if task_template.parent_env is not None:
+        task_env = task_template.parent_env()
+        if task_env is not None:
+            image_id = task_env.name
     else:
         raise flyte.errors.RuntimeSystemError("BadConfig", "Task template has no parent environment")
 
