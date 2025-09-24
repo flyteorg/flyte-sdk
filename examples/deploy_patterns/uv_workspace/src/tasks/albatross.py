@@ -10,7 +10,7 @@ env = flyte.TaskEnvironment(
     image=flyte.Image.from_debian_base().with_uv_project(
         pyproject_file=Path("./pyproject.toml"),
         extra_args="--only-group all",
-    ),
+    ).with_local_v2(),
 )
 
 

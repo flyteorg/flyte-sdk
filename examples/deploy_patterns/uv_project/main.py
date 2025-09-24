@@ -39,7 +39,7 @@ if __name__ == "__main__":
     flyte.init_from_config()
 
     # Run your tasks remotely inline and pass parameter data.
-    run = flyte.run(main, x_list=list(range(10)))
+    run = flyte.with_runcontext(copy_style="none", version="x").run(main, x_list=list(range(10)))
 
     # Print various attributes of the run.
     print(run.name)
