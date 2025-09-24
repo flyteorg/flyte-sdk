@@ -90,20 +90,11 @@ class LocalTaskCache(object):
         if LocalTaskCache._conn is None:
             raise RuntimeError("Cache not properly initialized")
 
-        # Check if cache entry already exists
-        existing = await LocalTaskCache.get(cache_key)
-
         output_bytes = value.proto_outputs.SerializeToString()
 
-        # NOTE: We will directly update the value in cache if it already exists
-        if existing:
-            await LocalTaskCache._conn.execute(
-                "UPDATE task_cache SET value = ? WHERE key = ?", (output_bytes, cache_key)
-            )
-        else:
-            await LocalTaskCache._conn.execute(
-                "INSERT INTO task_cache (key, value) VALUES (?, ?)", (cache_key, output_bytes)
-            )
+        await LocalTaskCache._conn.execute(
+            "INSERT OR REPLACE INTO task_cache (key, value) VALUES (?, ?)", (cache_key, output_bytes)
+        )
 
         await LocalTaskCache._conn.commit()
 
