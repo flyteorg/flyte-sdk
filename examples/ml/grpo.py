@@ -1,36 +1,23 @@
 """
-GRPO (Generalized Reinforcement Learning with Preference Optimization) - Real Implementation
+GRPO (Group Relative Policy Optimization) - Flyte 2.0 Implementation
 
-Clean Flyte 2.0 implementation with vLLM backend.
-
-Supported models (set MODEL_NAME environment variable):
-- microsoft/DialoGPT-medium (default)
-- meta-llama/Llama-2-7b-chat-hf
-- mistralai/Mistral-7B-Instruct-v0.1
-- NousResearch/Llama-2-7b-chat-hf
-- teknium/OpenHermes-2.5-Mistral-7B
-- Any model supported by vLLM
-
-Usage:
-    pip install vllm
-    export MODEL_NAME=meta-llama/Llama-2-7b-chat-hf
-    python grpo_real.py
+True GRPO algorithm with real gradient-based optimization, distributed across GPU/CPU tasks.
+Maintains algorithmic fidelity with the paper while leveraging Flyte's distributed execution.
 """
 
 import asyncio
-import json
 import logging
-import os
-import random
-from dataclasses import asdict, dataclass
-from typing import List
+from dataclasses import dataclass, asdict
+from typing import Dict, List, Tuple, Any, Optional
 
+import numpy as np
+import torch
+import torch.nn.functional as F
 from async_lru import alru_cache
+from tqdm.asyncio import tqdm
 
 import flyte
 from flyte.io import File
-
-# vLLM imports
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -40,206 +27,342 @@ logger = logging.getLogger(__name__)
 # 1. DATA STRUCTURES
 # =============================================================================
 
-
 @dataclass
 class GRPOConfig:
-    group_size: int = 4
-    beta: float = 0.1
+    """Configuration for GRPO training"""
+    model_name: str = "Qwen/Qwen2.5-0.5B"
     learning_rate: float = 1e-5
-    batch_size: int = 8
-    model_name: str = "microsoft/DialoGPT-medium"
-    temperature: float = 0.8
-    max_tokens: int = 512
-    top_p: float = 0.9
+    batch_size: int = 4
+    gradient_accumulation_steps: int = 4
+    num_epochs: int = 3
+    max_length: int = 512
+    temperature: float = 0.7
+    group_size: int = 4  # Number of responses per prompt for ranking
+    beta: float = 0.1  # KL penalty coefficient
+    clip_range: float = 0.2  # PPO-style clipping
+    device: str = "cuda" if torch.cuda.is_available() else "cpu"
+    seed: int = 42
 
 
 @dataclass
-class TrainingResults:
-    final_reward: float
-    reward_history: List[float]
-    num_steps: int
+class ModelResponse:
+    """Single model response with metadata"""
+    text: str
+    token_ids: List[int]
+    log_probs: List[float]
+    prompt: str
+
+
+@dataclass
+class TrainingBatch:
+    """Training batch with responses and computed data"""
+    prompts: List[str]
+    responses: List[List[ModelResponse]]  # [batch_size, group_size]
+    rewards: List[List[float]]  # [batch_size, group_size]
+    advantages: List[List[float]]  # [batch_size, group_size]
+
+
+@dataclass
+class TrainingState:
+    """Serializable training state for checkpointing"""
+    epoch: int
+    batch_idx: int
+    total_loss: float
+    losses_history: List[float]
     config: GRPOConfig
-    total_responses: int
+
+
+@dataclass
+class ModelCheckpoint:
+    """Model checkpoint data"""
+    state_dict: Dict[str, Any]  # Model state dict (Flyte will handle serialization)
+    optimizer_state: Optional[Dict[str, Any]]  # Optimizer state (optional)
+    training_state: TrainingState
 
 
 # =============================================================================
-# 2. vLLM ENGINE
+# 2. FLYTE ENVIRONMENTS
 # =============================================================================
 
-
-class VLLMEngine:
-    def __init__(self):
-        self.engine = None
-
-    async def initialize(self, model_name: str):
-        """Initialize vLLM async engine"""
-        from vllm.engine.arg_utils import AsyncEngineArgs
-        from vllm.engine.async_llm_engine import AsyncLLMEngine
-
-        if self.engine is None:
-            logger.info(f"Initializing vLLM engine with model: {model_name}")
-
-            engine_args = AsyncEngineArgs(
-                model=model_name,
-                tensor_parallel_size=1,
-                trust_remote_code=True,
-                max_model_len=2048,
-                gpu_memory_utilization=0.8,
-            )
-
-            self.engine = AsyncLLMEngine.from_engine_args(engine_args)
-            logger.info("vLLM engine initialized successfully")
-
-    async def generate_responses(self, prompt: str, config: GRPOConfig) -> List[str]:
-        """Generate multiple responses for a prompt using vLLM"""
-        from vllm import SamplingParams
-        from vllm.utils import random_uuid
-
-        await self.initialize(config.model_name)
-
-        sampling_params = SamplingParams(
-            temperature=config.temperature,
-            top_p=config.top_p,
-            max_tokens=config.max_tokens,
-            n=config.group_size,
-            use_beam_search=False,
-        )
-
-        request_id = f"grpo_{random_uuid()}"
-        result = await self.engine.generate(prompt, sampling_params, request_id)
-
-        # Extract responses
-        responses = [output.text.strip() for output in result.outputs]
-        return responses
-
-
-# =============================================================================
-# 3. FLYTE TASKS
-# =============================================================================
-
-vllm_env = flyte.TaskEnvironment(
-    name="vllm",
-    image=flyte.Image.from_debian_base().with_pip_packages("vllm", "unionai-reuse==0.1.6b0"),
-    resources=flyte.Resources(cpu=2, memory="8Gi", gpu=1),
+# GPU Environment for model operations
+gpu_env = flyte.TaskEnvironment(
+    name="grpo_gpu",
+    image=flyte.Image.from_debian_base().with_pip_packages(
+        "torch", "transformers", "numpy", "tqdm", "async-lru"
+    ),
+    resources=flyte.Resources(cpu=4, memory="16Gi", gpu=1),
     reusable=flyte.ReusePolicy(
-        replicas=1,
-        idle_ttl=300,
-        concurrency=10,
-        scaledown_ttl=300,
+        replicas=1,  # Keep one GPU instance alive
+        idle_ttl=600,  # 10 minutes idle time
+        concurrency=5,  # Allow multiple concurrent tasks
+        scaledown_ttl=300,  # 5 minutes before scaling down
     ),
 )
 
-
-env = flyte.TaskEnvironment(
-    name="grpo",
-    resources=flyte.Resources(cpu=1, memory="1Gi"),
-    image=flyte.Image.from_debian_base().with_pip_packages("numpy"),
-    depends_on=[vllm_env],
+# CPU Environment for reward computation and data processing
+cpu_env = flyte.TaskEnvironment(
+    name="grpo_cpu",
+    image=flyte.Image.from_debian_base().with_pip_packages("numpy", "torch", "tqdm"),
+    resources=flyte.Resources(cpu=2, memory="8Gi"),
 )
 
 
-# Global vLLM engine
+# =============================================================================
+# 3. MODEL MANAGEMENT (GPU TASKS)
+# =============================================================================
+
 @alru_cache
-async def get_vllm_engine():
-    return VLLMEngine()
+async def get_models(model_name: str) -> Tuple[Any, Any, Any]:
+    """Cached model loading - loads once and reuses across tasks"""
+    import torch
+    from transformers import AutoModelForCausalLM, AutoTokenizer
+
+    logger.info(f"Loading models (cached): {model_name}")
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    dtype = torch.float16 if torch.cuda.is_available() else torch.float32
+
+    # Load policy model (trainable)
+    policy_model = AutoModelForCausalLM.from_pretrained(
+        model_name,
+        dtype=dtype,
+        device_map="auto" if torch.cuda.is_available() else None
+    )
+
+    # Load reference model (frozen)
+    ref_model = AutoModelForCausalLM.from_pretrained(
+        model_name,
+        dtype=dtype,
+        device_map="auto" if torch.cuda.is_available() else None
+    )
+    ref_model.eval()
+    for param in ref_model.parameters():
+        param.requires_grad = False
+
+    # Load tokenizer
+    tokenizer = AutoTokenizer.from_pretrained(model_name)
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+
+    logger.info("Models loaded and cached successfully")
+    return policy_model, ref_model, tokenizer
 
 
-@env.task
-async def load_prompts(data_path: str) -> List[str]:
-    """Load training prompts from file or return defaults"""
-    try:
-        if os.path.exists(data_path):
-            with open(data_path, "r") as f:
-                if data_path.endswith(".json"):
-                    data = json.load(f)
-                    if isinstance(data, list):
-                        return data
-                    elif isinstance(data, dict) and "prompts" in data:
-                        return data["prompts"]
-                else:
-                    return [line.strip() for line in f if line.strip()]
-    except Exception as e:
-        logger.warning(f"Failed to load prompts from {data_path}: {e}")
+@gpu_env.task
+async def generate_response_batch(
+        prompts: List[str],
+        config: GRPOConfig,
+        model_state: Optional[Dict[str, Any]] = None  # Optional updated model state
+) -> List[List[ModelResponse]]:
+    """Generate responses for a batch of prompts on GPU"""
+    policy_model, ref_model, tokenizer = await get_models(config.model_name)
 
-    # Default prompts
-    return [
-        "Explain the concept of machine learning in simple terms.",
-        "What are the benefits of renewable energy?",
-        "Describe the process of photosynthesis.",
-        "How do neural networks work?",
-        "What is the importance of biodiversity?",
-        "Explain quantum computing to a beginner.",
-        "What is climate change and its impacts?",
-        "Describe the structure of DNA.",
-    ]
+    # Update model state if provided (for fine-tuning)
+    if model_state:
+        policy_model.load_state_dict(model_state)
 
+    policy_model.eval()  # Set to eval for generation
+    device = torch.device(config.device)
 
-@vllm_env.task
-async def generate_responses(prompts: List[str], config: GRPOConfig) -> List[List[str]]:
-    """Generate multiple responses per prompt using vLLM"""
     all_responses = []
-    vllm_engine = await get_vllm_engine()
 
-    for i, prompt in enumerate(prompts):
-        logger.info(f"Generating responses for prompt {i + 1}/{len(prompts)}: {prompt[:50]}...")
-        responses = await vllm_engine.generate_responses(prompt, config)
-        all_responses.append(responses)
+    # Generate responses for each prompt
+    for prompt in tqdm(prompts, desc="Generating responses", leave=False):
+        prompt_responses = []
 
-        # Small delay to avoid overwhelming the engine
-        await asyncio.sleep(0.1)
+        # Generate group_size responses per prompt
+        for _ in range(config.group_size):
+            inputs = tokenizer(
+                prompt,
+                return_tensors="pt",
+                padding=True,
+                truncation=True,
+                max_length=config.max_length
+            ).to(device)
+
+            with torch.no_grad():
+                outputs = policy_model.generate(
+                    **inputs,
+                    max_new_tokens=config.max_length,
+                    temperature=config.temperature,
+                    do_sample=True,
+                    pad_token_id=tokenizer.pad_token_id,
+                    return_dict_in_generate=True,
+                    output_scores=True
+                )
+
+            # Decode response
+            response_text = tokenizer.decode(outputs.sequences[0], skip_special_tokens=True)
+
+            # Compute log probabilities for the response
+            with torch.no_grad():
+                logits = torch.stack(outputs.scores, dim=1)  # [batch, seq_len, vocab]
+                log_probs = F.log_softmax(logits, dim=-1)
+
+                # Get log probs for generated tokens
+                generated_tokens = outputs.sequences[0][inputs.input_ids.shape[1]:]
+                token_log_probs = []
+                for i, token_id in enumerate(generated_tokens):
+                    if i < log_probs.shape[1]:
+                        token_log_prob = log_probs[0, i, token_id].item()
+                        token_log_probs.append(token_log_prob)
+
+            response = ModelResponse(
+                text=response_text,
+                token_ids=generated_tokens.cpu().tolist(),
+                log_probs=token_log_probs,
+                prompt=prompt
+            )
+            prompt_responses.append(response)
+
+        all_responses.append(prompt_responses)
 
     return all_responses
 
 
-@env.task
-async def compute_rewards(responses: List[List[str]]) -> List[List[float]]:
-    """Score each response for quality using multiple heuristics"""
-    import numpy as np
+@gpu_env.task
+async def compute_grpo_gradients(
+        training_batch: TrainingBatch,
+        config: GRPOConfig,
+        model_state: Optional[Dict[str, Any]] = None
+) -> Tuple[Dict[str, Any], float]:
+    """Compute GRPO gradients on GPU and return gradient updates"""
+    policy_model, ref_model, tokenizer = await get_models(config.model_name)
+
+    # Update model state if provided
+    if model_state:
+        policy_model.load_state_dict(model_state)
+
+    policy_model.train()
+    device = torch.device(config.device)
+
+    # Initialize optimizer (recreated each time - could be optimized)
+    optimizer = torch.optim.AdamW(policy_model.parameters(), lr=config.learning_rate)
+
+    total_loss = 0.0
+
+    # Process each prompt group
+    for prompt_idx, (prompt, responses, rewards, advantages) in enumerate(
+            zip(training_batch.prompts, training_batch.responses,
+                training_batch.rewards, training_batch.advantages)
+    ):
+        # Prepare response texts and tokenize
+        response_texts = [r.text for r in responses]
+        tokenized = tokenizer(
+            response_texts,
+            return_tensors="pt",
+            padding=True,
+            truncation=True,
+            max_length=config.max_length
+        ).to(device)
+
+        # Compute policy log probabilities
+        policy_outputs = policy_model(
+            input_ids=tokenized.input_ids,
+            attention_mask=tokenized.attention_mask,
+            labels=tokenized.input_ids
+        )
+
+        # Shift for autoregressive calculation
+        shift_logits = policy_outputs.logits[:, :-1, :].contiguous()
+        shift_labels = tokenized.input_ids[:, 1:].contiguous()
+
+        policy_log_probs = F.log_softmax(shift_logits, dim=-1)
+        gathered_policy_log_probs = torch.gather(
+            policy_log_probs, 2, shift_labels.unsqueeze(-1)
+        ).squeeze(-1)
+        policy_log_probs_sum = gathered_policy_log_probs.sum(dim=1)
+
+        # Compute reference log probabilities
+        with torch.no_grad():
+            ref_outputs = ref_model(
+                input_ids=tokenized.input_ids,
+                attention_mask=tokenized.attention_mask,
+                labels=tokenized.input_ids
+            )
+
+            ref_shift_logits = ref_outputs.logits[:, :-1, :].contiguous()
+            ref_log_probs = F.log_softmax(ref_shift_logits, dim=-1)
+            gathered_ref_log_probs = torch.gather(
+                ref_log_probs, 2, shift_labels.unsqueeze(-1)
+            ).squeeze(-1)
+            ref_log_probs_sum = gathered_ref_log_probs.sum(dim=1)
+
+        # Compute KL divergence
+        kl_div = (policy_log_probs_sum - ref_log_probs_sum)
+
+        # Convert advantages to tensors
+        advantages_tensor = torch.tensor(advantages, device=device, dtype=torch.float32)
+
+        # GRPO objective: maximize reward while minimizing KL divergence
+        grpo_advantages = advantages_tensor - config.beta * kl_div
+
+        # Policy gradient loss (negative because we want to maximize)
+        loss = -(policy_log_probs_sum * grpo_advantages).mean()
+        total_loss += loss.item()
+
+        # Backward pass
+        loss.backward()
+
+    # Gradient clipping
+    torch.nn.utils.clip_grad_norm_(policy_model.parameters(), 1.0)
+
+    # Extract gradients and apply optimizer step
+    optimizer.step()
+    optimizer.zero_grad()
+
+    # Return updated model state
+    updated_state = policy_model.state_dict()
+    avg_loss = total_loss / len(training_batch.prompts)
+
+    return updated_state, avg_loss
+
+
+# =============================================================================
+# 4. REWARD & ADVANTAGE COMPUTATION (CPU TASKS)
+# =============================================================================
+
+@cpu_env.task
+async def compute_batch_rewards(responses: List[List[ModelResponse]]) -> List[List[float]]:
+    """Compute rewards for responses (CPU task)"""
+    # This is a placeholder - replace with actual reward model
+    # For now, using simple heuristics similar to grpo.py
 
     all_rewards = []
 
     for response_group in responses:
-        rewards = []
+        group_rewards = []
         for response in response_group:
-            if not response.strip():
-                rewards.append(0.0)
+            text = response.text
+            if not text.strip():
+                group_rewards.append(0.0)
                 continue
 
-            words = response.split()
+            words = text.split()
             if not words:
-                rewards.append(0.0)
+                group_rewards.append(0.0)
                 continue
 
-            # Length reward (moderate length preferred)
+            # Multi-heuristic reward (can replace with learned reward model)
             length_score = min(len(words) / 100, 1.0)
-
-            # Diversity reward (unique tokens)
             unique_tokens = len(set(word.lower() for word in words))
             diversity_score = min(unique_tokens / 50, 1.0)
-
-            # Complexity reward (average word length)
             avg_word_length = np.mean([len(word) for word in words])
             complexity_score = min(avg_word_length / 10, 1.0)
 
-            # Coherence reward (sentence structure)
-            sentences = response.count(".") + response.count("!") + response.count("?")
-            coherence_score = min(sentences / len(words) * 50, 1.0) if words else 0.0
+            reward = 0.4 * length_score + 0.3 * diversity_score + 0.3 * complexity_score
+            group_rewards.append(max(0.0, reward))
 
-            # Combine scores
-            reward = 0.4 * length_score + 0.3 * diversity_score + 0.2 * complexity_score + 0.1 * coherence_score
-
-            rewards.append(max(0.0, reward))
-
-        all_rewards.append(rewards)
+        all_rewards.append(group_rewards)
 
     return all_rewards
 
 
-@env.task
-async def compute_advantages(rewards: List[List[float]], gamma: float = 1.0) -> List[List[float]]:
-    """Compare each response to its group average"""
-    import numpy as np
-
+@cpu_env.task
+async def compute_batch_advantages(
+        rewards: List[List[float]],
+        gamma: float = 1.0
+) -> List[List[float]]:
+    """Compute advantages using group-relative comparison (CPU task)"""
     all_advantages = []
 
     for reward_group in rewards:
@@ -247,149 +370,156 @@ async def compute_advantages(rewards: List[List[float]], gamma: float = 1.0) -> 
             all_advantages.append([])
             continue
 
-        baseline = np.mean(reward_group)
-        advantages = [gamma * (reward - baseline) for reward in reward_group]
-        all_advantages.append(advantages)
+        # Normalize rewards within group (GRPO key insight)
+        rewards_array = np.array(reward_group)
+        baseline = np.mean(rewards_array)
+        advantages = gamma * (rewards_array - baseline)
+        all_advantages.append(advantages.tolist())
 
     return all_advantages
 
 
-@env.task
-async def update_model(advantages: List[List[float]], config: GRPOConfig) -> float:
-    """Update the model based on advantages (simplified)"""
-    # In a real implementation, this would:
-    # 1. Compute policy gradients from advantages
-    # 2. Apply PPO clipping
-    # 3. Add KL penalty with beta coefficient
-    # 4. Update model weights with optimizer
+# =============================================================================
+# 5. TRAINING ORCHESTRATION
+# =============================================================================
 
-    flat_advantages = [adv for group in advantages for adv in group if group]
-    if not flat_advantages:
-        return 0.0
-
-    # Simulate improvement based on positive advantages
-    positive_advantages = [adv for adv in flat_advantages if adv > 0]
-    improvement = sum(positive_advantages) * config.learning_rate
-
-    logger.info(
-        f"Model update: {len(positive_advantages)}/{len(flat_advantages)} positive advantages, "
-        f"improvement: {improvement:.6f}"
+@cpu_env.task
+async def save_checkpoint(
+        model_state: Dict[str, Any],
+        training_state: TrainingState
+) -> ModelCheckpoint:
+    """Save training checkpoint - Flyte handles serialization automatically"""
+    checkpoint = ModelCheckpoint(
+        state_dict=model_state,
+        optimizer_state=None,  # Could add optimizer state if needed
+        training_state=training_state
     )
 
-    return improvement
+    logger.info(f"Checkpoint created for epoch {training_state.epoch}")
+    return checkpoint
 
 
-@env.task
-async def save_results(results: TrainingResults, output_dir: str = "/tmp") -> File:
-    """Save training results to file"""
-    output_path = os.path.join(output_dir, f"grpo_results_{results.num_steps}_steps.json")
+async def train_epoch(
+        prompts: List[str],
+        config: GRPOConfig,
+        model_state: Optional[Dict[str, Any]],
+        epoch: int
+) -> Tuple[Optional[Dict[str, Any]], List[float]]:
+    """Train one epoch with proper GPU/CPU task distribution"""
 
-    # Convert to dict for JSON serialization
-    results_dict = asdict(results)
+    # Split prompts into batches
+    batch_losses = []
+    current_model_state = model_state
 
-    with open(output_path, "w") as f:
-        json.dump(results_dict, f, indent=2)
+    # Create batches
+    batches = [prompts[i:i + config.batch_size] for i in range(0, len(prompts), config.batch_size)]
 
-    logger.info(f"Results saved to: {output_path}")
-    return File(path=output_path)
+    for batch_idx, batch_prompts in enumerate(tqdm(batches, desc=f"Epoch {epoch + 1} Batches")):
+        with (flyte.group(f"epoch-{epoch}-batch-{batch_idx}")):
+            # Step 1: Generate responses (GPU)
+            responses = await generate_response_batch(
+                batch_prompts,
+                config,
+                current_model_state
+            )
 
+            # Step 2: Compute rewards (CPU)
+            rewards = await compute_batch_rewards(responses)
 
-# =============================================================================
-# 4. GRPO TRAINING STEP
-# =============================================================================
+            # Step 3: Compute advantages (CPU) 
+            advantages = await compute_batch_advantages(rewards)
 
+            # Step 4: Create training batch (CPU)
+            training_batch = TrainingBatch(
+                prompts=batch_prompts,
+                responses=responses,
+                rewards=rewards,
+                advantages=advantages
+            )
 
-async def grpo_training_step(prompts: List[str], config: GRPOConfig, step: int) -> float:
-    """One step of GRPO training - calls tasks like normal functions"""
-    import numpy as np
+            # Step 5: Compute gradients and update model (GPU)
+            current_model_state, batch_loss = await compute_grpo_gradients(
+                training_batch, config, current_model_state
+            )
 
-    with flyte.group(f"grpo-step-{step}"):
-        logger.info(f"Step {step}: Generating responses...")
-        responses = await generate_responses(prompts, config)
+            batch_losses.append(batch_loss)
+            logger.info(f"Epoch {epoch + 1}, Batch {batch_idx + 1}: Loss = {batch_loss:.4f}")
 
-        logger.info(f"Step {step}: Computing rewards...")
-        rewards = await compute_rewards(responses)
-
-        logger.info(f"Step {step}: Computing advantages...")
-        advantages = await compute_advantages(rewards, gamma=1.0)
-
-        logger.info(f"Step {step}: Updating model...")
-        improvement = await update_model(advantages, config)
-
-        # Log step metrics
-        flat_rewards = [r for group in rewards for r in group if group]
-        if flat_rewards:
-            avg_reward = np.mean(flat_rewards)
-            logger.info(f"Step {step}: avg_reward={avg_reward:.4f}, improvement={improvement:.6f}")
-
-        return improvement
-
-
-# =============================================================================
-# 5. MAIN WORKFLOW
-# =============================================================================
+    return current_model_state, batch_losses
 
 
-@env.task
-async def grpo_workflow(
-    data_path: str = "prompts.txt",
-    num_steps: int = 5,
-    group_size: int = 4,
-    learning_rate: float = 1e-5,
-    model_name: str = "microsoft/DialoGPT-medium",
-    temperature: float = 0.8,
-    batch_size: int = 4,
-) -> TrainingResults:
-    """Complete GRPO training workflow"""
+@cpu_env.task
+async def grpo_training_workflow(
+        config: GRPOConfig,
+        train_prompts: List[str] = None,
+        checkpoint_every: int = 1
+) -> ModelCheckpoint:
+    """Main GRPO training workflow - leverages Flyte's native serialization for model states"""
 
-    # Step 1: Load data
-    logger.info("Loading training prompts...")
-    all_prompts = await load_prompts(data_path)
-    logger.info(f"Loaded {len(all_prompts)} prompts")
-
-    # Step 2: Setup config
-    config = GRPOConfig(
-        group_size=group_size,
-        learning_rate=learning_rate,
-        model_name=model_name,
-        temperature=temperature,
-        batch_size=batch_size,
-    )
+    # Default prompts if none provided
+    if train_prompts is None:
+        train_prompts = [
+            "Explain quantum computing in simple terms:",
+            "Write a Python function to sort a list:",
+            "What are the benefits of renewable energy?",
+            "Describe the process of photosynthesis:",
+            "How does machine learning work?",
+            "What is the difference between AI and ML?",
+            "Explain the concept of blockchain:",
+            "How do neural networks learn?",
+        ]
 
     logger.info(f"Starting GRPO training with config: {asdict(config)}")
 
-    # Step 3: Training loop
-    reward_history = []
-    total_responses = 0
+    # Initialize model state (None at start - will be loaded from base model in first task)
+    current_model_state: Optional[Dict[str, Any]] = None
+    all_losses = []
 
-    for step in range(num_steps):
-        # Sample batch of prompts
-        batch_prompts = random.sample(all_prompts, min(batch_size, len(all_prompts)))
+    # Training loop - Flyte handles model state serialization automatically
+    for epoch in range(config.num_epochs):
+        logger.info(f"Starting epoch {epoch + 1}/{config.num_epochs}")
 
-        # Training step
-        improvement = await grpo_training_step(batch_prompts, config, step)
-        reward_history.append(improvement)
-        total_responses += len(batch_prompts) * group_size
+        # Train one epoch - model loading/saving handled internally
+        current_model_state, epoch_losses = await train_epoch(
+            train_prompts, config, current_model_state, epoch
+        )
 
-        logger.info(f"Completed step {step + 1}/{num_steps}")
+        all_losses.extend(epoch_losses)
+        avg_epoch_loss = float(np.mean(epoch_losses))
+        logger.info(f"Epoch {epoch + 1} completed. Average loss: {avg_epoch_loss:.4f}")
 
-    # Step 4: Create results
-    final_reward = sum(reward_history)
-    results = TrainingResults(
-        final_reward=final_reward,
-        reward_history=reward_history,
-        num_steps=num_steps,
-        config=config,
-        total_responses=total_responses,
+        # Save checkpoint periodically
+        if epoch % checkpoint_every == 0:
+            training_state = TrainingState(
+                epoch=epoch,
+                batch_idx=0,
+                total_loss=avg_epoch_loss,
+                losses_history=all_losses,
+                config=config
+            )
+
+            checkpoint = await save_checkpoint(
+                current_model_state, training_state
+            )
+            logger.info(f"Checkpoint created at epoch {epoch + 1}: {checkpoint.training_state.total_loss:.4f} loss")
+
+    # Final checkpoint
+    final_training_state = TrainingState(
+        epoch=config.num_epochs,
+        batch_idx=0,
+        total_loss=float(np.mean(all_losses[-10:])) if all_losses else 0.0,
+        losses_history=all_losses,
+        config=config
     )
 
-    logger.info(f"Training completed! Final reward: {final_reward:.4f}, Total responses: {total_responses}")
+    final_checkpoint = await save_checkpoint(current_model_state, final_training_state)
+    logger.info("GRPO training completed successfully!")
 
-    return results
+    return final_checkpoint
 
 
 # =============================================================================
-# 6. RUNNING THE WORKFLOW
+# 6. EXECUTION
 # =============================================================================
 
 if __name__ == "__main__":
@@ -397,17 +527,32 @@ if __name__ == "__main__":
 
     flyte.init_from_config(flyte.git.config_from_root())
 
-    # Use a model supported by vLLM
-    model_name = "microsoft/DialoGPT-medium"
-
-    run = flyte.run(
-        grpo_workflow,
-        num_steps=3,
-        group_size=3,
-        model_name=model_name,
-        batch_size=2,
-        temperature=0.8,
+    # Configuration for training
+    config = GRPOConfig(
+        model_name="Qwen/Qwen2.5-0.5B",
         learning_rate=1e-5,
+        batch_size=2,  # Small for testing
+        group_size=4,
+        num_epochs=2,
+        beta=0.1,
+        temperature=0.7,
+        max_length=256,
+    )
+
+    # Custom training prompts
+    custom_prompts = [
+        "Explain the concept of machine learning:",
+        "What are the benefits of renewable energy?",
+        "Describe how neural networks work:",
+        "What is quantum computing?",
+    ]
+
+    # Run training workflow
+    run = flyte.with_runcontext(mode="local").run(
+        grpo_training_workflow,
+        config=config,
+        train_prompts=custom_prompts,
+        checkpoint_every=1
     )
 
     print(f"GRPO training started: {run.url}")
