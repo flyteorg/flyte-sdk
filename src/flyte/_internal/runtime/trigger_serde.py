@@ -30,7 +30,9 @@ def _to_schedule(m: Union[Cron, FixedRate], kickoff_arg_name: str | None = None)
 def to_trigger_details(
     task_id: task_definition_pb2.TaskIdentifier, t: Trigger
 ) -> trigger_definition_pb2.TriggerDetails:
-    env = [literals_pb2.KeyValuePair(key=k, value=v) for k, v in t.env_vars.items()] if t.env_vars else None
+    env = None
+    if t.env_vars:
+        env = run_definition_pb2.Envs([literals_pb2.KeyValuePair(key=k, value=v) for k, v in t.env_vars.items()])
 
     labels = run_definition_pb2.Labels(values=t.labels) if t.labels else None
 
@@ -46,10 +48,11 @@ def to_trigger_details(
     )
 
     kickoff_arg_name = None
-    for k, v in t.inputs.items():
-        if v is TriggerTime:
-            kickoff_arg_name = k
-            break
+    if t.inputs:
+        for k, v in t.inputs.items():
+            if v is TriggerTime:
+                kickoff_arg_name = k
+                break
 
     automation = _to_schedule(
         t.automation,

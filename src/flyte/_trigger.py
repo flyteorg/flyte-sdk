@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any, Dict, Mapping, Union
 
 import rich.repr
@@ -54,6 +55,7 @@ class FixedRate:
     """
 
     interval_minutes: int
+    start_time: datetime | None = None
 
     def __str__(self):
         return f"FixedRate Trigger: every {self.interval_minutes} minutes"

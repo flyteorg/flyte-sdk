@@ -257,7 +257,7 @@ class Trigger(ToJSONMixin):
                 yield (
                     "fixed_rate",
                     (
-                        f"Every [{r.value}] {r.unit.name} starting at "
+                        f"Every [{r.value}] {r.unit} starting at "
                         f"{r.start_time.ToDatetime() if automation.HasField('start_time') else 'now'}"
                     ),
                 )
