@@ -215,12 +215,13 @@ def _recursive_discover(planned_envs: Dict[str, Environment], env: Environment) 
     """
     # Skip if the environment is already planned
     if env.name in planned_envs:
-        return planned_envs
+        raise ValueError(f"Duplicate environment name '{env.name}' found")
+    # Add the environment to the existing envs
+    planned_envs[env.name] = env
+
     # Recursively discover dependent environments
     for dependent_env in env.depends_on:
         _recursive_discover(planned_envs, dependent_env)
-    # Add the environment to the existing envs
-    planned_envs[env.name] = env
     return planned_envs
 
 
@@ -231,7 +232,7 @@ def plan_deploy(*envs: Environment, version: Optional[str] = None) -> List[Deplo
     visited_envs: typing.Set[str] = set()
     for env in envs:
         if env.name in visited_envs:
-            continue
+            raise ValueError(f"Duplicate environment name '{env.name}' found")
         planned_envs = _recursive_discover({}, env)
         deployment_plans.append(DeploymentPlan(planned_envs, version=version))
         visited_envs.update(planned_envs.keys())
