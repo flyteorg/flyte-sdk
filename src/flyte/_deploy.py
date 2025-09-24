@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
 import cloudpickle
 import rich.repr
 
+import flyte._protos.app.app_definition_pb2 as app_definition_pb2
 import flyte.errors
 from flyte.models import SerializationContext
 from flyte.syncify import syncify
@@ -20,6 +21,7 @@ from ._initialize import ensure_client, get_client, get_common_config, requires_
 from ._logging import logger
 from ._task import TaskTemplate
 from ._task_environment import TaskEnvironment
+from .app._app_environment import App, AppEnvironment, AppSerializationSettings
 
 if TYPE_CHECKING:
     from flyte._protos.workflow import task_definition_pb2
@@ -40,6 +42,7 @@ class DeploymentPlan:
 class Deployment:
     envs: Dict[str, Environment]
     deployed_tasks: List[task_definition_pb2.TaskSpec] | None = None
+    deployed_apps: List[app_definition_pb2.App] | None = None
 
     def summary_repr(self) -> str:
         """
@@ -62,6 +65,21 @@ class Deployment:
                     [
                         ("name", task.task_template.id.name),
                         ("version", task.task_template.id.version),
+                    ]
+                )
+        return tuples
+
+    def app_repr(self) -> List[List[Tuple[str, str]]]:
+        """
+        Returns a detailed representation of the deployed apps.
+        """
+        tuples = []
+        if self.deployed_apps:
+            for app in self.deployed_apps:
+                tuples.append(
+                    [
+                        ("name", app.metadata.id.name),
+                        ("version", app.spec.runtime_metadata.version),
                     ]
                 )
         return tuples
@@ -129,6 +147,65 @@ async def _deploy_task(
         raise flyte.errors.DeploymentError(
             f"Failed to deploy task {task.name} file{task.source_file} with image {image_uri}, Error: {e!s}"
         ) from e
+
+
+async def _deploy_app(
+    app: App, serialization_context: SerializationContext, dryrun: bool = False
+) -> app_definition_pb2.App:
+    """
+    Deploy the given app.
+    """
+    ensure_client()
+    import grpc.aio
+
+    import flyte.remote
+
+    from ._internal.runtime.app_serde import translate_app_to_wire, upload_include_files
+    from ._protos.app import app_payload_pb2
+
+    additional_distribution = await upload_include_files(app)
+    materialized_inputs = {}
+
+    settings = AppSerializationSettings(
+        org=serialization_context.org,
+        project=serialization_context.project,
+        domain=serialization_context.domain,
+        version=serialization_context.version,
+        image_uri=serialization_context.image_cache.image_lookup[app.image.identifier],
+        desired_state=app_definition_pb2.Spec.DesiredState.DESIRED_STATE_ACTIVE,
+        additional_distribution=additional_distribution,
+        materialized_inputs=materialized_inputs,
+        is_serverless=False,
+    )
+
+    image_uri = app.image.uri if isinstance(app.image, Image) else app.image
+    app_idl = translate_app_to_wire(app, settings)
+
+    try:
+        if dryrun:
+            return translate_app_to_wire(app, settings)
+
+        app_idl = translate_app_to_wire(app, settings)
+        msg = f"Deploying app {app.name}, with image {image_uri} version {serialization_context.version}"
+        if app_idl.spec.HasField("container") and app_idl.spec.container.args:
+            msg += f" from {app_idl.spec.container.args[-3]}.{app_idl.spec.container.args[-1]}"
+        logger.info(msg)
+
+        try:
+            await get_client().app_service.Create(app_payload_pb2.CreateRequest(app=app_idl))
+            logger.info(f"Deployed app {app.name} with version {app_idl.spec.runtime_metadata.version}")
+        except grpc.aio.AioRpcError as e:
+            if e.code() == grpc.StatusCode.ALREADY_EXISTS:
+                logger.info(f"App {app.name} with image {image_uri} already exists, skipping deployment.")
+                return app_idl
+            raise
+
+        return app_idl
+    except Exception as exc:
+        logger.error(f"Failed to deploy app {app.name} with image {image_uri}: {exc}")
+        raise flyte.errors.DeploymentError(
+            f"Failed to deploy app {app.name} with image {image_uri}, Error: {exc!s}"
+        ) from exc
 
 
 async def _build_image_bg(env_name: str, image: Image) -> Tuple[str, str]:
@@ -204,6 +281,7 @@ async def apply(deployment_plan: DeploymentPlan, copy_style: CopyFiles, dryrun: 
     )
 
     tasks = []
+    apps = []
 
     for env_name, env in deployment_plan.envs.items():
         logger.info(f"Deploying environment {env_name}")
@@ -211,7 +289,13 @@ async def apply(deployment_plan: DeploymentPlan, copy_style: CopyFiles, dryrun: 
         if isinstance(env, TaskEnvironment):
             for task in env.tasks.values():
                 tasks.append(_deploy_task(task, dryrun=dryrun, serialization_context=sc))
-    return Deployment(envs=deployment_plan.envs, deployed_tasks=await asyncio.gather(*tasks))
+        if isinstance(env, AppEnvironment):
+            apps.append(_deploy_app(env.app, dryrun=dryrun, serialization_context=sc))
+    return Deployment(
+        envs=deployment_plan.envs,
+        deployed_tasks=await asyncio.gather(*tasks),
+        deployed_apps=await asyncio.gather(*apps),
+    )
 
 
 def _recursive_discover(planned_envs: Dict[str, Environment], env: Environment) -> Dict[str, Environment]:

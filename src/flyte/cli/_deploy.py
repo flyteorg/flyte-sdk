@@ -111,15 +111,19 @@ class DeployEnvCommand(click.RichCommand):
         obj: CLIConfig = ctx.obj
         obj.init(self.deploy_args.project, self.deploy_args.domain, root_dir=self.deploy_args.root_dir)
         with console.status("Deploying...", spinner="dots"):
-            deployment = flyte.deploy(
+            deployments = flyte.deploy(
                 self.env,
                 dryrun=self.deploy_args.dry_run,
                 copy_style=self.deploy_args.copy_style,
                 version=self.deploy_args.version,
             )
 
-        console.print(common.format("Environments", deployment[0].env_repr(), obj.output_format))
-        console.print(common.format("Tasks", deployment[0].task_repr(), obj.output_format))
+        for deployment in deployments:
+            console.print(common.format("Environments", deployment.env_repr(), obj.output_format))
+            if hasattr(deployment, "task_repr"):
+                console.print(common.format("Tasks", deployment.task_repr(), obj.output_format))
+            if hasattr(deployment, "app_repr"):
+                console.print(common.format("Apps", deployment.app_repr(), obj.output_format))
 
 
 class DeployEnvRecursiveCommand(click.Command):
