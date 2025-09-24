@@ -212,6 +212,7 @@ class PoetryProject(Layer):
     """
     Poetry does not use pip options, so the PoetryProject class do not inherits PipOption class
     """
+
     pyproject: Path
     poetry_lock: Path
     extra_args: Optional[str] = None
@@ -601,14 +602,7 @@ class Image:
 
     @classmethod
     def from_name(cls, name: str) -> Image:
-        from ._initialize import _get_init_config
-
-        cfg = _get_init_config()
-        if cfg and name in cfg.images:
-            img = cls._new(name=name, base_image=cfg.images[name])
-        else:
-            img = cls._new()
-        return img
+        return cls._new(name=name)
 
     @classmethod
     def from_uv_script(
