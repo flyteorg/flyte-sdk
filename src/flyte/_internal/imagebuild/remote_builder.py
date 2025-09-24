@@ -183,7 +183,6 @@ async def _validate_configuration(image: Image) -> Tuple[str, Optional[str]]:
 def _get_layers_proto(image: Image, context_path: Path) -> "image_definition_pb2.ImageSpec":
     from flyte._protos.imagebuilder import definition_pb2 as image_definition_pb2
 
-    docker_ignore_file_path: Optional[Path] = None
     docker_ignore_file_path = DockerImageBuilder.get_docker_ignore(image)
 
     if image.dockerfile is not None:
