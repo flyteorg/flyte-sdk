@@ -1,12 +1,9 @@
 import flyte
 from flyte.extras import ContainerTask
 
-env = flyte.TaskEnvironment(name="hello_world")
-
-
 greeting_task = ContainerTask(
     name="echo_and_return_greeting",
-    image="alpine:latest",
+    image=flyte.Image.from_base("alpine:3.18"),
     input_data_dir="/var/inputs",
     output_data_dir="/var/outputs",
     inputs={"name": str},
@@ -14,8 +11,9 @@ greeting_task = ContainerTask(
     command=["/bin/sh", "-c", "echo 'Hello, my name is {{.inputs.name}}.' | tee -a /var/outputs/greeting"],
 )
 
-# Add it to the environment if you want to deploy it.
-env.add_task(greeting_task)
+container_env = flyte.TaskEnvironment.from_task("container_env", greeting_task)
+
+env = flyte.TaskEnvironment(name="hello_world", depends_on=[container_env])
 
 
 @env.task

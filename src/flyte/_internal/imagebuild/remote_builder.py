@@ -182,6 +182,11 @@ async def _validate_configuration(image: Image) -> Tuple[str, Optional[str]]:
 def _get_layers_proto(image: Image, context_path: Path) -> "image_definition_pb2.ImageSpec":
     from flyte._protos.imagebuilder import definition_pb2 as image_definition_pb2
 
+    if image.dockerfile is not None:
+        raise flyte.errors.ImageBuildError(
+            "Custom Dockerfile is not supported with remote image builder.You can use local image builder instead."
+        )
+
     layers = []
     for layer in image._layers:
         secret_mounts = None

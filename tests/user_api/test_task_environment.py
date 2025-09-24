@@ -79,18 +79,6 @@ def test_reusable_conflict_pod_template(base_env):
         env.task(z, pod_template="tmpl")
 
 
-def test_add_task_and_duplicates(base_env):
-    class Dummy:
-        def __init__(self, name):
-            self.name = name
-
-    t1 = Dummy("t1")
-    base_env.add_task(t1)
-    assert "t1" in base_env.tasks
-    with pytest.raises(ValueError):
-        base_env.add_task(t1)
-
-
 def test_clone_no_tasks(base_env):
     # Ensure cloning does not carry over tasks
     clone = base_env.clone_with(name="clone_no_tasks")

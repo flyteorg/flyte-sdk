@@ -226,3 +226,42 @@ class TestFlytePickleSizeOptimization:
         assert result == large_object
         mock_to_pickle.assert_called_once_with(large_object)
         mock_from_pickle.assert_called_once_with("s3://test-bucket/test-path")
+
+    def test_guess_python_type_with_binary_simple_type(self, transformer):
+        """Test get_python_value_from_literal_type returns FlytePickle for BINARY simple type."""
+        literal_type = types_pb2.LiteralType(simple=types_pb2.SimpleType.BINARY)
+
+        result = FlytePickleTransformer().guess_python_type(literal_type)
+
+        assert result == FlytePickle
+
+    def test_get_literal_type_returns_union_type(self, transformer):
+        """Test get_literal_type returns union type with blob and binary variants."""
+        result = FlytePickleTransformer().get_literal_type(dict)
+
+        # Should be a union type
+        assert result.HasField("union_type")
+        assert len(result.union_type.variants) == 2
+
+        # First variant should be blob type
+        blob_variant = result.union_type.variants[0]
+        assert blob_variant.HasField("blob")
+        assert blob_variant.blob.format == FlytePickleTransformer().PYTHON_PICKLE_FORMAT
+        assert blob_variant.blob.dimensionality == types_pb2.BlobType.BlobDimensionality.SINGLE
+
+        # Second variant should be binary simple type
+        binary_variant = result.union_type.variants[1]
+        assert binary_variant.HasField("simple")
+        assert binary_variant.simple == types_pb2.SimpleType.BINARY
+
+        # Should have metadata
+        assert "python_class_name" in result.metadata
+        assert result.metadata["python_class_name"] == str(dict)
+
+    def test_guess_python_type_raises_for_unsupported_type(self, transformer):
+        """Test guess_python_type raises ValueError for unsupported literal types."""
+        # Create an unsupported literal type (neither blob with pickle format nor binary simple type)
+        literal_type = types_pb2.LiteralType(simple=types_pb2.SimpleType.STRING)
+
+        with pytest.raises(ValueError, match=r"Transformer .* cannot reverse .*"):
+            transformer.guess_python_type(literal_type)

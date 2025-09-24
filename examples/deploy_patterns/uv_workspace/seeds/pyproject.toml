@@ -1,0 +1,14 @@
+[project]
+name = "seeds"
+version = "0.1.0"
+description = "A package for seeds"
+requires-python = ">=3.10"
+dependencies = []
+
+# This section needs to be added to get uv sync to install this package (this package being seeds).
+[tool.uv]
+package = true
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["seeds*"]
