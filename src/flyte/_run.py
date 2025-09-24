@@ -129,6 +129,7 @@ class _Runner:
         import grpc
         from flyteidl.core import literals_pb2
         from flyteidl.admin import common_pb2
+        from flyteidl.core import security_pb2
         from google.protobuf import wrappers_pb2
 
         from flyte.remote import Run
@@ -255,8 +256,12 @@ class _Runner:
             env_kv = run_definition_pb2.Envs(values=kv_pairs)
             annotations = run_definition_pb2.Annotations(values=self._annotations)
             labels = run_definition_pb2.Labels(values=self._labels)
-            print(f"the raw output is {self._raw_data_path}")
             raw_output_data_config = common_pb2.RawOutputDataConfig(output_location_prefix=self._raw_data_path)
+            security_context = security_pb2.SecurityContext(
+                run_as=security_pb2.Identity(
+                    k8s_service_account=self._service_account
+                )
+            )
 
             try:
                 resp = await get_client().run_service.CreateRun(
@@ -271,7 +276,8 @@ class _Runner:
                             annotations=annotations,
                             labels=labels,
                             envs=env_kv,
-                            raw_output_data_config=raw_output_data_config
+                            raw_output_data_config=raw_output_data_config,
+                            security_context=security_context
                         ),
                     ),
                 )

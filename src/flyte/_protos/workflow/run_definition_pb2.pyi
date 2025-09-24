@@ -1,5 +1,5 @@
-from common import identifier_pb2 as _identifier_pb2
-from common import identity_pb2 as _identity_pb2
+from flyte._protos.common import identifier_pb2 as _identifier_pb2
+from flyte._protos.common import identity_pb2 as _identity_pb2
 from flyteidl.admin import common_pb2 as _common_pb2
 from flyteidl.core import catalog_pb2 as _catalog_pb2
 from flyteidl.core import execution_pb2 as _execution_pb2
@@ -7,8 +7,8 @@ from flyteidl.core import literals_pb2 as _literals_pb2
 from flyteidl.core import security_pb2 as _security_pb2
 from google.protobuf import timestamp_pb2 as _timestamp_pb2
 from google.protobuf import wrappers_pb2 as _wrappers_pb2
-from validate import validate_pb2 as _validate_pb2
-from workflow import task_definition_pb2 as _task_definition_pb2
+from flyte._protos.validate.validate import validate_pb2 as _validate_pb2
+from flyte._protos.workflow import task_definition_pb2 as _task_definition_pb2
 from google.protobuf.internal import containers as _containers
 from google.protobuf.internal import enum_type_wrapper as _enum_type_wrapper
 from google.protobuf import descriptor as _descriptor

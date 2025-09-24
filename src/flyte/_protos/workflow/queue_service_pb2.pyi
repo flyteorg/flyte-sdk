@@ -12,16 +12,6 @@ from typing import ClassVar as _ClassVar, Iterable as _Iterable, Mapping as _Map
 
 DESCRIPTOR: _descriptor.FileDescriptor
 
-class WorkerIdentifier(_message.Message):
-    __slots__ = ["organization", "cluster", "name"]
-    ORGANIZATION_FIELD_NUMBER: _ClassVar[int]
-    CLUSTER_FIELD_NUMBER: _ClassVar[int]
-    NAME_FIELD_NUMBER: _ClassVar[int]
-    organization: str
-    cluster: str
-    name: str
-    def __init__(self, organization: _Optional[str] = ..., cluster: _Optional[str] = ..., name: _Optional[str] = ...) -> None: ...
-
 class EnqueueActionRequest(_message.Message):
     __slots__ = ["action_id", "parent_action_name", "run_spec", "input_uri", "run_output_base", "group", "subject", "task", "trace", "condition"]
     ACTION_ID_FIELD_NUMBER: _ClassVar[int]
@@ -96,14 +86,38 @@ class EnqueueActionResponse(_message.Message):
     def __init__(self) -> None: ...
 
 class AbortQueuedRunRequest(_message.Message):
-    __slots__ = ["run_id"]
+    __slots__ = ["run_id", "reason"]
     RUN_ID_FIELD_NUMBER: _ClassVar[int]
+    REASON_FIELD_NUMBER: _ClassVar[int]
     run_id: _identifier_pb2.RunIdentifier
-    def __init__(self, run_id: _Optional[_Union[_identifier_pb2.RunIdentifier, _Mapping]] = ...) -> None: ...
+    reason: str
+    def __init__(self, run_id: _Optional[_Union[_identifier_pb2.RunIdentifier, _Mapping]] = ..., reason: _Optional[str] = ...) -> None: ...
 
 class AbortQueuedRunResponse(_message.Message):
     __slots__ = []
     def __init__(self) -> None: ...
+
+class AbortQueuedActionRequest(_message.Message):
+    __slots__ = ["action_id", "reason"]
+    ACTION_ID_FIELD_NUMBER: _ClassVar[int]
+    REASON_FIELD_NUMBER: _ClassVar[int]
+    action_id: _identifier_pb2.ActionIdentifier
+    reason: str
+    def __init__(self, action_id: _Optional[_Union[_identifier_pb2.ActionIdentifier, _Mapping]] = ..., reason: _Optional[str] = ...) -> None: ...
+
+class AbortQueuedActionResponse(_message.Message):
+    __slots__ = []
+    def __init__(self) -> None: ...
+
+class WorkerIdentifier(_message.Message):
+    __slots__ = ["organization", "cluster", "name"]
+    ORGANIZATION_FIELD_NUMBER: _ClassVar[int]
+    CLUSTER_FIELD_NUMBER: _ClassVar[int]
+    NAME_FIELD_NUMBER: _ClassVar[int]
+    organization: str
+    cluster: str
+    name: str
+    def __init__(self, organization: _Optional[str] = ..., cluster: _Optional[str] = ..., name: _Optional[str] = ...) -> None: ...
 
 class HeartbeatRequest(_message.Message):
     __slots__ = ["worker_id", "active_action_ids", "terminal_action_ids", "aborted_action_ids", "available_capacity"]
