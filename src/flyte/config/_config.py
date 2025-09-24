@@ -164,13 +164,6 @@ class ImageConfig(object):
         # TODO: We can add support for setting images in the config file
         return ImageConfig(**kwargs)
 
-    @classmethod
-    def add_image(cls, name: str, image: Image) -> None:
-        """
-        Adds an image to the ImageConfig.
-        """
-        cls.images[name] = image
-
 
 @rich.repr.auto
 @dataclass(init=True, repr=True, eq=True, frozen=True)
