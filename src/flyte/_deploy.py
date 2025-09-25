@@ -2,8 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import typing
-import sys
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Dict, List, Optional, Protocol, Set, Tuple, Type
 
@@ -380,7 +378,6 @@ def plan_deploy(*envs: Environment, version: Optional[str] = None) -> List[Deplo
         deployment_plans.append(DeploymentPlan(planned_envs, version=version))
         visited_envs.update(planned_envs.keys())
     return deployment_plans
-
 
 
 @syncify

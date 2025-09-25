@@ -50,14 +50,14 @@ RUN --mount=type=cache,sharing=locked,mode=0777,target=/root/.cache/uv,id=uv \
    --mount=type=bind,target=uv.lock,src=$UV_LOCK_PATH \
    --mount=type=bind,target=pyproject.toml,src=$PYPROJECT_PATH \
    $SECRET_MOUNT \
-   uv sync --active $PIP_INSTALL_ARGS
+   uv sync --active --inexact $PIP_INSTALL_ARGS
 """)
 
 UV_LOCK_INSTALL_TEMPLATE = Template("""\
 COPY $PYPROJECT_PATH $PYPROJECT_PATH
 RUN --mount=type=cache,sharing=locked,mode=0777,target=/root/.cache/uv,id=uv \
    $SECRET_MOUNT \
-   uv sync --active $PIP_INSTALL_ARGS --project $PYPROJECT_PATH
+   uv sync --active --inexact $PIP_INSTALL_ARGS --project $PYPROJECT_PATH
 """)
 
 POETRY_LOCK_WITHOUT_PROJECT_INSTALL_TEMPLATE = Template("""\
