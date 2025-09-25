@@ -1,5 +1,4 @@
 import asyncio
-import os
 import pathlib
 from pathlib import Path
 
@@ -72,7 +71,7 @@ async def failure_recovery() -> int:
         #     flush=True,
         # )
         # results = await asyncio.gather(*tasks)
-        print(f"All tasks completed successfully.", flush=True)
+        print("All tasks completed successfully.", flush=True)
     except flyte.errors.OOMError as e:
         print(f"Failed with oom trying with more resources: {e}, of type {type(e)}, {e.code}", flush=True)
         await asyncio.sleep(60)

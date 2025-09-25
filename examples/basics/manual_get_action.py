@@ -1,9 +1,8 @@
 import asyncio
-import pytest
 
-from flyte._protos.common import identifier_pb2
-from flyte._protos.workflow import run_definition_pb2, state_service_pb2
 from flyte._internal.controllers.remote._client import ControllerClient
+from flyte._protos.common import identifier_pb2
+from flyte._protos.workflow import state_service_pb2
 
 
 async def watch_direct():
@@ -23,7 +22,7 @@ async def watch_direct():
 
     # ============================================================
 
-    print(f"\n🧪 Starting Direct Watch Test")
+    print("\n🧪 Starting Direct Watch Test")
     print(f"🌐 Endpoint: {ENDPOINT}")
     print(f"🔧 Run Name: {RUN_NAME}")
     print(f"🔧 Parent Action: {PARENT_ACTION_NAME}")
@@ -36,14 +35,9 @@ async def watch_direct():
     )
 
     # Setup run identifier
-    run_id = identifier_pb2.RunIdentifier(
-        project="flytesnacks",
-        domain="development",
-        org="dogfood",
-        name=RUN_NAME
-    )
+    run_id = identifier_pb2.RunIdentifier(project="flytesnacks", domain="development", org="dogfood", name=RUN_NAME)
 
-    print(f"\n🚀 Creating watcher...")
+    print("\n🚀 Creating watcher...")
 
     try:
         # This is the exact code you want to test from _informer.py
@@ -58,8 +52,8 @@ async def watch_direct():
             wait_for_ready=True,
         )
 
-        print(f"✅ Watcher created successfully")
-        print(f"⏳ Starting to iterate over responses...")
+        print("✅ Watcher created successfully")
+        print("⏳ Starting to iterate over responses...")
 
         count = 0
         async for resp in watcher:
@@ -69,11 +63,11 @@ async def watch_direct():
 
     except Exception as e:
         print(f"❌ Error during watch: {e}")
-        print(f"🔧 Make sure to fill in the correct RUN_NAME and PARENT_ACTION_NAME")
+        print("🔧 Make sure to fill in the correct RUN_NAME and PARENT_ACTION_NAME")
         raise
 
     finally:
-        print(f"\n✅ Test completed!")
+        print("\n✅ Test completed!")
 
 
 if __name__ == "__main__":

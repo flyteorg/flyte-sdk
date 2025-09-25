@@ -32,7 +32,7 @@ parent_env = flyte.TaskEnvironment(
 async def simple(x: int):
     print(f"[Start] Running simple with {x=}", flush=True)
     await asyncio.sleep(60)
-    print(f"[End] simple returning", flush=True)
+    print("[End] simple returning", flush=True)
 
 
 @actor_env.task
@@ -40,11 +40,11 @@ async def simple_with_cancel(x: int):
     try:
         print(f"[Start] Running simple_with_cancel with {x=}", flush=True)
         await asyncio.sleep(60)
-        print(f"[End] simple_with_cancel returning", flush=True)
+        print("[End] simple_with_cancel returning", flush=True)
     except asyncio.CancelledError:
-        print(f"[Cancelled] simple_with_cancel cancelled, running cleanup", flush=True)
+        print("[Cancelled] simple_with_cancel cancelled, running cleanup", flush=True)
         await asyncio.sleep(1)
-        print(f"[Cancelled] simple_with_cancel, done", flush=True)
+        print("[Cancelled] simple_with_cancel, done", flush=True)
         raise
 
 
@@ -53,11 +53,11 @@ async def simple_with_long_cancel(x: int):
     try:
         print(f"[Start] Running simple_with_long_cancel with {x=}", flush=True)
         await asyncio.sleep(60)
-        print(f"[End] simple_with_long_cancel returning", flush=True)
+        print("[End] simple_with_long_cancel returning", flush=True)
     except asyncio.CancelledError:
-        print(f"[Cancelled] simple_with_long_cancel was cancelled", flush=True)
+        print("[Cancelled] simple_with_long_cancel was cancelled", flush=True)
         await asyncio.sleep(10)
-        print(f"[Cancel Handled] simple_with_long_cancel finished handling", flush=True)
+        print("[Cancel Handled] simple_with_long_cancel finished handling", flush=True)
         raise
 
 
@@ -69,11 +69,11 @@ def parent_task():
     c = simple_with_long_cancel(x=3)
 
     try:
-        print(f"[Parent] starting gather on tasks", flush=True)
+        print("[Parent] starting gather on tasks", flush=True)
         results = asyncio.gather(a, b, c)
         print(f"[Parent] completed with {results=}", flush=True)
     except asyncio.CancelledError:
-        print(f"[Parent] was cancelled, tasks should be cancelled too", flush=True)
+        print("[Parent] was cancelled, tasks should be cancelled too", flush=True)
         raise
 
 

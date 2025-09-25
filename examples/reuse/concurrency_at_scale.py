@@ -1,13 +1,10 @@
 import asyncio
-import os
-import datetime
-from pathlib import Path
 import time
+from pathlib import Path
 
 import flyte
 import flyte.errors
 from flyte._image import PythonWheels
-
 
 actor_dist_folder = Path("/Users/ytong/go/src/github.com/unionai/flyte/fasttask/worker-v2/dist")
 wheel_layer = PythonWheels(wheel_dir=actor_dist_folder, package_name="unionai-reuse")
@@ -56,7 +53,7 @@ async def concurrency_parent() -> int:
             flush=True,
         )
         results = await asyncio.gather(*tasks)
-        print(f"All tasks completed successfully.", flush=True)
+        print("All tasks completed successfully.", flush=True)
     finally:
         print("In finally...", flush=True)
 
