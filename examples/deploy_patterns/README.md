@@ -151,8 +151,22 @@ albatross = [
 
 ### Development (Fast Iteration)
 ```python
-# Use default copy_style for fast deployment
-flyte.run(task_function, param=value)
+import flyte
+import pathlib
+
+env = flyte.TaskEnvironment(
+    name="fast_iteration",
+    image=(
+        flyte.Image.from_debian_base()
+        .with_uv_project(pyproject_file=pathlib.Path("my_plugin/pyproject.toml"))
+    ),
+)
+
+@env.task
+def task_function() -> list[int]:
+    ...
+
+flyte.run(task_function)
 ```
 
 **How it works under the hood:**
@@ -172,16 +186,23 @@ flyte.run(task_function, param=value)
 
 ### Production (Full Build)
 ```python
+import flyte
+import pathlib
+
 env = flyte.TaskEnvironment(
     name="full_build",
-    image=flyte.Image.from_debian_base().with_source_folder(pathlib.Path(__file__).parent, copy_contents_only=True),
+    image=(
+        flyte.Image.from_debian_base()
+        .with_uv_project(pyproject_file=pathlib.Path("my_plugin/pyproject.toml"))
+        .with_source_file("./main.py")
+    ),
 )
 
 @env.task
-def task_function(n: int) -> list[int]:
+def task_function() -> list[int]:
     ...
 
-flyte.with_runcontext(copy_style="none", version="v1.0").run(task_function, param=value)
+flyte.with_runcontext(copy_style="none", version="v1.0").run(task_function)
 ```
 
 **How it works under the hood:**
