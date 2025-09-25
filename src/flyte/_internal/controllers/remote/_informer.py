@@ -270,7 +270,7 @@ class Informer:
             logger.warning("Informer already running")
             return cast(asyncio.Task, self._watch_task)
         self._running = True
-        self._watch_task = asyncio.create_task(self.watch())
+        self._watch_task = asyncio.create_task(self.watch(), name=f"InformerWatch-{self.parent_action_name}")
         await self.wait_for_cache_sync(timeout=timeout)
         return self._watch_task
 
