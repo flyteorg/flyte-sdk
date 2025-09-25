@@ -2,7 +2,6 @@ from flyte._protos.common import identifier_pb2 as _identifier_pb2
 from flyte._protos.common import list_pb2 as _list_pb2
 from flyte._protos.validate.validate import validate_pb2 as _validate_pb2
 from flyte._protos.workflow import task_definition_pb2 as _task_definition_pb2
-from flyte._protos.workflow import trigger_definition_pb2 as _trigger_definition_pb2
 from google.protobuf.internal import containers as _containers
 from google.protobuf import descriptor as _descriptor
 from google.protobuf import message as _message
@@ -11,14 +10,12 @@ from typing import ClassVar as _ClassVar, Iterable as _Iterable, Mapping as _Map
 DESCRIPTOR: _descriptor.FileDescriptor
 
 class DeployTaskRequest(_message.Message):
-    __slots__ = ["task_id", "spec", "triggers"]
+    __slots__ = ["task_id", "spec"]
     TASK_ID_FIELD_NUMBER: _ClassVar[int]
     SPEC_FIELD_NUMBER: _ClassVar[int]
-    TRIGGERS_FIELD_NUMBER: _ClassVar[int]
     task_id: _task_definition_pb2.TaskIdentifier
     spec: _task_definition_pb2.TaskSpec
-    triggers: _containers.RepeatedCompositeFieldContainer[_trigger_definition_pb2.TriggerDetails]
-    def __init__(self, task_id: _Optional[_Union[_task_definition_pb2.TaskIdentifier, _Mapping]] = ..., spec: _Optional[_Union[_task_definition_pb2.TaskSpec, _Mapping]] = ..., triggers: _Optional[_Iterable[_Union[_trigger_definition_pb2.TriggerDetails, _Mapping]]] = ...) -> None: ...
+    def __init__(self, task_id: _Optional[_Union[_task_definition_pb2.TaskIdentifier, _Mapping]] = ..., spec: _Optional[_Union[_task_definition_pb2.TaskSpec, _Mapping]] = ...) -> None: ...
 
 class DeployTaskResponse(_message.Message):
     __slots__ = []

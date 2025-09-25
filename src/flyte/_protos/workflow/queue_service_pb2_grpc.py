@@ -25,11 +25,6 @@ class QueueServiceStub(object):
                 request_serializer=workflow_dot_queue__service__pb2.AbortQueuedRunRequest.SerializeToString,
                 response_deserializer=workflow_dot_queue__service__pb2.AbortQueuedRunResponse.FromString,
                 )
-        self.AbortQueuedAction = channel.unary_unary(
-                '/cloudidl.workflow.QueueService/AbortQueuedAction',
-                request_serializer=workflow_dot_queue__service__pb2.AbortQueuedActionRequest.SerializeToString,
-                response_deserializer=workflow_dot_queue__service__pb2.AbortQueuedActionResponse.FromString,
-                )
         self.Heartbeat = channel.stream_stream(
                 '/cloudidl.workflow.QueueService/Heartbeat',
                 request_serializer=workflow_dot_queue__service__pb2.HeartbeatRequest.SerializeToString,
@@ -55,13 +50,6 @@ class QueueServiceServicer(object):
 
     def AbortQueuedRun(self, request, context):
         """abort a queued run.
-        """
-        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
-        context.set_details('Method not implemented!')
-        raise NotImplementedError('Method not implemented!')
-
-    def AbortQueuedAction(self, request, context):
-        """AbortAction aborts a single action that was previously queued or is currently being processed by a worker.
         """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -93,11 +81,6 @@ def add_QueueServiceServicer_to_server(servicer, server):
                     servicer.AbortQueuedRun,
                     request_deserializer=workflow_dot_queue__service__pb2.AbortQueuedRunRequest.FromString,
                     response_serializer=workflow_dot_queue__service__pb2.AbortQueuedRunResponse.SerializeToString,
-            ),
-            'AbortQueuedAction': grpc.unary_unary_rpc_method_handler(
-                    servicer.AbortQueuedAction,
-                    request_deserializer=workflow_dot_queue__service__pb2.AbortQueuedActionRequest.FromString,
-                    response_serializer=workflow_dot_queue__service__pb2.AbortQueuedActionResponse.SerializeToString,
             ),
             'Heartbeat': grpc.stream_stream_rpc_method_handler(
                     servicer.Heartbeat,
@@ -151,23 +134,6 @@ class QueueService(object):
         return grpc.experimental.unary_unary(request, target, '/cloudidl.workflow.QueueService/AbortQueuedRun',
             workflow_dot_queue__service__pb2.AbortQueuedRunRequest.SerializeToString,
             workflow_dot_queue__service__pb2.AbortQueuedRunResponse.FromString,
-            options, channel_credentials,
-            insecure, call_credentials, compression, wait_for_ready, timeout, metadata)
-
-    @staticmethod
-    def AbortQueuedAction(request,
-            target,
-            options=(),
-            channel_credentials=None,
-            call_credentials=None,
-            insecure=False,
-            compression=None,
-            wait_for_ready=None,
-            timeout=None,
-            metadata=None):
-        return grpc.experimental.unary_unary(request, target, '/cloudidl.workflow.QueueService/AbortQueuedAction',
-            workflow_dot_queue__service__pb2.AbortQueuedActionRequest.SerializeToString,
-            workflow_dot_queue__service__pb2.AbortQueuedActionResponse.FromString,
             options, channel_credentials,
             insecure, call_credentials, compression, wait_for_ready, timeout, metadata)
 
