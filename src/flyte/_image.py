@@ -181,7 +181,7 @@ class UVProject(PipOption, Layer):
         from ._utils import filehash_update
 
         super().update_hash(hasher)
-        if "--no-install-project" in self.extra_args:
+        if self.extra_args and "--no-install-project" in self.extra_args:
             filehash_update(self.uvlock, hasher)
             filehash_update(self.pyproject, hasher)
         else:
@@ -221,7 +221,7 @@ class PoetryProject(Layer):
         hasher.update(hash_input.encode("utf-8"))
 
         super().update_hash(hasher)
-        if "--no-root" in self.extra_args:
+        if self.extra_args and "--no-root" in self.extra_args:
             filehash_update(self.poetry_lock, hasher)
             filehash_update(self.pyproject, hasher)
         else:
