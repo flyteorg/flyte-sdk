@@ -20,7 +20,7 @@ from flyte._protos.workflow import run_definition_pb2 as workflow_dot_run__defin
 from flyte._protos.workflow import task_definition_pb2 as workflow_dot_task__definition__pb2
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x1cworkflow/queue_service.proto\x12\x11\x63loudidl.workflow\x1a\x17\x63ommon/identifier.proto\x1a\x19\x66lyteidl/core/types.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1egoogle/protobuf/wrappers.proto\x1a\x17validate/validate.proto\x1a\x1dworkflow/run_definition.proto\x1a\x1eworkflow/task_definition.proto\"\x7f\n\x10WorkerIdentifier\x12+\n\x0corganization\x18\x01 \x01(\tB\x07\xfa\x42\x04r\x02\x10\x01R\x0corganization\x12!\n\x07\x63luster\x18\x02 \x01(\tB\x07\xfa\x42\x04r\x02\x10\x01R\x07\x63luster\x12\x1b\n\x04name\x18\x03 \x01(\tB\x07\xfa\x42\x04r\x02\x10\x01R\x04name\"\xbf\x04\n\x14\x45nqueueActionRequest\x12H\n\taction_id\x18\x01 \x01(\x0b\x32!.cloudidl.common.ActionIdentifierB\x08\xfa\x42\x05\x8a\x01\x02\x10\x01R\x08\x61\x63tionId\x12\x31\n\x12parent_action_name\x18\x02 \x01(\tH\x01R\x10parentActionName\x88\x01\x01\x12\x35\n\x08run_spec\x18\x03 \x01(\x0b\x32\x1a.cloudidl.workflow.RunSpecR\x07runSpec\x12$\n\tinput_uri\x18\x06 \x01(\tB\x07\xfa\x42\x04r\x02\x10\x01R\x08inputUri\x12/\n\x0frun_output_base\x18\x07 \x01(\tB\x07\xfa\x42\x04r\x02\x10\x01R\rrunOutputBase\x12\x14\n\x05group\x18\x08 \x01(\tR\x05group\x12\x18\n\x07subject\x18\t \x01(\tR\x07subject\x12=\n\x04task\x18\n \x01(\x0b\x32\x1d.cloudidl.workflow.TaskActionB\x08\xfa\x42\x05\x8a\x01\x02\x10\x01H\x00R\x04task\x12@\n\x05trace\x18\x0b \x01(\x0b\x32\x1e.cloudidl.workflow.TraceActionB\x08\xfa\x42\x05\x8a\x01\x02\x10\x01H\x00R\x05trace\x12L\n\tcondition\x18\x0c \x01(\x0b\x32\".cloudidl.workflow.ConditionActionB\x08\xfa\x42\x05\x8a\x01\x02\x10\x01H\x00R\tconditionB\x06\n\x04specB\x15\n\x13_parent_action_name\"\xcf\x01\n\nTaskAction\x12\x31\n\x02id\x18\x01 \x01(\x0b\x32!.cloudidl.workflow.TaskIdentifierR\x02id\x12\x39\n\x04spec\x18\x02 \x01(\x0b\x32\x1b.cloudidl.workflow.TaskSpecB\x08\xfa\x42\x05\x8a\x01\x02\x10\x01R\x04spec\x12\x39\n\tcache_key\x18\x03 \x01(\x0b\x32\x1c.google.protobuf.StringValueR\x08\x63\x61\x63heKey\x12\x18\n\x07\x63luster\x18\x04 \x01(\tR\x07\x63luster\"\xd9\x02\n\x0bTraceAction\x12\x1b\n\x04name\x18\x01 \x01(\tB\x07\xfa\x42\x04r\x02\x10\x01R\x04name\x12.\n\x05phase\x18\x02 \x01(\x0e\x32\x18.cloudidl.workflow.PhaseR\x05phase\x12\x39\n\nstart_time\x18\x03 \x01(\x0b\x32\x1a.google.protobuf.TimestampR\tstartTime\x12:\n\x08\x65nd_time\x18\x04 \x01(\x0b\x32\x1a.google.protobuf.TimestampH\x00R\x07\x65ndTime\x88\x01\x01\x12=\n\x07outputs\x18\x05 \x01(\x0b\x32#.cloudidl.workflow.OutputReferencesR\x07outputs\x12:\n\x04spec\x18\x06 \x01(\x0b\x32\x1c.cloudidl.workflow.TraceSpecB\x08\xfa\x42\x05\x8a\x01\x02\x10\x01R\x04specB\x0b\n\t_end_time\"\x8a\x02\n\x0f\x43onditionAction\x12\x1b\n\x04name\x18\x01 \x01(\tB\x07\xfa\x42\x04r\x02\x10\x01R\x04name\x12 \n\x06run_id\x18\x02 \x01(\tB\x07\xfa\x42\x04r\x02\x10\x01H\x00R\x05runId\x12&\n\taction_id\x18\x03 \x01(\tB\x07\xfa\x42\x04r\x02\x10\x01H\x00R\x08\x61\x63tionId\x12\x18\n\x06global\x18\x04 \x01(\x08H\x00R\x06global\x12.\n\x04type\x18\x06 \x01(\x0b\x32\x1a.flyteidl.core.LiteralTypeR\x04type\x12\x16\n\x06prompt\x18\x07 \x01(\tR\x06prompt\x12 \n\x0b\x64\x65scription\x18\x08 \x01(\tR\x0b\x64\x65scriptionB\x0c\n\x05scope\x12\x03\xf8\x42\x01\"\x17\n\x15\x45nqueueActionResponse\"X\n\x15\x41\x62ortQueuedRunRequest\x12?\n\x06run_id\x18\x01 \x01(\x0b\x32\x1e.cloudidl.common.RunIdentifierB\x08\xfa\x42\x05\x8a\x01\x02\x10\x01R\x05runId\"\x18\n\x16\x41\x62ortQueuedRunResponse\"\x80\x03\n\x10HeartbeatRequest\x12J\n\tworker_id\x18\x01 \x01(\x0b\x32#.cloudidl.workflow.WorkerIdentifierB\x08\xfa\x42\x05\x8a\x01\x02\x10\x01R\x08workerId\x12M\n\x11\x61\x63tive_action_ids\x18\x02 \x03(\x0b\x32!.cloudidl.common.ActionIdentifierR\x0f\x61\x63tiveActionIds\x12Q\n\x13terminal_action_ids\x18\x03 \x03(\x0b\x32!.cloudidl.common.ActionIdentifierR\x11terminalActionIds\x12O\n\x12\x61\x62orted_action_ids\x18\x04 \x03(\x0b\x32!.cloudidl.common.ActionIdentifierR\x10\x61\x62ortedActionIds\x12-\n\x12\x61vailable_capacity\x18\x05 \x01(\x05R\x11\x61vailableCapacity\"\xe2\x01\n\x11HeartbeatResponse\x12\x37\n\nnew_leases\x18\x01 \x03(\x0b\x32\x18.cloudidl.workflow.LeaseR\tnewLeases\x12?\n\x0e\x61\x62orted_leases\x18\x02 \x03(\x0b\x32\x18.cloudidl.workflow.LeaseR\rabortedLeases\x12S\n\x14\x66inalized_action_ids\x18\x03 \x03(\x0b\x32!.cloudidl.common.ActionIdentifierR\x12\x66inalizedActionIds\"a\n\x13StreamLeasesRequest\x12J\n\tworker_id\x18\x01 \x01(\x0b\x32#.cloudidl.workflow.WorkerIdentifierB\x08\xfa\x42\x05\x8a\x01\x02\x10\x01R\x08workerId\"H\n\x14StreamLeasesResponse\x12\x30\n\x06leases\x18\x01 \x03(\x0b\x32\x18.cloudidl.workflow.LeaseR\x06leases\"\xc9\x04\n\x05Lease\x12H\n\taction_id\x18\x01 \x01(\x0b\x32!.cloudidl.common.ActionIdentifierB\x08\xfa\x42\x05\x8a\x01\x02\x10\x01R\x08\x61\x63tionId\x12\x31\n\x12parent_action_name\x18\x02 \x01(\tH\x01R\x10parentActionName\x88\x01\x01\x12\x35\n\x08run_spec\x18\x03 \x01(\x0b\x32\x1a.cloudidl.workflow.RunSpecR\x07runSpec\x12$\n\tinput_uri\x18\x04 \x01(\tB\x07\xfa\x42\x04r\x02\x10\x01R\x08inputUri\x12/\n\x0frun_output_base\x18\x05 \x01(\tB\x07\xfa\x42\x04r\x02\x10\x01R\rrunOutputBase\x12=\n\x04task\x18\x06 \x01(\x0b\x32\x1d.cloudidl.workflow.TaskActionB\x08\xfa\x42\x05\x8a\x01\x02\x10\x01H\x00R\x04task\x12L\n\tcondition\x18\x07 \x01(\x0b\x32\".cloudidl.workflow.ConditionActionB\x08\xfa\x42\x05\x8a\x01\x02\x10\x01H\x00R\tcondition\x12@\n\x05trace\x18\n \x01(\x0b\x32\x1e.cloudidl.workflow.TraceActionB\x08\xfa\x42\x05\x8a\x01\x02\x10\x01H\x00R\x05trace\x12\x14\n\x05group\x18\x08 \x01(\tR\x05group\x12\x18\n\x07subject\x18\t \x01(\tR\x07subject\x12\x12\n\x04host\x18\x0b \x01(\tR\x04hostB\x0b\n\x04spec\x12\x03\xf8\x42\x01\x42\x15\n\x13_parent_action_name2\xa0\x03\n\x0cQueueService\x12\x64\n\rEnqueueAction\x12\'.cloudidl.workflow.EnqueueActionRequest\x1a(.cloudidl.workflow.EnqueueActionResponse\"\x00\x12g\n\x0e\x41\x62ortQueuedRun\x12(.cloudidl.workflow.AbortQueuedRunRequest\x1a).cloudidl.workflow.AbortQueuedRunResponse\"\x00\x12\\\n\tHeartbeat\x12#.cloudidl.workflow.HeartbeatRequest\x1a$.cloudidl.workflow.HeartbeatResponse\"\x00(\x01\x30\x01\x12\x63\n\x0cStreamLeases\x12&.cloudidl.workflow.StreamLeasesRequest\x1a\'.cloudidl.workflow.StreamLeasesResponse\"\x00\x30\x01\x42\xbe\x01\n\x15\x63om.cloudidl.workflowB\x11QueueServiceProtoH\x02P\x01Z+github.com/unionai/cloud/gen/pb-go/workflow\xa2\x02\x03\x43WX\xaa\x02\x11\x43loudidl.Workflow\xca\x02\x11\x43loudidl\\Workflow\xe2\x02\x1d\x43loudidl\\Workflow\\GPBMetadata\xea\x02\x12\x43loudidl::Workflowb\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x1cworkflow/queue_service.proto\x12\x11\x63loudidl.workflow\x1a\x17\x63ommon/identifier.proto\x1a\x19\x66lyteidl/core/types.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1egoogle/protobuf/wrappers.proto\x1a\x17validate/validate.proto\x1a\x1dworkflow/run_definition.proto\x1a\x1eworkflow/task_definition.proto\"\xbf\x04\n\x14\x45nqueueActionRequest\x12H\n\taction_id\x18\x01 \x01(\x0b\x32!.cloudidl.common.ActionIdentifierB\x08\xfa\x42\x05\x8a\x01\x02\x10\x01R\x08\x61\x63tionId\x12\x31\n\x12parent_action_name\x18\x02 \x01(\tH\x01R\x10parentActionName\x88\x01\x01\x12\x35\n\x08run_spec\x18\x03 \x01(\x0b\x32\x1a.cloudidl.workflow.RunSpecR\x07runSpec\x12$\n\tinput_uri\x18\x06 \x01(\tB\x07\xfa\x42\x04r\x02\x10\x01R\x08inputUri\x12/\n\x0frun_output_base\x18\x07 \x01(\tB\x07\xfa\x42\x04r\x02\x10\x01R\rrunOutputBase\x12\x14\n\x05group\x18\x08 \x01(\tR\x05group\x12\x18\n\x07subject\x18\t \x01(\tR\x07subject\x12=\n\x04task\x18\n \x01(\x0b\x32\x1d.cloudidl.workflow.TaskActionB\x08\xfa\x42\x05\x8a\x01\x02\x10\x01H\x00R\x04task\x12@\n\x05trace\x18\x0b \x01(\x0b\x32\x1e.cloudidl.workflow.TraceActionB\x08\xfa\x42\x05\x8a\x01\x02\x10\x01H\x00R\x05trace\x12L\n\tcondition\x18\x0c \x01(\x0b\x32\".cloudidl.workflow.ConditionActionB\x08\xfa\x42\x05\x8a\x01\x02\x10\x01H\x00R\tconditionB\x06\n\x04specB\x15\n\x13_parent_action_name\"\xcf\x01\n\nTaskAction\x12\x31\n\x02id\x18\x01 \x01(\x0b\x32!.cloudidl.workflow.TaskIdentifierR\x02id\x12\x39\n\x04spec\x18\x02 \x01(\x0b\x32\x1b.cloudidl.workflow.TaskSpecB\x08\xfa\x42\x05\x8a\x01\x02\x10\x01R\x04spec\x12\x39\n\tcache_key\x18\x03 \x01(\x0b\x32\x1c.google.protobuf.StringValueR\x08\x63\x61\x63heKey\x12\x18\n\x07\x63luster\x18\x04 \x01(\tR\x07\x63luster\"\xd9\x02\n\x0bTraceAction\x12\x1b\n\x04name\x18\x01 \x01(\tB\x07\xfa\x42\x04r\x02\x10\x01R\x04name\x12.\n\x05phase\x18\x02 \x01(\x0e\x32\x18.cloudidl.workflow.PhaseR\x05phase\x12\x39\n\nstart_time\x18\x03 \x01(\x0b\x32\x1a.google.protobuf.TimestampR\tstartTime\x12:\n\x08\x65nd_time\x18\x04 \x01(\x0b\x32\x1a.google.protobuf.TimestampH\x00R\x07\x65ndTime\x88\x01\x01\x12=\n\x07outputs\x18\x05 \x01(\x0b\x32#.cloudidl.workflow.OutputReferencesR\x07outputs\x12:\n\x04spec\x18\x06 \x01(\x0b\x32\x1c.cloudidl.workflow.TraceSpecB\x08\xfa\x42\x05\x8a\x01\x02\x10\x01R\x04specB\x0b\n\t_end_time\"\x8a\x02\n\x0f\x43onditionAction\x12\x1b\n\x04name\x18\x01 \x01(\tB\x07\xfa\x42\x04r\x02\x10\x01R\x04name\x12 \n\x06run_id\x18\x02 \x01(\tB\x07\xfa\x42\x04r\x02\x10\x01H\x00R\x05runId\x12&\n\taction_id\x18\x03 \x01(\tB\x07\xfa\x42\x04r\x02\x10\x01H\x00R\x08\x61\x63tionId\x12\x18\n\x06global\x18\x04 \x01(\x08H\x00R\x06global\x12.\n\x04type\x18\x06 \x01(\x0b\x32\x1a.flyteidl.core.LiteralTypeR\x04type\x12\x16\n\x06prompt\x18\x07 \x01(\tR\x06prompt\x12 \n\x0b\x64\x65scription\x18\x08 \x01(\tR\x0b\x64\x65scriptionB\x0c\n\x05scope\x12\x03\xf8\x42\x01\"\x17\n\x15\x45nqueueActionResponse\"\x80\x01\n\x15\x41\x62ortQueuedRunRequest\x12?\n\x06run_id\x18\x01 \x01(\x0b\x32\x1e.cloudidl.common.RunIdentifierB\x08\xfa\x42\x05\x8a\x01\x02\x10\x01R\x05runId\x12\x1b\n\x06reason\x18\x02 \x01(\tH\x00R\x06reason\x88\x01\x01\x42\t\n\x07_reason\"\x18\n\x16\x41\x62ortQueuedRunResponse\"\x8c\x01\n\x18\x41\x62ortQueuedActionRequest\x12H\n\taction_id\x18\x01 \x01(\x0b\x32!.cloudidl.common.ActionIdentifierB\x08\xfa\x42\x05\x8a\x01\x02\x10\x01R\x08\x61\x63tionId\x12\x1b\n\x06reason\x18\x02 \x01(\tH\x00R\x06reason\x88\x01\x01\x42\t\n\x07_reason\"\x1b\n\x19\x41\x62ortQueuedActionResponse\"\x7f\n\x10WorkerIdentifier\x12+\n\x0corganization\x18\x01 \x01(\tB\x07\xfa\x42\x04r\x02\x10\x01R\x0corganization\x12!\n\x07\x63luster\x18\x02 \x01(\tB\x07\xfa\x42\x04r\x02\x10\x01R\x07\x63luster\x12\x1b\n\x04name\x18\x03 \x01(\tB\x07\xfa\x42\x04r\x02\x10\x01R\x04name\"\x80\x03\n\x10HeartbeatRequest\x12J\n\tworker_id\x18\x01 \x01(\x0b\x32#.cloudidl.workflow.WorkerIdentifierB\x08\xfa\x42\x05\x8a\x01\x02\x10\x01R\x08workerId\x12M\n\x11\x61\x63tive_action_ids\x18\x02 \x03(\x0b\x32!.cloudidl.common.ActionIdentifierR\x0f\x61\x63tiveActionIds\x12Q\n\x13terminal_action_ids\x18\x03 \x03(\x0b\x32!.cloudidl.common.ActionIdentifierR\x11terminalActionIds\x12O\n\x12\x61\x62orted_action_ids\x18\x04 \x03(\x0b\x32!.cloudidl.common.ActionIdentifierR\x10\x61\x62ortedActionIds\x12-\n\x12\x61vailable_capacity\x18\x05 \x01(\x05R\x11\x61vailableCapacity\"\xe2\x01\n\x11HeartbeatResponse\x12\x37\n\nnew_leases\x18\x01 \x03(\x0b\x32\x18.cloudidl.workflow.LeaseR\tnewLeases\x12?\n\x0e\x61\x62orted_leases\x18\x02 \x03(\x0b\x32\x18.cloudidl.workflow.LeaseR\rabortedLeases\x12S\n\x14\x66inalized_action_ids\x18\x03 \x03(\x0b\x32!.cloudidl.common.ActionIdentifierR\x12\x66inalizedActionIds\"a\n\x13StreamLeasesRequest\x12J\n\tworker_id\x18\x01 \x01(\x0b\x32#.cloudidl.workflow.WorkerIdentifierB\x08\xfa\x42\x05\x8a\x01\x02\x10\x01R\x08workerId\"H\n\x14StreamLeasesResponse\x12\x30\n\x06leases\x18\x01 \x03(\x0b\x32\x18.cloudidl.workflow.LeaseR\x06leases\"\xc9\x04\n\x05Lease\x12H\n\taction_id\x18\x01 \x01(\x0b\x32!.cloudidl.common.ActionIdentifierB\x08\xfa\x42\x05\x8a\x01\x02\x10\x01R\x08\x61\x63tionId\x12\x31\n\x12parent_action_name\x18\x02 \x01(\tH\x01R\x10parentActionName\x88\x01\x01\x12\x35\n\x08run_spec\x18\x03 \x01(\x0b\x32\x1a.cloudidl.workflow.RunSpecR\x07runSpec\x12$\n\tinput_uri\x18\x04 \x01(\tB\x07\xfa\x42\x04r\x02\x10\x01R\x08inputUri\x12/\n\x0frun_output_base\x18\x05 \x01(\tB\x07\xfa\x42\x04r\x02\x10\x01R\rrunOutputBase\x12=\n\x04task\x18\x06 \x01(\x0b\x32\x1d.cloudidl.workflow.TaskActionB\x08\xfa\x42\x05\x8a\x01\x02\x10\x01H\x00R\x04task\x12L\n\tcondition\x18\x07 \x01(\x0b\x32\".cloudidl.workflow.ConditionActionB\x08\xfa\x42\x05\x8a\x01\x02\x10\x01H\x00R\tcondition\x12@\n\x05trace\x18\n \x01(\x0b\x32\x1e.cloudidl.workflow.TraceActionB\x08\xfa\x42\x05\x8a\x01\x02\x10\x01H\x00R\x05trace\x12\x14\n\x05group\x18\x08 \x01(\tR\x05group\x12\x18\n\x07subject\x18\t \x01(\tR\x07subject\x12\x12\n\x04host\x18\x0b \x01(\tR\x04hostB\x0b\n\x04spec\x12\x03\xf8\x42\x01\x42\x15\n\x13_parent_action_name2\x92\x04\n\x0cQueueService\x12\x64\n\rEnqueueAction\x12\'.cloudidl.workflow.EnqueueActionRequest\x1a(.cloudidl.workflow.EnqueueActionResponse\"\x00\x12g\n\x0e\x41\x62ortQueuedRun\x12(.cloudidl.workflow.AbortQueuedRunRequest\x1a).cloudidl.workflow.AbortQueuedRunResponse\"\x00\x12p\n\x11\x41\x62ortQueuedAction\x12+.cloudidl.workflow.AbortQueuedActionRequest\x1a,.cloudidl.workflow.AbortQueuedActionResponse\"\x00\x12\\\n\tHeartbeat\x12#.cloudidl.workflow.HeartbeatRequest\x1a$.cloudidl.workflow.HeartbeatResponse\"\x00(\x01\x30\x01\x12\x63\n\x0cStreamLeases\x12&.cloudidl.workflow.StreamLeasesRequest\x1a\'.cloudidl.workflow.StreamLeasesResponse\"\x00\x30\x01\x42\xbe\x01\n\x15\x63om.cloudidl.workflowB\x11QueueServiceProtoH\x02P\x01Z+github.com/unionai/cloud/gen/pb-go/workflow\xa2\x02\x03\x43WX\xaa\x02\x11\x43loudidl.Workflow\xca\x02\x11\x43loudidl\\Workflow\xe2\x02\x1d\x43loudidl\\Workflow\\GPBMetadata\xea\x02\x12\x43loudidl::Workflowb\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
@@ -28,12 +28,6 @@ _builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, 'workflow.queue_service_pb2'
 if _descriptor._USE_C_DESCRIPTORS == False:
   DESCRIPTOR._options = None
   DESCRIPTOR._serialized_options = b'\n\025com.cloudidl.workflowB\021QueueServiceProtoH\002P\001Z+github.com/unionai/cloud/gen/pb-go/workflow\242\002\003CWX\252\002\021Cloudidl.Workflow\312\002\021Cloudidl\\Workflow\342\002\035Cloudidl\\Workflow\\GPBMetadata\352\002\022Cloudidl::Workflow'
-  _WORKERIDENTIFIER.fields_by_name['organization']._options = None
-  _WORKERIDENTIFIER.fields_by_name['organization']._serialized_options = b'\372B\004r\002\020\001'
-  _WORKERIDENTIFIER.fields_by_name['cluster']._options = None
-  _WORKERIDENTIFIER.fields_by_name['cluster']._serialized_options = b'\372B\004r\002\020\001'
-  _WORKERIDENTIFIER.fields_by_name['name']._options = None
-  _WORKERIDENTIFIER.fields_by_name['name']._serialized_options = b'\372B\004r\002\020\001'
   _ENQUEUEACTIONREQUEST.fields_by_name['action_id']._options = None
   _ENQUEUEACTIONREQUEST.fields_by_name['action_id']._serialized_options = b'\372B\005\212\001\002\020\001'
   _ENQUEUEACTIONREQUEST.fields_by_name['input_uri']._options = None
@@ -62,6 +56,14 @@ if _descriptor._USE_C_DESCRIPTORS == False:
   _CONDITIONACTION.fields_by_name['action_id']._serialized_options = b'\372B\004r\002\020\001'
   _ABORTQUEUEDRUNREQUEST.fields_by_name['run_id']._options = None
   _ABORTQUEUEDRUNREQUEST.fields_by_name['run_id']._serialized_options = b'\372B\005\212\001\002\020\001'
+  _ABORTQUEUEDACTIONREQUEST.fields_by_name['action_id']._options = None
+  _ABORTQUEUEDACTIONREQUEST.fields_by_name['action_id']._serialized_options = b'\372B\005\212\001\002\020\001'
+  _WORKERIDENTIFIER.fields_by_name['organization']._options = None
+  _WORKERIDENTIFIER.fields_by_name['organization']._serialized_options = b'\372B\004r\002\020\001'
+  _WORKERIDENTIFIER.fields_by_name['cluster']._options = None
+  _WORKERIDENTIFIER.fields_by_name['cluster']._serialized_options = b'\372B\004r\002\020\001'
+  _WORKERIDENTIFIER.fields_by_name['name']._options = None
+  _WORKERIDENTIFIER.fields_by_name['name']._serialized_options = b'\372B\004r\002\020\001'
   _HEARTBEATREQUEST.fields_by_name['worker_id']._options = None
   _HEARTBEATREQUEST.fields_by_name['worker_id']._serialized_options = b'\372B\005\212\001\002\020\001'
   _STREAMLEASESREQUEST.fields_by_name['worker_id']._options = None
@@ -80,32 +82,36 @@ if _descriptor._USE_C_DESCRIPTORS == False:
   _LEASE.fields_by_name['condition']._serialized_options = b'\372B\005\212\001\002\020\001'
   _LEASE.fields_by_name['trace']._options = None
   _LEASE.fields_by_name['trace']._serialized_options = b'\372B\005\212\001\002\020\001'
-  _globals['_WORKERIDENTIFIER']._serialized_start=256
-  _globals['_WORKERIDENTIFIER']._serialized_end=383
-  _globals['_ENQUEUEACTIONREQUEST']._serialized_start=386
-  _globals['_ENQUEUEACTIONREQUEST']._serialized_end=961
-  _globals['_TASKACTION']._serialized_start=964
-  _globals['_TASKACTION']._serialized_end=1171
-  _globals['_TRACEACTION']._serialized_start=1174
-  _globals['_TRACEACTION']._serialized_end=1519
-  _globals['_CONDITIONACTION']._serialized_start=1522
-  _globals['_CONDITIONACTION']._serialized_end=1788
-  _globals['_ENQUEUEACTIONRESPONSE']._serialized_start=1790
-  _globals['_ENQUEUEACTIONRESPONSE']._serialized_end=1813
-  _globals['_ABORTQUEUEDRUNREQUEST']._serialized_start=1815
-  _globals['_ABORTQUEUEDRUNREQUEST']._serialized_end=1903
-  _globals['_ABORTQUEUEDRUNRESPONSE']._serialized_start=1905
-  _globals['_ABORTQUEUEDRUNRESPONSE']._serialized_end=1929
-  _globals['_HEARTBEATREQUEST']._serialized_start=1932
-  _globals['_HEARTBEATREQUEST']._serialized_end=2316
-  _globals['_HEARTBEATRESPONSE']._serialized_start=2319
-  _globals['_HEARTBEATRESPONSE']._serialized_end=2545
-  _globals['_STREAMLEASESREQUEST']._serialized_start=2547
-  _globals['_STREAMLEASESREQUEST']._serialized_end=2644
-  _globals['_STREAMLEASESRESPONSE']._serialized_start=2646
-  _globals['_STREAMLEASESRESPONSE']._serialized_end=2718
-  _globals['_LEASE']._serialized_start=2721
-  _globals['_LEASE']._serialized_end=3306
-  _globals['_QUEUESERVICE']._serialized_start=3309
-  _globals['_QUEUESERVICE']._serialized_end=3725
+  _globals['_ENQUEUEACTIONREQUEST']._serialized_start=257
+  _globals['_ENQUEUEACTIONREQUEST']._serialized_end=832
+  _globals['_TASKACTION']._serialized_start=835
+  _globals['_TASKACTION']._serialized_end=1042
+  _globals['_TRACEACTION']._serialized_start=1045
+  _globals['_TRACEACTION']._serialized_end=1390
+  _globals['_CONDITIONACTION']._serialized_start=1393
+  _globals['_CONDITIONACTION']._serialized_end=1659
+  _globals['_ENQUEUEACTIONRESPONSE']._serialized_start=1661
+  _globals['_ENQUEUEACTIONRESPONSE']._serialized_end=1684
+  _globals['_ABORTQUEUEDRUNREQUEST']._serialized_start=1687
+  _globals['_ABORTQUEUEDRUNREQUEST']._serialized_end=1815
+  _globals['_ABORTQUEUEDRUNRESPONSE']._serialized_start=1817
+  _globals['_ABORTQUEUEDRUNRESPONSE']._serialized_end=1841
+  _globals['_ABORTQUEUEDACTIONREQUEST']._serialized_start=1844
+  _globals['_ABORTQUEUEDACTIONREQUEST']._serialized_end=1984
+  _globals['_ABORTQUEUEDACTIONRESPONSE']._serialized_start=1986
+  _globals['_ABORTQUEUEDACTIONRESPONSE']._serialized_end=2013
+  _globals['_WORKERIDENTIFIER']._serialized_start=2015
+  _globals['_WORKERIDENTIFIER']._serialized_end=2142
+  _globals['_HEARTBEATREQUEST']._serialized_start=2145
+  _globals['_HEARTBEATREQUEST']._serialized_end=2529
+  _globals['_HEARTBEATRESPONSE']._serialized_start=2532
+  _globals['_HEARTBEATRESPONSE']._serialized_end=2758
+  _globals['_STREAMLEASESREQUEST']._serialized_start=2760
+  _globals['_STREAMLEASESREQUEST']._serialized_end=2857
+  _globals['_STREAMLEASESRESPONSE']._serialized_start=2859
+  _globals['_STREAMLEASESRESPONSE']._serialized_end=2931
+  _globals['_LEASE']._serialized_start=2934
+  _globals['_LEASE']._serialized_end=3519
+  _globals['_QUEUESERVICE']._serialized_start=3522
+  _globals['_QUEUESERVICE']._serialized_end=4052
 # @@protoc_insertion_point(module_scope)
