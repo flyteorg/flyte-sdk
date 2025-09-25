@@ -135,13 +135,23 @@ class RunTaskCommand(click.RichCommand):
         async def _run():
             import flyte
 
+            console = common.get_console()
             r = await flyte.with_runcontext(
                 copy_style=self.run_args.copy_style,
                 mode="local" if self.run_args.local else "remote",
                 name=self.run_args.name,
             ).run.aio(self.obj, **ctx.params)
+            if self.run_args.local:
+                console.print(
+                    common.get_panel(
+                        "Local Run",
+                        f"[green]Completed Local Run, data stored in path: {r.url} [/green] \n"
+                        f"➡️  Outputs: {r.outputs()}",
+                        obj.output_format,
+                    )
+                )
+                return
             if isinstance(r, Run) and r.action is not None:
-                console = common.get_console()
                 console.print(
                     common.get_panel(
                         "Run",
@@ -221,6 +231,7 @@ class RunReferenceTaskCommand(click.RichCommand):
             import flyte.remote
 
             task = flyte.remote.Task.get(self.task_name, version=self.version, auto_version="latest")
+            console = common.get_console()
 
             r = await flyte.with_runcontext(
                 copy_style=self.run_args.copy_style,
@@ -228,7 +239,6 @@ class RunReferenceTaskCommand(click.RichCommand):
                 name=self.run_args.name,
             ).run.aio(task, **ctx.params)
             if isinstance(r, Run) and r.action is not None:
-                console = common.get_console()
                 console.print(
                     common.get_panel(
                         "Run",
