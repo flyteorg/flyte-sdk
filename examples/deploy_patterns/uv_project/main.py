@@ -6,11 +6,9 @@ env = flyte.TaskEnvironment(
     name="pyproject_test",
     resources=flyte.Resources(memory="250Mi"),
     image=(
-        flyte.Image.from_debian_base().with_uv_project(
-            pyproject_file=pathlib.Path("pyproject.toml"),
-            pre=True,
-            extra_args="--no-install-project"
-        ).with_local_v2()
+        flyte.Image.from_debian_base()
+        .with_uv_project(pyproject_file=pathlib.Path("pyproject.toml"), pre=True, extra_args="--no-install-project")
+        .with_local_v2()
     ),
 )
 

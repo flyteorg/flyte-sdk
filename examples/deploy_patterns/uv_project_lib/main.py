@@ -1,7 +1,8 @@
 import pathlib
 
+from my_lib.math_utils import calculate_mean, linear_function
+
 import flyte
-from my_lib.math_utils import linear_function, calculate_mean
 
 env = flyte.TaskEnvironment(
     name="uv_project_lib_tasks",
@@ -9,11 +10,10 @@ env = flyte.TaskEnvironment(
     image=(
         # TODO: Image builder should not copy the pyproject src to the image
         # TODO: Code bundle should not have my_plugin/src/my_lib
-        # TODO: Image builder should also use --inexact always,so uv sync won't not remove extraneous packages present in the environment
+        # TODO: Image builder should also use --inexact always,so uv sync won't not remove
+        #  extraneous packages present in the environment
         flyte.Image.from_debian_base().with_uv_project(
-            pyproject_file=pathlib.Path("my_plugin/pyproject.toml"),
-            pre=True,
-            extra_args="--inexact"
+            pyproject_file=pathlib.Path("my_plugin/pyproject.toml"), pre=True, extra_args="--inexact"
         )
     ),
 )
