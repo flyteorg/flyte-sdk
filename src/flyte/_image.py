@@ -212,7 +212,6 @@ class PoetryProject(Layer):
     """
     Poetry does not use pip options, so the PoetryProject class do not inherits PipOption class
     """
-
     pyproject: Path
     poetry_lock: Path
     extra_args: Optional[str] = None
