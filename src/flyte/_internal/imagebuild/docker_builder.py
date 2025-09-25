@@ -78,14 +78,11 @@ POETRY_LOCK_INSTALL_TEMPLATE = Template("""\
 RUN --mount=type=cache,sharing=locked,mode=0777,target=/root/.cache/uv,id=uv \
    uv pip install poetry
 
-COPY $PYPROJECT_PATH $PYPROJECT_PATH
-
 ENV POETRY_CACHE_DIR=/tmp/poetry_cache \
    POETRY_VIRTUALENVS_IN_PROJECT=true
 
 RUN --mount=type=cache,sharing=locked,mode=0777,target=/tmp/poetry_cache,id=poetry \
-   --mount=type=bind,target=poetry.lock,src=poetry.lock \
-   --mount=type=bind,target=pyproject.toml,src=pyproject.toml \
+   --mount=type=bind,target=/root/.flyte/$PYPROJECT_PATH,src=$PYPROJECT_PATH,rw \
    $SECRET_MOUNT \
    poetry install $POETRY_INSTALL_ARGS
 """)
