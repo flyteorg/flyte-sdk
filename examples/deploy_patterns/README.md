@@ -147,20 +147,9 @@ albatross = [
 ]
 ```
 
-## ⚡ Performance & Best Practices
+## Development vs Production
 
-### Memory Configuration
-```python
-env = flyte.TaskEnvironment(
-    name="my_task",
-    resources=flyte.Resources(memory="250Mi"),  # Start small, scale up as needed
-    image=image
-)
-```
-
-### Development vs Production
-
-#### Development (Fast Iteration)
+### Development (Fast Iteration)
 ```python
 # Use default copy_style for fast deployment
 flyte.run(task_function, param=value)
@@ -181,7 +170,7 @@ flyte.run(task_function, param=value)
 - 📡 **Network Dependency**: Requires code bundle download at runtime
 - 🔄 **Less Reproducible**: Code changes without image versioning
 
-#### Production (Full Build)
+### Production (Full Build)
 ```python
 env = flyte.TaskEnvironment(
     name="full_build",
