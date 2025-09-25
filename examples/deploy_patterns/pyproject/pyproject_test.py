@@ -10,7 +10,7 @@ env = flyte.TaskEnvironment(
         .with_uv_project(
             pyproject_file=pathlib.Path("pyproject.toml"),
             pre=True,
-        ).with_local_v2()
+        )
     ),
 )
 
