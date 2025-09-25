@@ -12,9 +12,10 @@ _sym_db = _symbol_database.Default()
 
 
 from flyteidl.core import interface_pb2 as flyteidl_dot_core_dot_interface__pb2
+from google.protobuf import timestamp_pb2 as google_dot_protobuf_dot_timestamp__pb2
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x15workflow/common.proto\x12\x11\x63loudidl.workflow\x1a\x1d\x66lyteidl/core/interface.proto\"\\\n\x0eNamedParameter\x12\x12\n\x04name\x18\x01 \x01(\tR\x04name\x12\x36\n\tparameter\x18\x02 \x01(\x0b\x32\x18.flyteidl.core.ParameterR\tparameterB\xb8\x01\n\x15\x63om.cloudidl.workflowB\x0b\x43ommonProtoH\x02P\x01Z+github.com/unionai/cloud/gen/pb-go/workflow\xa2\x02\x03\x43WX\xaa\x02\x11\x43loudidl.Workflow\xca\x02\x11\x43loudidl\\Workflow\xe2\x02\x1d\x43loudidl\\Workflow\\GPBMetadata\xea\x02\x12\x43loudidl::Workflowb\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x15workflow/common.proto\x12\x11\x63loudidl.workflow\x1a\x1d\x66lyteidl/core/interface.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\\\n\x0eNamedParameter\x12\x12\n\x04name\x18\x01 \x01(\tR\x04name\x12\x36\n\tparameter\x18\x02 \x01(\x0b\x32\x18.flyteidl.core.ParameterR\tparameter\"\x92\x01\n\tFixedRate\x12\x14\n\x05value\x18\x01 \x01(\rR\x05value\x12\x34\n\x04unit\x18\x02 \x01(\x0e\x32 .cloudidl.workflow.FixedRateUnitR\x04unit\x12\x39\n\nstart_time\x18\x03 \x01(\x0b\x32\x1a.google.protobuf.TimestampR\tstartTime\"\xac\x01\n\x08Schedule\x12\x32\n\x04rate\x18\x01 \x01(\x0b\x32\x1c.cloudidl.workflow.FixedRateH\x00R\x04rate\x12)\n\x0f\x63ron_expression\x18\x02 \x01(\tH\x00R\x0e\x63ronExpression\x12\x33\n\x16kickoff_time_input_arg\x18\x03 \x01(\tR\x13kickoffTimeInputArgB\x0c\n\nexpression\"\xe3\x01\n\x15TriggerAutomationSpec\x12\x41\n\x04type\x18\x01 \x01(\x0e\x32-.cloudidl.workflow.TriggerAutomationSpec.TypeR\x04type\x12\x39\n\x08schedule\x18\x02 \x01(\x0b\x32\x1b.cloudidl.workflow.ScheduleH\x00R\x08schedule\">\n\x04Type\x12\x14\n\x10TYPE_UNSPECIFIED\x10\x00\x12\r\n\tTYPE_NONE\x10\x01\x12\x11\n\rTYPE_SCHEDULE\x10\x02\x42\x0c\n\nautomation*\x7f\n\rFixedRateUnit\x12\x1f\n\x1b\x46IXED_RATE_UNIT_UNSPECIFIED\x10\x00\x12\x1a\n\x16\x46IXED_RATE_UNIT_MINUTE\x10\x01\x12\x18\n\x14\x46IXED_RATE_UNIT_HOUR\x10\x02\x12\x17\n\x13\x46IXED_RATE_UNIT_DAY\x10\x03\x42\xb8\x01\n\x15\x63om.cloudidl.workflowB\x0b\x43ommonProtoH\x02P\x01Z+github.com/unionai/cloud/gen/pb-go/workflow\xa2\x02\x03\x43WX\xaa\x02\x11\x43loudidl.Workflow\xca\x02\x11\x43loudidl\\Workflow\xe2\x02\x1d\x43loudidl\\Workflow\\GPBMetadata\xea\x02\x12\x43loudidl::Workflowb\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
@@ -22,6 +23,16 @@ _builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, 'workflow.common_pb2', _glob
 if _descriptor._USE_C_DESCRIPTORS == False:
   DESCRIPTOR._options = None
   DESCRIPTOR._serialized_options = b'\n\025com.cloudidl.workflowB\013CommonProtoH\002P\001Z+github.com/unionai/cloud/gen/pb-go/workflow\242\002\003CWX\252\002\021Cloudidl.Workflow\312\002\021Cloudidl\\Workflow\342\002\035Cloudidl\\Workflow\\GPBMetadata\352\002\022Cloudidl::Workflow'
-  _globals['_NAMEDPARAMETER']._serialized_start=75
-  _globals['_NAMEDPARAMETER']._serialized_end=167
+  _globals['_FIXEDRATEUNIT']._serialized_start=756
+  _globals['_FIXEDRATEUNIT']._serialized_end=883
+  _globals['_NAMEDPARAMETER']._serialized_start=108
+  _globals['_NAMEDPARAMETER']._serialized_end=200
+  _globals['_FIXEDRATE']._serialized_start=203
+  _globals['_FIXEDRATE']._serialized_end=349
+  _globals['_SCHEDULE']._serialized_start=352
+  _globals['_SCHEDULE']._serialized_end=524
+  _globals['_TRIGGERAUTOMATIONSPEC']._serialized_start=527
+  _globals['_TRIGGERAUTOMATIONSPEC']._serialized_end=754
+  _globals['_TRIGGERAUTOMATIONSPEC_TYPE']._serialized_start=678
+  _globals['_TRIGGERAUTOMATIONSPEC_TYPE']._serialized_end=740
 # @@protoc_insertion_point(module_scope)
