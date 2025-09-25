@@ -57,7 +57,7 @@ UV_LOCK_INSTALL_TEMPLATE = Template("""\
 RUN --mount=type=cache,sharing=locked,mode=0777,target=/root/.cache/uv,id=uv \
    --mount=type=bind,target=/root/.flyte/$PYPROJECT_PATH,src=$PYPROJECT_PATH,rw \
    $SECRET_MOUNT \
-   uv sync --active --inexact $PIP_INSTALL_ARGS --project /root/.flyte/$PYPROJECT_PATH
+   uv sync --active --inexact --no-editable $PIP_INSTALL_ARGS --project /root/.flyte/$PYPROJECT_PATH
 """)
 
 POETRY_LOCK_WITHOUT_PROJECT_INSTALL_TEMPLATE = Template("""\
