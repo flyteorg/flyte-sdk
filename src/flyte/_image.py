@@ -220,7 +220,6 @@ class PoetryProject(Layer):
                 hash_input += str(secret_mount)
         hasher.update(hash_input.encode("utf-8"))
 
-        super().update_hash(hasher)
         if self.extra_args and "--no-root" in self.extra_args:
             filehash_update(self.poetry_lock, hasher)
             filehash_update(self.pyproject, hasher)
