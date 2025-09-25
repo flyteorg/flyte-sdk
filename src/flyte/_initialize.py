@@ -173,7 +173,6 @@ async def init(
     :param ca_cert_file_path: [optional] str Root Cert to be loaded and used to verify admin
     :param http_proxy_url: [optional] HTTP Proxy to be used for OAuth requests
     :param rpc_retries: [optional] int Number of times to retry the platform calls
-    :param audience: oauth2 audience for the token request. This is used to validate the token
     :param insecure: insecure flag for the client
     :param storage: Optional blob store (S3, GCS, Azure) configuration if needed to access (i.e. using Minio)
     :param org: Optional organization override for the client. Should be set by auth instead.
@@ -242,7 +241,7 @@ async def init(
             else:
                 logger.info("No editable install found, using current working directory as root directory.")
                 root_dir = Path.cwd()
-        root_dir = root_dir or get_cwd_editable_install() or Path.cwd()
+
         _init_config = _InitConfig(
             root_dir=root_dir,
             project=project,
