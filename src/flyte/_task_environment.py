@@ -23,6 +23,7 @@ from ._cache import Cache, CacheRequest
 from ._doc import Documentation
 from ._environment import Environment
 from ._image import Image
+from ._pod import PodTemplate
 from ._resources import Resources
 from ._retry import RetryStrategy
 from ._reusable_environment import ReusePolicy
@@ -32,8 +33,6 @@ from ._trigger import Trigger
 from .models import MAX_INLINE_IO_BYTES, NativeInterface
 
 if TYPE_CHECKING:
-    from kubernetes.client import V1PodTemplate
-
     from ._task import FunctionTypes, P, R
 
 
@@ -62,6 +61,12 @@ class TaskEnvironment(Environment):
         that depend on each other.
     :param cache: Cache policy for the environment.
     :param reusable: Reuse policy for the environment, if set, a python process may be reused for multiple tasks.
+    :param plugin_config: Optional plugin configuration for custom task types.
+        If set, all tasks in this environment will use the specified plugin configuration.
+    :param queue: Optional queue name to use for tasks in this environment.
+        If not set, the default queue will be used.
+    :param pod_template: Optional pod template to use for tasks in this environment.
+        If not set, the default pod template will be used.
     """
 
     cache: CacheRequest = "disable"
@@ -89,6 +94,7 @@ class TaskEnvironment(Environment):
         env_vars: Optional[Dict[str, str]] = None,
         secrets: Optional[SecretRequest] = None,
         depends_on: Optional[List[Environment]] = None,
+        description: Optional[str] = None,
         interruptible: Optional[bool] = None,
         **kwargs: Any,
     ) -> TaskEnvironment:
@@ -105,6 +111,11 @@ class TaskEnvironment(Environment):
         :param depends_on: The environment dependencies to hint, so when you deploy the environment,
             the dependencies are also deployed. This is useful when you have a set of environments
             that depend on each other.
+        :param queue: The queue name to use for tasks in this environment.
+        :param pod_template: The pod template to use for tasks in this environment.
+        :param description: The description of the environment.
+        :param interruptible: Whether the environment is interruptible and can be scheduled on spot/preemptible
+            instances.
         :param kwargs: Additional parameters to override the environment (e.g., cache, reusable, plugin_config).
         """
         cache = kwargs.pop("cache", None)
@@ -134,6 +145,8 @@ class TaskEnvironment(Environment):
             kwargs["secrets"] = secrets
         if depends_on is not None:
             kwargs["depends_on"] = depends_on
+        if description is not None:
+            kwargs["description"] = description
         if interruptible is not None:
             kwargs["interruptible"] = interruptible
         return replace(self, **kwargs)
@@ -147,10 +160,11 @@ class TaskEnvironment(Environment):
         retries: Union[int, RetryStrategy] = 0,
         timeout: Union[timedelta, int] = 0,
         docs: Optional[Documentation] = None,
-        pod_template: Optional[Union[str, "V1PodTemplate"]] = None,
+        pod_template: Optional[Union[str, PodTemplate]] = None,
         report: bool = False,
         interruptible: bool | None = None,
         max_inline_io_bytes: int = MAX_INLINE_IO_BYTES,
+        queue: Optional[str] = None,
         triggers: Tuple[Trigger, ...] | Trigger = (),
     ) -> Union[AsyncFunctionTaskTemplate, Callable[P, R]]:
         """
@@ -172,6 +186,7 @@ class TaskEnvironment(Environment):
         :param triggers: Optional A tuple of triggers to associate with the task. This allows the task to be run on a
          schedule or in response to events. Triggers can be defined using the `flyte.trigger` module.
         :param interruptible: Optional Whether the task is interruptible, defaults to environment setting.
+        :param queue: Optional queue name to use for this task. If not set, the environment's queue will be used.
 
         :return: A TaskTemplate that can be used to deploy the task.
         """
@@ -226,6 +241,7 @@ class TaskEnvironment(Environment):
                 short_name=short,
                 plugin_config=self.plugin_config,
                 max_inline_io_bytes=max_inline_io_bytes,
+                queue=queue or self.queue,
                 interruptible=interruptible if interruptible is not None else self.interruptible,
                 triggers=triggers if isinstance(triggers, tuple) else (triggers,),
             )
