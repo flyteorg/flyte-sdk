@@ -31,7 +31,6 @@ metric_prefix = "flyte_connector_"
 create_operation = "create"
 get_operation = "get"
 delete_operation = "delete"
-do_operation = "do"
 
 # Follow the naming convention. https://prometheus.io/docs/practices/naming/
 request_success_count = Counter(
@@ -109,7 +108,6 @@ class AsyncConnectorService(AsyncAgentServiceServicer):
     async def CreateTask(self, request: CreateTaskRequest, context: grpc.ServicerContext) -> CreateTaskResponse:
         template = request.template
         connector = ConnectorRegistry.get_connector(template.type, template.task_type_version)
-
         logger.info(f"{connector.name} start creating the job")
         resource_meta = await connector.create(
             task_template=request.template,
@@ -141,10 +139,7 @@ class AsyncConnectorService(AsyncAgentServiceServicer):
         return await connector.get_metrics(resource_meta=connector.metadata_type.decode(request.resource_meta))
 
     async def GetTaskLogs(self, request: GetTaskLogsRequest, context: grpc.ServicerContext) -> GetTaskLogsResponse:
-        if request.task_category and request.task_category.name:
-            connector = ConnectorRegistry.get_connector(request.task_category.name, request.task_category.version)
-        else:
-            connector = ConnectorRegistry.get_connector(request.task_type)
+        connector = ConnectorRegistry.get_connector(request.task_category.name, request.task_category.version)
         logger.info(f"{connector.name} start getting logs of the job")
         return await connector.get_logs(resource_meta=connector.metadata_type.decode(request.resource_meta))
 
