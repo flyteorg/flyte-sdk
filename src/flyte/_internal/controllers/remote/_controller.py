@@ -126,7 +126,7 @@ class RemoteController(Controller):
             workers=workers,
             max_system_retries=max_system_retries,
         )
-        default_parent_concurrency = int(os.getenv("_F_P_CNC", "100"))
+        default_parent_concurrency = int(os.getenv("_F_P_CNC", "1000"))
         self._default_parent_concurrency = default_parent_concurrency
         self._parent_action_semaphore: DefaultDict[str, asyncio.Semaphore] = defaultdict(
             lambda: asyncio.Semaphore(default_parent_concurrency)
@@ -238,6 +238,7 @@ class RemoteController(Controller):
             inputs_uri=inputs_uri,
             run_output_base=tctx.run_base_dir,
             cache_key=cache_key,
+            queue=_task.queue,
         )
 
         try:
@@ -539,6 +540,7 @@ class RemoteController(Controller):
             inputs_uri=inputs_uri,
             run_output_base=tctx.run_base_dir,
             cache_key=cache_key,
+            queue=None,
         )
 
         try:

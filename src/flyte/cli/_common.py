@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import logging
 import os
 import sys
@@ -22,7 +23,7 @@ from rich.traceback import Traceback
 import flyte.errors
 from flyte.config import Config
 
-OutputFormat = Literal["table", "json", "table-simple"]
+OutputFormat = Literal["table", "json", "table-simple", "json-raw"]
 
 PREFERRED_BORDER_COLOR = "dim cyan"
 PREFERRED_ACCENT_COLOR = "bold #FFD700"
@@ -177,7 +178,7 @@ class InvokeBaseMixin:
         except Exception as e:
             if ctx.obj and ctx.obj.log_level and ctx.obj.log_level <= logging.DEBUG:
                 # If the user has requested verbose output, print the full traceback
-                console = Console()
+                console = get_console()
                 console.print(Traceback.from_exception(type(e), e, e.__traceback__))
                 exit(1)
             else:
@@ -381,6 +382,11 @@ def format(title: str, vals: Iterable[Any], of: OutputFormat = "table") -> Table
             if not vals:
                 return pretty_repr([])
             return pretty_repr([v.to_dict() for v in vals])
+        case "json-raw":
+            if not vals:
+                return []
+            return json.dumps([v.to_dict() for v in vals])
+
     raise click.ClickException("Unknown output format. Supported formats are: table, table-simple, json.")
 
 
@@ -395,3 +401,10 @@ def get_panel(title: str, renderable: Any, of: OutputFormat = "table") -> Panel:
         title=f"[{PREFERRED_ACCENT_COLOR}]{title}[/{PREFERRED_ACCENT_COLOR}]",
         border_style=PREFERRED_BORDER_COLOR,
     )
+
+
+def get_console() -> Console:
+    """
+    Get a console that is configured to use colors if the terminal supports it.
+    """
+    return Console(color_system="auto", force_terminal=True, width=120)

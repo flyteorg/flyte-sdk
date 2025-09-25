@@ -1,9 +1,10 @@
 import asyncio
-from typing import Tuple, Union
+from typing import Tuple, Union, get_args
 
 import rich_click as click
-from rich.console import Console
 from rich.pretty import pretty_repr
+
+import flyte.remote as remote
 
 from . import _common as common
 
@@ -38,20 +39,24 @@ def project(cfg: common.CLIConfig, name: str | None = None):
     """
     Get a list of all projects, or details of a specific project by name.
     """
-    from flyte.remote import Project
-
     cfg.init()
 
-    console = Console()
+    console = common.get_console()
     if name:
-        console.print(pretty_repr(Project.get(name)))
+        console.print(pretty_repr(remote.Project.get(name)))
     else:
-        console.print(common.format("Projects", Project.listall(), cfg.output_format))
+        console.print(common.format("Projects", remote.Project.listall(), cfg.output_format))
 
 
 @get.command(cls=common.CommandBase)
 @click.argument("name", type=str, required=False)
 @click.option("--limit", type=int, default=100, help="Limit the number of runs to fetch when listing.")
+@click.option(
+    "--in-phase",  # multiple=True, TODO support multiple phases once values in works
+    type=click.Choice(get_args(remote.Phase), case_sensitive=False),
+    help="Filter runs by their status.",
+)
+@click.option("--only-mine", is_flag=True, default=False, help="Show only runs created by the current user (you).")
 @click.pass_obj
 def run(
     cfg: common.CLIConfig,
@@ -59,6 +64,8 @@ def run(
     project: str | None = None,
     domain: str | None = None,
     limit: int = 100,
+    in_phase: str | Tuple[str, ...] | None = None,
+    only_mine: bool = False,
 ):
     """
     Get a list of all runs, or details of a specific run by name.
@@ -67,16 +74,29 @@ def run(
 
     If you want to see the actions for a run, use `get action <run_name>`.
     """
-    from flyte.remote import Run, RunDetails
 
     cfg.init(project=project, domain=domain)
 
-    console = Console()
+    console = common.get_console()
     if name:
-        details = RunDetails.get(name=name)
+        details = remote.RunDetails.get(name=name)
         console.print(common.format(f"Run {name}", [details], "json"))
     else:
-        console.print(common.format("Runs", Run.listall(limit=limit), cfg.output_format))
+        if in_phase and isinstance(in_phase, str):
+            in_phase = (in_phase,)
+
+        subject = None
+        if only_mine:
+            usr = remote.User.get()
+            subject = usr.subject()
+
+        console.print(
+            common.format(
+                "Runs",
+                remote.Run.listall(limit=limit, in_phase=in_phase, created_by_subject=subject),
+                cfg.output_format,
+            )
+        )
 
 
 @get.command(cls=common.CommandBase)
@@ -97,22 +117,22 @@ def task(
 
     Currently, both `name` and `version` are required to get a specific task.
     """
-    from flyte.remote import Task
-
     cfg.init(project=project, domain=domain)
 
-    console = Console()
+    console = common.get_console()
     if name:
         if version:
-            v = Task.get(name=name, version=version)
+            v = remote.Task.get(name=name, version=version)
             if v is None:
                 raise click.BadParameter(f"Task {name} not found.")
             t = v.fetch()
             console.print(common.format(f"Task {name}", [t], "json"))
         else:
-            console.print(common.format("Tasks", Task.listall(by_task_name=name, limit=limit), cfg.output_format))
+            console.print(
+                common.format("Tasks", remote.Task.listall(by_task_name=name, limit=limit), cfg.output_format)
+            )
     else:
-        console.print(common.format("Tasks", Task.listall(limit=limit), cfg.output_format))
+        console.print(common.format("Tasks", remote.Task.listall(limit=limit), cfg.output_format))
 
 
 @get.command(cls=common.CommandBase)
@@ -129,11 +149,9 @@ def action(
     """
     Get all actions for a run or details for a specific action.
     """
-    import flyte.remote as remote
-
     cfg.init(project=project, domain=domain)
 
-    console = Console()
+    console = common.get_console()
     if action_name:
         console.print(
             common.format(
@@ -196,8 +214,6 @@ def logs(
     $ flyte get logs my_run my_action --pretty --lines 50
     ```
     """
-    import flyte.remote as remote
-
     cfg.init(project=project, domain=domain)
 
     async def _run_log_view(_obj):
@@ -230,11 +246,9 @@ def secret(
     """
     Get a list of all secrets, or details of a specific secret by name.
     """
-    import flyte.remote as remote
-
     cfg.init(project=project, domain=domain)
 
-    console = Console()
+    console = common.get_console()
     if name:
         console.print(common.format("Secret", [remote.Secret.get(name)], "json"))
     else:
@@ -275,26 +289,23 @@ def io(
     if inputs_only and outputs_only:
         raise click.BadParameter("Cannot use both --inputs-only and --outputs-only")
 
-    import flyte.remote as remote
-    from flyte.remote import ActionDetails, ActionInputs, ActionOutputs
-
     cfg.init(project=project, domain=domain)
-    console = Console()
+    console = common.get_console()
     if action_name:
-        obj = ActionDetails.get(run_name=run_name, name=action_name)
+        obj = remote.ActionDetails.get(run_name=run_name, name=action_name)
     else:
         obj = remote.RunDetails.get(run_name)
 
     async def _get_io(
-        details: Union[remote.RunDetails, ActionDetails],
-    ) -> Tuple[ActionInputs | None, ActionOutputs | None | str]:
+        details: Union[remote.RunDetails, remote.ActionDetails],
+    ) -> Tuple[remote.ActionInputs | None, remote.ActionOutputs | None | str]:
         if inputs_only or outputs_only:
             if inputs_only:
                 return await details.inputs(), None
             elif outputs_only:
                 return None, await details.outputs()
         inputs = await details.inputs()
-        outputs: ActionOutputs | None | str = None
+        outputs: remote.ActionOutputs | None | str = None
         try:
             outputs = await details.outputs()
         except Exception:
@@ -321,5 +332,35 @@ def config(cfg: common.CLIConfig):
 
     The configuration will include the endpoint, organization, and other settings that are used by the CLI.
     """
-    console = Console()
+    console = common.get_console()
     console.print(cfg)
+
+
+@get.command(cls=common.CommandBase)
+@click.argument("task_name", type=str, required=False)
+@click.argument("name", type=str, required=False)
+@click.option("--limit", type=int, default=100, help="Limit the number of triggers to fetch.")
+@click.pass_obj
+def trigger(
+    cfg: common.CLIConfig,
+    task_name: str | None = None,
+    name: str | None = None,
+    limit: int = 100,
+    project: str | None = None,
+    domain: str | None = None,
+):
+    """
+    Get a list of all triggers, or details of a specific trigger by name.
+    """
+    if name and not task_name:
+        raise click.BadParameter("If you provide a trigger name, you must also provide the task name.")
+
+    from flyte.remote import Trigger
+
+    cfg.init(project=project, domain=domain)
+
+    console = common.get_console()
+    if name:
+        console.print(pretty_repr(Trigger.get(name=name, task_name=task_name)))
+    else:
+        console.print(common.format("Triggers", Trigger.listall(task_name=task_name, limit=limit), cfg.output_format))
