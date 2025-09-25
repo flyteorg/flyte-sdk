@@ -282,12 +282,9 @@ class _Runner:
                             annotations=annotations,
                             labels=labels,
                             envs=env_kv,
-<<<<<<< HEAD
-                            raw_output_data_config=raw_output_data_config,
-                            security_context=security_context
-=======
                             cluster=self._queue or task.queue,
->>>>>>> main
+                            raw_output_data_config=raw_output_data_config,
+                            security_context=security_context,
                         ),
                     ),
                 )
