@@ -213,9 +213,10 @@ def _recursive_discover(planned_envs: Dict[str, Environment], env: Environment) 
     Recursively deploy the environment and its dependencies, if not already deployed (present in env_tasks) and
     return the updated env_tasks.
     """
-    # Skip if the environment is already planned
     if env.name in planned_envs:
-        raise ValueError(f"Duplicate environment name '{env.name}' found")
+        if planned_envs[env.name] is not env:
+            # Raise error if different TaskEnvironment objects have the same name
+            raise ValueError(f"Duplicate environment name '{env.name}' found")
     # Add the environment to the existing envs
     planned_envs[env.name] = env
 
