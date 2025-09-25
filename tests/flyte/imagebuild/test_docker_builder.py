@@ -151,7 +151,7 @@ async def test_copy_config_handler():
                 layer=copy_config,
                 context_path=context_path,
                 dockerfile="FROM python:3.9\n",
-                docker_ignore_file_path=None,
+                docker_ignore_patterns=[],
             )
 
             # Should contain COPY command when file is copied
@@ -196,10 +196,6 @@ async def test_copy_config_handler_skips_dockerignore():
             exclude_file = src_dir / "memo.txt"
             exclude_file.write_text("memo")
 
-            # Create .dockerignore file in the root directory (not in src_dir)
-            dockerignore_file = src_dir / ".dockerignore"
-            dockerignore_file.write_text("*.txt\n.cache\n")
-
             # Mock _get_init_config().root_dir to return src_dir
             with patch("flyte._initialize._get_init_config") as mock_get_config:
                 mock_config = mock_get_config.return_value
@@ -217,7 +213,7 @@ async def test_copy_config_handler_skips_dockerignore():
                     layer=copy_config,
                     context_path=context_path,
                     dockerfile="FROM python:3.9\n",
-                    docker_ignore_file_path=None,
+                    docker_ignore_patterns=["*.txt", ".cache"],
                 )
 
                 # Should contain COPY command for the directory
@@ -256,10 +252,6 @@ async def test_copy_config_handler_with_dockerignore_layer():
             exclude_file = src_dir / "memo.txt"
             exclude_file.write_text("memo")
 
-            # Create .dockerignore file for DockerIgnore layer
-            layer_dockerignore = src_dir / "custom.dockerignore"
-            layer_dockerignore.write_text("*.txt\n.cache\n")
-
             # Mock _get_init_config().root_dir to return src_dir
             with patch("flyte._initialize._get_init_config") as mock_get_config:
                 mock_config = mock_get_config.return_value
@@ -277,7 +269,7 @@ async def test_copy_config_handler_with_dockerignore_layer():
                     layer=copy_config,
                     context_path=context_path,
                     dockerfile="FROM python:3.9\n",
-                    docker_ignore_file_path=layer_dockerignore,
+                    docker_ignore_patterns=["*.txt", ".cache"],
                 )
 
                 # Verify COPY command exists
@@ -310,7 +302,7 @@ def test_list_dockerignore_layer_priority():
         layer_dockerignore.write_text("*.txt\n.cache\n")
 
         # Test list_dockerignore method with DockerIgnore layer path
-        patterns = CopyConfigHandler.list_dockerignore(src_dir, layer_dockerignore)
+        patterns = DockerImageBuilder.list_dockerignore(src_dir, layer_dockerignore)
 
         # Should return patterns from DockerIgnore layer instead of local .dockerignore
         expected_patterns = ["*.txt", ".cache"]
@@ -327,7 +319,7 @@ def test_list_dockerignore_found():
         dockerignore_file.write_text("*.py\nsrc/\n.cache\n# This is a comment\n\n*.txt\n \n  \n\t\n")
 
         # Test the method
-        patterns = CopyConfigHandler.list_dockerignore(src_dir, None)
+        patterns = DockerImageBuilder.list_dockerignore(src_dir, None)
 
         # Should return expected patterns, excluding comments and empty lines
         expected_patterns = ["*.py", "src/", ".cache", "*.txt"]
@@ -340,7 +332,7 @@ def test_list_dockerignore_not_found():
         src_dir = Path(tmp_context)
 
         # Test the method
-        patterns = CopyConfigHandler.list_dockerignore(src_dir, None)
+        patterns = DockerImageBuilder.list_dockerignore(src_dir, None)
 
         # Should return empty list when .dockerignore doesn't exist
         assert patterns == []
@@ -367,7 +359,12 @@ async def test_poetry_handler_without_project_install():
             )
 
             initial_dockerfile = "FROM python:3.9\n"
-            result = await PoetryProjectHandler.handel(poetry_project, context_path, initial_dockerfile, None)
+            result = await PoetryProjectHandler.handel(
+                layer=poetry_project, 
+                context_path=context_path, 
+                dockerfile=initial_dockerfile, 
+                docker_ignore_patterns=[]
+            )
 
             assert "RUN --mount=type=cache,sharing=locked,mode=0777,target=/root/.cache/uv,id=uv" in result
             assert "RUN --mount=type=cache,sharing=locked,mode=0777,target=/tmp/poetry_cache,id=poetry" in result
@@ -394,8 +391,6 @@ async def test_poetry_handler_with_project_install():
             # Create PoetryProject without --no-root flag
             poetry_project = PoetryProject(pyproject=pyproject_file.absolute(), poetry_lock=None)
 
-            dockerignore_file = user_folder / ".dockerignore"
-            dockerignore_file.write_text("*.txt\n.cache\n")
             cache_dir = user_folder / ".cache"
             cache_dir.mkdir(parents=True, exist_ok=True)
             cache_file = cache_dir / "temp.txt"
@@ -407,7 +402,10 @@ async def test_poetry_handler_with_project_install():
 
             initial_dockerfile = "FROM python:3.9\n"
             result = await PoetryProjectHandler.handel(
-                poetry_project, context_path, initial_dockerfile, dockerignore_file
+                layer=poetry_project, 
+                context_path=context_path, 
+                dockerfile=initial_dockerfile, 
+                docker_ignore_patterns=["*.txt", ".cache"]
             )
 
             assert result.startswith(initial_dockerfile)
@@ -448,8 +446,6 @@ async def test_uvproject_handler_with_project_install():
 
             uv_project = UVProject(pyproject=pyproject_file.absolute(), uvlock=None)
 
-            dockerignore_file = user_folder / ".dockerignore"
-            dockerignore_file.write_text("*.txt\n.cache\n")
             cache_dir = user_folder / ".cache"
             cache_dir.mkdir(parents=True, exist_ok=True)
             (cache_dir / "temp.txt").write_text("temp")
@@ -458,7 +454,10 @@ async def test_uvproject_handler_with_project_install():
 
             initial_dockerfile = "FROM python:3.9\n"
             result = await UVProjectHandler.handle(
-                uv_project, context_path, initial_dockerfile, dockerignore_file,
+                layer=uv_project, 
+                context_path=context_path, 
+                dockerfile=initial_dockerfile, 
+                docker_ignore_patterns=["*.txt", ".cache"]
             )
 
             assert result.startswith(initial_dockerfile)

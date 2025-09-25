@@ -267,7 +267,7 @@ class AptPackagesHandler:
 class UVProjectHandler:
     @staticmethod
     async def handle(
-        layer: UVProject, context_path: Path, dockerfile: str, docker_ignore_file_path: Optional[Path]
+        layer: UVProject, context_path: Path, dockerfile: str, docker_ignore_patterns: list[str] = []
     ) -> str:
         secret_mounts = _get_secret_mounts_layer(layer.secret_mounts)
         if layer.extra_index_urls and "--no-install-project" in layer.extra_index_urls:
@@ -282,9 +282,6 @@ class UVProjectHandler:
             )
         else:
             # Copy the entire project.
-            docker_ignore_patterns = CopyConfigHandler.list_dockerignore(
-                layer.pyproject.parent, docker_ignore_file_path
-            )
             pyproject_dst = copy_files_to_context(layer.pyproject.parent, context_path, docker_ignore_patterns)
             if layer.uvlock:
                 # Sometimes the uv.lock file is in a different folder, if it's specified, let's copy it there explicitly
@@ -302,7 +299,7 @@ class UVProjectHandler:
 class PoetryProjectHandler:
     @staticmethod
     async def handel(
-        layer: PoetryProject, context_path: Path, dockerfile: str, docker_ignore_file_path: Optional[Path]
+        layer: PoetryProject, context_path: Path, dockerfile: str, docker_ignore_patterns: list[str] = []
     ) -> str:
         secret_mounts = _get_secret_mounts_layer(layer.secret_mounts)
         if layer.extra_args and "--no-root" in layer.extra_args:
@@ -317,9 +314,6 @@ class PoetryProjectHandler:
             )
         else:
             # Copy the entire project.
-            docker_ignore_patterns = CopyConfigHandler.list_dockerignore(
-                layer.pyproject.parent, docker_ignore_file_path
-            )
             pyproject_dst = copy_files_to_context(layer.pyproject.parent, context_path, docker_ignore_patterns)
             delta = POETRY_LOCK_INSTALL_TEMPLATE.substitute(
                 PYPROJECT_PATH=pyproject_dst.relative_to(context_path),
@@ -337,37 +331,10 @@ class DockerIgnoreHandler:
 
 
 class CopyConfigHandler:
-    @staticmethod
-    def list_dockerignore(root_path: Optional[Path], docker_ignore_file_path: Optional[Path]) -> List[str]:
-        patterns: List[str] = []
-        dockerignore_path: Optional[Path] = None
-        if root_path:
-            dockerignore_path = root_path / ".dockerignore"
-        # DockerIgnore layer should be first priority
-        if docker_ignore_file_path:
-            dockerignore_path = docker_ignore_file_path
-
-        # Return empty list if no .dockerignore file found
-        if not dockerignore_path or not dockerignore_path.exists() or not dockerignore_path.is_file():
-            logger.info(f".dockerignore file not found at path: {dockerignore_path}")
-            return patterns
-
-        try:
-            with open(dockerignore_path, "r", encoding="utf-8") as f:
-                for line in f:
-                    stripped_line = line.strip()
-                    # Skip empty lines, whitespace-only lines, and comments
-                    if not stripped_line or stripped_line.startswith("#"):
-                        continue
-                    patterns.append(stripped_line)
-        except Exception as e:
-            logger.error(f"Failed to read .dockerignore file at {dockerignore_path}: {e}")
-            return []
-        return patterns
 
     @staticmethod
     async def handle(
-        layer: CopyConfig, context_path: Path, dockerfile: str, docker_ignore_file_path: Optional[Path]
+        layer: CopyConfig, context_path: Path, dockerfile: str, docker_ignore_patterns: list[str] = []
     ) -> str:
         # Copy the source config file or directory to the context path
         if layer.src.is_absolute() or ".." in str(layer.src):
@@ -383,11 +350,6 @@ class CopyConfigHandler:
             shutil.copy(abs_path, dst_path)
         elif layer.src.is_dir():
             # Copy the entire directory
-            from flyte._initialize import _get_init_config
-
-            init_config = _get_init_config()
-            root_path = init_config.root_dir if init_config else None
-            docker_ignore_patterns = CopyConfigHandler.list_dockerignore(root_path, docker_ignore_file_path)
             shutil.copytree(
                 abs_path, dst_path, dirs_exist_ok=True, ignore=shutil.ignore_patterns(*docker_ignore_patterns)
             )
@@ -463,7 +425,7 @@ def _get_secret_mounts_layer(secrets: typing.Tuple[str | Secret, ...] | None) ->
 
 
 async def _process_layer(
-    layer: Layer, context_path: Path, dockerfile: str, docker_ignore_file_path: Optional[Path]
+    layer: Layer, context_path: Path, dockerfile: str, docker_ignore_patterns: list[str] = []
 ) -> str:
     match layer:
         case PythonWheels():
@@ -496,15 +458,15 @@ async def _process_layer(
 
         case UVProject():
             # Handle UV project
-            dockerfile = await UVProjectHandler.handle(layer, context_path, dockerfile, docker_ignore_file_path)
+            dockerfile = await UVProjectHandler.handle(layer, context_path, dockerfile, docker_ignore_patterns)
 
         case PoetryProject():
             # Handle Poetry project
-            dockerfile = await PoetryProjectHandler.handel(layer, context_path, dockerfile, docker_ignore_file_path)
+            dockerfile = await PoetryProjectHandler.handel(layer, context_path, dockerfile, docker_ignore_patterns)
 
         case CopyConfig():
             # Handle local files and folders
-            dockerfile = await CopyConfigHandler.handle(layer, context_path, dockerfile, docker_ignore_file_path)
+            dockerfile = await CopyConfigHandler.handle(layer, context_path, dockerfile, docker_ignore_patterns)
 
         case Commands():
             # Handle commands
@@ -641,6 +603,34 @@ class DockerImageBuilder(ImageBuilder):
 
         return None
 
+    @staticmethod
+    def list_dockerignore(root_path: Optional[Path], docker_ignore_file_path: Optional[Path]) -> List[str]:
+        patterns: List[str] = []
+        dockerignore_path: Optional[Path] = None
+        if root_path:
+            dockerignore_path = root_path / ".dockerignore"
+        # DockerIgnore layer should be first priority
+        if docker_ignore_file_path:
+            dockerignore_path = docker_ignore_file_path
+
+        # Return empty list if no .dockerignore file found
+        if not dockerignore_path or not dockerignore_path.exists() or not dockerignore_path.is_file():
+            logger.info(f".dockerignore file not found at path: {dockerignore_path}")
+            return patterns
+
+        try:
+            with open(dockerignore_path, "r", encoding="utf-8") as f:
+                for line in f:
+                    stripped_line = line.strip()
+                    # Skip empty lines, whitespace-only lines, and comments
+                    if not stripped_line or stripped_line.startswith("#"):
+                        continue
+                    patterns.append(stripped_line)
+        except Exception as e:
+            logger.error(f"Failed to read .dockerignore file at {dockerignore_path}: {e}")
+            return []
+        return patterns
+
     async def _build_image(self, image: Image, *, push: bool = True, dry_run: bool = False) -> str:
         """
         if default image (only base image and locked), raise an error, don't have a dockerfile
@@ -659,6 +649,7 @@ class DockerImageBuilder(ImageBuilder):
         """
         # For testing, set `push=False` to just build the image locally and not push to
         # registry.
+        from flyte._initialize import _get_init_config
 
         await DockerImageBuilder._ensure_buildx_builder()
 
@@ -671,9 +662,14 @@ class DockerImageBuilder(ImageBuilder):
                 PYTHON_VERSION=f"{image.python_version[0]}.{image.python_version[1]}",
             )
 
+            # Get .dockerignore file patterns first
             docker_ignore_file_path = DockerImageBuilder.get_docker_ignore(image)
+            init_config = _get_init_config()
+            root_path = init_config.root_dir if init_config else None
+            docker_ignore_patterns = DockerImageBuilder.list_dockerignore(root_path, docker_ignore_file_path)
+            
             for layer in image._layers:
-                dockerfile = await _process_layer(layer, tmp_path, dockerfile, docker_ignore_file_path)
+                dockerfile = await _process_layer(layer, tmp_path, dockerfile, docker_ignore_patterns)
 
             dockerfile += DOCKER_FILE_BASE_FOOTER.substitute(F_IMG_ID=image.uri)
 
