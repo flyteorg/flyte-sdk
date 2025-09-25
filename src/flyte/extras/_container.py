@@ -273,7 +273,7 @@ class ContainerTask(TaskTemplate):
         return tasks_pb2.DataLoadingConfig(
             input_path=str(self._input_data_dir) if self._input_data_dir else None,
             output_path=str(self._output_data_dir) if self._output_data_dir else None,
-            enabled=True,
+            enabled=self.reusable is None,
             format=literal_to_protobuf.get(self._metadata_format, "JSON"),
         )
 
