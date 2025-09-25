@@ -3,6 +3,7 @@ from __future__ import annotations
 import gzip
 import hashlib
 import importlib.util
+import importlib.metadata
 import os
 import pathlib
 import shutil

@@ -8,9 +8,9 @@ import flyte
 env = flyte.TaskEnvironment(
     name="albatross_env",
     image=flyte.Image.from_debian_base().with_uv_project(
-        pyproject_file=Path("./pyproject.toml"),
-        extra_args="--only-group all",
-    ).with_local_v2(),
+        pyproject_file=Path("../pyproject.toml"),
+        extra_args="--only-group albatross --inexact",  # albatross group define all the dependencies the task needs
+    )
 )
 
 
@@ -22,7 +22,6 @@ async def albatross_task() -> str:
 
 
 if __name__ == "__main__":
-    current_dir = Path(__file__).parent
-    flyte.init_from_config(root_dir=current_dir.parent)
-    run = flyte.with_runcontext(copy_style="none", version="x").run(albatross_task)
+    flyte.init_from_config(root_dir=Path(__file__).parent.parent)
+    run = flyte.run(albatross_task)
     print(run.url)

@@ -854,7 +854,7 @@ wheels = [
 [[package]]
 name = "tester"
 version = "0.1.0"
-source = { virtual = "." }
+source = { editable = "." }
 dependencies = [
     { name = "flyte" },
     { name = "numpy" },
@@ -863,6 +863,7 @@ dependencies = [
 
 [package.optional-dependencies]
 pandas = [
+    { name = "numpy" },
     { name = "pandas" },
 ]
 
@@ -870,6 +871,7 @@ pandas = [
 requires-dist = [
     { name = "flyte", specifier = ">=2.0.0b17" },
     { name = "numpy" },
+    { name = "numpy", marker = "extra == 'pandas'" },
     { name = "pandas", marker = "extra == 'pandas'" },
     { name = "requests" },
 ]

@@ -1,0 +1,28 @@
+version = 1
+revision = 2
+requires-python = ">=3.10"
+
+[options]
+prerelease-mode = "allow"
+
+[manifest]
+members = [
+    "bird-feeder",
+    "seeds",
+]
+
+[manifest.dependency-groups]
+albatross = [
+    { name = "bird-feeder", editable = "bird_feeder" },
+    { name = "seeds", editable = "seeds" },
+]
+
+[[package]]
+name = "bird-feeder"
+version = "0.1.0"
+source = { editable = "bird_feeder" }
+
+[[package]]
+name = "seeds"
+version = "0.1.0"
+source = { editable = "seeds" }
