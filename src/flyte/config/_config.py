@@ -231,10 +231,12 @@ def auto(config_file: typing.Union[str, pathlib.Path, ConfigFile, None] = None) 
       1. If specified, read the config from the provided file path.
       2. If not specified, the config file is searched in the default locations.
             a. ./config.yaml if it exists  (current working directory)
-            b. `UCTL_CONFIG` environment variable
-            c. `FLYTECTL_CONFIG` environment variable
-            d. ~/.union/config.yaml if it exists
-            e. ~/.flyte/config.yaml if it exists
+            b. ./.flyte/config.yaml if it exists (current working directory)
+            c. <git_root>/.flyte/config.yaml if it exists
+            d. `UCTL_CONFIG` environment variable
+            e. `FLYTECTL_CONFIG` environment variable
+            f. ~/.union/config.yaml if it exists
+            g. ~/.flyte/config.yaml if it exists
     3. If any value is not found in the config file, the default value is used.
     4. For any value there are environment variables that match the config variable names, those will override
 

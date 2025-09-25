@@ -59,5 +59,5 @@ async def create_and_check_dir():
 
 
 if __name__ == "__main__":
-    flyte.init_from_config("../../config.yaml")
+    flyte.init_from_config()
     flyte.run(create_and_check_dir)

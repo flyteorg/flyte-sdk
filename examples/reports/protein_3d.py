@@ -418,7 +418,7 @@ async def generate_protein_3d():
 
 
 if __name__ == "__main__":
-    flyte.init_from_config("../../config.yaml")
+    flyte.init_from_config()
     run = flyte.run(generate_protein_3d)
     print(run.name)
     print(run.url)

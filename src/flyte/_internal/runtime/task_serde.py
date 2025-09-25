@@ -170,7 +170,7 @@ def get_proto_task(task: TaskTemplate, serialize_context: SerializationContext) 
             retries=get_proto_retry_strategy(task.retries),
             timeout=get_proto_timeout(task.timeout),
             pod_template_name=(task.pod_template if task.pod_template and isinstance(task.pod_template, str) else None),
-            interruptible=task.interruptable,
+            interruptible=task.interruptible,
             generates_deck=wrappers_pb2.BoolValue(value=task.report),
         ),
         interface=transform_native_to_typed_interface(task.native_interface),
@@ -211,22 +211,26 @@ def _get_urun_container(
     # pr: under what conditions should this return None?
     if isinstance(task_template.image, str):
         raise flyte.errors.RuntimeSystemError("BadConfig", "Image is not a valid image")
-    image_id = task_template.image.identifier
+
+    env_name = ""
+    if task_template.parent_env is not None:
+        task_env = task_template.parent_env()
+        if task_env is not None:
+            env_name = task_env.name
+    else:
+        raise flyte.errors.RuntimeSystemError("BadConfig", "Task template has no parent environment")
+
     if not serialize_context.image_cache:
         # This computes the image uri, computing hashes as necessary so can fail if done remotely.
         img_uri = task_template.image.uri
-    elif serialize_context.image_cache and image_id not in serialize_context.image_cache.image_lookup:
+    elif serialize_context.image_cache and env_name not in serialize_context.image_cache.image_lookup:
         img_uri = task_template.image.uri
-        from flyte._version import __version__
 
         logger.warning(
-            f"Image {task_template.image} not found in the image cache: {serialize_context.image_cache.image_lookup}.\n"
-            f"This typically occurs when the Flyte SDK version (`{__version__}`) used in the task environment "
-            f"differs from the version used to compile or deploy it.\n"
-            f"Ensure both environments use the same Flyte SDK version to avoid inconsistencies in image resolution."
+            f"Image {task_template.image} not found in the image cache: {serialize_context.image_cache.image_lookup}."
         )
     else:
-        img_uri = serialize_context.image_cache.image_lookup[image_id]
+        img_uri = serialize_context.image_cache.image_lookup[env_name]
 
     return tasks_pb2.Container(
         image=img_uri,

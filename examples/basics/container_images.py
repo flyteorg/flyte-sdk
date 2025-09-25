@@ -40,7 +40,7 @@ async def workflow():
 
 
 if __name__ == "__main__":
-    flyte.init_from_config("config.yaml")
+    flyte.init_from_config()
     run = flyte.run(workflow)
     print(run.name)
     print(run.url)
