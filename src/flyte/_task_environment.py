@@ -72,8 +72,7 @@ class TaskEnvironment(Environment):
     cache: CacheRequest = "disable"
     reusable: ReusePolicy | None = None
     plugin_config: Optional[Any] = None
-    # TODO Shall we make this union of string or env? This way we can lookup the env by module/file:name
-    # TODO also we could add list of files that are used by this environment
+    queue: Optional[str] = None
 
     _tasks: Dict[str, TaskTemplate] = field(default_factory=dict, init=False)
 
