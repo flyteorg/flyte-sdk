@@ -9,7 +9,6 @@ from types import ModuleType
 from typing import Any, Dict, List, cast
 
 import rich_click as click
-from rich.console import Console
 from typing_extensions import get_args
 
 from .._code_bundle._utils import CopyFiles
@@ -142,7 +141,7 @@ class RunTaskCommand(click.RichCommand):
                 name=self.run_args.name,
             ).run.aio(self.obj, **ctx.params)
             if isinstance(r, Run) and r.action is not None:
-                console = Console()
+                console = common.get_console()
                 console.print(
                     common.get_panel(
                         "Run",
@@ -229,7 +228,7 @@ class RunReferenceTaskCommand(click.RichCommand):
                 name=self.run_args.name,
             ).run.aio(task, **ctx.params)
             if isinstance(r, Run) and r.action is not None:
-                console = Console()
+                console = common.get_console()
                 console.print(
                     common.get_panel(
                         "Run",
