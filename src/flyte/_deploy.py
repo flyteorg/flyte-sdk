@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import typing
 import sys
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Dict, List, Optional, Protocol, Set, Tuple, Type
@@ -230,12 +231,7 @@ async def _build_images(deployment: DeploymentPlan) -> ImageCache:
     for env_name, image_uri in final_images:
         logger.warning(f"Built Image for environment {env_name}, image: {image_uri}")
         env = deployment.envs[env_name]
-        if isinstance(env.image, Image):
-            py_version = "{}.{}".format(*env.image.python_version)
-            image_identifier_map[env.image.identifier] = {py_version: image_uri}
-        elif env.image == "auto":
-            py_version = "{}.{}".format(sys.version_info.major, sys.version_info.minor)
-            image_identifier_map["auto"] = {py_version: image_uri}
+        image_identifier_map[env_name] = image_uri
 
     return ImageCache(image_lookup=image_identifier_map)
 
@@ -359,14 +355,16 @@ def _recursive_discover(planned_envs: Dict[str, Environment], env: Environment) 
     Recursively deploy the environment and its dependencies, if not already deployed (present in env_tasks) and
     return the updated env_tasks.
     """
-    # Skip if the environment is already planned
     if env.name in planned_envs:
-        return planned_envs
+        if planned_envs[env.name] is not env:
+            # Raise error if different TaskEnvironment objects have the same name
+            raise ValueError(f"Duplicate environment name '{env.name}' found")
+    # Add the environment to the existing envs
+    planned_envs[env.name] = env
+
     # Recursively discover dependent environments
     for dependent_env in env.depends_on:
         _recursive_discover(planned_envs, dependent_env)
-    # Add the environment to the existing envs
-    planned_envs[env.name] = env
     return planned_envs
 
 
@@ -377,11 +375,12 @@ def plan_deploy(*envs: Environment, version: Optional[str] = None) -> List[Deplo
     visited_envs: Set[str] = set()
     for env in envs:
         if env.name in visited_envs:
-            continue
+            raise ValueError(f"Duplicate environment name '{env.name}' found")
         planned_envs = _recursive_discover({}, env)
         deployment_plans.append(DeploymentPlan(planned_envs, version=version))
         visited_envs.update(planned_envs.keys())
     return deployment_plans
+
 
 
 @syncify

@@ -135,11 +135,6 @@ class ImageBuildEngine:
 
     ImageBuilderType = typing.Literal["local", "remote"]
 
-    _SEEN_IMAGES: typing.ClassVar[typing.Dict[str, str]] = {
-        # Set default for the auto container. See Image._identifier_override for more info.
-        "auto": Image.from_debian_base().uri,
-    }
-
     @staticmethod
     @alru_cache
     async def image_exists(image: Image) -> Optional[str]:
@@ -235,7 +230,7 @@ class ImageBuildEngine:
 
 
 class ImageCache(BaseModel):
-    image_lookup: Dict[str, Dict[str, str]]
+    image_lookup: Dict[str, str]
     serialized_form: str | None = None
 
     @property
@@ -273,11 +268,10 @@ class ImageCache(BaseModel):
         """
         tuples = []
         for k, v in self.image_lookup.items():
-            for py_version, image_uri in v.items():
-                tuples.append(
-                    [
-                        ("Name", f"{k} (py{py_version})"),
-                        ("image", image_uri),
-                    ]
-                )
+            tuples.append(
+                [
+                    ("Name", k),
+                    ("image", v),
+                ]
+            )
         return tuples
