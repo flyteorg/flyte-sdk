@@ -7,7 +7,6 @@ env = flyte.TaskEnvironment(
     resources=flyte.Resources(memory="250Mi"),
     image=(
         flyte.Image.from_debian_base()
-        .with_env_vars({"sdf": "3"})
         .with_uv_project(
             pyproject_file=pathlib.Path("pyproject.toml"),
             pre=True,
