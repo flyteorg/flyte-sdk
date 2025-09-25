@@ -23,62 +23,6 @@ Do you want a single-file solution?
 | **uv_workspace** | Monorepo/multi-package | UV workspace with members | Shared dependencies, package isolation |
 | **uvscript** | Single-file scripts | No pyproject.toml | Inline dependencies, zero config files |
 
-## 📁 Project Structures
-
-### uv_project: Simple External Dependencies
-```
-uv_project/
-├── pyproject.toml      # Dependencies: requests, numpy, etc.
-├── uv.lock             # Lockfile
-└── main.py             # Main application
-```
-
-### uv_project_lib: Custom Library Integration  
-```
-uv_project_lib/
-├── main.py                        # Uses custom library
-└── my_plugin/
-    ├── pyproject.toml             # Library definition
-    ├── uv.lock
-    └── src/my_lib/
-        ├── __init__.py
-        └── math_utils.py          # Custom library code
-```
-
-### uv_workspace: Monorepo Structure
-```
-uv_workspace/
-├── pyproject.toml      # Workspace definition
-├── uv.lock
-├── tasks/              # Main application
-│   └── albatross.py
-├── bird_feeder/        # Package 1
-│   └── pyproject.toml
-└── seeds/              # Package 2
-    └── pyproject.toml
-```
-
-## 🔧 Configuration Reference
-
-### `with_uv_project()` Parameters
-
-```python
-flyte.Image.from_debian_base().with_uv_project(
-    pyproject_file=Path("pyproject.toml"),  # Required: path to pyproject.toml
-    pre=True,                               # Optional: allow pre-release versions
-    extra_args="--no-install-project",     # Optional: additional uv arguments
-)
-```
-
-### Essential `extra_args` Options
-
-| Argument | Use Case | Example Pattern |
-|----------|----------|-----------------|
-| `--no-install-project` | Don't install current project, only dependencies | `uv_project` |
-| `--inexact` | Allow version flexibility, prevent conflicts | `uv_project_lib` |
-| `--only-group <name>` | Install specific dependency groups only | `uv_workspace` |
-| `--only-group <name> --inexact` | Combine group selection with flexibility | `uv_workspace` |
-
 ## 📚 Pattern Details & Examples
 
 ### 1. uv_project: Simple Dependencies
