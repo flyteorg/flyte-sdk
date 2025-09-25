@@ -50,7 +50,7 @@ class DeploymentContext:
 @dataclass
 class DeployedTask:
     deployed_task: task_definition_pb2.TaskSpec
-    deployed_triggers: List[trigger_definition_pb2.TriggerDetails]
+    deployed_triggers: List[trigger_definition_pb2.TaskTrigger]
 
     def summary_repr(self) -> str:
         """
@@ -148,7 +148,7 @@ async def _deploy_task(
 
     from ._internal.runtime.convert import convert_upload_default_inputs
     from ._internal.runtime.task_serde import translate_task_to_wire
-    from ._internal.runtime.trigger_serde import to_trigger_details
+    from ._internal.runtime.trigger_serde import to_task_trigger
     from ._protos.workflow import task_definition_pb2, task_service_pb2
 
     image_uri = task.image.uri if isinstance(task.image, Image) else task.image
@@ -174,7 +174,7 @@ async def _deploy_task(
 
         deployable_triggers = []
         for t in task.triggers:
-            deployable_triggers.append(to_trigger_details(task_id=task_id, t=t))
+            deployable_triggers.append(to_task_trigger(t=t))
 
         try:
             await get_client().task_service.DeployTask(

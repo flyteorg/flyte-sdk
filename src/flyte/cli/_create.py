@@ -201,16 +201,9 @@ def config(
 @click.argument("task_name", type=str, required=True)
 @click.argument("name", type=str, required=True)
 @click.option(
-    "--task-version",
-    type=str,
-    default="latest",
-    help="Version of the task to create a trigger for. Defaults to 'latest'.",
-    show_default=True,
-)
-@click.option(
     "--schedule",
     type=str,
-    default="* * * * *",
+    required=True,
     help="Cron schedule for the trigger. Defaults to every minute.",
     show_default=True,
 )
@@ -240,10 +233,9 @@ def trigger(
     cfg: common.CLIConfig,
     task_name: str,
     name: str,
-    task_version: str = "latest",
+    schedule: str,
     trigger_time_var: str = "trigger_time",
     auto_activate: bool = True,
-    schedule: str = "* * * * *",
     description: str = "",
     project: str | None = None,
     domain: str | None = None,
@@ -274,5 +266,5 @@ def trigger(
         interruptible=None,
     )
     with console.status("Creating trigger..."):
-        v = Trigger.create(trigger, task_name=task_name, task_version=task_version)
+        v = Trigger.create(trigger, task_name=task_name)
     console.print(f"[bold green]Trigger {v.name} created successfully![/bold green]")

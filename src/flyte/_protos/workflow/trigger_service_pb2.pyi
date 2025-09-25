@@ -1,6 +1,8 @@
 from flyte._protos.common import identifier_pb2 as _identifier_pb2
 from flyte._protos.common import list_pb2 as _list_pb2
 from flyte._protos.validate.validate import validate_pb2 as _validate_pb2
+from flyte._protos.workflow import common_pb2 as _common_pb2
+from flyte._protos.workflow import task_definition_pb2 as _task_definition_pb2
 from flyte._protos.workflow import trigger_definition_pb2 as _trigger_definition_pb2
 from google.protobuf.internal import containers as _containers
 from google.protobuf import descriptor as _descriptor
@@ -9,13 +11,17 @@ from typing import ClassVar as _ClassVar, Iterable as _Iterable, Mapping as _Map
 
 DESCRIPTOR: _descriptor.FileDescriptor
 
-class SaveTriggerRequest(_message.Message):
-    __slots__ = ["trigger"]
-    TRIGGER_FIELD_NUMBER: _ClassVar[int]
-    trigger: _trigger_definition_pb2.TriggerDetails
-    def __init__(self, trigger: _Optional[_Union[_trigger_definition_pb2.TriggerDetails, _Mapping]] = ...) -> None: ...
+class CreateTriggerRequest(_message.Message):
+    __slots__ = ["id", "spec", "automation_spec"]
+    ID_FIELD_NUMBER: _ClassVar[int]
+    SPEC_FIELD_NUMBER: _ClassVar[int]
+    AUTOMATION_SPEC_FIELD_NUMBER: _ClassVar[int]
+    id: _identifier_pb2.TriggerIdentifier
+    spec: _trigger_definition_pb2.TriggerSpec
+    automation_spec: _common_pb2.TriggerAutomationSpec
+    def __init__(self, id: _Optional[_Union[_identifier_pb2.TriggerIdentifier, _Mapping]] = ..., spec: _Optional[_Union[_trigger_definition_pb2.TriggerSpec, _Mapping]] = ..., automation_spec: _Optional[_Union[_common_pb2.TriggerAutomationSpec, _Mapping]] = ...) -> None: ...
 
-class SaveTriggerResponse(_message.Message):
+class CreateTriggerResponse(_message.Message):
     __slots__ = ["trigger"]
     TRIGGER_FIELD_NUMBER: _ClassVar[int]
     trigger: _trigger_definition_pb2.TriggerDetails
@@ -46,14 +52,16 @@ class GetTriggerRevisionDetailsResponse(_message.Message):
     def __init__(self, trigger: _Optional[_Union[_trigger_definition_pb2.TriggerDetails, _Mapping]] = ...) -> None: ...
 
 class ListTriggersRequest(_message.Message):
-    __slots__ = ["request", "org", "project_id"]
+    __slots__ = ["request", "org", "project_id", "task_id"]
     REQUEST_FIELD_NUMBER: _ClassVar[int]
     ORG_FIELD_NUMBER: _ClassVar[int]
     PROJECT_ID_FIELD_NUMBER: _ClassVar[int]
+    TASK_ID_FIELD_NUMBER: _ClassVar[int]
     request: _list_pb2.ListRequest
     org: str
     project_id: _identifier_pb2.ProjectIdentifier
-    def __init__(self, request: _Optional[_Union[_list_pb2.ListRequest, _Mapping]] = ..., org: _Optional[str] = ..., project_id: _Optional[_Union[_identifier_pb2.ProjectIdentifier, _Mapping]] = ...) -> None: ...
+    task_id: _task_definition_pb2.TaskIdentifier
+    def __init__(self, request: _Optional[_Union[_list_pb2.ListRequest, _Mapping]] = ..., org: _Optional[str] = ..., project_id: _Optional[_Union[_identifier_pb2.ProjectIdentifier, _Mapping]] = ..., task_id: _Optional[_Union[_task_definition_pb2.TaskIdentifier, _Mapping]] = ...) -> None: ...
 
 class ListTriggersResponse(_message.Message):
     __slots__ = ["triggers", "token"]

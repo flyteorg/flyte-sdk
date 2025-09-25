@@ -8,7 +8,7 @@ import flyte
 from flyte._initialize import ensure_client, get_client, get_common_config
 from flyte._internal.runtime import trigger_serde
 from flyte._protos.common import identifier_pb2, list_pb2
-from flyte._protos.workflow import task_definition_pb2, trigger_definition_pb2, trigger_service_pb2
+from flyte._protos.workflow import common_pb2, task_definition_pb2, trigger_definition_pb2, trigger_service_pb2
 from flyte.syncify import syncify
 
 from ._common import ToJSONMixin
@@ -20,7 +20,7 @@ class TriggerDetails(ToJSONMixin):
 
     @syncify
     @classmethod
-    async def get(cls, *, name: str) -> TriggerDetails:
+    async def get(cls, *, name: str, task_name: str) -> TriggerDetails:
         """
         Retrieve detailed information about a specific trigger by its name.
         """
@@ -29,6 +29,7 @@ class TriggerDetails(ToJSONMixin):
         resp = await get_client().trigger_service.GetTriggerDetails(
             request=trigger_service_pb2.GetTriggerDetailsRequest(
                 name=identifier_pb2.TriggerName(
+                    task_name=task_name,
                     name=name,
                     org=cfg.org,
                     project=cfg.project,
@@ -51,7 +52,7 @@ class TriggerDetails(ToJSONMixin):
         return self.pb2.spec.task_id
 
     @property
-    def automation_spec(self) -> trigger_definition_pb2.TriggerAutomationSpec:
+    def automation_spec(self) -> common_pb2.TriggerAutomationSpec:
         return self.pb2.automation_spec
 
     @property
@@ -70,7 +71,6 @@ class TriggerDetails(ToJSONMixin):
     def trigger(self) -> trigger_definition_pb2.Trigger:
         return trigger_definition_pb2.Trigger(
             id=self.pb2.id,
-            task_id=self.pb2.spec.task_id,
             automation_spec=self.pb2.automation_spec,
             meta=self.pb2.meta,
             status=self.pb2.status,
@@ -89,30 +89,29 @@ class Trigger(ToJSONMixin):
         cls,
         trigger: flyte.Trigger,
         task_name: str,
-        task_version: str | None = None,
     ) -> Trigger:
         """
         Create a new trigger in the Flyte platform.
 
         :param trigger: The flyte.Trigger object containing the trigger definition.
         :param task_name: Optional name of the task to associate with the trigger.
-        :param task_version: Optional version of the task to associate with the trigger.
         """
         ensure_client()
         cfg = get_common_config()
-        trigger_details = trigger_serde.to_trigger_details(
-            task_id=task_definition_pb2.TaskIdentifier(
-                name=task_name,
-                project=cfg.project,
-                domain=cfg.domain,
-                org=cfg.org,
-                version=task_version,
-            ),
-            t=trigger,
-        )
-        resp = await get_client().trigger_service.SaveTrigger(
-            request=trigger_service_pb2.SaveTriggerRequest(
-                trigger=trigger_details,
+        task_trigger = trigger_serde.to_task_trigger(t=trigger)
+        resp = await get_client().trigger_service.CreateTrigger(
+            request=trigger_service_pb2.CreateTriggerRequest(
+                id=identifier_pb2.TriggerIdentifier(
+                    name=identifier_pb2.TriggerName(
+                        name=trigger.name,
+                        task_name=task_name,
+                        org=cfg.org,
+                        project=cfg.project,
+                        domain=cfg.domain,
+                    ),
+                ),
+                spec=task_trigger.spec,
+                automation_spec=task_trigger.automation_spec,
             )
         )
 
@@ -126,26 +125,50 @@ class Trigger(ToJSONMixin):
         """
         Retrieve a trigger by its name and associated task name.
         """
-        return await TriggerDetails.get(name=name)
+        return await TriggerDetails.get(name=name, task_name=task_name)
 
     @syncify
     @classmethod
-    async def listall(cls, task_name: str | None = None, limit: int = 100) -> AsyncIterator[Trigger]:
+    async def listall(
+        cls, task_name: str | None = None, task_version: str | None = None, limit: int = 100
+    ) -> AsyncIterator[Trigger]:
         """
         List all triggers associated with a specific task or all tasks if no task name is provided.
         """
         ensure_client()
         cfg = get_common_config()
         token = None
+        # task_name_id = None  TODO: implement listing by task name only
+        project_id = None
+        task_id = None
+        if task_name and task_version:
+            task_id = task_definition_pb2.TaskIdentifier(
+                name=task_name,
+                project=cfg.project,
+                domain=cfg.domain,
+                org=cfg.org,
+                version=task_version,
+            )
+        # elif task_name:  TODO: implement listing by task name only
+        #     task_name_id = task_definition_pb2.TaskName(
+        #         name=task_name,
+        #         project=cfg.project,
+        #         domain=cfg.domain,
+        #         org=cfg.org,
+        #     )
+        else:
+            project_id = identifier_pb2.ProjectIdentifier(
+                organization=cfg.org,
+                domain=cfg.domain,
+                name=cfg.project,
+            )
+
         while True:
             resp = await get_client().trigger_service.ListTriggers(
                 request=trigger_service_pb2.ListTriggersRequest(
-                    org=cfg.org,
-                    project_id=identifier_pb2.ProjectIdentifier(
-                        organization=cfg.org,
-                        domain=cfg.domain,
-                        name=cfg.project,
-                    ),
+                    project_id=project_id,
+                    task_id=task_id,
+                    # task_name=task_name_id,
                     request=list_pb2.ListRequest(
                         limit=limit,
                         token=token,
@@ -174,6 +197,7 @@ class Trigger(ToJSONMixin):
                         project=cfg.project,
                         domain=cfg.domain,
                         name=name,
+                        task_name=task_name,
                     )
                 ],
                 active=False,
@@ -196,6 +220,7 @@ class Trigger(ToJSONMixin):
                         project=cfg.project,
                         domain=cfg.domain,
                         name=name,
+                        task_name=task_name,
                     )
                 ],
                 active=True,
@@ -204,7 +229,7 @@ class Trigger(ToJSONMixin):
 
     @syncify
     @classmethod
-    async def delete(cls, name: str):
+    async def delete(cls, name: str, task_name: str):
         """
         Delete a trigger by its name.
         """
@@ -218,6 +243,7 @@ class Trigger(ToJSONMixin):
                         project=cfg.project,
                         domain=cfg.domain,
                         name=name,
+                        task_name=task_name,
                     )
                 ],
             )
@@ -232,7 +258,7 @@ class Trigger(ToJSONMixin):
         return self.id.name.name
 
     @property
-    def automation_spec(self) -> trigger_definition_pb2.TriggerAutomationSpec:
+    def automation_spec(self) -> common_pb2.TriggerAutomationSpec:
         return self.pb2.automation_spec
 
     async def get_details(self) -> TriggerDetails:
@@ -248,10 +274,10 @@ class Trigger(ToJSONMixin):
     def is_active(self) -> bool:
         return self.pb2.active
 
-    def _rich_automation(self, automation: trigger_definition_pb2.TriggerAutomationSpec):
-        if automation.type == trigger_definition_pb2.TriggerAutomationSpec.TYPE_NONE:
+    def _rich_automation(self, automation: common_pb2.TriggerAutomationSpec):
+        if automation.type == common_pb2.TriggerAutomationSpec.TYPE_NONE:
             yield "none", None
-        elif automation.type == trigger_definition_pb2.TriggerAutomationSpec.TYPE_SCHEDULE:
+        elif automation.type == common_pb2.TriggerAutomationSpec.TYPE_SCHEDULE:
             if automation.WhichOneof("schedule_type") == "fixed_rate":
                 r = automation.schedule.rate
                 yield (
