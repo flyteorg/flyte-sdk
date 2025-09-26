@@ -42,6 +42,7 @@ if __name__ == "__main__":
         annotations={"Ann": "ann"},
         overwrite_cache=True,
         interruptible=False,
+        raw_data_path="s3://my_test_bucket"
     ).run(say_hello_nested, data="hello world", n=10)
     print(run.name)
     print(run.url)

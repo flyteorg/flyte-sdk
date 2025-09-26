@@ -260,7 +260,7 @@ class _Runner:
             env_kv = run_definition_pb2.Envs(values=kv_pairs)
             annotations = run_definition_pb2.Annotations(values=self._annotations)
             labels = run_definition_pb2.Labels(values=self._labels)
-            raw_output_data_config = common_pb2.RawOutputDataConfig(output_location_prefix=self._raw_data_path)
+            raw_data_storage = run_definition_pb2.RawDataStorage(raw_data_prefix=self._raw_data_path)
             security_context = security_pb2.SecurityContext(
                 run_as=security_pb2.Identity(
                     k8s_service_account=self._service_account
@@ -283,7 +283,7 @@ class _Runner:
                             labels=labels,
                             envs=env_kv,
                             cluster=self._queue or task.queue,
-                            raw_output_data_config=raw_output_data_config,
+                            raw_data_storage=raw_data_storage,
                             security_context=security_context,
                         ),
                     ),
