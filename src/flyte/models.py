@@ -99,7 +99,7 @@ class PathRewrite:
         """
         Create a PathRewrite from a string pattern of the form 'old_prefix:new_prefix'.
         """
-        parts = pattern.split(":")
+        parts = pattern.split("->")
         if len(parts) != 2:
             raise ValueError(f"Invalid path rewrite pattern: {pattern}. Expected format 'old_prefix->new_prefix'.")
         return cls(old_prefix=parts[0], new_prefix=parts[1])
