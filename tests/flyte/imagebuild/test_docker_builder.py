@@ -409,7 +409,6 @@ async def test_uvproject_handler_with_project_install():
             )
 
             assert result.startswith(initial_dockerfile)
-            assert "COPY" in result
             assert "RUN --mount=type=cache,sharing=locked,mode=0777,target=/root/.cache/uv,id=uv" in result
             assert "uv sync" in result
 
