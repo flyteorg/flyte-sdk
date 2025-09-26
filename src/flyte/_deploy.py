@@ -222,9 +222,8 @@ async def _build_images(deployment: DeploymentPlan) -> ImageCache:
         if not isinstance(env.image, str):
             if env.image.name is not None and env.image.name in cfg.images:
                 # try to see if the image is set in the config. If so, directly use the image uri
-                py_version = "{}.{}".format(sys.version_info.major, sys.version_info.minor)
                 image_uri = cfg.images[env.image.name]
-                image_identifier_map[env_name] = {py_version: image_uri}
+                image_identifier_map[env_name] = image_uri
                 continue
             logger.debug(f"Building Image for environment {env_name}, image: {env.image}")
             images.append(_build_image_bg(env_name, env.image))
