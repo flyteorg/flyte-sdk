@@ -29,12 +29,13 @@ env = flyte.TaskEnvironment(
 @env.task
 async def concurrent_leaf(x: int):
     print(f"Leaf task got {x=}", flush=True)
-    sleep_time = random.randint(1, 20)
+    sleep_time = random.randint(1, 50)
     print(f"Leaf task {x=} sleeping for {sleep_time} seconds", flush=True)
     try:
         await asyncio.sleep(sleep_time)
     except asyncio.CancelledError:
         print(f"Leaf task {x=} cancelled!", flush=True)
+        await asyncio.sleep(5) # simulate cleanup  # uncomment to test poison pill
         raise
     print(f"Leaf task {x=} finishing", flush=True)
 
@@ -51,7 +52,7 @@ async def concurrency_parent() -> int:
     # await asyncio.sleep(10)
     try:
         tasks = []
-        for i in range(50):
+        for i in range(40):
             tasks.append(concurrent_leaf(x=i))
 
         start_time = time.time()
