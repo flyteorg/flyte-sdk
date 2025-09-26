@@ -33,6 +33,14 @@ async def say_hello_nested(data: str = "default string", n: int = 3) -> str:
     return await say_hello(data=data, lt=vals)
 
 
+@env.task
+async def flag_example(
+    flag: bool, normally_off: bool = False, normally_on: bool = True, optional: bool | None = None
+) -> str:
+    print(f"Args: {flag=}, {normally_off=}, {normally_on=}, {optional=}")
+    return f"flag: {flag}, normally_off: {normally_off}, normally_on: {normally_on}, optional: {optional}"
+
+
 if __name__ == "__main__":
     flyte.init_from_config()
     run = flyte.with_runcontext(
