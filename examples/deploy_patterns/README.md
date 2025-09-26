@@ -68,12 +68,13 @@ ml = ["pandas", "scikit-learn"]
 **Project Structure:**
 ```
 uv_project_lib/
-├── main.py                        # Uses custom library
+├── main.py                        # Alternative main application file
 └── my_plugin/
     ├── pyproject.toml             # Library definition
     ├── uv.lock                    # Library lock file
     └── src/my_lib/
         ├── __init__.py
+        ├── main.py                # Main application tasks
         └── math_utils.py          # Custom library code
 ```
 
@@ -109,15 +110,17 @@ from my_lib.math_utils import linear_function
 uv_workspace/
 ├── pyproject.toml      # Workspace definition
 ├── uv.lock             # Workspace lock file
-├── tasks/              # Main application
-│   └── albatross.py
+├── main.py             # Alternative main application file
+├── src/
+│   └── tasks/          # Main application tasks
+│       └── main.py
 ├── bird_feeder/        # Package 1
 │   ├── pyproject.toml
-│   └── bird_feeder/
+│   └── src/bird_feeder/
 │       └── actions.py
 └── seeds/              # Package 2
     ├── pyproject.toml
-    └── seeds/
+    └── src/seeds/
         └── actions.py
 ```
 
@@ -128,9 +131,16 @@ uv_workspace/
 
 **Key Configuration:**
 ```python
+# From tasks/main.py - points to workspace root
 image = flyte.Image.from_debian_base().with_uv_project(
-    pyproject_file=Path("../pyproject.toml"),  # Root workspace pyproject.toml
+    pyproject_file=(UV_WORKSPACE_ROOT / "pyproject.toml"),  # Root workspace pyproject.toml
     extra_args="--only-group albatross --inexact"  # Install specific dependency groups
+)
+
+# From main.py - local pyproject.toml reference
+image = flyte.Image.from_debian_base().with_uv_project(
+    pyproject_file=Path(__file__).parent / "pyproject.toml",
+    extra_args="--inexact"
 )
 ```
 
@@ -140,10 +150,15 @@ image = flyte.Image.from_debian_base().with_uv_project(
 [tool.uv.workspace]
 members = ["bird_feeder", "seeds"]
 
+[tool.uv.sources]
+bird-feeder = { workspace = true }
+seeds = { workspace = true }
+
 [dependency-groups]
 albatross = [
     "bird-feeder",
     "seeds",
+    "numpy"
 ]
 ```
 
@@ -227,6 +242,13 @@ flyte.with_runcontext(copy_style="none", version="v1.0").run(task_function)
 **For workspaces, organize dependencies by tasks:**
 ```toml
 [dependency-groups]
+# Main albatross task dependencies (matches current example)
+albatross = [
+    "bird-feeder",
+    "seeds",
+    "numpy"
+]
+
 # Data processing task dependencies
 data_processing = [
     "bird-feeder",
