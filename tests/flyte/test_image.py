@@ -173,7 +173,3 @@ def test_ids_for_different_python_version():
     # Override base images to be the same for testing that the identifier does not depends on python version
     object.__setattr__(ex_11, "base_image", "python:3.10-slim-bookworm")
     object.__setattr__(ex_12, "base_image", "python:3.10-slim-bookworm")
-<<<<<<< HEAD
-    assert ex_10.identifier == ex_11.identifier
-=======
->>>>>>> main
