@@ -231,9 +231,9 @@ async def _build_images(deployment: DeploymentPlan) -> ImageCache:
                     raise ValueError(
                         f"Image name '{env.image.name}' not found in config. Available: {list(cfg.images.keys())}"
                     )
-            # Build the image (either anonymous or named with base_image)
             logger.debug(f"Building Image for environment {env_name}, image: {env.image}")
             images.append(_build_image_bg(env_name, env.image))
+
         elif env.image == "auto" and "auto" not in image_identifier_map:
             if cfg and "default" in cfg.images:
                 # If the default image is set through CLI, use it instead
