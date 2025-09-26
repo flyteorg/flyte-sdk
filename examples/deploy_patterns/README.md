@@ -139,7 +139,7 @@ image = flyte.Image.from_debian_base().with_uv_project(
 
 # From main.py - local pyproject.toml reference
 image = flyte.Image.from_debian_base().with_uv_project(
-    pyproject_file=Path(__file__).parent / "pyproject.toml",
+    pyproject_file=Path(__file__).parent / "pyproject.toml",  # Install all dependencies in the workspace
     extra_args="--inexact"
 )
 ```

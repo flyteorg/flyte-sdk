@@ -15,5 +15,5 @@ build-backend = "setuptools.build_meta"
 
 # No src-layout: let setuptools auto-discover packages in-place
 [tool.setuptools.packages.find]
-where = ["src"]
-include = ["."]
+where = ["."]
+include = ["*"]

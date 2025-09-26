@@ -1,14 +1,16 @@
 [tool.uv.workspace]
-members = ["bird_feeder", "seeds"]
+members = ["bird_feeder", "seeds", "tasks"]
 
 
 [tool.uv.sources]
 bird-feeder = { workspace = true }
 seeds = { workspace = true }
+src = { workspace = true }
 
 [dependency-groups]
 albatross = [
     "bird-feeder",
     "seeds",
+    "tasks",
     "numpy"
 ]
