@@ -178,7 +178,7 @@ class InvokeBaseMixin:
         except Exception as e:
             if ctx.obj and ctx.obj.log_level and ctx.obj.log_level <= logging.DEBUG:
                 # If the user has requested verbose output, print the full traceback
-                console = Console()
+                console = get_console()
                 console.print(Traceback.from_exception(type(e), e, e.__traceback__))
                 exit(1)
             else:
@@ -401,3 +401,10 @@ def get_panel(title: str, renderable: Any, of: OutputFormat = "table") -> Panel:
         title=f"[{PREFERRED_ACCENT_COLOR}]{title}[/{PREFERRED_ACCENT_COLOR}]",
         border_style=PREFERRED_BORDER_COLOR,
     )
+
+
+def get_console() -> Console:
+    """
+    Get a console that is configured to use colors if the terminal supports it.
+    """
+    return Console(color_system="auto", force_terminal=True, width=120)

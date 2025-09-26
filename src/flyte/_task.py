@@ -15,6 +15,7 @@ from typing import (
     Literal,
     Optional,
     ParamSpec,
+    Tuple,
     TypeAlias,
     TypeVar,
     Union,
@@ -37,6 +38,8 @@ from .models import MAX_INLINE_IO_BYTES, NativeInterface, SerializationContext
 
 if TYPE_CHECKING:
     from flyteidl.core.tasks_pb2 import DataLoadingConfig
+
+    from flyte.trigger import Trigger
 
     from ._task_environment import TaskEnvironment
 
@@ -81,6 +84,9 @@ class TaskTemplate(Generic[P, R]):
     :param timeout: Optional The timeout for the task.
     :param max_inline_io_bytes: Maximum allowed size (in bytes) for all inputs and outputs passed directly to the task
         (e.g., primitives, strings, dicts). Does not apply to files, directories, or dataframes.
+    :param pod_template: Optional The pod template to use for the task.
+    :param report: Optional Whether to report the task execution to the Flyte console, defaults to False.
+    :param queue: Optional The queue to use for the task. If not provided, the default queue will be used.
     """
 
     name: str
@@ -100,10 +106,12 @@ class TaskTemplate(Generic[P, R]):
     timeout: Optional[TimeoutType] = None
     pod_template: Optional[Union[str, PodTemplate]] = None
     report: bool = False
+    queue: Optional[str] = None
 
     parent_env: Optional[weakref.ReferenceType[TaskEnvironment]] = None
     ref: bool = field(default=False, init=False, repr=False, compare=False)
     max_inline_io_bytes: int = MAX_INLINE_IO_BYTES
+    triggers: Tuple[Trigger, ...] = field(default_factory=tuple)
 
     # Only used in python 3.10 and 3.11, where we cannot use markcoroutinefunction
     _call_as_synchronous: bool = False
@@ -327,12 +335,30 @@ class TaskTemplate(Generic[P, R]):
         secrets: Optional[SecretRequest] = None,
         max_inline_io_bytes: int | None = None,
         pod_template: Optional[Union[str, PodTemplate]] = None,
+        queue: Optional[str] = None,
         interruptible: Optional[bool] = None,
         **kwargs: Any,
     ) -> TaskTemplate:
         """
         Override various parameters of the task template. This allows for dynamic configuration of the task
         when it is called, such as changing the image, resources, cache policy, etc.
+
+        :param short_name: Optional override for the short name of the task.
+        :param resources: Optional override for the resources to use for the task.
+        :param cache: Optional override for the cache policy for the task.
+        :param retries: Optional override for the number of retries for the task.
+        :param timeout: Optional override for the timeout for the task.
+        :param reusable: Optional override for the reusability policy for the task.
+        :param env_vars: Optional override for the environment variables to set for the task.
+        :param secrets: Optional override for the secrets that will be injected into the task at runtime.
+        :param max_inline_io_bytes: Optional override for the maximum allowed size (in bytes) for all inputs and outputs
+         passed directly to the task.
+        :param pod_template: Optional override for the pod template to use for the task.
+        :param queue: Optional override for the queue to use for the task.
+        :param kwargs: Additional keyword arguments for further overrides. Some fields like name, image, docs,
+         and interface cannot be overridden.
+
+        :return: A new TaskTemplate instance with the overridden parameters.
         """
         cache = cache or self.cache
         retries = retries or self.retries
@@ -392,6 +418,7 @@ class TaskTemplate(Generic[P, R]):
             max_inline_io_bytes=max_inline_io_bytes,
             pod_template=pod_template,
             interruptible=interruptible,
+            queue=queue or self.queue,
             **kwargs,
         )
 

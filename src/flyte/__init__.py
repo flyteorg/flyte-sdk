@@ -25,6 +25,7 @@ from ._secret import Secret, SecretRequest
 from ._task_environment import TaskEnvironment
 from ._timeout import Timeout, TimeoutType
 from ._trace import trace
+from ._trigger import Cron, FixedRate, Trigger, TriggerTime
 from ._version import __version__
 
 sys.excepthook = custom_excepthook
@@ -64,8 +65,10 @@ __all__ = [
     "Cache",
     "CachePolicy",
     "CacheRequest",
+    "Cron",
     "Device",
     "Environment",
+    "FixedRate",
     "Image",
     "PodTemplate",
     "Resources",
@@ -76,6 +79,8 @@ __all__ = [
     "TaskEnvironment",
     "Timeout",
     "TimeoutType",
+    "Trigger",
+    "TriggerTime",
     "__version__",
     "build",
     "build_images",
