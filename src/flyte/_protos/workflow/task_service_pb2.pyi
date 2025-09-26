@@ -17,8 +17,8 @@ class DeployTaskRequest(_message.Message):
     TRIGGERS_FIELD_NUMBER: _ClassVar[int]
     task_id: _task_definition_pb2.TaskIdentifier
     spec: _task_definition_pb2.TaskSpec
-    triggers: _containers.RepeatedCompositeFieldContainer[_trigger_definition_pb2.TriggerDetails]
-    def __init__(self, task_id: _Optional[_Union[_task_definition_pb2.TaskIdentifier, _Mapping]] = ..., spec: _Optional[_Union[_task_definition_pb2.TaskSpec, _Mapping]] = ..., triggers: _Optional[_Iterable[_Union[_trigger_definition_pb2.TriggerDetails, _Mapping]]] = ...) -> None: ...
+    triggers: _containers.RepeatedCompositeFieldContainer[_trigger_definition_pb2.TaskTrigger]
+    def __init__(self, task_id: _Optional[_Union[_task_definition_pb2.TaskIdentifier, _Mapping]] = ..., spec: _Optional[_Union[_task_definition_pb2.TaskSpec, _Mapping]] = ..., triggers: _Optional[_Iterable[_Union[_trigger_definition_pb2.TaskTrigger, _Mapping]]] = ...) -> None: ...
 
 class DeployTaskResponse(_message.Message):
     __slots__ = []
