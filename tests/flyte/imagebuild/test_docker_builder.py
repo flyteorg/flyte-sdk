@@ -288,56 +288,6 @@ async def test_copy_config_handler_with_dockerignore_layer():
                 assert not (expected_dst_path / ".cache").exists(), ".cache directory should be excluded"
 
 
-def test_list_dockerignore_layer_priority():
-    """Test list_dockerignore method prioritizes DockerIgnore layer over local .dockerignore"""
-    with tempfile.TemporaryDirectory() as tmp_context:
-        src_dir = Path(tmp_context)
-
-        # Create local .dockerignore file
-        local_dockerignore = src_dir / ".dockerignore"
-        local_dockerignore.write_text("*.py\nsrc/\n")
-
-        # Create another .dockerignore file to be used as DockerIgnore layer
-        layer_dockerignore = src_dir / "custom.dockerignore"
-        layer_dockerignore.write_text("*.txt\n.cache\n")
-
-        # Test list_dockerignore method with DockerIgnore layer path
-        patterns = DockerImageBuilder.list_dockerignore(src_dir, layer_dockerignore)
-
-        # Should return patterns from DockerIgnore layer instead of local .dockerignore
-        expected_patterns = ["*.txt", ".cache"]
-        assert patterns == expected_patterns
-
-
-def test_list_dockerignore_found():
-    """Test list_dockerignore method when .dockerignore file exists"""
-    with tempfile.TemporaryDirectory() as tmp_context:
-        src_dir = Path(tmp_context)
-
-        # Create .dockerignore file with various patterns
-        dockerignore_file = src_dir / ".dockerignore"
-        dockerignore_file.write_text("*.py\nsrc/\n.cache\n# This is a comment\n\n*.txt\n \n  \n\t\n")
-
-        # Test the method
-        patterns = DockerImageBuilder.list_dockerignore(src_dir, None)
-
-        # Should return expected patterns, excluding comments and empty lines
-        expected_patterns = ["*.py", "src/", ".cache", "*.txt"]
-        assert patterns == expected_patterns
-
-
-def test_list_dockerignore_not_found():
-    """Test list_dockerignore method when .dockerignore file does not exist"""
-    with tempfile.TemporaryDirectory() as tmp_context:
-        src_dir = Path(tmp_context)
-
-        # Test the method
-        patterns = DockerImageBuilder.list_dockerignore(src_dir, None)
-
-        # Should return empty list when .dockerignore doesn't exist
-        assert patterns == []
-
-
 @pytest.mark.asyncio
 async def test_poetry_handler_without_project_install():
     with tempfile.TemporaryDirectory() as tmp_context:

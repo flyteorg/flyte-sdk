@@ -38,7 +38,7 @@ from flyte._internal.imagebuild.image_builder import (
     LocalDockerCommandImageChecker,
     LocalPodmanCommandImageChecker,
 )
-from flyte._internal.imagebuild.utils import copy_files_to_context
+from flyte._internal.imagebuild.utils import copy_files_to_context, get_and_list_dockerignore
 from flyte._logging import logger
 
 _F_IMG_ID = "_F_IMG_ID"
@@ -593,43 +593,6 @@ class DockerImageBuilder(ImageBuilder):
         else:
             logger.info("Buildx builder already exists.")
 
-    @staticmethod
-    def get_docker_ignore(image: Image) -> Optional[Path]:
-        """Get the .dockerignore file path from the image layers."""
-        # Look for DockerIgnore layer in the image layers
-        for layer in image._layers:
-            if isinstance(layer, DockerIgnore) and layer.path.strip():
-                return Path(layer.path)
-
-        return None
-
-    @staticmethod
-    def list_dockerignore(root_path: Optional[Path], docker_ignore_file_path: Optional[Path]) -> List[str]:
-        patterns: List[str] = []
-        dockerignore_path: Optional[Path] = None
-        if root_path:
-            dockerignore_path = root_path / ".dockerignore"
-        # DockerIgnore layer should be first priority
-        if docker_ignore_file_path:
-            dockerignore_path = docker_ignore_file_path
-
-        # Return empty list if no .dockerignore file found
-        if not dockerignore_path or not dockerignore_path.exists() or not dockerignore_path.is_file():
-            logger.info(f".dockerignore file not found at path: {dockerignore_path}")
-            return patterns
-
-        try:
-            with open(dockerignore_path, "r", encoding="utf-8") as f:
-                for line in f:
-                    stripped_line = line.strip()
-                    # Skip empty lines, whitespace-only lines, and comments
-                    if not stripped_line or stripped_line.startswith("#"):
-                        continue
-                    patterns.append(stripped_line)
-        except Exception as e:
-            logger.error(f"Failed to read .dockerignore file at {dockerignore_path}: {e}")
-            return []
-        return patterns
 
     async def _build_image(self, image: Image, *, push: bool = True, dry_run: bool = False) -> str:
         """
@@ -663,10 +626,9 @@ class DockerImageBuilder(ImageBuilder):
             )
 
             # Get .dockerignore file patterns first
-            docker_ignore_file_path = DockerImageBuilder.get_docker_ignore(image)
             init_config = _get_init_config()
             root_path = init_config.root_dir if init_config else None
-            docker_ignore_patterns = DockerImageBuilder.list_dockerignore(root_path, docker_ignore_file_path)
+            docker_ignore_patterns = get_and_list_dockerignore(image, root_path)
             
             for layer in image._layers:
                 dockerfile = await _process_layer(layer, tmp_path, dockerfile, docker_ignore_patterns)

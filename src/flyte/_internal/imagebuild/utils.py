@@ -1,5 +1,9 @@
 import shutil
 from pathlib import Path
+from typing import Optional, List
+
+from flyte._image import Image, DockerIgnore
+from flyte._logging import logger
 
 
 def copy_files_to_context(src: Path, context_path: Path, ignore_patterns: list[str] = []) -> Path:
@@ -31,3 +35,42 @@ def copy_files_to_context(src: Path, context_path: Path, ignore_patterns: list[s
     else:
         shutil.copy(src, dst_path)
     return dst_path
+
+def get_and_list_dockerignore(image: Image, root_path: Optional[Path]) -> List[str]:
+    """
+    Get and parse dockerignore patterns from .dockerignore file.
+    
+    This function first looks for a DockerIgnore layer in the image's layers. If found, it uses
+    the path specified in that layer. If no DockerIgnore layer is found, it falls back to looking
+    for a .dockerignore file in the root_path directory.
+    
+    :param image: The Image object
+    :param root_path: Root directory path to look for .dockerignore file
+    """
+    # Look for DockerIgnore layer in the image layers
+    dockerignore_path: Optional[Path] = None
+    patterns: List[str] = []
+
+    for layer in image._layers:
+        if isinstance(layer, DockerIgnore) and layer.path.strip():
+            dockerignore_path = Path(layer.path)
+    # If DockerIgnore layer not specified, set dockerignore_path under root_path
+    if not dockerignore_path and root_path:
+        dockerignore_path = root_path / ".dockerignore"
+    # Return empty list if no .dockerignore file found
+    if not dockerignore_path or not dockerignore_path.exists() or not dockerignore_path.is_file():
+        logger.info(f".dockerignore file not found at path: {dockerignore_path}")
+        return patterns
+
+    try:
+        with open(dockerignore_path, "r", encoding="utf-8") as f:
+            for line in f:
+                stripped_line = line.strip()
+                # Skip empty lines, whitespace-only lines, and comments
+                if not stripped_line or stripped_line.startswith("#"):
+                    continue
+                patterns.append(stripped_line)
+    except Exception as e:
+        logger.error(f"Failed to read .dockerignore file at {dockerignore_path}: {e}")
+        return []
+    return patterns
