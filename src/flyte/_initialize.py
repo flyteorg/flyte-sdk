@@ -7,7 +7,6 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable, List, Literal, Optional, TypeVar
 
-from flyte._image import Image
 from flyte.errors import InitializationError
 from flyte.syncify import syncify
 
@@ -143,7 +142,7 @@ async def init(
     storage: Storage | None = None,
     batch_size: int = 1000,
     image_builder: ImageBuildEngine.ImageBuilderType = "local",
-    images: typing.Dict[str, Image] | None = None,
+    images: typing.Dict[str, str] | None = None,
     source_config_path: Optional[Path] = None,
 ) -> None:
     """

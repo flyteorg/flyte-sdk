@@ -221,7 +221,7 @@ async def _build_images(deployment: DeploymentPlan) -> ImageCache:
     for env_name, env in deployment.envs.items():
         if not isinstance(env.image, str):
             # No base image but the name is set, try getting image uri from configm
-            if env.image.base_image is None and env.image.name is not None:
+            if cfg and env.image.base_image is None and env.image.name is not None:
                 if env.image.name in cfg.images:
                     # try to see if the image is set in the config. If so, directly use the image uri
                     image_uri = cfg.images[env.image.name]
@@ -235,7 +235,7 @@ async def _build_images(deployment: DeploymentPlan) -> ImageCache:
             logger.debug(f"Building Image for environment {env_name}, image: {env.image}")
             images.append(_build_image_bg(env_name, env.image))
         elif env.image == "auto" and "auto" not in image_identifier_map:
-            if "default" in cfg.images:
+            if cfg and "default" in cfg.images:
                 # If the default image is set through CLI, use it instead
                 image_uri = cfg.images["default"]
                 image_identifier_map[env_name] = image_uri

@@ -11,7 +11,6 @@ from typing import Any, Dict, List, cast
 import rich_click as click
 from typing_extensions import get_args
 
-from .. import Image
 from .._code_bundle._utils import CopyFiles
 from .._initialize import _get_init_config
 from .._task import TaskTemplate
@@ -185,8 +184,10 @@ class RunTaskCommand(click.RichCommand):
         asyncio.run(_run())
 
     @staticmethod
-    def parse_images(values: List[str]) -> Dict[str, Image]:
+    def parse_images(values: List[str]) -> None:
         cfg = _get_init_config()
+        if cfg is None:
+            return
         for value in values:
             if "=" in value:
                 image_name, image_uri = value.split("=", 1)
