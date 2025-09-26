@@ -9,6 +9,7 @@ import scatter_3d as s3d
 import youtube_embed as yt
 
 import flyte
+import flyte.git
 
 env = flyte.TaskEnvironment(
     "reports",
@@ -30,7 +31,7 @@ async def main():
 
 
 if __name__ == "__main__":
-    flyte.init_from_config(root_dir=pathlib.Path(__file__).parent)
+    flyte.init_from_config(flyte.git.config_from_root())
     run = flyte.run(main)
     print(run.name)
     print(run.url)

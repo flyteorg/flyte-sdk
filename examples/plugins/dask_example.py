@@ -18,6 +18,7 @@ dask_config = Dask(
 task_env = flyte.TaskEnvironment(
     name="hello_dask", resources=Resources(cpu=(1, 2), memory=("400Mi", "1000Mi")), image=image
 )
+
 dask_env = flyte.TaskEnvironment(
     name="dask_env",
     plugin_config=dask_config,

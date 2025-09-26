@@ -6,6 +6,7 @@ from flyteplugins.ray.task import HeadNodeConfig, RayJobConfig, WorkerNodeConfig
 
 import flyte.remote
 import flyte.storage
+import flyte.git
 
 
 @ray.remote
@@ -57,12 +58,12 @@ async def hello_ray_nested(n: int = 3) -> typing.List[int]:
 
 
 if __name__ == "__main__":
-    flyte.init_from_config()
+    flyte.init_from_config(flyte.git.config_from_root())
     run = flyte.run(hello_ray_nested)
     print("run name:", run.name)
     print("run url:", run.url)
-    run.wait(run)
+    # run.wait(run)
 
-    action_details = flyte.remote.ActionDetails.get(run_name=run.name, name="a0")
-    for log in action_details.pb2.attempts[-1].log_info:
-        print(f"{log.name}: {log.uri}")
+    # action_details = flyte.remote.ActionDetails.get(run_name=run.name, name="a0")
+    # for log in action_details.pb2.attempts[-1].log_info:
+    #     print(f"{log.name}: {log.uri}")

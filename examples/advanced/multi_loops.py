@@ -3,6 +3,7 @@ from typing import List
 
 import flyte
 import flyte.errors
+import flyte.git
 
 env = flyte.TaskEnvironment(
     "memory_override_for_loops_1",
@@ -64,7 +65,7 @@ async def main(n: int) -> List[int]:
 
 
 if __name__ == "__main__":
-    flyte.init_from_config()
+    flyte.init_from_config(flyte.git.config_from_root())
     run = flyte.run(main, n=3)
     print(run.name)
     print(run.url)

@@ -40,6 +40,7 @@ from huggingface_hub import hf_hub_url
 from sentence_transformers import SentenceTransformer
 
 import flyte.io
+import flyte.git
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -52,7 +53,7 @@ driver = flyte.TaskEnvironment(
     name="embed_wikipedia_driver",
     image=image,
     resources=flyte.Resources(cpu=1, memory="4Gi", disk="16Gi"),
-    secrets="HF_HUB_TOKEN",
+    secrets="votta_hf_token",
 )
 
 N_GPUS = 1
@@ -62,7 +63,7 @@ worker = flyte.TaskEnvironment(
     resources=flyte.Resources(cpu=2, memory="8Gi", gpu=1),
     env_vars={"HF_HUB_ENABLE_HF_TRANSFER": "1"},
     reusable=flyte.ReusePolicy(replicas=16, concurrency=1, idle_ttl=120, scaledown_ttl=120),
-    secrets="HF_HUB_TOKEN",
+    secrets="votta_hf_token",
 )
 
 
@@ -189,7 +190,7 @@ if __name__ == "__main__":
     # Usage:
     # Run this with limit=-1 to embed all articles in the dataset (~61MM rows)
     # flyte.init()
-    flyte.init_from_config()
+    flyte.init_from_config(flyte.git.config_from_root())
     run = flyte.run(main, 256, shard="20231101.en")
     print(run.url)
     # asyncio.run(high_mem_examples())

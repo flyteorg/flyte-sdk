@@ -2,6 +2,7 @@ import asyncio
 import logging
 
 import flyte
+import flyte.git
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
@@ -33,8 +34,8 @@ async def reuse_concurrency(n: int = 50) -> int:
 
 
 if __name__ == "__main__":
-    flyte.init_from_config()
+    flyte.init_from_config(flyte.git.config_from_root())
     run = flyte.with_runcontext().run(reuse_concurrency, n=500)
     print(run.name)
     print(run.url)
-    run.wait()
+    # run.wait()
