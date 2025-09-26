@@ -90,7 +90,7 @@ def record_connector_metrics(func: typing.Callable):
         else:
             context.set_code(grpc.StatusCode.UNIMPLEMENTED)
             context.set_details("Method not implemented!")
-            return
+            return None
 
         try:
             with request_latency.labels(task_type=task_type, operation=operation).time():
