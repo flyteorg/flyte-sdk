@@ -1,5 +1,6 @@
 import asyncio
 import time
+import random
 from pathlib import Path
 
 import flyte
@@ -28,6 +29,13 @@ env = flyte.TaskEnvironment(
 @env.task
 async def concurrent_leaf(x: int):
     print(f"Leaf task got {x=}", flush=True)
+    sleep_time = random.randint(1, 20)
+    print(f"Leaf task {x=} sleeping for {sleep_time} seconds", flush=True)
+    try:
+        await asyncio.sleep(sleep_time)
+    except asyncio.CancelledError:
+        print(f"Leaf task {x=} cancelled!", flush=True)
+        raise
     print(f"Leaf task {x=} finishing", flush=True)
 
 

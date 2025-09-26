@@ -540,13 +540,26 @@ def to_click_option(
     if literal_converter.is_optional():
         required = False
 
-    return click.Option(
-        param_decls=[f"--{input_name}"],
-        type=literal_converter.click_type,
-        is_flag=is_flag,
-        default=default_val,
-        show_default=True,
-        required=required,
-        help=literal_var.description + description_extra,
-        callback=literal_converter.convert,
-    )
+    if is_flag:
+        return click.Option(
+            param_decls=[f"--{input_name}", f"--no-{input_name}"],
+            type=literal_converter.click_type,
+            is_flag=is_flag,
+            default=default_val,
+            show_default=True,
+            required=required,
+            help=literal_var.description + description_extra,
+            callback=literal_converter.convert,
+        )
+
+    else:
+        return click.Option(
+            param_decls=[f"--{input_name}"],
+            type=literal_converter.click_type,
+            is_flag=is_flag,
+            default=default_val,
+            show_default=True,
+            required=required,
+            help=literal_var.description + description_extra,
+            callback=literal_converter.convert,
+        )

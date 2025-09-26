@@ -36,7 +36,7 @@ async def simple(x: int):
 
 
 @actor_env.task
-async def simple_with_cancel(x: int):
+async def simple_with_cancel(x: int, reraise_cancel: bool = True) -> int:
     try:
         print(f"[Start] Running simple_with_cancel with {x=}", flush=True)
         await asyncio.sleep(60)
@@ -45,20 +45,25 @@ async def simple_with_cancel(x: int):
         print("[Cancelled] simple_with_cancel cancelled, running cleanup", flush=True)
         await asyncio.sleep(1)
         print("[Cancelled] simple_with_cancel, done", flush=True)
-        raise
+        if reraise_cancel:
+            raise
+
+    return x * 2
 
 
 @actor_env.task
-async def simple_with_long_cancel(x: int):
+async def simple_with_bad_user_code(x: int):
     try:
-        print(f"[Start] Running simple_with_long_cancel with {x=}", flush=True)
+        print(f"[Start] Running simple_with_bad_user_code with {x=}", flush=True)
         await asyncio.sleep(60)
-        print("[End] simple_with_long_cancel returning", flush=True)
+        print("[End] simple_with_bad_user_code returning", flush=True)
     except asyncio.CancelledError:
-        print("[Cancelled] simple_with_long_cancel was cancelled", flush=True)
-        await asyncio.sleep(10)
-        print("[Cancel Handled] simple_with_long_cancel finished handling", flush=True)
-        raise
+        print("[Cancelled] simple_with_bad_user_code was cancelled, ignoring forever", flush=True)
+        while True:
+            try:
+                await asyncio.sleep(10)
+            except asyncio.CancelledError:
+                print("[Cancelled] simple_with_bad_user_code got cancelled again, ignoring", flush=True)
 
 
 # aborting the parent should propagate
@@ -66,7 +71,7 @@ async def simple_with_long_cancel(x: int):
 def parent_task():
     a = simple(x=1)
     b = simple_with_cancel(x=2)
-    c = simple_with_long_cancel(x=3)
+    c = simple_with_bad_user_code(x=3)
 
     try:
         print("[Parent] starting gather on tasks", flush=True)
