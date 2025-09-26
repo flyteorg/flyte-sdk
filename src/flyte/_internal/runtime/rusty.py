@@ -11,7 +11,7 @@ from flyte._internal.runtime.entrypoints import download_code_bundle, load_pkl_t
 from flyte._internal.runtime.taskrunner import extract_download_run_upload
 from flyte._logging import logger
 from flyte._task import TaskTemplate
-from flyte.models import ActionID, Checkpoints, CodeBundle, RawDataPath
+from flyte.models import ActionID, Checkpoints, CodeBundle, PathRewrite, RawDataPath
 
 
 async def download_tgz(destination: str, version: str, tgz: str) -> CodeBundle:
@@ -115,6 +115,7 @@ async def run_task(
     prev_checkpoint: str | None = None,
     code_bundle: CodeBundle | None = None,
     input_path: str | None = None,
+    path_rewrite_cfg: str | None = None,
 ):
     """
     Runs the task with the provided parameters.
@@ -134,6 +135,7 @@ async def run_task(
     :param controller: The controller to use for the task.
     :param code_bundle: Optional code bundle for the task.
     :param input_path: Optional input path for the task.
+    :param path_rewrite_cfg: Optional path rewrite configuration.
     :return: The loaded task template.
     """
     start_time = time.time()
@@ -144,6 +146,9 @@ async def run_task(
         f" at {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(start_time))}"
     )
 
+    path_rewrite = None
+    path_rewrite = PathRewrite.from_str(path_rewrite_cfg) if path_rewrite_cfg else None
+
     try:
         await contextual_run(
             extract_download_run_upload,
@@ -151,7 +156,7 @@ async def run_task(
             action=ActionID(name=name, org=org, project=project, domain=domain, run_name=run_name),
             version=version,
             controller=controller,
-            raw_data_path=RawDataPath(path=raw_data_path),
+            raw_data_path=RawDataPath(path=raw_data_path, path_rewrite=path_rewrite),
             output_path=output_path,
             run_base_dir=run_base_dir,
             checkpoints=Checkpoints(prev_checkpoint_path=prev_checkpoint, checkpoint_path=checkpoint_path),

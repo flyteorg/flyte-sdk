@@ -5,12 +5,11 @@ It uses the storage module to handle the actual uploading and downloading of fil
 TODO: Convert to use streaming apis
 """
 
-from dataclasses import dataclass
-
 from flyteidl.core import errors_pb2, execution_pb2
 
 import flyte.storage as storage
 from flyte._protos.workflow import run_definition_pb2
+from flyte.models import PathRewrite
 
 from .convert import Inputs, Outputs, _clean_error_code
 
@@ -41,17 +40,6 @@ def error_path(base_path: str) -> str:
 
 def report_path(base_path: str) -> str:
     return storage.join(base_path, _REPORT_FILE_NAME)
-
-
-@dataclass
-class PathRewrite:
-    """
-    Configuration for rewriting paths during input loading.
-    """
-
-    # If set, rewrites any path starting with this prefix to the new prefix.
-    old_prefix: str
-    new_prefix: str
 
 
 # ------------------------------- UPLOAD Methods ------------------------------- #

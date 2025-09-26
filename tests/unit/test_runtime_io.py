@@ -2,6 +2,7 @@ import pytest
 from flyteidl.core import literals_pb2
 
 import flyte.errors
+import flyte.models
 import flyte.types as types
 from flyte._internal.runtime import io
 from flyte._protos.workflow import run_definition_pb2
@@ -164,7 +165,7 @@ async def test_load_inputs_path_rewrite(monkeypatch):
         yield serialized
 
     monkeypatch.setattr(io.storage, "get_stream", fake_get_stream)
-    path_rewrite_config = io.PathRewrite(old_prefix="s3://old_prefix", new_prefix="/tmp/new_prefix")
+    path_rewrite_config = flyte.models.PathRewrite(old_prefix="s3://old_prefix", new_prefix="/tmp/new_prefix")
     loaded = await io.load_inputs("some/path", max_bytes=1000, path_rewrite_config=path_rewrite_config)
     for lit in loaded.proto_inputs.literals:
         assert lit.value.scalar.blob.uri.startswith("/tmp/new_prefix")
@@ -180,7 +181,7 @@ async def test_load_inputs_path_rewrite_no_match(monkeypatch):
         yield serialized
 
     monkeypatch.setattr(io.storage, "get_stream", fake_get_stream)
-    path_rewrite_config = io.PathRewrite(old_prefix="s3://old_prefix1", new_prefix="/tmp/new_prefix")
+    path_rewrite_config = flyte.models.PathRewrite(old_prefix="s3://old_prefix1", new_prefix="/tmp/new_prefix")
     loaded = await io.load_inputs("some/path", max_bytes=1000, path_rewrite_config=path_rewrite_config)
     for lit in loaded.proto_inputs.literals:
         assert lit.value.scalar.blob.uri.startswith("s3://old_prefix")

@@ -12,6 +12,8 @@ from typing import Any, List
 
 import click
 
+from flyte.models import PathRewrite
+
 # Todo: work with pvditt to make these the names
 # ACTION_NAME = "_U_ACTION_NAME"
 # RUN_NAME = "_U_RUN_NAME"
@@ -28,8 +30,8 @@ ENDPOINT_OVERRIDE = "_U_EP_OVERRIDE"
 RUN_OUTPUT_BASE_DIR = "_U_RUN_BASE"
 FLYTE_ENABLE_VSCODE_KEY = "_F_E_VS"
 
-# TODO: Remove this after proper auth is implemented
 _UNION_EAGER_API_KEY_ENV_VAR = "_UNION_EAGER_API_KEY"
+_F_PATH_REWRITE = "_F_PATH_REWRITE"
 
 
 @click.group()
@@ -145,12 +147,17 @@ def main(
 
     ic = ImageCache.from_transport(image_cache) if image_cache else None
 
+    path_rewrite_cfg = os.getenv(_F_PATH_REWRITE, None)
+    path_rewrite = None
+    if path_rewrite_cfg:
+        path_rewrite = PathRewrite.from_str(path_rewrite_cfg)
+
     # Create a coroutine to load the task and run it
     task_coroutine = load_and_run_task(
         resolver=resolver,
         resolver_args=resolver_args,
         action=ActionID(name=name, run_name=run_name, project=project, domain=domain, org=org),
-        raw_data_path=RawDataPath(path=raw_data_path),
+        raw_data_path=RawDataPath(path=raw_data_path, path_rewrite=path_rewrite),
         checkpoints=Checkpoints(checkpoint_path, prev_checkpoint),
         code_bundle=bundle,
         input_path=inputs,
