@@ -370,4 +370,18 @@ def join(*paths: str) -> str:
     return str(os.path.join(*paths))
 
 
+async def exists(path: str, **kwargs) -> bool:
+    """
+    Check if a path exists.
+
+    :param path: Path to be checked.
+    :param kwargs: Additional arguments to be passed to the underlying filesystem.
+    :return: True if the path exists, False otherwise.
+    """
+    fs = get_underlying_filesystem(path=path, **kwargs)
+    if isinstance(fs, AsyncFileSystem):
+        return await fs._exists(path)
+    return fs.exists(path)
+
+
 register(_OBSTORE_SUPPORTED_PROTOCOLS, asynchronous=True)

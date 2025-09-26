@@ -14,6 +14,7 @@ __all__ = [
     "put",
     "put_stream",
     "put_stream",
+    "exists",
 ]
 
 from ._config import ABFS, GCS, S3, Storage
@@ -28,4 +29,5 @@ from ._storage import (
     join,
     put,
     put_stream,
+    exists,
 )
