@@ -34,7 +34,6 @@ def main(x_list: list[int]) -> float:
 
 if __name__ == "__main__":
     # Establish a remote connection from within your script.
-    # TODO: SDK should fail early if root dir is not set correctly
     flyte.init_from_config(root_dir=pathlib.Path(__file__).parent)
 
     # Run your tasks remotely inline and pass parameter data.

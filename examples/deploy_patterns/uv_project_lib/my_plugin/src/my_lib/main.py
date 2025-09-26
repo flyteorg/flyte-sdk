@@ -1,24 +1,12 @@
 import pathlib
 
+import flyte
 from my_lib.math_utils import calculate_mean, linear_function
 
-import flyte
-
 env = flyte.TaskEnvironment(
-    name="uv_project_lib_tasks",
-    resources=flyte.Resources(memory="2500Mi"),
-    image=(
-        # TODO: Image builder should not copy the pyproject src to the image?
-        # TODO: Code bundle should not have my_plugin/src/my_lib
-        # TODO: Image builder should also use --inexact always,so uv sync won't not remove
-        #  extraneous packages present in the environment
-        flyte.Image.from_debian_base()
-        # flyte.Image.from_debian_base().with_uv_project(
-        #     pyproject_file=pathlib.Path("my_plugin/pyproject.toml"), pre=True, extra_args="--inexact"
-        # )
-        # flyte.Image.from_debian_base().with_env_vars({"PYTHONPATH": "${PYTHONPATH}:./my_plugin/src"})
-        # flyte.Image.from_debian_base().with_source_folder(pathlib.Path("my_plugin"))).with_env_vars({"PYTHONPATH": "${PYTHONPATH}:./my_plugin/src"}),
-    )
+    name="uv_project_lib_task_in_src",
+    resources=flyte.Resources(memory="1000Mi"),
+    image=(flyte.Image.from_debian_base()),
 )
 
 
@@ -43,7 +31,9 @@ def process_list(x_list: list[int]) -> float:
 
 
 if __name__ == "__main__":
-    flyte.init_from_config()  # TODO: SDK should fail early if root dir is None
+    flyte.init_from_config(
+        root_dir=pathlib.Path(__file__).parent.parent
+    )  # TODO: SDK should fail early if root dir is None
 
     run = flyte.run(process_list, x_list=list(range(10)))
 

@@ -1,0 +1,31 @@
+from pathlib import Path
+
+from bird_feeder.actions import get_feeder
+from seeds.actions import get_seed
+
+import flyte
+
+UV_WORKSPACE_ROOT = Path(Path(__file__)).parent.parent.parent
+
+env = flyte.TaskEnvironment(
+    name="uv_workspace",
+    image=flyte.Image.from_debian_base()
+    .with_uv_project(
+        pyproject_file=(UV_WORKSPACE_ROOT / "pyproject.toml"),
+        extra_args="--only-group albatross --inexact",  # albatross group define all the dependencies the task needs
+    )
+    .with_local_v2(),
+)
+
+
+@env.task
+async def albatross_task() -> str:
+    get_feeder()
+    seed = get_seed(seed_name="Sun Flower seed")
+    return f"Get bird feeder and feed with {seed}"
+
+
+if __name__ == "__main__":
+    flyte.init_from_config(root_dir=Path(__file__).parent)
+    run = flyte.run(albatross_task)
+    print(run.url)

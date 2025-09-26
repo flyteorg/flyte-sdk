@@ -8,7 +8,3 @@ dependencies = []
 # This section needs to be added to get uv sync to install this package (this package being seeds).
 [tool.uv]
 package = true
-
-[tool.setuptools.packages.find]
-where = ["."]
-include = ["bird_feeder*"]
