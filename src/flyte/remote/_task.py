@@ -285,6 +285,13 @@ class TaskDetails(ToJSONMixin):
             f"Reference tasks [{self.name}] cannot be executed locally, only remotely."
         )
 
+    @property
+    def queue(self) -> Optional[str]:
+        """
+        The queue to use for the task.
+        """
+        return self.overriden_queue
+
     def override(
         self,
         *,
