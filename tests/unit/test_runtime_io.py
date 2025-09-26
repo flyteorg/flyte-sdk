@@ -1,4 +1,5 @@
 import pytest
+from flyteidl.core import literals_pb2
 
 import flyte.errors
 import flyte.types as types
@@ -31,6 +32,26 @@ async def create_outputs(size):
                         "x" * size, python_type=str, expected=types.TypeEngine.to_literal_type(str)
                     ),
                 )
+            ],
+        )
+    )
+
+
+async def create_blob_inputs(uri: str, count: int = 5) -> io.Inputs:
+    return io.Inputs(
+        run_definition_pb2.Inputs(
+            literals=[
+                run_definition_pb2.NamedLiteral(
+                    name=f"a{x}",
+                    value=literals_pb2.Literal(
+                        scalar=literals_pb2.Scalar(
+                            blob=literals_pb2.Blob(
+                                uri=uri,
+                            ),
+                        ),
+                    ),
+                )
+                for x in range(count)
             ],
         )
     )
@@ -132,3 +153,35 @@ async def test_load_outputs_exceeds_limit(monkeypatch):
     with pytest.raises(flyte.errors.InlineIOMaxBytesBreached) as excinfo:
         await io.load_outputs("out/path", max_bytes=15)
     assert "exceeds max_bytes limit" in str(excinfo.value)
+
+
+@pytest.mark.asyncio
+async def test_load_inputs_path_rewrite(monkeypatch):
+    inputs = await create_blob_inputs("s3://old_prefix/some/path")
+    serialized = inputs.proto_inputs.SerializeToString()
+
+    async def fake_get_stream(path):
+        yield serialized
+
+    monkeypatch.setattr(io.storage, "get_stream", fake_get_stream)
+    path_rewrite_config = io.PathRewrite(old_prefix="s3://old_prefix", new_prefix="/tmp/new_prefix")
+    loaded = await io.load_inputs("some/path", max_bytes=1000, path_rewrite_config=path_rewrite_config)
+    for lit in loaded.proto_inputs.literals:
+        assert lit.value.scalar.blob.uri.startswith("/tmp/new_prefix")
+        assert lit.value.scalar.blob.uri == "/tmp/new_prefix/some/path"
+
+
+@pytest.mark.asyncio
+async def test_load_inputs_path_rewrite_no_match(monkeypatch):
+    inputs = await create_blob_inputs("s3://old_prefix/some/path")
+    serialized = inputs.proto_inputs.SerializeToString()
+
+    async def fake_get_stream(path):
+        yield serialized
+
+    monkeypatch.setattr(io.storage, "get_stream", fake_get_stream)
+    path_rewrite_config = io.PathRewrite(old_prefix="s3://old_prefix1", new_prefix="/tmp/new_prefix")
+    loaded = await io.load_inputs("some/path", max_bytes=1000, path_rewrite_config=path_rewrite_config)
+    for lit in loaded.proto_inputs.literals:
+        assert lit.value.scalar.blob.uri.startswith("s3://old_prefix")
+        assert lit.value.scalar.blob.uri == "s3://old_prefix/some/path"
