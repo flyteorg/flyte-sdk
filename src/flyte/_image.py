@@ -550,6 +550,10 @@ class Image:
         return img
 
     @classmethod
+    def from_name(cls, name: str) -> Image:
+        return cls._new(name=name)
+
+    @classmethod
     def from_uv_script(
         cls,
         script: Path | str,

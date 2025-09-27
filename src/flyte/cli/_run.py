@@ -12,6 +12,7 @@ import rich_click as click
 from typing_extensions import get_args
 
 from .._code_bundle._utils import CopyFiles
+from .._initialize import _get_init_config
 from .._task import TaskTemplate
 from ..remote import Run
 from . import _common as common
@@ -108,6 +109,17 @@ class RunArguments:
             )
         },
     )
+    image: List[str] = field(
+        default_factory=list,
+        metadata={
+            "click.option": click.Option(
+                ["--image"],
+                type=str,
+                multiple=True,
+                help="Image to be used in the run. Format: imagename=imageuri. Can be specified multiple times.",
+            )
+        },
+    )
 
     @classmethod
     def from_dict(cls, d: Dict[str, Any]) -> RunArguments:
@@ -135,6 +147,7 @@ class RunTaskCommand(click.RichCommand):
         async def _run():
             import flyte
 
+            self.parse_images(self.run_args.image)
             console = common.get_console()
             r = await flyte.with_runcontext(
                 copy_style=self.run_args.copy_style,
@@ -169,6 +182,19 @@ class RunTaskCommand(click.RichCommand):
                     await r.show_logs.aio(max_lines=30, show_ts=True, raw=False)
 
         asyncio.run(_run())
+
+    @staticmethod
+    def parse_images(values: List[str]) -> None:
+        cfg = _get_init_config()
+        if cfg is None:
+            return
+        for value in values:
+            if "=" in value:
+                image_name, image_uri = value.split("=", 1)
+                cfg.images[image_name] = image_uri
+            else:
+                # If no name specified, use "default" as the name
+                cfg.images["default"] = value
 
     def get_params(self, ctx: click.Context) -> List[click.Parameter]:
         # Note this function may be called multiple times by click.

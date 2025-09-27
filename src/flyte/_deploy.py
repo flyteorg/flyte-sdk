@@ -212,16 +212,34 @@ async def _build_images(deployment: DeploymentPlan) -> ImageCache:
     """
     Build the images for the given deployment plan and update the environment with the built image.
     """
+    from ._initialize import _get_init_config
     from ._internal.imagebuild.image_builder import ImageCache
 
     images = []
     image_identifier_map = {}
+    cfg = _get_init_config()
     for env_name, env in deployment.envs.items():
         if not isinstance(env.image, str):
+            # No base image but the name is set, try getting image uri from configm
+            if cfg and env.image.base_image is None and env.image.name is not None:
+                if env.image.name in cfg.images:
+                    # try to see if the image is set in the config. If so, directly use the image uri
+                    image_uri = cfg.images[env.image.name]
+                    image_identifier_map[env_name] = image_uri
+                    continue
+                else:
+                    raise ValueError(
+                        f"Image name '{env.image.name}' not found in config. Available: {list(cfg.images.keys())}"
+                    )
             logger.debug(f"Building Image for environment {env_name}, image: {env.image}")
             images.append(_build_image_bg(env_name, env.image))
 
         elif env.image == "auto" and "auto" not in image_identifier_map:
+            if cfg and "default" in cfg.images:
+                # If the default image is set through CLI, use it instead
+                image_uri = cfg.images["default"]
+                image_identifier_map[env_name] = image_uri
+                continue
             auto_image = Image.from_debian_base()
             images.append(_build_image_bg(env_name, auto_image))
     final_images = await asyncio.gather(*images)
