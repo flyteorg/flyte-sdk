@@ -5,11 +5,13 @@ import flyte
 env = flyte.TaskEnvironment(
     name="pyproject_test",
     resources=flyte.Resources(memory="250Mi"),
-    image=(
-        flyte.Image.from_debian_base()
-        .with_uv_project(pyproject_file=pathlib.Path("pyproject.toml"), pre=True, extra_args="--no-install-project")
-        .with_local_v2()
-    ),
+    image=flyte.Image.from_debian_base().with_uv_project(
+        pyproject_file=pathlib.Path("pyproject.toml"),
+        pre=True,
+        # Install only the dependencies specified in pyproject.toml, without installing the current project itself.
+        # Only pyproject.toml and uv.lock will be uploaded to the remote builder to resolve and install dependencies.
+        extra_args="--no-install-project"
+    )
 )
 
 

@@ -45,7 +45,9 @@ uv_project/
 image = flyte.Image.from_debian_base().with_uv_project(
     pyproject_file=pathlib.Path("pyproject.toml"),
     pre=True,
-    extra_args="--no-install-project"  # Only install dependencies, not the project itself
+    # Install only the dependencies specified in pyproject.toml, without installing the current project itself.
+    # Only pyproject.toml and uv.lock will be uploaded to the remote builder to resolve and install dependencies.
+    extra_args="--no-install-project"
 )
 ```
 
