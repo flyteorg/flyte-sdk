@@ -96,6 +96,7 @@ def main(
     import flyte
     import flyte._utils as utils
     import flyte.errors
+    import flyte.storage as storage
     from flyte._initialize import init
     from flyte._internal.controllers import create_controller
     from flyte._internal.imagebuild.image_builder import ImageCache
@@ -150,7 +151,14 @@ def main(
     path_rewrite_cfg = os.getenv(_F_PATH_REWRITE, None)
     path_rewrite = None
     if path_rewrite_cfg:
-        path_rewrite = PathRewrite.from_str(path_rewrite_cfg)
+        potential_path_rewrite = PathRewrite.from_str(path_rewrite_cfg)
+        if storage.exists(potential_path_rewrite.new_prefix):
+            path_rewrite = potential_path_rewrite
+        else:
+            logger.error(
+                f"Path rewrite failed for path {potential_path_rewrite.new_prefix}, "
+                f"not found, reverting to original path {potential_path_rewrite.old_prefix}"
+            )
 
     # Create a coroutine to load the task and run it
     task_coroutine = load_and_run_task(

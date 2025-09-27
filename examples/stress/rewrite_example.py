@@ -13,7 +13,7 @@ async def create_large_file(dest_path: str, size_gigabytes: int = 5) -> flyte.io
     f = flyte.io.File(path=dest_path)
 
     async with f.open("wb") as fp:
-        chunk = b'\0' * (1024 * 1024)  # 1 MiB chunk
+        chunk = b"\0" * (1024 * 1024)  # 1 MiB chunk
         for _ in range(size_gigabytes * 1024):
             fp.write(chunk)
     return f
@@ -32,7 +32,7 @@ async def pathrewrite_read(f: flyte.io.File) -> int:
         print(f"Failed to check if file exists: {f.path} {e}")
 
     try:
-        print(f"Check if path exists: /mnt/mountpoint/data/ {await storage.exists("/mnt/mountpoint/data/")}")
+        print(f"Check if path exists: /mnt/mountpoint/data/ {await storage.exists('/mnt/mountpoint/data/')}")
     except Exception as e:
         print(f"Failed to check if path exists: [/mnt/mountpoint/data/ {e}")
 
@@ -61,9 +61,9 @@ if __name__ == "__main__":
 
     # Try read the data without acceleration and with acceleration
     r = flyte.with_runcontext(
-      env_vars={"_F_PATH_REWRITE": "s3://union-cloud-oc-canary-playground-persistent/->/mnt/mountpoint/data/"},
+        env_vars={"_F_PATH_REWRITE": "s3://union-cloud-oc-canary-playground-persistent/->/mnt/mountpoint/data/"},
     ).run(
         pathrewrite_read,
-        flyte.io.File.from_existing_remote("s3://union-cloud-oc-canary-playground-persistent/my_data.dat")
+        flyte.io.File.from_existing_remote("s3://union-cloud-oc-canary-playground-persistent/my_data.dat"),
     )
     print(r.url)

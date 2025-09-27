@@ -378,10 +378,14 @@ async def exists(path: str, **kwargs) -> bool:
     :param kwargs: Additional arguments to be passed to the underlying filesystem.
     :return: True if the path exists, False otherwise.
     """
-    fs = get_underlying_filesystem(path=path, **kwargs)
-    if isinstance(fs, AsyncFileSystem):
-        return await fs._exists(path)
-    return fs.exists(path)
+    try:
+        fs = get_underlying_filesystem(path=path, **kwargs)
+        if isinstance(fs, AsyncFileSystem):
+            return await fs.info(path)
+        _ = fs.info(path)
+        return True
+    except FileNotFoundError:
+        return False
 
 
 register(_OBSTORE_SUPPORTED_PROTOCOLS, asynchronous=True)

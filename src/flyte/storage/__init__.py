@@ -3,6 +3,7 @@ __all__ = [
     "GCS",
     "S3",
     "Storage",
+    "exists",
     "get",
     "get_configured_fsspec_kwargs",
     "get_random_local_directory",
@@ -14,11 +15,11 @@ __all__ = [
     "put",
     "put_stream",
     "put_stream",
-    "exists",
 ]
 
 from ._config import ABFS, GCS, S3, Storage
 from ._storage import (
+    exists,
     get,
     get_configured_fsspec_kwargs,
     get_random_local_directory,
@@ -29,5 +30,4 @@ from ._storage import (
     join,
     put,
     put_stream,
-    exists,
 )
