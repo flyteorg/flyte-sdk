@@ -381,7 +381,8 @@ async def exists(path: str, **kwargs) -> bool:
     try:
         fs = get_underlying_filesystem(path=path, **kwargs)
         if isinstance(fs, AsyncFileSystem):
-            return await fs.info(path)
+            _ = await fs._info(path)
+            return True
         _ = fs.info(path)
         return True
     except FileNotFoundError:
