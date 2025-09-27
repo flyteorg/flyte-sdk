@@ -146,8 +146,18 @@ async def run_task(
         f" at {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(start_time))}"
     )
 
-    path_rewrite = None
     path_rewrite = PathRewrite.from_str(path_rewrite_cfg) if path_rewrite_cfg else None
+    if path_rewrite:
+        import flyte.storage as storage
+
+        if not await storage.exists(path_rewrite.new_prefix):
+            logger.error(
+                f"[rusty] Path rewrite failed for path {path_rewrite.new_prefix}, "
+                f"not found, reverting to original path {path_rewrite.old_prefix}"
+            )
+            path_rewrite = None
+        else:
+            logger.info(f"[rusty] Using path rewrite: {path_rewrite}")
 
     try:
         await contextual_run(

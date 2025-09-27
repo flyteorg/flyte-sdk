@@ -388,4 +388,13 @@ async def exists(path: str, **kwargs) -> bool:
         return False
 
 
+def exists_sync(path: str, **kwargs) -> bool:
+    try:
+        fs = get_underlying_filesystem(path=path, **kwargs)
+        _ = fs.info(path)
+        return True
+    except FileNotFoundError:
+        return False
+
+
 register(_OBSTORE_SUPPORTED_PROTOCOLS, asynchronous=True)

@@ -152,8 +152,9 @@ def main(
     path_rewrite = None
     if path_rewrite_cfg:
         potential_path_rewrite = PathRewrite.from_str(path_rewrite_cfg)
-        if storage.exists(potential_path_rewrite.new_prefix):
+        if storage.exists_sync(potential_path_rewrite.new_prefix):
             path_rewrite = potential_path_rewrite
+            logger.info(f"Path rewrite configured for {path_rewrite.new_prefix}")
         else:
             logger.error(
                 f"Path rewrite failed for path {potential_path_rewrite.new_prefix}, "

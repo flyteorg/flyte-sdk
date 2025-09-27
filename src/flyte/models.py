@@ -104,6 +104,9 @@ class PathRewrite:
             raise ValueError(f"Invalid path rewrite pattern: {pattern}. Expected format 'old_prefix->new_prefix'.")
         return cls(old_prefix=parts[0], new_prefix=parts[1])
 
+    def __repr__(self) -> str:
+        return f"{self.old_prefix}->{self.new_prefix}"
+
 
 @rich.repr.auto
 @dataclass(frozen=True, kw_only=True)
