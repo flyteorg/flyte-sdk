@@ -378,9 +378,10 @@ class RemoteController(Controller):
         invoke_seq_num = self.generate_task_call_sequence(_func, current_action_id)
         inputs = await convert.convert_from_native_to_inputs(_interface, *args, **kwargs)
         serialized_inputs = inputs.proto_inputs.SerializeToString(deterministic=True)
+        inputs_hash = convert.generate_inputs_hash_from_proto(inputs.proto_inputs)
 
         sub_action_id, sub_action_output_path = convert.generate_sub_action_id_and_output_path(
-            tctx, func_name, serialized_inputs, invoke_seq_num
+            tctx, func_name, inputs_hash, invoke_seq_num
         )
 
         inputs_uri = io.inputs_path(sub_action_output_path)

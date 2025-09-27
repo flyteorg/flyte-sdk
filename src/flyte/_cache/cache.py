@@ -77,13 +77,15 @@ class Cache:
     def __post_init__(self):
         if self.behavior not in get_args(CacheBehavior):
             raise ValueError(f"Invalid cache behavior: {self.behavior}. Must be one of ['auto', 'override', 'disable']")
-        if self.behavior == "disable":
-            return
 
+        # Still setup _ignore_inputs when cache is disabled to prevent _ignored_inputs attribute not found error
         if isinstance(self.ignored_inputs, str):
             self._ignored_inputs = (self.ignored_inputs,)
         else:
             self._ignored_inputs = self.ignored_inputs
+
+        if self.behavior == "disable":
+            return
 
         # Normalize policies so that self._policies is always a list
         if self.policies is None:

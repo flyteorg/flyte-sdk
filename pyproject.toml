@@ -39,6 +39,11 @@ flyte_keyring_file = "flyte._keyring.file"
 requires = ["setuptools", "setuptools_scm"]
 build-backend = "setuptools.build_meta"
 
+[project.optional-dependencies]
+aiosqlite = [
+    "aiosqlite>=0.21.0",
+]
+
 [dependency-groups]
 dev = [
     "build>=1.2.2.post1",
