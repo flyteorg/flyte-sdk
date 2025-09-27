@@ -115,6 +115,7 @@ async def test_obstore_bypass_with_empty_data(obstore_file):
 async def test_storage_exists():
     assert await storage.exists("/tmp")
     import os
+
     listed = os.listdir("/tmp")[0]
     assert await storage.exists(os.path.join("/tmp", listed)), f"{listed} not found"
     assert not await storage.exists("/non-existent/test")
