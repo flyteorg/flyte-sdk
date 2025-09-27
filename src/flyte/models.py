@@ -97,7 +97,7 @@ class PathRewrite:
     @classmethod
     def from_str(cls, pattern: str) -> PathRewrite:
         """
-        Create a PathRewrite from a string pattern of the form 'old_prefix:new_prefix'.
+        Create a PathRewrite from a string pattern of the form `old_prefix->new_prefix`.
         """
         parts = pattern.split("->")
         if len(parts) != 2:
