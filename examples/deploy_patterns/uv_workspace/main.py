@@ -6,11 +6,13 @@ from seeds.actions import get_seed
 import flyte
 
 env = flyte.TaskEnvironment(
-    name="albatross_env",
-    image=flyte.Image.from_debian_base().with_uv_project(
-        pyproject_file=Path("./pyproject.toml"),
-        extra_args="--only-group all",
-    ),
+    name="uv_workspace",
+    image=flyte.Image.from_debian_base()
+    .with_uv_project(
+        pyproject_file=Path(__file__).parent / "pyproject.toml",
+        extra_args="--inexact",  # albatross group define all the dependencies the task needs
+    )
+    .with_local_v2(),
 )
 
 
@@ -22,7 +24,6 @@ async def albatross_task() -> str:
 
 
 if __name__ == "__main__":
-    current_dir = Path(__file__).parent
-    flyte.init_from_config(root_dir=current_dir.parent)
+    flyte.init_from_config(root_dir=Path(__file__).parent)
     run = flyte.run(albatross_task)
     print(run.url)
