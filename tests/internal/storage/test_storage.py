@@ -2,6 +2,7 @@ import os
 import tempfile
 import unittest
 
+import fsspec
 import pytest
 
 import flyte
@@ -64,7 +65,6 @@ def obstore_file():
     """
     Fixture to create a temporary obstore file for testing.
     """
-    import fsspec
     import fsspec.implementations.local
     import obstore.fsspec
 
@@ -109,3 +109,14 @@ async def test_obstore_bypass_with_empty_data(obstore_file):
     await _put_stream_obstore_bypass(data, to_path=dst)
     streams = _get_stream_obstore_bypass(dst, chunk_size=10 * 1024)
     assert data == b"".join([chunk async for chunk in streams])
+
+
+@pytest.mark.asyncio
+async def test_storage_exists():
+    fsspec.register_implementation("file", fsspec.implementations.local.LocalFileSystem, clobber=True)
+    assert await storage.exists("/tmp")
+    import os
+
+    listed = os.listdir("/tmp")[0]
+    assert await storage.exists(os.path.join("/tmp", listed)), f"{listed} not found"
+    assert not await storage.exists("/non-existent/test")
