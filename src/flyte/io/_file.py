@@ -366,6 +366,135 @@ class File(BaseModel, Generic[T], SerializableType):
         await storage.get(self.path, str(local_path))
         return str(local_path)
 
+    def download_sync(self, local_path: Optional[Union[str, Path]] = None) -> str:
+        """
+        Synchronously download the file to a local path.
+
+        Args:
+            local_path: The local path to download the file to. If None, a temporary
+                       directory will be used.
+
+        Returns:
+            The path to the downloaded file
+
+        Example:
+            ```python
+            local_file = file.download_sync('/tmp/myfile.csv')
+            ```
+        """
+        if local_path is None:
+            local_path = storage.get_random_local_path(file_path_or_file_name=local_path)
+        else:
+            local_path = str(Path(local_path).absolute())
+
+        fs = storage.get_underlying_filesystem(path=self.path)
+
+        # If it's already a local file, just copy it
+        if "file" in fs.protocol:
+            # Use standard file operations for sync copy
+            import shutil
+
+            shutil.copy2(self.path, local_path)
+            return str(local_path)
+
+        # Otherwise download from remote using sync functionality
+        # Use the sync version of storage operations
+        with fs.open(self.path, "rb") as src:
+            with open(local_path, "wb") as dst:
+                dst.write(src.read())
+        return str(local_path)
+
+    @classmethod
+    @requires_initialization
+    def from_local_sync(
+        cls,
+        local_path: Union[str, Path],
+        remote_destination: Optional[str] = None,
+        hash_method: Optional[HashMethod | str] = None,
+    ) -> File[T]:
+        """
+        Create a new File object from a local file that will be uploaded to the configured remote store.
+
+        Args:
+            local_path: Path to the local file
+            remote_destination: Optional path to store the file remotely. If None, a path will be generated.
+            hash_method: Pass this argument either as a set string or a HashMethod to use for
+              determining a task's cache key if this File object is used as an input to said task. If not specified,
+              the cache key will just be computed based on this object's attributes (i.e. path, name, format, etc.).
+              If there is a set value you want to use, please pass an instance of the PrecomputedValue HashMethod.
+
+        Returns:
+            A new File instance pointing to the uploaded file
+
+        Example:
+            ```python
+            remote_file = File[DataFrame].from_local_sync('/tmp/data.csv', 's3://bucket/data.csv')
+            ```
+        """
+        if not os.path.exists(local_path):
+            raise ValueError(f"File not found: {local_path}")
+
+        remote_path = remote_destination or internal_ctx().raw_data.get_random_remote_path()
+        protocol = get_protocol(remote_path)
+        filename = Path(local_path).name
+
+        # If remote_destination was not set by the user, and the configured raw data path is also local,
+        # then let's optimize by not uploading.
+        hash_value = hash_method if isinstance(hash_method, str) else None
+        hash_method_obj = hash_method if isinstance(hash_method, HashMethod) else None
+
+        if "file" in protocol:
+            if remote_destination is None:
+                path = str(Path(local_path).absolute())
+            else:
+                # Otherwise, actually make a copy of the file
+                import shutil
+
+                if hash_method_obj:
+                    # For hash computation, we need to read and write manually
+                    with open(local_path, "rb") as src:
+                        with open(remote_path, "wb") as dst:
+                            dst_wrapper = HashingWriter(dst, accumulator=hash_method_obj)
+                            dst_wrapper.write(src.read())
+                            hash_value = dst_wrapper.result()
+                            dst_wrapper.close()
+                else:
+                    shutil.copy2(local_path, remote_path)
+                path = str(Path(remote_path).absolute())
+        else:
+            # Otherwise upload to remote using sync storage layer
+            fs = storage.get_underlying_filesystem(path=remote_path)
+
+            if hash_method_obj:
+                # We can skip the wrapper if the hash method is just a precomputed value
+                if not isinstance(hash_method_obj, PrecomputedValue):
+                    with open(local_path, "rb") as src:
+                        # For sync operations, we need to compute hash manually
+                        data = src.read()
+                        hash_method_obj.update(memoryview(data))
+                        hash_value = hash_method_obj.result()
+
+                    # Now write the data to remote
+                    with fs.open(remote_path, "wb") as dst:
+                        dst.write(data)
+                    path = remote_path
+                else:
+                    # Use sync file operations
+                    with open(local_path, "rb") as src:
+                        with fs.open(remote_path, "wb") as dst:
+                            dst.write(src.read())
+                    path = remote_path
+                    hash_value = hash_method_obj.result()
+            else:
+                # Simple sync copy
+                with open(local_path, "rb") as src:
+                    with fs.open(remote_path, "wb") as dst:
+                        dst.write(src.read())
+                path = remote_path
+
+        f = cls(path=path, name=filename, hash_method=hash_method_obj, hash=hash_value)
+        return f
+
     @classmethod
     @requires_initialization
     async def from_local(
