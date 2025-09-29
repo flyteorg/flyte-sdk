@@ -109,3 +109,53 @@ async def test_obstore_bypass_with_empty_data(obstore_file):
     await _put_stream_obstore_bypass(data, to_path=dst)
     streams = _get_stream_obstore_bypass(dst, chunk_size=10 * 1024)
     assert data == b"".join([chunk async for chunk in streams])
+
+
+from flyte.storage import S3, get_underlying_filesystem
+from pathlib import Path
+import time
+
+def test_bjlk():
+    s3_cfg = S3.for_sandbox()
+    flyte.init(storage=s3_cfg)
+
+    fs = get_underlying_filesystem(protocol="s3")
+    print(fs)
+    resp = fs.info(path="s3://bucket/testproject/development")
+    print(resp)
+
+
+@pytest.mark.asyncio
+async def test_access_large_file():
+    location = "s3://bucket/metadata/v2/testorg/testproject/development/rxw4wk5fdw9tfl24pnv9/a0/1/f3/rxw4wk5fdw9tfl24pnv9-a0-0/b087922792e194f32f601d1083ef02f5"
+    local_dst = Path("/Users/ytong/temp/b087922792e194f32f601d1083ef02f5")
+    if local_dst.exists():
+        local_dst.unlink()
+
+    s3_cfg = S3.for_sandbox()
+    flyte.init(storage=s3_cfg)
+
+    # time how long it takes to download the file
+    start = time.time()
+    result = await storage.get(location, to_path=local_dst)
+    print(result)
+    end = time.time()
+    print(f"Time taken to download the file: {end - start} seconds", flush=True)
+
+    # stream the file
+    buf = bytearray(5 * 1024 * 1024 * 1024)
+    start = time.time()
+    offset = 0
+    async for chunk in storage.get_stream(location, chunk_size=1 * 1024 * 1024):
+        end = offset + len(chunk)
+        if end > len(buf):
+            raise ValueError("Generator produced more data than buffer size")
+        buf[offset:end] = chunk
+        offset = end
+
+    end = time.time()
+    print(f"Time taken to stream file to memory: {end - start} seconds", flush=True)
+
+
+
+
