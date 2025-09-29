@@ -27,8 +27,8 @@ class RunPolicy:
     RunPolicy describes some policy to apply to the execution of a kubeflow job.
 
     Args:
-        clean_pod_policy (CleanPodPolicy): Defines the policy for cleaning up pods after
-            the PyTorchJob completes. Defaults to None.
+        clean_pod_policy (str, optional): Policy for cleaning up pods after the PyTorchJob completes.
+            Allowed values are "None", "all", or "Running". Defaults to None.
         ttl_seconds_after_finished (int, optional): Defines the TTL (in seconds) for cleaning
             up finished PyTorchJobs. Defaults to None.
         active_deadline_seconds (int, optional): Specifies the duration (in seconds) since
