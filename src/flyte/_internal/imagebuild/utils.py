@@ -36,7 +36,7 @@ def copy_files_to_context(src: Path, context_path: Path, ignore_patterns: list[s
         shutil.copy(src, dst_path)
     return dst_path
 
-def get_and_list_dockerignore(image: Image, root_path: Optional[Path]) -> List[str]:
+def get_and_list_dockerignore(image: Image) -> List[str]:
     """
     Get and parse dockerignore patterns from .dockerignore file.
     
@@ -45,8 +45,9 @@ def get_and_list_dockerignore(image: Image, root_path: Optional[Path]) -> List[s
     for a .dockerignore file in the root_path directory.
     
     :param image: The Image object
-    :param root_path: Root directory path to look for .dockerignore file
     """
+    from flyte._initialize import _get_init_config
+
     # Look for DockerIgnore layer in the image layers
     dockerignore_path: Optional[Path] = None
     patterns: List[str] = []
@@ -55,6 +56,8 @@ def get_and_list_dockerignore(image: Image, root_path: Optional[Path]) -> List[s
         if isinstance(layer, DockerIgnore) and layer.path.strip():
             dockerignore_path = Path(layer.path)
     # If DockerIgnore layer not specified, set dockerignore_path under root_path
+    init_config = _get_init_config()
+    root_path = init_config.root_dir if init_config else None
     if not dockerignore_path and root_path:
         dockerignore_path = root_path / ".dockerignore"
     # Return empty list if no .dockerignore file found

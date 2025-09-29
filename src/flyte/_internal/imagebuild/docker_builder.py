@@ -6,7 +6,7 @@ import tempfile
 import typing
 from pathlib import Path
 from string import Template
-from typing import ClassVar, List, Optional, Protocol, cast
+from typing import ClassVar, Optional, Protocol, cast
 
 import aiofiles
 import click
@@ -609,7 +609,6 @@ class DockerImageBuilder(ImageBuilder):
         """
         # For testing, set `push=False` to just build the image locally and not push to
         # registry.
-        from flyte._initialize import _get_init_config
 
         await DockerImageBuilder._ensure_buildx_builder()
 
@@ -623,9 +622,7 @@ class DockerImageBuilder(ImageBuilder):
             )
 
             # Get .dockerignore file patterns first
-            init_config = _get_init_config()
-            root_path = init_config.root_dir if init_config else None
-            docker_ignore_patterns = get_and_list_dockerignore(image, root_path)
+            docker_ignore_patterns = get_and_list_dockerignore(image)
             
             for layer in image._layers:
                 dockerfile = await _process_layer(layer, tmp_path, dockerfile, docker_ignore_patterns)
