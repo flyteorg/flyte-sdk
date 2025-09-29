@@ -13,7 +13,7 @@ from flyte._logging import logger
 from flyte._protos.workflow import run_definition_pb2
 from flyte.config import auto
 
-DEFAILT_CACHE_DIR = "~/.flyte"
+DEFAULT_CACHE_DIR = "~/.flyte"
 CACHE_LOCATION = "local-cache/cache.db"
 
 
@@ -33,7 +33,7 @@ class LocalTaskCache(object):
         if config.source:
             cache_dir = config.source.parent
         else:
-            cache_dir = Path(DEFAILT_CACHE_DIR).expanduser()
+            cache_dir = Path(DEFAULT_CACHE_DIR).expanduser()
 
         cache_path = cache_dir / CACHE_LOCATION
         # Ensure the directory exists
