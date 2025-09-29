@@ -78,6 +78,37 @@ class ActionID:
 
 
 @rich.repr.auto
+@dataclass
+class PathRewrite:
+    """
+    Configuration for rewriting paths during input loading.
+    """
+
+    # If set, rewrites any path starting with this prefix to the new prefix.
+    old_prefix: str
+    new_prefix: str
+
+    def __post_init__(self):
+        if not self.old_prefix or not self.new_prefix:
+            raise ValueError("Both old_prefix and new_prefix must be non-empty strings.")
+        if self.old_prefix == self.new_prefix:
+            raise ValueError("old_prefix and new_prefix must be different.")
+
+    @classmethod
+    def from_str(cls, pattern: str) -> PathRewrite:
+        """
+        Create a PathRewrite from a string pattern of the form `old_prefix->new_prefix`.
+        """
+        parts = pattern.split("->")
+        if len(parts) != 2:
+            raise ValueError(f"Invalid path rewrite pattern: {pattern}. Expected format 'old_prefix->new_prefix'.")
+        return cls(old_prefix=parts[0], new_prefix=parts[1])
+
+    def __repr__(self) -> str:
+        return f"{self.old_prefix}->{self.new_prefix}"
+
+
+@rich.repr.auto
 @dataclass(frozen=True, kw_only=True)
 class RawDataPath:
     """
@@ -86,6 +117,7 @@ class RawDataPath:
     """
 
     path: str
+    path_rewrite: Optional[PathRewrite] = None
 
     @classmethod
     def from_local_folder(cls, local_folder: str | pathlib.Path | None = None) -> RawDataPath:
