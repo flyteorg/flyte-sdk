@@ -2,7 +2,6 @@ import flyte
 from flyte.models import SerializationContext
 
 from flyteplugins.pytorch.task import (
-    CleanPodPolicy,
     Elastic,
     RunPolicy,
     TorchFunctionTask,
@@ -10,7 +9,7 @@ from flyteplugins.pytorch.task import (
 
 
 def test_torch_post_init():
-    t = Elastic(nnodes=2)
+    t = Elastic(nnodes=2, nproc_per_node=1)
 
     task = TorchFunctionTask(
         name="n",
@@ -34,7 +33,7 @@ def test_custom_config():
         nnodes=2,
         nproc_per_node=2,
         run_policy=RunPolicy(
-            clean_pod_policy=CleanPodPolicy.ALL,
+            clean_pod_policy="all",
             backoff_limit=4,
             ttl_seconds_after_finished=100,
             active_deadline_seconds=200,

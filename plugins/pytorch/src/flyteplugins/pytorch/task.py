@@ -1,13 +1,11 @@
 import os
 from dataclasses import dataclass, field
-from enum import Enum
 from typing import Any, Dict, Literal, Optional, Union
 
 import flyte
 import flyte.report
 from cloudpickle import cloudpickle
 from flyte._context import internal_ctx
-from flyte._initialize import _get_init_config
 from flyte._logging import logger
 from flyte._task import P, R
 from flyte.extend import AsyncFunctionTaskTemplate, TaskPluginRegistry
@@ -21,16 +19,6 @@ from flyteidl.plugins.kubeflow.pytorch_pb2 import (
 from google.protobuf.json_format import MessageToDict
 from torch.distributed import run
 from torch.distributed.launcher.api import LaunchConfig, elastic_launch
-
-
-class CleanPodPolicy(Enum):
-    """
-    CleanPodPolicy defines how pods are cleaned up after a PyTorchJob completes.
-    """
-
-    NONE = common_pb2.CLEANPOD_POLICY_NONE
-    ALL = common_pb2.CLEANPOD_POLICY_ALL
-    RUNNING = common_pb2.CLEANPOD_POLICY_RUNNING
 
 
 @dataclass
@@ -51,7 +39,7 @@ class RunPolicy:
             Defaults to None.
     """
 
-    clean_pod_policy: Optional[CleanPodPolicy] = None
+    clean_pod_policy: Optional[Literal["None", "all", "Running"]] = None
     ttl_seconds_after_finished: Optional[int] = None
     active_deadline_seconds: Optional[int] = None
     backoff_limit: Optional[int] = None
@@ -86,16 +74,13 @@ class Elastic:
     rdzv_configs: Dict[str, Any] = field(default_factory=lambda: {"timeout": 900, "join_timeout": 900})
 
 
-def launcher_entrypoint(tctx: TaskContext, endpoint: str, insecure: bool, fn: bytes, kwargs: dict):
+def launcher_entrypoint(tctx: TaskContext, fn: bytes, kwargs: dict):
     func = cloudpickle.loads(fn)
     flyte.init(
         org=tctx.action.org,
         project=tctx.action.project,
         domain=tctx.action.domain,
         root_dir=tctx.run_base_dir,
-        insecure=insecure,
-        endpoint=endpoint,
-        api_key=os.getenv("_UNION_EAGER_API_KEY"),
     )
 
     with internal_ctx().replace_task_context(tctx):
@@ -152,11 +137,8 @@ class TorchFunctionTask(AsyncFunctionTaskTemplate):
             monitor_interval=self.plugin_config.monitor_interval,
         )
 
-        cfg = _get_init_config()
         out = elastic_launch(config=config, entrypoint=launcher_entrypoint)(
             tctx,
-            cfg.client.endpoint,
-            cfg.client.insecure,
             cloudpickle.dumps(self.func),
             kwargs,
         )
@@ -183,7 +165,10 @@ class TorchFunctionTask(AsyncFunctionTaskTemplate):
         if self.plugin_config.run_policy:
             policy = common_pb2.RunPolicy(
                 clean_pod_policy=(
-                    self.plugin_config.run_policy.clean_pod_policy.value
+                    # https://github.com/flyteorg/flyte/blob/4caa5639ee6453d86c823181083423549f08f702/flyteidl/protos/flyteidl/plugins/kubeflow/common.proto#L9-L13
+                    common_pb2.CleanPodPolicy.Value(
+                        "CLEANPOD_POLICY_" + self.plugin_config.run_policy.clean_pod_policy.upper()
+                    )
                     if self.plugin_config.run_policy.clean_pod_policy
                     else None
                 ),
