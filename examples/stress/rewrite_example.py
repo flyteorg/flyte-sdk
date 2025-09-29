@@ -61,7 +61,7 @@ if __name__ == "__main__":
 
     # Try read the data without acceleration and with acceleration
     r = flyte.with_runcontext(
-        env_vars={"_F_PATH_REWRITE": "s3://union-cloud-oc-canary-playground-persistent/->/mnt/mountpoint/data/"},
+        env_vars={"_F_PATH_REWRITE": "s3://union-cloud-oc-canary-playground-persistent/->/union-persistent-data/"},
     ).run(
         pathrewrite_read,
         flyte.io.File.from_existing_remote("s3://union-cloud-oc-canary-playground-persistent/my_data.dat"),
