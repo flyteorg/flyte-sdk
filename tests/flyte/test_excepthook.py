@@ -1,10 +1,6 @@
 import io
 import logging
-import sys
-import traceback
 from unittest import mock
-
-import pytest
 
 from flyte._excepthook import custom_excepthook, should_include_frame
 from flyte._logging import logger
@@ -50,9 +46,9 @@ class TestCustomExcepthook:
                 exc_type = ValueError
                 exc_value = ValueError("test error")
                 exc_tb = None
-                
+
                 custom_excepthook(exc_type, exc_value, exc_tb)
-                
+
                 mock_original.assert_called_once_with(exc_type, exc_value, exc_tb)
 
     @mock.patch("sys.stdout", new_callable=io.StringIO)
@@ -64,23 +60,23 @@ class TestCustomExcepthook:
         included_frame = mock.Mock()
         included_frame.name = "regular_function"
         included_frame.filename = "/path/to/regular_file.py"
-        
+
         excluded_frame = mock.Mock()
         excluded_frame.name = "_internal_function"
         excluded_frame.filename = "/path/to/file.py"
-        
+
         mock_extract_tb.return_value = [included_frame, excluded_frame]
-        
+
         with mock.patch.object(logger, "getEffectiveLevel", return_value=logging.INFO):
             exc_type = ValueError
             exc_value = ValueError("test error")
             exc_tb = mock.Mock()
-            
+
             custom_excepthook(exc_type, exc_value, exc_tb)
-            
+
             # Verify traceback.print_tb was called with filtered frames
             mock_print_tb.assert_called_once_with([included_frame])
-            
+
             # Check output contains expected content
             output = mock_stdout.getvalue()
             assert "Filtered traceback (most recent call last):" in output
@@ -95,24 +91,24 @@ class TestCustomExcepthook:
         included_frame = mock.Mock()
         included_frame.name = "regular_function"
         included_frame.filename = "/path/to/regular_file.py"
-        
+
         mock_extract_tb.return_value = [included_frame]
-        
+
         # Create exception with cause
         cause_exception = RuntimeError("root cause")
         main_exception = ValueError("test error")
         main_exception.__cause__ = cause_exception
-        
+
         with mock.patch.object(logger, "getEffectiveLevel", return_value=logging.INFO):
             exc_type = ValueError
             exc_value = main_exception
             exc_tb = mock.Mock()
-            
+
             custom_excepthook(exc_type, exc_value, exc_tb)
-            
+
             # Verify traceback.print_tb was called
             mock_print_tb.assert_called_once_with([included_frame])
-            
+
             # Check output contains expected content including cause
             output = mock_stdout.getvalue()
             assert "Filtered traceback (most recent call last):" in output
@@ -128,20 +124,20 @@ class TestCustomExcepthook:
         included_frame = mock.Mock()
         included_frame.name = "regular_function"
         included_frame.filename = "/path/to/regular_file.py"
-        
+
         mock_extract_tb.return_value = [included_frame]
-        
+
         with mock.patch.object(logger, "getEffectiveLevel", return_value=logging.INFO):
             exc_type = ValueError
             exc_value = ValueError("test error")
             exc_value.__cause__ = None
             exc_tb = mock.Mock()
-            
+
             custom_excepthook(exc_type, exc_value, exc_tb)
-            
+
             # Verify traceback.print_tb was called
             mock_print_tb.assert_called_once_with([included_frame])
-            
+
             # Check output does not contain cause information
             output = mock_stdout.getvalue()
             assert "Filtered traceback (most recent call last):" in output
@@ -157,23 +153,23 @@ class TestCustomExcepthook:
         excluded_frame1 = mock.Mock()
         excluded_frame1.name = "_internal_function"
         excluded_frame1.filename = "/path/to/file.py"
-        
+
         excluded_frame2 = mock.Mock()
         excluded_frame2.name = "regular_function"
         excluded_frame2.filename = "/path/to/syncify_file.py"
-        
+
         mock_extract_tb.return_value = [excluded_frame1, excluded_frame2]
-        
+
         with mock.patch.object(logger, "getEffectiveLevel", return_value=logging.INFO):
             exc_type = ValueError
             exc_value = ValueError("test error")
             exc_tb = mock.Mock()
-            
+
             custom_excepthook(exc_type, exc_value, exc_tb)
-            
+
             # Verify traceback.print_tb was called with empty list
             mock_print_tb.assert_called_once_with([])
-            
+
             # Check output still contains error message
             output = mock_stdout.getvalue()
             assert "Filtered traceback (most recent call last):" in output

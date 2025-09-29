@@ -35,6 +35,3 @@ def custom_excepthook(exc_type, exc_value, exc_tb):
         print("Filtered traceback (most recent call last):")
         traceback.print_tb(filtered_tb)
         print(f"{exc_type.__name__}: {exc_value}\n")
-
-        if exc_value.__cause__:
-            print(f"Caused by {exc_value.__cause__.__class__.__name__}: {exc_value.__cause__}")
