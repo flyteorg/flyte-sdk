@@ -33,5 +33,8 @@ def custom_excepthook(exc_type, exc_value, exc_tb):
         filtered_tb = [frame for frame in tb_list if should_include_frame(frame)]
         # Print the filtered version (custom format)
         print("Filtered traceback (most recent call last):")
-        print("".join(traceback.format_list(filtered_tb)))
+        traceback.print_tb(filtered_tb)
         print(f"{exc_type.__name__}: {exc_value}\n")
+
+        if exc_value.__cause__:
+            print(f"Caused by {exc_value.__cause__.__class__.__name__}: {exc_value.__cause__}")
