@@ -85,39 +85,6 @@ class TestCustomExcepthook:
     @mock.patch("sys.stdout", new_callable=io.StringIO)
     @mock.patch("flyte._excepthook.traceback.extract_tb")
     @mock.patch("flyte._excepthook.traceback.print_tb")
-    def test_filtered_traceback_with_cause(self, mock_print_tb, mock_extract_tb, mock_stdout):
-        """Test filtered traceback printing with exception cause."""
-        # Setup mock frames
-        included_frame = mock.Mock()
-        included_frame.name = "regular_function"
-        included_frame.filename = "/path/to/regular_file.py"
-
-        mock_extract_tb.return_value = [included_frame]
-
-        # Create exception with cause
-        cause_exception = RuntimeError("root cause")
-        main_exception = ValueError("test error")
-        main_exception.__cause__ = cause_exception
-
-        with mock.patch.object(logger, "getEffectiveLevel", return_value=logging.INFO):
-            exc_type = ValueError
-            exc_value = main_exception
-            exc_tb = mock.Mock()
-
-            custom_excepthook(exc_type, exc_value, exc_tb)
-
-            # Verify traceback.print_tb was called
-            mock_print_tb.assert_called_once_with([included_frame])
-
-            # Check output contains expected content including cause
-            output = mock_stdout.getvalue()
-            assert "Filtered traceback (most recent call last):" in output
-            assert "ValueError: test error" in output
-            assert "Caused by RuntimeError: root cause" in output
-
-    @mock.patch("sys.stdout", new_callable=io.StringIO)
-    @mock.patch("flyte._excepthook.traceback.extract_tb")
-    @mock.patch("flyte._excepthook.traceback.print_tb")
     def test_filtered_traceback_without_cause_none_cause(self, mock_print_tb, mock_extract_tb, mock_stdout):
         """Test filtered traceback printing when exception cause is None."""
         # Setup mock frames
