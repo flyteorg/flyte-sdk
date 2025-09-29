@@ -310,10 +310,10 @@ async def test_poetry_handler_without_project_install():
 
             initial_dockerfile = "FROM python:3.9\n"
             result = await PoetryProjectHandler.handel(
-                layer=poetry_project, 
-                context_path=context_path, 
-                dockerfile=initial_dockerfile, 
-                docker_ignore_patterns=[]
+                layer=poetry_project,
+                context_path=context_path,
+                dockerfile=initial_dockerfile,
+                docker_ignore_patterns=[],
             )
 
             assert "RUN --mount=type=cache,sharing=locked,mode=0777,target=/root/.cache/uv,id=uv" in result
@@ -352,10 +352,10 @@ async def test_poetry_handler_with_project_install():
 
             initial_dockerfile = "FROM python:3.9\n"
             result = await PoetryProjectHandler.handel(
-                layer=poetry_project, 
-                context_path=context_path, 
-                dockerfile=initial_dockerfile, 
-                docker_ignore_patterns=["*.txt", ".cache"]
+                layer=poetry_project,
+                context_path=context_path,
+                dockerfile=initial_dockerfile,
+                docker_ignore_patterns=["*.txt", ".cache"],
             )
 
             assert result.startswith(initial_dockerfile)
@@ -402,10 +402,10 @@ async def test_uvproject_handler_with_project_install():
 
             initial_dockerfile = "FROM python:3.9\n"
             result = await UVProjectHandler.handle(
-                layer=uv_project, 
-                context_path=context_path, 
-                dockerfile=initial_dockerfile, 
-                docker_ignore_patterns=["*.txt", ".cache"]
+                layer=uv_project,
+                context_path=context_path,
+                dockerfile=initial_dockerfile,
+                docker_ignore_patterns=["*.txt", ".cache"],
             )
 
             assert result.startswith(initial_dockerfile)

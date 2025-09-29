@@ -279,7 +279,9 @@ class UVProjectHandler:
             )
         else:
             # Copy the entire project.
-            pyproject_dst = copy_files_to_context(layer.pyproject.parent, context_path, docker_ignore_patterns)
+            pyproject_dst = copy_files_to_context(
+                layer.pyproject.parent, context_path, docker_ignore_patterns, ["pyproject.toml", "uv.lock"]
+            )
             if layer.uvlock:
                 # Sometimes the uv.lock file is in a different folder, if it's specified, let's copy it there explicitly
                 shutil.copy(layer.uvlock, pyproject_dst)
@@ -311,7 +313,9 @@ class PoetryProjectHandler:
             )
         else:
             # Copy the entire project.
-            pyproject_dst = copy_files_to_context(layer.pyproject.parent, context_path, docker_ignore_patterns)
+            pyproject_dst = copy_files_to_context(
+                layer.pyproject.parent, context_path, docker_ignore_patterns, ["pyproject.toml", "poetry.lock"]
+            )
             delta = POETRY_LOCK_INSTALL_TEMPLATE.substitute(
                 PYPROJECT_PATH=pyproject_dst.relative_to(context_path),
                 POETRY_INSTALL_ARGS=layer.extra_args or "",
@@ -328,7 +332,6 @@ class DockerIgnoreHandler:
 
 
 class CopyConfigHandler:
-
     @staticmethod
     async def handle(
         layer: CopyConfig, context_path: Path, dockerfile: str, docker_ignore_patterns: list[str] = []
@@ -590,7 +593,6 @@ class DockerImageBuilder(ImageBuilder):
         else:
             logger.info("Buildx builder already exists.")
 
-
     async def _build_image(self, image: Image, *, push: bool = True, dry_run: bool = False) -> str:
         """
         if default image (only base image and locked), raise an error, don't have a dockerfile
@@ -623,7 +625,7 @@ class DockerImageBuilder(ImageBuilder):
 
             # Get .dockerignore file patterns first
             docker_ignore_patterns = get_and_list_dockerignore(image)
-            
+
             for layer in image._layers:
                 dockerfile = await _process_layer(layer, tmp_path, dockerfile, docker_ignore_patterns)
 

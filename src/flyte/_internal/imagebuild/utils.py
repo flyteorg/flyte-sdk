@@ -1,12 +1,15 @@
+import fnmatch
 import shutil
 from pathlib import Path
-from typing import Optional, List
+from typing import List, Optional
 
-from flyte._image import Image, DockerIgnore
+from flyte._image import DockerIgnore, Image
 from flyte._logging import logger
 
 
-def copy_files_to_context(src: Path, context_path: Path, ignore_patterns: list[str] = []) -> Path:
+def copy_files_to_context(
+    src: Path, context_path: Path, ignore_patterns: list[str] = [], protected_patterns: list[str] = []
+) -> Path:
     """
     This helper function ensures that absolute paths that users specify are converted correctly to a path in the
     context directory. Doing this prevents collisions while ensuring files are available in the context.
@@ -28,22 +31,43 @@ def copy_files_to_context(src: Path, context_path: Path, ignore_patterns: list[s
         dst_path = context_path / src
     dst_path.parent.mkdir(parents=True, exist_ok=True)
     if src.is_dir():
-        # TODO: Add support dockerignore
         default_ignore_patterns = [".idea", ".venv"]
         ignore_patterns = list(set(ignore_patterns + default_ignore_patterns))
-        shutil.copytree(src, dst_path, dirs_exist_ok=True, ignore=shutil.ignore_patterns(*ignore_patterns))
+
+        def protective_ignore(directory, contents):
+            # Execute the standard ignore function
+            standard_ignore = shutil.ignore_patterns(*ignore_patterns)
+            ignored = standard_ignore(directory, contents)
+
+            # Remove protected patterns from ignored set
+            if ignored and protected_patterns:
+                filtered_ignored = set()
+                for item in ignored:
+                    is_protected = False
+                    for pattern in protected_patterns:
+                        if fnmatch.fnmatch(item, pattern):
+                            is_protected = True
+                            break
+                    if not is_protected:
+                        filtered_ignored.add(item)
+                ignored = filtered_ignored
+
+            return ignored
+
+        shutil.copytree(src, dst_path, dirs_exist_ok=True, ignore=protective_ignore)
     else:
         shutil.copy(src, dst_path)
     return dst_path
 
+
 def get_and_list_dockerignore(image: Image) -> List[str]:
     """
     Get and parse dockerignore patterns from .dockerignore file.
-    
+
     This function first looks for a DockerIgnore layer in the image's layers. If found, it uses
     the path specified in that layer. If no DockerIgnore layer is found, it falls back to looking
     for a .dockerignore file in the root_path directory.
-    
+
     :param image: The Image object
     """
     from flyte._initialize import _get_init_config
