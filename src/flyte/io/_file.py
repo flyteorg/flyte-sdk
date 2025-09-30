@@ -40,8 +40,8 @@ class File(BaseModel, Generic[T], SerializableType):
     A generic file class representing a file with a specified format.
     Provides both async and sync interfaces for file operations. All methods without _sync suffix are async.
 
-    The class should be instantiated using one of the class methods, the constructor, should be used only to
-    instantiate existing remote objects.
+    The class should be instantiated using one of the class methods. The constructor should be used only to
+    instantiate references to existing remote objects.
 
     The generic type T represents the format of the file.
 
@@ -61,65 +61,116 @@ class File(BaseModel, Generic[T], SerializableType):
     - `from_local_sync`: Synchronously create a File object from a local file, uploading it to remote storage.
     - `exists_sync`: Synchronously check if the file exists.
 
-    Example:
-
-    ```python
-    # Async usage
-    from pandas import DataFrame
-    csv_file = File[DataFrame](path="s3://my-bucket/data.csv")
-
-    async with csv_file.open() as f:
-        content = await f.read()
-
-    # Sync alternative
-    with csv_file.open_sync() as f:
-        content = f.read()
-    ```
-
-    Example: Read a file input in a Task.
+    Example: Read a file input in a Task (Async).
 
     ```python
     @env.task
-    async def my_task(file: File[DataFrame]):
-        async with file.open() as f:
-            df = pd.read_csv(f)
+    async def read_file(file: File) -> str:
+        async with file.open("rb") as f:
+            content = bytes(await f.read())
+            return content.decode("utf-8")
     ```
 
-    Example: Write a file by streaming it directly to blob storage
+    Example: Read a file input in a Task (Sync).
 
     ```python
     @env.task
-    async def my_task() -> File[DataFrame]:
-        df = pd.DataFrame(...)
+    def read_file_sync(file: File) -> str:
+        with file.open_sync("rb") as f:
+            content = f.read()
+            return content.decode("utf-8")
+    ```
+
+    Example: Write a file by streaming it directly to blob storage (Async).
+
+    ```python
+    @env.task
+    async def write_file() -> File:
         file = File.new_remote()
         async with file.open("wb") as f:
-            df.to_csv(f)
-        # No additional uploading will be done here.
+            await f.write(b"Hello, World!")
         return file
     ```
 
-    Example: Write a file by writing it locally first, and then uploading it.
+    Example: Upload a local file to remote storage (Async).
 
     ```python
     @env.task
-    async def my_task() -> File[DataFrame]:
-        # write to /tmp/data.csv
-        return File.from_local("/tmp/data.csv", optional="s3://my-bucket/data.csv")
+    async def upload_file() -> File:
+        # Write to local file first
+        with open("/tmp/data.csv", "w") as f:
+            f.write("col1,col2\\n1,2\\n3,4\\n")
+        # Upload to remote storage
+        return await File.from_local("/tmp/data.csv")
     ```
 
-    Example: From an existing remote file
+    Example: Upload a local file to remote storage (Sync).
 
     ```python
     @env.task
-    async def my_task() -> File[DataFrame]:
-        return File.from_existing_remote("s3://my-bucket/data.csv")
+    def upload_file_sync() -> File:
+        # Write to local file first
+        with open("/tmp/data.csv", "w") as f:
+            f.write("col1,col2\\n1,2\\n3,4\\n")
+        # Upload to remote storage
+        return File.from_local_sync("/tmp/data.csv")
     ```
 
-    Example: Take a remote file as input and return the same one, should not do any copy
+    Example: Download a file to local storage (Async).
 
     ```python
     @env.task
-    async def my_task(file: File[DataFrame]) -> File[DataFrame]:
+    async def download_file(file: File) -> str:
+        local_path = await file.download()
+        # Process the local file
+        with open(local_path, "r") as f:
+            return f.read()
+    ```
+
+    Example: Download a file to local storage (Sync).
+
+    ```python
+    @env.task
+    def download_file_sync(file: File) -> str:
+        local_path = file.download_sync()
+        # Process the local file
+        with open(local_path, "r") as f:
+            return f.read()
+    ```
+
+    Example: Reference an existing remote file.
+
+    ```python
+    @env.task
+    async def process_existing_file() -> str:
+        file = File.from_existing_remote("s3://my-bucket/data.csv")
+        async with file.open("rb") as f:
+            content = await f.read()
+            return content.decode("utf-8")
+    ```
+
+    Example: Check if a file exists (Async).
+
+    ```python
+    @env.task
+    async def check_file(file: File) -> bool:
+        return await file.exists()
+    ```
+
+    Example: Check if a file exists (Sync).
+
+    ```python
+    @env.task
+    def check_file_sync(file: File) -> bool:
+        return file.exists_sync()
+    ```
+
+    Example: Pass through a file without copying.
+
+    ```python
+    @env.task
+    async def pass_through(file: File) -> File:
+        # No copy occurs - just passes the reference
         return file
     ```
 
@@ -178,14 +229,6 @@ class File(BaseModel, Generic[T], SerializableType):
 
         Use this when you want to create a new file and write to it directly without creating a local file first.
 
-        Args:
-            hash_method: Optional HashMethod or string to use for cache key computation. If a string is provided,
-                        it will be used as a precomputed cache key. If a HashMethod is provided, it will be used
-                        to compute the hash as data is written.
-
-        Returns:
-            A new File instance with a generated remote path
-
         Example (Async):
 
         ```python
@@ -197,6 +240,14 @@ class File(BaseModel, Generic[T], SerializableType):
                 df.to_csv(f)
             return file
         ```
+
+        Args:
+            hash_method: Optional HashMethod or string to use for cache key computation. If a string is provided,
+                        it will be used as a precomputed cache key. If a HashMethod is provided, it will be used
+                        to compute the hash as data is written.
+
+        Returns:
+            A new File instance with a generated remote path
         """
         ctx = internal_ctx()
         known_cache_key = hash_method if isinstance(hash_method, str) else None
@@ -211,14 +262,6 @@ class File(BaseModel, Generic[T], SerializableType):
 
         Use this when you want to reference a file that already exists in remote storage without uploading it.
 
-        Args:
-            remote_path: The remote path to the existing file
-            file_cache_key: Optional hash value to use for cache key computation. If not specified, the cache key
-                           will be computed based on the file's attributes (path, name, format).
-
-        Returns:
-            A new File instance pointing to the existing remote file
-
         Example:
 
         ```python
@@ -229,6 +272,14 @@ class File(BaseModel, Generic[T], SerializableType):
                 content = await f.read()
             return content.decode("utf-8")
         ```
+
+        Args:
+            remote_path: The remote path to the existing file
+            file_cache_key: Optional hash value to use for cache key computation. If not specified, the cache key
+                           will be computed based on the file's attributes (path, name, format).
+
+        Returns:
+            A new File instance pointing to the existing remote file
         """
         return cls(path=remote_path, hash=file_cache_key)
 
@@ -246,18 +297,6 @@ class File(BaseModel, Generic[T], SerializableType):
         Asynchronously open the file and return a file-like object.
 
         Use this method in async tasks to read from or write to files directly.
-
-        Args:
-            mode: The mode to open the file in (default: 'rb'). Common modes: 'rb' (read binary),
-                  'wb' (write binary), 'rt' (read text), 'wt' (write text)
-            block_size: Size of blocks for reading in bytes. Useful for streaming large files.
-            cache_type: Caching mechanism to use ('readahead', 'mmap', 'bytes', 'none')
-            cache_options: Dictionary of options for the cache
-            compression: Compression format or None for auto-detection
-            **kwargs: Additional arguments passed to fsspec's open method
-
-        Returns:
-            An async file-like object that can be used with async read/write operations
 
         Example (Async Read):
 
@@ -294,6 +333,18 @@ class File(BaseModel, Generic[T], SerializableType):
                     content_parts.append(chunk)
             return b"".join(content_parts).decode("utf-8")
         ```
+
+        Args:
+            mode: The mode to open the file in (default: 'rb'). Common modes: 'rb' (read binary),
+                  'wb' (write binary), 'rt' (read text), 'wt' (write text)
+            block_size: Size of blocks for reading in bytes. Useful for streaming large files.
+            cache_type: Caching mechanism to use ('readahead', 'mmap', 'bytes', 'none')
+            cache_options: Dictionary of options for the cache
+            compression: Compression format or None for auto-detection
+            **kwargs: Additional arguments passed to fsspec's open method
+
+        Returns:
+            An async file-like object that can be used with async read/write operations
         """
         # Check if we should use obstore bypass
         try:
@@ -324,9 +375,6 @@ class File(BaseModel, Generic[T], SerializableType):
         """
         Asynchronously check if the file exists.
 
-        Returns:
-            True if the file exists, False otherwise
-
         Example (Async):
 
         ```python
@@ -337,6 +385,9 @@ class File(BaseModel, Generic[T], SerializableType):
                 return True
             return False
         ```
+
+        Returns:
+            True if the file exists, False otherwise
         """
         return await storage.exists(self.path)
 
@@ -345,9 +396,6 @@ class File(BaseModel, Generic[T], SerializableType):
         Synchronously check if the file exists.
 
         Use this in non-async tasks or when you need synchronous file existence checking.
-
-        Returns:
-            True if the file exists, False otherwise
 
         Example (Sync):
 
@@ -359,6 +407,9 @@ class File(BaseModel, Generic[T], SerializableType):
                 return True
             return False
         ```
+
+        Returns:
+            True if the file exists, False otherwise
         """
         return storage.exists_sync(self.path)
 
@@ -376,18 +427,6 @@ class File(BaseModel, Generic[T], SerializableType):
         Synchronously open the file and return a file-like object.
 
         Use this method in non-async tasks to read from or write to files directly.
-
-        Args:
-            mode: The mode to open the file in (default: 'rb'). Common modes: 'rb' (read binary),
-                  'wb' (write binary), 'rt' (read text), 'wt' (write text)
-            block_size: Size of blocks for reading in bytes. Useful for streaming large files.
-            cache_type: Caching mechanism to use ('readahead', 'mmap', 'bytes', 'none')
-            cache_options: Dictionary of options for the cache
-            compression: Compression format or None for auto-detection
-            **kwargs: Additional arguments passed to fsspec's open method
-
-        Returns:
-            A file-like object that can be used with standard read/write operations
 
         Example (Sync Read):
 
@@ -409,6 +448,18 @@ class File(BaseModel, Generic[T], SerializableType):
                 fh.write(b"Hello, World!")
             return f
         ```
+
+        Args:
+            mode: The mode to open the file in (default: 'rb'). Common modes: 'rb' (read binary),
+                  'wb' (write binary), 'rt' (read text), 'wt' (write text)
+            block_size: Size of blocks for reading in bytes. Useful for streaming large files.
+            cache_type: Caching mechanism to use ('readahead', 'mmap', 'bytes', 'none')
+            cache_options: Dictionary of options for the cache
+            compression: Compression format or None for auto-detection
+            **kwargs: Additional arguments passed to fsspec's open method
+
+        Returns:
+            A file-like object that can be used with standard read/write operations
         """
         fs = storage.get_underlying_filesystem(path=self.path)
 
@@ -437,13 +488,6 @@ class File(BaseModel, Generic[T], SerializableType):
 
         Use this when you need to download a remote file to your local filesystem for processing.
 
-        Args:
-            local_path: The local path to download the file to. If None, a temporary
-                       directory will be used and a path will be generated.
-
-        Returns:
-            The absolute path to the downloaded file
-
         Example (Async):
 
         ```python
@@ -463,6 +507,13 @@ class File(BaseModel, Generic[T], SerializableType):
             local_path = await f.download("/tmp/myfile.csv")
             return local_path
         ```
+
+        Args:
+            local_path: The local path to download the file to. If None, a temporary
+                       directory will be used and a path will be generated.
+
+        Returns:
+            The absolute path to the downloaded file
         """
         if local_path is None:
             local_path = storage.get_random_local_path(file_path_or_file_name=local_path)
@@ -489,13 +540,6 @@ class File(BaseModel, Generic[T], SerializableType):
 
         Use this in non-async tasks when you need to download a remote file to your local filesystem.
 
-        Args:
-            local_path: The local path to download the file to. If None, a temporary
-                       directory will be used and a path will be generated.
-
-        Returns:
-            The absolute path to the downloaded file
-
         Example (Sync):
 
         ```python
@@ -515,6 +559,13 @@ class File(BaseModel, Generic[T], SerializableType):
             local_path = f.download_sync("/tmp/myfile.csv")
             return local_path
         ```
+
+        Args:
+            local_path: The local path to download the file to. If None, a temporary
+                       directory will be used and a path will be generated.
+
+        Returns:
+            The absolute path to the downloaded file
         """
         if local_path is None:
             local_path = storage.get_random_local_path(file_path_or_file_name=local_path)
@@ -551,16 +602,6 @@ class File(BaseModel, Generic[T], SerializableType):
 
         Use this in non-async tasks when you have a local file that needs to be uploaded to remote storage.
 
-        Args:
-            local_path: Path to the local file
-            remote_destination: Optional remote path to store the file. If None, a path will be automatically generated.
-            hash_method: Optional HashMethod or string to use for cache key computation. If a string is provided,
-                        it will be used as a precomputed cache key. If a HashMethod is provided, it will compute
-                        the hash during upload. If not specified, the cache key will be based on file attributes.
-
-        Returns:
-            A new File instance pointing to the uploaded remote file
-
         Example (Sync):
 
         ```python
@@ -583,6 +624,16 @@ class File(BaseModel, Generic[T], SerializableType):
             remote_file = File.from_local_sync("/tmp/data.csv", "s3://my-bucket/data.csv")
             return remote_file
         ```
+
+        Args:
+            local_path: Path to the local file
+            remote_destination: Optional remote path to store the file. If None, a path will be automatically generated.
+            hash_method: Optional HashMethod or string to use for cache key computation. If a string is provided,
+                        it will be used as a precomputed cache key. If a HashMethod is provided, it will compute
+                        the hash during upload. If not specified, the cache key will be based on file attributes.
+
+        Returns:
+            A new File instance pointing to the uploaded remote file
         """
         if not os.path.exists(local_path):
             raise ValueError(f"File not found: {local_path}")
@@ -661,16 +712,6 @@ class File(BaseModel, Generic[T], SerializableType):
 
         Use this in async tasks when you have a local file that needs to be uploaded to remote storage.
 
-        Args:
-            local_path: Path to the local file
-            remote_destination: Optional remote path to store the file. If None, a path will be automatically generated.
-            hash_method: Optional HashMethod or string to use for cache key computation. If a string is provided,
-                        it will be used as a precomputed cache key. If a HashMethod is provided, it will compute
-                        the hash during upload. If not specified, the cache key will be based on file attributes.
-
-        Returns:
-            A new File instance pointing to the uploaded remote file
-
         Example (Async):
 
         ```python
@@ -693,6 +734,16 @@ class File(BaseModel, Generic[T], SerializableType):
             remote_file = await File.from_local("/tmp/data.csv", "s3://my-bucket/data.csv")
             return remote_file
         ```
+
+        Args:
+            local_path: Path to the local file
+            remote_destination: Optional remote path to store the file. If None, a path will be automatically generated.
+            hash_method: Optional HashMethod or string to use for cache key computation. If a string is provided,
+                        it will be used as a precomputed cache key. If a HashMethod is provided, it will compute
+                        the hash during upload. If not specified, the cache key will be based on file attributes.
+
+        Returns:
+            A new File instance pointing to the uploaded remote file
         """
         if not os.path.exists(local_path):
             raise ValueError(f"File not found: {local_path}")

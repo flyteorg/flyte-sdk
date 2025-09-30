@@ -45,13 +45,13 @@ class Dir(BaseModel, Generic[T], SerializableType):
     - `exists_sync`: Synchronously check if the directory exists.
     - `get_file_sync`: Synchronously get a specific file from the directory by name.
 
-    Example: Read files from a directory in a Task (Async).
+    Example: Walk through directory files recursively (Async).
 
     ```python
     @env.task
-    async def process_directory(d: Dir) -> int:
+    async def process_all_files(d: Dir) -> int:
         file_count = 0
-        async for file in d.walk():
+        async for file in d.walk(recursive=True):
             async with file.open("rb") as f:
                 content = await f.read()
                 # Process content
@@ -59,13 +59,13 @@ class Dir(BaseModel, Generic[T], SerializableType):
         return file_count
     ```
 
-    Example: Read files from a directory in a Task (Sync).
+    Example: Walk through directory files recursively (Sync).
 
     ```python
     @env.task
-    def process_directory_sync(d: Dir) -> int:
+    def process_all_files_sync(d: Dir) -> int:
         file_count = 0
-        for file in d.walk_sync():
+        for file in d.walk_sync(recursive=True):
             with file.open_sync("rb") as f:
                 content = f.read()
                 # Process content
@@ -73,12 +73,92 @@ class Dir(BaseModel, Generic[T], SerializableType):
         return file_count
     ```
 
-    Example: Upload a local directory.
+    Example: List files in directory (Async).
 
     ```python
     @env.task
-    async def upload_data() -> Dir:
+    async def count_files(d: Dir) -> int:
+        files = await d.list_files()
+        return len(files)
+    ```
+
+    Example: List files in directory (Sync).
+
+    ```python
+    @env.task
+    def count_files_sync(d: Dir) -> int:
+        files = d.list_files_sync()
+        return len(files)
+    ```
+
+    Example: Get a specific file from directory (Async).
+
+    ```python
+    @env.task
+    async def read_config_file(d: Dir) -> str:
+        config_file = await d.get_file("config.json")
+        if config_file:
+            async with config_file.open("rb") as f:
+                return (await f.read()).decode("utf-8")
+        return "Config not found"
+    ```
+
+    Example: Get a specific file from directory (Sync).
+
+    ```python
+    @env.task
+    def read_config_file_sync(d: Dir) -> str:
+        config_file = d.get_file_sync("config.json")
+        if config_file:
+            with config_file.open_sync("rb") as f:
+                return f.read().decode("utf-8")
+        return "Config not found"
+    ```
+
+    Example: Upload a local directory to remote storage (Async).
+
+    ```python
+    @env.task
+    async def upload_directory() -> Dir:
+        # Create local directory with files
+        os.makedirs("/tmp/my_data", exist_ok=True)
+        with open("/tmp/my_data/file1.txt", "w") as f:
+            f.write("data1")
+        # Upload to remote storage
         return await Dir.from_local("/tmp/my_data/")
+    ```
+
+    Example: Upload a local directory to remote storage (Sync).
+
+    ```python
+    @env.task
+    def upload_directory_sync() -> Dir:
+        # Create local directory with files
+        os.makedirs("/tmp/my_data", exist_ok=True)
+        with open("/tmp/my_data/file1.txt", "w") as f:
+            f.write("data1")
+        # Upload to remote storage
+        return Dir.from_local_sync("/tmp/my_data/")
+    ```
+
+    Example: Download a directory to local storage (Async).
+
+    ```python
+    @env.task
+    async def download_directory(d: Dir) -> str:
+        local_path = await d.download()
+        # Process files in local directory
+        return local_path
+    ```
+
+    Example: Download a directory to local storage (Sync).
+
+    ```python
+    @env.task
+    def download_directory_sync(d: Dir) -> str:
+        local_path = d.download_sync()
+        # Process files in local directory
+        return local_path
     ```
 
     Example: Reference an existing remote directory.
@@ -89,6 +169,22 @@ class Dir(BaseModel, Generic[T], SerializableType):
         d = Dir.from_existing_remote("s3://my-bucket/data/")
         files = await d.list_files()
         return len(files)
+    ```
+
+    Example: Check if directory exists (Async).
+
+    ```python
+    @env.task
+    async def check_directory(d: Dir) -> bool:
+        return await d.exists()
+    ```
+
+    Example: Check if directory exists (Sync).
+
+    ```python
+    @env.task
+    def check_directory_sync(d: Dir) -> bool:
+        return d.exists_sync()
     ```
 
     Args:
@@ -144,13 +240,6 @@ class Dir(BaseModel, Generic[T], SerializableType):
 
         Use this to iterate through all files in a directory. Each yielded File can be read directly without downloading.
 
-        Args:
-            recursive: If True, recursively walk subdirectories. If False, only list files in the top-level directory.
-            max_depth: Maximum depth for recursive walking. If None, walk through all subdirectories.
-
-        Yields:
-            File objects for each file found in the directory
-
         Example (Async - Recursive):
 
         ```python
@@ -183,6 +272,13 @@ class Dir(BaseModel, Generic[T], SerializableType):
                 file_names.append(file.name)
             return file_names
         ```
+
+        Args:
+            recursive: If True, recursively walk subdirectories. If False, only list files in the top-level directory.
+            max_depth: Maximum depth for recursive walking. If None, walk through all subdirectories.
+
+        Yields:
+            File objects for each file found in the directory
         """
         fs = storage.get_underlying_filesystem(path=self.path)
         if recursive is False:
@@ -210,14 +306,6 @@ class Dir(BaseModel, Generic[T], SerializableType):
         Synchronously walk through the directory and yield File objects.
 
         Use this in non-async tasks to iterate through all files in a directory.
-
-        Args:
-            recursive: If True, recursively walk subdirectories. If False, only list files in the top-level directory.
-            file_pattern: Glob pattern to filter files (e.g., "*.txt", "*.csv"). Default is "*" (all files).
-            max_depth: Maximum depth for recursive walking. If None, walk through all subdirectories.
-
-        Yields:
-            File objects for each file found in the directory
 
         Example (Sync - Recursive):
 
@@ -251,6 +339,14 @@ class Dir(BaseModel, Generic[T], SerializableType):
                 file_names.append(file.name)
             return file_names
         ```
+
+        Args:
+            recursive: If True, recursively walk subdirectories. If False, only list files in the top-level directory.
+            file_pattern: Glob pattern to filter files (e.g., "*.txt", "*.csv"). Default is "*" (all files).
+            max_depth: Maximum depth for recursive walking. If None, walk through all subdirectories.
+
+        Yields:
+            File objects for each file found in the directory
         """
         fs = storage.get_underlying_filesystem(path=self.path)
         for parent, _, files in fs.walk(self.path, maxdepth=max_depth):
@@ -339,13 +435,6 @@ class Dir(BaseModel, Generic[T], SerializableType):
 
         Use this when you need to download all files in a directory to your local filesystem for processing.
 
-        Args:
-            local_path: The local path to download the directory to. If None, a temporary
-                       directory will be used and a path will be generated.
-
-        Returns:
-            The absolute path to the downloaded directory
-
         Example (Async):
 
         ```python
@@ -364,6 +453,13 @@ class Dir(BaseModel, Generic[T], SerializableType):
             local_dir = await d.download("/tmp/my_data/")
             return local_dir
         ```
+
+        Args:
+            local_path: The local path to download the directory to. If None, a temporary
+                       directory will be used and a path will be generated.
+
+        Returns:
+            The absolute path to the downloaded directory
         """
         local_dest = str(local_path) if local_path else str(storage.get_random_local_path())
         if not storage.is_remote(self.path):
@@ -388,13 +484,6 @@ class Dir(BaseModel, Generic[T], SerializableType):
 
         Use this in non-async tasks when you need to download all files in a directory to your local filesystem.
 
-        Args:
-            local_path: The local path to download the directory to. If None, a temporary
-                       directory will be used and a path will be generated.
-
-        Returns:
-            The absolute path to the downloaded directory
-
         Example (Sync):
 
         ```python
@@ -413,6 +502,12 @@ class Dir(BaseModel, Generic[T], SerializableType):
             local_dir = d.download_sync("/tmp/my_data/")
             return local_dir
         ```
+        Args:
+            local_path: The local path to download the directory to. If None, a temporary
+                       directory will be used and a path will be generated.
+
+        Returns:
+            The absolute path to the downloaded directory
         """
         local_dest = str(local_path) if local_path else str(storage.get_random_local_path())
         if not storage.is_remote(self.path):
@@ -440,16 +535,6 @@ class Dir(BaseModel, Generic[T], SerializableType):
         Asynchronously create a new Dir by uploading a local directory to remote storage.
 
         Use this in async tasks when you have a local directory that needs to be uploaded to remote storage.
-
-        Args:
-            local_path: Path to the local directory
-            remote_path: Optional remote path to store the directory. If None, a path will be automatically generated.
-            dir_cache_key: Optional precomputed hash value to use for cache key computation when this Dir is used
-                          as an input to discoverable tasks. If not specified, the cache key will be based on
-                          directory attributes.
-
-        Returns:
-            A new Dir instance pointing to the uploaded directory
 
         Example (Async):
 
@@ -483,6 +568,15 @@ class Dir(BaseModel, Generic[T], SerializableType):
             remote_dir = await Dir.from_local("/tmp/data_dir/", dir_cache_key="my_cache_key_123")
             return remote_dir
         ```
+        Args:
+            local_path: Path to the local directory
+            remote_path: Optional remote path to store the directory. If None, a path will be automatically generated.
+            dir_cache_key: Optional precomputed hash value to use for cache key computation when this Dir is used
+                          as an input to discoverable tasks. If not specified, the cache key will be based on
+                          directory attributes.
+
+        Returns:
+            A new Dir instance pointing to the uploaded directory
         """
         local_path_str = str(local_path)
         dirname = os.path.basename(os.path.normpath(local_path_str))
@@ -501,16 +595,6 @@ class Dir(BaseModel, Generic[T], SerializableType):
         Synchronously create a new Dir by uploading a local directory to remote storage.
 
         Use this in non-async tasks when you have a local directory that needs to be uploaded to remote storage.
-
-        Args:
-            local_path: Path to the local directory
-            remote_path: Optional remote path to store the directory. If None, a path will be automatically generated.
-            dir_cache_key: Optional precomputed hash value to use for cache key computation when this Dir is used
-                          as an input to discoverable tasks. If not specified, the cache key will be based on
-                          directory attributes.
-
-        Returns:
-            A new Dir instance pointing to the uploaded directory
 
         Example (Sync):
 
@@ -544,6 +628,16 @@ class Dir(BaseModel, Generic[T], SerializableType):
             remote_dir = Dir.from_local_sync("/tmp/data_dir/", dir_cache_key="my_cache_key_123")
             return remote_dir
         ```
+
+        Args:
+            local_path: Path to the local directory
+            remote_path: Optional remote path to store the directory. If None, a path will be automatically generated.
+            dir_cache_key: Optional precomputed hash value to use for cache key computation when this Dir is used
+                          as an input to discoverable tasks. If not specified, the cache key will be based on
+                          directory attributes.
+
+        Returns:
+            A new Dir instance pointing to the uploaded directory
         """
         local_path_str = str(local_path)
         dirname = os.path.basename(os.path.normpath(local_path_str))
@@ -564,14 +658,6 @@ class Dir(BaseModel, Generic[T], SerializableType):
 
         Use this when you want to reference a directory that already exists in remote storage without uploading it.
 
-        Args:
-            remote_path: The remote path to the existing directory
-            dir_cache_key: Optional hash value to use for cache key computation. If not specified,
-                          the cache key will be computed based on the directory's attributes.
-
-        Returns:
-            A new Dir instance pointing to the existing remote directory
-
         Example:
 
         ```python
@@ -591,6 +677,14 @@ class Dir(BaseModel, Generic[T], SerializableType):
             files = await d.list_files()
             return len(files)
         ```
+
+        Args:
+            remote_path: The remote path to the existing directory
+            dir_cache_key: Optional hash value to use for cache key computation. If not specified,
+                          the cache key will be computed based on the directory's attributes.
+
+        Returns:
+            A new Dir instance pointing to the existing remote directory
         """
         return cls(path=remote_path, hash=dir_cache_key)
 
@@ -647,12 +741,6 @@ class Dir(BaseModel, Generic[T], SerializableType):
 
         Use this when you know the name of a specific file in the directory you want to access.
 
-        Args:
-            file_name: The name of the file to get
-
-        Returns:
-            A File instance if the file exists, None otherwise
-
         Example (Async):
 
         ```python
@@ -665,6 +753,12 @@ class Dir(BaseModel, Generic[T], SerializableType):
                     return content.decode("utf-8")
             return "File not found"
         ```
+
+        Args:
+            file_name: The name of the file to get
+
+        Returns:
+            A File instance if the file exists, None otherwise
         """
         fs = storage.get_underlying_filesystem(path=self.path)
         file_path = fs.sep.join([self.path, file_name])
@@ -680,12 +774,6 @@ class Dir(BaseModel, Generic[T], SerializableType):
 
         Use this in non-async tasks when you know the name of a specific file in the directory you want to access.
 
-        Args:
-            file_name: The name of the file to get
-
-        Returns:
-            A File instance if the file exists, None otherwise
-
         Example (Sync):
 
         ```python
@@ -698,6 +786,12 @@ class Dir(BaseModel, Generic[T], SerializableType):
                     return content.decode("utf-8")
             return "File not found"
         ```
+
+        Args:
+            file_name: The name of the file to get
+
+        Returns:
+            A File instance if the file exists, None otherwise
         """
         file_path = os.path.join(self.path, file_name)
         file = File[T](path=file_path)
