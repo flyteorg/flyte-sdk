@@ -221,7 +221,7 @@ class File(BaseModel, Generic[T], SerializableType):
             cache_options = {}
 
         # Configure the open parameters
-        open_kwargs = {"mode": mode, **kwargs}
+        open_kwargs = {**kwargs}
         if compression:
             open_kwargs["compression"] = compression
 
@@ -244,7 +244,7 @@ class File(BaseModel, Generic[T], SerializableType):
                 if "b" not in mode:
                     raise ValueError("Mode must include 'b' for binary access, when using remote files.")
                 if isinstance(fs, AsyncFileSystem):
-                    file_handle = await fs.open_async(self.path, mode)
+                    file_handle = await fs.open_async(self.path, mode, **open_kwargs)
                     yield file_handle
                     return
             except NotImplementedError:
@@ -253,7 +253,7 @@ class File(BaseModel, Generic[T], SerializableType):
                 if file_handle is not None:
                     file_handle.close()
 
-            with fs.open(self.path, mode) as file_handle:
+            with fs.open(self.path, mode, **open_kwargs) as file_handle:
                 if self.hash_method and self.hash is None:
                     logger.debug(f"Wrapping file handle with hashing writer using {self.hash_method}")
                     fh = HashingWriter(file_handle, accumulator=self.hash_method)
