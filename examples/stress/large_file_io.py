@@ -28,7 +28,7 @@ async def create_large_file(size_gigabytes: int = 5) -> flyte.io.File:
 @env.task
 async def read_large_file(f: flyte.io.File) -> Tuple[int, float]:
     total_bytes = 0
-    chunk_size = 10*1024 * 1024
+    chunk_size = 10 * 1024 * 1024
     start = time.time()
     read = 0
     async with f.open("rb", block_size=chunk_size) as fp:

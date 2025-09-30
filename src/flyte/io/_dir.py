@@ -238,7 +238,8 @@ class Dir(BaseModel, Generic[T], SerializableType):
         """
         Asynchronously walk through the directory and yield File objects.
 
-        Use this to iterate through all files in a directory. Each yielded File can be read directly without downloading.
+        Use this to iterate through all files in a directory. Each yielded File can be read directly without
+        downloading.
 
         Example (Async - Recursive):
 
