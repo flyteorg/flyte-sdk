@@ -7,7 +7,7 @@ import threading
 from collections import defaultdict
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Awaitable, DefaultDict, Tuple, TypeVar
+from typing import TYPE_CHECKING, Any, Awaitable, DefaultDict, Tuple, TypeVar
 
 import flyte
 import flyte.errors
@@ -22,12 +22,13 @@ from flyte._internal.runtime import convert, io
 from flyte._internal.runtime.task_serde import translate_task_to_wire
 from flyte._internal.runtime.types_serde import transform_native_to_typed_interface
 from flyte._logging import logger
-from flyte._protos.common import identifier_pb2
-from flyte._protos.workflow import run_definition_pb2
 from flyte._task import TaskTemplate
 from flyte._utils.helpers import _selector_policy
 from flyte.models import MAX_INLINE_IO_BYTES, ActionID, NativeInterface, SerializationContext
-from flyte.remote._task import TaskDetails
+
+if TYPE_CHECKING:
+    from flyte._protos.common import identifier_pb2
+    from flyte.remote._task import TaskDetails
 
 R = TypeVar("R")
 
@@ -70,6 +71,8 @@ async def handle_action_failure(action: Action, task_name: str) -> Exception:
     Raises:
         Exception: The converted native exception or RuntimeSystemError
     """
+    from flyte._protos.workflow import run_definition_pb2
+
     err = action.err or action.client_err
     if not err and action.phase == run_definition_pb2.PHASE_FAILED:
         logger.error(f"Server reported failure for action {action.name}, checking error file.")
@@ -157,6 +160,9 @@ class RemoteController(Controller):
         return new_seq
 
     async def _submit(self, _task_call_seq: int, _task: TaskTemplate, *args, **kwargs) -> Any:
+        from flyte._protos.common import identifier_pb2
+        from flyte._protos.workflow import run_definition_pb2
+
         ctx = internal_ctx()
         tctx = ctx.data.task_context
         if tctx is None:
@@ -346,6 +352,8 @@ class RemoteController(Controller):
         This method is invoked when the parent action is finished. It will finalize the run and upload the outputs
         to the control plane.
         """
+        from flyte._protos.common import identifier_pb2
+
         run_id = identifier_pb2.RunIdentifier(
             name=action_id.run_name,
             project=action_id.project,
@@ -368,6 +376,9 @@ class RemoteController(Controller):
         :param kwargs: Keyword arguments
         :return:
         """
+        from flyte._protos.common import identifier_pb2
+        from flyte._protos.workflow import run_definition_pb2
+
         ctx = internal_ctx()
         tctx = ctx.data.task_context
         if tctx is None:
@@ -483,7 +494,10 @@ class RemoteController(Controller):
                 # If the action is cancelled, we need to cancel the action on the server as well
                 raise
 
-    async def _submit_task_ref(self, invoke_seq_num: int, _task: TaskDetails, *args, **kwargs) -> Any:
+    async def _submit_task_ref(self, invoke_seq_num: int, _task: "TaskDetails", *args, **kwargs) -> Any:
+        from flyte._protos.common import identifier_pb2
+        from flyte._protos.workflow import run_definition_pb2
+
         ctx = internal_ctx()
         tctx = ctx.data.task_context
         if tctx is None:
@@ -569,7 +583,7 @@ class RemoteController(Controller):
             return await load_and_convert_outputs(native_interface, n.realized_outputs_uri, _task.max_inline_io_bytes)
         return None
 
-    async def submit_task_ref(self, _task: TaskDetails, *args, **kwargs) -> Any:
+    async def submit_task_ref(self, _task: "TaskDetails", *args, **kwargs) -> Any:
         ctx = internal_ctx()
         tctx = ctx.data.task_context
         if tctx is None:

@@ -101,6 +101,7 @@ def get_controller() -> Controller:
     """
     if _ControllerState.controller is not None:
         return _ControllerState.controller
+
     raise RuntimeError("Controller is not initialized. Please call create_controller() first.")
 
 
@@ -123,7 +124,7 @@ def create_controller(
             controller = create_remote_controller(**kwargs)
         case _:
             raise ValueError(f"{ct} is not a valid controller type.")
-
     with _ControllerState.lock:
         _ControllerState.controller = controller
+
         return controller
