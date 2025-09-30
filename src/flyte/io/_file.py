@@ -38,27 +38,47 @@ T = TypeVar("T")
 class File(BaseModel, Generic[T], SerializableType):
     """
     A generic file class representing a file with a specified format.
-    Provides both async and sync interfaces for file operations.
-    Users must handle all I/O operations themselves by instantiating this class with the appropriate class methods.
+    Provides both async and sync interfaces for file operations. All methods without _sync suffix are async.
+
+    The class should be instantiated using one of the class methods, the constructor, should be used only to
+    instantiate existing remote objects.
 
     The generic type T represents the format of the file.
 
+    Important methods:
+    - `from_existing_remote`: Create a File object from an existing remote file.
+    - `new_remote`: Create a new File reference for a remote file that will be written to.
+
+    **Asynchronous methods**:
+    - `open`: Asynchronously open the file and return a file-like object.
+    - `download`: Asynchronously download the file to a local path.
+    - `from_local`: Asynchronously create a File object from a local file, uploading it to remote storage.
+    - `exists`: Asynchronously check if the file exists.
+
+    **Synchronous methods** (suffixed with `_sync`):
+    - `open_sync`: Synchronously open the file and return a file-like object.
+    - `download_sync`: Synchronously download the file to a local path.
+    - `from_local_sync`: Synchronously create a File object from a local file, uploading it to remote storage.
+    - `exists_sync`: Synchronously check if the file exists.
+
     Example:
-        ```python
-        # Async usage
-        from pandas import DataFrame
-        csv_file = File[DataFrame](path="s3://my-bucket/data.csv")
 
-        async with csv_file.open() as f:
-            content = await f.read()
+    ```python
+    # Async usage
+    from pandas import DataFrame
+    csv_file = File[DataFrame](path="s3://my-bucket/data.csv")
 
-        # Sync alternative
-        with csv_file.open_sync() as f:
-            content = f.read()
-        ```
+    async with csv_file.open() as f:
+        content = await f.read()
+
+    # Sync alternative
+    with csv_file.open_sync() as f:
+        content = f.read()
+    ```
 
     Example: Read a file input in a Task.
-    ```
+
+    ```python
     @env.task
     async def my_task(file: File[DataFrame]):
         async with file.open() as f:
@@ -66,7 +86,8 @@ class File(BaseModel, Generic[T], SerializableType):
     ```
 
     Example: Write a file by streaming it directly to blob storage
-    ```
+
+    ```python
     @env.task
     async def my_task() -> File[DataFrame]:
         df = pd.DataFrame(...)
@@ -76,8 +97,10 @@ class File(BaseModel, Generic[T], SerializableType):
         # No additional uploading will be done here.
         return file
     ```
+
     Example: Write a file by writing it locally first, and then uploading it.
-    ```
+
+    ```python
     @env.task
     async def my_task() -> File[DataFrame]:
         # write to /tmp/data.csv
@@ -85,14 +108,16 @@ class File(BaseModel, Generic[T], SerializableType):
     ```
 
     Example: From an existing remote file
-    ```
+
+    ```python
     @env.task
     async def my_task() -> File[DataFrame]:
         return File.from_existing_remote("s3://my-bucket/data.csv")
     ```
 
     Example: Take a remote file as input and return the same one, should not do any copy
-    ```
+
+    ```python
     @env.task
     async def my_task(file: File[DataFrame]) -> File[DataFrame]:
         return file
@@ -238,6 +263,13 @@ class File(BaseModel, Generic[T], SerializableType):
                 return
             raise
 
+    async def exists(self) -> bool:
+        """
+        Asynchronously check if the file exists.
+        Returns: True if the file exists, False otherwise
+        """
+        return await storage.exists(self.path)
+
     def exists_sync(self) -> bool:
         """
         Synchronously check if the file exists.
@@ -246,13 +278,13 @@ class File(BaseModel, Generic[T], SerializableType):
             True if the file exists, False otherwise
 
         Example:
-            ```python
-            if file.exists_sync():
-                # Process the file
-            ```
+
+        ```python
+        if file.exists_sync():
+            # Process the file
+        ```
         """
-        fs = storage.get_underlying_filesystem(path=self.path)
-        return fs.exists(self.path)
+        return storage.exists_sync(self.path)
 
     @contextmanager
     def open_sync(

@@ -27,6 +27,7 @@ class Dir(BaseModel, Generic[T], SerializableType):
     The generic type T represents the format of the files in the directory.
 
     Example:
+
     ```python
     # Async usage
     from pandas import DataFrame
