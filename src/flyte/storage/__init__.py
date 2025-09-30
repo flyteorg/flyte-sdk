@@ -13,8 +13,8 @@ __all__ = [
     "get_underlying_filesystem",
     "is_remote",
     "join",
+    "open",
     "put",
-    "put_stream",
     "put_stream",
 ]
 
@@ -30,6 +30,7 @@ from ._storage import (
     get_underlying_filesystem,
     is_remote,
     join,
+    open,
     put,
     put_stream,
 )
