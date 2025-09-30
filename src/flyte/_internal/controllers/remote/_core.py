@@ -163,6 +163,9 @@ class Controller:
         self._thread = threading.Thread(target=self._bg_thread_target, daemon=True, name="ControllerThread")
         self._thread.start()
 
+        logger.info(f"Controller started in thread: {self._thread.name}")
+
+    def _wait(self):
         # Wait for the thread to be ready
         if not self._thread_ready.wait(timeout=self._thread_wait_timeout):
             logger.warning("Controller thread did not finish within timeout")
@@ -174,10 +177,9 @@ class Controller:
                 f"Controller thread startup failed: {self._get_exception()}",
             )
 
-        logger.info(f"Controller started in thread: {self._thread.name}")
-
     def _run_coroutine_in_controller_thread(self, coro: Coroutine) -> asyncio.Future:
         """Run a coroutine in the controller's event loop and return the result"""
+        self._wait()  # Make sure the controller has been started
         with self._thread_com_lock:
             loop = self._loop
             if not self._loop or not self._thread or not self._thread.is_alive():
