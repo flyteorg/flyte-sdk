@@ -75,7 +75,7 @@ def get_random_local_directory() -> pathlib.Path:
 
 
 def get_configured_fsspec_kwargs(
-        protocol: typing.Optional[str] = None, anonymous: bool = False
+    protocol: typing.Optional[str] = None, anonymous: bool = False
 ) -> typing.Dict[str, typing.Any]:
     if protocol:
         # Try to get storage config safely - may not be initialized for local operations
@@ -121,10 +121,10 @@ def get_configured_fsspec_kwargs(
 
 
 def get_underlying_filesystem(
-        protocol: typing.Optional[str] = None,
-        anonymous: bool = False,
-        path: typing.Optional[str] = None,
-        **kwargs,
+    protocol: typing.Optional[str] = None,
+    anonymous: bool = False,
+    path: typing.Optional[str] = None,
+    **kwargs,
 ) -> fsspec.AbstractFileSystem:
     if protocol is None:
         # If protocol is None, get it from the path
@@ -168,11 +168,11 @@ async def get(from_path: str, to_path: Optional[str | pathlib.Path] = None, recu
 
 
 async def _get_from_filesystem(
-        file_system: fsspec.AbstractFileSystem,
-        from_path: str | pathlib.Path,
-        to_path: str | pathlib.Path,
-        recursive: bool,
-        **kwargs,
+    file_system: fsspec.AbstractFileSystem,
+    from_path: str | pathlib.Path,
+    to_path: str | pathlib.Path,
+    recursive: bool,
+    **kwargs,
 ):
     if isinstance(file_system, AsyncFileSystem):
         dst = await file_system._get(from_path, to_path, recursive=recursive, **kwargs)  # pylint: disable=W0212
@@ -215,11 +215,12 @@ async def _open_obstore_bypass(path: str, mode: str = "rb", **kwargs):
     bucket, file_path = fs._split_path(path)  # pylint: disable=W0212
     store: ObjectStore = fs._construct_store(bucket)
 
+    file_handle: obstore.AsyncWritableFile | obstore.AsyncReadableFile
     if "w" in mode:
         attributes = kwargs.pop("attributes", {})
         file_handle = obstore.open_writer_async(store, file_path, attributes=attributes)
     else:  # read mode
-        buffer_size = kwargs.pop("buffer_size", 10 * 2 ** 20)
+        buffer_size = kwargs.pop("buffer_size", 10 * 2**20)
         file_handle = await obstore.open_reader_async(store, file_path, buffer_size=buffer_size)
 
     return file_handle
@@ -259,8 +260,7 @@ async def open(path: str, mode: str = "rb", **kwargs):
 
 
 async def put_stream(
-        data_iterable: typing.AsyncIterable[bytes] | bytes, *, name: str | None = None, to_path: str | None = None,
-        **kwargs
+    data_iterable: typing.AsyncIterable[bytes] | bytes, *, name: str | None = None, to_path: str | None = None, **kwargs
 ) -> str:
     """
     Put a stream of data to a remote location. This is useful for streaming data to a remote location.
@@ -281,6 +281,7 @@ async def put_stream(
     """
     if not to_path:
         from flyte._context import internal_ctx
+
         ctx = internal_ctx()
         to_path = ctx.raw_data.get_random_remote_path(file_name=name)
 
@@ -302,7 +303,7 @@ async def put_stream(
     return str(to_path)
 
 
-async def get_stream(path: str, chunk_size=10 * 2 ** 20, **kwargs) -> AsyncGenerator[bytes, None]:
+async def get_stream(path: str, chunk_size=10 * 2**20, **kwargs) -> AsyncGenerator[bytes, None]:
     """
     Get a stream of data from a remote location.
     This is useful for downloading streaming data from a remote location.
@@ -324,7 +325,6 @@ async def get_stream(path: str, chunk_size=10 * 2 ** 20, **kwargs) -> AsyncGener
         # Set buffer_size for obstore if chunk_size is provided
         if "buffer_size" not in kwargs:
             kwargs["buffer_size"] = chunk_size
-        print(f"Using obstore bypass for {path} with buffer_size {kwargs['buffer_size']}", flush=True)
         file_handle = await _open_obstore_bypass(path, "rb", **kwargs)
         while chunk := await file_handle.read():
             yield bytes(chunk)
