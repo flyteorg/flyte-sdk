@@ -283,7 +283,7 @@ async def put_stream(
     # Check if we should use obstore bypass
     fs = get_underlying_filesystem(path=to_path)
     try:
-        file_handle = typing.cast(AsyncWritableFile, await open(to_path, "wb", **kwargs))
+        file_handle = typing.cast("AsyncWritableFile", await open(to_path, "wb", **kwargs))
         if isinstance(data_iterable, bytes):
             await file_handle.write(data_iterable)
         else:
@@ -328,7 +328,7 @@ async def get_stream(path: str, chunk_size=10 * 2**20, **kwargs) -> AsyncGenerat
         # Set buffer_size for obstore if chunk_size is provided
         if "buffer_size" not in kwargs:
             kwargs["buffer_size"] = chunk_size
-        file_handle = typing.cast(AsyncReadableFile, await _open_obstore_bypass(path, "rb", **kwargs))
+        file_handle = typing.cast("AsyncReadableFile", await _open_obstore_bypass(path, "rb", **kwargs))
         while chunk := await file_handle.read():
             yield bytes(chunk)
         return
