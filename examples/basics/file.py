@@ -1,3 +1,4 @@
+import logging
 import os
 import tempfile
 
@@ -142,12 +143,12 @@ async def demonstrate_streaming_read(f: File) -> str:
     """
     Demonstrates streaming read from a remote file.
     """
+    print(f"File path: {f.path}", flush=True)
     content_parts = []
-    async with f.open("rb") as fh:
+    async with f.open("rb", block_size=10) as fh:
         # Read in chunks to demonstrate streaming
-        chunk_size = 10
         while True:
-            chunk = fh.read(chunk_size)
+            chunk = fh.read()
             if not chunk:
                 break
             content_parts.append(chunk)

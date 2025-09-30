@@ -75,7 +75,7 @@ def get_random_local_directory() -> pathlib.Path:
 
 
 def get_configured_fsspec_kwargs(
-    protocol: typing.Optional[str] = None, anonymous: bool = False
+        protocol: typing.Optional[str] = None, anonymous: bool = False
 ) -> typing.Dict[str, typing.Any]:
     if protocol:
         # Try to get storage config safely - may not be initialized for local operations
@@ -121,10 +121,10 @@ def get_configured_fsspec_kwargs(
 
 
 def get_underlying_filesystem(
-    protocol: typing.Optional[str] = None,
-    anonymous: bool = False,
-    path: typing.Optional[str] = None,
-    **kwargs,
+        protocol: typing.Optional[str] = None,
+        anonymous: bool = False,
+        path: typing.Optional[str] = None,
+        **kwargs,
 ) -> fsspec.AbstractFileSystem:
     if protocol is None:
         # If protocol is None, get it from the path
@@ -168,11 +168,11 @@ async def get(from_path: str, to_path: Optional[str | pathlib.Path] = None, recu
 
 
 async def _get_from_filesystem(
-    file_system: fsspec.AbstractFileSystem,
-    from_path: str | pathlib.Path,
-    to_path: str | pathlib.Path,
-    recursive: bool,
-    **kwargs,
+        file_system: fsspec.AbstractFileSystem,
+        from_path: str | pathlib.Path,
+        to_path: str | pathlib.Path,
+        recursive: bool,
+        **kwargs,
 ):
     if isinstance(file_system, AsyncFileSystem):
         dst = await file_system._get(from_path, to_path, recursive=recursive, **kwargs)  # pylint: disable=W0212
@@ -204,38 +204,63 @@ async def put(from_path: str, to_path: Optional[str] = None, recursive: bool = F
         return to_path
 
 
-async def _put_stream_obstore_bypass(data_iterable: typing.AsyncIterable[bytes] | bytes, to_path: str, **kwargs) -> str:
+async def _open_obstore_bypass(path: str, mode: str = "rb", **kwargs):
     """
-    NOTE: This can break if obstore changes its API.
-
-    This function is a workaround for obstore's fsspec implementation which does not support async file operations.
-    It uses the synchronous methods directly to put a stream of data.
+    Simple obstore bypass for opening files. No fallbacks, obstore only.
     """
     import obstore
     from obstore.store import ObjectStore
 
-    fs = get_underlying_filesystem(path=to_path)
-    if not hasattr(fs, "_split_path") or not hasattr(fs, "_construct_store"):
-        raise NotImplementedError(f"Obstore bypass not supported for {fs.protocol} protocol, methods missing.")
-    bucket, path = fs._split_path(to_path)  # pylint: disable=W0212
+    fs = get_underlying_filesystem(path=path)
+    bucket, file_path = fs._split_path(path)  # pylint: disable=W0212
     store: ObjectStore = fs._construct_store(bucket)
-    if "attributes" in kwargs:
-        attributes = kwargs.pop("attributes")
-    else:
-        attributes = {}
-    buf_file = obstore.open_writer_async(store, path, attributes=attributes)
-    if isinstance(data_iterable, bytes):
-        await buf_file.write(data_iterable)
-    else:
-        async for data in data_iterable:
-            await buf_file.write(data)
-    # await buf_file.flush()
-    await buf_file.close()
-    return to_path
+
+    if "w" in mode:
+        attributes = kwargs.pop("attributes", {})
+        file_handle = obstore.open_writer_async(store, file_path, attributes=attributes)
+    else:  # read mode
+        buffer_size = kwargs.pop("buffer_size", 10 * 2 ** 20)
+        file_handle = await obstore.open_reader_async(store, file_path, buffer_size=buffer_size)
+
+    return file_handle
+
+
+async def open(path: str, mode: str = "rb", **kwargs):
+    """
+    Asynchronously open a file and return an async context manager.
+    Simple and clean implementation using AsyncFileSystem or sync fallback.
+    Args:
+        path: Path to the file
+        mode: File open mode ('rb', 'wb', etc.)
+        **kwargs: Additional arguments passed to the underlying filesystem
+    Returns:
+        AsyncFileHandle that can be used as an async context manager
+    Example:
+        ```python
+        async with await storage.open("s3://bucket/file.txt", "rb") as f:
+            data = await f.read()
+        async with await storage.open("s3://bucket/file.txt", "wb") as f:
+            await f.write(b"data")
+        ```
+    """
+    fs = get_underlying_filesystem(path=path)
+
+    # Try AsyncFileSystem first
+    if isinstance(fs, AsyncFileSystem):
+        try:
+            file_handle = await fs.open_async(path, mode, **kwargs)
+            return file_handle
+        except NotImplementedError:
+            logger.debug(f"{fs} doesn't implement 'open_async', falling back to sync")
+
+    # Fallback to sync open
+    file_handle = fs.open(path, mode, **kwargs)
+    return file_handle
 
 
 async def put_stream(
-    data_iterable: typing.AsyncIterable[bytes] | bytes, *, name: str | None = None, to_path: str | None = None, **kwargs
+        data_iterable: typing.AsyncIterable[bytes] | bytes, *, name: str | None = None, to_path: str | None = None,
+        **kwargs
 ) -> str:
     """
     Put a stream of data to a remote location. This is useful for streaming data to a remote location.
@@ -256,107 +281,64 @@ async def put_stream(
     """
     if not to_path:
         from flyte._context import internal_ctx
-
         ctx = internal_ctx()
         to_path = ctx.raw_data.get_random_remote_path(file_name=name)
+
+    # Check if we should use obstore bypass
     fs = get_underlying_filesystem(path=to_path)
+    if _is_obstore_supported_protocol(fs.protocol) and hasattr(fs, "_split_path") and hasattr(fs, "_construct_store"):
+        file_handle = await _open_obstore_bypass(to_path, "wb", **kwargs)
+    else:
+        file_handle = await open(to_path, "wb", **kwargs)
 
-    file_handle = None
-    if isinstance(fs, AsyncFileSystem):
-        try:
-            if _is_obstore_supported_protocol(fs.protocol):
-                # If the protocol is supported by obstore, use the obstore bypass method
-                return await _put_stream_obstore_bypass(data_iterable, to_path=to_path, **kwargs)
-            file_handle = await fs.open_async(to_path, "wb", **kwargs)
-            if isinstance(data_iterable, bytes):
-                await file_handle.write(data_iterable)
-            else:
-                async for data in data_iterable:
-                    await file_handle.write(data)
-            return str(to_path)
-        except NotImplementedError as e:
-            logger.debug(f"{fs} doesn't implement 'open_async', falling back to sync, {e}")
-        finally:
-            if file_handle is not None:
-                await file_handle.close()
-
-    with fs.open(to_path, "wb", **kwargs) as f:
+    # Simple and clean: use the AsyncFileHandle wrapper
+    async with file_handle as f:
         if isinstance(data_iterable, bytes):
             f.write(data_iterable)
         else:
-            # If data_iterable is async iterable, iterate over it and write each chunk to the file
             async for data in data_iterable:
                 f.write(data)
+
     return str(to_path)
 
 
-async def _get_stream_obstore_bypass(path: str, chunk_size, **kwargs) -> AsyncGenerator[bytes, None]:
-    """
-    NOTE: This can break if obstore changes its API.
-    This function is a workaround for obstore's fsspec implementation which does not support async file operations.
-    It uses the synchronous methods directly to get a stream of data.
-    """
-    import obstore
-    from obstore.store import ObjectStore
-
-    fs = get_underlying_filesystem(path=path)
-    if not hasattr(fs, "_split_path") or not hasattr(fs, "_construct_store"):
-        raise NotImplementedError(f"Obstore bypass not supported for {fs.protocol} protocol, methods missing.")
-    bucket, rem_path = fs._split_path(path)  # pylint: disable=W0212
-    store: ObjectStore = fs._construct_store(bucket)
-    buf_file = await obstore.open_reader_async(store, rem_path, buffer_size=chunk_size)
-    try:
-        while True:
-            chunk = await buf_file.read()
-            if not chunk:
-                break
-            yield bytes(chunk)
-    finally:
-        buf_file.close()
-
-
-async def get_stream(path: str, chunk_size=10 * 2**20, **kwargs) -> AsyncGenerator[bytes, None]:
+async def get_stream(path: str, chunk_size=10 * 2 ** 20, **kwargs) -> AsyncGenerator[bytes, None]:
     """
     Get a stream of data from a remote location.
     This is useful for downloading streaming data from a remote location.
     Example usage:
     ```python
     import flyte.storage as storage
-    obj = storage.get_stream(path="s3://my_bucket/my_file.txt")
+    async for chunk in storage.get_stream(path="s3://my_bucket/my_file.txt"):
+        process(chunk)
     ```
 
     :param path: Path to the remote location where the data will be downloaded.
     :param kwargs: Additional arguments to be passed to the underlying filesystem.
     :param chunk_size: Size of each chunk to be read from the file.
-    :return: An async iterator that yields chunks of data.
+    :return: An async iterator that yields chunks of bytes.
     """
-    fs = get_underlying_filesystem(path=path, **kwargs)
+    # Check if we should use obstore bypass
+    fs = get_underlying_filesystem(path=path)
+    if _is_obstore_supported_protocol(fs.protocol) and hasattr(fs, "_split_path") and hasattr(fs, "_construct_store"):
+        # Set buffer_size for obstore if chunk_size is provided
+        if "buffer_size" not in kwargs:
+            kwargs["buffer_size"] = chunk_size
+        print(f"Using obstore bypass for {path} with buffer_size {kwargs['buffer_size']}", flush=True)
+        file_handle = await _open_obstore_bypass(path, "rb", **kwargs)
+        while chunk := await file_handle.read():
+            yield bytes(chunk)
+        return
 
-    file_size = fs.info(path)["size"]
-    total_read = 0
-    file_handle = None
-    try:
-        if _is_obstore_supported_protocol(fs.protocol):
-            # If the protocol is supported by obstore, use the obstore bypass method
-            async for x in _get_stream_obstore_bypass(path, chunk_size=chunk_size, **kwargs):
-                yield x
-            return
-        if isinstance(fs, AsyncFileSystem):
-            file_handle = await fs.open_async(path, "rb")
-            while chunk := await file_handle.read(min(chunk_size, file_size - total_read)):
-                total_read += len(chunk)
-                yield chunk
-            return
-    except NotImplementedError as e:
-        logger.debug(f"{fs} doesn't implement 'open_async', falling back to sync, error: {e}")
-    finally:
-        if file_handle is not None:
-            file_handle.close()
-
-    # Sync fallback
-    with fs.open(path, "rb") as file_handle:
-        while chunk := file_handle.read(min(chunk_size, file_size - total_read)):
-            total_read += len(chunk)
+    # Fallback to normal open
+    if "block_size" not in kwargs:
+        kwargs["block_size"] = chunk_size
+    file_handle = await open(path, "rb", **kwargs)
+    if isinstance(fs, AsyncFileSystem):
+        while chunk := await file_handle.read():
+            yield chunk
+    else:
+        while chunk := file_handle.read():
             yield chunk
 
 
