@@ -12,7 +12,6 @@ from typing import Any, List
 
 import click
 
-from flyte._initialize import _get_init_config
 from flyte.models import PathRewrite
 
 # Todo: work with pvditt to make these the names
@@ -144,7 +143,6 @@ def main(
     if tgz or pkl:
         bundle = CodeBundle(tgz=tgz, pkl=pkl, destination=dest, computed_version=version)
     init(org=org, project=project, domain=domain, image_builder="remote", **controller_kwargs)
-    client = _get_init_config().client
     controller = create_controller(ct="remote", **controller_kwargs)
 
     ic = ImageCache.from_transport(image_cache) if image_cache else None
