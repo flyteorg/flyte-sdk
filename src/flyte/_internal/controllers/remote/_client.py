@@ -4,8 +4,6 @@ from typing import Awaitable
 
 import grpc.aio
 
-from flyte._protos.workflow import queue_service_pb2_grpc, state_service_pb2_grpc
-from flyte.remote import create_channel
 
 from ._service_protocol import QueueService, StateService
 
@@ -16,16 +14,22 @@ class ControllerClient:
     """
 
     def __init__(self, channel: grpc.aio.Channel):
+        from flyte._protos.workflow import queue_service_pb2_grpc, state_service_pb2_grpc
+
         self._channel = channel
         self._state_service = state_service_pb2_grpc.StateServiceStub(channel=channel)
         self._queue_service = queue_service_pb2_grpc.QueueServiceStub(channel=channel)
 
     @classmethod
     async def for_endpoint(cls, endpoint: str, insecure: bool = False, **kwargs) -> Awaitable[ControllerClient]:
+        from flyte.remote import create_channel
+
         return cls(await create_channel(endpoint, None, insecure=insecure, **kwargs))
 
     @classmethod
     async def for_api_key(cls, api_key: str, insecure: bool = False, **kwargs) -> Awaitable[ControllerClient]:
+        from flyte.remote import create_channel
+
         return cls(await create_channel(None, api_key, insecure=insecure, **kwargs))
 
     @property

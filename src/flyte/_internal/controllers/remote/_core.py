@@ -166,6 +166,7 @@ class Controller:
         logger.info(f"Controller started in thread: {self._thread.name}")
 
     def _wait(self):
+        print("waitttttt")
         # Wait for the thread to be ready
         if not self._thread_ready.wait(timeout=self._thread_wait_timeout):
             logger.warning("Controller thread did not finish within timeout")
