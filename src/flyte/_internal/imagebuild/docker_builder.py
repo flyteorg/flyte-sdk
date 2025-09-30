@@ -279,12 +279,16 @@ class UVProjectHandler:
             )
         else:
             # Copy the entire project.
-            pyproject_dst = copy_files_to_context(
-                layer.pyproject.parent, context_path, docker_ignore_patterns, ["pyproject.toml", "uv.lock"]
-            )
-            if layer.uvlock:
-                # Sometimes the uv.lock file is in a different folder, if it's specified, let's copy it there explicitly
+            pyproject_dst = copy_files_to_context(layer.pyproject.parent, context_path, docker_ignore_patterns)
+
+            # Make sure pyproject.toml and uv.lock files are not removed by docker ignore
+            uv_lock_context_path = pyproject_dst / "uv.lock"
+            pyproject_context_path = pyproject_dst / "pyproject.toml"
+            if not uv_lock_context_path.exists():
                 shutil.copy(layer.uvlock, pyproject_dst)
+            if not pyproject_context_path.exists():
+                shutil.copy(layer.pyproject, pyproject_dst)
+
             delta = UV_LOCK_INSTALL_TEMPLATE.substitute(
                 PYPROJECT_PATH=pyproject_dst.relative_to(context_path),
                 PIP_INSTALL_ARGS=" ".join(layer.get_pip_install_args()),
@@ -313,9 +317,16 @@ class PoetryProjectHandler:
             )
         else:
             # Copy the entire project.
-            pyproject_dst = copy_files_to_context(
-                layer.pyproject.parent, context_path, docker_ignore_patterns, ["pyproject.toml", "poetry.lock"]
-            )
+            pyproject_dst = copy_files_to_context(layer.pyproject.parent, context_path, docker_ignore_patterns)
+
+            # Make sure pyproject.toml and poetry.lock files are not removed by docker ignore
+            poetry_lock_context_path = pyproject_dst / "poetry.lock"
+            pyproject_context_path = pyproject_dst / "pyproject.toml"
+            if not poetry_lock_context_path.exists():
+                shutil.copy(layer.poetry_lock, pyproject_dst)
+            if not pyproject_context_path.exists():
+                shutil.copy(layer.pyproject, pyproject_dst)
+
             delta = POETRY_LOCK_INSTALL_TEMPLATE.substitute(
                 PYPROJECT_PATH=pyproject_dst.relative_to(context_path),
                 POETRY_INSTALL_ARGS=layer.extra_args or "",

@@ -1,4 +1,3 @@
-import fnmatch
 import shutil
 from pathlib import Path
 from typing import List, Optional
@@ -7,9 +6,7 @@ from flyte._image import DockerIgnore, Image
 from flyte._logging import logger
 
 
-def copy_files_to_context(
-    src: Path, context_path: Path, ignore_patterns: list[str] = [], protected_patterns: list[str] = []
-) -> Path:
+def copy_files_to_context(src: Path, context_path: Path, ignore_patterns: list[str] = []) -> Path:
     """
     This helper function ensures that absolute paths that users specify are converted correctly to a path in the
     context directory. Doing this prevents collisions while ensuring files are available in the context.
@@ -23,7 +20,6 @@ def copy_files_to_context(
 
     :param src: The source path to copy
     :param context_path: The context path where the files should be copied to
-    :param ignore_patterns: List of file and folder patterns to ignore when copying folders
     """
     if src.is_absolute() or ".." in str(src):
         dst_path = context_path / str(src.absolute()).replace("/", "./_flyte_abs_context/", 1)
@@ -33,28 +29,7 @@ def copy_files_to_context(
     if src.is_dir():
         default_ignore_patterns = [".idea", ".venv"]
         ignore_patterns = list(set(ignore_patterns + default_ignore_patterns))
-
-        def protective_ignore(directory, contents):
-            # Execute the standard ignore function
-            standard_ignore = shutil.ignore_patterns(*ignore_patterns)
-            ignored = standard_ignore(directory, contents)
-
-            # Remove protected patterns from ignored set
-            if ignored and protected_patterns:
-                filtered_ignored = set()
-                for item in ignored:
-                    is_protected = False
-                    for pattern in protected_patterns:
-                        if fnmatch.fnmatch(item, pattern):
-                            is_protected = True
-                            break
-                    if not is_protected:
-                        filtered_ignored.add(item)
-                ignored = filtered_ignored
-
-            return ignored
-
-        shutil.copytree(src, dst_path, dirs_exist_ok=True, ignore=protective_ignore)
+        shutil.copytree(src, dst_path, dirs_exist_ok=True, ignore=shutil.ignore_patterns(*ignore_patterns))
     else:
         shutil.copy(src, dst_path)
     return dst_path

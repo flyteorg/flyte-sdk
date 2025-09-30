@@ -339,7 +339,7 @@ async def test_poetry_handler_with_project_install():
             poetry_lock_file.write_text("[[package]]\nname = 'requests'\nversion = '2.28.0'")
 
             # Create PoetryProject without --no-root flag
-            poetry_project = PoetryProject(pyproject=pyproject_file.absolute(), poetry_lock=None)
+            poetry_project = PoetryProject(pyproject=pyproject_file.absolute(), poetry_lock=poetry_lock_file)
 
             cache_dir = user_folder / ".cache"
             cache_dir.mkdir(parents=True, exist_ok=True)
@@ -355,7 +355,7 @@ async def test_poetry_handler_with_project_install():
                 layer=poetry_project,
                 context_path=context_path,
                 dockerfile=initial_dockerfile,
-                docker_ignore_patterns=["*.txt", ".cache"],
+                docker_ignore_patterns=["*.txt", ".cache", "pyproject.toml", "*.toml", "poetry.lock", "*.lock"],
             )
 
             assert result.startswith(initial_dockerfile)
@@ -374,6 +374,8 @@ async def test_poetry_handler_with_project_install():
             # Verify directory copy results and file exclusions
             assert expected_dst_path.exists(), f"Directory should be copied to {expected_dst_path}"
             assert expected_dst_path.is_dir(), "Should be a directory"
+            assert (expected_dst_path / "pyproject.toml").exists(), "pyproject.toml should be included"
+            assert (expected_dst_path / "poetry.lock").exists(), "poetry.lock should be included"
             assert (expected_dst_path / "main.py").exists(), "main.py should be included"
             assert not (expected_dst_path / "memo.txt").exists(), "memo.txt should be excluded"
             assert not (expected_dst_path / ".cache").exists(), ".cache directory should be excluded"
@@ -388,11 +390,13 @@ async def test_uvproject_handler_with_project_install():
             user_folder = Path(tmp_user_folder)
             pyproject_file = user_folder / "pyproject.toml"
             pyproject_file.write_text("[project]\nname = 'test-project'\nversion='0.1.0'")
+            uv_lock_file = user_folder / "uv.lock"
+            uv_lock_file.write_text("lock content")
 
             # Create UVProject installing the whole project
             from flyte._image import UVProject
 
-            uv_project = UVProject(pyproject=pyproject_file.absolute(), uvlock=None)
+            uv_project = UVProject(pyproject=pyproject_file.absolute(), uvlock=uv_lock_file.absolute())
 
             cache_dir = user_folder / ".cache"
             cache_dir.mkdir(parents=True, exist_ok=True)
@@ -405,7 +409,7 @@ async def test_uvproject_handler_with_project_install():
                 layer=uv_project,
                 context_path=context_path,
                 dockerfile=initial_dockerfile,
-                docker_ignore_patterns=["*.txt", ".cache"],
+                docker_ignore_patterns=["*.txt", ".cache", "pyproject.toml", "*.toml", "uv.lock", "*.lock"],
             )
 
             assert result.startswith(initial_dockerfile)
@@ -421,5 +425,7 @@ async def test_uvproject_handler_with_project_install():
             assert expected_dst_path.exists(), f"Directory should be copied to {expected_dst_path}"
             assert expected_dst_path.is_dir(), "Should be a directory"
             assert (expected_dst_path / "main.py").exists(), "main.py should be included"
+            assert (expected_dst_path / "pyproject.toml").exists(), "pyproject.toml should be included"
+            assert (expected_dst_path / "uv.lock").exists(), "uv.lock should be included"
             assert not (expected_dst_path / "memo.txt").exists(), "memo.txt should be excluded"
             assert not (expected_dst_path / ".cache").exists(), ".cache directory should be excluded"
