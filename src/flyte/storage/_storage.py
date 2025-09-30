@@ -276,7 +276,7 @@ async def put_stream(
 
     # Check if we should use obstore bypass
     fs = get_underlying_filesystem(path=to_path)
-    if _is_obstore_supported_protocol(fs.protocol) and hasattr(fs, "_split_path") and hasattr(fs, "_construct_store"):
+    try:
         file_handle = await open(to_path, "wb", **kwargs)
         if isinstance(data_iterable, bytes):
             await file_handle.write(data_iterable)
@@ -285,6 +285,8 @@ async def put_stream(
                 await file_handle.write(data)
         await file_handle.close()
         return str(to_path)
+    except OnlyAsyncIOSupportedError:
+        pass
 
     # Fallback to normal open
     file_handle = fs.open(to_path, mode="wb", **kwargs)

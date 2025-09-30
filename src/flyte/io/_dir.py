@@ -245,8 +245,9 @@ class Dir(BaseModel, Generic[T], SerializableType):
 
                 shutil.copytree(self.path, local_dest, dirs_exist_ok=True)
 
-        # Figure this out when we figure out the final sync story
-        raise NotImplementedError("Sync download is not implemented for remote paths")
+        fs = storage.get_underlying_filesystem(path=self.path)
+        fs.get(self.path, local_dest, recursive=True)
+        return local_dest
 
     @classmethod
     async def from_local(
@@ -281,6 +282,44 @@ class Dir(BaseModel, Generic[T], SerializableType):
         return cls(path=output_path, name=dirname, hash=dir_cache_key)
 
     @classmethod
+    def from_local_sync(
+        cls,
+        local_path: Union[str, Path],
+        remote_path: Optional[str] = None,
+        dir_cache_key: Optional[str] = None,
+    ) -> Dir[T]:
+        """
+        Synchronously create a new Dir by uploading a local directory to the configured remote store.
+
+        Args:
+            local_path: Path to the local directory
+            remote_path: Optional path to store the directory remotely. If None, a path will be generated.
+            dir_cache_key: If you have a precomputed hash value you want to use when computing cache keys for
+              discoverable tasks that this File is an input to.
+
+        Returns:
+            A new Dir instance pointing to the uploaded directory
+
+        Example:
+        ```python
+        remote_dir = Dir[DataFrame].from_local_sync('/tmp/data_dir/', 's3://bucket/data/')
+        # With a known hash value you want to use for cache key calculation
+        remote_dir = Dir[DataFrame].from_local_sync('/tmp/data_dir/', 's3://bucket/data/', dir_cache_key='abc123')
+        ```
+        """
+        local_path_str = str(local_path)
+        dirname = os.path.basename(os.path.normpath(local_path_str))
+
+        if not remote_path:
+            from flyte._context import internal_ctx
+
+            ctx = internal_ctx()
+            remote_path = ctx.raw_data.get_random_remote_path(dirname)
+        fs = storage.get_underlying_filesystem(path=remote_path)
+        fs.put(local_path_str, remote_path, recursive=True)
+        return cls(path=remote_path, name=dirname, hash=dir_cache_key)
+
+    @classmethod
     def from_existing_remote(cls, remote_path: str, dir_cache_key: Optional[str] = None) -> Dir[T]:
         """
         Create a Dir reference from an existing remote directory.
@@ -298,26 +337,6 @@ class Dir(BaseModel, Generic[T], SerializableType):
         ```
         """
         return cls(path=remote_path, hash=dir_cache_key)
-
-    @classmethod
-    def from_local_sync(cls, local_path: Union[str, Path], remote_path: Optional[str] = None) -> Dir[T]:
-        """
-        Synchronously create a new Dir by uploading a local directory to the configured remote store.
-
-        Args:
-            local_path: Path to the local directory
-            remote_path: Optional path to store the directory remotely. If None, a path will be generated.
-
-        Returns:
-            A new Dir instance pointing to the uploaded directory
-
-        Example:
-        ```python
-        remote_dir = Dir[DataFrame].from_local_sync('/tmp/data_dir/', 's3://bucket/data/')
-        ```
-        """
-        # Implement this after we figure out the final sync story
-        raise NotImplementedError("Sync upload is not implemented for remote paths")
 
     async def exists(self) -> bool:
         """
