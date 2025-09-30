@@ -6,7 +6,6 @@ from pathlib import Path
 
 import mock
 import pytest
-from flyteidl2.core import literals_pb2, types_pb2
 from fsspec.utils import get_protocol
 
 import flyte
@@ -21,6 +20,7 @@ from flyte.io._dataframe.dataframe import (
 )
 from flyte.models import SerializationContext
 from flyte.types import TypeEngine
+from flyteidl2.core import literals_pb2, types_pb2
 
 pd = pytest.importorskip("pandas")
 pa = pytest.importorskip("pyarrow")

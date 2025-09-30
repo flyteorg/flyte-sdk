@@ -9,7 +9,6 @@ from types import ModuleType
 from typing import Any, Dict, List, cast
 
 import rich_click as click
-from rich.console import Console
 from typing_extensions import get_args
 
 from .._code_bundle._utils import CopyFiles
@@ -23,14 +22,14 @@ RUN_REMOTE_CMD = "deployed-task"
 
 
 @lru_cache()
-def _initialize_config(ctx: click.Context, project: str, domain: str):
+def _initialize_config(ctx: click.Context, project: str, domain: str, root_dir: str | None = None):
     obj: CLIConfig | None = ctx.obj
     if obj is None:
         import flyte.config
 
         obj = CLIConfig(flyte.config.auto(), ctx)
 
-    obj.init(project, domain)
+    obj.init(project, domain, root_dir)
     return obj
 
 
@@ -74,6 +73,16 @@ class RunArguments:
                 type=click.Choice(get_args(CopyFiles)),
                 default="loaded_modules",
                 help="Copy style to use when running the task",
+            )
+        },
+    )
+    root_dir: str | None = field(
+        default=None,
+        metadata={
+            "click.option": click.Option(
+                ["--root-dir"],
+                type=str,
+                help="Override the root source directory, helpful when working with monorepos.",
             )
         },
     )
@@ -121,18 +130,28 @@ class RunTaskCommand(click.RichCommand):
         super().__init__(obj_name, *args, **kwargs)
 
     def invoke(self, ctx: click.Context):
-        obj: CLIConfig = _initialize_config(ctx, self.run_args.project, self.run_args.domain)
+        obj: CLIConfig = _initialize_config(ctx, self.run_args.project, self.run_args.domain, self.run_args.root_dir)
 
         async def _run():
             import flyte
 
+            console = common.get_console()
             r = await flyte.with_runcontext(
                 copy_style=self.run_args.copy_style,
                 mode="local" if self.run_args.local else "remote",
                 name=self.run_args.name,
             ).run.aio(self.obj, **ctx.params)
+            if self.run_args.local:
+                console.print(
+                    common.get_panel(
+                        "Local Run",
+                        f"[green]Completed Local Run, data stored in path: {r.url} [/green] \n"
+                        f"➡️  Outputs: {r.outputs()}",
+                        obj.output_format,
+                    )
+                )
+                return
             if isinstance(r, Run) and r.action is not None:
-                console = Console()
                 console.print(
                     common.get_panel(
                         "Run",
@@ -212,6 +231,7 @@ class RunReferenceTaskCommand(click.RichCommand):
             import flyte.remote
 
             task = flyte.remote.Task.get(self.task_name, version=self.version, auto_version="latest")
+            console = common.get_console()
 
             r = await flyte.with_runcontext(
                 copy_style=self.run_args.copy_style,
@@ -219,7 +239,6 @@ class RunReferenceTaskCommand(click.RichCommand):
                 name=self.run_args.name,
             ).run.aio(task, **ctx.params)
             if isinstance(r, Run) and r.action is not None:
-                console = Console()
                 console.print(
                     common.get_panel(
                         "Run",

@@ -4,8 +4,6 @@ from enum import Enum
 from typing import Dict, List, Optional, Tuple, Union
 
 import pytest
-from flyteidl2.core.literals_pb2 import Literal, Scalar
-from flyteidl2.core.types_pb2 import TypeAnnotation
 from google.protobuf import json_format as _json_format
 from google.protobuf import struct_pb2 as _struct
 from pydantic import BaseModel, Field
@@ -19,6 +17,8 @@ from flyte.types._type_engine import (
     SERIALIZATION_FORMAT,
     TypeEngine,
 )
+from flyteidl2.core.literals_pb2 import Literal, Scalar
+from flyteidl2.core.types_pb2 import TypeAnnotation
 
 
 class Status(Enum):
@@ -86,26 +86,26 @@ async def test_flytetypes_in_pydantic_basemodel_wf(local_dummy_file, local_dummy
     o1, o2, o3, o4 = o.outputs()
 
     async with o1.open() as fh:
-        content = fh.read()
+        content = await fh.read()
         content = content.decode("utf-8")
         assert content == "Hello File"
 
     async with o2.open() as fh:
-        content = fh.read()
+        content = await fh.read()
         content = content.decode("utf-8")
         assert content == "Hello File"
 
     async for f in o3.walk():
         assert f.name == "file"
         async with f.open() as fh:
-            content = fh.read()
+            content = await fh.read()
             content = content.decode("utf-8")
             assert content == "Hello Dir"
 
     async for f in o4.walk():
         assert f.name == "file"
         async with f.open() as fh:
-            content = fh.read()
+            content = await fh.read()
             content = content.decode("utf-8")
             assert content == "Hello Dir"
 
@@ -177,22 +177,22 @@ async def test_all_types_in_pydantic_basemodel_wf(local_dummy_file, local_dummy_
         for ff in inner_bm.f:
             assert type(ff) is File
             async with ff.open() as f:
-                assert f.read().decode("utf-8") == "Hello File"
+                assert (await f.read()).decode("utf-8") == "Hello File"
         # j: Dict[int, File]
         for _, ff in inner_bm.j.items():
             assert type(ff) is File
             async with ff.open() as f:
-                assert f.read().decode("utf-8") == "Hello File"
+                assert (await f.read()).decode("utf-8") == "Hello File"
         # n: File
         assert type(inner_bm.n) is File
         async with inner_bm.n.open() as f:
-            assert f.read().decode("utf-8") == "Hello File"
+            assert (await f.read()).decode("utf-8") == "Hello File"
         # o: Dir
         assert type(inner_bm.o) is Dir
         async for f in inner_bm.o.walk():
             assert f.name == "file"
             async with f.open() as fh:
-                content = fh.read()
+                content = await fh.read()
                 content = content.decode("utf-8")
                 assert content == "Hello Dir"
 
@@ -384,22 +384,22 @@ async def test_all_types_with_optional_in_pydantic_basemodel_wf(local_dummy_file
         for ff in inner_bm.f:
             assert type(ff) is File
             async with ff.open() as f:
-                assert f.read().decode("utf-8") == "Hello File"
+                assert (await f.read()).decode("utf-8") == "Hello File"
         # j: Dict[int, File]
         for _, ff in inner_bm.j.items():
             assert type(ff) is File
             async with ff.open() as f:
-                assert f.read().decode("utf-8") == "Hello File"
+                assert (await f.read()).decode("utf-8") == "Hello File"
         # n: File
         assert type(inner_bm.n) is File
         async with inner_bm.n.open() as f:
-            assert f.read().decode("utf-8") == "Hello File"
+            assert (await f.read()).decode("utf-8") == "Hello File"
         # o: Dir
         assert type(inner_bm.o) is Dir
         async for f in inner_bm.o.walk():
             assert f.name == "file"
             async with f.open() as fh:
-                content = fh.read()
+                content = await fh.read()
                 content = content.decode("utf-8")
                 assert content == "Hello Dir"
 
@@ -666,22 +666,22 @@ async def test_input_from_ui_pydantic_basemodel(local_dummy_file, local_dummy_di
         for ff in inner_bm.f:
             assert type(ff) is File
             async with ff.open() as f:
-                assert f.read().decode("utf-8") == "Hello File"
+                assert (await f.read()).decode("utf-8") == "Hello File"
         # j: Dict[int, File]
         for _, ff in inner_bm.j.items():
             assert type(ff) is File
             async with ff.open() as f:
-                assert f.read().decode("utf-8") == "Hello File"
+                assert (await f.read()).decode("utf-8") == "Hello File"
         # n: File
         assert type(inner_bm.n) is File
         async with inner_bm.n.open() as f:
-            assert f.read().decode("utf-8") == "Hello File"
+            assert (await f.read()).decode("utf-8") == "Hello File"
         # o: Dir
         assert type(inner_bm.o) is Dir
         async for f in inner_bm.o.walk():
             assert f.name == "file"
             async with f.open() as fh:
-                content = fh.read()
+                content = await fh.read()
                 content = content.decode("utf-8")
                 assert content == "Hello Dir"
 

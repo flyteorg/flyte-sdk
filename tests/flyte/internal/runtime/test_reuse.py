@@ -2,13 +2,13 @@ import datetime
 import random
 
 import pytest
-from flyteidl2.core import security_pb2, tasks_pb2
 from kubernetes.client import ApiClient, V1Container, V1EnvVar, V1LocalObjectReference, V1PodSpec
 
 from flyte import ReusePolicy
 from flyte._internal.runtime.reuse import add_reusable, extract_unique_id_and_image
 from flyte._pod import _PRIMARY_CONTAINER_NAME_FIELD
 from flyte.models import CodeBundle
+from flyteidl2.core import security_pb2, tasks_pb2
 
 
 @pytest.fixture

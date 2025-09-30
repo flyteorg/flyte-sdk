@@ -11,18 +11,6 @@ from typing import Dict, List
 
 import pytest
 from flyteidl.core import errors_pb2
-from flyteidl2.core import literals_pb2, types_pb2
-from flyteidl2.core.literals_pb2 import (
-    Literal,
-    LiteralCollection,
-    LiteralMap,
-    Primitive,
-    Scalar,
-)
-from flyteidl2.core.types_pb2 import (
-    LiteralType,
-    SimpleType,
-)
 from mashumaro.mixins.json import DataClassJSONMixin
 from mashumaro.mixins.orjson import DataClassORJSONMixin
 from pydantic import BaseModel
@@ -54,6 +42,18 @@ from flyte.types._type_engine import (
     _check_and_covert_float,
     convert_mashumaro_json_schema_to_python_class,
     strict_type_hint_matching,
+)
+from flyteidl2.core import literals_pb2, types_pb2
+from flyteidl2.core.literals_pb2 import (
+    Literal,
+    LiteralCollection,
+    LiteralMap,
+    Primitive,
+    Scalar,
+)
+from flyteidl2.core.types_pb2 import (
+    LiteralType,
+    SimpleType,
 )
 
 T = typing.TypeVar("T")

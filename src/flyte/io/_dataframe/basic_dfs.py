@@ -3,7 +3,6 @@ import typing
 from pathlib import Path
 from typing import TypeVar
 
-from flyteidl2.core import literals_pb2, types_pb2
 from fsspec.core import split_protocol, strip_protocol
 
 import flyte.storage as storage
@@ -16,6 +15,7 @@ from flyte.io._dataframe.dataframe import (
     DataFrameDecoder,
     DataFrameEncoder,
 )
+from flyteidl2.core import literals_pb2, types_pb2
 
 if typing.TYPE_CHECKING:
     import pandas as pd

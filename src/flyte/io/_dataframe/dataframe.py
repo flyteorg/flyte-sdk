@@ -8,7 +8,6 @@ from abc import ABC, abstractmethod
 from dataclasses import is_dataclass
 from typing import Any, ClassVar, Coroutine, Dict, Generic, List, Optional, Type, Union
 
-from flyteidl2.core import literals_pb2, types_pb2
 from fsspec.utils import get_protocol
 from mashumaro.types import SerializableType
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, model_serializer, model_validator
@@ -21,6 +20,7 @@ from flyte._utils.asyn import loop_manager
 from flyte.types import TypeEngine, TypeTransformer, TypeTransformerFailedError
 from flyte.types._renderer import Renderable
 from flyte.types._type_engine import modify_literal_uris
+from flyteidl2.core import literals_pb2, types_pb2
 
 MESSAGEPACK = "msgpack"
 

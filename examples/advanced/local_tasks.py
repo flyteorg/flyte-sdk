@@ -5,11 +5,7 @@ import flyte
 
 idl2 = "git+https://github.com/flyteorg/flyte.git@enghabu/rename-idl2#subdirectory=gen/python"
 
-image = (
-    flyte.Image.from_debian_base()
-    .with_apt_packages("git")
-    .with_pip_packages(idl2)
-)
+image = flyte.Image.from_debian_base().with_apt_packages("git").with_pip_packages(idl2)
 
 env = flyte.TaskEnvironment(
     name="traces",

@@ -4,13 +4,13 @@ import json
 
 import msgpack
 import pytest
-from flyteidl2.core import literals_pb2
 from google.protobuf.duration_pb2 import Duration
 from google.protobuf.json_format import MessageToDict
 from google.protobuf.struct_pb2 import Struct
 from google.protobuf.timestamp_pb2 import Timestamp
 
 from flyte.types._string_literals import literal_string_repr
+from flyteidl2.core import literals_pb2
 from flyteidl2.workflow import run_definition_pb2
 
 

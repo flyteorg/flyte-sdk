@@ -7,6 +7,8 @@ from typing import Dict, Generator, Literal, Tuple, Type, TypeVar, Union, cast, 
 
 from flyte._logging import logger
 
+LITERAL_ENUM = "LiteralEnum"
+
 
 def default_output_name(index: int = 0) -> str:
     return f"o{index}"
@@ -110,6 +112,6 @@ def literal_to_enum(literal_type: Type) -> Type[Enum | typing.Any]:
     enum_dict = {str(v).upper(): v for v in values}
 
     # Dynamically create an Enum
-    literal_enum = Enum("LiteralEnum", enum_dict)  # type: ignore
+    literal_enum = Enum(LITERAL_ENUM, enum_dict)  # type: ignore
 
     return literal_enum  # type: ignore

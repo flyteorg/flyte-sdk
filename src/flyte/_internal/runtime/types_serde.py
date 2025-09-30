@@ -1,9 +1,8 @@
 from typing import Dict, Optional, TypeVar
 
-from flyteidl2.core import interface_pb2
-
 from flyte.models import NativeInterface
 from flyte.types._type_engine import TypeEngine
+from flyteidl2.core import interface_pb2
 
 T = TypeVar("T")
 

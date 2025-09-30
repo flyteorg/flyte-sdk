@@ -369,14 +369,15 @@ class Action(ToJSONMixin):
                     # If the action is done, handle the final state
                     if ad.done():
                         progress.stop_task(task_id)
-                        if ad.pb2.status.phase == run_definition_pb2.PHASE_SUCCEEDED:
-                            console.print(f"[bold green]Run '{self.run_name}' completed successfully.[/bold green]")
-                        else:
-                            error_message = ad.error_info.message if ad.error_info else ""
-                            console.print(
-                                f"[bold red]Run '{self.run_name}' exited unsuccessfully in state {ad.phase}"
-                                f" with error: {error_message}[/bold red]"
-                            )
+                        if not quiet:
+                            if ad.pb2.status.phase == run_definition_pb2.PHASE_SUCCEEDED:
+                                console.print(f"[bold green]Run '{self.run_name}' completed successfully.[/bold green]")
+                            else:
+                                error_message = ad.error_info.message if ad.error_info else ""
+                                console.print(
+                                    f"[bold red]Run '{self.run_name}' exited unsuccessfully in state {ad.phase}"
+                                    f" with error: {error_message}[/bold red]"
+                                )
                         break
         except asyncio.CancelledError:
             # Handle cancellation gracefully

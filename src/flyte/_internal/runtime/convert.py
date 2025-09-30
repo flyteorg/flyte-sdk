@@ -8,12 +8,11 @@ from dataclasses import dataclass
 from types import NoneType
 from typing import Any, Dict, List, Tuple, Union, get_args
 
-from flyteidl2.core import execution_pb2, interface_pb2, literals_pb2
-
 import flyte.errors
 import flyte.storage as storage
 from flyte.models import ActionID, NativeInterface, TaskContext
 from flyte.types import TypeEngine, TypeTransformerFailedError
+from flyteidl2.core import execution_pb2, interface_pb2, literals_pb2
 from flyteidl2.task import common_pb2, task_definition_pb2
 from flyteidl2.workflow import run_definition_pb2
 

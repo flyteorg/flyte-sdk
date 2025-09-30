@@ -6,9 +6,10 @@ TODO: Convert to use streaming apis
 """
 
 from flyteidl.core import errors_pb2
-from flyteidl2.core import execution_pb2
 
 import flyte.storage as storage
+from flyte.models import PathRewrite
+from flyteidl2.core import execution_pb2
 from flyteidl2.workflow import run_definition_pb2
 
 from .convert import Inputs, Outputs, _clean_error_code
@@ -91,10 +92,11 @@ async def upload_error(err: execution_pb2.ExecutionError, output_prefix: str):
 
 
 # ------------------------------- DOWNLOAD Methods ------------------------------- #
-async def load_inputs(path: str, max_bytes: int = -1) -> Inputs:
+async def load_inputs(path: str, max_bytes: int = -1, path_rewrite_config: PathRewrite | None = None) -> Inputs:
     """
     :param path: Input file to be downloaded
     :param max_bytes: Maximum number of bytes to read from the input file. Default is -1, which means no limit.
+    :param path_rewrite_config: If provided, rewrites paths in the input blobs according to the configuration.
     :return: Inputs object
     """
     lm = run_definition_pb2.Inputs()
@@ -116,6 +118,16 @@ async def load_inputs(path: str, max_bytes: int = -1) -> Inputs:
         proto_str = b"".join(proto_bytes)
 
     lm.ParseFromString(proto_str)
+
+    if path_rewrite_config is not None:
+        for inp in lm.literals:
+            if inp.value.HasField("scalar") and inp.value.scalar.HasField("blob"):
+                scalar_blob = inp.value.scalar.blob
+                if scalar_blob.uri.startswith(path_rewrite_config.old_prefix):
+                    scalar_blob.uri = scalar_blob.uri.replace(
+                        path_rewrite_config.old_prefix, path_rewrite_config.new_prefix, 1
+                    )
+
     return Inputs(proto_inputs=lm)
 
 

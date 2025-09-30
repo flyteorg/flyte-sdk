@@ -232,3 +232,12 @@ class SlowDownError(RuntimeUserError):
 
     def __init__(self, message: str):
         super().__init__("SlowDownError", message, "user")
+
+
+class OnlyAsyncIOSupportedError(RuntimeUserError):
+    """
+    This error is raised when the user tries to use sync IO in an async task.
+    """
+
+    def __init__(self, message: str):
+        super().__init__("OnlyAsyncIOSupportedError", message, "user")

@@ -6,7 +6,6 @@ from dataclasses import dataclass
 from typing import Any, AsyncIterator, Callable, Coroutine, Dict, Iterator, Literal, Optional, Tuple, Union, cast
 
 import rich.repr
-from flyteidl2.core import literals_pb2
 from google.protobuf import timestamp
 
 import flyte
@@ -20,6 +19,7 @@ from flyte._logging import logger
 from flyte.models import NativeInterface
 from flyte.syncify import syncify
 from flyteidl2.common import identifier_pb2, list_pb2
+from flyteidl2.core import literals_pb2
 from flyteidl2.task import task_definition_pb2, task_service_pb2
 
 from ._common import ToJSONMixin
@@ -99,6 +99,7 @@ AutoVersioning = Literal["latest", "current"]
 class TaskDetails(ToJSONMixin):
     pb2: task_definition_pb2.TaskDetails
     max_inline_io_bytes: int = 10 * 1024 * 1024  # 10 MB
+    overriden_queue: Optional[str] = None
 
     @classmethod
     def get(
@@ -284,6 +285,13 @@ class TaskDetails(ToJSONMixin):
             f"Reference tasks [{self.name}] cannot be executed locally, only remotely."
         )
 
+    @property
+    def queue(self) -> Optional[str]:
+        """
+        The queue to use for the task.
+        """
+        return self.overriden_queue
+
     def override(
         self,
         *,
@@ -295,6 +303,7 @@ class TaskDetails(ToJSONMixin):
         secrets: Optional[flyte.SecretRequest] = None,
         max_inline_io_bytes: Optional[int] = None,
         cache: Optional[flyte.Cache] = None,
+        queue: Optional[str] = None,
         **kwargs: Any,
     ) -> TaskDetails:
         if len(kwargs) > 0:
@@ -342,7 +351,11 @@ class TaskDetails(ToJSONMixin):
             md.cache_serializable = cache.serialize
             md.cache_ignore_input_vars[:] = list(cache.ignored_inputs or ())
 
-        return TaskDetails(pb2, max_inline_io_bytes=max_inline_io_bytes or self.max_inline_io_bytes)
+        return TaskDetails(
+            pb2,
+            max_inline_io_bytes=max_inline_io_bytes or self.max_inline_io_bytes,
+            overriden_queue=queue,
+        )
 
     def __rich_repr__(self) -> rich.repr.Result:
         """

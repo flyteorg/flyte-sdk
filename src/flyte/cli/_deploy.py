@@ -7,8 +7,8 @@ from typing import Any, Dict, List, cast, get_args
 import rich_click as click
 
 import flyte
+from flyte._code_bundle._utils import CopyFiles
 
-from .._code_bundle._utils import CopyFiles
 from . import _common as common
 from ._common import CLIConfig
 
@@ -40,6 +40,16 @@ class DeployArguments:
                 type=click.Choice(get_args(CopyFiles)),
                 default="loaded_modules",
                 help="Copy style to use when running the task",
+            )
+        },
+    )
+    root_dir: str | None = field(
+        default=None,
+        metadata={
+            "click.option": click.Option(
+                ["--root-dir"],
+                type=str,
+                help="Override the root source directory, helpful when working with monorepos.",
             )
         },
     )
@@ -94,12 +104,10 @@ class DeployEnvCommand(click.RichCommand):
         super().__init__(*args, **kwargs)
 
     def invoke(self, ctx: click.Context):
-        from rich.console import Console
-
-        console = Console()
+        console = common.get_console()
         console.print(f"Deploying root - environment: {self.env_name}")
         obj: CLIConfig = ctx.obj
-        obj.init(self.deploy_args.project, self.deploy_args.domain)
+        obj.init(self.deploy_args.project, self.deploy_args.domain, root_dir=self.deploy_args.root_dir)
         with console.status("Deploying...", spinner="dots"):
             deployment = flyte.deploy(
                 self.env,
@@ -109,7 +117,7 @@ class DeployEnvCommand(click.RichCommand):
             )
 
         console.print(common.format("Environments", deployment[0].env_repr(), obj.output_format))
-        console.print(common.format("Tasks", deployment[0].task_repr(), obj.output_format))
+        console.print(common.format("Tasks", deployment[0].table_repr(), obj.output_format))
 
 
 class DeployEnvRecursiveCommand(click.Command):
@@ -125,13 +133,11 @@ class DeployEnvRecursiveCommand(click.Command):
         super().__init__(*args, **kwargs)
 
     def invoke(self, ctx: click.Context):
-        from rich.console import Console
-
         from flyte._environment import list_loaded_environments
         from flyte._utils import load_python_modules
 
-        console = Console()
         obj: CLIConfig = ctx.obj
+        console = common.get_console()
 
         # Load all python modules
         loaded_modules, failed_paths = load_python_modules(self.path, self.deploy_args.recursive)
@@ -167,7 +173,7 @@ class DeployEnvRecursiveCommand(click.Command):
         console.print(
             common.format("Environments", [env for d in deployments for env in d.env_repr()], obj.output_format)
         )
-        console.print(common.format("Tasks", [task for d in deployments for task in d.task_repr()], obj.output_format))
+        console.print(common.format("Tasks", [task for d in deployments for task in d.table_repr()], obj.output_format))
 
 
 class EnvPerFileGroup(common.ObjectsPerFileGroup):
