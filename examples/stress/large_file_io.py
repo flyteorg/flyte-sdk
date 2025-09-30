@@ -10,7 +10,7 @@ env = flyte.TaskEnvironment(
     resources=flyte.Resources(
         cpu=4,
         memory="16Gi",
-    )
+    ),
 )
 
 
@@ -19,7 +19,7 @@ async def create_large_file(size_gigabytes: int = 5) -> flyte.io.File:
     f = flyte.io.File.new_remote()
 
     async with f.open("wb") as fp:
-        chunk = b'\0' * (1024 * 1024)  # 1 MiB chunk
+        chunk = b"\0" * (1024 * 1024)  # 1 MiB chunk
         for _ in range(size_gigabytes * 1024):
             fp.write(chunk)
     return f
@@ -32,7 +32,7 @@ async def read_large_file(f: flyte.io.File) -> Tuple[int, float]:
     start = time.time()
     read = 0
     async with f.open("rb", block_size=chunk_size) as fp:
-        while chunk := await fp.read():
+        while _ := await fp.read():
             read += 1
 
     end = time.time()
