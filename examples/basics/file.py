@@ -11,8 +11,8 @@ from flyte.io import File
 
 env = flyte.TaskEnvironment(
     name="file",
-    # reusable=flyte.ReusePolicy(replicas=1, concurrency=10),
-    # image=flyte.Image.from_debian_base().with_pip_packages("unionai-reuse"),
+    reusable=flyte.ReusePolicy(replicas=1, concurrency=10),
+    image=flyte.Image.from_debian_base().with_pip_packages("unionai-reuse"),
 )
 
 
@@ -23,7 +23,7 @@ async def create_new_remote_file(content: str) -> File:
     """
     f = File.new_remote()
     async with f.open("wb") as fh:
-        fh.write(content.encode("utf-8"))
+        await fh.write(content.encode("utf-8"))
     print(f"Created new remote file at: {f.path}")
     return f
 
@@ -34,7 +34,7 @@ async def read_file_async(f: File) -> str:
     Demonstrates reading a file asynchronously using open().
     """
     async with f.open("rb") as fh:
-        contents = fh.read()
+        contents = bytes(await fh.read())  # read() returns a memoryview, NOTE the bytes() conversion
         text_content = contents.decode("utf-8")
         print(f"File {f.path} contents: {text_content}")
         return text_content
@@ -132,7 +132,7 @@ async def demonstrate_streaming_write(content: str) -> File:
         chunk_size = 10
         for i in range(0, len(data), chunk_size):
             chunk = data[i : i + chunk_size]
-            fh.write(chunk)
+            await fh.write(chunk)
     print(f"Streamed content to file: {f.path}")
     return f
 
@@ -147,7 +147,7 @@ async def demonstrate_streaming_read(f: File) -> str:
     async with f.open("rb", block_size=10) as fh:
         # Read in chunks to demonstrate streaming
         while True:
-            chunk = fh.read()
+            chunk = await fh.read()
             if not chunk:
                 break
             content_parts.append(chunk)
@@ -211,11 +211,5 @@ if __name__ == "__main__":
     import flyte.git
 
     flyte.init_from_config(flyte.git.config_from_root())
-    # r = flyte.run(main)
-    r = flyte.run(
-        demonstrate_streaming_read,
-        flyte.io.File.from_existing_remote(
-            "s3://union-oc-canary-playground-playground/metadata/v2/playground/ketan/development/rhlhgd7vq4642lj2mvl5/9cgmlotghcre1d3s8y85sjxro/1/2f/rhlhgd7vq4642lj2mvl5-9cgmlotghcre1d3s8y85sjxro-0/892aa4d58a3ad40a0dd5f516f6e205c2"
-        ),
-    )
+    r = flyte.run(main)
     print(r.url)
