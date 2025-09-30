@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import typing
 from contextlib import asynccontextmanager, contextmanager
 from pathlib import Path
 from typing import (
@@ -30,6 +31,9 @@ from flyte._context import internal_ctx
 from flyte._initialize import requires_initialization
 from flyte.io._hashing_io import AsyncHashingReader, HashingWriter, HashMethod, PrecomputedValue
 from flyte.types import TypeEngine, TypeTransformer, TypeTransformerFailedError
+
+if typing.TYPE_CHECKING:
+    from obstore import AsyncReadableFile, AsyncWritableFile
 
 # Type variable for the file format
 T = TypeVar("T")
@@ -292,7 +296,7 @@ class File(BaseModel, Generic[T], SerializableType):
         cache_options: Optional[dict] = None,
         compression: Optional[str] = None,
         **kwargs,
-    ) -> AsyncGenerator[Union[IO[Any], "HashingWriter"], None]:
+    ) -> AsyncGenerator[Union[AsyncWritableFile, AsyncReadableFile, "HashingWriter"], None]:
         """
         Asynchronously open the file and return a file-like object.
 
@@ -422,7 +426,7 @@ class File(BaseModel, Generic[T], SerializableType):
         cache_options: Optional[dict] = None,
         compression: Optional[str] = None,
         **kwargs,
-    ) -> Generator[IO[Any]]:
+    ) -> Generator[IO[Any], None, None]:
         """
         Synchronously open the file and return a file-like object.
 

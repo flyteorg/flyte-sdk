@@ -7,6 +7,7 @@ from typing import AsyncGenerator, Optional
 from uuid import UUID
 
 import fsspec
+import obstore
 from fsspec.asyn import AsyncFileSystem
 from fsspec.utils import get_protocol
 from obstore.exceptions import GenericError
@@ -15,6 +16,9 @@ from obstore.fsspec import register
 from flyte._initialize import get_storage
 from flyte._logging import logger
 from flyte.errors import InitializationError, OnlyAsyncIOSupportedError
+
+if typing.TYPE_CHECKING:
+    from obstore import AsyncReadableFile, AsyncWritableFile
 
 _OBSTORE_SUPPORTED_PROTOCOLS = ["s3", "gs", "abfs", "abfss"]
 
@@ -204,7 +208,7 @@ async def put(from_path: str, to_path: Optional[str] = None, recursive: bool = F
         return to_path
 
 
-async def _open_obstore_bypass(path: str, mode: str = "rb", **kwargs):
+async def _open_obstore_bypass(path: str, mode: str = "rb", **kwargs) -> AsyncReadableFile | AsyncWritableFile:
     """
     Simple obstore bypass for opening files. No fallbacks, obstore only.
     """
@@ -226,7 +230,7 @@ async def _open_obstore_bypass(path: str, mode: str = "rb", **kwargs):
     return file_handle
 
 
-async def open(path: str, mode: str = "rb", **kwargs):
+async def open(path: str, mode: str = "rb", **kwargs) -> AsyncReadableFile | AsyncWritableFile:
     """
     Asynchronously open a file and return an async context manager.
     This function checks if the underlying filesystem supports obstore bypass.
@@ -277,7 +281,9 @@ async def put_stream(
     # Check if we should use obstore bypass
     fs = get_underlying_filesystem(path=to_path)
     try:
-        file_handle = await open(to_path, "wb", **kwargs)
+        file_handle: obstore.AsyncWritableFile = typing.cast(
+            obstore.AsyncWritableFile, await open(to_path, "wb", **kwargs)
+        )
         if isinstance(data_iterable, bytes):
             await file_handle.write(data_iterable)
         else:
@@ -289,13 +295,13 @@ async def put_stream(
         pass
 
     # Fallback to normal open
-    file_handle = fs.open(to_path, mode="wb", **kwargs)
+    file_handle_io: typing.IO = fs.open(to_path, mode="wb", **kwargs)
     if isinstance(data_iterable, bytes):
-        file_handle.write(data_iterable)
+        file_handle_io.write(data_iterable)
     else:
         async for data in data_iterable:
-            file_handle.write(data)
-    file_handle.close()
+            file_handle_io.write(data)
+    file_handle_io.close()
 
     return str(to_path)
 
@@ -322,7 +328,7 @@ async def get_stream(path: str, chunk_size=10 * 2**20, **kwargs) -> AsyncGenerat
         # Set buffer_size for obstore if chunk_size is provided
         if "buffer_size" not in kwargs:
             kwargs["buffer_size"] = chunk_size
-        file_handle = await _open_obstore_bypass(path, "rb", **kwargs)
+        file_handle = typing.cast(obstore.AsyncReadableFile, await _open_obstore_bypass(path, "rb", **kwargs))
         while chunk := await file_handle.read():
             yield bytes(chunk)
         return
