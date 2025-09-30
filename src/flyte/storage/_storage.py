@@ -14,7 +14,7 @@ from obstore.fsspec import register
 
 from flyte._initialize import get_storage
 from flyte._logging import logger
-from flyte.errors import InitializationError
+from flyte.errors import InitializationError, OnlyAsyncIOSupportedError
 
 _OBSTORE_SUPPORTED_PROTOCOLS = ["s3", "gs", "abfs", "abfss"]
 
@@ -229,34 +229,23 @@ async def _open_obstore_bypass(path: str, mode: str = "rb", **kwargs):
 async def open(path: str, mode: str = "rb", **kwargs):
     """
     Asynchronously open a file and return an async context manager.
-    Simple and clean implementation using AsyncFileSystem or sync fallback.
-    Args:
-        path: Path to the file
-        mode: File open mode ('rb', 'wb', etc.)
-        **kwargs: Additional arguments passed to the underlying filesystem
-    Returns:
-        AsyncFileHandle that can be used as an async context manager
-    Example:
-        ```python
-        async with await storage.open("s3://bucket/file.txt", "rb") as f:
-            data = await f.read()
-        async with await storage.open("s3://bucket/file.txt", "wb") as f:
-            await f.write(b"data")
-        ```
+    This function checks if the underlying filesystem supports obstore bypass.
+    If it does, it uses obstore to open the file. Otherwise, it falls back to
+    the standard _open function which uses AsyncFileSystem.
+
+    It will raise NotImplementedError if neither obstore nor AsyncFileSystem is supported.
     """
     fs = get_underlying_filesystem(path=path)
 
-    # Try AsyncFileSystem first
-    if isinstance(fs, AsyncFileSystem):
-        try:
-            file_handle = await fs.open_async(path, mode, **kwargs)
-            return file_handle
-        except NotImplementedError:
-            logger.debug(f"{fs} doesn't implement 'open_async', falling back to sync")
+    # Check if we should use obstore bypass
+    if _is_obstore_supported_protocol(fs.protocol) and hasattr(fs, "_split_path") and hasattr(fs, "_construct_store"):
+        return await _open_obstore_bypass(path, mode, **kwargs)
 
-    # Fallback to sync open
-    file_handle = fs.open(path, mode, **kwargs)
-    return file_handle
+    # Fallback to normal open
+    if isinstance(fs, AsyncFileSystem):
+        return await fs.open_async(path, mode, **kwargs)
+
+    raise OnlyAsyncIOSupportedError(f"Filesystem {fs} does not support async operations")
 
 
 async def put_stream(
@@ -288,17 +277,23 @@ async def put_stream(
     # Check if we should use obstore bypass
     fs = get_underlying_filesystem(path=to_path)
     if _is_obstore_supported_protocol(fs.protocol) and hasattr(fs, "_split_path") and hasattr(fs, "_construct_store"):
-        file_handle = await _open_obstore_bypass(to_path, "wb", **kwargs)
-    else:
         file_handle = await open(to_path, "wb", **kwargs)
-
-    # Simple and clean: use the AsyncFileHandle wrapper
-    async with file_handle as f:
         if isinstance(data_iterable, bytes):
-            f.write(data_iterable)
+            await file_handle.write(data_iterable)
         else:
             async for data in data_iterable:
-                f.write(data)
+                await file_handle.write(data)
+        await file_handle.close()
+        return str(to_path)
+
+    # Fallback to normal open
+    file_handle = fs.open(to_path, mode="wb", **kwargs)
+    if isinstance(data_iterable, bytes):
+        file_handle.write(data_iterable)
+    else:
+        async for data in data_iterable:
+            file_handle.write(data)
+    file_handle.close()
 
     return str(to_path)
 
@@ -333,13 +328,18 @@ async def get_stream(path: str, chunk_size=10 * 2**20, **kwargs) -> AsyncGenerat
     # Fallback to normal open
     if "block_size" not in kwargs:
         kwargs["block_size"] = chunk_size
-    file_handle = await open(path, "rb", **kwargs)
+
     if isinstance(fs, AsyncFileSystem):
+        file_handle = await fs.open_async(path, "rb", **kwargs)
         while chunk := await file_handle.read():
             yield chunk
-    else:
-        while chunk := file_handle.read():
-            yield chunk
+        await file_handle.close()
+        return
+
+    file_handle = fs.open(path, "rb", **kwargs)
+    while chunk := file_handle.read():
+        yield chunk
+    file_handle.close()
 
 
 def join(*paths: str) -> str:

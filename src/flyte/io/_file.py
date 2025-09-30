@@ -19,16 +19,15 @@ from typing import (
 
 import aiofiles
 from flyteidl.core import literals_pb2, types_pb2
-from fsspec.asyn import AsyncFileSystem
 from fsspec.utils import get_protocol
 from mashumaro.types import SerializableType
 from pydantic import BaseModel, Field, model_validator
 from pydantic.json_schema import SkipJsonSchema
 
+import flyte.errors
 import flyte.storage as storage
 from flyte._context import internal_ctx
 from flyte._initialize import requires_initialization
-from flyte._logging import logger
 from flyte.io._hashing_io import AsyncHashingReader, HashingWriter, HashMethod, PrecomputedValue
 from flyte.types import TypeEngine, TypeTransformer, TypeTransformerFailedError
 
@@ -214,55 +213,30 @@ class File(BaseModel, Generic[T], SerializableType):
                 data = await f.read()
             ```
         """
-        fs = storage.get_underlying_filesystem(path=self.path)
-
-        # Set up cache options if provided
-        if cache_options is None:
-            cache_options = {}
-
-        # Configure the open parameters
-        open_kwargs = {**kwargs}
-        if compression:
-            open_kwargs["compression"] = compression
-
-        if block_size:
-            open_kwargs["block_size"] = block_size
-
-        # Apply caching strategy
-        if cache_type != "none":
-            open_kwargs["cache_type"] = cache_type
-            open_kwargs["cache_options"] = cache_options
-
-        # Use aiofiles for local files
-        if fs.protocol == "file":
-            async with aiofiles.open(self.path, mode=mode, **kwargs) as f:
-                yield f
-        else:
-            # This code is broadly similar to what storage.get_stream does, but without actually reading from the stream
-            file_handle = None
+        # Check if we should use obstore bypass
+        try:
+            fh = await storage.open(
+                self.path,
+                mode=mode,
+                cache_type=cache_type,
+                cache_options=cache_options,
+                compression=compression,
+                block_size=block_size,
+                **kwargs,
+            )
             try:
-                if "b" not in mode:
-                    raise ValueError("Mode must include 'b' for binary access, when using remote files.")
-                if isinstance(fs, AsyncFileSystem):
-                    file_handle = await fs.open_async(self.path, mode, **open_kwargs)
-                    yield file_handle
-                    return
-            except NotImplementedError:
-                logger.debug(f"{fs} doesn't implement 'open_async', falling back to sync")
+                yield fh
+                return
             finally:
-                if file_handle is not None:
-                    file_handle.close()
-
-            with fs.open(self.path, mode, **open_kwargs) as file_handle:
-                if self.hash_method and self.hash is None:
-                    logger.debug(f"Wrapping file handle with hashing writer using {self.hash_method}")
-                    fh = HashingWriter(file_handle, accumulator=self.hash_method)
-                    yield fh
-                    self.hash = fh.result()
-                    fh.close()
-                else:
-                    yield file_handle
-                    file_handle.close()
+                fh.close()
+        except flyte.errors.OnlyAsyncIOSupportedError:
+            # Fall back to aiofiles
+            fs = storage.get_underlying_filesystem(path=self.path)
+            if "file" in fs.protocol:
+                async with aiofiles.open(self.path, mode=mode, **kwargs) as f:
+                    yield f
+                return
+            raise
 
     def exists_sync(self) -> bool:
         """

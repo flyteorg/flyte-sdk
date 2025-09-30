@@ -17,11 +17,11 @@ env = flyte.TaskEnvironment(
 @env.task(cache="auto")
 async def create_large_file(size_gigabytes: int = 5) -> flyte.io.File:
     f = flyte.io.File.new_remote()
-
-    async with f.open("wb") as fp:
-        chunk = b"\0" * (1024 * 1024)  # 1 MiB chunk
+    chunk_size = 1024 * 1024
+    async with f.open("wb", block_size=chunk_size) as fp:
+        chunk = b"\0" * chunk_size
         for _ in range(size_gigabytes * 1024):
-            fp.write(chunk)
+            await fp.write(chunk)
     return f
 
 
@@ -51,5 +51,5 @@ if __name__ == "__main__":
     import flyte.git
 
     flyte.init_from_config(flyte.git.config_from_root())
-    r = flyte.run(main, 5)
+    r = flyte.run(main, 2)
     print(r.url)
