@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import os
 import pathlib
 import random
@@ -212,14 +214,14 @@ async def _open_obstore_bypass(path: str, mode: str = "rb", **kwargs) -> AsyncRe
     """
     Simple obstore bypass for opening files. No fallbacks, obstore only.
     """
-    import obstore
     from obstore.store import ObjectStore
 
     fs = get_underlying_filesystem(path=path)
     bucket, file_path = fs._split_path(path)  # pylint: disable=W0212
     store: ObjectStore = fs._construct_store(bucket)
 
-    file_handle: obstore.AsyncWritableFile | obstore.AsyncReadableFile
+    file_handle: AsyncReadableFile | AsyncWritableFile
+
     if "w" in mode:
         attributes = kwargs.pop("attributes", {})
         file_handle = obstore.open_writer_async(store, file_path, attributes=attributes)
@@ -281,9 +283,7 @@ async def put_stream(
     # Check if we should use obstore bypass
     fs = get_underlying_filesystem(path=to_path)
     try:
-        file_handle: obstore.AsyncWritableFile = typing.cast(
-            obstore.AsyncWritableFile, await open(to_path, "wb", **kwargs)
-        )
+        file_handle = typing.cast(AsyncWritableFile, await open(to_path, "wb", **kwargs))
         if isinstance(data_iterable, bytes):
             await file_handle.write(data_iterable)
         else:
@@ -328,7 +328,7 @@ async def get_stream(path: str, chunk_size=10 * 2**20, **kwargs) -> AsyncGenerat
         # Set buffer_size for obstore if chunk_size is provided
         if "buffer_size" not in kwargs:
             kwargs["buffer_size"] = chunk_size
-        file_handle = typing.cast(obstore.AsyncReadableFile, await _open_obstore_bypass(path, "rb", **kwargs))
+        file_handle = typing.cast(AsyncReadableFile, await _open_obstore_bypass(path, "rb", **kwargs))
         while chunk := await file_handle.read():
             yield bytes(chunk)
         return

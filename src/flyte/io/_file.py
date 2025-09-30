@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import os
 import typing
 from contextlib import asynccontextmanager, contextmanager
@@ -365,7 +366,10 @@ class File(BaseModel, Generic[T], SerializableType):
                 yield fh
                 return
             finally:
-                fh.close()
+                if inspect.iscoroutinefunction(fh.close):
+                    await fh.close()
+                else:
+                    fh.close()
         except flyte.errors.OnlyAsyncIOSupportedError:
             # Fall back to aiofiles
             fs = storage.get_underlying_filesystem(path=self.path)
