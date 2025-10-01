@@ -1,7 +1,6 @@
 from datetime import datetime
 
 import pytest
-from flyteidl.core import interface_pb2, literals_pb2, types_pb2
 
 from flyte import Cron, FixedRate, TaskEnvironment, Trigger, TriggerTime
 from flyte._internal.runtime.convert import convert_upload_default_inputs
@@ -10,8 +9,9 @@ from flyte._internal.runtime.trigger_serde import (
     process_default_inputs,
     to_task_trigger,
 )
-from flyte._protos.workflow import common_pb2
 from flyte.types import TypeEngine
+from flyteidl2.core import interface_pb2, literals_pb2, types_pb2
+from flyteidl2.task import common_pb2
 
 
 class TestToSchedule:
