@@ -408,3 +408,24 @@ def get_console() -> Console:
     Get a console that is configured to use colors if the terminal supports it.
     """
     return Console(color_system="auto", force_terminal=True, width=120)
+
+
+def parse_images(values: List[str]) -> None:
+    """
+    Parse image values and update the init config.
+
+    Args:
+        values: List of image strings in format "imagename=imageuri" or just "imageuri"
+    """
+    from .._initialize import _get_init_config
+
+    cfg = _get_init_config()
+    if cfg is None:
+        return
+    for value in values:
+        if "=" in value:
+            image_name, image_uri = value.split("=", 1)
+            cfg.images[image_name] = image_uri
+        else:
+            # If no name specified, use "default" as the name
+            cfg.images["default"] = value
