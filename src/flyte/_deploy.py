@@ -67,7 +67,7 @@ class DeployedTask:
         return [
             ("name", self.deployed_task.task_template.id.name),
             ("version", self.deployed_task.task_template.id.version),
-            ("# triggers", str(len(self.deployed_triggers))),
+            ("triggers", ",".join([t.name for t in self.deployed_triggers])),
         ]
 
 
@@ -171,10 +171,14 @@ async def _deploy_task(
             name=spec.task_template.id.name,
         )
 
-        deployable_triggers = []
+        deployable_triggers_coros = []
         for t in task.triggers:
-            deployable_triggers.append(to_task_trigger(t=t))
+            inputs = None
+            if spec.task_template.interface and spec.task_template.interface.inputs:
+                inputs = spec.task_template.interface.inputs
+            deployable_triggers_coros.append(to_task_trigger(t=t, task_name=task.name, task_inputs=inputs))
 
+        deployable_triggers = await asyncio.gather(*deployable_triggers_coros)
         try:
             await get_client().task_service.DeployTask(
                 task_service_pb2.DeployTaskRequest(
