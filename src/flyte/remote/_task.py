@@ -6,7 +6,6 @@ from dataclasses import dataclass
 from typing import Any, AsyncIterator, Callable, Coroutine, Dict, Iterator, Literal, Optional, Tuple, Union, cast
 
 import rich.repr
-from google.protobuf import timestamp
 
 import flyte
 import flyte.errors
@@ -35,7 +34,7 @@ def _repr_task_metadata(metadata: task_definition_pb2.TaskMetadata) -> rich.repr
         else:
             yield "deployed_by", f"App: {metadata.deployed_by.application.spec.name}"
     yield "short_name", metadata.short_name
-    yield "deployed_at", timestamp.to_datetime(metadata.deployed_at)
+    yield "deployed_at", metadata.deployed_at.ToDatetime()
     yield "environment_name", metadata.environment_name
 
 
