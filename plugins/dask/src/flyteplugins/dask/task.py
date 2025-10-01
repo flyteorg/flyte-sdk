@@ -4,9 +4,7 @@ from typing import Any, Dict, Optional
 import flyte
 from distributed import Client, WorkerPlugin
 from flyte import Resources
-from flyte._internal.runtime.entrypoints import download_code_bundle
-from flyte._internal.runtime.resources_serde import get_proto_resources
-from flyte.extend import AsyncFunctionTaskTemplate, TaskPluginRegistry
+from flyte.extend import AsyncFunctionTaskTemplate, TaskPluginRegistry, download_code_bundle, get_proto_resources
 from flyte.models import CodeBundle, SerializationContext
 from flyteidl.plugins.dask_pb2 import DaskJob, DaskScheduler, DaskWorkerGroup
 from google.protobuf.json_format import MessageToDict
