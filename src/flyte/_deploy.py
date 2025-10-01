@@ -20,7 +20,8 @@ from ._task import TaskTemplate
 from ._task_environment import TaskEnvironment
 
 if TYPE_CHECKING:
-    from flyteidl2.workflow import task_definition_pb2, trigger_definition_pb2
+    from flyteidl2.task import task_definition_pb2
+    from flyteidl2.trigger import trigger_definition_pb2
 
     from ._code_bundle import CopyFiles
     from ._internal.imagebuild.image_builder import ImageCache

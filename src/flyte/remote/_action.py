@@ -29,6 +29,7 @@ from flyte.remote._common import ToJSONMixin
 from flyte.remote._logs import Logs
 from flyte.syncify import syncify
 from flyteidl2.common import identifier_pb2, list_pb2
+from flyteidl2.task import common_pb2
 from flyteidl2.workflow import run_definition_pb2, run_service_pb2
 from flyteidl2.workflow.run_service_pb2 import WatchActionDetailsResponse
 
@@ -706,7 +707,7 @@ class ActionInputs(UserDict, ToJSONMixin):
     remote Union API.
     """
 
-    pb2: run_definition_pb2.Inputs
+    pb2: common_pb2.Inputs
     data: Dict[str, Any]
 
     def __repr__(self):
@@ -723,14 +724,14 @@ class ActionOutputs(tuple, ToJSONMixin):
     remote Union API.
     """
 
-    def __new__(cls, pb2: run_definition_pb2.Outputs, data: Tuple[Any, ...]):
+    def __new__(cls, pb2: common_pb2.Outputs, data: Tuple[Any, ...]):
         # Create the tuple part
         obj = super().__new__(cls, data)
         # Store extra data (you can't do this here directly since it's immutable)
         obj.pb2 = pb2
         return obj
 
-    def __init__(self, pb2: run_definition_pb2.Outputs, data: Tuple[Any, ...]):
+    def __init__(self, pb2: common_pb2.Outputs, data: Tuple[Any, ...]):
         # Normally you'd set instance attributes here,
         # but we've already set `pb2` in `__new__`
         self.pb2 = pb2

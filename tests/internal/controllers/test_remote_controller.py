@@ -13,6 +13,7 @@ from flyte._internal.runtime.convert import Outputs
 from flyte.models import ActionID, CodeBundle, RawDataPath, TaskContext
 from flyte.types import TypeEngine
 from flyteidl2.common import identifier_pb2
+from flyteidl2.task import common_pb2
 from flyteidl2.workflow import run_definition_pb2
 
 env = flyte.TaskEnvironment("test")
@@ -117,9 +118,9 @@ async def test_submit_with_outputs():
         # Ensure the mock returns a valid value
         mock_submit_action.return_value = action
         mock_load_outputs.return_value = Outputs(
-            proto_outputs=run_definition_pb2.Outputs(
+            proto_outputs=common_pb2.Outputs(
                 literals=[
-                    run_definition_pb2.NamedLiteral(
+                    common_pb2.NamedLiteral(
                         name="o0",
                         value=await TypeEngine.to_literal("test", str, TypeEngine.to_literal_type(str)),
                     )

@@ -10,8 +10,8 @@ except ImportError:
 
 from flyte._internal.runtime import convert
 from flyte._logging import logger
-from flyte._protos.workflow import run_definition_pb2
 from flyte.config import auto
+from flyteidl2.task import common_pb2
 
 DEFAULT_CACHE_DIR = "~/.flyte"
 CACHE_LOCATION = "local-cache/cache.db"
@@ -127,7 +127,7 @@ class LocalTaskCache(object):
             row = await cursor.fetchone()
             if row:
                 outputs_bytes = row[0]
-                outputs = run_definition_pb2.Outputs()
+                outputs = common_pb2.Outputs()
                 outputs.ParseFromString(outputs_bytes)
                 return convert.Outputs(proto_outputs=outputs)
         return None
@@ -142,7 +142,7 @@ class LocalTaskCache(object):
         row = cursor.fetchone()
         if row:
             outputs_bytes = row[0]
-            outputs = run_definition_pb2.Outputs()
+            outputs = common_pb2.Outputs()
             outputs.ParseFromString(outputs_bytes)
             return convert.Outputs(proto_outputs=outputs)
         return None

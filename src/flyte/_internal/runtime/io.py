@@ -10,7 +10,7 @@ from flyteidl.core import errors_pb2
 import flyte.storage as storage
 from flyte.models import PathRewrite
 from flyteidl2.core import execution_pb2
-from flyteidl2.workflow import run_definition_pb2
+from flyteidl2.task import common_pb2
 
 from .convert import Inputs, Outputs, _clean_error_code
 
@@ -99,7 +99,7 @@ async def load_inputs(path: str, max_bytes: int = -1, path_rewrite_config: PathR
     :param path_rewrite_config: If provided, rewrites paths in the input blobs according to the configuration.
     :return: Inputs object
     """
-    lm = run_definition_pb2.Inputs()
+    lm = common_pb2.Inputs()
 
     if max_bytes == -1:
         proto_str = b"".join([c async for c in storage.get_stream(path=path)])
@@ -138,7 +138,7 @@ async def load_outputs(path: str, max_bytes: int = -1) -> Outputs:
                       If -1, reads the entire file.
     :return: Outputs object
     """
-    lm = run_definition_pb2.Outputs()
+    lm = common_pb2.Outputs()
 
     if max_bytes == -1:
         proto_str = b"".join([c async for c in storage.get_stream(path=path)])

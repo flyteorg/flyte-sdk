@@ -134,6 +134,7 @@ class _Runner:
         from flyte.remote._task import LazyEntity
         from flyteidl2.common import identifier_pb2
         from flyteidl2.core import literals_pb2
+        from flyteidl2.task import run_pb2
         from flyteidl2.workflow import run_definition_pb2, run_service_pb2
 
         from ._code_bundle import build_code_bundle, build_pkl_bundle
@@ -254,9 +255,9 @@ class _Runner:
                     raise ValueError(f"Environment variable {k} must be a string, got {type(v)}")
                 kv_pairs.append(literals_pb2.KeyValuePair(key=k, value=v))
 
-            env_kv = run_definition_pb2.Envs(values=kv_pairs)
-            annotations = run_definition_pb2.Annotations(values=self._annotations)
-            labels = run_definition_pb2.Labels(values=self._labels)
+            env_kv = run_pb2.Envs(values=kv_pairs)
+            annotations = run_pb2.Annotations(values=self._annotations)
+            labels = run_pb2.Labels(values=self._labels)
 
             try:
                 resp = await get_client().run_service.CreateRun(
@@ -265,7 +266,7 @@ class _Runner:
                         project_id=project_id,
                         task_spec=task_spec,
                         inputs=inputs.proto_inputs,
-                        run_spec=run_definition_pb2.RunSpec(
+                        run_spec=run_pb2.RunSpec(
                             overwrite_cache=self._overwrite_cache,
                             interruptible=wrappers_pb2.BoolValue(value=self._interruptible)
                             if self._interruptible is not None

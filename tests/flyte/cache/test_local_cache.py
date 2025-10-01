@@ -1,11 +1,11 @@
 import pytest
-from flyteidl.core.interface_pb2 import TypedInterface, Variable, VariableMap
-from flyteidl.core.literals_pb2 import Literal, Primitive, Scalar
-from flyteidl.core.types_pb2 import LiteralType, SimpleType
 
 from flyte._cache.local_cache import LocalTaskCache
 from flyte._internal.runtime import convert
-from flyte._protos.workflow import run_definition_pb2
+from flyteidl2.core.interface_pb2 import TypedInterface, Variable, VariableMap
+from flyteidl2.core.literals_pb2 import Literal, Primitive, Scalar
+from flyteidl2.core.types_pb2 import LiteralType, SimpleType
+from flyteidl2.task import common_pb2
 
 
 @pytest.mark.asyncio
@@ -15,10 +15,8 @@ async def test_set_and_get_cache():
     ignore_input_vars = []
 
     proto_inputs = convert.Inputs(
-        proto_inputs=run_definition_pb2.Inputs(
-            literals=[
-                run_definition_pb2.NamedLiteral(name="x", value=Literal(scalar=Scalar(primitive=Primitive(integer=42))))
-            ]
+        proto_inputs=common_pb2.Inputs(
+            literals=[common_pb2.NamedLiteral(name="x", value=Literal(scalar=Scalar(primitive=Primitive(integer=42))))]
         )
     )
     inputs_hash = convert.generate_inputs_hash_from_proto(proto_inputs.proto_inputs)
@@ -28,9 +26,9 @@ async def test_set_and_get_cache():
     )
 
     expected_output = convert.Outputs(
-        proto_outputs=run_definition_pb2.Outputs(
+        proto_outputs=common_pb2.Outputs(
             literals=[
-                run_definition_pb2.NamedLiteral(
+                common_pb2.NamedLiteral(
                     name="result", value=Literal(scalar=Scalar(primitive=Primitive(string_value="cached_result")))
                 )
             ]
@@ -58,10 +56,8 @@ async def test_set_overwrites_existing():
     ignore_input_vars = []
 
     proto_inputs = convert.Inputs(
-        proto_inputs=run_definition_pb2.Inputs(
-            literals=[
-                run_definition_pb2.NamedLiteral(name="x", value=Literal(scalar=Scalar(primitive=Primitive(integer=42))))
-            ]
+        proto_inputs=common_pb2.Inputs(
+            literals=[common_pb2.NamedLiteral(name="x", value=Literal(scalar=Scalar(primitive=Primitive(integer=42))))]
         )
     )
     inputs_hash = convert.generate_inputs_hash_from_proto(proto_inputs.proto_inputs)
@@ -71,9 +67,9 @@ async def test_set_overwrites_existing():
     )
 
     first_output = convert.Outputs(
-        proto_outputs=run_definition_pb2.Outputs(
+        proto_outputs=common_pb2.Outputs(
             literals=[
-                run_definition_pb2.NamedLiteral(
+                common_pb2.NamedLiteral(
                     name="result", value=Literal(scalar=Scalar(primitive=Primitive(string_value="first_result")))
                 )
             ]
@@ -81,9 +77,9 @@ async def test_set_overwrites_existing():
     )
 
     second_output = convert.Outputs(
-        proto_outputs=run_definition_pb2.Outputs(
+        proto_outputs=common_pb2.Outputs(
             literals=[
-                run_definition_pb2.NamedLiteral(
+                common_pb2.NamedLiteral(
                     name="result", value=Literal(scalar=Scalar(primitive=Primitive(string_value="second_result")))
                 )
             ]
@@ -112,10 +108,8 @@ async def test_clear_cache():
     ignore_input_vars = []
 
     proto_inputs = convert.Inputs(
-        proto_inputs=run_definition_pb2.Inputs(
-            literals=[
-                run_definition_pb2.NamedLiteral(name="x", value=Literal(scalar=Scalar(primitive=Primitive(integer=42))))
-            ]
+        proto_inputs=common_pb2.Inputs(
+            literals=[common_pb2.NamedLiteral(name="x", value=Literal(scalar=Scalar(primitive=Primitive(integer=42))))]
         )
     )
     inputs_hash = convert.generate_inputs_hash_from_proto(proto_inputs.proto_inputs)
@@ -125,9 +119,9 @@ async def test_clear_cache():
     )
 
     output = convert.Outputs(
-        proto_outputs=run_definition_pb2.Outputs(
+        proto_outputs=common_pb2.Outputs(
             literals=[
-                run_definition_pb2.NamedLiteral(
+                common_pb2.NamedLiteral(
                     name="result", value=Literal(scalar=Scalar(primitive=Primitive(string_value="test_result")))
                 )
             ]

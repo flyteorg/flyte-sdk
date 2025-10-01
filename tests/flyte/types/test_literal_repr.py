@@ -11,7 +11,7 @@ from google.protobuf.timestamp_pb2 import Timestamp
 
 from flyte.types._string_literals import literal_string_repr
 from flyteidl2.core import literals_pb2
-from flyteidl2.workflow import run_definition_pb2
+from flyteidl2.task import common_pb2 as run_definition_pb2
 
 
 class TestLiteralStringReprWithLiteral:

@@ -4,7 +4,8 @@ from flyteidl.core import literals_pb2
 from google.protobuf import wrappers_pb2
 
 from flyte import Cron, FixedRate, Trigger, TriggerTime
-from flyte._protos.workflow import common_pb2, run_definition_pb2, trigger_definition_pb2
+from flyteidl2.task import common_pb2, run_pb2
+from flyteidl2.trigger import trigger_definition_pb2
 
 
 def _to_schedule(m: Union[Cron, FixedRate], kickoff_arg_name: str | None = None) -> common_pb2.Schedule:
@@ -26,16 +27,16 @@ def _to_schedule(m: Union[Cron, FixedRate], kickoff_arg_name: str | None = None)
         )
 
 
-def to_task_trigger(t: Trigger) -> trigger_definition_pb2.TaskTrigger:
+def to_task_trigger(t: Trigger) -> trigger_definition_pb2.TriggerSpec:
     env = None
     if t.env_vars:
-        env = run_definition_pb2.Envs([literals_pb2.KeyValuePair(key=k, value=v) for k, v in t.env_vars.items()])
+        env = run_pb2.Envs([literals_pb2.KeyValuePair(key=k, value=v) for k, v in t.env_vars.items()])
 
-    labels = run_definition_pb2.Labels(values=t.labels) if t.labels else None
+    labels = run_pb2.Labels(values=t.labels) if t.labels else None
 
-    annotations = run_definition_pb2.Annotations(values=t.annotations) if t.annotations else None
+    annotations = run_pb2.Annotations(values=t.annotations) if t.annotations else None
 
-    run_spec = run_definition_pb2.RunSpec(
+    run_spec = run_pb2.RunSpec(
         overwrite_cache=t.overwrite_cache,
         envs=env,
         interruptible=wrappers_pb2.BoolValue(t.interruptible) if t.interruptible is not None else None,
@@ -49,20 +50,18 @@ def to_task_trigger(t: Trigger) -> trigger_definition_pb2.TaskTrigger:
         for k, v in t.inputs.items():
             if v is TriggerTime:
                 kickoff_arg_name = k
-                break
+                # Continue to process other inputs, don't break
+                continue
 
     automation = _to_schedule(
         t.automation,
         kickoff_arg_name=kickoff_arg_name,
     )
 
-    return trigger_definition_pb2.TaskTrigger(
-        name=t.name,
-        spec=trigger_definition_pb2.TriggerSpec(
-            active=t.auto_activate,
-            run_spec=run_spec,
-            inputs=None,  # No inputs for now
-        ),
+    return trigger_definition_pb2.TriggerSpec(
+        active=t.auto_activate,
+        run_spec=run_spec,
+        inputs=None,  # No inputs for now
         automation_spec=common_pb2.TriggerAutomationSpec(
             type=common_pb2.TriggerAutomationSpec.Type.TYPE_SCHEDULE,
             schedule=automation,

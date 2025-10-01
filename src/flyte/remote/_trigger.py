@@ -7,9 +7,10 @@ from typing import AsyncIterator
 import flyte
 from flyte._initialize import ensure_client, get_client, get_common_config
 from flyte._internal.runtime import trigger_serde
-from flyte._protos.common import identifier_pb2, list_pb2
-from flyte._protos.workflow import common_pb2, task_definition_pb2, trigger_definition_pb2, trigger_service_pb2
 from flyte.syncify import syncify
+from flyteidl2.common import identifier_pb2, list_pb2
+from flyteidl2.task import common_pb2, task_definition_pb2
+from flyteidl2.trigger import trigger_definition_pb2, trigger_service_pb2
 
 from ._common import ToJSONMixin
 
@@ -99,8 +100,8 @@ class Trigger(ToJSONMixin):
         ensure_client()
         cfg = get_common_config()
         task_trigger = trigger_serde.to_task_trigger(t=trigger)
-        resp = await get_client().trigger_service.CreateTrigger(
-            request=trigger_service_pb2.CreateTriggerRequest(
+        resp = await get_client().trigger_service.DeployTrigger(
+            request=trigger_service_pb2.DeployTriggerRequest(
                 id=identifier_pb2.TriggerIdentifier(
                     name=identifier_pb2.TriggerName(
                         name=trigger.name,

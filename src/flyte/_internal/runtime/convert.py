@@ -14,21 +14,20 @@ from flyte.models import ActionID, NativeInterface, TaskContext
 from flyte.types import TypeEngine, TypeTransformerFailedError
 from flyteidl2.core import execution_pb2, interface_pb2, literals_pb2
 from flyteidl2.task import common_pb2, task_definition_pb2
-from flyteidl2.workflow import run_definition_pb2
 
 
 @dataclass(frozen=True)
 class Inputs:
-    proto_inputs: run_definition_pb2.Inputs
+    proto_inputs: common_pb2.Inputs
 
     @classmethod
     def empty(cls) -> "Inputs":
-        return cls(proto_inputs=run_definition_pb2.Inputs())
+        return cls(proto_inputs=common_pb2.Inputs())
 
 
 @dataclass(frozen=True)
 class Outputs:
-    proto_outputs: run_definition_pb2.Outputs
+    proto_outputs: common_pb2.Outputs
 
 
 @dataclass
@@ -146,10 +145,8 @@ async def convert_from_native_to_inputs(interface: NativeInterface, *args, **kwa
         literal_map = literals_pb2.LiteralMap(literals=copied_literals)
     # Make sure we the interface, not literal_map or kwargs, because those may have a different order
     return Inputs(
-        proto_inputs=run_definition_pb2.Inputs(
-            literals=[
-                run_definition_pb2.NamedLiteral(name=k, value=literal_map.literals[k]) for k in interface.inputs.keys()
-            ]
+        proto_inputs=common_pb2.Inputs(
+            literals=[common_pb2.NamedLiteral(name=k, value=literal_map.literals[k]) for k in interface.inputs.keys()]
         )
     )
 
@@ -191,11 +188,11 @@ async def convert_from_native_to_outputs(o: Any, interface: NativeInterface, tas
     for (output_name, python_type), v in zip(interface.outputs.items(), o):
         try:
             lit = await TypeEngine.to_literal(v, python_type, TypeEngine.to_literal_type(python_type))
-            named.append(run_definition_pb2.NamedLiteral(name=output_name, value=lit))
+            named.append(common_pb2.NamedLiteral(name=output_name, value=lit))
         except TypeTransformerFailedError as e:
             raise flyte.errors.RuntimeDataValidationError(output_name, e, task_name)
 
-    return Outputs(proto_outputs=run_definition_pb2.Outputs(literals=named))
+    return Outputs(proto_outputs=common_pb2.Outputs(literals=named))
 
 
 async def convert_outputs_to_native(interface: NativeInterface, outputs: Outputs) -> Union[Any, Tuple[Any, ...]]:
@@ -351,7 +348,7 @@ def generate_inputs_repr_for_literal(literal: literals_pb2.Literal) -> bytes:
     return literal.SerializeToString(deterministic=True)
 
 
-def generate_inputs_hash_for_named_literals(inputs: list[run_definition_pb2.NamedLiteral]) -> str:
+def generate_inputs_hash_for_named_literals(inputs: list[common_pb2.NamedLiteral]) -> str:
     """
     Generate a hash for the inputs using the new literal representation approach that respects
     hash values already present in literals. This is used to uniquely identify the inputs for a task
@@ -375,7 +372,7 @@ def generate_inputs_hash_for_named_literals(inputs: list[run_definition_pb2.Name
     return hash_data(combined_bytes)
 
 
-def generate_inputs_hash_from_proto(inputs: run_definition_pb2.Inputs) -> str:
+def generate_inputs_hash_from_proto(inputs: common_pb2.Inputs) -> str:
     """
     Generate a hash for the inputs. This is used to uniquely identify the inputs for a task.
     :param inputs: The inputs to hash.
@@ -404,7 +401,7 @@ def generate_cache_key_hash(
     task_interface: interface_pb2.TypedInterface,
     cache_version: str,
     ignored_input_vars: List[str],
-    proto_inputs: run_definition_pb2.Inputs,
+    proto_inputs: common_pb2.Inputs,
 ) -> str:
     """
     Generate a cache key hash based on the inputs hash, task name, task interface, and cache version.
@@ -420,7 +417,7 @@ def generate_cache_key_hash(
     """
     if ignored_input_vars:
         filtered = [named_lit for named_lit in proto_inputs.literals if named_lit.name not in ignored_input_vars]
-        final = run_definition_pb2.Inputs(literals=filtered)
+        final = common_pb2.Inputs(literals=filtered)
         final_inputs = generate_inputs_hash_from_proto(final)
     else:
         final_inputs = inputs_hash
