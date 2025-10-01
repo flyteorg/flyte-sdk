@@ -29,7 +29,10 @@ def _to_schedule(m: Union[Cron, FixedRate], kickoff_arg_name: str | None = None)
 
 
 async def to_task_trigger(
-    t: Trigger, task_name: str, task_inputs: interface_pb2.VariableMap
+    t: Trigger,
+    task_name: str,
+    task_inputs: interface_pb2.VariableMap,
+    task_default_inputs: list[common_pb2.NamedParameter],
 ) -> trigger_definition_pb2.TaskTrigger:
     """
     Converts a Trigger object to a TaskTrigger protobuf object.
@@ -37,7 +40,7 @@ async def to_task_trigger(
         t:
         task_name:
         task_inputs:
-
+        task_default_inputs:
     Returns:
 
     """
@@ -89,6 +92,12 @@ async def to_task_trigger(
             keys.append(k)
 
     final_literals: list[literals_pb2.Literal] = await asyncio.gather(*literal_coros)
+
+    for p in task_default_inputs or []:
+        if p.name not in keys:
+            keys.append(p.name)
+            final_literals.append(p.parameter.default)
+
     literals: list[run_definition_pb2.NamedLiteral] = []
     for k, lit in zip(keys, final_literals):
         literals.append(

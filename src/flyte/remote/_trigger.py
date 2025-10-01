@@ -113,7 +113,10 @@ class Trigger(ToJSONMixin):
             task: TaskDetails = await lazy.fetch.aio()
 
             task_trigger = await trigger_serde.to_task_trigger(
-                t=trigger, task_name=task_name, task_inputs=task.pb2.spec.task_template.interface.inputs
+                t=trigger,
+                task_name=task_name,
+                task_inputs=task.pb2.spec.task_template.interface.inputs,
+                task_default_inputs=list(task.pb2.spec.default_inputs),
             )
 
             resp = await get_client().trigger_service.DeployTrigger(

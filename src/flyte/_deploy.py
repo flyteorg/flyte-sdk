@@ -173,10 +173,11 @@ async def _deploy_task(
 
         deployable_triggers_coros = []
         for t in task.triggers:
-            inputs = None
-            if spec.task_template.interface and spec.task_template.interface.inputs:
-                inputs = spec.task_template.interface.inputs
-            deployable_triggers_coros.append(to_task_trigger(t=t, task_name=task.name, task_inputs=inputs))
+            inputs = spec.task_template.interface.inputs
+            default_inputs = spec.default_inputs
+            deployable_triggers_coros.append(
+                to_task_trigger(t=t, task_name=task.name, task_inputs=inputs, task_default_inputs=list(default_inputs))
+            )
 
         deployable_triggers = await asyncio.gather(*deployable_triggers_coros)
         try:
