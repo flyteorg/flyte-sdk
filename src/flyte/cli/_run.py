@@ -467,6 +467,28 @@ Flyte environment:
 flyte run --local hello.py my_task --arg1 value1 --arg2 value2
 ```
 
+You can provide image mappings with `--image` flag. This allows you to specify
+the image URI for the task environment during CLI execution without changing
+the code. Any images defined with `Image.from_name("name")` will resolve to the
+corresponding URIs you specify here.
+
+```bash
+flyte run hello.py my_task --image my_image=ghcr.io/myorg/my-image:v1.0
+```
+
+If the image name is not provided, it is regarded as a default image and will
+be used when no image is specified in TaskEnvironment:
+
+```bash
+flyte run hello.py my_task --image ghcr.io/myorg/default-image:latest
+```
+
+You can specify multiple image arguments:
+
+```bash
+flyte run hello.py my_task --image ghcr.io/org/default:latest --image gpu=ghcr.io/org/gpu:v2.0
+```
+
 To run tasks that you've already deployed to Flyte, use the {RUN_REMOTE_CMD} command:
 
 ```bash
