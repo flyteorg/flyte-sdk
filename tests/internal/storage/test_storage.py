@@ -115,15 +115,6 @@ from flyte.storage import S3, get_underlying_filesystem
 from pathlib import Path
 import time
 
-def test_bjlk():
-    s3_cfg = S3.for_sandbox()
-    flyte.init(storage=s3_cfg)
-
-    fs = get_underlying_filesystem(protocol="s3")
-    print(fs)
-    resp = fs.info(path="s3://bucket/testproject/development")
-    print(resp)
-
 
 @pytest.mark.asyncio
 async def test_access_large_file():

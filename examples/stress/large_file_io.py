@@ -25,7 +25,7 @@ async def create_large_file(size_gigabytes: int = 5) -> flyte.io.File:
             fp.write(chunk)
     print(f"Path is {f.path=}", flush=True)
     print("sleeping")
-    await asyncio.sleep(10000)
+    await asyncio.sleep(40000)
     return f
 
 
