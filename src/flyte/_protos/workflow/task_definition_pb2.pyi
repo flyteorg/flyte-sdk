@@ -39,34 +39,34 @@ class TaskIdentifier(_message.Message):
     version: str
     def __init__(self, org: _Optional[str] = ..., project: _Optional[str] = ..., domain: _Optional[str] = ..., name: _Optional[str] = ..., version: _Optional[str] = ...) -> None: ...
 
-class TaskTriggersMetadata(_message.Message):
-    __slots__ = ["single_trigger_meta", "multi_trigger_meta"]
-    class MultiTriggerMeta(_message.Message):
+class TaskTriggersSummary(_message.Message):
+    __slots__ = ["automation_spec", "stats"]
+    class TriggerStats(_message.Message):
         __slots__ = ["total", "active"]
         TOTAL_FIELD_NUMBER: _ClassVar[int]
         ACTIVE_FIELD_NUMBER: _ClassVar[int]
         total: int
         active: int
         def __init__(self, total: _Optional[int] = ..., active: _Optional[int] = ...) -> None: ...
-    SINGLE_TRIGGER_META_FIELD_NUMBER: _ClassVar[int]
-    MULTI_TRIGGER_META_FIELD_NUMBER: _ClassVar[int]
-    single_trigger_meta: _common_pb2.TriggerAutomationSpec
-    multi_trigger_meta: TaskTriggersMetadata.MultiTriggerMeta
-    def __init__(self, single_trigger_meta: _Optional[_Union[_common_pb2.TriggerAutomationSpec, _Mapping]] = ..., multi_trigger_meta: _Optional[_Union[TaskTriggersMetadata.MultiTriggerMeta, _Mapping]] = ...) -> None: ...
+    AUTOMATION_SPEC_FIELD_NUMBER: _ClassVar[int]
+    STATS_FIELD_NUMBER: _ClassVar[int]
+    automation_spec: _common_pb2.TriggerAutomationSpec
+    stats: TaskTriggersSummary.TriggerStats
+    def __init__(self, automation_spec: _Optional[_Union[_common_pb2.TriggerAutomationSpec, _Mapping]] = ..., stats: _Optional[_Union[TaskTriggersSummary.TriggerStats, _Mapping]] = ...) -> None: ...
 
 class TaskMetadata(_message.Message):
-    __slots__ = ["deployed_by", "short_name", "deployed_at", "environment_name", "triggers_meta"]
+    __slots__ = ["deployed_by", "short_name", "deployed_at", "environment_name", "triggers_summary"]
     DEPLOYED_BY_FIELD_NUMBER: _ClassVar[int]
     SHORT_NAME_FIELD_NUMBER: _ClassVar[int]
     DEPLOYED_AT_FIELD_NUMBER: _ClassVar[int]
     ENVIRONMENT_NAME_FIELD_NUMBER: _ClassVar[int]
-    TRIGGERS_META_FIELD_NUMBER: _ClassVar[int]
+    TRIGGERS_SUMMARY_FIELD_NUMBER: _ClassVar[int]
     deployed_by: _identity_pb2.EnrichedIdentity
     short_name: str
     deployed_at: _timestamp_pb2.Timestamp
     environment_name: str
-    triggers_meta: TaskTriggersMetadata
-    def __init__(self, deployed_by: _Optional[_Union[_identity_pb2.EnrichedIdentity, _Mapping]] = ..., short_name: _Optional[str] = ..., deployed_at: _Optional[_Union[_timestamp_pb2.Timestamp, _Mapping]] = ..., environment_name: _Optional[str] = ..., triggers_meta: _Optional[_Union[TaskTriggersMetadata, _Mapping]] = ...) -> None: ...
+    triggers_summary: TaskTriggersSummary
+    def __init__(self, deployed_by: _Optional[_Union[_identity_pb2.EnrichedIdentity, _Mapping]] = ..., short_name: _Optional[str] = ..., deployed_at: _Optional[_Union[_timestamp_pb2.Timestamp, _Mapping]] = ..., environment_name: _Optional[str] = ..., triggers_summary: _Optional[_Union[TaskTriggersSummary, _Mapping]] = ...) -> None: ...
 
 class Task(_message.Message):
     __slots__ = ["task_id", "metadata"]

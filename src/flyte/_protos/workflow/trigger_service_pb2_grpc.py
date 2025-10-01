@@ -15,10 +15,10 @@ class TriggerServiceStub(object):
         Args:
             channel: A grpc.Channel.
         """
-        self.CreateTrigger = channel.unary_unary(
-                '/cloudidl.workflow.TriggerService/CreateTrigger',
-                request_serializer=workflow_dot_trigger__service__pb2.CreateTriggerRequest.SerializeToString,
-                response_deserializer=workflow_dot_trigger__service__pb2.CreateTriggerResponse.FromString,
+        self.DeployTrigger = channel.unary_unary(
+                '/cloudidl.workflow.TriggerService/DeployTrigger',
+                request_serializer=workflow_dot_trigger__service__pb2.DeployTriggerRequest.SerializeToString,
+                response_deserializer=workflow_dot_trigger__service__pb2.DeployTriggerResponse.FromString,
                 )
         self.GetTriggerDetails = channel.unary_unary(
                 '/cloudidl.workflow.TriggerService/GetTriggerDetails',
@@ -56,7 +56,7 @@ class TriggerServiceServicer(object):
     """TriggerService provides an interface for managing triggers.
     """
 
-    def CreateTrigger(self, request, context):
+    def DeployTrigger(self, request, context):
         """Create if trigger didn't exist previously.
         Update if it already exists.
         Re-create(or undelete) if it was soft-deleted.
@@ -115,10 +115,10 @@ class TriggerServiceServicer(object):
 
 def add_TriggerServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
-            'CreateTrigger': grpc.unary_unary_rpc_method_handler(
-                    servicer.CreateTrigger,
-                    request_deserializer=workflow_dot_trigger__service__pb2.CreateTriggerRequest.FromString,
-                    response_serializer=workflow_dot_trigger__service__pb2.CreateTriggerResponse.SerializeToString,
+            'DeployTrigger': grpc.unary_unary_rpc_method_handler(
+                    servicer.DeployTrigger,
+                    request_deserializer=workflow_dot_trigger__service__pb2.DeployTriggerRequest.FromString,
+                    response_serializer=workflow_dot_trigger__service__pb2.DeployTriggerResponse.SerializeToString,
             ),
             'GetTriggerDetails': grpc.unary_unary_rpc_method_handler(
                     servicer.GetTriggerDetails,
@@ -162,7 +162,7 @@ class TriggerService(object):
     """
 
     @staticmethod
-    def CreateTrigger(request,
+    def DeployTrigger(request,
             target,
             options=(),
             channel_credentials=None,
@@ -172,9 +172,9 @@ class TriggerService(object):
             wait_for_ready=None,
             timeout=None,
             metadata=None):
-        return grpc.experimental.unary_unary(request, target, '/cloudidl.workflow.TriggerService/CreateTrigger',
-            workflow_dot_trigger__service__pb2.CreateTriggerRequest.SerializeToString,
-            workflow_dot_trigger__service__pb2.CreateTriggerResponse.FromString,
+        return grpc.experimental.unary_unary(request, target, '/cloudidl.workflow.TriggerService/DeployTrigger',
+            workflow_dot_trigger__service__pb2.DeployTriggerRequest.SerializeToString,
+            workflow_dot_trigger__service__pb2.DeployTriggerResponse.FromString,
             options, channel_credentials,
             insecure, call_credentials, compression, wait_for_ready, timeout, metadata)
 
