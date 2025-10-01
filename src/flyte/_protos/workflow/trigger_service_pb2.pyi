@@ -11,7 +11,7 @@ from typing import ClassVar as _ClassVar, Iterable as _Iterable, Mapping as _Map
 
 DESCRIPTOR: _descriptor.FileDescriptor
 
-class CreateTriggerRequest(_message.Message):
+class DeployTriggerRequest(_message.Message):
     __slots__ = ["id", "spec", "automation_spec"]
     ID_FIELD_NUMBER: _ClassVar[int]
     SPEC_FIELD_NUMBER: _ClassVar[int]
@@ -21,7 +21,7 @@ class CreateTriggerRequest(_message.Message):
     automation_spec: _common_pb2.TriggerAutomationSpec
     def __init__(self, id: _Optional[_Union[_identifier_pb2.TriggerIdentifier, _Mapping]] = ..., spec: _Optional[_Union[_trigger_definition_pb2.TriggerSpec, _Mapping]] = ..., automation_spec: _Optional[_Union[_common_pb2.TriggerAutomationSpec, _Mapping]] = ...) -> None: ...
 
-class CreateTriggerResponse(_message.Message):
+class DeployTriggerResponse(_message.Message):
     __slots__ = ["trigger"]
     TRIGGER_FIELD_NUMBER: _ClassVar[int]
     trigger: _trigger_definition_pb2.TriggerDetails

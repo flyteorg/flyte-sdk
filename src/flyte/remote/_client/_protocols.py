@@ -138,9 +138,9 @@ class IdentityService(Protocol):
 
 
 class TriggerService(Protocol):
-    async def CreateTrigger(
-        self, request: trigger_service_pb2.CreateTriggerRequest
-    ) -> trigger_service_pb2.CreateTriggerResponse: ...
+    async def DeployTrigger(
+        self, request: trigger_service_pb2.DeployTriggerRequest
+    ) -> trigger_service_pb2.DeployTriggerResponse: ...
 
     async def GetTriggerDetails(
         self, request: trigger_service_pb2.GetTriggerDetailsRequest
