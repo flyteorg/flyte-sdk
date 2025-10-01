@@ -2,7 +2,7 @@ import asyncio
 from typing import Union
 
 from flyteidl.core import interface_pb2, literals_pb2
-from google.protobuf import wrappers_pb2
+from google.protobuf import timestamp_pb2, wrappers_pb2
 
 import flyte.types
 from flyte import Cron, FixedRate, Trigger, TriggerTime
@@ -16,7 +16,10 @@ def _to_schedule(m: Union[Cron, FixedRate], kickoff_arg_name: str | None = None)
             kickoff_time_input_arg=kickoff_arg_name,
         )
     elif isinstance(m, FixedRate):
-        start_time = wrappers_pb2.StringValue(m.start_time.isoformat()) if m.start_time is not None else None
+        start_time = None
+        if m.start_time is not None:
+            start_time = timestamp_pb2.Timestamp()
+            start_time.FromDatetime(m.start_time)
 
         return common_pb2.Schedule(
             rate=common_pb2.FixedRate(
@@ -28,57 +31,24 @@ def _to_schedule(m: Union[Cron, FixedRate], kickoff_arg_name: str | None = None)
         )
 
 
-async def to_task_trigger(
-    t: Trigger,
+async def process_default_inputs(
+    default_inputs: dict,
     task_name: str,
     task_inputs: interface_pb2.VariableMap,
     task_default_inputs: list[common_pb2.NamedParameter],
-) -> trigger_definition_pb2.TaskTrigger:
+) -> list[run_definition_pb2.NamedLiteral]:
     """
-    Converts a Trigger object to a TaskTrigger protobuf object.
+    Process default inputs and convert them to NamedLiteral objects.
+
     Args:
-        t:
-        task_name:
-        task_inputs:
-        task_default_inputs:
+        default_inputs: Dictionary of default input values
+        task_name: Name of the task for error messages
+        task_inputs: Task input variable map
+        task_default_inputs: List of default parameters from task
+
     Returns:
-
+        List of NamedLiteral objects
     """
-    env = None
-    if t.env_vars:
-        env = run_definition_pb2.Envs([literals_pb2.KeyValuePair(key=k, value=v) for k, v in t.env_vars.items()])
-
-    labels = run_definition_pb2.Labels(values=t.labels) if t.labels else None
-
-    annotations = run_definition_pb2.Annotations(values=t.annotations) if t.annotations else None
-
-    run_spec = run_definition_pb2.RunSpec(
-        overwrite_cache=t.overwrite_cache,
-        envs=env,
-        interruptible=wrappers_pb2.BoolValue(t.interruptible) if t.interruptible is not None else None,
-        cluster=t.queue,
-        labels=labels,
-        annotations=annotations,
-    )
-
-    kickoff_arg_name = None
-    default_inputs = {}
-    if t.inputs:
-        for k, v in t.inputs.items():
-            if v is TriggerTime:
-                kickoff_arg_name = k
-                break
-            else:
-                default_inputs[k] = v
-
-    # assert that default_inputs and the kickoff_arg_name are infact in the task inputs
-    if kickoff_arg_name is not None and kickoff_arg_name not in task_inputs.variables:
-        raise ValueError(
-            f"For a scheduled trigger, the TriggerTime input '{kickoff_arg_name}' "
-            f"must be an input to the task, but not found in task {task_name}. "
-            f"Available inputs: {list(task_inputs.variables.keys())}"
-        )
-
     keys = []
     literal_coros = []
     for k, v in default_inputs.items():
@@ -106,6 +76,63 @@ async def to_task_trigger(
                 value=lit,
             )
         )
+
+    return literals
+
+
+async def to_task_trigger(
+    t: Trigger,
+    task_name: str,
+    task_inputs: interface_pb2.VariableMap,
+    task_default_inputs: list[common_pb2.NamedParameter],
+) -> trigger_definition_pb2.TaskTrigger:
+    """
+    Converts a Trigger object to a TaskTrigger protobuf object.
+    Args:
+        t:
+        task_name:
+        task_inputs:
+        task_default_inputs:
+    Returns:
+
+    """
+    env = None
+    if t.env_vars:
+        env = run_definition_pb2.Envs()
+        for k, v in t.env_vars.items():
+            env.values.append(literals_pb2.KeyValuePair(key=k, value=v))
+
+    labels = run_definition_pb2.Labels(values=t.labels) if t.labels else None
+
+    annotations = run_definition_pb2.Annotations(values=t.annotations) if t.annotations else None
+
+    run_spec = run_definition_pb2.RunSpec(
+        overwrite_cache=t.overwrite_cache,
+        envs=env,
+        interruptible=wrappers_pb2.BoolValue(value=t.interruptible) if t.interruptible is not None else None,
+        cluster=t.queue,
+        labels=labels,
+        annotations=annotations,
+    )
+
+    kickoff_arg_name = None
+    default_inputs = {}
+    if t.inputs:
+        for k, v in t.inputs.items():
+            if v is TriggerTime:
+                kickoff_arg_name = k
+            else:
+                default_inputs[k] = v
+
+    # assert that default_inputs and the kickoff_arg_name are infact in the task inputs
+    if kickoff_arg_name is not None and kickoff_arg_name not in task_inputs.variables:
+        raise ValueError(
+            f"For a scheduled trigger, the TriggerTime input '{kickoff_arg_name}' "
+            f"must be an input to the task, but not found in task {task_name}. "
+            f"Available inputs: {list(task_inputs.variables.keys())}"
+        )
+
+    literals = await process_default_inputs(default_inputs, task_name, task_inputs, task_default_inputs)
 
     automation = _to_schedule(
         t.automation,
