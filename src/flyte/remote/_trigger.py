@@ -213,7 +213,7 @@ class Trigger(ToJSONMixin):
 
     @syncify
     @classmethod
-    async def deactivate(cls, name: str, task_name: str):
+    async def update(cls, name: str, task_name: str, active: bool):
         """
         Pause a trigger by its name and associated task name.
         """
@@ -230,30 +230,7 @@ class Trigger(ToJSONMixin):
                         task_name=task_name,
                     )
                 ],
-                active=False,
-            )
-        )
-
-    @syncify
-    @classmethod
-    async def activate(cls, name: str, task_name: str):
-        """
-        Resume a paused trigger by its name and associated task name.
-        """
-        ensure_client()
-        cfg = get_common_config()
-        await get_client().trigger_service.UpdateTriggers(
-            request=trigger_service_pb2.UpdateTriggersRequest(
-                names=[
-                    identifier_pb2.TriggerName(
-                        org=cfg.org,
-                        project=cfg.project,
-                        domain=cfg.domain,
-                        name=name,
-                        task_name=task_name,
-                    )
-                ],
-                active=True,
+                active=active,
             )
         )
 
@@ -286,6 +263,10 @@ class Trigger(ToJSONMixin):
     @property
     def name(self) -> str:
         return self.id.name.name
+
+    @property
+    def task_name(self) -> str:
+        return self.id.name.task_name
 
     @property
     def automation_spec(self) -> common_pb2.TriggerAutomationSpec:
@@ -321,6 +302,7 @@ class Trigger(ToJSONMixin):
                 )
 
     def __rich_repr__(self):
+        yield "task_name", self.task_name
         yield "name", self.name
         yield from self._rich_automation(self.pb2.automation_spec)
         yield "auto_activate", self.is_active
