@@ -2,7 +2,13 @@ import pathlib
 import tempfile
 from unittest.mock import Mock
 
+import pytest
+
+import flyte
 from flyte._code_bundle._utils import list_all_files
+from flyte._code_bundle.bundle import build_pkl_bundle
+from flyte._internal.runtime.entrypoints import load_pkl_task
+from flyte.extras import ContainerTask
 
 
 def test_list_all_files():
@@ -44,3 +50,28 @@ def test_list_all_files():
 
         files_with_ignore = list_all_files(test_dir, deref_symlinks=False, ignore_group=mock_ignore_group)
         assert len(files_with_ignore) == 4
+
+
+@pytest.mark.asyncio
+async def test_from_task_sets_env():
+    greeting_task = ContainerTask(
+        name="echo_and_return_greeting",
+        image=flyte.Image.from_base("alpine:3.18"),
+        input_data_dir="/var/inputs",
+        output_data_dir="/var/outputs",
+        inputs={"name": str},
+        outputs={"greeting": str},
+        command=["/bin/sh", "-c", "echo 'Hello, my name is {{.inputs.name}}.' | tee -a /var/outputs/greeting"],
+    )
+
+    flyte.TaskEnvironment.from_task("container_env", greeting_task)
+
+    assert greeting_task.parent_env_name == "container_env"
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        pkled = await build_pkl_bundle(
+            greeting_task, upload_to_controlplane=False, copy_bundle_to=pathlib.Path(tmp_dir)
+        )
+        object.__setattr__(pkled, "downloaded_path", pkled.pkl)
+        tt = load_pkl_task(pkled)
+        assert tt.parent_env_name == "container_env"

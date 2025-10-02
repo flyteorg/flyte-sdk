@@ -144,7 +144,7 @@ async def convert_and_run(
         interactive_mode=interactive_mode,
     )
     with ctx.replace_task_context(tctx):
-        inputs = await load_inputs(input_path) if input_path else inputs
+        inputs = await load_inputs(input_path, path_rewrite_config=raw_data_path.path_rewrite) if input_path else inputs
         inputs_kwargs = await convert_inputs_to_native(inputs, task.native_interface)
         out, err = await run_task(tctx=tctx, controller=controller, task=task, inputs=inputs_kwargs)
         if err is not None:

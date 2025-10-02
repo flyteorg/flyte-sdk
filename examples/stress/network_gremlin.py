@@ -121,6 +121,8 @@ async def main(sleep: float = 5.0, n: int = 10) -> Tuple[List[str], int]:
 
 
 if __name__ == "__main__":
-    flyte.init_from_config()
+    import flyte.git
+
+    flyte.init_from_config(flyte.git.config_from_root())
     r = flyte.run(main, sleep=2.0, n=20)  # Adjust parameters as needed
     print(r.url)

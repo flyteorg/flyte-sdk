@@ -2,7 +2,6 @@ import asyncio
 from typing import Tuple, Union, get_args
 
 import rich_click as click
-from rich.console import Console
 from rich.pretty import pretty_repr
 
 import flyte.remote as remote
@@ -42,7 +41,7 @@ def project(cfg: common.CLIConfig, name: str | None = None):
     """
     cfg.init()
 
-    console = Console()
+    console = common.get_console()
     if name:
         console.print(pretty_repr(remote.Project.get(name)))
     else:
@@ -78,7 +77,7 @@ def run(
 
     cfg.init(project=project, domain=domain)
 
-    console = Console()
+    console = common.get_console()
     if name:
         details = remote.RunDetails.get(name=name)
         console.print(common.format(f"Run {name}", [details], "json"))
@@ -120,7 +119,7 @@ def task(
     """
     cfg.init(project=project, domain=domain)
 
-    console = Console()
+    console = common.get_console()
     if name:
         if version:
             v = remote.Task.get(name=name, version=version)
@@ -152,7 +151,7 @@ def action(
     """
     cfg.init(project=project, domain=domain)
 
-    console = Console()
+    console = common.get_console()
     if action_name:
         console.print(
             common.format(
@@ -249,7 +248,7 @@ def secret(
     """
     cfg.init(project=project, domain=domain)
 
-    console = Console()
+    console = common.get_console()
     if name:
         console.print(common.format("Secret", [remote.Secret.get(name)], "json"))
     else:
@@ -291,7 +290,7 @@ def io(
         raise click.BadParameter("Cannot use both --inputs-only and --outputs-only")
 
     cfg.init(project=project, domain=domain)
-    console = Console()
+    console = common.get_console()
     if action_name:
         obj = remote.ActionDetails.get(run_name=run_name, name=action_name)
     else:
@@ -333,5 +332,35 @@ def config(cfg: common.CLIConfig):
 
     The configuration will include the endpoint, organization, and other settings that are used by the CLI.
     """
-    console = Console()
+    console = common.get_console()
     console.print(cfg)
+
+
+@get.command(cls=common.CommandBase)
+@click.argument("task_name", type=str, required=False)
+@click.argument("name", type=str, required=False)
+@click.option("--limit", type=int, default=100, help="Limit the number of triggers to fetch.")
+@click.pass_obj
+def trigger(
+    cfg: common.CLIConfig,
+    task_name: str | None = None,
+    name: str | None = None,
+    limit: int = 100,
+    project: str | None = None,
+    domain: str | None = None,
+):
+    """
+    Get a list of all triggers, or details of a specific trigger by name.
+    """
+    if name and not task_name:
+        raise click.BadParameter("If you provide a trigger name, you must also provide the task name.")
+
+    from flyte.remote import Trigger
+
+    cfg.init(project=project, domain=domain)
+
+    console = common.get_console()
+    if name:
+        console.print(pretty_repr(Trigger.get(name=name, task_name=task_name)))
+    else:
+        console.print(common.format("Triggers", Trigger.listall(task_name=task_name, limit=limit), cfg.output_format))

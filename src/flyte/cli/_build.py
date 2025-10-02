@@ -44,9 +44,7 @@ class BuildEnvCommand(click.Command):
         super().__init__(*args, **kwargs)
 
     def invoke(self, ctx: click.Context):
-        from rich.console import Console
-
-        console = Console()
+        console = common.get_console()
         console.print(f"Building Environment: {self.obj_name}")
         obj: CLIConfig = ctx.obj
         obj.init()

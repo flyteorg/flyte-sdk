@@ -14,7 +14,7 @@ from ._environment import Environment
 from ._excepthook import custom_excepthook
 from ._group import group
 from ._image import Image
-from ._initialize import init, init_from_config
+from ._initialize import current_domain, init, init_from_config
 from ._map import map
 from ._pod import PodTemplate
 from ._resources import GPU, TPU, Device, Resources
@@ -25,6 +25,7 @@ from ._secret import Secret, SecretRequest
 from ._task_environment import TaskEnvironment
 from ._timeout import Timeout, TimeoutType
 from ._trace import trace
+from ._trigger import Cron, FixedRate, Trigger, TriggerTime
 from ._version import __version__
 
 sys.excepthook = custom_excepthook
@@ -64,8 +65,10 @@ __all__ = [
     "Cache",
     "CachePolicy",
     "CacheRequest",
+    "Cron",
     "Device",
     "Environment",
+    "FixedRate",
     "Image",
     "PodTemplate",
     "Resources",
@@ -76,10 +79,13 @@ __all__ = [
     "TaskEnvironment",
     "Timeout",
     "TimeoutType",
+    "Trigger",
+    "TriggerTime",
     "__version__",
     "build",
     "build_images",
     "ctx",
+    "current_domain",
     "deploy",
     "group",
     "init",

@@ -50,6 +50,8 @@ async def run_subprocess(args: List[str], working_dir: pathlib.Path) -> None:
     stdout, stderr = await process.communicate()
     logger.info("Task Invocation Complete ==============")
     if process.returncode != 0:
+        print("STDOUT:\n", stdout.decode())
+        print("STDERR:\n", stderr.decode(), flush=True)
         raise subprocess.CalledProcessError(process.returncode, args, output=stdout, stderr=stderr)
 
 

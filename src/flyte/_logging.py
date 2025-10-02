@@ -71,7 +71,7 @@ def get_rich_handler(log_level: int) -> Optional[logging.Handler]:
 
     handler = RichHandler(
         tracebacks_suppress=[click],
-        rich_tracebacks=True,
+        rich_tracebacks=False,
         omit_repeated_times=False,
         show_path=False,
         log_time_format="%H:%M:%S.%f",

@@ -30,7 +30,7 @@ async def reuse_concurrency(n: int = 50) -> int:
 if __name__ == "__main__":
     flyte.init_from_config()
     runs = []
-    for i in range(20):
+    for i in range(1):
         run = flyte.run(reuse_concurrency, n=10000)
         runs.append(run.url)
     print(runs)

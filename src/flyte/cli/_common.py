@@ -7,6 +7,7 @@ import os
 import sys
 from abc import abstractmethod
 from dataclasses import dataclass, replace
+from functools import lru_cache
 from pathlib import Path
 from types import MappingProxyType, ModuleType
 from typing import Any, Dict, Iterable, List, Literal, Optional
@@ -20,6 +21,7 @@ from rich.pretty import pretty_repr
 from rich.table import Table
 from rich.traceback import Traceback
 
+import flyte.config
 import flyte.errors
 from flyte.config import Config
 
@@ -178,7 +180,7 @@ class InvokeBaseMixin:
         except Exception as e:
             if ctx.obj and ctx.obj.log_level and ctx.obj.log_level <= logging.DEBUG:
                 # If the user has requested verbose output, print the full traceback
-                console = Console()
+                console = get_console()
                 console.print(Traceback.from_exception(type(e), e, e.__traceback__))
                 exit(1)
             else:
@@ -401,3 +403,22 @@ def get_panel(title: str, renderable: Any, of: OutputFormat = "table") -> Panel:
         title=f"[{PREFERRED_ACCENT_COLOR}]{title}[/{PREFERRED_ACCENT_COLOR}]",
         border_style=PREFERRED_BORDER_COLOR,
     )
+
+
+def get_console() -> Console:
+    """
+    Get a console that is configured to use colors if the terminal supports it.
+    """
+    return Console(color_system="auto", force_terminal=True, width=120)
+
+
+@lru_cache()
+def initialize_config(ctx: click.Context, project: str, domain: str, root_dir: str | None = None):
+    obj: CLIConfig | None = ctx.obj
+    if obj is None:
+        import flyte.config
+
+        obj = CLIConfig(flyte.config.auto(), ctx)
+
+    obj.init(project, domain, root_dir)
+    return obj

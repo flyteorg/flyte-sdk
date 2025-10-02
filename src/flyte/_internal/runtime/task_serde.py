@@ -4,7 +4,6 @@ It includes a Resolver interface for loading tasks, and functions to load classe
 """
 
 import copy
-import sys
 import typing
 from datetime import timedelta
 from typing import Optional, cast
@@ -120,7 +119,7 @@ def get_proto_task(task: TaskTemplate, serialize_context: SerializationContext) 
         version=serialize_context.version,
     )
 
-    # TODO Add support for SQL, extra_config, custom
+    # TODO Add support for extra_config, custom
     extra_config: typing.Dict[str, str] = {}
 
     if task.pod_template and not isinstance(task.pod_template, str):
@@ -133,7 +132,7 @@ def get_proto_task(task: TaskTemplate, serialize_context: SerializationContext) 
 
     custom = task.custom_config(serialize_context)
 
-    sql = None
+    sql = task.sql(serialize_context)
 
     # -------------- CACHE HANDLING ----------------------
     task_cache = cache_from_request(task.cache)
@@ -209,34 +208,25 @@ def _get_urun_container(
         else None
     )
     resources = get_proto_resources(task_template.resources)
-    # pr: under what conditions should this return None?
+
     if isinstance(task_template.image, str):
         raise flyte.errors.RuntimeSystemError("BadConfig", "Image is not a valid image")
-    image_id = task_template.image.identifier
+
+    env_name = task_template.parent_env_name
+    if env_name is None:
+        raise flyte.errors.RuntimeSystemError("BadConfig", f"Task {task_template.name} has no parent environment name")
+
     if not serialize_context.image_cache:
         # This computes the image uri, computing hashes as necessary so can fail if done remotely.
         img_uri = task_template.image.uri
-    elif serialize_context.image_cache and image_id not in serialize_context.image_cache.image_lookup:
+    elif serialize_context.image_cache and env_name not in serialize_context.image_cache.image_lookup:
         img_uri = task_template.image.uri
 
         logger.warning(
             f"Image {task_template.image} not found in the image cache: {serialize_context.image_cache.image_lookup}."
         )
     else:
-        python_version_str = "{}.{}".format(sys.version_info.major, sys.version_info.minor)
-        version_lookup = serialize_context.image_cache.image_lookup[image_id]
-        if python_version_str in version_lookup:
-            img_uri = version_lookup[python_version_str]
-        elif version_lookup:
-            # Fallback: try to get any available version
-            fallback_py_version, img_uri = next(iter(version_lookup.items()))
-            logger.warning(
-                f"Image {task_template.image} for python version {python_version_str} "
-                f"not found in the image cache: {serialize_context.image_cache.image_lookup}.\n"
-                f"Fall back using image {img_uri} for python version {fallback_py_version} ."
-            )
-        else:
-            img_uri = task_template.image.uri
+        img_uri = serialize_context.image_cache.image_lookup[env_name]
 
     return tasks_pb2.Container(
         image=img_uri,

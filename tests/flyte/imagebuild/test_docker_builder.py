@@ -398,8 +398,6 @@ async def test_poetry_handler_with_project_install():
 
             assert result.startswith(initial_dockerfile)
 
-            assert "COPY" in result
-            assert "pyproject.toml" in result
             assert "RUN --mount=type=cache,sharing=locked,mode=0777,target=/root/.cache/uv,id=uv" in result
             assert "RUN --mount=type=cache,sharing=locked,mode=0777,target=/tmp/poetry_cache,id=poetry" in result
             assert "uv pip install poetry" in result

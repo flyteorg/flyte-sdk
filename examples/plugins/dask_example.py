@@ -23,6 +23,7 @@ dask_env = flyte.TaskEnvironment(
     plugin_config=dask_config,
     image=image,
     resources=Resources(cpu="1", memory="1Gi"),
+    depends_on=[task_env],
 )
 
 

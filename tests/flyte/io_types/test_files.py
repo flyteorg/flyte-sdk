@@ -63,13 +63,13 @@ async def test_async_file_read(ctx_with_test_raw_data_path):
     lv = await FileTransformer().to_literal(uploaded_file, File, TypeEngine.to_literal_type(File))
     pv = await FileTransformer().to_python_value(lv, File)
     async with pv.open() as fh:
-        content = fh.read()
+        content = await fh.read()
     content = content.decode("utf-8")
     assert "col1,col2" in content
 
     pv2 = File.from_existing_remote(uploaded_file.path)
     async with pv2.open() as fh:
-        content = fh.read()
+        content = await fh.read()
     content = content.decode("utf-8")
     assert "col1,col2" in content
 
@@ -97,14 +97,14 @@ async def test_task_write_file_streaming(ctx_with_test_raw_data_path):
     async def my_task() -> File[pd.DataFrame]:
         df = pd.DataFrame({"col1": [1, 2], "col2": [3, 4]})
         file = File.new_remote()
-        async with file.open("wb") as fh:
+        with file.open_sync("wb") as fh:
             df.to_csv(fh, index=False)
         return file
 
     file = await my_task()
     assert file.hash is None
     async with file.open() as f:
-        content = f.read()
+        content = await f.read()
     content = content.decode("utf-8")
     assert "col1,col2" in content
 
@@ -119,7 +119,7 @@ async def test_task_write_file_streaming_locals3(ctx_with_test_local_s3_stack_ra
         df = pd.DataFrame({"col1": [1, 2], "col2": [3, 4]})
         a = HashlibAccumulator.from_hash_name("sha256")
         file = File.new_remote(hash_method=a)
-        async with file.open("wb") as fh:
+        with file.open_sync("wb") as fh:
             df.to_csv(fh, index=False)
             fh.close()  # context manager should also close but this should still work
         return file
@@ -127,7 +127,7 @@ async def test_task_write_file_streaming_locals3(ctx_with_test_local_s3_stack_ra
     file = await my_task()
     assert file.hash == "9b0a34a69b639520f1a18e54f85544d9d379f81727eb44b8814e1c4707e1760d"
     async with file.open() as f:
-        content = f.read()
+        content = await f.read()
     content = content.decode("utf-8")
     assert "col1,col2" in content
 
@@ -150,7 +150,7 @@ async def test_task_write_file_local_then_upload(ctx_with_test_raw_data_path):
     assert file.path == "s3://bucket/data.csv"
     pv2 = File.from_existing_remote(file.path)
     async with pv2.open() as fh:
-        content = fh.read()
+        content = await fh.read()
     content = content.decode("utf-8")
     assert "col1,col2" in content
 
@@ -171,7 +171,7 @@ async def test_from_local_with_local_files():
 
         assert result.path == remote_path
         async with result.open() as f:
-            content = f.read()
+            content = await f.read()
         content = content.decode("utf-8")
         assert content == test_content
 
@@ -193,7 +193,7 @@ async def test_from_local_to_s3(ctx_with_test_local_s3_stack_raw_data_path):
         assert result.hash == TEST_SHA256
 
         async with result.open() as f:
-            content = f.read()
+            content = await f.read()
         content = content.decode("utf-8")
         assert content == TEST_CONTENT
 

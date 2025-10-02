@@ -11,7 +11,7 @@ from flyte._context import internal_ctx
 image = (
     flyte.Image.from_base("apache/spark-py:v3.4.0")
     .clone(name="spark", python_version=(3, 10), registry="ghcr.io/flyteorg")
-    .with_pip_packages("flyteplugins-spark>=2.0.0b20", pre=True)
+    .with_pip_packages("flyteplugins-spark", pre=True)
 )
 
 task_env = flyte.TaskEnvironment(
@@ -35,6 +35,7 @@ spark_env = flyte.TaskEnvironment(
     resources=flyte.Resources(cpu=(1, 2), memory=("3000Mi", "5000Mi")),
     plugin_config=spark_conf,
     image=image,
+    depends_on=[task_env],
 )
 
 

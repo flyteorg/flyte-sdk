@@ -50,14 +50,14 @@ RUN --mount=type=cache,sharing=locked,mode=0777,target=/root/.cache/uv,id=uv \
    --mount=type=bind,target=uv.lock,src=$UV_LOCK_PATH \
    --mount=type=bind,target=pyproject.toml,src=$PYPROJECT_PATH \
    $SECRET_MOUNT \
-   uv sync --active $PIP_INSTALL_ARGS
+   uv sync --active --inexact $PIP_INSTALL_ARGS
 """)
 
 UV_LOCK_INSTALL_TEMPLATE = Template("""\
-COPY $PYPROJECT_PATH $PYPROJECT_PATH
 RUN --mount=type=cache,sharing=locked,mode=0777,target=/root/.cache/uv,id=uv \
+   --mount=type=bind,target=/root/.flyte/$PYPROJECT_PATH,src=$PYPROJECT_PATH,rw \
    $SECRET_MOUNT \
-   uv sync --active $PIP_INSTALL_ARGS --project $PYPROJECT_PATH
+   uv sync --active --inexact --no-editable $PIP_INSTALL_ARGS --project /root/.flyte/$PYPROJECT_PATH
 """)
 
 POETRY_LOCK_WITHOUT_PROJECT_INSTALL_TEMPLATE = Template("""\
@@ -78,14 +78,11 @@ POETRY_LOCK_INSTALL_TEMPLATE = Template("""\
 RUN --mount=type=cache,sharing=locked,mode=0777,target=/root/.cache/uv,id=uv \
    uv pip install poetry
 
-COPY $PYPROJECT_PATH $PYPROJECT_PATH
-
 ENV POETRY_CACHE_DIR=/tmp/poetry_cache \
    POETRY_VIRTUALENVS_IN_PROJECT=true
 
 RUN --mount=type=cache,sharing=locked,mode=0777,target=/tmp/poetry_cache,id=poetry \
-   --mount=type=bind,target=poetry.lock,src=poetry.lock \
-   --mount=type=bind,target=pyproject.toml,src=pyproject.toml \
+   --mount=type=bind,target=/root/.flyte/$PYPROJECT_PATH,src=$PYPROJECT_PATH,rw \
    $SECRET_MOUNT \
    poetry install $POETRY_INSTALL_ARGS
 """)

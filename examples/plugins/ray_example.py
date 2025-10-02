@@ -36,6 +36,7 @@ ray_env = flyte.TaskEnvironment(
     plugin_config=ray_config,
     image=image,
     resources=flyte.Resources(cpu=(3, 4), memory=("3000Mi", "5000Mi")),
+    depends_on=[task_env],
 )
 
 
