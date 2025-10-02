@@ -14,7 +14,7 @@ from ._environment import Environment
 from ._excepthook import custom_excepthook
 from ._group import group
 from ._image import Image
-from ._initialize import init, init_from_config
+from ._initialize import current_domain, init, init_from_config
 from ._map import map
 from ._pod import PodTemplate
 from ._resources import GPU, TPU, Device, Resources
@@ -85,6 +85,7 @@ __all__ = [
     "build",
     "build_images",
     "ctx",
+    "current_domain",
     "deploy",
     "group",
     "init",
