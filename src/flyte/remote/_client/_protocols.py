@@ -6,7 +6,7 @@ from grpc.aio import UnaryStreamCall
 from grpc.aio._typing import RequestType
 
 from flyte._protos.secret import payload_pb2
-from flyte._protos.workflow import run_logs_service_pb2, run_service_pb2, task_service_pb2
+from flyte._protos.workflow import run_logs_service_pb2, run_service_pb2, task_service_pb2, trigger_service_pb2
 
 
 class MetadataServiceProtocol(Protocol):
@@ -135,3 +135,33 @@ class SecretService(Protocol):
 
 class IdentityService(Protocol):
     async def UserInfo(self, request: identity_pb2.UserInfoRequest) -> identity_pb2.UserInfoResponse: ...
+
+
+class TriggerService(Protocol):
+    async def DeployTrigger(
+        self, request: trigger_service_pb2.DeployTriggerRequest
+    ) -> trigger_service_pb2.DeployTriggerResponse: ...
+
+    async def GetTriggerDetails(
+        self, request: trigger_service_pb2.GetTriggerDetailsRequest
+    ) -> trigger_service_pb2.GetTriggerDetailsResponse: ...
+
+    async def GetTriggerRevisionDetails(
+        self, request: trigger_service_pb2.GetTriggerRevisionDetailsRequest
+    ) -> trigger_service_pb2.GetTriggerRevisionDetailsResponse: ...
+
+    async def ListTriggers(
+        self, request: trigger_service_pb2.ListTriggersRequest
+    ) -> trigger_service_pb2.ListTriggersResponse: ...
+
+    async def GetTriggerRevisionHistory(
+        self, request: trigger_service_pb2.GetTriggerRevisionHistoryRequest
+    ) -> trigger_service_pb2.GetTriggerRevisionHistoryResponse: ...
+
+    async def UpdateTriggers(
+        self, request: trigger_service_pb2.UpdateTriggersRequest
+    ) -> trigger_service_pb2.UpdateTriggersResponse: ...
+
+    async def DeleteTriggers(
+        self, request: trigger_service_pb2.DeleteTriggersRequest
+    ) -> trigger_service_pb2.DeleteTriggersResponse: ...

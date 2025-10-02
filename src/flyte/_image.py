@@ -1,17 +1,18 @@
 from __future__ import annotations
 
-import base64
 import hashlib
 import sys
 import typing
 from abc import abstractmethod
-from dataclasses import asdict, dataclass, field, fields
+from dataclasses import dataclass, field
 from functools import cached_property
 from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar, Dict, List, Literal, Optional, Tuple, TypeVar, Union
 
 import rich.repr
 from packaging.version import Version
+
+from flyte._utils import update_hasher_for_source
 
 if TYPE_CHECKING:
     from flyte import Secret, SecretRequest
@@ -56,34 +57,12 @@ class Layer:
 
         :param hasher: The hash object to update with the layer's data.
         """
-        print("hash hash")
 
     def validate(self):
         """
         Raise any validation errors for the layer
         :return:
         """
-
-    def identifier(self) -> str:
-        """
-        This method computes a unique identifier for the layer based on its properties.
-        It is used to identify the layer in the image cache.
-
-        It is also used to compute a unique identifier for the image itself, which is a combination of all the layers.
-        This identifier is used to look up previously built images in the image cache. So having a consistent
-        identifier is important for the image cache to work correctly.
-
-        :return: A unique identifier for the layer.
-        """
-        ignore_fields: list[str] = []
-        for f in fields(self):
-            if f.metadata.get("identifier", True) is False:
-                ignore_fields.append(f.name)
-        d = asdict(self)
-        for v in ignore_fields:
-            d.pop(v)
-
-        return str(d)
 
 
 @rich.repr.auto
@@ -152,7 +131,7 @@ class PipPackages(PipOption, Layer):
 @rich.repr.auto
 @dataclass(kw_only=True, frozen=True, repr=True)
 class PythonWheels(PipOption, Layer):
-    wheel_dir: Path = field(metadata={"identifier": False})
+    wheel_dir: Path
     wheel_dir_name: str = field(init=False)
     package_name: str
 
@@ -191,19 +170,22 @@ class UVProject(PipOption, Layer):
 
     def validate(self):
         if not self.pyproject.exists():
-            raise FileNotFoundError(f"pyproject.toml file {self.pyproject} does not exist")
+            raise FileNotFoundError(f"pyproject.toml file {self.pyproject.resolve()} does not exist")
         if not self.pyproject.is_file():
-            raise ValueError(f"Pyproject file {self.pyproject} is not a file")
+            raise ValueError(f"Pyproject file {self.pyproject.resolve()} is not a file")
         if not self.uvlock.exists():
-            raise ValueError(f"UVLock file {self.uvlock} does not exist")
+            raise ValueError(f"UVLock file {self.uvlock.resolve()} does not exist")
         super().validate()
 
     def update_hash(self, hasher: hashlib._Hash):
         from ._utils import filehash_update
 
         super().update_hash(hasher)
-        filehash_update(self.uvlock, hasher)
-        filehash_update(self.pyproject, hasher)
+        if self.extra_args and "--no-install-project" in self.extra_args:
+            filehash_update(self.uvlock, hasher)
+            filehash_update(self.pyproject, hasher)
+        else:
+            update_hasher_for_source(self.pyproject.parent, hasher)
 
 
 @rich.repr.auto
@@ -212,6 +194,7 @@ class PoetryProject(Layer):
     """
     Poetry does not use pip options, so the PoetryProject class do not inherits PipOption class
     """
+
     pyproject: Path
     poetry_lock: Path
     extra_args: Optional[str] = None
@@ -236,14 +219,18 @@ class PoetryProject(Layer):
             for secret_mount in self.secret_mounts:
                 hash_input += str(secret_mount)
         hasher.update(hash_input.encode("utf-8"))
-        filehash_update(self.poetry_lock, hasher)
-        filehash_update(self.pyproject, hasher)
+
+        if self.extra_args and "--no-root" in self.extra_args:
+            filehash_update(self.poetry_lock, hasher)
+            filehash_update(self.pyproject, hasher)
+        else:
+            update_hasher_for_source(self.pyproject.parent, hasher)
 
 
 @rich.repr.auto
 @dataclass(frozen=True, repr=True)
 class UVScript(PipOption, Layer):
-    script: Path = field(metadata={"identifier": False})
+    script: Path
     script_name: str = field(init=False)
 
     def __post_init__(self):
@@ -319,8 +306,8 @@ class DockerIgnore(Layer):
 @rich.repr.auto
 @dataclass(frozen=True, repr=True)
 class CopyConfig(Layer):
-    path_type: CopyConfigType = field(metadata={"identifier": True})
-    src: Path = field(metadata={"identifier": False})
+    path_type: CopyConfigType
+    src: Path
     dst: str
     src_name: str
 
@@ -415,9 +402,6 @@ class Image:
     platform: Tuple[Architecture, ...] = field(default=("linux/amd64",))
     python_version: Tuple[int, int] = field(default_factory=_detect_python_version)
 
-    # For .auto() images. Don't compute an actual identifier.
-    _identifier_override: Optional[str] = field(default=None, init=False)
-
     # Layers to be added to the image. In init, because frozen, but users shouldn't access, so underscore.
     _layers: Tuple[Layer, ...] = field(default_factory=tuple)
 
@@ -449,34 +433,6 @@ class Image:
         object.__setattr__(obj, "_guard", cls._token)  # set guard to prevent direct construction
         cls.__init__(obj, **kwargs)  # run dataclass generated __init__
         return obj
-
-    @cached_property
-    def identifier(self) -> str:
-        """
-        This identifier is a hash of the layers and properties of the image. It is used to look up previously built
-        images. Why is this useful? For example, if a user has Image.from_uv_base().with_source_file("a/local/file"),
-        it's not necessarily the case that that file exists within the image (further commands may have removed/changed
-        it), and certainly not the case that the path to the file, inside the image (which is used as part of the layer
-        hash computation), is the same. That is, inside the image when a task runs, as we come across the same Image
-        declaration, we need a way of identifying the image and its uri, without hashing all the layers again. This
-        is what this identifier is for. See the ImageCache object for additional information.
-
-        :return: A unique identifier of the Image
-        """
-        if self._identifier_override:
-            return self._identifier_override
-
-        # Only get the non-None values in the Image to ensure the hash is consistent
-        # across different SDK versions.
-        # Layers can specify a _compute_identifier optionally, but the default will just stringify
-        image_dict = asdict(
-            self,
-            dict_factory=lambda x: {k: v for (k, v) in x if v is not None and k not in ("_layers", "python_version")},
-        )
-        layers_str_repr = "".join([layer.identifier() for layer in self._layers])
-        image_dict["layers"] = layers_str_repr
-        spec_bytes = image_dict.__str__().encode("utf-8")
-        return base64.urlsafe_b64encode(hashlib.md5(spec_bytes).digest()).decode("ascii").rstrip("=")
 
     def validate(self):
         for layer in self._layers:
@@ -540,9 +496,6 @@ class Image:
                     image = image.with_pip_packages(f"flyte=={flyte_version}")
         if not dev_mode:
             object.__setattr__(image, "_tag", preset_tag)
-        # Set this to auto for all auto images because the meaning of "auto" can change (based on logic inside
-        # _get_default_image_for, acts differently in a running task container) so let's make sure it stays auto.
-        object.__setattr__(image, "_identifier_override", "auto")
 
         return image
 
@@ -583,9 +536,6 @@ class Image:
         if registry or name:
             return base_image.clone(registry=registry, name=name)
 
-        # # Set this to auto for all auto images because the meaning of "auto" can change (based on logic inside
-        # # _get_default_image_for, acts differently in a running task container) so let's make sure it stays auto.
-        # object.__setattr__(base_image, "_identifier_override", "auto")
         return base_image
 
     @classmethod

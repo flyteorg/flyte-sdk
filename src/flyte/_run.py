@@ -93,6 +93,7 @@ class _Runner:
         interruptible: bool | None = None,
         log_level: int | None = None,
         disable_run_cache: bool = False,
+        queue: Optional[str] = None,
     ):
         from flyte._tools import ipython_check
 
@@ -122,6 +123,7 @@ class _Runner:
         self._interruptible = interruptible
         self._log_level = log_level
         self._disable_run_cache = disable_run_cache
+        self._queue = queue
 
     @requires_initialization
     async def _run_remote(self, obj: TaskTemplate[P, R] | LazyEntity, *args: P.args, **kwargs: P.kwargs) -> Run:
@@ -150,6 +152,7 @@ class _Runner:
             version = task.pb2.task_id.version
             code_bundle = None
         else:
+            task = cast(TaskTemplate[P, R], obj)
             if obj.parent_env is None:
                 raise ValueError("Task is not attached to an environment. Please attach the task to an environment")
 
@@ -270,6 +273,7 @@ class _Runner:
                             annotations=annotations,
                             labels=labels,
                             envs=env_kv,
+                            cluster=self._queue or task.queue,
                         ),
                     ),
                 )
@@ -581,6 +585,7 @@ def with_runcontext(
     interruptible: bool | None = None,
     log_level: int | None = None,
     disable_run_cache: bool = False,
+    queue: Optional[str] = None,
 ) -> _Runner:
     """
     Launch a new run with the given parameters as the context.
@@ -624,6 +629,7 @@ def with_runcontext(
     :param log_level: Optional Log level to set for the run. If not provided, it will be set to the default log level
         set using `flyte.init()`
     :param disable_run_cache: Optional If true, the run cache will be disabled. This is useful for testing purposes.
+    :param queue: Optional The queue to use for the run. This is used to specify the cluster to use for the run.
 
     :return: runner
     """
@@ -651,6 +657,7 @@ def with_runcontext(
         domain=domain,
         log_level=log_level,
         disable_run_cache=disable_run_cache,
+        queue=queue,
     )
 
 
