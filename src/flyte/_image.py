@@ -170,11 +170,11 @@ class UVProject(PipOption, Layer):
 
     def validate(self):
         if not self.pyproject.exists():
-            raise FileNotFoundError(f"pyproject.toml file {self.pyproject} does not exist")
+            raise FileNotFoundError(f"pyproject.toml file {self.pyproject.resolve()} does not exist")
         if not self.pyproject.is_file():
-            raise ValueError(f"Pyproject file {self.pyproject} is not a file")
+            raise ValueError(f"Pyproject file {self.pyproject.resolve()} is not a file")
         if not self.uvlock.exists():
-            raise ValueError(f"UVLock file {self.uvlock} does not exist")
+            raise ValueError(f"UVLock file {self.uvlock.resolve()} does not exist")
         super().validate()
 
     def update_hash(self, hasher: hashlib._Hash):
