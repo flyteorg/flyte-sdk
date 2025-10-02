@@ -56,7 +56,8 @@ if __name__ == "__main__":
     flyte.init_from_config(flyte.git.config_from_root())
 
     # Try read the data without acceleration and with acceleration
-    r = flyte.run(pathrewrite_read,
+    r = flyte.run(
+        pathrewrite_read,
         flyte.io.File.from_existing_remote("s3://union-cloud-oc-canary-playground-persistent/my_data.dat"),
     )
     print(r.url)

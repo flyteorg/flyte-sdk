@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Dict, List, Optional, Protocol, Set, Tuple, Type
+from typing import TYPE_CHECKING, Dict, List, Optional, Set, Tuple
 
 import cloudpickle
 import rich.repr
@@ -12,6 +12,7 @@ import flyte.errors
 from flyte.models import SerializationContext
 from flyte.syncify import syncify
 
+from ._deployer import DeploymentContext, get_deployer
 from ._environment import Environment
 from ._image import Image
 from ._initialize import ensure_client, get_client, get_common_config, requires_initialization
@@ -35,18 +36,6 @@ class DeploymentPlan:
 
 @rich.repr.auto
 @dataclass
-class DeploymentContext:
-    """
-    Context for deployment operations.
-    """
-
-    environment: Environment | TaskEnvironment
-    serialization_context: SerializationContext
-    dryrun: bool = False
-
-
-@rich.repr.auto
-@dataclass
 class DeployedTask:
     deployed_task: task_definition_pb2.TaskSpec
     deployed_triggers: List[trigger_definition_pb2.TaskTrigger]
@@ -60,11 +49,12 @@ class DeployedTask:
             f"version={self.deployed_task.task_template.id.version})"
         )
 
-    def table_repr(self) -> List[Tuple[str, ...]]:
+    def table_repr(self) -> List[Tuple[str, str]]:
         """
         Returns a table representation of the deployed task.
         """
         return [
+            ("type", "task"),
             ("name", self.deployed_task.task_template.id.name),
             ("version", self.deployed_task.task_template.id.version),
             ("triggers", ",".join([t.name for t in self.deployed_triggers])),
@@ -73,8 +63,8 @@ class DeployedTask:
 
 @rich.repr.auto
 @dataclass
-class DeployedEnv:
-    env: Environment
+class DeployedTaskEnvironment:
+    env: TaskEnvironment
     deployed_entities: List[DeployedTask]
 
     def summary_repr(self) -> str:
@@ -108,7 +98,7 @@ class DeployedEnv:
 @rich.repr.auto
 @dataclass(frozen=True)
 class Deployment:
-    envs: Dict[str, DeployedEnv]
+    envs: Dict[str, DeployedTaskEnvironment]
 
     def summary_repr(self) -> str:
         """
@@ -239,25 +229,7 @@ async def _build_images(deployment: DeploymentPlan) -> ImageCache:
     return ImageCache(image_lookup=image_identifier_map)
 
 
-class Deployer(Protocol):
-    """
-    Protocol for deployment callables.
-    """
-
-    async def __call__(self, context: DeploymentContext) -> DeployedEnv:
-        """
-        Deploy the environment described in the context.
-
-        Args:
-            context: Deployment context containing environment, serialization context, and dryrun flag
-
-        Returns:
-            Deployment result
-        """
-        ...
-
-
-async def _deploy_task_env(context: DeploymentContext) -> DeployedEnv:
+async def _deploy_task_env(context: DeploymentContext) -> DeployedTaskEnvironment:
     """
     Deploy the given task environment.
     """
@@ -273,39 +245,7 @@ async def _deploy_task_env(context: DeploymentContext) -> DeployedEnv:
     deployed_tasks = []
     for t in deployed_task_vals:
         deployed_tasks.append(t)
-    return DeployedEnv(env=env, deployed_entities=deployed_tasks)
-
-
-_ENVTYPE_REGISTRY: Dict[Type[Environment | TaskEnvironment], Deployer] = {
-    TaskEnvironment: _deploy_task_env,
-}
-
-
-def register_deployer(env_type: Type[Environment | TaskEnvironment], deployer: Deployer) -> None:
-    """
-    Register a deployer for a specific environment type.
-
-    Args:
-        env_type: Type of environment this deployer handles
-        deployer: Deployment callable that conforms to the Deployer protocol
-    """
-    _ENVTYPE_REGISTRY[env_type] = deployer
-
-
-def get_deployer(env_type: Type[Environment | TaskEnvironment]) -> Deployer:
-    """
-    Get the registered deployer for an environment type.
-
-    Args:
-        env_type: Type of environment to get deployer for
-
-    Returns:
-        Deployer for the environment type, defaults to task environment deployer
-    """
-    v = _ENVTYPE_REGISTRY.get(env_type)
-    if v is None:
-        raise ValueError(f"No deployer registered for environment type {env_type}")
-    return v
+    return DeployedTaskEnvironment(env=env, deployed_entities=deployed_tasks)
 
 
 @requires_initialization

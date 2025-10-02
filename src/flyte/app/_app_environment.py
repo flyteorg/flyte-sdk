@@ -393,7 +393,9 @@ class AppEnvironment(Environment):
             resources=self.resources,
             env=self.env_vars,
             secrets=self.secrets,
-            dependencies=self.depends_on,
+            dependencies=[app_env.app for app_env in self.depends_on if isinstance(app_env, AppEnvironment)]
+            if self.depends_on
+            else None,
             image=self.pod_template or self.image,
             port=self.port,
             args=self.args,

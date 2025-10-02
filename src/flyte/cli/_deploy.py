@@ -117,7 +117,7 @@ class DeployEnvCommand(click.RichCommand):
             )
 
         console.print(common.format("Environments", deployment[0].env_repr(), obj.output_format))
-        console.print(common.format("Tasks", deployment[0].table_repr(), obj.output_format))
+        console.print(common.format("Entities", deployment[0].table_repr(), obj.output_format))
 
 
 class DeployEnvRecursiveCommand(click.Command):
