@@ -135,7 +135,10 @@ root_context_var = contextvars.ContextVar("root", default=Context(data=ContextDa
 
 
 def ctx() -> Optional[TaskContext]:
-    """Retrieve the current task context from the context variable."""
+    """
+    Returns flyte.models.TaskContext if within a task context, else None
+    Note: Only use this in task code and not module level.
+    """
     return internal_ctx().data.task_context
 
 
