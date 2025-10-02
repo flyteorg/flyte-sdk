@@ -169,6 +169,8 @@ async def download_bundle(bundle: CodeBundle) -> pathlib.Path:
 
     :return: The path to the downloaded code bundle.
     """
+    import sys
+
     import flyte.storage as storage
 
     dest = pathlib.Path(bundle.destination)
@@ -185,12 +187,18 @@ async def download_bundle(bundle: CodeBundle) -> pathlib.Path:
         # NOTE the os.path.join(destination, ''). This is to ensure that the given path is in fact a directory and all
         # downloaded data should be copied into this directory. We do this to account for a difference in behavior in
         # fsspec, which requires a trailing slash in case of pre-existing directory.
-        process = await asyncio.create_subprocess_exec(
-            "tar",
+        args = [
             "-xvf",
             str(downloaded_bundle),
             "-C",
             str(dest),
+        ]
+        if sys.platform != "darwin":
+            args.insert(0, "--overwrite")
+
+        process = await asyncio.create_subprocess_exec(
+            "tar",
+            *args,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )

@@ -1,5 +1,4 @@
 import rich_click as click
-from rich.console import Console
 
 import flyte.remote as remote
 
@@ -13,6 +12,6 @@ def whoami(
 ):
     """Display the current user information."""
     cfg.init()
-    console = Console()
+    console = common.get_console()
     user_info = remote.User.get()
     console.print(user_info.to_json())
