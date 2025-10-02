@@ -18,21 +18,18 @@ Usage:
 """
 
 import asyncio
-from typing import List, TypeVar, Callable, Optional
+from typing import Callable, List, Optional, TypeVar
 
-T = TypeVar('T')
-R = TypeVar('R')
+T = TypeVar("T")
+R = TypeVar("R")
 
 
 class CircuitBreakerError(Exception):
     """Raised when too many failures occur."""
-    pass
 
 
 async def circuit_breaker_execute(
-    task_fn: Callable[[T], R],
-    items: List[T],
-    max_failures: int = 3
+    task_fn: Callable[[T], R], items: List[T], max_failures: int = 3
 ) -> List[Optional[R]]:
     """
     Execute tasks in parallel with circuit breaker protection.
@@ -78,7 +75,9 @@ async def circuit_breaker_execute(
                     for remaining_task in pending:
                         remaining_task.cancel()
 
-                    raise CircuitBreakerError(f"Circuit breaker opened: {failures} failures exceed limit of {max_failures}")
+                    raise CircuitBreakerError(
+                        f"Circuit breaker opened: {failures} failures exceed limit of {max_failures}"
+                    )
             else:
                 results[task_index] = task.result()
                 print(f"✓ Task {task_index + 1} succeeded")

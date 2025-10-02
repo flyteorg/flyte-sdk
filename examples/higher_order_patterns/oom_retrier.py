@@ -48,7 +48,7 @@ async def retry_with_memory(
     increment: str = "200Mi",
     max_memory: str = "4Gi",
     cpu: int = 1,
-    **kwargs
+    **kwargs,
 ):
     """
     Retry a Flyte task with increasing memory allocation on OOM errors.
@@ -80,9 +80,7 @@ async def retry_with_memory(
         print(f"Attempt {attempt}: Running task with memory: {mem_str}")
 
         try:
-            result = await task_fn.override(
-                resources=flyte.Resources(cpu=cpu, memory=mem_str)
-            )(*args, **kwargs)
+            result = await task_fn.override(resources=flyte.Resources(cpu=cpu, memory=mem_str))(*args, **kwargs)
             print(f"Success with memory: {mem_str}")
             return result
 
@@ -94,6 +92,5 @@ async def retry_with_memory(
             attempt += 1
 
     raise RuntimeError(
-        f"Task failed with OOM even after retrying up to {format_memory(max_memory_mi)} "
-        f"across {attempt} attempts"
+        f"Task failed with OOM even after retrying up to {format_memory(max_memory_mi)} across {attempt} attempts"
     )

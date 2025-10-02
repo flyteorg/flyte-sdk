@@ -27,11 +27,9 @@ Usage:
     )
 """
 
-import asyncio
-from typing import List, Type, TypeVar, Callable, Any, Optional, Union
-import flyte
+from typing import Callable, List, Optional, Type, TypeVar
 
-R = TypeVar('R')
+R = TypeVar("R")
 
 
 async def run_with_fallback(
@@ -40,7 +38,7 @@ async def run_with_fallback(
     *args,
     fallback_exceptions: Optional[List[Type[Exception]]] = None,
     log_failures: bool = True,
-    **kwargs
+    **kwargs,
 ) -> R:
     """
     Run a primary task with automatic fallback on specified exceptions.
@@ -71,13 +69,12 @@ async def run_with_fallback(
 
     except Exception as e:
         # Check if this exception should trigger fallback
-        should_fallback = (
-            fallback_exceptions is None or
-            any(isinstance(e, exc_type) for exc_type in fallback_exceptions)
+        should_fallback = fallback_exceptions is None or any(
+            isinstance(e, exc_type) for exc_type in fallback_exceptions
         )
 
         # If not a direct match, check if it's a Flyte error with a code that matches our target exceptions
-        if not should_fallback and hasattr(e, 'code') and fallback_exceptions:
+        if not should_fallback and hasattr(e, "code") and fallback_exceptions:
             error_code = str(e.code)
             should_fallback = any(exc_type.__name__ == error_code for exc_type in fallback_exceptions)
 

@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Script to run all higher-order function pattern examples in the higher_order_patterns directory.
 
@@ -11,49 +10,46 @@ Each example is run independently and shows the pattern in action.
 """
 
 import asyncio
-import flyte
-import flyte.errors
-from typing import List
 import random
 import time
+
+import flyte
+import flyte.errors
 
 # Set up the environment with a reusable image
 reusable_image = flyte.Image.from_debian_base(name="higher_order_patterns").with_pip_packages("unionai-reuse>=0.1.3")
 
 env = flyte.TaskEnvironment(
-    name="higher_order_cpu",
-    resources=flyte.Resources(cpu="1", memory="512Mi"),
-    image=reusable_image
+    name="higher_order_cpu", resources=flyte.Resources(cpu="1", memory="512Mi"), image=reusable_image
 )
 
 # Import our higher-order patterns
 from auto_batcher import batch_map_reduce
+from circuit_breaker import circuit_breaker_execute
 from fallback_runner import run_with_fallback
 from oom_retrier import retry_with_memory
-from circuit_breaker import circuit_breaker_execute, CircuitBreakerError
 
 # === AUTO BATCHER EXAMPLE ===
+
 
 @env.task
 async def process_text_item(item: str) -> dict:
     """Process a single text item - simulates some computation."""
     await asyncio.sleep(0.1)  # Simulate processing time
-    return {
-        "item": item,
-        "length": len(item),
-        "processed_at": time.time(),
-        "uppercase": item.upper()
-    }
+    return {"item": item, "length": len(item), "processed_at": time.time(), "uppercase": item.upper()}
+
 
 def sum_all(items) -> int:
     """Simple reduce function that sums numbers."""
     return sum(items)
+
 
 @env.task
 async def get_length(text: str) -> int:
     """Simple task that returns text length."""
     await asyncio.sleep(0.1)
     return len(text)
+
 
 @env.task
 async def auto_batcher_example() -> dict:
@@ -65,28 +61,21 @@ async def auto_batcher_example() -> dict:
 
     # Example: Batch map-reduce - map to lengths, reduce by summing
     print("Running batch_map_reduce example...")
-    total_length = await batch_map_reduce(
-        map_fn=get_length,
-        reduce_fn=sum_all,
-        data=data,
-        batch_size=2
-    )
+    total_length = await batch_map_reduce(map_fn=get_length, reduce_fn=sum_all, data=data, batch_size=2)
 
-    return {
-        "total_characters": total_length,
-        "words_processed": len(data),
-        "pattern": "auto_batcher"
-    }
+    return {"total_characters": total_length, "words_processed": len(data), "pattern": "auto_batcher"}
+
 
 # === FALLBACK RUNNER EXAMPLE ===
 
+
 class APIError(Exception):
     """Simulated API error."""
-    pass
+
 
 class CustomTimeoutError(Exception):
     """Simulated timeout error."""
-    pass
+
 
 @env.task
 async def unreliable_api_task(data: str) -> dict:
@@ -102,11 +91,13 @@ async def unreliable_api_task(data: str) -> dict:
 
     return {"result": f"api_processed_{data}", "source": "primary_api"}
 
+
 @env.task
 async def local_fallback_task(data: str) -> dict:
     """Fallback task that processes locally."""
     await asyncio.sleep(0.05)  # Faster local processing
     return {"result": f"local_processed_{data}", "source": "local_fallback"}
+
 
 @env.task
 async def fallback_runner_example() -> dict:
@@ -122,7 +113,7 @@ async def fallback_runner_example() -> dict:
             fallback_task=local_fallback_task,
             data=item,
             fallback_exceptions=[APIError, CustomTimeoutError],
-            log_failures=True
+            log_failures=True,
         )
         results.append(result)
 
@@ -134,10 +125,12 @@ async def fallback_runner_example() -> dict:
         "total_processed": len(results),
         "primary_successes": primary_count,
         "fallback_uses": fallback_count,
-        "pattern": "fallback_runner"
+        "pattern": "fallback_runner",
     }
 
+
 # === OOM RETRIER EXAMPLE ===
+
 
 @env.task
 async def memory_hungry_task(message: str) -> dict:
@@ -150,6 +143,7 @@ async def memory_hungry_task(message: str) -> dict:
 
     return {"message": message, "success": True}
 
+
 @env.task
 async def oom_retrier_example() -> dict:
     """Demonstrate the OOM retrier pattern."""
@@ -157,25 +151,17 @@ async def oom_retrier_example() -> dict:
 
     try:
         result = await retry_with_memory(
-            memory_hungry_task,
-            "large dataset processing",
-            initial_memory="250Mi",
-            increment="300Mi",
-            max_memory="1Gi"
+            memory_hungry_task, "large dataset processing", initial_memory="250Mi", increment="300Mi", max_memory="1Gi"
         )
 
-        return {
-            "result": result,
-            "pattern": "oom_retrier"
-        }
+        return {"result": result, "pattern": "oom_retrier"}
     except Exception as e:
         print(f"Failed even with max memory: {e}")
-        return {
-            "error": str(e),
-            "pattern": "oom_retrier"
-        }
+        return {"error": str(e), "pattern": "oom_retrier"}
+
 
 # === CIRCUIT BREAKER EXAMPLE ===
+
 
 @env.task
 async def flaky_service_task(item: str) -> str:
@@ -188,6 +174,7 @@ async def flaky_service_task(item: str) -> str:
 
     return f"processed_{item}"
 
+
 @env.task
 async def circuit_breaker_example() -> dict:
     """Demonstrate the circuit breaker pattern."""
@@ -196,11 +183,7 @@ async def circuit_breaker_example() -> dict:
     # Test data
     items = [f"item_{i}" for i in range(10)]
 
-    results = await circuit_breaker_execute(
-        flaky_service_task,
-        items,
-        max_failures=3
-    )
+    results = await circuit_breaker_execute(flaky_service_task, items, max_failures=3)
     print(f"Results: {results}")
 
     successful_count = sum(1 for r in results if r is not None)
@@ -209,10 +192,12 @@ async def circuit_breaker_example() -> dict:
         "items_processed": len(items),
         "successful": successful_count,
         "failed": len(items) - successful_count,
-        "pattern": "circuit_breaker"
+        "pattern": "circuit_breaker",
     }
 
+
 # === MAIN ORCHESTRATOR ===
+
 
 @env.task
 async def run_all_higher_order_patterns() -> dict:
@@ -231,13 +216,14 @@ async def run_all_higher_order_patterns() -> dict:
         # "fallback_runner": fallback_result,
         # "oom_retrier": oom_result,
         "circuit_breaker": circuit_breaker_result,
-        "status": "completed"
+        "status": "completed",
     }
 
     print("✅ All higher-order pattern examples completed!")
     print(f"Summary: {summary}")
 
     return summary
+
 
 if __name__ == "__main__":
     # Initialize Flyte with config

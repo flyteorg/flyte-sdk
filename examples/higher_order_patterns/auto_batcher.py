@@ -24,16 +24,17 @@ Usage:
 """
 
 import asyncio
-from typing import List, TypeVar, Callable, Any, Optional
+from typing import Any, Callable, List, Optional, TypeVar
+
 import flyte
 
-T = TypeVar('T')
-R = TypeVar('R')
+T = TypeVar("T")
+R = TypeVar("R")
 
 
 def create_batches(data: List[T], batch_size: int) -> List[List[T]]:
     """Split data into batches of specified size."""
-    return [data[i:i + batch_size] for i in range(0, len(data), batch_size)]
+    return [data[i : i + batch_size] for i in range(0, len(data), batch_size)]
 
 
 async def batch_map_reduce(
@@ -41,7 +42,7 @@ async def batch_map_reduce(
     reduce_fn: Callable[[List[R]], Any],
     data: List[T],
     batch_size: int = 10,
-    max_concurrent_batches: Optional[int] = None
+    max_concurrent_batches: Optional[int] = None,
 ) -> Any:
     """
     Map-reduce pattern with batching.
@@ -80,22 +81,16 @@ async def batch_map_reduce(
     if max_concurrent_batches and max_concurrent_batches < len(batches):
         batch_results = []
         for i in range(0, len(batches), max_concurrent_batches):
-            batch_chunk = batches[i:i + max_concurrent_batches]
-            chunk_tasks = [
-                process_and_reduce_batch(batch, i + j)
-                for j, batch in enumerate(batch_chunk)
-            ]
+            batch_chunk = batches[i : i + max_concurrent_batches]
+            chunk_tasks = [process_and_reduce_batch(batch, i + j) for j, batch in enumerate(batch_chunk)]
             chunk_results = await asyncio.gather(*chunk_tasks)
             batch_results.extend(chunk_results)
     else:
         # Process all batches concurrently
-        batch_tasks = [
-            process_and_reduce_batch(batch, i)
-            for i, batch in enumerate(batches)
-        ]
+        batch_tasks = [process_and_reduce_batch(batch, i) for i, batch in enumerate(batches)]
         batch_results = await asyncio.gather(*batch_tasks)
 
     # Final reduce phase
     final_result = reduce_fn(batch_results)
-    print(f"Completed map-reduce processing")
+    print("Completed map-reduce processing")
     return final_result
