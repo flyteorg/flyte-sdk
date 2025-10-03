@@ -53,7 +53,7 @@ Accelerators = Literal[
     "A10:6",
     "A10:7",
     "A10:8",
-        # A10G
+    # A10G
     "A10G:1",
     "A10G:2",
     "A10G:3",
@@ -62,7 +62,7 @@ Accelerators = Literal[
     "A10G:6",
     "A10G:7",
     "A10G:8",
-        # A100
+    # A100
     "A100:1",
     "A100:2",
     "A100:3",
@@ -71,7 +71,7 @@ Accelerators = Literal[
     "A100:6",
     "A100:7",
     "A100:8",
-        # A100 80G
+    # A100 80G
     "A100 80G:1",
     "A100 80G:2",
     "A100 80G:3",
@@ -80,7 +80,7 @@ Accelerators = Literal[
     "A100 80G:6",
     "A100 80G:7",
     "A100 80G:8",
-        # B200
+    # B200
     "B200:1",
     "B200:2",
     "B200:3",
@@ -89,7 +89,7 @@ Accelerators = Literal[
     "B200:6",
     "B200:7",
     "B200:8",
-        # H100
+    # H100
     "H100:1",
     "H100:2",
     "H100:3",
@@ -98,7 +98,7 @@ Accelerators = Literal[
     "H100:6",
     "H100:7",
     "H100:8",
-        # H200
+    # H200
     "H200:1",
     "H200:2",
     "H200:3",
@@ -107,7 +107,7 @@ Accelerators = Literal[
     "H200:6",
     "H200:7",
     "H200:8",
-        # L4
+    # L4
     "L4:1",
     "L4:2",
     "L4:3",
@@ -116,7 +116,7 @@ Accelerators = Literal[
     "L4:6",
     "L4:7",
     "L4:8",
-        # L40s
+    # L40s
     "L40s:1",
     "L40s:2",
     "L40s:3",
@@ -125,7 +125,7 @@ Accelerators = Literal[
     "L40s:6",
     "L40s:7",
     "L40s:8",
-        # V100
+    # V100
     "V100:1",
     "V100:2",
     "V100:3",
@@ -134,9 +134,9 @@ Accelerators = Literal[
     "V100:6",
     "V100:7",
     "V100:8",
-        # RTX 6000
+    # RTX 6000
     "RTX PRO 6000:1",
-        # T4
+    # T4
     "T4:1",
     "T4:2",
     "T4:3",
@@ -145,37 +145,37 @@ Accelerators = Literal[
     "T4:6",
     "T4:7",
     "T4:8",
-        # Trn1
+    # Trn1
     "Trn1:1",
-        # Trn1n
+    # Trn1n
     "Trn1n:1",
-        # Trn2
+    # Trn2
     "Trn2:1",
-        # Trn2u
+    # Trn2u
     "Trn2u:1",
-        # Inf1
+    # Inf1
     "Inf1:1",
-        # Inf2
+    # Inf2
     "Inf2:1",
-        # MI100
+    # MI100
     "MI100:1",
-        # MI210
+    # MI210
     "MI210:1",
-        # MI250
+    # MI250
     "MI250:1",
-        # MI250X
+    # MI250X
     "MI250X:1",
-        # MI300A
+    # MI300A
     "MI300A:1",
-        # MI300X
+    # MI300X
     "MI300X:1",
-        # MI325X
+    # MI325X
     "MI325X:1",
-        # MI350X
+    # MI350X
     "MI350X:1",
-        # MI355X
+    # MI355X
     "MI355X:1",
-        # Habana Gaudi
+    # Habana Gaudi
     "Gaudi1:1",
 ]
 
@@ -388,10 +388,10 @@ def _check_resource_is_singular(resource: Resources):
 
 
 def pod_spec_from_resources(
-        primary_container_name: str = _PRIMARY_CONTAINER_DEFAULT_NAME,
-        requests: Optional[Resources] = None,
-        limits: Optional[Resources] = None,
-        k8s_gpu_resource_key: str = "nvidia.com/gpu",
+    primary_container_name: str = _PRIMARY_CONTAINER_DEFAULT_NAME,
+    requests: Optional[Resources] = None,
+    limits: Optional[Resources] = None,
+    k8s_gpu_resource_key: str = "nvidia.com/gpu",
 ) -> "V1PodSpec":
     from kubernetes.client import V1Container, V1PodSpec, V1ResourceRequirements
 

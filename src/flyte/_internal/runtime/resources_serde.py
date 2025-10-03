@@ -1,7 +1,8 @@
-from typing import List, Optional, Tuple, Dict
+from typing import Dict, List, Optional, Tuple
 
-from flyte._resources import CPUBaseType, Resources, DeviceClass
 from flyteidl2.core import tasks_pb2
+
+from flyte._resources import CPUBaseType, DeviceClass, Resources
 
 ACCELERATOR_DEVICE_MAP = {
     "A100": "nvidia-tesla-a100",
@@ -100,7 +101,7 @@ def get_proto_extended_resources(resources: Resources | None) -> Optional[tasks_
 
 
 def _convert_resources_to_resource_entries(
-        resources: Resources | None,
+    resources: Resources | None,
 ) -> Tuple[List[tasks_pb2.Resources.ResourceEntry], List[tasks_pb2.Resources.ResourceEntry]]:
     request_entries: List[tasks_pb2.Resources.ResourceEntry] = []
     limit_entries: List[tasks_pb2.Resources.ResourceEntry] = []

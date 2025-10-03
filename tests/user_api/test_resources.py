@@ -1,6 +1,6 @@
 import pytest
 
-from flyte._resources import AMD_GPU, GPU, HABANA_GAUDI, Neuron, TPU, Device, Resources
+from flyte._resources import AMD_GPU, GPU, HABANA_GAUDI, TPU, Device, Neuron, Resources
 
 
 def test_resources_gpu_with_int():
@@ -352,4 +352,3 @@ def test_accelerator_strings(accelerator_string, expected_device, expected_quant
     assert device.device == expected_device
     assert device.quantity == expected_quantity
     assert device.device_class == expected_class
-

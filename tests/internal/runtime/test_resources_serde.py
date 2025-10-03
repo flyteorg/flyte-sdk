@@ -150,5 +150,3 @@ def test_accelerator_map_with_fallback():
     acc = _get_gpu_extended_resource_entry(res)
     assert acc is not None
     assert acc.device == "CustomGPU-X1000"  # Should use original device string as fallback
-
-
