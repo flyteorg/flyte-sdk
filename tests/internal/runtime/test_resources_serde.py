@@ -125,3 +125,30 @@ def test_gpu_partition_size():
     assert acc is not None
     assert acc.device == "nvidia-tesla-a100"
     assert acc.partition_size == "1g.5gb"
+
+
+def test_device_class_with_fallback():
+    """Test that unknown device_class falls back to NVIDIA_GPU"""
+    from flyte._resources import Device
+
+    # Create a Device with an unknown device_class by using Device directly
+    # This bypasses the GPU() helper which enforces valid types
+    unknown_device = Device(quantity=2, device_class="UNKNOWN_CLASS", device="T4")  # type: ignore
+    res = Resources(gpu=unknown_device)
+    acc = _get_gpu_extended_resource_entry(res)
+    assert acc is not None
+    assert acc.device_class == tasks_pb2.GPUAccelerator.NVIDIA_GPU  # Should fallback to NVIDIA_GPU
+
+
+def test_accelerator_map_with_fallback():
+    """Test that unknown accelerator device falls back to original device string"""
+    from flyte._resources import Device
+
+    # Create a Device with an unknown device type
+    unknown_device = Device(quantity=2, device_class="GPU", device="CustomGPU-X1000")
+    res = Resources(gpu=unknown_device)
+    acc = _get_gpu_extended_resource_entry(res)
+    assert acc is not None
+    assert acc.device == "CustomGPU-X1000"  # Should use original device string as fallback
+
+
