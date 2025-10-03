@@ -1,4 +1,5 @@
 import pytest
+from flyteidl2.core import tasks_pb2
 
 from flyte._internal.runtime.resources_serde import (
     ACCELERATOR_DEVICE_MAP,
@@ -8,7 +9,6 @@ from flyte._internal.runtime.resources_serde import (
     get_proto_resources,
 )
 from flyte._resources import GPU, Resources
-from flyteidl2.core import tasks_pb2
 
 
 def test_cpu_single():
