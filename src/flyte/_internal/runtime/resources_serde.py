@@ -10,6 +10,7 @@ ACCELERATOR_DEVICE_MAP = {
     "A10": "nvidia-a10",
     "A10G": "nvidia-a10g",
     "A100G": "nvidia-a100g",
+    "H100": "nvidia-h100",
     "L4": "nvidia-l4",
     "L40s": "nvidia-l40s",
     "L4_VWS": "nvidia-l4-vws",
