@@ -174,7 +174,7 @@ class RuntimeDataValidationError(RuntimeUserError):
 
     def __init__(self, var: str, e: Exception | str, task_name: str = ""):
         super().__init__(
-            "DataValiationError", f"In task {task_name} variable {var}, failed to serialize/deserialize because of {e}"
+            "DataValidationError", f"In task {task_name} variable {var}, failed to serialize/deserialize because of {e}"
         )
 
 

@@ -647,17 +647,21 @@ class DataFrameTransformerEngine(TypeTransformer[DataFrame]):
                 f"Already registered a handler for {(h.python_type, protocol, h.supported_format)}"
             )
         lowest_level[h.supported_format] = h
-        logger.debug(f"Registered {h} as handler for {h.python_type}, protocol {protocol}, fmt {h.supported_format}")
+        logger.debug(
+            f"Registered {h.__class__.__name__} as handler for {h.python_type.__class__.__name__},"
+            f" protocol {protocol}, fmt {h.supported_format}"
+        )
 
         if (default_format_for_type or default_for_type) and h.supported_format != GENERIC_FORMAT:
             if h.python_type in cls.DEFAULT_FORMATS and not override:
                 if cls.DEFAULT_FORMATS[h.python_type] != h.supported_format:
                     logger.info(
-                        f"Not using handler {h} with format {h.supported_format}"
-                        f" as default for {h.python_type}, {cls.DEFAULT_FORMATS[h.python_type]} already specified."
+                        f"Not using handler {h.__class__.__name__} with format {h.supported_format}"
+                        f" as default for {h.python_type.__class__.__name__},"
+                        f" {cls.DEFAULT_FORMATS[h.python_type]} already specified."
                     )
             else:
-                logger.debug(f"Use {type(h).__name__} as default handler for {h.python_type}.")
+                logger.debug(f"Use {type(h).__name__} as default handler for {h.python_type.__class__.__name__}.")
                 cls.DEFAULT_FORMATS[h.python_type] = h.supported_format
         if default_storage_for_type or default_for_type:
             if h.protocol in cls.DEFAULT_PROTOCOLS and not override:
