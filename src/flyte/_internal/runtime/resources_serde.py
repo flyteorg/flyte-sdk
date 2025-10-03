@@ -64,7 +64,11 @@ def _get_gpu_extended_resource_entry(resources: Resources) -> Optional[tasks_pb2
         return None
 
     device_class = _DeviceClassToProto.get(device.device_class, tasks_pb2.GPUAccelerator.NVIDIA_GPU)
-    device_type = ACCELERATOR_DEVICE_MAP.get(device.device, device.device)
+    if device.device is None:
+        raise RuntimeError("Device type must be specified for GPU string.")
+    else:
+        device_type = device.device
+    device_type = ACCELERATOR_DEVICE_MAP.get(device_type, device_type)
     return tasks_pb2.GPUAccelerator(
         device=device_type,
         partition_size=device.partition if device.partition else None,

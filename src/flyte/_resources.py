@@ -1,5 +1,6 @@
+import typing
 from dataclasses import dataclass, fields
-from typing import TYPE_CHECKING, Dict, Literal, Optional, Tuple, Type, Union, get_args
+from typing import TYPE_CHECKING, Dict, Literal, Optional, Tuple, Union, get_args
 
 import rich.repr
 
@@ -181,7 +182,7 @@ Accelerators = Literal[
 
 DeviceClass = Literal["GPU", "TPU", "NEURON", "AMD_GPU", "HABANA_GAUDI"]
 
-_DeviceClassType: Dict[Type, DeviceClass] = {
+_DeviceClassType: Dict[typing.Any, str] = {
     GPUType: "GPU",
     TPUType: "TPU",
     NeuronType: "NEURON",
@@ -360,7 +361,7 @@ class Resources:
                     break
             else:
                 raise ValueError(f"Invalid device type: {device}. Must be one of {list(_DeviceClassType.keys())}")
-            return Device(device=device, device_class=device_class, quantity=int(portion))
+            return Device(device=device, device_class=device_class, quantity=int(portion))  # type: ignore
         return self.gpu
 
     def get_shared_memory(self) -> Optional[str]:
