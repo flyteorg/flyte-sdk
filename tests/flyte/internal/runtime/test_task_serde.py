@@ -1,6 +1,10 @@
 import pathlib
 
 import pytest
+from flyteidl2.core import identifier_pb2, interface_pb2, literals_pb2, tasks_pb2, types_pb2
+from flyteidl2.core.security_pb2 import Secret as ProtoSecret
+from flyteidl2.core.security_pb2 import SecurityContext
+from flyteidl2.task import common_pb2, environment_pb2
 from kubernetes.client import (
     V1Container,
     V1EnvVar,
@@ -19,10 +23,6 @@ from flyte._internal.runtime.task_serde import (
 )
 from flyte._secret import Secret
 from flyte.models import SerializationContext
-from flyteidl2.core import identifier_pb2, interface_pb2, literals_pb2, tasks_pb2, types_pb2
-from flyteidl2.core.security_pb2 import Secret as ProtoSecret
-from flyteidl2.core.security_pb2 import SecurityContext
-from flyteidl2.task import common_pb2, environment_pb2
 
 
 def test_get_security_context():

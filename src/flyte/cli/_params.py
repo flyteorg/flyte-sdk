@@ -15,15 +15,15 @@ from typing import get_args
 import rich_click as click
 import yaml
 from click import Parameter
+from flyteidl2.core.interface_pb2 import Variable
+from flyteidl2.core.literals_pb2 import Literal
+from flyteidl2.core.types_pb2 import BlobType, LiteralType, SimpleType
 from google.protobuf.json_format import MessageToDict
 from mashumaro.codecs.json import JSONEncoder
 
 from flyte._logging import logger
 from flyte.io import Dir, File
 from flyte.types._pickle import FlytePickleTransformer
-from flyteidl2.core.interface_pb2 import Variable
-from flyteidl2.core.literals_pb2 import Literal
-from flyteidl2.core.types_pb2 import BlobType, LiteralType, SimpleType
 
 
 class StructuredDataset:

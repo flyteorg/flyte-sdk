@@ -3,9 +3,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal, Optional
 
-from google.protobuf import timestamp_pb2
-
-from flyte.models import GroupData
 from flyteidl2.common import identifier_pb2
 from flyteidl2.core import execution_pb2, interface_pb2
 from flyteidl2.task import common_pb2, task_definition_pb2
@@ -14,6 +11,9 @@ from flyteidl2.workflow import (
     run_definition_pb2,
     state_service_pb2,
 )
+from google.protobuf import timestamp_pb2
+
+from flyte.models import GroupData
 
 ActionType = Literal["task", "trace"]
 

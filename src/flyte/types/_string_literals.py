@@ -3,10 +3,9 @@ import json
 from typing import Any, Dict, Union
 
 import msgpack
-from google.protobuf.json_format import MessageToDict
-
 from flyteidl2.core import literals_pb2
 from flyteidl2.task import common_pb2
+from google.protobuf.json_format import MessageToDict
 
 
 def _primitive_to_string(primitive: literals_pb2.Primitive) -> Any:

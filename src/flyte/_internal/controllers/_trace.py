@@ -1,8 +1,9 @@
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
-from flyte.models import ActionID, NativeInterface
 from flyteidl2.core import interface_pb2
+
+from flyte.models import ActionID, NativeInterface
 
 
 @dataclass

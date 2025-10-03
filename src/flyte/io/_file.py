@@ -32,7 +32,6 @@ from flyte._context import internal_ctx
 from flyte._initialize import requires_initialization
 from flyte.io._hashing_io import AsyncHashingReader, HashingWriter, HashMethod, PrecomputedValue
 from flyte.types import TypeEngine, TypeTransformer, TypeTransformerFailedError
-from flyteidl2.core import literals_pb2, types_pb2
 
 if typing.TYPE_CHECKING:
     from obstore import AsyncReadableFile, AsyncWritableFile

@@ -6,9 +6,9 @@ from typing import Type
 
 import aiofiles
 import cloudpickle
+from flyteidl2.core import literals_pb2, types_pb2
 
 import flyte.storage as storage
-from flyteidl2.core import literals_pb2, types_pb2
 
 from ._type_engine import TypeEngine, TypeTransformer
 

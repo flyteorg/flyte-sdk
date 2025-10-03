@@ -1,11 +1,11 @@
 import pytest
-
-from flyte._cache.local_cache import LocalTaskCache
-from flyte._internal.runtime import convert
 from flyteidl2.core.interface_pb2 import TypedInterface, Variable, VariableMap
 from flyteidl2.core.literals_pb2 import Literal, Primitive, Scalar
 from flyteidl2.core.types_pb2 import LiteralType, SimpleType
 from flyteidl2.task import common_pb2
+
+from flyte._cache.local_cache import LocalTaskCache
+from flyte._internal.runtime import convert
 
 
 @pytest.mark.asyncio

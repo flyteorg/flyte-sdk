@@ -1,7 +1,8 @@
 from typing import List, Optional, Tuple
 
-from flyte._resources import CPUBaseType, Resources
 from flyteidl2.core import tasks_pb2
+
+from flyte._resources import CPUBaseType, Resources
 
 ACCELERATOR_DEVICE_MAP = {
     "A100": "nvidia-tesla-a100",

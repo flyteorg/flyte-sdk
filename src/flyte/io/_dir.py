@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 from typing import AsyncIterator, Dict, Generic, Iterator, List, Optional, Type, TypeVar, Union
 
+from flyteidl2.core import literals_pb2, types_pb2
 from fsspec.asyn import AsyncFileSystem
 from mashumaro.types import SerializableType
 from pydantic import BaseModel, model_validator
@@ -11,7 +12,6 @@ from pydantic import BaseModel, model_validator
 import flyte.storage as storage
 from flyte.io._file import File
 from flyte.types import TypeEngine, TypeTransformer, TypeTransformerFailedError
-from flyteidl2.core import literals_pb2, types_pb2
 
 # Type variable for the directory format
 T = TypeVar("T")

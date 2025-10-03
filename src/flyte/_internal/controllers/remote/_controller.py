@@ -9,6 +9,9 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Awaitable, DefaultDict, Tuple, TypeVar
 
+from flyteidl2.common import identifier_pb2
+from flyteidl2.workflow import run_definition_pb2
+
 import flyte
 import flyte.errors
 import flyte.storage as storage
@@ -26,8 +29,6 @@ from flyte._task import TaskTemplate
 from flyte._utils.helpers import _selector_policy
 from flyte.models import MAX_INLINE_IO_BYTES, ActionID, NativeInterface, SerializationContext
 from flyte.remote._task import TaskDetails
-from flyteidl2.common import identifier_pb2
-from flyteidl2.workflow import run_definition_pb2
 
 R = TypeVar("R")
 

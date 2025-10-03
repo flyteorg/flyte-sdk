@@ -8,11 +8,11 @@ from pathlib import Path
 from typing import ClassVar, Type
 
 from async_lru import alru_cache
+from flyteidl2.core.tasks_pb2 import TaskTemplate
 
 from flyte._logging import log, logger
 from flyte._utils import AsyncLRUCache
 from flyte.models import CodeBundle
-from flyteidl2.core.tasks_pb2 import TaskTemplate
 
 from ._ignore import GitIgnore, Ignore, StandardIgnore
 from ._packaging import create_bundle, list_files_to_bundle, print_ls_tree

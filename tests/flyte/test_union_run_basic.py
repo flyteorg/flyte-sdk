@@ -1,14 +1,14 @@
 import mock
 import pytest
+from flyteidl2.core import literals_pb2
+from flyteidl2.task import common_pb2
+from flyteidl2.workflow import run_service_pb2
 from mock.mock import AsyncMock, MagicMock
 
 import flyte
 from flyte._image import Image
 from flyte._initialize import _init_for_testing
 from flyte.models import CodeBundle
-from flyteidl2.core import literals_pb2
-from flyteidl2.task import common_pb2
-from flyteidl2.workflow import run_service_pb2
 
 env = flyte.TaskEnvironment(
     name="test",

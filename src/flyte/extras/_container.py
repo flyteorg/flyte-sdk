@@ -2,12 +2,13 @@ import os
 import pathlib
 from typing import Any, Dict, List, Literal, Optional, Tuple, Type, Union
 
+from flyteidl2.core import tasks_pb2
+
 from flyte import Image, storage
 from flyte._logging import logger
 from flyte._task import TaskTemplate
 from flyte.io import Dir, File
 from flyte.models import NativeInterface, SerializationContext
-from flyteidl2.core import tasks_pb2
 
 
 def _extract_command_key(cmd: str, **kwargs) -> List[Any] | None:

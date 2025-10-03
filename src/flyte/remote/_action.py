@@ -20,6 +20,10 @@ from typing import (
 import grpc
 import rich.pretty
 import rich.repr
+from flyteidl2.common import identifier_pb2, list_pb2
+from flyteidl2.task import common_pb2
+from flyteidl2.workflow import run_definition_pb2, run_service_pb2
+from flyteidl2.workflow.run_service_pb2 import WatchActionDetailsResponse
 from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
 
@@ -28,10 +32,6 @@ from flyte._initialize import ensure_client, get_client, get_common_config
 from flyte.remote._common import ToJSONMixin
 from flyte.remote._logs import Logs
 from flyte.syncify import syncify
-from flyteidl2.common import identifier_pb2, list_pb2
-from flyteidl2.task import common_pb2
-from flyteidl2.workflow import run_definition_pb2, run_service_pb2
-from flyteidl2.workflow.run_service_pb2 import WatchActionDetailsResponse
 
 WaitFor = Literal["terminal", "running", "logs-ready"]
 

@@ -1,12 +1,12 @@
 import asyncio
 from typing import Union
 
+from flyteidl2.core import interface_pb2, literals_pb2
+from flyteidl2.task import common_pb2, run_pb2, task_definition_pb2
 from google.protobuf import timestamp_pb2, wrappers_pb2
 
 import flyte.types
 from flyte import Cron, FixedRate, Trigger, TriggerTime
-from flyteidl2.core import interface_pb2, literals_pb2
-from flyteidl2.task import common_pb2, run_pb2, task_definition_pb2
 
 
 def _to_schedule(m: Union[Cron, FixedRate], kickoff_arg_name: str | None = None) -> common_pb2.Schedule:

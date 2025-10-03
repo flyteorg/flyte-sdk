@@ -8,10 +8,11 @@ try:
 except ImportError:
     HAS_AIOSQLITE = False
 
+from flyteidl2.task import common_pb2
+
 from flyte._internal.runtime import convert
 from flyte._logging import logger
 from flyte.config import auto
-from flyteidl2.task import common_pb2
 
 DEFAULT_CACHE_DIR = "~/.flyte"
 CACHE_LOCATION = "local-cache/cache.db"

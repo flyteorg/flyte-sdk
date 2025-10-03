@@ -6,6 +6,9 @@ from dataclasses import dataclass
 from typing import Any, AsyncIterator, Callable, Coroutine, Dict, Iterator, Literal, Optional, Tuple, Union, cast
 
 import rich.repr
+from flyteidl2.common import identifier_pb2, list_pb2
+from flyteidl2.core import literals_pb2
+from flyteidl2.task import task_definition_pb2, task_service_pb2
 
 import flyte
 import flyte.errors
@@ -17,9 +20,6 @@ from flyte._internal.runtime.task_serde import get_proto_retry_strategy, get_pro
 from flyte._logging import logger
 from flyte.models import NativeInterface
 from flyte.syncify import syncify
-from flyteidl2.common import identifier_pb2, list_pb2
-from flyteidl2.core import literals_pb2
-from flyteidl2.task import task_definition_pb2, task_service_pb2
 
 from ._common import ToJSONMixin
 

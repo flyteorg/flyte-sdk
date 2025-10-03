@@ -68,10 +68,11 @@ class RemoteImageChecker(ImageChecker):
         image_name = f"{repository.split('/')[-1]}:{tag}"
 
         try:
-            from flyte._initialize import _get_init_config
             from flyteidl2.imagebuilder import definition_pb2 as image_definition__pb2
             from flyteidl2.imagebuilder import payload_pb2 as image_payload__pb2
             from flyteidl2.imagebuilder import service_pb2_grpc as image_service_pb2_grpc
+
+            from flyte._initialize import _get_init_config
 
             cfg = _get_init_config()
             if cfg is None:

@@ -128,14 +128,14 @@ class _Runner:
     @requires_initialization
     async def _run_remote(self, obj: TaskTemplate[P, R] | LazyEntity, *args: P.args, **kwargs: P.kwargs) -> Run:
         import grpc
-        from google.protobuf import wrappers_pb2
-
-        from flyte.remote import Run
-        from flyte.remote._task import LazyEntity
         from flyteidl2.common import identifier_pb2
         from flyteidl2.core import literals_pb2
         from flyteidl2.task import run_pb2
         from flyteidl2.workflow import run_definition_pb2, run_service_pb2
+        from google.protobuf import wrappers_pb2
+
+        from flyte.remote import Run
+        from flyte.remote._task import LazyEntity
 
         from ._code_bundle import build_code_bundle, build_pkl_bundle
         from ._deploy import build_images
@@ -422,11 +422,12 @@ class _Runner:
         return outputs
 
     async def _run_local(self, obj: TaskTemplate[P, R], *args: P.args, **kwargs: P.kwargs) -> Run:
+        from flyteidl2.common import identifier_pb2
+
         from flyte._internal.controllers import create_controller
         from flyte._internal.controllers._local_controller import LocalController
         from flyte.remote import Run
         from flyte.report import Report
-        from flyteidl2.common import identifier_pb2
 
         controller = cast(LocalController, create_controller("local"))
 

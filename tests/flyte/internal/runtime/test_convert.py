@@ -4,13 +4,6 @@ from dataclasses import dataclass
 from typing import Awaitable, Optional, Tuple, Union
 
 import pytest
-
-import flyte._internal.runtime.convert as convert
-from flyte._internal.runtime.convert import Inputs, generate_sub_action_id_and_output_path
-from flyte._internal.runtime.types_serde import transform_native_to_typed_interface
-from flyte.models import ActionID, NativeInterface, RawDataPath, TaskContext
-from flyte.report import Report
-from flyte.types import TypeEngine
 from flyteidl2.core.interface_pb2 import TypedInterface, Variable, VariableMap
 from flyteidl2.core.literals_pb2 import (
     Literal,
@@ -29,6 +22,13 @@ from flyteidl2.core.types_pb2 import (
 )
 from flyteidl2.task import common_pb2 as _task_common_pb2
 from flyteidl2.task import common_pb2 as run_definition_pb2
+
+import flyte._internal.runtime.convert as convert
+from flyte._internal.runtime.convert import Inputs, generate_sub_action_id_and_output_path
+from flyte._internal.runtime.types_serde import transform_native_to_typed_interface
+from flyte.models import ActionID, NativeInterface, RawDataPath, TaskContext
+from flyte.report import Report
+from flyte.types import TypeEngine
 
 test_cases = [
     (None, "cc6zwnxnmf3chm008fxfwv9g8"),

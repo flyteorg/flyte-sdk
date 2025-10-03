@@ -2,11 +2,12 @@ import hashlib
 import typing
 from venv import logger
 
+from flyteidl2.core import tasks_pb2
+
 import flyte.errors
 from flyte import ReusePolicy
 from flyte._pod import _PRIMARY_CONTAINER_DEFAULT_NAME, _PRIMARY_CONTAINER_NAME_FIELD
 from flyte.models import CodeBundle
-from flyteidl2.core import tasks_pb2
 
 
 def extract_unique_id_and_image(

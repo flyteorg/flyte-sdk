@@ -34,8 +34,9 @@ def test_single_output_new_decorator():
 
 
 def test_sig_files():
-    from flyte.io._file import File
     from flyteidl2.core import types_pb2
+
+    from flyte.io._file import File
 
     def q() -> File: ...
 
