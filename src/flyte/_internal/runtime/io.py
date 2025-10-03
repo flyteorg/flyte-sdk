@@ -8,9 +8,9 @@ TODO: Convert to use streaming apis
 from flyteidl.core import errors_pb2
 
 import flyte.storage as storage
-from flyte.models import PathRewrite
 from flyteidl2.core import execution_pb2
 from flyteidl2.task import common_pb2
+from flyte.models import PathRewrite
 
 from .convert import Inputs, Outputs, _clean_error_code
 

@@ -20,6 +20,7 @@ from typing import (
 )
 
 import aiofiles
+from flyteidl2.core import literals_pb2, types_pb2
 from fsspec.utils import get_protocol
 from mashumaro.types import SerializableType
 from pydantic import BaseModel, Field, model_validator
@@ -32,6 +33,9 @@ from flyte._initialize import requires_initialization
 from flyte.io._hashing_io import AsyncHashingReader, HashingWriter, HashMethod, PrecomputedValue
 from flyte.types import TypeEngine, TypeTransformer, TypeTransformerFailedError
 from flyteidl2.core import literals_pb2, types_pb2
+
+if typing.TYPE_CHECKING:
+    from obstore import AsyncReadableFile, AsyncWritableFile
 
 if typing.TYPE_CHECKING:
     from obstore import AsyncReadableFile, AsyncWritableFile
@@ -369,7 +373,7 @@ class File(BaseModel, Generic[T], SerializableType):
                 if inspect.iscoroutinefunction(fh.close):
                     await fh.close()
                 else:
-                    fh.close()
+                    await fh.close()
         except flyte.errors.OnlyAsyncIOSupportedError:
             # Fall back to aiofiles
             fs = storage.get_underlying_filesystem(path=self.path)

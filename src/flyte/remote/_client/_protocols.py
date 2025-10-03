@@ -7,9 +7,9 @@ from grpc.aio._typing import RequestType
 
 from flyteidl2.secret import payload_pb2
 from flyteidl2.task import task_service_pb2
-from flyteidl2.trigger import trigger_service_pb2
 from flyteidl2.workflow import run_logs_service_pb2, run_service_pb2
 
+from flyteidl2.trigger import trigger_service_pb2
 
 class MetadataServiceProtocol(Protocol):
     async def GetVersion(self, request: version_pb2.GetVersionRequest) -> version_pb2.GetVersionResponse: ...

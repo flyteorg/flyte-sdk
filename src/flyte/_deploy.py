@@ -22,9 +22,8 @@ from ._task_environment import TaskEnvironment
 if TYPE_CHECKING:
     from flyteidl2.task import task_definition_pb2
     from flyteidl2.trigger import trigger_definition_pb2
-
-    from ._code_bundle import CopyFiles
     from ._internal.imagebuild.image_builder import ImageCache
+    from ._code_bundle import CopyFiles
 
 
 @rich.repr.auto
@@ -150,6 +149,7 @@ async def _deploy_task(
 
     from ._internal.runtime.convert import convert_upload_default_inputs
     from ._internal.runtime.task_serde import translate_task_to_wire
+    from flyteidl2.task import task_definition_pb2, task_service_pb2
     from ._internal.runtime.trigger_serde import to_task_trigger
 
     image_uri = task.image.uri if isinstance(task.image, Image) else task.image

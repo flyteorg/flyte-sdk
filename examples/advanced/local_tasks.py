@@ -3,9 +3,9 @@ from typing import AsyncGenerator, AsyncIterator, Tuple
 
 import flyte
 
-idl2 = "git+https://github.com/flyteorg/flyte.git@enghabu/rename-idl2#subdirectory=gen/python"
+idl2 = "git+https://github.com/flyteorg/flyte.git@v2#subdirectory=gen/python"
 
-image = flyte.Image.from_debian_base().with_apt_packages("git").with_pip_packages(idl2)
+image = flyte.Image.from_debian_base(install_flyte=False).with_apt_packages("git").with_pip_packages(idl2).with_local_v2()
 
 env = flyte.TaskEnvironment(
     name="traces",
@@ -99,7 +99,7 @@ def noio_task():
 @env.task
 async def parallel_main_no_io(q: str) -> int:
     print("Starting parallel_main_no_io", flush=True)
-    noio_task()
+    await noio_task()
     await input_trace("hello world", "blah", 42)
     a = await output_trace()
     await noio_trace()

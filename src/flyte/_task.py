@@ -40,6 +40,8 @@ if TYPE_CHECKING:
     from flyte.trigger import Trigger
     from flyteidl2.core.tasks_pb2 import DataLoadingConfig
 
+    from flyte.trigger import Trigger
+
     from ._task_environment import TaskEnvironment
 
 P = ParamSpec("P")  # capture the function's parameters
@@ -108,6 +110,7 @@ class TaskTemplate(Generic[P, R]):
     queue: Optional[str] = None
 
     parent_env: Optional[weakref.ReferenceType[TaskEnvironment]] = None
+    parent_env_name: Optional[str] = None
     ref: bool = field(default=False, init=False, repr=False, compare=False)
     max_inline_io_bytes: int = MAX_INLINE_IO_BYTES
     triggers: Tuple[Trigger, ...] = field(default_factory=tuple)

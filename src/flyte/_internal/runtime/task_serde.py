@@ -208,17 +208,13 @@ def _get_urun_container(
         else None
     )
     resources = get_proto_resources(task_template.resources)
-    # pr: under what conditions should this return None?
+
     if isinstance(task_template.image, str):
         raise flyte.errors.RuntimeSystemError("BadConfig", "Image is not a valid image")
 
-    env_name = ""
-    if task_template.parent_env is not None:
-        task_env = task_template.parent_env()
-        if task_env is not None:
-            env_name = task_env.name
-    else:
-        raise flyte.errors.RuntimeSystemError("BadConfig", "Task template has no parent environment")
+    env_name = task_template.parent_env_name
+    if env_name is None:
+        raise flyte.errors.RuntimeSystemError("BadConfig", f"Task {task_template.name} has no parent environment name")
 
     if not serialize_context.image_cache:
         # This computes the image uri, computing hashes as necessary so can fail if done remotely.
