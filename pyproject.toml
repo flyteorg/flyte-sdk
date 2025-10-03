@@ -26,7 +26,7 @@ dependencies = [
     "mashumaro",
     "dataclasses_json", # TODO: remove this dependency once we remove dataclasses_json from the code
     "aiolimiter>=1.2.1",
-    "flyteidl2>=2.0.0a6",
+    "flyteidl2>=2.0.0a7",
 ]
 
 [project.scripts]
@@ -39,9 +39,6 @@ flyte_keyring_file = "flyte._keyring.file"
 [build-system]
 requires = ["setuptools", "setuptools_scm"]
 build-backend = "setuptools.build_meta"
-
-[[tool.uv.index]]
-url = "https://buf.build/gen/python"
 
 [project.optional-dependencies]
 aiosqlite = [
