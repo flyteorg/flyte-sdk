@@ -435,7 +435,7 @@ class AsyncFunctionTaskTemplate(TaskTemplate[P, R]):
 
     func: FunctionTypes
     plugin_config: Optional[Any] = None  # This is used to pass plugin specific configuration
-    debuggable: bool = (True,)
+    debuggable: bool = True
 
     def __post_init__(self):
         super().__post_init__()
