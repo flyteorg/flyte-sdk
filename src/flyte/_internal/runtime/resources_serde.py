@@ -17,6 +17,7 @@ ACCELERATOR_DEVICE_MAP = {
     "M60": "nvidia-tesla-m60",
     "P4": "nvidia-tesla-p4",
     "P100": "nvidia-tesla-p100",
+    "RTX_PRO_6000": "nvidia-rtx-pro-6000",
     "T4": "nvidia-tesla-t4",
     "V100": "nvidia-tesla-v100",
     "V5E": "tpu-v5-lite-podslice",
