@@ -170,7 +170,7 @@ async def load_error(path: str) -> execution_pb2.ExecutionError:
     err.ParseFromString(proto_str)
 
     if err.error is not None:
-        user_code, server_code = _clean_error_code(err.error.code)
+        user_code, _server_code = _clean_error_code(err.error.code)
         return execution_pb2.ExecutionError(
             code=user_code,
             message=err.error.message,

@@ -685,7 +685,7 @@ class DataFrameTransformerEngine(TypeTransformer[DataFrame]):
         expected: types_pb2.LiteralType,
     ) -> literals_pb2.Literal:
         # Make a copy in case we need to hand off to encoders, since we can't be sure of mutations.
-        python_type, *attrs = extract_cols_and_format(python_type)
+        python_type, *_attrs = extract_cols_and_format(python_type)
         sdt = types_pb2.StructuredDatasetType(format=self.DEFAULT_FORMATS.get(python_type, GENERIC_FORMAT))
 
         if issubclass(python_type, DataFrame) and not isinstance(python_val, DataFrame):
@@ -876,7 +876,7 @@ class DataFrameTransformerEngine(TypeTransformer[DataFrame]):
             raise TypeTransformerFailedError("Attribute access unsupported.")
 
         # Detect annotations and extract out all the relevant information that the user might supply
-        expected_python_type, column_dict, storage_fmt, pa_schema = extract_cols_and_format(expected_python_type)
+        expected_python_type, column_dict, _storage_fmt, _pa_schema = extract_cols_and_format(expected_python_type)
 
         # Start handling for DataFrame scalars, first look at the columns
         incoming_columns = lv.scalar.structured_dataset.metadata.structured_dataset_type.columns
@@ -986,7 +986,7 @@ class DataFrameTransformerEngine(TypeTransformer[DataFrame]):
         return converted_cols
 
     def _get_dataset_type(self, t: typing.Union[Type[DataFrame], typing.Any]) -> types_pb2.StructuredDatasetType:
-        original_python_type, column_map, storage_format, pa_schema = extract_cols_and_format(t)  # type: ignore
+        _original_python_type, column_map, storage_format, pa_schema = extract_cols_and_format(t)  # type: ignore
 
         # Get the column information
         converted_cols: typing.List[types_pb2.StructuredDatasetType.DatasetColumn] = (

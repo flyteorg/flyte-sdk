@@ -220,7 +220,7 @@ def convert_error_to_native(err: execution_pb2.ExecutionError | Exception | Erro
     if isinstance(err, Error):
         err = err.err
 
-    user_code, server_code = _clean_error_code(err.code)
+    user_code, _server_code = _clean_error_code(err.code)
     match err.kind:
         case execution_pb2.ExecutionError.UNKNOWN:
             return flyte.errors.RuntimeUnknownError(code=user_code, message=err.message, worker=err.worker)

@@ -373,7 +373,7 @@ class InformerCache:
         """Stop all informers and remove them from the cache"""
         async with self._lock:
             while self._cache:
-                name, informer = self._cache.popitem()
+                _name, informer = self._cache.popitem()
                 try:
                     await informer.stop()
                 except asyncio.CancelledError:

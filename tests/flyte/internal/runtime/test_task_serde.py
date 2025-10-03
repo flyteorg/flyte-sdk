@@ -308,7 +308,7 @@ def env_task_ctx():
 
 
 def test_translate_task_to_wire(env_task_ctx):
-    env, task_template, context = env_task_ctx
+    _env, task_template, context = env_task_ctx
     # Generate proto task
     proto_task = translate_task_to_wire(task_template, context)
 
@@ -322,7 +322,7 @@ def test_translate_task_to_wire(env_task_ctx):
 
 
 def test_translate_task_to_wire_with_default_inputs(env_task_ctx):
-    env, task_template, context = env_task_ctx
+    _env, task_template, context = env_task_ctx
 
     default_inputs = [
         common_pb2.NamedParameter(

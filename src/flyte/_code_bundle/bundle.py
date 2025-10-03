@@ -202,7 +202,7 @@ async def download_bundle(bundle: CodeBundle) -> pathlib.Path:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
-        stdout, stderr = await process.communicate()
+        _stdout, stderr = await process.communicate()
 
         if process.returncode != 0:
             raise RuntimeError(stderr.decode())
