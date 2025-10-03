@@ -2,7 +2,7 @@ from typing import Dict, List, Optional, Tuple
 
 from flyteidl2.core import tasks_pb2
 
-from flyte._resources import CPUBaseType, Resources
+from flyte._resources import CPUBaseType, DeviceClass, Resources
 
 ACCELERATOR_DEVICE_MAP = {
     "A100": "nvidia-tesla-a100",
@@ -24,7 +24,7 @@ ACCELERATOR_DEVICE_MAP = {
     "V6E": "tpu-v6e-slice",
 }
 
-_DeviceClassToProto: Dict[str, tasks_pb2.GPUAccelerator.DeviceClass] = {
+_DeviceClassToProto: Dict[DeviceClass, "tasks_pb2.GPUAccelerator.DeviceClass"] = {
     "GPU": tasks_pb2.GPUAccelerator.NVIDIA_GPU,
     "TPU": tasks_pb2.GPUAccelerator.GOOGLE_TPU,
     "NEURON": tasks_pb2.GPUAccelerator.AMAZON_NEURON,
