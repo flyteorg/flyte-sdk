@@ -68,14 +68,14 @@ def _action_rich_repr(action: run_definition_pb2.Action) -> rich.repr.Result:
     """
     Rich representation of the action.
     """
-    yield "run", action.id.run.name
+    yield "name", action.id.run.name
     if action.metadata.HasField("task"):
-        yield "task", action.metadata.task.id.name
+        yield "task name", action.metadata.task.id.name
         yield "type", action.metadata.task.task_type
     elif action.metadata.HasField("trace"):
         yield "trace", action.metadata.trace.name
         yield "type", "trace"
-    yield "name", action.id.name
+    yield "action name", action.id.name
     yield from _action_time_phase(action)
     yield "group", action.metadata.group
     yield "parent", action.metadata.parent
