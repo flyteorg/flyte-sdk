@@ -621,6 +621,7 @@ class Image:
         self,
         registry: Optional[str] = None,
         name: Optional[str] = None,
+        base_image: Optional[str] = None,
         python_version: Optional[Tuple[int, int]] = None,
         addl_layer: Optional[Layer] = None,
     ) -> Image:
@@ -643,13 +644,14 @@ class Image:
             )
         registry = registry if registry else self.registry
         name = name if name else self.name
+        base_image = base_image if base_image else self.base_image
         if addl_layer and (not name):
             raise ValueError(
                 f"Cannot add additional layer {addl_layer} to an image without name. Please first clone()."
             )
         new_layers = (*self._layers, addl_layer) if addl_layer else self._layers
         img = Image._new(
-            base_image=self.base_image,
+            base_image=base_image,
             dockerfile=self.dockerfile,
             registry=registry,
             name=name,

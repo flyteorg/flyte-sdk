@@ -228,10 +228,9 @@ async def _build_images(deployment: DeploymentPlan) -> ImageCache:
             # No base image but the name is set, try getting image uri from configm
             if cfg and env.image.base_image is None and env.image.dockerfile is None and env.image.name is not None:
                 if env.image.name in cfg.images:
-                    # try to see if the image is set in the config. If so, directly use the image uri
+                    # try to see if the image is set in the config. If so, use the image uri as base_image
                     image_uri = cfg.images[env.image.name]
-                    image_identifier_map[env_name] = image_uri
-                    continue
+                    env.image = env.image.clone(base_image=image_uri)
                 else:
                     raise ValueError(
                         f"Image name '{env.image.name}' not found in config. Available: {list(cfg.images.keys())}"
