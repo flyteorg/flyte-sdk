@@ -99,9 +99,10 @@ def _action_details_rich_repr(
     """
     yield "name", action.id.run.name
     yield from _action_time_phase(action)
-    yield "task", action.resolved_task_spec.task_template.id.name
-    yield "task_type", action.resolved_task_spec.task_template.type
-    yield "task_version", action.resolved_task_spec.task_template.id.version
+    if action.HasField("task"):
+        yield "task", action.task.task_template.id.name
+        yield "task_type", action.task.task_template.type
+        yield "task_version", action.task.task_template.id.version
     yield "attempts", action.attempts
     yield "error", (f"{action.error_info.kind}: {action.error_info.message}" if action.HasField("error_info") else "NA")
     yield "phase", run_definition_pb2.Phase.Name(action.status.phase)
