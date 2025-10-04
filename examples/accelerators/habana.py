@@ -1,6 +1,6 @@
 import flyte
 
-acc_env = flyte.TaskEnvironment("nvidia", resources=flyte.Resources(gpu="T4:1"))
+acc_env = flyte.TaskEnvironment("habana", resources=flyte.Resources(gpu="Gaudi1:1"))
 
 
 @acc_env.task
