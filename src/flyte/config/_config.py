@@ -161,7 +161,7 @@ class ImageConfig(object):
         config_file = get_config_file(config_file)
         kwargs: typing.Dict[str, typing.Any] = {}
         kwargs = set_if_exists(kwargs, "builder", _internal.Image.BUILDER.read(config_file))
-        # TODO: We can add support for setting images in the config file
+        kwargs = set_if_exists(kwargs, "images", _internal.Image.IMAGES.read(config_file))
         return ImageConfig(**kwargs)
 
 
