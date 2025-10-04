@@ -1,8 +1,8 @@
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from flyteidl2.core import tasks_pb2
 
-from flyte._resources import CPUBaseType, Resources
+from flyte._resources import CPUBaseType, DeviceClass, Resources
 
 ACCELERATOR_DEVICE_MAP = {
     "A100": "nvidia-tesla-a100",
@@ -22,6 +22,14 @@ ACCELERATOR_DEVICE_MAP = {
     "V5E": "tpu-v5-lite-podslice",
     "V5P": "tpu-v5p-slice",
     "V6E": "tpu-v6e-slice",
+}
+
+_DeviceClassToProto: Dict[DeviceClass, "tasks_pb2.GPUAccelerator.DeviceClass"] = {
+    "GPU": tasks_pb2.GPUAccelerator.NVIDIA_GPU,
+    "TPU": tasks_pb2.GPUAccelerator.GOOGLE_TPU,
+    "NEURON": tasks_pb2.GPUAccelerator.AMAZON_NEURON,
+    "AMD_GPU": tasks_pb2.GPUAccelerator.AMD_GPU,
+    "HABANA_GAUDI": tasks_pb2.GPUAccelerator.HABANA_GAUDI,
 }
 
 
@@ -54,11 +62,17 @@ def _get_gpu_extended_resource_entry(resources: Resources) -> Optional[tasks_pb2
     device = resources.get_device()
     if device is None:
         return None
-    if device.device not in ACCELERATOR_DEVICE_MAP:
-        raise ValueError(f"GPU of type {device.device} unknown, cannot map to device name")
+
+    device_class = _DeviceClassToProto.get(device.device_class, tasks_pb2.GPUAccelerator.NVIDIA_GPU)
+    if device.device is None:
+        raise RuntimeError("Device type must be specified for GPU string.")
+    else:
+        device_type = device.device
+    device_type = ACCELERATOR_DEVICE_MAP.get(device_type, device_type)
     return tasks_pb2.GPUAccelerator(
-        device=ACCELERATOR_DEVICE_MAP[device.device],
+        device=device_type,
         partition_size=device.partition if device.partition else None,
+        device_class=device_class,
     )
 
 
