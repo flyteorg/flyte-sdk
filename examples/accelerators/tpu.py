@@ -1,6 +1,6 @@
 import flyte
 
-acc_env = flyte.TaskEnvironment("amd", resources=flyte.Resources(gpu="MI350X:1"))
+acc_env = flyte.TaskEnvironment("tpu", resources=flyte.Resources(gpu=flyte.TPU("V5P", "2x2x1")))
 
 
 @acc_env.task
