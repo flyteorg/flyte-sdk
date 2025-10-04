@@ -320,7 +320,7 @@ async def init_from_config(
         root_dir=root_dir,
         log_level=log_level,
         image_builder=cfg.image.builder,
-        images=cfg.image.images,
+        images=cfg.image.image_refs,
         storage=storage,
         source_config_path=cfg_path,
     )

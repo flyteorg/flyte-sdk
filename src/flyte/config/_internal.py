@@ -70,4 +70,4 @@ class Image(object):
     """
 
     BUILDER = ConfigEntry(YamlConfigEntry("image.builder"))
-    IMAGES = ConfigEntry(YamlConfigEntry("image.images"))
+    IMAGE_REFS = ConfigEntry(YamlConfigEntry("image.image_refs"))
