@@ -28,12 +28,12 @@ class QueueService(Protocol):
     ) -> queue_service_pb2.EnqueueActionResponse:
         """Enqueue a task"""
 
-    # async def AbortQueuedAction(
-    #     self,
-    #     req: queue_service_pb2.AbortQueuedActionRequest,
-    #     **kwargs,
-    # ) -> queue_service_pb2.AbortQueuedActionResponse:
-    #     """Dequeue a task"""
+    async def AbortQueuedAction(
+        self,
+        req: queue_service_pb2.AbortQueuedActionRequest,
+        **kwargs,
+    ) -> queue_service_pb2.AbortQueuedActionResponse:
+        """Cancel an enqueued task"""
 
 
 class ClientSet(Protocol):
