@@ -83,6 +83,11 @@ class ContainerTask(TaskTemplate):
                 self._image = Image.from_debian_base()
             else:
                 self._image = Image.from_base(image)
+
+        if command and any(not isinstance(c, str) for c in command):
+            raise ValueError("All elements in the command list must be strings.")
+        if arguments and any(not isinstance(a, str) for a in arguments):
+            raise ValueError("All elements in the arguments list must be strings.")
         self._cmd = command
         self._args = arguments
         self._input_data_dir = input_data_dir
