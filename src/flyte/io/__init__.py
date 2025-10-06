@@ -14,6 +14,7 @@ __all__ = [
     "Dir",
     "File",
     "lazy_import_dataframe_handler",
+    "PARQUET",
 ]
 
 from ._dataframe import (
@@ -22,6 +23,7 @@ from ._dataframe import (
     DataFrameEncoder,
     DataFrameTransformerEngine,
     lazy_import_dataframe_handler,
+    PARQUET,
 )
 from ._dir import Dir
 from ._file import File

@@ -23,6 +23,7 @@ from .dataframe import (
     DataFrameEncoder,
     DataFrameTransformerEngine,
     DuplicateHandlerError,
+    PARQUET,
 )
 
 
@@ -126,4 +127,5 @@ __all__ = [
     "DataFrameEncoder",
     "DataFrameTransformerEngine",
     "lazy_import_dataframe_handler",
+    "PARQUET",
 ]
