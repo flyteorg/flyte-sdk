@@ -10,15 +10,16 @@ from enum import Enum, auto
 from typing import Dict, List
 
 import pytest
-from flyteidl.core import errors_pb2, literals_pb2, types_pb2
-from flyteidl.core.literals_pb2 import (
+from flyteidl.core import errors_pb2
+from flyteidl2.core import literals_pb2, types_pb2
+from flyteidl2.core.literals_pb2 import (
     Literal,
     LiteralCollection,
     LiteralMap,
     Primitive,
     Scalar,
 )
-from flyteidl.core.types_pb2 import (
+from flyteidl2.core.types_pb2 import (
     LiteralType,
     SimpleType,
 )
@@ -889,7 +890,7 @@ def test_assert_dataclassjsonmixin_type():
     pv = Bar(x=3)
     with pytest.raises(
         TypeTransformerFailedError,
-        match="Type of Val '<class 'int'>' is not an instance of <class '.*.ArgsAssert'>",
+        match=r"Type of Val '<class 'int'>' is not an instance of <class '.*.ArgsAssert'>",
     ):
         DataclassTransformer().assert_type(gt, pv)
 

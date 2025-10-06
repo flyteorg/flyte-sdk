@@ -1,12 +1,13 @@
 import mock
 import pytest
-from flyteidl.core import literals_pb2
+from flyteidl2.core import literals_pb2
+from flyteidl2.task import common_pb2
+from flyteidl2.workflow import run_service_pb2
 from mock.mock import AsyncMock, MagicMock
 
 import flyte
 from flyte._image import Image
 from flyte._initialize import _init_for_testing
-from flyte._protos.workflow import run_definition_pb2, run_service_pb2
 from flyte.models import CodeBundle
 
 env = flyte.TaskEnvironment(
@@ -74,9 +75,9 @@ async def test_task1_remote_union_sync(
     mock_run_service.CreateRun.assert_called_once()
     captured_input = mock_run_service.CreateRun.call_args[0]
     req: run_service_pb2.CreateRunRequest = captured_input[0]
-    assert req.inputs == run_definition_pb2.Inputs(
+    assert req.inputs == common_pb2.Inputs(
         literals=[
-            run_definition_pb2.NamedLiteral(
+            common_pb2.NamedLiteral(
                 name="v",
                 value=literals_pb2.Literal(
                     scalar=literals_pb2.Scalar(primitive=literals_pb2.Primitive(string_value="say test"))
