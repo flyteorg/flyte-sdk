@@ -104,15 +104,6 @@ async def create_controller(
     return _create_controller(ct="remote", **controller_kwargs)
 
 
-def debugger():
-    import asyncio
-    import ipdb; ipdb.set_trace()
-    try:
-        asyncio.get_running_loop()
-    except RuntimeError:
-        ipdb.set_trace()
-
-
 async def run_task(
     task: TaskTemplate,
     controller: Controller,
