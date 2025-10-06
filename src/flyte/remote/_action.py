@@ -20,14 +20,15 @@ from typing import (
 import grpc
 import rich.pretty
 import rich.repr
+from flyteidl2.common import identifier_pb2, list_pb2
+from flyteidl2.task import common_pb2
+from flyteidl2.workflow import run_definition_pb2, run_service_pb2
+from flyteidl2.workflow.run_service_pb2 import WatchActionDetailsResponse
 from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
 
 from flyte import types
 from flyte._initialize import ensure_client, get_client, get_common_config
-from flyte._protos.common import identifier_pb2, list_pb2
-from flyte._protos.workflow import run_definition_pb2, run_service_pb2
-from flyte._protos.workflow.run_service_pb2 import WatchActionDetailsResponse
 from flyte.remote._common import ToJSONMixin
 from flyte.remote._logs import Logs
 from flyte.syncify import syncify
@@ -67,14 +68,14 @@ def _action_rich_repr(action: run_definition_pb2.Action) -> rich.repr.Result:
     """
     Rich representation of the action.
     """
-    yield "run", action.id.run.name
+    yield "name", action.id.run.name
     if action.metadata.HasField("task"):
-        yield "task", action.metadata.task.id.name
+        yield "task name", action.metadata.task.id.name
         yield "type", action.metadata.task.task_type
     elif action.metadata.HasField("trace"):
         yield "trace", action.metadata.trace.name
         yield "type", "trace"
-    yield "name", action.id.name
+    yield "action name", action.id.name
     yield from _action_time_phase(action)
     yield "group", action.metadata.group
     yield "parent", action.metadata.parent
@@ -98,9 +99,10 @@ def _action_details_rich_repr(
     """
     yield "name", action.id.run.name
     yield from _action_time_phase(action)
-    yield "task", action.resolved_task_spec.task_template.id.name
-    yield "task_type", action.resolved_task_spec.task_template.type
-    yield "task_version", action.resolved_task_spec.task_template.id.version
+    if action.HasField("task"):
+        yield "task", action.task.task_template.id.name
+        yield "task_type", action.task.task_template.type
+        yield "task_version", action.task.task_template.id.version
     yield "attempts", action.attempts
     yield "error", (f"{action.error_info.kind}: {action.error_info.message}" if action.HasField("error_info") else "NA")
     yield "phase", run_definition_pb2.Phase.Name(action.status.phase)
@@ -706,7 +708,7 @@ class ActionInputs(UserDict, ToJSONMixin):
     remote Union API.
     """
 
-    pb2: run_definition_pb2.Inputs
+    pb2: common_pb2.Inputs
     data: Dict[str, Any]
 
     def __repr__(self):
@@ -723,14 +725,14 @@ class ActionOutputs(tuple, ToJSONMixin):
     remote Union API.
     """
 
-    def __new__(cls, pb2: run_definition_pb2.Outputs, data: Tuple[Any, ...]):
+    def __new__(cls, pb2: common_pb2.Outputs, data: Tuple[Any, ...]):
         # Create the tuple part
         obj = super().__new__(cls, data)
         # Store extra data (you can't do this here directly since it's immutable)
         obj.pb2 = pb2
         return obj
 
-    def __init__(self, pb2: run_definition_pb2.Outputs, data: Tuple[Any, ...]):
+    def __init__(self, pb2: common_pb2.Outputs, data: Tuple[Any, ...]):
         # Normally you'd set instance attributes here,
         # but we've already set `pb2` in `__new__`
         self.pb2 = pb2

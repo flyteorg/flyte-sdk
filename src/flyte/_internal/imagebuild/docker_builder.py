@@ -475,6 +475,10 @@ async def _process_layer(
             # Handle Poetry project
             dockerfile = await PoetryProjectHandler.handel(layer, context_path, dockerfile, docker_ignore_patterns)
 
+        case PoetryProject():
+            # Handle Poetry project
+            dockerfile = await PoetryProjectHandler.handel(layer, context_path, dockerfile, docker_ignore_patterns)
+
         case CopyConfig():
             # Handle local files and folders
             dockerfile = await CopyConfigHandler.handle(layer, context_path, dockerfile, docker_ignore_patterns)

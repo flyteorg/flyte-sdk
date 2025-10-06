@@ -4,8 +4,8 @@ from enum import Enum
 from typing import Dict, List, Optional, Tuple, Union
 
 import pytest
-from flyteidl.core.literals_pb2 import Literal, Scalar
-from flyteidl.core.types_pb2 import TypeAnnotation
+from flyteidl2.core.literals_pb2 import Literal, Scalar
+from flyteidl2.core.types_pb2 import TypeAnnotation
 from google.protobuf import json_format as _json_format
 from google.protobuf import struct_pb2 as _struct
 from pydantic import BaseModel, Field

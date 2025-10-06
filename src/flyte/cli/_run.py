@@ -22,6 +22,18 @@ RUN_REMOTE_CMD = "deployed-task"
 
 
 @lru_cache()
+def _initialize_config(ctx: click.Context, project: str, domain: str, root_dir: str | None = None):
+    obj: CLIConfig | None = ctx.obj
+    if obj is None:
+        import flyte.config
+
+        obj = CLIConfig(flyte.config.auto(), ctx)
+
+    obj.init(project, domain, root_dir)
+    return obj
+
+
+@lru_cache()
 def _list_tasks(
     ctx: click.Context,
     project: str,

@@ -1,11 +1,11 @@
 import pytest
-from flyteidl.core import literals_pb2
+from flyteidl2.core import literals_pb2
+from flyteidl2.task import common_pb2 as run_definition_pb2
 
 import flyte.errors
 import flyte.models
 import flyte.types as types
 from flyte._internal.runtime import io
-from flyte._protos.workflow import run_definition_pb2
 
 
 async def create_inputs(size):

@@ -2,7 +2,7 @@ import datetime
 import random
 
 import pytest
-from flyteidl.core import security_pb2, tasks_pb2
+from flyteidl2.core import security_pb2, tasks_pb2
 from kubernetes.client import ApiClient, V1Container, V1EnvVar, V1LocalObjectReference, V1PodSpec
 
 from flyte import ReusePolicy

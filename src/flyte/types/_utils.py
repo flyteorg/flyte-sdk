@@ -3,7 +3,7 @@ from __future__ import annotations
 import importlib
 import typing
 
-from flyteidl.core.types_pb2 import EnumType, LiteralType, UnionType
+from flyteidl2.core.types_pb2 import EnumType, LiteralType, UnionType
 
 T = typing.TypeVar("T")
 

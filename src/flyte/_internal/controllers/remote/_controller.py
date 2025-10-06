@@ -9,6 +9,9 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Awaitable, DefaultDict, Tuple, TypeVar
 
+from flyteidl2.common import identifier_pb2
+from flyteidl2.workflow import run_definition_pb2
+
 import flyte
 import flyte.errors
 import flyte.storage as storage
@@ -22,8 +25,6 @@ from flyte._internal.runtime import convert, io
 from flyte._internal.runtime.task_serde import translate_task_to_wire
 from flyte._internal.runtime.types_serde import transform_native_to_typed_interface
 from flyte._logging import logger
-from flyte._protos.common import identifier_pb2
-from flyte._protos.workflow import run_definition_pb2
 from flyte._task import TaskTemplate
 from flyte._utils.helpers import _selector_policy
 from flyte.models import MAX_INLINE_IO_BYTES, ActionID, NativeInterface, SerializationContext

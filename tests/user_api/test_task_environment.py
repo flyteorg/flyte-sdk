@@ -95,7 +95,7 @@ def test_clone_no_tasks(base_env):
 
 def test_task_environment_name_validation():
     with pytest.raises(
-        ValueError, match="Environment name 'invalid-name!' must be in snake_case or kebab-case format."
+        ValueError, match=r"Environment name 'invalid-name!' must be in snake_case or kebab-case format\."
     ):
         flyte.TaskEnvironment(name="invalid-name!")
 

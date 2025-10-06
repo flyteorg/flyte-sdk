@@ -237,7 +237,7 @@ async def test_listall_proxy_async():
 def test_illegal_syncify_sync_methods():
     with pytest.raises(
         TypeError,
-        match="Syncify can only be applied to async functions, async generators, async classmethods or staticmethods.",
+        match=r"Syncify can only be applied to async functions, async generators, async classmethods or staticmethods.",
     ):
 
         @syncify
@@ -248,7 +248,7 @@ def test_illegal_syncify_sync_methods():
 def test_illegal_syncify_sync_methods_class():
     with pytest.raises(
         TypeError,
-        match="Syncify can only be applied to async functions, async generators, async classmethods or staticmethods.",
+        match=r"Syncify can only be applied to async functions, async generators, async classmethods or staticmethods.",
     ):
 
         class MySyncClass:
@@ -260,7 +260,7 @@ def test_illegal_syncify_sync_methods_class():
 def test_illegal_syncify_classes():
     with pytest.raises(
         TypeError,
-        match="Syncify can only be applied to async functions, async generators, async classmethods or staticmethods.",
+        match=r"Syncify can only be applied to async functions, async generators, async classmethods or staticmethods.",
     ):
 
         @syncify

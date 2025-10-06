@@ -153,7 +153,7 @@ class TestCreateChannel(unittest.TestCase):
         self.assertEqual(result, mock_channel)
 
         # Verify interceptors were added
-        args, kwargs = mock_insecure_channel.call_args
+        _args, kwargs = mock_insecure_channel.call_args
         self.assertIn("interceptors", kwargs)
         self.assertIn(mock_proxy_interceptor, kwargs["interceptors"])
         self.assertIn(mock_auth_interceptor, kwargs["interceptors"])

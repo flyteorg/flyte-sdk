@@ -163,7 +163,7 @@ def test_poetry_project_validate_missing_pyproject():
         non_existent_poetry_lock = Path(tmpdir) / "non_existent_poetry.lock"
         poetry_project = PoetryProject(pyproject=non_existent_pyproject, poetry_lock=non_existent_poetry_lock)
 
-        with pytest.raises(FileNotFoundError, match="pyproject.toml file .* does not exist"):
+        with pytest.raises(FileNotFoundError, match=r"pyproject.toml file .* does not exist"):
             poetry_project.validate()
 
 

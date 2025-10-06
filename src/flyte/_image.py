@@ -12,7 +12,6 @@ from typing import TYPE_CHECKING, ClassVar, Dict, List, Literal, Optional, Tuple
 import rich.repr
 from packaging.version import Version
 
-from flyte._utils import update_hasher_for_source
 
 if TYPE_CHECKING:
     from flyte import Secret, SecretRequest
@@ -178,7 +177,7 @@ class UVProject(PipOption, Layer):
         super().validate()
 
     def update_hash(self, hasher: hashlib._Hash):
-        from ._utils import filehash_update
+        from ._utils import filehash_update, update_hasher_for_source
 
         super().update_hash(hasher)
         if self.extra_args and "--no-install-project" in self.extra_args:
@@ -210,7 +209,7 @@ class PoetryProject(Layer):
         super().validate()
 
     def update_hash(self, hasher: hashlib._Hash):
-        from ._utils import filehash_update
+        from ._utils import filehash_update, update_hasher_for_source
 
         hash_input = ""
         if self.extra_args:

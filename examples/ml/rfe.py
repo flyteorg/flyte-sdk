@@ -46,7 +46,7 @@ async def train(features: list[str], drop: str) -> float:
 
 @worker.task
 async def rfe():  # -> list[dict[str, float]]:
-    x, y = fetch_california_housing(as_frame=True, return_X_y=True)
+    x, _y = fetch_california_housing(as_frame=True, return_X_y=True)
 
     features = list(x.columns)
 

@@ -1,12 +1,12 @@
 import asyncio
 from typing import Union
 
-from flyteidl.core import interface_pb2, literals_pb2
+from flyteidl2.core import interface_pb2, literals_pb2
+from flyteidl2.task import common_pb2, run_pb2, task_definition_pb2
 from google.protobuf import timestamp_pb2, wrappers_pb2
 
 import flyte.types
 from flyte import Cron, FixedRate, Trigger, TriggerTime
-from flyte._protos.workflow import common_pb2, run_definition_pb2, trigger_definition_pb2
 
 
 def _to_schedule(m: Union[Cron, FixedRate], kickoff_arg_name: str | None = None) -> common_pb2.Schedule:
@@ -36,7 +36,7 @@ async def process_default_inputs(
     task_name: str,
     task_inputs: interface_pb2.VariableMap,
     task_default_inputs: list[common_pb2.NamedParameter],
-) -> list[run_definition_pb2.NamedLiteral]:
+) -> list[common_pb2.NamedLiteral]:
     """
     Process default inputs and convert them to NamedLiteral objects.
 
@@ -68,10 +68,10 @@ async def process_default_inputs(
             keys.append(p.name)
             final_literals.append(p.parameter.default)
 
-    literals: list[run_definition_pb2.NamedLiteral] = []
+    literals: list[common_pb2.NamedLiteral] = []
     for k, lit in zip(keys, final_literals):
         literals.append(
-            run_definition_pb2.NamedLiteral(
+            common_pb2.NamedLiteral(
                 name=k,
                 value=lit,
             )
@@ -85,7 +85,7 @@ async def to_task_trigger(
     task_name: str,
     task_inputs: interface_pb2.VariableMap,
     task_default_inputs: list[common_pb2.NamedParameter],
-) -> trigger_definition_pb2.TaskTrigger:
+) -> task_definition_pb2.TaskTrigger:
     """
     Converts a Trigger object to a TaskTrigger protobuf object.
     Args:
@@ -98,15 +98,15 @@ async def to_task_trigger(
     """
     env = None
     if t.env_vars:
-        env = run_definition_pb2.Envs()
+        env = run_pb2.Envs()
         for k, v in t.env_vars.items():
             env.values.append(literals_pb2.KeyValuePair(key=k, value=v))
 
-    labels = run_definition_pb2.Labels(values=t.labels) if t.labels else None
+    labels = run_pb2.Labels(values=t.labels) if t.labels else None
 
-    annotations = run_definition_pb2.Annotations(values=t.annotations) if t.annotations else None
+    annotations = run_pb2.Annotations(values=t.annotations) if t.annotations else None
 
-    run_spec = run_definition_pb2.RunSpec(
+    run_spec = run_pb2.RunSpec(
         overwrite_cache=t.overwrite_cache,
         envs=env,
         interruptible=wrappers_pb2.BoolValue(value=t.interruptible) if t.interruptible is not None else None,
@@ -139,12 +139,12 @@ async def to_task_trigger(
         kickoff_arg_name=kickoff_arg_name,
     )
 
-    return trigger_definition_pb2.TaskTrigger(
+    return task_definition_pb2.TaskTrigger(
         name=t.name,
-        spec=trigger_definition_pb2.TaskTriggerSpec(
+        spec=task_definition_pb2.TaskTriggerSpec(
             active=t.auto_activate,
             run_spec=run_spec,
-            inputs=run_definition_pb2.Inputs(literals=literals),
+            inputs=common_pb2.Inputs(literals=literals),
         ),
         automation_spec=common_pb2.TriggerAutomationSpec(
             type=common_pb2.TriggerAutomationSpec.Type.TYPE_SCHEDULE,
