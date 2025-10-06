@@ -2,8 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import typing
-import sys
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Dict, List, Optional, Protocol, Set, Tuple, Type
 
@@ -22,7 +20,8 @@ from ._task import TaskTemplate
 from ._task_environment import TaskEnvironment
 
 if TYPE_CHECKING:
-    from flyte._protos.workflow import task_definition_pb2, trigger_definition_pb2
+    from flyteidl2.task import task_definition_pb2
+    from flyteidl2.trigger import trigger_definition_pb2
 
     from ._code_bundle import CopyFiles
     from ._internal.imagebuild.image_builder import ImageCache
@@ -69,7 +68,7 @@ class DeployedTask:
         return [
             ("name", self.deployed_task.task_template.id.name),
             ("version", self.deployed_task.task_template.id.version),
-            ("# triggers", str(len(self.deployed_triggers))),
+            ("triggers", ",".join([t.name for t in self.deployed_triggers])),
         ]
 
 
@@ -146,11 +145,11 @@ async def _deploy_task(
     """
     ensure_client()
     import grpc.aio
+    from flyteidl2.task import task_definition_pb2, task_service_pb2
 
     from ._internal.runtime.convert import convert_upload_default_inputs
     from ._internal.runtime.task_serde import translate_task_to_wire
     from ._internal.runtime.trigger_serde import to_task_trigger
-    from ._protos.workflow import task_definition_pb2, task_service_pb2
 
     image_uri = task.image.uri if isinstance(task.image, Image) else task.image
 
@@ -173,10 +172,15 @@ async def _deploy_task(
             name=spec.task_template.id.name,
         )
 
-        deployable_triggers = []
+        deployable_triggers_coros = []
         for t in task.triggers:
-            deployable_triggers.append(to_task_trigger(t=t))
+            inputs = spec.task_template.interface.inputs
+            default_inputs = spec.default_inputs
+            deployable_triggers_coros.append(
+                to_task_trigger(t=t, task_name=task.name, task_inputs=inputs, task_default_inputs=list(default_inputs))
+            )
 
+        deployable_triggers = await asyncio.gather(*deployable_triggers_coros)
         try:
             await get_client().task_service.DeployTask(
                 task_service_pb2.DeployTaskRequest(
@@ -380,7 +384,6 @@ def plan_deploy(*envs: Environment, version: Optional[str] = None) -> List[Deplo
         deployment_plans.append(DeploymentPlan(planned_envs, version=version))
         visited_envs.update(planned_envs.keys())
     return deployment_plans
-
 
 
 @syncify

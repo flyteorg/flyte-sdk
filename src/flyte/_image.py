@@ -12,6 +12,8 @@ from typing import TYPE_CHECKING, ClassVar, Dict, List, Literal, Optional, Tuple
 import rich.repr
 from packaging.version import Version
 
+from flyte._utils import update_hasher_for_source
+
 if TYPE_CHECKING:
     from flyte import Secret, SecretRequest
 
@@ -168,19 +170,22 @@ class UVProject(PipOption, Layer):
 
     def validate(self):
         if not self.pyproject.exists():
-            raise FileNotFoundError(f"pyproject.toml file {self.pyproject} does not exist")
+            raise FileNotFoundError(f"pyproject.toml file {self.pyproject.resolve()} does not exist")
         if not self.pyproject.is_file():
-            raise ValueError(f"Pyproject file {self.pyproject} is not a file")
+            raise ValueError(f"Pyproject file {self.pyproject.resolve()} is not a file")
         if not self.uvlock.exists():
-            raise ValueError(f"UVLock file {self.uvlock} does not exist")
+            raise ValueError(f"UVLock file {self.uvlock.resolve()} does not exist")
         super().validate()
 
     def update_hash(self, hasher: hashlib._Hash):
         from ._utils import filehash_update
 
         super().update_hash(hasher)
-        filehash_update(self.uvlock, hasher)
-        filehash_update(self.pyproject, hasher)
+        if self.extra_args and "--no-install-project" in self.extra_args:
+            filehash_update(self.uvlock, hasher)
+            filehash_update(self.pyproject, hasher)
+        else:
+            update_hasher_for_source(self.pyproject.parent, hasher)
 
 
 @rich.repr.auto
@@ -214,8 +219,12 @@ class PoetryProject(Layer):
             for secret_mount in self.secret_mounts:
                 hash_input += str(secret_mount)
         hasher.update(hash_input.encode("utf-8"))
-        filehash_update(self.poetry_lock, hasher)
-        filehash_update(self.pyproject, hasher)
+
+        if self.extra_args and "--no-root" in self.extra_args:
+            filehash_update(self.poetry_lock, hasher)
+            filehash_update(self.pyproject, hasher)
+        else:
+            update_hasher_for_source(self.pyproject.parent, hasher)
 
 
 @rich.repr.auto

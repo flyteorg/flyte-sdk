@@ -68,17 +68,29 @@ async def create_flyte_dataframe() -> Annotated[flyte.io.DataFrame, "csv"]:
 
 
 @env.task
-async def get_employee_data() -> pd.DataFrame:
-    raw_dataframe = await create_raw_dataframe()
-    flyte_dataframe = await create_flyte_dataframe()
-    downloaded_fdf = await flyte_dataframe.open(pd.DataFrame).all()
-    joined_df = raw_dataframe.merge(downloaded_fdf, on="employee_id", how="inner")
+async def get_employee_data(raw_dataframe: pd.DataFrame, flyte_dataframe: pd.DataFrame) -> pd.DataFrame:
+    """
+    This task takes two dataframes as input. We'll pass one raw pandas dataframe, and one flyte.io.DataFrame.
+    Flyte automatically converts the flyte.io.DataFrame to a pandas DataFrame. The actual download and conversion
+    happens only when we access the data (in this case, when we do the merge)."""
+    joined_df = raw_dataframe.merge(flyte_dataframe, on="employee_id", how="inner")
 
     return joined_df
 
 
 if __name__ == "__main__":
-    # Use local execution mode
-    flyte.init_from_config()
-    run = flyte.with_runcontext(mode="local").run(get_employee_data)
+    import flyte.git
+
+    flyte.init_from_config(flyte.git.config_from_root())
+    # Get the data sources
+
+    raw_df = flyte.with_runcontext(mode="local").run(create_raw_dataframe)
+    flyte_df = flyte.with_runcontext(mode="local").run(create_flyte_dataframe)
+
+    # Pass both to get_employee_data - Flyte auto-converts flyte.io.DataFrame to pd.DataFrame
+    run = flyte.with_runcontext(mode="local").run(
+        get_employee_data,
+        raw_dataframe=raw_df.outputs(),
+        flyte_dataframe=flyte_df.outputs(),
+    )
     print("Results:", run.outputs())

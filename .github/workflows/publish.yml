@@ -72,6 +72,7 @@ jobs:
           - "plugins/spark"
           - "plugins/openai"
           - "plugins/dask"
+          - "plugins/pytorch"
     steps:
       - uses: actions/checkout@v4
         with:
