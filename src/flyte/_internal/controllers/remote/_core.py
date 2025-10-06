@@ -303,11 +303,10 @@ class Controller:
             async with self._rate_limiter:
                 logger.info(f"Cancelling action: {action.name}")
                 try:
-                    # TODO add support when the queue service supports aborting actions
-                    # await self._queue_service.AbortQueuedAction(
-                    #     queue_service_pb2.AbortQueuedActionRequest(action_id=action.action_id),
-                    #     wait_for_ready=True,
-                    # )
+                    await self._queue_service.AbortQueuedAction(
+                        queue_service_pb2.AbortQueuedActionRequest(action_id=action.action_id),
+                        wait_for_ready=True,
+                    )
                     logger.info(f"Successfully cancelled action: {action.name}")
                 except grpc.aio.AioRpcError as e:
                     if e.code() in [
