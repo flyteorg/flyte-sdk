@@ -1216,7 +1216,7 @@ class TypeEngine(typing.Generic[T]):
                 e: BaseException = literal_map[k].exception()  # type: ignore
                 if isinstance(e, TypeError):
                     raise TypeError(
-                        f"Error converting: Var:{k}, type:{type(v)}, into:{python_type}, received_value {v}"
+                        f"Error converting: Var:{k}, type:{type(d[k])}, into:{python_type}, received_value {d[k]}"
                     )
                 else:
                     raise e
