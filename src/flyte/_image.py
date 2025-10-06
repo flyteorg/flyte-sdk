@@ -12,7 +12,6 @@ from typing import TYPE_CHECKING, ClassVar, Dict, List, Literal, Optional, Tuple
 import rich.repr
 from packaging.version import Version
 
-
 if TYPE_CHECKING:
     from flyte import Secret, SecretRequest
 
