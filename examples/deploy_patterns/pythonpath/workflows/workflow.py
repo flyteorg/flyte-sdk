@@ -1,7 +1,8 @@
 import pathlib
 
-import flyte
 from src.my_module import say_hello
+
+import flyte
 
 env = flyte.TaskEnvironment(
     name="workflow_env",

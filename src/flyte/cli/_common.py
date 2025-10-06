@@ -357,7 +357,7 @@ def _table_format(table: Table, vals: Iterable[Any]) -> Table:
         if headers is None:
             headers = [k for k, _ in o]
             for h in headers:
-                table.add_column(h.capitalize())
+                table.add_column(h.capitalize(), no_wrap=True if "name" in h.casefold() else False)
         table.add_row(*[str(v) for _, v in o])
     return table
 
@@ -377,6 +377,7 @@ def format(title: str, vals: Iterable[Any], of: OutputFormat = "table") -> Table
                     header_style=HEADER_STYLE,
                     show_header=True,
                     border_style=PREFERRED_BORDER_COLOR,
+                    expand=True,
                 ),
                 vals,
             )
