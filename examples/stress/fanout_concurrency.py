@@ -1,6 +1,13 @@
 import asyncio
 
 import flyte
+from pathlib import Path
+from flyte._image import PythonWheels
+
+actor_dist_folder = Path("/Users/ytong/go/src/github.com/unionai/flyte/fasttask/worker-v2/dist")
+wheel_layer = PythonWheels(wheel_dir=actor_dist_folder, package_name="unionai-reuse")
+base = flyte.Image.from_debian_base()
+actor_image = base.clone(addl_layer=wheel_layer)
 
 env = flyte.TaskEnvironment(
     name="large_fanout_concurrent",
@@ -11,7 +18,7 @@ env = flyte.TaskEnvironment(
         concurrency=50,
         scaledown_ttl=60,
     ),
-    image=flyte.Image.from_debian_base().with_pip_packages("unionai-reuse==0.1.6"),
+    image=actor_image,
 )
 
 

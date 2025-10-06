@@ -29,6 +29,7 @@ env = flyte.TaskEnvironment(
 @env.task
 async def concurrent_leaf(x: int):
     print(f"Leaf task got {x=}", flush=True)
+    return
     sleep_time = random.randint(1, 50)
     print(f"Leaf task {x=} sleeping for {sleep_time} seconds", flush=True)
     try:
@@ -52,7 +53,7 @@ async def concurrency_parent() -> int:
     # await asyncio.sleep(10)
     try:
         tasks = []
-        for i in range(40):
+        for i in range(99):
             tasks.append(concurrent_leaf(x=i))
 
         start_time = time.time()
