@@ -165,6 +165,7 @@ async def extract_download_run_upload(
     version: str,
     checkpoints: Checkpoints | None = None,
     code_bundle: CodeBundle | None = None,
+    inputs: Inputs = Inputs.empty(),
     input_path: str | None = None,
     image_cache: ImageCache | None = None,
     interactive_mode: bool = False,
@@ -177,6 +178,7 @@ async def extract_download_run_upload(
     logger.warning(f"Task {action.name} started at {t}")
     outputs, err = await convert_and_run(
         task=task,
+        inputs=inputs,
         input_path=input_path,
         action=action,
         controller=controller,

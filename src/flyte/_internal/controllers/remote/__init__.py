@@ -1,8 +1,10 @@
-from typing import List
-
-from flyte.remote._client.auth import AuthType, ClientConfig
+import typing
+from typing import TYPE_CHECKING, List
 
 from ._controller import RemoteController
+
+if TYPE_CHECKING:
+    from flyte.remote._client.auth import AuthType, ClientConfig
 
 __all__ = ["RemoteController", "create_remote_controller"]
 
@@ -14,8 +16,8 @@ def create_remote_controller(
     insecure: bool = False,
     insecure_skip_verify: bool = False,
     ca_cert_file_path: str | None = None,
-    client_config: ClientConfig | None = None,
-    auth_type: AuthType = "Pkce",
+    client_config: typing.Optional["ClientConfig"] = None,
+    auth_type: "AuthType" = "Pkce",
     headless: bool = False,
     command: List[str] | None = None,
     proxy_command: List[str] | None = None,

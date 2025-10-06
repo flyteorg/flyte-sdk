@@ -1,3 +1,4 @@
+import asyncio
 import importlib
 from typing import List, Optional, Tuple, Type
 
@@ -11,6 +12,7 @@ from flyte._task import TaskTemplate
 from flyte.models import ActionID, Checkpoints, CodeBundle, RawDataPath
 
 from .convert import Error, Inputs, Outputs
+from .io import load_inputs
 from .taskrunner import (
     convert_and_run,
     extract_download_run_upload,
@@ -109,7 +111,6 @@ async def _download_and_load_task(
     code_bundle: CodeBundle | None, resolver: str | None = None, resolver_args: List[str] | None = None
 ) -> TaskTemplate:
     if code_bundle and (code_bundle.tgz or code_bundle.pkl):
-        logger.debug(f"Downloading {code_bundle}")
         code_bundle = await download_code_bundle(code_bundle)
         if code_bundle.pkl:
             return load_pkl_task(code_bundle)
@@ -162,7 +163,11 @@ async def load_and_run_task(
     :param image_cache: Mappings of Image identifiers to image URIs.
     :param interactive_mode: Whether to run the task in interactive mode.
     """
-    task = await _download_and_load_task(code_bundle, resolver, resolver_args)
+    coros = [
+        _download_and_load_task(code_bundle, resolver, resolver_args),
+        load_inputs(input_path, path_rewrite_config=raw_data_path.path_rewrite),
+    ]
+    task, inputs = await asyncio.gather(*coros)
 
     await contextual_run(
         extract_download_run_upload,
@@ -175,7 +180,7 @@ async def load_and_run_task(
         run_base_dir=run_base_dir,
         checkpoints=checkpoints,
         code_bundle=code_bundle,
-        input_path=input_path,
+        inputs=inputs,
         image_cache=image_cache,
         interactive_mode=interactive_mode,
     )

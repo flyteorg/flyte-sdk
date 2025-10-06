@@ -163,6 +163,10 @@ class Controller:
         self._thread = threading.Thread(target=self._bg_thread_target, daemon=True, name="ControllerThread")
         self._thread.start()
 
+        logger.info(f"Controller started in thread: {self._thread.name}")
+
+    def _wait(self):
+        print("waitttttt")
         # Wait for the thread to be ready
         if not self._thread_ready.wait(timeout=self._thread_wait_timeout):
             logger.warning("Controller thread did not finish within timeout")
@@ -173,8 +177,6 @@ class Controller:
                 type(self._get_exception()).__name__,
                 f"Controller thread startup failed: {self._get_exception()}",
             )
-
-        logger.info(f"Controller started in thread: {self._thread.name}")
 
     def _run_coroutine_in_controller_thread(self, coro: Coroutine) -> asyncio.Future:
         """Run a coroutine in the controller's event loop and return the result"""
@@ -238,6 +240,8 @@ class Controller:
         self, action_id: identifier_pb2.ActionIdentifier, parent_action_name: str
     ) -> Optional[Action]:
         """Get the action from the informer"""
+        self._wait()  # Make sure the controller has been started
+
         # Ensure the informer is created and wait for it to be ready
         informer = await self._informers.get_or_create(
             action_id.run,
@@ -264,6 +268,7 @@ class Controller:
     @log
     async def _bg_submit_action(self, action: Action) -> Action:
         """Submit a resource and await its completion, returning the final state"""
+        self._wait()  # Make sure the controller has been started
         logger.debug(f"{threading.current_thread().name} Submitting action {action.name}")
         informer = await self._informers.get_or_create(
             action.action_id.run,
@@ -293,6 +298,7 @@ class Controller:
         """
         Cancel an action.
         """
+        self._wait()  # Make sure the controller has been started
         if action.is_terminal():
             logger.info(f"Action {action.name} is already terminal, no need to cancel.")
             return
@@ -328,6 +334,7 @@ class Controller:
         """
         Attempt to launch an action.
         """
+        self._wait()  # Make sure the controller has been started
         if not action.is_started():
             async with self._rate_limiter:
                 task: queue_service_pb2.TaskAction | None = None
