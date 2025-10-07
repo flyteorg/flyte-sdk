@@ -1,5 +1,5 @@
 [project]
-name = "albatross"
+name = "tasks"
 version = "0.1.0"
 description = "examples"
 requires-python = ">=3.10"
