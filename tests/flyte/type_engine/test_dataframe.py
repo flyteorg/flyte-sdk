@@ -6,7 +6,7 @@ from pathlib import Path
 
 import mock
 import pytest
-from flyteidl.core import literals_pb2, types_pb2
+from flyteidl2.core import literals_pb2, types_pb2
 from fsspec.utils import get_protocol
 
 import flyte
@@ -182,7 +182,7 @@ async def test_sd():
     with pytest.raises(ValueError, match="No dataframe type set"):
         await sd.all()
 
-    with pytest.raises(ValueError, match="No dataframe type set."):
+    with pytest.raises(ValueError, match=r"No dataframe type set\."):
         await sd.iter()
 
     class MockPandasDecodingHandlers(DataFrameDecoder):
