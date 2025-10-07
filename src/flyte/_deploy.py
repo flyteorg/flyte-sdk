@@ -12,7 +12,6 @@ import flyte.errors
 from flyte.models import SerializationContext
 from flyte.syncify import syncify
 
-from ._deployer import DeploymentContext, get_deployer
 from ._environment import Environment
 from ._image import Image
 from ._initialize import ensure_client, get_client, get_common_config, requires_initialization
@@ -25,6 +24,7 @@ if TYPE_CHECKING:
     from flyteidl2.trigger import trigger_definition_pb2
 
     from ._code_bundle import CopyFiles
+    from ._deployer import DeploymentContext
     from ._internal.imagebuild.image_builder import ImageCache
 
 
@@ -252,6 +252,7 @@ async def _deploy_task_env(context: DeploymentContext) -> DeployedTaskEnvironmen
 @requires_initialization
 async def apply(deployment_plan: DeploymentPlan, copy_style: CopyFiles, dryrun: bool = False) -> Deployment:
     from ._code_bundle import build_code_bundle
+    from ._deployer import DeploymentContext, get_deployer
 
     cfg = get_common_config()
 

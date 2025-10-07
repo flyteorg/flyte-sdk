@@ -7,9 +7,9 @@ import rich.repr
 
 from flyte.models import SerializationContext
 
-from . import TaskEnvironment
 from ._deploy import _deploy_task_env
 from ._environment import Environment
+from ._task_environment import TaskEnvironment
 
 
 @rich.repr.auto
@@ -70,12 +70,12 @@ class Deployer(Protocol):
         ...
 
 
-_ENVTYPE_REGISTRY: Dict[Type[Environment | TaskEnvironment], Deployer] = {
+_ENVTYPE_REGISTRY: Dict[Type[Environment], Deployer] = {
     TaskEnvironment: _deploy_task_env,
 }
 
 
-def register_deployer(env_type: Type[Environment | TaskEnvironment], deployer: Deployer) -> None:
+def register_deployer(env_type: Type[Environment], deployer: Deployer) -> None:
     """
     Register a deployer for a specific environment type.
 
