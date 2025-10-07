@@ -235,6 +235,7 @@ class TaskEnvironment(Environment):
                 secrets=self.secrets,
                 pod_template=pod_template or self.pod_template,
                 parent_env=weakref.ref(self),
+                parent_env_name=self.name,
                 interface=NativeInterface.from_callable(func),
                 report=report,
                 short_name=short,
@@ -286,4 +287,5 @@ class TaskEnvironment(Environment):
         for t in tasks:
             env._tasks[t.name] = t
             t.parent_env = weakref.ref(env)
+            t.parent_env_name = name
         return env

@@ -20,7 +20,8 @@ from ._task import TaskTemplate
 from ._task_environment import TaskEnvironment
 
 if TYPE_CHECKING:
-    from flyte._protos.workflow import task_definition_pb2, trigger_definition_pb2
+    from flyteidl2.task import task_definition_pb2
+    from flyteidl2.trigger import trigger_definition_pb2
 
     from ._code_bundle import CopyFiles
     from ._internal.imagebuild.image_builder import ImageCache
@@ -145,10 +146,11 @@ async def _deploy_task(
     ensure_client()
     import grpc.aio
 
+    from flyteidl2.task import task_definition_pb2, task_service_pb2
+
     from ._internal.runtime.convert import convert_upload_default_inputs
     from ._internal.runtime.task_serde import translate_task_to_wire
     from ._internal.runtime.trigger_serde import to_task_trigger
-    from ._protos.workflow import task_definition_pb2, task_service_pb2
 
     image_uri = task.image.uri if isinstance(task.image, Image) else task.image
 
