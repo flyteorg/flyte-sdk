@@ -9,7 +9,8 @@ from flyte._initialize import ensure_client, get_client
 from flyte._logging import logger
 from flyte.models import SerializationContext
 
-from ._app_environment import App, AppEnvironment, AppSerializationSettings
+from ._app_environment import AppEnvironment, AppSerializationSettings
+from ._app import App
 
 if typing.TYPE_CHECKING:
     from flyte._protos.app import app_definition_pb2

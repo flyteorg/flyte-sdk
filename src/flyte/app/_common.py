@@ -1,5 +1,6 @@
 import inspect
 import os
+import re
 import site
 import sys
 from pathlib import Path
@@ -35,3 +36,21 @@ def _extract_files_loaded_from_cwd(cwd: Path) -> list[str]:
         files_loaded_from_cwd.append(absolute_file_path)
 
     return files_loaded_from_cwd
+
+
+def is_union_image(image: str):
+    return image.startswith("cr.union.ai/")
+
+
+def get_image_name(image_url: str) -> str:
+    """
+    Extract the image name from a Docker image string.
+
+    :param image_url: Docker image string (e.g., 'repository/name:tag' or 'name:tag')
+    :return: The image name
+    """
+    pattern = r"^(?:[^/]+/)?([^:]+)(?::[^:]+)?$"
+    match = re.match(pattern, image_url)
+    if not match:
+        raise ValueError(f"Invalid Docker image format: {image_url}")
+    return match.group(1)
