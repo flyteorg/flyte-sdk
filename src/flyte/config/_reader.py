@@ -140,7 +140,7 @@ def _config_path_from_git_root() -> pathlib.Path | None:
 
     try:
         return config_from_root().source
-    except RuntimeError:
+    except (RuntimeError, FileNotFoundError):
         return None
 
 
