@@ -1,4 +1,5 @@
 import asyncio
+import time
 from typing import Tuple, Union, get_args
 
 import rich_click as click
@@ -43,7 +44,12 @@ def project(cfg: common.CLIConfig, name: str | None = None):
 
     console = common.get_console()
     if name:
-        console.print(pretty_repr(remote.Project.get(name)))
+        for i in range(3):
+            start = time.time()
+            console.print(pretty_repr(remote.Project.get(name)))
+            end = time.time()
+            print(f"----- Time to fetch project {name}, attempt {i}: {end - start:.2f} seconds")
+
     else:
         console.print(common.format("Projects", remote.Project.listall(), cfg.output_format))
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import time
 
 # Set environment variables for gRPC, this reduces log spew and avoids unnecessary warnings
 # before importing grpc
@@ -57,9 +58,14 @@ class ClientSet:
 
     @classmethod
     async def for_endpoint(cls, endpoint: str, *, insecure: bool = False, **kwargs) -> ClientSet:
-        return cls(
-            await create_channel(endpoint, None, insecure=insecure, **kwargs), endpoint, insecure=insecure, **kwargs
-        )
+        start = time.time()
+        try:
+            return cls(
+                await create_channel(endpoint, None, insecure=insecure, **kwargs), endpoint, insecure=insecure, **kwargs
+            )
+        finally:
+            end = time.time()
+            print(f"----- Time to create channel to {endpoint}: {end - start:.2f} seconds")
 
     @classmethod
     async def for_api_key(cls, api_key: str, *, insecure: bool = False, **kwargs) -> ClientSet:
