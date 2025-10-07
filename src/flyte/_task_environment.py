@@ -165,7 +165,7 @@ class TaskEnvironment(Environment):
         max_inline_io_bytes: int = MAX_INLINE_IO_BYTES,
         queue: Optional[str] = None,
         triggers: Tuple[Trigger, ...] | Trigger = (),
-    ) -> Union[AsyncFunctionTaskTemplate, Callable[P, R]]:
+    ) -> Union[AsyncFunctionTaskTemplate[P, R], Callable[P, R]]:
         """
         Decorate a function to be a task.
 
@@ -235,6 +235,7 @@ class TaskEnvironment(Environment):
                 secrets=self.secrets,
                 pod_template=pod_template or self.pod_template,
                 parent_env=weakref.ref(self),
+                parent_env_name=self.name,
                 interface=NativeInterface.from_callable(func),
                 report=report,
                 short_name=short,
@@ -286,4 +287,5 @@ class TaskEnvironment(Environment):
         for t in tasks:
             env._tasks[t.name] = t
             t.parent_env = weakref.ref(env)
+            t.parent_env_name = name
         return env
