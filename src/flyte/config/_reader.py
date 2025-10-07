@@ -138,10 +138,10 @@ class ConfigFile(object):
 def _config_path_from_git_root() -> pathlib.Path | None:
     from flyte.git import config_from_root
 
-    try:
-        return config_from_root().source
-    except (RuntimeError, FileNotFoundError):
+    config = config_from_root()
+    if config is None:
         return None
+    return config.source
 
 
 def resolve_config_path() -> pathlib.Path | None:
