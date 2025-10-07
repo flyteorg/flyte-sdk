@@ -86,6 +86,26 @@ class RunArguments:
             )
         },
     )
+    raw_data_path: str | None = field(
+        default=None,
+        metadata={
+            "click.option": click.Option(
+                ["--raw-data-path"],
+                type=str,
+                help="Override the output path to store the raw data. Example: s3://bucket/",
+            )
+        },
+    )
+    service_account: str | None = field(
+        default=None,
+        metadata={
+            "click.option": click.Option(
+                ["--service-account"],
+                type=str,
+                help="Kubernetes service account. If not provided, default will be used",
+            )
+        },
+    )
     name: str | None = field(
         default=None,
         metadata={
@@ -140,6 +160,8 @@ class RunTaskCommand(click.RichCommand):
                 copy_style=self.run_args.copy_style,
                 mode="local" if self.run_args.local else "remote",
                 name=self.run_args.name,
+                raw_data_path=self.run_args.raw_data_path,
+                service_account=self.run_args.service_account,
             ).run.aio(self.obj, **ctx.params)
             if self.run_args.local:
                 console.print(
