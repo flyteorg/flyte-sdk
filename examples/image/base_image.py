@@ -4,7 +4,7 @@ import flyte
 from flyte import Image
 
 image = (
-    Image.from_debian_base(install_flyte=False)
+    Image.from_debian_base(install_flyte=False, registry="pingsutw")
     .with_apt_packages("vim", "wget")
     .with_pip_packages("mypy", pre=True)
     .with_env_vars({"hello": "world1"})

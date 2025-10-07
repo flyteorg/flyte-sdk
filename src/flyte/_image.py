@@ -506,6 +506,7 @@ class Image:
         registry: Optional[str] = None,
         name: Optional[str] = None,
         platform: Optional[Tuple[Architecture, ...]] = None,
+        secret: Optional[SecretRequest] = None,
     ) -> Image:
         """
         Use this method to start using the default base image, built from this library's base Dockerfile
@@ -518,6 +519,7 @@ class Image:
         :param name: Name of the image if you want to override the default name
         :param platform: Platform to use for the image, default is linux/amd64, use tuple for multiple values
             Example: ("linux/amd64", "linux/arm64")
+        :param secret: Secret to use to pull/push the private image.
 
         :return: Image
         """
