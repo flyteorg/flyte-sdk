@@ -228,6 +228,12 @@ async def _build_images(deployment: DeploymentPlan) -> ImageCache:
     for env_name, env in deployment.envs.items():
         if not isinstance(env.image, str):
             # No base image but the name is set, try getting image uri from config.
+            # pr: we shouldn't need to check for cfg here, if we pass it in.
+            # pr: this combination takes me too much effort to think about.
+            #   if a bunch of things are None, and env.image is not a str, which means it's an Image object, then
+            #   that means we should look up the uri in the images map from cfg... i think it's better to have an
+            #   explicit flag somewhere that says "hey, go look up image uri from the cfg dict" rather than inferring
+            #   it from a bunch of logic... explicit is better than implicit.
             if cfg and env.image.base_image is None and env.image.dockerfile is None and env.image.name is not None:
                 if env.image.name in cfg.images:
                     # If the image is set in the config and has no layers, use the URI directly
@@ -238,6 +244,10 @@ async def _build_images(deployment: DeploymentPlan) -> ImageCache:
                         continue
                     else:
                         # Has layers, set as base_image and build on top
+                        # pr: i think it's actually clearer to remove the ability to set base_image in clone, and
+                        #   do an object.__set_attr__ instead to override the frozen protection. what do you think?
+                        #   clone() is a public facing API - if you add it to clone that means you're inviting users
+                        #   to do this. Can we think of other situations where clone with base_image would be useful?
                         env.image = env.image.clone(base_image=image_uri)
                 else:
                     raise ValueError(
@@ -247,6 +257,7 @@ async def _build_images(deployment: DeploymentPlan) -> ImageCache:
             images.append(_build_image_bg(env_name, env.image))
 
         elif env.image == "auto" and "auto" not in image_identifier_map:
+            # pr: question - we use the word "auto" instead of "default"?  Or did you intentionally pick a different word?
             if cfg and "default" in cfg.images:
                 # If the default image is set through CLI, use it instead
                 image_uri = cfg.images["default"]
@@ -339,6 +350,9 @@ async def apply(deployment_plan: DeploymentPlan, copy_style: CopyFiles, dryrun: 
 
     cfg = get_common_config()
 
+    # pr: let's extract the images map from cfg in this function, and pass it explicitly to _build_images
+    #  This function is decorated with requires_initialization, so pulling it out of cfg is safer.
+    #  If not there, then pass in empty dict.
     image_cache = await _build_images(deployment_plan)
 
     if copy_style == "none" and not deployment_plan.version:
