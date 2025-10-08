@@ -419,7 +419,7 @@ def get_console() -> Console:
     return Console(color_system="auto", force_terminal=True, width=120)
 
 
-def parse_images(cfg: Config, values: List[str]) -> None:
+def parse_images(cfg: Config, values: List[str] | None) -> None:
     """
     Parse image values and update the config.
 
