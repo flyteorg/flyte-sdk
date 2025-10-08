@@ -7,9 +7,9 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable, List, Literal, Optional, TypeVar
 
+from flyte.cli._common import parse_images
 from flyte.errors import InitializationError
 from flyte.syncify import syncify
-from src.flyte.cli._common import parse_images
 
 from ._logging import initialize_logger, logger
 
@@ -341,7 +341,7 @@ def _get_init_config() -> Optional[_InitConfig]:
         return _init_config
 
 
-def get_common_config() -> _InitConfig:
+def get_init_config() -> _InitConfig:
     """
     Get the current initialization configuration. Thread-safe implementation.
 

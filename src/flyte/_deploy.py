@@ -14,7 +14,7 @@ from flyte.syncify import syncify
 
 from ._environment import Environment
 from ._image import Image
-from ._initialize import ensure_client, get_client, get_common_config, requires_initialization
+from ._initialize import ensure_client, get_client, get_init_config, requires_initialization
 from ._logging import logger
 from ._task import TaskTemplate
 from ._task_environment import TaskEnvironment
@@ -332,7 +332,7 @@ def get_deployer(env_type: Type[Environment | TaskEnvironment]) -> Deployer:
 async def apply(deployment_plan: DeploymentPlan, copy_style: CopyFiles, dryrun: bool = False) -> Deployment:
     from ._code_bundle import build_code_bundle
 
-    cfg = get_common_config()
+    cfg = get_init_config()
 
     image_cache = await _build_images(deployment_plan, cfg.images)
 
