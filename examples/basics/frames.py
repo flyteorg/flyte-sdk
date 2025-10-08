@@ -42,9 +42,7 @@ async def main(filter: str = "union") -> list[str]:
 
 
 if __name__ == "__main__":
-    flyte.init_from_config("/Users/ytong/.flyte/config-k3d.yaml")
+    flyte.init_from_config()
 
-    run = flyte.with_runcontext(mode="local").run(main)
-
-    # print(run.url)
-    # run.wait(run)
+    run = flyte.run(main)
+    print(run.url)

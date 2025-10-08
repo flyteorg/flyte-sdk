@@ -3,10 +3,9 @@ import json
 from typing import Any, Dict, Union
 
 import msgpack
-from flyteidl.core import literals_pb2
+from flyteidl2.core import literals_pb2
+from flyteidl2.task import common_pb2
 from google.protobuf.json_format import MessageToDict
-
-from flyte._protos.workflow import run_definition_pb2
 
 
 def _primitive_to_string(primitive: literals_pb2.Primitive) -> Any:
@@ -88,9 +87,9 @@ def _dict_literal_repr(lmd: Dict[str, literals_pb2.Literal]) -> Dict[str, Any]:
 def literal_string_repr(
     lm: Union[
         literals_pb2.Literal,
-        run_definition_pb2.NamedLiteral,
-        run_definition_pb2.Inputs,
-        run_definition_pb2.Outputs,
+        common_pb2.NamedLiteral,
+        common_pb2.Inputs,
+        common_pb2.Outputs,
         literals_pb2.LiteralMap,
         Dict[str, literals_pb2.Literal],
     ],
@@ -105,13 +104,13 @@ def literal_string_repr(
             return _literal_string_repr(lm)
         case literals_pb2.LiteralMap():
             return _dict_literal_repr(lm.literals)
-        case run_definition_pb2.NamedLiteral():
+        case common_pb2.NamedLiteral():
             lmd = {lm.name: lm.value}
             return _dict_literal_repr(lmd)
-        case run_definition_pb2.Inputs():
+        case common_pb2.Inputs():
             lmd = {n.name: n.value for n in lm.literals}
             return _dict_literal_repr(lmd)
-        case run_definition_pb2.Outputs():
+        case common_pb2.Outputs():
             lmd = {n.name: n.value for n in lm.literals}
             return _dict_literal_repr(lmd)
         case dict():

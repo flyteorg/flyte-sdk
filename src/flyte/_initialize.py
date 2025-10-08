@@ -519,3 +519,31 @@ def replace_client(client):
 
     with _init_lock:
         _init_config = _init_config.replace(client=client)
+
+
+def current_domain() -> str:
+    """
+    Returns the current domain from Runtime environment (on the cluster) or from the initialized configuration.
+    This is safe to be used during `deploy`, `run` and within `task` code.
+
+    NOTE: This will not work if you deploy a task to a domain and then run it in another domain.
+
+    Raises InitializationError if the configuration is not initialized or domain is not set.
+    :return: The current domain
+    """
+    from ._context import ctx
+
+    tctx = ctx()
+    if tctx is not None:
+        domain = tctx.action.domain
+        if domain is not None:
+            return domain
+
+    cfg = _get_init_config()
+    if cfg is None or cfg.domain is None:
+        raise InitializationError(
+            "DomainNotInitializedError",
+            "user",
+            "Domain has not been initialized. Call flyte.init() with a valid domain before using this function.",
+        )
+    return cfg.domain

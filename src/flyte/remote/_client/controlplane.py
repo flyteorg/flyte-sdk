@@ -16,14 +16,10 @@ if "GRPC_VERBOSITY" not in os.environ:
 
 import grpc
 from flyteidl.service import admin_pb2_grpc, dataproxy_pb2_grpc, identity_pb2_grpc
-
-from flyte._protos.secret import secret_pb2_grpc
-from flyte._protos.workflow import (
-    run_logs_service_pb2_grpc,
-    run_service_pb2_grpc,
-    task_service_pb2_grpc,
-    trigger_service_pb2_grpc,
-)
+from flyteidl2.secret import secret_pb2_grpc
+from flyteidl2.task import task_service_pb2_grpc
+from flyteidl2.trigger import trigger_service_pb2_grpc
+from flyteidl2.workflow import run_logs_service_pb2_grpc, run_service_pb2_grpc
 
 from ._protocols import (
     DataProxyService,
