@@ -400,7 +400,7 @@ class Image:
     platform: Tuple[Architecture, ...] = field(default=("linux/amd64",))
     python_version: Tuple[int, int] = field(default_factory=_detect_python_version)
     # Refer to the image_refs (name:image-uri) set in CLI or config
-    _ref_name: Optional[str] = field(default=None, init=False)
+    _ref_name: Optional[str] = field(default=None)
 
     # Layers to be added to the image. In init, because frozen, but users shouldn't access, so underscore.
     _layers: Tuple[Layer, ...] = field(default_factory=tuple)
@@ -551,7 +551,10 @@ class Image:
 
     @classmethod
     def from_ref_name(cls, name: str) -> Image:
-        return cls._new(ref_name=name)
+        # NOTE: set image name as _ref_name to enable adding additional layers.
+        # See: https://github.com/flyteorg/flyte-sdk/blob/14de802701aab7b8615ffb99c650a36305ef01f7/src/flyte/_image.py#L642
+        img = cls._new(name=name, _ref_name=name)
+        return img
 
     @classmethod
     def from_uv_script(
@@ -658,6 +661,7 @@ class Image:
             platform=self.platform,
             python_version=python_version or self.python_version,
             _layers=new_layers,
+            _ref_name=self._ref_name,
         )
 
         return img

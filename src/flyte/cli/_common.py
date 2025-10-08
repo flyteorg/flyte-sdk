@@ -427,13 +427,15 @@ def parse_images(cfg: Config, values: List[str]) -> None:
         cfg: The Config object to write images to
         values: List of image strings in format "imagename=imageuri" or just "imageuri"
     """
+    if values is None:
+        return
     for value in values:
         if "=" in value:
             image_name, image_uri = value.split("=", 1)
-            cfg.images[image_name] = image_uri
+            cfg.image.image_refs[image_name] = image_uri
         else:
             # If no name specified, use "default" as the name
-            cfg.images["default"] = value
+            cfg.image.image_refs["default"] = value
 
 
 @lru_cache()

@@ -7,7 +7,6 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable, List, Literal, Optional, TypeVar
 
-from flyte.cli._common import parse_images
 from flyte.errors import InitializationError
 from flyte.syncify import syncify
 
@@ -281,6 +280,7 @@ async def init_from_config(
     from rich.highlighter import ReprHighlighter
 
     import flyte.config as config
+    from flyte.cli._common import parse_images
 
     cfg: config.Config
     cfg_path: Optional[Path] = None

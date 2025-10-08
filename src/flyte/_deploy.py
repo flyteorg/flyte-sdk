@@ -221,25 +221,25 @@ async def _build_images(deployment: DeploymentPlan, images: Dict[str, str]) -> I
     """
     from ._internal.imagebuild.image_builder import ImageCache
 
-    images = []
+    build_tasks = []
     image_identifier_map = {}
     for env_name, env in deployment.envs.items():
         if not isinstance(env.image, str):
             if env.image._ref_name is not None:
-                if env.image.name in images:
+                if env.image._ref_name in images:
                     # If the image is set in the config, set it as the base_image
-                    image_uri = images[env.image.name]
+                    image_uri = images[env.image._ref_name]
                     env.image = env.image.clone(base_image=image_uri)
                 else:
                     raise ValueError(
-                        f"Image name '{env.image.name}' not found in config. Available: {list(images.keys())}"
+                        f"Image name '{env.image._ref_name}' not found in config. Available: {list(images.keys())}"
                     )
             if not env.image._layers:
                 # No additional layers, use the base_image directly without building
                 image_identifier_map[env_name] = image_uri
                 continue
             logger.debug(f"Building Image for environment {env_name}, image: {env.image}")
-            images.append(_build_image_bg(env_name, env.image))
+            build_tasks.append(_build_image_bg(env_name, env.image))
 
         elif env.image == "auto" and "auto" not in image_identifier_map:
             if "default" in images:
@@ -248,8 +248,8 @@ async def _build_images(deployment: DeploymentPlan, images: Dict[str, str]) -> I
                 image_identifier_map[env_name] = image_uri
                 continue
             auto_image = Image.from_debian_base()
-            images.append(_build_image_bg(env_name, auto_image))
-    final_images = await asyncio.gather(*images)
+            build_tasks.append(_build_image_bg(env_name, auto_image))
+    final_images = await asyncio.gather(*build_tasks)
 
     for env_name, image_uri in final_images:
         logger.warning(f"Built Image for environment {env_name}, image: {image_uri}")
@@ -442,6 +442,7 @@ async def build_images(envs: Environment) -> ImageCache:
     :param envs: Environment to build images for.
     :return: ImageCache containing the built images.
     """
-    # TODO: call get_init_cofnig here in the new deploy
+    cfg = get_init_config()
+    images = cfg.images if cfg else {}
     deployment = plan_deploy(envs)
-    return await _build_images(deployment[0])
+    return await _build_images(deployment[0], images)

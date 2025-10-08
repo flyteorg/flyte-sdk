@@ -9,7 +9,6 @@ from typing import TYPE_CHECKING
 
 import rich.repr
 
-from flyte import Image
 from flyte._logging import logger
 from flyte.config import _internal
 from flyte.config._reader import ConfigFile, get_config_file, read_file_if_exists
@@ -17,6 +16,7 @@ from flyte.config._reader import ConfigFile, get_config_file, read_file_if_exist
 _all__ = ["ConfigFile", "PlatformConfig", "TaskConfig", "ImageConfig"]
 
 if TYPE_CHECKING:
+    from flyte import Image
     from flyte.remote._client.auth import AuthType
 
 
