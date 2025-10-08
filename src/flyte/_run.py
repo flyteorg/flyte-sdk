@@ -132,7 +132,6 @@ class _Runner:
         from flyteidl2.core import literals_pb2, security_pb2
         from flyteidl2.task import run_pb2
         from flyteidl2.workflow import run_definition_pb2, run_service_pb2
-
         from google.protobuf import wrappers_pb2
 
         from flyte.remote import Run
@@ -259,9 +258,13 @@ class _Runner:
             env_kv = run_pb2.Envs(values=kv_pairs)
             annotations = run_pb2.Annotations(values=self._annotations)
             labels = run_pb2.Labels(values=self._labels)
-            raw_data_storage = run_pb2.RawDataStorage(raw_data_prefix=self._raw_data_path)
-            security_context = security_pb2.SecurityContext(
-                run_as=security_pb2.Identity(k8s_service_account=self._service_account)
+            raw_data_storage = (
+                run_pb2.RawDataStorage(raw_data_prefix=self._raw_data_path) if self._raw_data_path else None
+            )
+            security_context = (
+                security_pb2.SecurityContext(run_as=security_pb2.Identity(k8s_service_account=self._service_account))
+                if self._service_account
+                else None
             )
 
             try:

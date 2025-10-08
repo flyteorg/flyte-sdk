@@ -92,7 +92,7 @@ class RunArguments:
             "click.option": click.Option(
                 ["--raw-data-path"],
                 type=str,
-                help="Override the output path to store the raw data. Example: s3://bucket/",
+                help="Override the output prefix used to store offloaded data types. e.g. s3://bucket/",
             )
         },
     )
@@ -102,7 +102,7 @@ class RunArguments:
             "click.option": click.Option(
                 ["--service-account"],
                 type=str,
-                help="Kubernetes service account. If not provided, default will be used",
+                help="Kubernetes service account. If not provided, the configured default will be used",
             )
         },
     )
