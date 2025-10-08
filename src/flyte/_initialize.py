@@ -261,7 +261,7 @@ async def init_from_config(
     root_dir: Path | None = None,
     log_level: int | None = None,
     storage: Storage | None = None,
-    images: List[str] | None = None,
+    images: tuple[str, ...] | None = None,
 ) -> None:
     """
     Initialize the Flyte system using a configuration file or Config object. This method should be called before any

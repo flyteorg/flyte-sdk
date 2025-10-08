@@ -119,7 +119,7 @@ class CLIConfig:
         project: str | None = None,
         domain: str | None = None,
         root_dir: str | None = None,
-        images: List[str] | None = None,
+        images: tuple[str, ...] | None = None,
     ):
         from flyte.config._config import TaskConfig
 
@@ -419,7 +419,7 @@ def get_console() -> Console:
     return Console(color_system="auto", force_terminal=True, width=120)
 
 
-def parse_images(cfg: Config, values: List[str] | None) -> None:
+def parse_images(cfg: Config, values: tuple[str, ...] | None) -> None:
     """
     Parse image values and update the config.
 
@@ -448,5 +448,5 @@ def initialize_config(
 
         obj = CLIConfig(flyte.config.auto(), ctx)
 
-    obj.init(project, domain, root_dir, list(images) if images else None)
+    obj.init(project, domain, root_dir, images)
     return obj
