@@ -28,7 +28,7 @@ from flyte._image import (
     Requirements,
     UVProject,
     UVScript,
-    WorkDir,
+    WorkDir, _BASE_REGISTRY,
 )
 from flyte._internal.imagebuild.image_builder import ImageBuilder, ImageChecker
 from flyte._internal.imagebuild.utils import copy_files_to_context, get_and_list_dockerignore
@@ -111,7 +111,7 @@ class RemoteImageBuilder(ImageBuilder):
         ).override.aio(secrets=_get_build_secrets_from_image(image))
 
         logger.warning("[bold blue]🐳 Submitting a new build...[/bold blue]")
-        if image.registry:
+        if image.registry and image.registry != _BASE_REGISTRY:
             target_image = f"{image.registry}/{image_name}"
         else:
             # Use the default system registry in the backend.
