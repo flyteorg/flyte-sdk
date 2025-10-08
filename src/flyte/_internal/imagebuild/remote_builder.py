@@ -116,7 +116,6 @@ class RemoteImageBuilder(ImageBuilder):
         else:
             # Use the default system registry in the backend.
             target_image = image_name
-        print("target_image", target_image)
         run = cast(
             Run,
             await flyte.with_runcontext(project=IMAGE_TASK_PROJECT, domain=IMAGE_TASK_DOMAIN).run.aio(
@@ -338,7 +337,6 @@ def _get_build_secrets_from_image(image: Image) -> Optional[typing.List[Secret]]
                 else:
                     raise ValueError(f"Unsupported secret_mount type: {type(secret_mount)}")
 
-    print("image._image_registry_secret", image._image_registry_secret)
     if image._image_registry_secret:
         secrets.append(image._image_registry_secret)
     return secrets

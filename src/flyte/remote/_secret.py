@@ -63,8 +63,8 @@ class Secret(ToJSONMixin):
             request=payload_pb2.GetSecretRequest(
                 id=definition_pb2.SecretIdentifier(
                     organization=cfg.org,
-                    project=None,
-                    domain=None,
+                    project=cfg.project,
+                    domain=cfg.domain,
                     name=name,
                 )
             )
@@ -81,8 +81,8 @@ class Secret(ToJSONMixin):
             resp = await get_client().secrets_service.ListSecrets(  # type: ignore
                 request=payload_pb2.ListSecretsRequest(
                     organization=cfg.org,
-                    project=None,
-                    domain=None,
+                    project=cfg.project,
+                    domain=cfg.domain,
                     token=token,
                     limit=limit,
                 ),

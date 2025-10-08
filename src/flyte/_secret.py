@@ -44,7 +44,6 @@ class Secret:
     def __post_init__(self):
         if not self.mount and not self.as_env_var:
             self.as_env_var = f"{self.group}_{self.key}" if self.group else self.key
-            print("self.as_env_var", self)
             self.as_env_var = self.as_env_var.replace("-", "_").upper()
         if self.as_env_var is not None:
             pattern = r"^[A-Z_][A-Z0-9_]*$"
