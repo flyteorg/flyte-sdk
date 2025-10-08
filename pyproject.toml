@@ -7,7 +7,6 @@ authors = [{ name = "Ketan Umare", email = "kumare3@users.noreply.github.com" }]
 requires-python = ">=3.10"
 dependencies = [
     "aiofiles>=24.1.0",
-    # 8.2.0 has a bug https://github.com/pallets/click/issues/2897
     "click>=8.2.1",
     "flyteidl>=1.15.4b0,<2.0.0",
     "cloudpickle>=3.1.1",

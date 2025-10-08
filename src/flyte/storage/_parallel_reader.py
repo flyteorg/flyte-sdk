@@ -1,20 +1,26 @@
+from __future__ import annotations
+
 import asyncio
 import dataclasses
+import typing
 import io
-import logging
 import pathlib
 import tempfile
-import time
 import os
 from typing import Any, Hashable, Protocol
-from urllib.parse import urlparse
 
 import aiofiles
 import aiofiles.os
-import numpy as np
 import obstore
 
+from obstore import Bytes
+from obstore.store import ObjectStore
+
+if typing.TYPE_CHECKING:
+    from obstore.models import ObjectMeta
+
 CHUNK_SIZE = int(os.getenv("FLYTE_IO_CHUNK_SIZE", str(16 * 1024 * 1024)))
+CHUNK_SIZE = 30
 MAX_CONCURRENCY = int(os.getenv("FLYTE_IO_MAX_CONCURRENCY", str(32)))
 
 
@@ -22,29 +28,8 @@ class DownloadQueueEmpty(RuntimeError):
     pass
 
 
-# def obstore_from_url(url, **kwargs):
-#     for maybe_store in (
-#         obstore.store.S3Store,
-#         obstore.store.GCSStore,
-#         obstore.store.AzureStore,
-#     ):
-#         try:
-#             return maybe_store.from_url(url, **kwargs)
-#         except obstore.exceptions.ObstoreError:
-#             pass
-#     raise ValueError(f"Could not find valid store for URL: {url}. Must be an S3, GCS, or Azure URI")
-
-
-# def prefix_exists(url: str) -> bool:
-#     store = obstore_from_url(url)
-#     prefix = urlparse(url).path.lstrip("/")
-#     for _ in obstore.list(store, prefix, chunk_size=1):
-#         return True
-#     return False
-
-
 class BufferProtocol(Protocol):
-    async def write(self, offset, length, value) -> None: ...
+    async def write(self, offset, length, value: Bytes) -> None: ...
 
     async def read(self) -> memoryview: ...
 
@@ -54,12 +39,12 @@ class BufferProtocol(Protocol):
 
 @dataclasses.dataclass
 class _MemoryBuffer:
-    arr: np.ndarray
+    arr: bytearray
     pending: int
     _closed: bool = False
 
-    async def write(self, offset, length, value) -> None:
-        self.arr[offset : offset + length] = value
+    async def write(self, offset: int, length: int, value: Bytes) -> None:
+        self.arr[offset : offset + length] = memoryview(value)
         self.pending -= length
 
     async def read(self) -> memoryview:
@@ -71,7 +56,7 @@ class _MemoryBuffer:
 
     @classmethod
     def new(cls, size):
-        return cls(arr=np.empty(size, dtype=np.uint8), pending=size)
+        return cls(arr=bytearray(size), pending=size)
 
 
 @dataclasses.dataclass
@@ -81,7 +66,7 @@ class _FileBuffer:
     _handle: io.FileIO | None = None
     _closed: bool = False
 
-    async def write(self, offset, length, value) -> None:
+    async def write(self, offset: int, length: int, value: Bytes) -> None:
         async with aiofiles.open(self.path, mode="r+b") as f:
             await f.seek(offset)
             await f.write(value)
@@ -96,7 +81,7 @@ class _FileBuffer:
         return self.pending == 0
 
     @classmethod
-    def new(cls, path, size):
+    def new(cls, path: pathlib.Path, size: int):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.touch()
         return cls(path=path, pending=size)
@@ -111,9 +96,8 @@ class Chunk:
 @dataclasses.dataclass
 class Source:
     id: Hashable
-    path: pathlib.Path
+    path: pathlib.Path  # Should be str, represents the fully qualified prefix of a file (no bucket)
     length: int
-    offset: int = 0
     metadata: Any | None = None
 
 
@@ -127,7 +111,7 @@ class DownloadTask:
 class ObstoreParallelReader:
     def __init__(
         self,
-        store,
+        store: ObjectStore,
         *,
         chunk_size=CHUNK_SIZE,
         max_concurrency=MAX_CONCURRENCY,
@@ -136,20 +120,23 @@ class ObstoreParallelReader:
         self._chunk_size = chunk_size
         self._max_concurrency = max_concurrency
 
-    def _chunks(self, size):
-        offsets = np.arange(0, size, self._chunk_size)
-        lengths = np.minimum(self._chunk_size, size - offsets)
-        return zip(offsets, lengths)
+    def _chunks(self, size) -> typing.Iterator[tuple[int, int]]:
+        cs = self._chunk_size
+        for offset in range(0, size, cs):
+            length = min(cs, size - offset)
+            yield offset, length
 
-    async def _as_completed(self, gen, transformer=None):
+    async def _as_completed(self, gen: typing.AsyncGenerator[DownloadTask, None], transformer=None):
         inq = asyncio.Queue(self._max_concurrency * 2)
         outq = asyncio.Queue()
         sentinel = object()
         done = asyncio.Event()
 
-        active = {}
+        active: dict[Hashable, _FileBuffer | _MemoryBuffer] = {}
 
         async def _fill():
+            # Helper function to fill the input queue, this is because the generator is async because it does list/head
+            # calls on the object store which are async.
             try:
                 counter = 0
                 async for task in gen:
@@ -165,6 +152,7 @@ class ObstoreParallelReader:
                 if counter == 0:
                     raise DownloadQueueEmpty
             except asyncio.CancelledError:
+                # document why we need to swallow this
                 pass
 
         async def _worker():
@@ -174,22 +162,23 @@ class ObstoreParallelReader:
                     if task is sentinel:
                         inq.put_nowait(sentinel)
                         break
-                    chunk_source_offset = task.chunk.offset + task.source.offset
+                    chunk_source_offset = task.chunk.offset
                     buf = active[task.source.id]
-                    await buf.write(
-                        task.chunk.offset,
-                        task.chunk.length,
-                        await obstore.get_range_async(
+                    data_to_write = await obstore.get_range_async(
                             self._store,
                             str(task.source.path),
                             start=chunk_source_offset,
                             end=chunk_source_offset + task.chunk.length,
-                        ),
+                    )
+                    await buf.write(
+                        task.chunk.offset,
+                        task.chunk.length,
+                        data_to_write,
                     )
                     if not buf.complete:
                         continue
                     if transformer is not None:
-                        result = await transformer(task.source, buf)
+                        result = await transformer(buf)
                     elif task.target is not None:
                         result = task.target
                     else:
@@ -216,59 +205,47 @@ class ObstoreParallelReader:
         except asyncio.QueueEmpty:
             pass
 
-    async def download_files(self, src_prefix, target_prefix, *paths, include=None, exclude=None):
-        def _keep(path):
-            if include is not None and not any(path.match(i) for i in include):
-                return False
-            if exclude is not None and any(path.match(e) for e in exclude):
-                return False
-            return True
-
-        async def _list_downloadable():
+    async def download_files(self, src_prefix: pathlib.Path, target_prefix: pathlib.Path, *paths):
+        """
+        src_prefix: Prefix you want to download from in the object store, not including the bucket name, nor file name.
+                    Should be replaced with string
+        target_prefix: Local directory to download to
+        paths: Specific paths (relative to src_prefix) to download. If empty, download everything
+        """
+        async def _list_downloadable() -> typing.AsyncGenerator[ObjectMeta, None]:
             if paths:
                 for path_ in paths:
                     path = src_prefix / path_
-                    if _keep(path):
-                        yield await obstore.head_async(self._store, str(path))
+                    x = await obstore.head_async(self._store, str(path))
+                    yield x
                 return
 
             list_result = await obstore.list_with_delimiter_async(self._store, prefix=str(src_prefix))
             for obj in list_result["objects"]:
-                path = pathlib.Path(obj["path"])
-                if _keep(path):
-                    yield obj
+                yield obj
 
-        async def _gen(tmpdir):
+        async def _gen(tmp_dir: str) -> typing.AsyncGenerator[DownloadTask, None]:
             async for obj in _list_downloadable():
-                path = pathlib.Path(obj["path"])
+                path = pathlib.Path(obj["path"])  # e.g. Path(prefix/file.txt), needs to be changed to str.
                 size = obj["size"]
                 source = Source(id=path, path=path, length=size)
                 # Strip src_prefix from path for destination
-                rel_path = path.relative_to(src_prefix)
+                rel_path = path.relative_to(src_prefix)  # doesn't work on windows
                 for offset, length in self._chunks(size):
                     yield DownloadTask(
                         source=source,
-                        target=tmpdir / rel_path,
+                        target=tmp_dir / rel_path,  # doesn't work on windows
                         chunk=Chunk(offset, length),
                     )
 
-        def _transform_decorator(tmpdir):
-            async def _transformer(source: Source, buf: BufferProtocol) -> None:
-                target = target_prefix / buf.path.relative_to(tmpdir)
+        def _transform_decorator(tmp_dir: str):
+            async def _transformer(buf: _FileBuffer) -> None:
+                target = target_prefix / buf.path.relative_to(tmp_dir)
                 await aiofiles.os.makedirs(target.parent, exist_ok=True)
-                return await aiofiles.os.replace(buf.path, target)
+                return await aiofiles.os.replace(buf.path, target)  # mv buf.path target
 
             return _transformer
 
-        with tempfile.TemporaryDirectory() as tmpdir:
-            async for _ in self._as_completed(_gen(tmpdir), transformer=_transform_decorator(tmpdir)):
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            async for _ in self._as_completed(_gen(temporary_dir), transformer=_transform_decorator(temporary_dir)):
                 pass
-
-    async def get_ranges(self, gen, transformer=None):
-        async def _gen():
-            async for source in gen:
-                for offset, length in self._chunks(source.length):
-                    yield DownloadTask(source=source, chunk=Chunk(offset, length))
-
-        async for result in self._as_completed(_gen(), transformer=transformer):
-            yield result
