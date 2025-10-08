@@ -16,7 +16,6 @@ from flyte.config._reader import ConfigFile, get_config_file, read_file_if_exist
 _all__ = ["ConfigFile", "PlatformConfig", "TaskConfig", "ImageConfig"]
 
 if TYPE_CHECKING:
-    from flyte import Image
     from flyte.remote._client.auth import AuthType
 
 
@@ -149,7 +148,7 @@ class ImageConfig(object):
     """
 
     builder: str | None = None
-    image_refs: typing.Dict[str, Image] = field(default_factory=dict)
+    image_refs: typing.Dict[str, str] = field(default_factory=dict)
 
     @classmethod
     def auto(cls, config_file: typing.Optional[typing.Union[str, ConfigFile]] = None) -> "ImageConfig":

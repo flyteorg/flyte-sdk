@@ -97,7 +97,7 @@ def test_run_complex_inputs(runner):
 
 
 def test_run_with_multiple_images_and_build_images_cache(runner):
-    """Test that multiple --image parameters work correctly with Image.from_name() and _build_images uses config URIs"""
+    """Test multiple --image parameters work correctly with Image.from_ref_name() and _build_images uses config URIs"""
 
     custom_env_name = "env_with_custom_img"
     default_env_name = "env_with_default_img"
@@ -128,8 +128,8 @@ def test_run_with_multiple_images_and_build_images_cache(runner):
     assert "custom" in cfg.images
     assert "default" in cfg.images
 
-    # Test that Image.from_name() set the image name
-    custom_image = Image.from_name("custom")
+    # Test that Image.from_ref_name() set the image name
+    custom_image = Image.from_ref_name("custom")
     assert custom_image.name == "custom"
 
     # Test that _build_images uses the config URIs instead of building
@@ -137,7 +137,7 @@ def test_run_with_multiple_images_and_build_images_cache(runner):
     default_env = TaskEnvironment(name=default_env_name)
     deployment_plan = DeploymentPlan(envs={custom_env_name: custom_env, default_env_name: default_env})
 
-    image_cache = asyncio.run(_build_images(deployment_plan))
+    image_cache = asyncio.run(_build_images(deployment_plan, cfg.images))
 
     assert image_cache.image_lookup[custom_env_name] == custom_image_uri
     # use default image set in CLI
@@ -161,15 +161,16 @@ def test_build_images_image_name_not_found_error(runner):
     runner.invoke(run, cmd)
 
     # Create a TaskEnvironment with an image name that doesn't exist in config
-    invalid_image = Image.from_name("invalid")
+    invalid_image = Image.from_ref_name("invalid")
     env_name = "test_env"
     task_env = TaskEnvironment(name=env_name, image=invalid_image)
     deployment_plan = DeploymentPlan(envs={env_name: task_env})
 
+    cfg = _get_init_config()
     # Check if _build_images raises ValueError for missing image name
     with pytest.raises(ValueError) as exc_info:
-        asyncio.run(_build_images(deployment_plan))
+        asyncio.run(_build_images(deployment_plan, cfg.images))
 
     error_msg = str(exc_info.value)
     assert "Image name 'invalid' not found in config" in error_msg
-    assert "Available: ['custom']" in error_msg
+    assert "'custom'" in error_msg

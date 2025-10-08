@@ -215,11 +215,14 @@ async def _build_image_bg(env_name: str, image: Image) -> Tuple[str, str]:
     return env_name, await build.aio(image)
 
 
-async def _build_images(deployment: DeploymentPlan, images: Dict[str, str]) -> ImageCache:
+async def _build_images(deployment: DeploymentPlan, images: Dict[str, str] | None = None) -> ImageCache:
     """
     Build the images for the given deployment plan and update the environment with the built image.
     """
     from ._internal.imagebuild.image_builder import ImageCache
+
+    if images is None:
+        images = {}
 
     build_tasks = []
     image_identifier_map = {}

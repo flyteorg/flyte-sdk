@@ -478,7 +478,7 @@ flyte run --local hello.py my_task --arg1 value1 --arg2 value2
 
 You can provide image mappings with `--image` flag. This allows you to specify
 the image URI for the task environment during CLI execution without changing
-the code. Any images defined with `Image.from_name("name")` will resolve to the
+the code. Any images defined with `Image.from_ref_name("name")` will resolve to the
 corresponding URIs you specify here.
 
 ```bash
