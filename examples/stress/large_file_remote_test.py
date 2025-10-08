@@ -1,9 +1,6 @@
 import asyncio
 import time
-
-from flyte.storage import S3, get_underlying_filesystem
 from pathlib import Path
-
 
 import flyte
 import flyte.io
@@ -40,4 +37,3 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-

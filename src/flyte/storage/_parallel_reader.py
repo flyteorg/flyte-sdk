@@ -2,17 +2,16 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
-import typing
 import io
+import os
 import pathlib
 import tempfile
-import os
+import typing
 from typing import Any, Hashable, Protocol
 
 import aiofiles
 import aiofiles.os
 import obstore
-
 from obstore import Bytes
 from obstore.store import ObjectStore
 
@@ -165,10 +164,10 @@ class ObstoreParallelReader:
                     chunk_source_offset = task.chunk.offset
                     buf = active[task.source.id]
                     data_to_write = await obstore.get_range_async(
-                            self._store,
-                            str(task.source.path),
-                            start=chunk_source_offset,
-                            end=chunk_source_offset + task.chunk.length,
+                        self._store,
+                        str(task.source.path),
+                        start=chunk_source_offset,
+                        end=chunk_source_offset + task.chunk.length,
                     )
                     await buf.write(
                         task.chunk.offset,
@@ -212,6 +211,7 @@ class ObstoreParallelReader:
         target_prefix: Local directory to download to
         paths: Specific paths (relative to src_prefix) to download. If empty, download everything
         """
+
         async def _list_downloadable() -> typing.AsyncGenerator[ObjectMeta, None]:
             if paths:
                 for path_ in paths:

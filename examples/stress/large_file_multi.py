@@ -1,23 +1,22 @@
 import asyncio
-from obstore.store import S3Store
+import time
 from pathlib import Path
 
-import time
-
+from obstore.store import S3Store
 from union._model_loader.loader import ObstoreParallelReader
 
 CHUNK_SIZE = 16 * 1024 * 1024
 MAX_CONCURRENCY = 32
 
 
-
 def obstore_parallel_reader():
-    location_prefix = "metadata/v2/dogfood/flytesnacks/development/r6tfhn5wxpp44xsw6qmv/a0/1/l6/r6tfhn5wxpp44xsw6qmv-a0-0/"
+    location_prefix = (
+        "metadata/v2/dogfood/flytesnacks/development/r6tfhn5wxpp44xsw6qmv/a0/1/l6/r6tfhn5wxpp44xsw6qmv-a0-0/"
+    )
     path_5gb = "711845b49a5b161703f8a8d904b77dc7"
     local_dst = Path("/root/model_loader_output")
     if local_dst.exists():
         local_dst.unlink()
-
 
     store = S3Store(
         "union-cloud-dogfood-1-dogfood",
@@ -57,4 +56,3 @@ fs.get(location, "/root/downloaded_by_rustfs")
 end = time.time()
 print(f"Time taken to download the file: {end - start} seconds")
 """
-
