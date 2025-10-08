@@ -5,6 +5,7 @@ from flyte._utils.lazy_module import lazy_module
 from flyte.io import PARQUET, DataFrame, DataFrameDecoder, DataFrameEncoder, DataFrameTransformerEngine
 from flyteidl.core import literals_pb2, types_pb2
 from typing_extensions import Any
+import flyte.storage as storage
 
 pd = lazy_module("pandas")
 pyspark = lazy_module("pyspark")
@@ -35,12 +36,12 @@ class SparkToParquetEncodingHandler(DataFrameEncoder):
         structured_dataset_type: types_pb2.StructuredDatasetType,
     ) -> literals_pb2.StructuredDataset:
         path = typing.cast(str, dataframe.uri)
-        # ctx = internal_ctx()
-        # if ctx and not path:
-        #     path = ctx.file_access.join(
-        #         ctx.file_access.raw_output_prefix,
-        #         ctx.file_access.get_random_string(),
-        #     )
+        ctx = internal_ctx()
+        if ctx and not path:
+            path = storage.join(
+                ctx.file_access.raw_output_prefix,
+                storage.get_random_string(),
+            )
 
         df = typing.cast(PSDataFrame, dataframe)
         ss = pyspark.sql.SparkSession.builder.getOrCreate()
