@@ -8,7 +8,7 @@ logger.setLevel(logging.DEBUG)
 noop_env = flyte.TaskEnvironment(
     name="reuse_concurrency",
     resources=flyte.Resources(cpu=1, memory="1Gi"),
-    image=flyte.Image.from_name("custom-image")
+    image=flyte.Image.from_ref_name("custom-image")
     .with_apt_packages("ca-certificates")
     .with_pip_packages("flyte", pre=True)
     .with_local_v2(),
