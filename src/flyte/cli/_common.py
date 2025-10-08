@@ -440,7 +440,7 @@ def parse_images(cfg: Config, values: List[str] | None) -> None:
 
 @lru_cache()
 def initialize_config(
-    ctx: click.Context, project: str, domain: str, root_dir: str | None = None, images: List[str] | None = None
+    ctx: click.Context, project: str, domain: str, root_dir: str | None = None, images: tuple[str, ...] | None = None
 ):
     obj: CLIConfig | None = ctx.obj
     if obj is None:
@@ -448,5 +448,5 @@ def initialize_config(
 
         obj = CLIConfig(flyte.config.auto(), ctx)
 
-    obj.init(project, domain, root_dir, images)
+    obj.init(project, domain, root_dir, list(images) if images else None)
     return obj

@@ -142,7 +142,7 @@ class RunTaskCommand(click.RichCommand):
 
     def invoke(self, ctx: click.Context):
         obj: CLIConfig = initialize_config(
-            ctx, self.run_args.project, self.run_args.domain, self.run_args.root_dir, self.run_args.image
+            ctx, self.run_args.project, self.run_args.domain, self.run_args.root_dir, tuple(self.run_args.image) or None
         )
 
         async def _run():
@@ -246,7 +246,7 @@ class RunReferenceTaskCommand(click.RichCommand):
 
     def invoke(self, ctx: click.Context):
         obj: CLIConfig = common.initialize_config(
-            ctx, self.run_args.project, self.run_args.domain, self.run_args.root_dir
+            ctx, self.run_args.project, self.run_args.domain, self.run_args.root_dir, tuple(self.run_args.image) or None
         )
 
         async def _run():
