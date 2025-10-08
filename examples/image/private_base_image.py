@@ -4,10 +4,12 @@ import flyte
 from flyte import Image
 
 image = (
-    Image.from_debian_base(install_flyte=False, registry="pingsutw", name="private", secret="pingsutw")
+    Image.from_base("pingsutw/private:d1742efed83fc4b18c7751e53e771bbe")
+    .clone(registry="registry-1.docker.io/pingsutw", name="private", secret="pingsutw")
+    # Image.from_debian_base(install_flyte=False, registry="registry-1.docker.io/pingsutw", name="private", secret="pingsutw")
     .with_apt_packages("vim", "wget")
-    .with_pip_packages("ty", "mypy", pre=True)
-    .with_env_vars({"hello": "world3"})
+    .with_pip_packages("ty", pre=True)
+    .with_env_vars({"hello": "world6"})
     .with_dockerignore(Path(__file__).parent / ".dockerignore")
     .with_local_v2()
 )

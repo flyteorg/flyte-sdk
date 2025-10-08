@@ -22,11 +22,15 @@ class Secret(ToJSONMixin):
     async def create(cls, name: str, value: Union[str, bytes], type: SecretTypes = "regular"):
         ensure_client()
         cfg = get_common_config()
-        secret_type = (
-            definition_pb2.SecretType.SECRET_TYPE_GENERIC
-            if type == "regular"
-            else definition_pb2.SecretType.SECRET_TYPE_IMAGE_PULL_SECRET
-        )
+
+        if type == "regular":
+            secret_type = definition_pb2.SecretType.SECRET_TYPE_GENERIC
+            project = None
+            domain = None
+        else:
+            secret_type = definition_pb2.SecretType.SECRET_TYPE_IMAGE_PULL_SECRET
+            project = None
+            domain = None
 
         if isinstance(value, str):
             secret = definition_pb2.SecretSpec(
@@ -42,8 +46,8 @@ class Secret(ToJSONMixin):
             request=payload_pb2.CreateSecretRequest(
                 id=definition_pb2.SecretIdentifier(
                     organization=cfg.org,
-                    project=cfg.project,
-                    domain=cfg.domain,
+                    project=project,
+                    domain=domain,
                     name=name,
                 ),
                 secret_spec=secret,
@@ -59,8 +63,8 @@ class Secret(ToJSONMixin):
             request=payload_pb2.GetSecretRequest(
                 id=definition_pb2.SecretIdentifier(
                     organization=cfg.org,
-                    project=cfg.project,
-                    domain=cfg.domain,
+                    project=None,
+                    domain=None,
                     name=name,
                 )
             )
@@ -77,8 +81,8 @@ class Secret(ToJSONMixin):
             resp = await get_client().secrets_service.ListSecrets(  # type: ignore
                 request=payload_pb2.ListSecretsRequest(
                     organization=cfg.org,
-                    project=cfg.project,
-                    domain=cfg.domain,
+                    project=None,
+                    domain=None,
                     token=token,
                     limit=limit,
                 ),

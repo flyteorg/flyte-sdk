@@ -416,6 +416,8 @@ class Image:
     # class-level token not included in __init__
     _token: ClassVar[object] = object()
 
+    _image_registry_secret: Optional[Secret] = None
+
     # check for the guard that we put in place
     def __post_init__(self):
         if object.__getattribute__(self, "__dict__").pop("_guard", None) is not Image._token:
@@ -534,7 +536,7 @@ class Image:
         )
 
         if registry or name:
-            return base_image.clone(registry=registry, name=name)
+            return base_image.clone(registry=registry, name=name, secret=secret)
 
         return base_image
 
@@ -619,6 +621,7 @@ class Image:
         name: Optional[str] = None,
         python_version: Optional[Tuple[int, int]] = None,
         addl_layer: Optional[Layer] = None,
+        secret: Optional[str | Secret] = None,
     ) -> Image:
         """
         Use this method to clone the current image and change the registry and name
@@ -627,9 +630,11 @@ class Image:
         :param name: Name of the image
         :param python_version: Python version for the image, if not specified, will use the current Python version
         :param addl_layer: Additional layer to add to the image. This will be added to the end of the layers.
-
+        :param secret: Secret to use to pull/push the private image.
         :return:
         """
+        from flyte import Secret
+
         if addl_layer and self.dockerfile:
             # We don't know how to inspect dockerfiles to know what kind it is (OS, python version, uv vs poetry, etc)
             # so there's no guarantee any of the layering logic will work.
@@ -639,6 +644,7 @@ class Image:
             )
         registry = registry if registry else self.registry
         name = name if name else self.name
+        secret = secret if secret else self._image_registry_secret
         if addl_layer and (not name):
             raise ValueError(
                 f"Cannot add additional layer {addl_layer} to an image without name. Please first clone()."
@@ -652,6 +658,7 @@ class Image:
             platform=self.platform,
             python_version=python_version or self.python_version,
             _layers=new_layers,
+            _image_registry_secret=Secret(key=secret) if isinstance(secret, str) else secret
         )
 
         return img
