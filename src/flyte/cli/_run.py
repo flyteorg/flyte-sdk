@@ -141,12 +141,13 @@ class RunTaskCommand(click.RichCommand):
         super().__init__(obj_name, *args, **kwargs)
 
     def invoke(self, ctx: click.Context):
-        obj: CLIConfig = initialize_config(ctx, self.run_args.project, self.run_args.domain, self.run_args.root_dir)
+        obj: CLIConfig = initialize_config(
+            ctx, self.run_args.project, self.run_args.domain, self.run_args.root_dir, self.run_args.image
+        )
 
         async def _run():
             import flyte
 
-            common.parse_images(self.run_args.image)
             console = common.get_console()
             r = await flyte.with_runcontext(
                 copy_style=self.run_args.copy_style,

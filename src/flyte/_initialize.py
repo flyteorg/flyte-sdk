@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Callable, List, Literal, Optional, TypeVar
 
 from flyte.errors import InitializationError
 from flyte.syncify import syncify
+from src.flyte.cli._common import parse_images
 
 from ._logging import initialize_logger, logger
 
@@ -261,6 +262,7 @@ async def init_from_config(
     root_dir: Path | None = None,
     log_level: int | None = None,
     storage: Storage | None = None,
+    images: List[str] | None = None,
 ) -> None:
     """
     Initialize the Flyte system using a configuration file or Config object. This method should be called before any
@@ -303,6 +305,9 @@ async def init_from_config(
     _initialize_logger(log_level=log_level)
 
     logger.info(f"Flyte config initialized as {cfg}", extra={"highlighter": ReprHighlighter()})
+
+    # parse image, this will overwrite the image_refs set in the config file
+    parse_images(cfg, images)
 
     await init.aio(
         org=cfg.task.org,

@@ -114,7 +114,13 @@ class CLIConfig:
         """
         return replace(self, **kwargs)
 
-    def init(self, project: str | None = None, domain: str | None = None, root_dir: str | None = None):
+    def init(
+        self,
+        project: str | None = None,
+        domain: str | None = None,
+        root_dir: str | None = None,
+        images: List[str] | None = None,
+    ):
         from flyte.config._config import TaskConfig
 
         task_cfg = TaskConfig(
@@ -134,7 +140,7 @@ class CLIConfig:
 
         updated_config = self.config.with_params(platform_cfg, task_cfg)
 
-        flyte.init_from_config(updated_config, log_level=self.log_level, root_dir=root_dir)
+        flyte.init_from_config(updated_config, log_level=self.log_level, root_dir=root_dir, images=images)
 
 
 class InvokeBaseMixin:
@@ -413,18 +419,14 @@ def get_console() -> Console:
     return Console(color_system="auto", force_terminal=True, width=120)
 
 
-def parse_images(values: List[str]) -> None:
+def parse_images(cfg: Config, values: List[str]) -> None:
     """
-    Parse image values and update the init config.
+    Parse image values and update the config.
 
     Args:
+        cfg: The Config object to write images to
         values: List of image strings in format "imagename=imageuri" or just "imageuri"
     """
-    from .._initialize import _get_init_config
-
-    cfg = _get_init_config()
-    if cfg is None:
-        return
     for value in values:
         if "=" in value:
             image_name, image_uri = value.split("=", 1)
@@ -435,12 +437,14 @@ def parse_images(values: List[str]) -> None:
 
 
 @lru_cache()
-def initialize_config(ctx: click.Context, project: str, domain: str, root_dir: str | None = None):
+def initialize_config(
+    ctx: click.Context, project: str, domain: str, root_dir: str | None = None, images: List[str] | None = None
+):
     obj: CLIConfig | None = ctx.obj
     if obj is None:
         import flyte.config
 
         obj = CLIConfig(flyte.config.auto(), ctx)
 
-    obj.init(project, domain, root_dir)
+    obj.init(project, domain, root_dir, images)
     return obj
