@@ -215,44 +215,44 @@ async def _build_image_bg(env_name: str, image: Image) -> Tuple[str, str]:
     return env_name, await build.aio(image)
 
 
-async def _build_images(deployment: DeploymentPlan, images: Dict[str, str] | None = None) -> ImageCache:
+async def _build_images(deployment: DeploymentPlan, image_refs: Dict[str, str] | None = None) -> ImageCache:
     """
     Build the images for the given deployment plan and update the environment with the built image.
     """
     from ._internal.imagebuild.image_builder import ImageCache
 
-    if images is None:
-        images = {}
+    if image_refs is None:
+        image_refs = {}
 
-    build_tasks = []
+    images = []
     image_identifier_map = {}
     for env_name, env in deployment.envs.items():
         if not isinstance(env.image, str):
             if env.image._ref_name is not None:
-                if env.image._ref_name in images:
+                if env.image._ref_name in image_refs:
                     # If the image is set in the config, set it as the base_image
-                    image_uri = images[env.image._ref_name]
+                    image_uri = image_refs[env.image._ref_name]
                     env.image = env.image.clone(base_image=image_uri)
                 else:
                     raise ValueError(
-                        f"Image name '{env.image._ref_name}' not found in config. Available: {list(images.keys())}"
+                        f"Image name '{env.image._ref_name}' not found in config. Available: {list(image_refs.keys())}"
                     )
             if not env.image._layers:
                 # No additional layers, use the base_image directly without building
                 image_identifier_map[env_name] = image_uri
                 continue
             logger.debug(f"Building Image for environment {env_name}, image: {env.image}")
-            build_tasks.append(_build_image_bg(env_name, env.image))
+            images.append(_build_image_bg(env_name, env.image))
 
         elif env.image == "auto" and "auto" not in image_identifier_map:
-            if "default" in images:
+            if "default" in image_refs:
                 # If the default image is set through CLI, use it instead
-                image_uri = images["default"]
+                image_uri = image_refs["default"]
                 image_identifier_map[env_name] = image_uri
                 continue
             auto_image = Image.from_debian_base()
-            build_tasks.append(_build_image_bg(env_name, auto_image))
-    final_images = await asyncio.gather(*build_tasks)
+            images.append(_build_image_bg(env_name, auto_image))
+    final_images = await asyncio.gather(*images)
 
     for env_name, image_uri in final_images:
         logger.warning(f"Built Image for environment {env_name}, image: {image_uri}")
