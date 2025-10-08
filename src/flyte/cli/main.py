@@ -13,6 +13,7 @@ from ._deploy import deploy
 from ._gen import gen
 from ._get import get
 from ._run import run
+from ._update import update
 from ._user import whoami
 
 help_config = click.RichHelpConfiguration(
@@ -26,7 +27,7 @@ help_config = click.RichHelpConfiguration(
             },
             {
                 "name": "Management of various objects.",
-                "commands": ["create", "get", "delete"],
+                "commands": ["create", "get", "delete", "update"],
             },
             {
                 "name": "Build and deploy environments, tasks and images.",
@@ -35,6 +36,10 @@ help_config = click.RichHelpConfiguration(
             {
                 "name": "Documentation generation",
                 "commands": ["gen"],
+            },
+            {
+                "name": "User information",
+                "commands": ["whoami"],
             },
         ]
     },
@@ -195,3 +200,4 @@ main.add_command(gen)  # type: ignore
 main.add_command(delete)  # type: ignore
 main.add_command(build)
 main.add_command(whoami)  # type: ignore
+main.add_command(update)  # type: ignore

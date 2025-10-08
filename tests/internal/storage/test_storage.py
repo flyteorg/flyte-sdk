@@ -2,14 +2,14 @@ import os
 import tempfile
 import unittest
 
+import fsspec
 import pytest
 
 import flyte
 import flyte.storage as storage
 from flyte.storage._storage import (
-    _get_stream_obstore_bypass,
     _is_obstore_supported_protocol,
-    _put_stream_obstore_bypass,
+    _open_obstore_bypass,
 )
 
 
@@ -64,7 +64,6 @@ def obstore_file():
     """
     Fixture to create a temporary obstore file for testing.
     """
-    import fsspec
     import fsspec.implementations.local
     import obstore.fsspec
 
@@ -82,9 +81,14 @@ async def test_obstore_bypass(obstore_file):
     """
     data = "Hello, world!".encode("utf-8")
     dst = os.path.join(tempfile.mkdtemp(), "dst")
-    await _put_stream_obstore_bypass(data, to_path=dst)
-    streams = _get_stream_obstore_bypass(dst, chunk_size=10 * 1024 * 1024)  # 10 MB chunk size
-    assert data == b"".join([chunk async for chunk in streams])
+    fh = await _open_obstore_bypass(dst, "wb")
+    await fh.write(data)
+    await fh.close()
+    # Read back the data in chunks
+    fh = await _open_obstore_bypass(dst, "rb", chunk_size=5 * 1024)
+    rcv_data = await fh.read()
+    fh.close()
+    assert data == rcv_data
 
 
 @pytest.mark.asyncio
@@ -92,11 +96,19 @@ async def test_obstore_bypass_with_large_data(obstore_file):
     """
     Test that the obstore bypass works with large data.
     """
-    data = os.urandom(10 * 1024 * 1024)
+    chunk_size = 10 * 1024 * 1024
+    data = os.urandom(chunk_size)
     dst = os.path.join(tempfile.mkdtemp(), "large_dst")
-    await _put_stream_obstore_bypass(data, to_path=dst)
-    streams = _get_stream_obstore_bypass(dst, chunk_size=10 * 1024)
-    assert data == b"".join([chunk async for chunk in streams])
+    fh = await _open_obstore_bypass(dst, "wb", chunk_size=chunk_size)
+    await fh.write(data)
+    await fh.close()
+    # Read back the data in chunks
+    rcv_data = []
+    fh = await _open_obstore_bypass(dst, "rb", chunk_size=5 * 1024)
+    while chunk := await fh.read():
+        rcv_data.append(chunk)
+    fh.close()
+    assert data == b"".join(rcv_data)
 
 
 @pytest.mark.asyncio
@@ -106,9 +118,25 @@ async def test_obstore_bypass_with_empty_data(obstore_file):
     """
     data = b""
     dst = os.path.join(tempfile.mkdtemp(), "empty_dst")
-    await _put_stream_obstore_bypass(data, to_path=dst)
-    streams = _get_stream_obstore_bypass(dst, chunk_size=10 * 1024)
-    assert data == b"".join([chunk async for chunk in streams])
+    fh = await _open_obstore_bypass(dst, "wb")
+    await fh.write(data)
+    await fh.close()
+    # Read back the data in chunks
+    fh = await _open_obstore_bypass(dst, "rb", chunk_size=5 * 1024)
+    rcv_data = await fh.read()
+    fh.close()
+    assert data == rcv_data
+
+
+@pytest.mark.asyncio
+async def test_storage_exists():
+    fsspec.register_implementation("file", fsspec.implementations.local.LocalFileSystem, clobber=True)
+    assert await storage.exists("/tmp")
+    import os
+
+    listed = os.listdir("/tmp")[0]
+    assert await storage.exists(os.path.join("/tmp", listed)), f"{listed} not found"
+    assert not await storage.exists("/non-existent/test")
 
 
 from flyte.storage import S3, get_underlying_filesystem
@@ -146,7 +174,3 @@ async def test_access_large_file():
 
     end = time.time()
     print(f"Time taken to stream file to memory: {end - start} seconds", flush=True)
-
-
-
-

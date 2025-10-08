@@ -15,9 +15,9 @@ from typing import get_args
 import rich_click as click
 import yaml
 from click import Parameter
-from flyteidl.core.interface_pb2 import Variable
-from flyteidl.core.literals_pb2 import Literal
-from flyteidl.core.types_pb2 import BlobType, LiteralType, SimpleType
+from flyteidl2.core.interface_pb2 import Variable
+from flyteidl2.core.literals_pb2 import Literal
+from flyteidl2.core.types_pb2 import BlobType, LiteralType, SimpleType
 from google.protobuf.json_format import MessageToDict
 from mashumaro.codecs.json import JSONEncoder
 
@@ -505,7 +505,7 @@ def to_click_option(
     This handles converting workflow input types to supported click parameters with callbacks to initialize
     the input values to their expected types.
     """
-    from flyteidl.core.types_pb2 import SimpleType
+    from flyteidl2.core.types_pb2 import SimpleType
 
     if input_name != input_name.lower():
         # Click does not support uppercase option names: https://github.com/pallets/click/issues/837
@@ -531,17 +531,19 @@ def to_click_option(
         if literal_var.type.metadata:
             description_extra = f": {MessageToDict(literal_var.type.metadata)}"
 
-    # If a query has been specified, the input is never strictly required at this layer
     required = False if default_val is not None else True
     is_flag: typing.Optional[bool] = None
+    param_decls = [f"--{input_name}"]
     if literal_converter.is_bool():
         required = False
         is_flag = True
+        if default_val is True:
+            param_decls = [f"--{input_name}/--no-{input_name}"]
     if literal_converter.is_optional():
         required = False
 
     return click.Option(
-        param_decls=[f"--{input_name}"],
+        param_decls=param_decls,
         type=literal_converter.click_type,
         is_flag=is_flag,
         default=default_val,
