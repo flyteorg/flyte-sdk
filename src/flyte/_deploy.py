@@ -215,52 +215,36 @@ async def _build_image_bg(env_name: str, image: Image) -> Tuple[str, str]:
     return env_name, await build.aio(image)
 
 
-async def _build_images(deployment: DeploymentPlan) -> ImageCache:
+async def _build_images(deployment: DeploymentPlan, images: Dict[str, str]) -> ImageCache:
     """
     Build the images for the given deployment plan and update the environment with the built image.
     """
-    from ._initialize import _get_init_config
     from ._internal.imagebuild.image_builder import ImageCache
 
     images = []
     image_identifier_map = {}
-    cfg = _get_init_config()
     for env_name, env in deployment.envs.items():
         if not isinstance(env.image, str):
-            # No base image but the name is set, try getting image uri from config.
-            # pr: we shouldn't need to check for cfg here, if we pass it in.
-            # pr: this combination takes me too much effort to think about.
-            #   if a bunch of things are None, and env.image is not a str, which means it's an Image object, then
-            #   that means we should look up the uri in the images map from cfg... i think it's better to have an
-            #   explicit flag somewhere that says "hey, go look up image uri from the cfg dict" rather than inferring
-            #   it from a bunch of logic... explicit is better than implicit.
-            if cfg and env.image.base_image is None and env.image.dockerfile is None and env.image.name is not None:
-                if env.image.name in cfg.images:
-                    # If the image is set in the config and has no layers, use the URI directly
-                    image_uri = cfg.images[env.image.name]
-                    if not env.image._layers:
-                        # No additional layers, use the config URI directly without building
-                        image_identifier_map[env_name] = image_uri
-                        continue
-                    else:
-                        # Has layers, set as base_image and build on top
-                        # pr: i think it's actually clearer to remove the ability to set base_image in clone, and
-                        #   do an object.__set_attr__ instead to override the frozen protection. what do you think?
-                        #   clone() is a public facing API - if you add it to clone that means you're inviting users
-                        #   to do this. Can we think of other situations where clone with base_image would be useful?
-                        env.image = env.image.clone(base_image=image_uri)
+            if env.image._ref_name is not None:
+                if env.image.name in images:
+                    # If the image is set in the config, set it as the base_image
+                    image_uri = images[env.image.name]
+                    env.image = env.image.clone(base_image=image_uri)
                 else:
                     raise ValueError(
-                        f"Image name '{env.image.name}' not found in config. Available: {list(cfg.images.keys())}"
+                        f"Image name '{env.image.name}' not found in config. Available: {list(images.keys())}"
                     )
+            if not env.image._layers:
+                # No additional layers, use the base_image directly without building
+                image_identifier_map[env_name] = image_uri
+                continue
             logger.debug(f"Building Image for environment {env_name}, image: {env.image}")
             images.append(_build_image_bg(env_name, env.image))
 
         elif env.image == "auto" and "auto" not in image_identifier_map:
-            # pr: question - we use the word "auto" instead of "default"?  Or did you intentionally pick a different word?
-            if cfg and "default" in cfg.images:
+            if "default" in images:
                 # If the default image is set through CLI, use it instead
-                image_uri = cfg.images["default"]
+                image_uri = images["default"]
                 image_identifier_map[env_name] = image_uri
                 continue
             auto_image = Image.from_debian_base()
@@ -350,10 +334,7 @@ async def apply(deployment_plan: DeploymentPlan, copy_style: CopyFiles, dryrun: 
 
     cfg = get_common_config()
 
-    # pr: let's extract the images map from cfg in this function, and pass it explicitly to _build_images
-    #  This function is decorated with requires_initialization, so pulling it out of cfg is safer.
-    #  If not there, then pass in empty dict.
-    image_cache = await _build_images(deployment_plan)
+    image_cache = await _build_images(deployment_plan, cfg.images)
 
     if copy_style == "none" and not deployment_plan.version:
         raise flyte.errors.DeploymentError("Version must be set when copy_style is none")
@@ -461,5 +442,6 @@ async def build_images(envs: Environment) -> ImageCache:
     :param envs: Environment to build images for.
     :return: ImageCache containing the built images.
     """
+    # TODO: call get_init_cofnig here in the new deploy
     deployment = plan_deploy(envs)
     return await _build_images(deployment[0])

@@ -341,7 +341,7 @@ def _get_init_config() -> Optional[_InitConfig]:
         return _init_config
 
 
-def get_common_config() -> CommonInit:
+def get_common_config() -> _InitConfig:
     """
     Get the current initialization configuration. Thread-safe implementation.
 

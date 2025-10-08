@@ -399,6 +399,8 @@ class Image:
     name: Optional[str] = field(default=None)
     platform: Tuple[Architecture, ...] = field(default=("linux/amd64",))
     python_version: Tuple[int, int] = field(default_factory=_detect_python_version)
+    # Refer to the image_refs (name:image-uri) set in CLI or config
+    _ref_name: Optional[str] = field(default=None, init=False)
 
     # Layers to be added to the image. In init, because frozen, but users shouldn't access, so underscore.
     _layers: Tuple[Layer, ...] = field(default_factory=tuple)
@@ -548,8 +550,8 @@ class Image:
         return img
 
     @classmethod
-    def from_name(cls, name: str) -> Image:
-        return cls._new(name=name)
+    def from_ref_name(cls, name: str) -> Image:
+        return cls._new(ref_name=name)
 
     @classmethod
     def from_uv_script(
