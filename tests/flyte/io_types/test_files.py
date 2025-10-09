@@ -1,5 +1,6 @@
 # from flytekit import dynamic, kwtypes, task, workflow
 
+import filecmp
 import os
 import tempfile
 
@@ -253,12 +254,66 @@ async def test_multiple_files_with_hashes():
     assert recovered_files[1].hash is None
 
 
+@pytest.mark.sandbox
 @pytest.mark.asyncio
-async def test_fdsjkl():
+async def test_download_file_with_name(tmp_path, ctx_with_test_local_s3_stack_raw_data_path):
+    """
+    Test downloading a file from S3 to a local path with a specified file name.
+    """
     await flyte.init.aio(storage=S3.for_sandbox())
 
-    small_file = File.from_existing_remote(
-        "s3://bucket/tests/default_upload/38d779853cea2083f740ab048e9185fd/one_hundred_bytes"
-    )
-    xx = await small_file.download("/Users/ytong/temp/my_small_file")
-    print(xx)
+    # Create a local file with random content
+    local_file = tmp_path / "one_hundred_bytes"
+    local_file.write_bytes(os.urandom(100))
+
+    # Upload to S3
+    uploaded_file = await File.from_local(str(local_file))
+    print(f"Uploaded temp file {local_file} to {uploaded_file.path}", flush=True)
+
+    # Download to a specific local path with a custom name
+    download_target = tmp_path / "downloaded" / "my_custom_filename"
+    download_target.parent.mkdir(parents=True, exist_ok=True)
+    downloaded_path = await uploaded_file.download(str(download_target))
+
+    print(f"Downloaded file to {downloaded_path}", flush=True)
+
+    assert downloaded_path.endswith("my_custom_filename")
+    assert filecmp.cmp(local_file, downloaded_path, shallow=False)
+    assert downloaded_path == str(download_target)
+
+
+@pytest.mark.sandbox
+@pytest.mark.asyncio
+async def test_download_file_with_folder_name():
+    # Ignore this for now, it doesn't work yet. Needs to be implemented in File.download or storage.get
+    ...
+
+
+@pytest.mark.sandbox
+@pytest.mark.asyncio
+async def test_download_file_with_no_local_target(tmp_path, ctx_with_test_local_s3_stack_raw_data_path):
+    """
+    Test downloading a file from S3 without specifying a target path.
+    The file should be downloaded to a temporary location.
+    """
+    await flyte.init.aio(storage=S3.for_sandbox())
+
+    # Create a local file with random content
+    local_file = tmp_path / "one_hundred_bytes"
+    local_file.write_bytes(os.urandom(100))
+
+    # Upload to S3
+    uploaded_file = await File.from_local(str(local_file))
+    print(f"Uploaded temp file {local_file} to {uploaded_file.path}", flush=True)
+
+    # Download without specifying a target path
+    downloaded_path = await uploaded_file.download()
+
+    print(f"Downloaded file to {downloaded_path}", flush=True)
+
+    # Verify the files match
+    assert filecmp.cmp(local_file, downloaded_path, shallow=False)
+    assert downloaded_path is not None
+    assert os.path.isfile(downloaded_path)
+    suffix = uploaded_file.path.split("/")[-1]
+    assert downloaded_path.endswith(suffix)

@@ -527,7 +527,7 @@ class File(BaseModel, Generic[T], SerializableType):
             The absolute path to the downloaded file
         """
         if local_path is None:
-            local_path = storage.get_random_local_path(file_path_or_file_name=local_path)
+            local_path = storage.get_random_local_path(file_path_or_file_name=self.path)
         else:
             local_path = str(Path(local_path).absolute())
 
@@ -579,7 +579,7 @@ class File(BaseModel, Generic[T], SerializableType):
             The absolute path to the downloaded file
         """
         if local_path is None:
-            local_path = storage.get_random_local_path(file_path_or_file_name=local_path)
+            local_path = storage.get_random_local_path(file_path_or_file_name=self.path)
         else:
             local_path = str(Path(local_path).absolute())
 
