@@ -1,3 +1,5 @@
+from typing import Optional
+
 from flyte._internal.runtime.resources_serde import get_proto_resources, get_proto_extended_resources
 from flyte._protos.app.app_definition_pb2 import App as AppIDL, SecurityContext, AutoscalingConfig, Replicas, Meta, \
     Identifier, Spec, IngressConfig, Link as LinkIDL
@@ -6,7 +8,7 @@ from flyteidl.core import tasks_pb2, literals_pb2
 from flyte.app._common import _extract_files_loaded_from_cwd
 from flyte.app._frameworks import _is_fastapi_app
 
-def _attach_registration_scope(self, module: Optional[ModuleType], module_name: Optional[str]) -> "App":
+def _attach_registration_scope(module: Optional[ModuleType], module_name: Optional[str]) -> "App":
     """
     Attach variable name to the object
     """

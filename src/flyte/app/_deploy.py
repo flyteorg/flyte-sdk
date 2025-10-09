@@ -8,9 +8,7 @@ from flyte import Image
 from flyte._initialize import ensure_client, get_client
 from flyte._logging import logger
 from flyte.models import SerializationContext
-
-from ._app_environment import AppEnvironment, AppSerializationSettings
-from ._app import App
+from ._app_environment import AppEnvironment
 
 if typing.TYPE_CHECKING:
     from flyte._protos.app import app_definition_pb2
@@ -45,7 +43,7 @@ class DeployedAppEnvironment(deployer.DeployedEnvironment):
 
 
 async def _deploy_app(
-    app: App, serialization_context: SerializationContext, dryrun: bool = False
+    app: AppEnvironment, serialization_context: SerializationContext, dryrun: bool = False
 ) -> app_definition_pb2.App:
     """
     Deploy the given app.
@@ -107,6 +105,6 @@ async def _deploy_app_env(context: deployer.DeploymentContext) -> deployer.Deplo
         raise TypeError(f"Expected AppEnvironment, got {type(context.environment)}")
 
     app_env = context.environment
-    deployed_app = await _deploy_app(app_env.app, context.serialization_context, dryrun=context.dryrun)
+    deployed_app = await _deploy_app(app_env, context.serialization_context, dryrun=context.dryrun)
 
     return DeployedAppEnvironment(env=app_env, deployed_app=deployed_app)

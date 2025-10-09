@@ -67,6 +67,8 @@ class Environment:
             raise TypeError(f"Expected resources to be of type Resources, got {type(self.resources)}")
         if self.env_vars is not None and not isinstance(self.env_vars, dict):
             raise TypeError(f"Expected env_vars to be of type Dict[str, str], got {type(self.env_vars)}")
+        if self.pod_template is not None and not isinstance(self.pod_template, (str, PodTemplate)):
+            raise TypeError(f"Expected pod_template to be of type str or PodTemplate, got {type(self.pod_template)}")
         # Automatically register this environment instance in load order
         _ENVIRONMENT_REGISTRY.append(self)
 
