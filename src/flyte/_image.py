@@ -621,7 +621,7 @@ class Image:
         name: Optional[str] = None,
         python_version: Optional[Tuple[int, int]] = None,
         addl_layer: Optional[Layer] = None,
-        secret: Optional[str | Secret] = None,
+        registry_secret: Optional[str | Secret] = None,
     ) -> Image:
         """
         Use this method to clone the current image and change the registry and name
@@ -630,7 +630,7 @@ class Image:
         :param name: Name of the image
         :param python_version: Python version for the image, if not specified, will use the current Python version
         :param addl_layer: Additional layer to add to the image. This will be added to the end of the layers.
-        :param secret: Secret to use to pull/push the private image.
+        :param registry_secret: Secret to use to pull/push the private image.
         :return:
         """
         from flyte import Secret
@@ -644,7 +644,7 @@ class Image:
             )
         registry = registry if registry else self.registry
         name = name if name else self.name
-        secret = secret if secret else self._image_registry_secret
+        registry_secret = registry_secret if registry_secret else self._image_registry_secret
         if addl_layer and (not name):
             raise ValueError(
                 f"Cannot add additional layer {addl_layer} to an image without name. Please first clone()."
@@ -658,7 +658,7 @@ class Image:
             platform=self.platform,
             python_version=python_version or self.python_version,
             _layers=new_layers,
-            _image_registry_secret=Secret(key=secret) if isinstance(secret, str) else secret
+            _image_registry_secret=Secret(key=registry_secret) if isinstance(registry_secret, str) else registry_secret,
         )
 
         return img

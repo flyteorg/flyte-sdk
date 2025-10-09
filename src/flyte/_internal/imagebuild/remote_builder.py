@@ -16,6 +16,7 @@ import flyte.errors
 from flyte import Image, remote
 from flyte._code_bundle._utils import tar_strip_file_attributes
 from flyte._image import (
+    _BASE_REGISTRY,
     AptPackages,
     Architecture,
     Commands,
@@ -28,7 +29,7 @@ from flyte._image import (
     Requirements,
     UVProject,
     UVScript,
-    WorkDir, _BASE_REGISTRY,
+    WorkDir,
 )
 from flyte._internal.imagebuild.image_builder import ImageBuilder, ImageChecker
 from flyte._internal.imagebuild.utils import copy_files_to_context, get_and_list_dockerignore
@@ -337,6 +338,9 @@ def _get_build_secrets_from_image(image: Image) -> Optional[typing.List[Secret]]
                 else:
                     raise ValueError(f"Unsupported secret_mount type: {type(secret_mount)}")
 
-    if image._image_registry_secret:
-        secrets.append(image._image_registry_secret)
+    image_registry_secret = image._image_registry_secret
+    if image_registry_secret:
+        secrets.append(
+            Secret(key=image_registry_secret.key, group=image_registry_secret.group, mount=DEFAULT_SECRET_DIR)
+        )
     return secrets

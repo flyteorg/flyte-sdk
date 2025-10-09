@@ -25,8 +25,8 @@ class Secret(ToJSONMixin):
 
         if type == "regular":
             secret_type = definition_pb2.SecretType.SECRET_TYPE_GENERIC
-            project = None
-            domain = None
+            project = cfg.project
+            domain = cfg.domain
         else:
             secret_type = definition_pb2.SecretType.SECRET_TYPE_IMAGE_PULL_SECRET
             project = None
