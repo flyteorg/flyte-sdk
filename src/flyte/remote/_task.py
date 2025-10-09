@@ -6,8 +6,9 @@ from dataclasses import dataclass
 from typing import Any, AsyncIterator, Callable, Coroutine, Dict, Iterator, Literal, Optional, Tuple, Union, cast
 
 import rich.repr
-from flyteidl.core import literals_pb2
-from google.protobuf import timestamp
+from flyteidl2.common import identifier_pb2, list_pb2
+from flyteidl2.core import literals_pb2
+from flyteidl2.task import task_definition_pb2, task_service_pb2
 
 import flyte
 import flyte.errors
@@ -17,8 +18,6 @@ from flyte._initialize import ensure_client, get_client, get_common_config
 from flyte._internal.runtime.resources_serde import get_proto_resources
 from flyte._internal.runtime.task_serde import get_proto_retry_strategy, get_proto_timeout, get_security_context
 from flyte._logging import logger
-from flyte._protos.common import identifier_pb2, list_pb2
-from flyte._protos.workflow import task_definition_pb2, task_service_pb2
 from flyte.models import NativeInterface
 from flyte.syncify import syncify
 
@@ -35,7 +34,7 @@ def _repr_task_metadata(metadata: task_definition_pb2.TaskMetadata) -> rich.repr
         else:
             yield "deployed_by", f"App: {metadata.deployed_by.application.spec.name}"
     yield "short_name", metadata.short_name
-    yield "deployed_at", timestamp.to_datetime(metadata.deployed_at)
+    yield "deployed_at", metadata.deployed_at.ToDatetime()
     yield "environment_name", metadata.environment_name
 
 
@@ -99,6 +98,7 @@ AutoVersioning = Literal["latest", "current"]
 class TaskDetails(ToJSONMixin):
     pb2: task_definition_pb2.TaskDetails
     max_inline_io_bytes: int = 10 * 1024 * 1024  # 10 MB
+    overriden_queue: Optional[str] = None
 
     @classmethod
     def get(
@@ -284,6 +284,13 @@ class TaskDetails(ToJSONMixin):
             f"Reference tasks [{self.name}] cannot be executed locally, only remotely."
         )
 
+    @property
+    def queue(self) -> Optional[str]:
+        """
+        The queue to use for the task.
+        """
+        return self.overriden_queue
+
     def override(
         self,
         *,
@@ -295,6 +302,7 @@ class TaskDetails(ToJSONMixin):
         secrets: Optional[flyte.SecretRequest] = None,
         max_inline_io_bytes: Optional[int] = None,
         cache: Optional[flyte.Cache] = None,
+        queue: Optional[str] = None,
         **kwargs: Any,
     ) -> TaskDetails:
         if len(kwargs) > 0:
@@ -342,7 +350,11 @@ class TaskDetails(ToJSONMixin):
             md.cache_serializable = cache.serialize
             md.cache_ignore_input_vars[:] = list(cache.ignored_inputs or ())
 
-        return TaskDetails(pb2, max_inline_io_bytes=max_inline_io_bytes or self.max_inline_io_bytes)
+        return TaskDetails(
+            pb2,
+            max_inline_io_bytes=max_inline_io_bytes or self.max_inline_io_bytes,
+            overriden_queue=queue,
+        )
 
     def __rich_repr__(self) -> rich.repr.Result:
         """

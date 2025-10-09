@@ -9,6 +9,9 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Awaitable, DefaultDict, Tuple, TypeVar
 
+from flyteidl2.common import identifier_pb2
+from flyteidl2.workflow import run_definition_pb2
+
 import flyte
 import flyte.errors
 import flyte.storage as storage
@@ -22,8 +25,6 @@ from flyte._internal.runtime import convert, io
 from flyte._internal.runtime.task_serde import translate_task_to_wire
 from flyte._internal.runtime.types_serde import transform_native_to_typed_interface
 from flyte._logging import logger
-from flyte._protos.common import identifier_pb2
-from flyte._protos.workflow import run_definition_pb2
 from flyte._task import TaskTemplate
 from flyte._utils.helpers import _selector_policy
 from flyte.models import MAX_INLINE_IO_BYTES, ActionID, NativeInterface, SerializationContext
@@ -238,6 +239,7 @@ class RemoteController(Controller):
             inputs_uri=inputs_uri,
             run_output_base=tctx.run_base_dir,
             cache_key=cache_key,
+            queue=_task.queue,
         )
 
         try:
@@ -377,9 +379,10 @@ class RemoteController(Controller):
         invoke_seq_num = self.generate_task_call_sequence(_func, current_action_id)
         inputs = await convert.convert_from_native_to_inputs(_interface, *args, **kwargs)
         serialized_inputs = inputs.proto_inputs.SerializeToString(deterministic=True)
+        inputs_hash = convert.generate_inputs_hash_from_proto(inputs.proto_inputs)
 
         sub_action_id, sub_action_output_path = convert.generate_sub_action_id_and_output_path(
-            tctx, func_name, serialized_inputs, invoke_seq_num
+            tctx, func_name, inputs_hash, invoke_seq_num
         )
 
         inputs_uri = io.inputs_path(sub_action_output_path)
@@ -539,6 +542,7 @@ class RemoteController(Controller):
             inputs_uri=inputs_uri,
             run_output_base=tctx.run_base_dir,
             cache_key=cache_key,
+            queue=None,
         )
 
         try:

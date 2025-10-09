@@ -3,7 +3,7 @@ import typing
 from pathlib import Path
 from typing import TypeVar
 
-from flyteidl.core import literals_pb2, types_pb2
+from flyteidl2.core import literals_pb2, types_pb2
 from fsspec.core import split_protocol, strip_protocol
 
 import flyte.storage as storage

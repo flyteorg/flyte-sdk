@@ -5,10 +5,10 @@ from asyncio import Queue
 from typing import AsyncIterator, Callable, Dict, Optional, Tuple, cast
 
 import grpc.aio
+from flyteidl2.common import identifier_pb2
+from flyteidl2.workflow import run_definition_pb2, state_service_pb2
 
 from flyte._logging import log, logger
-from flyte._protos.common import identifier_pb2
-from flyte._protos.workflow import run_definition_pb2, state_service_pb2
 
 from ._action import Action
 from ._service_protocol import StateService
@@ -373,7 +373,7 @@ class InformerCache:
         """Stop all informers and remove them from the cache"""
         async with self._lock:
             while self._cache:
-                name, informer = self._cache.popitem()
+                _name, informer = self._cache.popitem()
                 try:
                     await informer.stop()
                 except asyncio.CancelledError:

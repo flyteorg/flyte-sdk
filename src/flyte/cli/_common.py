@@ -7,6 +7,7 @@ import os
 import sys
 from abc import abstractmethod
 from dataclasses import dataclass, replace
+from functools import lru_cache
 from pathlib import Path
 from types import MappingProxyType, ModuleType
 from typing import Any, Dict, Iterable, List, Literal, Optional
@@ -20,6 +21,7 @@ from rich.pretty import pretty_repr
 from rich.table import Table
 from rich.traceback import Traceback
 
+import flyte.config
 import flyte.errors
 from flyte.config import Config
 
@@ -178,7 +180,7 @@ class InvokeBaseMixin:
         except Exception as e:
             if ctx.obj and ctx.obj.log_level and ctx.obj.log_level <= logging.DEBUG:
                 # If the user has requested verbose output, print the full traceback
-                console = Console()
+                console = get_console()
                 console.print(Traceback.from_exception(type(e), e, e.__traceback__))
                 exit(1)
             else:
@@ -355,7 +357,7 @@ def _table_format(table: Table, vals: Iterable[Any]) -> Table:
         if headers is None:
             headers = [k for k, _ in o]
             for h in headers:
-                table.add_column(h.capitalize())
+                table.add_column(h.capitalize(), no_wrap=True if "name" in h.casefold() else False)
         table.add_row(*[str(v) for _, v in o])
     return table
 
@@ -375,6 +377,7 @@ def format(title: str, vals: Iterable[Any], of: OutputFormat = "table") -> Table
                     header_style=HEADER_STYLE,
                     show_header=True,
                     border_style=PREFERRED_BORDER_COLOR,
+                    expand=True,
                 ),
                 vals,
             )
@@ -401,3 +404,22 @@ def get_panel(title: str, renderable: Any, of: OutputFormat = "table") -> Panel:
         title=f"[{PREFERRED_ACCENT_COLOR}]{title}[/{PREFERRED_ACCENT_COLOR}]",
         border_style=PREFERRED_BORDER_COLOR,
     )
+
+
+def get_console() -> Console:
+    """
+    Get a console that is configured to use colors if the terminal supports it.
+    """
+    return Console(color_system="auto", force_terminal=True, width=120)
+
+
+@lru_cache()
+def initialize_config(ctx: click.Context, project: str, domain: str, root_dir: str | None = None):
+    obj: CLIConfig | None = ctx.obj
+    if obj is None:
+        import flyte.config
+
+        obj = CLIConfig(flyte.config.auto(), ctx)
+
+    obj.init(project, domain, root_dir)
+    return obj

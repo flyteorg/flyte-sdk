@@ -14,10 +14,10 @@ from ._environment import Environment
 from ._excepthook import custom_excepthook
 from ._group import group
 from ._image import Image
-from ._initialize import init, init_from_config
+from ._initialize import current_domain, init, init_from_config
 from ._map import map
 from ._pod import PodTemplate
-from ._resources import GPU, TPU, Device, Resources
+from ._resources import AMD_GPU, GPU, HABANA_GAUDI, TPU, Device, DeviceClass, Neuron, Resources
 from ._retry import RetryStrategy
 from ._reusable_environment import ReusePolicy
 from ._run import run, with_runcontext
@@ -25,6 +25,7 @@ from ._secret import Secret, SecretRequest
 from ._task_environment import TaskEnvironment
 from ._timeout import Timeout, TimeoutType
 from ._trace import trace
+from ._trigger import Cron, FixedRate, Trigger, TriggerTime
 from ._version import __version__
 
 sys.excepthook = custom_excepthook
@@ -59,14 +60,20 @@ def version() -> str:
 
 
 __all__ = [
+    "AMD_GPU",
     "GPU",
+    "HABANA_GAUDI",
     "TPU",
     "Cache",
     "CachePolicy",
     "CacheRequest",
+    "Cron",
     "Device",
+    "DeviceClass",
     "Environment",
+    "FixedRate",
     "Image",
+    "Neuron",
     "PodTemplate",
     "Resources",
     "RetryStrategy",
@@ -76,10 +83,13 @@ __all__ = [
     "TaskEnvironment",
     "Timeout",
     "TimeoutType",
+    "Trigger",
+    "TriggerTime",
     "__version__",
     "build",
     "build_images",
     "ctx",
+    "current_domain",
     "deploy",
     "group",
     "init",
@@ -87,5 +97,6 @@ __all__ = [
     "map",
     "run",
     "trace",
+    "version",
     "with_runcontext",
 ]

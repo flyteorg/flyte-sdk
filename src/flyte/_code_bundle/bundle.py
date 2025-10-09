@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import ClassVar, Type
 
 from async_lru import alru_cache
-from flyteidl.core.tasks_pb2 import TaskTemplate
+from flyteidl2.core.tasks_pb2 import TaskTemplate
 
 from flyte._logging import log, logger
 from flyte._utils import AsyncLRUCache
@@ -169,6 +169,8 @@ async def download_bundle(bundle: CodeBundle) -> pathlib.Path:
 
     :return: The path to the downloaded code bundle.
     """
+    import sys
+
     import flyte.storage as storage
 
     dest = pathlib.Path(bundle.destination)
@@ -185,17 +187,22 @@ async def download_bundle(bundle: CodeBundle) -> pathlib.Path:
         # NOTE the os.path.join(destination, ''). This is to ensure that the given path is in fact a directory and all
         # downloaded data should be copied into this directory. We do this to account for a difference in behavior in
         # fsspec, which requires a trailing slash in case of pre-existing directory.
-        process = await asyncio.create_subprocess_exec(
-            "tar",
-            "--overwrite",
+        args = [
             "-xvf",
             str(downloaded_bundle),
             "-C",
             str(dest),
+        ]
+        if sys.platform != "darwin":
+            args.insert(0, "--overwrite")
+
+        process = await asyncio.create_subprocess_exec(
+            "tar",
+            *args,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
-        stdout, stderr = await process.communicate()
+        _stdout, stderr = await process.communicate()
 
         if process.returncode != 0:
             raise RuntimeError(stderr.decode())

@@ -16,9 +16,10 @@ if "GRPC_VERBOSITY" not in os.environ:
 
 import grpc
 from flyteidl.service import admin_pb2_grpc, dataproxy_pb2_grpc, identity_pb2_grpc
-
-from flyte._protos.secret import secret_pb2_grpc
-from flyte._protos.workflow import run_logs_service_pb2_grpc, run_service_pb2_grpc, task_service_pb2_grpc
+from flyteidl2.secret import secret_pb2_grpc
+from flyteidl2.task import task_service_pb2_grpc
+from flyteidl2.trigger import trigger_service_pb2_grpc
+from flyteidl2.workflow import run_logs_service_pb2_grpc, run_service_pb2_grpc
 
 from ._protocols import (
     DataProxyService,
@@ -29,6 +30,7 @@ from ._protocols import (
     RunService,
     SecretService,
     TaskService,
+    TriggerService,
 )
 from .auth import create_channel
 
@@ -39,7 +41,6 @@ class ClientSet:
         channel: grpc.aio.Channel,
         endpoint: str,
         insecure: bool = False,
-        data_proxy_channel: grpc.aio.Channel | None = None,
         **kwargs,
     ):
         self.endpoint = endpoint
@@ -52,6 +53,7 @@ class ClientSet:
         self._log_service = run_logs_service_pb2_grpc.RunLogsServiceStub(channel=channel)
         self._secrets_service = secret_pb2_grpc.SecretServiceStub(channel=channel)
         self._identity_service = identity_pb2_grpc.IdentityServiceStub(channel=channel)
+        self._trigger_service = trigger_service_pb2_grpc.TriggerServiceStub(channel=channel)
 
     @classmethod
     async def for_endpoint(cls, endpoint: str, *, insecure: bool = False, **kwargs) -> ClientSet:
@@ -110,6 +112,10 @@ class ClientSet:
     @property
     def identity_service(self) -> IdentityService:
         return self._identity_service
+
+    @property
+    def trigger_service(self) -> TriggerService:
+        return self._trigger_service
 
     async def close(self, grace: float | None = None):
         return await self._channel.close(grace=grace)
