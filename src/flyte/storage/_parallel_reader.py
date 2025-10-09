@@ -202,7 +202,9 @@ class ObstoreParallelReader:
         except asyncio.QueueEmpty:
             pass
 
-    async def download_files(self, src_prefix: pathlib.Path, target_prefix: pathlib.Path, *paths, destination_file_name: str | None = None) -> None:
+    async def download_files(
+        self, src_prefix: pathlib.Path, target_prefix: pathlib.Path, *paths, destination_file_name: str | None = None
+    ) -> None:
         """
         src_prefix: Prefix you want to download from in the object store, not including the bucket name, nor file name.
                     Should be replaced with string

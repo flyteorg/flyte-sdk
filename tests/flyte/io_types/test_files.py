@@ -257,9 +257,8 @@ async def test_multiple_files_with_hashes():
 async def test_fdsjkl():
     await flyte.init.aio(storage=S3.for_sandbox())
 
-    small_file = File.from_existing_remote("s3://bucket/tests/default_upload/38d779853cea2083f740ab048e9185fd/one_hundred_bytes")
+    small_file = File.from_existing_remote(
+        "s3://bucket/tests/default_upload/38d779853cea2083f740ab048e9185fd/one_hundred_bytes"
+    )
     xx = await small_file.download("/Users/ytong/temp/my_small_file")
     print(xx)
-
-
-

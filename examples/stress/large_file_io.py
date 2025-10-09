@@ -1,13 +1,13 @@
-import time
-from typing import Tuple
-import tempfile
 import asyncio
 import os
+import signal
+import tempfile
+import time
+from typing import Tuple
 
 import flyte
 import flyte.io
 import flyte.storage
-import signal
 
 env = flyte.TaskEnvironment(
     "large_file_io",
