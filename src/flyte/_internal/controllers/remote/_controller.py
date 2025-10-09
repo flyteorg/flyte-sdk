@@ -384,7 +384,12 @@ class RemoteController(Controller):
 
         func_name = _func.__name__
         invoke_seq_num = self.generate_task_call_sequence(_func, current_action_id)
-        inputs = await convert.convert_from_native_to_inputs(_interface, *args, **kwargs)
+
+        # Propagate context from current task to traced functions
+        from flyte._input_context import _input_context_var
+        current_context = _input_context_var.get()
+
+        inputs = await convert.convert_from_native_to_inputs(_interface, *args, input_context=current_context, **kwargs)
         serialized_inputs = inputs.proto_inputs.SerializeToString(deterministic=True)
         inputs_hash = convert.generate_inputs_hash_from_proto(inputs.proto_inputs)
 
@@ -503,7 +508,11 @@ class RemoteController(Controller):
         native_interface = _task.interface
         pb_interface = _task.pb2.spec.task_template.interface
 
-        inputs = await convert.convert_from_native_to_inputs(native_interface, *args, **kwargs)
+        # Propagate context from current task to task references
+        from flyte._input_context import _input_context_var
+        current_context = _input_context_var.get()
+
+        inputs = await convert.convert_from_native_to_inputs(native_interface, *args, input_context=current_context, **kwargs)
         inputs_hash = convert.generate_inputs_hash_from_proto(inputs.proto_inputs)
         sub_action_id, sub_action_output_path = convert.generate_sub_action_id_and_output_path(
             tctx, task_name, inputs_hash, invoke_seq_num
