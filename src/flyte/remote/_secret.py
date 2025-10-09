@@ -4,11 +4,11 @@ from dataclasses import dataclass
 from typing import AsyncIterator, Literal, Union
 
 import rich.repr
-from flyteidl2.secret import definition_pb2, payload_pb2
 
-from flyte._initialize import ensure_client, get_client, get_common_config
+from flyte._initialize import ensure_client, get_client, get_init_config
 from flyte.remote._common import ToJSONMixin
 from flyte.syncify import syncify
+from flyteidl2.secret import definition_pb2, payload_pb2
 
 SecretTypes = Literal["regular", "image_pull"]
 
@@ -21,7 +21,7 @@ class Secret(ToJSONMixin):
     @classmethod
     async def create(cls, name: str, value: Union[str, bytes], type: SecretTypes = "regular"):
         ensure_client()
-        cfg = get_common_config()
+        cfg = get_init_config()
 
         if type == "regular":
             secret_type = definition_pb2.SecretType.SECRET_TYPE_GENERIC
@@ -58,7 +58,7 @@ class Secret(ToJSONMixin):
     @classmethod
     async def get(cls, name: str) -> Secret:
         ensure_client()
-        cfg = get_common_config()
+        cfg = get_init_config()
         resp = await get_client().secrets_service.GetSecret(
             request=payload_pb2.GetSecretRequest(
                 id=definition_pb2.SecretIdentifier(
@@ -75,7 +75,7 @@ class Secret(ToJSONMixin):
     @classmethod
     async def listall(cls, limit: int = 100) -> AsyncIterator[Secret]:
         ensure_client()
-        cfg = get_common_config()
+        cfg = get_init_config()
         token = None
         while True:
             resp = await get_client().secrets_service.ListSecrets(  # type: ignore
@@ -97,7 +97,7 @@ class Secret(ToJSONMixin):
     @classmethod
     async def delete(cls, name):
         ensure_client()
-        cfg = get_common_config()
+        cfg = get_init_config()
         await get_client().secrets_service.DeleteSecret(  # type: ignore
             request=payload_pb2.DeleteSecretRequest(
                 id=definition_pb2.SecretIdentifier(

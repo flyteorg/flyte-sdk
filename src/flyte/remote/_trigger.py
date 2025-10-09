@@ -5,14 +5,14 @@ from functools import cached_property
 from typing import AsyncIterator
 
 import grpc.aio
+
+import flyte
+from flyte._initialize import ensure_client, get_client, get_init_config
+from flyte._internal.runtime import trigger_serde
+from flyte.syncify import syncify
 from flyteidl2.common import identifier_pb2, list_pb2
 from flyteidl2.task import common_pb2, task_definition_pb2
 from flyteidl2.trigger import trigger_definition_pb2, trigger_service_pb2
-
-import flyte
-from flyte._initialize import ensure_client, get_client, get_common_config
-from flyte._internal.runtime import trigger_serde
-from flyte.syncify import syncify
 
 from ._common import ToJSONMixin
 from ._task import Task, TaskDetails
@@ -29,7 +29,7 @@ class TriggerDetails(ToJSONMixin):
         Retrieve detailed information about a specific trigger by its name.
         """
         ensure_client()
-        cfg = get_common_config()
+        cfg = get_init_config()
         resp = await get_client().trigger_service.GetTriggerDetails(
             request=trigger_service_pb2.GetTriggerDetailsRequest(
                 name=identifier_pb2.TriggerName(
@@ -102,7 +102,7 @@ class Trigger(ToJSONMixin):
         :param task_name: Optional name of the task to associate with the trigger.
         """
         ensure_client()
-        cfg = get_common_config()
+        cfg = get_init_config()
 
         # Fetch the task to ensure it exists and to get its input definitions
         try:
@@ -167,7 +167,7 @@ class Trigger(ToJSONMixin):
         List all triggers associated with a specific task or all tasks if no task name is provided.
         """
         ensure_client()
-        cfg = get_common_config()
+        cfg = get_init_config()
         token = None
         # task_name_id = None  TODO: implement listing by task name only
         project_id = None
@@ -219,7 +219,7 @@ class Trigger(ToJSONMixin):
         Pause a trigger by its name and associated task name.
         """
         ensure_client()
-        cfg = get_common_config()
+        cfg = get_init_config()
         await get_client().trigger_service.UpdateTriggers(
             request=trigger_service_pb2.UpdateTriggersRequest(
                 names=[
@@ -242,7 +242,7 @@ class Trigger(ToJSONMixin):
         Delete a trigger by its name.
         """
         ensure_client()
-        cfg = get_common_config()
+        cfg = get_init_config()
         await get_client().trigger_service.DeleteTriggers(
             request=trigger_service_pb2.DeleteTriggersRequest(
                 names=[
