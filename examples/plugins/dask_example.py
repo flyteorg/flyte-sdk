@@ -11,8 +11,8 @@ from flyte import Resources
 image = flyte.Image.from_debian_base(python_version=(3, 12)).with_pip_packages("flyteplugins-dask")
 
 dask_config = Dask(
-    scheduler=Scheduler(resources=Resources(cpu="1", memory="1Gi")),
-    workers=WorkerGroup(number_of_workers=4, resources=Resources(cpu="1", memory="1Gi")),
+    scheduler=Scheduler(),
+    workers=WorkerGroup(number_of_workers=4),
 )
 
 task_env = flyte.TaskEnvironment(
