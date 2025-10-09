@@ -124,3 +124,30 @@ async def test_obstore_parallel_reader_sandbox_100_bytes(tmp_path, ctx_with_test
     end = time.time()
     print(f"Time taken to download the file: {end - start} seconds")
     assert filecmp.cmp(local_file, tmp_path / "downloaded" / path_for_reader, shallow=False)
+
+
+@pytest.mark.sandbox
+@pytest.mark.asyncio
+async def test_obstore_parallel_reader_with_storage_100_bytes(tmp_path, ctx_with_test_local_s3_stack_raw_data_path):
+    await flyte.init.aio(storage=S3.for_sandbox())
+
+    pp = internal_ctx().raw_data.path
+    parsed = urlparse(pp)
+    bucket = parsed.netloc  # "bucket"
+    location_prefix = parsed.path.lstrip("/")
+    print(f"Using raw data path: {pp}. Bucket {bucket}, {location_prefix=}", flush=True)
+
+    # create a random 100-byte file in locally and put to localstack
+
+    local_file = tmp_path / "one_hundred_bytes"
+    local_file.write_bytes(os.urandom(100))
+    remote_location = await storage.put(str(local_file))
+    path_for_reader = remote_location.replace(pp, "")
+    print(f"Uploaded temp file {local_file} to {remote_location}", flush=True)
+    print(f"Attempting to download {path_for_reader=}", flush=True)
+
+    start = time.time()
+    await storage.get(remote_location, to_path=tmp_path / "downloaded" / path_for_reader)
+    end = time.time()
+    print(f"Time taken to download the file: {end - start} seconds")
+    assert filecmp.cmp(local_file, tmp_path / "downloaded" / path_for_reader, shallow=False)

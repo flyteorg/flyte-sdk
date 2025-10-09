@@ -27,17 +27,24 @@ async def create_large_file(size_gigabytes: int = 5) -> flyte.io.File:
 
 @env.task
 async def read_large_file(f: flyte.io.File) -> Tuple[int, float]:
+    import tempfile
+    import os
     total_bytes = 0
-    chunk_size = 10 * 1024 * 1024
+    # chunk_size = 10 * 1024 * 1024
     start = time.time()
-    read = 0
-    async with f.open("rb", block_size=chunk_size) as fp:
-        while _ := await fp.read():
-            read += 1
+    # read = 0
+    # async with f.open("rb", block_size=chunk_size) as fp:
+    #     while _ := await fp.read():
+    #         read += 1
+
+    _, tmp_path = tempfile.mkstemp()
+    await flyte.storage.get(f.path, tmp_path)
 
     end = time.time()
     total = end - start
+    total_bytes = os.path.getsize(tmp_path)
     print(f"Read {total_bytes} bytes in {total:.2f} seconds ({total_bytes / total / (1024 * 1024):.2f} MiB/s)")
+
     return total_bytes, total
 
 
