@@ -25,6 +25,11 @@ class Inputs:
     def empty(cls) -> "Inputs":
         return cls(proto_inputs=common_pb2.Inputs())
 
+    @property
+    def context(self) -> Dict[str, str]:
+        """Get the context as a dictionary."""
+        return {kv.key: kv.value for kv in self.proto_inputs.context}
+
 
 @dataclass(frozen=True)
 class Outputs:
@@ -102,7 +107,9 @@ def is_optional_type(tp) -> bool:
     return NoneType in get_args(tp)  # fastest check
 
 
-async def convert_from_native_to_inputs(interface: NativeInterface, *args, **kwargs) -> Inputs:
+async def convert_from_native_to_inputs(
+    interface: NativeInterface, *args, input_context: Dict[str, str] | None = None, **kwargs
+) -> Inputs:
     kwargs = interface.convert_to_kwargs(*args, **kwargs)
 
     missing = [key for key in interface.required_inputs() if key not in kwargs]
@@ -110,7 +117,11 @@ async def convert_from_native_to_inputs(interface: NativeInterface, *args, **kwa
         raise ValueError(f"Missing required inputs: {', '.join(missing)}")
 
     if len(interface.inputs) == 0:
-        return Inputs.empty()
+        # Handle context even for empty inputs
+        context_kvs = []
+        if input_context:
+            context_kvs = [literals_pb2.KeyValuePair(key=k, value=v) for k, v in input_context.items()]
+        return Inputs(proto_inputs=common_pb2.Inputs(context=context_kvs))
 
     # fill in defaults if missing
     type_hints: Dict[str, type] = {}
@@ -144,10 +155,17 @@ async def convert_from_native_to_inputs(interface: NativeInterface, *args, **kwa
         for k, v in already_converted_kwargs.items():
             copied_literals[k] = v
         literal_map = literals_pb2.LiteralMap(literals=copied_literals)
+
+    # Convert context to KeyValuePairs
+    context_kvs = []
+    if input_context:
+        context_kvs = [literals_pb2.KeyValuePair(key=k, value=v) for k, v in input_context.items()]
+
     # Make sure we the interface, not literal_map or kwargs, because those may have a different order
     return Inputs(
         proto_inputs=common_pb2.Inputs(
-            literals=[common_pb2.NamedLiteral(name=k, value=literal_map.literals[k]) for k in interface.inputs.keys()]
+            literals=[common_pb2.NamedLiteral(name=k, value=literal_map.literals[k]) for k in interface.inputs.keys()],
+            context=context_kvs,
         )
     )
 

@@ -84,7 +84,12 @@ class LocalController:
         if not tctx:
             raise flyte.errors.RuntimeSystemError("BadContext", "Task context not initialized")
 
-        inputs = await convert.convert_from_native_to_inputs(_task.native_interface, *args, **kwargs)
+        # Use context from context manager
+        from flyte._input_context import _input_context_var
+
+        current_context = _input_context_var.get()
+
+        inputs = await convert.convert_from_native_to_inputs(_task.native_interface, *args, input_context=current_context, **kwargs)
         inputs_hash = convert.generate_inputs_hash_from_proto(inputs.proto_inputs)
         task_interface = transform_native_to_typed_interface(_task.interface)
 
@@ -186,9 +191,17 @@ class LocalController:
         tctx = ctx.data.task_context
         if not tctx:
             raise flyte.errors.NotInTaskContextError("BadContext", "Task context not initialized")
+
+        # Propagate context from current task to sub-tasks, merging with context manager context
+        from flyte._input_context import _input_context_var
+
+        current_context = tctx.input_context.copy()
+        # Merge with context from context manager (if any)
+        current_context.update(_input_context_var.get())
+
         converted_inputs = convert.Inputs.empty()
         if _interface.inputs:
-            converted_inputs = await convert.convert_from_native_to_inputs(_interface, *args, **kwargs)
+            converted_inputs = await convert.convert_from_native_to_inputs(_interface, *args, input_context=current_context, **kwargs)
             assert converted_inputs
 
         inputs_hash = convert.generate_inputs_hash_from_proto(converted_inputs.proto_inputs)

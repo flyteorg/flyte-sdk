@@ -15,6 +15,7 @@ from ._excepthook import custom_excepthook
 from ._group import group
 from ._image import Image
 from ._initialize import current_domain, init, init_from_config
+from ._input_context import get_input_context, input_context
 from ._map import map
 from ._pod import PodTemplate
 from ._resources import AMD_GPU, GPU, HABANA_GAUDI, TPU, Device, DeviceClass, Neuron, Resources
@@ -91,9 +92,11 @@ __all__ = [
     "ctx",
     "current_domain",
     "deploy",
+    "get_input_context",
     "group",
     "init",
     "init_from_config",
+    "input_context",
     "map",
     "run",
     "trace",
