@@ -1,118 +1,147 @@
-from typing import Optional
+"""
+Serialization module for AppEnvironment to AppIDL conversion.
 
-from flyte._internal.runtime.resources_serde import get_proto_resources, get_proto_extended_resources
-from flyte._protos.app.app_definition_pb2 import App as AppIDL, SecurityContext, AutoscalingConfig, Replicas, Meta, \
-    Identifier, Spec, IngressConfig, Link as LinkIDL
-from flyteidl.core import tasks_pb2, literals_pb2
+This module provides functionality to serialize an AppEnvironment object into
+the AppIDL protobuf format, using SerializationContext for configuration.
+"""
+from __future__ import annotations
 
-from flyte.app._common import _extract_files_loaded_from_cwd
+import os
+import shlex
+import tarfile
+from copy import deepcopy
+from pathlib import Path
+from tempfile import TemporaryDirectory
+from typing import TYPE_CHECKING, Any, List, Optional, Union
+
+from flyteidl2.common import runtime_version_pb2
+from flyteidl2.core import literals_pb2, tasks_pb2
+from google.protobuf.duration_pb2 import Duration
+
+from flyte import Image, PodTemplate
+from flyte._internal.runtime.resources_serde import get_proto_extended_resources, get_proto_resources
+from flyte._protos.app import app_definition_pb2
 from flyte.app._frameworks import _is_fastapi_app
+from flyte.models import SerializationContext
 
-def _attach_registration_scope(module: Optional[ModuleType], module_name: Optional[str]) -> "App":
+if TYPE_CHECKING:
+    from dataclasses import dataclass
+
+    from flyte.app._app_environment import AppEnvironment
+
+    @dataclass
+    class ResolvedInclude:
+        """Resolved include file with source and destination paths."""
+        src: str
+        dest: str
+
+FILES_TAR_FILE_NAME = "include-files.tar.gz"
+
+
+async def upload_include_files(app_env: AppEnvironment, include_resolved: List[ResolvedInclude]) -> str | None:
     """
-    Attach variable name to the object
+    Upload include files to remote storage.
+
+    Args:
+        app_env: The app environment
+        include_resolved: List of resolved include files
+
+    Returns:
+        URL to the uploaded tar file, or None if no files to upload
     """
-    if self.framework_app:
-        # extract variable name from module
-        for var_name, obj in getmembers(module):
-            if obj is self.framework_app:
-                self._framework_variable_name = var_name
-                break
-        else:  # no break
-            msg = "Unable to find framework_app in the scope of App"
-            raise RuntimeError(msg)
-    self._module_name = module_name
-    return self
+    import flyte.remote
+
+    if not include_resolved:
+        return None
+
+    with TemporaryDirectory() as temp_dir:
+        tar_path = os.path.join(temp_dir, FILES_TAR_FILE_NAME)
+        with tarfile.open(tar_path, "w:gz") as tar:
+            for resolve_include in include_resolved:
+                tar.add(resolve_include.src, arcname=resolve_include.dest)
+
+        _, upload_native_url = await flyte.remote.upload_file.aio(Path(tar_path))
+        return upload_native_url
 
 
-def _resolve_include(self, app_directory: Path, cwd: Path) -> "App":
+def _get_image_uri(image: Union[str, Image], serialization_context: SerializationContext) -> str:
     """
-    Resolve include based on the working_dir.
+    Get the image URI from the image specification.
 
-    If a path in `include` is prefixed with "./", then those files are
-    assumed to be relative to the file that has the App object.
+    Args:
+        image: Either a string image name or an Image object
+        serialization_context: Serialization context with image cache
+
+    Returns:
+        The image URI string
     """
-    relative_prefix = "./"
-    seen_dests = set()
+    if isinstance(image, str):
+        return image
 
-    included_resolved = []
+    # Image object - look up in the image cache
+    if image.identifier not in serialization_context.image_cache.image_lookup:
+        raise ValueError(f"Image {image.identifier} not found in image cache")
 
-    all_includes = self.include
-
-    if self.framework_app is not None:
-        all_includes.extend(_extract_files_loaded_from_cwd(cwd))
-
-    for file in all_includes:
-        normed_file = os.path.normpath(file)
-        if file.startswith(relative_prefix):
-            # File is relative to the app_directory:
-            src_dir = app_directory
-        else:
-            src_dir = cwd
-
-        if "*" in normed_file:
-            new_srcs = src_dir.rglob(normed_file)
-        else:
-            new_srcs = [src_dir / normed_file]
-
-        for new_src in new_srcs:
-            dest = new_src.relative_to(src_dir).as_posix()
-            if dest in seen_dests:
-                msg = f"{dest} is in include multiple times. Please remove one of them."
-                raise ValueError(msg)
-
-            seen_dests.add(dest)
-
-            included_resolved.append(ResolvedInclude(src=os.fspath(new_src), dest=os.fspath(dest)))
-
-    self._include_resolved = included_resolved
-    return self
+    return serialization_context.image_cache.image_lookup[image.identifier]
 
 
-def _get_image(self, container_image: Union[str, Image], settings: AppSerializationSettings) -> str:
-    if isinstance(container_image, str):
-        if settings.is_serverless and not is_union_image(container_image):
-            # Serverless expects the image to be built by the serverless runtime.
-            # If the image isn't a union image, then we need to build it.
-            container_image = Image(name=get_image_name(container_image), base_image=container_image)
-        else:
-            return container_image
+def _construct_args_for_framework(
+    app_env: AppEnvironment,
+    framework_app: Any,
+    module_name: Optional[str],
+    framework_variable_name: Optional[str],
+    port: int
+) -> Optional[str]:
+    """
+    Construct framework-specific arguments.
 
-    image_spec = container_image
+    Args:
+        app_env: The app environment
+        framework_app: The framework application object
+        module_name: Name of the module containing the app
+        framework_variable_name: Variable name of the framework app
+        port: Port number
 
-    if settings.is_serverless and image_spec.packages is not None:
-        image_spec = deepcopy(image_spec)
-        new_packages = _convert_union_runtime_to_serverless(image_spec.packages)
-        image_spec.packages = new_packages
-
-    return self._build_image(image_spec)
-
-
-def _build_image(self, image: Image):
-    from flyte._build import build
-
-    ctx = nullcontext()
-    with ctx:
-        build(image)
-    return image.name
-
-
-def _construct_args_for_framework(self, framework_app: Any) -> Optional[str]:
-    # Framework specific argument adjustments here
+    Returns:
+        Command string for the framework, or None
+    """
     if _is_fastapi_app(framework_app):
-        if self._module_name is None or self._framework_variable_name is None:
-            raise ValueError("Unable to find module name")
-        return f"uvicorn {self._module_name}:{self._framework_variable_name} --port {self.port}"
+        if module_name is None or framework_variable_name is None:
+            raise ValueError("Unable to find module name or framework variable name")
+        return f"uvicorn {module_name}:{framework_variable_name} --port {port}"
 
     return None
 
 
-def _get_args(self) -> List[str]:
-    args = self.args
+def _get_args(
+    app_env: AppEnvironment,
+    module_name: Optional[str],
+    framework_variable_name: Optional[str],
+    port: int
+) -> List[str]:
+    """
+    Get the command arguments for the app.
 
-    # Framework specific argument adjustments here
-    if self.framework_app is not None and args is None:
-        args = self._construct_args_for_framework(self.framework_app)
+    Args:
+        app_env: The app environment
+        module_name: Name of the module containing the app
+        framework_variable_name: Variable name of the framework app
+        port: Port number
+
+    Returns:
+        List of argument strings
+    """
+    args = app_env.args
+
+    # Framework specific argument adjustments
+    if app_env.framework_app is not None and args is None:
+        args = _construct_args_for_framework(
+            app_env,
+            app_env.framework_app,
+            module_name,
+            framework_variable_name,
+            port
+        )
 
     if args is None:
         return []
@@ -123,171 +152,126 @@ def _get_args(self) -> List[str]:
         return args
 
 
-def _get_command(self, settings: AppSerializationSettings) -> List[str]:
-    if self.command is None:
+def _get_command(app_env: AppEnvironment, additional_distribution: Optional[str]) -> List[str]:
+    """
+    Get the command for the app.
+
+    Args:
+        app_env: The app environment
+        additional_distribution: URL to additional distribution files
+
+    Returns:
+        List of command strings
+    """
+    if app_env.command is None:
+        # Default command
         cmd = ["union-serve"]
 
-        serve_config = ServeConfig(
-            code_uri=settings.additional_distribution,
-            inputs=[InputBackend.from_input(user_input, settings) for user_input in self.inputs],
-        )
-
-        cmd.extend(["--config", SERVE_CONFIG_ENCODER.encode(serve_config)])
+        if additional_distribution:
+            # TODO: Add serve config construction when needed
+            # For now, just pass the distribution
+            pass
 
         return [*cmd, "--"]
-    elif isinstance(self.command, str):
-        return shlex.split(self.command)
+    elif isinstance(app_env.command, str):
+        return shlex.split(app_env.command)
     else:
-        # args is a list
-        return self.command
+        # command is a list
+        return app_env.command
 
 
-def _get_resources(self) -> tasks_pb2.Resources:
-    return get_proto_resources(self.resources)
+def _get_env(app_env: AppEnvironment) -> dict:
+    """
+    Get environment variables for the app.
+
+    Args:
+        app_env: The app environment
+
+    Returns:
+        Dictionary of environment variables
+    """
+    return app_env.env_vars or {}
 
 
-def _get_container(self, settings: AppSerializationSettings) -> tasks_pb2.Container:
-    container_ports = [tasks_pb2.ContainerPort(container_port=self._port.port, name=self._port.name)]
+def _get_container(
+    app_env: AppEnvironment,
+    serialization_context: SerializationContext,
+    additional_distribution: Optional[str],
+    port: int,
+    module_name: Optional[str],
+    framework_variable_name: Optional[str],
+) -> tasks_pb2.Container:
+    """
+    Construct the container specification.
+
+    Args:
+        app_env: The app environment
+        serialization_context: Serialization context
+        additional_distribution: URL to additional distribution files
+        port: Port number
+        module_name: Name of the module containing the app
+        framework_variable_name: Variable name of the framework app
+
+    Returns:
+        Container protobuf message
+    """
+    from flyte.app._types import Port
+
+    # Default port if not specified
+    _port = Port(port=port, name="http")
+    container_ports = [tasks_pb2.ContainerPort(container_port=_port.port, name=_port.name)]
 
     return tasks_pb2.Container(
-        image=self._get_image(self.image, settings),
-        command=self._get_command(settings),
-        args=self._get_args(),
-        resources=self._get_resources(),
+        image=_get_image_uri(app_env.image, serialization_context),
+        command=_get_command(app_env, additional_distribution),
+        args=_get_args(app_env, module_name, framework_variable_name, port),
+        resources=get_proto_resources(app_env.resources),
         ports=container_ports,
-        env=[literals_pb2.KeyValuePair(key=k, value=v) for k, v in self._get_env(settings).items()],
+        env=[literals_pb2.KeyValuePair(key=k, value=v) for k, v in _get_env(app_env).items()],
     )
 
 
-def _get_env(self, settings: AppSerializationSettings) -> dict:
-    return self.env or {}
-
-
-def _get_extended_resources(self) -> Optional[tasks_pb2.ExtendedResources]:
-    return get_proto_extended_resources(self.resources)
-
-
-def _to_union_idl(self, settings: AppSerializationSettings) -> AppIDL:
-    if self.config is not None:
-        self.config.before_to_union_idl(self, settings)
-
-    security_context_kwargs = {}
-    security_context = None
-    if self.secrets:
-        security_context_kwargs["secrets"] = [s.to_flyte_idl() for s in self.secrets]
-    if not self.requires_auth:
-        security_context_kwargs["allow_anonymous"] = True
-
-    if security_context_kwargs:
-        security_context = SecurityContext(**security_context_kwargs)
-
-    scaling_metric = ScalingMetric._to_union_idl(self.scaling_metric)
-
-    dur = None
-    if self.scaledown_after:
-        from google.protobuf.duration_pb2 import Duration
-
-        dur = Duration()
-        dur.FromTimedelta(self.scaledown_after)
-
-    autoscaling = AutoscalingConfig(
-        replicas=Replicas(min=self.min_replicas, max=self.max_replicas),
-        scaledown_period=dur,
-        scaling_metric=scaling_metric,
-    )
-
-    spec_kwargs = {}
-    if isinstance(self.image, (str, Image)):
-        spec_kwargs["container"] = self._get_container(settings)
-    else:
-        msg = "container_image must be a str, ImageSpec or PodTemplate"
-        raise ValueError(msg)
-
-    from flyte._protos.app.app_definition_pb2 import Profile
-
-    return AppIDL(
-        metadata=Meta(
-            id=Identifier(
-                org=settings.org,
-                project=settings.project,
-                domain=settings.domain,
-                name=self.name,
-            ),
-        ),
-        spec=Spec(
-            desired_state=settings.desired_state,
-            ingress=IngressConfig(
-                private=False,
-                subdomain=self.subdomain if self.subdomain else None,
-                cname=self.custom_domain if self.custom_domain else None,
-            ),
-            autoscaling=autoscaling,
-            security_context=security_context,
-            cluster_pool=self.cluster_pool,
-            extended_resources=self._get_extended_resources(),
-            profile=Profile(
-                type=self.type,
-                short_description=self.description,
-            ),
-            links=[LinkIDL(path=link.path, title=link.title, is_relative=link.is_relative) for link in self.links]
-            if self.links
-            else None,
-            **spec_kwargs,
-        ),
-    )
-
-
-@classmethod
-def _update_app_idl(cls, old_app_idl: AppIDL, new_app_idl: AppIDL) -> AppIDL:
-    # Replace all lists with empty so that MergeFrom works out of the box.
-    app_idl_ = AppIDL(
-        metadata=old_app_idl.metadata,
-        spec=new_app_idl.spec,
-        status=old_app_idl.status,
-    )
-    # Make sure values set by the server and not by the app configuration is
-    # preserved.
-    if old_app_idl.spec.creator.ListFields():
-        app_idl_.spec.creator.CopyFrom(old_app_idl.spec.creator)
-
-    # Ingress subdomain could be configured by the server or overriden by the user
-    app_idl_.spec.ingress.CopyFrom(old_app_idl.spec.ingress)
-    app_idl_.spec.ingress.MergeFrom(new_app_idl.spec.ingress)
-    return app_idl_
-
-
-def _get_k8s_pod(self, pod_template: PodTemplate, settings: AppSerializationSettings) -> tasks_pb2.K8sPod:
-    """Convert pod_template into a K8sPod IDL."""
-    import json
-
-    from google.protobuf.json_format import Parse
-    from google.protobuf.struct_pb2 import Struct
-
-    pod_spec_dict = self._serialized_pod_spec(pod_template, settings)
-    pod_spec_idl = Parse(json.dumps(pod_spec_dict), Struct())
-
-    metadata = tasks_pb2.K8sObjectMetadata(
-        labels=pod_template.labels,
-        annotations=pod_template.annotations,
-    )
-    return tasks_pb2.K8sPod(pod_spec=pod_spec_idl, metadata=metadata)
-
-
-@staticmethod
 def _sanitize_resource_name(resource: tasks_pb2.Resources.ResourceEntry) -> str:
+    """
+    Sanitize resource name for Kubernetes compatibility.
+
+    Args:
+        resource: Resource entry
+
+    Returns:
+        Sanitized resource name
+    """
     return tasks_pb2.Resources.ResourceName.Name(resource.name).lower().replace("_", "-")
 
 
 def _serialized_pod_spec(
-        self,
-        pod_template: PodTemplate,
-        settings: AppSerializationSettings,
+    app_env: AppEnvironment,
+    pod_template: PodTemplate,
+    serialization_context: SerializationContext,
+    additional_distribution: Optional[str],
+    port: int,
+    module_name: Optional[str],
+    framework_variable_name: Optional[str],
 ) -> dict:
-    """Convert pod spec into a dict."""
+    """
+    Convert pod spec into a dict for serialization.
+
+    Args:
+        app_env: The app environment
+        pod_template: Pod template specification
+        serialization_context: Serialization context
+        additional_distribution: URL to additional distribution files
+        port: Port number
+        module_name: Name of the module containing the app
+        framework_variable_name: Variable name of the framework app
+
+    Returns:
+        Dictionary representation of the pod spec
+    """
     from kubernetes.client import ApiClient
     from kubernetes.client.models import V1Container, V1ContainerPort, V1EnvVar, V1ResourceRequirements
 
-    pod_template = copy.deepcopy(pod_template)
+    pod_template = deepcopy(pod_template)
 
     if pod_template.pod_spec is None:
         return {}
@@ -300,39 +284,252 @@ def _serialized_pod_spec(
     primary_exists = any(container.name == pod_template.primary_container_name for container in containers)
 
     if not primary_exists:
-        msg = "Primary container does not exist with name 'app' does not exist"
+        msg = "Primary container does not exist with name 'app'"
         raise ValueError(msg)
 
     final_containers = []
 
-    # Move all resource names into containers
+    # Process containers
     for container in containers:
-        container.image = self._get_image(container.image, settings)
+        container.image = _get_image_uri(container.image, serialization_context)
 
         if container.name == pod_template.primary_container_name:
-            container.args = self._get_args()
-            container.command = self._get_command(settings)
+            container.args = _get_args(app_env, module_name, framework_variable_name, port)
+            container.command = _get_command(app_env, additional_distribution)
 
             limits, requests = {}, {}
-            resources = self._get_resources()
-            for resource in resources.limits:
-                limits[self._sanitize_resource_name(resource)] = resource.value
-            for resource in resources.requests:
-                requests[self._sanitize_resource_name(resource)] = resource.value
+            resources = get_proto_resources(app_env.resources)
+            if resources:
+                for resource in resources.limits:
+                    limits[_sanitize_resource_name(resource)] = resource.value
+                for resource in resources.requests:
+                    requests[_sanitize_resource_name(resource)] = resource.value
 
-            resource_requirements = V1ResourceRequirements(limits=limits, requests=requests)
+                resource_requirements = V1ResourceRequirements(limits=limits, requests=requests)
 
-            if limits or requests:
-                container.resources = resource_requirements
+                if limits or requests:
+                    container.resources = resource_requirements
 
-            if self.env:
-                container.env = [V1EnvVar(name=k, value=v) for k, v in self.env.items()] + (container.env or [])
+            if app_env.env_vars:
+                container.env = [V1EnvVar(name=k, value=v) for k, v in app_env.env_vars.items()] + (
+                    container.env or []
+                )
 
-            container.ports = [V1ContainerPort(container_port=self._port.port, name=self._port.name)] + (
-                    container.ports or []
+            from flyte.app._types import Port
+            _port = Port(port=port, name="http")
+            container.ports = [V1ContainerPort(container_port=_port.port, name=_port.name)] + (
+                container.ports or []
             )
 
         final_containers.append(container)
 
     pod_template.pod_spec.containers = final_containers
     return ApiClient().sanitize_for_serialization(pod_template.pod_spec)
+
+
+def _get_k8s_pod(
+    app_env: AppEnvironment,
+    pod_template: PodTemplate,
+    serialization_context: SerializationContext,
+    additional_distribution: Optional[str],
+    port: int,
+    module_name: Optional[str],
+    framework_variable_name: Optional[str],
+) -> tasks_pb2.K8sPod:
+    """
+    Convert pod_template into a K8sPod IDL.
+
+    Args:
+        app_env: The app environment
+        pod_template: Pod template specification
+        serialization_context: Serialization context
+        additional_distribution: URL to additional distribution files
+        port: Port number
+        module_name: Name of the module containing the app
+        framework_variable_name: Variable name of the framework app
+
+    Returns:
+        K8sPod protobuf message
+    """
+    import json
+
+    from google.protobuf.json_format import Parse
+    from google.protobuf.struct_pb2 import Struct
+
+    pod_spec_dict = _serialized_pod_spec(
+        app_env,
+        pod_template,
+        serialization_context,
+        additional_distribution,
+        port,
+        module_name,
+        framework_variable_name
+    )
+    pod_spec_idl = Parse(json.dumps(pod_spec_dict), Struct())
+
+    metadata = tasks_pb2.K8sObjectMetadata(
+        labels=pod_template.labels,
+        annotations=pod_template.annotations,
+    )
+    return tasks_pb2.K8sPod(pod_spec=pod_spec_idl, metadata=metadata)
+
+
+def _get_scaling_metric(metric: Any) -> Optional[app_definition_pb2.ScalingMetric]:
+    """
+    Convert scaling metric to protobuf format.
+
+    Args:
+        metric: Scaling metric (Concurrency or RequestRate)
+
+    Returns:
+        ScalingMetric protobuf message or None
+    """
+    from flyte.app._types import Scaling
+
+    if metric is None:
+        return None
+
+    if isinstance(metric, Scaling.Concurrency):
+        return app_definition_pb2.ScalingMetric(
+            concurrency=app_definition_pb2.Concurrency(val=metric.val)
+        )
+    elif isinstance(metric, Scaling.RequestRate):
+        return app_definition_pb2.ScalingMetric(
+            request_rate=app_definition_pb2.RequestRate(val=metric.val)
+        )
+
+    return None
+
+
+def translate_app_env_to_idl(
+    app_env: AppEnvironment,
+    serialization_context: SerializationContext,
+    additional_distribution: Optional[str] = None,
+    desired_state: app_definition_pb2.Spec.DesiredState.ValueType = app_definition_pb2.Spec.DesiredState.DESIRED_STATE_ACTIVE,
+    port: int = 8080,
+    module_name: Optional[str] = None,
+    framework_variable_name: Optional[str] = None,
+) -> app_definition_pb2.App:
+    """
+    Translate an AppEnvironment to AppIDL protobuf format.
+
+    This is the main entry point for serializing an AppEnvironment object into
+    the AppIDL protobuf format.
+
+    Args:
+        app_env: The app environment to serialize
+        serialization_context: Serialization context containing org, project, domain, version, etc.
+        additional_distribution: URL to additional distribution files (e.g., tar.gz of include files)
+        desired_state: Desired state of the app (ACTIVE, INACTIVE, etc.)
+        port: Port number for the app (default: 8080)
+        module_name: Name of the module containing the app (for framework apps)
+        framework_variable_name: Variable name of the framework app (for framework apps)
+
+    Returns:
+        AppIDL protobuf message
+    """
+    # Build security context
+    security_context_kwargs = {}
+    security_context = None
+    if app_env.secrets:
+        security_context_kwargs["secrets"] = [s.to_flyte_idl() for s in app_env.secrets]
+    if not app_env.requires_auth:
+        security_context_kwargs["allow_anonymous"] = True
+
+    if security_context_kwargs:
+        security_context = app_definition_pb2.SecurityContext(**security_context_kwargs)
+
+    # Build autoscaling config
+    scaling_metric = _get_scaling_metric(app_env.scaling.metric)
+
+    dur = None
+    if app_env.scaling.scaledown_after:
+        dur = Duration()
+        dur.FromTimedelta(app_env.scaling.scaledown_after)
+
+    min_replicas, max_replicas = app_env.scaling.replicas
+    autoscaling = app_definition_pb2.AutoscalingConfig(
+        replicas=app_definition_pb2.Replicas(min=min_replicas, max=max_replicas),
+        scaledown_period=dur,
+        scaling_metric=scaling_metric,
+    )
+
+    # Build spec based on image type
+    container = None
+    pod = None
+    # TODO check pod template
+    if isinstance(app_env.image, (str, Image)):
+        container = _get_container(
+            app_env,
+            serialization_context,
+            additional_distribution,
+            port,
+            module_name,
+            framework_variable_name,
+        )
+    elif isinstance(app_env.image, PodTemplate):
+         pod = _get_k8s_pod(
+            app_env,
+            app_env.image,
+            serialization_context,
+            additional_distribution,
+            port,
+            module_name,
+            framework_variable_name,
+        )
+    else:
+        msg = "image must be a str, Image, or PodTemplate"
+        raise ValueError(msg)
+
+    # Build ingress config
+    subdomain = app_env.domain.subdomain if app_env.domain else None
+    custom_domain = app_env.domain.custom_domain if app_env.domain else None
+
+    ingress = app_definition_pb2.IngressConfig(
+        private=False,
+        subdomain=subdomain if subdomain else None,
+        cname=custom_domain if custom_domain else None,
+    )
+
+    # Build links
+    links = None
+    if app_env.links:
+        links = [
+            app_definition_pb2.Link(path=link.path, title=link.title, is_relative=link.is_relative)
+            for link in app_env.links
+        ]
+
+    # Build profile
+    profile = app_definition_pb2.Profile(
+        type=app_env.type,
+        short_description=app_env.docs,
+    )
+
+    # Build the full App IDL
+    return app_definition_pb2.App(
+        metadata=app_definition_pb2.Meta(
+            id=app_definition_pb2.Identifier(
+                org=serialization_context.org,
+                project=serialization_context.project,
+                domain=serialization_context.domain,
+                name=app_env.name,
+            ),
+        ),
+        spec=app_definition_pb2.Spec(
+            desired_state=desired_state,
+            ingress=ingress,
+            autoscaling=autoscaling,
+            security_context=security_context,
+            cluster_pool=app_env.cluster_pool,
+            extended_resources=get_proto_extended_resources(app_env.resources),
+            runtime_metadata=runtime_version_pb2.RuntimeMetadata(
+                type=runtime_version_pb2.RuntimeMetadata.RuntimeType.FLYTE_SDK,
+                version=serialization_context.version,
+                flavor="python",
+            ),
+            profile=profile,
+            links=links,
+            container=container,
+            pod=pod
+        ),
+    )
