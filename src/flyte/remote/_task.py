@@ -6,20 +6,20 @@ from dataclasses import dataclass
 from typing import Any, AsyncIterator, Callable, Coroutine, Dict, Iterator, Literal, Optional, Tuple, Union, cast
 
 import rich.repr
-from flyteidl2.common import identifier_pb2, list_pb2
-from flyteidl2.core import literals_pb2
-from flyteidl2.task import task_definition_pb2, task_service_pb2
 
 import flyte
 import flyte.errors
 from flyte._cache.cache import CacheBehavior
 from flyte._context import internal_ctx
-from flyte._initialize import ensure_client, get_client, get_common_config
+from flyte._initialize import ensure_client, get_client, get_init_config
 from flyte._internal.runtime.resources_serde import get_proto_resources
 from flyte._internal.runtime.task_serde import get_proto_retry_strategy, get_proto_timeout, get_security_context
 from flyte._logging import logger
 from flyte.models import NativeInterface
 from flyte.syncify import syncify
+from flyteidl2.common import identifier_pb2, list_pb2
+from flyteidl2.core import literals_pb2
+from flyteidl2.task import task_definition_pb2, task_service_pb2
 
 from ._common import ToJSONMixin
 
@@ -150,7 +150,7 @@ class TaskDetails(ToJSONMixin):
                     if ctx is None:
                         raise ValueError("auto_version=current can only be used within a task context.")
                     _version = ctx.version
-            cfg = get_common_config()
+            cfg = get_init_config()
             task_id = task_definition_pb2.TaskIdentifier(
                 org=cfg.org,
                 project=project or cfg.project,
@@ -450,7 +450,7 @@ class Task(ToJSONMixin):
         sort_pb2 = list_pb2.Sort(
             key=sort_by[0], direction=list_pb2.Sort.ASCENDING if sort_by[1] == "asc" else list_pb2.Sort.DESCENDING
         )
-        cfg = get_common_config()
+        cfg = get_init_config()
         filters = []
         if by_task_name:
             filters.append(
