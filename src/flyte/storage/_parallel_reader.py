@@ -202,7 +202,7 @@ class ObstoreParallelReader:
         except asyncio.QueueEmpty:
             pass
 
-    async def download_files(self, src_prefix: pathlib.Path, target_prefix: pathlib.Path, *paths):
+    async def download_files(self, src_prefix: pathlib.Path, target_prefix: pathlib.Path, *paths, destination_file_name: str | None = None) -> None:
         """
         src_prefix: Prefix you want to download from in the object store, not including the bucket name, nor file name.
                     Should be replaced with string
@@ -238,7 +238,10 @@ class ObstoreParallelReader:
 
         def _transform_decorator(tmp_dir: str):
             async def _transformer(buf: _FileBuffer) -> None:
-                target = target_prefix / buf.path.relative_to(tmp_dir)
+                if len(paths) == 1 and destination_file_name is not None:
+                    target = target_prefix / destination_file_name
+                else:
+                    target = target_prefix / buf.path.relative_to(tmp_dir)
                 await aiofiles.os.makedirs(target.parent, exist_ok=True)
                 return await aiofiles.os.replace(buf.path, target)  # mv buf.path target
 

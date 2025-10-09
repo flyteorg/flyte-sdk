@@ -184,6 +184,7 @@ async def _get_obstore_bypass(from_path: str, to_path: str | pathlib.Path, recur
             final_prefix,
             target_path.parent,
             path_for_reader,
+            destination_file_name=target_path.name,
         )
         return str(target_path / path_for_reader)
 

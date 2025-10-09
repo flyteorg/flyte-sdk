@@ -1,9 +1,13 @@
 import time
 from typing import Tuple
+import tempfile
+import asyncio
+import os
 
 import flyte
 import flyte.io
 import flyte.storage
+import signal
 
 env = flyte.TaskEnvironment(
     "large_file_io",
@@ -26,23 +30,33 @@ async def create_large_file(size_gigabytes: int = 5) -> flyte.io.File:
 
 
 @env.task
-async def read_large_file(f: flyte.io.File) -> Tuple[int, float]:
-    import tempfile
-    import os
+async def read_large_file(f: flyte.io.File, hang: bool = False) -> Tuple[int, float]:
     total_bytes = 0
     # chunk_size = 10 * 1024 * 1024
+    _, tmp_path = tempfile.mkstemp()
+    print(f"Will download file from {f.path} to {tmp_path}", flush=True)
+    if hang:
+        loop = asyncio.get_running_loop()
+        waiter = asyncio.Event()
+        args = ()
+
+        loop.add_signal_handler(signal.SIGUSR2, waiter.set, *args)
+        # kill -USR2 <pid>
+        print(f"Hanging until SIGUSR2 is received (pid={os.getpid()})", flush=True)
+        signal.pause()
+
     start = time.time()
     # read = 0
     # async with f.open("rb", block_size=chunk_size) as fp:
     #     while _ := await fp.read():
     #         read += 1
 
-    _, tmp_path = tempfile.mkstemp()
     await flyte.storage.get(f.path, tmp_path)
 
     end = time.time()
     total = end - start
     total_bytes = os.path.getsize(tmp_path)
+    await asyncio.sleep(100)
     print(f"Read {total_bytes} bytes in {total:.2f} seconds ({total_bytes / total / (1024 * 1024):.2f} MiB/s)")
 
     return total_bytes, total
@@ -51,7 +65,7 @@ async def read_large_file(f: flyte.io.File) -> Tuple[int, float]:
 @env.task
 async def main(size_gigabytes: int = 5) -> Tuple[int, float]:
     large_file = await create_large_file(size_gigabytes)
-    return await read_large_file(large_file)
+    return await read_large_file(large_file, hang=False)
 
 
 if __name__ == "__main__":
