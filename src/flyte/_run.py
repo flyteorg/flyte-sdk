@@ -12,7 +12,7 @@ from flyte._environment import Environment
 from flyte._initialize import (
     _get_init_config,
     get_client,
-    get_common_config,
+    get_init_config,
     get_storage,
     requires_initialization,
     requires_storage,
@@ -130,21 +130,21 @@ class _Runner:
     @requires_initialization
     async def _run_remote(self, obj: TaskTemplate[P, R] | LazyEntity, *args: P.args, **kwargs: P.kwargs) -> Run:
         import grpc
-        from flyteidl2.common import identifier_pb2
-        from flyteidl2.core import literals_pb2
-        from flyteidl2.task import run_pb2
-        from flyteidl2.workflow import run_definition_pb2, run_service_pb2
         from google.protobuf import wrappers_pb2
 
         from flyte.remote import Run
         from flyte.remote._task import LazyEntity
+        from flyteidl2.common import identifier_pb2
+        from flyteidl2.core import literals_pb2
+        from flyteidl2.task import run_pb2
+        from flyteidl2.workflow import run_definition_pb2, run_service_pb2
 
         from ._code_bundle import build_code_bundle, build_pkl_bundle
         from ._deploy import build_images
         from ._internal.runtime.convert import convert_from_native_to_inputs
         from ._internal.runtime.task_serde import translate_task_to_wire
 
-        cfg = get_common_config()
+        cfg = get_init_config()
         project = self._project or cfg.project
         domain = self._domain or cfg.domain
 
@@ -336,7 +336,7 @@ class _Runner:
         from ._internal import create_controller
         from ._internal.runtime.taskrunner import run_task
 
-        cfg = get_common_config()
+        cfg = get_init_config()
 
         if obj.parent_env is None:
             raise ValueError("Task is not attached to an environment. Please attach the task to an environment.")
@@ -425,13 +425,12 @@ class _Runner:
         return outputs
 
     async def _run_local(self, obj: TaskTemplate[P, R], *args: P.args, **kwargs: P.kwargs) -> Run:
-        from flyteidl2.common import identifier_pb2
-
         from flyte._input_context import _input_context_var
         from flyte._internal.controllers import create_controller
         from flyte._internal.controllers._local_controller import LocalController
         from flyte.remote import Run
         from flyte.report import Report
+        from flyteidl2.common import identifier_pb2
 
         controller = cast(LocalController, create_controller("local"))
 
