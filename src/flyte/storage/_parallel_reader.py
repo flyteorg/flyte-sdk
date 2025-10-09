@@ -12,14 +12,13 @@ from typing import Any, Hashable, Protocol
 import aiofiles
 import aiofiles.os
 import obstore
-from obstore import Bytes
-from obstore.store import ObjectStore
 
 if typing.TYPE_CHECKING:
-    from obstore.models import ObjectMeta
+    from obstore import Bytes, ObjectMeta
+    from obstore.store import ObjectStore
 
 CHUNK_SIZE = int(os.getenv("FLYTE_IO_CHUNK_SIZE", str(16 * 1024 * 1024)))
-CHUNK_SIZE = 30
+CHUNK_SIZE = 131  # use a random number that doesn't align with anything.
 MAX_CONCURRENCY = int(os.getenv("FLYTE_IO_MAX_CONCURRENCY", str(32)))
 
 
