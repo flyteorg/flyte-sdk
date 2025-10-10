@@ -116,11 +116,12 @@ async def convert_from_native_to_inputs(
     if missing:
         raise ValueError(f"Missing required inputs: {', '.join(missing)}")
 
+    context_kvs = None
+    if input_context:
+        context_kvs = [literals_pb2.KeyValuePair(key=k, value=v) for k, v in input_context.items()]
+
     if len(interface.inputs) == 0:
         # Handle context even for empty inputs
-        context_kvs = []
-        if input_context:
-            context_kvs = [literals_pb2.KeyValuePair(key=k, value=v) for k, v in input_context.items()]
         return Inputs(proto_inputs=common_pb2.Inputs(context=context_kvs))
 
     # fill in defaults if missing
@@ -155,11 +156,6 @@ async def convert_from_native_to_inputs(
         for k, v in already_converted_kwargs.items():
             copied_literals[k] = v
         literal_map = literals_pb2.LiteralMap(literals=copied_literals)
-
-    # Convert context to KeyValuePairs
-    context_kvs = []
-    if input_context:
-        context_kvs = [literals_pb2.KeyValuePair(key=k, value=v) for k, v in input_context.items()]
 
     # Make sure we the interface, not literal_map or kwargs, because those may have a different order
     return Inputs(
