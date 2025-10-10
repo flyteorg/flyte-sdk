@@ -145,7 +145,6 @@ async def _deploy_task(
     """
     ensure_client()
     import grpc.aio
-
     from flyteidl2.task import task_definition_pb2, task_service_pb2
 
     from ._internal.runtime.convert import convert_upload_default_inputs

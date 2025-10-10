@@ -67,10 +67,7 @@ async def tune_memory(udf: typing.Callable, inputs: dict) -> str:
 @env.task(cache="auto")
 async def tuning_step(inputs: list[int]) -> dict[int, str]:
     tuned_memories = await asyncio.gather(
-        *[
-            tune_memory.override(short_name=f"tune_memory_{i}")(memory_hogger, {"x": i})
-            for i in inputs
-        ]
+        *[tune_memory.override(short_name=f"tune_memory_{i}")(memory_hogger, {"x": i}) for i in inputs]
     )
     return dict(zip(inputs, tuned_memories))
 
