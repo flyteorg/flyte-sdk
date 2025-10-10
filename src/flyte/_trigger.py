@@ -2,9 +2,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Dict, Mapping, Union
+from typing import Any, Dict, Literal, Mapping, Union
 
 import rich.repr
+
+DEFAULT_TIMEZONE = "America/Los_Angeles"
 
 
 class _trigger_time:
@@ -33,9 +35,14 @@ class Cron:
     """
 
     expression: str
+    timezone: Literal["America/Los_Angeles", "Europe/London", "Australia/Sydney", "America/New_York"] = DEFAULT_TIMEZONE
+
+    @property
+    def timezone_expression(self) -> str:
+        return f"{self.timezone} {self.expression}"
 
     def __str__(self):
-        return f"Cron Trigger: {self.expression}"
+        return f"Cron Trigger: {self.timezone_expression}"
 
 
 @rich.repr.auto
