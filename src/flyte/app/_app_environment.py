@@ -1,11 +1,11 @@
 from dataclasses import dataclass, field
-from typing import Optional, Union, List, Any
+from typing import Any, List, Optional, Union
 
 import rich.repr
 
 from flyte import Environment
 from flyte.app._input import Input
-from flyte.app._types import Scaling, Domain, Link
+from flyte.app._types import Domain, Link, Scaling
 
 
 @rich.repr.auto

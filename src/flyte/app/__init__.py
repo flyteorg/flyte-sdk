@@ -1,7 +1,12 @@
 from flyte.app._app_environment import AppEnvironment
+from flyte.app._types import Domain, Link, Port, Scaling
 
 __all__ = [
     "AppEnvironment",
+    "Domain",
+    "Link",
+    "Port",
+    "Scaling",
 ]
 
 

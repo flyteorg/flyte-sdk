@@ -7,9 +7,9 @@ import flyte._protos.app.app_definition_pb2 as app_definition_pb2
 import flyte._protos.common.runtime_version_pb2 as runtime_version_pb2
 from flyte._image import Image
 from flyte._pod import PodTemplate
+from flyte.app._app import App
 from flyte.app._app_environment import AppSerializationSettings
 from flyte.app._models import ScalingMetric
-from flyte.app._app import App
 
 FILES_TAR_FILE_NAME = "include-files.tar.gz"
 

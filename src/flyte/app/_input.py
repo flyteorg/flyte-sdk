@@ -1,10 +1,10 @@
 from dataclasses import dataclass, field
-from enum import Enum
-from typing import Union, Optional, Literal
+from typing import Literal, Optional
 
 from flyte.app._app_environment_bk import ENV_NAME_RE
 
 InputType = Literal["file", "directory", "string"]
+
 
 @dataclass
 class Input:

@@ -32,9 +32,9 @@ _MAX_TASK_SHORT_NAME_LENGTH = 63  # Maximum length for task short names
 
 
 def translate_task_to_wire(
-        task: TaskTemplate,
-        serialization_context: SerializationContext,
-        default_inputs: Optional[typing.List[common_pb2.NamedParameter]] = None,
+    task: TaskTemplate,
+    serialization_context: SerializationContext,
+    default_inputs: Optional[typing.List[common_pb2.NamedParameter]] = None,
 ) -> task_definition_pb2.TaskSpec:
     """
     Translate a task to a wire format. This is a placeholder function.
@@ -60,7 +60,7 @@ def translate_task_to_wire(
 
 
 def get_security_context(
-        secrets: Optional[SecretRequest],
+    secrets: Optional[SecretRequest],
 ) -> Optional[security_pb2.SecurityContext]:
     """
     Get the security context from a list of secrets. This is a placeholder function.
@@ -89,7 +89,7 @@ def get_security_context(
 
 
 def get_proto_retry_strategy(
-        retries: RetryStrategy | int | None,
+    retries: RetryStrategy | int | None,
 ) -> Optional[literals_pb2.RetryStrategy]:
     if retries is None:
         return None
@@ -205,16 +205,14 @@ def lookup_image_in_cache(serialize_context: SerializationContext, env_name: str
         return image.uri
 
     if serialize_context.image_cache and env_name not in serialize_context.image_cache.image_lookup:
-        logger.warning(
-            f"Image {image} not found in the image cache: {serialize_context.image_cache.image_lookup}."
-        )
+        logger.warning(f"Image {image} not found in the image cache: {serialize_context.image_cache.image_lookup}.")
         return image.uri
 
     return serialize_context.image_cache.image_lookup[env_name]
 
 
 def _get_urun_container(
-        serialize_context: SerializationContext, task_template: TaskTemplate
+    serialize_context: SerializationContext, task_template: TaskTemplate
 ) -> Optional[tasks_pb2.Container]:
     env = (
         [literals_pb2.KeyValuePair(key=k, value=v) for k, v in task_template.env_vars.items()]
@@ -304,7 +302,7 @@ def _get_k8s_pod(primary_container: tasks_pb2.Container, pod_template: PodTempla
 
             if primary_container.env is not None:
                 container.env = [V1EnvVar(name=e.key, value=e.value) for e in primary_container.env] + (
-                        container.env or []
+                    container.env or []
                 )
 
         final_containers.append(container)
@@ -317,7 +315,7 @@ def _get_k8s_pod(primary_container: tasks_pb2.Container, pod_template: PodTempla
 
 
 def extract_code_bundle(
-        task_spec: task_definition_pb2.TaskSpec,
+    task_spec: task_definition_pb2.TaskSpec,
 ) -> Optional[CodeBundle]:
     """
     Extract the code bundle from the task spec.

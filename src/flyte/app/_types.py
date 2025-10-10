@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 from datetime import timedelta
-from typing import Optional, Union, Tuple
+from typing import Optional, Tuple, Union
 
 import rich.repr
 
@@ -37,6 +37,7 @@ class Scaling:
         Use this to specify the concurrency metric for autoscaling, i.e. the number of concurrent requests at a replica
          at which to scale up.
         """
+
         val: int
 
         def __post_init__(self):
@@ -49,6 +50,7 @@ class Scaling:
         Use this to specify the request rate metric for autoscaling, i.e. the number of requests per second at a replica
          at which to scale up.
         """
+
         val: int
 
         def __post_init__(self):

@@ -19,16 +19,23 @@ logger = logging.getLogger(__name__)
 @click.option("--pkl", required=False)
 @click.option("--dest", required=False)
 @click.argument("command", nargs=-1, type=click.UNPROCESSED)
-def main(inputs: str, version: str,
-         interactive_mode: bool, image_cache: str, tgz: str, pkl: str, dest: str,
-         command: Tuple[str, ...] | None = None):
-    pass
+def main(
+    inputs: str,
+    version: str,
+    interactive_mode: bool,
+    image_cache: str,
+    tgz: str,
+    pkl: str,
+    dest: str,
+    command: Tuple[str, ...] | None = None,
+):
     import json
     import os
     import signal
     from subprocess import Popen
-    from flyte.models import CodeBundle
+
     from flyte._app_runtime.constants import _RUNTIME_CONFIG_FILE
+    from flyte.models import CodeBundle
 
     serve_config = {}
     env_vars = {}

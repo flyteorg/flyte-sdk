@@ -7,6 +7,7 @@ We should ideally move it to the app module and make the app module, really fast
 TODO we might want to expose this as non private module.
 
 """
+
 from inputs import get_input
 
 __all__ = [
