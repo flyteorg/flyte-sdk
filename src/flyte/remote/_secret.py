@@ -22,15 +22,16 @@ class Secret(ToJSONMixin):
     async def create(cls, name: str, value: Union[str, bytes], type: SecretTypes = "regular"):
         ensure_client()
         cfg = get_init_config()
+        project = cfg.project
+        domain = cfg.domain
 
         if type == "regular":
             secret_type = definition_pb2.SecretType.SECRET_TYPE_GENERIC
-            project = cfg.project
-            domain = cfg.domain
+
         else:
             secret_type = definition_pb2.SecretType.SECRET_TYPE_IMAGE_PULL_SECRET
-            project = None
-            domain = None
+            if project or domain:
+                raise ValueError("Project and domain should not be set when creating the image pull secret.")
 
         if isinstance(value, str):
             secret = definition_pb2.SecretSpec(
