@@ -17,6 +17,7 @@ import flyte.errors
 import flyte.storage as storage
 from flyte._code_bundle import build_pkl_bundle
 from flyte._context import internal_ctx
+from flyte._input_context import _input_context_var
 from flyte._internal.controllers import TraceInfo
 from flyte._internal.controllers.remote._action import Action
 from flyte._internal.controllers.remote._core import Controller
@@ -177,8 +178,6 @@ class RemoteController(Controller):
             )
 
         # Propagate context from current task to sub-tasks, merging with context manager context
-        from flyte._input_context import _input_context_var
-
         current_context = _input_context_var.get()
 
         inputs = await convert.convert_from_native_to_inputs(
@@ -386,7 +385,6 @@ class RemoteController(Controller):
         invoke_seq_num = self.generate_task_call_sequence(_func, current_action_id)
 
         # Propagate context from current task to traced functions
-        from flyte._input_context import _input_context_var
         current_context = _input_context_var.get()
 
         inputs = await convert.convert_from_native_to_inputs(_interface, *args, input_context=current_context, **kwargs)
@@ -509,7 +507,6 @@ class RemoteController(Controller):
         pb_interface = _task.pb2.spec.task_template.interface
 
         # Propagate context from current task to task references
-        from flyte._input_context import _input_context_var
         current_context = _input_context_var.get()
 
         inputs = await convert.convert_from_native_to_inputs(native_interface, *args, input_context=current_context, **kwargs)

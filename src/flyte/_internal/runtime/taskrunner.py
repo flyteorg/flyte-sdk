@@ -9,6 +9,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import flyte.report
 from flyte._context import internal_ctx
+from flyte._input_context import _input_context_var
 from flyte._internal.imagebuild.image_builder import ImageCache
 from flyte._logging import log, logger
 from flyte._task import TaskTemplate
@@ -128,8 +129,6 @@ async def convert_and_run(
     This method is used to convert the inputs to native types, and run the task. It assumes you are running
     in a context tree.
     """
-    from flyte._input_context import _input_context_var
-
     ctx = internal_ctx()
 
     # Load inputs first to get context

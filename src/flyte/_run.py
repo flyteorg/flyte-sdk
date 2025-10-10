@@ -17,6 +17,7 @@ from flyte._initialize import (
     requires_initialization,
     requires_storage,
 )
+from flyte._input_context import _input_context_var
 from flyte._logging import logger
 from flyte._task import P, R, TaskTemplate
 from flyte.models import (
@@ -425,7 +426,6 @@ class _Runner:
         return outputs
 
     async def _run_local(self, obj: TaskTemplate[P, R], *args: P.args, **kwargs: P.kwargs) -> Run:
-        from flyte._input_context import _input_context_var
         from flyte._internal.controllers import create_controller
         from flyte._internal.controllers._local_controller import LocalController
         from flyte.remote import Run
