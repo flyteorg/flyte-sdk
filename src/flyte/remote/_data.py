@@ -15,7 +15,7 @@ import httpx
 from flyteidl.service import dataproxy_pb2
 from google.protobuf import duration_pb2
 
-from flyte._initialize import CommonInit, ensure_client, get_client, get_init_config
+from flyte._initialize import CommonInit, ensure_client, get_client, get_init_config, require_project_and_domain
 from flyte.errors import InitializationError, RuntimeSystemError
 from flyte.syncify import syncify
 
@@ -54,6 +54,7 @@ def hash_file(file_path: typing.Union[os.PathLike, str]) -> Tuple[bytes, str, in
     return h.digest(), h.hexdigest(), size
 
 
+@require_project_and_domain
 async def _upload_single_file(
     cfg: CommonInit, fp: Path, verify: bool = True, basedir: str | None = None
 ) -> Tuple[str, str]:
