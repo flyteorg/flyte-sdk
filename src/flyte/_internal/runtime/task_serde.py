@@ -32,9 +32,9 @@ _MAX_TASK_SHORT_NAME_LENGTH = 63  # Maximum length for task short names
 
 
 def translate_task_to_wire(
-    task: TaskTemplate,
-    serialization_context: SerializationContext,
-    default_inputs: Optional[typing.List[common_pb2.NamedParameter]] = None,
+        task: TaskTemplate,
+        serialization_context: SerializationContext,
+        default_inputs: Optional[typing.List[common_pb2.NamedParameter]] = None,
 ) -> task_definition_pb2.TaskSpec:
     """
     Translate a task to a wire format. This is a placeholder function.
@@ -60,7 +60,7 @@ def translate_task_to_wire(
 
 
 def get_security_context(
-    secrets: Optional[SecretRequest],
+        secrets: Optional[SecretRequest],
 ) -> Optional[security_pb2.SecurityContext]:
     """
     Get the security context from a list of secrets. This is a placeholder function.
@@ -89,7 +89,7 @@ def get_security_context(
 
 
 def get_proto_retry_strategy(
-    retries: RetryStrategy | int | None,
+        retries: RetryStrategy | int | None,
 ) -> Optional[literals_pb2.RetryStrategy]:
     if retries is None:
         return None
@@ -199,8 +199,22 @@ def get_proto_task(task: TaskTemplate, serialize_context: SerializationContext) 
     return task_template
 
 
+def lookup_image_in_cache(serialize_context: SerializationContext, env_name: str, image: flyte.Image) -> str:
+    if not serialize_context.image_cache:
+        # This computes the image uri, computing hashes as necessary so can fail if done remotely.
+        return image.uri
+
+    if serialize_context.image_cache and env_name not in serialize_context.image_cache.image_lookup:
+        logger.warning(
+            f"Image {image} not found in the image cache: {serialize_context.image_cache.image_lookup}."
+        )
+        return image.uri
+
+    return serialize_context.image_cache.image_lookup[env_name]
+
+
 def _get_urun_container(
-    serialize_context: SerializationContext, task_template: TaskTemplate
+        serialize_context: SerializationContext, task_template: TaskTemplate
 ) -> Optional[tasks_pb2.Container]:
     env = (
         [literals_pb2.KeyValuePair(key=k, value=v) for k, v in task_template.env_vars.items()]
@@ -209,24 +223,21 @@ def _get_urun_container(
     )
     resources = get_proto_resources(task_template.resources)
 
-    if isinstance(task_template.image, str):
+    img = task_template.image
+    if isinstance(img, str):
         raise flyte.errors.RuntimeSystemError("BadConfig", "Image is not a valid image")
 
     env_name = task_template.parent_env_name
     if env_name is None:
         raise flyte.errors.RuntimeSystemError("BadConfig", f"Task {task_template.name} has no parent environment name")
 
-    if not serialize_context.image_cache:
-        # This computes the image uri, computing hashes as necessary so can fail if done remotely.
-        img_uri = task_template.image.uri
-    elif serialize_context.image_cache and env_name not in serialize_context.image_cache.image_lookup:
-        img_uri = task_template.image.uri
+    img_uri = lookup_image_in_cache(serialize_context, env_name, img)
 
-        logger.warning(
-            f"Image {task_template.image} not found in the image cache: {serialize_context.image_cache.image_lookup}."
-        )
-    else:
-        img_uri = serialize_context.image_cache.image_lookup[env_name]
+    config = task_template.config(serialize_context)
+    serialized_config = []
+    if config:
+        for k, v in config.items():
+            serialized_config.append(literals_pb2.KeyValuePair(key=k, value=v))
 
     return tasks_pb2.Container(
         image=img_uri,
@@ -235,7 +246,7 @@ def _get_urun_container(
         resources=resources,
         env=env,
         data_config=task_template.data_loading_config(serialize_context),
-        config=task_template.config(serialize_context),
+        config=serialized_config,
     )
 
 
@@ -293,7 +304,7 @@ def _get_k8s_pod(primary_container: tasks_pb2.Container, pod_template: PodTempla
 
             if primary_container.env is not None:
                 container.env = [V1EnvVar(name=e.key, value=e.value) for e in primary_container.env] + (
-                    container.env or []
+                        container.env or []
                 )
 
         final_containers.append(container)
@@ -306,7 +317,7 @@ def _get_k8s_pod(primary_container: tasks_pb2.Container, pod_template: PodTempla
 
 
 def extract_code_bundle(
-    task_spec: task_definition_pb2.TaskSpec,
+        task_spec: task_definition_pb2.TaskSpec,
 ) -> Optional[CodeBundle]:
     """
     Extract the code bundle from the task spec.

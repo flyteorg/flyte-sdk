@@ -69,6 +69,10 @@ class Environment:
             raise TypeError(f"Expected env_vars to be of type Dict[str, str], got {type(self.env_vars)}")
         if self.pod_template is not None and not isinstance(self.pod_template, (str, PodTemplate)):
             raise TypeError(f"Expected pod_template to be of type str or PodTemplate, got {type(self.pod_template)}")
+        if self.image == "auto":
+            self.image = Image.from_debian_base()
+        elif isinstance(self.image, str):
+            self.image = Image.from_base(str(self.image))
         # Automatically register this environment instance in load order
         _ENVIRONMENT_REGISTRY.append(self)
 

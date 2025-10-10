@@ -6,91 +6,30 @@ the AppIDL protobuf format, using SerializationContext for configuration.
 """
 from __future__ import annotations
 
-import os
 import shlex
-import tarfile
 from copy import deepcopy
-from pathlib import Path
-from tempfile import TemporaryDirectory
-from typing import TYPE_CHECKING, Any, List, Optional, Union
+from typing import Any, List, Optional
 
 from flyteidl2.common import runtime_version_pb2
 from flyteidl2.core import literals_pb2, tasks_pb2
 from google.protobuf.duration_pb2 import Duration
 
-from flyte import Image, PodTemplate
+import flyte
+import flyte.errors
 from flyte._internal.runtime.resources_serde import get_proto_extended_resources, get_proto_resources
+from flyte._internal.runtime.task_serde import lookup_image_in_cache
 from flyte._protos.app import app_definition_pb2
-from flyte.app._frameworks import _is_fastapi_app
+from flyte.app._app_environment import AppEnvironment
 from flyte.models import SerializationContext
-
-if TYPE_CHECKING:
-    from dataclasses import dataclass
-
-    from flyte.app._app_environment import AppEnvironment
-
-    @dataclass
-    class ResolvedInclude:
-        """Resolved include file with source and destination paths."""
-        src: str
-        dest: str
-
-FILES_TAR_FILE_NAME = "include-files.tar.gz"
-
-
-async def upload_include_files(app_env: AppEnvironment, include_resolved: List[ResolvedInclude]) -> str | None:
-    """
-    Upload include files to remote storage.
-
-    Args:
-        app_env: The app environment
-        include_resolved: List of resolved include files
-
-    Returns:
-        URL to the uploaded tar file, or None if no files to upload
-    """
-    import flyte.remote
-
-    if not include_resolved:
-        return None
-
-    with TemporaryDirectory() as temp_dir:
-        tar_path = os.path.join(temp_dir, FILES_TAR_FILE_NAME)
-        with tarfile.open(tar_path, "w:gz") as tar:
-            for resolve_include in include_resolved:
-                tar.add(resolve_include.src, arcname=resolve_include.dest)
-
-        _, upload_native_url = await flyte.remote.upload_file.aio(Path(tar_path))
-        return upload_native_url
-
-
-def _get_image_uri(image: Union[str, Image], serialization_context: SerializationContext) -> str:
-    """
-    Get the image URI from the image specification.
-
-    Args:
-        image: Either a string image name or an Image object
-        serialization_context: Serialization context with image cache
-
-    Returns:
-        The image URI string
-    """
-    if isinstance(image, str):
-        return image
-
-    # Image object - look up in the image cache
-    if image.identifier not in serialization_context.image_cache.image_lookup:
-        raise ValueError(f"Image {image.identifier} not found in image cache")
-
-    return serialization_context.image_cache.image_lookup[image.identifier]
+from .frameworks import _is_fastapi_app
 
 
 def _construct_args_for_framework(
-    app_env: AppEnvironment,
-    framework_app: Any,
-    module_name: Optional[str],
-    framework_variable_name: Optional[str],
-    port: int
+        app_env: AppEnvironment,
+        framework_app: Any,
+        module_name: Optional[str],
+        framework_variable_name: Optional[str],
+        port: int
 ) -> Optional[str]:
     """
     Construct framework-specific arguments.
@@ -114,10 +53,10 @@ def _construct_args_for_framework(
 
 
 def _get_args(
-    app_env: AppEnvironment,
-    module_name: Optional[str],
-    framework_variable_name: Optional[str],
-    port: int
+        app_env: AppEnvironment,
+        module_name: Optional[str],
+        framework_variable_name: Optional[str],
+        port: int
 ) -> List[str]:
     """
     Get the command arguments for the app.
@@ -165,7 +104,7 @@ def _get_command(app_env: AppEnvironment, additional_distribution: Optional[str]
     """
     if app_env.command is None:
         # Default command
-        cmd = ["union-serve"]
+        cmd = ["fserve"]
 
         if additional_distribution:
             # TODO: Add serve config construction when needed
@@ -194,12 +133,12 @@ def _get_env(app_env: AppEnvironment) -> dict:
 
 
 def _get_container(
-    app_env: AppEnvironment,
-    serialization_context: SerializationContext,
-    additional_distribution: Optional[str],
-    port: int,
-    module_name: Optional[str],
-    framework_variable_name: Optional[str],
+        app_env: AppEnvironment,
+        serialization_context: SerializationContext,
+        additional_distribution: Optional[str],
+        port: int,
+        module_name: Optional[str],
+        framework_variable_name: Optional[str],
 ) -> tasks_pb2.Container:
     """
     Construct the container specification.
@@ -221,8 +160,12 @@ def _get_container(
     _port = Port(port=port, name="http")
     container_ports = [tasks_pb2.ContainerPort(container_port=_port.port, name=_port.name)]
 
+    img = app_env.image
+    if isinstance(img, str):
+        raise flyte.errors.RuntimeSystemError("BadConfig", "Image is not a valid image")
+
     return tasks_pb2.Container(
-        image=_get_image_uri(app_env.image, serialization_context),
+        image=lookup_image_in_cache(serialization_context, app_env.name, img),
         command=_get_command(app_env, additional_distribution),
         args=_get_args(app_env, module_name, framework_variable_name, port),
         resources=get_proto_resources(app_env.resources),
@@ -245,13 +188,13 @@ def _sanitize_resource_name(resource: tasks_pb2.Resources.ResourceEntry) -> str:
 
 
 def _serialized_pod_spec(
-    app_env: AppEnvironment,
-    pod_template: PodTemplate,
-    serialization_context: SerializationContext,
-    additional_distribution: Optional[str],
-    port: int,
-    module_name: Optional[str],
-    framework_variable_name: Optional[str],
+        app_env: AppEnvironment,
+        pod_template: flyte.PodTemplate,
+        serialization_context: SerializationContext,
+        additional_distribution: Optional[str],
+        port: int,
+        module_name: Optional[str],
+        framework_variable_name: Optional[str],
 ) -> dict:
     """
     Convert pod spec into a dict for serialization.
@@ -291,7 +234,10 @@ def _serialized_pod_spec(
 
     # Process containers
     for container in containers:
-        container.image = _get_image_uri(container.image, serialization_context)
+        img = container.image
+        if isinstance(img, flyte.Image):
+            img = lookup_image_in_cache(serialization_context, container.name, img)
+        container.image = img
 
         if container.name == pod_template.primary_container_name:
             container.args = _get_args(app_env, module_name, framework_variable_name, port)
@@ -312,13 +258,13 @@ def _serialized_pod_spec(
 
             if app_env.env_vars:
                 container.env = [V1EnvVar(name=k, value=v) for k, v in app_env.env_vars.items()] + (
-                    container.env or []
+                        container.env or []
                 )
 
             from flyte.app._types import Port
             _port = Port(port=port, name="http")
             container.ports = [V1ContainerPort(container_port=_port.port, name=_port.name)] + (
-                container.ports or []
+                    container.ports or []
             )
 
         final_containers.append(container)
@@ -328,13 +274,13 @@ def _serialized_pod_spec(
 
 
 def _get_k8s_pod(
-    app_env: AppEnvironment,
-    pod_template: PodTemplate,
-    serialization_context: SerializationContext,
-    additional_distribution: Optional[str],
-    port: int,
-    module_name: Optional[str],
-    framework_variable_name: Optional[str],
+        app_env: AppEnvironment,
+        pod_template: flyte.PodTemplate,
+        serialization_context: SerializationContext,
+        additional_distribution: Optional[str],
+        port: int,
+        module_name: Optional[str],
+        framework_variable_name: Optional[str],
 ) -> tasks_pb2.K8sPod:
     """
     Convert pod_template into a K8sPod IDL.
@@ -402,13 +348,13 @@ def _get_scaling_metric(metric: Any) -> Optional[app_definition_pb2.ScalingMetri
 
 
 def translate_app_env_to_idl(
-    app_env: AppEnvironment,
-    serialization_context: SerializationContext,
-    additional_distribution: Optional[str] = None,
-    desired_state: app_definition_pb2.Spec.DesiredState.ValueType = app_definition_pb2.Spec.DesiredState.DESIRED_STATE_ACTIVE,
-    port: int = 8080,
-    module_name: Optional[str] = None,
-    framework_variable_name: Optional[str] = None,
+        app_env: AppEnvironment,
+        serialization_context: SerializationContext,
+        additional_distribution: Optional[str] = None,
+        desired_state: app_definition_pb2.Spec.DesiredState.ValueType = app_definition_pb2.Spec.DesiredState.DESIRED_STATE_ACTIVE,
+        port: int = 8080,
+        module_name: Optional[str] = None,
+        framework_variable_name: Optional[str] = None,
 ) -> app_definition_pb2.App:
     """
     Translate an AppEnvironment to AppIDL protobuf format.
@@ -458,7 +404,7 @@ def translate_app_env_to_idl(
     container = None
     pod = None
     # TODO check pod template
-    if isinstance(app_env.image, (str, Image)):
+    if isinstance(app_env.image, (str, flyte.Image)):
         container = _get_container(
             app_env,
             serialization_context,
@@ -467,8 +413,8 @@ def translate_app_env_to_idl(
             module_name,
             framework_variable_name,
         )
-    elif isinstance(app_env.image, PodTemplate):
-         pod = _get_k8s_pod(
+    elif isinstance(app_env.image, flyte.PodTemplate):
+        pod = _get_k8s_pod(
             app_env,
             app_env.image,
             serialization_context,
