@@ -11,7 +11,6 @@ from flyte.errors import InitializationError
 from flyte.syncify import syncify
 
 from ._logging import initialize_logger, logger
-from ._utils import org_from_endpoint
 
 if TYPE_CHECKING:
     from flyte._internal.imagebuild import ImageBuildEngine
@@ -483,6 +482,7 @@ def require_project_and_domain(func):
     Decorator that ensures the current Flyte configuration defines
     both 'project' and 'domain'. Raises a clear error if not found.
     """
+
     @functools.wraps(func)
     def wrapper(*args, **kwargs):
         cfg = get_init_config()
