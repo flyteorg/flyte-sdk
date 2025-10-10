@@ -69,4 +69,4 @@ if __name__ == "__main__":
     # print(run.name)
     # print(run.url)
     #
-    # run.wait(run)  # stream the logs from the root action to the terminal.
+    # run.wait()  # stream the logs from the root action to the terminal.
