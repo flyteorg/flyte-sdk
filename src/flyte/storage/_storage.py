@@ -186,14 +186,27 @@ async def _get_obstore_bypass(from_path: str, to_path: str | pathlib.Path, recur
             path_for_reader,
             destination_file_name=target_path.name,
         )
-        return str(target_path / path_for_reader)
+        return str(target_path)
 
 
 async def get(from_path: str, to_path: Optional[str | pathlib.Path] = None, recursive: bool = False, **kwargs) -> str:
     if not to_path:
-        name = pathlib.Path(from_path).name
+        name = pathlib.Path(from_path).name  # may need to be adjusted for windows
         to_path = get_random_local_path(file_path_or_file_name=name)
         logger.debug(f"Storing file from {from_path} to {to_path}")
+    else:
+        # Only apply directory logic for single files (not recursive)
+        if not recursive:
+            to_path_str = str(to_path)
+            # Check for trailing separator BEFORE converting to Path (which normalizes and removes it)
+            ends_with_sep = to_path_str.endswith(os.sep)
+            to_path_obj = pathlib.Path(to_path)
+
+            # If path ends with os.sep or is an existing directory, append source filename
+            if ends_with_sep or (to_path_obj.exists() and to_path_obj.is_dir()):
+                source_filename = pathlib.Path(from_path).name  # may need to be adjusted for windows
+                to_path = to_path_obj / source_filename
+        # For recursive=True, keep to_path as-is (it's the destination directory for contents)
 
     file_system = get_underlying_filesystem(path=from_path)
 

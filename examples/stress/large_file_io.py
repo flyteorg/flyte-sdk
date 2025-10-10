@@ -36,6 +36,7 @@ async def read_large_file(f: flyte.io.File, hang: bool = False) -> Tuple[int, fl
     _, tmp_path = tempfile.mkstemp()
     print(f"Will download file from {f.path} to {tmp_path}", flush=True)
     if hang:
+        # This is debugging to exec into the container to monitor it.
         loop = asyncio.get_running_loop()
         waiter = asyncio.Event()
         args = ()
