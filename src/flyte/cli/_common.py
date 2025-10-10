@@ -143,7 +143,6 @@ class CLIConfig:
         flyte.init_from_config(updated_config, log_level=self.log_level, root_dir=root_dir, images=images)
 
 
-
 class InvokeBaseMixin:
     """
     Mixin to catch grpc.RpcError, flyte.RpcError, other errors and other exceptions

@@ -1,6 +1,9 @@
 import pathlib
 
 import pytest
+from flyteidl2.common import identifier_pb2
+from flyteidl2.task import common_pb2
+from flyteidl2.workflow import run_definition_pb2
 from mock.mock import AsyncMock, patch
 
 import flyte
@@ -12,9 +15,6 @@ from flyte._internal.controllers.remote._service_protocol import ClientSet
 from flyte._internal.runtime.convert import Outputs
 from flyte.models import ActionID, CodeBundle, RawDataPath, TaskContext
 from flyte.types import TypeEngine
-from flyteidl2.common import identifier_pb2
-from flyteidl2.task import common_pb2
-from flyteidl2.workflow import run_definition_pb2
 
 env = flyte.TaskEnvironment("test")
 
