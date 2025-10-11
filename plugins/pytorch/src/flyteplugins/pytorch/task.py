@@ -96,6 +96,7 @@ class TorchFunctionTask(AsyncFunctionTaskTemplate):
     task_type: str = "pytorch"
     task_type_version: int = 1
     plugin_config: Elastic
+    debuggable: bool = True
 
     def __post_init__(self):
         super().__post_init__()

@@ -78,6 +78,7 @@ class DaskTask(AsyncFunctionTaskTemplate):
 
     plugin_config: Dask
     task_type: str = "dask"
+    debuggable: bool = True
 
     async def pre(self, *args, **kwargs) -> Dict[str, Any]:
         ctx = flyte.ctx()
