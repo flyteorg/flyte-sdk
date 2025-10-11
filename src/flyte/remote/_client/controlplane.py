@@ -21,7 +21,10 @@ from flyteidl2.task import task_service_pb2_grpc
 from flyteidl2.trigger import trigger_service_pb2_grpc
 from flyteidl2.workflow import run_logs_service_pb2_grpc, run_service_pb2_grpc
 
+from flyte._protos.app import app_service_pb2_grpc
+
 from ._protocols import (
+    AppService,
     DataProxyService,
     IdentityService,
     MetadataServiceProtocol,
@@ -48,6 +51,7 @@ class ClientSet:
         self._channel = channel
         self._admin_client = admin_pb2_grpc.AdminServiceStub(channel=channel)
         self._task_service = task_service_pb2_grpc.TaskServiceStub(channel=channel)
+        self._app_service = app_service_pb2_grpc.AppServiceStub(channel=channel)
         self._run_service = run_service_pb2_grpc.RunServiceStub(channel=channel)
         self._dataproxy = dataproxy_pb2_grpc.DataProxyServiceStub(channel=channel)
         self._log_service = run_logs_service_pb2_grpc.RunLogsServiceStub(channel=channel)
@@ -92,6 +96,10 @@ class ClientSet:
     @property
     def task_service(self) -> TaskService:
         return self._task_service
+
+    @property
+    def app_service(self) -> AppService:
+        return self._app_service
 
     @property
     def run_service(self) -> RunService:
