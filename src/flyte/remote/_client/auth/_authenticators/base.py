@@ -1,6 +1,7 @@
 import asyncio
 import dataclasses
 import ssl
+import time
 import typing
 from abc import abstractmethod
 from http import HTTPStatus
@@ -131,18 +132,23 @@ class Authenticator(object):
 
         :return: A tuple of (header_key, header_value) or None if no credentials are available
         """
-        creds = self.get_credentials()
-        if creds:
-            header_key = self._default_header_key
-            if self._resolved_config is not None:
-                # We only resolve the config during authentication flow, to avoid unnecessary network calls
-                # and usually the header_key is consistent.
-                header_key = self._resolved_config.header_key
-            return GrpcAuthMetadata(
-                creds_id=creds.id,
-                pairs=Metadata((header_key, f"Bearer {creds.access_token}")),
-            )
-        return None
+        start = time.time()
+        try:
+            creds = self.get_credentials()
+            if creds:
+                header_key = self._default_header_key
+                if self._resolved_config is not None:
+                    # We only resolve the config during authentication flow, to avoid unnecessary network calls
+                    # and usually the header_key is consistent.
+                    header_key = self._resolved_config.header_key
+                return GrpcAuthMetadata(
+                    creds_id=creds.id,
+                    pairs=Metadata((header_key, f"Bearer {creds.access_token}")),
+                )
+            return None
+        finally:
+            end = time.time()
+            print(f"----- Time to get gRPC auth metadata: {end - start:.2f} seconds")
 
     async def refresh_credentials(self, creds_id: str | None = None):
         """
@@ -168,23 +174,28 @@ class Authenticator(object):
             # Credentials have been refreshed by another thread/coroutine since caller read them
             return
 
-        # Use the async lock to ensure coroutine safety
-        async with self._async_lock:
-            # Double-check pattern to avoid unnecessary work
-            if creds_id and creds_id != self._creds_id:
-                # Another thread/coroutine refreshed credentials while we were waiting for the lock
-                return
+        start = time.time()
+        try:
+            # Use the async lock to ensure coroutine safety
+            async with self._async_lock:
+                # Double-check pattern to avoid unnecessary work
+                if creds_id and creds_id != self._creds_id:
+                    # Another thread/coroutine refreshed credentials while we were waiting for the lock
+                    return
 
-            # Perform the actual credential refresh
-            try:
-                self._creds = await self._do_refresh_credentials()
-                KeyringStore.store(self._creds)
-            except Exception:
-                KeyringStore.delete(self._endpoint)
-                raise
+                # Perform the actual credential refresh
+                try:
+                    self._creds = await self._do_refresh_credentials()
+                    KeyringStore.store(self._creds)
+                except Exception:
+                    KeyringStore.delete(self._endpoint)
+                    raise
 
-            # Update the timestamp to indicate credentials have been refreshed
-            self._creds_id = self._creds.id
+                # Update the timestamp to indicate credentials have been refreshed
+                self._creds_id = self._creds.id
+        finally:
+            end = time.time()
+            print(f"----- Time to refresh credentials: {end - start:.2f} seconds")
 
     @abstractmethod
     async def _do_refresh_credentials(self) -> Credentials:

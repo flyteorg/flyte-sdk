@@ -1,4 +1,5 @@
 import asyncio
+import time
 import typing
 from abc import abstractmethod
 
@@ -69,17 +70,22 @@ class RemoteClientConfigStore(ClientConfigStore):
         """
         Retrieves the ClientConfig from the given grpc.Channel assuming  AuthMetadataService is available
         """
-        metadata_service = AuthMetadataServiceStub(self._unauthenticated_channel)
-        oauth2_metadata_task = metadata_service.GetOAuth2Metadata(OAuth2MetadataRequest())
-        public_client_config_task = metadata_service.GetPublicClientConfig(PublicClientAuthConfigRequest())
-        oauth2_metadata, public_client_config = await asyncio.gather(oauth2_metadata_task, public_client_config_task)
-        return ClientConfig(
-            token_endpoint=oauth2_metadata.token_endpoint,
-            authorization_endpoint=oauth2_metadata.authorization_endpoint,
-            redirect_uri=public_client_config.redirect_uri,
-            client_id=public_client_config.client_id,
-            scopes=public_client_config.scopes,
-            header_key=public_client_config.authorization_metadata_key,
-            device_authorization_endpoint=oauth2_metadata.device_authorization_endpoint,
-            audience=public_client_config.audience,
-        )
+        start = time.time()
+        try:
+            metadata_service = AuthMetadataServiceStub(self._unauthenticated_channel)
+            oauth2_metadata_task = metadata_service.GetOAuth2Metadata(OAuth2MetadataRequest())
+            public_client_config_task = metadata_service.GetPublicClientConfig(PublicClientAuthConfigRequest())
+            oauth2_metadata, public_client_config = await asyncio.gather(oauth2_metadata_task, public_client_config_task)
+            return ClientConfig(
+                token_endpoint=oauth2_metadata.token_endpoint,
+                authorization_endpoint=oauth2_metadata.authorization_endpoint,
+                redirect_uri=public_client_config.redirect_uri,
+                client_id=public_client_config.client_id,
+                scopes=public_client_config.scopes,
+                header_key=public_client_config.authorization_metadata_key,
+                device_authorization_endpoint=oauth2_metadata.device_authorization_endpoint,
+                audience=public_client_config.audience,
+            )
+        finally:
+            end = time.time()
+            print(f"----- Time to get client config: {end - start:.2f} seconds", flush=True)

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass
 from typing import AsyncIterator, Iterator, Literal, Tuple, Union
 
@@ -31,14 +32,20 @@ class Project(ToJSONMixin):
         :param org: The organization of the project (if applicable).
         """
         ensure_client()
-        service = get_client().project_domain_service  # type: ignore
-        resp = await service.GetProject(
-            project_pb2.ProjectGetRequest(
-                id=name,
-                # org=org,
+        start = time.time()
+        try:
+            service = get_client().project_domain_service  # type: ignore
+            resp = await service.GetProject(
+                project_pb2.ProjectGetRequest(
+                    id=name,
+                    # org=org,
+                )
             )
-        )
-        return cls(resp)
+            return cls(resp)
+        finally:
+            end = time.time()
+            print(f"----- Time to fetch project {name}: {end - start:.2f} seconds")
+
 
     @syncify
     @classmethod
@@ -61,21 +68,26 @@ class Project(ToJSONMixin):
             key=sort_by[0], direction=common_pb2.Sort.ASCENDING if sort_by[1] == "asc" else common_pb2.Sort.DESCENDING
         )
         # org = get_common_config().org
-        while True:
-            resp = await get_client().project_domain_service.ListProjects(  # type: ignore
-                project_pb2.ProjectListRequest(
-                    limit=100,
-                    token=token,
-                    filters=filters,
-                    sort_by=sort_pb2,
-                    # org=org,
+        start = time.time()
+        try:
+            while True:
+                resp = await get_client().project_domain_service.ListProjects(  # type: ignore
+                    project_pb2.ProjectListRequest(
+                        limit=100,
+                        token=token,
+                        filters=filters,
+                        sort_by=sort_pb2,
+                        # org=org,
+                    )
                 )
-            )
-            token = resp.token
-            for p in resp.projects:
-                yield cls(p)
-            if not token:
-                break
+                token = resp.token
+                for p in resp.projects:
+                    yield cls(p)
+                if not token:
+                    break
+        finally:
+            end = time.time()
+            print(f"----- Time to list projects: {end - start:.2f} seconds", flush=True)
 
     def __rich_repr__(self) -> rich.repr.Result:
         yield "name", self.pb2.name
