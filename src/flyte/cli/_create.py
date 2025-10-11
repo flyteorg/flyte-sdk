@@ -78,7 +78,8 @@ def secret(
     ```
     """
     from flyte.remote import Secret
-
+    project = "" if project is None else project
+    domain = "" if domain is None else domain
     cfg.init(project, domain)
     if from_file:
         with open(from_file, "rb") as f:
