@@ -9,6 +9,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import flyte.report
 from flyte._context import internal_ctx
+from flyte._input_context import _input_context_var
 from flyte._internal.imagebuild.image_builder import ImageCache
 from flyte._logging import log, logger
 from flyte._task import TaskTemplate
@@ -129,6 +130,14 @@ async def convert_and_run(
     in a context tree.
     """
     ctx = internal_ctx()
+
+    # Load inputs first to get context
+    if input_path:
+        inputs = await load_inputs(input_path, path_rewrite_config=raw_data_path.path_rewrite)
+
+    # Extract context from inputs
+    input_context = inputs.context if inputs else {}
+
     tctx = TaskContext(
         action=action,
         checkpoints=checkpoints,
@@ -142,16 +151,27 @@ async def convert_and_run(
         report=flyte.report.Report(name=action.name),
         mode="remote" if not ctx.data.task_context else ctx.data.task_context.mode,
         interactive_mode=interactive_mode,
+        input_context=input_context,
     )
-    with ctx.replace_task_context(tctx):
-        inputs = await load_inputs(input_path, path_rewrite_config=raw_data_path.path_rewrite) if input_path else inputs
-        inputs_kwargs = await convert_inputs_to_native(inputs, task.native_interface)
-        out, err = await run_task(tctx=tctx, controller=controller, task=task, inputs=inputs_kwargs)
-        if err is not None:
-            return None, convert_from_native_to_error(err)
-        if task.report:
-            await flyte.report.flush.aio()
-        return await convert_from_native_to_outputs(out, task.native_interface, task.name), None
+
+    # Set input context so child tasks can inherit it
+    # This initializes the context var with global context from with_runcontext
+    context_token = None
+    if input_context:
+        context_token = _input_context_var.set(input_context.copy())
+
+    try:
+        with ctx.replace_task_context(tctx):
+            inputs_kwargs = await convert_inputs_to_native(inputs, task.native_interface)
+            out, err = await run_task(tctx=tctx, controller=controller, task=task, inputs=inputs_kwargs)
+            if err is not None:
+                return None, convert_from_native_to_error(err)
+            if task.report:
+                await flyte.report.flush.aio()
+            return await convert_from_native_to_outputs(out, task.native_interface, task.name), None
+    finally:
+        if context_token is not None:
+            _input_context_var.reset(context_token)
 
 
 async def extract_download_run_upload(
