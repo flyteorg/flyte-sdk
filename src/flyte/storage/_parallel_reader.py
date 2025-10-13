@@ -124,8 +124,8 @@ class ObstoreParallelReader:
             yield offset, length
 
     async def _as_completed(self, gen: typing.AsyncGenerator[DownloadTask, None], transformer=None):
-        inq = asyncio.Queue(self._max_concurrency * 2)
-        outq = asyncio.Queue()
+        inq: asyncio.Queue = asyncio.Queue(self._max_concurrency * 2)
+        outq: asyncio.Queue = asyncio.Queue()
         sentinel = object()
         done = asyncio.Event()
 
