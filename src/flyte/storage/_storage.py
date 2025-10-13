@@ -156,7 +156,6 @@ async def _get_obstore_bypass(from_path: str, to_path: str | pathlib.Path, recur
     bucket, prefix = fs._split_path(from_path)  # pylint: disable=W0212
     store: ObjectStore = fs._construct_store(bucket)
 
-    logger.warning("Using parallel reader!!!")
     download_kwargs = {}
     if "chunk_size" in kwargs:
         download_kwargs["chunk_size"] = kwargs["chunk_size"]
@@ -168,7 +167,7 @@ async def _get_obstore_bypass(from_path: str, to_path: str | pathlib.Path, recur
 
     # if recursive, just download the prefix to the target path
     if recursive:
-        logger.warning(f"Downloading recursively {prefix=} to {target_path=}")
+        logger.debug(f"Downloading recursively {prefix=} to {target_path=}")
         await reader.download_files(
             prefix,
             target_path,
@@ -179,7 +178,7 @@ async def _get_obstore_bypass(from_path: str, to_path: str | pathlib.Path, recur
     else:
         path_for_reader = pathlib.Path(prefix).name
         final_prefix = pathlib.Path(prefix).parent
-        logger.warning(f"Downloading single file {final_prefix=}, {path_for_reader=} to {target_path=}")
+        logger.debug(f"Downloading single file {final_prefix=}, {path_for_reader=} to {target_path=}")
         await reader.download_files(
             final_prefix,
             target_path.parent,

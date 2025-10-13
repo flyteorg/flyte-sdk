@@ -31,8 +31,6 @@ async def create_large_file(size_gigabytes: int = 5) -> flyte.io.File:
 
 @env.task
 async def read_large_file(f: flyte.io.File, hang: bool = False) -> Tuple[int, float]:
-    total_bytes = 0
-    # chunk_size = 10 * 1024 * 1024
     _, tmp_path = tempfile.mkstemp()
     print(f"Will download file from {f.path} to {tmp_path}", flush=True)
     if hang:
@@ -42,15 +40,10 @@ async def read_large_file(f: flyte.io.File, hang: bool = False) -> Tuple[int, fl
         args = ()
 
         loop.add_signal_handler(signal.SIGUSR2, waiter.set, *args)
-        # kill -USR2 <pid>
-        print(f"Hanging until SIGUSR2 is received (pid={os.getpid()})", flush=True)
+        print(f"Hanging until SIGUSR2 is received... Run 'kill -USR2 {os.getpid()}' to continue", flush=True)
         signal.pause()
 
     start = time.time()
-    # read = 0
-    # async with f.open("rb", block_size=chunk_size) as fp:
-    #     while _ := await fp.read():
-    #         read += 1
 
     await flyte.storage.get(f.path, tmp_path)
 
