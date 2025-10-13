@@ -14,13 +14,14 @@ from flyte.syncify import syncify
 
 from ._environment import Environment
 from ._image import Image
-from ._initialize import ensure_client, get_client, get_common_config, requires_initialization
+from ._initialize import ensure_client, get_client, get_init_config, requires_initialization
 from ._logging import logger
 from ._task import TaskTemplate
 from ._task_environment import TaskEnvironment
 
 if TYPE_CHECKING:
-    from flyte._protos.workflow import task_definition_pb2, trigger_definition_pb2
+    from flyteidl2.task import task_definition_pb2
+    from flyteidl2.trigger import trigger_definition_pb2
 
     from ._code_bundle import CopyFiles
     from ._internal.imagebuild.image_builder import ImageCache
@@ -144,11 +145,11 @@ async def _deploy_task(
     """
     ensure_client()
     import grpc.aio
+    from flyteidl2.task import task_definition_pb2, task_service_pb2
 
     from ._internal.runtime.convert import convert_upload_default_inputs
     from ._internal.runtime.task_serde import translate_task_to_wire
     from ._internal.runtime.trigger_serde import to_task_trigger
-    from ._protos.workflow import task_definition_pb2, task_service_pb2
 
     image_uri = task.image.uri if isinstance(task.image, Image) else task.image
 
@@ -213,20 +214,41 @@ async def _build_image_bg(env_name: str, image: Image) -> Tuple[str, str]:
     return env_name, await build.aio(image)
 
 
-async def _build_images(deployment: DeploymentPlan) -> ImageCache:
+async def _build_images(deployment: DeploymentPlan, image_refs: Dict[str, str] | None = None) -> ImageCache:
     """
     Build the images for the given deployment plan and update the environment with the built image.
     """
     from ._internal.imagebuild.image_builder import ImageCache
 
+    if image_refs is None:
+        image_refs = {}
+
     images = []
     image_identifier_map = {}
     for env_name, env in deployment.envs.items():
         if not isinstance(env.image, str):
+            if env.image._ref_name is not None:
+                if env.image._ref_name in image_refs:
+                    # If the image is set in the config, set it as the base_image
+                    image_uri = image_refs[env.image._ref_name]
+                    env.image = env.image.clone(base_image=image_uri)
+                else:
+                    raise ValueError(
+                        f"Image name '{env.image._ref_name}' not found in config. Available: {list(image_refs.keys())}"
+                    )
+                if not env.image._layers:
+                    # No additional layers, use the base_image directly without building
+                    image_identifier_map[env_name] = image_uri
+                    continue
             logger.debug(f"Building Image for environment {env_name}, image: {env.image}")
             images.append(_build_image_bg(env_name, env.image))
 
         elif env.image == "auto" and "auto" not in image_identifier_map:
+            if "default" in image_refs:
+                # If the default image is set through CLI, use it instead
+                image_uri = image_refs["default"]
+                image_identifier_map[env_name] = image_uri
+                continue
             auto_image = Image.from_debian_base()
             images.append(_build_image_bg(env_name, auto_image))
     final_images = await asyncio.gather(*images)
@@ -312,9 +334,9 @@ def get_deployer(env_type: Type[Environment | TaskEnvironment]) -> Deployer:
 async def apply(deployment_plan: DeploymentPlan, copy_style: CopyFiles, dryrun: bool = False) -> Deployment:
     from ._code_bundle import build_code_bundle
 
-    cfg = get_common_config()
+    cfg = get_init_config()
 
-    image_cache = await _build_images(deployment_plan)
+    image_cache = await _build_images(deployment_plan, cfg.images)
 
     if copy_style == "none" and not deployment_plan.version:
         raise flyte.errors.DeploymentError("Version must be set when copy_style is none")
@@ -422,5 +444,7 @@ async def build_images(envs: Environment) -> ImageCache:
     :param envs: Environment to build images for.
     :return: ImageCache containing the built images.
     """
+    cfg = get_init_config()
+    images = cfg.images if cfg else {}
     deployment = plan_deploy(envs)
-    return await _build_images(deployment[0])
+    return await _build_images(deployment[0], images)

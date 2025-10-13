@@ -5,8 +5,6 @@ import sys
 from pathlib import Path
 from typing import List, Tuple
 
-from rich.progress import BarColumn, Progress, TextColumn, TimeElapsedColumn, TimeRemainingColumn
-
 import flyte.errors
 
 
@@ -18,6 +16,8 @@ def load_python_modules(path: Path, recursive: bool = False) -> Tuple[List[str],
     :param recursive: If True, load modules recursively from subdirectories
     :return: List of loaded module names, and list of file paths that failed to load
     """
+    from rich.progress import BarColumn, Progress, TextColumn, TimeElapsedColumn, TimeRemainingColumn
+
     loaded_modules = []
     failed_paths = []
 

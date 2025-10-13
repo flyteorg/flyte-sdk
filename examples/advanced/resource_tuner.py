@@ -13,6 +13,7 @@ skip the `tune_memory` step and use the cached optimal memory configuration.
 """
 
 import asyncio
+import typing
 
 import flyte
 import flyte.errors
@@ -41,16 +42,19 @@ async def memory_hogger(x: int) -> int:
 
 
 @env.task(cache="auto")
-async def tune_memory(x: int) -> str:
+async def tune_memory(udf: typing.Callable, inputs: dict) -> str:
     """
     Retry foo with more memory if it fails.
     """
     i = 0
-    with flyte.group(f"tune-memory-{x}"):
+    with flyte.group(f"tune-memory-{inputs}"):
         while i < len(MEM_OVERRIDES):
             try:
                 mem = MEM_OVERRIDES[i]
-                await memory_hogger.override(resources=flyte.Resources(cpu=1, memory=mem), cache="disable")(x)
+                await udf.override(
+                    resources=flyte.Resources(cpu=1, memory=mem),
+                    cache="disable",
+                )(**inputs)
                 return mem
             except flyte.errors.OOMError as e:
                 print(f"OOMError encountered: {e}, retrying with more memory")
@@ -62,7 +66,9 @@ async def tune_memory(x: int) -> str:
 
 @env.task(cache="auto")
 async def tuning_step(inputs: list[int]) -> dict[int, str]:
-    tuned_memories = await asyncio.gather(*[tune_memory.override(short_name=f"tune_memory_{i}")(i) for i in inputs])
+    tuned_memories = await asyncio.gather(
+        *[tune_memory.override(short_name=f"tune_memory_{i}")(memory_hogger, {"x": i}) for i in inputs]
+    )
     return dict(zip(inputs, tuned_memories))
 
 
@@ -76,14 +82,19 @@ async def main(n: int) -> list[int]:
 
     coros = []
     for i in inputs:
-        coros.append(memory_hogger.override(resources=flyte.Resources(cpu=1, memory=tuned_mem[i]), cache="disable")(i))
+        coros.append(
+            memory_hogger.override(
+                resources=flyte.Resources(cpu=1, memory=tuned_mem[i]),
+                cache="disable",
+            )(i)
+        )
     result = await asyncio.gather(*coros)
     return result
 
 
 if __name__ == "__main__":
     flyte.init_from_config()
-    run = flyte.run(main, n=3)
+    run = flyte.run(main, n=4)
     print(run.name)
     print(run.url)
-    run.wait(run)
+    run.wait()

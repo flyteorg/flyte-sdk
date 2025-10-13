@@ -3,9 +3,15 @@ from typing import AsyncGenerator, AsyncIterator, Tuple
 
 import flyte
 
+idl2 = "git+https://github.com/flyteorg/flyte.git@v2#subdirectory=gen/python"
+
+image = (
+    flyte.Image.from_debian_base(install_flyte=False).with_apt_packages("git").with_pip_packages(idl2).with_local_v2()
+)
+
 env = flyte.TaskEnvironment(
     name="traces",
-    image=flyte.Image.from_debian_base(),
+    image=image,
     resources=flyte.Resources(cpu=1),
 )
 

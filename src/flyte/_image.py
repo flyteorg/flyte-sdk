@@ -12,8 +12,6 @@ from typing import TYPE_CHECKING, ClassVar, Dict, List, Literal, Optional, Tuple
 import rich.repr
 from packaging.version import Version
 
-from flyte._utils import update_hasher_for_source
-
 if TYPE_CHECKING:
     from flyte import Secret, SecretRequest
 
@@ -178,7 +176,7 @@ class UVProject(PipOption, Layer):
         super().validate()
 
     def update_hash(self, hasher: hashlib._Hash):
-        from ._utils import filehash_update
+        from ._utils import filehash_update, update_hasher_for_source
 
         super().update_hash(hasher)
         if self.extra_args and "--no-install-project" in self.extra_args:
@@ -210,7 +208,7 @@ class PoetryProject(Layer):
         super().validate()
 
     def update_hash(self, hasher: hashlib._Hash):
-        from ._utils import filehash_update
+        from ._utils import filehash_update, update_hasher_for_source
 
         hash_input = ""
         if self.extra_args:
@@ -401,6 +399,8 @@ class Image:
     name: Optional[str] = field(default=None)
     platform: Tuple[Architecture, ...] = field(default=("linux/amd64",))
     python_version: Tuple[int, int] = field(default_factory=_detect_python_version)
+    # Refer to the image_refs (name:image-uri) set in CLI or config
+    _ref_name: Optional[str] = field(default=None)
 
     # Layers to be added to the image. In init, because frozen, but users shouldn't access, so underscore.
     _layers: Tuple[Layer, ...] = field(default_factory=tuple)
@@ -550,6 +550,13 @@ class Image:
         return img
 
     @classmethod
+    def from_ref_name(cls, name: str) -> Image:
+        # NOTE: set image name as _ref_name to enable adding additional layers.
+        # See: https://github.com/flyteorg/flyte-sdk/blob/14de802701aab7b8615ffb99c650a36305ef01f7/src/flyte/_image.py#L642
+        img = cls._new(name=name, _ref_name=name)
+        return img
+
+    @classmethod
     def from_uv_script(
         cls,
         script: Path | str,
@@ -617,6 +624,7 @@ class Image:
         self,
         registry: Optional[str] = None,
         name: Optional[str] = None,
+        base_image: Optional[str] = None,
         python_version: Optional[Tuple[int, int]] = None,
         addl_layer: Optional[Layer] = None,
     ) -> Image:
@@ -639,19 +647,21 @@ class Image:
             )
         registry = registry if registry else self.registry
         name = name if name else self.name
+        base_image = base_image if base_image else self.base_image
         if addl_layer and (not name):
             raise ValueError(
                 f"Cannot add additional layer {addl_layer} to an image without name. Please first clone()."
             )
         new_layers = (*self._layers, addl_layer) if addl_layer else self._layers
         img = Image._new(
-            base_image=self.base_image,
+            base_image=base_image,
             dockerfile=self.dockerfile,
             registry=registry,
             name=name,
             platform=self.platform,
             python_version=python_version or self.python_version,
             _layers=new_layers,
+            _ref_name=self._ref_name,
         )
 
         return img

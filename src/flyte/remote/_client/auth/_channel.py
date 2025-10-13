@@ -112,7 +112,7 @@ async def create_channel(
     if api_key:
         from flyte.remote._client.auth._auth_utils import decode_api_key
 
-        endpoint, client_id, client_secret, org = decode_api_key(api_key)
+        endpoint, client_id, client_secret, _org = decode_api_key(api_key)
         kwargs["auth_type"] = "ClientSecret"
         kwargs["client_id"] = client_id
         kwargs["client_secret"] = client_secret

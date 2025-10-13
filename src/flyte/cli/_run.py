@@ -22,6 +22,18 @@ RUN_REMOTE_CMD = "deployed-task"
 
 
 @lru_cache()
+def _initialize_config(ctx: click.Context, project: str, domain: str, root_dir: str | None = None):
+    obj: CLIConfig | None = ctx.obj
+    if obj is None:
+        import flyte.config
+
+        obj = CLIConfig(flyte.config.auto(), ctx)
+
+    obj.init(project, domain, root_dir)
+    return obj
+
+
+@lru_cache()
 def _list_tasks(
     ctx: click.Context,
     project: str,
@@ -96,6 +108,17 @@ class RunArguments:
             )
         },
     )
+    image: List[str] = field(
+        default_factory=list,
+        metadata={
+            "click.option": click.Option(
+                ["--image"],
+                type=str,
+                multiple=True,
+                help="Image to be used in the run. Format: imagename=imageuri. Can be specified multiple times.",
+            )
+        },
+    )
 
     @classmethod
     def from_dict(cls, d: Dict[str, Any]) -> RunArguments:
@@ -118,7 +141,9 @@ class RunTaskCommand(click.RichCommand):
         super().__init__(obj_name, *args, **kwargs)
 
     def invoke(self, ctx: click.Context):
-        obj: CLIConfig = initialize_config(ctx, self.run_args.project, self.run_args.domain, self.run_args.root_dir)
+        obj: CLIConfig = initialize_config(
+            ctx, self.run_args.project, self.run_args.domain, self.run_args.root_dir, tuple(self.run_args.image) or None
+        )
 
         async def _run():
             import flyte
@@ -221,7 +246,7 @@ class RunReferenceTaskCommand(click.RichCommand):
 
     def invoke(self, ctx: click.Context):
         obj: CLIConfig = common.initialize_config(
-            ctx, self.run_args.project, self.run_args.domain, self.run_args.root_dir
+            ctx, self.run_args.project, self.run_args.domain, self.run_args.root_dir, tuple(self.run_args.image) or None
         )
 
         async def _run():
@@ -449,6 +474,28 @@ Flyte environment:
 
 ```bash
 flyte run --local hello.py my_task --arg1 value1 --arg2 value2
+```
+
+You can provide image mappings with `--image` flag. This allows you to specify
+the image URI for the task environment during CLI execution without changing
+the code. Any images defined with `Image.from_ref_name("name")` will resolve to the
+corresponding URIs you specify here.
+
+```bash
+flyte run hello.py my_task --image my_image=ghcr.io/myorg/my-image:v1.0
+```
+
+If the image name is not provided, it is regarded as a default image and will
+be used when no image is specified in TaskEnvironment:
+
+```bash
+flyte run hello.py my_task --image ghcr.io/myorg/default-image:latest
+```
+
+You can specify multiple image arguments:
+
+```bash
+flyte run hello.py my_task --image ghcr.io/org/default:latest --image gpu=ghcr.io/org/gpu:v2.0
 ```
 
 To run tasks that you've already deployed to Flyte, use the {RUN_REMOTE_CMD} command:

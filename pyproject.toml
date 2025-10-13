@@ -26,6 +26,7 @@ dependencies = [
     "mashumaro",
     "dataclasses_json", # TODO: remove this dependency once we remove dataclasses_json from the code
     "aiolimiter>=1.2.1",
+    "flyteidl2==2.0.0a8",
 ]
 
 [project.scripts]
@@ -97,7 +98,6 @@ branch = true
 [tool.ruff]
 line-length = 120
 extend-exclude = [
-    "src/flyte/_protos",
     "src/flyte/remote/client/_protocols.py",
     "examples/reports",
 ]
@@ -137,9 +137,11 @@ dev-dependencies = [
     "pytest>=8.3.5",
 ]
 
+[tool.uv.sources]
+flyteidl2 = { git = "https://github.com/flyteorg/flyte.git", subdirectory = "gen/python", rev = "v2" }
+
 [tool.mypy]
 disable_error_code = ["import-untyped"]
-exclude = "src/flyte/_protos/.*"
 ignore_missing_imports = true
 
 [tool.ty.rules]

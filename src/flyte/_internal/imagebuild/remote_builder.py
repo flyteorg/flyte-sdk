@@ -24,6 +24,7 @@ from flyte._image import (
     Env,
     PipOption,
     PipPackages,
+    PoetryProject,
     PythonWheels,
     Requirements,
     UVProject,
@@ -38,7 +39,7 @@ from flyte._secret import Secret
 from flyte.remote import ActionOutputs, Run
 
 if TYPE_CHECKING:
-    from flyte._protos.imagebuilder import definition_pb2 as image_definition_pb2
+    from flyteidl2.imagebuilder import definition_pb2 as image_definition_pb2
 
 IMAGE_TASK_NAME = "build-image"
 IMAGE_TASK_PROJECT = "system"
@@ -68,10 +69,11 @@ class RemoteImageChecker(ImageChecker):
         image_name = f"{repository.split('/')[-1]}:{tag}"
 
         try:
+            from flyteidl2.imagebuilder import definition_pb2 as image_definition__pb2
+            from flyteidl2.imagebuilder import payload_pb2 as image_payload__pb2
+            from flyteidl2.imagebuilder import service_pb2_grpc as image_service_pb2_grpc
+
             from flyte._initialize import _get_init_config
-            from flyte._protos.imagebuilder import definition_pb2 as image_definition__pb2
-            from flyte._protos.imagebuilder import payload_pb2 as image_payload__pb2
-            from flyte._protos.imagebuilder import service_pb2_grpc as image_service_pb2_grpc
 
             cfg = _get_init_config()
             if cfg is None:
@@ -96,7 +98,7 @@ class RemoteImageBuilder(ImageBuilder):
         return [RemoteImageChecker]
 
     async def build_image(self, image: Image, dry_run: bool = False) -> str:
-        from flyte._protos.workflow import run_definition_pb2
+        from flyteidl2.workflow import run_definition_pb2
 
         image_name = f"{image.name}:{image._final_tag}"
         spec, context = await _validate_configuration(image)
@@ -180,7 +182,7 @@ async def _validate_configuration(image: Image) -> Tuple[str, Optional[str]]:
 
 
 def _get_layers_proto(image: Image, context_path: Path) -> "image_definition_pb2.ImageSpec":
-    from flyte._protos.imagebuilder import definition_pb2 as image_definition_pb2
+    from flyteidl2.imagebuilder import definition_pb2 as image_definition_pb2
 
     if image.dockerfile is not None:
         raise flyte.errors.ImageBuildError(
@@ -273,6 +275,27 @@ def _get_layers_proto(image: Image, context_path: Path) -> "image_definition_pb2
                 )
             )
             layers.append(uv_layer)
+        elif isinstance(layer, PoetryProject):
+            for line in layer.pyproject.read_text().splitlines():
+                if "tool.poetry.source" in line:
+                    raise ValueError("External sources are not supported in pyproject.toml")
+
+            if layer.extra_args and "--no-root" in layer.extra_args:
+                # Copy pyproject itself
+                pyproject_dst = copy_files_to_context(layer.pyproject, context_path)
+            else:
+                # Copy the entire project
+                pyproject_dst = copy_files_to_context(layer.pyproject.parent, context_path)
+
+            poetry_layer = image_definition_pb2.Layer(
+                poetry_project=image_definition_pb2.PoetryProject(
+                    pyproject=str(pyproject_dst.relative_to(context_path)),
+                    poetry_lock=str(copy_files_to_context(layer.poetry_lock, context_path).relative_to(context_path)),
+                    extra_args=layer.extra_args,
+                    secret_mounts=secret_mounts,
+                )
+            )
+            layers.append(poetry_layer)
         elif isinstance(layer, Commands):
             commands_layer = image_definition_pb2.Layer(
                 commands=image_definition_pb2.Commands(
