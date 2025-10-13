@@ -8,6 +8,7 @@ from typing import (
     TYPE_CHECKING,
     Any,
     Callable,
+    Coroutine,
     Dict,
     List,
     Literal,
@@ -15,6 +16,7 @@ from typing import (
     Tuple,
     Union,
     cast,
+    overload,
 )
 
 import rich.repr
@@ -33,7 +35,7 @@ from ._trigger import Trigger
 from .models import MAX_INLINE_IO_BYTES, NativeInterface
 
 if TYPE_CHECKING:
-    from ._task import FunctionTypes, P, R
+    from ._task import SyncFunctionType, AsyncFunctionType, FunctionTypes, P, R, F
 
 
 @rich.repr.auto
@@ -150,6 +152,7 @@ class TaskEnvironment(Environment):
             kwargs["interruptible"] = interruptible
         return replace(self, **kwargs)
 
+    @overload
     def task(
         self,
         _func: Callable[P, R] | None = None,
@@ -165,7 +168,45 @@ class TaskEnvironment(Environment):
         max_inline_io_bytes: int = MAX_INLINE_IO_BYTES,
         queue: Optional[str] = None,
         triggers: Tuple[Trigger, ...] | Trigger = (),
-    ) -> AsyncFunctionTaskTemplate[P, R]:
+    ) -> AsyncFunctionTaskTemplate[P, R, Callable[P, R]]:
+        ...
+
+    @overload
+    def task(
+        self,
+        _func: Callable[P, Coroutine[Any, Any, R]] | None = None,
+        *,
+        short_name: Optional[str] = None,
+        cache: CacheRequest | None = None,
+        retries: Union[int, RetryStrategy] = 0,
+        timeout: Union[timedelta, int] = 0,
+        docs: Optional[Documentation] = None,
+        pod_template: Optional[Union[str, PodTemplate]] = None,
+        report: bool = False,
+        interruptible: bool | None = None,
+        max_inline_io_bytes: int = MAX_INLINE_IO_BYTES,
+        queue: Optional[str] = None,
+        triggers: Tuple[Trigger, ...] | Trigger = (),
+    ) -> AsyncFunctionTaskTemplate[P, R, Callable[P, Coroutine[Any, Any, R]]]:
+        ...
+
+    def task(
+        self,
+        _func: F | None = None,
+        *,
+        short_name: Optional[str] = None,
+        cache: CacheRequest | None = None,
+        retries: Union[int, RetryStrategy] = 0,
+        timeout: Union[timedelta, int] = 0,
+        docs: Optional[Documentation] = None,
+        pod_template: Optional[Union[str, PodTemplate]] = None,
+        report: bool = False,
+        interruptible: bool | None = None,
+        max_inline_io_bytes: int = MAX_INLINE_IO_BYTES,
+        queue: Optional[str] = None,
+        triggers: Tuple[Trigger, ...] | Trigger = (),
+    ) -> AsyncFunctionTaskTemplate[P, R, F]:
+        ...
         """
         Decorate a function to be a task.
 
@@ -189,13 +230,13 @@ class TaskEnvironment(Environment):
 
         :return: A TaskTemplate that can be used to deploy the task.
         """
-        from ._task import P, R
+        from ._task import P, R, F
 
         if self.reusable is not None:
             if pod_template is not None:
                 raise ValueError("Cannot set pod_template when environment is reusable.")
 
-        def decorator(func: FunctionTypes) -> AsyncFunctionTaskTemplate[P, R]:
+        def decorator(func: F) -> AsyncFunctionTaskTemplate[P, R, F]:
             short = short_name or func.__name__
             task_name = self.name + "." + func.__name__
 
@@ -209,7 +250,7 @@ class TaskEnvironment(Environment):
             if self.plugin_config is not None:
                 from flyte.extend import TaskPluginRegistry
 
-                task_template_class: type[AsyncFunctionTaskTemplate[P, R]] | None = TaskPluginRegistry.find(
+                task_template_class: type[AsyncFunctionTaskTemplate[P, R, F]] | None = TaskPluginRegistry.find(
                     config_type=type(self.plugin_config)
                 )
                 if task_template_class is None:
@@ -218,9 +259,9 @@ class TaskEnvironment(Environment):
                         f"Please register a plugin using flyte.extend.TaskPluginRegistry.register() api."
                     )
             else:
-                task_template_class = AsyncFunctionTaskTemplate[P, R]
+                task_template_class = AsyncFunctionTaskTemplate[P, R, F]
 
-            task_template_class = cast(type[AsyncFunctionTaskTemplate[P, R]], task_template_class)
+            task_template_class = cast(type[AsyncFunctionTaskTemplate[P, R, F]], task_template_class)
             tmpl = task_template_class(
                 func=func,
                 name=task_name,

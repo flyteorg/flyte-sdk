@@ -1,5 +1,6 @@
 """Basic task type checking test."""
 
+import typing
 from flyte import TaskEnvironment
 
 env = TaskEnvironment(name="test_env")
@@ -21,5 +22,7 @@ def sync_task(x: str) -> str:
 async def multi_input_task(x: int, y: str, z: float = 1.0) -> tuple[int, str, float]:
     """Task with multiple inputs and tuple return."""
     a = await simple_task(x)
+    # typing.reveal_type(a)
     b = await sync_task.aio(y)
-    return a, b, z
+    # typing.reveal_type(b)
+    return a + 1, b + "foo", z

@@ -7,7 +7,7 @@ from flyte.syncify import syncify
 
 from ._group import group
 from ._logging import logger
-from ._task import P, R, TaskTemplate
+from ._task import P, R, F, TaskTemplate
 
 
 class MapAsyncIterator(Generic[P, R]):
@@ -15,7 +15,7 @@ class MapAsyncIterator(Generic[P, R]):
 
     def __init__(
         self,
-        func: TaskTemplate[P, R] | functools.partial[R],
+        func: TaskTemplate[P, R, F] | functools.partial[R],
         args: tuple,
         name: str,
         concurrency: int,
@@ -174,7 +174,7 @@ class _Mapper(Generic[P, R]):
 
     def __call__(
         self,
-        func: TaskTemplate[P, R] | functools.partial[R],
+        func: TaskTemplate[P, R, F] | functools.partial[R],
         *args: Iterable[Any],
         group_name: str | None = None,
         concurrency: int = 0,
@@ -234,7 +234,7 @@ class _Mapper(Generic[P, R]):
 
     async def aio(
         self,
-        func: TaskTemplate[P, R] | functools.partial[R],
+        func: TaskTemplate[P, R, F] | functools.partial[R],
         *args: Iterable[Any],
         group_name: str | None = None,
         concurrency: int = 0,
@@ -277,7 +277,7 @@ class _Mapper(Generic[P, R]):
 
 @syncify
 async def _map(
-    func: TaskTemplate[P, R] | functools.partial[R],
+    func: TaskTemplate[P, R, F] | functools.partial[R],
     *args: Iterable[Any],
     name: str = "map",
     concurrency: int = 0,
