@@ -1,5 +1,6 @@
 """Complex type annotations test."""
-from typing import Any, Dict, List, Optional
+
+from typing import Any
 
 from flyte import TaskEnvironment
 
@@ -27,9 +28,7 @@ async def optional_task(x: int, y: int | None = None) -> int:
 
 
 @env.task
-async def nested_types_task(
-    data: dict[str, list[int]]
-) -> list[dict[str, int]]:
+async def nested_types_task(data: dict[str, list[int]]) -> list[dict[str, int]]:
     """Task with nested complex types."""
     return [{k: sum(v)} for k, v in data.items()]
 
@@ -38,4 +37,3 @@ async def nested_types_task(
 async def any_type_task(data: Any) -> Any:
     """Task with Any types."""
     return data
-

@@ -7,7 +7,7 @@ from flyte.syncify import syncify
 
 from ._group import group
 from ._logging import logger
-from ._task import P, R, F, TaskTemplate
+from ._task import F, P, R, TaskTemplate
 
 
 class MapAsyncIterator(Generic[P, R]):

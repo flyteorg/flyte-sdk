@@ -1,4 +1,5 @@
 """Task composition type checking test."""
+
 from flyte import TaskEnvironment
 
 env = TaskEnvironment(name="composition_env")

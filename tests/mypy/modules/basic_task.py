@@ -1,6 +1,5 @@
 """Basic task type checking test."""
 
-import typing
 from flyte import TaskEnvironment
 
 env = TaskEnvironment(name="test_env")

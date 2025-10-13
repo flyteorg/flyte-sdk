@@ -18,7 +18,7 @@ from flyte._initialize import (
     requires_storage,
 )
 from flyte._logging import logger
-from flyte._task import P, R, F, TaskTemplate
+from flyte._task import F, P, R, TaskTemplate
 from flyte.models import (
     ActionID,
     Checkpoints,

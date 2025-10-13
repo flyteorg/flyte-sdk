@@ -35,7 +35,7 @@ from ._trigger import Trigger
 from .models import MAX_INLINE_IO_BYTES, NativeInterface
 
 if TYPE_CHECKING:
-    from ._task import SyncFunctionType, AsyncFunctionType, FunctionTypes, P, R, F
+    from ._task import F, P, R
 
 
 @rich.repr.auto
@@ -168,8 +168,7 @@ class TaskEnvironment(Environment):
         max_inline_io_bytes: int = MAX_INLINE_IO_BYTES,
         queue: Optional[str] = None,
         triggers: Tuple[Trigger, ...] | Trigger = (),
-    ) -> AsyncFunctionTaskTemplate[P, R, Callable[P, R]]:
-        ...
+    ) -> AsyncFunctionTaskTemplate[P, R, Callable[P, R]]: ...
 
     @overload
     def task(
@@ -187,8 +186,7 @@ class TaskEnvironment(Environment):
         max_inline_io_bytes: int = MAX_INLINE_IO_BYTES,
         queue: Optional[str] = None,
         triggers: Tuple[Trigger, ...] | Trigger = (),
-    ) -> AsyncFunctionTaskTemplate[P, R, Callable[P, Coroutine[Any, Any, R]]]:
-        ...
+    ) -> AsyncFunctionTaskTemplate[P, R, Callable[P, Coroutine[Any, Any, R]]]: ...
 
     def task(
         self,
@@ -206,7 +204,6 @@ class TaskEnvironment(Environment):
         queue: Optional[str] = None,
         triggers: Tuple[Trigger, ...] | Trigger = (),
     ) -> AsyncFunctionTaskTemplate[P, R, F]:
-        ...
         """
         Decorate a function to be a task.
 
@@ -230,7 +227,7 @@ class TaskEnvironment(Environment):
 
         :return: A TaskTemplate that can be used to deploy the task.
         """
-        from ._task import P, R, F
+        from ._task import F, P, R
 
         if self.reusable is not None:
             if pod_template is not None:
