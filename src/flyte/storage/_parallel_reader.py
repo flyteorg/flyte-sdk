@@ -214,15 +214,18 @@ class ObstoreParallelReader:
 
         async def _list_downloadable() -> typing.AsyncGenerator[ObjectMeta, None]:
             if paths:
+                # For specific file paths, use async head
                 for path_ in paths:
                     path = src_prefix / path_
                     x = await obstore.head_async(self._store, str(path))
                     yield x
                 return
 
-            list_result = await obstore.list_with_delimiter_async(self._store, prefix=str(src_prefix))
-            for obj in list_result["objects"]:
-                yield obj
+            # Use obstore.list() for recursive listing (all files in all subdirectories)
+            # obstore.list() returns an async iterator that yields batches (lists) of objects
+            async for batch in obstore.list(self._store, prefix=str(src_prefix)):
+                for obj in batch:
+                    yield obj
 
         async def _gen(tmp_dir: str) -> typing.AsyncGenerator[DownloadTask, None]:
             async for obj in _list_downloadable():

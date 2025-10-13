@@ -462,7 +462,15 @@ class Dir(BaseModel, Generic[T], SerializableType):
         Returns:
             The absolute path to the downloaded directory
         """
-        local_dest = str(local_path) if local_path else str(storage.get_random_local_path())
+        # If no local_path specified, create a unique path + append source directory name
+        if local_path is None:
+            unique_path = storage.get_random_local_path()
+            source_dirname = Path(self.path).name  # will need to be updated for windows
+            local_dest = str(Path(unique_path) / source_dirname)
+        else:
+            # If local_path is specified, use it directly (contents go into it)
+            local_dest = str(local_path)
+
         if not storage.is_remote(self.path):
             if not local_path or local_path == self.path:
                 # Skip copying
@@ -477,6 +485,7 @@ class Dir(BaseModel, Generic[T], SerializableType):
                     await loop.run_in_executor(None, lambda: shutil.copytree(self.path, local_dest, dirs_exist_ok=True))
 
                 await copy_tree()
+                return local_dest
         return await storage.get(self.path, local_dest, recursive=True)
 
     def download_sync(self, local_path: Optional[Union[str, Path]] = None) -> str:
@@ -510,7 +519,15 @@ class Dir(BaseModel, Generic[T], SerializableType):
         Returns:
             The absolute path to the downloaded directory
         """
-        local_dest = str(local_path) if local_path else str(storage.get_random_local_path())
+        # If no local_path specified, create a unique path + append source directory name
+        if local_path is None:
+            unique_path = storage.get_random_local_path()
+            source_dirname = Path(self.path).name
+            local_dest = str(Path(unique_path) / source_dirname)
+        else:
+            # If local_path is specified, use it directly (contents go into it)
+            local_dest = str(local_path)
+
         if not storage.is_remote(self.path):
             if not local_path or local_path == self.path:
                 # Skip copying
@@ -520,6 +537,7 @@ class Dir(BaseModel, Generic[T], SerializableType):
                 import shutil
 
                 shutil.copytree(self.path, local_dest, dirs_exist_ok=True)
+                return local_dest
 
         fs = storage.get_underlying_filesystem(path=self.path)
         fs.get(self.path, local_dest, recursive=True)

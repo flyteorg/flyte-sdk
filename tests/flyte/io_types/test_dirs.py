@@ -113,9 +113,8 @@ async def test_dir_walk_s3(tmp_dir_structure, ctx_with_test_local_s3_stack_raw_d
 
     with tempfile.TemporaryDirectory() as tmpdir:
         await d.download(tmpdir)
-        # grab the name of the folder from the upload_location using Path even though it's s3.
-        folder_name = pathlib.Path(upload_location).name
-        root_file = pathlib.Path(tmpdir) / folder_name / "root.txt"
+        # With the new behavior, contents go directly into the specified path
+        root_file = pathlib.Path(tmpdir) / "root.txt"
         assert root_file.exists()
         assert root_file.is_file()
 
@@ -238,8 +237,7 @@ async def test_download_dir_with_name(tmp_path, tmp_dir_structure, ctx_with_test
 async def test_download_dir_with_folder_name(tmp_path, tmp_dir_structure, ctx_with_test_local_s3_stack_raw_data_path):
     """
     Test downloading a directory to a directory path.
-    When a directory path is provided (either existing directory or path ending with os.sep),
-    the directory should be downloaded with its original remote directory name.
+    When a directory path is provided, the directory contents should be downloaded directly into that path.
     """
     from flyte.storage import S3
 
@@ -256,10 +254,8 @@ async def test_download_dir_with_folder_name(tmp_path, tmp_dir_structure, ctx_wi
 
     print(f"Downloaded directory to {downloaded_path}", flush=True)
 
-    # Verify the directory was downloaded into the target directory with the remote dir name
-    remote_dirname = pathlib.Path(uploaded_dir.path).name
-    expected_path = download_dir / remote_dirname
-    assert downloaded_path == str(expected_path)
+    # Verify the directory contents were downloaded directly into the target directory
+    assert downloaded_path == str(download_dir)
     assert os.path.isdir(downloaded_path)
     assert os.path.exists(os.path.join(downloaded_path, "root.txt"))
 
@@ -269,16 +265,19 @@ async def test_download_dir_with_folder_name(tmp_path, tmp_dir_structure, ctx_wi
 
     print(f"Downloaded directory to {downloaded_path2}", flush=True)
 
-    # Verify the directory was downloaded into the target directory with the remote dir name
-    expected_path2 = tmp_path / "downloaded_new" / remote_dirname
-    assert downloaded_path2 == str(expected_path2)
-    assert os.path.isdir(downloaded_path2)
-    assert os.path.exists(os.path.join(downloaded_path2, "root.txt"))
+    # Verify the directory contents were downloaded directly into the target directory
+    expected_path2 = tmp_path / "downloaded_new"
+    assert downloaded_path2 == str(expected_path2) + os.sep  # Trailing separator is preserved
+    assert os.path.isdir(str(expected_path2))
+    assert os.path.exists(os.path.join(str(expected_path2), "root.txt"))
+    assert os.path.isdir(os.path.join(expected_path2, "sibling"))
 
 
 @pytest.mark.sandbox
 @pytest.mark.asyncio
-async def test_download_dir_with_no_local_target(tmp_path, tmp_dir_structure, ctx_with_test_local_s3_stack_raw_data_path):
+async def test_download_dir_with_no_local_target(
+    tmp_path, tmp_dir_structure, ctx_with_test_local_s3_stack_raw_data_path
+):
     """
     Test downloading a directory from S3 without specifying a target path.
     The directory should be downloaded to a temporary location.
@@ -300,6 +299,7 @@ async def test_download_dir_with_no_local_target(tmp_path, tmp_dir_structure, ct
     assert downloaded_path is not None
     assert os.path.isdir(downloaded_path)
     assert os.path.exists(os.path.join(downloaded_path, "root.txt"))
+    assert os.path.isdir(os.path.join(downloaded_path, "sibling"))
     suffix = uploaded_dir.path.split("/")[-1]
     assert downloaded_path.endswith(suffix)
 
@@ -325,6 +325,7 @@ async def test_download_dir_with_name_local(tmp_path, tmp_dir_structure, ctx_wit
 
     # Verify the directory was downloaded to the custom name
     assert downloaded_path == str(download_target)
+    assert os.path.isdir(os.path.join(download_target, "sibling"))
     assert os.path.isdir(downloaded_path)
     assert os.path.exists(os.path.join(downloaded_path, "root.txt"))
 
@@ -333,8 +334,7 @@ async def test_download_dir_with_name_local(tmp_path, tmp_dir_structure, ctx_wit
 async def test_download_dir_with_folder_name_local(tmp_path, tmp_dir_structure, ctx_with_test_raw_data_path):
     """
     Test downloading a directory to a directory path using local storage.
-    When a directory path is provided (either existing directory or path ending with os.sep),
-    the directory should be downloaded with its original remote directory name.
+    When a directory path is provided, the directory contents should be downloaded directly into that path.
     This test is separate because the local filesystem doesn't use obstore.
     """
     flyte.init()
@@ -350,10 +350,8 @@ async def test_download_dir_with_folder_name_local(tmp_path, tmp_dir_structure, 
 
     print(f"Downloaded directory to {downloaded_path}", flush=True)
 
-    # Verify the directory was downloaded into the target directory with the remote dir name
-    remote_dirname = pathlib.Path(uploaded_dir.path).name
-    expected_path = download_dir / remote_dirname
-    assert downloaded_path == str(expected_path)
+    # Verify the directory contents were downloaded directly into the target directory
+    assert downloaded_path == str(download_dir)
     assert os.path.isdir(downloaded_path)
     assert os.path.exists(os.path.join(downloaded_path, "root.txt"))
 
@@ -363,11 +361,12 @@ async def test_download_dir_with_folder_name_local(tmp_path, tmp_dir_structure, 
 
     print(f"Downloaded directory to {downloaded_path2}", flush=True)
 
-    # Verify the directory was downloaded into the target directory with the remote dir name
-    expected_path2 = tmp_path / "downloaded_new" / remote_dirname
-    assert downloaded_path2 == str(expected_path2)
-    assert os.path.isdir(downloaded_path2)
-    assert os.path.exists(os.path.join(downloaded_path2, "root.txt"))
+    # Verify the directory contents were downloaded directly into the target directory
+    expected_path2 = tmp_path / "downloaded_new"
+    assert downloaded_path2 == str(expected_path2) + os.sep  # Trailing separator is preserved
+    assert os.path.isdir(str(expected_path2))
+    assert os.path.exists(os.path.join(str(expected_path2), "root.txt"))
+    assert os.path.isdir(os.path.join(expected_path2, "sibling"))
 
 
 @pytest.mark.asyncio
@@ -384,12 +383,12 @@ async def test_download_dir_with_no_local_target_local(tmp_path, tmp_dir_structu
 
     # Download without specifying a target path
     downloaded_path = await uploaded_dir.download()
-
     print(f"Downloaded directory to {downloaded_path}", flush=True)
 
     # Verify the directory was downloaded
     assert downloaded_path is not None
     assert os.path.isdir(downloaded_path)
     assert os.path.exists(os.path.join(downloaded_path, "root.txt"))
+    assert os.path.isdir(os.path.join(downloaded_path, "sibling"))
     suffix = uploaded_dir.path.split(os.sep)[-1]
     assert downloaded_path.endswith(suffix)
