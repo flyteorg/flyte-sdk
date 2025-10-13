@@ -252,8 +252,12 @@ class TaskTemplate(Generic[P, R]):
         ```
         :param args:
         :param kwargs:
+        :raises RuntimeUserError: If the task is an async function.
         :return:
         """
+
+        if iscoroutinefunction(self.func):
+            raise RuntimeUserError("InvalidUsage", "Cannot use aio on an async function. Use await directly instead.")
 
         ctx = internal_ctx()
         if ctx.is_task_context():
