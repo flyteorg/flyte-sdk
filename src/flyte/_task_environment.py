@@ -165,7 +165,7 @@ class TaskEnvironment(Environment):
         max_inline_io_bytes: int = MAX_INLINE_IO_BYTES,
         queue: Optional[str] = None,
         triggers: Tuple[Trigger, ...] | Trigger = (),
-    ) -> Union[AsyncFunctionTaskTemplate[P, R], Callable[P, R]]:
+    ) -> AsyncFunctionTaskTemplate[P, R]:
         """
         Decorate a function to be a task.
 

@@ -20,6 +20,7 @@ from typing import (
     TypeVar,
     Union,
     cast,
+    overload,
 )
 
 from flyte._pod import PodTemplate
@@ -226,6 +227,10 @@ class TaskTemplate(Generic[P, R]):
     def native_interface(self) -> NativeInterface:
         return self.interface
 
+    @overload
+    async def aio(self, *args: P.args, **kwargs: P.kwargs) -> R: ...
+    @overload
+    async def aio(self, *args: P.args, **kwargs: P.kwargs) -> Coroutine[Any, Any, R]: ...
     async def aio(self, *args: P.args, **kwargs: P.kwargs) -> Coroutine[Any, Any, R] | R:
         """
         The aio function allows executing "sync" tasks, in an async context. This helps with migrating v1 defined sync
@@ -274,6 +279,10 @@ class TaskTemplate(Generic[P, R]):
             # even for synchronous tasks. This is to support migration.
             return self.forward(*args, **kwargs)
 
+    @overload
+    def __call__(self, *args: P.args, **kwargs: P.kwargs) -> R: ...
+    @overload
+    def __call__(self, *args: P.args, **kwargs: P.kwargs) -> Coroutine[Any, Any, R]: ...
     def __call__(self, *args: P.args, **kwargs: P.kwargs) -> Coroutine[Any, Any, R] | R:
         """
         This is the entrypoint for an async function task at runtime. It will be called during an execution.
