@@ -183,6 +183,7 @@ def get_proto_task(task: TaskTemplate, serialize_context: SerializationContext) 
         k8s_pod=pod,
         sql=sql,
         extended_resources=get_proto_extended_resources(task.resources),
+        debuggable=task.debuggable,
     )
 
     if task.reusable is not None:
