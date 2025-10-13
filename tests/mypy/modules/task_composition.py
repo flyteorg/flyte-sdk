@@ -1,5 +1,6 @@
 """Task composition type checking test."""
 
+import asyncio
 from flyte import TaskEnvironment
 
 env = TaskEnvironment(name="composition_env")
@@ -36,4 +37,11 @@ async def mixed_composition(x: int) -> int:
     """Mix async and sync tasks."""
     sync_result = await sync_step.aio(x)
     async_result = await step_one(sync_result)
+    return async_result
+
+
+@env.task
+def mixed_composition_sync(x: int) -> int:
+    sync_result = sync_step(x)
+    async_result = asyncio.run(step_one(sync_result))
     return async_result
