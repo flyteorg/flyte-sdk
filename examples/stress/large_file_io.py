@@ -45,12 +45,11 @@ async def read_large_file(f: flyte.io.File, hang: bool = False) -> Tuple[int, fl
 
     start = time.time()
 
-    await flyte.storage.get(f.path, tmp_path)
+    await f.download(tmp_path)
 
     end = time.time()
     total = end - start
     total_bytes = os.path.getsize(tmp_path)
-    await asyncio.sleep(100)
     print(f"Read {total_bytes} bytes in {total:.2f} seconds ({total_bytes / total / (1024 * 1024):.2f} MiB/s)")
 
     return total_bytes, total

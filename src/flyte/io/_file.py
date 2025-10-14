@@ -793,9 +793,9 @@ class File(BaseModel, Generic[T], SerializableType):
         if not os.path.exists(local_path):
             raise ValueError(f"File not found: {local_path}")
 
-        remote_path = remote_destination or internal_ctx().raw_data.get_random_remote_path()
-        protocol = get_protocol(remote_path)
         filename = Path(local_path).name
+        remote_path = remote_destination or internal_ctx().raw_data.get_random_remote_path(filename)
+        protocol = get_protocol(remote_path)
 
         # If remote_destination was not set by the user, and the configured raw data path is also local,
         # then let's optimize by not uploading.
