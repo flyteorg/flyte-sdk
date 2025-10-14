@@ -533,7 +533,7 @@ class File(BaseModel, Generic[T], SerializableType):
             local_path_str = str(local_path)
             has_trailing_sep = local_path_str.endswith(os.sep)
             local_path = str(Path(local_path).absolute())
-            if has_trailing_sep and not local_path.endswith(os.sep):
+            if has_trailing_sep:
                 local_path = local_path + os.sep
 
         fs = storage.get_underlying_filesystem(path=self.path)
@@ -602,7 +602,7 @@ class File(BaseModel, Generic[T], SerializableType):
             local_path_str = str(local_path)
             has_trailing_sep = local_path_str.endswith(os.sep)
             local_path = str(Path(local_path).absolute())
-            if has_trailing_sep and not local_path.endswith(os.sep):
+            if has_trailing_sep:
                 local_path = local_path + os.sep
 
         fs = storage.get_underlying_filesystem(path=self.path)

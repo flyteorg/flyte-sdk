@@ -606,10 +606,9 @@ class Dir(BaseModel, Generic[T], SerializableType):
         protocol = get_protocol(resolved_remote_path)
 
         # Shortcut for local, don't copy and just return
-        if "file" in protocol:
-            if remote_destination is None:
-                output_path = str(Path(local_path).absolute())
-                return cls(path=output_path, name=dirname, hash=dir_cache_key)
+        if "file" in protocol and remote_destination is None:
+            output_path = str(Path(local_path).absolute())
+            return cls(path=output_path, name=dirname, hash=dir_cache_key)
 
         # todo: in the future, mirror File and set the file to_path here
         output_path = await storage.put(from_path=local_path_str, to_path=remote_destination, recursive=True)
@@ -678,10 +677,9 @@ class Dir(BaseModel, Generic[T], SerializableType):
         protocol = get_protocol(resolved_remote_path)
 
         # Shortcut for local, don't copy and just return
-        if "file" in protocol:
-            if remote_destination is None:
-                output_path = str(Path(local_path).absolute())
-                return cls(path=output_path, name=dirname, hash=dir_cache_key)
+        if "file" in protocol and remote_destination is None:
+            output_path = str(Path(local_path).absolute())
+            return cls(path=output_path, name=dirname, hash=dir_cache_key)
 
         fs = storage.get_underlying_filesystem(path=resolved_remote_path)
         fs.put(local_path_str, resolved_remote_path, recursive=True)
