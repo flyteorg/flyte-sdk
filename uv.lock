@@ -674,7 +674,7 @@ requires-dist = [
     { name = "cloudpickle", specifier = ">=3.1.1" },
     { name = "dataclasses-json" },
     { name = "flyteidl", specifier = ">=1.15.4b0,<2.0.0" },
-    { name = "flyteidl2", git = "https://github.com/flyteorg/flyte.git?subdirectory=gen%2Fpython&rev=3fe3c1e5490eba9a46203a94dbd8dae67898698b" },
+    { name = "flyteidl2", git = "https://github.com/flyteorg/flyte.git?subdirectory=gen%2Fpython&rev=v2" },
     { name = "fsspec", specifier = ">=2025.3.0" },
     { name = "grpcio", specifier = ">=1.71.0" },
     { name = "httpx", specifier = ">=0.28.1,<1.0.0" },
@@ -726,8 +726,8 @@ wheels = [
 
 [[package]]
 name = "flyteidl2"
-version = "2.0.0a10.dev7+g3fe3c1e54"
-source = { git = "https://github.com/flyteorg/flyte.git?subdirectory=gen%2Fpython&rev=3fe3c1e5490eba9a46203a94dbd8dae67898698b#3fe3c1e5490eba9a46203a94dbd8dae67898698b" }
+version = "2.0.0a10.dev8+g97bd388cc"
+source = { git = "https://github.com/flyteorg/flyte.git?subdirectory=gen%2Fpython&rev=v2#97bd388ccc3a89b5a8b1ede640f7ad788ca9fd9d" }
 dependencies = [
     { name = "googleapis-common-protos" },
     { name = "protobuf" },
