@@ -160,13 +160,20 @@ class RawDataPath:
 
         protocol = get_protocol(file_prefix)
         if "file" in protocol:
-            local_path = pathlib.Path(file_prefix) / random_string
+            parent_folder = pathlib.Path(file_prefix)
+            parent_folder.mkdir(exist_ok=True, parents=True)
             if file_name:
-                # Only if file name is given do we create the parent, because it may be needed as a folder otherwise
-                local_path = local_path / file_name
-                if not local_path.exists():
-                    local_path.parent.mkdir(exist_ok=True, parents=True)
-                    local_path.touch()
+                random_folder = parent_folder / random_string
+                random_folder.mkdir()
+                local_path = random_folder / file_name
+            else:
+                local_path = parent_folder / random_string
+            # if file_name:
+            #     # Only if file name is given do we create the parent, because it may be needed as a folder otherwise
+            #     local_path = local_path / file_name
+            #     if not local_path.exists():
+            #         local_path.parent.mkdir(exist_ok=True, parents=True)
+            #         local_path.touch()
             return str(local_path.absolute())
 
         fs = fsspec.filesystem(protocol)

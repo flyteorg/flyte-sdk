@@ -549,7 +549,7 @@ class Dir(BaseModel, Generic[T], SerializableType):
     async def from_local(
         cls,
         local_path: Union[str, Path],
-        remote_path: Optional[str] = None,
+        remote_destination: Optional[str] = None,
         dir_cache_key: Optional[str] = None,
     ) -> Dir[T]:
         """
@@ -591,7 +591,8 @@ class Dir(BaseModel, Generic[T], SerializableType):
         ```
         Args:
             local_path: Path to the local directory
-            remote_path: Optional remote path to store the directory. If None, a path will be automatically generated.
+            remote_destination: Optional remote path to store the directory. If None, a path will be automatically
+              generated.
             dir_cache_key: Optional precomputed hash value to use for cache key computation when this Dir is used
                           as an input to discoverable tasks. If not specified, the cache key will be based on
                           directory attributes.
@@ -601,12 +602,12 @@ class Dir(BaseModel, Generic[T], SerializableType):
         """
         local_path_str = str(local_path)
         dirname = os.path.basename(os.path.normpath(local_path_str))
-        resolved_remote_path = remote_path or internal_ctx().raw_data.get_random_remote_path(dirname)
+        resolved_remote_path = remote_destination or internal_ctx().raw_data.get_random_remote_path(dirname)
         protocol = get_protocol(resolved_remote_path)
 
         # Shortcut for local, don't copy and just return
         if "file" in protocol:
-            if remote_path is None:
+            if remote_destination is None:
                 output_path = str(Path(local_path).absolute())
                 return cls(path=output_path, name=dirname, hash=dir_cache_key)
 
@@ -618,7 +619,7 @@ class Dir(BaseModel, Generic[T], SerializableType):
     def from_local_sync(
         cls,
         local_path: Union[str, Path],
-        remote_path: Optional[str] = None,
+        remote_destination: Optional[str] = None,
         dir_cache_key: Optional[str] = None,
     ) -> Dir[T]:
         """
@@ -661,7 +662,8 @@ class Dir(BaseModel, Generic[T], SerializableType):
 
         Args:
             local_path: Path to the local directory
-            remote_path: Optional remote path to store the directory. If None, a path will be automatically generated.
+            remote_destination: Optional remote path to store the directory. If None, a path will be automatically
+              generated.
             dir_cache_key: Optional precomputed hash value to use for cache key computation when this Dir is used
                           as an input to discoverable tasks. If not specified, the cache key will be based on
                           directory attributes.
@@ -672,14 +674,18 @@ class Dir(BaseModel, Generic[T], SerializableType):
         local_path_str = str(local_path)
         dirname = os.path.basename(os.path.normpath(local_path_str))
 
-        if not remote_path:
-            from flyte._context import internal_ctx
+        resolved_remote_path = remote_destination or internal_ctx().raw_data.get_random_remote_path(dirname)
+        protocol = get_protocol(resolved_remote_path)
 
-            ctx = internal_ctx()
-            remote_path = ctx.raw_data.get_random_remote_path(dirname)
-        fs = storage.get_underlying_filesystem(path=remote_path)
-        fs.put(local_path_str, remote_path, recursive=True)
-        return cls(path=remote_path, name=dirname, hash=dir_cache_key)
+        # Shortcut for local, don't copy and just return
+        if "file" in protocol:
+            if remote_destination is None:
+                output_path = str(Path(local_path).absolute())
+                return cls(path=output_path, name=dirname, hash=dir_cache_key)
+
+        fs = storage.get_underlying_filesystem(path=resolved_remote_path)
+        fs.put(local_path_str, resolved_remote_path, recursive=True)
+        return cls(path=resolved_remote_path, name=dirname, hash=dir_cache_key)
 
     @classmethod
     def from_existing_remote(cls, remote_path: str, dir_cache_key: Optional[str] = None) -> Dir[T]:
