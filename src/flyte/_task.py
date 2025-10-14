@@ -230,10 +230,12 @@ class TaskTemplate(Generic[P, R, F]):
 
     @overload
     async def aio(self: TaskTemplate[P, R, SyncFunctionType], *args: P.args, **kwargs: P.kwargs) -> R: ...
+
     @overload
     async def aio(
         self: TaskTemplate[P, R, AsyncFunctionType], *args: P.args, **kwargs: P.kwargs
     ) -> Coroutine[Any, Any, R]: ...
+
     async def aio(self, *args: P.args, **kwargs: P.kwargs) -> Coroutine[Any, Any, R] | R:
         """
         The aio function allows executing "sync" tasks, in an async context. This helps with migrating v1 defined sync
