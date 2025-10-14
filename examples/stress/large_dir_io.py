@@ -34,7 +34,7 @@ async def create_large_dir(size_gigabytes: int = 5) -> flyte.io.Dir:
           - file_0.bin (500 MB)
           ...
     """
-    with tempfile.TemporaryDirectory() as tmpdir:
+    with tempfile.TemporaryDirectory(prefix="my_name") as tmpdir:
         # Calculate how many 500MB files we need
         file_size_mb = 500
         total_files = (size_gigabytes * 1024) // file_size_mb
@@ -83,6 +83,14 @@ async def create_large_dir(size_gigabytes: int = 5) -> flyte.io.Dir:
         with open(os.path.join(sibling_dir, "metadata.txt"), "w") as f:
             f.write(f"Total files: {total_files}\nTotal size: {size_gigabytes}GB\n")
 
+        # Print directory structure for visibility, internal functions, please don't use.
+        print(f"\nDirectory structure:", flush=True)
+        from flyte._code_bundle._utils import list_all_files
+        from flyte._code_bundle._packaging import print_ls_tree
+        files = list_all_files(pathlib.Path(tmpdir), deref_symlinks=False)
+        print_ls_tree(tmpdir, files)
+        print(f"Total files in structure: {len(files)}\n", flush=True)
+
         print(f"Uploading directory structure from {tmpdir}...", flush=True)
         d = await flyte.io.Dir.from_local(tmpdir)
         print(f"Uploaded to {d.path}", flush=True)
@@ -96,7 +104,7 @@ async def read_large_dir(d: flyte.io.Dir, hang: bool = False) -> Tuple[int, floa
     Returns: (total_bytes, download_time_seconds, file_count)
     """
     with tempfile.TemporaryDirectory() as tmpdir:
-        download_path = os.path.join(tmpdir, "downloaded")
+        download_path = os.path.join(tmpdir, "download_target")
         print(f"Will download directory from {d.path} to {download_path}", flush=True)
 
         if hang:
@@ -125,8 +133,14 @@ async def read_large_dir(d: flyte.io.Dir, hang: bool = False) -> Tuple[int, floa
                 total_bytes += os.path.getsize(file_path)
                 file_count += 1
 
-        await asyncio.sleep(100)
         print(f"Downloaded {file_count} files ({total_bytes / (1024**3):.2f} GB) in {total:.2f} seconds ({total_bytes / total / (1024 * 1024):.2f} MiB/s)")
+
+        # Print directory structure for visibility, internal functions, please don't use.
+        print(f"\nDirectory structure:", flush=True)
+        from flyte._code_bundle._utils import list_all_files
+        from flyte._code_bundle._packaging import print_ls_tree
+        files = list_all_files(pathlib.Path(download_path), deref_symlinks=False)
+        print_ls_tree(download_path, files)
 
         # Verify nested structure exists
         assert os.path.exists(os.path.join(downloaded_path, "nested1")), "nested1 directory missing"
