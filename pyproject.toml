@@ -126,7 +126,7 @@ select = [
     "FURB",
     "RUF",
 ]
-ignore = ["PGH003", "PLC0415", "ASYNC210"]
+ignore = ["PGH003", "PLC0415", "ASYNC210", "FURB122"]
 
 [tool.ruff.lint.per-file-ignores]
 "examples/*" = ["E402"]

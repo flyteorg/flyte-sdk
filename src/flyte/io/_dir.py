@@ -6,10 +6,12 @@ from typing import AsyncIterator, Dict, Generic, Iterator, List, Optional, Type,
 
 from flyteidl2.core import literals_pb2, types_pb2
 from fsspec.asyn import AsyncFileSystem
+from fsspec.utils import get_protocol
 from mashumaro.types import SerializableType
 from pydantic import BaseModel, model_validator
 
 import flyte.storage as storage
+from flyte._context import internal_ctx
 from flyte.io._file import File
 from flyte.types import TypeEngine, TypeTransformer, TypeTransformerFailedError
 
@@ -599,7 +601,16 @@ class Dir(BaseModel, Generic[T], SerializableType):
         """
         local_path_str = str(local_path)
         dirname = os.path.basename(os.path.normpath(local_path_str))
+        resolved_remote_path = remote_path or internal_ctx().raw_data.get_random_remote_path(dirname)
+        protocol = get_protocol(resolved_remote_path)
 
+        # Shortcut for local, don't copy and just return
+        if "file" in protocol:
+            if remote_path is None:
+                output_path = str(Path(local_path).absolute())
+                return cls(path=output_path, name=dirname, hash=dir_cache_key)
+
+        # todo: in the future, mirror File and set the file to_path here
         output_path = await storage.put(from_path=local_path_str, to_path=remote_path, recursive=True)
         return cls(path=output_path, name=dirname, hash=dir_cache_key)
 

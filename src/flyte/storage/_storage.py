@@ -259,7 +259,7 @@ async def put(from_path: str, to_path: Optional[str] = None, recursive: bool = F
         from flyte._context import internal_ctx
 
         ctx = internal_ctx()
-        name = pathlib.Path(from_path).name if not recursive else None  # don't pass a name for folders
+        name = pathlib.Path(from_path).name
         to_path = ctx.raw_data.get_random_remote_path(file_name=name)
 
     file_system = get_underlying_filesystem(path=to_path)

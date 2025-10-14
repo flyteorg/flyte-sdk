@@ -53,9 +53,8 @@ async def create_large_dir(size_gigabytes: int = 5) -> flyte.io.Dir:
         print(f"Creating {files_per_level + remainder} files at root level...", flush=True)
         for i in range(files_per_level + remainder):
             file_path = os.path.join(tmpdir, f"file_{i}.bin")
-            with open(file_path, "wb") as f:
-                for _ in range(chunks_per_file):
-                    f.write(chunk)
+            with open(file_path, "wb") as f:  # noqa: ASYNC230
+                f.writelines(chunk for _ in range(chunks_per_file))
 
         # Nested level 1
         nested1_dir = os.path.join(tmpdir, "nested1")
@@ -63,9 +62,8 @@ async def create_large_dir(size_gigabytes: int = 5) -> flyte.io.Dir:
         print(f"Creating {files_per_level} files in nested1/...", flush=True)
         for i in range(files_per_level):
             file_path = os.path.join(nested1_dir, f"file_{i}.bin")
-            with open(file_path, "wb") as f:
-                for _ in range(chunks_per_file):
-                    f.write(chunk)
+            with open(file_path, "wb") as f:  # noqa: ASYNC230
+                f.writelines(chunk for _ in range(chunks_per_file))
 
         # Nested level 2
         nested2_dir = os.path.join(nested1_dir, "nested2")
@@ -73,20 +71,20 @@ async def create_large_dir(size_gigabytes: int = 5) -> flyte.io.Dir:
         print(f"Creating {files_per_level} files in nested1/nested2/...", flush=True)
         for i in range(files_per_level):
             file_path = os.path.join(nested2_dir, f"file_{i}.bin")
-            with open(file_path, "wb") as f:
-                for _ in range(chunks_per_file):
-                    f.write(chunk)
+            with open(file_path, "wb") as f:  # noqa: ASYNC230
+                f.writelines(chunk for _ in range(chunks_per_file))
 
         # Add a sibling folder to nested1 with a small file
         sibling_dir = os.path.join(tmpdir, "sibling")
         os.makedirs(sibling_dir)
-        with open(os.path.join(sibling_dir, "metadata.txt"), "w") as f:
+        with open(os.path.join(sibling_dir, "metadata.txt"), "w") as f:  # noqa: ASYNC230
             f.write(f"Total files: {total_files}\nTotal size: {size_gigabytes}GB\n")
 
         # Print directory structure for visibility, internal functions, please don't use.
-        print(f"\nDirectory structure:", flush=True)
-        from flyte._code_bundle._utils import list_all_files
+        print("\nDirectory structure:", flush=True)
         from flyte._code_bundle._packaging import print_ls_tree
+        from flyte._code_bundle._utils import list_all_files
+
         files = list_all_files(pathlib.Path(tmpdir), deref_symlinks=False)
         print_ls_tree(tmpdir, files)
         print(f"Total files in structure: {len(files)}\n", flush=True)
@@ -133,12 +131,16 @@ async def read_large_dir(d: flyte.io.Dir, hang: bool = False) -> Tuple[int, floa
                 total_bytes += os.path.getsize(file_path)
                 file_count += 1
 
-        print(f"Downloaded {file_count} files ({total_bytes / (1024**3):.2f} GB) in {total:.2f} seconds ({total_bytes / total / (1024 * 1024):.2f} MiB/s)")
+        print(
+            f"Downloaded {file_count} files ({total_bytes / (1024**3):.2f} GB)"
+            f" in {total:.2f} seconds ({total_bytes / total / (1024 * 1024):.2f} MiB/s)"
+        )
 
         # Print directory structure for visibility, internal functions, please don't use.
-        print(f"\nDirectory structure:", flush=True)
-        from flyte._code_bundle._utils import list_all_files
+        print("\nDirectory structure:", flush=True)
         from flyte._code_bundle._packaging import print_ls_tree
+        from flyte._code_bundle._utils import list_all_files
+
         files = list_all_files(pathlib.Path(download_path), deref_symlinks=False)
         print_ls_tree(download_path, files)
 
