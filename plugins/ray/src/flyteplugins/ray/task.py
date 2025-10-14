@@ -10,7 +10,7 @@ import yaml
 from flyte import PodTemplate, Resources
 from flyte.extend import AsyncFunctionTaskTemplate, TaskPluginRegistry, pod_spec_from_resources
 from flyte.models import SerializationContext
-from flyteidl.plugins.ray_pb2 import HeadGroupSpec, RayCluster, RayJob, WorkerGroupSpec
+from flyteidl2.plugins.ray_pb2 import HeadGroupSpec, RayCluster, RayJob, WorkerGroupSpec
 from google.protobuf.json_format import MessageToDict
 
 import ray

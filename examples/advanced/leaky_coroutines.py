@@ -36,5 +36,5 @@ if __name__ == "__main__":
     flyte.init_from_config()
     run = flyte.run(main, seconds=30)
     print(run.url)
-    run.wait(run)
+    run.wait()
     print("Run completed")

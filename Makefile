@@ -55,12 +55,6 @@ check-import-profile:
 	diff import_profiles/filtered_flyte_importtime.txt updated_filtered_flyte_importtime.txt || (echo "Import profile mismatch!" && exit 1)
 	rm -f updated_flyte_importtime.txt updated_filtered_flyte_importtime.txt
 
-.PHONY: copy-protos
-copy-protos: export CLOUD_REPO_PATH ?= ../cloud
-copy-protos:
-	uv run ./maint_tools/copy_pb_python_from_cloud.py ${CLOUD_REPO_PATH}
-
-
 .PHONY: unit_test
 unit_test: ## Test the code with pytest
 	@echo "🚀 Testing code: Running unit tests..."

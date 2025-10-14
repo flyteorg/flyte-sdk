@@ -54,7 +54,7 @@ async def test_submit_task():
             "flyte._internal.controllers.remote._controller.RemoteController.submit_action",
             new_callable=AsyncMock,
         ) as mock_submit_action,
-        patch("flyte._initialize.get_common_config") as mock_get_common_config,
+        patch("flyte._initialize.get_init_config") as mock_get_common_config,
     ):
         mock_get_common_config.return_value.root_dir = pathlib.Path(__file__).parent
         # Ensure the mock returns a valid value
@@ -111,7 +111,7 @@ async def test_submit_with_outputs():
             "flyte._internal.controllers.remote._controller.RemoteController.submit_action",
             new_callable=AsyncMock,
         ) as mock_submit_action,
-        patch("flyte._initialize.get_common_config") as mock_get_common_config,
+        patch("flyte._initialize.get_init_config") as mock_get_common_config,
     ):
         mock_get_common_config.return_value.root_dir = pathlib.Path(__file__).parent
 
@@ -177,7 +177,7 @@ async def test_submit_task_with_error():
             "flyte._internal.controllers.remote._controller.RemoteController.submit_action",
             new_callable=AsyncMock,
         ) as mock_submit_action,
-        patch("flyte._initialize.get_common_config") as mock_get_common_config,
+        patch("flyte._initialize.get_init_config") as mock_get_common_config,
     ):
         mock_get_common_config.return_value.root_dir = pathlib.Path(__file__).parent
 
@@ -254,7 +254,7 @@ async def test_record_trace_with_int_zero_output():
         patch(
             "flyte._internal.controllers.remote._controller.RemoteController.submit_action", new_callable=AsyncMock
         ) as mock_submit_action,
-        patch("flyte._initialize.get_common_config") as mock_get_common_config,
+        patch("flyte._initialize.get_init_config") as mock_get_common_config,
     ):
         mock_get_common_config.return_value.root_dir = pathlib.Path(__file__).parent
 
@@ -313,7 +313,7 @@ async def test_record_trace_with_optional_none_output():
         patch(
             "flyte._internal.controllers.remote._controller.RemoteController.submit_action", new_callable=AsyncMock
         ) as mock_submit_action,
-        patch("flyte._initialize.get_common_config") as mock_get_common_config,
+        patch("flyte._initialize.get_init_config") as mock_get_common_config,
     ):
         mock_get_common_config.return_value.root_dir = pathlib.Path(__file__).parent
 
@@ -375,7 +375,7 @@ async def test_record_trace_with_error():
         patch(
             "flyte._internal.controllers.remote._controller.RemoteController.submit_action", new_callable=AsyncMock
         ) as mock_submit_action,
-        patch("flyte._initialize.get_common_config") as mock_get_common_config,
+        patch("flyte._initialize.get_init_config") as mock_get_common_config,
     ):
         mock_get_common_config.return_value.root_dir = pathlib.Path(__file__).parent
         mock_convert_error.return_value = AsyncMock(err=AsyncMock())
