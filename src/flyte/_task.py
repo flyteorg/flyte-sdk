@@ -255,7 +255,6 @@ class TaskTemplate(Generic[P, R, F]):
         ```
         :param args:
         :param kwargs:
-        :raises RuntimeUserError: If the task is an async function.
         :return:
         """
         ctx = internal_ctx()
