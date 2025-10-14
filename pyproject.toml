@@ -25,7 +25,7 @@ dependencies = [
     "mashumaro",
     "dataclasses_json", # TODO: remove this dependency once we remove dataclasses_json from the code
     "aiolimiter>=1.2.1",
-    "flyteidl2==2.0.0a8",
+    "flyteidl2==0.1.0.dev97388",
 ]
 
 [project.scripts]
