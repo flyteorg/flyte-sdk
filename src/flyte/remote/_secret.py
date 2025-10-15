@@ -31,7 +31,9 @@ class Secret(ToJSONMixin):
         else:
             secret_type = definition_pb2.SecretType.SECRET_TYPE_IMAGE_PULL_SECRET
             if project or domain:
-                raise ValueError(f"Project `{project}` or domain `{domain}` should not be set when creating the image pull secret.")
+                raise ValueError(
+                    f"Project `{project}` or domain `{domain}` should not be set when creating the image pull secret."
+                )
 
         if isinstance(value, str):
             secret = definition_pb2.SecretSpec(
