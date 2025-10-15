@@ -1,15 +1,24 @@
+[project]
+name = "albatross"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = ["bird-feeder", "tqdm>=4,<5", "flyte==2.0.0b24"]
+
+
 [tool.uv.workspace]
-members = ["bird_feeder", "seeds", "src"]
+members = ["bird_feeder", "seeds"]
 
 
 [tool.uv.sources]
-bird-feeder = { workspace = true }
-seeds = { workspace = true }
-albatross = { workspace = true }
+bird-feeder = { workspace = true }  # points to the bird-feeder package in the workspace for the dependency
+
 
 [dependency-groups]
-all = [
+main = [
     "albatross",
     "bird-feeder",
-    "seeds",
 ]
+
+[build-system]
+requires = ["uv_build>=0.9.3,<0.10.0"]
+build-backend = "uv_build"

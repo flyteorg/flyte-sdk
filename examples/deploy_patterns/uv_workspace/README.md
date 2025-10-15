@@ -26,11 +26,11 @@ uv_workspace/
 ##  Testing This Example
 Execute the flyte command directly:
 ```bash
-flyte -vvv -c <YOUR_CONFIG_FILE_PATH> run --root-dir `pwd`/src src/workflows/albatross.py albatross_task
+flyte -vvv -c <YOUR_CONFIG_FILE_PATH> run --root-dir `pwd`/src src/workflows/src.py albatross_task
 ```
 Or just run python script:
 ```bash
-python src/workflows/albatross.py
+python src/workflows/src.py
 ```
 
 ##  Issues With `--root-dir`
