@@ -1,5 +1,4 @@
 import asyncio
-from typing import List
 
 import flyte
 
@@ -10,11 +9,12 @@ env = flyte.TaskEnvironment(
 
 @env.task()
 async def hello_worker(id: int) -> str:
-    return f"hello, my id is: {id} and I am being run by Action: {flyte.ctx().action}"
+    assert (ctx := flyte.ctx())
+    return f"hello, my id is: {id} and I am being run by Action: {ctx.action}"
 
 
-@env.task()
-async def hello_driver(ids: List[int] = [1, 2, 3]) -> List[str]:
+@env.task
+async def hello_driver(ids: list[int] = [1, 2, 3]) -> list[str]:
     coros = []
     with flyte.group("fanout-group"):
         for id in ids:

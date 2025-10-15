@@ -285,10 +285,12 @@ class TaskTemplate(Generic[P, R, F]):
 
     @overload
     def __call__(self: TaskTemplate[P, R, SyncFunctionType], *args: P.args, **kwargs: P.kwargs) -> R: ...
+
     @overload
     def __call__(
         self: TaskTemplate[P, R, AsyncFunctionType], *args: P.args, **kwargs: P.kwargs
     ) -> Coroutine[Any, Any, R]: ...
+
     def __call__(self, *args: P.args, **kwargs: P.kwargs) -> Coroutine[Any, Any, R] | R:
         """
         This is the entrypoint for an async function task at runtime. It will be called during an execution.
