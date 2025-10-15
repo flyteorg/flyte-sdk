@@ -245,7 +245,7 @@ class TaskEnvironment(Environment):
 
         :return: A TaskTemplate that can be used to deploy the task.
         """
-        # from ._task import F, P, R
+        from ._task import F, P, R
 
         if self.reusable is not None:
             if pod_template is not None:
