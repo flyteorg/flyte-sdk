@@ -404,3 +404,17 @@ def test_trigger_different_key_names():
     assert trigger2.inputs["execution_time"] is flyte.TriggerTime
     assert "trigger_time" not in trigger1.inputs
     assert "trigger_time" not in trigger2.inputs
+
+
+@pytest.mark.asyncio
+async def test_trigger_remote():
+    import flyte.remote
+
+    flyte.init_from_config("/Users/ytong/go/src/github.com/flyteorg/flyte-sdk/.flyte/playground.yaml")
+
+    result = flyte.remote.Trigger.listall.aio(task_name="base.test_some_stuff")
+    try:
+        async for r in result:
+            print(r)
+    except Exception as e:
+        print(f"Error fetching triggers: {e}")
