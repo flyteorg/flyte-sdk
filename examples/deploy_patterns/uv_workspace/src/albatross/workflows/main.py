@@ -1,6 +1,7 @@
 from pathlib import Path
 
 from bird_feeder.actions import get_feeder
+from albatross.condor.strategy import get_strategy
 
 import flyte
 
@@ -17,7 +18,8 @@ env = flyte.TaskEnvironment(
 async def albatross_task() -> str:
     get_feeder()
     seed = "Sun Flower seed"
-    return f"Get bird feeder and feed with {seed}"
+    condor = get_strategy()
+    return f"Get bird feeder and feed with {seed}. {condor=}"
 
 
 if __name__ == "__main__":
