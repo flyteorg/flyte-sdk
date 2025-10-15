@@ -22,11 +22,16 @@ class Secret(ToJSONMixin):
     async def create(cls, name: str, value: Union[str, bytes], type: SecretTypes = "regular"):
         ensure_client()
         cfg = get_init_config()
-        secret_type = (
-            definition_pb2.SecretType.SECRET_TYPE_GENERIC
-            if type == "regular"
-            else definition_pb2.SecretType.SECRET_TYPE_IMAGE_PULL_SECRET
-        )
+        project = cfg.project
+        domain = cfg.domain
+
+        if type == "regular":
+            secret_type = definition_pb2.SecretType.SECRET_TYPE_GENERIC
+
+        else:
+            secret_type = definition_pb2.SecretType.SECRET_TYPE_IMAGE_PULL_SECRET
+            if project or domain:
+                raise ValueError(f"Project `{project}` or domain `{domain}` should not be set when creating the image pull secret.")
 
         if isinstance(value, str):
             secret = definition_pb2.SecretSpec(
@@ -42,8 +47,8 @@ class Secret(ToJSONMixin):
             request=payload_pb2.CreateSecretRequest(
                 id=definition_pb2.SecretIdentifier(
                     organization=cfg.org,
-                    project=cfg.project,
-                    domain=cfg.domain,
+                    project=project,
+                    domain=domain,
                     name=name,
                 ),
                 secret_spec=secret,

@@ -16,6 +16,7 @@ import flyte.errors
 from flyte import Image, remote
 from flyte._code_bundle._utils import tar_strip_file_attributes
 from flyte._image import (
+    _BASE_REGISTRY,
     AptPackages,
     Architecture,
     Commands,
@@ -112,10 +113,15 @@ class RemoteImageBuilder(ImageBuilder):
         ).override.aio(secrets=_get_build_secrets_from_image(image))
 
         logger.warning("[bold blue]🐳 Submitting a new build...[/bold blue]")
+        if image.registry and image.registry != _BASE_REGISTRY:
+            target_image = f"{image.registry}/{image_name}"
+        else:
+            # Use the default system registry in the backend.
+            target_image = image_name
         run = cast(
             Run,
             await flyte.with_runcontext(project=IMAGE_TASK_PROJECT, domain=IMAGE_TASK_DOMAIN).run.aio(
-                entity, spec=spec, context=context, target_image=image_name
+                entity, spec=spec, context=context, target_image=target_image
             ),
         )
         logger.warning(f"⏳ Waiting for build to finish at: [bold cyan link={run.url}]{run.url}[/bold cyan link]")
@@ -354,4 +360,9 @@ def _get_build_secrets_from_image(image: Image) -> Optional[typing.List[Secret]]
                 else:
                     raise ValueError(f"Unsupported secret_mount type: {type(secret_mount)}")
 
+    image_registry_secret = image._image_registry_secret
+    if image_registry_secret:
+        secrets.append(
+            Secret(key=image_registry_secret.key, group=image_registry_secret.group, mount=DEFAULT_SECRET_DIR)
+        )
     return secrets
