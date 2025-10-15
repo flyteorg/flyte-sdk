@@ -78,6 +78,8 @@ def secret(
     ```
     """
     from flyte.remote import Secret
+    # todo: remove this hack when secrets creation more easily distinguishes between org and project/domain level
+    #   (and domain level) secrets
     project = "" if project is None else project
     domain = "" if domain is None else domain
     cfg.init(project, domain)

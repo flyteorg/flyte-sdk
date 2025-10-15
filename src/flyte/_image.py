@@ -418,6 +418,7 @@ class Image:
     # class-level token not included in __init__
     _token: ClassVar[object] = object()
 
+    # Underscore cuz we may rename in the future, don't expose for now,
     _image_registry_secret: Optional[Secret] = None
 
     # check for the guard that we put in place
