@@ -5,6 +5,7 @@ import dataclasses
 import io
 import os
 import pathlib
+import sys
 import tempfile
 import typing
 from typing import Any, Hashable, Protocol
@@ -188,12 +189,28 @@ class ObstoreParallelReader:
                 done.set()
 
         # Yield results as they are completed
-        async with asyncio.TaskGroup() as tg:
-            tg.create_task(_fill())
-            for _ in range(self._max_concurrency):
-                tg.create_task(_worker())
-            while not done.is_set():
-                yield await outq.get()
+        if sys.version_info >= (3, 11):
+            async with asyncio.TaskGroup() as tg:
+                tg.create_task(_fill())
+                for _ in range(self._max_concurrency):
+                    tg.create_task(_worker())
+                while not done.is_set():
+                    yield await outq.get()
+        else:
+            fill_task = asyncio.create_task(_fill())
+            worker_tasks = [asyncio.create_task(_worker()) for _ in range(self._max_concurrency)]
+            try:
+                while not done.is_set():
+                    yield await outq.get()
+            except Exception as e:
+                if not fill_task.done():
+                    fill_task.cancel()
+                for wt in worker_tasks:
+                    if not wt.done():
+                        wt.cancel()
+                raise e
+            finally:
+                await asyncio.gather(fill_task, *worker_tasks, return_exceptions=True)
 
         # Drain the output queue
         try:
