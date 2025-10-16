@@ -5,7 +5,6 @@ description = "Test project"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-    "flyte>=2.0.0b22",
     "requests",
     "numpy",
 ]

@@ -167,6 +167,7 @@ class Requirements(PipPackages):
 class UVProject(PipOption, Layer):
     pyproject: Path
     uvlock: Path
+    copy_code: bool = False
 
     def validate(self):
         if not self.pyproject.exists():
@@ -181,7 +182,7 @@ class UVProject(PipOption, Layer):
         from ._utils import filehash_update
 
         super().update_hash(hasher)
-        if self.extra_args and "--no-install-project" in self.extra_args:
+        if not self.copy_code:
             filehash_update(self.uvlock, hasher)
             filehash_update(self.pyproject, hasher)
         else:
@@ -876,17 +877,16 @@ class Image:
         pre: bool = False,
         extra_args: Optional[str] = None,
         secret_mounts: Optional[SecretRequest] = None,
+        copy_code: bool = False,
     ) -> Image:
         """
         Use this method to create a new image with the specified uv.lock file layered on top of the current image
         Must have a corresponding pyproject.toml file in the same directory
         Cannot be used in conjunction with conda
 
-        By default, this method copies the entire project into the image,
-         including files such as pyproject.toml, uv.lock, and the src/ directory.
+        By default, this method copies the pyproject.toml and uv.lock files into the image.
 
-        If you prefer not to install the current project, you can pass the extra argument --no-install-project.
-         In this case, the image builder will only copy pyproject.toml and uv.lock into the image.
+        If `copy_code` is True, it will also copy directory where the pyproject.toml file is located into the image.
 
         :param pyproject_file: path to the pyproject.toml file, needs to have a corresponding uv.lock file
         :param uvlock: path to the uv.lock file, if not specified, will use the default uv.lock file in the same
@@ -896,6 +896,7 @@ class Image:
         :param pre: whether to allow pre-release versions, default is False
         :param extra_args: extra arguments to pass to pip install, default is None
         :param secret_mounts: list of secret mounts to use for the build process.
+        :param copy_code: whether to copy the code into the image, default is False
         :return: Image
         """
         if isinstance(pyproject_file, str):
@@ -909,6 +910,7 @@ class Image:
                 pre=pre,
                 extra_args=extra_args,
                 secret_mounts=_ensure_tuple(secret_mounts) if secret_mounts else None,
+                copy_code=copy_code,
             )
         )
         return new_image

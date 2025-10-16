@@ -2,6 +2,44 @@
 
 Modern Python dependency management and deployment patterns using UV with Flyte. This guide covers three main patterns for different use cases and shows you exactly when and how to use each one.
 
+## When to Use `with_uv_project`
+
+The `with_uv_project` method is essential in three specific scenarios:
+
+**Use Case 1: Installing Locked Dependencies**
+When you want to install the exact dependencies specified in `uv.lock`:
+```python
+image = flyte.Image.from_debian_base().with_uv_project(
+    pyproject_file=pathlib.Path("pyproject.toml"),
+)
+```
+This ensures reproducible builds by using the locked versions from `uv.lock`, while `--no-install-project` prevents installing the current project itself (only dependencies).
+
+**Use Case 2: Installing pyproject Without Code Copying**
+When you want to install the python project in the image without copying it into the code bundle (using `copy_style=None`):
+```python
+image = flyte.Image.from_debian_base().with_uv_project(
+    pyproject_file=pathlib.Path("pyproject.toml"),
+    copy_code=True
+)
+
+# Deploy with copy_style="none" to bake code into image
+flyte.with_runcontext(copy_style="none", version="v1.0").run(task_function)
+```
+This is ideal for production deployments where you want immutable, self-contained container images with all dependencies pre-installed.
+
+**Use Case 3: Multi-Path Projects (Plugin in Different Location)**
+When your task's pyproject and a plugin's pyproject are in different paths (e.g., one in `/tmp`, another in `/root/uv_workspace/`). In this scenario, fast register never works, so you must use `with_uv_project` to install the plugin in your image:
+```python
+# Example: Plugin located outside the main project structure
+image = flyte.Image.from_debian_base().with_uv_project(
+    pyproject_file=pathlib.Path("/tmp/my_plugin/pyproject.toml"),
+    copy_code=True
+)
+```
+Fast register requires all code to be in a single tree for the code bundle, but when dependencies span multiple directories, you need `with_uv_project` to explicitly install them during the image build phase.
+
+
 ## 🚀 Quick Decision Tree
 
 ```
@@ -42,27 +80,29 @@ uv_project/
 
 **Key Configuration:**
 ```python
-image = flyte.Image.from_debian_base().with_uv_project(
-    pyproject_file=pathlib.Path("pyproject.toml"),
-    pre=True,
-    # Install only the dependencies specified in pyproject.toml, without installing the current project itself.
-    # Only pyproject.toml and uv.lock will be uploaded to the remote builder to resolve and install dependencies.
-    extra_args="--no-install-project"
+env = flyte.TaskEnvironment(
+    name="pyproject_test",
+    resources=flyte.Resources(memory="250Mi"),
+    image=flyte.Image.from_debian_base().with_uv_project(
+        pyproject_file=pathlib.Path("pyproject.toml"),
+    )
 )
 ```
 
 **pyproject.toml:**
 ```toml
 [project]
-name = "my-flyte-app"
+name = "tester"
+version = "0.1.0"
+description = "Test project"
+requires-python = ">=3.12"
 dependencies = [
-    "flyte>=2.0.0",
     "requests",
     "numpy",
 ]
 
 [project.optional-dependencies]
-ml = ["pandas", "scikit-learn"]
+pandas = ["pandas", "numpy"]
 ```
 
 ### 2. uv_project_lib: Custom Libraries
@@ -70,7 +110,6 @@ ml = ["pandas", "scikit-learn"]
 **Project Structure:**
 ```
 uv_project_lib/
-├── main.py                        # Alternative main application file
 └── my_plugin/
     ├── pyproject.toml             # Library definition
     ├── uv.lock                    # Library lock file
@@ -87,22 +126,18 @@ uv_project_lib/
 
 **Key Configuration:**
 ```python
-image = flyte.Image.from_debian_base().with_uv_project(
-    pyproject_file=pathlib.Path("my_plugin/pyproject.toml"),  # Point to library's pyproject.toml
-    pre=True,
-    extra_args="--inexact"  # TODO: Set it as default in the SDK
+UV_PROJECT_ROOT = Path(Path(__file__)).parent.parent.parent
+
+env = flyte.TaskEnvironment(
+    name="uv_project_lib_task_in_src",
+    resources=flyte.Resources(memory="1000Mi"),
+    image=(
+        flyte.Image.from_debian_base()
+        .with_uv_project(
+            pyproject_file=UV_WORKSPACE_ROOT / "pyproject.toml",
+        )
+    ),
 )
-```
-
-**Library Structure:**
-```python
-# my_plugin/pyproject.toml
-[project]
-name = "my-custom-lib"
-dependencies = ["numpy"]
-
-# main.py
-from my_lib.math_utils import linear_function
 ```
 
 ### 3. uv_workspace: Monorepo
@@ -112,17 +147,20 @@ from my_lib.math_utils import linear_function
 uv_workspace/
 ├── pyproject.toml      # Workspace definition
 ├── uv.lock             # Workspace lock file
-├── main.py             # Alternative main application file
 ├── src/
+│   ├── pyproject.yaml  # Tasks package definition
 │   └── tasks/          # Main application tasks
+│       ├── __init__.py
 │       └── main.py
 ├── bird_feeder/        # Package 1
 │   ├── pyproject.toml
 │   └── src/bird_feeder/
+│       ├── __init__.py
 │       └── actions.py
 └── seeds/              # Package 2
     ├── pyproject.toml
     └── src/seeds/
+        ├── __init__.py
         └── actions.py
 ```
 
@@ -133,33 +171,42 @@ uv_workspace/
 
 **Key Configuration:**
 ```python
-# From tasks/main.py - points to workspace root
-image = flyte.Image.from_debian_base().with_uv_project(
-    pyproject_file=(UV_WORKSPACE_ROOT / "pyproject.toml"),  # Root workspace pyproject.toml
-    extra_args="--only-group albatross --inexact"  # Install specific dependency groups
+# From src/tasks/main.py - points to workspace root
+UV_WORKSPACE_ROOT = Path(Path(__file__)).parent.parent.parent
+
+env = flyte.TaskEnvironment(
+    name="uv_workspace",
+    image=flyte.Image.from_debian_base()
+    .with_uv_project(
+        pyproject_file=(UV_WORKSPACE_ROOT / "pyproject.toml"),
+        extra_args="--only-group albatross",  # Install specific dependency group
+        copy_code=True,
+    )
 )
 
-# From main.py - local pyproject.toml reference
-image = flyte.Image.from_debian_base().with_uv_project(
-    pyproject_file=Path(__file__).parent / "pyproject.toml",  # Install all dependencies in the workspace
-    extra_args="--inexact"
-)
+@env.task
+async def albatross_task() -> str:
+    get_feeder()
+    seed = get_seed(seed_name="Sun Flower seed")
+    return f"Get bird feeder and feed with {seed}"
 ```
 
-**Workspace Structure:**
+**Workspace pyproject.toml:**
 ```toml
-# Root pyproject.toml
 [tool.uv.workspace]
-members = ["bird_feeder", "seeds"]
+members = ["bird_feeder", "seeds", "tasks"]
 
 [tool.uv.sources]
 bird-feeder = { workspace = true }
 seeds = { workspace = true }
+src = { workspace = true }
 
 [dependency-groups]
+# Main albatross task dependencies (matches current example)
 albatross = [
     "bird-feeder",
     "seeds",
+    "tasks",
     "numpy"
 ]
 ```
@@ -197,10 +244,6 @@ flyte.run(task_function)
 - 🔄 **Iteration**: Perfect for rapid development cycles
 - 📦 **Small Images**: Base image stays unchanged
 
-**Trade-offs:**
-- 📡 **Network Dependency**: Requires code bundle download at runtime
-- 🔄 **Less Reproducible**: Code changes without image versioning
-
 ### Production (Full Build)
 ```python
 import flyte
@@ -210,8 +253,7 @@ env = flyte.TaskEnvironment(
     name="full_build",
     image=(
         flyte.Image.from_debian_base()
-        .with_uv_project(pyproject_file=pathlib.Path("my_plugin/pyproject.toml"))
-        .with_source_file("./main.py")
+        .with_uv_project(pyproject_file=pathlib.Path("my_plugin/pyproject.toml"), copy_code=True)
     ),
 )
 
