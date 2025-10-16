@@ -268,13 +268,16 @@ class UVProjectHandler:
     ) -> str:
         secret_mounts = _get_secret_mounts_layer(layer.secret_mounts)
         if not layer.copy_code:
+            pip_install_args = " ".join(layer.get_pip_install_args())
+            if "--no-install-project" not in pip_install_args:
+                pip_install_args += " --no-install-project"
             # Only Copy pyproject.yaml and uv.lock.
             pyproject_dst = copy_files_to_context(layer.pyproject, context_path)
             uvlock_dst = copy_files_to_context(layer.uvlock, context_path)
             delta = UV_LOCK_WITHOUT_PROJECT_INSTALL_TEMPLATE.substitute(
                 UV_LOCK_PATH=uvlock_dst.relative_to(context_path),
                 PYPROJECT_PATH=pyproject_dst.relative_to(context_path),
-                PIP_INSTALL_ARGS=" ".join(layer.get_pip_install_args()),
+                PIP_INSTALL_ARGS=pip_install_args,
                 SECRET_MOUNT=secret_mounts,
             )
         else:
