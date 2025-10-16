@@ -97,4 +97,4 @@ if __name__ == "__main__":
     run = flyte.run(main, n=4)
     print(run.name)
     print(run.url)
-    run.wait(run)
+    run.wait()
