@@ -175,6 +175,7 @@ uv_workspace/
 - Complex project structures
 
 **Key Configuration:**
+
 ```python
 # From src/albatross/main.py
 from pathlib import Path
@@ -196,6 +197,7 @@ env = flyte.TaskEnvironment(
         project_install_mode="install_as_package",
     ),
 )
+
 
 @env.task
 async def albatross_task() -> str:
