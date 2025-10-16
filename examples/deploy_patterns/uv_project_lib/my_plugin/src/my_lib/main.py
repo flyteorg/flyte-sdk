@@ -7,8 +7,9 @@ env = flyte.TaskEnvironment(
     name="uv_project_lib",
     resources=flyte.Resources(memory="1000Mi"),
     image=(
-        flyte.Image.from_debian_base()
-        .with_uv_project(pyproject_file=pathlib.Path(__file__).parent.parent.parent / "pyproject.toml", pre=True)
+        flyte.Image.from_debian_base().with_uv_project(
+            pyproject_file=pathlib.Path(__file__).parent.parent.parent / "pyproject.toml", pre=True
+        )
     ),
 )
 
@@ -34,9 +35,7 @@ def process_list(x_list: list[int]) -> float:
 
 
 if __name__ == "__main__":
-    flyte.init_from_config(
-        root_dir=pathlib.Path(__file__).parent.parent
-    )
+    flyte.init_from_config(root_dir=pathlib.Path(__file__).parent.parent)
 
     run = flyte.run(process_list, x_list=list(range(10)))
 

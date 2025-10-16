@@ -2,17 +2,15 @@ from pathlib import Path
 
 from bird_feeder.actions import get_feeder
 from seeds.actions import get_seed
-from albatross.condor.strategy import get_strategy
-
 
 import flyte
+from albatross.condor.strategy import get_strategy
 
 UV_WORKSPACE_ROOT = Path(__file__).parent.parent.parent
 
 env = flyte.TaskEnvironment(
     name="uv_workspace",
-    image=flyte.Image.from_debian_base()
-    .with_uv_project(
+    image=flyte.Image.from_debian_base().with_uv_project(
         pyproject_file=(UV_WORKSPACE_ROOT / "pyproject.toml"),
         extra_args="--only-group albatross",  # albatross group define all the dependencies the task needs
         copy_code=True,

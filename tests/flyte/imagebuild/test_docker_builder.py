@@ -396,7 +396,7 @@ async def test_uvproject_handler_with_project_install():
             # Create UVProject installing the whole project
             from flyte._image import UVProject
 
-            uv_project = UVProject(pyproject=pyproject_file.absolute(), uvlock=uv_lock_file.absolute())
+            uv_project = UVProject(pyproject=pyproject_file.absolute(), uvlock=uv_lock_file.absolute(), copy_code=True)
 
             cache_dir = user_folder / ".cache"
             cache_dir.mkdir(parents=True, exist_ok=True)

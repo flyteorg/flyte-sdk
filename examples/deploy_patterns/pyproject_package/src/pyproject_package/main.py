@@ -7,6 +7,7 @@ from the data and models modules. It demonstrates:
 - Integration with external dependencies
 - Entrypoint pattern for execution
 """
+
 import pathlib
 
 import flyte
