@@ -18,7 +18,7 @@ from flyte._initialize import (
     requires_storage,
 )
 from flyte._logging import logger
-from flyte._task import P, R, TaskTemplate
+from flyte._task import F, P, R, TaskTemplate
 from flyte.models import (
     ActionID,
     Checkpoints,
@@ -126,7 +126,7 @@ class _Runner:
         self._queue = queue
 
     @requires_initialization
-    async def _run_remote(self, obj: TaskTemplate[P, R] | LazyEntity, *args: P.args, **kwargs: P.kwargs) -> Run:
+    async def _run_remote(self, obj: TaskTemplate[P, R, F] | LazyEntity, *args: P.args, **kwargs: P.kwargs) -> Run:
         import grpc
         from flyteidl2.common import identifier_pb2
         from flyteidl2.core import literals_pb2
@@ -153,7 +153,7 @@ class _Runner:
             version = task.pb2.task_id.version
             code_bundle = None
         else:
-            task = cast(TaskTemplate[P, R], obj)
+            task = cast(TaskTemplate[P, R, F], obj)
             if obj.parent_env is None:
                 raise ValueError("Task is not attached to an environment. Please attach the task to an environment")
 
@@ -319,7 +319,7 @@ class _Runner:
 
     @requires_storage
     @requires_initialization
-    async def _run_hybrid(self, obj: TaskTemplate[P, R], *args: P.args, **kwargs: P.kwargs) -> R:
+    async def _run_hybrid(self, obj: TaskTemplate[P, R, F], *args: P.args, **kwargs: P.kwargs) -> R:
         """
         Run a task in hybrid mode. This means that the parent action will be run locally, but the child actions will be
         run in the cluster remotely. This is currently only used for testing,
@@ -421,7 +421,7 @@ class _Runner:
             raise err
         return outputs
 
-    async def _run_local(self, obj: TaskTemplate[P, R], *args: P.args, **kwargs: P.kwargs) -> Run:
+    async def _run_local(self, obj: TaskTemplate[P, R, F], *args: P.args, **kwargs: P.kwargs) -> Run:
         from flyteidl2.common import identifier_pb2
 
         from flyte._internal.controllers import create_controller
@@ -508,7 +508,7 @@ class _Runner:
     @syncify
     async def run(
         self,
-        task: TaskTemplate[P, Union[R, Run]] | LazyEntity,
+        task: TaskTemplate[P, Union[R, Run], F] | LazyEntity,
         *args: P.args,
         **kwargs: P.kwargs,
     ) -> Union[R, Run]:
@@ -652,7 +652,7 @@ def with_runcontext(
 
 
 @syncify
-async def run(task: TaskTemplate[P, R], *args: P.args, **kwargs: P.kwargs) -> Union[R, Run]:
+async def run(task: TaskTemplate[P, R, F], *args: P.args, **kwargs: P.kwargs) -> Union[R, Run]:
     """
     Run a task with the given parameters
     :param task: task to run
