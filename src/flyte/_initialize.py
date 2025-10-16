@@ -184,28 +184,6 @@ async def init(
     """
     from flyte._utils import get_cwd_editable_install, org_from_endpoint, sanitize_endpoint
 
-    if endpoint or api_key:
-        if project is None:
-            raise ValueError(
-                "Project must be provided to initialize the client. "
-                "Please set 'project' in the 'task' section of your config file, "
-                "or pass it directly to flyte.init(project='your-project-name')."
-            )
-
-        if domain is None:
-            raise ValueError(
-                "Domain must be provided to initialize the client. "
-                "Please set 'domain' in the 'task' section of your config file, "
-                "or pass it directly to flyte.init(domain='your-domain-name')."
-            )
-
-        if org is None and org_from_endpoint(endpoint) is None:
-            raise ValueError(
-                "Organization must be provided to initialize the client. "
-                "Please set 'org' in the 'task' section of your config file, "
-                "or pass it directly to flyte.init(org='your-org-name')."
-            )
-
     _initialize_logger(log_level=log_level)
 
     global _init_config  # noqa: PLW0603
@@ -497,6 +475,34 @@ def requires_initialization(func: T) -> T:
         return func(*args, **kwargs)
 
     return typing.cast(T, wrapper)
+
+
+def require_project_and_domain(func):
+    """
+    Decorator that ensures the current Flyte configuration defines
+    both 'project' and 'domain'. Raises a clear error if not found.
+    """
+
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        cfg = get_init_config()
+        if cfg.project is None:
+            raise ValueError(
+                "Project must be provided to initialize the client. "
+                "Please set 'project' in the 'task' section of your config file, "
+                "or pass it directly to flyte.init(project='your-project-name')."
+            )
+
+        if cfg.domain is None:
+            raise ValueError(
+                "Domain must be provided to initialize the client. "
+                "Please set 'domain' in the 'task' section of your config file, "
+                "or pass it directly to flyte.init(domain='your-domain-name')."
+            )
+
+        return func(*args, **kwargs)
+
+    return wrapper
 
 
 async def _init_for_testing(

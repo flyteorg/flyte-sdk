@@ -125,8 +125,8 @@ class CLIConfig:
 
         task_cfg = TaskConfig(
             org=self.org or self.config.task.org,
-            project=project or self.config.task.project,
-            domain=domain or self.config.task.domain,
+            project=project if project is not None else self.config.task.project,
+            domain=domain if domain is not None else self.config.task.domain,
         )
 
         kwargs: Dict[str, Any] = {}

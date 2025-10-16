@@ -22,7 +22,7 @@ downstream_env = flyte.TaskEnvironment(
         scaledown_ttl=60,
     ),
     image=flyte.Image.from_debian_base(install_flyte=False).with_pip_packages(
-        "unionai-reuse==0.1.6b0", "flyte>2.0.0b22", pre=True
+        "unionai-reuse==0.1.7", "flyte>2.0.0b22", pre=True
     ),
 )
 

@@ -5,14 +5,14 @@ from functools import cached_property
 from typing import AsyncIterator
 
 import grpc.aio
+from flyteidl2.common import identifier_pb2, list_pb2
+from flyteidl2.task import common_pb2, task_definition_pb2
+from flyteidl2.trigger import trigger_definition_pb2, trigger_service_pb2
 
 import flyte
 from flyte._initialize import ensure_client, get_client, get_init_config
 from flyte._internal.runtime import trigger_serde
 from flyte.syncify import syncify
-from flyteidl2.common import identifier_pb2, list_pb2
-from flyteidl2.task import common_pb2, task_definition_pb2
-from flyteidl2.trigger import trigger_definition_pb2, trigger_service_pb2
 
 from ._common import ToJSONMixin
 from ._task import Task, TaskDetails
