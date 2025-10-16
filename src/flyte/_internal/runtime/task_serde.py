@@ -172,6 +172,7 @@ def get_proto_task(task: TaskTemplate, serialize_context: SerializationContext) 
             pod_template_name=(task.pod_template if task.pod_template and isinstance(task.pod_template, str) else None),
             interruptible=task.interruptible,
             generates_deck=wrappers_pb2.BoolValue(value=task.report),
+            debuggable=task.debuggable,
         ),
         interface=transform_native_to_typed_interface(task.native_interface),
         custom=custom if len(custom) > 0 else None,
