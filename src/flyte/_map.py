@@ -1,13 +1,13 @@
 import asyncio
 import functools
 import logging
-from typing import overload, Any, AsyncGenerator, AsyncIterator, Generic, Iterable, Iterator, List, Union, cast
+from typing import Any, AsyncGenerator, AsyncIterator, Generic, Iterable, Iterator, List, Union, cast, overload
 
 from flyte.syncify import syncify
 
 from ._group import group
 from ._logging import logger
-from ._task import F, P, R, AsyncFunctionTaskTemplate
+from ._task import AsyncFunctionTaskTemplate, F, P, R
 
 
 class MapAsyncIterator(Generic[P, R]):
@@ -292,6 +292,7 @@ class _Mapper(Generic[P, R]):
                 return_exceptions=return_exceptions,
             ):
                 yield cast(Union[R, Exception], x)
+
 
 @syncify
 async def _map(
