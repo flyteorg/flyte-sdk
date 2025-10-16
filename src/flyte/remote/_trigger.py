@@ -166,7 +166,7 @@ class Trigger(ToJSONMixin):
         ensure_client()
         cfg = get_init_config()
         token = None
-        # task_name_id = None  TODO: implement listing by task name only
+        task_name_id = None
         project_id = None
         task_id = None
         if task_name and task_version:
@@ -177,13 +177,13 @@ class Trigger(ToJSONMixin):
                 org=cfg.org,
                 version=task_version,
             )
-        # elif task_name:  TODO: implement listing by task name only
-        #     task_name_id = task_definition_pb2.TaskName(
-        #         name=task_name,
-        #         project=cfg.project,
-        #         domain=cfg.domain,
-        #         org=cfg.org,
-        #     )
+        elif task_name:
+            task_name_id = task_definition_pb2.TaskName(
+                name=task_name,
+                project=cfg.project,
+                domain=cfg.domain,
+                org=cfg.org,
+            )
         else:
             project_id = identifier_pb2.ProjectIdentifier(
                 organization=cfg.org,
@@ -196,7 +196,7 @@ class Trigger(ToJSONMixin):
                 request=trigger_service_pb2.ListTriggersRequest(
                     project_id=project_id,
                     task_id=task_id,
-                    # task_name=task_name_id,
+                    task_name=task_name_id,
                     request=list_pb2.ListRequest(
                         limit=limit,
                         token=token,
