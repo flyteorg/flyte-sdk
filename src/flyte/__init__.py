@@ -18,16 +18,7 @@ from ._image import Image
 from ._initialize import current_domain, init, init_from_config
 from ._map import map
 from ._pod import PodTemplate
-from ._resources import (
-    AMD_GPU,
-    GPU,
-    HABANA_GAUDI,
-    TPU,
-    Device,
-    DeviceClass,
-    Neuron,
-    Resources,
-)
+from ._resources import AMD_GPU, GPU, HABANA_GAUDI, TPU, Device, DeviceClass, Neuron, Resources
 from ._retry import RetryStrategy
 from ._reusable_environment import ReusePolicy
 from ._run import run, with_runcontext
