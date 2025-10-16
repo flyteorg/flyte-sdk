@@ -10,7 +10,7 @@ The `with_uv_project` method is essential in three specific scenarios:
 When you want to install the exact dependencies specified in `uv.lock`:
 ```python
 image = flyte.Image.from_debian_base().with_uv_project(
-    pyproject_file=pathlib.Path("pyproject.toml"),
+    pyproject_file=pathlib.Path(__file__).parent / "pyproject.toml",
 )
 ```
 This ensures reproducible builds by using the locked versions from `uv.lock`, while `--no-install-project` prevents installing the current project itself (only dependencies).
@@ -19,7 +19,7 @@ This ensures reproducible builds by using the locked versions from `uv.lock`, wh
 When you want to install the python project in the image without copying it into the code bundle (using `copy_style=None`):
 ```python
 image = flyte.Image.from_debian_base().with_uv_project(
-    pyproject_file=pathlib.Path("pyproject.toml"),
+    pyproject_file=pathlib.Path(__file__).parent / "pyproject.toml",
     copy_code=True
 )
 
@@ -84,7 +84,7 @@ env = flyte.TaskEnvironment(
     name="pyproject_test",
     resources=flyte.Resources(memory="250Mi"),
     image=flyte.Image.from_debian_base().with_uv_project(
-        pyproject_file=pathlib.Path("pyproject.toml"),
+        pyproject_file=pathlib.Path(__file__).parent / "pyproject.toml",
     )
 )
 ```
@@ -145,23 +145,28 @@ env = flyte.TaskEnvironment(
 **Project Structure:**
 ```
 uv_workspace/
-├── pyproject.toml      # Workspace definition
-├── uv.lock             # Workspace lock file
-├── src/
-│   ├── pyproject.yaml  # Tasks package definition
-│   └── tasks/          # Main application tasks
-│       ├── __init__.py
-│       └── main.py
-├── bird_feeder/        # Package 1
-│   ├── pyproject.toml
-│   └── src/bird_feeder/
-│       ├── __init__.py
-│       └── actions.py
-└── seeds/              # Package 2
-    ├── pyproject.toml
-    └── src/seeds/
-        ├── __init__.py
-        └── actions.py
+└── albatross/
+    ├── pyproject.toml          # Workspace definition
+    ├── uv.lock                 # Workspace lock file
+    ├── src/
+    │   └── albatross/          # Main application
+    │       ├── __init__.py
+    │       ├── main.py
+    │       └── condor/         # Application submodule
+    │           ├── __init__.py
+    │           └── strategy.py
+    └── packages/
+        ├── bird_feeder/        # Package 1
+        │   ├── pyproject.toml
+        │   └── src/bird_feeder/
+        │       ├── __init__.py
+        │       └── actions.py
+        └── seeds/              # Package 2
+            ├── pyproject.toml
+            └── src/seeds/
+                ├── __init__.py
+                ├── actions.py
+                └── utils.py
 ```
 
 **When to use:**
@@ -171,8 +176,16 @@ uv_workspace/
 
 **Key Configuration:**
 ```python
-# From src/tasks/main.py - points to workspace root
-UV_WORKSPACE_ROOT = Path(Path(__file__)).parent.parent.parent
+# From src/albatross/main.py
+from pathlib import Path
+
+from bird_feeder.actions import get_feeder
+from seeds.actions import get_seed
+from albatross.condor.strategy import get_strategy
+
+import flyte
+
+UV_WORKSPACE_ROOT = Path(__file__).parent.parent.parent
 
 env = flyte.TaskEnvironment(
     name="uv_workspace",
@@ -181,32 +194,40 @@ env = flyte.TaskEnvironment(
         pyproject_file=(UV_WORKSPACE_ROOT / "pyproject.toml"),
         extra_args="--only-group albatross",  # Install specific dependency group
         copy_code=True,
-    )
+    ),
 )
 
 @env.task
 async def albatross_task() -> str:
     get_feeder()
+    get_strategy()
     seed = get_seed(seed_name="Sun Flower seed")
     return f"Get bird feeder and feed with {seed}"
 ```
 
 **Workspace pyproject.toml:**
 ```toml
-[tool.uv.workspace]
-members = ["bird_feeder", "seeds", "tasks"]
+[project]
+name = "albatross"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = ["bird-feeder", "seeds"]
 
 [tool.uv.sources]
 bird-feeder = { workspace = true }
 seeds = { workspace = true }
-src = { workspace = true }
+
+[tool.uv.workspace]
+members = ["packages/*"]
+
+[build-system]
+requires = ["uv_build>=0.9.3,<0.10.0"]
+build-backend = "uv_build"
 
 [dependency-groups]
-# Main albatross task dependencies (matches current example)
 albatross = [
     "bird-feeder",
     "seeds",
-    "tasks",
     "numpy"
 ]
 ```

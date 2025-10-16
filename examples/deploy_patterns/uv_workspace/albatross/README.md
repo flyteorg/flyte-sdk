@@ -58,11 +58,13 @@ all = [
 
 In Flyte task environment:
 ```python
+UV_WORKSPACE_ROOT = Path(__file__).parent.parent.parent
+
 env = flyte.TaskEnvironment(
     name="albatross_env",
     image=flyte.Image.from_debian_base().with_uv_project(
-        pyproject_file=Path("./pyproject.toml"),
-        extra_args="--only-group all",  # Specify dependency group with --only-group argument
+        pyproject_file=UV_WORKSPACE_ROOT / "pyproject.toml",
+        extra_args="--only-group albatross",  # Specify dependency group with --only-group argument
     ),
 )
 ```
