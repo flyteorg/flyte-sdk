@@ -8,7 +8,6 @@ from typing import (
     TYPE_CHECKING,
     Any,
     Callable,
-    Coroutine,
     Dict,
     List,
     Literal,
@@ -155,7 +154,6 @@ class TaskEnvironment(Environment):
     @overload
     def task(
         self,
-        _func: None = None,
         *,
         short_name: Optional[str] = None,
         cache: CacheRequest | None = None,
@@ -168,43 +166,14 @@ class TaskEnvironment(Environment):
         max_inline_io_bytes: int = MAX_INLINE_IO_BYTES,
         queue: Optional[str] = None,
         triggers: Tuple[Trigger, ...] | Trigger = (),
-    ) -> Callable[[F], AsyncFunctionTaskTemplate[P, R, F]]: ...
+    ) -> Callable[[Callable[P, R]], AsyncFunctionTaskTemplate[P, R, Callable[P, R]]]: ...
 
     @overload
     def task(
         self,
         _func: Callable[P, R],
-        *,
-        short_name: Optional[str] = None,
-        cache: CacheRequest | None = None,
-        retries: Union[int, RetryStrategy] = 0,
-        timeout: Union[timedelta, int] = 0,
-        docs: Optional[Documentation] = None,
-        pod_template: Optional[Union[str, PodTemplate]] = None,
-        report: bool = False,
-        interruptible: bool | None = None,
-        max_inline_io_bytes: int = MAX_INLINE_IO_BYTES,
-        queue: Optional[str] = None,
-        triggers: Tuple[Trigger, ...] | Trigger = (),
+        /,
     ) -> AsyncFunctionTaskTemplate[P, R, Callable[P, R]]: ...
-
-    @overload
-    def task(
-        self,
-        _func: Callable[P, Coroutine[Any, Any, R]],
-        *,
-        short_name: Optional[str] = None,
-        cache: CacheRequest | None = None,
-        retries: Union[int, RetryStrategy] = 0,
-        timeout: Union[timedelta, int] = 0,
-        docs: Optional[Documentation] = None,
-        pod_template: Optional[Union[str, PodTemplate]] = None,
-        report: bool = False,
-        interruptible: bool | None = None,
-        max_inline_io_bytes: int = MAX_INLINE_IO_BYTES,
-        queue: Optional[str] = None,
-        triggers: Tuple[Trigger, ...] | Trigger = (),
-    ) -> AsyncFunctionTaskTemplate[P, R, Callable[P, Coroutine[Any, Any, R]]]: ...
 
     def task(
         self,
@@ -221,7 +190,7 @@ class TaskEnvironment(Environment):
         max_inline_io_bytes: int = MAX_INLINE_IO_BYTES,
         queue: Optional[str] = None,
         triggers: Tuple[Trigger, ...] | Trigger = (),
-    ) -> AsyncFunctionTaskTemplate[P, R, F] | Callable[[F], AsyncFunctionTaskTemplate[P, R, F]]:
+    ) -> Callable[[F], AsyncFunctionTaskTemplate[P, R, F]] | AsyncFunctionTaskTemplate[P, R, F]:
         """
         Decorate a function to be a task.
 

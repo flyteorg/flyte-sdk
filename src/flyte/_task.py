@@ -49,7 +49,7 @@ R = TypeVar("R")  # return type
 
 AsyncFunctionType: TypeAlias = Callable[P, Coroutine[Any, Any, R]]
 SyncFunctionType: TypeAlias = Callable[P, R]
-FunctionTypes: TypeAlias = Union[AsyncFunctionType, SyncFunctionType]
+FunctionTypes: TypeAlias = AsyncFunctionType | SyncFunctionType
 F = TypeVar("F", bound=FunctionTypes)
 
 
@@ -291,7 +291,7 @@ class TaskTemplate(Generic[P, R, F]):
         self: TaskTemplate[P, R, AsyncFunctionType], *args: P.args, **kwargs: P.kwargs
     ) -> Coroutine[Any, Any, R]: ...
 
-    def __call__(self: TaskTemplate[P, R, F], *args: P.args, **kwargs: P.kwargs) -> Coroutine[Any, Any, R] | R:
+    def __call__(self, *args: P.args, **kwargs: P.kwargs) -> Coroutine[Any, Any, R] | R:
         """
         This is the entrypoint for an async function task at runtime. It will be called during an execution.
         Please do not override this method, if you simply want to modify the execution behavior, override the

@@ -13,7 +13,10 @@ fmt:
 
 .PHONY: mypy
 mypy:
-	uv run python -m mypy src/ --config-file pyproject.toml
+	uv run python -m mypy --config-file pyproject.toml \
+		src/ \
+		examples/basics/hello_v2.py
+
 
 .PHONY: lint
 lint-fix:

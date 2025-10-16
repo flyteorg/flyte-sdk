@@ -14,13 +14,7 @@ async def hello_worker(id: int) -> str:
     return f"hello, my id is: {id} and I am being run by Action: {ctx.action}"
 
 
-from typing import reveal_type
-
-reveal_type(env.task())
-reveal_type(hello_worker)
-
-
-@env.task
+@env.task()
 async def hello_driver(ids: list[int] = [1, 2, 3]) -> list[str]:
     coros = []
     with flyte.group("fanout-group"):
