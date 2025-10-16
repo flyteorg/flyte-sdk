@@ -6,4 +6,4 @@ This half of the example contains just one Flyte task but is built as a library 
 flyte run --local src/my_task_library/flyte_entities.py library_parent_task
 ```
 
-To build and push this wheel:
+This has been built and pushed to https://pypi.org/project/my-task-library/
