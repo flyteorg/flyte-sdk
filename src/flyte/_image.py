@@ -444,11 +444,11 @@ class Image:
 
     @classmethod
     def _get_default_image_for(
-            cls,
-            python_version: Tuple[int, int],
-            flyte_version: Optional[str] = None,
-            install_flyte: bool = True,
-            platform: Optional[Tuple[Architecture, ...]] = None,
+        cls,
+        python_version: Tuple[int, int],
+        flyte_version: Optional[str] = None,
+        install_flyte: bool = True,
+        platform: Optional[Tuple[Architecture, ...]] = None,
     ) -> Image:
         # Would love a way to move this outside of this class (but still needs to be accessible via Image.auto())
         # this default image definition may need to be updated once there is a released pypi version
@@ -505,14 +505,14 @@ class Image:
 
     @classmethod
     def from_debian_base(
-            cls,
-            python_version: Optional[Tuple[int, int]] = None,
-            flyte_version: Optional[str] = None,
-            install_flyte: bool = True,
-            registry: Optional[str] = None,
-            registry_secret: Optional[str | Secret] = None,
-            name: Optional[str] = None,
-            platform: Optional[Tuple[Architecture, ...]] = None,
+        cls,
+        python_version: Optional[Tuple[int, int]] = None,
+        flyte_version: Optional[str] = None,
+        install_flyte: bool = True,
+        registry: Optional[str] = None,
+        registry_secret: Optional[str | Secret] = None,
+        name: Optional[str] = None,
+        platform: Optional[Tuple[Architecture, ...]] = None,
     ) -> Image:
         """
         Use this method to start using the default base image, built from this library's base Dockerfile
@@ -564,19 +564,19 @@ class Image:
 
     @classmethod
     def from_uv_script(
-            cls,
-            script: Path | str,
-            *,
-            name: str,
-            registry: str | None = None,
-            registry_secret: Optional[str | Secret] = None,
-            python_version: Optional[Tuple[int, int]] = None,
-            index_url: Optional[str] = None,
-            extra_index_urls: Union[str, List[str], Tuple[str, ...], None] = None,
-            pre: bool = False,
-            extra_args: Optional[str] = None,
-            platform: Optional[Tuple[Architecture, ...]] = None,
-            secret_mounts: Optional[SecretRequest] = None,
+        cls,
+        script: Path | str,
+        *,
+        name: str,
+        registry: str | None = None,
+        registry_secret: Optional[str | Secret] = None,
+        python_version: Optional[Tuple[int, int]] = None,
+        index_url: Optional[str] = None,
+        extra_index_urls: Union[str, List[str], Tuple[str, ...], None] = None,
+        pre: bool = False,
+        extra_args: Optional[str] = None,
+        platform: Optional[Tuple[Architecture, ...]] = None,
+        secret_mounts: Optional[SecretRequest] = None,
     ) -> Image:
         """
         Use this method to create a new image with the specified uv script.
@@ -635,13 +635,13 @@ class Image:
         return img.clone(addl_layer=ll)
 
     def clone(
-            self,
-            registry: Optional[str] = None,
-            registry_secret: Optional[str | Secret] = None,
-            name: Optional[str] = None,
-            base_image: Optional[str] = None,
-            python_version: Optional[Tuple[int, int]] = None,
-            addl_layer: Optional[Layer] = None,
+        self,
+        registry: Optional[str] = None,
+        registry_secret: Optional[str | Secret] = None,
+        name: Optional[str] = None,
+        base_image: Optional[str] = None,
+        python_version: Optional[Tuple[int, int]] = None,
+        addl_layer: Optional[Layer] = None,
     ) -> Image:
         """
         Use this method to clone the current image and change the registry and name
@@ -687,8 +687,7 @@ class Image:
 
     @classmethod
     def from_dockerfile(
-            cls, file: Path, registry: str, name: str,
-            platform: Union[Architecture, Tuple[Architecture, ...], None] = None
+        cls, file: Path, registry: str, name: str, platform: Union[Architecture, Tuple[Architecture, ...], None] = None
     ) -> Image:
         """
         Use this method to create a new image with the specified dockerfile. Note you cannot use additional layers
@@ -769,9 +768,9 @@ class Image:
         return new_image
 
     def with_requirements(
-            self,
-            file: str | Path,
-            secret_mounts: Optional[SecretRequest] = None,
+        self,
+        file: str | Path,
+        secret_mounts: Optional[SecretRequest] = None,
     ) -> Image:
         """
         Use this method to create a new image with the specified requirements file layered on top of the current image
@@ -791,13 +790,13 @@ class Image:
         return new_image
 
     def with_pip_packages(
-            self,
-            *packages: str,
-            index_url: Optional[str] = None,
-            extra_index_urls: Union[str, List[str], Tuple[str, ...], None] = None,
-            pre: bool = False,
-            extra_args: Optional[str] = None,
-            secret_mounts: Optional[SecretRequest] = None,
+        self,
+        *packages: str,
+        index_url: Optional[str] = None,
+        extra_index_urls: Union[str, List[str], Tuple[str, ...], None] = None,
+        pre: bool = False,
+        extra_args: Optional[str] = None,
+        secret_mounts: Optional[SecretRequest] = None,
     ) -> Image:
         """
         Use this method to create a new image with the specified pip packages layered on top of the current image
@@ -898,15 +897,15 @@ class Image:
         return new_image
 
     def with_uv_project(
-            self,
-            pyproject_file: str | Path,
-            uvlock: Path | None = None,
-            index_url: Optional[str] = None,
-            extra_index_urls: Union[List[str], Tuple[str, ...], None] = None,
-            pre: bool = False,
-            extra_args: Optional[str] = None,
-            secret_mounts: Optional[SecretRequest] = None,
-            project_install_mode=typing.Literal["dependencies_only", "install_as_package"]
+        self,
+        pyproject_file: str | Path,
+        uvlock: Path | None = None,
+        index_url: Optional[str] = None,
+        extra_index_urls: Union[List[str], Tuple[str, ...], None] = None,
+        pre: bool = False,
+        extra_args: Optional[str] = None,
+        secret_mounts: Optional[SecretRequest] = None,
+        project_install_mode=typing.Literal["dependencies_only", "install_as_package"],
     ) -> Image:
         """
         Use this method to create a new image with the specified uv.lock file layered on top of the current image
@@ -915,7 +914,8 @@ class Image:
 
         By default, this method copies the pyproject.toml and uv.lock files into the image.
 
-        If `project_install_mode` is "install_as_package", it will also copy directory where the pyproject.toml file is located into the image.
+        If `project_install_mode` is "install_as_package", it will also copy directory
+         where the pyproject.toml file is located into the image.
 
         :param pyproject_file: path to the pyproject.toml file, needs to have a corresponding uv.lock file
         :param uvlock: path to the uv.lock file, if not specified, will use the default uv.lock file in the same
@@ -925,7 +925,8 @@ class Image:
         :param pre: whether to allow pre-release versions, default is False
         :param extra_args: extra arguments to pass to pip install, default is None
         :param secret_mounts: list of secret mounts to use for the build process.
-        :param project_install_mode: whether to install the project as a package or only dependencies, default is "dependencies_only"
+        :param project_install_mode: whether to install the project as a package or
+         only dependencies, default is "dependencies_only"
         :return: Image
         """
         if isinstance(pyproject_file, str):
@@ -945,11 +946,11 @@ class Image:
         return new_image
 
     def with_poetry_project(
-            self,
-            pyproject_file: str | Path,
-            poetry_lock: Path | None = None,
-            extra_args: Optional[str] = None,
-            secret_mounts: Optional[SecretRequest] = None,
+        self,
+        pyproject_file: str | Path,
+        poetry_lock: Path | None = None,
+        extra_args: Optional[str] = None,
+        secret_mounts: Optional[SecretRequest] = None,
     ):
         """
         Use this method to create a new image with the specified pyproject.toml layered on top of the current image.
