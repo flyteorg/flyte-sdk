@@ -122,15 +122,12 @@ class Trigger(ToJSONMixin):
 
             resp = await get_client().trigger_service.DeployTrigger(
                 request=trigger_service_pb2.DeployTriggerRequest(
-                    id=identifier_pb2.TriggerIdentifier(
-                        name=identifier_pb2.TriggerName(
-                            name=trigger.name,
-                            task_name=task_name,
-                            org=cfg.org,
-                            project=cfg.project,
-                            domain=cfg.domain,
-                        ),
-                        revision=1,
+                    name=identifier_pb2.TriggerName(
+                        name=trigger.name,
+                        task_name=task_name,
+                        org=cfg.org,
+                        project=cfg.project,
+                        domain=cfg.domain,
                     ),
                     spec=trigger_definition_pb2.TriggerSpec(
                         active=task_trigger.spec.active,
@@ -156,7 +153,7 @@ class Trigger(ToJSONMixin):
         """
         Retrieve a trigger by its name and associated task name.
         """
-        return await TriggerDetails.get(name=name, task_name=task_name)
+        return await TriggerDetails.get.aio(name=name, task_name=task_name)
 
     @syncify
     @classmethod
