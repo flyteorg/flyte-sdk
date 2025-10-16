@@ -35,7 +35,7 @@ from ._trigger import Trigger
 from .models import MAX_INLINE_IO_BYTES, NativeInterface
 
 if TYPE_CHECKING:
-    from ._task import F, P, R, SyncFunctionType, AsyncFunctionType
+    from ._task import F, P, R
 
 
 @rich.repr.auto
@@ -173,7 +173,7 @@ class TaskEnvironment(Environment):
     @overload
     def task(
         self,
-        _func: SyncFunctionType,
+        _func: Callable[P, R],
         *,
         short_name: Optional[str] = None,
         cache: CacheRequest | None = None,
@@ -186,12 +186,12 @@ class TaskEnvironment(Environment):
         max_inline_io_bytes: int = MAX_INLINE_IO_BYTES,
         queue: Optional[str] = None,
         triggers: Tuple[Trigger, ...] | Trigger = (),
-    ) -> AsyncFunctionTaskTemplate[P, R, SyncFunctionType]: ...
+    ) -> AsyncFunctionTaskTemplate[P, R, Callable[P, R]]: ...
 
     @overload
     def task(
         self,
-        _func: AsyncFunctionType,
+        _func: Callable[P, Coroutine[Any, Any, R]],
         *,
         short_name: Optional[str] = None,
         cache: CacheRequest | None = None,
@@ -204,7 +204,7 @@ class TaskEnvironment(Environment):
         max_inline_io_bytes: int = MAX_INLINE_IO_BYTES,
         queue: Optional[str] = None,
         triggers: Tuple[Trigger, ...] | Trigger = (),
-    ) -> AsyncFunctionTaskTemplate[P, R, AsyncFunctionType]: ...
+    ) -> AsyncFunctionTaskTemplate[P, R, Callable[P, Coroutine[Any, Any, R]]]: ...
 
     def task(
         self,
@@ -250,12 +250,6 @@ class TaskEnvironment(Environment):
         if self.reusable is not None:
             if pod_template is not None:
                 raise ValueError("Cannot set pod_template when environment is reusable.")
-
-        @overload
-        def decorator(func: AsyncFunctionType) -> AsyncFunctionTaskTemplate[P, R, AsyncFunctionType]: ...
-
-        @overload
-        def decorator(func: SyncFunctionType) -> AsyncFunctionTaskTemplate[P, R, SyncFunctionType]: ...
 
         def decorator(func: F) -> AsyncFunctionTaskTemplate[P, R, F]:
             short = short_name or func.__name__
@@ -311,7 +305,7 @@ class TaskEnvironment(Environment):
             return tmpl
 
         if _func is None:
-            return decorator
+            return cast(Callable[[F], AsyncFunctionTaskTemplate[P, R, F]], decorator)
         return cast(AsyncFunctionTaskTemplate[P, R, F], decorator(_func))
 
     @property
