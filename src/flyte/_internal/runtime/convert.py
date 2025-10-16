@@ -13,7 +13,7 @@ from flyteidl2.task import common_pb2, task_definition_pb2
 
 import flyte.errors
 import flyte.storage as storage
-from flyte._context import internal_ctx
+from flyte._context import ctx
 from flyte.models import ActionID, NativeInterface, TaskContext
 from flyte.types import TypeEngine, TypeTransformerFailedError
 
@@ -120,10 +120,10 @@ async def convert_from_native_to_inputs(
     # Read custom_context from TaskContext if available (inside task execution)
     # Otherwise use the passed parameter (for remote run initiation)
     context_kvs = None
-    ctx = internal_ctx()
-    if ctx.data.task_context and ctx.data.task_context.custom_context:
+    tctx = ctx()
+    if tctx and tctx.custom_context:
         # Inside a task - read from TaskContext
-        context_to_use = ctx.data.task_context.custom_context
+        context_to_use = tctx.custom_context
         context_kvs = [literals_pb2.KeyValuePair(key=k, value=v) for k, v in context_to_use.items()]
     elif custom_context:
         # Remote run initiation
