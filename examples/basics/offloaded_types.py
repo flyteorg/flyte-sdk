@@ -27,7 +27,7 @@ async def write_and_check_files() -> Dir:
     temp_dir = tempfile.mkdtemp()
     for file in vals:
         async with file.open() as fh:
-            contents = fh.read()
+            contents = await fh.read()
             print(f"File {file.path} contents: {contents}")
             new_file = Path(temp_dir) / file.name
             with open(new_file, "wb") as out:  # noqa: ASYNC230
@@ -48,8 +48,8 @@ async def check_dir(my_dir: Dir):
     async for file in my_dir.walk():
         print(f"File: {file.name}")
         async with file.open() as fh:
-            contents = fh.read()
-            print(f"Contents: {contents.decode('utf-8')}")
+            contents = await fh.read()
+            print(f"Contents: {str(contents, 'utf-8')}")
 
 
 @env.task
@@ -60,4 +60,5 @@ async def create_and_check_dir():
 
 if __name__ == "__main__":
     flyte.init_from_config()
-    flyte.run(create_and_check_dir)
+    r = flyte.run(create_and_check_dir)
+    print(r.url)

@@ -12,7 +12,7 @@ from flyte._environment import Environment
 from flyte._initialize import (
     _get_init_config,
     get_client,
-    get_common_config,
+    get_init_config,
     get_storage,
     requires_initialization,
     requires_storage,
@@ -142,7 +142,7 @@ class _Runner:
         from ._internal.runtime.convert import convert_from_native_to_inputs
         from ._internal.runtime.task_serde import translate_task_to_wire
 
-        cfg = get_common_config()
+        cfg = get_init_config()
         project = self._project or cfg.project
         domain = self._domain or cfg.domain
 
@@ -334,7 +334,7 @@ class _Runner:
         from ._internal import create_controller
         from ._internal.runtime.taskrunner import run_task
 
-        cfg = get_common_config()
+        cfg = get_init_config()
 
         if obj.parent_env is None:
             raise ValueError("Task is not attached to an environment. Please attach the task to an environment.")

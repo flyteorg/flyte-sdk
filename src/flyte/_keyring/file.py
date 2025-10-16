@@ -72,9 +72,9 @@ class SimplePlainTextKeyring(KeyringBackend):
 
     @property
     def file_path(self) -> Path:
-        from flyte._initialize import get_common_config
+        from flyte._initialize import get_init_config
 
-        config_path = get_common_config().source_config_path
+        config_path = get_init_config().source_config_path
         if config_path and str(config_path.parent) == ".flyte":
             # if the config is in a .flyte directory, use that as the path
             return config_path.parent / "keyring.cfg"

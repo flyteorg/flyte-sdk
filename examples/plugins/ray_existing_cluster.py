@@ -64,7 +64,7 @@ async def create_ray_cluster() -> str:
 if __name__ == "__main__":
     flyte.init_from_config()
     run = flyte.run(create_ray_cluster)
-    run.wait(run)
+    run.wait()
     # or get output from an existing run
     # run = Run.get("rcjt69chjnmzghzhhqjw")
     print("run url:", run.url)

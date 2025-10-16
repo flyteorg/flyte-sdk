@@ -31,4 +31,4 @@ if __name__ == "__main__":
     run = flyte.run(hello_driver)
     print(run.name)
     print(run.url)
-    run.wait(run)
+    run.wait()
