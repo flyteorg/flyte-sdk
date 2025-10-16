@@ -211,7 +211,7 @@ def list_imported_modules_as_files(source_path: str, modules: List[ModuleType]) 
     import flyte
     from flyte._utils.lazy_module import is_imported
 
-    files = []
+    files = set()
     flyte_root = os.path.dirname(flyte.__file__)
 
     # These directories contain installed packages or modules from the Python standard library.
@@ -244,9 +244,9 @@ def list_imported_modules_as_files(source_path: str, modules: List[ModuleType]) 
             logger.debug(f"{mod_file} is not in {source_path}")
             continue
 
-        files.append(mod_file)
+        files.add(mod_file)
 
-    return files
+    return list(files)
 
 
 def add_imported_modules_from_source(source_path: str, destination: str, modules: List[ModuleType]):
