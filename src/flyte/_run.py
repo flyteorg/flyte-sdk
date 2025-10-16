@@ -17,7 +17,6 @@ from flyte._initialize import (
     requires_initialization,
     requires_storage,
 )
-from flyte._input_context import _input_context_var
 from flyte._logging import logger
 from flyte._task import P, R, TaskTemplate
 from flyte.models import (
@@ -95,7 +94,7 @@ class _Runner:
         log_level: int | None = None,
         disable_run_cache: bool = False,
         queue: Optional[str] = None,
-        input_context: Dict[str, str] | None = None,
+        custom_context: Dict[str, str] | None = None,
     ):
         from flyte._tools import ipython_check
 
@@ -126,7 +125,7 @@ class _Runner:
         self._log_level = log_level
         self._disable_run_cache = disable_run_cache
         self._queue = queue
-        self._input_context = input_context or {}
+        self._custom_context = custom_context or {}
 
     @requires_initialization
     async def _run_remote(self, obj: TaskTemplate[P, R] | LazyEntity, *args: P.args, **kwargs: P.kwargs) -> Run:
@@ -152,7 +151,7 @@ class _Runner:
         if isinstance(obj, LazyEntity):
             task = await obj.fetch.aio()
             task_spec = task.pb2.spec
-            inputs = await convert_from_native_to_inputs(task.interface, *args, input_context=self._input_context, **kwargs)
+            inputs = await convert_from_native_to_inputs(task.interface, *args, custom_context=self._custom_context, **kwargs)
             version = task.pb2.task_id.version
             code_bundle = None
         else:
@@ -208,7 +207,7 @@ class _Runner:
                 root_dir=cfg.root_dir,
             )
             task_spec = translate_task_to_wire(obj, s_ctx)
-            inputs = await convert_from_native_to_inputs(obj.native_interface, *args, input_context=self._input_context, **kwargs)
+            inputs = await convert_from_native_to_inputs(obj.native_interface, *args, custom_context=self._custom_context, **kwargs)
 
         env = self._env_vars or {}
         if env.get("LOG_LEVEL") is None:
@@ -415,7 +414,7 @@ class _Runner:
                 compiled_image_cache=image_cache,
                 run_base_dir=run_base_dir,
                 report=flyte.report.Report(name=action.name),
-                input_context=self._input_context,
+                custom_context=self._custom_context,
             )
             async with ctx.replace_task_context(tctx):
                 return await run_task(tctx=tctx, controller=controller, task=obj, inputs=inputs)
@@ -466,26 +465,17 @@ class _Runner:
             compiled_image_cache=None,
             report=Report(name=action.name),
             mode="local",
-            input_context=self._input_context,
+            custom_context=self._custom_context,
         )
 
-        # Set input context from with_runcontext if provided
-        context_token = None
-        if self._input_context:
-            context_token = _input_context_var.set(self._input_context.copy())
-
-        try:
-            with ctx.replace_task_context(tctx):
-                # make the local version always runs on a different thread, returns a wrapped future.
-                if obj._call_as_synchronous:
-                    fut = controller.submit_sync(obj, *args, **kwargs)
-                    awaitable = asyncio.wrap_future(fut)
-                    outputs = await awaitable
-                else:
-                    outputs = await controller.submit(obj, *args, **kwargs)
-        finally:
-            if context_token is not None:
-                _input_context_var.reset(context_token)
+        with ctx.replace_task_context(tctx):
+            # make the local version always runs on a different thread, returns a wrapped future.
+            if obj._call_as_synchronous:
+                fut = controller.submit_sync(obj, *args, **kwargs)
+                awaitable = asyncio.wrap_future(fut)
+                outputs = await awaitable
+            else:
+                outputs = await controller.submit(obj, *args, **kwargs)
 
         class _LocalRun(Run):
             def __init__(self, outputs: Tuple[Any, ...] | Any):
@@ -590,7 +580,7 @@ def with_runcontext(
     log_level: int | None = None,
     disable_run_cache: bool = False,
     queue: Optional[str] = None,
-    input_context: Dict[str, str] | None = None,
+    custom_context: Dict[str, str] | None = None,
 ) -> _Runner:
     """
     Launch a new run with the given parameters as the context.
@@ -635,7 +625,7 @@ def with_runcontext(
         set using `flyte.init()`
     :param disable_run_cache: Optional If true, the run cache will be disabled. This is useful for testing purposes.
     :param queue: Optional The queue to use for the run. This is used to specify the cluster to use for the run.
-    :param input_context: Optional Global input context to pass to the task. This will be available via get_input_context()
+    :param custom_context: Optional global input context to pass to the task. This will be available via get_custom_context()
         within the task and will automatically propagate to sub-tasks. Acts as base/default values that can be
         overridden by context managers in the code.
 
@@ -666,7 +656,7 @@ def with_runcontext(
         log_level=log_level,
         disable_run_cache=disable_run_cache,
         queue=queue,
-        input_context=input_context,
+        custom_context=custom_context,
     )
 
 

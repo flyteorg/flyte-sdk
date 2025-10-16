@@ -13,6 +13,7 @@ from flyteidl2.task import common_pb2, task_definition_pb2
 
 import flyte.errors
 import flyte.storage as storage
+from flyte._context import internal_ctx
 from flyte.models import ActionID, NativeInterface, TaskContext
 from flyte.types import TypeEngine, TypeTransformerFailedError
 
@@ -108,7 +109,7 @@ def is_optional_type(tp) -> bool:
 
 
 async def convert_from_native_to_inputs(
-    interface: NativeInterface, *args, input_context: Dict[str, str] | None = None, **kwargs
+    interface: NativeInterface, *args, custom_context: Dict[str, str] | None = None, **kwargs
 ) -> Inputs:
     kwargs = interface.convert_to_kwargs(*args, **kwargs)
 
@@ -116,9 +117,17 @@ async def convert_from_native_to_inputs(
     if missing:
         raise ValueError(f"Missing required inputs: {', '.join(missing)}")
 
+    # Read custom_context from TaskContext if available (inside task execution)
+    # Otherwise use the passed parameter (for remote run initiation)
     context_kvs = None
-    if input_context:
-        context_kvs = [literals_pb2.KeyValuePair(key=k, value=v) for k, v in input_context.items()]
+    ctx = internal_ctx()
+    if ctx.data.task_context and ctx.data.task_context.custom_context:
+        # Inside a task - read from TaskContext
+        context_to_use = ctx.data.task_context.custom_context
+        context_kvs = [literals_pb2.KeyValuePair(key=k, value=v) for k, v in context_to_use.items()]
+    elif custom_context:
+        # Remote run initiation
+        context_kvs = [literals_pb2.KeyValuePair(key=k, value=v) for k, v in custom_context.items()]
 
     if len(interface.inputs) == 0:
         # Handle context even for empty inputs
