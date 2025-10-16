@@ -35,7 +35,6 @@ def get_custom_context() -> dict[str, str]:
     return tctx.custom_context
 
 
-
 @contextmanager
 def custom_context(**context: str):
     """

@@ -176,9 +176,7 @@ class RemoteController(Controller):
                 upload_from_dataplane_base_path=tctx.run_base_dir,
             )
 
-        inputs = await convert.convert_from_native_to_inputs(
-            _task.native_interface, *args, **kwargs
-        )
+        inputs = await convert.convert_from_native_to_inputs(_task.native_interface, *args, **kwargs)
 
         root_dir = Path(code_bundle.destination).absolute() if code_bundle else Path.cwd()
         # Don't set output path in sec context because node executor will set it

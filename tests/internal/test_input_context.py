@@ -1,11 +1,12 @@
 """Tests for custom_context functionality."""
+
 import pytest
 
 import flyte
 from flyte._context import internal_ctx
+from flyte._run import with_runcontext
 from flyte.models import ActionID, RawDataPath, TaskContext
 from flyte.report import Report
-from flyte._run import with_runcontext
 
 
 @pytest.fixture
@@ -322,7 +323,9 @@ def test_with_runcontext_and_context_manager():
         return {"without_override": ctx1, "with_override": ctx2}
 
     # Main block: set base context, then parent task uses context manager for overrides
-    result = with_runcontext(mode="local", custom_context={"project": "base-project", "entity": "base-entity"}).run(parent_task)
+    result = with_runcontext(mode="local", custom_context={"project": "base-project", "entity": "base-entity"}).run(
+        parent_task
+    )
     outputs = result.outputs()
 
     # Without override should have base context
@@ -371,9 +374,7 @@ def test_with_runcontext_parallel_tasks():
         return list(results)
 
     # Main block: context should propagate to both parallel tasks
-    result = with_runcontext(mode="local", custom_context={"project": "parallel-test", "batch": "123"}).run(
-        parent_task
-    )
+    result = with_runcontext(mode="local", custom_context={"project": "parallel-test", "batch": "123"}).run(parent_task)
     outputs = result.outputs()
 
     # Both tasks should have the same context

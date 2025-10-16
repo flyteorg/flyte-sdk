@@ -151,7 +151,9 @@ class _Runner:
         if isinstance(obj, LazyEntity):
             task = await obj.fetch.aio()
             task_spec = task.pb2.spec
-            inputs = await convert_from_native_to_inputs(task.interface, *args, custom_context=self._custom_context, **kwargs)
+            inputs = await convert_from_native_to_inputs(
+                task.interface, *args, custom_context=self._custom_context, **kwargs
+            )
             version = task.pb2.task_id.version
             code_bundle = None
         else:
@@ -207,7 +209,9 @@ class _Runner:
                 root_dir=cfg.root_dir,
             )
             task_spec = translate_task_to_wire(obj, s_ctx)
-            inputs = await convert_from_native_to_inputs(obj.native_interface, *args, custom_context=self._custom_context, **kwargs)
+            inputs = await convert_from_native_to_inputs(
+                obj.native_interface, *args, custom_context=self._custom_context, **kwargs
+            )
 
         env = self._env_vars or {}
         if env.get("LOG_LEVEL") is None:
@@ -626,9 +630,9 @@ def with_runcontext(
         set using `flyte.init()`
     :param disable_run_cache: Optional If true, the run cache will be disabled. This is useful for testing purposes.
     :param queue: Optional The queue to use for the run. This is used to specify the cluster to use for the run.
-    :param custom_context: Optional global input context to pass to the task. This will be available via get_custom_context()
-        within the task and will automatically propagate to sub-tasks. Acts as base/default values that can be
-        overridden by context managers in the code.
+    :param custom_context: Optional global input context to pass to the task. This will be available via
+        get_custom_context() within the task and will automatically propagate to sub-tasks.
+        Acts as base/default values that can be overridden by context managers in the code.
 
     :return: runner
     """
