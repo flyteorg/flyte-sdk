@@ -267,7 +267,7 @@ class UVProjectHandler:
         layer: UVProject, context_path: Path, dockerfile: str, docker_ignore_patterns: list[str] = []
     ) -> str:
         secret_mounts = _get_secret_mounts_layer(layer.secret_mounts)
-        if layer.extra_args and "--no-install-project" in layer.extra_args:
+        if not layer.copy_code:
             # Only Copy pyproject.yaml and uv.lock.
             pyproject_dst = copy_files_to_context(layer.pyproject, context_path)
             uvlock_dst = copy_files_to_context(layer.uvlock, context_path)

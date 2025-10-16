@@ -4,7 +4,7 @@ import flyte
 from my_lib.math_utils import calculate_mean, linear_function
 
 env = flyte.TaskEnvironment(
-    name="uv_project_lib_task_in_src",
+    name="uv_project_lib",
     resources=flyte.Resources(memory="1000Mi"),
     image=(
         flyte.Image.from_debian_base()
