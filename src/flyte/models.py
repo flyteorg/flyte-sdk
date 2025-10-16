@@ -14,7 +14,7 @@ from flyte._interface import extract_return_annotation, literal_to_enum
 from flyte._logging import logger
 
 if TYPE_CHECKING:
-    from flyteidl.core import literals_pb2
+    from flyteidl2.core import literals_pb2
 
     from flyte._internal.imagebuild.image_builder import ImageCache
     from flyte.report import Report
@@ -78,6 +78,37 @@ class ActionID:
 
 
 @rich.repr.auto
+@dataclass
+class PathRewrite:
+    """
+    Configuration for rewriting paths during input loading.
+    """
+
+    # If set, rewrites any path starting with this prefix to the new prefix.
+    old_prefix: str
+    new_prefix: str
+
+    def __post_init__(self):
+        if not self.old_prefix or not self.new_prefix:
+            raise ValueError("Both old_prefix and new_prefix must be non-empty strings.")
+        if self.old_prefix == self.new_prefix:
+            raise ValueError("old_prefix and new_prefix must be different.")
+
+    @classmethod
+    def from_str(cls, pattern: str) -> PathRewrite:
+        """
+        Create a PathRewrite from a string pattern of the form `old_prefix->new_prefix`.
+        """
+        parts = pattern.split("->")
+        if len(parts) != 2:
+            raise ValueError(f"Invalid path rewrite pattern: {pattern}. Expected format 'old_prefix->new_prefix'.")
+        return cls(old_prefix=parts[0], new_prefix=parts[1])
+
+    def __repr__(self) -> str:
+        return f"{self.old_prefix}->{self.new_prefix}"
+
+
+@rich.repr.auto
 @dataclass(frozen=True, kw_only=True)
 class RawDataPath:
     """
@@ -86,6 +117,7 @@ class RawDataPath:
     """
 
     path: str
+    path_rewrite: Optional[PathRewrite] = None
 
     @classmethod
     def from_local_folder(cls, local_folder: str | pathlib.Path | None = None) -> RawDataPath:
@@ -112,7 +144,7 @@ class RawDataPath:
 
     def get_random_remote_path(self, file_name: Optional[str] = None) -> str:
         """
-        Returns a random path for uploading a file/directory to.
+        Returns a random path for uploading a file/directory to. This file/folder will not be created, it's just a path.
 
         :param file_name: If given, will be joined after a randomly generated portion.
         :return:
@@ -128,13 +160,14 @@ class RawDataPath:
 
         protocol = get_protocol(file_prefix)
         if "file" in protocol:
-            local_path = pathlib.Path(file_prefix) / random_string
+            parent_folder = pathlib.Path(file_prefix)
+            parent_folder.mkdir(exist_ok=True, parents=True)
             if file_name:
-                # Only if file name is given do we create the parent, because it may be needed as a folder otherwise
-                local_path = local_path / file_name
-                if not local_path.exists():
-                    local_path.parent.mkdir(exist_ok=True, parents=True)
-                    local_path.touch()
+                random_folder = parent_folder / random_string
+                random_folder.mkdir()
+                local_path = random_folder / file_name
+            else:
+                local_path = parent_folder / random_string
             return str(local_path.absolute())
 
         fs = fsspec.filesystem(protocol)

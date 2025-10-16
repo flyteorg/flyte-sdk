@@ -189,6 +189,14 @@ class EnvPerFileGroup(common.ObjectsPerFileGroup):
     def _filter_objects(self, module: ModuleType) -> Dict[str, Any]:
         return {k: v for k, v in module.__dict__.items() if isinstance(v, flyte.Environment)}
 
+    def list_commands(self, ctx):
+        common.initialize_config(ctx, self.deploy_args.project, self.deploy_args.domain, self.deploy_args.root_dir)
+        return super().list_commands(ctx)
+
+    def get_command(self, ctx, obj_name):
+        common.initialize_config(ctx, self.deploy_args.project, self.deploy_args.domain, self.deploy_args.root_dir)
+        return super().get_command(ctx, obj_name)
+
     def _get_command_for_obj(self, ctx: click.Context, obj_name: str, obj: Any) -> click.Command:
         obj = cast(flyte.Environment, obj)
         return DeployEnvCommand(

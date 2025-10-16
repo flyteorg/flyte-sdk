@@ -9,15 +9,13 @@ from typing import Awaitable, Coroutine, Optional
 
 import grpc.aio
 from aiolimiter import AsyncLimiter
+from flyteidl2.common import identifier_pb2
+from flyteidl2.task import task_definition_pb2
+from flyteidl2.workflow import queue_service_pb2, run_definition_pb2
 from google.protobuf.wrappers_pb2 import StringValue
 
 import flyte.errors
 from flyte._logging import log, logger
-from flyte._protos.common import identifier_pb2
-from flyte._protos.workflow import (
-    queue_service_pb2,
-    task_definition_pb2,
-)
 
 from ._action import Action
 from ._informer import InformerCache
@@ -303,11 +301,10 @@ class Controller:
             async with self._rate_limiter:
                 logger.info(f"Cancelling action: {action.name}")
                 try:
-                    # TODO add support when the queue service supports aborting actions
-                    # await self._queue_service.AbortQueuedAction(
-                    #     queue_service_pb2.AbortQueuedActionRequest(action_id=action.action_id),
-                    #     wait_for_ready=True,
-                    # )
+                    await self._queue_service.AbortQueuedAction(
+                        queue_service_pb2.AbortQueuedActionRequest(action_id=action.action_id),
+                        wait_for_ready=True,
+                    )
                     logger.info(f"Successfully cancelled action: {action.name}")
                 except grpc.aio.AioRpcError as e:
                     if e.code() in [
@@ -330,8 +327,8 @@ class Controller:
         """
         if not action.is_started():
             async with self._rate_limiter:
-                task: queue_service_pb2.TaskAction | None = None
-                trace: queue_service_pb2.TraceAction | None = None
+                task: run_definition_pb2.TaskAction | None = None
+                trace: run_definition_pb2.TraceAction | None = None
                 if action.type == "task":
                     if action.task is None:
                         raise flyte.errors.RuntimeSystemError(
@@ -342,7 +339,7 @@ class Controller:
                     if action.cache_key:
                         cache_key = StringValue(value=action.cache_key)
 
-                    task = queue_service_pb2.TaskAction(
+                    task = run_definition_pb2.TaskAction(
                         id=task_definition_pb2.TaskIdentifier(
                             version=action.task.task_template.id.version,
                             org=action.task.task_template.id.org,

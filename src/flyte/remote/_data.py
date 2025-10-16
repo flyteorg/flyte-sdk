@@ -15,7 +15,7 @@ import httpx
 from flyteidl.service import dataproxy_pb2
 from google.protobuf import duration_pb2
 
-from flyte._initialize import CommonInit, ensure_client, get_client, get_common_config
+from flyte._initialize import CommonInit, ensure_client, get_client, get_init_config, require_project_and_domain
 from flyte.errors import InitializationError, RuntimeSystemError
 from flyte.syncify import syncify
 
@@ -54,6 +54,7 @@ def hash_file(file_path: typing.Union[os.PathLike, str]) -> Tuple[bytes, str, in
     return h.digest(), h.hexdigest(), size
 
 
+@require_project_and_domain
 async def _upload_single_file(
     cfg: CommonInit, fp: Path, verify: bool = True, basedir: str | None = None
 ) -> Tuple[str, str]:
@@ -124,7 +125,7 @@ async def upload_file(fp: Path, verify: bool = True) -> Tuple[str, str]:
     """
     # This is a placeholder implementation. Replace with actual upload logic.
     ensure_client()
-    cfg = get_common_config()
+    cfg = get_init_config()
     if not fp.is_file():
         raise ValueError(f"{fp} is not a single file, upload arg must be a single file.")
     return await _upload_single_file(cfg, fp, verify=verify)
@@ -140,7 +141,7 @@ async def upload_dir(dir_path: Path, verify: bool = True) -> str:
     """
     # This is a placeholder implementation. Replace with actual upload logic.
     ensure_client()
-    cfg = get_common_config()
+    cfg = get_init_config()
     if not dir_path.is_dir():
         raise ValueError(f"{dir_path} is not a directory, upload arg must be a directory.")
 

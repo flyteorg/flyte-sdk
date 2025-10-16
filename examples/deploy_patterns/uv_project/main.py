@@ -42,4 +42,4 @@ if __name__ == "__main__":
     print(run.url)
 
     # Stream the logs from the remote run to the terminal.
-    run.wait(run)
+    run.wait()

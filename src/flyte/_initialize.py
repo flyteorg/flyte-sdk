@@ -3,7 +3,7 @@ from __future__ import annotations
 import functools
 import threading
 import typing
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable, List, Literal, Optional, TypeVar
 
@@ -41,6 +41,7 @@ class _InitConfig(CommonInit):
     client: Optional[ClientSet] = None
     storage: Optional[Storage] = None
     image_builder: "ImageBuildEngine.ImageBuilderType" = "local"
+    images: typing.Dict[str, str] = field(default_factory=dict)
 
     def replace(self, **kwargs) -> _InitConfig:
         return replace(self, **kwargs)
@@ -141,6 +142,7 @@ async def init(
     storage: Storage | None = None,
     batch_size: int = 1000,
     image_builder: ImageBuildEngine.ImageBuilderType = "local",
+    images: typing.Dict[str, str] | None = None,
     source_config_path: Optional[Path] = None,
 ) -> None:
     """
@@ -170,39 +172,17 @@ async def init(
     :param ca_cert_file_path: [optional] str Root Cert to be loaded and used to verify admin
     :param http_proxy_url: [optional] HTTP Proxy to be used for OAuth requests
     :param rpc_retries: [optional] int Number of times to retry the platform calls
-    :param audience: oauth2 audience for the token request. This is used to validate the token
     :param insecure: insecure flag for the client
     :param storage: Optional blob store (S3, GCS, Azure) configuration if needed to access (i.e. using Minio)
     :param org: Optional organization override for the client. Should be set by auth instead.
     :param batch_size: Optional batch size for operations that use listings, defaults to 1000, so limit larger than
       batch_size will be split into multiple requests.
     :param image_builder: Optional image builder configuration, if not provided, the default image builder will be used.
+    :param images: Optional dict of images that can be used by referencing the image name.
     :param source_config_path: Optional path to the source configuration file (This is only used for documentation)
     :return: None
     """
     from flyte._utils import get_cwd_editable_install, org_from_endpoint, sanitize_endpoint
-
-    if endpoint or api_key:
-        if project is None:
-            raise ValueError(
-                "Project must be provided to initialize the client. "
-                "Please set 'project' in the 'task' section of your config file, "
-                "or pass it directly to flyte.init(project='your-project-name')."
-            )
-
-        if domain is None:
-            raise ValueError(
-                "Domain must be provided to initialize the client. "
-                "Please set 'domain' in the 'task' section of your config file, "
-                "or pass it directly to flyte.init(domain='your-domain-name')."
-            )
-
-        if org is None and org_from_endpoint(endpoint) is None:
-            raise ValueError(
-                "Organization must be provided to initialize the client. "
-                "Please set 'org' in the 'task' section of your config file, "
-                "or pass it directly to flyte.init(org='your-org-name')."
-            )
 
     _initialize_logger(log_level=log_level)
 
@@ -238,7 +218,7 @@ async def init(
             else:
                 logger.info("No editable install found, using current working directory as root directory.")
                 root_dir = Path.cwd()
-        root_dir = root_dir or get_cwd_editable_install() or Path.cwd()
+
         _init_config = _InitConfig(
             root_dir=root_dir,
             project=project,
@@ -248,6 +228,7 @@ async def init(
             org=org or org_from_endpoint(endpoint),
             batch_size=batch_size,
             image_builder=image_builder,
+            images=images or {},
             source_config_path=source_config_path,
         )
 
@@ -258,6 +239,7 @@ async def init_from_config(
     root_dir: Path | None = None,
     log_level: int | None = None,
     storage: Storage | None = None,
+    images: tuple[str, ...] | None = None,
 ) -> None:
     """
     Initialize the Flyte system using a configuration file or Config object. This method should be called before any
@@ -276,6 +258,7 @@ async def init_from_config(
     from rich.highlighter import ReprHighlighter
 
     import flyte.config as config
+    from flyte.cli._common import parse_images
 
     cfg: config.Config
     cfg_path: Optional[Path] = None
@@ -301,6 +284,9 @@ async def init_from_config(
 
     logger.info(f"Flyte config initialized as {cfg}", extra={"highlighter": ReprHighlighter()})
 
+    # parse image, this will overwrite the image_refs set in the config file
+    parse_images(cfg, images)
+
     await init.aio(
         org=cfg.task.org,
         project=cfg.task.project,
@@ -317,6 +303,7 @@ async def init_from_config(
         root_dir=root_dir,
         log_level=log_level,
         image_builder=cfg.image.builder,
+        images=cfg.image.image_refs,
         storage=storage,
         source_config_path=cfg_path,
     )
@@ -332,7 +319,7 @@ def _get_init_config() -> Optional[_InitConfig]:
         return _init_config
 
 
-def get_common_config() -> CommonInit:
+def get_init_config() -> _InitConfig:
     """
     Get the current initialization configuration. Thread-safe implementation.
 
@@ -490,6 +477,34 @@ def requires_initialization(func: T) -> T:
     return typing.cast(T, wrapper)
 
 
+def require_project_and_domain(func):
+    """
+    Decorator that ensures the current Flyte configuration defines
+    both 'project' and 'domain'. Raises a clear error if not found.
+    """
+
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        cfg = get_init_config()
+        if cfg.project is None:
+            raise ValueError(
+                "Project must be provided to initialize the client. "
+                "Please set 'project' in the 'task' section of your config file, "
+                "or pass it directly to flyte.init(project='your-project-name')."
+            )
+
+        if cfg.domain is None:
+            raise ValueError(
+                "Domain must be provided to initialize the client. "
+                "Please set 'domain' in the 'task' section of your config file, "
+                "or pass it directly to flyte.init(domain='your-domain-name')."
+            )
+
+        return func(*args, **kwargs)
+
+    return wrapper
+
+
 async def _init_for_testing(
     project: str | None = None,
     domain: str | None = None,
@@ -519,3 +534,31 @@ def replace_client(client):
 
     with _init_lock:
         _init_config = _init_config.replace(client=client)
+
+
+def current_domain() -> str:
+    """
+    Returns the current domain from Runtime environment (on the cluster) or from the initialized configuration.
+    This is safe to be used during `deploy`, `run` and within `task` code.
+
+    NOTE: This will not work if you deploy a task to a domain and then run it in another domain.
+
+    Raises InitializationError if the configuration is not initialized or domain is not set.
+    :return: The current domain
+    """
+    from ._context import ctx
+
+    tctx = ctx()
+    if tctx is not None:
+        domain = tctx.action.domain
+        if domain is not None:
+            return domain
+
+    cfg = _get_init_config()
+    if cfg is None or cfg.domain is None:
+        raise InitializationError(
+            "DomainNotInitializedError",
+            "user",
+            "Domain has not been initialized. Call flyte.init() with a valid domain before using this function.",
+        )
+    return cfg.domain

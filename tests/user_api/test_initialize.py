@@ -10,7 +10,7 @@ from flyte._initialize import (
     _get_init_config,
     _InitConfig,
     get_client,
-    get_common_config,
+    get_init_config,
     get_storage,
     init,
     init_from_config,
@@ -285,12 +285,12 @@ class TestInitialization:
         assert is_initialized() is True
 
     def test_get_common_config_when_initialized(self):
-        """Test get_common_config returns config when initialized"""
+        """Test get_init_config returns config when initialized"""
         test_root = Path("/test/root")
         test_config = _InitConfig(root_dir=test_root, org="test-org", project="test-project", domain="test-domain")
         init_module._init_config = test_config
 
-        common_config = get_common_config()
+        common_config = get_init_config()
 
         assert isinstance(common_config, CommonInit)
         assert common_config.root_dir == test_root
@@ -299,9 +299,9 @@ class TestInitialization:
         assert common_config.domain == "test-domain"
 
     def test_get_common_config_raises_when_not_initialized(self):
-        """Test get_common_config raises error when not initialized"""
+        """Test get_init_config raises error when not initialized"""
         with pytest.raises(InitializationError):
-            get_common_config()
+            get_init_config()
 
     def test_get_storage_when_initialized_with_storage(self):
         """Test get_storage returns storage when initialized"""

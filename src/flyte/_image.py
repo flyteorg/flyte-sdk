@@ -12,8 +12,6 @@ from typing import TYPE_CHECKING, ClassVar, Dict, List, Literal, Optional, Tuple
 import rich.repr
 from packaging.version import Version
 
-from flyte._utils import update_hasher_for_source
-
 if TYPE_CHECKING:
     from flyte import Secret, SecretRequest
 
@@ -171,15 +169,15 @@ class UVProject(PipOption, Layer):
 
     def validate(self):
         if not self.pyproject.exists():
-            raise FileNotFoundError(f"pyproject.toml file {self.pyproject} does not exist")
+            raise FileNotFoundError(f"pyproject.toml file {self.pyproject.resolve()} does not exist")
         if not self.pyproject.is_file():
-            raise ValueError(f"Pyproject file {self.pyproject} is not a file")
+            raise ValueError(f"Pyproject file {self.pyproject.resolve()} is not a file")
         if not self.uvlock.exists():
-            raise ValueError(f"UVLock file {self.uvlock} does not exist")
+            raise ValueError(f"UVLock file {self.uvlock.resolve()} does not exist")
         super().validate()
 
     def update_hash(self, hasher: hashlib._Hash):
-        from ._utils import filehash_update
+        from ._utils import filehash_update, update_hasher_for_source
 
         super().update_hash(hasher)
         if not self.copy_code:
@@ -211,7 +209,7 @@ class PoetryProject(Layer):
         super().validate()
 
     def update_hash(self, hasher: hashlib._Hash):
-        from ._utils import filehash_update
+        from ._utils import filehash_update, update_hasher_for_source
 
         hash_input = ""
         if self.extra_args:
@@ -402,6 +400,8 @@ class Image:
     name: Optional[str] = field(default=None)
     platform: Tuple[Architecture, ...] = field(default=("linux/amd64",))
     python_version: Tuple[int, int] = field(default_factory=_detect_python_version)
+    # Refer to the image_refs (name:image-uri) set in CLI or config
+    _ref_name: Optional[str] = field(default=None)
 
     # Layers to be added to the image. In init, because frozen, but users shouldn't access, so underscore.
     _layers: Tuple[Layer, ...] = field(default_factory=tuple)
@@ -418,6 +418,9 @@ class Image:
 
     # class-level token not included in __init__
     _token: ClassVar[object] = object()
+
+    # Underscore cuz we may rename in the future, don't expose for now,
+    _image_registry_secret: Optional[Secret] = None
 
     # check for the guard that we put in place
     def __post_init__(self):
@@ -507,6 +510,7 @@ class Image:
         flyte_version: Optional[str] = None,
         install_flyte: bool = True,
         registry: Optional[str] = None,
+        registry_secret: Optional[str | Secret] = None,
         name: Optional[str] = None,
         platform: Optional[Tuple[Architecture, ...]] = None,
     ) -> Image:
@@ -518,6 +522,7 @@ class Image:
         :param flyte_version: Union version to use
         :param install_flyte: If True, will install the flyte library in the image
         :param registry: Registry to use for the image
+        :param registry_secret: Secret to use to pull/push the private image.
         :param name: Name of the image if you want to override the default name
         :param platform: Platform to use for the image, default is linux/amd64, use tuple for multiple values
             Example: ("linux/amd64", "linux/arm64")
@@ -535,7 +540,7 @@ class Image:
         )
 
         if registry or name:
-            return base_image.clone(registry=registry, name=name)
+            return base_image.clone(registry=registry, name=name, registry_secret=registry_secret)
 
         return base_image
 
@@ -551,12 +556,20 @@ class Image:
         return img
 
     @classmethod
+    def from_ref_name(cls, name: str) -> Image:
+        # NOTE: set image name as _ref_name to enable adding additional layers.
+        # See: https://github.com/flyteorg/flyte-sdk/blob/14de802701aab7b8615ffb99c650a36305ef01f7/src/flyte/_image.py#L642
+        img = cls._new(name=name, _ref_name=name)
+        return img
+
+    @classmethod
     def from_uv_script(
         cls,
         script: Path | str,
         *,
         name: str,
         registry: str | None = None,
+        registry_secret: Optional[str | Secret] = None,
         python_version: Optional[Tuple[int, int]] = None,
         index_url: Optional[str] = None,
         extra_index_urls: Union[str, List[str], Tuple[str, ...], None] = None,
@@ -585,6 +598,7 @@ class Image:
 
         :param name: name of the image
         :param registry: registry to use for the image
+        :param registry_secret: Secret to use to pull/push the private image.
         :param python_version: Python version to use for the image, if not specified, will use the current Python
         version
         :param script: path to the uv script
@@ -610,14 +624,22 @@ class Image:
             secret_mounts=_ensure_tuple(secret_mounts) if secret_mounts else None,
         )
 
-        img = cls.from_debian_base(registry=registry, name=name, python_version=python_version, platform=platform)
+        img = cls.from_debian_base(
+            registry=registry,
+            registry_secret=registry_secret,
+            name=name,
+            python_version=python_version,
+            platform=platform,
+        )
 
         return img.clone(addl_layer=ll)
 
     def clone(
         self,
         registry: Optional[str] = None,
+        registry_secret: Optional[str | Secret] = None,
         name: Optional[str] = None,
+        base_image: Optional[str] = None,
         python_version: Optional[Tuple[int, int]] = None,
         addl_layer: Optional[Layer] = None,
     ) -> Image:
@@ -625,12 +647,14 @@ class Image:
         Use this method to clone the current image and change the registry and name
 
         :param registry: Registry to use for the image
+        :param registry_secret: Secret to use to pull/push the private image.
         :param name: Name of the image
         :param python_version: Python version for the image, if not specified, will use the current Python version
         :param addl_layer: Additional layer to add to the image. This will be added to the end of the layers.
-
         :return:
         """
+        from flyte import Secret
+
         if addl_layer and self.dockerfile:
             # We don't know how to inspect dockerfiles to know what kind it is (OS, python version, uv vs poetry, etc)
             # so there's no guarantee any of the layering logic will work.
@@ -640,19 +664,23 @@ class Image:
             )
         registry = registry if registry else self.registry
         name = name if name else self.name
+        registry_secret = registry_secret if registry_secret else self._image_registry_secret
+        base_image = base_image if base_image else self.base_image
         if addl_layer and (not name):
             raise ValueError(
                 f"Cannot add additional layer {addl_layer} to an image without name. Please first clone()."
             )
         new_layers = (*self._layers, addl_layer) if addl_layer else self._layers
         img = Image._new(
-            base_image=self.base_image,
+            base_image=base_image,
             dockerfile=self.dockerfile,
             registry=registry,
             name=name,
             platform=self.platform,
             python_version=python_version or self.python_version,
             _layers=new_layers,
+            _image_registry_secret=Secret(key=registry_secret) if isinstance(registry_secret, str) else registry_secret,
+            _ref_name=self._ref_name,
         )
 
         return img

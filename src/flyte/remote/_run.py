@@ -5,11 +5,11 @@ from typing import AsyncGenerator, AsyncIterator, Literal, Tuple
 
 import grpc
 import rich.repr
+from flyteidl2.common import identifier_pb2, list_pb2
+from flyteidl2.workflow import run_definition_pb2, run_service_pb2
 
-from flyte._initialize import ensure_client, get_client, get_common_config
+from flyte._initialize import ensure_client, get_client, get_init_config
 from flyte._logging import logger
-from flyte._protos.common import identifier_pb2, list_pb2
-from flyte._protos.workflow import run_definition_pb2, run_service_pb2
 from flyte.syncify import syncify
 
 from . import Action, ActionDetails, ActionInputs, ActionOutputs
@@ -97,7 +97,7 @@ class Run(ToJSONMixin):
                 ),
             )
 
-        cfg = get_common_config()
+        cfg = get_init_config()
         i = 0
         while True:
             req = list_pb2.ListRequest(
@@ -316,7 +316,7 @@ class RunDetails(ToJSONMixin):
         :param name: The name of the run.
         """
         ensure_client()
-        cfg = get_common_config()
+        cfg = get_init_config()
         return await RunDetails.get_details.aio(
             run_id=identifier_pb2.RunIdentifier(
                 org=cfg.org,
