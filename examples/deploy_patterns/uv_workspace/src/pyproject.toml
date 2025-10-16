@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "examples"
 requires-python = ">=3.10"
 dependencies = [
-    "flyte>=2.0.0b22", # make sure that flyte is added to dependencies, or it will be excluded by uv sync
+    "flyte>=2.0.0b24", # make sure that flyte is added to dependencies, or it will be excluded by uv sync
     "bird-feeder",
     "seeds",
 ]
