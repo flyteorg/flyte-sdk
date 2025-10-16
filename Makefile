@@ -13,7 +13,11 @@ fmt:
 
 .PHONY: mypy
 mypy:
-	uv run python -m mypy src/ --config-file pyproject.toml
+	uv run python -m mypy --config-file pyproject.toml \
+		src/ \
+		examples/basics/hello.py \
+		examples/basics/hello_v2.py
+
 
 .PHONY: lint
 lint-fix:
@@ -54,12 +58,6 @@ check-import-profile:
 	awk '{print $$NF}' updated_flyte_importtime.txt > updated_filtered_flyte_importtime.txt
 	diff import_profiles/filtered_flyte_importtime.txt updated_filtered_flyte_importtime.txt || (echo "Import profile mismatch!" && exit 1)
 	rm -f updated_flyte_importtime.txt updated_filtered_flyte_importtime.txt
-
-.PHONY: copy-protos
-copy-protos: export CLOUD_REPO_PATH ?= ../cloud
-copy-protos:
-	uv run ./maint_tools/copy_pb_python_from_cloud.py ${CLOUD_REPO_PATH}
-
 
 .PHONY: unit_test
 unit_test: ## Test the code with pytest

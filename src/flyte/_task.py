@@ -20,6 +20,7 @@ from typing import (
     TypeVar,
     Union,
     cast,
+    overload,
 )
 
 from flyte._pod import PodTemplate
@@ -48,11 +49,12 @@ R = TypeVar("R")  # return type
 
 AsyncFunctionType: TypeAlias = Callable[P, Coroutine[Any, Any, R]]
 SyncFunctionType: TypeAlias = Callable[P, R]
-FunctionTypes: TypeAlias = Union[AsyncFunctionType, SyncFunctionType]
+FunctionTypes: TypeAlias = AsyncFunctionType | SyncFunctionType
+F = TypeVar("F", bound=FunctionTypes)
 
 
 @dataclass(kw_only=True)
-class TaskTemplate(Generic[P, R]):
+class TaskTemplate(Generic[P, R, F]):
     """
     Task template is a template for a task that can be executed. It defines various parameters for the task, which
     can be defined statically at the time of task definition or dynamically at the time of task invocation using
@@ -226,6 +228,14 @@ class TaskTemplate(Generic[P, R]):
     def native_interface(self) -> NativeInterface:
         return self.interface
 
+    @overload
+    async def aio(self: TaskTemplate[P, R, SyncFunctionType], *args: P.args, **kwargs: P.kwargs) -> R: ...
+
+    @overload
+    async def aio(
+        self: TaskTemplate[P, R, AsyncFunctionType], *args: P.args, **kwargs: P.kwargs
+    ) -> Coroutine[Any, Any, R]: ...
+
     async def aio(self, *args: P.args, **kwargs: P.kwargs) -> Coroutine[Any, Any, R] | R:
         """
         The aio function allows executing "sync" tasks, in an async context. This helps with migrating v1 defined sync
@@ -249,7 +259,6 @@ class TaskTemplate(Generic[P, R]):
         :param kwargs:
         :return:
         """
-
         ctx = internal_ctx()
         if ctx.is_task_context():
             from ._internal.controllers import get_controller
@@ -273,6 +282,14 @@ class TaskTemplate(Generic[P, R]):
             # Local execute, just stay out of the way, but because .aio is used, we want to return an awaitable,
             # even for synchronous tasks. This is to support migration.
             return self.forward(*args, **kwargs)
+
+    @overload
+    def __call__(self: TaskTemplate[P, R, SyncFunctionType], *args: P.args, **kwargs: P.kwargs) -> R: ...
+
+    @overload
+    def __call__(
+        self: TaskTemplate[P, R, AsyncFunctionType], *args: P.args, **kwargs: P.kwargs
+    ) -> Coroutine[Any, Any, R]: ...
 
     def __call__(self, *args: P.args, **kwargs: P.kwargs) -> Coroutine[Any, Any, R] | R:
         """
@@ -425,13 +442,13 @@ class TaskTemplate(Generic[P, R]):
 
 
 @dataclass(kw_only=True)
-class AsyncFunctionTaskTemplate(TaskTemplate[P, R]):
+class AsyncFunctionTaskTemplate(TaskTemplate[P, R, F]):
     """
     A task template that wraps an asynchronous functions. This is automatically created when an asynchronous function
     is decorated with the task decorator.
     """
 
-    func: FunctionTypes
+    func: F
     plugin_config: Optional[Any] = None  # This is used to pass plugin specific configuration
 
     def __post_init__(self):
