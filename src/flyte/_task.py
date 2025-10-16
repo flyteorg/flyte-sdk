@@ -89,6 +89,7 @@ class TaskTemplate(Generic[P, R, F]):
     :param pod_template: Optional The pod template to use for the task.
     :param report: Optional Whether to report the task execution to the Flyte console, defaults to False.
     :param queue: Optional The queue to use for the task. If not provided, the default queue will be used.
+    :param debuggable: Optional Whether the task supports debugging capabilities, defaults to False.
     """
 
     name: str
@@ -109,6 +110,7 @@ class TaskTemplate(Generic[P, R, F]):
     pod_template: Optional[Union[str, PodTemplate]] = None
     report: bool = False
     queue: Optional[str] = None
+    debuggable: bool = False
 
     parent_env: Optional[weakref.ReferenceType[TaskEnvironment]] = None
     parent_env_name: Optional[str] = None
@@ -450,6 +452,7 @@ class AsyncFunctionTaskTemplate(TaskTemplate[P, R, F]):
 
     func: F
     plugin_config: Optional[Any] = None  # This is used to pass plugin specific configuration
+    debuggable: bool = True
 
     def __post_init__(self):
         super().__post_init__()
