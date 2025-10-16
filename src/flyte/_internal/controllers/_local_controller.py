@@ -186,6 +186,7 @@ class LocalController:
         tctx = ctx.data.task_context
         if not tctx:
             raise flyte.errors.NotInTaskContextError("BadContext", "Task context not initialized")
+
         converted_inputs = convert.Inputs.empty()
         if _interface.inputs:
             converted_inputs = await convert.convert_from_native_to_inputs(_interface, *args, **kwargs)
