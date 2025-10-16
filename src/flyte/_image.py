@@ -418,6 +418,9 @@ class Image:
     # class-level token not included in __init__
     _token: ClassVar[object] = object()
 
+    # Underscore cuz we may rename in the future, don't expose for now,
+    _image_registry_secret: Optional[Secret] = None
+
     # check for the guard that we put in place
     def __post_init__(self):
         if object.__getattribute__(self, "__dict__").pop("_guard", None) is not Image._token:
@@ -506,6 +509,7 @@ class Image:
         flyte_version: Optional[str] = None,
         install_flyte: bool = True,
         registry: Optional[str] = None,
+        registry_secret: Optional[str | Secret] = None,
         name: Optional[str] = None,
         platform: Optional[Tuple[Architecture, ...]] = None,
     ) -> Image:
@@ -517,6 +521,7 @@ class Image:
         :param flyte_version: Union version to use
         :param install_flyte: If True, will install the flyte library in the image
         :param registry: Registry to use for the image
+        :param registry_secret: Secret to use to pull/push the private image.
         :param name: Name of the image if you want to override the default name
         :param platform: Platform to use for the image, default is linux/amd64, use tuple for multiple values
             Example: ("linux/amd64", "linux/arm64")
@@ -534,7 +539,7 @@ class Image:
         )
 
         if registry or name:
-            return base_image.clone(registry=registry, name=name)
+            return base_image.clone(registry=registry, name=name, registry_secret=registry_secret)
 
         return base_image
 
@@ -563,6 +568,7 @@ class Image:
         *,
         name: str,
         registry: str | None = None,
+        registry_secret: Optional[str | Secret] = None,
         python_version: Optional[Tuple[int, int]] = None,
         index_url: Optional[str] = None,
         extra_index_urls: Union[str, List[str], Tuple[str, ...], None] = None,
@@ -591,6 +597,7 @@ class Image:
 
         :param name: name of the image
         :param registry: registry to use for the image
+        :param registry_secret: Secret to use to pull/push the private image.
         :param python_version: Python version to use for the image, if not specified, will use the current Python
         version
         :param script: path to the uv script
@@ -616,13 +623,20 @@ class Image:
             secret_mounts=_ensure_tuple(secret_mounts) if secret_mounts else None,
         )
 
-        img = cls.from_debian_base(registry=registry, name=name, python_version=python_version, platform=platform)
+        img = cls.from_debian_base(
+            registry=registry,
+            registry_secret=registry_secret,
+            name=name,
+            python_version=python_version,
+            platform=platform,
+        )
 
         return img.clone(addl_layer=ll)
 
     def clone(
         self,
         registry: Optional[str] = None,
+        registry_secret: Optional[str | Secret] = None,
         name: Optional[str] = None,
         base_image: Optional[str] = None,
         python_version: Optional[Tuple[int, int]] = None,
@@ -632,12 +646,14 @@ class Image:
         Use this method to clone the current image and change the registry and name
 
         :param registry: Registry to use for the image
+        :param registry_secret: Secret to use to pull/push the private image.
         :param name: Name of the image
         :param python_version: Python version for the image, if not specified, will use the current Python version
         :param addl_layer: Additional layer to add to the image. This will be added to the end of the layers.
-
         :return:
         """
+        from flyte import Secret
+
         if addl_layer and self.dockerfile:
             # We don't know how to inspect dockerfiles to know what kind it is (OS, python version, uv vs poetry, etc)
             # so there's no guarantee any of the layering logic will work.
@@ -647,6 +663,7 @@ class Image:
             )
         registry = registry if registry else self.registry
         name = name if name else self.name
+        registry_secret = registry_secret if registry_secret else self._image_registry_secret
         base_image = base_image if base_image else self.base_image
         if addl_layer and (not name):
             raise ValueError(
@@ -661,6 +678,7 @@ class Image:
             platform=self.platform,
             python_version=python_version or self.python_version,
             _layers=new_layers,
+            _image_registry_secret=Secret(key=registry_secret) if isinstance(registry_secret, str) else registry_secret,
             _ref_name=self._ref_name,
         )
 

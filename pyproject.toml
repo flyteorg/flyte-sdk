@@ -7,7 +7,6 @@ authors = [{ name = "Ketan Umare", email = "kumare3@users.noreply.github.com" }]
 requires-python = ">=3.10"
 dependencies = [
     "aiofiles>=24.1.0",
-    # 8.2.0 has a bug https://github.com/pallets/click/issues/2897
     "click>=8.2.1",
     "flyteidl>=1.15.4b0,<2.0.0",
     "cloudpickle>=3.1.1",
@@ -26,7 +25,7 @@ dependencies = [
     "mashumaro",
     "dataclasses_json", # TODO: remove this dependency once we remove dataclasses_json from the code
     "aiolimiter>=1.2.1",
-    "flyteidl2==2.0.0a8",
+    "flyteidl2==0.1.0.dev97388",
 ]
 
 [project.scripts]
@@ -127,7 +126,7 @@ select = [
     "FURB",
     "RUF",
 ]
-ignore = ["PGH003", "PLC0415", "ASYNC210"]
+ignore = ["PGH003", "PLC0415", "ASYNC210", "FURB122"]
 
 [tool.ruff.lint.per-file-ignores]
 "examples/*" = ["E402"]
