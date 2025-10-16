@@ -4,6 +4,7 @@ This module provides functions to load data from various sources,
 including APIs and local files. It has no Flyte dependencies and
 can be used independently.
 """
+
 import json
 from pathlib import Path
 from typing import Any

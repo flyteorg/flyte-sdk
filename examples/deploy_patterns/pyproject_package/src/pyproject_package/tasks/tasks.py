@@ -7,9 +7,7 @@ from pyproject_package.models import analyzer
 
 env = flyte.TaskEnvironment(
     name="data_pipeline",
-    image=flyte.Image.from_debian_base().with_uv_project(
-        pyproject_file=pathlib.Path("pyproject.toml")
-    ),
+    image=flyte.Image.from_debian_base().with_uv_project(pyproject_file=pathlib.Path("pyproject.toml")),
     resources=flyte.Resources(memory="512Mi", cpu="500m"),
 )
 
@@ -73,9 +71,7 @@ async def analyze_task(processed_data: list[dict[str, Any]]) -> str:
     stats = analyzer.calculate_statistics(processed_data)
 
     print("Generating report...")
-    report = analyzer.generate_report(
-        {"basic": stats, "aggregated": aggregated}
-    )
+    report = analyzer.generate_report({"basic": stats, "aggregated": aggregated})
 
     print("\n" + report)
     return report

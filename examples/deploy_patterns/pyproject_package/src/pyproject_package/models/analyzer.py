@@ -3,6 +3,7 @@
 This module provides functions to analyze processed data and generate reports.
 It uses numpy for numerical operations and has no Flyte dependencies.
 """
+
 from typing import Any
 
 import numpy as np

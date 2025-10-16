@@ -9,7 +9,6 @@ from the data and models modules. It demonstrates:
 """
 
 import flyte
-
 from pyproject_package.tasks.tasks import pipeline
 
 
@@ -32,20 +31,6 @@ def main():
     # to ensure the example works reliably
     print("Starting data pipeline...")
     print(f"Target API: {example_url}")
-
-    # Create mock data for demonstration
-    mock_data = {
-        "items": [
-            {"id": 1, "value": 10.5, "category": "Alpha"},
-            {"id": 2, "value": 20.3, "category": "Beta"},
-            {"id": 3, "value": 15.7, "category": "Alpha"},
-            {"id": 4, "value": 8.9, "category": "Gamma"},
-            {"id": 5, "value": 22.1, "category": "Beta"},
-            {"id": 6, "value": 12.4, "category": "Alpha"},
-            {"id": 7, "value": 18.6, "category": "Gamma"},
-            {"id": 8, "value": 25.0, "category": "Beta"},
-        ]
-    }
 
     # To run remotely, uncomment the following:
     run = flyte.run(pipeline, api_url=example_url)

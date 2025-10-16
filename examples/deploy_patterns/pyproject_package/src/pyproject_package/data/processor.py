@@ -3,6 +3,7 @@
 This module provides functions to clean, transform, and aggregate data.
 It has no Flyte dependencies and can be used independently.
 """
+
 import asyncio
 from typing import Any
 
@@ -119,9 +120,9 @@ async def aggregate_data(items: list[dict[str, Any]]) -> dict[str, Any]:
         aggregated[category]["values"].append(item["value"])
 
     # Calculate averages
-    for category in aggregated:
-        total = aggregated[category]["total_value"]
-        count = aggregated[category]["count"]
-        aggregated[category]["average_value"] = total / count if count > 0 else 0.0
+    for category, v in aggregated.items():
+        total = v["total_value"]
+        count = v["count"]
+        v["average_value"] = total / count if count > 0 else 0.0
 
     return {"categories": aggregated, "total_items": len(items)}
