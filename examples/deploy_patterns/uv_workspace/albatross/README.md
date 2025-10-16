@@ -1,36 +1,43 @@
 
 # Flyte SDK: UV Workspace Deployment Pattern
 
-UV workspace is useful for projects that have multiple project folders where some of them are dependencies of a main project. This example demonstrates how to set up a UV workspace in a Flyte task environment. In this example, the `bird_feeder` and `seeds` projects are dependencies required by the Flyte task and will be installed in the UV workspace under editable mode.
+UV workspace is useful for projects that have multiple project folders where some of them are dependencies of a main project. This example demonstrates how to set up a UV workspace in a Flyte task environment. In this example, the `bird_feeder` and `seeds` packages are workspace dependencies required by the Flyte task and will be installed in the UV workspace under editable mode.
 
 ## Project Structure
 
 ```
-uv_workspace/
+albatross/
 ├── pyproject.toml              # Workspace root configuration
 ├── uv.lock                     # Lock file for dependencies
-├── bird_feeder/                # bird_feeder package
-│   ├── pyproject.toml          # pyproject.toml for bird_feeder package
-│   └── bird_feeder/
-│       └── actions.py          # bird_feeder actions
-├── seeds/                      # seeds package
-│   ├── pyproject.toml          # pyproject.toml for seeds package
-│   └── seeds/
-│       └── actions.py          # Seeds actions
-└── src/                        # Main project source
-    ├── pyproject.toml
-    └── tasks/
-        └── albatross.py        # Flyte task definition
+├── packages/                   # Workspace packages
+│   ├── bird_feeder/            # bird_feeder package
+│   │   ├── pyproject.toml
+│   │   └── src/bird_feeder/
+│   │       ├── __init__.py
+│   │       └── actions.py
+│   └── seeds/                  # seeds package
+│       ├── pyproject.toml
+│       └── src/seeds/
+│           ├── __init__.py
+│           ├── actions.py
+│           └── utils.py
+└── src/                        # Main application source
+    └── albatross/
+        ├── __init__.py
+        ├── main.py             # Flyte task definition
+        └── condor/             # Application submodule
+            ├── __init__.py
+            └── strategy.py
 ```
 
 ##  Testing This Example
 Execute the flyte command directly:
 ```bash
-flyte -vvv -c <YOUR_CONFIG_FILE_PATH> run --root-dir `pwd`/src src/tasks/albatross.py albatross_task
+flyte -vvv -c <YOUR_CONFIG_FILE_PATH> run --root-dir `pwd`/src src/albatross/main.py albatross_task
 ```
 Or just run python script:
 ```bash
-python src/tasks/albatross.py
+python src/albatross/main.py
 ```
 
 ##  Issues With `--root-dir`
@@ -46,25 +53,41 @@ It is recommended to specify dependency groups in order to exclude unrelated dep
 
 In pyproject.toml:
 ```toml
-# other settings
+[project]
+name = "albatross"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = ["bird-feeder", "seeds"]
+
+[tool.uv.sources]
+bird-feeder = { workspace = true }
+seeds = { workspace = true }
+
+[tool.uv.workspace]
+members = ["packages/*"]
 
 [dependency-groups]
-all = [
-    "albatross",
+albatross = [
     "bird-feeder",
     "seeds",
+    "numpy"
 ]
 ```
 
 In Flyte task environment:
 ```python
+from pathlib import Path
+import flyte
+
 UV_WORKSPACE_ROOT = Path(__file__).parent.parent.parent
 
 env = flyte.TaskEnvironment(
-    name="albatross_env",
-    image=flyte.Image.from_debian_base().with_uv_project(
-        pyproject_file=UV_WORKSPACE_ROOT / "pyproject.toml",
+    name="uv_workspace",
+    image=flyte.Image.from_debian_base()
+    .with_uv_project(
+        pyproject_file=(UV_WORKSPACE_ROOT / "pyproject.toml"),
         extra_args="--only-group albatross",  # Specify dependency group with --only-group argument
+        copy_code=True,
     ),
 )
 ```
