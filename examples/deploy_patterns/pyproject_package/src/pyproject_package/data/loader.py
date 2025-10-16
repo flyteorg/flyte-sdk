@@ -11,7 +11,7 @@ from typing import Any
 import httpx
 
 
-async def fetch_data_from_api(url: str) -> dict[str, Any]:
+async def fetch_data_from_api(url: str) -> list[dict[str, Any]]:
     """Fetch data from an API endpoint asynchronously.
 
     Args:

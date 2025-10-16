@@ -26,7 +26,7 @@ env = flyte.TaskEnvironment(
 
 
 @env.task
-async def fetch_task(url: str) -> dict[str, Any]:
+async def fetch_task(url: str) -> list[dict[str, Any]]:
     """Fetch data from an API endpoint.
 
     This task demonstrates async execution and external API calls.
@@ -106,7 +106,7 @@ async def pipeline(api_url: str) -> str:
     """
     # Chain tasks together
     raw_data = await fetch_task(url=api_url)
-    processed_data = await process_task(raw_data=raw_data)
+    processed_data = await process_task(raw_data=raw_data[0])
     report = await analyze_task(processed_data=processed_data)
 
     return report
