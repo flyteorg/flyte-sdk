@@ -267,7 +267,7 @@ class UVProjectHandler:
         layer: UVProject, context_path: Path, dockerfile: str, docker_ignore_patterns: list[str] = []
     ) -> str:
         secret_mounts = _get_secret_mounts_layer(layer.secret_mounts)
-        if not layer.copy_code:
+        if layer.project_install_mode == "dependencies_only":
             pip_install_args = " ".join(layer.get_pip_install_args())
             if "--no-install-project" not in pip_install_args:
                 pip_install_args += " --no-install-project"

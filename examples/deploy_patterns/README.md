@@ -20,7 +20,7 @@ When you want to install the python project in the image without copying it into
 ```python
 image = flyte.Image.from_debian_base().with_uv_project(
     pyproject_file=pathlib.Path(__file__).parent / "pyproject.toml",
-    copy_code=True
+    project_install_mode="install_as_package",
 )
 
 # Deploy with copy_style="none" to bake code into image
@@ -34,7 +34,7 @@ When your task's pyproject and a plugin's pyproject are in different paths (e.g.
 # Example: Plugin located outside the main project structure
 image = flyte.Image.from_debian_base().with_uv_project(
     pyproject_file=pathlib.Path("/tmp/my_plugin/pyproject.toml"),
-    copy_code=True
+    project_install_mode="install_as_package",
 )
 ```
 Fast register requires all code to be in a single tree for the code bundle, but when dependencies span multiple directories, you need `with_uv_project` to explicitly install them during the image build phase.
@@ -193,7 +193,7 @@ env = flyte.TaskEnvironment(
     .with_uv_project(
         pyproject_file=(UV_WORKSPACE_ROOT / "pyproject.toml"),
         extra_args="--only-group albatross",  # Install specific dependency group
-        copy_code=True,
+        project_install_mode="install_as_package",
     ),
 )
 
@@ -274,7 +274,7 @@ env = flyte.TaskEnvironment(
     name="full_build",
     image=(
         flyte.Image.from_debian_base()
-        .with_uv_project(pyproject_file=pathlib.Path("my_plugin/pyproject.toml"), copy_code=True)
+        .with_uv_project(pyproject_file=pathlib.Path("my_plugin/pyproject.toml"), project_install_mode="install_as_package")
     ),
 )
 
