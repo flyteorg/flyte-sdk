@@ -198,7 +198,7 @@ def _get_layers_proto(image: Image, context_path: Path) -> "image_definition_pb2
     layers = []
     for layer in image._layers:
         secret_mounts = None
-        pip_options = None
+        pip_options = image_definition_pb2.PipOptions()
 
         if isinstance(layer, PipOption):
             pip_options = image_definition_pb2.PipOptions(
@@ -267,12 +267,11 @@ def _get_layers_proto(image: Image, context_path: Path) -> "image_definition_pb2
             if not layer.copy_code:
                 # Copy pyproject itself
                 pyproject_dst = copy_files_to_context(layer.pyproject, context_path)
-                if pip_options:
-                    if pip_options.extra_args:
-                        if "--no-install-project" not in pip_options.extra_args:
-                            pip_options.extra_args += " --no-install-project"
-                    else:
-                        pip_options.extra_args = " --no-install-project"
+                if pip_options.extra_args:
+                    if "--no-install-project" not in pip_options.extra_args:
+                        pip_options.extra_args += " --no-install-project"
+                else:
+                    pip_options.extra_args = " --no-install-project"
             else:
                 # Copy the entire project
                 docker_ignore_patterns = get_and_list_dockerignore(image)
