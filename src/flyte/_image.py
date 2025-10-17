@@ -165,7 +165,7 @@ class Requirements(PipPackages):
 class UVProject(PipOption, Layer):
     pyproject: Path
     uvlock: Path
-    project_install_mode: typing.Literal["dependencies_only", "install_as_package"] = "dependencies_only"
+    project_install_mode: typing.Literal["dependencies_only", "install_project"] = "dependencies_only"
 
     def validate(self):
         if not self.pyproject.exists():
@@ -905,7 +905,7 @@ class Image:
         pre: bool = False,
         extra_args: Optional[str] = None,
         secret_mounts: Optional[SecretRequest] = None,
-        project_install_mode: typing.Literal["dependencies_only", "install_as_package"]="dependencies_only",
+        project_install_mode: typing.Literal["dependencies_only", "install_project"] = "dependencies_only",
     ) -> Image:
         """
         Use this method to create a new image with the specified uv.lock file layered on top of the current image
@@ -914,7 +914,7 @@ class Image:
 
         By default, this method copies the pyproject.toml and uv.lock files into the image.
 
-        If `project_install_mode` is "install_as_package", it will also copy directory
+        If `project_install_mode` is "install_project", it will also copy directory
          where the pyproject.toml file is located into the image.
 
         :param pyproject_file: path to the pyproject.toml file, needs to have a corresponding uv.lock file
