@@ -129,6 +129,14 @@ async def convert_and_run(
     in a context tree.
     """
     ctx = internal_ctx()
+
+    # Load inputs first to get context
+    if input_path:
+        inputs = await load_inputs(input_path, path_rewrite_config=raw_data_path.path_rewrite)
+
+    # Extract context from inputs
+    custom_context = inputs.context if inputs else {}
+
     tctx = TaskContext(
         action=action,
         checkpoints=checkpoints,
@@ -142,9 +150,10 @@ async def convert_and_run(
         report=flyte.report.Report(name=action.name),
         mode="remote" if not ctx.data.task_context else ctx.data.task_context.mode,
         interactive_mode=interactive_mode,
+        custom_context=custom_context,
     )
+
     with ctx.replace_task_context(tctx):
-        inputs = await load_inputs(input_path, path_rewrite_config=raw_data_path.path_rewrite) if input_path else inputs
         inputs_kwargs = await convert_inputs_to_native(inputs, task.native_interface)
         out, err = await run_task(tctx=tctx, controller=controller, task=task, inputs=inputs_kwargs)
         if err is not None:

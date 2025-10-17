@@ -62,6 +62,7 @@ class RayFunctionTask(AsyncFunctionTaskTemplate):
 
     task_type: str = "ray"
     plugin_config: RayJobConfig
+    debuggable: bool = True
 
     async def pre(self, *args, **kwargs) -> Dict[str, Any]:
         init_params = {"address": self.plugin_config.address}

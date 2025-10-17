@@ -195,6 +195,8 @@ class TaskContext:
     :param action: The action ID of the current execution. This is always set, within a run.
     :param version: The version of the executed task. This is set when the task is executed by an action and will be
       set on all sub-actions.
+    :param custom_context: Context metadata for the action. If an action receives context, it'll automatically pass it
+      to any actions it spawns. Context will not be used for cache key computation.
     """
 
     action: ActionID
@@ -211,6 +213,7 @@ class TaskContext:
     data: Dict[str, Any] = field(default_factory=dict)
     mode: Literal["local", "remote", "hybrid"] = "remote"
     interactive_mode: bool = False
+    custom_context: Dict[str, str] = field(default_factory=dict)
 
     def replace(self, **kwargs) -> TaskContext:
         if "data" in kwargs:
