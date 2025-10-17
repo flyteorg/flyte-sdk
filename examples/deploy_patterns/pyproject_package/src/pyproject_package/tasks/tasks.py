@@ -5,9 +5,11 @@ import flyte
 from pyproject_package.data import loader, processor
 from pyproject_package.models import analyzer
 
+UV_PROJECT_ROOT = pathlib.Path(__file__).parent.parent.parent.parent
+
 env = flyte.TaskEnvironment(
     name="data_pipeline",
-    image=flyte.Image.from_debian_base().with_uv_project(pyproject_file=pathlib.Path("pyproject.toml")),
+    image=flyte.Image.from_debian_base().with_uv_project(pyproject_file=UV_PROJECT_ROOT / "pyproject.toml"),
     resources=flyte.Resources(memory="512Mi", cpu="500m"),
 )
 
