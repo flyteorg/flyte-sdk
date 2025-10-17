@@ -88,7 +88,7 @@ async def upload_error(err: execution_pb2.ExecutionError, output_prefix: str):
         )
     )
     error_uri = error_path(output_prefix)
-    await storage.put_stream(data_iterable=error_document.SerializeToString(), to_path=error_uri)
+    return await storage.put_stream(data_iterable=error_document.SerializeToString(), to_path=error_uri)
 
 
 # ------------------------------- DOWNLOAD Methods ------------------------------- #
