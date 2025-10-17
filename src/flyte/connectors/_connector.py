@@ -5,12 +5,17 @@ from abc import ABC, abstractmethod
 from dataclasses import asdict, dataclass
 from typing import Any, Dict, List, Optional
 
-from flyteidl.admin import agent_pb2
-from flyteidl.admin.agent_pb2 import Agent, GetTaskLogsResponse, GetTaskMetricsResponse, TaskExecutionMetadata
-from flyteidl.admin.agent_pb2 import TaskCategory as _TaskCategory
-from flyteidl.core import tasks_pb2
-from flyteidl.core.execution_pb2 import TaskExecution, TaskLog
-from flyteidl.core.literals_pb2 import LiteralMap
+from flyteidl2.core import tasks_pb2
+from flyteidl2.core.execution_pb2 import TaskExecution, TaskLog
+from flyteidl2.core.literals_pb2 import LiteralMap
+from flyteidl2.plugins import connector_pb2
+from flyteidl2.plugins.connector_pb2 import (
+    Connector,
+    GetTaskLogsResponse,
+    GetTaskMetricsResponse,
+    TaskCategory,
+    TaskExecutionMetadata,
+)
 from google.protobuf import json_format
 from google.protobuf.struct_pb2 import Struct
 
@@ -23,7 +28,7 @@ from flyte.models import SerializationContext
 from flyte.types._type_engine import TypeEngine, dataclass_from_dict
 
 
-@dataclass
+@dataclass(frozen=True)
 class ConnectorRegistryKey:
     task_type_name: str
     task_type_version: int
@@ -71,7 +76,7 @@ class Resource:
     phase: TaskExecution.Phase
     message: Optional[str] = None
     log_links: Optional[List[TaskLog]] = None
-    outputs: Optional[typing.Dict[str, Any]] = None
+    outputs: Optional[typing.Dict[str, Any] | LiteralMap] = None
     custom_info: Optional[typing.Dict[str, Any]] = None
 
 
@@ -140,7 +145,7 @@ class ConnectorRegistry(object):
     """
 
     _REGISTRY: typing.ClassVar[Dict[ConnectorRegistryKey, AsyncConnector]] = {}
-    _METADATA: typing.ClassVar[Dict[str, Agent]] = {}
+    _METADATA: typing.ClassVar[Dict[str, Connector]] = {}
 
     @staticmethod
     def register(connector: AsyncConnector, override: bool = False):
@@ -154,16 +159,14 @@ class ConnectorRegistry(object):
             )
         ConnectorRegistry._REGISTRY[key] = connector
 
-        task_category = _TaskCategory(name=connector.task_type_name, version=connector.task_type_version)
+        task_category = TaskCategory(name=connector.task_type_name, version=connector.task_type_version)
 
         if connector.name in ConnectorRegistry._METADATA:
             connector_metadata = ConnectorRegistry.get_connector_metadata(connector.name)
             connector_metadata.supported_task_categories.append(task_category)
-            connector_metadata.supported_task_types.append(task_category.name)
         else:
-            connector_metadata = Agent(
+            connector_metadata = Connector(
                 name=connector.name,
-                supported_task_types=[task_category.name],
                 supported_task_categories=[task_category],
             )
             ConnectorRegistry._METADATA[connector.name] = connector_metadata
@@ -178,11 +181,11 @@ class ConnectorRegistry(object):
         return ConnectorRegistry._REGISTRY[key]
 
     @staticmethod
-    def list_connectors() -> List[Agent]:
+    def list_connectors() -> List[Connector]:
         return list(ConnectorRegistry._METADATA.values())
 
     @staticmethod
-    def get_connector_metadata(name: str) -> Agent:
+    def get_connector_metadata(name: str) -> Connector:
         if name not in ConnectorRegistry._METADATA:
             raise FlyteConnectorNotFound(f"Cannot find connector for name: {name}.")
         return ConnectorRegistry._METADATA[name]
@@ -240,10 +243,13 @@ def is_terminal_phase(phase: TaskExecution.Phase) -> bool:
     return phase in [TaskExecution.SUCCEEDED, TaskExecution.ABORTED, TaskExecution.FAILED]
 
 
-async def get_resource_proto(resource: Resource) -> agent_pb2.Resource:
-    outputs = await TypeEngine.dict_to_literal_map(resource.outputs) if resource.outputs else None
+async def get_resource_proto(resource: Resource) -> connector_pb2.Resource:
+    if not isinstance(resource.outputs, LiteralMap):
+        outputs = await TypeEngine.dict_to_literal_map(resource.outputs) if resource.outputs else None
+    else:
+        outputs = resource.outputs
 
-    return agent_pb2.Resource(
+    return connector_pb2.Resource(
         phase=resource.phase,
         message=resource.message,
         log_links=resource.log_links,

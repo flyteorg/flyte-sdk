@@ -2,25 +2,25 @@ import typing
 from http import HTTPStatus
 
 import grpc
-from flyteidl.admin.agent_pb2 import (
+from flyteidl2.plugins.connector_pb2 import (
     CreateTaskRequest,
     CreateTaskResponse,
     DeleteTaskRequest,
     DeleteTaskResponse,
-    GetAgentRequest,
-    GetAgentResponse,
+    GetConnectorRequest,
+    GetConnectorResponse,
     GetTaskLogsRequest,
     GetTaskLogsResponse,
     GetTaskMetricsRequest,
     GetTaskMetricsResponse,
     GetTaskRequest,
     GetTaskResponse,
-    ListAgentsRequest,
-    ListAgentsResponse,
+    ListConnectorsRequest,
+    ListConnectorsResponse,
 )
-from flyteidl.service.agent_pb2_grpc import (
-    AgentMetadataServiceServicer,
-    AsyncAgentServiceServicer,
+from flyteidl2.service.connector_pb2_grpc import (
+    AsyncConnectorServiceServicer,
+    ConnectorMetadataServiceServicer,
 )
 from prometheus_client import Counter, Summary
 
@@ -82,10 +82,10 @@ def record_connector_metrics(func: typing.Callable):
             if request.inputs:
                 input_literal_size.labels(task_type=task_type).observe(request.inputs.ByteSize())
         elif isinstance(request, GetTaskRequest):
-            task_type = request.task_type or request.task_category.name
+            task_type = request.task_category.name
             operation = get_operation
         elif isinstance(request, DeleteTaskRequest):
-            task_type = request.task_type or request.task_category.name
+            task_type = request.task_category.name
             operation = delete_operation
         else:
             context.set_code(grpc.StatusCode.UNIMPLEMENTED)
@@ -103,7 +103,7 @@ def record_connector_metrics(func: typing.Callable):
     return wrapper
 
 
-class AsyncConnectorService(AsyncAgentServiceServicer):
+class AsyncConnectorService(AsyncConnectorServiceServicer):
     @record_connector_metrics
     async def CreateTask(self, request: CreateTaskRequest, context: grpc.ServicerContext) -> CreateTaskResponse:
         template = request.template
@@ -122,7 +122,7 @@ class AsyncConnectorService(AsyncAgentServiceServicer):
         connector = ConnectorRegistry.get_connector(request.task_category.name, request.task_category.version)
         logger.info(f"{connector.name} start checking the status of the job")
         res = await connector.get(resource_meta=connector.metadata_type.decode(request.resource_meta))
-        return GetTaskResponse(resource=get_resource_proto(res))
+        return GetTaskResponse(resource=await get_resource_proto(res))
 
     @record_connector_metrics
     async def DeleteTask(self, request: DeleteTaskRequest, context: grpc.ServicerContext) -> DeleteTaskResponse:
@@ -144,9 +144,11 @@ class AsyncConnectorService(AsyncAgentServiceServicer):
         return await connector.get_logs(resource_meta=connector.metadata_type.decode(request.resource_meta))
 
 
-class ConnectorMetadataService(AgentMetadataServiceServicer):
-    async def GetAgent(self, request: GetAgentRequest, context: grpc.ServicerContext) -> GetAgentResponse:
-        return GetAgentResponse(agent=ConnectorRegistry.get_connector_metadata(request.name))
+class ConnectorMetadataService(ConnectorMetadataServiceServicer):
+    async def GetConnector(self, request: GetConnectorRequest, context: grpc.ServicerContext) -> GetConnectorResponse:
+        return GetConnectorResponse(connector=ConnectorRegistry.get_connector_metadata(request.name))
 
-    async def ListAgents(self, request: ListAgentsRequest, context: grpc.ServicerContext) -> ListAgentsResponse:
-        return ListAgentsResponse(agents=ConnectorRegistry.list_connectors())
+    async def ListConnectors(
+        self, request: ListConnectorsRequest, context: grpc.ServicerContext
+    ) -> ListConnectorsResponse:
+        return ListConnectorsResponse(connectors=ConnectorRegistry.list_connectors())

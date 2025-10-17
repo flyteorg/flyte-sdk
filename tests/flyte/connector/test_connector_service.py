@@ -5,8 +5,19 @@ from unittest.mock import MagicMock
 
 import grpc
 import pytest
-from flyteidl.admin import agent_pb2
-from flyteidl.admin.agent_pb2 import (
+from flyteidl.core.tasks_pb2 import TaskTemplate
+from flyteidl2.core import literals_pb2
+from flyteidl2.core.execution_pb2 import TaskExecution, TaskLog
+from flyteidl2.core.identifier_pb2 import (
+    Identifier,
+    NodeExecutionIdentifier,
+    ResourceType,
+    TaskExecutionIdentifier,
+    WorkflowExecutionIdentifier,
+)
+from flyteidl2.core.literals_pb2 import LiteralMap
+from flyteidl2.core.security_pb2 import Identity
+from flyteidl2.plugins.connector_pb2 import (
     CreateTaskRequest,
     DeleteTaskRequest,
     DeleteTaskResponse,
@@ -15,19 +26,8 @@ from flyteidl.admin.agent_pb2 import (
     GetTaskRequest,
     Resource,
     TaskCategory,
+    TaskExecutionMetadata,
 )
-from flyteidl.core import literals_pb2
-from flyteidl.core.execution_pb2 import TaskExecution, TaskLog
-from flyteidl.core.identifier_pb2 import (
-    Identifier,
-    NodeExecutionIdentifier,
-    ResourceType,
-    TaskExecutionIdentifier,
-    WorkflowExecutionIdentifier,
-)
-from flyteidl.core.literals_pb2 import LiteralMap
-from flyteidl.core.security_pb2 import Identity
-from flyteidl.core.tasks_pb2 import TaskTemplate
 
 import flyte
 from flyte._internal.runtime.task_serde import get_proto_task
@@ -44,22 +44,24 @@ class DummyMetadata(ResourceMeta):
 
 
 class DummyConnector(AsyncConnector):
-    name = "Dummy Connector"
+    name: str = "Dummy Connector"
+    task_type_name: str = "async_dummy"
+    metadata_type: type = DummyMetadata
 
     def __init__(self):
-        super().__init__(task_type_name="dummy", metadata_type=DummyMetadata)
+        super().__init__()
 
-    def create(self, task_template: TaskTemplate, inputs: typing.Optional[LiteralMap], **kwargs) -> DummyMetadata:
-        return DummyMetadata(job_id="job_id")
+    async def create(self, task_template: TaskTemplate, inputs: typing.Optional[LiteralMap], **kwargs) -> DummyMetadata:
+        return DummyMetadata(job_id="dummy_id", output_path="/tmp/dummy_id", task_name="async_dummy")
 
-    def get(self, resource_meta: DummyMetadata, **kwargs) -> Resource:
+    async def get(self, resource_meta: DummyMetadata, **kwargs) -> Resource:
         return Resource(
             phase=TaskExecution.SUCCEEDED,
             log_links=[TaskLog(name="console", uri="localhost:3000")],
             custom_info={"custom": "info", "num": 1},
         )
 
-    def delete(self, resource_meta: DummyMetadata, **kwargs): ...
+    async def delete(self, resource_meta: DummyMetadata, **kwargs): ...
 
 
 def get_task_template() -> TaskTemplate:
@@ -82,6 +84,7 @@ def get_task_template() -> TaskTemplate:
         return f"{a} {my_ignored_input}"
 
     # Get the task template from the decorated function
+    test_function.task_type = "async_dummy"
     task_template = test_function
 
     # Create serialization context
@@ -101,11 +104,11 @@ def get_task_template() -> TaskTemplate:
 
 
 def get_task_execution_metadata():
-    return agent_pb2.TaskExecutionMetadata(
+    return TaskExecutionMetadata(
         task_execution_id=TaskExecutionIdentifier(
-            task_id=Identifier(ResourceType.TASK, "project", "domain", "name", "version"),
+            task_id=Identifier(resource_type=ResourceType.TASK, project="project", domain="domain", name="name", version="version"),
             node_execution_id=NodeExecutionIdentifier(
-                "node_id", WorkflowExecutionIdentifier("project", "domain", "name")
+                node_id="node_id", execution_id=WorkflowExecutionIdentifier(project="project", domain="domain", name="name")
             ),
             retry_attempt=1,
         ),
@@ -118,30 +121,29 @@ def get_task_execution_metadata():
     )
 
 
+@pytest.mark.asyncio
 async def test_async_connector_service():
-    connector = DummyConnector
+    connector = DummyConnector()
     ConnectorRegistry.register(connector, override=True)
     service = AsyncConnectorService()
     ctx = MagicMock(spec=grpc.ServicerContext)
 
     inputs_proto = literals_pb2.LiteralMap(
-        {
+        literals={
             "a": literals_pb2.Literal(scalar=literals_pb2.Scalar(primitive=literals_pb2.Primitive(integer=1))),
         },
     )
 
     output_prefix = "/tmp"
     dummy_id = "dummy_id"
-    metadata_bytes = (
-        DummyMetadata(
-            job_id=dummy_id,
-            output_path=f"{output_prefix}/{dummy_id}",
-            task_name=agent_pb2.TaskExecutionMetadata.task_execution_id.task_id.name,
-        ).encode()
-    )
+    metadata_bytes = DummyMetadata(
+        job_id=dummy_id,
+        output_path=f"{output_prefix}/{dummy_id}",
+        task_name=connector.task_type_name,
+    ).encode()
 
     tmp = get_task_template()
-    task_category = TaskCategory(name=connector.task_category.name, version=0)
+    task_category = TaskCategory(name=connector.task_type_name, version=connector.task_type_version)
     req = CreateTaskRequest(
         inputs=inputs_proto,
         template=tmp,
@@ -150,6 +152,7 @@ async def test_async_connector_service():
     )
 
     res = await service.CreateTask(req, ctx)
+    assert res is not None
     assert res.resource_meta == metadata_bytes
     res = await service.GetTask(GetTaskRequest(task_category=task_category, resource_meta=metadata_bytes), ctx)
     assert res.resource.phase == TaskExecution.SUCCEEDED
@@ -158,7 +161,7 @@ async def test_async_connector_service():
         ctx,
     )
     assert res == DeleteTaskResponse()
-    if connector.task_category.name == "async_dummy":
+    if connector.task_type_name == "async_dummy":
         res = await service.GetTaskMetrics(
             GetTaskMetricsRequest(task_category=task_category, resource_meta=metadata_bytes), ctx
         )
@@ -170,8 +173,8 @@ async def test_async_connector_service():
         assert res.body.results == ["foo", "bar"]
 
     connector_metadata = ConnectorRegistry.get_connector_metadata(connector.name)
-    assert connector_metadata.supported_task_types[0] == connector.task_category.name
-    assert connector_metadata.supported_task_categories[0].name == connector.task_category.name
+    assert connector_metadata.supported_task_categories[0].version == connector.task_type_version
+    assert connector_metadata.supported_task_categories[0].name == connector.task_type_name
 
     with pytest.raises(FlyteConnectorNotFound):
         ConnectorRegistry.get_connector_metadata("non-exist-namr")

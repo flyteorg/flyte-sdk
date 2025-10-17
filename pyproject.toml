@@ -138,7 +138,7 @@ dev-dependencies = [
 ]
 
 [tool.uv.sources]
-flyteidl2 = { git = "https://github.com/flyteorg/flyte.git", subdirectory = "gen/python", rev = "v2" }
+flyteidl2 = { git = "https://github.com/flyteorg/flyte.git", subdirectory = "gen/python", rev = "8175f3e684a3cdae44fbb8842435d60f1ae4adcc" }
 
 [tool.mypy]
 disable_error_code = ["import-untyped"]
