@@ -16,7 +16,9 @@ from flyteidl2.core.identifier_pb2 import (
     WorkflowExecutionIdentifier,
 )
 from flyteidl2.core.literals_pb2 import LiteralMap
+from flyteidl2.core.metrics_pb2 import ExecutionMetricResult
 from flyteidl2.core.security_pb2 import Identity
+from flyteidl2.plugins import connector_pb2
 from flyteidl2.plugins.connector_pb2 import (
     CreateTaskRequest,
     DeleteTaskRequest,
@@ -24,14 +26,14 @@ from flyteidl2.plugins.connector_pb2 import (
     GetTaskLogsRequest,
     GetTaskMetricsRequest,
     GetTaskRequest,
-    Resource,
     TaskCategory,
-    TaskExecutionMetadata,
+    TaskExecutionMetadata, GetTaskMetricsResponse, GetTaskLogsResponse, GetTaskLogsResponseBody,
 )
 
 import flyte
 from flyte._internal.runtime.task_serde import get_proto_task
-from flyte.connectors._connector import AsyncConnector, ConnectorRegistry, FlyteConnectorNotFound, ResourceMeta
+from flyte.connectors._connector import AsyncConnector, ConnectorRegistry, FlyteConnectorNotFound, ResourceMeta, \
+    Resource
 from flyte.connectors._server import AsyncConnectorService
 from flyte.models import SerializationContext
 
@@ -62,6 +64,12 @@ class DummyConnector(AsyncConnector):
         )
 
     async def delete(self, resource_meta: DummyMetadata, **kwargs): ...
+
+    async def get_metrics(self, resource_meta: DummyMetadata, **kwargs) -> GetTaskMetricsResponse:
+        return GetTaskMetricsResponse(results=[ExecutionMetricResult(metric="EXECUTION_METRIC_LIMIT_MEMORY_BYTES", data=None)])
+
+    async def get_logs(self, resource_meta: DummyMetadata, **kwargs) -> GetTaskLogsResponse:
+        return GetTaskLogsResponse(body=GetTaskLogsResponseBody(results=["foo", "bar"]))
 
 
 def get_task_template() -> TaskTemplate:
