@@ -18,22 +18,29 @@ from flyteidl2.core.identifier_pb2 import (
 from flyteidl2.core.literals_pb2 import LiteralMap
 from flyteidl2.core.metrics_pb2 import ExecutionMetricResult
 from flyteidl2.core.security_pb2 import Identity
-from flyteidl2.plugins import connector_pb2
 from flyteidl2.plugins.connector_pb2 import (
     CreateTaskRequest,
     DeleteTaskRequest,
     DeleteTaskResponse,
     GetTaskLogsRequest,
+    GetTaskLogsResponse,
+    GetTaskLogsResponseBody,
     GetTaskMetricsRequest,
+    GetTaskMetricsResponse,
     GetTaskRequest,
     TaskCategory,
-    TaskExecutionMetadata, GetTaskMetricsResponse, GetTaskLogsResponse, GetTaskLogsResponseBody,
+    TaskExecutionMetadata,
 )
 
 import flyte
 from flyte._internal.runtime.task_serde import get_proto_task
-from flyte.connectors._connector import AsyncConnector, ConnectorRegistry, FlyteConnectorNotFound, ResourceMeta, \
-    Resource
+from flyte.connectors._connector import (
+    AsyncConnector,
+    ConnectorRegistry,
+    FlyteConnectorNotFound,
+    Resource,
+    ResourceMeta,
+)
 from flyte.connectors._server import AsyncConnectorService
 from flyte.models import SerializationContext
 
@@ -66,7 +73,9 @@ class DummyConnector(AsyncConnector):
     async def delete(self, resource_meta: DummyMetadata, **kwargs): ...
 
     async def get_metrics(self, resource_meta: DummyMetadata, **kwargs) -> GetTaskMetricsResponse:
-        return GetTaskMetricsResponse(results=[ExecutionMetricResult(metric="EXECUTION_METRIC_LIMIT_MEMORY_BYTES", data=None)])
+        return GetTaskMetricsResponse(
+            results=[ExecutionMetricResult(metric="EXECUTION_METRIC_LIMIT_MEMORY_BYTES", data=None)]
+        )
 
     async def get_logs(self, resource_meta: DummyMetadata, **kwargs) -> GetTaskLogsResponse:
         return GetTaskLogsResponse(body=GetTaskLogsResponseBody(results=["foo", "bar"]))
@@ -114,9 +123,12 @@ def get_task_template() -> TaskTemplate:
 def get_task_execution_metadata():
     return TaskExecutionMetadata(
         task_execution_id=TaskExecutionIdentifier(
-            task_id=Identifier(resource_type=ResourceType.TASK, project="project", domain="domain", name="name", version="version"),
+            task_id=Identifier(
+                resource_type=ResourceType.TASK, project="project", domain="domain", name="name", version="version"
+            ),
             node_execution_id=NodeExecutionIdentifier(
-                node_id="node_id", execution_id=WorkflowExecutionIdentifier(project="project", domain="domain", name="name")
+                node_id="node_id",
+                execution_id=WorkflowExecutionIdentifier(project="project", domain="domain", name="name"),
             ),
             retry_attempt=1,
         ),
