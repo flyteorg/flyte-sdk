@@ -20,8 +20,8 @@ def union_type_simple_task(input_val: Union[str, None] = None) -> str:
 
 
 if __name__ == "__main__":
-    flyte.init_from_config("../../config.yaml")
+    flyte.init_from_config()
     run = flyte.run(union_type_simple_task, input_val="hello world")
     print(run.name)
     print(run.url)
-    run.wait(run)
+    run.wait()

@@ -47,7 +47,7 @@ class MNISTAutoEncoder(L.LightningModule):
         self.decoder = decoder
 
     def training_step(self, batch, batch_idx):
-        x, y = batch
+        x, _y = batch
         x = x.view(x.size(0), -1)
         z = self.encoder(x)
         x_hat = self.decoder(z)
@@ -143,9 +143,8 @@ async def gridsearch(
 
 if __name__ == "__main__":
     from datetime import datetime
-    from pathlib import Path
 
-    flyte.init_from_config(str(Path(__file__).parents[2] / "config.yaml"))
+    flyte.init_from_config()
     sweep_name = f"hpo-gpu-sweep-{datetime.now().strftime('%Y%m%d%H%M%S')}"
     run = flyte.run(gridsearch, sweep_name, batch_sizes=[4, 8, 16])
     print(run.url)

@@ -174,7 +174,7 @@ class RuntimeDataValidationError(RuntimeUserError):
 
     def __init__(self, var: str, e: Exception | str, task_name: str = ""):
         super().__init__(
-            "DataValiationError", f"In task {task_name} variable {var}, failed to serialize/deserialize because of {e}"
+            "DataValidationError", f"In task {task_name} variable {var}, failed to serialize/deserialize because of {e}"
         )
 
 
@@ -223,3 +223,21 @@ class RunAbortedError(RuntimeUserError):
 
     def __init__(self, message: str):
         super().__init__("RunAbortedError", message, "user")
+
+
+class SlowDownError(RuntimeUserError):
+    """
+    This error is raised when the user tries to access a resource that does not exist or is invalid.
+    """
+
+    def __init__(self, message: str):
+        super().__init__("SlowDownError", message, "user")
+
+
+class OnlyAsyncIOSupportedError(RuntimeUserError):
+    """
+    This error is raised when the user tries to use sync IO in an async task.
+    """
+
+    def __init__(self, message: str):
+        super().__init__("OnlyAsyncIOSupportedError", message, "user")

@@ -20,9 +20,9 @@ from types import GenericAlias, NoneType
 from typing import Any, Dict, NamedTuple, Optional, Type, cast
 
 import msgpack
-from flyteidl.core import interface_pb2, literals_pb2, types_pb2
-from flyteidl.core.literals_pb2 import Binary, Literal, LiteralCollection, LiteralMap, Primitive, Scalar, Union, Void
-from flyteidl.core.types_pb2 import LiteralType, SimpleType, TypeAnnotation, TypeStructure, UnionType
+from flyteidl2.core import interface_pb2, literals_pb2, types_pb2
+from flyteidl2.core.literals_pb2 import Binary, Literal, LiteralCollection, LiteralMap, Primitive, Scalar, Union, Void
+from flyteidl2.core.types_pb2 import LiteralType, SimpleType, TypeAnnotation, TypeStructure, UnionType
 from fsspec.asyn import _run_coros_in_chunks  # pylint: disable=W0212
 from google.protobuf import json_format as _json_format
 from google.protobuf import struct_pb2
@@ -786,6 +786,13 @@ class EnumTransformer(TypeTransformer[enum.Enum]):
         return LiteralType(enum_type=types_pb2.EnumType(values=values))
 
     async def to_literal(self, python_val: enum.Enum, python_type: Type[T], expected: LiteralType) -> Literal:
+        if isinstance(python_val, str):
+            # this is the case when python Literals are used as enums
+            if python_val not in expected.enum_type.values:
+                raise TypeTransformerFailedError(
+                    f"Value {python_val} is not valid value, expected - {expected.enum_type.values}"
+                )
+            return Literal(scalar=Scalar(primitive=Primitive(string_value=python_val)))  # type: ignore
         if type(python_val).__class__ != enum.EnumMeta:
             raise TypeTransformerFailedError("Expected an enum")
         if type(python_val.value) is not str:
@@ -796,6 +803,12 @@ class EnumTransformer(TypeTransformer[enum.Enum]):
     async def to_python_value(self, lv: Literal, expected_python_type: Type[T]) -> T:
         if lv.HasField("scalar") and lv.scalar.HasField("binary"):
             return self.from_binary_idl(lv.scalar.binary, expected_python_type)  # type: ignore
+        from flyte._interface import LITERAL_ENUM
+
+        if expected_python_type.__name__ is LITERAL_ENUM:
+            # This is the case when python Literal types are used as enums. The class name is always LiteralEnum an
+            # hardcoded in flyte.models
+            return lv.scalar.primitive.string_value
         return expected_python_type(lv.scalar.primitive.string_value)  # type: ignore
 
     def guess_python_type(self, literal_type: LiteralType) -> Type[enum.Enum]:
@@ -1203,7 +1216,7 @@ class TypeEngine(typing.Generic[T]):
                 e: BaseException = literal_map[k].exception()  # type: ignore
                 if isinstance(e, TypeError):
                     raise TypeError(
-                        f"Error converting: Var:{k}, type:{type(v)}, into:{python_type}, received_value {v}"
+                        f"Error converting: Var:{k}, type:{type(d[k])}, into:{python_type}, received_value {d[k]}"
                     )
                 else:
                     raise e

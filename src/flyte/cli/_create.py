@@ -3,6 +3,7 @@ from typing import Any, Dict, get_args
 
 import rich_click as click
 
+import flyte
 import flyte.cli._common as common
 from flyte.cli._option import MutuallyExclusiveOption
 from flyte.remote import SecretTypes
@@ -78,6 +79,10 @@ def secret(
     """
     from flyte.remote import Secret
 
+    # todo: remove this hack when secrets creation more easily distinguishes between org and project/domain level
+    #   (and domain level) secrets
+    project = "" if project is None else project
+    domain = "" if domain is None else domain
     cfg.init(project, domain)
     if from_file:
         with open(from_file, "rb") as f:
@@ -194,3 +199,76 @@ def config(
         yaml.dump(d, f)
 
     click.echo(f"Config file written to {output_path}")
+
+
+@create.command(cls=common.CommandBase)
+@click.argument("task_name", type=str, required=True)
+@click.argument("name", type=str, required=True)
+@click.option(
+    "--schedule",
+    type=str,
+    required=True,
+    help="Cron schedule for the trigger. Defaults to every minute.",
+    show_default=True,
+)
+@click.option(
+    "--description",
+    type=str,
+    default="",
+    help="Description of the trigger.",
+    show_default=True,
+)
+@click.option(
+    "--auto-activate",
+    is_flag=True,
+    default=True,
+    help="Whether the trigger should not be automatically activated. Defaults to True.",
+    show_default=True,
+)
+@click.option(
+    "--trigger-time-var",
+    type=str,
+    default="trigger_time",
+    help="Variable name for the trigger time in the task inputs. Defaults to 'trigger_time'.",
+    show_default=True,
+)
+@click.pass_obj
+def trigger(
+    cfg: common.CLIConfig,
+    task_name: str,
+    name: str,
+    schedule: str,
+    trigger_time_var: str = "trigger_time",
+    auto_activate: bool = True,
+    description: str = "",
+    project: str | None = None,
+    domain: str | None = None,
+):
+    """
+    Create a new trigger for a task. The task name and trigger name are required.
+
+    Example:
+
+    ```bash
+    $ flyte create trigger my_task my_trigger --schedule "0 0 * * *"
+    ```
+
+    This will create a trigger that runs every day at midnight.
+    """
+    from flyte.remote import Trigger
+
+    cfg.init(project, domain)
+    console = common.get_console()
+
+    trigger = flyte.Trigger(
+        name=name,
+        automation=flyte.Cron(schedule),
+        description=description,
+        auto_activate=auto_activate,
+        inputs={trigger_time_var: flyte.TriggerTime},  # Use the trigger time variable in inputs
+        env_vars=None,
+        interruptible=None,
+    )
+    with console.status("Creating trigger..."):
+        v = Trigger.create(trigger, task_name=task_name)
+    console.print(f"[bold green]Trigger {v.name} created successfully![/bold green]")

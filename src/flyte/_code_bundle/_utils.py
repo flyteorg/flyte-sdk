@@ -156,7 +156,7 @@ def list_all_files(source_path: pathlib.Path, deref_symlinks, ignore_group: Opti
 
     # This is needed to prevent infinite recursion when walking with followlinks
     visited_inodes = set()
-    for root, dirnames, files in source_path.walk(top_down=True, follow_symlinks=deref_symlinks):
+    for root, dirnames, files in os.walk(source_path, topdown=True, followlinks=deref_symlinks):
         dirnames[:] = [d for d in dirnames if d not in EXCLUDE_DIRS]
         if deref_symlinks:
             inode = os.stat(root).st_ino
@@ -167,7 +167,7 @@ def list_all_files(source_path: pathlib.Path, deref_symlinks, ignore_group: Opti
         ff = []
         files.sort()
         for fname in files:
-            abspath = (root / fname).absolute()
+            abspath = (pathlib.Path(root) / fname).absolute()
             # Only consider files that exist (e.g. disregard symlinks that point to non-existent files)
             if not os.path.exists(abspath):
                 logger.info(f"Skipping non-existent file {abspath}")
@@ -211,7 +211,7 @@ def list_imported_modules_as_files(source_path: str, modules: List[ModuleType]) 
     import flyte
     from flyte._utils.lazy_module import is_imported
 
-    files = []
+    files = set()
     flyte_root = os.path.dirname(flyte.__file__)
 
     # These directories contain installed packages or modules from the Python standard library.
@@ -244,9 +244,9 @@ def list_imported_modules_as_files(source_path: str, modules: List[ModuleType]) 
             logger.debug(f"{mod_file} is not in {source_path}")
             continue
 
-        files.append(mod_file)
+        files.add(mod_file)
 
-    return files
+    return list(files)
 
 
 def add_imported_modules_from_source(source_path: str, destination: str, modules: List[ModuleType]):

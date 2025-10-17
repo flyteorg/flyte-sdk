@@ -11,7 +11,7 @@ env = flyte.TaskEnvironment(
         concurrency=50,
         scaledown_ttl=60,
     ),
-    image=flyte.Image.from_debian_base().with_pip_packages("unionai-reuse==0.1.4"),
+    image=flyte.Image.from_debian_base().with_pip_packages("unionai-reuse==0.1.7"),
 )
 
 
@@ -20,7 +20,7 @@ async def noop(x: int) -> int:
     return x
 
 
-@env.task
+@env.clone_with(name="fanout_main", reusable=None, depends_on=[env]).task
 async def reuse_concurrency(n: int = 50) -> int:
     coros = [noop(i) for i in range(n)]
     results = await asyncio.gather(*coros)
@@ -28,9 +28,9 @@ async def reuse_concurrency(n: int = 50) -> int:
 
 
 if __name__ == "__main__":
-    flyte.init_from_config("../../config.yaml")
+    flyte.init_from_config()
     runs = []
-    for i in range(10):
+    for i in range(1):
         run = flyte.run(reuse_concurrency, n=1000)
         runs.append(run.url)
     print(runs)

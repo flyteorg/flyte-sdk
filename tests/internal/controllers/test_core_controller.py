@@ -4,7 +4,14 @@ import asyncio
 from typing import AsyncIterator, Dict, List, Optional, Tuple
 
 import pytest
-from flyteidl.core import execution_pb2
+from flyteidl2.common import identifier_pb2
+from flyteidl2.core import execution_pb2
+from flyteidl2.task import task_definition_pb2
+from flyteidl2.workflow import (
+    queue_service_pb2,
+    run_definition_pb2,
+    state_service_pb2,
+)
 
 from flyte._internal.controllers.remote._action import Action
 from flyte._internal.controllers.remote._controller import Controller
@@ -14,13 +21,7 @@ from flyte._internal.controllers.remote._service_protocol import (
     StateService,
 )
 from flyte._logging import logger
-from flyte._protos.common import identifier_pb2
-from flyte._protos.workflow import (
-    queue_service_pb2,
-    run_definition_pb2,
-    state_service_pb2,
-    task_definition_pb2,
-)
+from flyte._utils import run_coros
 
 
 class DummyService(QueueService, StateService, ClientSet):
@@ -135,6 +136,17 @@ class DummyService(QueueService, StateService, ClientSet):
         print("Enqueueing task:", req.action_id.name)
         return queue_service_pb2.EnqueueActionResponse()
 
+    async def AbortQueuedAction(
+        self,
+        req: queue_service_pb2.AbortQueuedActionRequest,
+        **kwargs,
+    ) -> queue_service_pb2.AbortQueuedActionResponse:
+        """Abort a queued task."""
+        print(f"Dummy service aborting task: {req.action_id.name}")
+        if req.action_id.name in self._queue:
+            del self._queue[req.action_id.name]
+        return queue_service_pb2.AbortQueuedActionResponse()
+
 
 @pytest.mark.asyncio
 async def test_basic_end_to_end_one_task():
@@ -171,15 +183,19 @@ async def test_basic_end_to_end_one_task():
         run_output_base="output_uri",
     )
     c = Controller(client_coro=service, workers=2, max_system_retries=2)
-    final_node = await c.submit_action(input_node)
-    assert final_node.started
-    assert final_node.phase == run_definition_pb2.Phase.PHASE_SUCCEEDED, (
-        f"Expected phase to be PHASE_SUCCEEDED, found {run_definition_pb2.Phase.Name(final_node.phase)},"
-        f" for {final_node.action_id.name}"
-    )
-    assert final_node.realized_outputs_uri == "s3://bucket/run-id/sub-action/1"
-    await c._finalize_parent_action(run_id=run_id, parent_action_name=parent_action_name)
-    await c.stop()
+
+    async def _run():
+        final_node = await c.submit_action(input_node)
+        assert final_node.started
+        assert final_node.phase == run_definition_pb2.Phase.PHASE_SUCCEEDED, (
+            f"Expected phase to be PHASE_SUCCEEDED, found {run_definition_pb2.Phase.Name(final_node.phase)},"
+            f" for {final_node.action_id.name}"
+        )
+        assert final_node.realized_outputs_uri == "s3://bucket/run-id/sub-action/1"
+        await c._finalize_parent_action(run_id=run_id, parent_action_name=parent_action_name)
+        await c.stop()
+
+    await run_coros(_run(), c.watch_for_errors())
 
 
 @pytest.mark.asyncio
@@ -571,6 +587,73 @@ async def test_submit_with_failure_phase_no_err():
     assert final_node1.started
     assert final_node1.phase == run_definition_pb2.Phase.PHASE_FAILED
     assert final_node1.err is None
+
+    await c._finalize_parent_action(run_id=run_id, parent_action_name=parent_action_name)
+    await c.stop()
+
+
+@pytest.mark.asyncio
+async def test_cancel_queued_action():
+    """Test that cancelling a queued action properly invokes AbortQueuedAction"""
+    parent_action_name = "parent_action"
+    run_id = identifier_pb2.RunIdentifier(
+        name="root_run",
+    )
+    phases = {
+        "subrun-1": [
+            (run_definition_pb2.Phase.PHASE_RUNNING, None, None),
+            (run_definition_pb2.Phase.PHASE_RUNNING, None, None),
+            (run_definition_pb2.Phase.PHASE_RUNNING, None, None),
+        ],
+    }
+
+    # Create service and track calls to AbortQueuedAction
+    abort_called = False
+
+    class TrackingService(DummyService):
+        async def AbortQueuedAction(self, req, **kwargs):
+            nonlocal abort_called
+            abort_called = True
+            return await super().AbortQueuedAction(req, **kwargs)
+
+    async def create_tracking_service():
+        return TrackingService(phases=phases)
+
+    c = Controller(client_coro=create_tracking_service(), workers=2, max_system_retries=2)
+
+    # Create and enqueue an action
+    action = Action(
+        action_id=identifier_pb2.ActionIdentifier(
+            name="subrun-1",
+            run=run_id,
+        ),
+        parent_action_name=parent_action_name,
+        task=task_definition_pb2.TaskSpec(),
+        inputs_uri="input_uri",
+        run_output_base="run-base",
+    )
+
+    # Start submitting the action but don't wait for completion
+    submit_task = asyncio.create_task(c.submit_action(action))
+
+    # Give it time to enqueue and start
+    await asyncio.sleep(0.3)
+
+    # Mark the action as started (simulating that it has been enqueued)
+    action.mark_started()
+
+    # Cancel the action
+    await c.cancel_action(action)
+
+    # Verify that AbortQueuedAction was called
+    assert abort_called, "AbortQueuedAction should have been called"
+
+    # Clean up
+    submit_task.cancel()
+    try:
+        await submit_task
+    except asyncio.CancelledError:
+        pass
 
     await c._finalize_parent_action(run_id=run_id, parent_action_name=parent_action_name)
     await c.stop()

@@ -11,7 +11,7 @@ from flyte._context import internal_ctx
 image = (
     flyte.Image.from_base("apache/spark-py:v3.4.0")
     .clone(name="spark", python_version=(3, 10), registry="ghcr.io/flyteorg")
-    .with_pip_packages("flyteplugins-spark>=2.0.0b18", pre=True)
+    .with_pip_packages("flyteplugins-spark", pre=True)
 )
 
 task_env = flyte.TaskEnvironment(
@@ -20,25 +20,22 @@ task_env = flyte.TaskEnvironment(
 
 spark_conf = Spark(
     spark_conf={
-        "spark.driver.memory": "1000M",
+        "spark.driver.memory": "3000M",
         "spark.executor.memory": "1000M",
         "spark.executor.cores": "1",
         "spark.executor.instances": "2",
         "spark.driver.cores": "1",
         "spark.kubernetes.file.upload.path": "/opt/spark/work-dir",
-        "spark.jars": "https://storage.googleapis.com/hadoop-lib/gcs/gcs-connector-hadoop3-latest.jar",
-        # For AWS environments, you can use the following jars:
-        # "spark.jars": "https://repo1.maven.org/maven2/org/apache/hadoop/hadoop-aws/3.2.2/hadoop-aws-3.2.2.jar,https://repo1.maven.org/maven2/com/amazonaws/aws-java-sdk-bundle/1.12.262/aws-java-sdk-bundle-1.12.262.jar"
+        "spark.jars": "https://storage.googleapis.com/hadoop-lib/gcs/gcs-connector-hadoop3-latest.jar,https://repo1.maven.org/maven2/org/apache/hadoop/hadoop-aws/3.2.2/hadoop-aws-3.2.2.jar,https://repo1.maven.org/maven2/com/amazonaws/aws-java-sdk-bundle/1.12.262/aws-java-sdk-bundle-1.12.262.jar",
     },
-    executor_path="/opt/venv/bin/python",
-    applications_path="local:///opt/venv/bin/runtime.py",
 )
 
 spark_env = flyte.TaskEnvironment(
     name="spark_env",
-    resources=flyte.Resources(cpu=(1, 2), memory=("400Mi", "1000Mi")),
+    resources=flyte.Resources(cpu=(1, 2), memory=("3000Mi", "5000Mi")),
     plugin_config=spark_conf,
     image=image,
+    depends_on=[task_env],
 )
 
 
@@ -74,14 +71,15 @@ async def spark_overrider(executor_instances: int = 3, partitions: int = 4) -> f
 # You can execute the code locally as if it was a normal Python script.
 
 if __name__ == "__main__":
-    flyte.init_from_config("../../config.yaml")
-    # run = flyte.run(hello_spark_nested)
-    # print("run name:", run.name)
-    # print("run url:", run.url)
-
-    run = flyte.run(spark_overrider, executor_instances=4)
+    flyte.init_from_config()
+    run = flyte.run(hello_spark_nested)
     print("run name:", run.name)
     print("run url:", run.url)
+
+    # run = flyte.run(spark_overrider, executor_instances=4)
+    # print("run name:", run.name)
+    # print("run url:", run.url)
+    run.wait()
 
     action_details = flyte.remote.ActionDetails.get(run_name=run.name, name="a0")
     for log in action_details.pb2.attempts[-1].log_info:

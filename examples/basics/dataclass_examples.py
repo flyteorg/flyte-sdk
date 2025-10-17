@@ -68,9 +68,11 @@ async def avg_from_file(results: BatchPredictionResults) -> float:
     total = 0.0
     count = 0
     async with results.results_file.open() as f:
-        iter_f = iter(f)
-        next(iter_f)  # Skip header
-        for row in iter_f:
+        await f.readline()  # Skip header
+        lines = await f.readlines()
+        for row in lines:
+            if not row:
+                continue
             total += float(row)
             count += 1
 
@@ -91,7 +93,7 @@ async def dc_wf(batch: BatchRequest):
 if __name__ == "__main__":
     # result_one = asyncio.run(predict_one(InferenceRequest(feature_a=1.0, feature_b=2.0)))
     # print(f"Prediction for single request: {result_one}")
-    flyte.init_from_config("config.yaml")
+    flyte.init_from_config()
     # Can run programmatically
     # run = flyte.run(predict_one, InferenceRequest(feature_a=1.0, feature_b=2.0))
     # print(run.url)

@@ -4,7 +4,7 @@
 #     "langgraph==0.6.4",
 #     "langchain==0.3.27",
 #     "langchain-anthropic==0.3.18",
-#     "flyte==0.1.0",
+#     "flyte>=2.0.0b22",
 # ]
 # ///
 
@@ -49,6 +49,6 @@ def main(in_str: str) -> list[BaseMessage]:
 
 
 if __name__ == "__main__":
-    flyte.init_from_config("../../config.yaml")
+    flyte.init_from_config()
     r = flyte.run(main, in_str="what is the weather in sf")
     print(r.url)

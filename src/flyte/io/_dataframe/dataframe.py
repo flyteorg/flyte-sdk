@@ -8,7 +8,7 @@ from abc import ABC, abstractmethod
 from dataclasses import is_dataclass
 from typing import Any, ClassVar, Coroutine, Dict, Generic, List, Optional, Type, Union
 
-from flyteidl.core import literals_pb2, types_pb2
+from flyteidl2.core import literals_pb2, types_pb2
 from fsspec.utils import get_protocol
 from mashumaro.types import SerializableType
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, model_serializer, model_validator
@@ -647,17 +647,21 @@ class DataFrameTransformerEngine(TypeTransformer[DataFrame]):
                 f"Already registered a handler for {(h.python_type, protocol, h.supported_format)}"
             )
         lowest_level[h.supported_format] = h
-        logger.debug(f"Registered {h} as handler for {h.python_type}, protocol {protocol}, fmt {h.supported_format}")
+        logger.debug(
+            f"Registered {h.__class__.__name__} as handler for {h.python_type.__class__.__name__},"
+            f" protocol {protocol}, fmt {h.supported_format}"
+        )
 
         if (default_format_for_type or default_for_type) and h.supported_format != GENERIC_FORMAT:
             if h.python_type in cls.DEFAULT_FORMATS and not override:
                 if cls.DEFAULT_FORMATS[h.python_type] != h.supported_format:
                     logger.info(
-                        f"Not using handler {h} with format {h.supported_format}"
-                        f" as default for {h.python_type}, {cls.DEFAULT_FORMATS[h.python_type]} already specified."
+                        f"Not using handler {h.__class__.__name__} with format {h.supported_format}"
+                        f" as default for {h.python_type.__class__.__name__},"
+                        f" {cls.DEFAULT_FORMATS[h.python_type]} already specified."
                     )
             else:
-                logger.debug(f"Use {type(h).__name__} as default handler for {h.python_type}.")
+                logger.debug(f"Use {type(h).__name__} as default handler for {h.python_type.__class__.__name__}.")
                 cls.DEFAULT_FORMATS[h.python_type] = h.supported_format
         if default_storage_for_type or default_for_type:
             if h.protocol in cls.DEFAULT_PROTOCOLS and not override:
@@ -685,7 +689,7 @@ class DataFrameTransformerEngine(TypeTransformer[DataFrame]):
         expected: types_pb2.LiteralType,
     ) -> literals_pb2.Literal:
         # Make a copy in case we need to hand off to encoders, since we can't be sure of mutations.
-        python_type, *attrs = extract_cols_and_format(python_type)
+        python_type, *_attrs = extract_cols_and_format(python_type)
         sdt = types_pb2.StructuredDatasetType(format=self.DEFAULT_FORMATS.get(python_type, GENERIC_FORMAT))
 
         if issubclass(python_type, DataFrame) and not isinstance(python_val, DataFrame):
@@ -876,7 +880,7 @@ class DataFrameTransformerEngine(TypeTransformer[DataFrame]):
             raise TypeTransformerFailedError("Attribute access unsupported.")
 
         # Detect annotations and extract out all the relevant information that the user might supply
-        expected_python_type, column_dict, storage_fmt, pa_schema = extract_cols_and_format(expected_python_type)
+        expected_python_type, column_dict, _storage_fmt, _pa_schema = extract_cols_and_format(expected_python_type)
 
         # Start handling for DataFrame scalars, first look at the columns
         incoming_columns = lv.scalar.structured_dataset.metadata.structured_dataset_type.columns
@@ -904,7 +908,8 @@ class DataFrameTransformerEngine(TypeTransformer[DataFrame]):
         #   t1(input_a: DataFrame)  # or
         #   t1(input_a: Annotated[DataFrame, my_cols])
         if issubclass(expected_python_type, DataFrame):
-            fdf = DataFrame(format=metad.structured_dataset_type.format)
+            fdf = DataFrame(format=metad.structured_dataset_type.format, uri=lv.scalar.structured_dataset.uri)
+            fdf._already_uploaded = True
             fdf._literal_sd = lv.scalar.structured_dataset
             fdf._metadata = metad
             return fdf
@@ -985,7 +990,7 @@ class DataFrameTransformerEngine(TypeTransformer[DataFrame]):
         return converted_cols
 
     def _get_dataset_type(self, t: typing.Union[Type[DataFrame], typing.Any]) -> types_pb2.StructuredDatasetType:
-        original_python_type, column_map, storage_format, pa_schema = extract_cols_and_format(t)  # type: ignore
+        _original_python_type, column_map, storage_format, pa_schema = extract_cols_and_format(t)  # type: ignore
 
         # Get the column information
         converted_cols: typing.List[types_pb2.StructuredDatasetType.DatasetColumn] = (
@@ -1012,7 +1017,7 @@ class DataFrameTransformerEngine(TypeTransformer[DataFrame]):
     def guess_python_type(self, literal_type: types_pb2.LiteralType) -> Type[DataFrame]:
         # todo: technically we should return the dataframe type specified in the constructor, but to do that,
         #   we'd have to store that, which we don't do today. See possibly #1363
-        if literal_type.HasField("dataframe_type"):
+        if literal_type.HasField("structured_dataset_type"):
             return DataFrame
         raise ValueError(f"DataFrameTransformerEngine cannot reverse {literal_type}")
 

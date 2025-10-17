@@ -23,6 +23,6 @@ async def main() -> str:
 
 
 if __name__ == "__main__":
-    flyte.init_from_config("../../config.yaml")
+    flyte.init_from_config()
     r = flyte.run(main)
     print(r.url)

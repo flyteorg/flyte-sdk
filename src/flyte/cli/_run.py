@@ -9,28 +9,27 @@ from types import ModuleType
 from typing import Any, Dict, List, cast
 
 import rich_click as click
-from rich.console import Console
 from typing_extensions import get_args
 
 from .._code_bundle._utils import CopyFiles
 from .._task import TaskTemplate
 from ..remote import Run
 from . import _common as common
-from ._common import CLIConfig
+from ._common import CLIConfig, initialize_config
 from ._params import to_click_option
 
 RUN_REMOTE_CMD = "deployed-task"
 
 
 @lru_cache()
-def _initialize_config(ctx: click.Context, project: str, domain: str):
+def _initialize_config(ctx: click.Context, project: str, domain: str, root_dir: str | None = None):
     obj: CLIConfig | None = ctx.obj
     if obj is None:
         import flyte.config
 
         obj = CLIConfig(flyte.config.auto(), ctx)
 
-    obj.init(project, domain)
+    obj.init(project, domain, root_dir)
     return obj
 
 
@@ -44,7 +43,7 @@ def _list_tasks(
 ) -> list[str]:
     import flyte.remote
 
-    _initialize_config(ctx, project, domain)
+    common.initialize_config(ctx, project, domain)
     return [task.name for task in flyte.remote.Task.listall(by_task_name=by_task_name, by_task_env=by_task_env)]
 
 
@@ -77,6 +76,16 @@ class RunArguments:
             )
         },
     )
+    root_dir: str | None = field(
+        default=None,
+        metadata={
+            "click.option": click.Option(
+                ["--root-dir"],
+                type=str,
+                help="Override the root source directory, helpful when working with monorepos.",
+            )
+        },
+    )
     name: str | None = field(
         default=None,
         metadata={
@@ -96,6 +105,17 @@ class RunArguments:
                 default=False,
                 help="Wait and watch logs for the parent action. If not provided, the CLI will exit after "
                 "successfully launching a remote execution with a link to the UI.",
+            )
+        },
+    )
+    image: List[str] = field(
+        default_factory=list,
+        metadata={
+            "click.option": click.Option(
+                ["--image"],
+                type=str,
+                multiple=True,
+                help="Image to be used in the run. Format: imagename=imageuri. Can be specified multiple times.",
             )
         },
     )
@@ -121,18 +141,30 @@ class RunTaskCommand(click.RichCommand):
         super().__init__(obj_name, *args, **kwargs)
 
     def invoke(self, ctx: click.Context):
-        obj: CLIConfig = _initialize_config(ctx, self.run_args.project, self.run_args.domain)
+        obj: CLIConfig = initialize_config(
+            ctx, self.run_args.project, self.run_args.domain, self.run_args.root_dir, tuple(self.run_args.image) or None
+        )
 
         async def _run():
             import flyte
 
+            console = common.get_console()
             r = await flyte.with_runcontext(
                 copy_style=self.run_args.copy_style,
                 mode="local" if self.run_args.local else "remote",
                 name=self.run_args.name,
             ).run.aio(self.obj, **ctx.params)
+            if self.run_args.local:
+                console.print(
+                    common.get_panel(
+                        "Local Run",
+                        f"[green]Completed Local Run, data stored in path: {r.url} [/green] \n"
+                        f"➡️  Outputs: {r.outputs()}",
+                        obj.output_format,
+                    )
+                )
+                return
             if isinstance(r, Run) and r.action is not None:
-                console = Console()
                 console.print(
                     common.get_panel(
                         "Run",
@@ -186,6 +218,14 @@ class TaskPerFileGroup(common.ObjectsPerFileGroup):
     def _filter_objects(self, module: ModuleType) -> Dict[str, Any]:
         return {k: v for k, v in module.__dict__.items() if isinstance(v, TaskTemplate)}
 
+    def list_commands(self, ctx):
+        common.initialize_config(ctx, self.run_args.project, self.run_args.domain, self.run_args.root_dir)
+        return super().list_commands(ctx)
+
+    def get_command(self, ctx, obj_name):
+        common.initialize_config(ctx, self.run_args.project, self.run_args.domain, self.run_args.root_dir)
+        return super().get_command(ctx, obj_name)
+
     def _get_command_for_obj(self, ctx: click.Context, obj_name: str, obj: Any) -> click.Command:
         obj = cast(TaskTemplate, obj)
         return RunTaskCommand(
@@ -205,13 +245,15 @@ class RunReferenceTaskCommand(click.RichCommand):
         super().__init__(*args, **kwargs)
 
     def invoke(self, ctx: click.Context):
-        obj: CLIConfig = _initialize_config(ctx, self.run_args.project, self.run_args.domain)
+        obj: CLIConfig = common.initialize_config(
+            ctx, self.run_args.project, self.run_args.domain, self.run_args.root_dir, tuple(self.run_args.image) or None
+        )
 
         async def _run():
-            import flyte
             import flyte.remote
 
             task = flyte.remote.Task.get(self.task_name, version=self.version, auto_version="latest")
+            console = common.get_console()
 
             r = await flyte.with_runcontext(
                 copy_style=self.run_args.copy_style,
@@ -219,7 +261,6 @@ class RunReferenceTaskCommand(click.RichCommand):
                 name=self.run_args.name,
             ).run.aio(task, **ctx.params)
             if isinstance(r, Run) and r.action is not None:
-                console = Console()
                 console.print(
                     common.get_panel(
                         "Run",
@@ -243,7 +284,7 @@ class RunReferenceTaskCommand(click.RichCommand):
         import flyte.remote
         from flyte._internal.runtime.types_serde import transform_native_to_typed_interface
 
-        _initialize_config(ctx, self.run_args.project, self.run_args.domain)
+        common.initialize_config(ctx, self.run_args.project, self.run_args.domain)
 
         task = flyte.remote.Task.get(self.task_name, auto_version="latest")
         task_details = task.fetch()
@@ -389,7 +430,6 @@ class TaskFiles(common.FileGroup):
 
     def get_command(self, ctx, cmd_name):
         run_args = RunArguments.from_dict(ctx.params)
-
         if cmd_name == RUN_REMOTE_CMD:
             return ReferenceTaskGroup(
                 name=cmd_name,
@@ -434,6 +474,28 @@ Flyte environment:
 
 ```bash
 flyte run --local hello.py my_task --arg1 value1 --arg2 value2
+```
+
+You can provide image mappings with `--image` flag. This allows you to specify
+the image URI for the task environment during CLI execution without changing
+the code. Any images defined with `Image.from_ref_name("name")` will resolve to the
+corresponding URIs you specify here.
+
+```bash
+flyte run hello.py my_task --image my_image=ghcr.io/myorg/my-image:v1.0
+```
+
+If the image name is not provided, it is regarded as a default image and will
+be used when no image is specified in TaskEnvironment:
+
+```bash
+flyte run hello.py my_task --image ghcr.io/myorg/default-image:latest
+```
+
+You can specify multiple image arguments:
+
+```bash
+flyte run hello.py my_task --image ghcr.io/org/default:latest --image gpu=ghcr.io/org/gpu:v2.0
 ```
 
 To run tasks that you've already deployed to Flyte, use the {RUN_REMOTE_CMD} command:

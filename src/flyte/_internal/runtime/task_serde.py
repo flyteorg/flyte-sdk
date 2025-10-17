@@ -8,14 +8,14 @@ import typing
 from datetime import timedelta
 from typing import Optional, cast
 
-from flyteidl.core import identifier_pb2, literals_pb2, security_pb2, tasks_pb2
+from flyteidl2.core import identifier_pb2, literals_pb2, security_pb2, tasks_pb2
+from flyteidl2.task import common_pb2, environment_pb2, task_definition_pb2
 from google.protobuf import duration_pb2, wrappers_pb2
 
 import flyte.errors
 from flyte._cache.cache import VersionParameters, cache_from_request
 from flyte._logging import logger
 from flyte._pod import _PRIMARY_CONTAINER_NAME_FIELD, PodTemplate
-from flyte._protos.workflow import common_pb2, environment_pb2, task_definition_pb2
 from flyte._secret import SecretRequest, secrets_from_request
 from flyte._task import AsyncFunctionTaskTemplate, TaskTemplate
 from flyte.models import CodeBundle, SerializationContext
@@ -119,7 +119,7 @@ def get_proto_task(task: TaskTemplate, serialize_context: SerializationContext) 
         version=serialize_context.version,
     )
 
-    # TODO Add support for SQL, extra_config, custom
+    # TODO Add support for extra_config, custom
     extra_config: typing.Dict[str, str] = {}
 
     if task.pod_template and not isinstance(task.pod_template, str):
@@ -132,7 +132,7 @@ def get_proto_task(task: TaskTemplate, serialize_context: SerializationContext) 
 
     custom = task.custom_config(serialize_context)
 
-    sql = None
+    sql = task.sql(serialize_context)
 
     # -------------- CACHE HANDLING ----------------------
     task_cache = cache_from_request(task.cache)
@@ -170,8 +170,9 @@ def get_proto_task(task: TaskTemplate, serialize_context: SerializationContext) 
             retries=get_proto_retry_strategy(task.retries),
             timeout=get_proto_timeout(task.timeout),
             pod_template_name=(task.pod_template if task.pod_template and isinstance(task.pod_template, str) else None),
-            interruptible=task.interruptable,
+            interruptible=task.interruptible,
             generates_deck=wrappers_pb2.BoolValue(value=task.report),
+            debuggable=task.debuggable,
         ),
         interface=transform_native_to_typed_interface(task.native_interface),
         custom=custom if len(custom) > 0 else None,
@@ -208,25 +209,25 @@ def _get_urun_container(
         else None
     )
     resources = get_proto_resources(task_template.resources)
-    # pr: under what conditions should this return None?
+
     if isinstance(task_template.image, str):
         raise flyte.errors.RuntimeSystemError("BadConfig", "Image is not a valid image")
-    image_id = task_template.image.identifier
+
+    env_name = task_template.parent_env_name
+    if env_name is None:
+        raise flyte.errors.RuntimeSystemError("BadConfig", f"Task {task_template.name} has no parent environment name")
+
     if not serialize_context.image_cache:
         # This computes the image uri, computing hashes as necessary so can fail if done remotely.
         img_uri = task_template.image.uri
-    elif serialize_context.image_cache and image_id not in serialize_context.image_cache.image_lookup:
+    elif serialize_context.image_cache and env_name not in serialize_context.image_cache.image_lookup:
         img_uri = task_template.image.uri
-        from flyte._version import __version__
 
         logger.warning(
-            f"Image {task_template.image} not found in the image cache: {serialize_context.image_cache.image_lookup}.\n"
-            f"This typically occurs when the Flyte SDK version (`{__version__}`) used in the task environment "
-            f"differs from the version used to compile or deploy it.\n"
-            f"Ensure both environments use the same Flyte SDK version to avoid inconsistencies in image resolution."
+            f"Image {task_template.image} not found in the image cache: {serialize_context.image_cache.image_lookup}."
         )
     else:
-        img_uri = serialize_context.image_cache.image_lookup[image_id]
+        img_uri = serialize_context.image_cache.image_lookup[env_name]
 
     return tasks_pb2.Container(
         image=img_uri,

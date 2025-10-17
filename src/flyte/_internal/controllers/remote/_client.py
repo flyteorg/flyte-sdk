@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import grpc.aio
+from flyteidl2.workflow import queue_service_pb2_grpc, state_service_pb2_grpc
 
-from flyte._protos.workflow import queue_service_pb2_grpc, state_service_pb2_grpc
 from flyte.remote import create_channel
 
 from ._service_protocol import QueueService, StateService

@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-import base64
 import hashlib
 import sys
 import typing
 from abc import abstractmethod
-from dataclasses import asdict, dataclass, field, fields
+from dataclasses import dataclass, field
 from functools import cached_property
 from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar, Dict, List, Literal, Optional, Tuple, TypeVar, Union
@@ -56,34 +55,12 @@ class Layer:
 
         :param hasher: The hash object to update with the layer's data.
         """
-        print("hash hash")
 
     def validate(self):
         """
         Raise any validation errors for the layer
         :return:
         """
-
-    def identifier(self) -> str:
-        """
-        This method computes a unique identifier for the layer based on its properties.
-        It is used to identify the layer in the image cache.
-
-        It is also used to compute a unique identifier for the image itself, which is a combination of all the layers.
-        This identifier is used to look up previously built images in the image cache. So having a consistent
-        identifier is important for the image cache to work correctly.
-
-        :return: A unique identifier for the layer.
-        """
-        ignore_fields: list[str] = []
-        for f in fields(self):
-            if f.metadata.get("identifier", True) is False:
-                ignore_fields.append(f.name)
-        d = asdict(self)
-        for v in ignore_fields:
-            d.pop(v)
-
-        return str(d)
 
 
 @rich.repr.auto
@@ -152,7 +129,7 @@ class PipPackages(PipOption, Layer):
 @rich.repr.auto
 @dataclass(kw_only=True, frozen=True, repr=True)
 class PythonWheels(PipOption, Layer):
-    wheel_dir: Path = field(metadata={"identifier": False})
+    wheel_dir: Path
     wheel_dir_name: str = field(init=False)
     package_name: str
 
@@ -191,24 +168,67 @@ class UVProject(PipOption, Layer):
 
     def validate(self):
         if not self.pyproject.exists():
-            raise FileNotFoundError(f"pyproject.toml file {self.pyproject} does not exist")
+            raise FileNotFoundError(f"pyproject.toml file {self.pyproject.resolve()} does not exist")
         if not self.pyproject.is_file():
-            raise ValueError(f"Pyproject file {self.pyproject} is not a file")
+            raise ValueError(f"Pyproject file {self.pyproject.resolve()} is not a file")
         if not self.uvlock.exists():
-            raise ValueError(f"UVLock file {self.uvlock} does not exist")
+            raise ValueError(f"UVLock file {self.uvlock.resolve()} does not exist")
         super().validate()
 
     def update_hash(self, hasher: hashlib._Hash):
-        from ._utils import filehash_update
+        from ._utils import filehash_update, update_hasher_for_source
 
         super().update_hash(hasher)
-        filehash_update(self.uvlock, hasher)
+        if self.extra_args and "--no-install-project" in self.extra_args:
+            filehash_update(self.uvlock, hasher)
+            filehash_update(self.pyproject, hasher)
+        else:
+            update_hasher_for_source(self.pyproject.parent, hasher)
+
+
+@rich.repr.auto
+@dataclass(frozen=True, repr=True)
+class PoetryProject(Layer):
+    """
+    Poetry does not use pip options, so the PoetryProject class do not inherits PipOption class
+    """
+
+    pyproject: Path
+    poetry_lock: Path
+    extra_args: Optional[str] = None
+    secret_mounts: Optional[Tuple[str | Secret, ...]] = None
+
+    def validate(self):
+        if not self.pyproject.exists():
+            raise FileNotFoundError(f"pyproject.toml file {self.pyproject} does not exist")
+        if not self.pyproject.is_file():
+            raise ValueError(f"Pyproject file {self.pyproject} is not a file")
+        if not self.poetry_lock.exists():
+            raise ValueError(f"poetry.lock file {self.poetry_lock} does not exist")
+        super().validate()
+
+    def update_hash(self, hasher: hashlib._Hash):
+        from ._utils import filehash_update, update_hasher_for_source
+
+        hash_input = ""
+        if self.extra_args:
+            hash_input += self.extra_args
+        if self.secret_mounts:
+            for secret_mount in self.secret_mounts:
+                hash_input += str(secret_mount)
+        hasher.update(hash_input.encode("utf-8"))
+
+        if self.extra_args and "--no-root" in self.extra_args:
+            filehash_update(self.poetry_lock, hasher)
+            filehash_update(self.pyproject, hasher)
+        else:
+            update_hasher_for_source(self.pyproject.parent, hasher)
 
 
 @rich.repr.auto
 @dataclass(frozen=True, repr=True)
 class UVScript(PipOption, Layer):
-    script: Path = field(metadata={"identifier": False})
+    script: Path
     script_name: str = field(init=False)
 
     def __post_init__(self):
@@ -284,15 +304,14 @@ class DockerIgnore(Layer):
 @rich.repr.auto
 @dataclass(frozen=True, repr=True)
 class CopyConfig(Layer):
-    path_type: CopyConfigType = field(metadata={"identifier": True})
-    src: Path = field(metadata={"identifier": False})
+    path_type: CopyConfigType
+    src: Path
     dst: str
-    src_name: str = field(init=False)
+    src_name: str
 
     def __post_init__(self):
         if self.path_type not in (0, 1):
             raise ValueError(f"Invalid path_type {self.path_type}, must be 0 (file) or 1 (directory)")
-        object.__setattr__(self, "src_name", self.src.name)
 
     def validate(self):
         if not self.src.exists():
@@ -380,9 +399,8 @@ class Image:
     name: Optional[str] = field(default=None)
     platform: Tuple[Architecture, ...] = field(default=("linux/amd64",))
     python_version: Tuple[int, int] = field(default_factory=_detect_python_version)
-
-    # For .auto() images. Don't compute an actual identifier.
-    _identifier_override: Optional[str] = field(default=None, init=False)
+    # Refer to the image_refs (name:image-uri) set in CLI or config
+    _ref_name: Optional[str] = field(default=None)
 
     # Layers to be added to the image. In init, because frozen, but users shouldn't access, so underscore.
     _layers: Tuple[Layer, ...] = field(default_factory=tuple)
@@ -400,6 +418,9 @@ class Image:
     # class-level token not included in __init__
     _token: ClassVar[object] = object()
 
+    # Underscore cuz we may rename in the future, don't expose for now,
+    _image_registry_secret: Optional[Secret] = None
+
     # check for the guard that we put in place
     def __post_init__(self):
         if object.__getattribute__(self, "__dict__").pop("_guard", None) is not Image._token:
@@ -415,31 +436,6 @@ class Image:
         object.__setattr__(obj, "_guard", cls._token)  # set guard to prevent direct construction
         cls.__init__(obj, **kwargs)  # run dataclass generated __init__
         return obj
-
-    @cached_property
-    def identifier(self) -> str:
-        """
-        This identifier is a hash of the layers and properties of the image. It is used to look up previously built
-        images. Why is this useful? For example, if a user has Image.from_uv_base().with_source_file("a/local/file"),
-        it's not necessarily the case that that file exists within the image (further commands may have removed/changed
-        it), and certainly not the case that the path to the file, inside the image (which is used as part of the layer
-        hash computation), is the same. That is, inside the image when a task runs, as we come across the same Image
-        declaration, we need a way of identifying the image and its uri, without hashing all the layers again. This
-        is what this identifier is for. See the ImageCache object for additional information.
-
-        :return: A unique identifier of the Image
-        """
-        if self._identifier_override:
-            return self._identifier_override
-
-        # Only get the non-None values in the Image to ensure the hash is consistent
-        # across different SDK versions.
-        # Layers can specify a _compute_identifier optionally, but the default will just stringify
-        image_dict = asdict(self, dict_factory=lambda x: {k: v for (k, v) in x if v is not None and k != "_layers"})
-        layers_str_repr = "".join([layer.identifier() for layer in self._layers])
-        image_dict["layers"] = layers_str_repr
-        spec_bytes = image_dict.__str__().encode("utf-8")
-        return base64.urlsafe_b64encode(hashlib.md5(spec_bytes).digest()).decode("ascii").rstrip("=")
 
     def validate(self):
         for layer in self._layers:
@@ -503,9 +499,6 @@ class Image:
                     image = image.with_pip_packages(f"flyte=={flyte_version}")
         if not dev_mode:
             object.__setattr__(image, "_tag", preset_tag)
-        # Set this to auto for all auto images because the meaning of "auto" can change (based on logic inside
-        # _get_default_image_for, acts differently in a running task container) so let's make sure it stays auto.
-        object.__setattr__(image, "_identifier_override", "auto")
 
         return image
 
@@ -516,6 +509,7 @@ class Image:
         flyte_version: Optional[str] = None,
         install_flyte: bool = True,
         registry: Optional[str] = None,
+        registry_secret: Optional[str | Secret] = None,
         name: Optional[str] = None,
         platform: Optional[Tuple[Architecture, ...]] = None,
     ) -> Image:
@@ -527,6 +521,7 @@ class Image:
         :param flyte_version: Union version to use
         :param install_flyte: If True, will install the flyte library in the image
         :param registry: Registry to use for the image
+        :param registry_secret: Secret to use to pull/push the private image.
         :param name: Name of the image if you want to override the default name
         :param platform: Platform to use for the image, default is linux/amd64, use tuple for multiple values
             Example: ("linux/amd64", "linux/arm64")
@@ -544,11 +539,8 @@ class Image:
         )
 
         if registry or name:
-            return base_image.clone(registry=registry, name=name)
+            return base_image.clone(registry=registry, name=name, registry_secret=registry_secret)
 
-        # # Set this to auto for all auto images because the meaning of "auto" can change (based on logic inside
-        # # _get_default_image_for, acts differently in a running task container) so let's make sure it stays auto.
-        # object.__setattr__(base_image, "_identifier_override", "auto")
         return base_image
 
     @classmethod
@@ -563,12 +555,20 @@ class Image:
         return img
 
     @classmethod
+    def from_ref_name(cls, name: str) -> Image:
+        # NOTE: set image name as _ref_name to enable adding additional layers.
+        # See: https://github.com/flyteorg/flyte-sdk/blob/14de802701aab7b8615ffb99c650a36305ef01f7/src/flyte/_image.py#L642
+        img = cls._new(name=name, _ref_name=name)
+        return img
+
+    @classmethod
     def from_uv_script(
         cls,
         script: Path | str,
         *,
         name: str,
         registry: str | None = None,
+        registry_secret: Optional[str | Secret] = None,
         python_version: Optional[Tuple[int, int]] = None,
         index_url: Optional[str] = None,
         extra_index_urls: Union[str, List[str], Tuple[str, ...], None] = None,
@@ -597,6 +597,7 @@ class Image:
 
         :param name: name of the image
         :param registry: registry to use for the image
+        :param registry_secret: Secret to use to pull/push the private image.
         :param python_version: Python version to use for the image, if not specified, will use the current Python
         version
         :param script: path to the uv script
@@ -622,14 +623,22 @@ class Image:
             secret_mounts=_ensure_tuple(secret_mounts) if secret_mounts else None,
         )
 
-        img = cls.from_debian_base(registry=registry, name=name, python_version=python_version, platform=platform)
+        img = cls.from_debian_base(
+            registry=registry,
+            registry_secret=registry_secret,
+            name=name,
+            python_version=python_version,
+            platform=platform,
+        )
 
         return img.clone(addl_layer=ll)
 
     def clone(
         self,
         registry: Optional[str] = None,
+        registry_secret: Optional[str | Secret] = None,
         name: Optional[str] = None,
+        base_image: Optional[str] = None,
         python_version: Optional[Tuple[int, int]] = None,
         addl_layer: Optional[Layer] = None,
     ) -> Image:
@@ -637,12 +646,14 @@ class Image:
         Use this method to clone the current image and change the registry and name
 
         :param registry: Registry to use for the image
+        :param registry_secret: Secret to use to pull/push the private image.
         :param name: Name of the image
         :param python_version: Python version for the image, if not specified, will use the current Python version
         :param addl_layer: Additional layer to add to the image. This will be added to the end of the layers.
-
         :return:
         """
+        from flyte import Secret
+
         if addl_layer and self.dockerfile:
             # We don't know how to inspect dockerfiles to know what kind it is (OS, python version, uv vs poetry, etc)
             # so there's no guarantee any of the layering logic will work.
@@ -652,19 +663,23 @@ class Image:
             )
         registry = registry if registry else self.registry
         name = name if name else self.name
+        registry_secret = registry_secret if registry_secret else self._image_registry_secret
+        base_image = base_image if base_image else self.base_image
         if addl_layer and (not name):
             raise ValueError(
                 f"Cannot add additional layer {addl_layer} to an image without name. Please first clone()."
             )
         new_layers = (*self._layers, addl_layer) if addl_layer else self._layers
         img = Image._new(
-            base_image=self.base_image,
+            base_image=base_image,
             dockerfile=self.dockerfile,
             registry=registry,
             name=name,
             platform=self.platform,
             python_version=python_version or self.python_version,
             _layers=new_layers,
+            _image_registry_secret=Secret(key=registry_secret) if isinstance(registry_secret, str) else registry_secret,
+            _ref_name=self._ref_name,
         )
 
         return img
@@ -845,16 +860,23 @@ class Image:
         new_image = self.clone(addl_layer=Env.from_dict(env_vars))
         return new_image
 
-    def with_source_folder(self, src: Path, dst: str = ".") -> Image:
+    def with_source_folder(self, src: Path, dst: str = ".", copy_contents_only: bool = False) -> Image:
         """
         Use this method to create a new image with the specified local directory layered on top of the current image.
         If dest is not specified, it will be copied to the working directory of the image
 
         :param src: root folder of the source code from the build context to be copied
         :param dst: destination folder in the image
+        :param copy_contents_only: If True, will copy the contents of the source folder to the destination folder,
+            instead of the folder itself. Default is False.
         :return: Image
         """
-        new_image = self.clone(addl_layer=CopyConfig(path_type=1, src=src, dst=dst))
+        src_name = src.name
+        if copy_contents_only:
+            src_name = "."
+        else:
+            dst = str("./" + src_name)
+        new_image = self.clone(addl_layer=CopyConfig(path_type=1, src=src, dst=dst, src_name=src_name))
         return new_image
 
     def with_source_file(self, src: Path, dst: str = ".") -> Image:
@@ -866,7 +888,7 @@ class Image:
         :param dst: destination folder in the image
         :return: Image
         """
-        new_image = self.clone(addl_layer=CopyConfig(path_type=0, src=src, dst=dst))
+        new_image = self.clone(addl_layer=CopyConfig(path_type=0, src=src, dst=dst, src_name=src.name))
         return new_image
 
     def with_dockerignore(self, path: Path) -> Image:
@@ -913,6 +935,45 @@ class Image:
                 index_url=index_url,
                 extra_index_urls=extra_index_urls,
                 pre=pre,
+                extra_args=extra_args,
+                secret_mounts=_ensure_tuple(secret_mounts) if secret_mounts else None,
+            )
+        )
+        return new_image
+
+    def with_poetry_project(
+        self,
+        pyproject_file: str | Path,
+        poetry_lock: Path | None = None,
+        extra_args: Optional[str] = None,
+        secret_mounts: Optional[SecretRequest] = None,
+    ):
+        """
+        Use this method to create a new image with the specified pyproject.toml layered on top of the current image.
+        Must have a corresponding pyproject.toml file in the same directory.
+        Cannot be used in conjunction with conda.
+
+        By default, this method copies the entire project into the image,
+        including files such as pyproject.toml, poetry.lock, and the src/ directory.
+
+        If you prefer not to install the current project, you can pass through `extra_args`
+        `--no-root`. In this case, the image builder will only copy pyproject.toml and poetry.lock
+        into the image.
+
+        :param pyproject_file: Path to the pyproject.toml file. A poetry.lock file must exist in the same directory
+            unless `poetry_lock` is explicitly provided.
+        :param poetry_lock: Path to the poetry.lock file. If not specified, the default is the file named
+            'poetry.lock' in the same directory as `pyproject_file` (pyproject.parent / "poetry.lock").
+        :param extra_args: Extra arguments to pass through to the package installer/resolver, default is None.
+        :param secret_mounts: Secrets to make available during dependency resolution/build (e.g., private indexes).
+        :return: Image
+        """
+        if isinstance(pyproject_file, str):
+            pyproject_file = Path(pyproject_file)
+        new_image = self.clone(
+            addl_layer=PoetryProject(
+                pyproject=pyproject_file,
+                poetry_lock=poetry_lock or (pyproject_file.parent / "poetry.lock"),
                 extra_args=extra_args,
                 secret_mounts=_ensure_tuple(secret_mounts) if secret_mounts else None,
             )
