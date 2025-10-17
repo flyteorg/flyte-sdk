@@ -6,7 +6,7 @@ from distributed import Client, WorkerPlugin
 from flyte import Resources
 from flyte.extend import AsyncFunctionTaskTemplate, TaskPluginRegistry, download_code_bundle, get_proto_resources
 from flyte.models import CodeBundle, SerializationContext
-from flyteidl.plugins.dask_pb2 import DaskJob, DaskScheduler, DaskWorkerGroup
+from flyteidl2.plugins.dask_pb2 import DaskJob, DaskScheduler, DaskWorkerGroup
 from google.protobuf.json_format import MessageToDict
 
 
@@ -78,6 +78,7 @@ class DaskTask(AsyncFunctionTaskTemplate):
 
     plugin_config: Dask
     task_type: str = "dask"
+    debuggable: bool = True
 
     async def pre(self, *args, **kwargs) -> Dict[str, Any]:
         ctx = flyte.ctx()
