@@ -13,7 +13,7 @@ env = flyte.TaskEnvironment(
     image=flyte.Image.from_debian_base().with_uv_project(
         pyproject_file=(UV_WORKSPACE_ROOT / "pyproject.toml"),
         extra_args="--only-group albatross",  # albatross group define all the dependencies the task needs
-        project_install_mode="install_as_package",
+        project_install_mode="install_project",
     ),
 )
 

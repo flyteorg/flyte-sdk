@@ -399,7 +399,7 @@ async def test_uvproject_handler_with_project_install():
             uv_project = UVProject(
                 pyproject=pyproject_file.absolute(),
                 uvlock=uv_lock_file.absolute(),
-                project_install_mode="install_as_package",
+                project_install_mode="install_project",
             )
 
             cache_dir = user_folder / ".cache"
