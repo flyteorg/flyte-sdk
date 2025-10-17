@@ -144,7 +144,7 @@ class RawDataPath:
 
     def get_random_remote_path(self, file_name: Optional[str] = None) -> str:
         """
-        Returns a random path for uploading a file/directory to.
+        Returns a random path for uploading a file/directory to. This file/folder will not be created, it's just a path.
 
         :param file_name: If given, will be joined after a randomly generated portion.
         :return:
@@ -160,13 +160,14 @@ class RawDataPath:
 
         protocol = get_protocol(file_prefix)
         if "file" in protocol:
-            local_path = pathlib.Path(file_prefix) / random_string
+            parent_folder = pathlib.Path(file_prefix)
+            parent_folder.mkdir(exist_ok=True, parents=True)
             if file_name:
-                # Only if file name is given do we create the parent, because it may be needed as a folder otherwise
-                local_path = local_path / file_name
-                if not local_path.exists():
-                    local_path.parent.mkdir(exist_ok=True, parents=True)
-                    local_path.touch()
+                random_folder = parent_folder / random_string
+                random_folder.mkdir()
+                local_path = random_folder / file_name
+            else:
+                local_path = parent_folder / random_string
             return str(local_path.absolute())
 
         fs = fsspec.filesystem(protocol)
@@ -194,6 +195,8 @@ class TaskContext:
     :param action: The action ID of the current execution. This is always set, within a run.
     :param version: The version of the executed task. This is set when the task is executed by an action and will be
       set on all sub-actions.
+    :param custom_context: Context metadata for the action. If an action receives context, it'll automatically pass it
+      to any actions it spawns. Context will not be used for cache key computation.
     """
 
     action: ActionID
@@ -210,6 +213,7 @@ class TaskContext:
     data: Dict[str, Any] = field(default_factory=dict)
     mode: Literal["local", "remote", "hybrid"] = "remote"
     interactive_mode: bool = False
+    custom_context: Dict[str, str] = field(default_factory=dict)
 
     def replace(self, **kwargs) -> TaskContext:
         if "data" in kwargs:

@@ -15,7 +15,7 @@ def update():
 @update.command("trigger", cls=common.CommandBase)
 @click.argument("name", type=str)
 @click.argument("task_name", type=str)
-@click.option("--activate/--deactivate", default=None, required=True, help="Activate or deactivate the trigger.")
+@click.option("--activate/--deactivate", required=True, help="Activate or deactivate the trigger.")
 @click.pass_obj
 def trigger(cfg: common.CLIConfig, name: str, task_name: str, activate: bool, project: str | None, domain: str | None):
     """
@@ -31,6 +31,7 @@ def trigger(cfg: common.CLIConfig, name: str, task_name: str, activate: bool, pr
     """
     cfg.init(project, domain)
     console = common.get_console()
-    with console.status(f"Updating trigger {name} for task {task_name} to {'active' if activate else 'deactive'}..."):
+    to_state = "active" if activate else "deactivate"
+    with console.status(f"Updating trigger {name} for task {task_name} to {to_state}..."):
         remote.Trigger.update(name, task_name, activate)
-    console.print("Trigger updated.")
+    console.print(f"Trigger updated and is set to [fuchsia]{to_state}[/fuchsia]")

@@ -8,8 +8,9 @@ from flyte import Image
 from flyte._initialize import ensure_client, get_client
 from flyte._logging import logger
 from flyte.models import SerializationContext
+import flyte.errors
 
-from ._app_environment import App, AppEnvironment, AppSerializationSettings
+from ._app_environment import AppEnvironment
 
 if typing.TYPE_CHECKING:
     from flyte._protos.app import app_definition_pb2
@@ -44,7 +45,7 @@ class DeployedAppEnvironment(deployer.DeployedEnvironment):
 
 
 async def _deploy_app(
-    app: App, serialization_context: SerializationContext, dryrun: bool = False
+        app: AppEnvironment, serialization_context: SerializationContext, dryrun: bool = False
 ) -> app_definition_pb2.App:
     """
     Deploy the given app.
@@ -56,29 +57,16 @@ async def _deploy_app(
     from flyte._internal.runtime.app_serde import translate_app_to_wire, upload_include_files
     from flyte._protos.app import app_payload_pb2
 
+    # TODO We need to handle uploading include files, ideally this is part of code bundle
+    # The reason is at this point, we already have a code bundle created.
     additional_distribution = await upload_include_files(app)
     materialized_inputs = {}
 
-    settings = AppSerializationSettings(
-        org=serialization_context.org,
-        project=serialization_context.project,
-        domain=serialization_context.domain,
-        version=serialization_context.version,
-        image_uri=serialization_context.image_cache.image_lookup[app.image.identifier],
-        desired_state=app_definition_pb2.Spec.DesiredState.DESIRED_STATE_ACTIVE,
-        additional_distribution=additional_distribution,
-        materialized_inputs=materialized_inputs,
-        is_serverless=False,
-    )
-
     image_uri = app.image.uri if isinstance(app.image, Image) else app.image
-    app_idl = translate_app_to_wire(app, settings)
-
     try:
+        app_idl = translate_app_to_wire(app, serialization_context)
         if dryrun:
-            return translate_app_to_wire(app, settings)
-
-        app_idl = translate_app_to_wire(app, settings)
+            return app_idl
         msg = f"Deploying app {app.name}, with image {image_uri} version {serialization_context.version}"
         if app_idl.spec.HasField("container") and app_idl.spec.container.args:
             msg += f" from {app_idl.spec.container.args[-3]}.{app_idl.spec.container.args[-1]}"
@@ -106,6 +94,6 @@ async def _deploy_app_env(context: deployer.DeploymentContext) -> deployer.Deplo
         raise TypeError(f"Expected AppEnvironment, got {type(context.environment)}")
 
     app_env = context.environment
-    deployed_app = await _deploy_app(app_env.app, context.serialization_context, dryrun=context.dryrun)
+    deployed_app = await _deploy_app(app_env, context.serialization_context, dryrun=context.dryrun)
 
     return DeployedAppEnvironment(env=app_env, deployed_app=deployed_app)

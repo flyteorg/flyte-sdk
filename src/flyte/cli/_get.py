@@ -246,6 +246,10 @@ def secret(
     """
     Get a list of all secrets, or details of a specific secret by name.
     """
+    if project is None:
+        project = ""
+    if domain is None:
+        domain = ""
     cfg.init(project=project, domain=domain)
 
     console = common.get_console()
