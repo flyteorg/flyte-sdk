@@ -3,27 +3,30 @@ This example demonstrates all supported Flyte types as inputs to tasks.
 It shows how to use primitive types, complex types, and special Flyte types.
 """
 
-import asyncio
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from enum import Enum
-from typing import Dict, List, Optional, Tuple, Union, Any
+from typing import Any, Dict, List, Literal, Optional, Tuple, Union
 
+import aiofiles
 import pandas as pd
 from pydantic import BaseModel
 
 import flyte
-from flyte.io import Dir, File, DataFrame
+from flyte.io import DataFrame, Dir, File
 from flyte.types import FlytePickle
 
 # Set up environment with required dependencies for different types
 env = flyte.TaskEnvironment(
     name="all_types",
-    image=flyte.Image.from_debian_base().with_pip_packages("pandas", "pyarrow"),
+    image=flyte.Image.from_debian_base().with_pip_packages("pandas", "pyarrow", "unionai-reuse==0.1.7"),
     resources=flyte.Resources(cpu="1", memory="1Gi"),
+    reusable=flyte.ReusePolicy(replicas=2, concurrency=20),
 )
 
 # Define custom types for demonstration
+
+Intensity = Literal["low", "medium", "high"]
 
 
 class Status(Enum):
@@ -60,13 +63,15 @@ async def all_types_task(
     my_float: float,
     my_str: str,
     my_bool: bool,
+    my_bytes: bytes,
     # Date and time types
     my_datetime: datetime,
     my_timedelta: timedelta,
+    my_date: date,
     # Collection types
     my_list: List[str],
     my_dict: Dict[str, int],
-    my_tuple: Tuple[str, int, bool],
+    my_tuple: Any,  # Tuple[str, int, bool],
     # Optional types
     my_optional_str: Optional[str],
     my_optional_int: Optional[int],
@@ -79,6 +84,7 @@ async def all_types_task(
     my_dataclass: Person,
     my_pydantic: PersonModel,
     my_enum: Status,
+    my_literal: Intensity,
     # Flyte special types
     my_file: File,
     my_dir: Dir,
@@ -96,11 +102,11 @@ async def all_types_task(
     summary = {}
 
     # Process primitive types
-    primitive_results = await process_primitives(my_int, my_float, my_str, my_bool)
+    primitive_results = await process_primitives(my_int, my_float, my_str, my_bool, my_bytes)
     summary.update(primitive_results)
 
     # Process datetime types
-    datetime_results = await process_datetimes(my_datetime, my_timedelta)
+    datetime_results = await process_datetimes(my_datetime, my_timedelta, my_date)
     summary.update(datetime_results)
 
     # Process collections
@@ -120,13 +126,11 @@ async def all_types_task(
     summary.update(nested_results)
 
     # Process custom types
-    custom_results = await process_custom_types(my_dataclass, my_pydantic, my_enum)
+    custom_results = await process_custom_types(my_dataclass, my_pydantic, my_enum, my_literal)
     summary.update(custom_results)
 
     # Process Flyte types
-    flyte_results = await process_flyte_types(
-        my_file, my_dir, my_dataframe, my_flyte_dataframe
-    )
+    flyte_results = await process_flyte_types(my_file, my_dir, my_dataframe, my_flyte_dataframe)
     summary.update(flyte_results)
 
     # Process any and pickle types
@@ -139,7 +143,7 @@ async def all_types_task(
 # Individual tasks for each type category
 @env.task
 async def process_primitives(
-    my_int: int, my_float: float, my_str: str, my_bool: bool
+    my_int: int, my_float: float, my_str: str, my_bool: bool, my_bytes: bytes
 ) -> Dict[str, str]:
     """Process primitive types"""
     return {
@@ -147,23 +151,25 @@ async def process_primitives(
         "float": f"Received float: {my_float} (type: {type(my_float).__name__})",
         "str": f"Received string: '{my_str}' (length: {len(my_str)})",
         "bool": f"Received boolean: {my_bool} (type: {type(my_bool).__name__})",
+        "bytes": f"Received bytes: {len(my_bytes)} bytes (first 20: {my_bytes[:20]})",
     }
 
 
 @env.task
-async def process_datetimes(
-    my_datetime: datetime, my_timedelta: timedelta
-) -> Dict[str, str]:
-    """Process datetime and timedelta types"""
+async def process_datetimes(my_datetime: datetime, my_timedelta: timedelta, my_date: date) -> Dict[str, str]:
+    """Process datetime, timedelta, and date types"""
     return {
         "datetime": f"Received datetime: {my_datetime} (weekday: {my_datetime.strftime('%A')})",
         "timedelta": f"Received timedelta: {my_timedelta} (total seconds: {my_timedelta.total_seconds()})",
+        "date": f"Received date: {my_date} (formatted: {my_date.strftime('%B %d, %Y')})",
     }
 
 
 @env.task
 async def process_collections(
-    my_list: List[str], my_dict: Dict[str, int], my_tuple: Tuple[str, int, bool]
+    my_list: List[str],
+    my_dict: Dict[str, int],
+    my_tuple: Any,
 ) -> Dict[str, str]:
     """Process collection types"""
     return {
@@ -174,9 +180,7 @@ async def process_collections(
 
 
 @env.task
-async def process_optionals(
-    my_optional_str: Optional[str], my_optional_int: Optional[int]
-) -> Dict[str, str]:
+async def process_optionals(my_optional_str: Optional[str], my_optional_int: Optional[int]) -> Dict[str, str]:
     """Process optional types"""
     return {
         "optional_str": f"Optional string: {'None' if my_optional_str is None else repr(my_optional_str)}",
@@ -193,9 +197,7 @@ async def process_unions(my_union: Union[str, int]) -> Dict[str, str]:
 
 
 @env.task
-async def process_nested_types(
-    nested_list: List[List[int]], nested_dict: Dict[str, List[float]]
-) -> Dict[str, str]:
+async def process_nested_types(nested_list: List[List[int]], nested_dict: Dict[str, List[float]]) -> Dict[str, str]:
     """Process nested collection types"""
     total_nested_items = sum(len(sublist) for sublist in nested_list)
     total_dict_items = sum(len(values) for values in nested_dict.values())
@@ -208,13 +210,14 @@ async def process_nested_types(
 
 @env.task
 async def process_custom_types(
-    my_dataclass: Person, my_pydantic: PersonModel, my_enum: Status
+    my_dataclass: Person, my_pydantic: PersonModel, my_enum: Status, my_literal: Intensity
 ) -> Dict[str, str]:
-    """Process custom dataclass, Pydantic model, and enum types"""
+    """Process custom dataclass, Pydantic model, enum, and literal types"""
     return {
         "dataclass": f"Person: {my_dataclass.name}, age {my_dataclass.age}, email: {my_dataclass.email}",
         "pydantic": f"PersonModel: {my_pydantic.name}, age {my_pydantic.age}, active: {my_pydantic.is_active}",
         "enum": f"Status: {my_enum.value} (type: {type(my_enum).__name__})",
+        "literal": f"Intensity: {my_literal} (type: {type(my_literal).__name__})",
     }
 
 
@@ -240,23 +243,17 @@ async def process_flyte_types(
     results["dir"] = f"Directory: {my_dir.path} ({file_count} files)"
 
     # Process pandas DataFrame
-    results["pandas_df"] = (
-        f"Pandas DataFrame: {my_dataframe.shape} shape, columns: {list(my_dataframe.columns)}"
-    )
+    results["pandas_df"] = f"Pandas DataFrame: {my_dataframe.shape} shape, columns: {list(my_dataframe.columns)}"
 
     # Process Flyte DataFrame
     df_data = await my_flyte_dataframe.open(pd.DataFrame).all()
-    results["flyte_df"] = (
-        f"Flyte DataFrame: {df_data.shape} shape, columns: {list(df_data.columns)}"
-    )
+    results["flyte_df"] = f"Flyte DataFrame: {df_data.shape} shape, columns: {list(df_data.columns)}"
 
     return results
 
 
 @env.task
-async def process_any_pickle_types(
-    my_any: Any, my_pickle: FlytePickle
-) -> Dict[str, str]:
+async def process_any_pickle_types(my_any: Any, my_pickle: FlytePickle) -> Dict[str, str]:
     """Process Any and FlytePickle types"""
     return {
         "any": f"Any type: {my_any} (actual type: {type(my_any).__name__})",
@@ -266,9 +263,7 @@ async def process_any_pickle_types(
 
 # Example workflow that creates sample data and runs the main task
 @env.task
-async def create_sample_data() -> (
-    Tuple[File, Dir, pd.DataFrame, DataFrame, Any, FlytePickle]
-):
+async def create_sample_data() -> Tuple[File, Dir, pd.DataFrame, DataFrame, Any, Any]:
     """Create sample data for testing"""
     # Create a sample file
     sample_file = File.new_remote()
@@ -276,13 +271,13 @@ async def create_sample_data() -> (
         await f.write(b"Hello from Flyte! This is sample file content.")
 
     # Create a sample directory with files
-    import tempfile
     import os
+    import tempfile
 
     temp_dir = tempfile.mkdtemp()
     for i in range(3):
-        with open(os.path.join(temp_dir, f"file_{i}.txt"), "w") as f:
-            f.write(f"Content of file {i}")
+        async with aiofiles.open(os.path.join(temp_dir, f"file_{i}.txt"), "w") as f:
+            await f.write(f"Content of file {i}")
 
     sample_dir = await Dir.from_local(temp_dir)
 
@@ -308,7 +303,7 @@ async def create_sample_data() -> (
         def __str__(self):
             return f"CustomObject(value={self.value})"
 
-    sample_pickle = FlytePickle(CustomObject("Hello from pickle!"))
+    sample_pickle = CustomObject("Hello from pickle!")
 
     return (
         sample_file,
@@ -342,9 +337,11 @@ async def demo_workflow() -> Dict[str, str]:
         my_float=3.14159,
         my_str="Hello, Flyte!",
         my_bool=True,
+        my_bytes=b"Binary data: \x00\x01\x02\xff",
         # Date and time types
         my_datetime=datetime(2024, 1, 15, 10, 30, 0),
         my_timedelta=timedelta(days=7, hours=3, minutes=45),
+        my_date=date(2024, 10, 16),
         # Collection types
         my_list=["apple", "banana", "cherry"],
         my_dict={"a": 1, "b": 2, "c": 3},
@@ -361,6 +358,7 @@ async def demo_workflow() -> Dict[str, str]:
         my_dataclass=Person(name="John Doe", age=30, email="john@example.com"),
         my_pydantic=PersonModel(name="Jane Smith", age=28, is_active=True),
         my_enum=Status.RUNNING,
+        my_literal="high",
         # Flyte special types
         my_file=sample_file,
         my_dir=sample_dir,
@@ -375,10 +373,10 @@ async def demo_workflow() -> Dict[str, str]:
 
 
 if __name__ == "__main__":
-    flyte.init_from_config("../../config.yaml")
+    flyte.init_from_config()
 
     print("Running all types demo...")
-    run = flyte.run(demo_workflow)
+    run = flyte.with_runcontext("remote").run(demo_workflow)
     print(f"Run URL: {run.url}")
 
     # Wait for completion and print results
