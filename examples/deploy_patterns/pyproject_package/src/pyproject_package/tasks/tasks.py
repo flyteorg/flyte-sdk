@@ -19,7 +19,6 @@ async def fetch_task(url: str) -> list[dict[str, Any]]:
     """Fetch data from an API endpoint.
 
     This task demonstrates async execution and external API calls.
-    Add one
 
     Args:
         url: API endpoint URL
