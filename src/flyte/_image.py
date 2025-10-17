@@ -905,7 +905,7 @@ class Image:
         pre: bool = False,
         extra_args: Optional[str] = None,
         secret_mounts: Optional[SecretRequest] = None,
-        project_install_mode=typing.Literal["dependencies_only", "install_as_package"],
+        project_install_mode: typing.Literal["dependencies_only", "install_as_package"]="dependencies_only",
     ) -> Image:
         """
         Use this method to create a new image with the specified uv.lock file layered on top of the current image
