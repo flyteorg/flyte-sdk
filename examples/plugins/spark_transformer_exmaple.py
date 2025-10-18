@@ -1,18 +1,24 @@
-# # Spark Example
+from io import StringIO
+from pathlib import Path
+from typing import cast
 
 import pandas
-from flyteidl.core import types_pb2
 from flyteplugins.spark.task import Spark
+from pandas.io.formats.style import pd
+from pyspark.sql import SparkSession
 
 import flyte
 from flyte._context import internal_ctx
-from flyte.io import DataFrame
-from plugins.spark.src.flyteplugins.spark.sd_transformers import SparkToParquetEncodingHandler
+from flyte.io import DataFrame, File
 
 image = (
     flyte.Image.from_base("apache/spark-py:v3.4.0")
     .clone(name="spark", python_version=(3, 10), registry="ghcr.io/flyteorg")
-    .with_pip_packages("flyteplugins-spark", pre=True)
+    # .with_pip_packages("flyteplugins-spark", pre=True)
+    .with_pip_packages("pandas", "pyarrow", "fastparquet", "Jinja2")
+    .with_source_folder(Path(__file__).parent.parent.parent / "plugins/spark", "./spark")
+    .with_env_vars({"PYTHONPATH": "./spark/src:${PYTHONPATH}"})
+    .with_local_v2()
 )
 
 task_env = flyte.TaskEnvironment(
@@ -40,7 +46,38 @@ spark_env = flyte.TaskEnvironment(
 )
 
 
-@task_env.task
+# @spark_env.task
+# async def upload_local_file_async(content: str) -> File:
+#     """
+#     Demonstrates File.from_local() - uploading a local file asynchronously.
+#     """
+#     with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".txt") as tmp:
+#         tmp.write(content)
+#         tmp_path = tmp.name
+
+#     try:
+#         # Upload the local file
+#         uploaded_file = await File.from_local(tmp_path)
+#         print(f"Uploaded local file {tmp_path} to remote: {uploaded_file.path}")
+#         return uploaded_file
+#     finally:
+#         # Clean up the temporary file
+#         os.unlink(tmp_path)
+
+
+@spark_env.task
+async def create_new_remote_file(content: str) -> File:
+    """
+    Demonstrates File.new_remote() - creating a new remote file asynchronously.
+    """
+    f = File.new_remote()
+    async with f.open("wb") as fh:
+        await fh.write(content.encode("utf-8"))
+    print(f"Created new remote file at: {f.path}")
+    return f
+
+
+@spark_env.task
 async def sum_of_all_ages(sd: DataFrame) -> int:
     df: pandas.DataFrame = await sd.open(pandas.DataFrame).all()
     return int(df["age"].sum())
@@ -51,22 +88,19 @@ async def dataframe_transformer() -> int:
     """
     This task returns a Spark dataset that conforms to the defined schema.
     """
+
     ctx = internal_ctx()
     spark = ctx.data.task_context.data["spark_session"]
-    h = SparkToParquetEncodingHandler()
-    sd = await h.encode(
-        dataframe=spark.createDataFrame(
-            [
-                ("Alice", 5),
-                ("Bob", 10),
-                ("Charlie", 15),
-            ],
-            ["name", "age"],
-        ),
-        structured_dataset_type=types_pb2.StructuredDatasetType(),
-    )
+    spark = cast(SparkSession, spark)
 
-    return await sum_of_all_ages(sd)
+    csv_data = "age,name\n10,alice\n20,bob\n30,charlie\n40,david\n50,edward\n60,frank"
+    file = await create_new_remote_file(csv_data)
+    file = cast(File, file)
+
+    spark_df = spark.read.csv(path=file.path, header=True, inferSchema=True)
+    df = DataFrame.from_df(val=spark_df)
+
+    return await sum_of_all_ages(df)
 
 
 # ## Execute locally
