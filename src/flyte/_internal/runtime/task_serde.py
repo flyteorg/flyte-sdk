@@ -8,14 +8,14 @@ import typing
 from datetime import timedelta
 from typing import Optional, cast
 
-from flyteidl.core import identifier_pb2, literals_pb2, security_pb2, tasks_pb2
+from flyteidl2.core import identifier_pb2, literals_pb2, security_pb2, tasks_pb2
+from flyteidl2.task import common_pb2, environment_pb2, task_definition_pb2
 from google.protobuf import duration_pb2, wrappers_pb2
 
 import flyte.errors
 from flyte._cache.cache import VersionParameters, cache_from_request
 from flyte._logging import logger
 from flyte._pod import _PRIMARY_CONTAINER_NAME_FIELD, PodTemplate
-from flyte._protos.workflow import common_pb2, environment_pb2, task_definition_pb2
 from flyte._secret import SecretRequest, secrets_from_request
 from flyte._task import AsyncFunctionTaskTemplate, TaskTemplate
 from flyte.models import CodeBundle, SerializationContext
@@ -172,6 +172,7 @@ def get_proto_task(task: TaskTemplate, serialize_context: SerializationContext) 
             pod_template_name=(task.pod_template if task.pod_template and isinstance(task.pod_template, str) else None),
             interruptible=task.interruptible,
             generates_deck=wrappers_pb2.BoolValue(value=task.report),
+            debuggable=task.debuggable,
         ),
         interface=transform_native_to_typed_interface(task.native_interface),
         custom=custom if len(custom) > 0 else None,
@@ -208,17 +209,13 @@ def _get_urun_container(
         else None
     )
     resources = get_proto_resources(task_template.resources)
-    # pr: under what conditions should this return None?
+
     if isinstance(task_template.image, str):
         raise flyte.errors.RuntimeSystemError("BadConfig", "Image is not a valid image")
 
-    env_name = ""
-    if task_template.parent_env is not None:
-        task_env = task_template.parent_env()
-        if task_env is not None:
-            env_name = task_env.name
-    else:
-        raise flyte.errors.RuntimeSystemError("BadConfig", "Task template has no parent environment")
+    env_name = task_template.parent_env_name
+    if env_name is None:
+        raise flyte.errors.RuntimeSystemError("BadConfig", f"Task {task_template.name} has no parent environment name")
 
     if not serialize_context.image_cache:
         # This computes the image uri, computing hashes as necessary so can fail if done remotely.

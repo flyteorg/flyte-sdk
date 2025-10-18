@@ -9,15 +9,16 @@ import sys
 from ._build import build
 from ._cache import Cache, CachePolicy, CacheRequest
 from ._context import ctx
+from ._custom_context import custom_context, get_custom_context
 from ._deploy import build_images, deploy
 from ._environment import Environment
 from ._excepthook import custom_excepthook
 from ._group import group
 from ._image import Image
-from ._initialize import init, init_from_config
+from ._initialize import current_domain, init, init_from_config
 from ._map import map
 from ._pod import PodTemplate
-from ._resources import GPU, TPU, Device, Resources
+from ._resources import AMD_GPU, GPU, HABANA_GAUDI, TPU, Device, DeviceClass, Neuron, Resources
 from ._retry import RetryStrategy
 from ._reusable_environment import ReusePolicy
 from ._run import run, with_runcontext
@@ -60,16 +61,20 @@ def version() -> str:
 
 
 __all__ = [
+    "AMD_GPU",
     "GPU",
+    "HABANA_GAUDI",
     "TPU",
     "Cache",
     "CachePolicy",
     "CacheRequest",
     "Cron",
     "Device",
+    "DeviceClass",
     "Environment",
     "FixedRate",
     "Image",
+    "Neuron",
     "PodTemplate",
     "Resources",
     "RetryStrategy",
@@ -85,12 +90,16 @@ __all__ = [
     "build",
     "build_images",
     "ctx",
+    "current_domain",
+    "custom_context",
     "deploy",
+    "get_custom_context",
     "group",
     "init",
     "init_from_config",
     "map",
     "run",
     "trace",
+    "version",
     "with_runcontext",
 ]

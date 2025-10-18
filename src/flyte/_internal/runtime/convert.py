@@ -8,27 +8,33 @@ from dataclasses import dataclass
 from types import NoneType
 from typing import Any, Dict, List, Tuple, Union, get_args
 
-from flyteidl.core import execution_pb2, interface_pb2, literals_pb2
+from flyteidl2.core import execution_pb2, interface_pb2, literals_pb2
+from flyteidl2.task import common_pb2, task_definition_pb2
 
 import flyte.errors
 import flyte.storage as storage
-from flyte._protos.workflow import common_pb2, run_definition_pb2, task_definition_pb2
+from flyte._context import ctx
 from flyte.models import ActionID, NativeInterface, TaskContext
 from flyte.types import TypeEngine, TypeTransformerFailedError
 
 
 @dataclass(frozen=True)
 class Inputs:
-    proto_inputs: run_definition_pb2.Inputs
+    proto_inputs: common_pb2.Inputs
 
     @classmethod
     def empty(cls) -> "Inputs":
-        return cls(proto_inputs=run_definition_pb2.Inputs())
+        return cls(proto_inputs=common_pb2.Inputs())
+
+    @property
+    def context(self) -> Dict[str, str]:
+        """Get the context as a dictionary."""
+        return {kv.key: kv.value for kv in self.proto_inputs.context}
 
 
 @dataclass(frozen=True)
 class Outputs:
-    proto_outputs: run_definition_pb2.Outputs
+    proto_outputs: common_pb2.Outputs
 
 
 @dataclass
@@ -102,15 +108,30 @@ def is_optional_type(tp) -> bool:
     return NoneType in get_args(tp)  # fastest check
 
 
-async def convert_from_native_to_inputs(interface: NativeInterface, *args, **kwargs) -> Inputs:
+async def convert_from_native_to_inputs(
+    interface: NativeInterface, *args, custom_context: Dict[str, str] | None = None, **kwargs
+) -> Inputs:
     kwargs = interface.convert_to_kwargs(*args, **kwargs)
 
     missing = [key for key in interface.required_inputs() if key not in kwargs]
     if missing:
         raise ValueError(f"Missing required inputs: {', '.join(missing)}")
 
+    # Read custom_context from TaskContext if available (inside task execution)
+    # Otherwise use the passed parameter (for remote run initiation)
+    context_kvs = None
+    tctx = ctx()
+    if tctx and tctx.custom_context:
+        # Inside a task - read from TaskContext
+        context_to_use = tctx.custom_context
+        context_kvs = [literals_pb2.KeyValuePair(key=k, value=v) for k, v in context_to_use.items()]
+    elif custom_context:
+        # Remote run initiation
+        context_kvs = [literals_pb2.KeyValuePair(key=k, value=v) for k, v in custom_context.items()]
+
     if len(interface.inputs) == 0:
-        return Inputs.empty()
+        # Handle context even for empty inputs
+        return Inputs(proto_inputs=common_pb2.Inputs(context=context_kvs))
 
     # fill in defaults if missing
     type_hints: Dict[str, type] = {}
@@ -144,12 +165,12 @@ async def convert_from_native_to_inputs(interface: NativeInterface, *args, **kwa
         for k, v in already_converted_kwargs.items():
             copied_literals[k] = v
         literal_map = literals_pb2.LiteralMap(literals=copied_literals)
+
     # Make sure we the interface, not literal_map or kwargs, because those may have a different order
     return Inputs(
-        proto_inputs=run_definition_pb2.Inputs(
-            literals=[
-                run_definition_pb2.NamedLiteral(name=k, value=literal_map.literals[k]) for k in interface.inputs.keys()
-            ]
+        proto_inputs=common_pb2.Inputs(
+            literals=[common_pb2.NamedLiteral(name=k, value=literal_map.literals[k]) for k in interface.inputs.keys()],
+            context=context_kvs,
         )
     )
 
@@ -191,11 +212,11 @@ async def convert_from_native_to_outputs(o: Any, interface: NativeInterface, tas
     for (output_name, python_type), v in zip(interface.outputs.items(), o):
         try:
             lit = await TypeEngine.to_literal(v, python_type, TypeEngine.to_literal_type(python_type))
-            named.append(run_definition_pb2.NamedLiteral(name=output_name, value=lit))
+            named.append(common_pb2.NamedLiteral(name=output_name, value=lit))
         except TypeTransformerFailedError as e:
             raise flyte.errors.RuntimeDataValidationError(output_name, e, task_name)
 
-    return Outputs(proto_outputs=run_definition_pb2.Outputs(literals=named))
+    return Outputs(proto_outputs=common_pb2.Outputs(literals=named))
 
 
 async def convert_outputs_to_native(interface: NativeInterface, outputs: Outputs) -> Union[Any, Tuple[Any, ...]]:
@@ -222,7 +243,7 @@ def convert_error_to_native(err: execution_pb2.ExecutionError | Exception | Erro
     if isinstance(err, Error):
         err = err.err
 
-    user_code, server_code = _clean_error_code(err.code)
+    user_code, _server_code = _clean_error_code(err.code)
     match err.kind:
         case execution_pb2.ExecutionError.UNKNOWN:
             return flyte.errors.RuntimeUnknownError(code=user_code, message=err.message, worker=err.worker)
@@ -351,7 +372,7 @@ def generate_inputs_repr_for_literal(literal: literals_pb2.Literal) -> bytes:
     return literal.SerializeToString(deterministic=True)
 
 
-def generate_inputs_hash_for_named_literals(inputs: list[run_definition_pb2.NamedLiteral]) -> str:
+def generate_inputs_hash_for_named_literals(inputs: list[common_pb2.NamedLiteral]) -> str:
     """
     Generate a hash for the inputs using the new literal representation approach that respects
     hash values already present in literals. This is used to uniquely identify the inputs for a task
@@ -375,7 +396,7 @@ def generate_inputs_hash_for_named_literals(inputs: list[run_definition_pb2.Name
     return hash_data(combined_bytes)
 
 
-def generate_inputs_hash_from_proto(inputs: run_definition_pb2.Inputs) -> str:
+def generate_inputs_hash_from_proto(inputs: common_pb2.Inputs) -> str:
     """
     Generate a hash for the inputs. This is used to uniquely identify the inputs for a task.
     :param inputs: The inputs to hash.
@@ -404,7 +425,7 @@ def generate_cache_key_hash(
     task_interface: interface_pb2.TypedInterface,
     cache_version: str,
     ignored_input_vars: List[str],
-    proto_inputs: run_definition_pb2.Inputs,
+    proto_inputs: common_pb2.Inputs,
 ) -> str:
     """
     Generate a cache key hash based on the inputs hash, task name, task interface, and cache version.
@@ -420,7 +441,7 @@ def generate_cache_key_hash(
     """
     if ignored_input_vars:
         filtered = [named_lit for named_lit in proto_inputs.literals if named_lit.name not in ignored_input_vars]
-        final = run_definition_pb2.Inputs(literals=filtered)
+        final = common_pb2.Inputs(literals=filtered)
         final_inputs = generate_inputs_hash_from_proto(final)
     else:
         final_inputs = inputs_hash

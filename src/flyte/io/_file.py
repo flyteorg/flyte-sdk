@@ -20,7 +20,7 @@ from typing import (
 )
 
 import aiofiles
-from flyteidl.core import literals_pb2, types_pb2
+from flyteidl2.core import literals_pb2, types_pb2
 from fsspec.utils import get_protocol
 from mashumaro.types import SerializableType
 from pydantic import BaseModel, Field, model_validator
@@ -32,6 +32,9 @@ from flyte._context import internal_ctx
 from flyte._initialize import requires_initialization
 from flyte.io._hashing_io import AsyncHashingReader, HashingWriter, HashMethod, PrecomputedValue
 from flyte.types import TypeEngine, TypeTransformer, TypeTransformerFailedError
+
+if typing.TYPE_CHECKING:
+    from obstore import AsyncReadableFile, AsyncWritableFile
 
 if typing.TYPE_CHECKING:
     from obstore import AsyncReadableFile, AsyncWritableFile
@@ -524,23 +527,40 @@ class File(BaseModel, Generic[T], SerializableType):
             The absolute path to the downloaded file
         """
         if local_path is None:
-            local_path = storage.get_random_local_path(file_path_or_file_name=local_path)
+            local_path = storage.get_random_local_path(file_path_or_file_name=self.path)
         else:
+            # Preserve trailing separator if present (Path.absolute() strips it)
+            local_path_str = str(local_path)
+            has_trailing_sep = local_path_str.endswith(os.sep)
             local_path = str(Path(local_path).absolute())
+            if has_trailing_sep:
+                local_path = local_path + os.sep
 
         fs = storage.get_underlying_filesystem(path=self.path)
 
         # If it's already a local file, just copy it
         if "file" in fs.protocol:
+            # Apply directory logic for local-to-local copies
+            local_path_for_copy = local_path
+            if isinstance(local_path, str):
+                local_path_obj = Path(local_path)
+                # Check if it's a directory or ends with separator
+                if local_path.endswith(os.sep) or (local_path_obj.exists() and local_path_obj.is_dir()):
+                    remote_filename = Path(self.path).name
+                    local_path_for_copy = str(local_path_obj / remote_filename)
+
+            # Ensure parent directory exists
+            Path(local_path_for_copy).parent.mkdir(parents=True, exist_ok=True)
+
             # Use aiofiles for async copy
             async with aiofiles.open(self.path, "rb") as src:
-                async with aiofiles.open(local_path, "wb") as dst:
+                async with aiofiles.open(local_path_for_copy, "wb") as dst:
                     await dst.write(await src.read())
-            return str(local_path)
+            return str(local_path_for_copy)
 
         # Otherwise download from remote using async functionality
-        await storage.get(self.path, str(local_path))
-        return str(local_path)
+        result_path = await storage.get(self.path, str(local_path))
+        return result_path
 
     def download_sync(self, local_path: Optional[Union[str, Path]] = None) -> str:
         """
@@ -576,19 +596,36 @@ class File(BaseModel, Generic[T], SerializableType):
             The absolute path to the downloaded file
         """
         if local_path is None:
-            local_path = storage.get_random_local_path(file_path_or_file_name=local_path)
+            local_path = storage.get_random_local_path(file_path_or_file_name=self.path)
         else:
+            # Preserve trailing separator if present (Path.absolute() strips it)
+            local_path_str = str(local_path)
+            has_trailing_sep = local_path_str.endswith(os.sep)
             local_path = str(Path(local_path).absolute())
+            if has_trailing_sep:
+                local_path = local_path + os.sep
 
         fs = storage.get_underlying_filesystem(path=self.path)
 
         # If it's already a local file, just copy it
         if "file" in fs.protocol:
+            # Apply directory logic for local-to-local copies
+            local_path_for_copy = local_path
+            if isinstance(local_path, str):
+                local_path_obj = Path(local_path)
+                # Check if it's a directory or ends with separator
+                if local_path.endswith(os.sep) or (local_path_obj.exists() and local_path_obj.is_dir()):
+                    remote_filename = Path(self.path).name
+                    local_path_for_copy = str(local_path_obj / remote_filename)
+
+            # Ensure parent directory exists
+            Path(local_path_for_copy).parent.mkdir(parents=True, exist_ok=True)
+
             # Use standard file operations for sync copy
             import shutil
 
-            shutil.copy2(self.path, local_path)
-            return str(local_path)
+            shutil.copy2(self.path, local_path_for_copy)
+            return str(local_path_for_copy)
 
         # Otherwise download from remote using sync functionality
         # Use the sync version of storage operations
@@ -756,9 +793,9 @@ class File(BaseModel, Generic[T], SerializableType):
         if not os.path.exists(local_path):
             raise ValueError(f"File not found: {local_path}")
 
-        remote_path = remote_destination or internal_ctx().raw_data.get_random_remote_path()
-        protocol = get_protocol(remote_path)
         filename = Path(local_path).name
+        remote_path = remote_destination or internal_ctx().raw_data.get_random_remote_path(filename)
+        protocol = get_protocol(remote_path)
 
         # If remote_destination was not set by the user, and the configured raw data path is also local,
         # then let's optimize by not uploading.

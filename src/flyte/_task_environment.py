@@ -15,6 +15,7 @@ from typing import (
     Tuple,
     Union,
     cast,
+    overload,
 )
 
 import rich.repr
@@ -33,7 +34,7 @@ from ._trigger import Trigger
 from .models import MAX_INLINE_IO_BYTES, NativeInterface
 
 if TYPE_CHECKING:
-    from ._task import FunctionTypes, P, R
+    from ._task import F, P, R
 
 
 @rich.repr.auto
@@ -150,9 +151,9 @@ class TaskEnvironment(Environment):
             kwargs["interruptible"] = interruptible
         return replace(self, **kwargs)
 
+    @overload
     def task(
         self,
-        _func: Callable[P, R] | None = None,
         *,
         short_name: Optional[str] = None,
         cache: CacheRequest | None = None,
@@ -165,7 +166,31 @@ class TaskEnvironment(Environment):
         max_inline_io_bytes: int = MAX_INLINE_IO_BYTES,
         queue: Optional[str] = None,
         triggers: Tuple[Trigger, ...] | Trigger = (),
-    ) -> Union[AsyncFunctionTaskTemplate[P, R], Callable[P, R]]:
+    ) -> Callable[[Callable[P, R]], AsyncFunctionTaskTemplate[P, R, Callable[P, R]]]: ...
+
+    @overload
+    def task(
+        self,
+        _func: Callable[P, R],
+        /,
+    ) -> AsyncFunctionTaskTemplate[P, R, Callable[P, R]]: ...
+
+    def task(
+        self,
+        _func: F | None = None,
+        *,
+        short_name: Optional[str] = None,
+        cache: CacheRequest | None = None,
+        retries: Union[int, RetryStrategy] = 0,
+        timeout: Union[timedelta, int] = 0,
+        docs: Optional[Documentation] = None,
+        pod_template: Optional[Union[str, PodTemplate]] = None,
+        report: bool = False,
+        interruptible: bool | None = None,
+        max_inline_io_bytes: int = MAX_INLINE_IO_BYTES,
+        queue: Optional[str] = None,
+        triggers: Tuple[Trigger, ...] | Trigger = (),
+    ) -> Callable[[F], AsyncFunctionTaskTemplate[P, R, F]] | AsyncFunctionTaskTemplate[P, R, F]:
         """
         Decorate a function to be a task.
 
@@ -189,13 +214,13 @@ class TaskEnvironment(Environment):
 
         :return: A TaskTemplate that can be used to deploy the task.
         """
-        from ._task import P, R
+        from ._task import F, P, R
 
         if self.reusable is not None:
             if pod_template is not None:
                 raise ValueError("Cannot set pod_template when environment is reusable.")
 
-        def decorator(func: FunctionTypes) -> AsyncFunctionTaskTemplate[P, R]:
+        def decorator(func: F) -> AsyncFunctionTaskTemplate[P, R, F]:
             short = short_name or func.__name__
             task_name = self.name + "." + func.__name__
 
@@ -209,7 +234,7 @@ class TaskEnvironment(Environment):
             if self.plugin_config is not None:
                 from flyte.extend import TaskPluginRegistry
 
-                task_template_class: type[AsyncFunctionTaskTemplate[P, R]] | None = TaskPluginRegistry.find(
+                task_template_class: type[AsyncFunctionTaskTemplate[P, R, F]] | None = TaskPluginRegistry.find(
                     config_type=type(self.plugin_config)
                 )
                 if task_template_class is None:
@@ -218,9 +243,9 @@ class TaskEnvironment(Environment):
                         f"Please register a plugin using flyte.extend.TaskPluginRegistry.register() api."
                     )
             else:
-                task_template_class = AsyncFunctionTaskTemplate[P, R]
+                task_template_class = AsyncFunctionTaskTemplate[P, R, F]
 
-            task_template_class = cast(type[AsyncFunctionTaskTemplate[P, R]], task_template_class)
+            task_template_class = cast(type[AsyncFunctionTaskTemplate[P, R, F]], task_template_class)
             tmpl = task_template_class(
                 func=func,
                 name=task_name,
@@ -235,6 +260,7 @@ class TaskEnvironment(Environment):
                 secrets=self.secrets,
                 pod_template=pod_template or self.pod_template,
                 parent_env=weakref.ref(self),
+                parent_env_name=self.name,
                 interface=NativeInterface.from_callable(func),
                 report=report,
                 short_name=short,
@@ -248,8 +274,8 @@ class TaskEnvironment(Environment):
             return tmpl
 
         if _func is None:
-            return cast(AsyncFunctionTaskTemplate, decorator)
-        return cast(AsyncFunctionTaskTemplate, decorator(_func))
+            return cast(Callable[[F], AsyncFunctionTaskTemplate[P, R, F]], decorator)
+        return cast(AsyncFunctionTaskTemplate[P, R, F], decorator(_func))
 
     @property
     def tasks(self) -> Dict[str, TaskTemplate]:
@@ -286,4 +312,5 @@ class TaskEnvironment(Environment):
         for t in tasks:
             env._tasks[t.name] = t
             t.parent_env = weakref.ref(env)
+            t.parent_env_name = name
         return env

@@ -3,16 +3,15 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal, Optional
 
-from flyteidl.core import execution_pb2, interface_pb2
-from google.protobuf import timestamp_pb2
-
-from flyte._protos.common import identifier_pb2
-from flyte._protos.workflow import (
-    queue_service_pb2,
+from flyteidl2.common import identifier_pb2
+from flyteidl2.core import execution_pb2, interface_pb2
+from flyteidl2.task import common_pb2, task_definition_pb2
+from flyteidl2.workflow import (
     run_definition_pb2,
     state_service_pb2,
-    task_definition_pb2,
 )
+from google.protobuf import timestamp_pb2
+
 from flyte.models import GroupData
 
 ActionType = Literal["task", "trace"]
@@ -31,7 +30,7 @@ class Action:
     friendly_name: str | None = None
     group: GroupData | None = None
     task: task_definition_pb2.TaskSpec | None = None
-    trace: queue_service_pb2.TraceAction | None = None
+    trace: run_definition_pb2.TraceAction | None = None
     inputs_uri: str | None = None
     run_output_base: str | None = None
     realized_outputs_uri: str | None = None
@@ -198,12 +197,12 @@ class Action:
             realized_outputs_uri=outputs_uri,
             phase=run_definition_pb2.Phase.PHASE_SUCCEEDED,
             run_output_base=run_output_base,
-            trace=queue_service_pb2.TraceAction(
+            trace=run_definition_pb2.TraceAction(
                 name=friendly_name,
                 phase=run_definition_pb2.Phase.PHASE_SUCCEEDED,
                 start_time=st,
                 end_time=et,
-                outputs=run_definition_pb2.OutputReferences(
+                outputs=common_pb2.OutputReferences(
                     output_uri=outputs_uri,
                     report_uri=report_uri,
                 ),
