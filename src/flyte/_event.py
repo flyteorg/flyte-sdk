@@ -8,7 +8,7 @@ from flyte.syncify import syncify
 
 EventScope = Literal["task", "run", "action"]
 
-EventType = typing.TypeVar("EventType")
+EventType = typing.TypeVar("EventType", bool, int, float, str)
 
 
 @rich.repr.auto
@@ -38,8 +38,13 @@ class _Event(Generic[EventType]):
     name: str
     scope: EventScope = "run"
     prompt: str = "Approve?"
-    data_type: EventType = bool
+    data_type: Type[EventType] = bool
     description: str = ""
+
+    def __post_init__(self):
+        valid_types = (bool, int, float, str)
+        if self.data_type not in valid_types:
+            raise TypeError(f"Invalid data_type {self.data_type}. Must be one of {valid_types}.")
 
     @syncify
     async def wait(self) -> EventType:
@@ -66,7 +71,12 @@ class _Event(Generic[EventType]):
 
 @syncify
 async def new_event(
-    name: str, /, scope: EventScope = "run", prompt: str = "Approve?", data_type: Type = bool, description: str = ""
+    name: str,
+    /,
+    scope: EventScope = "run",
+    prompt: str = "Approve?",
+    data_type: Type[EventType] = bool,
+    description: str = "",
 ) -> _Event:
     """
     Create an event that can be awaited in a workflow. Events can be used to pause workflow execution until
