@@ -20,7 +20,7 @@ from google.protobuf import json_format
 from google.protobuf.struct_pb2 import Struct
 
 from flyte._context import internal_ctx
-from flyte._initialize import get_common_config
+from flyte._initialize import get_init_config
 from flyte._internal.runtime.task_serde import get_proto_task
 from flyte._logging import logger
 from flyte._task import TaskTemplate
@@ -202,7 +202,7 @@ class AsyncConnectorExecutorMixin(TaskTemplate):
 
         ctx = internal_ctx()
         tctx = internal_ctx().data.task_context
-        cfg = get_common_config()
+        cfg = get_init_config()
 
         if tctx is None:
             raise RuntimeError("Task context is not set.")
