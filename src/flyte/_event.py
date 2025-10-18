@@ -38,7 +38,7 @@ class _Event(Generic[EventType]):
     name: str
     scope: EventScope = "run"
     prompt: str = "Approve?"
-    data_type: Type[EventType] = bool
+    data_type: Type[EventType] = bool  # type: ignore[assignment]
     description: str = ""
 
     def __post_init__(self):
@@ -75,7 +75,7 @@ async def new_event(
     /,
     scope: EventScope = "run",
     prompt: str = "Approve?",
-    data_type: Type[EventType] = bool,
+    data_type: Type[EventType] = bool,  # type: ignore[assignment]
     description: str = "",
 ) -> _Event:
     """
