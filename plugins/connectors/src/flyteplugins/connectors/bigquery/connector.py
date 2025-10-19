@@ -1,8 +1,7 @@
 import datetime
 from dataclasses import dataclass
-from typing import Dict, Optional
+from typing import Any, Dict, Optional
 
-import flyte
 from flyte import logger
 from flyte.connectors import (
     AsyncConnector,
@@ -13,11 +12,11 @@ from flyte.connectors import (
 from flyte.connectors.utils import convert_to_flyte_phase
 from flyte.io import DataFrame
 from flyte.types import TypeEngine
-from flyteidl.core.execution_pb2 import TaskExecution, TaskLog
-from flyteidl2.core.literals_pb2 import LiteralMap
+from flyteidl2.core.execution_pb2 import TaskExecution, TaskLog
 from flyteidl2.core.tasks_pb2 import TaskTemplate
 from google.api_core.client_info import ClientInfo
 from google.cloud import bigquery
+from google.protobuf import json_format
 
 pythonTypeToBigQueryType: Dict[type, str] = {
     # https://cloud.google.com/bigquery/docs/reference/standard-sql/data-types#data_type_sizes
@@ -40,33 +39,33 @@ class BigQueryMetadata(ResourceMeta):
 
 class BigQueryConnector(AsyncConnector):
     name = "Bigquery Connector"
-
-    def __init__(self):
-        super().__init__(task_type_name="bigquery_query_job_task", metadata_type=BigQueryMetadata)
+    task_type_name = "bigquery_query_job_task"
+    metadata_type = BigQueryMetadata
 
     async def create(
         self,
         task_template: TaskTemplate,
-        inputs: Optional[LiteralMap] = None,
+        inputs: Optional[Dict[str, Any]] = None,
         **kwargs,
     ) -> BigQueryMetadata:
         job_config = None
+        python_interface_inputs = {
+            name: TypeEngine.guess_python_type(lt.type) for name, lt in task_template.interface.inputs.variables.items()
+        }
         if inputs:
-            ctx = flyte.ctx()
-            python_interface_inputs = {
-                name: TypeEngine.guess_python_type(lt.type)
-                for name, lt in task_template.interface.inputs.variables.items()
-            }
-            native_inputs = await TypeEngine.literal_map_to_kwargs(ctx, inputs, python_interface_inputs)
-            logger.info(f"Create BigQuery job config with inputs: {native_inputs}")
+            # if isinstance(inputs, LiteralMap):
+            #     native_inputs = await convert_from_inputs_to_native(inputs, python_interface_inputs)
+            # else:
+            #     native_inputs = inputs
+            # logger.info(f"Create BigQuery job config with inputs: {native_inputs}")
             job_config = bigquery.QueryJobConfig(
                 query_parameters=[
                     bigquery.ScalarQueryParameter(name, pythonTypeToBigQueryType[python_interface_inputs[name]], val)
-                    for name, val in native_inputs.items()
+                    for name, val in inputs.items()
                 ]
             )
 
-        custom = task_template.custom
+        custom = json_format.MessageToDict(task_template.custom) if task_template.custom else None
 
         domain = custom.get("Domain")
         sdk_version = task_template.metadata.runtime.version

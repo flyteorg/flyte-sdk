@@ -3,9 +3,10 @@ from dataclasses import dataclass
 from typing import Any, Dict, Optional, Type
 
 from flyte._task import TaskTemplate
+from flyte.connectors._connector import AsyncConnectorExecutorMixin
 from flyte.io import DataFrame
 from flyte.models import NativeInterface, SerializationContext
-from flyteidl.core import tasks_pb2
+from flyteidl2.core import tasks_pb2
 from google.cloud import bigquery
 from google.protobuf import json_format
 from google.protobuf.struct_pb2 import Struct
@@ -22,7 +23,7 @@ class BigQueryConfig(object):
     QueryJobConfig: Optional[bigquery.QueryJobConfig] = None
 
 
-class BigQueryTask(TaskTemplate):
+class BigQueryTask(AsyncConnectorExecutorMixin, TaskTemplate):
     _TASK_TYPE = "bigquery_query_job_task"
 
     def __init__(

@@ -1,6 +1,13 @@
 from flyteidl2.core.execution_pb2 import TaskExecution
 
 
+def is_terminal_phase(phase: TaskExecution.Phase) -> bool:
+    """
+    Return true if the phase is terminal.
+    """
+    return phase in [TaskExecution.SUCCEEDED, TaskExecution.ABORTED, TaskExecution.FAILED]
+
+
 def convert_to_flyte_phase(state: str) -> TaskExecution.Phase:
     """
     Convert the state from the connector to the phase in flyte.

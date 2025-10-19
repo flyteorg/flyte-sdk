@@ -7,7 +7,6 @@ from typing import Any, Dict, List, Optional
 
 from flyteidl2.core import tasks_pb2
 from flyteidl2.core.execution_pb2 import TaskExecution, TaskLog
-from flyteidl2.core.literals_pb2 import LiteralMap
 from flyteidl2.plugins import connector_pb2
 from flyteidl2.plugins.connector_pb2 import (
     Connector,
@@ -21,11 +20,13 @@ from google.protobuf.struct_pb2 import Struct
 
 from flyte._context import internal_ctx
 from flyte._initialize import get_init_config
+from flyte._internal.runtime.convert import convert_from_native_to_outputs
 from flyte._internal.runtime.task_serde import get_proto_task
 from flyte._logging import logger
 from flyte._task import TaskTemplate
-from flyte.models import SerializationContext
-from flyte.types._type_engine import TypeEngine, dataclass_from_dict
+from flyte.connectors.utils import is_terminal_phase
+from flyte.models import NativeInterface, SerializationContext
+from flyte.types._type_engine import dataclass_from_dict
 
 
 @dataclass(frozen=True)
@@ -76,7 +77,7 @@ class Resource:
     phase: TaskExecution.Phase
     message: Optional[str] = None
     log_links: Optional[List[TaskLog]] = None
-    outputs: Optional[typing.Dict[str, Any] | LiteralMap] = None
+    outputs: Optional[Dict[str, Any]] = None
     custom_info: Optional[typing.Dict[str, Any]] = None
 
 
@@ -100,7 +101,7 @@ class AsyncConnector(ABC):
         self,
         task_template: tasks_pb2.TaskTemplate,
         output_prefix: str,
-        inputs: Optional[LiteralMap] = None,
+        inputs: Optional[Dict[str, typing.Any]] = None,
         task_execution_metadata: Optional[TaskExecutionMetadata] = None,
         **kwargs,
     ) -> ResourceMeta:
@@ -233,21 +234,15 @@ class AsyncConnectorExecutorMixin(TaskTemplate):
 
         # TODO: Support abort
 
-        return resource.outputs
-
-
-def is_terminal_phase(phase: TaskExecution.Phase) -> bool:
-    """
-    Return true if the phase is terminal.
-    """
-    return phase in [TaskExecution.SUCCEEDED, TaskExecution.ABORTED, TaskExecution.FAILED]
+        return tuple(resource.outputs.values())
 
 
 async def get_resource_proto(resource: Resource) -> connector_pb2.Resource:
-    if not isinstance(resource.outputs, LiteralMap):
-        outputs = await TypeEngine.dict_to_literal_map(resource.outputs) if resource.outputs else None
+    if resource.outputs:
+        interface = NativeInterface.from_types(inputs={}, outputs={k: type(v) for k, v in resource.outputs.items()})
+        outputs = await convert_from_native_to_outputs(tuple(resource.outputs.values()), interface)
     else:
-        outputs = resource.outputs
+        outputs = None
 
     return connector_pb2.Resource(
         phase=resource.phase,

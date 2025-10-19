@@ -1,3 +1,4 @@
+import inspect
 import typing
 from http import HTTPStatus
 
@@ -24,8 +25,11 @@ from flyteidl2.service.connector_pb2_grpc import (
 )
 from prometheus_client import Counter, Summary
 
+from flyte._internal.runtime.convert import Inputs, convert_from_inputs_to_native
 from flyte._logging import logger
 from flyte.connectors._connector import ConnectorRegistry, FlyteConnectorNotFound, get_resource_proto
+from flyte.models import NativeInterface
+from flyte.types import TypeEngine
 
 metric_prefix = "flyte_connector_"
 create_operation = "create"
@@ -109,9 +113,15 @@ class AsyncConnectorService(AsyncConnectorServiceServicer):
         template = request.template
         connector = ConnectorRegistry.get_connector(template.type, template.task_type_version)
         logger.info(f"{connector.name} start creating the job")
+        python_interface_inputs = {
+            name: (TypeEngine.guess_python_type(lt.type), inspect.Parameter.empty)
+            for name, lt in template.interface.inputs.variables.items()
+        }
+        native_interface = NativeInterface.from_types(inputs=python_interface_inputs, outputs={})
+        native_inputs = await convert_from_inputs_to_native(native_interface, Inputs(proto_inputs=request.inputs))
         resource_meta = await connector.create(
             task_template=request.template,
-            inputs=request.inputs,
+            inputs=native_inputs,
             output_prefix=request.output_prefix,
             task_execution_metadata=request.task_execution_metadata,
         )

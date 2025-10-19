@@ -699,7 +699,7 @@ requires-dist = [
     { name = "cloudpickle", specifier = ">=3.1.1" },
     { name = "dataclasses-json" },
     { name = "flyteidl", specifier = ">=1.15.4b0,<2.0.0" },
-    { name = "flyteidl2", git = "https://github.com/flyteorg/flyte.git?subdirectory=gen%2Fpython&rev=8175f3e684a3cdae44fbb8842435d60f1ae4adcc" },
+    { name = "flyteidl2", git = "https://github.com/flyteorg/flyte.git?subdirectory=gen%2Fpython&rev=16e01e918fe9d4ec73955cbd707435996ddac83f" },
     { name = "fsspec", specifier = ">=2025.3.0" },
     { name = "grpcio", specifier = ">=1.71.0" },
     { name = "httpx", specifier = ">=0.28.1,<1.0.0" },
@@ -751,8 +751,8 @@ wheels = [
 
 [[package]]
 name = "flyteidl2"
-version = "2.0.0a11.dev6+g8175f3e68"
-source = { git = "https://github.com/flyteorg/flyte.git?subdirectory=gen%2Fpython&rev=8175f3e684a3cdae44fbb8842435d60f1ae4adcc#8175f3e684a3cdae44fbb8842435d60f1ae4adcc" }
+version = "2.0.0a11.dev7+g16e01e918"
+source = { git = "https://github.com/flyteorg/flyte.git?subdirectory=gen%2Fpython&rev=16e01e918fe9d4ec73955cbd707435996ddac83f#16e01e918fe9d4ec73955cbd707435996ddac83f" }
 dependencies = [
     { name = "googleapis-common-protos" },
     { name = "protobuf" },
@@ -1081,7 +1081,7 @@ name = "importlib-metadata"
 version = "8.7.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "zipp" },
+    { name = "zipp", marker = "python_full_version < '3.12'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/76/66/650a33bd90f786193e4de4b3ad86ea60b53c89b669a5c7be931fac31cdb0/importlib_metadata-8.7.0.tar.gz", hash = "sha256:d13b81ad223b890aa16c5471f2ac3056cf76c5f10f82d6f9292f0b415f389000", size = 56641, upload-time = "2025-04-27T15:29:01.736Z" }
 wheels = [

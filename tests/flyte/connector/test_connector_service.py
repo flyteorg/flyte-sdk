@@ -15,7 +15,6 @@ from flyteidl2.core.identifier_pb2 import (
     TaskExecutionIdentifier,
     WorkflowExecutionIdentifier,
 )
-from flyteidl2.core.literals_pb2 import LiteralMap
 from flyteidl2.core.metrics_pb2 import ExecutionMetricResult
 from flyteidl2.core.security_pb2 import Identity
 from flyteidl2.plugins.connector_pb2 import (
@@ -31,6 +30,7 @@ from flyteidl2.plugins.connector_pb2 import (
     TaskCategory,
     TaskExecutionMetadata,
 )
+from flyteidl2.task import common_pb2
 
 import flyte
 from flyte._internal.runtime.task_serde import get_proto_task
@@ -60,7 +60,9 @@ class DummyConnector(AsyncConnector):
     def __init__(self):
         super().__init__()
 
-    async def create(self, task_template: TaskTemplate, inputs: typing.Optional[LiteralMap], **kwargs) -> DummyMetadata:
+    async def create(
+        self, task_template: TaskTemplate, inputs: typing.Optional[typing.Dict[str, typing.Any]], **kwargs
+    ) -> DummyMetadata:
         return DummyMetadata(job_id="dummy_id", output_path="/tmp/dummy_id", task_name="async_dummy")
 
     async def get(self, resource_meta: DummyMetadata, **kwargs) -> Resource:
@@ -148,10 +150,13 @@ async def test_async_connector_service():
     service = AsyncConnectorService()
     ctx = MagicMock(spec=grpc.ServicerContext)
 
-    inputs_proto = literals_pb2.LiteralMap(
-        literals={
-            "a": literals_pb2.Literal(scalar=literals_pb2.Scalar(primitive=literals_pb2.Primitive(integer=1))),
-        },
+    inputs_proto = common_pb2.Inputs(
+        literals=[
+            common_pb2.NamedLiteral(
+                name="a",
+                value=literals_pb2.Literal(scalar=literals_pb2.Scalar(primitive=literals_pb2.Primitive(integer=1))),
+            ),
+        ],
     )
 
     output_prefix = "/tmp"
