@@ -1,5 +1,5 @@
 import inspect
-import typing
+from typing import Dict, Tuple, Callable, Union, Type
 from http import HTTPStatus
 
 import grpc
@@ -28,7 +28,7 @@ from prometheus_client import Counter, Summary
 from flyte._internal.runtime.convert import Inputs, convert_from_inputs_to_native
 from flyte._logging import logger
 from flyte.connectors._connector import ConnectorRegistry, FlyteConnectorNotFound, get_resource_proto
-from flyte.models import NativeInterface
+from flyte.models import NativeInterface, _has_default
 from flyte.types import TypeEngine
 
 metric_prefix = "flyte_connector_"
@@ -72,10 +72,10 @@ def _handle_exception(e: Exception, context: grpc.ServicerContext, task_type: st
         ).inc()
 
 
-def record_connector_metrics(func: typing.Callable):
+def record_connector_metrics(func: Callable):
     async def wrapper(
         self,
-        request: typing.Union[CreateTaskRequest, GetTaskRequest, DeleteTaskRequest],
+        request: Union[CreateTaskRequest, GetTaskRequest, DeleteTaskRequest],
         context: grpc.ServicerContext,
         *args,
         **kwargs,
@@ -113,7 +113,7 @@ class AsyncConnectorService(AsyncConnectorServiceServicer):
         template = request.template
         connector = ConnectorRegistry.get_connector(template.type, template.task_type_version)
         logger.info(f"{connector.name} start creating the job")
-        python_interface_inputs = {
+        python_interface_inputs: Dict[str, Tuple[Type, Type[_has_default] | Type[inspect._empty]]] = {
             name: (TypeEngine.guess_python_type(lt.type), inspect.Parameter.empty)
             for name, lt in template.interface.inputs.variables.items()
         }

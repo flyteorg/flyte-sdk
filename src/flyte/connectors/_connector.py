@@ -234,6 +234,8 @@ class AsyncConnectorExecutorMixin(TaskTemplate):
 
         # TODO: Support abort
 
+        if resource.outputs is None:
+            return None
         return tuple(resource.outputs.values())
 
 
