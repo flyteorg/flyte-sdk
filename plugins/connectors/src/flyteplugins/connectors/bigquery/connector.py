@@ -49,15 +49,11 @@ class BigQueryConnector(AsyncConnector):
         **kwargs,
     ) -> BigQueryMetadata:
         job_config = None
-        python_interface_inputs = {
-            name: TypeEngine.guess_python_type(lt.type) for name, lt in task_template.interface.inputs.variables.items()
-        }
         if inputs:
-            # if isinstance(inputs, LiteralMap):
-            #     native_inputs = await convert_from_inputs_to_native(inputs, python_interface_inputs)
-            # else:
-            #     native_inputs = inputs
-            # logger.info(f"Create BigQuery job config with inputs: {native_inputs}")
+            python_interface_inputs = {
+                name: TypeEngine.guess_python_type(lt.type)
+                for name, lt in task_template.interface.inputs.variables.items()
+            }
             job_config = bigquery.QueryJobConfig(
                 query_parameters=[
                     bigquery.ScalarQueryParameter(name, pythonTypeToBigQueryType[python_interface_inputs[name]], val)
@@ -70,7 +66,7 @@ class BigQueryConnector(AsyncConnector):
         domain = custom.get("Domain")
         sdk_version = task_template.metadata.runtime.version
 
-        user_agent = f"Flytekit/{sdk_version} (GPN:Union;{domain or ''})"
+        user_agent = f"Flyte/{sdk_version} (GPN:Union;{domain or ''})"
         cinfo = ClientInfo(user_agent=user_agent)
 
         project = custom["ProjectID"]
