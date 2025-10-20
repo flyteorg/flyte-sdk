@@ -2,7 +2,7 @@
 name = "albatross"
 version = "0.1.0"
 requires-python = ">=3.12"
-#dependencies = ["bird-feeder", "seeds"]
+dependencies = ["bird-feeder", "seeds"]
 
 [tool.uv.sources]
 bird-feeder = { workspace = true }
