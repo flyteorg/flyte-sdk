@@ -33,8 +33,12 @@ import flyte
 # Configure Flyte environment
 env = flyte.TaskEnvironment(
     name="slack_echo_bot",
-    image=flyte.Image.from_debian_base().with_pip_packages("slack-sdk"),
+    image=flyte.Image.from_debian_base().with_pip_packages("slack-sdk", "unionai-reuse"),
     secrets=flyte.Secret(key="slack_bot_token", as_env_var="SLACK_BOT_TOKEN"),
+    reusable=flyte.ReusePolicy(
+        replicas=1,  # Scale between 1and 3 replicas
+        concurrency=20,
+    ),
 )
 
 
@@ -278,7 +282,7 @@ if __name__ == "__main__":
     # Initialize Flyte
     flyte.init_from_config()
 
-    chan = os.getenv("SLACK_CHANNEL_ID")
+    chan = os.getenv("SLACK_CHANNEL_ID", "C07C3DFGGQH")
     if not chan:
         raise ValueError("SLACK_CHANNEL_ID environment variable is required")
 
