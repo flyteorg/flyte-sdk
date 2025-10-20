@@ -282,7 +282,7 @@ if __name__ == "__main__":
     # Initialize Flyte
     flyte.init_from_config()
 
-    chan = os.getenv("SLACK_CHANNEL_ID", "C07C3DFGGQH")
+    chan = os.getenv("SLACK_CHANNEL_ID")
     if not chan:
         raise ValueError("SLACK_CHANNEL_ID environment variable is required")
 
