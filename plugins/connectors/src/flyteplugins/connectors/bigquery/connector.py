@@ -16,6 +16,7 @@ from flyteidl2.core.execution_pb2 import TaskExecution, TaskLog
 from flyteidl2.core.tasks_pb2 import TaskTemplate
 from google.api_core.client_info import ClientInfo
 from google.cloud import bigquery
+from google.oauth2 import service_account
 from google.protobuf import json_format
 
 pythonTypeToBigQueryType: Dict[type, str] = {
@@ -72,7 +73,16 @@ class BigQueryConnector(AsyncConnector):
         project = custom["ProjectID"]
         location = custom["Location"]
 
-        client = bigquery.Client(project=project, location=location, client_info=cinfo)
+        if custom.get("google_application_credentials") is not None:
+            google_application_credentials = service_account.Credentials.from_service_account_info(
+                custom["google_application_credentials"]
+            )
+        else:
+            google_application_credentials = None
+
+        client = bigquery.Client(
+            project=project, location=location, client_info=cinfo, credentials=google_application_credentials
+        )
         query_job = client.query(task_template.sql.statement, job_config=job_config)
 
         return BigQueryMetadata(job_id=str(query_job.job_id), location=location, project=project)

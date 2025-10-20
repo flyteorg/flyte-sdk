@@ -1,6 +1,6 @@
 import inspect
-from typing import Dict, Tuple, Callable, Union, Type
 from http import HTTPStatus
+from typing import Callable, Dict, Tuple, Type, Union
 
 import grpc
 from flyteidl2.plugins.connector_pb2 import (

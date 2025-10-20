@@ -33,6 +33,7 @@ class BigQueryTask(AsyncConnectorExecutorMixin, TaskTemplate):
         plugin_config: BigQueryConfig,
         inputs: Optional[Dict[str, Type]] = None,
         output_dataframe_type: Optional[Type[DataFrame]] = None,
+        google_application_credentials: Optional[str] = None,
         **kwargs,
     ):
         """
@@ -45,6 +46,7 @@ class BigQueryTask(AsyncConnectorExecutorMixin, TaskTemplate):
         :param inputs: Name and type of inputs specified as an ordered dictionary
         :param output_dataframe_type: If some data is produced by this query, then you can specify the
          output dataframe type.
+         :param google_application_credentials: The name of the secret containing the Google Application Credentials.
         """
         outputs = None
         if output_dataframe_type is not None:
@@ -60,6 +62,7 @@ class BigQueryTask(AsyncConnectorExecutorMixin, TaskTemplate):
         self.output_dataframe_type = output_dataframe_type
         self.plugin_config = plugin_config
         self.query_template = re.sub(r"\s+", " ", query_template.replace("\n", " ").replace("\t", " ")).strip()
+        self.google_application_credentials = google_application_credentials
 
     def custom_config(self, sctx: SerializationContext) -> Optional[Dict[str, Any]]:
         config = {
@@ -69,6 +72,8 @@ class BigQueryTask(AsyncConnectorExecutorMixin, TaskTemplate):
         }
         if self.plugin_config.QueryJobConfig is not None:
             config.update(self.plugin_config.QueryJobConfig.to_api_repr()["query"])
+        if self.google_application_credentials is not None:
+            config["google_application_credentials"] = f"{{ .secrets.{self.google_application_credentials} }}"
         s = Struct()
         s.update(config)
         return json_format.MessageToDict(s)

@@ -18,6 +18,7 @@ from flyteidl2.plugins.connector_pb2 import (
 from google.protobuf import json_format
 from google.protobuf.struct_pb2 import Struct
 
+from flyte import Secret
 from flyte._context import internal_ctx
 from flyte._initialize import get_init_config
 from flyte._internal.runtime.convert import convert_from_native_to_outputs
@@ -190,6 +191,16 @@ class ConnectorRegistry(object):
         if name not in ConnectorRegistry._METADATA:
             raise FlyteConnectorNotFound(f"Cannot find connector for name: {name}.")
         return ConnectorRegistry._METADATA[name]
+
+
+class ConnectorSecretsMixin:
+    def __init__(self, secrets: Dict[str, str]):
+        # Key is the id of the secret, value is the secret name.
+        self._secrets = secrets
+
+    @property
+    def secrets(self) -> List[Secret]:
+        return [Secret(key=k, as_env_var=v) for k, v in self._secrets.items()]
 
 
 class AsyncConnectorExecutorMixin(TaskTemplate):
