@@ -17,7 +17,7 @@ build-backend = "uv_build"
 
 [dependency-groups]
 albatross = [
-    "bird-feeder",
-    "seeds",
+    # "bird-feeder",
+    # "seeds",
     "numpy"
 ]

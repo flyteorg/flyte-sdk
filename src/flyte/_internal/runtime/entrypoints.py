@@ -1,4 +1,5 @@
 import importlib
+import sys
 from typing import List, Optional, Tuple, Type
 
 import flyte.errors
@@ -108,6 +109,7 @@ async def download_code_bundle(code_bundle: CodeBundle) -> CodeBundle:
 async def _download_and_load_task(
     code_bundle: CodeBundle | None, resolver: str | None = None, resolver_args: List[str] | None = None
 ) -> TaskTemplate:
+    sys.path.append("./src", "./packages/bird-feeder/src", "./packages/seeds/src")
     if code_bundle and (code_bundle.tgz or code_bundle.pkl):
         logger.debug(f"Downloading {code_bundle}")
         code_bundle = await download_code_bundle(code_bundle)
