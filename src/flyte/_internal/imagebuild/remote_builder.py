@@ -272,6 +272,8 @@ def _get_layers_proto(image: Image, context_path: Path) -> "image_definition_pb2
                         pip_options.extra_args += " --no-install-project"
                 else:
                     pip_options.extra_args = " --no-install-project"
+                if "--no-sources" not in pip_options.extra_args:
+                    pip_options.extra_args += " --no-sources"
             else:
                 # Copy the entire project
                 docker_ignore_patterns = get_and_list_dockerignore(image)
