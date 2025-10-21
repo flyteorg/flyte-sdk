@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import pathlib
+import sys
 import uuid
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Tuple, Union, cast
@@ -219,6 +220,10 @@ class _Runner:
                 env["LOG_LEVEL"] = str(self._log_level)
             else:
                 env["LOG_LEVEL"] = str(logger.getEffectiveLevel())
+        if env.get("_F_SYS_PATH") is None:
+            env["_F_SYS_PATH"] = ":".join(
+                str(pathlib.Path(p).relative_to(cfg.root_dir)) for p in sys.path if p.startswith(str(cfg.root_dir))
+            )
 
         if not self._dry_run:
             if get_client() is None:

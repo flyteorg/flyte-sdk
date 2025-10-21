@@ -1,4 +1,5 @@
 import importlib
+import os
 import sys
 from typing import List, Optional, Tuple, Type
 
@@ -110,9 +111,13 @@ async def _download_and_load_task(
     code_bundle: CodeBundle | None, resolver: str | None = None, resolver_args: List[str] | None = None
 ) -> TaskTemplate:
     # TODO: Add these paths at runtime somehow
-    sys.path.append("./src")
-    sys.path.append("./packages/bird_feeder/src")
-    sys.path.append("./packages/seeds/src")
+    # sys.path.append("./src")
+    # sys.path.append("./packages/bird_feeder/src")
+    # sys.path.append("./packages/seeds/src")
+    print("_F_SYS_PATH", os.environ.get("_F_SYS_PATH", ""))
+    for p in os.environ.get("_F_SYS_PATH", "").split(":"):
+        if p and p not in sys.path:
+            sys.path.insert(0, p)
     if code_bundle and (code_bundle.tgz or code_bundle.pkl):
         logger.debug(f"Downloading {code_bundle}")
         code_bundle = await download_code_bundle(code_bundle)
