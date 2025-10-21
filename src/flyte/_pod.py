@@ -2,8 +2,8 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Dict, Optional
 
 if TYPE_CHECKING:
-    from flyteidl.core.tasks_pb2 import K8sPod
-    from kubernetes.client import ApiClient, V1PodSpec
+    from flyteidl2.core.tasks_pb2 import K8sPod
+    from kubernetes.client import V1PodSpec
 
 
 _PRIMARY_CONTAINER_NAME_FIELD = "primary_container_name"
@@ -20,7 +20,8 @@ class PodTemplate(object):
     annotations: Optional[Dict[str, str]] = None
 
     def to_k8s_pod(self) -> "K8sPod":
-        from flyteidl.core.tasks_pb2 import K8sObjectMetadata, K8sPod
+        from flyteidl2.core.tasks_pb2 import K8sObjectMetadata, K8sPod
+        from kubernetes.client import ApiClient
 
         return K8sPod(
             metadata=K8sObjectMetadata(labels=self.labels, annotations=self.annotations),

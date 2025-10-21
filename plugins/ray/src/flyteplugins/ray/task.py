@@ -10,7 +10,7 @@ import yaml
 from flyte import PodTemplate, Resources
 from flyte.extend import AsyncFunctionTaskTemplate, TaskPluginRegistry, pod_spec_from_resources
 from flyte.models import SerializationContext
-from flyteidl.plugins.ray_pb2 import HeadGroupSpec, RayCluster, RayJob, WorkerGroupSpec
+from flyteidl2.plugins.ray_pb2 import HeadGroupSpec, RayCluster, RayJob, WorkerGroupSpec
 from google.protobuf.json_format import MessageToDict
 
 import ray
@@ -62,6 +62,7 @@ class RayFunctionTask(AsyncFunctionTaskTemplate):
 
     task_type: str = "ray"
     plugin_config: RayJobConfig
+    debuggable: bool = True
 
     async def pre(self, *args, **kwargs) -> Dict[str, Any]:
         init_params = {"address": self.plugin_config.address}
@@ -70,7 +71,7 @@ class RayFunctionTask(AsyncFunctionTaskTemplate):
             working_dir = os.getcwd()
             init_params["runtime_env"] = {
                 "working_dir": working_dir,
-                "excludes": ["script_mode.tar.gz", "fast*.tar.gz", ".python_history"],
+                "excludes": ["script_mode.tar.gz", "fast*.tar.gz", ".python_history", ".code-server"],
             }
 
         if not ray.is_initialized():

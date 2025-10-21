@@ -1,3 +1,11 @@
+# /// script
+# requires-python = ">=3.10"
+# dependencies = [
+#    "flyte>=2.0.0b0",
+#    "polyglot-hello>=0.1.3",
+# ]
+# ///
+
 import sys
 
 import polyglot_hello
@@ -40,7 +48,7 @@ def main(letter: str) -> dict[str, str]:
 
 
 if __name__ == "__main__":
-    flyte.init_from_config("../config.yaml")
+    flyte.init_from_config()
 
     input_letter = sys.argv[1] if len(sys.argv) > 1 else "e"
     execution = flyte.run(main, letter=input_letter)

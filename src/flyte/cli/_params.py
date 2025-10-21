@@ -15,9 +15,9 @@ from typing import get_args
 import rich_click as click
 import yaml
 from click import Parameter
-from flyteidl.core.interface_pb2 import Variable
-from flyteidl.core.literals_pb2 import Literal
-from flyteidl.core.types_pb2 import BlobType, LiteralType, SimpleType
+from flyteidl2.core.interface_pb2 import Variable
+from flyteidl2.core.literals_pb2 import Literal
+from flyteidl2.core.types_pb2 import BlobType, LiteralType, SimpleType
 from google.protobuf.json_format import MessageToDict
 from mashumaro.codecs.json import JSONEncoder
 
@@ -283,13 +283,17 @@ class UnionParamType(click.ParamType):
     A composite type that allows for multiple types to be specified. This is used for union types.
     """
 
-    def __init__(self, types: typing.List[click.ParamType]):
+    def __init__(self, types: typing.List[click.ParamType | None]):
         super().__init__()
         self._types = self._sort_precedence(types)
-        self.name = "|".join([t.name for t in self._types])
+        self.name = "|".join([t.name for t in self._types if t is not None])
+        self.optional = False
+        if None in types:
+            self.name = f"Optional[{self.name}]"
+            self.optional = True
 
     @staticmethod
-    def _sort_precedence(tp: typing.List[click.ParamType]) -> typing.List[click.ParamType]:
+    def _sort_precedence(tp: typing.List[click.ParamType | None]) -> typing.List[click.ParamType]:
         unprocessed = []
         str_types = []
         others = []
@@ -311,6 +315,8 @@ class UnionParamType(click.ParamType):
         """
         for p in self._types:
             try:
+                if p is None and value is None:
+                    return None
                 return p.convert(value, param, ctx)
             except Exception as e:
                 logger.debug(f"Ignoring conversion error for type {p} trying other variants in Union. Error: {e}")
@@ -433,7 +439,10 @@ def literal_type_to_click_type(lt: LiteralType, python_type: typing.Type) -> cli
         for i in range(len(lt.union_type.variants)):
             variant = lt.union_type.variants[i]
             variant_python_type = typing.get_args(python_type)[i]
-            cts.append(literal_type_to_click_type(variant, variant_python_type))
+            if variant_python_type is type(None):
+                cts.append(None)
+            else:
+                cts.append(literal_type_to_click_type(variant, variant_python_type))
         return UnionParamType(cts)
 
     if lt.HasField("enum_type"):
@@ -460,6 +469,9 @@ class FlyteLiteralConverter(object):
 
     def is_bool(self) -> bool:
         return self.click_type == click.BOOL
+
+    def is_optional(self) -> bool:
+        return isinstance(self.click_type, UnionParamType) and self.click_type.optional
 
     def convert(
         self, ctx: click.Context, param: typing.Optional[click.Parameter], value: typing.Any
@@ -493,7 +505,7 @@ def to_click_option(
     This handles converting workflow input types to supported click parameters with callbacks to initialize
     the input values to their expected types.
     """
-    from flyteidl.core.types_pb2 import SimpleType
+    from flyteidl2.core.types_pb2 import SimpleType
 
     if input_name != input_name.lower():
         # Click does not support uppercase option names: https://github.com/pallets/click/issues/837
@@ -519,15 +531,19 @@ def to_click_option(
         if literal_var.type.metadata:
             description_extra = f": {MessageToDict(literal_var.type.metadata)}"
 
-    # If a query has been specified, the input is never strictly required at this layer
     required = False if default_val is not None else True
     is_flag: typing.Optional[bool] = None
+    param_decls = [f"--{input_name}"]
     if literal_converter.is_bool():
         required = False
         is_flag = True
+        if default_val is True:
+            param_decls = [f"--{input_name}/--no-{input_name}"]
+    if literal_converter.is_optional():
+        required = False
 
     return click.Option(
-        param_decls=[f"--{input_name}"],
+        param_decls=param_decls,
         type=literal_converter.click_type,
         is_flag=is_flag,
         default=default_val,

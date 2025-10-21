@@ -4,12 +4,11 @@ from pathlib import Path
 from types import ModuleType
 from typing import Any, Dict, List, cast, get_args
 
-import click
-from click import Context
+import rich_click as click
 
 import flyte
+from flyte._code_bundle._utils import CopyFiles
 
-from .._code_bundle._utils import CopyFiles
 from . import _common as common
 from ._common import CLIConfig
 
@@ -41,6 +40,16 @@ class DeployArguments:
                 type=click.Choice(get_args(CopyFiles)),
                 default="loaded_modules",
                 help="Copy style to use when running the task",
+            )
+        },
+    )
+    root_dir: str | None = field(
+        default=None,
+        metadata={
+            "click.option": click.Option(
+                ["--root-dir"],
+                type=str,
+                help="Override the root source directory, helpful when working with monorepos.",
             )
         },
     )
@@ -87,20 +96,18 @@ class DeployArguments:
         return [common.get_option_from_metadata(f.metadata) for f in fields(cls) if f.metadata]
 
 
-class DeployEnvCommand(click.Command):
+class DeployEnvCommand(click.RichCommand):
     def __init__(self, env_name: str, env: Any, deploy_args: DeployArguments, *args, **kwargs):
         self.env_name = env_name
         self.env = env
         self.deploy_args = deploy_args
         super().__init__(*args, **kwargs)
 
-    def invoke(self, ctx: Context):
-        from rich.console import Console
-
-        console = Console()
+    def invoke(self, ctx: click.Context):
+        console = common.get_console()
         console.print(f"Deploying root - environment: {self.env_name}")
         obj: CLIConfig = ctx.obj
-        obj.init(self.deploy_args.project, self.deploy_args.domain)
+        obj.init(self.deploy_args.project, self.deploy_args.domain, root_dir=self.deploy_args.root_dir)
         with console.status("Deploying...", spinner="dots"):
             deployment = flyte.deploy(
                 self.env,
@@ -110,7 +117,7 @@ class DeployEnvCommand(click.Command):
             )
 
         console.print(common.format("Environments", deployment[0].env_repr(), obj.output_format))
-        console.print(common.format("Tasks", deployment[0].task_repr(), obj.output_format))
+        console.print(common.format("Tasks", deployment[0].table_repr(), obj.output_format))
 
 
 class DeployEnvRecursiveCommand(click.Command):
@@ -125,14 +132,12 @@ class DeployEnvRecursiveCommand(click.Command):
         self.deploy_args = deploy_args
         super().__init__(*args, **kwargs)
 
-    def invoke(self, ctx: Context):
-        from rich.console import Console
-
+    def invoke(self, ctx: click.Context):
         from flyte._environment import list_loaded_environments
         from flyte._utils import load_python_modules
 
-        console = Console()
         obj: CLIConfig = ctx.obj
+        console = common.get_console()
 
         # Load all python modules
         loaded_modules, failed_paths = load_python_modules(self.path, self.deploy_args.recursive)
@@ -168,7 +173,7 @@ class DeployEnvRecursiveCommand(click.Command):
         console.print(
             common.format("Environments", [env for d in deployments for env in d.env_repr()], obj.output_format)
         )
-        console.print(common.format("Tasks", [task for d in deployments for task in d.task_repr()], obj.output_format))
+        console.print(common.format("Tasks", [task for d in deployments for task in d.table_repr()], obj.output_format))
 
 
 class EnvPerFileGroup(common.ObjectsPerFileGroup):
@@ -183,6 +188,14 @@ class EnvPerFileGroup(common.ObjectsPerFileGroup):
 
     def _filter_objects(self, module: ModuleType) -> Dict[str, Any]:
         return {k: v for k, v in module.__dict__.items() if isinstance(v, flyte.Environment)}
+
+    def list_commands(self, ctx):
+        common.initialize_config(ctx, self.deploy_args.project, self.deploy_args.domain, self.deploy_args.root_dir)
+        return super().list_commands(ctx)
+
+    def get_command(self, ctx, obj_name):
+        common.initialize_config(ctx, self.deploy_args.project, self.deploy_args.domain, self.deploy_args.root_dir)
+        return super().get_command(ctx, obj_name)
 
     def _get_command_for_obj(self, ctx: click.Context, obj_name: str, obj: Any) -> click.Command:
         obj = cast(flyte.Environment, obj)

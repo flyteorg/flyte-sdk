@@ -25,7 +25,9 @@ pod_template = flyte.PodTemplate(
 )
 
 env = flyte.TaskEnvironment(
-    name="hello_world", pod_template=pod_template, image="ghcr.io/flyteorg/flyte:py3.12-v0.2.0b8"
+    name="hello_world",
+    pod_template=pod_template,
+    image=flyte.Image.from_uv_script(__file__, name="flyte", pre=True),
 )
 
 
@@ -40,6 +42,6 @@ async def say_hello_nested(data: str = "default string") -> str:
 
 
 if __name__ == "__main__":
-    flyte.init("../../config.yaml")
+    flyte.init_from_config()
     result = flyte.run(say_hello_nested, data="hello world")
-    print(result)
+    print(result.url)

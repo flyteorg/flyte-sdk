@@ -7,9 +7,8 @@ authors = [{ name = "Ketan Umare", email = "kumare3@users.noreply.github.com" }]
 requires-python = ">=3.10"
 dependencies = [
     "aiofiles>=24.1.0",
-    # 8.2.0 has a bug https://github.com/pallets/click/issues/2897
     "click>=8.2.1",
-    "flyteidl>=1.15.4b0",
+    "flyteidl>=1.15.4b0,<2.0.0",
     "cloudpickle>=3.1.1",
     "fsspec>=2025.3.0",
     "grpcio>=1.71.0",
@@ -17,7 +16,7 @@ dependencies = [
     "protobuf>=6.30.1",
     "pydantic>=2.10.6",
     "pyyaml>=6.0.2",
-    "rich-click>=1.8.9",
+    "rich-click==1.8.9", # As we are installing flyte in --pre mode, we need to pin rich-click to a stable version
     "httpx>=0.28.1,<1.0.0",
     "keyring>=25.6.0",
     "msgpack>=1.1.0",
@@ -25,15 +24,25 @@ dependencies = [
     "async-lru>=2.0.5",
     "mashumaro",
     "dataclasses_json", # TODO: remove this dependency once we remove dataclasses_json from the code
+    "aiolimiter>=1.2.1",
+    "flyteidl2==2.0.0a10",
 ]
 
 [project.scripts]
 flyte = "flyte.cli.main:main"
 a0 = "flyte._bin.runtime:main"
 
+[project.entry-points."keyring.backends"]
+flyte_keyring_file = "flyte._keyring.file"
+
 [build-system]
 requires = ["setuptools", "setuptools_scm"]
 build-backend = "setuptools.build_meta"
+
+[project.optional-dependencies]
+aiosqlite = [
+    "aiosqlite>=0.21.0",
+]
 
 [dependency-groups]
 dev = [
@@ -61,6 +70,7 @@ license-files = ["licenses/*.txt", "LICENSE"]
 package-dir = {"" = "src"}
 script-files = [
     "src/flyte/_bin/runtime.py",
+    "src/flyte/_bin/debug.py",
 ]
 
 [tool.setuptools.packages.find]
@@ -87,7 +97,6 @@ branch = true
 [tool.ruff]
 line-length = 120
 extend-exclude = [
-    "src/flyte/_protos",
     "src/flyte/remote/client/_protocols.py",
     "examples/reports",
 ]
@@ -117,7 +126,7 @@ select = [
     "FURB",
     "RUF",
 ]
-ignore = ["PGH003", "PLC0415"]
+ignore = ["PGH003", "PLC0415", "ASYNC210", "FURB122"]
 
 [tool.ruff.lint.per-file-ignores]
 "examples/*" = ["E402"]
@@ -127,9 +136,11 @@ dev-dependencies = [
     "pytest>=8.3.5",
 ]
 
+[tool.uv.sources]
+flyteidl2 = { git = "https://github.com/flyteorg/flyte.git", subdirectory = "gen/python", rev = "v2" }
+
 [tool.mypy]
 disable_error_code = ["import-untyped"]
-exclude = "src/flyte/_protos/.*"
 ignore_missing_imports = true
 
 [tool.ty.rules]

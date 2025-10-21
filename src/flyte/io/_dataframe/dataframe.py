@@ -1,20 +1,17 @@
 from __future__ import annotations
 
 import _datetime
-import asyncio
 import collections
 import types
 import typing
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field, is_dataclass
+from dataclasses import is_dataclass
 from typing import Any, ClassVar, Coroutine, Dict, Generic, List, Optional, Type, Union
 
-import msgpack
-from flyteidl.core import literals_pb2, types_pb2
+from flyteidl2.core import literals_pb2, types_pb2
 from fsspec.utils import get_protocol
-from mashumaro.mixins.json import DataClassJSONMixin
 from mashumaro.types import SerializableType
-from pydantic import model_serializer, model_validator
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, model_serializer, model_validator
 from typing_extensions import Annotated, TypeAlias, get_args, get_origin
 
 import flyte.storage as storage
@@ -48,15 +45,23 @@ GENERIC_FORMAT: DataFrameFormat = ""
 GENERIC_PROTOCOL: str = "generic protocol"
 
 
-@dataclass
-class DataFrame(SerializableType, DataClassJSONMixin):
+class DataFrame(BaseModel, SerializableType):
     """
     This is the user facing DataFrame class. Please don't confuse it with the literals.StructuredDataset
     class (that is just a model, a Python class representation of the protobuf).
     """
 
-    uri: typing.Optional[str] = field(default=None)
-    file_format: typing.Optional[str] = field(default=GENERIC_FORMAT)
+    uri: typing.Optional[str] = Field(default=None)
+    format: typing.Optional[str] = Field(default=GENERIC_FORMAT)
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    # Private attributes that are not part of the Pydantic model schema
+    _raw_df: typing.Optional[typing.Any] = PrivateAttr(default=None)
+    _metadata: typing.Optional[literals_pb2.StructuredDatasetMetadata] = PrivateAttr(default=None)
+    _literal_sd: Optional[literals_pb2.StructuredDataset] = PrivateAttr(default=None)
+    _dataframe_type: Optional[Type[Any]] = PrivateAttr(default=None)
+    _already_uploaded: bool = PrivateAttr(default=False)
 
     # loop manager is working better than synchronicity for some reason, was getting an error but may be an easy fix
     def _serialize(self) -> Dict[str, Optional[str]]:
@@ -65,16 +70,16 @@ class DataFrame(SerializableType, DataClassJSONMixin):
         engine = DataFrameTransformerEngine()
         lv = loop_manager.run_sync(engine.to_literal, self, type(self), lt)
         sd = DataFrame(uri=lv.scalar.structured_dataset.uri)
-        sd.file_format = lv.scalar.structured_dataset.metadata.structured_dataset_type.format
+        sd.format = lv.scalar.structured_dataset.metadata.structured_dataset_type.format
         return {
             "uri": sd.uri,
-            "file_format": sd.file_format,
+            "format": sd.format,
         }
 
     @classmethod
-    def _deserialize(cls, value) -> "DataFrame":
+    def _deserialize(cls, value) -> DataFrame:
         uri = value.get("uri", None)
-        file_format = value.get("file_format", None)
+        format_val = value.get("format", None)
 
         if uri is None:
             raise ValueError("DataFrame's uri and file format should not be None")
@@ -86,7 +91,7 @@ class DataFrame(SerializableType, DataClassJSONMixin):
                 scalar=literals_pb2.Scalar(
                     structured_dataset=literals_pb2.StructuredDataset(
                         metadata=literals_pb2.StructuredDatasetMetadata(
-                            structured_dataset_type=types_pb2.StructuredDatasetType(format=file_format)
+                            structured_dataset_type=types_pb2.StructuredDatasetType(format=format_val)
                         ),
                         uri=uri,
                     )
@@ -102,7 +107,7 @@ class DataFrame(SerializableType, DataClassJSONMixin):
         lv = loop_manager.run_sync(sde.to_literal, self, type(self), lt)
         return {
             "uri": lv.scalar.structured_dataset.uri,
-            "file_format": lv.scalar.structured_dataset.metadata.structured_dataset_type.format,
+            "format": lv.scalar.structured_dataset.metadata.structured_dataset_type.format,
         }
 
     @model_validator(mode="after")
@@ -117,7 +122,7 @@ class DataFrame(SerializableType, DataClassJSONMixin):
                 scalar=literals_pb2.Scalar(
                     structured_dataset=literals_pb2.StructuredDataset(
                         metadata=literals_pb2.StructuredDatasetMetadata(
-                            structured_dataset_type=types_pb2.StructuredDatasetType(format=self.file_format)
+                            structured_dataset_type=types_pb2.StructuredDatasetType(format=self.format)
                         ),
                         uri=self.uri,
                     )
@@ -134,30 +139,46 @@ class DataFrame(SerializableType, DataClassJSONMixin):
     def column_names(cls) -> typing.List[str]:
         return [k for k, v in cls.columns().items()]
 
-    def __init__(
-        self,
+    @classmethod
+    def from_df(
+        cls,
         val: typing.Optional[typing.Any] = None,
         uri: typing.Optional[str] = None,
-        metadata: typing.Optional[literals_pb2.StructuredDatasetMetadata] = None,
+    ) -> DataFrame:
+        """
+        Wrapper to create a DataFrame from a dataframe.
+        The reason this is implemented as a wrapper instead of a full translation invoking
+        the type engine and the encoders is because there's too much information in the type
+        signature of the task that we don't want the user to have to replicate.
+        """
+        instance = cls(uri=uri)
+        instance._raw_df = val
+        return instance
+
+    @classmethod
+    def from_existing_remote(
+        cls,
+        remote_path: str,
+        format: typing.Optional[str] = None,
         **kwargs,
-    ):
-        self._val = val
-        # Make these fields public, so that the dataclass transformer can set a value for it
-        # https://github.com/flyteorg/flytekit/blob/bcc8541bd6227b532f8462563fe8aac902242b21/flytekit/core/type_engine.py#L298
-        self.uri = uri
-        # When dataclass_json runs from_json, we need to set it here, otherwise the format will be empty string
-        self.file_format = kwargs["file_format"] if "file_format" in kwargs else GENERIC_FORMAT
-        # This is a special attribute that indicates if the data was either downloaded or uploaded
-        self._metadata = metadata
-        # This is not for users to set, the transformer will set this.
-        self._literal_sd: Optional[literals_pb2.StructuredDataset] = None
-        # Not meant for users to set, will be set by an open() call
-        self._dataframe_type: Optional[DF] = None  # type: ignore
-        self._already_uploaded = False
+    ) -> "DataFrame":
+        """
+        Create a DataFrame reference from an existing remote dataframe.
+
+        Args:
+            remote_path: The remote path to the existing dataframe
+            format: Format of the stored dataframe
+
+        Example:
+            ```python
+            df = DataFrame.from_existing_remote("s3://bucket/data.parquet", format="parquet")
+            ```
+        """
+        return cls(uri=remote_path, format=format or GENERIC_FORMAT, **kwargs)
 
     @property
     def val(self) -> Optional[DF]:
-        return self._val
+        return self._raw_df
 
     @property
     def metadata(self) -> Optional[literals_pb2.StructuredDatasetMetadata]:
@@ -201,7 +222,7 @@ class DataFrame(SerializableType, DataClassJSONMixin):
 
         @task
         def return_df() -> DataFrame:
-            df = DataFrame(uri="s3://my-s3-bucket/s3_flyte_dir/df.parquet", file_format="parquet")
+            df = DataFrame(uri="s3://my-s3-bucket/s3_flyte_dir/df.parquet", format="parquet")
             df = df.open(pd.DataFrame).all()
             return df
 
@@ -243,6 +264,9 @@ def flatten_dict(sub_dict: dict, parent_key: str = "") -> typing.Dict:
         elif is_dataclass(value):
             fields = getattr(value, "__dataclass_fields__")
             d = {k: v.type for k, v in fields.items()}
+            result.update(flatten_dict(sub_dict=d, parent_key=current_key))
+        elif hasattr(value, "model_fields"):  # Pydantic model
+            d = {k: v.annotation for k, v in value.model_fields.items()}
             result.update(flatten_dict(sub_dict=d, parent_key=current_key))
         else:
             result[current_key] = value
@@ -623,17 +647,21 @@ class DataFrameTransformerEngine(TypeTransformer[DataFrame]):
                 f"Already registered a handler for {(h.python_type, protocol, h.supported_format)}"
             )
         lowest_level[h.supported_format] = h
-        logger.debug(f"Registered {h} as handler for {h.python_type}, protocol {protocol}, fmt {h.supported_format}")
+        logger.debug(
+            f"Registered {h.__class__.__name__} as handler for {h.python_type.__class__.__name__},"
+            f" protocol {protocol}, fmt {h.supported_format}"
+        )
 
         if (default_format_for_type or default_for_type) and h.supported_format != GENERIC_FORMAT:
             if h.python_type in cls.DEFAULT_FORMATS and not override:
                 if cls.DEFAULT_FORMATS[h.python_type] != h.supported_format:
                     logger.info(
-                        f"Not using handler {h} with format {h.supported_format}"
-                        f" as default for {h.python_type}, {cls.DEFAULT_FORMATS[h.python_type]} already specified."
+                        f"Not using handler {h.__class__.__name__} with format {h.supported_format}"
+                        f" as default for {h.python_type.__class__.__name__},"
+                        f" {cls.DEFAULT_FORMATS[h.python_type]} already specified."
                     )
             else:
-                logger.debug(f"Use {type(h).__name__} as default handler for {h.python_type}.")
+                logger.debug(f"Use {type(h).__name__} as default handler for {h.python_type.__class__.__name__}.")
                 cls.DEFAULT_FORMATS[h.python_type] = h.supported_format
         if default_storage_for_type or default_for_type:
             if h.protocol in cls.DEFAULT_PROTOCOLS and not override:
@@ -661,7 +689,7 @@ class DataFrameTransformerEngine(TypeTransformer[DataFrame]):
         expected: types_pb2.LiteralType,
     ) -> literals_pb2.Literal:
         # Make a copy in case we need to hand off to encoders, since we can't be sure of mutations.
-        python_type, *attrs = extract_cols_and_format(python_type)
+        python_type, *_attrs = extract_cols_and_format(python_type)
         sdt = types_pb2.StructuredDatasetType(format=self.DEFAULT_FORMATS.get(python_type, GENERIC_FORMAT))
 
         if issubclass(python_type, DataFrame) and not isinstance(python_val, DataFrame):
@@ -708,16 +736,16 @@ class DataFrameTransformerEngine(TypeTransformer[DataFrame]):
             #       return DataFrame(uri=uri)
             if python_val.val is None:
                 uri = python_val.uri
-                file_format = python_val.file_format
+                format_val = python_val.format
 
                 # Check the user-specified uri
                 if not uri:
                     raise ValueError(f"If dataframe is not specified, then the uri should be specified. {python_val}")
                 if not storage.is_remote(uri):
-                    uri = await storage.put(uri)
+                    uri = await storage.put(uri, recursive=True)
 
-                # Check the user-specified file_format
-                # When users specify file_format for a DataFrame, the file_format should be retained
+                # Check the user-specified format
+                # When users specify format for a DataFrame, the format should be retained
                 # conditionally. For details, please refer to https://github.com/flyteorg/flyte/issues/6096.
                 # Following illustrates why we can't always copy the user-specified file_format over:
                 #
@@ -725,14 +753,14 @@ class DataFrameTransformerEngine(TypeTransformer[DataFrame]):
                 # def modify_format(df: Annotated[DataFrame, {}, "task-format"]) -> DataFrame:
                 #     return df
                 #
-                # df = DataFrame(uri="s3://my-s3-bucket/df.parquet", file_format="user-format")
+                # df = DataFrame(uri="s3://my-s3-bucket/df.parquet", format="user-format")
                 # df2 = modify_format(df=df)
                 #
-                # In this case, we expect the df2.file_format to be task-format (as shown in Annotated),
-                # not user-format. If we directly copy the user-specified file_format over,
+                # In this case, we expect the df2.format to be task-format (as shown in Annotated),
+                # not user-format. If we directly copy the user-specified format over,
                 # the type hint information will be missing.
-                if sdt.format == GENERIC_FORMAT and file_format != GENERIC_FORMAT:
-                    sdt.format = file_format
+                if sdt.format == GENERIC_FORMAT and format_val != GENERIC_FORMAT:
+                    sdt.format = format_val
 
                 sd_model = literals_pb2.StructuredDataset(
                     uri=uri,
@@ -760,8 +788,9 @@ class DataFrameTransformerEngine(TypeTransformer[DataFrame]):
             structured_dataset_type=expected.structured_dataset_type if expected else None
         )
 
-        sd = DataFrame(val=python_val, metadata=meta)
-        return await self.encode(sd, python_type, protocol, fmt, sdt)
+        fdf = DataFrame.from_df(val=python_val)
+        fdf._metadata = meta
+        return await self.encode(fdf, python_type, protocol, fmt, sdt)
 
     def _protocol_from_type_or_prefix(self, df_type: Type, uri: Optional[str] = None) -> str:
         """
@@ -782,7 +811,7 @@ class DataFrameTransformerEngine(TypeTransformer[DataFrame]):
 
     async def encode(
         self,
-        sd: DataFrame,
+        df: DataFrame,
         df_type: Type,
         protocol: str,
         format: str,
@@ -791,7 +820,7 @@ class DataFrameTransformerEngine(TypeTransformer[DataFrame]):
         handler: DataFrameEncoder
         handler = self.get_encoder(df_type, protocol, format)
 
-        sd_model = await handler.encode(sd, structured_literal_type)
+        sd_model = await handler.encode(df, structured_literal_type)
         # This block is here in case the encoder did not set the type information in the metadata. Since this literal
         # is special in that it carries around the type itself, we want to make sure the type info therein is at
         # least as good as the type of the interface.
@@ -807,71 +836,12 @@ class DataFrameTransformerEngine(TypeTransformer[DataFrame]):
         lit = literals_pb2.Literal(scalar=literals_pb2.Scalar(structured_dataset=sd_model))
 
         # Because the handler.encode may have uploaded something, and because the sd may end up living inside a
-        # dataclass, we need to modify any uploaded flyte:// urls here.
-        modify_literal_uris(lit)  # todo: verify that this can be removed.
-        sd._literal_sd = sd_model
-        sd._already_uploaded = True
+        # dataclass, we need to modify any uploaded flyte:// urls here. Needed here even though the Type engine
+        # already does this because the DataframeTransformerEngine may be called directly.
+        modify_literal_uris(lit)
+        df._literal_sd = sd_model
+        df._already_uploaded = True
         return lit
-
-    # pr: han-ru: can this be removed if we make DataFrame a pydantic model?
-    def dict_to_dataframe(
-        self, dict_obj: typing.Dict[str, str], expected_python_type: Type[T] | DataFrame
-    ) -> T | DataFrame:
-        uri = dict_obj.get("uri", None)
-        file_format = dict_obj.get("file_format", None)
-
-        if uri is None:
-            raise ValueError("DataFrame's uri and file format should not be None")
-
-        # Instead of using python native DataFrame, we need to build a literals.StructuredDataset
-        # The reason is that _literal_sd of python sd is accessed when task output LiteralMap is
-        # converted back to flyteidl. Hence, _literal_sd must have to_flyte_idl method
-        # See https://github.com/flyteorg/flytekit/blob/f938661ff8413219d1bea77f6914a58c302d5c6c/flytekit/bin/entrypoint.py#L326
-        # For details, please refer to this issue: https://github.com/flyteorg/flyte/issues/5956.
-        sdt = types_pb2.StructuredDatasetType(format=file_format)
-        metad = literals_pb2.StructuredDatasetMetadata(structured_dataset_type=sdt)
-        sd_literal = literals_pb2.StructuredDataset(uri=uri, metadata=metad)
-
-        return asyncio.run(
-            DataFrameTransformerEngine().to_python_value(
-                literals_pb2.Literal(scalar=literals_pb2.Scalar(structured_dataset=sd_literal)),
-                expected_python_type,
-            )
-        )
-
-    def from_binary_idl(
-        self, binary_idl_object: literals_pb2.Binary, expected_python_type: Type[T] | DataFrame
-    ) -> T | DataFrame:
-        """
-        If the input is from flytekit, the Life Cycle will be as follows:
-
-        Life Cycle:
-        binary IDL                 -> resolved binary         -> bytes                   -> expected Python object
-        (flytekit customized          (propeller processing)     (flytekit binary IDL)      (flytekit customized
-        serialization)                                                                       deserialization)
-
-        Example Code:
-        @dataclass
-        class DC:
-            sd: StructuredDataset
-
-        @workflow
-        def wf(dc: DC):
-            t_sd(dc.sd)
-
-        Note:
-        - The deserialization is the same as put a structured dataset in a dataclass,
-          which will deserialize by the mashumaro's API.
-
-        Related PR:
-        - Title: Override Dataclass Serialization/Deserialization Behavior for FlyteTypes via Mashumaro
-        - Link: https://github.com/flyteorg/flytekit/pull/2554
-        """
-        if binary_idl_object.tag == MESSAGEPACK:
-            python_val = msgpack.loads(binary_idl_object.value)
-            return self.dict_to_dataframe(dict_obj=python_val, expected_python_type=expected_python_type)
-        else:
-            raise TypeTransformerFailedError(f"Unsupported binary format: `{binary_idl_object.tag}`")
 
     async def to_python_value(
         self, lv: literals_pb2.Literal, expected_python_type: Type[T] | DataFrame
@@ -906,12 +876,11 @@ class DataFrameTransformerEngine(TypeTransformer[DataFrame]):
         |                             | the running task's signature.           |                                      |
         +-----------------------------+-----------------------------------------+--------------------------------------+
         """
-        # Handle dataclass attribute access
         if lv.HasField("scalar") and lv.scalar.HasField("binary"):
-            return self.from_binary_idl(lv.scalar.binary, expected_python_type)
+            raise TypeTransformerFailedError("Attribute access unsupported.")
 
         # Detect annotations and extract out all the relevant information that the user might supply
-        expected_python_type, column_dict, storage_fmt, pa_schema = extract_cols_and_format(expected_python_type)
+        expected_python_type, column_dict, _storage_fmt, _pa_schema = extract_cols_and_format(expected_python_type)
 
         # Start handling for DataFrame scalars, first look at the columns
         incoming_columns = lv.scalar.structured_dataset.metadata.structured_dataset_type.columns
@@ -939,16 +908,13 @@ class DataFrameTransformerEngine(TypeTransformer[DataFrame]):
         #   t1(input_a: DataFrame)  # or
         #   t1(input_a: Annotated[DataFrame, my_cols])
         if issubclass(expected_python_type, DataFrame):
-            sd = expected_python_type(
-                dataframe=None,
-                # Note here that the type being passed in
-                metadata=metad,
-            )
-            sd._literal_sd = lv.scalar.structured_dataset
-            sd.file_format = metad.structured_dataset_type.format
-            return sd
+            fdf = DataFrame(format=metad.structured_dataset_type.format, uri=lv.scalar.structured_dataset.uri)
+            fdf._already_uploaded = True
+            fdf._literal_sd = lv.scalar.structured_dataset
+            fdf._metadata = metad
+            return fdf
 
-        # If the requested type was not a StructuredDataset, then it means it was a plain dataframe type, which means
+        # If the requested type was not a flyte.DataFrame, then it means it was a raw dataframe type, which means
         # we should do the opening/downloading and whatever else it might entail right now. No iteration option here.
         return await self.open_as(lv.scalar.structured_dataset, df_type=expected_python_type, updated_metadata=metad)
 
@@ -1024,7 +990,7 @@ class DataFrameTransformerEngine(TypeTransformer[DataFrame]):
         return converted_cols
 
     def _get_dataset_type(self, t: typing.Union[Type[DataFrame], typing.Any]) -> types_pb2.StructuredDatasetType:
-        original_python_type, column_map, storage_format, pa_schema = extract_cols_and_format(t)  # type: ignore
+        _original_python_type, column_map, storage_format, pa_schema = extract_cols_and_format(t)  # type: ignore
 
         # Get the column information
         converted_cols: typing.List[types_pb2.StructuredDatasetType.DatasetColumn] = (
@@ -1051,7 +1017,7 @@ class DataFrameTransformerEngine(TypeTransformer[DataFrame]):
     def guess_python_type(self, literal_type: types_pb2.LiteralType) -> Type[DataFrame]:
         # todo: technically we should return the dataframe type specified in the constructor, but to do that,
         #   we'd have to store that, which we don't do today. See possibly #1363
-        if literal_type.HasField("dataframe_type"):
+        if literal_type.HasField("structured_dataset_type"):
             return DataFrame
         raise ValueError(f"DataFrameTransformerEngine cannot reverse {literal_type}")
 

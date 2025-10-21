@@ -1,24 +1,23 @@
 from __future__ import annotations
 
+import asyncio
 import functools
 from dataclasses import dataclass
-from threading import Lock
 from typing import Any, AsyncIterator, Callable, Coroutine, Dict, Iterator, Literal, Optional, Tuple, Union, cast
 
 import rich.repr
-from flyteidl.core import literals_pb2
-from google.protobuf import timestamp
+from flyteidl2.common import identifier_pb2, list_pb2
+from flyteidl2.core import literals_pb2
+from flyteidl2.task import task_definition_pb2, task_service_pb2
 
 import flyte
 import flyte.errors
 from flyte._cache.cache import CacheBehavior
 from flyte._context import internal_ctx
-from flyte._initialize import ensure_client, get_client, get_common_config
+from flyte._initialize import ensure_client, get_client, get_init_config
 from flyte._internal.runtime.resources_serde import get_proto_resources
 from flyte._internal.runtime.task_serde import get_proto_retry_strategy, get_proto_timeout, get_security_context
 from flyte._logging import logger
-from flyte._protos.common import identifier_pb2, list_pb2
-from flyte._protos.workflow import task_definition_pb2, task_service_pb2
 from flyte.models import NativeInterface
 from flyte.syncify import syncify
 
@@ -35,7 +34,7 @@ def _repr_task_metadata(metadata: task_definition_pb2.TaskMetadata) -> rich.repr
         else:
             yield "deployed_by", f"App: {metadata.deployed_by.application.spec.name}"
     yield "short_name", metadata.short_name
-    yield "deployed_at", timestamp.to_datetime(metadata.deployed_at)
+    yield "deployed_at", metadata.deployed_at.ToDatetime()
     yield "environment_name", metadata.environment_name
 
 
@@ -49,7 +48,7 @@ class LazyEntity:
         self._task: Optional[TaskDetails] = None
         self._getter = getter
         self._name = name
-        self._mutex = Lock()
+        self._mutex = asyncio.Lock()
 
     @property
     def name(self) -> str:
@@ -60,11 +59,11 @@ class LazyEntity:
         """
         Forwards all other attributes to task, causing the task to be fetched!
         """
-        with self._mutex:
+        async with self._mutex:
             if self._task is None:
                 self._task = await self._getter()
-            if self._task is None:
-                raise RuntimeError(f"Error downloading the task {self._name}, (check original exception...)")
+                if self._task is None:
+                    raise RuntimeError(f"Error downloading the task {self._name}, (check original exception...)")
             return self._task
 
     @syncify
@@ -73,8 +72,10 @@ class LazyEntity:
         **kwargs: Any,
     ) -> LazyEntity:
         task_details = cast(TaskDetails, await self.fetch.aio())
-        task_details.override(**kwargs)
-        return self
+        new_task_details = task_details.override(**kwargs)
+        new_entity = LazyEntity(self._name, self._getter)
+        new_entity._task = new_task_details
+        return new_entity
 
     async def __call__(self, *args, **kwargs):
         """
@@ -93,10 +94,11 @@ class LazyEntity:
 AutoVersioning = Literal["latest", "current"]
 
 
-@dataclass
+@dataclass(frozen=True)
 class TaskDetails(ToJSONMixin):
     pb2: task_definition_pb2.TaskDetails
     max_inline_io_bytes: int = 10 * 1024 * 1024  # 10 MB
+    overriden_queue: Optional[str] = None
 
     @classmethod
     def get(
@@ -148,7 +150,7 @@ class TaskDetails(ToJSONMixin):
                     if ctx is None:
                         raise ValueError("auto_version=current can only be used within a task context.")
                     _version = ctx.version
-            cfg = get_common_config()
+            cfg = get_init_config()
             task_id = task_definition_pb2.TaskIdentifier(
                 org=cfg.org,
                 project=project or cfg.project,
@@ -261,12 +263,6 @@ class TaskDetails(ToJSONMixin):
                 f"Reference task {self.name} does not support positional arguments"
                 f"currently. Please use keyword arguments."
             )
-        if len(self.required_args) > 0:
-            if len(args) + len(kwargs) < len(self.required_args):
-                raise ValueError(
-                    f"Task {self.name} requires at least {self.required_args} arguments, "
-                    f"but only received args:{args}  kwargs{kwargs}."
-                )
 
         ctx = internal_ctx()
         if ctx.is_task_context():
@@ -276,19 +272,37 @@ class TaskDetails(ToJSONMixin):
             from flyte._internal.controllers import get_controller
 
             controller = get_controller()
+            if len(self.required_args) > 0:
+                if len(args) + len(kwargs) < len(self.required_args):
+                    raise ValueError(
+                        f"Task {self.name} requires at least {self.required_args} arguments, "
+                        f"but only received args:{args}  kwargs{kwargs}."
+                    )
             if controller:
-                return await controller.submit_task_ref(self.pb2, self.max_inline_io_bytes, *args, **kwargs)
-        raise flyte.errors
+                return await controller.submit_task_ref(self, *args, **kwargs)
+        raise flyte.errors.ReferenceTaskError(
+            f"Reference tasks [{self.name}] cannot be executed locally, only remotely."
+        )
+
+    @property
+    def queue(self) -> Optional[str]:
+        """
+        The queue to use for the task.
+        """
+        return self.overriden_queue
 
     def override(
         self,
         *,
-        friendly_name: Optional[str] = None,
+        short_name: Optional[str] = None,
         resources: Optional[flyte.Resources] = None,
         retries: Union[int, flyte.RetryStrategy] = 0,
         timeout: Optional[flyte.TimeoutType] = None,
         env_vars: Optional[Dict[str, str]] = None,
         secrets: Optional[flyte.SecretRequest] = None,
+        max_inline_io_bytes: Optional[int] = None,
+        cache: Optional[flyte.Cache] = None,
+        queue: Optional[str] = None,
         **kwargs: Any,
     ) -> TaskDetails:
         if len(kwargs) > 0:
@@ -296,29 +310,57 @@ class TaskDetails(ToJSONMixin):
                 f"ReferenceTasks [{self.name}] do not support overriding with kwargs: {kwargs}, "
                 f"Check the parameters for override method."
             )
-        template = self.pb2.spec.task_template
-        if friendly_name:
-            self.pb2.metadata.short_name = friendly_name
+        pb2 = task_definition_pb2.TaskDetails()
+        pb2.CopyFrom(self.pb2)
+
+        if short_name:
+            pb2.metadata.short_name = short_name
+
+        template = pb2.spec.task_template
         if secrets:
             template.security_context.CopyFrom(get_security_context(secrets))
+
         if template.HasField("container"):
             if env_vars:
                 template.container.env.clear()
                 template.container.env.extend([literals_pb2.KeyValuePair(key=k, value=v) for k, v in env_vars.items()])
             if resources:
                 template.container.resources.CopyFrom(get_proto_resources(resources))
-        if retries:
-            template.metadata.retries.CopyFrom(get_proto_retry_strategy(retries))
-        if timeout:
-            template.metadata.timeout.CopyFrom(get_proto_timeout(timeout))
 
-        return self
+        md = template.metadata
+        if retries:
+            md.retries.CopyFrom(get_proto_retry_strategy(retries))
+
+        if timeout:
+            md.timeout.CopyFrom(get_proto_timeout(timeout))
+
+        if cache:
+            if cache.behavior == "disable":
+                md.discoverable = False
+                md.discovery_version = ""
+            elif cache.behavior == "override":
+                md.discoverable = True
+                if not cache.version_override:
+                    raise ValueError("cache.version_override must be set when cache.behavior is 'override'")
+                md.discovery_version = cache.version_override
+            else:
+                if cache.behavior == "auto":
+                    raise ValueError("cache.behavior must be 'disable' or 'override' for reference tasks")
+                raise ValueError(f"Invalid cache behavior: {cache.behavior}.")
+            md.cache_serializable = cache.serialize
+            md.cache_ignore_input_vars[:] = list(cache.ignored_inputs or ())
+
+        return TaskDetails(
+            pb2,
+            max_inline_io_bytes=max_inline_io_bytes or self.max_inline_io_bytes,
+            overriden_queue=queue,
+        )
 
     def __rich_repr__(self) -> rich.repr.Result:
         """
         Rich representation of the task.
         """
-        yield "friendly_name", self.pb2.spec.short_name
+        yield "short_name", self.pb2.spec.short_name
         yield "environment", self.pb2.spec.environment
         yield "default_inputs_keys", self.default_input_args
         yield "required_args", self.required_args
@@ -408,7 +450,7 @@ class Task(ToJSONMixin):
         sort_pb2 = list_pb2.Sort(
             key=sort_by[0], direction=list_pb2.Sort.ASCENDING if sort_by[1] == "asc" else list_pb2.Sort.DESCENDING
         )
-        cfg = get_common_config()
+        cfg = get_init_config()
         filters = []
         if by_task_name:
             filters.append(

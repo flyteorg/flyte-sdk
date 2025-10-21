@@ -1,9 +1,10 @@
 import pathlib
 
 import pytest
-from flyteidl.core import identifier_pb2, interface_pb2, literals_pb2, tasks_pb2, types_pb2
-from flyteidl.core.security_pb2 import Secret as ProtoSecret
-from flyteidl.core.security_pb2 import SecurityContext
+from flyteidl2.core import identifier_pb2, interface_pb2, literals_pb2, tasks_pb2, types_pb2
+from flyteidl2.core.security_pb2 import Secret as ProtoSecret
+from flyteidl2.core.security_pb2 import SecurityContext
+from flyteidl2.task import common_pb2, environment_pb2
 from kubernetes.client import (
     V1Container,
     V1EnvVar,
@@ -20,7 +21,6 @@ from flyte._internal.runtime.task_serde import (
     get_security_context,
     translate_task_to_wire,
 )
-from flyte._protos.workflow import common_pb2, environment_pb2
 from flyte._secret import Secret
 from flyte.models import SerializationContext
 
@@ -82,7 +82,7 @@ def test_get_proto_container_task():
 
     # Create a task using the environment
     @env.task(
-        name="real_test_task",
+        short_name="real_test_task",
         cache=flyte.Cache(behavior="auto"),
         retries=3,
         timeout=60,
@@ -159,7 +159,7 @@ def test_get_proto_task_ignored_cache_inputs():
 
     # Create a task using the environment
     @env.task(
-        name="real_test_task",
+        short_name="real_test_task",
         cache=flyte.Cache(behavior="auto", ignored_inputs="my_ignored_input"),
         retries=3,
         timeout=60,
@@ -211,7 +211,7 @@ def test_get_proto_k8s_pod_task():
     )
 
     @env.task(
-        name="real_test_task",
+        short_name="real_test_task",
     )
     async def t1(a: int, b: str) -> str:
         """Test function docstring"""
@@ -258,7 +258,7 @@ def test_get_proto_k8s_pod_task():
     )
 
     @env.task(
-        name="real_test_task",
+        short_name="real_test_task",
     )
     async def t2(a: int, b: str) -> str:
         """Test function docstring"""
@@ -280,7 +280,7 @@ def env_task_ctx():
 
     # Create a task using the environment
     @env.task(
-        name="real_test_task",
+        short_name="real_test_task",
         cache=flyte.Cache(behavior="auto"),
         retries=3,
         timeout=60,
@@ -308,7 +308,7 @@ def env_task_ctx():
 
 
 def test_translate_task_to_wire(env_task_ctx):
-    env, task_template, context = env_task_ctx
+    _env, task_template, context = env_task_ctx
     # Generate proto task
     proto_task = translate_task_to_wire(task_template, context)
 
@@ -322,7 +322,7 @@ def test_translate_task_to_wire(env_task_ctx):
 
 
 def test_translate_task_to_wire_with_default_inputs(env_task_ctx):
-    env, task_template, context = env_task_ctx
+    _env, task_template, context = env_task_ctx
 
     default_inputs = [
         common_pb2.NamedParameter(

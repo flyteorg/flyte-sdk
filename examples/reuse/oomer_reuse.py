@@ -62,8 +62,8 @@ async def failure_recovery() -> int:
 
 
 if __name__ == "__main__":
-    flyte.init_from_config("../../config.yaml")
+    flyte.init_from_config()
 
     run = flyte.run(failure_recovery)
     print(run.url)
-    run.wait(run)
+    run.wait()

@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import logging
 import os
 import sys
 from abc import abstractmethod
 from dataclasses import dataclass, replace
+from functools import lru_cache
 from pathlib import Path
 from types import MappingProxyType, ModuleType
 from typing import Any, Dict, Iterable, List, Literal, Optional
@@ -19,10 +21,11 @@ from rich.pretty import pretty_repr
 from rich.table import Table
 from rich.traceback import Traceback
 
+import flyte.config
 import flyte.errors
 from flyte.config import Config
 
-OutputFormat = Literal["table", "json", "table-simple"]
+OutputFormat = Literal["table", "json", "table-simple", "json-raw"]
 
 PREFERRED_BORDER_COLOR = "dim cyan"
 PREFERRED_ACCENT_COLOR = "bold #FFD700"
@@ -111,13 +114,19 @@ class CLIConfig:
         """
         return replace(self, **kwargs)
 
-    def init(self, project: str | None = None, domain: str | None = None):
+    def init(
+        self,
+        project: str | None = None,
+        domain: str | None = None,
+        root_dir: str | None = None,
+        images: tuple[str, ...] | None = None,
+    ):
         from flyte.config._config import TaskConfig
 
         task_cfg = TaskConfig(
             org=self.org or self.config.task.org,
-            project=project or self.config.task.project,
-            domain=domain or self.config.task.domain,
+            project=project if project is not None else self.config.task.project,
+            domain=domain if domain is not None else self.config.task.domain,
         )
 
         kwargs: Dict[str, Any] = {}
@@ -131,7 +140,7 @@ class CLIConfig:
 
         updated_config = self.config.with_params(platform_cfg, task_cfg)
 
-        flyte.init_from_config(updated_config, log_level=self.log_level)
+        flyte.init_from_config(updated_config, log_level=self.log_level, root_dir=root_dir, images=images)
 
 
 class InvokeBaseMixin:
@@ -177,7 +186,7 @@ class InvokeBaseMixin:
         except Exception as e:
             if ctx.obj and ctx.obj.log_level and ctx.obj.log_level <= logging.DEBUG:
                 # If the user has requested verbose output, print the full traceback
-                console = Console()
+                console = get_console()
                 console.print(Traceback.from_exception(type(e), e, e.__traceback__))
                 exit(1)
             else:
@@ -354,7 +363,7 @@ def _table_format(table: Table, vals: Iterable[Any]) -> Table:
         if headers is None:
             headers = [k for k, _ in o]
             for h in headers:
-                table.add_column(h.capitalize())
+                table.add_column(h.capitalize(), no_wrap=True if "name" in h.casefold() else False)
         table.add_row(*[str(v) for _, v in o])
     return table
 
@@ -374,6 +383,7 @@ def format(title: str, vals: Iterable[Any], of: OutputFormat = "table") -> Table
                     header_style=HEADER_STYLE,
                     show_header=True,
                     border_style=PREFERRED_BORDER_COLOR,
+                    expand=True,
                 ),
                 vals,
             )
@@ -381,6 +391,11 @@ def format(title: str, vals: Iterable[Any], of: OutputFormat = "table") -> Table
             if not vals:
                 return pretty_repr([])
             return pretty_repr([v.to_dict() for v in vals])
+        case "json-raw":
+            if not vals:
+                return []
+            return json.dumps([v.to_dict() for v in vals])
+
     raise click.ClickException("Unknown output format. Supported formats are: table, table-simple, json.")
 
 
@@ -395,3 +410,43 @@ def get_panel(title: str, renderable: Any, of: OutputFormat = "table") -> Panel:
         title=f"[{PREFERRED_ACCENT_COLOR}]{title}[/{PREFERRED_ACCENT_COLOR}]",
         border_style=PREFERRED_BORDER_COLOR,
     )
+
+
+def get_console() -> Console:
+    """
+    Get a console that is configured to use colors if the terminal supports it.
+    """
+    return Console(color_system="auto", force_terminal=True, width=120)
+
+
+def parse_images(cfg: Config, values: tuple[str, ...] | None) -> None:
+    """
+    Parse image values and update the config.
+
+    Args:
+        cfg: The Config object to write images to
+        values: List of image strings in format "imagename=imageuri" or just "imageuri"
+    """
+    if values is None:
+        return
+    for value in values:
+        if "=" in value:
+            image_name, image_uri = value.split("=", 1)
+            cfg.image.image_refs[image_name] = image_uri
+        else:
+            # If no name specified, use "default" as the name
+            cfg.image.image_refs["default"] = value
+
+
+@lru_cache()
+def initialize_config(
+    ctx: click.Context, project: str, domain: str, root_dir: str | None = None, images: tuple[str, ...] | None = None
+):
+    obj: CLIConfig | None = ctx.obj
+    if obj is None:
+        import flyte.config
+
+        obj = CLIConfig(flyte.config.auto(), ctx)
+
+    obj.init(project, domain, root_dir, images)
+    return obj

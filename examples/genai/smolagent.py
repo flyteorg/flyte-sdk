@@ -12,7 +12,7 @@ agent_env = flyte.TaskEnvironment(
         concurrency=10,
         scaledown_ttl=60,
     ),
-    image=flyte.Image.from_debian_base().with_pip_packages("unionai-reuse==0.1.4b0", pre=True),
+    image=flyte.Image.from_debian_base().with_pip_packages("unionai-reuse==0.1.6"),
 )
 
 
@@ -118,6 +118,8 @@ async def main(goal: str) -> Dict[str, str]:
 
 if __name__ == "__main__":
     # asyncio.run(main("Make a peanut butter and jelly sandwich"))
-    flyte.init_from_config("../../config.yaml")
+    import flyte.git
+
+    flyte.init_from_config(flyte.git.config_from_root())
     r = flyte.run(main, goal="Make a peanut butter and jelly sandwich")
     print(r.url)

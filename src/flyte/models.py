@@ -3,17 +3,18 @@ from __future__ import annotations
 import inspect
 import os
 import pathlib
+import typing
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Callable, ClassVar, Dict, List, Literal, Optional, Tuple, Type
 
 import rich.repr
 
 from flyte._docstring import Docstring
-from flyte._interface import extract_return_annotation
+from flyte._interface import extract_return_annotation, literal_to_enum
 from flyte._logging import logger
 
 if TYPE_CHECKING:
-    from flyteidl.core import literals_pb2
+    from flyteidl2.core import literals_pb2
 
     from flyte._internal.imagebuild.image_builder import ImageCache
     from flyte.report import Report
@@ -77,6 +78,37 @@ class ActionID:
 
 
 @rich.repr.auto
+@dataclass
+class PathRewrite:
+    """
+    Configuration for rewriting paths during input loading.
+    """
+
+    # If set, rewrites any path starting with this prefix to the new prefix.
+    old_prefix: str
+    new_prefix: str
+
+    def __post_init__(self):
+        if not self.old_prefix or not self.new_prefix:
+            raise ValueError("Both old_prefix and new_prefix must be non-empty strings.")
+        if self.old_prefix == self.new_prefix:
+            raise ValueError("old_prefix and new_prefix must be different.")
+
+    @classmethod
+    def from_str(cls, pattern: str) -> PathRewrite:
+        """
+        Create a PathRewrite from a string pattern of the form `old_prefix->new_prefix`.
+        """
+        parts = pattern.split("->")
+        if len(parts) != 2:
+            raise ValueError(f"Invalid path rewrite pattern: {pattern}. Expected format 'old_prefix->new_prefix'.")
+        return cls(old_prefix=parts[0], new_prefix=parts[1])
+
+    def __repr__(self) -> str:
+        return f"{self.old_prefix}->{self.new_prefix}"
+
+
+@rich.repr.auto
 @dataclass(frozen=True, kw_only=True)
 class RawDataPath:
     """
@@ -85,6 +117,7 @@ class RawDataPath:
     """
 
     path: str
+    path_rewrite: Optional[PathRewrite] = None
 
     @classmethod
     def from_local_folder(cls, local_folder: str | pathlib.Path | None = None) -> RawDataPath:
@@ -111,7 +144,7 @@ class RawDataPath:
 
     def get_random_remote_path(self, file_name: Optional[str] = None) -> str:
         """
-        Returns a random path for uploading a file/directory to.
+        Returns a random path for uploading a file/directory to. This file/folder will not be created, it's just a path.
 
         :param file_name: If given, will be joined after a randomly generated portion.
         :return:
@@ -127,13 +160,14 @@ class RawDataPath:
 
         protocol = get_protocol(file_prefix)
         if "file" in protocol:
-            local_path = pathlib.Path(file_prefix) / random_string
+            parent_folder = pathlib.Path(file_prefix)
+            parent_folder.mkdir(exist_ok=True, parents=True)
             if file_name:
-                # Only if file name is given do we create the parent, because it may be needed as a folder otherwise
-                local_path = local_path / file_name
-                if not local_path.exists():
-                    local_path.parent.mkdir(exist_ok=True, parents=True)
-                    local_path.touch()
+                random_folder = parent_folder / random_string
+                random_folder.mkdir()
+                local_path = random_folder / file_name
+            else:
+                local_path = parent_folder / random_string
             return str(local_path.absolute())
 
         fs = fsspec.filesystem(protocol)
@@ -161,11 +195,14 @@ class TaskContext:
     :param action: The action ID of the current execution. This is always set, within a run.
     :param version: The version of the executed task. This is set when the task is executed by an action and will be
       set on all sub-actions.
+    :param custom_context: Context metadata for the action. If an action receives context, it'll automatically pass it
+      to any actions it spawns. Context will not be used for cache key computation.
     """
 
     action: ActionID
     version: str
     raw_data_path: RawDataPath
+    input_path: str | None = None
     output_path: str
     run_base_dir: str
     report: Report
@@ -175,6 +212,8 @@ class TaskContext:
     compiled_image_cache: ImageCache | None = None
     data: Dict[str, Any] = field(default_factory=dict)
     mode: Literal["local", "remote", "hybrid"] = "remote"
+    interactive_mode: bool = False
+    custom_context: Dict[str, str] = field(default_factory=dict)
 
     def replace(self, **kwargs) -> TaskContext:
         if "data" in kwargs:
@@ -327,7 +366,10 @@ class NativeInterface:
                 logger.warning(
                     f"Function {func.__name__} has parameter {name} without type annotation. Data will be pickled."
                 )
-            param_info[name] = (param.annotation, param.default)
+            if typing.get_origin(param.annotation) is Literal:
+                param_info[name] = (literal_to_enum(param.annotation), param.default)
+            else:
+                param_info[name] = (param.annotation, param.default)
 
         # Get return type
         outputs = extract_return_annotation(sig.return_annotation)
@@ -340,9 +382,15 @@ class NativeInterface:
         """
         # Convert positional arguments to keyword arguments
         if len(args) > len(self.inputs):
-            raise ValueError(f"Too many positional arguments provided, inputs {self.inputs.keys()}, args {len(args)}")
+            raise ValueError(
+                f"Too many positional arguments provided, expected inputs {self.inputs.keys()}, args {len(args)}"
+            )
         for arg, input_name in zip(args, self.inputs.keys()):
             kwargs[input_name] = arg
+        if len(kwargs) > len(self.inputs):
+            raise ValueError(
+                f"Too many keyword arguments provided, expected inputs {self.inputs.keys()}, args {kwargs.keys()}"
+            )
         return kwargs
 
     def get_input_types(self) -> Dict[str, Type]:
@@ -408,13 +456,15 @@ class SerializationContext:
     code_bundle: Optional[CodeBundle] = None
     input_path: str = "{{.input}}"
     output_path: str = "{{.outputPrefix}}"
-    _entrypoint_path: str = field(default="_bin/runtime.py", init=False)
+    interpreter_path: str = "/opt/venv/bin/python"
     image_cache: ImageCache | None = None
     root_dir: Optional[pathlib.Path] = None
 
-    def get_entrypoint_path(self, interpreter_path: str) -> str:
+    def get_entrypoint_path(self, interpreter_path: Optional[str] = None) -> str:
         """
         Get the entrypoint path for the task. This is used to determine the entrypoint for the task execution.
         :param interpreter_path: The path to the interpreter (python)
         """
-        return os.path.join(os.path.dirname(os.path.dirname(interpreter_path)), self._entrypoint_path)
+        if interpreter_path is None:
+            interpreter_path = self.interpreter_path
+        return os.path.join(os.path.dirname(interpreter_path), "runtime.py")

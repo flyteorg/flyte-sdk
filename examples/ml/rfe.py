@@ -46,7 +46,7 @@ async def train(features: list[str], drop: str) -> float:
 
 @worker.task
 async def rfe():  # -> list[dict[str, float]]:
-    x, y = fetch_california_housing(as_frame=True, return_X_y=True)
+    x, _y = fetch_california_housing(as_frame=True, return_X_y=True)
 
     features = list(x.columns)
 
@@ -70,7 +70,7 @@ async def rfe():  # -> list[dict[str, float]]:
 
 
 if __name__ == "__main__":
-    flyte.init_from_config("../../config.yaml")
+    flyte.init_from_config()
     run = flyte.run(rfe)
     print(run.url)
 

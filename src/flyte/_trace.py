@@ -3,6 +3,7 @@ import inspect
 import time
 from typing import Any, AsyncGenerator, AsyncIterator, Awaitable, Callable, TypeGuard, TypeVar, Union, cast
 
+from flyte._logging import logger
 from flyte.models import NativeInterface
 
 T = TypeVar("T")
@@ -33,10 +34,13 @@ def trace(func: Callable[..., T]) -> Callable[..., T]:
             iface = NativeInterface.from_callable(func)
             info, ok = await controller.get_action_outputs(iface, func, *args, **kwargs)
             if ok:
+                logger.info(f"Found existing trace info for {func}, {info}")
                 if info.output:
                     return info.output
                 elif info.error:
                     raise info.error
+            else:
+                logger.debug(f"No existing trace info found for {func}, proceeding to execute.")
             start_time = time.time()
             try:
                 # Cast to Awaitable to satisfy mypy
@@ -44,6 +48,7 @@ def trace(func: Callable[..., T]) -> Callable[..., T]:
                 results = await coroutine_result
                 info.add_outputs(results, start_time=start_time, end_time=time.time())
                 await controller.record_trace(info)
+                logger.debug(f"Finished trace for {func}, {info}")
                 return results
             except Exception as e:
                 # If there is an error, we need to record it

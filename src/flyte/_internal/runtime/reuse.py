@@ -2,7 +2,7 @@ import hashlib
 import typing
 from venv import logger
 
-from flyteidl.core import tasks_pb2
+from flyteidl2.core import tasks_pb2
 
 import flyte.errors
 from flyte import ReusePolicy

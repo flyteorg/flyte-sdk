@@ -8,8 +8,10 @@ import flyte
 from flyte import PodTemplate
 from flyte.extend import AsyncFunctionTaskTemplate, TaskPluginRegistry
 from flyte.models import SerializationContext
-from flyteidl.plugins.spark_pb2 import SparkApplication, SparkJob
+from flyteidl2.plugins.spark_pb2 import SparkApplication, SparkJob
 from google.protobuf.json_format import MessageToDict
+
+DEFAULT_SPARK_CONTEXT_NAME = "FlyteSpark"
 
 
 @dataclass
@@ -50,11 +52,12 @@ class PysparkFunctionTask(AsyncFunctionTaskTemplate):
 
     plugin_config: Spark
     task_type: str = "spark"
+    debuggable: bool = True
 
     async def pre(self, *args, **kwargs) -> Dict[str, Any]:
         import pyspark as _pyspark
 
-        sess = _pyspark.sql.SparkSession.builder.appName("FlyteSpark").getOrCreate()
+        sess = _pyspark.sql.SparkSession.builder.appName(DEFAULT_SPARK_CONTEXT_NAME).getOrCreate()
 
         if flyte.ctx().is_in_cluster():
             base_dir = tempfile.mkdtemp()
@@ -72,8 +75,8 @@ class PysparkFunctionTask(AsyncFunctionTaskTemplate):
         job = SparkJob(
             sparkConf=self.plugin_config.spark_conf,
             hadoopConf=self.plugin_config.hadoop_conf,
-            mainApplicationFile=self.plugin_config.applications_path,
-            executorPath=self.plugin_config.executor_path,
+            mainApplicationFile=self.plugin_config.applications_path or "local://" + sctx.get_entrypoint_path(),
+            executorPath=self.plugin_config.executor_path or sctx.interpreter_path,
             mainClass="",
             applicationType=SparkApplication.PYTHON,
             driverPod=driver_pod,
@@ -81,6 +84,12 @@ class PysparkFunctionTask(AsyncFunctionTaskTemplate):
         )
 
         return MessageToDict(job)
+
+    async def post(self, return_vals: Any) -> Any:
+        import pyspark as _pyspark
+
+        sess = _pyspark.sql.SparkSession.builder.appName(DEFAULT_SPARK_CONTEXT_NAME).getOrCreate()
+        sess.stop()
 
 
 TaskPluginRegistry.register(Spark, PysparkFunctionTask)

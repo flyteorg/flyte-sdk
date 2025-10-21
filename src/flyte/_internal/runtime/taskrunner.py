@@ -4,6 +4,7 @@ invoked within a context tree.
 """
 
 import pathlib
+import time
 from typing import Any, Dict, List, Optional, Tuple
 
 import flyte.report
@@ -110,26 +111,37 @@ async def run_task(
 async def convert_and_run(
     *,
     task: TaskTemplate,
-    inputs: Inputs,
     action: ActionID,
     controller: Controller,
     raw_data_path: RawDataPath,
     version: str,
     output_path: str,
     run_base_dir: str,
+    inputs: Inputs = Inputs.empty(),
+    input_path: str | None = None,
     checkpoints: Checkpoints | None = None,
     code_bundle: CodeBundle | None = None,
     image_cache: ImageCache | None = None,
+    interactive_mode: bool = False,
 ) -> Tuple[Optional[Outputs], Optional[Error]]:
     """
     This method is used to convert the inputs to native types, and run the task. It assumes you are running
     in a context tree.
     """
     ctx = internal_ctx()
+
+    # Load inputs first to get context
+    if input_path:
+        inputs = await load_inputs(input_path, path_rewrite_config=raw_data_path.path_rewrite)
+
+    # Extract context from inputs
+    custom_context = inputs.context if inputs else {}
+
     tctx = TaskContext(
         action=action,
         checkpoints=checkpoints,
         code_bundle=code_bundle,
+        input_path=input_path,
         output_path=output_path,
         run_base_dir=run_base_dir,
         version=version,
@@ -137,7 +149,10 @@ async def convert_and_run(
         compiled_image_cache=image_cache,
         report=flyte.report.Report(name=action.name),
         mode="remote" if not ctx.data.task_context else ctx.data.task_context.mode,
+        interactive_mode=interactive_mode,
+        custom_context=custom_context,
     )
+
     with ctx.replace_task_context(tctx):
         inputs_kwargs = await convert_inputs_to_native(inputs, task.native_interface)
         out, err = await run_task(tctx=tctx, controller=controller, task=task, inputs=inputs_kwargs)
@@ -161,15 +176,17 @@ async def extract_download_run_upload(
     code_bundle: CodeBundle | None = None,
     input_path: str | None = None,
     image_cache: ImageCache | None = None,
+    interactive_mode: bool = False,
 ):
     """
     This method is invoked from the CLI (urun) and is used to run a task. This assumes that the context tree
     has already been created, and the task has been loaded. It also handles the loading of the task.
     """
-    inputs = await load_inputs(input_path) if input_path else None
+    t = time.time()
+    logger.warning(f"Task {action.name} started at {t}")
     outputs, err = await convert_and_run(
         task=task,
-        inputs=inputs or Inputs.empty(),
+        input_path=input_path,
         action=action,
         controller=controller,
         raw_data_path=raw_data_path,
@@ -179,6 +196,7 @@ async def extract_download_run_upload(
         checkpoints=checkpoints,
         code_bundle=code_bundle,
         image_cache=image_cache,
+        interactive_mode=interactive_mode,
     )
     if err is not None:
         path = await upload_error(err.err, output_path)
@@ -188,4 +206,4 @@ async def extract_download_run_upload(
         logger.info(f"Task {task.name} completed successfully, no outputs")
         return
     await upload_outputs(outputs, output_path) if output_path else None
-    logger.info(f"Task {task.name} completed successfully, uploaded outputs to {output_path}")
+    logger.warning(f"Task {task.name} completed successfully, uploaded outputs to {output_path} in {time.time() - t}s")

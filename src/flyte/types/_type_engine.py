@@ -20,9 +20,9 @@ from types import GenericAlias, NoneType
 from typing import Any, Dict, NamedTuple, Optional, Type, cast
 
 import msgpack
-from flyteidl.core import interface_pb2, literals_pb2, types_pb2
-from flyteidl.core.literals_pb2 import Binary, Literal, LiteralCollection, LiteralMap, Primitive, Scalar, Union, Void
-from flyteidl.core.types_pb2 import LiteralType, SimpleType, TypeAnnotation, TypeStructure, UnionType
+from flyteidl2.core import interface_pb2, literals_pb2, types_pb2
+from flyteidl2.core.literals_pb2 import Binary, Literal, LiteralCollection, LiteralMap, Primitive, Scalar, Union, Void
+from flyteidl2.core.types_pb2 import LiteralType, SimpleType, TypeAnnotation, TypeStructure, UnionType
 from fsspec.asyn import _run_coros_in_chunks  # pylint: disable=W0212
 from google.protobuf import json_format as _json_format
 from google.protobuf import struct_pb2
@@ -39,7 +39,6 @@ from pydantic import BaseModel
 from typing_extensions import Annotated, get_args, get_origin
 
 import flyte.storage as storage
-from flyte._hash import HashMethod
 from flyte._logging import logger
 from flyte._utils.helpers import load_proto_from_file
 from flyte.models import NativeInterface
@@ -456,35 +455,6 @@ class DataclassTransformer(TypeTransformer[object]):
     2. Deserialization: The dataclass transformer converts the MessagePack Bytes back to a dataclass.
         (1) Convert MessagePack Bytes to a dataclass using mashumaro.
         (2) Handle dataclass attributes to ensure they are of the correct types.
-
-    TODO: Update the example using mashumaro instead of the older library
-
-    Example
-
-    .. code-block:: python
-
-        @dataclass
-        class Test:
-           a: int
-           b: str
-
-        t = Test(a=10,b="e")
-        JSONSchema().dump(t.schema())
-
-    Output will look like
-
-    .. code-block:: json
-
-        {'$schema': 'http://json-schema.org/draft-07/schema#',
-         'definitions': {'TestSchema': {'properties': {'a': {'title': 'a',
-             'type': 'number',
-             'format': 'integer'},
-            'b': {'title': 'b', 'type': 'string'}},
-           'type': 'object',
-           'additionalProperties': False}},
-         '$ref': '#/definitions/TestSchema'}
-
-
     """
 
     def __init__(self) -> None:
@@ -616,7 +586,7 @@ class DataclassTransformer(TypeTransformer[object]):
             }
         )
 
-        # The type engine used to publish a type structure for attribute access. As of v2, this is no longer needed.
+        # The type engine used to publish the type `structure` for attribute access. As of v2, this is no longer needed.
         return types_pb2.LiteralType(
             simple=types_pb2.SimpleType.STRUCT,
             metadata=schema,
@@ -816,6 +786,13 @@ class EnumTransformer(TypeTransformer[enum.Enum]):
         return LiteralType(enum_type=types_pb2.EnumType(values=values))
 
     async def to_literal(self, python_val: enum.Enum, python_type: Type[T], expected: LiteralType) -> Literal:
+        if isinstance(python_val, str):
+            # this is the case when python Literals are used as enums
+            if python_val not in expected.enum_type.values:
+                raise TypeTransformerFailedError(
+                    f"Value {python_val} is not valid value, expected - {expected.enum_type.values}"
+                )
+            return Literal(scalar=Scalar(primitive=Primitive(string_value=python_val)))  # type: ignore
         if type(python_val).__class__ != enum.EnumMeta:
             raise TypeTransformerFailedError("Expected an enum")
         if type(python_val.value) is not str:
@@ -826,6 +803,12 @@ class EnumTransformer(TypeTransformer[enum.Enum]):
     async def to_python_value(self, lv: Literal, expected_python_type: Type[T]) -> T:
         if lv.HasField("scalar") and lv.scalar.HasField("binary"):
             return self.from_binary_idl(lv.scalar.binary, expected_python_type)  # type: ignore
+        from flyte._interface import LITERAL_ENUM
+
+        if expected_python_type.__name__ is LITERAL_ENUM:
+            # This is the case when python Literal types are used as enums. The class name is always LiteralEnum an
+            # hardcoded in flyte.models
+            return lv.scalar.primitive.string_value
         return expected_python_type(lv.scalar.primitive.string_value)  # type: ignore
 
     def guess_python_type(self, literal_type: LiteralType) -> Type[enum.Enum]:
@@ -1097,23 +1080,6 @@ class TypeEngine(typing.Generic[T]):
             raise TypeTransformerFailedError(f"Python value cannot be None, expected {python_type}/{expected}")
 
     @classmethod
-    def calculate_hash(cls, python_val: typing.Any, python_type: Type[T]) -> Optional[str]:
-        # In case the value is an annotated type we inspect the annotations and look for hash-related annotations.
-        hsh = None
-        if is_annotated(python_type):
-            # We are now dealing with one of two cases:
-            # 1. The annotated type is a `HashMethod`, which indicates that we should produce the hash using
-            #    the method indicated in the annotation.
-            # 2. The annotated type is being used for a different purpose other than calculating hash values,
-            #    in which case we should just continue.
-            for annotation in get_args(python_type)[1:]:
-                if not isinstance(annotation, HashMethod):
-                    continue
-                hsh = annotation.calculate(python_val)
-                break
-        return hsh
-
-    @classmethod
     async def to_literal(
         cls, python_val: typing.Any, python_type: Type[T], expected: types_pb2.LiteralType
     ) -> literals_pb2.Literal:
@@ -1125,8 +1091,6 @@ class TypeEngine(typing.Generic[T]):
         lv = await transformer.to_literal(python_val, python_type, expected)
 
         modify_literal_uris(lv)
-        calculated_hash = cls.calculate_hash(python_val, python_type) or ""
-        lv.hash = calculated_hash
         return lv
 
     @classmethod
@@ -1204,20 +1168,26 @@ class TypeEngine(typing.Generic[T]):
                 f"Received more input values {len(lm.literals)}"
                 f" than allowed by the input spec {len(python_interface_inputs)}"
             )
-        kwargs = {}
-        try:
-            for i, k in enumerate(lm.literals):
-                kwargs[k] = asyncio.create_task(TypeEngine.to_python_value(lm.literals[k], python_interface_inputs[k]))
-            await asyncio.gather(*kwargs.values())
-        except Exception as e:
-            raise TypeTransformerFailedError(
-                f"Error converting input:\n"
-                f"Literal value: {lm.literals[k]}\n"
-                f"Expected Python type: {python_interface_inputs[k]}\n"
-                f"Exception: {e}"
-            )
+        # Create tasks for converting each kwarg
+        tasks = {}
+        for k in lm.literals:
+            tasks[k] = asyncio.create_task(TypeEngine.to_python_value(lm.literals[k], python_interface_inputs[k]))
 
-        kwargs = {k: v.result() for k, v in kwargs.items() if v is not None}
+        # Gather all tasks, returning exceptions instead of raising them
+        results = await asyncio.gather(*tasks.values(), return_exceptions=True)
+
+        # Check for exceptions and raise with specific kwarg name
+        kwargs = {}
+        for (key, task), result in zip(tasks.items(), results):
+            if isinstance(result, Exception):
+                raise TypeTransformerFailedError(
+                    f"Error converting input '{key}':\n"
+                    f"Literal value: {lm.literals[key]}\n"
+                    f"Expected Python type: {python_interface_inputs[key]}\n"
+                    f"Exception: {result}"
+                ) from result
+            kwargs[key] = result
+
         return kwargs
 
     @classmethod
@@ -1252,7 +1222,7 @@ class TypeEngine(typing.Generic[T]):
                 e: BaseException = literal_map[k].exception()  # type: ignore
                 if isinstance(e, TypeError):
                     raise TypeError(
-                        f"Error converting: Var:{k}, type:{type(v)}, into:{python_type}, received_value {v}"
+                        f"Error converting: Var:{k}, type:{type(d[k])}, into:{python_type}, received_value {d[k]}"
                     )
                 else:
                     raise e
@@ -1795,7 +1765,6 @@ class DictTransformer(TypeTransformer[dict]):
         for k, v in python_val.items():
             if type(k) is not str:
                 raise ValueError("Flyte MapType expects all keys to be strings")
-            # TODO: log a warning for Annotated objects that contain HashMethod
 
             _, v_type = self.extract_types(python_type)
             lit_map[k] = TypeEngine.to_literal(v, cast(type, v_type), expected.map_value_type)
@@ -2083,7 +2052,9 @@ DateTransformer = SimpleTransformer(
     lambda x: Literal(
         scalar=Scalar(primitive=Primitive(datetime=datetime.datetime.combine(x, datetime.time.min)))
     ),  # convert datetime to date
-    lambda x: x.scalar.primitive.datetime.date() if x.scalar.primitive.HasField("datetime") else None,
+    lambda x: x.scalar.primitive.datetime.ToDatetime().replace(tzinfo=datetime.timezone.utc).date()
+    if x.scalar.primitive.HasField("datetime")
+    else None,
 )
 
 NoneTransformer = SimpleTransformer(
