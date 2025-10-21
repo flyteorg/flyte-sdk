@@ -46,9 +46,9 @@ if __name__ == "__main__":
     print(r.url)
     print(r.outputs())
 
-    # import flyte.remote as remote
-    #
-    # while not (remote_event := remote.Event.get("my_event", r.name)):
-    #     time.sleep(10)
-    #
-    # remote_event.signal(True)
+    import flyte.remote as remote
+
+    while not (remote_event := remote.Event.get("my_event", r.name)):
+        time.sleep(10)
+
+    remote_event.signal(True)

@@ -36,7 +36,9 @@ class _Event(Generic[EventType]):
     """
 
     name: str
+    # TODO restrict scope to action only right now
     scope: EventScope = "run"
+    # TODO Support prompt as html
     prompt: str = "Approve?"
     data_type: Type[EventType] = bool  # type: ignore[assignment]
     description: str = ""
