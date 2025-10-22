@@ -221,6 +221,8 @@ class _Runner:
                 env["LOG_LEVEL"] = str(self._log_level)
             else:
                 env["LOG_LEVEL"] = str(logger.getEffectiveLevel())
+
+        # These paths will be appended to sys.path at runtime.
         if env.get(FLYTE_SYS_PATH) is None:
             env[FLYTE_SYS_PATH] = ":".join(
                 str(pathlib.Path(p).relative_to(cfg.root_dir)) for p in sys.path if p.startswith(str(cfg.root_dir))

@@ -111,6 +111,7 @@ async def download_code_bundle(code_bundle: CodeBundle) -> CodeBundle:
 async def _download_and_load_task(
     code_bundle: CodeBundle | None, resolver: str | None = None, resolver_args: List[str] | None = None
 ) -> TaskTemplate:
+    # Adjust sys.path if necessary
     for p in os.environ.get(FLYTE_SYS_PATH, "").split(":"):
         if p and p not in sys.path:
             sys.path.insert(0, p)
