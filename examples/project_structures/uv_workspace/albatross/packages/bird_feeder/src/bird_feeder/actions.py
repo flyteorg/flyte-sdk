@@ -10,7 +10,7 @@ bird_env = flyte.TaskEnvironment(
     name="bird_feeder",
     image=flyte.Image.from_debian_base().with_uv_project(
         pyproject_file=(UV_WORKSPACE_ROOT / "pyproject.toml"),
-        extra_args="packages/bird_feeder --no-install-project",
+        extra_args="--only-group bird-feeder-deps",
     ),
 )
 

@@ -29,6 +29,7 @@ from flyte.models import (
     TaskContext,
 )
 from flyte.syncify import syncify
+from ._constants import FLYTE_SYS_PATH
 
 if TYPE_CHECKING:
     from flyte.remote import Run
@@ -220,8 +221,8 @@ class _Runner:
                 env["LOG_LEVEL"] = str(self._log_level)
             else:
                 env["LOG_LEVEL"] = str(logger.getEffectiveLevel())
-        if env.get("_F_SYS_PATH") is None:
-            env["_F_SYS_PATH"] = ":".join(
+        if env.get(FLYTE_SYS_PATH) is None:
+            env[FLYTE_SYS_PATH] = ":".join(
                 str(pathlib.Path(p).relative_to(cfg.root_dir)) for p in sys.path if p.startswith(str(cfg.root_dir))
             )
 

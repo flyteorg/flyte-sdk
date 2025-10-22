@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from bird_feeder.actions import get_feeder
+from bird_feeder.actions import get_feeder, bird_env
 from seeds.actions import get_seed
 
 import flyte
@@ -10,11 +10,12 @@ UV_WORKSPACE_ROOT = Path(__file__).parent.parent.parent
 
 env = flyte.TaskEnvironment(
     name="uv_workspace",
-    image=flyte.Image.from_debian_base().with_uv_project(
+    image=flyte.Image.from_debian_base().with_pip_packages("setuptools").with_uv_project(
         pyproject_file=(UV_WORKSPACE_ROOT / "pyproject.toml"),
-        extra_args="--only-group albatross-deps",  # albatross group define all the dependencies the task needs
-        project_install_mode="install_project",
+        extra_args="--only-group dev --no-install-project",  # albatross group define all the dependencies the task needs
+        # project_install_mode="install_project",
     ),
+    # depends_on=[bird_env],
 )
 
 

@@ -2,7 +2,7 @@
 name = "albatross"
 version = "0.1.0"
 requires-python = ">=3.12"
-dependencies = ["bird-feeder", "seeds"]
+dependencies = ["bird-feeder"]
 
 [tool.uv.sources]
 bird-feeder = { workspace = true }
@@ -16,12 +16,11 @@ requires = ["uv_build>=0.9.3,<0.10.0"]
 build-backend = "uv_build"
 
 [dependency-groups]
-albatross = [
-    "bird-feeder",
-    "seeds",
+dev = [
     "numpy"
 ]
-
-albatross-deps = [
-    "numpy"
-]
+#production = [
+#    "bird-feeder",
+#    "seeds",
+#    {include-group = "dev"}
+#]

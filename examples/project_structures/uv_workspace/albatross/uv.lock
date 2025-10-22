@@ -15,32 +15,28 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "bird-feeder" },
-    { name = "seeds" },
 ]
 
 [package.dev-dependencies]
-albatross = [
+dev = [
+    { name = "numpy" },
+]
+production = [
     { name = "bird-feeder" },
     { name = "numpy" },
     { name = "seeds" },
 ]
-albatross-deps = [
-    { name = "numpy" },
-]
 
 [package.metadata]
-requires-dist = [
-    { name = "bird-feeder", editable = "packages/bird_feeder" },
-    { name = "seeds", editable = "packages/seeds" },
-]
+requires-dist = [{ name = "bird-feeder", editable = "packages/bird_feeder" }]
 
 [package.metadata.requires-dev]
-albatross = [
+dev = [{ name = "numpy" }]
+production = [
     { name = "bird-feeder", editable = "packages/bird_feeder" },
     { name = "numpy" },
     { name = "seeds", editable = "packages/seeds" },
 ]
-albatross-deps = [{ name = "numpy" }]
 
 [[package]]
 name = "bird-feeder"
