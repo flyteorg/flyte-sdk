@@ -4,16 +4,34 @@ import typing
 from dataclasses import dataclass
 
 import flyte._deployer as deployer
+import flyte.errors
 from flyte import Image
 from flyte._initialize import ensure_client, get_client
 from flyte._logging import logger
 from flyte.models import SerializationContext
-import flyte.errors
-
 from ._app_environment import AppEnvironment
 
 if typing.TYPE_CHECKING:
     from flyte._protos.app import app_definition_pb2
+
+FILES_TAR_FILE_NAME = "code_bundle.tgz"
+
+
+async def upload_include_files(app: AppEnvironment) -> str | None:
+    import flyte.remote
+    import os
+    import tarfile
+    from pathlib import Path
+    from tempfile import TemporaryDirectory
+
+    with TemporaryDirectory() as temp_dir:
+        tar_path = os.path.join(temp_dir, FILES_TAR_FILE_NAME)
+        with tarfile.open(tar_path, "w:gz") as tar:
+            for resolve_include in app.include_resolved:
+                tar.add(resolve_include.src, arcname=resolve_include.dest)
+
+        _, upload_native_url = await flyte.remote.upload_file.aio(Path(tar_path))
+        return upload_native_url
 
 
 @dataclass

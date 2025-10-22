@@ -1,7 +1,8 @@
+import re
 from dataclasses import dataclass, field
 from typing import Literal, Optional
 
-from flyte.app._app_environment_bk import ENV_NAME_RE
+import flyte.io
 
 InputType = Literal["file", "directory", "string"]
 
@@ -10,8 +11,6 @@ InputType = Literal["file", "directory", "string"]
 class Input:
     """
     Input for application.
-
-    TODO Support flyte.io.File/Dir, string, int, float, bool, etc.
 
     :param name: Name of input.
     :param value: Value for input.
@@ -25,20 +24,21 @@ class Input:
         patterns to ignore.
     """
 
-    value: str
+    value: str | flyte.io.File | flyte.io.Dir
     name: Optional[str] = None
     env_var: Optional[str] = None
-    type: InputType = "string"
     download: bool = False
     mount: Optional[str] = None
     ignore_patterns: list[str] = field(default_factory=list)
 
     def __post_init__(self):
-        if self.env_var is not None and ENV_NAME_RE.match(self.env_var) is None:
+        env_name_re = re.compile("^[_a-zA-Z][_a-zA-Z0-9]*$")
+
+        if self.env_var is not None and env_name_re.match(self.env_var) is None:
             raise ValueError(f"env_var ({self.env_var}) is not a valid environment name for shells")
 
-        if not isinstance(self.value, str):
-            raise TypeError(f"Expected value to be of type str, got {type(self.value)}")
+        if not isinstance(self.value, (str, flyte.io.File, flyte.io.Dir)):
+            raise TypeError(f"Expected value to be of type str, file or dir, got {type(self.value)}")
 
         if self.name is None:
             self.name = "i0"

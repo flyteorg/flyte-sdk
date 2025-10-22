@@ -23,6 +23,5 @@ app = flyte.app.AppEnvironment(
     name="streamlit-hello-v2-004",
     image=image,
     args="streamlit hello --server.port 8080",
-    port=8080,
     resources=flyte.Resources(cpu="1", memory="1Gi"),
 )
