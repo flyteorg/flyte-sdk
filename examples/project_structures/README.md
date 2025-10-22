@@ -213,7 +213,7 @@ async def albatross_task() -> str:
 name = "albatross"
 version = "0.1.0"
 requires-python = ">=3.12"
-dependencies = ["bird-feeder", "seeds"]
+dependencies = ["bird-feeder"]
 
 [tool.uv.sources]
 bird-feeder = { workspace = true }
@@ -229,7 +229,6 @@ build-backend = "uv_build"
 [dependency-groups]
 albatross = [
     "bird-feeder",
-    "seeds",
     "numpy"
 ]
 ```
@@ -312,14 +311,12 @@ flyte.with_runcontext(copy_style="none", version="v1.0").run(task_function)
 # Main albatross task dependencies (matches current example)
 albatross = [
     "bird-feeder",
-    "seeds",
     "numpy"
 ]
 
 # Data processing task dependencies
 data_processing = [
     "bird-feeder",
-    "seeds", 
     "pandas",
     "numpy"
 ]

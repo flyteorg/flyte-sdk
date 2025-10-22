@@ -17,7 +17,7 @@ from .taskrunner import (
     convert_and_run,
     extract_download_run_upload,
 )
-from ..._constants import FLYTE_SYS_PATH
+from flyte._constants import FLYTE_SYS_PATH
 
 
 async def direct_dispatch(

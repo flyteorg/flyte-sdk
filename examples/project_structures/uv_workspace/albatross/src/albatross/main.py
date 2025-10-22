@@ -10,7 +10,7 @@ UV_WORKSPACE_ROOT = Path(__file__).parent.parent.parent
 
 env = flyte.TaskEnvironment(
     name="uv_workspace",
-    image=flyte.Image.from_debian_base().with_pip_packages("setuptools").with_uv_project(
+    image=flyte.Image.from_debian_base().with_uv_project(
         pyproject_file=(UV_WORKSPACE_ROOT / "pyproject.toml"),
         extra_args="--only-group albatross",  # albatross group define all the dependencies the task needs
     ),

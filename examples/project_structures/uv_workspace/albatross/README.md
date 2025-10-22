@@ -57,7 +57,7 @@ In pyproject.toml:
 name = "albatross"
 version = "0.1.0"
 requires-python = ">=3.12"
-dependencies = ["bird-feeder", "seeds"]
+dependencies = ["bird-feeder"]
 
 [tool.uv.sources]
 bird-feeder = { workspace = true }
@@ -69,7 +69,6 @@ members = ["packages/*"]
 [dependency-groups]
 albatross = [
     "bird-feeder",
-    "seeds",
     "numpy"
 ]
 ```
