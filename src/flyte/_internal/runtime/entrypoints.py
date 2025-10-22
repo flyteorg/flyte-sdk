@@ -115,6 +115,7 @@ async def _download_and_load_task(
     for p in os.environ.get(FLYTE_SYS_PATH, "").split(":"):
         if p and p not in sys.path:
             sys.path.insert(0, p)
+            logger.info(f"Added {p} to sys.path")
 
     if code_bundle and (code_bundle.tgz or code_bundle.pkl):
         logger.debug(f"Downloading {code_bundle}")
