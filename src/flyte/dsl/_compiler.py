@@ -106,7 +106,7 @@ class DAG:
     """
 
     def __init__(self):
-        self.graph = nx.DiGraph()
+        self.graph = nx.MultiDiGraph()  # Use MultiDiGraph to support multiple edges between nodes
         self.task_nodes: Dict[str, DAGNode] = {}  # Maps task_id to TaskTemplate instances
         self.graph.add_node(START_NODE, node=StartNode())
 
@@ -178,6 +178,10 @@ class Promise:
 
     from_node_id: str
     output_name: str
+
+    # Make sure promise objects cannot be used in if, for, etc.
+    def __bool__(self):
+        raise TypeError("Promise objects cannot be used in boolean contexts.")
 
 
 def compile(fn) -> DAG:
