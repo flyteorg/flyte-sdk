@@ -29,6 +29,7 @@ from flyte.models import (
     TaskContext,
 )
 from flyte.syncify import syncify
+
 from ._constants import FLYTE_SYS_PATH
 
 if TYPE_CHECKING:
@@ -97,6 +98,7 @@ class _Runner:
         disable_run_cache: bool = False,
         queue: Optional[str] = None,
         custom_context: Dict[str, str] | None = None,
+        sync_local_sys_paths: bool = True,
     ):
         from flyte._tools import ipython_check
 
@@ -128,6 +130,7 @@ class _Runner:
         self._disable_run_cache = disable_run_cache
         self._queue = queue
         self._custom_context = custom_context or {}
+        self._sync_local_sys_paths = sync_local_sys_paths
 
     @requires_initialization
     async def _run_remote(self, obj: TaskTemplate[P, R, F] | LazyEntity, *args: P.args, **kwargs: P.kwargs) -> Run:
@@ -223,7 +226,7 @@ class _Runner:
                 env["LOG_LEVEL"] = str(logger.getEffectiveLevel())
 
         # These paths will be appended to sys.path at runtime.
-        if env.get(FLYTE_SYS_PATH) is None:
+        if self._sync_local_sys_paths:
             env[FLYTE_SYS_PATH] = ":".join(
                 str(pathlib.Path(p).relative_to(cfg.root_dir)) for p in sys.path if p.startswith(str(cfg.root_dir))
             )
@@ -594,6 +597,7 @@ def with_runcontext(
     disable_run_cache: bool = False,
     queue: Optional[str] = None,
     custom_context: Dict[str, str] | None = None,
+    sync_local_sys_paths: bool = True,
 ) -> _Runner:
     """
     Launch a new run with the given parameters as the context.
@@ -641,6 +645,8 @@ def with_runcontext(
     :param custom_context: Optional global input context to pass to the task. This will be available via
         get_custom_context() within the task and will automatically propagate to sub-tasks.
         Acts as base/default values that can be overridden by context managers in the code.
+    :param sync_local_sys_paths: Whether to include and synchronize local sys.path entries under the root directory
+     into the remote container (default: True).
 
     :return: runner
     """
@@ -670,6 +676,7 @@ def with_runcontext(
         disable_run_cache=disable_run_cache,
         queue=queue,
         custom_context=custom_context,
+        sync_local_sys_paths=sync_local_sys_paths,
     )
 
 

@@ -7,11 +7,11 @@ Refrain from importing any modules here. If you need to import any modules, do i
 
 import asyncio
 import os
-import sys
 from typing import Any, List
 
 import click
 
+from flyte._utils import adjust_sys_path
 from flyte.models import PathRewrite
 
 # Todo: work with pvditt to make these the names
@@ -88,7 +88,7 @@ def main(
     resolver: str,
     resolver_args: List[str],
 ):
-    sys.path.insert(0, ".")
+    adjust_sys_path()
 
     import faulthandler
     import signal

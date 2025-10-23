@@ -6,6 +6,8 @@ from pathlib import Path
 from typing import List, Tuple
 
 import flyte.errors
+from flyte._constants import FLYTE_SYS_PATH
+from flyte._logging import logger
 
 
 def load_python_modules(path: Path, recursive: bool = False) -> Tuple[List[str], List[Tuple[Path, str]]]:
@@ -87,3 +89,14 @@ def _load_module_from_file(file_path: Path) -> str | None:
 
     except Exception as e:
         raise flyte.errors.ModuleLoadError(f"Failed to load module from {file_path}: {e}") from e
+
+
+def adjust_sys_path():
+    """
+    Adjust sys.path to include local sys.path entries under the root directory.
+    """
+    sys.path.insert(0, ".")
+    for p in os.environ.get(FLYTE_SYS_PATH, "").split(":"):
+        if p and p not in sys.path:
+            sys.path.insert(0, p)
+            logger.info(f"Added {p} to sys.path")

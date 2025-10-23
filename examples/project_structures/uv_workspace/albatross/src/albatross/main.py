@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from bird_feeder.actions import get_feeder, bird_env
+from bird_feeder.actions import bird_env, get_feeder
 from seeds.actions import get_seed
 
 import flyte
