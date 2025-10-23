@@ -309,37 +309,4 @@ async def _map(
         yield result
 
 
-@overload
-def map(
-    func: AsyncFunctionTaskTemplate[P, R, F] | functools.partial[R],
-    *args: Iterable[Any],
-    group_name: str | None = None,
-    concurrency: int = 0,
-) -> Iterator[R]: ...
-
-
-@overload
-def map(
-    func: AsyncFunctionTaskTemplate[P, R, F] | functools.partial[R],
-    *args: Iterable[Any],
-    group_name: str | None = None,
-    concurrency: int = 0,
-    return_exceptions: bool = True,
-) -> Iterator[Union[R, Exception]]: ...
-
-
-def map(
-    func: AsyncFunctionTaskTemplate[P, R, F] | functools.partial[R],
-    *args: Iterable[Any],
-    group_name: str | None = None,
-    concurrency: int = 0,
-    return_exceptions: bool = True,
-) -> Iterator[Union[R, Exception]]:
-    map: _Mapper = _Mapper()
-    return map(
-        func,
-        *args,
-        group_name=group_name,
-        concurrency=concurrency,
-        return_exceptions=return_exceptions,
-    )
+map: _Mapper = _Mapper()
