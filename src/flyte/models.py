@@ -369,10 +369,10 @@ class NativeInterface:
             if typing.get_origin(param.annotation) is Literal:
                 param_info[name] = (literal_to_enum(param.annotation), param.default)
             else:
-                param_info[name] = (param.annotation, param.default)
+                param_info[name] = (typing.get_type_hints(func).get(name), param.default)
 
         # Get return type
-        outputs = extract_return_annotation(sig.return_annotation)
+        outputs = extract_return_annotation(typing.get_type_hints(func).get('return', sig.return_annotation))
         return cls(inputs=param_info, outputs=outputs)
 
     def convert_to_kwargs(self, *args, **kwargs) -> Dict[str, Any]:
