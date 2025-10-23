@@ -189,7 +189,7 @@ class _Mapper(Generic[P, R]):
         group_name: str | None = None,
         concurrency: int = 0,
         return_exceptions: bool = True,
-    ) -> Iterator[R]: ...
+    ) -> Iterator[Union[R, Exception]]: ...
 
     def __call__(
         self,
