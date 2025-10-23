@@ -228,7 +228,9 @@ class _Runner:
         # These paths will be appended to sys.path at runtime.
         if self._sync_local_sys_paths:
             env[FLYTE_SYS_PATH] = ":".join(
-                str(pathlib.Path(p).relative_to(cfg.root_dir)) for p in sys.path if p.startswith(str(cfg.root_dir))
+                f"./{pathlib.Path(p).relative_to(cfg.root_dir)}"
+                for p in sys.path
+                if p.startswith(str(cfg.root_dir))
             )
 
         if not self._dry_run:

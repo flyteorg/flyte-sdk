@@ -95,7 +95,9 @@ def adjust_sys_path():
     """
     Adjust sys.path to include local sys.path entries under the root directory.
     """
-    sys.path.insert(0, ".")
+    if "." not in sys.path or os.getcwd() not in sys.path:
+        sys.path.insert(0, ".")
+        logger.info(f"Added {os.getcwd()} to sys.path")
     for p in os.environ.get(FLYTE_SYS_PATH, "").split(":"):
         if p and p not in sys.path:
             sys.path.insert(0, p)

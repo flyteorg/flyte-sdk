@@ -7,10 +7,12 @@ Refrain from importing any modules here. If you need to import any modules, do i
 
 import asyncio
 import os
+import sys
 from typing import Any, List
 
 import click
 
+from flyte._constants import FLYTE_SYS_PATH
 from flyte._utils import adjust_sys_path
 from flyte.models import PathRewrite
 
