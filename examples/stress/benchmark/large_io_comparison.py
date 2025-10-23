@@ -22,7 +22,7 @@ old_env = flyte.TaskEnvironment(
 
 s5cmd_image = (
     flyte.Image.from_debian_base(name="s5cmd-benchmark")
-    .with_apt_packages("wget", "ca-certificates")
+    .with_apt_packages("wget", "ca-certificates", "bc")
     .with_commands(
         [
             "wget -q https://github.com/peak/s5cmd/releases/download/v2.2.2/s5cmd_2.2.2_Linux-64bit.tar.gz",
@@ -51,15 +51,15 @@ s5cmd_file_task = ContainerTask(
         set -e
         echo "Starting s5cmd download benchmark for file: $0"
         START=$(date +%s%N)
-        s5cmd cat "$0" > /tmp/downloaded_file
+        s5cmd cp -c 16 "$0" /tmp/downloaded_file
         END=$(date +%s%N)
         DURATION_NS=$((END - START))
-        DURATION=$(awk "BEGIN {printf \"%.2f\", $DURATION_NS / 1000000000}")
+        DURATION=$(echo "scale=2; $DURATION_NS / 1000000000" | bc)
         SIZE_BYTES=$(stat -c%s /tmp/downloaded_file)
-        THROUGHPUT=$(awk "BEGIN {printf \"%.2f\", $SIZE_BYTES / $DURATION / 1024 / 1024}")
+        THROUGHPUT=$(echo "scale=2; $SIZE_BYTES / $DURATION / 1024 / 1024" | bc)
         echo "Downloaded $SIZE_BYTES bytes in $DURATION seconds ($THROUGHPUT MiB/s)"
-        echo "$DURATION" > /tmp/outputs/duration
-        echo "$THROUGHPUT" > /tmp/outputs/throughput_mbps
+        echo "$DURATION" > /var/outputs/duration
+        echo "$THROUGHPUT" > /var/outputs/throughput_mbps
         """,
         "{{.inputs.remote_path}}",
     ],
@@ -86,9 +86,9 @@ s5cmd_dir_task = ContainerTask(
         s5cmd cp "$0/*" /tmp/download_dir/
         END=$(date +%s%N)
         DURATION_NS=$((END - START))
-        DURATION=$(awk "BEGIN {printf \"%.2f\", $DURATION_NS / 1000000000}")
+        DURATION=$(echo "scale=2; $DURATION_NS / 1000000000" | bc)
         TOTAL_SIZE=$(du -sb /tmp/download_dir | cut -f1)
-        THROUGHPUT=$(awk "BEGIN {printf \"%.2f\", $TOTAL_SIZE / $DURATION / 1024 / 1024}")
+        THROUGHPUT=$(echo "scale=2; $TOTAL_SIZE / $DURATION / 1024 / 1024" | bc)
         FILE_COUNT=$(find /tmp/download_dir -type f | wc -l)
         echo "Downloaded $FILE_COUNT files, $TOTAL_SIZE bytes in $DURATION seconds ($THROUGHPUT MiB/s)"
         echo "$DURATION" > /tmp/outputs/duration
