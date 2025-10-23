@@ -134,7 +134,7 @@ class RemoteImageBuilder(ImageBuilder):
         if run_details.action_details.raw_phase == run_definition_pb2.PHASE_SUCCEEDED:
             logger.warning(f"[bold green]✅ Build completed in {elapsed}![/bold green]")
         else:
-            raise flyte.errors.ImageBuildError(f"❌ Build failed in {elapsed} at [cyan]{run.url}[/cyan]")
+            raise flyte.errors.ImageBuildError(f"❌ Build failed in {elapsed} at {run.url}")
 
         outputs = await run_details.outputs()
         return _get_fully_qualified_image_name(outputs)
