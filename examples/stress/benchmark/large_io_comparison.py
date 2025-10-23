@@ -14,8 +14,8 @@ from flyte.extras import ContainerTask
 old_env = flyte.TaskEnvironment(
     "file_io_benchmark_old",
     resources=flyte.Resources(
-        cpu=4,
-        memory="16Gi",
+        cpu=8,
+        memory="33Gi",
     ),
     image=flyte.Image.from_base("ghcr.io/flyteorg/flyte:py3.13-v2.0.0b24"),
 )
