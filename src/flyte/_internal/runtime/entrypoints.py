@@ -1,7 +1,8 @@
 import importlib
+import os
 import traceback
 from typing import List, Optional, Tuple, Type
-import os
+
 import flyte.errors
 from flyte._code_bundle import download_bundle
 from flyte._context import contextual_run
@@ -87,13 +88,10 @@ def load_task(resolver: str, *resolver_args: str) -> TaskTemplate:
             files = [f"(Failed to list directory: {list_err})"]
 
         msg = (
-            "\n\nFull traceback:\n"
-            + "".join(traceback.format_exc())
-            + f"\n[ImportError Diagnostics]\n"
+            "\n\nFull traceback:\n" + "".join(traceback.format_exc()) + f"\n[ImportError Diagnostics]\n"
             f"Module '{e.name}' not found in either the Python virtual environment or the current working directory.\n"
             f"Current working directory: {cwd}\n"
-            f"Files found under current directory:\n"
-            + "\n".join(f"  - {f}" for f in files)
+            f"Files found under current directory:\n" + "\n".join(f"  - {f}" for f in files)
         )
         raise ModuleNotFoundError(msg) from e
 
