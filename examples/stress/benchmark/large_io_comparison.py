@@ -83,7 +83,7 @@ s5cmd_dir_task = ContainerTask(
         echo "Starting s5cmd download benchmark for directory: $0"
         mkdir -p /tmp/download_dir
         START=$(date +%s%N)
-        s5cmd cp "$0/*" /tmp/download_dir/
+        s5cmd cp -c 20 "$0/*" /tmp/download_dir/
         END=$(date +%s%N)
         DURATION_NS=$((END - START))
         DURATION=$(echo "scale=2; $DURATION_NS / 1000000000" | bc)
