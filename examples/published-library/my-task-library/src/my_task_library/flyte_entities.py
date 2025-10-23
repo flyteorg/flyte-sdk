@@ -5,6 +5,7 @@ import flyte
 library_environment = flyte.TaskEnvironment(
     name="my-task-library-env",
     resources=flyte.Resources(cpu=1, memory="1Gi"),
+    image=flyte.Image.from_debian_base().with_pip_packages("my-task-library>=0.4.0", pre=True),
 )
 
 

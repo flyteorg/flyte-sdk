@@ -5,11 +5,12 @@ from typing import List
 
 from my_task_library import flyte_entities
 
-img = flyte.Image.from_debian_base().with_pip_packages("my-task-library")
+img = flyte.Image.from_debian_base().with_pip_packages("my-task-library>=0.4.0", pre=True).with_local_v2()
 env = flyte.TaskEnvironment(
     name="library-consumer-env",
     resources=flyte.Resources(cpu=1, memory="1Gi"),
     image=img,
+    depends_on=[flyte_entities.library_environment],
 )
 
 

@@ -1,6 +1,6 @@
 [project]
 name = "my-task-library"
-version = "0.1.0"
+version = "0.4.0"
 description = "Add your description here"
 readme = "README.md"
 authors = [
@@ -8,7 +8,7 @@ authors = [
 ]
 requires-python = ">=3.10"
 dependencies = [
-    "flyte==2.0.0b24",
+    "flyte>=2.0.0b25",
 ]
 
 [build-system]
