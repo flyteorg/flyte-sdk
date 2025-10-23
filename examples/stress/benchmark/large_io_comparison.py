@@ -3,23 +3,13 @@ import os
 import signal
 import tempfile
 import time
-from typing import Tuple
 from pathlib import Path
+from typing import Tuple
 
 import flyte
 import flyte.io
 import flyte.storage
-
 from flyte.extras import ContainerTask
-
-env = flyte.TaskEnvironment(
-    "file_io_benchmark",
-    resources=flyte.Resources(
-        cpu=4,
-        memory="16Gi",
-    ),
-    image=flyte.Image.from_debian_base(name="io-benchmarker")
-)
 
 old_env = flyte.TaskEnvironment(
     "file_io_benchmark_old",
@@ -31,26 +21,99 @@ old_env = flyte.TaskEnvironment(
 )
 
 s5cmd_image = (
-    flyte.Image.from_base("public.ecr.aws/aws-cli/aws-cli:latest").clone(name="test-s5cmd")
-    .with_commands([
-        "wget -q https://github.com/peak/s5cmd/releases/download/v2.2.2/s5cmd_2.2.2_Linux-64bit.tar.gz",
-        "tar -xzf s5cmd_2.2.2_Linux-64bit.tar.gz",
-        "mv s5cmd /usr/local/bin/",
-        "rm s5cmd_2.2.2_Linux-64bit.tar.gz",
-        "chmod +x /usr/local/bin/s5cmd"
-    ])
+    flyte.Image.from_debian_base(name="s5cmd-benchmark")
+    .with_apt_packages("wget", "ca-certificates")
+    .with_commands(
+        [
+            "wget -q https://github.com/peak/s5cmd/releases/download/v2.2.2/s5cmd_2.2.2_Linux-64bit.tar.gz",
+            "tar -xzf s5cmd_2.2.2_Linux-64bit.tar.gz",
+            "mv s5cmd /usr/local/bin/",
+            "rm s5cmd_2.2.2_Linux-64bit.tar.gz",
+            "chmod +x /usr/local/bin/s5cmd",
+        ]
+    )
 )
 
-s5cmd_env = flyte.TaskEnvironment(
-    "s5cmd_benchmark",
+# S5cmd benchmarks using ContainerTask
+s5cmd_file_task = ContainerTask(
+    name="s5cmd_download_file",
+    image=s5cmd_image,
     resources=flyte.Resources(
         cpu=4,
         memory="16Gi",
     ),
-    image=s5cmd_image
+    inputs={"remote_path": str, "file_size_mb": int},
+    outputs={"duration": float, "throughput_mbps": float},
+    command=[
+        "/bin/bash",
+        "-c",
+        """
+        set -e
+        echo "Starting s5cmd download benchmark for file: $0"
+        START=$(date +%s%N)
+        s5cmd cat "$0" > /tmp/downloaded_file
+        END=$(date +%s%N)
+        DURATION_NS=$((END - START))
+        DURATION=$(awk "BEGIN {printf \"%.2f\", $DURATION_NS / 1000000000}")
+        SIZE_BYTES=$(stat -c%s /tmp/downloaded_file)
+        THROUGHPUT=$(awk "BEGIN {printf \"%.2f\", $SIZE_BYTES / $DURATION / 1024 / 1024}")
+        echo "Downloaded $SIZE_BYTES bytes in $DURATION seconds ($THROUGHPUT MiB/s)"
+        echo "$DURATION" > /tmp/outputs/duration
+        echo "$THROUGHPUT" > /tmp/outputs/throughput_mbps
+        """,
+        "{{.inputs.remote_path}}",
+    ],
 )
 
-@env.task  # (cache=flyte.Cache(behavior="override", version_override="v2"))
+
+s5cmd_dir_task = ContainerTask(
+    name="s5cmd_download_dir",
+    image=s5cmd_image,
+    resources=flyte.Resources(
+        cpu=4,
+        memory="16Gi",
+    ),
+    inputs={"remote_path": str, "expected_files": int},
+    outputs={"duration": float, "throughput_mbps": float},
+    command=[
+        "/bin/bash",
+        "-c",
+        """
+        set -e
+        echo "Starting s5cmd download benchmark for directory: $0"
+        mkdir -p /tmp/download_dir
+        START=$(date +%s%N)
+        s5cmd cp "$0/*" /tmp/download_dir/
+        END=$(date +%s%N)
+        DURATION_NS=$((END - START))
+        DURATION=$(awk "BEGIN {printf \"%.2f\", $DURATION_NS / 1000000000}")
+        TOTAL_SIZE=$(du -sb /tmp/download_dir | cut -f1)
+        THROUGHPUT=$(awk "BEGIN {printf \"%.2f\", $TOTAL_SIZE / $DURATION / 1024 / 1024}")
+        FILE_COUNT=$(find /tmp/download_dir -type f | wc -l)
+        echo "Downloaded $FILE_COUNT files, $TOTAL_SIZE bytes in $DURATION seconds ($THROUGHPUT MiB/s)"
+        echo "$DURATION" > /tmp/outputs/duration
+        echo "$THROUGHPUT" > /tmp/outputs/throughput_mbps
+        """,
+        "{{.inputs.remote_path}}",
+    ],
+)
+
+
+s5cmd_env = flyte.TaskEnvironment.from_task("s5cmd_env", s5cmd_file_task, s5cmd_dir_task)
+
+
+env = flyte.TaskEnvironment(
+    "file_io_benchmark",
+    resources=flyte.Resources(
+        cpu=4,
+        memory="16Gi",
+    ),
+    depends_on=[s5cmd_env],
+    image=flyte.Image.from_debian_base(name="io-benchmarker"),
+)
+
+
+@env.task(cache=flyte.Cache(behavior="override", version_override="v3"))
 async def create_file(size_megabytes: int = 5120) -> flyte.io.File:
     f = flyte.io.File.new_remote()
     chunk_size = 1024 * 1024
@@ -64,8 +127,9 @@ async def create_file(size_megabytes: int = 5120) -> flyte.io.File:
     try:
         print(fs.info(f.path), flush=True)
         print("Successfully got file metadata", flush=True)
-    except Exception as e:
+    except Exception:
         import traceback
+
         traceback.print_exc()
         print("hanging for debug", flush=True)
         await asyncio.sleep(2000)
@@ -85,14 +149,14 @@ async def create_dir_with_files(num_files: int = 1000, size_megabytes: int = 5) 
 
         for i in range(num_files):
             file_path = tmppath / f"file_{i:04d}.bin"
-            with open(file_path, "wb") as fp:
+            with open(file_path, "wb") as fp:  # noqa: ASYNC230
                 for _ in range(size_megabytes):
                     fp.write(chunk)
 
             if (i + 1) % 100 == 0:
                 print(f"Created {i + 1}/{num_files} files", flush=True)
 
-        print(f"Uploading directory to remote storage...", flush=True)
+        print("Uploading directory to remote storage...", flush=True)
         d = await flyte.io.Dir.from_local(tmppath)
         print(f"Uploaded directory to {d.path}", flush=True)
         return d
@@ -174,61 +238,6 @@ async def read_dir_new(d: flyte.io.Dir, hang: bool = False) -> Tuple[int, float]
     return await download_dir(d, hang)
 
 
-# S5cmd benchmarks using ContainerTask
-s5cmd_file_task = ContainerTask(
-    name="s5cmd_download_file",
-    image=s5cmd_image,
-    inputs={"remote_path": str, "file_size_mb": int},
-    outputs={"duration": float, "throughput_mbps": float},
-    command=[
-        "/bin/bash",
-        "-c",
-        """
-        set -e
-        echo "Starting s5cmd download benchmark for file: $0"
-        START=$(date +%s.%N)
-        s5cmd --no-sign-request cat "$0" > /tmp/downloaded_file || s5cmd cat "$0" > /tmp/downloaded_file
-        END=$(date +%s.%N)
-        DURATION=$(echo "$END - $START" | bc)
-        SIZE_BYTES=$(stat -f%z /tmp/downloaded_file 2>/dev/null || stat -c%s /tmp/downloaded_file)
-        THROUGHPUT=$(echo "scale=2; $SIZE_BYTES / $DURATION / 1024 / 1024" | bc)
-        echo "Downloaded $SIZE_BYTES bytes in $DURATION seconds ($THROUGHPUT MiB/s)"
-        echo "$DURATION" > /tmp/outputs/duration
-        echo "$THROUGHPUT" > /tmp/outputs/throughput_mbps
-        """,
-        "{{.inputs.remote_path}}",
-    ],
-)
-
-
-s5cmd_dir_task = ContainerTask(
-    name="s5cmd_download_dir",
-    image=s5cmd_image,
-    inputs={"remote_path": str, "expected_files": int},
-    outputs={"duration": float, "throughput_mbps": float},
-    command=[
-        "/bin/bash",
-        "-c",
-        """
-        set -e
-        echo "Starting s5cmd download benchmark for directory: $0"
-        mkdir -p /tmp/download_dir
-        START=$(date +%s.%N)
-        s5cmd --no-sign-request cp "$0/*" /tmp/download_dir/ || s5cmd cp "$0/*" /tmp/download_dir/
-        END=$(date +%s.%N)
-        DURATION=$(echo "$END - $START" | bc)
-        TOTAL_SIZE=$(du -sb /tmp/download_dir | cut -f1)
-        THROUGHPUT=$(echo "scale=2; $TOTAL_SIZE / $DURATION / 1024 / 1024" | bc)
-        FILE_COUNT=$(find /tmp/download_dir -type f | wc -l)
-        echo "Downloaded $FILE_COUNT files, $TOTAL_SIZE bytes in $DURATION seconds ($THROUGHPUT MiB/s)"
-        echo "$DURATION" > /tmp/outputs/duration
-        echo "$THROUGHPUT" > /tmp/outputs/throughput_mbps
-        """,
-        "{{.inputs.remote_path}}",
-    ],
-)
-
-
 @env.task
 async def main(size_megabytes: int = 5120) -> Tuple[int, float]:
     large_file = await create_file(size_megabytes)
@@ -251,36 +260,41 @@ async def benchmark_all():
     print("\n--- Test 1: Single 5GB file ---")
     large_file = await create_file(5120)
 
-    print("Running native Flyte download (new SDK)...")
-    bytes_new, time_new = await read_large_file_new(large_file)
+    print("Running all downloads in parallel...")
+    t1 = asyncio.create_task(read_large_file_new(large_file))
+    t2 = asyncio.create_task(read_large_file_old(large_file))
+    t3 = asyncio.create_task(s5cmd_file_task(remote_path=large_file.path, file_size_mb=5120))
 
-    print("Running native Flyte download (old SDK)...")
-    bytes_old, time_old = await read_large_file_old(large_file)
-
-    print("Running s5cmd download...")
-    s5cmd_result = await s5cmd_file_task(remote_path=large_file.path, file_size_mb=5120)
+    (bytes_new, time_new), (bytes_old, time_old), s5cmd_result = await asyncio.gather(t1, t2, t3)
     s5cmd_time = s5cmd_result["duration"]
     s5cmd_throughput = s5cmd_result["throughput_mbps"]
 
-    print(f"\nResults for 5GB file:")
-    print(f"  New SDK: {bytes_new / (1024**3):.2f} GB in {time_new:.2f}s ({bytes_new / time_new / (1024**2):.2f} MiB/s)")
-    print(f"  Old SDK: {bytes_old / (1024**3):.2f} GB in {time_old:.2f}s ({bytes_old / time_old / (1024**2):.2f} MiB/s)")
+    print("\nResults for 5GB file:")
+    print(
+        f"  New SDK: {bytes_new / (1024**3):.2f} GB in {time_new:.2f}s ({bytes_new / time_new / (1024**2):.2f} MiB/s)"
+    )
+    print(
+        f"  Old SDK: {bytes_old / (1024**3):.2f} GB in {time_old:.2f}s ({bytes_old / time_old / (1024**2):.2f} MiB/s)"
+    )
     print(f"  s5cmd:   {s5cmd_time:.2f}s ({s5cmd_throughput:.2f} MiB/s)")
 
     # Test 2: Directory with 1000 5MB files
     print("\n--- Test 2: Directory with 1000 x 5MB files ---")
     file_dir = await create_dir_with_files(num_files=1000, size_megabytes=5)
 
-    print("Running native Flyte directory download (new SDK)...")
-    dir_bytes_new, dir_time_new = await read_dir_new(file_dir)
+    print("Running directory downloads in parallel...")
+    td1 = asyncio.create_task(read_dir_new(file_dir))
+    td2 = asyncio.create_task(s5cmd_dir_task(remote_path=file_dir.path, expected_files=1000))
 
-    print("Running s5cmd directory download...")
-    s5cmd_dir_result = await s5cmd_dir_task(remote_path=file_dir.path, expected_files=1000)
+    (dir_bytes_new, dir_time_new), s5cmd_dir_result = await asyncio.gather(td1, td2)
     s5cmd_dir_time = s5cmd_dir_result["duration"]
     s5cmd_dir_throughput = s5cmd_dir_result["throughput_mbps"]
 
-    print(f"\nResults for 1000 x 5MB files:")
-    print(f"  New SDK: {dir_bytes_new / (1024**3):.2f} GB in {dir_time_new:.2f}s ({dir_bytes_new / dir_time_new / (1024**2):.2f} MiB/s)")
+    print("\nResults for 1000 x 5MB files:")
+    print(
+        f"  New SDK: {dir_bytes_new / (1024**3):.2f} GB in {dir_time_new:.2f}s"
+        f" ({dir_bytes_new / dir_time_new / (1024**2):.2f} MiB/s)"
+    )
     print(f"  s5cmd:   {s5cmd_dir_time:.2f}s ({s5cmd_dir_throughput:.2f} MiB/s)")
 
     print("\n" + "=" * 80)
@@ -288,14 +302,11 @@ async def benchmark_all():
     print("=" * 80)
 
 
-
+# From command line:
+# $ flyte -c ~/.flyte/builder.remote.demo.yaml run -p flytesnacks -d development stress/benchmark/large_io_comparison.py benchmark_all  # noqa: E501
 if __name__ == "__main__":
     import flyte.git
 
     flyte.init_from_config(flyte.git.config_from_root())
     r = flyte.run(main, 5)
     print(r.url)
-
-
-
-
