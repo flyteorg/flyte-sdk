@@ -11,6 +11,7 @@ import shlex
 from copy import deepcopy
 from typing import Any, List, Optional, Union
 
+from flyteidl2.app import app_definition_pb2
 from flyteidl2.common import runtime_version_pb2
 from flyteidl2.core import literals_pb2, tasks_pb2
 from google.protobuf.duration_pb2 import Duration
@@ -19,7 +20,6 @@ import flyte
 import flyte.errors
 from flyte._internal.runtime.resources_serde import get_proto_extended_resources, get_proto_resources
 from flyte._internal.runtime.task_serde import get_security_context, lookup_image_in_cache
-from flyte._protos.app import app_definition_pb2
 from flyte.app import AppEnvironment, Scaling
 from flyte.models import SerializationContext
 

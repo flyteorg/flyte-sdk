@@ -3,11 +3,11 @@ import tarfile
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
+from flyteidl2.app import app_definition_pb2
 from flyteidl2.core import tasks_pb2
 
 from flyte._image import Image
 from flyte._pod import PodTemplate
-from flyte._protos.app import app_definition_pb2
 from flyte.app import AppEnvironment
 from flyte.app._types import Scaling
 from flyte.models import SerializationContext
@@ -29,7 +29,6 @@ async def upload_include_files(app: AppEnvironment) -> str | None:
 
 
 def translate_app_to_wire(app: AppEnvironment, settings: SerializationContext) -> app_definition_pb2.App:
-
     if app.config is not None:
         app.config.before_to_union_idl(app, settings)
 

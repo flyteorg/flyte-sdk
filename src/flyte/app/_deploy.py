@@ -4,25 +4,26 @@ import typing
 from dataclasses import dataclass
 
 import flyte._deployer as deployer
-import flyte.errors
 from flyte import Image
 from flyte._initialize import ensure_client, get_client
 from flyte._logging import logger
 from flyte.models import SerializationContext
+
 from ._app_environment import AppEnvironment
 
 if typing.TYPE_CHECKING:
-    from flyte._protos.app import app_definition_pb2
+    from flyteidl2.app import app_definition_pb2
 
 FILES_TAR_FILE_NAME = "code_bundle.tgz"
 
 
 async def upload_include_files(app: AppEnvironment) -> str | None:
-    import flyte.remote
     import os
     import tarfile
     from pathlib import Path
     from tempfile import TemporaryDirectory
+
+    import flyte.remote
 
     with TemporaryDirectory() as temp_dir:
         tar_path = os.path.join(temp_dir, FILES_TAR_FILE_NAME)
@@ -63,17 +64,17 @@ class DeployedAppEnvironment(deployer.DeployedEnvironment):
 
 
 async def _deploy_app(
-        app: AppEnvironment, serialization_context: SerializationContext, dryrun: bool = False
+    app: AppEnvironment, serialization_context: SerializationContext, dryrun: bool = False
 ) -> app_definition_pb2.App:
     """
     Deploy the given app.
     """
     ensure_client()
     import grpc.aio
+    from flyteidl2.app import app_payload_pb2
 
     import flyte.remote
     from flyte._internal.runtime.app_serde import translate_app_to_wire, upload_include_files
-    from flyte._protos.app import app_payload_pb2
 
     # TODO We need to handle uploading include files, ideally this is part of code bundle
     # The reason is at this point, we already have a code bundle created.

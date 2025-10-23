@@ -6,7 +6,7 @@ import rich.repr
 
 from flyte import Environment
 from flyte.app._input import Input
-from flyte.app._types import Domain, Link, Scaling, Port
+from flyte.app._types import Domain, Link, Port, Scaling
 
 APP_NAME_RE = re.compile(r"[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*")
 
