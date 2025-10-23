@@ -8,7 +8,9 @@ import flyte.remote
 import flyte.storage
 from flyte import Resources
 
-image = flyte.Image.from_debian_base(python_version=(3, 12)).with_pip_packages("flyteplugins-dask")
+
+dask_plugin = f"git+https://github.com/flyteorg/flyte-sdk.git@445a265cdf49a067741d1671652383793d7747f4#subdirectory=plugins/dask"
+image = flyte.Image.from_debian_base(python_version=(3, 12)).with_apt_packages("git").with_pip_packages(dask_plugin)
 
 dask_config = Dask(
     scheduler=Scheduler(),
