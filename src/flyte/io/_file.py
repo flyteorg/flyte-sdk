@@ -260,10 +260,8 @@ class File(BaseModel, Generic[T], SerializableType):
         ctx = internal_ctx()
         known_cache_key = hash_method if isinstance(hash_method, str) else None
         method = hash_method if isinstance(hash_method, HashMethod) else None
-        print(f"{ctx.raw_data.path=}, {ctx.raw_data.path_rewrite=} !!!!!!!!!!!!", flush=True)
-        pp = ctx.raw_data.get_random_remote_path()
-        print(f"THIS IS PP: {pp=}", flush=True)
-        return cls(path=pp, hash=known_cache_key, hash_method=method)
+
+        return cls(path=ctx.raw_data.get_random_remote_path(), hash=known_cache_key, hash_method=method)
 
     @classmethod
     def from_existing_remote(cls, remote_path: str, file_cache_key: Optional[str] = None) -> File[T]:
