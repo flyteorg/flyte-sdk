@@ -91,8 +91,8 @@ s5cmd_dir_task = ContainerTask(
         THROUGHPUT=$(echo "scale=2; $TOTAL_SIZE / $DURATION / 1024 / 1024" | bc)
         FILE_COUNT=$(find /tmp/download_dir -type f | wc -l)
         echo "Downloaded $FILE_COUNT files, $TOTAL_SIZE bytes in $DURATION seconds ($THROUGHPUT MiB/s)"
-        echo "$DURATION" > /tmp/outputs/duration
-        echo "$THROUGHPUT" > /tmp/outputs/throughput_mbps
+        echo "$DURATION" > /var/outputs/duration
+        echo "$THROUGHPUT" > /var/outputs/throughput_mbps
         """,
         "{{.inputs.remote_path}}",
     ],
@@ -137,7 +137,7 @@ async def create_file(size_megabytes: int = 5120) -> flyte.io.File:
     return f
 
 
-@env.task
+@env.task(cache=flyte.Cache(behavior="override", version_override="v1"))
 async def create_dir_with_files(num_files: int = 1000, size_megabytes: int = 5) -> flyte.io.Dir:
     """Create a directory with multiple files of specified size"""
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -265,9 +265,7 @@ async def benchmark_all():
     t2 = asyncio.create_task(read_large_file_old(large_file))
     t3 = asyncio.create_task(s5cmd_file_task(remote_path=large_file.path, file_size_mb=5120))
 
-    (bytes_new, time_new), (bytes_old, time_old), s5cmd_result = await asyncio.gather(t1, t2, t3)
-    s5cmd_time = s5cmd_result["duration"]
-    s5cmd_throughput = s5cmd_result["throughput_mbps"]
+    (bytes_new, time_new), (bytes_old, time_old), (s5cmd_time, s5cmd_throughput) = await asyncio.gather(t1, t2, t3)
 
     print("\nResults for 5GB file:")
     print(
@@ -286,9 +284,7 @@ async def benchmark_all():
     td1 = asyncio.create_task(read_dir_new(file_dir))
     td2 = asyncio.create_task(s5cmd_dir_task(remote_path=file_dir.path, expected_files=1000))
 
-    (dir_bytes_new, dir_time_new), s5cmd_dir_result = await asyncio.gather(td1, td2)
-    s5cmd_dir_time = s5cmd_dir_result["duration"]
-    s5cmd_dir_throughput = s5cmd_dir_result["throughput_mbps"]
+    (dir_bytes_new, dir_time_new), (s5cmd_dir_time, s5cmd_dir_throughput) = await asyncio.gather(td1, td2)
 
     print("\nResults for 1000 x 5MB files:")
     print(
