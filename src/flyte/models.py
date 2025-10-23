@@ -381,7 +381,7 @@ class NativeInterface:
                 param_info[name] = (hints.get(name, param.annotation), param.default)
 
         # Get return type
-        outputs = extract_return_annotation(hints.get('return', sig.return_annotation))
+        outputs = extract_return_annotation(hints.get("return", sig.return_annotation))
         return cls(inputs=param_info, outputs=outputs)
 
     def convert_to_kwargs(self, *args, **kwargs) -> Dict[str, Any]:
