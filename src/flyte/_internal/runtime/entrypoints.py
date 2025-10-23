@@ -1,4 +1,6 @@
 import importlib
+import os
+import traceback
 from typing import List, Optional, Tuple, Type
 
 import flyte.errors
@@ -72,7 +74,26 @@ def load_task(resolver: str, *resolver_args: str) -> TaskTemplate:
     """
     resolver_class = load_class(resolver)
     resolver_instance = resolver_class()
-    return resolver_instance.load_task(resolver_args)
+    try:
+        return resolver_instance.load_task(resolver_args)
+    except ModuleNotFoundError as e:
+        cwd = os.getcwd()
+        files = []
+        try:
+            for root, dirs, filenames in os.walk(cwd):
+                for name in dirs + filenames:
+                    rel_path = os.path.relpath(os.path.join(root, name), cwd)
+                    files.append(rel_path)
+        except Exception as list_err:
+            files = [f"(Failed to list directory: {list_err})"]
+
+        msg = (
+            "\n\nFull traceback:\n" + "".join(traceback.format_exc()) + f"\n[ImportError Diagnostics]\n"
+            f"Module '{e.name}' not found in either the Python virtual environment or the current working directory.\n"
+            f"Current working directory: {cwd}\n"
+            f"Files found under current directory:\n" + "\n".join(f"  - {f}" for f in files)
+        )
+        raise ModuleNotFoundError(msg) from e
 
 
 def load_pkl_task(code_bundle: CodeBundle) -> TaskTemplate:
