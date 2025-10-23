@@ -243,7 +243,7 @@ async def main(size_megabytes: int = 5120) -> Tuple[int, float]:
     large_file = await create_file(size_megabytes)
     t1 = asyncio.create_task(read_large_file_new(large_file))
     t2 = asyncio.create_task(read_large_file_old(large_file))
-    r1, r2 = await asyncio.gather(t1, t2)
+    r1, _ = await asyncio.gather(t1, t2)
     # r1, = await asyncio.gather(t1)
     # print(r1, r2)
     return r1
