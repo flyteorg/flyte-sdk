@@ -1,15 +1,12 @@
-from io import StringIO
 from pathlib import Path
 from typing import cast
 
-import pandas
 from flyteplugins.spark.task import Spark
-from pandas.io.formats.style import pd
 from pyspark.sql import SparkSession
+from pyspark.sql.dataframe import DataFrame as PSDataFrame
 
 import flyte
-from flyte._context import internal_ctx
-from flyte.io import DataFrame, File
+from flyte.io import File
 
 image = (
     flyte.Image.from_base("apache/spark-py:v3.4.0")
@@ -46,25 +43,6 @@ spark_env = flyte.TaskEnvironment(
 )
 
 
-# @spark_env.task
-# async def upload_local_file_async(content: str) -> File:
-#     """
-#     Demonstrates File.from_local() - uploading a local file asynchronously.
-#     """
-#     with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".txt") as tmp:
-#         tmp.write(content)
-#         tmp_path = tmp.name
-
-#     try:
-#         # Upload the local file
-#         uploaded_file = await File.from_local(tmp_path)
-#         print(f"Uploaded local file {tmp_path} to remote: {uploaded_file.path}")
-#         return uploaded_file
-#     finally:
-#         # Clean up the temporary file
-#         os.unlink(tmp_path)
-
-
 @spark_env.task
 async def create_new_remote_file(content: str) -> File:
     """
@@ -78,29 +56,38 @@ async def create_new_remote_file(content: str) -> File:
 
 
 @spark_env.task
-async def sum_of_all_ages(sd: DataFrame) -> int:
-    df: pandas.DataFrame = await sd.open(pandas.DataFrame).all()
-    return int(df["age"].sum())
+async def sum_of_all_ages(sd: PSDataFrame):
+    """
+    This task computes the sum of all ages in the provided Spark DataFrame.
+    """
+    total_age = sd.groupBy().sum("age").collect()[0][0]
+    print("Total age sum:", total_age)
+    return total_age
 
 
 @spark_env.task
-async def dataframe_transformer() -> int:
+async def dataframe_transformer() -> PSDataFrame:
     """
     This task returns a Spark dataset that conforms to the defined schema.
     """
-
-    ctx = internal_ctx()
-    spark = ctx.data.task_context.data["spark_session"]
+    ctx = flyte.ctx()
+    spark = ctx["spark_session"]
     spark = cast(SparkSession, spark)
 
     csv_data = "age,name\n10,alice\n20,bob\n30,charlie\n40,david\n50,edward\n60,frank"
     file = await create_new_remote_file(csv_data)
     file = cast(File, file)
+    print("Remote file path:", file.path)
 
-    spark_df = spark.read.csv(path=file.path, header=True, inferSchema=True)
-    df = DataFrame.from_df(val=spark_df)
+    spark_df = spark.read.csv(
+        path=file.path,
+        header=True,
+        inferSchema=True,
+    )
 
-    return await sum_of_all_ages(df)
+    return spark_df
+
+    # return await sum_of_all_ages(spark_df)
 
 
 # ## Execute locally
