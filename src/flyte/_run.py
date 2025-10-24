@@ -174,7 +174,7 @@ class _Runner:
                 else:
                     from ._internal.imagebuild.image_builder import ImageCache
 
-                    image_cache = ImageCache(image_lookup={})
+                    image_cache = None
 
                 if self._interactive_mode:
                     code_bundle = await build_pkl_bundle(
