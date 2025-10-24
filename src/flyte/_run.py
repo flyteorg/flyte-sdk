@@ -172,9 +172,7 @@ class _Runner:
                 if not self._dry_run:
                     image_cache = await build_images.aio(cast(Environment, obj.parent_env()))
                 else:
-                    from ._internal.imagebuild.image_builder import ImageCache
-
-                    image_cache = ImageCache(image_lookup={})
+                    image_cache = None
 
                 if self._interactive_mode:
                     code_bundle = await build_pkl_bundle(
