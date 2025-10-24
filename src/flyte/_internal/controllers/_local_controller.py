@@ -73,6 +73,7 @@ class LocalController:
     def __init__(self):
         logger.debug("LocalController init")
         self._runner_map: dict[str, _TaskRunner] = {}
+        self._registered_events: dict[str, Any] = {}
 
     @log
     async def submit(self, _task: TaskTemplate, *args, **kwargs) -> Any:
@@ -237,3 +238,58 @@ class LocalController:
         raise flyte.errors.ReferenceTaskError(
             f"Reference tasks cannot be executed locally, only remotely. Found remote task {_task.name}"
         )
+
+    async def register_event(self, event: Any):
+        """
+        Register an event that can be awaited. Stores the event for later retrieval.
+
+        :param event: Event object to register
+        """
+        from flyte._event import _Event
+
+        if not isinstance(event, _Event):
+            raise TypeError(f"Expected _Event, got {type(event)}")
+
+        logger.debug(f"Registering event: {event.name} with scope: {event.scope}")
+        self._registered_events[event.name] = event
+
+    async def wait_for_event(self, event: Any) -> Any:
+        """
+        Wait for an event to be signaled. Uses rich library to prompt the user for input.
+
+        :param event: Event object to wait for
+        :return: The payload associated with the event when it is signaled
+        """
+        from rich.console import Console
+        from rich.prompt import Confirm, Prompt
+
+        from flyte._event import _Event
+
+        if not isinstance(event, _Event):
+            raise TypeError(f"Expected _Event, got {type(event)}")
+
+        logger.info(f"Waiting for event: {event.name}")
+
+        console = Console()
+        console.print(f"\n[bold cyan]Event:[/bold cyan] {event.name}")
+        if event.description:
+            console.print(f"[dim]{event.description}[/dim]")
+
+        # Handle different data types
+        if event.data_type is bool:
+            result = Confirm.ask(event.prompt, console=console)
+        elif event.data_type in (int, float, str):
+            # For int, float, str - use the same prompt with type conversion
+            while True:
+                try:
+                    value = Prompt.ask(event.prompt, console=console)
+                    result = event.data_type(value)
+                    break
+                except ValueError:
+                    type_name = event.data_type.__name__
+                    console.print(f"[red]Please enter a valid {type_name}[/red]")
+        else:
+            raise ValueError(f"Unsupported data type {event.data_type}")
+
+        logger.debug(f"Event {event.name} received value: {result}")
+        return result
