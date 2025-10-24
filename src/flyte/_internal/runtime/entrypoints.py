@@ -122,6 +122,7 @@ async def download_code_bundle(code_bundle: CodeBundle) -> CodeBundle:
     :param code_bundle: The code bundle to download.
     :return: The code bundle with the downloaded path.
     """
+    adjust_sys_path()
     logger.debug(f"Downloading {code_bundle}")
     downloaded_path = await download_bundle(code_bundle)
     return code_bundle.with_downloaded_path(downloaded_path)
@@ -130,7 +131,6 @@ async def download_code_bundle(code_bundle: CodeBundle) -> CodeBundle:
 async def _download_and_load_task(
     code_bundle: CodeBundle | None, resolver: str | None = None, resolver_args: List[str] | None = None
 ) -> TaskTemplate:
-    adjust_sys_path()
     if code_bundle and (code_bundle.tgz or code_bundle.pkl):
         logger.debug(f"Downloading {code_bundle}")
         code_bundle = await download_code_bundle(code_bundle)
