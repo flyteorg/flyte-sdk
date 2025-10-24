@@ -1,5 +1,6 @@
 import asyncio
 import typing
+from pathlib import Path
 
 from distributed import Client
 from flyteplugins.dask import Dask, Scheduler, WorkerGroup
@@ -7,6 +8,7 @@ from flyteplugins.dask import Dask, Scheduler, WorkerGroup
 import flyte.remote
 import flyte.storage
 from flyte import Resources
+from utils import hello
 
 
 dask_plugin = f"git+https://github.com/flyteorg/flyte-sdk.git@445a265cdf49a067741d1671652383793d7747f4#subdirectory=plugins/dask"
@@ -38,6 +40,7 @@ async def hello_dask():
 @dask_env.task
 async def hello_dask_nested(n: int = 3) -> typing.List[int]:
     print("running dask task")
+    hello()
     t = asyncio.create_task(hello_dask())
     client = Client()
     futures = client.map(lambda x: x + 1, range(n))
@@ -47,7 +50,7 @@ async def hello_dask_nested(n: int = 3) -> typing.List[int]:
 
 
 if __name__ == "__main__":
-    flyte.init_from_config()
+    flyte.init_from_config(root_dir=Path(__file__).parent)
     run = flyte.run(hello_dask_nested, n=3)
     print("run name:", run.name)
     print("run url:", run.url)
