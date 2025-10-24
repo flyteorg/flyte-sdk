@@ -1,3 +1,4 @@
+import asyncio
 import sys
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional
@@ -66,7 +67,7 @@ class DownloadCodeBundleSchedulerPlugin(SchedulerPlugin):
 
     def start(self, scheduler):
         sys.path.insert(0, ".")
-        download_code_bundle(self.code_bundle)
+        asyncio.run(download_code_bundle(self.code_bundle))
 
 
 class DownloadCodeBundleWorkerPlugin(WorkerPlugin):
@@ -82,7 +83,7 @@ class DownloadCodeBundleWorkerPlugin(WorkerPlugin):
         Runs on each worker as it is initialized.
         """
         sys.path.insert(0, ".")
-        download_code_bundle(self.code_bundle)
+        asyncio.run(download_code_bundle(self.code_bundle))
 
 
 @dataclass(kw_only=True)

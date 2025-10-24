@@ -8,10 +8,10 @@ from flyteplugins.dask import Dask, Scheduler, WorkerGroup
 import flyte.remote
 import flyte.storage
 from flyte import Resources
-from utils import hello
 
-
-dask_plugin = f"git+https://github.com/flyteorg/flyte-sdk.git@445a265cdf49a067741d1671652383793d7747f4#subdirectory=plugins/dask"
+dask_plugin = (
+    "git+https://github.com/flyteorg/flyte-sdk.git@bd0940ab493e9044bff59757b3f06e599c22c4be#subdirectory=plugins/dask"
+)
 image = flyte.Image.from_debian_base(python_version=(3, 12)).with_apt_packages("git").with_pip_packages(dask_plugin)
 
 dask_config = Dask(
@@ -40,7 +40,6 @@ async def hello_dask():
 @dask_env.task
 async def hello_dask_nested(n: int = 3) -> typing.List[int]:
     print("running dask task")
-    hello()
     t = asyncio.create_task(hello_dask())
     client = Client()
     futures = client.map(lambda x: x + 1, range(n))
