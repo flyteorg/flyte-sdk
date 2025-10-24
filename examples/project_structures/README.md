@@ -194,7 +194,6 @@ env = flyte.TaskEnvironment(
     .with_uv_project(
         pyproject_file=(UV_WORKSPACE_ROOT / "pyproject.toml"),
         extra_args="--only-group albatross",  # Install specific dependency group
-        project_install_mode="install_project",
     ),
 )
 
