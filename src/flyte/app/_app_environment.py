@@ -26,7 +26,6 @@ class AppEnvironment(Environment):
 
     type: Optional[str] = None
     port: int | Port = 8080
-    framework_app: Optional[Any] = None
     args: Optional[Union[List[str], str]] = None
     command: Optional[Union[List[str], str]] = None
     requires_auth: bool = True

@@ -54,7 +54,7 @@ def extract_task_module(task: TaskTemplate, /, source_dir: pathlib.Path | None =
 
         entity_name = task.func.__name__
     else:
-        raise NotImplementedError(f"Task module {entity_name} not implemented.")
+        raise NotImplementedError(f"Task module for {entity_name} not implemented.")
 
     if entity_module_name == "__main__":
         """

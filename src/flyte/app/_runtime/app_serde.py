@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import shlex
 from copy import deepcopy
-from typing import Any, List, Optional, Union
+from typing import List, Optional, Union
 
 from flyteidl2.app import app_definition_pb2
 from flyteidl2.common import runtime_version_pb2
@@ -23,39 +23,9 @@ from flyte._internal.runtime.task_serde import get_security_context, lookup_imag
 from flyte.app import AppEnvironment, Scaling
 from flyte.models import SerializationContext
 
-from .frameworks import _is_fastapi_app
-
-
-def _construct_args_for_framework(
-    app_env: AppEnvironment,
-    framework_app: Any,
-    module_name: Optional[str],
-    framework_variable_name: Optional[str],
-    port: int,
-) -> Optional[str]:
-    """
-    Construct framework-specific arguments.
-
-    Args:
-        app_env: The app environment
-        framework_app: The framework application object
-        module_name: Name of the module containing the app
-        framework_variable_name: Variable name of the framework app
-        port: Port number
-
-    Returns:
-        Command string for the framework, or None
-    """
-    if _is_fastapi_app(framework_app):
-        if module_name is None or framework_variable_name is None:
-            raise ValueError("Unable to find module name or framework variable name")
-        return f"uvicorn {module_name}:{framework_variable_name} --port {port}"
-
-    return None
-
 
 def _get_args(
-    app_env: AppEnvironment, module_name: Optional[str], framework_variable_name: Optional[str], port: int
+        app_env: AppEnvironment, module_name: Optional[str], framework_variable_name: Optional[str], port: int
 ) -> List[str]:
     """
     Get the command arguments for the app.
@@ -125,11 +95,11 @@ def _get_env(app_env: AppEnvironment) -> dict:
 
 
 def _get_container(
-    app_env: AppEnvironment,
-    serialization_context: SerializationContext,
-    port: int,
-    module_name: Optional[str],
-    framework_variable_name: Optional[str],
+        app_env: AppEnvironment,
+        serialization_context: SerializationContext,
+        port: int,
+        module_name: Optional[str],
+        framework_variable_name: Optional[str],
 ) -> tasks_pb2.Container:
     """
     Construct the container specification.
@@ -178,12 +148,12 @@ def _sanitize_resource_name(resource: tasks_pb2.Resources.ResourceEntry) -> str:
 
 
 def _serialized_pod_spec(
-    app_env: AppEnvironment,
-    pod_template: flyte.PodTemplate,
-    serialization_context: SerializationContext,
-    port: int,
-    module_name: Optional[str],
-    framework_variable_name: Optional[str],
+        app_env: AppEnvironment,
+        pod_template: flyte.PodTemplate,
+        serialization_context: SerializationContext,
+        port: int,
+        module_name: Optional[str],
+        framework_variable_name: Optional[str],
 ) -> dict:
     """
     Convert pod spec into a dict for serialization.
@@ -259,12 +229,12 @@ def _serialized_pod_spec(
 
 
 def _get_k8s_pod(
-    app_env: AppEnvironment,
-    pod_template: flyte.PodTemplate,
-    serialization_context: SerializationContext,
-    port: int,
-    module_name: Optional[str],
-    framework_variable_name: Optional[str],
+        app_env: AppEnvironment,
+        pod_template: flyte.PodTemplate,
+        serialization_context: SerializationContext,
+        port: int,
+        module_name: Optional[str],
+        framework_variable_name: Optional[str],
 ) -> tasks_pb2.K8sPod:
     """
     Convert pod_template into a K8sPod IDL.
@@ -298,7 +268,7 @@ def _get_k8s_pod(
 
 
 def _get_scaling_metric(
-    metric: Optional[Union[Scaling.Concurrency, Scaling.RequestRate]],
+        metric: Optional[Union[Scaling.Concurrency, Scaling.RequestRate]],
 ) -> Optional[app_definition_pb2.ScalingMetric]:
     """
     Convert scaling metric to protobuf format.
@@ -322,12 +292,12 @@ def _get_scaling_metric(
 
 
 def translate_app_env_to_idl(
-    app_env: AppEnvironment,
-    serialization_context: SerializationContext,
-    desired_state: app_definition_pb2.Spec.DesiredState.ValueType = app_definition_pb2.Spec.DesiredState.DESIRED_STATE_ACTIVE,
-    port: int = 8080,
-    module_name: Optional[str] = None,
-    framework_variable_name: Optional[str] = None,
+        app_env: AppEnvironment,
+        serialization_context: SerializationContext,
+        desired_state: app_definition_pb2.Spec.DesiredState = app_definition_pb2.Spec.DesiredState.DESIRED_STATE_ACTIVE,
+        port: int = 8080,
+        module_name: Optional[str] = None,
+        framework_variable_name: Optional[str] = None,
 ) -> app_definition_pb2.App:
     """
     Translate an AppEnvironment to AppIDL protobuf format.
@@ -399,14 +369,8 @@ def translate_app_env_to_idl(
         msg = "image must be a str, Image, or PodTemplate"
         raise ValueError(msg)
 
-    # Build ingress config
-    subdomain = app_env.domain.subdomain if app_env.domain else None
-    custom_domain = app_env.domain.custom_domain if app_env.domain else None
-
     ingress = app_definition_pb2.IngressConfig(
         private=False,
-        subdomain=subdomain if subdomain else None,
-        cname=custom_domain if custom_domain else None,
     )
 
     # Build links
@@ -420,7 +384,7 @@ def translate_app_env_to_idl(
     # Build profile
     profile = app_definition_pb2.Profile(
         type=app_env.type,
-        short_description=app_env.docs,
+        short_description=app_env.description,
     )
 
     # Build the full App IDL
@@ -442,7 +406,7 @@ def translate_app_env_to_idl(
             extended_resources=get_proto_extended_resources(app_env.resources),
             runtime_metadata=runtime_version_pb2.RuntimeMetadata(
                 type=runtime_version_pb2.RuntimeMetadata.RuntimeType.FLYTE_SDK,
-                version=serialization_context.version,
+                version=flyte.version(),
                 flavor="python",
             ),
             profile=profile,

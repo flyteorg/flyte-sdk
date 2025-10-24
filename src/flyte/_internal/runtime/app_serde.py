@@ -4,7 +4,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from flyteidl2.app import app_definition_pb2
-from flyteidl2.core import tasks_pb2
+from flyteidl2.core import tasks_pb2, literals_pb2
 
 from flyte._image import Image
 from flyte._pod import PodTemplate
@@ -13,19 +13,6 @@ from flyte.app._types import Scaling
 from flyte.models import SerializationContext
 
 FILES_TAR_FILE_NAME = "code_bundle.tgz"
-
-
-async def upload_include_files(app: AppEnvironment) -> str | None:
-    import flyte.remote
-
-    with TemporaryDirectory() as temp_dir:
-        tar_path = os.path.join(temp_dir, FILES_TAR_FILE_NAME)
-        with tarfile.open(tar_path, "w:gz") as tar:
-            for resolve_include in app.include_resolved:
-                tar.add(resolve_include.src, arcname=resolve_include.dest)
-
-        _, upload_native_url = await flyte.remote.upload_file.aio(Path(tar_path))
-        return upload_native_url
 
 
 def translate_app_to_wire(app: AppEnvironment, settings: SerializationContext) -> app_definition_pb2.App:
