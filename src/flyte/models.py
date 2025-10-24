@@ -375,10 +375,11 @@ class NativeInterface:
                 logger.warning(
                     f"Function {func.__name__} has parameter {name} without type annotation. Data will be pickled."
                 )
-            if typing.get_origin(param.annotation) is Literal:
-                param_info[name] = (literal_to_enum(param.annotation), param.default)
+            arg_type = hints.get(name, param.annotation)
+            if typing.get_origin(arg_type) is Literal:
+                param_info[name] = (literal_to_enum(arg_type), param.default)
             else:
-                param_info[name] = (hints.get(name, param.annotation), param.default)
+                param_info[name] = (arg_type, param.default)
 
         # Get return type
         outputs = extract_return_annotation(hints.get("return", sig.return_annotation))
