@@ -1,4 +1,4 @@
-__all__ = ["Spark", "SparkToParquetEncodingHandler"]
+__all__ = ["Spark", "SparkToParquetEncoder", "ParquetToSparkDecoder"]
 
-from flyteplugins.spark.sd_transformers import SparkToParquetEncodingHandler
+from flyteplugins.spark.df_transformer import SparkToParquetEncoder, ParquetToSparkDecoder
 from flyteplugins.spark.task import Spark

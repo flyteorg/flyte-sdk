@@ -1,9 +1,12 @@
 from pathlib import Path
-from typing import cast
+from typing import cast, Annotated
+
+import pandas
+import pyspark
+from flytekit import kwtypes
 
 from flyteplugins.spark.task import Spark
 from pyspark.sql import SparkSession
-from pyspark.sql.dataframe import DataFrame as PSDataFrame
 
 import flyte
 from flyte.io import File
@@ -24,7 +27,7 @@ task_env = flyte.TaskEnvironment(
 
 spark_conf = Spark(
     spark_conf={
-        "spark.driver.memory": "3000M",
+        "spark.driver.memory": "1000M",
         "spark.executor.memory": "1000M",
         "spark.executor.cores": "1",
         "spark.executor.instances": "2",
@@ -36,65 +39,57 @@ spark_conf = Spark(
 
 spark_env = flyte.TaskEnvironment(
     name="spark_env",
-    resources=flyte.Resources(cpu=(1, 2), memory=("3000Mi", "5000Mi")),
+    resources=flyte.Resources(cpu=(1, 2), memory=("800Mi", "1600Mi")),
     plugin_config=spark_conf,
     image=image,
     depends_on=[task_env],
 )
 
-
-@spark_env.task
-async def create_new_remote_file(content: str) -> File:
-    """
-    Demonstrates File.new_remote() - creating a new remote file asynchronously.
-    """
-    f = File.new_remote()
-    async with f.open("wb") as fh:
-        await fh.write(content.encode("utf-8"))
-    print(f"Created new remote file at: {f.path}")
-    return f
+columns = kwtypes(name=str, age=int)
 
 
 @spark_env.task
-async def sum_of_all_ages(sd: PSDataFrame):
-    """
-    This task computes the sum of all ages in the provided Spark DataFrame.
-    """
-    total_age = sd.groupBy().sum("age").collect()[0][0]
-    print("Total age sum:", total_age)
-    return total_age
-
-
-@spark_env.task
-async def dataframe_transformer() -> PSDataFrame:
+def spark_df() -> Annotated[flyte.io.DataFrame, columns]:
     """
     This task returns a Spark dataset that conforms to the defined schema.
     """
-    ctx = flyte.ctx()
-    spark = ctx["spark_session"]
-    spark = cast(SparkSession, spark)
+    sess = flyte.ctx().data["spark_session"]
+    return flyte.io.DataFrame.from_df(
+        val=sess.createDataFrame(
+            [
+                ("Alice", 5),
+                ("Bob", 10),
+                ("Charlie", 15),
+            ],
+            ["name", "age"],
+        ),
+    )
+
+
+@spark_env.task
+def sum_of_all_ages(sd: Annotated[flyte.io.DataFrame, columns]) -> int:
+    df: pandas.DataFrame = sd.open(pandas.DataFrame).all()
+    return int(df["age"].sum())
+
+
+@spark_env.task
+async def dataframe_transformer() -> pyspark.sql.DataFrame:
+    spark = flyte.ctx().data["spark_session"]
 
     csv_data = "age,name\n10,alice\n20,bob\n30,charlie\n40,david\n50,edward\n60,frank"
     file = await create_new_remote_file(csv_data)
-    file = cast(File, file)
     print("Remote file path:", file.path)
 
-    spark_df = spark.read.csv(
+    return spark.read.csv(
         path=file.path,
         header=True,
-        inferSchema=True,
+        inferSchema=False,
     )
 
-    return spark_df
 
-    # return await sum_of_all_ages(spark_df)
-
-
-# ## Execute locally
-# You can execute the code locally as if it was a normal Python script.
 if __name__ == "__main__":
     flyte.init_from_config()
-    run = flyte.run(dataframe_transformer)
+    run = flyte.with_runcontext(mode="local").run(dataframe_transformer)
     print("run name:", run.name)
     print("run url:", run.url)
 
