@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import inspect
 import typing
 from typing import Annotated, Dict, List, NamedTuple, Tuple, TypeVar
