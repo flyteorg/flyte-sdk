@@ -150,7 +150,7 @@ async def convert_from_native_to_inputs(
                     raise ValueError(f"Input '{input_name}' has a default value but it is not set in the interface.")
                 already_converted_kwargs[input_name] = interface._remote_defaults[input_name]
             elif input_type is None or input_type is type(None):
-                # If the type is None, we assume it's a placeholder for no type
+                # If the type is 'None' or 'class<None>', we assume it's a placeholder for no type
                 kwargs[input_name] = None
                 type_hints[input_name] = NoneType
             else:
