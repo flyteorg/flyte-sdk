@@ -10,7 +10,7 @@ from flyteidl2.task import common_pb2, task_definition_pb2
 from flyteidl2.trigger import trigger_definition_pb2, trigger_service_pb2
 
 import flyte
-from flyte._initialize import ensure_client, get_client, get_common_config
+from flyte._initialize import ensure_client, get_client, get_init_config
 from flyte._internal.runtime import trigger_serde
 from flyte.syncify import syncify
 
@@ -29,7 +29,7 @@ class TriggerDetails(ToJSONMixin):
         Retrieve detailed information about a specific trigger by its name.
         """
         ensure_client()
-        cfg = get_common_config()
+        cfg = get_init_config()
         resp = await get_client().trigger_service.GetTriggerDetails(
             request=trigger_service_pb2.GetTriggerDetailsRequest(
                 name=identifier_pb2.TriggerName(
@@ -102,7 +102,7 @@ class Trigger(ToJSONMixin):
         :param task_name: Optional name of the task to associate with the trigger.
         """
         ensure_client()
-        cfg = get_common_config()
+        cfg = get_init_config()
 
         # Fetch the task to ensure it exists and to get its input definitions
         try:
@@ -122,15 +122,12 @@ class Trigger(ToJSONMixin):
 
             resp = await get_client().trigger_service.DeployTrigger(
                 request=trigger_service_pb2.DeployTriggerRequest(
-                    id=identifier_pb2.TriggerIdentifier(
-                        name=identifier_pb2.TriggerName(
-                            name=trigger.name,
-                            task_name=task_name,
-                            org=cfg.org,
-                            project=cfg.project,
-                            domain=cfg.domain,
-                        ),
-                        revision=1,
+                    name=identifier_pb2.TriggerName(
+                        name=trigger.name,
+                        task_name=task_name,
+                        org=cfg.org,
+                        project=cfg.project,
+                        domain=cfg.domain,
                     ),
                     spec=trigger_definition_pb2.TriggerSpec(
                         active=task_trigger.spec.active,
@@ -156,7 +153,7 @@ class Trigger(ToJSONMixin):
         """
         Retrieve a trigger by its name and associated task name.
         """
-        return await TriggerDetails.get(name=name, task_name=task_name)
+        return await TriggerDetails.get.aio(name=name, task_name=task_name)
 
     @syncify
     @classmethod
@@ -167,9 +164,9 @@ class Trigger(ToJSONMixin):
         List all triggers associated with a specific task or all tasks if no task name is provided.
         """
         ensure_client()
-        cfg = get_common_config()
+        cfg = get_init_config()
         token = None
-        # task_name_id = None  TODO: implement listing by task name only
+        task_name_id = None
         project_id = None
         task_id = None
         if task_name and task_version:
@@ -180,13 +177,13 @@ class Trigger(ToJSONMixin):
                 org=cfg.org,
                 version=task_version,
             )
-        # elif task_name:  TODO: implement listing by task name only
-        #     task_name_id = task_definition_pb2.TaskName(
-        #         name=task_name,
-        #         project=cfg.project,
-        #         domain=cfg.domain,
-        #         org=cfg.org,
-        #     )
+        elif task_name:
+            task_name_id = task_definition_pb2.TaskName(
+                name=task_name,
+                project=cfg.project,
+                domain=cfg.domain,
+                org=cfg.org,
+            )
         else:
             project_id = identifier_pb2.ProjectIdentifier(
                 organization=cfg.org,
@@ -199,7 +196,7 @@ class Trigger(ToJSONMixin):
                 request=trigger_service_pb2.ListTriggersRequest(
                     project_id=project_id,
                     task_id=task_id,
-                    # task_name=task_name_id,
+                    task_name=task_name_id,
                     request=list_pb2.ListRequest(
                         limit=limit,
                         token=token,
@@ -219,7 +216,7 @@ class Trigger(ToJSONMixin):
         Pause a trigger by its name and associated task name.
         """
         ensure_client()
-        cfg = get_common_config()
+        cfg = get_init_config()
         await get_client().trigger_service.UpdateTriggers(
             request=trigger_service_pb2.UpdateTriggersRequest(
                 names=[
@@ -242,7 +239,7 @@ class Trigger(ToJSONMixin):
         Delete a trigger by its name.
         """
         ensure_client()
-        cfg = get_common_config()
+        cfg = get_init_config()
         await get_client().trigger_service.DeleteTriggers(
             request=trigger_service_pb2.DeleteTriggersRequest(
                 names=[

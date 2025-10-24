@@ -24,4 +24,4 @@ if __name__ == "__main__":
     run = flyte.run(union_type_simple_task, input_val="hello world")
     print(run.name)
     print(run.url)
-    run.wait(run)
+    run.wait()

@@ -36,4 +36,4 @@ if __name__ == "__main__":
     state = ResearchState(query="AI agent companies 2025")
     run = flyte.run(lead_agent, state)
     print(run.url)
-    run.wait(run)
+    run.wait()

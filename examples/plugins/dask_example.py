@@ -11,8 +11,8 @@ from flyte import Resources
 image = flyte.Image.from_debian_base(python_version=(3, 12)).with_pip_packages("flyteplugins-dask")
 
 dask_config = Dask(
-    scheduler=Scheduler(resources=Resources(cpu="1", memory="1Gi")),
-    workers=WorkerGroup(number_of_workers=4, resources=Resources(cpu="1", memory="1Gi")),
+    scheduler=Scheduler(),
+    workers=WorkerGroup(number_of_workers=4),
 )
 
 task_env = flyte.TaskEnvironment(
@@ -49,7 +49,7 @@ if __name__ == "__main__":
     run = flyte.run(hello_dask_nested, n=3)
     print("run name:", run.name)
     print("run url:", run.url)
-    run.wait(run)
+    run.wait()
 
     action_details = flyte.remote.ActionDetails.get(run_name=run.name, name="a0")
     for log in action_details.pb2.attempts[-1].log_info:

@@ -58,7 +58,7 @@ def get_and_list_dockerignore(image: Image) -> List[str]:
     init_config = _get_init_config()
     root_path = init_config.root_dir if init_config else None
     if not dockerignore_path and root_path:
-        dockerignore_path = root_path / ".dockerignore"
+        dockerignore_path = Path(root_path) / ".dockerignore"
     # Return empty list if no .dockerignore file found
     if not dockerignore_path or not dockerignore_path.exists() or not dockerignore_path.is_file():
         logger.info(f".dockerignore file not found at path: {dockerignore_path}")
