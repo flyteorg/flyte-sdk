@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import List, Tuple
 
 import pytest
@@ -61,21 +61,43 @@ async def test_basic_dc_in_task(local_dummy_file, local_dummy_directory):
     assert result.generic_list_field == ["hello"]
 
 
+def test_get_signature():
+    from flyte.models import NativeInterface
+
+    async def my_func(dc: PrimitiveDC) -> Tuple[File, File, Dir, Dir]: ...
+
+    native_interface = NativeInterface.from_callable(my_func)
+    assert len(native_interface.outputs) == 4
+
+    async def my_func_2() -> Tuple[File, File, Dir, Dir]: ...
+
+    native_interface = NativeInterface.from_callable(my_func_2)
+    assert len(native_interface.outputs) == 4
+
+    async def my_func_3(in1: DoesNotExist) -> Tuple[File, File, Dir, Dir]:  # noqa: F821
+        ...
+
+    with pytest.raises(NameError):
+        NativeInterface.from_callable(my_func_3)
+
+
+@dataclass
+class InnerDC:
+    file: File
+    dir: Dir
+
+
+@dataclass
+class DC:
+    file: File
+    dir: Dir
+    inner_dc: InnerDC
+
+
 @pytest.mark.asyncio
 async def test_flytetypes_in_dataclass_wf(ctx_with_test_raw_data_path, local_dummy_file, local_dummy_directory):
     flyte.init(storage=S3.for_sandbox())
     env = flyte.TaskEnvironment(name="test-delayed-dataclass-transformer-flyte-types")
-
-    @dataclass
-    class InnerDC:
-        file: File = field(default_factory=lambda: File(path=local_dummy_file))
-        dir: Dir = field(default_factory=lambda: Dir(path=local_dummy_directory))
-
-    @dataclass
-    class DC:
-        file: File = field(default_factory=lambda: File(path=local_dummy_file))
-        dir: Dir = field(default_factory=lambda: Dir(path=local_dummy_directory))
-        inner_dc: InnerDC = field(default_factory=lambda: InnerDC())
 
     @env.task
     async def t1(path: File) -> File:
@@ -94,7 +116,15 @@ async def test_flytetypes_in_dataclass_wf(ctx_with_test_raw_data_path, local_dum
             await t2(path=dc.inner_dc.dir),
         )
 
-    o = flyte.run(main, dc=DC())
+    dc = DC(
+        file=File(path=local_dummy_file),
+        dir=Dir(path=local_dummy_directory),
+        inner_dc=InnerDC(
+            file=File(path=local_dummy_file),
+            dir=Dir(path=local_dummy_directory),
+        ),
+    )
+    o = flyte.run(main, dc=dc)
     o1, o2, o3, o4 = o.outputs()
 
     async with o1.open() as fh:

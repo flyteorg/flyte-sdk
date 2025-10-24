@@ -363,10 +363,9 @@ class NativeInterface:
         try:
             # Get fully evaluated, real Python types for type checking.
             hints = typing.get_type_hints(func, include_extras=True)
-        except TypeError:
-            hints = typing.get_type_hints(func)
-        except Exception:
-            hints = {}
+        except Exception as e:
+            logger.warning(f"Could not get type hints for function {func.__name__}: {e}")
+            raise
 
         for name, param in sig.parameters.items():
             if param.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD):
