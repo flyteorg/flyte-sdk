@@ -7,6 +7,7 @@ import rich.repr
 from flyte import Environment
 from flyte.app._input import Input
 from flyte.app._types import Domain, Link, Port, Scaling
+from flyte.models import SerializationContext
 
 APP_NAME_RE = re.compile(r"[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*")
 
@@ -65,3 +66,9 @@ class AppEnvironment(Environment):
         for link in self.links:
             if not isinstance(link, Link):
                 raise TypeError(f"Expected links to be of type List[Link], got {type(link)}")
+
+    def container_args(self, serialize_context: SerializationContext) -> List[str]:
+        return []
+
+    def container_cmd(self, serialize_context: SerializationContext) -> List[str]:
+        return []
