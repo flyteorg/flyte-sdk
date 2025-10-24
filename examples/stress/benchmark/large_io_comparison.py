@@ -11,15 +11,6 @@ import flyte.io
 import flyte.storage
 from flyte.extras import ContainerTask
 
-old_env = flyte.TaskEnvironment(
-    "file_io_benchmark_old",
-    resources=flyte.Resources(
-        cpu=8,
-        memory="33Gi",
-    ),
-    image=flyte.Image.from_base("ghcr.io/flyteorg/flyte:py3.13-v2.0.0b24"),
-)
-
 s5cmd_image = (
     flyte.Image.from_debian_base(name="s5cmd-benchmark")
     .with_apt_packages("wget", "ca-certificates", "bc")
@@ -39,8 +30,8 @@ s5cmd_file_task = ContainerTask(
     name="s5cmd_download_file",
     image=s5cmd_image,
     resources=flyte.Resources(
-        cpu=4,
-        memory="16Gi",
+        cpu=8,
+        memory="32Gi",
     ),
     inputs={"remote_path": str, "file_size_mb": int},
     outputs={"duration": float, "throughput_mbps": float},
@@ -70,8 +61,8 @@ s5cmd_dir_task = ContainerTask(
     name="s5cmd_download_dir",
     image=s5cmd_image,
     resources=flyte.Resources(
-        cpu=4,
-        memory="16Gi",
+        cpu=8,
+        memory="32Gi",
     ),
     inputs={"remote_path": str, "expected_files": int},
     outputs={"duration": float, "throughput_mbps": float},
@@ -105,8 +96,8 @@ s5cmd_env = flyte.TaskEnvironment.from_task("s5cmd_env", s5cmd_file_task, s5cmd_
 env = flyte.TaskEnvironment(
     "file_io_benchmark",
     resources=flyte.Resources(
-        cpu=4,
-        memory="16Gi",
+        cpu=8,
+        memory="32Gi",
     ),
     depends_on=[s5cmd_env],
     image=flyte.Image.from_debian_base(name="io-benchmarker"),
@@ -228,11 +219,6 @@ async def read_large_file_new(f: flyte.io.File, hang: bool = False) -> Tuple[int
     return await download(f, hang)
 
 
-@old_env.task
-async def read_large_file_old(f: flyte.io.File, hang: bool = False) -> Tuple[int, float]:
-    return await download(f, hang)
-
-
 @env.task
 async def read_dir_new(d: flyte.io.Dir, hang: bool = False) -> Tuple[int, float]:
     return await download_dir(d, hang)
@@ -242,10 +228,7 @@ async def read_dir_new(d: flyte.io.Dir, hang: bool = False) -> Tuple[int, float]
 async def main(size_megabytes: int = 5120) -> Tuple[int, float]:
     large_file = await create_file(size_megabytes)
     t1 = asyncio.create_task(read_large_file_new(large_file))
-    t2 = asyncio.create_task(read_large_file_old(large_file))
-    r1, _ = await asyncio.gather(t1, t2)
-    # r1, = await asyncio.gather(t1)
-    # print(r1, r2)
+    r1, = await asyncio.gather(t1)
     return r1
 
 
@@ -262,17 +245,13 @@ async def benchmark_all():
 
     print("Running all downloads in parallel...")
     t1 = asyncio.create_task(read_large_file_new(large_file))
-    t2 = asyncio.create_task(read_large_file_old(large_file))
     t3 = asyncio.create_task(s5cmd_file_task(remote_path=large_file.path, file_size_mb=5120))
 
-    (bytes_new, time_new), (bytes_old, time_old), (s5cmd_time, s5cmd_throughput) = await asyncio.gather(t1, t2, t3)
+    (bytes_new, time_new), (s5cmd_time, s5cmd_throughput) = await asyncio.gather(t1, t3)
 
     print("\nResults for 5GB file:")
     print(
         f"  New SDK: {bytes_new / (1024**3):.2f} GB in {time_new:.2f}s ({bytes_new / time_new / (1024**2):.2f} MiB/s)"
-    )
-    print(
-        f"  Old SDK: {bytes_old / (1024**3):.2f} GB in {time_old:.2f}s ({bytes_old / time_old / (1024**2):.2f} MiB/s)"
     )
     print(f"  s5cmd:   {s5cmd_time:.2f}s ({s5cmd_throughput:.2f} MiB/s)")
 
