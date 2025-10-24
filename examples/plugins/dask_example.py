@@ -10,7 +10,7 @@ import flyte.storage
 from flyte import Resources
 
 dask_plugin = (
-    "git+https://github.com/flyteorg/flyte-sdk.git@bd0940ab493e9044bff59757b3f06e599c22c4be#subdirectory=plugins/dask"
+    "git+https://github.com/flyteorg/flyte-sdk.git@e988fead568f4dc2b8a0ccc04b05528e3895a306#subdirectory=plugins/dask"
 )
 image = flyte.Image.from_debian_base(python_version=(3, 12)).with_apt_packages("git").with_pip_packages(dask_plugin)
 
