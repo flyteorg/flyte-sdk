@@ -12,6 +12,7 @@ from flyte._logging import log, logger
 from flyte._task import TaskTemplate
 from flyte.models import ActionID, Checkpoints, CodeBundle, RawDataPath
 
+from ..._utils import adjust_sys_path
 from .convert import Error, Inputs, Outputs
 from .taskrunner import (
     convert_and_run,
@@ -121,6 +122,7 @@ async def download_code_bundle(code_bundle: CodeBundle) -> CodeBundle:
     :param code_bundle: The code bundle to download.
     :return: The code bundle with the downloaded path.
     """
+    adjust_sys_path()
     logger.debug(f"Downloading {code_bundle}")
     downloaded_path = await download_bundle(code_bundle)
     return code_bundle.with_downloaded_path(downloaded_path)

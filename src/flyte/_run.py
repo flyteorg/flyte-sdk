@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import pathlib
+import sys
 import uuid
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Tuple, Union, cast
@@ -28,6 +29,8 @@ from flyte.models import (
     TaskContext,
 )
 from flyte.syncify import syncify
+
+from ._constants import FLYTE_SYS_PATH
 
 if TYPE_CHECKING:
     from flyte.remote import Run
@@ -217,6 +220,12 @@ class _Runner:
                 env["LOG_LEVEL"] = str(self._log_level)
             else:
                 env["LOG_LEVEL"] = str(logger.getEffectiveLevel())
+
+        # These paths will be appended to sys.path at runtime.
+        if cfg.sync_local_sys_paths:
+            env[FLYTE_SYS_PATH] = ":".join(
+                f"./{pathlib.Path(p).relative_to(cfg.root_dir)}" for p in sys.path if p.startswith(str(cfg.root_dir))
+            )
 
         if not self._dry_run:
             if get_client() is None:
