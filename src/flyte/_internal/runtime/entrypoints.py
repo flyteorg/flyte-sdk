@@ -1,6 +1,5 @@
 import importlib
 import os
-import sys
 import traceback
 from typing import List, Optional, Tuple, Type
 
@@ -13,12 +12,12 @@ from flyte._logging import log, logger
 from flyte._task import TaskTemplate
 from flyte.models import ActionID, Checkpoints, CodeBundle, RawDataPath
 
+from ..._utils import adjust_sys_path
 from .convert import Error, Inputs, Outputs
 from .taskrunner import (
     convert_and_run,
     extract_download_run_upload,
 )
-from ..._utils import adjust_sys_path
 
 
 async def direct_dispatch(
@@ -132,7 +131,6 @@ async def _download_and_load_task(
     code_bundle: CodeBundle | None, resolver: str | None = None, resolver_args: List[str] | None = None
 ) -> TaskTemplate:
     adjust_sys_path()
-    print("sys.pathffff", sys.path)
     if code_bundle and (code_bundle.tgz or code_bundle.pkl):
         logger.debug(f"Downloading {code_bundle}")
         code_bundle = await download_code_bundle(code_bundle)

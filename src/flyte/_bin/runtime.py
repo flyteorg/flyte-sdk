@@ -12,8 +12,6 @@ from typing import Any, List
 
 import click
 
-from flyte._constants import FLYTE_SYS_PATH
-from flyte._utils import adjust_sys_path
 from flyte.models import PathRewrite
 
 # Todo: work with pvditt to make these the names
@@ -90,7 +88,7 @@ def main(
     resolver: str,
     resolver_args: List[str],
 ):
-    adjust_sys_path()
+    sys.path.insert(0, ".")
 
     import faulthandler
     import signal
