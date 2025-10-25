@@ -49,14 +49,15 @@ class ParquetToSparkDecoder(DataFrameDecoder):
         current_task_metadata: literals_pb2.StructuredDatasetMetadata,
     ) -> pyspark.sql.DataFrame:
         spark = pyspark.sql.SparkSession.builder.getOrCreate()
+        path = os.path.join(flyte_value.uri, f"{0:05}")
 
         print("[debug]: current_task_metadata:", current_task_metadata)
         print("[debug]: flyte_value.uri:", flyte_value.uri)
 
         if current_task_metadata.structured_dataset_type and current_task_metadata.structured_dataset_type.columns:
             columns = [c.name for c in current_task_metadata.structured_dataset_type.columns]
-            return spark.read.parquet(flyte_value.uri).select(*columns)
-        return spark.read.parquet(flyte_value.uri)
+            return spark.read.parquet(path).select(*columns)
+        return spark.read.parquet(path)
 
 
 DataFrameTransformerEngine.register(SparkToParquetEncoder(), default_format_for_type=True)

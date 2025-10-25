@@ -43,6 +43,7 @@ spark_env = flyte.TaskEnvironment(
 )
 
 
+@spark_env.task
 async def sum_of_all_ages(sd: pyspark.sql.DataFrame) -> int:
     """
     This task computes the sum of all ages in the provided Spark DataFrame.
