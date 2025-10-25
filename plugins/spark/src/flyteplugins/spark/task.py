@@ -88,8 +88,8 @@ class PysparkFunctionTask(AsyncFunctionTaskTemplate):
     async def post(self, return_vals: Any) -> Any:
         import pyspark as _pyspark
 
-        sess = _pyspark.sql.SparkSession.builder.appName(DEFAULT_SPARK_CONTEXT_NAME).getOrCreate()
-        sess.stop()
+        # sess = _pyspark.sql.SparkSession.builder.appName(DEFAULT_SPARK_CONTEXT_NAME).getOrCreate()
+        # sess.stop()
 
 
 TaskPluginRegistry.register(Spark, PysparkFunctionTask)

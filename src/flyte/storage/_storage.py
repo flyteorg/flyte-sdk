@@ -70,6 +70,10 @@ def get_random_local_path(file_path_or_file_name: pathlib.Path | str | None = No
     return tmp_folder
 
 
+def get_random_string() -> str:
+    return UUID(int=random.getrandbits(128)).hex
+
+
 def get_random_local_directory() -> pathlib.Path:
     """
     :return: a random directory

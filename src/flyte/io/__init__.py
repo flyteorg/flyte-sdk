@@ -7,6 +7,7 @@ of large datasets in Union.
 """
 
 __all__ = [
+    "PARQUET",
     "DataFrame",
     "DataFrameDecoder",
     "DataFrameEncoder",
@@ -17,6 +18,7 @@ __all__ = [
 ]
 
 from ._dataframe import (
+    PARQUET,
     DataFrame,
     DataFrameDecoder,
     DataFrameEncoder,
