@@ -4,9 +4,7 @@ from flyte.models import SerializationContext
 try:
     import fastapi
 except ModuleNotFoundError:
-    raise ModuleNotFoundError(
-        "fastapi is not installed. Please install the 'fastapi', to use FastAPI apps."
-    )
+    raise ModuleNotFoundError("fastapi is not installed. Please install the 'fastapi', to use FastAPI apps.")
 
 
 class FastAPIAppEnvironment(flyte.app.AppEnvironment):

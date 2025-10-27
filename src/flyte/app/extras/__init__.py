@@ -1,1 +1,3 @@
-from ._fastapi import F
+from ._fastapi import FastAPIAppEnvironment
+
+__all__ = ["FastAPIAppEnvironment"]
