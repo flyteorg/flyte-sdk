@@ -73,7 +73,7 @@ class BigQueryTask(AsyncConnectorExecutorMixin, TaskTemplate):
         if self.plugin_config.QueryJobConfig is not None:
             config.update(self.plugin_config.QueryJobConfig.to_api_repr()["query"])
         if self.google_application_credentials is not None:
-            config["google_application_credentials"] = f"{{ .secrets.{self.google_application_credentials} }}"
+            config["secrets"] = {"google_application_credentials:": self.google_application_credentials}
         s = Struct()
         s.update(config)
         return json_format.MessageToDict(s)

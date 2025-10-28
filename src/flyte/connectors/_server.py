@@ -3,6 +3,7 @@ from http import HTTPStatus
 from typing import Callable, Dict, Tuple, Type, Union
 
 import grpc
+from flyteidl2.core.security_pb2 import Connection
 from flyteidl2.plugins.connector_pb2 import (
     CreateTaskRequest,
     CreateTaskResponse,
@@ -107,6 +108,17 @@ def record_connector_metrics(func: Callable):
     return wrapper
 
 
+def _get_connection_kwargs(request: Connection) -> Dict[str, str]:
+    kwargs = {}
+
+    for k, v in request.secrets.items():
+        kwargs[k] = v
+    for k, v in request.configs.items():
+        kwargs[k] = v
+
+    return kwargs
+
+
 class AsyncConnectorService(AsyncConnectorServiceServicer):
     @record_connector_metrics
     async def CreateTask(self, request: CreateTaskRequest, context: grpc.ServicerContext) -> CreateTaskResponse:
@@ -124,6 +136,7 @@ class AsyncConnectorService(AsyncConnectorServiceServicer):
             inputs=native_inputs,
             output_prefix=request.output_prefix,
             task_execution_metadata=request.task_execution_metadata,
+            connection=_get_connection_kwargs(request.connection),
         )
         return CreateTaskResponse(resource_meta=resource_meta.encode())
 
@@ -131,14 +144,20 @@ class AsyncConnectorService(AsyncConnectorServiceServicer):
     async def GetTask(self, request: GetTaskRequest, context: grpc.ServicerContext) -> GetTaskResponse:
         connector = ConnectorRegistry.get_connector(request.task_category.name, request.task_category.version)
         logger.info(f"{connector.name} start checking the status of the job")
-        res = await connector.get(resource_meta=connector.metadata_type.decode(request.resource_meta))
+        res = await connector.get(
+            resource_meta=connector.metadata_type.decode(request.resource_meta),
+            connection=_get_connection_kwargs(request.connection),
+        )
         return GetTaskResponse(resource=await get_resource_proto(res))
 
     @record_connector_metrics
     async def DeleteTask(self, request: DeleteTaskRequest, context: grpc.ServicerContext) -> DeleteTaskResponse:
         connector = ConnectorRegistry.get_connector(request.task_category.name, request.task_category.version)
         logger.info(f"{connector.name} start deleting the job")
-        await connector.delete(resource_meta=connector.metadata_type.decode(request.resource_meta))
+        await connector.delete(
+            resource_meta=connector.metadata_type.decode(request.resource_meta),
+            connection=_get_connection_kwargs(request.connection),
+        )
         return DeleteTaskResponse()
 
     async def GetTaskMetrics(

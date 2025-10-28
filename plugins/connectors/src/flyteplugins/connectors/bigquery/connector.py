@@ -1,5 +1,6 @@
 import datetime
 from dataclasses import dataclass
+from functools import lru_cache
 from typing import Any, Dict, Optional
 
 from flyte import logger
@@ -36,6 +37,19 @@ class BigQueryMetadata(ResourceMeta):
     job_id: str
     project: str
     location: str
+    user_agent: str
+
+
+@lru_cache
+def _get_bigquery_client(
+    project: str, location: str, user_agent: str, google_application_credentials: str
+) -> bigquery.Client:
+    if google_application_credentials is not None:
+        credentials = service_account.Credentials.from_service_account_info(google_application_credentials)
+    else:
+        credentials = None
+    cinfo = ClientInfo(user_agent=user_agent)
+    return bigquery.Client(project=project, location=location, client_info=cinfo, credentials=credentials)
 
 
 class BigQueryConnector(AsyncConnector):
@@ -68,27 +82,28 @@ class BigQueryConnector(AsyncConnector):
         sdk_version = task_template.metadata.runtime.version
 
         user_agent = f"Flyte/{sdk_version} (GPN:Union;{domain or ''})"
-        cinfo = ClientInfo(user_agent=user_agent)
-
         project = custom["ProjectID"]
         location = custom["Location"]
 
-        if custom.get("google_application_credentials") is not None:
-            google_application_credentials = service_account.Credentials.from_service_account_info(
-                custom["google_application_credentials"]
-            )
-        else:
-            google_application_credentials = None
-
-        client = bigquery.Client(
-            project=project, location=location, client_info=cinfo, credentials=google_application_credentials
+        client = _get_bigquery_client(
+            project=project,
+            location=location,
+            user_agent=user_agent,
+            google_application_credentials=custom.get("google_application_credentials"),
         )
         query_job = client.query(task_template.sql.statement, job_config=job_config)
 
-        return BigQueryMetadata(job_id=str(query_job.job_id), location=location, project=project)
+        return BigQueryMetadata(job_id=str(query_job.job_id), location=location, project=project, user_agent=user_agent)
 
-    async def get(self, resource_meta: BigQueryMetadata, **kwargs) -> Resource:
-        client = bigquery.Client()
+    async def get(
+        self, resource_meta: BigQueryMetadata, google_application_credentials: Optional[str] = None, **kwargs
+    ) -> Resource:
+        client = _get_bigquery_client(
+            project=resource_meta.project,
+            location=resource_meta.location,
+            user_agent=resource_meta.user_agent,
+            google_application_credentials=google_application_credentials,
+        )
         log_link = TaskLog(
             uri=f"https://console.cloud.google.com/bigquery?project={resource_meta.project}&j=bq:{resource_meta.location}:{resource_meta.job_id}&page=queryresults",
             name="BigQuery Console",
@@ -110,8 +125,15 @@ class BigQueryConnector(AsyncConnector):
 
         return Resource(phase=cur_phase, message=str(job.state), log_links=[log_link], outputs=res)
 
-    async def delete(self, resource_meta: BigQueryMetadata, **kwargs):
-        client = bigquery.Client()
+    async def delete(
+        self, resource_meta: BigQueryMetadata, google_application_credentials: Optional[str] = None, **kwargs
+    ):
+        client = _get_bigquery_client(
+            project=resource_meta.project,
+            location=resource_meta.location,
+            user_agent=resource_meta.user_agent,
+            google_application_credentials=google_application_credentials,
+        )
         client.cancel_job(resource_meta.job_id, resource_meta.project, resource_meta.location)
 
 
