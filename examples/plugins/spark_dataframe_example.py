@@ -89,7 +89,7 @@ async def dataframe_transformer() -> int:
 # You can execute the code locally as if it was a normal Python script.
 if __name__ == "__main__":
     flyte.init_from_config()
-    run = flyte.with_runcontext(mode="local").run(dataframe_transformer)
+    run = flyte.with_runcontext(mode="remote").run(dataframe_transformer)
     print("run name:", run.name)
     print("run url:", run.url)
 

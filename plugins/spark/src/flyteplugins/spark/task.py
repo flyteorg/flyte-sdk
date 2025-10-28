@@ -86,10 +86,15 @@ class PysparkFunctionTask(AsyncFunctionTaskTemplate):
         return MessageToDict(job)
 
     async def post(self, return_vals: Any) -> Any:
-        import pyspark as _pyspark
-
-        # sess = _pyspark.sql.SparkSession.builder.appName(DEFAULT_SPARK_CONTEXT_NAME).getOrCreate()
-        # sess.stop()
+        ctx = flyte.ctx()
+        if ctx and ctx.action.name == "a0":
+            # Only stop the SparkSession if it was created by the parent task in the debug mode.
+            # This is to make sure that the SparkSession is stopped by
+            # parent action only when debugging in the interactive mode.
+            # Note: The action name is always "a0" in the debug mode.
+            import pyspark as _pyspark
+            sess = _pyspark.sql.SparkSession.builder.appName(DEFAULT_SPARK_CONTEXT_NAME).getOrCreate()
+            sess.stop()
 
 
 TaskPluginRegistry.register(Spark, PysparkFunctionTask)
