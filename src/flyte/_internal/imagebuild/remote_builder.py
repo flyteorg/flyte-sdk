@@ -16,6 +16,7 @@ import flyte.errors
 from flyte import Image, remote
 from flyte._code_bundle._utils import tar_strip_file_attributes
 from flyte._image import (
+    _BASE_REGISTRY,
     AptPackages,
     Architecture,
     Commands,
@@ -24,6 +25,7 @@ from flyte._image import (
     Env,
     PipOption,
     PipPackages,
+    PoetryProject,
     PythonWheels,
     Requirements,
     UVProject,
@@ -111,10 +113,15 @@ class RemoteImageBuilder(ImageBuilder):
         ).override.aio(secrets=_get_build_secrets_from_image(image))
 
         logger.warning("[bold blue]🐳 Submitting a new build...[/bold blue]")
+        if image.registry and image.registry != _BASE_REGISTRY:
+            target_image = f"{image.registry}/{image_name}"
+        else:
+            # Use the default system registry in the backend.
+            target_image = image_name
         run = cast(
             Run,
             await flyte.with_runcontext(project=IMAGE_TASK_PROJECT, domain=IMAGE_TASK_DOMAIN).run.aio(
-                entity, spec=spec, context=context, target_image=image_name
+                entity, spec=spec, context=context, target_image=target_image
             ),
         )
         logger.warning(f"⏳ Waiting for build to finish at: [bold cyan link={run.url}]{run.url}[/bold cyan link]")
@@ -127,7 +134,7 @@ class RemoteImageBuilder(ImageBuilder):
         if run_details.action_details.raw_phase == run_definition_pb2.PHASE_SUCCEEDED:
             logger.warning(f"[bold green]✅ Build completed in {elapsed}![/bold green]")
         else:
-            raise flyte.errors.ImageBuildError(f"❌ Build failed in {elapsed} at [cyan]{run.url}[/cyan]")
+            raise flyte.errors.ImageBuildError(f"❌ Build failed in {elapsed} at {run.url}")
 
         outputs = await run_details.outputs()
         return _get_fully_qualified_image_name(outputs)
@@ -191,7 +198,7 @@ def _get_layers_proto(image: Image, context_path: Path) -> "image_definition_pb2
     layers = []
     for layer in image._layers:
         secret_mounts = None
-        pip_options = None
+        pip_options = image_definition_pb2.PipOptions()
 
         if isinstance(layer, PipOption):
             pip_options = image_definition_pb2.PipOptions(
@@ -257,9 +264,16 @@ def _get_layers_proto(image: Image, context_path: Path) -> "image_definition_pb2
                 if "tool.uv.index" in line:
                     raise ValueError("External sources are not supported in pyproject.toml")
 
-            if layer.extra_args and "--no-install-project" in layer.extra_args:
+            if layer.project_install_mode == "dependencies_only":
                 # Copy pyproject itself
                 pyproject_dst = copy_files_to_context(layer.pyproject, context_path)
+                if pip_options.extra_args:
+                    if "--no-install-project" not in pip_options.extra_args:
+                        pip_options.extra_args += " --no-install-project"
+                else:
+                    pip_options.extra_args = " --no-install-project"
+                if "--no-sources" not in pip_options.extra_args:
+                    pip_options.extra_args += " --no-sources"
             else:
                 # Copy the entire project
                 docker_ignore_patterns = get_and_list_dockerignore(image)
@@ -274,6 +288,27 @@ def _get_layers_proto(image: Image, context_path: Path) -> "image_definition_pb2
                 )
             )
             layers.append(uv_layer)
+        elif isinstance(layer, PoetryProject):
+            for line in layer.pyproject.read_text().splitlines():
+                if "tool.poetry.source" in line:
+                    raise ValueError("External sources are not supported in pyproject.toml")
+
+            if layer.extra_args and "--no-root" in layer.extra_args:
+                # Copy pyproject itself
+                pyproject_dst = copy_files_to_context(layer.pyproject, context_path)
+            else:
+                # Copy the entire project
+                pyproject_dst = copy_files_to_context(layer.pyproject.parent, context_path)
+
+            poetry_layer = image_definition_pb2.Layer(
+                poetry_project=image_definition_pb2.PoetryProject(
+                    pyproject=str(pyproject_dst.relative_to(context_path)),
+                    poetry_lock=str(copy_files_to_context(layer.poetry_lock, context_path).relative_to(context_path)),
+                    extra_args=layer.extra_args,
+                    secret_mounts=secret_mounts,
+                )
+            )
+            layers.append(poetry_layer)
         elif isinstance(layer, Commands):
             commands_layer = image_definition_pb2.Layer(
                 commands=image_definition_pb2.Commands(
@@ -332,4 +367,9 @@ def _get_build_secrets_from_image(image: Image) -> Optional[typing.List[Secret]]
                 else:
                     raise ValueError(f"Unsupported secret_mount type: {type(secret_mount)}")
 
+    image_registry_secret = image._image_registry_secret
+    if image_registry_secret:
+        secrets.append(
+            Secret(key=image_registry_secret.key, group=image_registry_secret.group, mount=DEFAULT_SECRET_DIR)
+        )
     return secrets

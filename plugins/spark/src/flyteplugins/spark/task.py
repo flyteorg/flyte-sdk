@@ -8,7 +8,7 @@ import flyte
 from flyte import PodTemplate
 from flyte.extend import AsyncFunctionTaskTemplate, TaskPluginRegistry
 from flyte.models import SerializationContext
-from flyteidl.plugins.spark_pb2 import SparkApplication, SparkJob
+from flyteidl2.plugins.spark_pb2 import SparkApplication, SparkJob
 from google.protobuf.json_format import MessageToDict
 
 DEFAULT_SPARK_CONTEXT_NAME = "FlyteSpark"
@@ -52,6 +52,7 @@ class PysparkFunctionTask(AsyncFunctionTaskTemplate):
 
     plugin_config: Spark
     task_type: str = "spark"
+    debuggable: bool = True
 
     async def pre(self, *args, **kwargs) -> Dict[str, Any]:
         import pyspark as _pyspark

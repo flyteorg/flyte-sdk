@@ -114,13 +114,20 @@ class CLIConfig:
         """
         return replace(self, **kwargs)
 
-    def init(self, project: str | None = None, domain: str | None = None, root_dir: str | None = None):
+    def init(
+        self,
+        project: str | None = None,
+        domain: str | None = None,
+        root_dir: str | None = None,
+        images: tuple[str, ...] | None = None,
+        sync_local_sys_paths: bool = True,
+    ):
         from flyte.config._config import TaskConfig
 
         task_cfg = TaskConfig(
             org=self.org or self.config.task.org,
-            project=project or self.config.task.project,
-            domain=domain or self.config.task.domain,
+            project=project if project is not None else self.config.task.project,
+            domain=domain if domain is not None else self.config.task.domain,
         )
 
         kwargs: Dict[str, Any] = {}
@@ -134,7 +141,13 @@ class CLIConfig:
 
         updated_config = self.config.with_params(platform_cfg, task_cfg)
 
-        flyte.init_from_config(updated_config, log_level=self.log_level, root_dir=root_dir)
+        flyte.init_from_config(
+            updated_config,
+            log_level=self.log_level,
+            root_dir=root_dir,
+            images=images,
+            sync_local_sys_paths=sync_local_sys_paths,
+        )
 
 
 class InvokeBaseMixin:
@@ -413,13 +426,39 @@ def get_console() -> Console:
     return Console(color_system="auto", force_terminal=True, width=120)
 
 
+def parse_images(cfg: Config, values: tuple[str, ...] | None) -> None:
+    """
+    Parse image values and update the config.
+
+    Args:
+        cfg: The Config object to write images to
+        values: List of image strings in format "imagename=imageuri" or just "imageuri"
+    """
+    if values is None:
+        return
+    for value in values:
+        if "=" in value:
+            image_name, image_uri = value.split("=", 1)
+            cfg.image.image_refs[image_name] = image_uri
+        else:
+            # If no name specified, use "default" as the name
+            cfg.image.image_refs["default"] = value
+
+
 @lru_cache()
-def initialize_config(ctx: click.Context, project: str, domain: str, root_dir: str | None = None):
+def initialize_config(
+    ctx: click.Context,
+    project: str,
+    domain: str,
+    root_dir: str | None = None,
+    images: tuple[str, ...] | None = None,
+    sync_local_sys_paths: bool = True,
+):
     obj: CLIConfig | None = ctx.obj
     if obj is None:
         import flyte.config
 
         obj = CLIConfig(flyte.config.auto(), ctx)
 
-    obj.init(project, domain, root_dir)
+    obj.init(project, domain, root_dir, images, sync_local_sys_paths)
     return obj
