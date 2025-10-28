@@ -20,8 +20,7 @@ from flyteidl2.secret import secret_pb2_grpc
 from flyteidl2.task import task_service_pb2_grpc
 from flyteidl2.trigger import trigger_service_pb2_grpc
 from flyteidl2.workflow import run_logs_service_pb2_grpc, run_service_pb2_grpc
-
-from flyte._protos.app import app_service_pb2_grpc
+from flyteidl2.app import app_service_pb2_grpc
 
 from ._protocols import (
     AppService,
@@ -40,11 +39,11 @@ from .auth import create_channel
 
 class ClientSet:
     def __init__(
-        self,
-        channel: grpc.aio.Channel,
-        endpoint: str,
-        insecure: bool = False,
-        **kwargs,
+            self,
+            channel: grpc.aio.Channel,
+            endpoint: str,
+            insecure: bool = False,
+            **kwargs,
     ):
         self.endpoint = endpoint
         self.insecure = insecure

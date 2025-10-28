@@ -85,8 +85,8 @@ async def _deploy_app(
 
     # TODO We need to handle uploading include files, ideally this is part of code bundle
     # The reason is at this point, we already have a code bundle created.
-    additional_distribution = await upload_include_files(app)
-    materialized_inputs = {}
+    # additional_distribution = await upload_include_files(app)
+    # materialized_inputs = {}
 
     image_uri = app.image.uri if isinstance(app.image, Image) else app.image
     try:
