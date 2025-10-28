@@ -34,6 +34,7 @@ class CommonInit:
     domain: str | None = None
     batch_size: int = 1000
     source_config_path: Optional[Path] = None  # Only used for documentation
+    sync_local_sys_paths: bool = True
 
 
 @dataclass(init=True, kw_only=True, repr=True, eq=True, frozen=True)
@@ -144,6 +145,7 @@ async def init(
     image_builder: ImageBuildEngine.ImageBuilderType = "local",
     images: typing.Dict[str, str] | None = None,
     source_config_path: Optional[Path] = None,
+    sync_local_sys_paths: bool = True,
 ) -> None:
     """
     Initialize the Flyte system with the given configuration. This method should be called before any other Flyte
@@ -180,6 +182,8 @@ async def init(
     :param image_builder: Optional image builder configuration, if not provided, the default image builder will be used.
     :param images: Optional dict of images that can be used by referencing the image name.
     :param source_config_path: Optional path to the source configuration file (This is only used for documentation)
+    :param sync_local_sys_paths: Whether to include and synchronize local sys.path entries under the root directory
+     into the remote container (default: True).
     :return: None
     """
     from flyte._utils import get_cwd_editable_install, org_from_endpoint, sanitize_endpoint
@@ -230,6 +234,7 @@ async def init(
             image_builder=image_builder,
             images=images or {},
             source_config_path=source_config_path,
+            sync_local_sys_paths=sync_local_sys_paths,
         )
 
 
@@ -240,6 +245,7 @@ async def init_from_config(
     log_level: int | None = None,
     storage: Storage | None = None,
     images: tuple[str, ...] | None = None,
+    sync_local_sys_paths: bool = True,
 ) -> None:
     """
     Initialize the Flyte system using a configuration file or Config object. This method should be called before any
@@ -253,6 +259,9 @@ async def init_from_config(
     :param log_level: Optional logging level for the framework logger,
         default is set using the default initialization policies
     :param storage: Optional blob store (S3, GCS, Azure) configuration if needed to access (i.e. using Minio)
+    :param images: List of image strings in format "imagename=imageuri" or just "imageuri".
+    :param sync_local_sys_paths: Whether to include and synchronize local sys.path entries under the root directory
+     into the remote container (default: True).
     :return: None
     """
     from rich.highlighter import ReprHighlighter
@@ -306,6 +315,7 @@ async def init_from_config(
         images=cfg.image.image_refs,
         storage=storage,
         source_config_path=cfg_path,
+        sync_local_sys_paths=sync_local_sys_paths,
     )
 
 

@@ -355,10 +355,18 @@ class NativeInterface:
         """
         Extract the native interface from the given function. This is used to create a native interface for the task.
         """
+        # Get function parameters, defaults, varargs info (POSITIONAL_ONLY, VAR_POSITIONAL, KEYWORD_ONLY, etc.).
         sig = inspect.signature(func)
 
         # Extract parameter details (name, type, default value)
         param_info = {}
+        try:
+            # Get fully evaluated, real Python types for type checking.
+            hints = typing.get_type_hints(func, include_extras=True)
+        except Exception as e:
+            logger.warning(f"Could not get type hints for function {func.__name__}: {e}")
+            raise
+
         for name, param in sig.parameters.items():
             if param.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD):
                 raise ValueError(f"Function {func.__name__} cannot have variable positional or keyword arguments.")
@@ -366,13 +374,14 @@ class NativeInterface:
                 logger.warning(
                     f"Function {func.__name__} has parameter {name} without type annotation. Data will be pickled."
                 )
-            if typing.get_origin(param.annotation) is Literal:
-                param_info[name] = (literal_to_enum(param.annotation), param.default)
+            arg_type = hints.get(name, param.annotation)
+            if typing.get_origin(arg_type) is Literal:
+                param_info[name] = (literal_to_enum(arg_type), param.default)
             else:
-                param_info[name] = (param.annotation, param.default)
+                param_info[name] = (arg_type, param.default)
 
         # Get return type
-        outputs = extract_return_annotation(sig.return_annotation)
+        outputs = extract_return_annotation(hints.get("return", sig.return_annotation))
         return cls(inputs=param_info, outputs=outputs)
 
     def convert_to_kwargs(self, *args, **kwargs) -> Dict[str, Any]:

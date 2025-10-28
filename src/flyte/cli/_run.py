@@ -86,6 +86,26 @@ class RunArguments:
             )
         },
     )
+    raw_data_path: str | None = field(
+        default=None,
+        metadata={
+            "click.option": click.Option(
+                ["--raw-data-path"],
+                type=str,
+                help="Override the output prefix used to store offloaded data types. e.g. s3://bucket/",
+            )
+        },
+    )
+    service_account: str | None = field(
+        default=None,
+        metadata={
+            "click.option": click.Option(
+                ["--service-account"],
+                type=str,
+                help="Kubernetes service account. If not provided, the configured default will be used",
+            )
+        },
+    )
     name: str | None = field(
         default=None,
         metadata={
@@ -119,6 +139,19 @@ class RunArguments:
             )
         },
     )
+    no_sync_local_sys_paths: bool = field(
+        default=True,
+        metadata={
+            "click.option": click.Option(
+                ["--no-sync-local-sys-paths"],
+                is_flag=True,
+                flag_value=True,
+                default=False,
+                help="Disable synchronization of local sys.path entries under the root directory "
+                "to the remote container.",
+            )
+        },
+    )
 
     @classmethod
     def from_dict(cls, d: Dict[str, Any]) -> RunArguments:
@@ -142,7 +175,12 @@ class RunTaskCommand(click.RichCommand):
 
     def invoke(self, ctx: click.Context):
         obj: CLIConfig = initialize_config(
-            ctx, self.run_args.project, self.run_args.domain, self.run_args.root_dir, tuple(self.run_args.image) or None
+            ctx,
+            self.run_args.project,
+            self.run_args.domain,
+            self.run_args.root_dir,
+            tuple(self.run_args.image) or None,
+            not self.run_args.no_sync_local_sys_paths,
         )
 
         async def _run():
@@ -153,6 +191,8 @@ class RunTaskCommand(click.RichCommand):
                 copy_style=self.run_args.copy_style,
                 mode="local" if self.run_args.local else "remote",
                 name=self.run_args.name,
+                raw_data_path=self.run_args.raw_data_path,
+                service_account=self.run_args.service_account,
             ).run.aio(self.obj, **ctx.params)
             if self.run_args.local:
                 console.print(
@@ -219,11 +259,23 @@ class TaskPerFileGroup(common.ObjectsPerFileGroup):
         return {k: v for k, v in module.__dict__.items() if isinstance(v, TaskTemplate)}
 
     def list_commands(self, ctx):
-        common.initialize_config(ctx, self.run_args.project, self.run_args.domain, self.run_args.root_dir)
+        common.initialize_config(
+            ctx,
+            self.run_args.project,
+            self.run_args.domain,
+            self.run_args.root_dir,
+            sync_local_sys_paths=not self.run_args.no_sync_local_sys_paths,
+        )
         return super().list_commands(ctx)
 
     def get_command(self, ctx, obj_name):
-        common.initialize_config(ctx, self.run_args.project, self.run_args.domain, self.run_args.root_dir)
+        common.initialize_config(
+            ctx,
+            self.run_args.project,
+            self.run_args.domain,
+            self.run_args.root_dir,
+            sync_local_sys_paths=not self.run_args.no_sync_local_sys_paths,
+        )
         return super().get_command(ctx, obj_name)
 
     def _get_command_for_obj(self, ctx: click.Context, obj_name: str, obj: Any) -> click.Command:
@@ -246,7 +298,12 @@ class RunReferenceTaskCommand(click.RichCommand):
 
     def invoke(self, ctx: click.Context):
         obj: CLIConfig = common.initialize_config(
-            ctx, self.run_args.project, self.run_args.domain, self.run_args.root_dir, tuple(self.run_args.image) or None
+            ctx,
+            self.run_args.project,
+            self.run_args.domain,
+            self.run_args.root_dir,
+            tuple(self.run_args.image) or None,
+            not self.run_args.no_sync_local_sys_paths,
         )
 
         async def _run():
@@ -284,7 +341,12 @@ class RunReferenceTaskCommand(click.RichCommand):
         import flyte.remote
         from flyte._internal.runtime.types_serde import transform_native_to_typed_interface
 
-        common.initialize_config(ctx, self.run_args.project, self.run_args.domain)
+        common.initialize_config(
+            ctx,
+            self.run_args.project,
+            self.run_args.domain,
+            sync_local_sys_paths=not self.run_args.no_sync_local_sys_paths,
+        )
 
         task = flyte.remote.Task.get(self.task_name, auto_version="latest")
         task_details = task.fetch()
