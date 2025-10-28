@@ -255,7 +255,6 @@ async def _build_images(deployment: DeploymentPlan, image_refs: Dict[str, str] |
 
     for env_name, image_uri in final_images:
         logger.warning(f"Built Image for environment {env_name}, image: {image_uri}")
-        env = deployment.envs[env_name]
         image_identifier_map[env_name] = image_uri
 
     return ImageCache(image_lookup=image_identifier_map)

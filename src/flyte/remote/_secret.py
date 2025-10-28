@@ -76,7 +76,7 @@ class Secret(ToJSONMixin):
 
     @syncify
     @classmethod
-    async def listall(cls, limit: int = 100) -> AsyncIterator[Secret]:
+    async def listall(cls, limit: int = 10) -> AsyncIterator[Secret]:
         ensure_client()
         cfg = get_init_config()
         token = None
