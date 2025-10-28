@@ -30,6 +30,10 @@ def bootstrap_ssl_from_server(endpoint: str) -> grpc.ChannelCredentials:
     :param endpoint: The endpoint URL to retrieve the SSL certificate from, may include port number
     :return: gRPC channel credentials created from the retrieved certificate
     """
+    # Strip dns:/// prefix if present (added by sanitize_endpoint)
+    if endpoint.startswith("dns:///"):
+        endpoint = endpoint[7:]
+
     # Get port from endpoint or use 443
     endpoint_parts = endpoint.rsplit(":", 1)
     if len(endpoint_parts) == 2 and endpoint_parts[1].isdigit():
@@ -38,8 +42,9 @@ def bootstrap_ssl_from_server(endpoint: str) -> grpc.ChannelCredentials:
         logger.warning(f"Unrecognized port in endpoint [{endpoint}], defaulting to 443.")
         server_address = (endpoint, 443)
 
-    # Run the blocking SSL certificate retrieval in a thread pool
-    cert = ssl.get_server_certificate(server_address)
+    # Run the blocking SSL certificate retrieval with a timeout
+    logger.debug(f"Retrieving SSL certificate from {server_address}")
+    cert = ssl.get_server_certificate(server_address, timeout=10)
     return grpc.ssl_channel_credentials(str.encode(cert))
 
 
