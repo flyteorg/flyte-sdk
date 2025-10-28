@@ -4,11 +4,11 @@ import typing
 from dataclasses import dataclass
 
 import flyte._deployer as deployer
-import flyte.errors
 from flyte import Image
 from flyte._initialize import ensure_client, get_client
 from flyte._logging import logger
 from flyte.models import SerializationContext
+
 from ._app_environment import AppEnvironment
 
 if typing.TYPE_CHECKING:
@@ -39,6 +39,13 @@ async def upload_include_files(app: AppEnvironment) -> str | None:
 class DeployedAppEnvironment(deployer.DeployedEnvironment):
     env: AppEnvironment
     deployed_app: app_definition_pb2.App
+
+    def get_name(self) -> str:
+        """
+        Returns the name of the deployed environment.
+        Returns:
+        """
+        return self.env.name
 
     def env_repr(self) -> typing.List[typing.Tuple[str, ...]]:
         return [

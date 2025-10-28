@@ -21,7 +21,6 @@ from ._task_environment import TaskEnvironment
 
 if TYPE_CHECKING:
     from flyteidl2.task import task_definition_pb2
-    from flyteidl2.trigger import trigger_definition_pb2
 
     from ._code_bundle import CopyFiles
     from ._deployer import DeploymentContext
@@ -39,7 +38,14 @@ class DeploymentPlan:
 @dataclass
 class DeployedTask:
     deployed_task: task_definition_pb2.TaskSpec
-    deployed_triggers: List[trigger_definition_pb2.TaskTrigger]
+    deployed_triggers: List[task_definition_pb2.TaskTrigger]
+
+    def get_name(self) -> str:
+        """
+        Returns the name of the deployed environment.
+        Returns:
+        """
+        return self.deployed_task.task_template.id.name
 
     def summary_repr(self) -> str:
         """
@@ -50,7 +56,7 @@ class DeployedTask:
             f"version={self.deployed_task.task_template.id.version})"
         )
 
-    def table_repr(self) -> List[Tuple[str, str]]:
+    def table_repr(self) -> List[Tuple[str, ...]]:
         """
         Returns a table representation of the deployed task.
         """
@@ -162,15 +168,16 @@ async def _deploy_task(
             name=spec.task_template.id.name,
         )
 
-        deployable_triggers_coros = []
+        deployable_triggers = []
         for t in task.triggers:
             inputs = spec.task_template.interface.inputs
             default_inputs = spec.default_inputs
-            deployable_triggers_coros.append(
-                to_task_trigger(t=t, task_name=task.name, task_inputs=inputs, task_default_inputs=list(default_inputs))
+            deployable_triggers.append(
+                await to_task_trigger(
+                    t=t, task_name=task.name, task_inputs=inputs, task_default_inputs=list(default_inputs)
+                )
             )
 
-        deployable_triggers = await asyncio.gather(*deployable_triggers_coros)
         try:
             await get_client().task_service.DeployTask(
                 task_service_pb2.DeployTaskRequest(

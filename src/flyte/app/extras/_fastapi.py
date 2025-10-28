@@ -1,8 +1,8 @@
 from inspect import getmembers
 
 import flyte.app
-from flyte.models import SerializationContext
 from flyte._module import extract_obj_module
+from flyte.models import SerializationContext
 
 try:
     import fastapi

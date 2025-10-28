@@ -228,7 +228,6 @@ def lookup_image_in_cache(serialize_context: SerializationContext, env_name: str
     return serialize_context.image_cache.image_lookup[env_name]
 
 
-
 def _get_urun_container(
     serialize_context: SerializationContext, task_template: TaskTemplate
 ) -> Optional[tasks_pb2.Container]:
