@@ -34,7 +34,7 @@ def main(
     import signal
     from subprocess import Popen
 
-    from flyte._app_runtime.constants import _RUNTIME_CONFIG_FILE
+    from flyte.app._runtime import RUNTIME_CONFIG_FILE
     from flyte.models import CodeBundle
 
     serve_config = {}
@@ -51,11 +51,11 @@ def main(
     if inputs_json:
         download_inputs(inputs_json)
 
-    serve_file = os.path.join(os.getcwd(), _RUNTIME_CONFIG_FILE)
+    serve_file = os.path.join(os.getcwd(), RUNTIME_CONFIG_FILE)
     with open(serve_file, "w") as f:
         json.dump(serve_config, f)
 
-    os.environ[_RUNTIME_CONFIG_FILE] = serve_file
+    os.environ[RUNTIME_CONFIG_FILE] = serve_file
 
     command_joined = " ".join(command)
     logger.info(f"Serving command: {command_joined}")

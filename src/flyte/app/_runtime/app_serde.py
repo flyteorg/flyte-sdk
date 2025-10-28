@@ -8,7 +8,7 @@ the AppIDL protobuf format, using SerializationContext for configuration.
 from __future__ import annotations
 
 from copy import deepcopy
-from typing import Optional, Union
+from typing import List, Optional, Union
 
 from flyteidl2.app import app_definition_pb2
 from flyteidl2.common import runtime_version_pb2
@@ -17,9 +17,10 @@ from google.protobuf.duration_pb2 import Duration
 
 import flyte
 import flyte.errors
+import flyte.io
 from flyte._internal.runtime.resources_serde import get_proto_extended_resources, get_proto_resources
 from flyte._internal.runtime.task_serde import get_security_context, lookup_image_in_cache
-from flyte.app import AppEnvironment, Scaling
+from flyte.app import AppEnvironment, Input, Scaling
 from flyte.models import SerializationContext
 
 
@@ -205,6 +206,29 @@ def _get_scaling_metric(
     return None
 
 
+def translate_inputs(inputs: List[Input]) -> app_definition_pb2.InputList:
+    """
+    Placeholder for translating inputs to protobuf format.
+
+    Returns:
+        InputList protobuf message
+    """
+    if not inputs:
+        return app_definition_pb2.InputList()
+
+    inputs_list = []
+    for input in inputs:
+        if isinstance(input.value, str):
+            inputs_list.append(app_definition_pb2.Input(name=input.name, string_value=input.value))
+        elif isinstance(input.value, flyte.io.File):
+            inputs_list.append(app_definition_pb2.Input(name=input.name, string_value=str(input.value.path)))
+        elif isinstance(input.value, flyte.io.Dir):
+            inputs_list.append(app_definition_pb2.Input(name=input.name, string_value=str(input.value.path)))
+        else:
+            raise ValueError(f"Unsupported input value type: {type(input.value)}")
+    return app_definition_pb2.InputList(items=inputs_list)
+
+
 def translate_app_env_to_idl(
     app_env: AppEnvironment,
     serialization_context: SerializationContext,
@@ -315,6 +339,6 @@ def translate_app_env_to_idl(
             links=links,
             container=container,
             pod=pod,
-            # inputs=app_env.inputs,  # TODO fix this!
+            inputs=translate_inputs(app_env.inputs),
         ),
     )

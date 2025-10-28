@@ -1,1 +1,0 @@
-_RUNTIME_CONFIG_FILE = "flyte-serve.json"

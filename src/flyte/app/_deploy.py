@@ -74,7 +74,7 @@ async def _deploy_app(
     from flyteidl2.app import app_payload_pb2
 
     import flyte.remote
-    from flyte._internal.runtime.app_serde import translate_app_to_wire, upload_include_files
+    from flyte.app._runtime import translate_app_env_to_idl
 
     # TODO We need to handle uploading include files, ideally this is part of code bundle
     # The reason is at this point, we already have a code bundle created.
@@ -83,7 +83,7 @@ async def _deploy_app(
 
     image_uri = app.image.uri if isinstance(app.image, Image) else app.image
     try:
-        app_idl = translate_app_to_wire(app, serialization_context)
+        app_idl = translate_app_env_to_idl(app, serialization_context)
         if dryrun:
             return app_idl
         msg = f"Deploying app {app.name}, with image {image_uri} version {serialization_context.version}"

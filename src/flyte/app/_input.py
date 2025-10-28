@@ -1,5 +1,6 @@
 import re
 from dataclasses import dataclass, field
+from functools import cache
 from typing import Literal, Optional
 
 import flyte.io
@@ -42,3 +43,19 @@ class Input:
 
         if self.name is None:
             self.name = "i0"
+
+
+@cache
+def get_input(name: str) -> str:
+    """Get inputs for application or endpoint."""
+    import json
+    import os
+
+    from ._runtime import RUNTIME_CONFIG_FILE
+
+    config_file = os.getenv(RUNTIME_CONFIG_FILE)
+
+    with open(config_file, "r") as f:
+        inputs = json.load(f)["inputs"]
+
+    return inputs[name]
