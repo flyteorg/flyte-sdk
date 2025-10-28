@@ -84,6 +84,17 @@ class AppEnvironment(Environment):
         if self.command is None:
             # Default command
             cmd = ["fserve"]
+            # @click.option("--inputs", "-i")
+            # @click.option("--version", required=True)
+            # @click.option("--interactive-mode", type=click.BOOL, required=False)
+            # @click.option("--image-cache", required=False)
+            # @click.option("--tgz", required=False)
+            # @click.option("--pkl", required=False)
+            # @click.option("--dest", required=False)
+            # @click.option("--project", envvar=PROJECT_NAME, required=False)
+            # @click.option("--domain", envvar=DOMAIN_NAME, required=False)
+            # @click.option("--org", envvar=ORG_NAME, required=False)
+            # @click.argument("command", nargs=-1, type=click.UNPROCESSED)
 
             if serialize_context.code_bundle is not None:
                 # TODO: Add serve config construction when needed

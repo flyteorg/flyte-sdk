@@ -5,6 +5,7 @@ from dataclasses import dataclass
 
 import flyte._deployer as deployer
 from flyte import Image
+import flyte.errors
 from flyte._initialize import ensure_client, get_client
 from flyte._logging import logger
 from flyte.models import SerializationContext
@@ -76,7 +77,6 @@ async def _deploy_app(
     """
     Deploy the given app.
     """
-    ensure_client()
     import grpc.aio
     from flyteidl2.app import app_payload_pb2
 
@@ -93,6 +93,7 @@ async def _deploy_app(
         app_idl = translate_app_env_to_idl(app, serialization_context)
         if dryrun:
             return app_idl
+        ensure_client()
         msg = f"Deploying app {app.name}, with image {image_uri} version {serialization_context.version}"
         if app_idl.spec.HasField("container") and app_idl.spec.container.args:
             msg += f" from {app_idl.spec.container.args[-3]}.{app_idl.spec.container.args[-1]}"
