@@ -160,9 +160,6 @@ def _get_k8s_pod(
         app_env: The app environment
         pod_template: Pod template specification
         serialization_context: Serialization context
-        port: Port number
-        module_name: Name of the module containing the app
-        framework_variable_name: Variable name of the framework app
 
     Returns:
         K8sPod protobuf message
@@ -257,8 +254,8 @@ def translate_app_env_to_idl(
     security_context = None
     if task_sec_ctx or allow_anonymous:
         security_context = app_definition_pb2.SecurityContext(
-            run_as=task_sec_ctx.run_as,
-            secrets=task_sec_ctx.secrets,
+            run_as=task_sec_ctx.run_as if task_sec_ctx else None,
+            secrets=task_sec_ctx.secrets if task_sec_ctx else [],
             allow_anonymous=allow_anonymous,
         )
 
@@ -270,7 +267,7 @@ def translate_app_env_to_idl(
         dur = Duration()
         dur.FromTimedelta(app_env.scaling.scaledown_after)
 
-    min_replicas, max_replicas = app_env.scaling.replicas
+    min_replicas, max_replicas = app_env.scaling.get_replicas()
     autoscaling = app_definition_pb2.AutoscalingConfig(
         replicas=app_definition_pb2.Replicas(min=min_replicas, max=max_replicas),
         scaledown_period=dur,
@@ -281,6 +278,8 @@ def translate_app_env_to_idl(
     container = None
     pod = None
     if app_env.pod_template:
+        if isinstance(app_env.pod_template, str):
+            raise NotImplementedError("PodTemplate as str is not supported yet")
         pod = _get_k8s_pod(
             app_env,
             app_env.pod_template,

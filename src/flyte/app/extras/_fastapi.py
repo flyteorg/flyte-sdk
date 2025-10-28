@@ -30,7 +30,9 @@ class FastAPIAppEnvironment(flyte.app.AppEnvironment):
                 break
         else:  # no break
             raise RuntimeError("Could not find variable name for FastAPI app in module")
-        return ["uvicorn", f"{module_name}:{app_var_name}", "--port", str(self.port.port)]
+        p = self.port
+        assert isinstance(p, flyte.app.Port)
+        return ["uvicorn", f"{module_name}:{app_var_name}", "--port", str(p.port)]
 
     def container_command(self, serialization_context: SerializationContext) -> list[str]:
         return []

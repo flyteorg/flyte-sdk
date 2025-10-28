@@ -87,6 +87,11 @@ class Scaling:
             elif not isinstance(self.scaledown_after, timedelta):
                 raise TypeError("scaledown_after must be an int or a timedelta")
 
+    def get_replicas(self) -> Tuple[int, int]:
+        if isinstance(self.replicas, int):
+            return self.replicas, self.replicas
+        return self.replicas
+
 
 @rich.repr.auto
 @dataclass

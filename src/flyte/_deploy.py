@@ -317,7 +317,7 @@ async def apply(deployment_plan: DeploymentPlan, copy_style: CopyFiles, dryrun: 
     deployed_envs = await asyncio.gather(*deployment_coros)
     envs = {}
     for d in deployed_envs:
-        envs[d.env.name] = d
+        envs[d.get_name()] = d
 
     return Deployment(envs)
 

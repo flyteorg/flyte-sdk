@@ -55,6 +55,9 @@ def get_input(name: str) -> str:
 
     config_file = os.getenv(RUNTIME_CONFIG_FILE)
 
+    if config_file is None:
+        raise ValueError("Inputs are not mounted")
+
     with open(config_file, "r") as f:
         inputs = json.load(f)["inputs"]
 
