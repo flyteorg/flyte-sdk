@@ -4,11 +4,11 @@ import typing
 from dataclasses import dataclass
 
 import flyte._deployer as deployer
+import flyte.errors
 from flyte import Image
 from flyte._initialize import ensure_client, get_client
 from flyte._logging import logger
 from flyte.models import SerializationContext
-
 from ._app_environment import AppEnvironment
 
 if typing.TYPE_CHECKING:
