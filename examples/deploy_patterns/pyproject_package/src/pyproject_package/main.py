@@ -8,6 +8,8 @@ from the data and models modules. It demonstrates:
 - Entrypoint pattern for execution
 """
 
+import pathlib
+
 import flyte
 from pyproject_package.tasks.tasks import pipeline
 
@@ -21,7 +23,7 @@ def main():
     - Directly: `python src/pyproject_package/main.py`
     """
     # Initialize Flyte connection
-    flyte.init_from_config()
+    flyte.init_from_config(root_dir=pathlib.Path(__file__).parent.parent)
 
     # Example API URL with mock data
     # In a real scenario, this would be a real API endpoint

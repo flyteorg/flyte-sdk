@@ -1,4 +1,3 @@
-import os
 import tempfile
 from enum import Enum
 from typing import Dict, List, Optional, Tuple, Union
@@ -25,28 +24,6 @@ class Status(Enum):
     PENDING = "pending"
     APPROVED = "approved"
     REJECTED = "rejected"
-
-
-@pytest.fixture
-def local_dummy_file():
-    fd, path = tempfile.mkstemp()
-    try:
-        with os.fdopen(fd, "w") as tmp:
-            tmp.write("Hello File")
-        yield path
-    finally:
-        os.remove(path)
-
-
-@pytest.fixture
-def local_dummy_directory():
-    temp_dir = tempfile.TemporaryDirectory()
-    try:
-        with open(os.path.join(temp_dir.name, "file"), "w") as tmp:
-            tmp.write("Hello Dir")
-        yield temp_dir.name
-    finally:
-        temp_dir.cleanup()
 
 
 @pytest.mark.sandbox

@@ -9,6 +9,8 @@ async def async_add(a: int, b: int) -> int:
 result = run_sync(async_add, a=10, b=12)
 """
 
+from __future__ import annotations
+
 import asyncio
 import atexit
 import functools
@@ -88,7 +90,7 @@ class _TaskRunner:
 
 
 class _AsyncLoopManager:
-    def __init__(self):
+    def __init__(self: _AsyncLoopManager):
         self._runner_map: dict[str, _TaskRunner] = {}
 
     def run_sync(self, coro_func: Callable[..., Awaitable[T]], *args, **kwargs) -> T:

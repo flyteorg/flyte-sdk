@@ -3,13 +3,10 @@ import pathlib
 import flyte
 
 env = flyte.TaskEnvironment(
-    name="pyproject_test_0",
+    name="pyproject_test",
     resources=flyte.Resources(memory="250Mi"),
-    image=(
-        flyte.Image.from_debian_base().with_uv_project(
-            pyproject_file=pathlib.Path("pyproject.toml"),
-            pre=True,
-        )
+    image=flyte.Image.from_debian_base().with_uv_project(
+        pyproject_file=pathlib.Path("pyproject.toml"),
     ),
 )
 
@@ -35,7 +32,7 @@ def main(x_list: list[int]) -> float:
 
 if __name__ == "__main__":
     # Establish a remote connection from within your script.
-    flyte.init_from_config()
+    flyte.init_from_config(root_dir=pathlib.Path(__file__).parent)
 
     # Run your tasks remotely inline and pass parameter data.
     run = flyte.run(main, x_list=list(range(10)))

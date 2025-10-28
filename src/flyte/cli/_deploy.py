@@ -83,6 +83,19 @@ class DeployArguments:
             )
         },
     )
+    no_sync_local_sys_paths: bool = field(
+        default=True,
+        metadata={
+            "click.option": click.Option(
+                ["--no-sync-local-sys-paths"],
+                is_flag=True,
+                flag_value=True,
+                default=False,
+                help="Disable synchronization of local sys.path entries under the root directory "
+                "to the remote container.",
+            )
+        },
+    )
 
     @classmethod
     def from_dict(cls, d: Dict[str, Any]) -> "DeployArguments":
@@ -107,7 +120,12 @@ class DeployEnvCommand(click.RichCommand):
         console = common.get_console()
         console.print(f"Deploying root - environment: {self.env_name}")
         obj: CLIConfig = ctx.obj
-        obj.init(self.deploy_args.project, self.deploy_args.domain, root_dir=self.deploy_args.root_dir)
+        obj.init(
+            self.deploy_args.project,
+            self.deploy_args.domain,
+            root_dir=self.deploy_args.root_dir,
+            sync_local_sys_paths=not self.deploy_args.no_sync_local_sys_paths,
+        )
         with console.status("Deploying...", spinner="dots"):
             deployment = flyte.deploy(
                 self.env,
@@ -161,7 +179,11 @@ class DeployEnvRecursiveCommand(click.Command):
                 f"Failed to load {len(failed_paths)} files. Use --ignore-load-errors to ignore these errors."
             )
         # Now start connection and deploy all environments
-        obj.init(self.deploy_args.project, self.deploy_args.domain)
+        obj.init(
+            self.deploy_args.project,
+            self.deploy_args.domain,
+            sync_local_sys_paths=not self.deploy_args.no_sync_local_sys_paths,
+        )
         with console.status("Deploying...", spinner="dots"):
             deployments = flyte.deploy(
                 *all_envs,
@@ -190,11 +212,23 @@ class EnvPerFileGroup(common.ObjectsPerFileGroup):
         return {k: v for k, v in module.__dict__.items() if isinstance(v, flyte.Environment)}
 
     def list_commands(self, ctx):
-        common.initialize_config(ctx, self.deploy_args.project, self.deploy_args.domain, self.deploy_args.root_dir)
+        common.initialize_config(
+            ctx,
+            self.deploy_args.project,
+            self.deploy_args.domain,
+            self.deploy_args.root_dir,
+            sync_local_sys_paths=not self.deploy_args.no_sync_local_sys_paths,
+        )
         return super().list_commands(ctx)
 
     def get_command(self, ctx, obj_name):
-        common.initialize_config(ctx, self.deploy_args.project, self.deploy_args.domain, self.deploy_args.root_dir)
+        common.initialize_config(
+            ctx,
+            self.deploy_args.project,
+            self.deploy_args.domain,
+            self.deploy_args.root_dir,
+            sync_local_sys_paths=not self.deploy_args.no_sync_local_sys_paths,
+        )
         return super().get_command(ctx, obj_name)
 
     def _get_command_for_obj(self, ctx: click.Context, obj_name: str, obj: Any) -> click.Command:

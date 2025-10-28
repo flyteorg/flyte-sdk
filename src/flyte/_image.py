@@ -165,6 +165,7 @@ class Requirements(PipPackages):
 class UVProject(PipOption, Layer):
     pyproject: Path
     uvlock: Path
+    project_install_mode: typing.Literal["dependencies_only", "install_project"] = "dependencies_only"
 
     def validate(self):
         if not self.pyproject.exists():
@@ -179,7 +180,7 @@ class UVProject(PipOption, Layer):
         from ._utils import filehash_update, update_hasher_for_source
 
         super().update_hash(hasher)
-        if self.extra_args and "--no-install-project" in self.extra_args:
+        if self.project_install_mode == "dependencies_only":
             filehash_update(self.uvlock, hasher)
             filehash_update(self.pyproject, hasher)
         else:
@@ -904,17 +905,17 @@ class Image:
         pre: bool = False,
         extra_args: Optional[str] = None,
         secret_mounts: Optional[SecretRequest] = None,
+        project_install_mode: typing.Literal["dependencies_only", "install_project"] = "dependencies_only",
     ) -> Image:
         """
         Use this method to create a new image with the specified uv.lock file layered on top of the current image
         Must have a corresponding pyproject.toml file in the same directory
         Cannot be used in conjunction with conda
 
-        By default, this method copies the entire project into the image,
-         including files such as pyproject.toml, uv.lock, and the src/ directory.
+        By default, this method copies the pyproject.toml and uv.lock files into the image.
 
-        If you prefer not to install the current project, you can pass the extra argument --no-install-project.
-         In this case, the image builder will only copy pyproject.toml and uv.lock into the image.
+        If `project_install_mode` is "install_project", it will also copy directory
+         where the pyproject.toml file is located into the image.
 
         :param pyproject_file: path to the pyproject.toml file, needs to have a corresponding uv.lock file
         :param uvlock: path to the uv.lock file, if not specified, will use the default uv.lock file in the same
@@ -924,6 +925,8 @@ class Image:
         :param pre: whether to allow pre-release versions, default is False
         :param extra_args: extra arguments to pass to pip install, default is None
         :param secret_mounts: list of secret mounts to use for the build process.
+        :param project_install_mode: whether to install the project as a package or
+         only dependencies, default is "dependencies_only"
         :return: Image
         """
         if isinstance(pyproject_file, str):
@@ -937,6 +940,7 @@ class Image:
                 pre=pre,
                 extra_args=extra_args,
                 secret_mounts=_ensure_tuple(secret_mounts) if secret_mounts else None,
+                project_install_mode=project_install_mode,
             )
         )
         return new_image

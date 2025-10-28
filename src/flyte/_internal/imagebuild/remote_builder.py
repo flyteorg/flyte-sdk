@@ -134,7 +134,7 @@ class RemoteImageBuilder(ImageBuilder):
         if run_details.action_details.raw_phase == run_definition_pb2.PHASE_SUCCEEDED:
             logger.warning(f"[bold green]✅ Build completed in {elapsed}![/bold green]")
         else:
-            raise flyte.errors.ImageBuildError(f"❌ Build failed in {elapsed} at [cyan]{run.url}[/cyan]")
+            raise flyte.errors.ImageBuildError(f"❌ Build failed in {elapsed} at {run.url}")
 
         outputs = await run_details.outputs()
         return _get_fully_qualified_image_name(outputs)
@@ -198,7 +198,7 @@ def _get_layers_proto(image: Image, context_path: Path) -> "image_definition_pb2
     layers = []
     for layer in image._layers:
         secret_mounts = None
-        pip_options = None
+        pip_options = image_definition_pb2.PipOptions()
 
         if isinstance(layer, PipOption):
             pip_options = image_definition_pb2.PipOptions(
@@ -264,9 +264,16 @@ def _get_layers_proto(image: Image, context_path: Path) -> "image_definition_pb2
                 if "tool.uv.index" in line:
                     raise ValueError("External sources are not supported in pyproject.toml")
 
-            if layer.extra_args and "--no-install-project" in layer.extra_args:
+            if layer.project_install_mode == "dependencies_only":
                 # Copy pyproject itself
                 pyproject_dst = copy_files_to_context(layer.pyproject, context_path)
+                if pip_options.extra_args:
+                    if "--no-install-project" not in pip_options.extra_args:
+                        pip_options.extra_args += " --no-install-project"
+                else:
+                    pip_options.extra_args = " --no-install-project"
+                if "--no-sources" not in pip_options.extra_args:
+                    pip_options.extra_args += " --no-sources"
             else:
                 # Copy the entire project
                 docker_ignore_patterns = get_and_list_dockerignore(image)

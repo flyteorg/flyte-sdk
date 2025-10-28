@@ -51,6 +51,8 @@ def extract_return_annotation(return_annotation: Union[Type, Tuple, None]) -> Di
     Note that Options 1 and 2 are identical, just syntactic sugar. In the NamedTuple case, we'll use the names in the
     definition. In all other cases, we'll automatically generate output names, indexed starting at 0.
     """
+    if isinstance(return_annotation, str):
+        raise TypeError("String return annotations are not supported.")
 
     # Handle Option 6
     # We can think about whether we should add a default output name with type None in the future.

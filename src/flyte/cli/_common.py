@@ -120,6 +120,7 @@ class CLIConfig:
         domain: str | None = None,
         root_dir: str | None = None,
         images: tuple[str, ...] | None = None,
+        sync_local_sys_paths: bool = True,
     ):
         from flyte.config._config import TaskConfig
 
@@ -140,7 +141,13 @@ class CLIConfig:
 
         updated_config = self.config.with_params(platform_cfg, task_cfg)
 
-        flyte.init_from_config(updated_config, log_level=self.log_level, root_dir=root_dir, images=images)
+        flyte.init_from_config(
+            updated_config,
+            log_level=self.log_level,
+            root_dir=root_dir,
+            images=images,
+            sync_local_sys_paths=sync_local_sys_paths,
+        )
 
 
 class InvokeBaseMixin:
@@ -440,7 +447,12 @@ def parse_images(cfg: Config, values: tuple[str, ...] | None) -> None:
 
 @lru_cache()
 def initialize_config(
-    ctx: click.Context, project: str, domain: str, root_dir: str | None = None, images: tuple[str, ...] | None = None
+    ctx: click.Context,
+    project: str,
+    domain: str,
+    root_dir: str | None = None,
+    images: tuple[str, ...] | None = None,
+    sync_local_sys_paths: bool = True,
 ):
     obj: CLIConfig | None = ctx.obj
     if obj is None:
@@ -448,5 +460,5 @@ def initialize_config(
 
         obj = CLIConfig(flyte.config.auto(), ctx)
 
-    obj.init(project, domain, root_dir, images)
+    obj.init(project, domain, root_dir, images, sync_local_sys_paths)
     return obj
