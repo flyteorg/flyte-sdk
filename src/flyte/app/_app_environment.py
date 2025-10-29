@@ -58,7 +58,7 @@ class AppEnvironment(Environment):
         if self.args is not None and not isinstance(self.args, (list, str)):
             raise TypeError(f"Expected args to be of type List[str] or str, got {type(self.args)}")
         if isinstance(self.port, int):
-            self.port = Port(port=self.port, name="http")
+            self.port = Port(port=self.port)  # Name should be blank can be h2c / http1
             if self.port.port in INVALID_APP_PORTS:
                 raise ValueError(f"Port {self.port.port} is reserved and cannot be used for AppEnvironment")
         if self.command is not None and not isinstance(self.command, (list, str)):
