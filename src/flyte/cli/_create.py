@@ -141,6 +141,9 @@ def secret(
 
     # Handle image pull secret creation
     if type == "image_pull":
+        if project != "" or domain != "":
+            raise click.ClickException("Project and domain must not be set when creating an image pull secret.")
+
         if from_docker_config:
             # Mode 3: From Docker config
             from flyte._utils.docker_credentials import create_dockerconfigjson_from_config

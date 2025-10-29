@@ -14,7 +14,7 @@ Note that you do not need a secret to push to (or pull from) the default remote 
 
 image = (
     Image.from_base("ghcr.io/wild-endeavor/newprivate:0977dcd202aef2c1262ded713fe12abd")
-    .clone(name="from-private-image2", registry_secret="yt_ghcr_tst1")
+    .clone(name="from-private-image5", registry_secret="yt_ghcr_tst5")
     .with_apt_packages("vim")
     .with_local_v2()
 )
