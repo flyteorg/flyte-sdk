@@ -1,5 +1,5 @@
 version = 1
-revision = 2
+revision = 3
 requires-python = ">=3.10"
 resolution-markers = [
     "python_full_version >= '3.14'",
@@ -668,6 +668,11 @@ dependencies = [
 aiosqlite = [
     { name = "aiosqlite" },
 ]
+connector = [
+    { name = "grpcio-health-checking" },
+    { name = "httpx" },
+    { name = "prometheus-client" },
+]
 
 [package.dev-dependencies]
 dev = [
@@ -702,18 +707,21 @@ requires-dist = [
     { name = "flyteidl2", git = "https://github.com/flyteorg/flyte.git?subdirectory=gen%2Fpython&rev=16e01e918fe9d4ec73955cbd707435996ddac83f" },
     { name = "fsspec", specifier = ">=2025.3.0" },
     { name = "grpcio", specifier = ">=1.71.0" },
+    { name = "grpcio-health-checking", marker = "extra == 'connector'" },
     { name = "httpx", specifier = ">=0.28.1,<1.0.0" },
+    { name = "httpx", marker = "extra == 'connector'" },
     { name = "keyring", specifier = ">=25.6.0" },
     { name = "mashumaro" },
     { name = "msgpack", specifier = ">=1.1.0" },
     { name = "obstore", specifier = ">=0.7.3" },
+    { name = "prometheus-client", marker = "extra == 'connector'" },
     { name = "protobuf", specifier = ">=6.30.1" },
     { name = "pydantic", specifier = ">=2.10.6" },
     { name = "pyyaml", specifier = ">=6.0.2" },
     { name = "rich-click", specifier = "==1.8.9" },
     { name = "toml", specifier = ">=0.10.2" },
 ]
-provides-extras = ["aiosqlite"]
+provides-extras = ["aiosqlite", "connector"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -1014,6 +1022,19 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/67/8e/3204b94ac30b0f675ab1c06540ab5578660dc8b690db71854d3116f20d00/grpcio-1.75.1-cp314-cp314-musllinux_1_2_x86_64.whl", hash = "sha256:aad1c774f4ebf0696a7f148a56d39a3432550612597331792528895258966dc0", size = 7464478, upload-time = "2025-09-26T09:03:03.096Z" },
     { url = "https://files.pythonhosted.org/packages/b7/97/2d90652b213863b2cf466d9c1260ca7e7b67a16780431b3eb1d0420e3d5b/grpcio-1.75.1-cp314-cp314-win32.whl", hash = "sha256:62ce42d9994446b307649cb2a23335fa8e927f7ab2cbf5fcb844d6acb4d85f9c", size = 4012672, upload-time = "2025-09-26T09:03:05.477Z" },
     { url = "https://files.pythonhosted.org/packages/f9/df/e2e6e9fc1c985cd1a59e6996a05647c720fe8a03b92f5ec2d60d366c531e/grpcio-1.75.1-cp314-cp314-win_amd64.whl", hash = "sha256:f86e92275710bea3000cb79feca1762dc0ad3b27830dd1a74e82ab321d4ee464", size = 4772475, upload-time = "2025-09-26T09:03:07.661Z" },
+]
+
+[[package]]
+name = "grpcio-health-checking"
+version = "1.75.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "grpcio" },
+    { name = "protobuf" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/f9/3d/ed141f8b19b40f41b7fe5432c1ecb10c54ef002e46466cd8450f9ef621f7/grpcio_health_checking-1.75.1.tar.gz", hash = "sha256:888ea1b86ad65c02c8547486e95263562e145363e3d5400f5244f7f2c5323e63", size = 16766, upload-time = "2025-09-26T09:13:17.171Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/af/44/37245c53f61a66002a6a451ba63be080c100b7c1dfc54ae2af4403452bd9/grpcio_health_checking-1.75.1-py3-none-any.whl", hash = "sha256:f9d3eae78c13bfe81105a6433fbf7c4ad04ea1f517e9110fde35391d56ec760e", size = 18921, upload-time = "2025-09-26T09:12:37.076Z" },
 ]
 
 [[package]]

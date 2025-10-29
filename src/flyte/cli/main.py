@@ -13,8 +13,8 @@ from ._deploy import deploy
 from ._gen import gen
 from ._get import get
 from ._run import run
-from ._update import update
 from ._serve import serve
+from ._update import update
 from ._user import whoami
 
 help_config = click.RichHelpConfiguration(

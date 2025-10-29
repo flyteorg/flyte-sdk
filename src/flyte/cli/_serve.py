@@ -24,7 +24,6 @@ def serve(_: click.Context):
     flyte serve connector
     ```
     """
-    pass
 
 
 @serve.command()
@@ -88,10 +87,10 @@ async def _start_grpc_server(port: int, prometheus_port: int, worker: int, timeo
         )
     except ImportError as e:
         raise ImportError(
-            f"Flyte connector dependencies are not installed. Please install it using `pip install flyte[connector]`"
+            "Flyte connector dependencies are not installed. Please install it using `pip install flyte[connector]`"
         ) from e
 
-    click.secho(f"🚀 Starting the connector service...")
+    click.secho("🚀 Starting the connector service...")
     _start_http_server(prometheus_port)
 
     print_metadata()
