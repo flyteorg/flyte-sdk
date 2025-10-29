@@ -1,5 +1,6 @@
+import collections
 from pathlib import Path
-from typing import cast
+from typing import Annotated, OrderedDict, Type, cast
 
 import pyspark
 from flyteplugins.spark.task import Spark
@@ -43,8 +44,18 @@ spark_env = flyte.TaskEnvironment(
 )
 
 
+def kwtypes(**kwargs) -> OrderedDict[str, Type]:
+    d = collections.OrderedDict()
+    for k, v in kwargs.items():
+        d[k] = v
+    return d
+
+
+columns = kwtypes(name=str, age=int)
+
+
 @spark_env.task
-async def sum_of_all_ages(sd: pyspark.sql.DataFrame) -> int:
+async def sum_of_all_ages(sd: Annotated[pyspark.sql.DataFrame, columns]) -> int:
     """
     This task computes the sum of all ages in the provided Spark DataFrame.
     """
