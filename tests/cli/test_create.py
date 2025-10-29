@@ -26,7 +26,7 @@ def test_create_secret_value(mock_cli_config, mock_secret_create, runner: CliRun
 
     result = runner.invoke(main, ["create", "secret", "my_secret", "--value", secret_value])
     assert result.exit_code == 0, result.stderr
-    mock_secret_create.assert_called_once_with(name="my_secret", value="my_value", type="regular")
+    mock_secret_create.assert_called_once_with(name="my_secret", value=b"my_value", type="regular")
 
 
 @patch("flyte.remote.Secret.create")

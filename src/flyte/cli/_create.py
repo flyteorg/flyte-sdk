@@ -110,10 +110,6 @@ def secret(
     Other secrets should be specified as `regular`.
     If no type is specified, `regular` is assumed.
 
-    ```bash
-    $ flyte create secret my_secret --type image_pull
-    ```
-
     For image pull secrets, you have several options:
 
     1. Interactive mode (prompts for registry, username, password):
@@ -126,7 +122,9 @@ def secret(
     $ flyte create secret my_secret --type image_pull --registry ghcr.io --username myuser
     ```
 
-    3. From Docker config file:
+    3. Lastly, you can create a secret from your existing Docker installation (i.e., you've run `docker login` in
+    the past) and you just want to pull from those credentials. Since you may have logged in to multiple registries,
+    you can specify which registries to include. If no registries are specified, all registries are added.
     ```bash
     $ flyte create secret my_secret --type image_pull --from-docker-config --registries ghcr.io,docker.io
     ```
@@ -182,7 +180,9 @@ def secret(
         with open(from_file, "rb") as f:
             value = f.read()
 
-    value = value.encode("utf-8")
+    # Encode string values to bytes
+    if isinstance(value, str):
+        value = value.encode("utf-8")
 
     Secret.create(name=name, value=value, type=type)
 
