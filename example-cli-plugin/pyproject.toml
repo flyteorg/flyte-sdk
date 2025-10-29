@@ -1,0 +1,24 @@
+[project]
+name = "flyte-app-plugin"
+version = "0.1.0"
+description = "Example Flyte CLI plugin that adds 'app' entity management"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "flyte>=1.0.0",
+    "rich-click>=1.8.0",
+]
+
+[project.entry-points."flyte.plugins.cli.commands"]
+# Add 'app' subcommands to existing command groups
+"get.app" = "flyte_app_plugin.commands:get_app"
+"create.app" = "flyte_app_plugin.commands:create_app"
+"delete.app" = "flyte_app_plugin.commands:delete_app"
+
+[project.entry-points."flyte.plugins.cli.hooks"]
+# Hook into 'flyte run' to add custom behavior
+run = "flyte_app_plugin.hooks:enhance_run_command"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

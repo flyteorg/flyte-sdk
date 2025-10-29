@@ -201,3 +201,8 @@ main.add_command(delete)  # type: ignore
 main.add_command(build)
 main.add_command(whoami)  # type: ignore
 main.add_command(update)  # type: ignore
+
+# Discover and register CLI plugins from installed packages
+from ._plugins import discover_and_register_plugins
+
+discover_and_register_plugins(main)
