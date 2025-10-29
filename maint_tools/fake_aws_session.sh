@@ -8,7 +8,6 @@ export FLYTE_AWS_ACCESS_KEY_ID=test
 export FLYTE_AWS_SECRET_ACCESS_KEY=test
 export FLYTE_AWS_ENDPOINT=http://localhost:4566
 export _U_EP_OVERRIDE=dns:///localhost:8090
-export _U_INSECURE=true
 # Set a prompt prefix (e.g., [venv]) and preserve existing PS1
 export PS1="[faws] $PS1"
 

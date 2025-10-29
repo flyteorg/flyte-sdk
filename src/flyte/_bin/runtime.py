@@ -12,6 +12,7 @@ from typing import Any, List
 
 import click
 
+from flyte._utils.helpers import str2bool
 from flyte.models import PathRewrite
 
 # Todo: work with pvditt to make these the names
@@ -27,7 +28,6 @@ PROJECT_NAME = "FLYTE_INTERNAL_EXECUTION_PROJECT"
 DOMAIN_NAME = "FLYTE_INTERNAL_EXECUTION_DOMAIN"
 ORG_NAME = "_U_ORG_NAME"
 ENDPOINT_OVERRIDE = "_U_EP_OVERRIDE"
-INSECURE_OVERRIDE = "_U_INSECURE"
 INSECURE_SKIP_VERIFY_OVERRIDE = "_U_INSECURE_SKIP_VERIFY"
 RUN_OUTPUT_BASE_DIR = "_U_RUN_BASE"
 FLYTE_ENABLE_VSCODE_KEY = "_F_E_VS"
@@ -35,7 +35,6 @@ FLYTE_ENABLE_VSCODE_KEY = "_F_E_VS"
 _UNION_EAGER_API_KEY_ENV_VAR = "_UNION_EAGER_API_KEY"
 _F_PATH_REWRITE = "_F_PATH_REWRITE"
 
-_ENV_OVERRIDE_TRUTHS = ("true", "1", "yes")
 
 @click.group()
 def _pass_through():
@@ -138,22 +137,15 @@ def main(
     else:
         ep = os.environ.get(ENDPOINT_OVERRIDE, "host.docker.internal:8090")
         controller_kwargs["endpoint"] = ep
-        # Legacy assumption behavior that was introduced prior to the INSECURE_OVERRIDE variable.
         if "localhost" in ep or "docker" in ep:
             controller_kwargs["insecure"] = True
         logger.debug(f"Using controller endpoint: {ep} with kwargs: {controller_kwargs}")
 
-    # Check for insecure mode
-    insecure_str = os.getenv(INSECURE_OVERRIDE, "").lower()
-    if insecure_str in _ENV_OVERRIDE_TRUTHS:
-        controller_kwargs["insecure"] = True
-        logger.info(f"Controller insecure mode enabled (insecure=True)")
-
     # Check for insecure_skip_verify override (e.g. for self-signed certs)
-    insecure_skip_verify_str = os.getenv(INSECURE_SKIP_VERIFY_OVERRIDE, "").lower()
-    if insecure_skip_verify_str in _ENV_OVERRIDE_TRUTHS:
+    insecure_skip_verify_str = os.getenv(INSECURE_SKIP_VERIFY_OVERRIDE, "")
+    if str2bool(insecure_skip_verify_str):
         controller_kwargs["insecure_skip_verify"] = True
-        logger.info(f"SSL certificate verification disabled (insecure_skip_verify=True)")
+        logger.info("SSL certificate verification disabled (insecure_skip_verify=True)")
 
     bundle = None
     if tgz or pkl:
