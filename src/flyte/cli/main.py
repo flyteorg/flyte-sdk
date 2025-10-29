@@ -14,6 +14,7 @@ from ._gen import gen
 from ._get import get
 from ._run import run
 from ._update import update
+from ._serve import serve
 from ._user import whoami
 
 help_config = click.RichHelpConfiguration(
@@ -201,3 +202,4 @@ main.add_command(delete)  # type: ignore
 main.add_command(build)
 main.add_command(whoami)  # type: ignore
 main.add_command(update)  # type: ignore
+main.add_command(serve)  # type: ignore
