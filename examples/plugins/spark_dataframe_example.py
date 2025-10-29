@@ -12,11 +12,8 @@ from flyte.io import File
 image = (
     flyte.Image.from_base("apache/spark-py:v3.4.0")
     .clone(name="spark", python_version=(3, 10), registry="ghcr.io/flyteorg")
-    # .with_pip_packages("flyteplugins-spark", pre=True)
-    .with_pip_packages("pandas", "pyarrow", "fastparquet", "Jinja2")
-    .with_source_folder(Path(__file__).parent.parent.parent / "plugins/spark", "./spark")
-    .with_env_vars({"PYTHONPATH": "./spark/src:${PYTHONPATH}"})
-    .with_local_v2()
+    .with_pip_packages("flyteplugins-spark", pre=True)
+    .with_pip_packages("pandas", "pyarrow")
 )
 
 task_env = flyte.TaskEnvironment(
@@ -96,8 +93,6 @@ async def dataframe_transformer() -> int:
     return await sum_of_all_ages(spark_df)
 
 
-# ## Execute locally
-# You can execute the code locally as if it was a normal Python script.
 if __name__ == "__main__":
     flyte.init_from_config()
     run = flyte.with_runcontext(mode="remote").run(dataframe_transformer)

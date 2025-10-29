@@ -21,9 +21,6 @@ class SparkToParquetEncoder(DataFrameEncoder):
 
         ss = pyspark.sql.SparkSession.builder.getOrCreate()
 
-        print("[debug]: ctx:", ctx)
-        print("[debug] path:", path)
-
         # Avoid generating SUCCESS files
         ss.conf.set("mapreduce.fileoutputcommitter.marksuccessfuljobs", "false")
         cast(pyspark.sql.DataFrame, dataframe._raw_df).write.mode("overwrite").parquet(path=path)
@@ -46,10 +43,6 @@ class ParquetToSparkDecoder(DataFrameDecoder):
     ) -> pyspark.sql.DataFrame:
         spark = pyspark.sql.SparkSession.builder.getOrCreate()
         path = flyte_value.uri
-
-        print("[debug]: current_task_metadata:", current_task_metadata)
-        print("[debug]: flyte_value.uri:", flyte_value.uri)
-        print("[debug]: path:", flyte_value.uri)
 
         if current_task_metadata.structured_dataset_type and current_task_metadata.structured_dataset_type.columns:
             columns = [c.name for c in current_task_metadata.structured_dataset_type.columns]
