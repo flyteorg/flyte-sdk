@@ -54,6 +54,8 @@ class DeployedAppEnvironment(deployer.DeployedEnvironment):
         ]
 
     def table_repr(self) -> typing.List[typing.List[typing.Tuple[str, ...]]]:
+        from flyteidl2.app import app_definition_pb2
+
         return [
             [
                 ("type", "App"),
@@ -61,7 +63,7 @@ class DeployedAppEnvironment(deployer.DeployedEnvironment):
                 ("version", self.deployed_app.spec.runtime_metadata.version),
                 (
                     "state",
-                    self.deployed_app.spec.desired_state.DESIRED_STATE.Name(self.deployed_app.spec.desired_state),
+                    app_definition_pb2.Spec.DesiredState.Name(self.deployed_app.spec.desired_state),
                 ),
             ],
         ]

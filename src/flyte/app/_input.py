@@ -41,6 +41,8 @@ class Input:
     ignore_patterns: list[str] = field(default_factory=list)
 
     def __post_init__(self):
+        import flyte.io
+
         env_name_re = re.compile("^[_a-zA-Z][_a-zA-Z0-9]*$")
 
         if self.env_var is not None and env_name_re.match(self.env_var) is None:
@@ -97,7 +99,6 @@ class SerializableInput(BaseModel):
         )
 
 
-@dataclass
 class SerializableInputCollection(BaseModel):
     """
     Collection of inputs for application.
@@ -126,9 +127,7 @@ class SerializableInputCollection(BaseModel):
 
         compressed_val = base64.b64decode(s.encode("utf-8"))
         json_str = gzip.decompress(compressed_val).decode("utf-8")
-        val = cls.model_validate_json(json_str)
-        val.serialized_form = s
-        return val
+        return cls.model_validate_json(json_str)
 
     @classmethod
     def from_inputs(cls, inputs: List[Input]) -> SerializableInputCollection:
