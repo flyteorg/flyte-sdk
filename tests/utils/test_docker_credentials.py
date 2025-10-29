@@ -1,7 +1,6 @@
 import base64
 import json
-from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -86,9 +85,7 @@ def test_create_dockerconfigjson_from_config_with_direct_auth(tmp_path):
     with open(config_file, "w") as f:
         json.dump(test_config, f)
 
-    result = create_dockerconfigjson_from_config(
-        registries=["ghcr.io"], docker_config_path=config_file
-    )
+    result = create_dockerconfigjson_from_config(registries=["ghcr.io"], docker_config_path=config_file)
 
     config = json.loads(result)
     assert "auths" in config
@@ -133,9 +130,7 @@ def test_create_dockerconfigjson_from_config_with_cred_helper(mock_get_creds, tm
     # Mock the credential helper to return username/password
     mock_get_creds.return_value = ("myuser", "mytoken")
 
-    result = create_dockerconfigjson_from_config(
-        registries=["ghcr.io"], docker_config_path=config_file
-    )
+    result = create_dockerconfigjson_from_config(registries=["ghcr.io"], docker_config_path=config_file)
 
     config = json.loads(result)
     assert "auths" in config
@@ -148,9 +143,7 @@ def test_create_dockerconfigjson_from_config_with_cred_helper(mock_get_creds, tm
 
 
 @patch("flyte._utils.docker_credentials._get_credentials_from_helper")
-def test_create_dockerconfigjson_from_config_with_global_creds_store(
-    mock_get_creds, tmp_path
-):
+def test_create_dockerconfigjson_from_config_with_global_creds_store(mock_get_creds, tmp_path):
     """Test using global credsStore instead of per-registry credHelpers."""
     config_file = tmp_path / "config.json"
     test_config = {
@@ -163,9 +156,7 @@ def test_create_dockerconfigjson_from_config_with_global_creds_store(
 
     mock_get_creds.return_value = ("user", "pass")
 
-    result = create_dockerconfigjson_from_config(
-        registries=["docker.io"], docker_config_path=config_file
-    )
+    result = create_dockerconfigjson_from_config(registries=["docker.io"], docker_config_path=config_file)
 
     config = json.loads(result)
     assert "docker.io" in config["auths"]
@@ -180,9 +171,7 @@ def test_create_dockerconfigjson_from_config_no_credentials(tmp_path):
         json.dump(test_config, f)
 
     with pytest.raises(ValueError, match="No credentials could be extracted"):
-        create_dockerconfigjson_from_config(
-            registries=["ghcr.io"], docker_config_path=config_file
-        )
+        create_dockerconfigjson_from_config(registries=["ghcr.io"], docker_config_path=config_file)
 
 
 def test_create_dockerconfigjson_from_config_empty_auths(tmp_path):

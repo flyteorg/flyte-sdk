@@ -179,6 +179,8 @@ def secret(
         with open(from_file, "rb") as f:
             value = f.read()
 
+    value = value.encode("utf-8")
+
     Secret.create(name=name, value=value, type=type)
 
 
