@@ -66,7 +66,7 @@ class SerializableInput(BaseModel):
     name: str
     value: str
     download: bool
-    type: _SerializedInputType = str
+    type: _SerializedInputType = "string"
     env_var: Optional[str] = None
     dest: Optional[str] = None
     ignore_patterns: List[str] = field(default_factory=list)
@@ -74,6 +74,9 @@ class SerializableInput(BaseModel):
     @classmethod
     def from_input(cls, inp: Input) -> "SerializableInput":
         import flyte.io
+
+        # inp.name is guaranteed to be set by Input.__post_init__
+        assert inp.name is not None, "Input name should be set by __post_init__"
 
         tpe: _SerializedInputType = "string"
         if isinstance(inp.value, flyte.io.File):

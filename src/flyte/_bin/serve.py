@@ -43,7 +43,7 @@ async def sync_inputs(serialized_inputs: str, dest: str) -> dict:
             user_dest = input.dest or dest
             if input.type == "file":
                 value = await storage.get(input.value, user_dest)
-            elif input["type"] == "directory":
+            elif input.type == "directory":
                 value = await storage.get(input.value, user_dest, recursive=True)
             else:
                 raise ValueError("Can only download files or directories")
@@ -57,13 +57,13 @@ async def sync_inputs(serialized_inputs: str, dest: str) -> dict:
 
 async def download_code_inputs(
     serialized_inputs: str, tgz: str, pkl: str, dest: str, version: str
-) -> Tuple[dict, CodeBundle]:
+) -> Tuple[dict, CodeBundle | None]:
     from flyte._internal.runtime.entrypoints import download_code_bundle
 
     user_inputs = {}
     if serialized_inputs and len(serialized_inputs) > 0:
         user_inputs = await sync_inputs(serialized_inputs, dest)
-    code_bundle = None
+    code_bundle: CodeBundle | None = None
     if tgz or pkl:
         bundle = CodeBundle(tgz=tgz, pkl=pkl, destination=dest, computed_version=version)
         code_bundle = await download_code_bundle(bundle)
@@ -133,6 +133,9 @@ def main(
         json.dump(materialized_inputs, f)
 
     os.environ[RUNTIME_INPUTS_FILE] = inputs_file
+
+    if command is None or len(command) == 0:
+        raise ValueError("No command provided to execute")
 
     command_joined = " ".join(command)
     logger.info(f"Serving command: {command_joined}")

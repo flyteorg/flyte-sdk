@@ -91,10 +91,14 @@ class AppEnvironment(Environment):
     def container_cmd(self, serialize_context: SerializationContext) -> List[str]:
         if self.command is None:
             # Default command
+            version = serialize_context.version
+            if version is None and serialize_context.code_bundle is not None:
+                version = serialize_context.code_bundle.computed_version
+
             cmd = [
                 "fserve",
                 "--version",
-                serialize_context.version or serialize_context.code_bundle.computed_version,
+                version or "",
                 "--project",
                 serialize_context.project,
                 "--domain",
