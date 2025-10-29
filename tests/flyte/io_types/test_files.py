@@ -1,5 +1,6 @@
-# from flytekit import dynamic, kwtypes, task, workflow
+from __future__ import annotations
 
+import filecmp
 import os
 import tempfile
 
@@ -64,13 +65,13 @@ async def test_async_file_read(ctx_with_test_raw_data_path):
     pv = await FileTransformer().to_python_value(lv, File)
     async with pv.open() as fh:
         content = await fh.read()
-    content = content.decode("utf-8")
+    content = str(content, "utf-8")
     assert "col1,col2" in content
 
     pv2 = File.from_existing_remote(uploaded_file.path)
     async with pv2.open() as fh:
-        content = await fh.read()
-    content = content.decode("utf-8")
+        content = memoryview(await fh.read())
+    content = str(content, "utf-8")
     assert "col1,col2" in content
 
 
@@ -111,29 +112,6 @@ async def test_task_write_file_streaming(ctx_with_test_raw_data_path):
 
 @pytest.mark.sandbox
 @pytest.mark.asyncio
-async def test_task_write_file_streaming_locals3(ctx_with_test_local_s3_stack_raw_data_path):
-    flyte.init(storage=S3.for_sandbox())
-
-    # Simulate writing a file by streaming it directly to blob storage
-    async def my_task() -> File[pd.DataFrame]:
-        df = pd.DataFrame({"col1": [1, 2], "col2": [3, 4]})
-        a = HashlibAccumulator.from_hash_name("sha256")
-        file = File.new_remote(hash_method=a)
-        with file.open_sync("wb") as fh:
-            df.to_csv(fh, index=False)
-            fh.close()  # context manager should also close but this should still work
-        return file
-
-    file = await my_task()
-    assert file.hash == "9b0a34a69b639520f1a18e54f85544d9d379f81727eb44b8814e1c4707e1760d"
-    async with file.open() as f:
-        content = await f.read()
-    content = content.decode("utf-8")
-    assert "col1,col2" in content
-
-
-@pytest.mark.sandbox
-@pytest.mark.asyncio
 async def test_task_write_file_local_then_upload(ctx_with_test_raw_data_path):
     flyte.init(storage=S3.for_sandbox())
 
@@ -151,7 +129,7 @@ async def test_task_write_file_local_then_upload(ctx_with_test_raw_data_path):
     pv2 = File.from_existing_remote(file.path)
     async with pv2.open() as fh:
         content = await fh.read()
-    content = content.decode("utf-8")
+    content = str(content, "utf-8")
     assert "col1,col2" in content
 
 
@@ -194,7 +172,7 @@ async def test_from_local_to_s3(ctx_with_test_local_s3_stack_raw_data_path):
 
         async with result.open() as f:
             content = await f.read()
-        content = content.decode("utf-8")
+        content = str(content, "utf-8")
         assert content == TEST_CONTENT
 
 
@@ -251,3 +229,204 @@ async def test_multiple_files_with_hashes():
     assert recovered_files[0].hash == "hash1"
     assert recovered_files[1].path == file_without_hash.path
     assert recovered_files[1].hash is None
+
+
+@pytest.mark.sandbox
+@pytest.mark.asyncio
+async def test_download_file_with_name(tmp_path, ctx_with_test_local_s3_stack_raw_data_path):
+    """
+    Test downloading a file from S3 to a local path with a specified file name.
+    """
+    await flyte.init.aio(storage=S3.for_sandbox())
+
+    # Create a local file with random content
+    local_file = tmp_path / "one_hundred_bytes"
+    local_file.write_bytes(os.urandom(100))
+
+    # Upload to S3
+    uploaded_file = await File.from_local(str(local_file))
+    print(f"Uploaded temp file {local_file} to {uploaded_file.path}", flush=True)
+
+    # Download to a specific local path with a custom name
+    download_target = tmp_path / "downloaded" / "my_custom_filename"
+    download_target.parent.mkdir(parents=True, exist_ok=True)
+    downloaded_path = await uploaded_file.download(str(download_target))
+
+    print(f"Downloaded file to {downloaded_path}", flush=True)
+
+    assert downloaded_path.endswith("my_custom_filename")
+    assert filecmp.cmp(local_file, downloaded_path, shallow=False)
+    assert downloaded_path == str(download_target)
+
+
+@pytest.mark.sandbox
+@pytest.mark.asyncio
+async def test_download_file_with_folder_name(tmp_path, ctx_with_test_local_s3_stack_raw_data_path):
+    """
+    Test downloading a file to a directory path.
+    When a directory path is provided (either existing directory or path ending with os.sep),
+    the file should be downloaded with its original remote filename.
+    """
+    await flyte.init.aio(storage=S3.for_sandbox())
+
+    # Create a local file with random content
+    local_file = tmp_path / "one_hundred_bytes"
+    local_file.write_bytes(os.urandom(100))
+
+    # Upload to S3
+    uploaded_file = await File.from_local(str(local_file))
+    print(f"Uploaded temp file {local_file} to {uploaded_file.path}", flush=True)
+
+    # Test 1: Download to an existing directory
+    download_dir = tmp_path / "downloaded_existing"
+    download_dir.mkdir(parents=True, exist_ok=True)
+    downloaded_path = await uploaded_file.download(str(download_dir))
+
+    print(f"Downloaded file to {downloaded_path}", flush=True)
+
+    # Verify the file was downloaded into the directory with the remote filename
+    remote_filename = uploaded_file.path.split("/")[-1]
+    expected_path = download_dir / remote_filename
+    assert downloaded_path == str(expected_path)
+    assert filecmp.cmp(local_file, downloaded_path, shallow=False)
+
+    # Test 2: Download to a non-existent path ending with os.sep
+    download_dir2_str = str(tmp_path / "downloaded_new") + os.sep  # Ends with separator
+    downloaded_path2 = await uploaded_file.download(download_dir2_str)
+
+    print(f"Downloaded file to {downloaded_path2}", flush=True)
+
+    # Verify the file was downloaded into the directory with the remote filename
+    expected_path2 = tmp_path / "downloaded_new" / remote_filename
+    assert downloaded_path2 == str(expected_path2)
+    assert filecmp.cmp(local_file, downloaded_path2, shallow=False)
+
+
+@pytest.mark.sandbox
+@pytest.mark.asyncio
+async def test_download_file_with_no_local_target(tmp_path, ctx_with_test_local_s3_stack_raw_data_path):
+    """
+    Test downloading a file from S3 without specifying a target path.
+    The file should be downloaded to a temporary location.
+    """
+    await flyte.init.aio(storage=S3.for_sandbox())
+
+    # Create a local file with random content
+    local_file = tmp_path / "one_hundred_bytes"
+    local_file.write_bytes(os.urandom(100))
+
+    # Upload to S3
+    uploaded_file = await File.from_local(str(local_file))
+    print(f"Uploaded temp file {local_file} to {uploaded_file.path}", flush=True)
+
+    # Download without specifying a target path
+    downloaded_path = await uploaded_file.download()
+
+    print(f"Downloaded file to {downloaded_path}", flush=True)
+
+    # Verify the files match
+    assert filecmp.cmp(local_file, downloaded_path, shallow=False)
+    assert downloaded_path is not None
+    assert os.path.isfile(downloaded_path)
+    suffix = uploaded_file.path.split("/")[-1]
+    assert downloaded_path.endswith(suffix)
+
+
+@pytest.mark.asyncio
+async def test_download_file_with_name_local(tmp_path, ctx_with_test_raw_data_path):
+    """
+    Test downloading a file from local storage to a local path with a specified file name.
+    This test is separate because the local filesystem doesn't use obstore.
+    """
+    flyte.init()
+
+    # Create a local file with random content
+    local_file = tmp_path / "one_hundred_bytes"
+    local_file.write_bytes(os.urandom(100))
+
+    # Upload to "remote" (which is actually local)
+    uploaded_file = await File.from_local(str(local_file))
+    print(f"Uploaded temp file {local_file} to {uploaded_file.path}", flush=True)
+
+    # Download to a specific local path with a custom name
+    download_target = tmp_path / "downloaded" / "my_custom_filename"
+    download_target.parent.mkdir(parents=True, exist_ok=True)
+    downloaded_path = await uploaded_file.download(str(download_target))
+
+    print(f"Downloaded file to {downloaded_path}", flush=True)
+
+    assert downloaded_path.endswith("my_custom_filename")
+    assert filecmp.cmp(local_file, downloaded_path, shallow=False)
+    assert downloaded_path == str(download_target)
+
+
+@pytest.mark.asyncio
+async def test_download_file_with_folder_name_local(tmp_path, ctx_with_test_raw_data_path):
+    """
+    Test downloading a file to a directory path using local storage.
+    When a directory path is provided (either existing directory or path ending with os.sep),
+    the file should be downloaded with its original remote filename.
+    This test is separate because the local filesystem doesn't use obstore.
+    """
+    flyte.init()
+
+    # Create a local file with random content
+    local_file = tmp_path / "one_hundred_bytes"
+    local_file.write_bytes(os.urandom(100))
+
+    # Upload to "remote" (which is actually local)
+    uploaded_file = await File.from_local(str(local_file))
+    print(f"Uploaded temp file {local_file} to {uploaded_file.path}", flush=True)
+
+    # Test 1: Download to an existing directory
+    download_dir = tmp_path / "downloaded_existing"
+    download_dir.mkdir(parents=True, exist_ok=True)
+    downloaded_path = await uploaded_file.download(str(download_dir))
+
+    print(f"Downloaded file to {downloaded_path}", flush=True)
+
+    # Verify the file was downloaded into the directory with the remote filename
+    remote_filename = uploaded_file.path.split(os.sep)[-1]
+    expected_path = download_dir / remote_filename
+    assert downloaded_path == str(expected_path)
+    assert filecmp.cmp(local_file, downloaded_path, shallow=False)
+
+    # Test 2: Download to a non-existent path ending with os.sep
+    download_dir2_str = str(tmp_path / "downloaded_new") + os.sep  # Ends with separator
+    downloaded_path2 = await uploaded_file.download(download_dir2_str)
+
+    print(f"Downloaded file to {downloaded_path2}", flush=True)
+
+    # Verify the file was downloaded into the directory with the remote filename
+    expected_path2 = tmp_path / "downloaded_new" / remote_filename
+    assert downloaded_path2 == str(expected_path2)
+    assert filecmp.cmp(local_file, downloaded_path2, shallow=False)
+
+
+@pytest.mark.asyncio
+async def test_download_file_with_no_local_target_local(tmp_path, ctx_with_test_raw_data_path):
+    """
+    Test downloading a file from local storage without specifying a target path.
+    This test is separate because the local filesystem doesn't use obstore.
+    """
+    flyte.init()
+
+    # Create a local file with random content
+    local_file = tmp_path / "one_hundred_bytes"
+    local_file.write_bytes(os.urandom(100))
+
+    # Upload to "remote" (which is actually local)
+    uploaded_file = await File.from_local(str(local_file))
+    print(f"Uploaded temp file {local_file} to {uploaded_file.path}", flush=True)
+
+    # Download without specifying a target path
+    downloaded_path = await uploaded_file.download()
+
+    print(f"Downloaded file to {downloaded_path}", flush=True)
+
+    # Verify the files match
+    assert filecmp.cmp(local_file, downloaded_path, shallow=False)
+    assert downloaded_path is not None
+    assert os.path.isfile(downloaded_path)
+    suffix = uploaded_file.path.split(os.sep)[-1]
+    assert downloaded_path.endswith(suffix)

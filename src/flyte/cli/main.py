@@ -13,6 +13,7 @@ from ._deploy import deploy
 from ._gen import gen
 from ._get import get
 from ._run import run
+from ._serve import serve
 from ._update import update
 from ._user import whoami
 
@@ -201,3 +202,4 @@ main.add_command(delete)  # type: ignore
 main.add_command(build)
 main.add_command(whoami)  # type: ignore
 main.add_command(update)  # type: ignore
+main.add_command(serve)  # type: ignore

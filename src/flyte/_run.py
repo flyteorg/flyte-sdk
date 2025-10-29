@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import pathlib
+import sys
 import uuid
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Tuple, Union, cast
@@ -18,7 +19,7 @@ from flyte._initialize import (
     requires_storage,
 )
 from flyte._logging import logger
-from flyte._task import P, R, TaskTemplate
+from flyte._task import F, P, R, TaskTemplate
 from flyte.models import (
     ActionID,
     Checkpoints,
@@ -28,6 +29,8 @@ from flyte.models import (
     TaskContext,
 )
 from flyte.syncify import syncify
+
+from ._constants import FLYTE_SYS_PATH
 
 if TYPE_CHECKING:
     from flyte.remote import Run
@@ -94,6 +97,7 @@ class _Runner:
         log_level: int | None = None,
         disable_run_cache: bool = False,
         queue: Optional[str] = None,
+        custom_context: Dict[str, str] | None = None,
     ):
         from flyte._tools import ipython_check
 
@@ -124,18 +128,19 @@ class _Runner:
         self._log_level = log_level
         self._disable_run_cache = disable_run_cache
         self._queue = queue
+        self._custom_context = custom_context or {}
 
     @requires_initialization
-    async def _run_remote(self, obj: TaskTemplate[P, R] | LazyEntity, *args: P.args, **kwargs: P.kwargs) -> Run:
+    async def _run_remote(self, obj: TaskTemplate[P, R, F] | LazyEntity, *args: P.args, **kwargs: P.kwargs) -> Run:
         import grpc
+        from flyteidl2.common import identifier_pb2
+        from flyteidl2.core import literals_pb2, security_pb2
+        from flyteidl2.task import run_pb2
+        from flyteidl2.workflow import run_definition_pb2, run_service_pb2
         from google.protobuf import wrappers_pb2
 
         from flyte.remote import Run
         from flyte.remote._task import LazyEntity
-        from flyteidl2.common import identifier_pb2
-        from flyteidl2.core import literals_pb2
-        from flyteidl2.task import run_pb2
-        from flyteidl2.workflow import run_definition_pb2, run_service_pb2
 
         from ._code_bundle import build_code_bundle, build_pkl_bundle
         from ._deploy import build_images
@@ -149,11 +154,13 @@ class _Runner:
         if isinstance(obj, LazyEntity):
             task = await obj.fetch.aio()
             task_spec = task.pb2.spec
-            inputs = await convert_from_native_to_inputs(task.interface, *args, **kwargs)
+            inputs = await convert_from_native_to_inputs(
+                task.interface, *args, custom_context=self._custom_context, **kwargs
+            )
             version = task.pb2.task_id.version
             code_bundle = None
         else:
-            task = cast(TaskTemplate[P, R], obj)
+            task = cast(TaskTemplate[P, R, F], obj)
             if obj.parent_env is None:
                 raise ValueError("Task is not attached to an environment. Please attach the task to an environment")
 
@@ -168,9 +175,7 @@ class _Runner:
                 if not self._dry_run:
                     image_cache = await build_images.aio(cast(Environment, obj.parent_env()))
                 else:
-                    from ._internal.imagebuild.image_builder import ImageCache
-
-                    image_cache = ImageCache(image_lookup={})
+                    image_cache = None
 
                 if self._interactive_mode:
                     code_bundle = await build_pkl_bundle(
@@ -205,7 +210,9 @@ class _Runner:
                 root_dir=cfg.root_dir,
             )
             task_spec = translate_task_to_wire(obj, s_ctx)
-            inputs = await convert_from_native_to_inputs(obj.native_interface, *args, **kwargs)
+            inputs = await convert_from_native_to_inputs(
+                obj.native_interface, *args, custom_context=self._custom_context, **kwargs
+            )
 
         env = self._env_vars or {}
         if env.get("LOG_LEVEL") is None:
@@ -213,6 +220,12 @@ class _Runner:
                 env["LOG_LEVEL"] = str(self._log_level)
             else:
                 env["LOG_LEVEL"] = str(logger.getEffectiveLevel())
+
+        # These paths will be appended to sys.path at runtime.
+        if cfg.sync_local_sys_paths:
+            env[FLYTE_SYS_PATH] = ":".join(
+                f"./{pathlib.Path(p).relative_to(cfg.root_dir)}" for p in sys.path if p.startswith(str(cfg.root_dir))
+            )
 
         if not self._dry_run:
             if get_client() is None:
@@ -258,6 +271,14 @@ class _Runner:
             env_kv = run_pb2.Envs(values=kv_pairs)
             annotations = run_pb2.Annotations(values=self._annotations)
             labels = run_pb2.Labels(values=self._labels)
+            raw_data_storage = (
+                run_pb2.RawDataStorage(raw_data_prefix=self._raw_data_path) if self._raw_data_path else None
+            )
+            security_context = (
+                security_pb2.SecurityContext(run_as=security_pb2.Identity(k8s_service_account=self._service_account))
+                if self._service_account
+                else None
+            )
 
             try:
                 resp = await get_client().run_service.CreateRun(
@@ -275,6 +296,8 @@ class _Runner:
                             labels=labels,
                             envs=env_kv,
                             cluster=self._queue or task.queue,
+                            raw_data_storage=raw_data_storage,
+                            security_context=security_context,
                         ),
                     ),
                 )
@@ -319,7 +342,7 @@ class _Runner:
 
     @requires_storage
     @requires_initialization
-    async def _run_hybrid(self, obj: TaskTemplate[P, R], *args: P.args, **kwargs: P.kwargs) -> R:
+    async def _run_hybrid(self, obj: TaskTemplate[P, R, F], *args: P.args, **kwargs: P.kwargs) -> R:
         """
         Run a task in hybrid mode. This means that the parent action will be run locally, but the child actions will be
         run in the cluster remotely. This is currently only used for testing,
@@ -412,6 +435,7 @@ class _Runner:
                 compiled_image_cache=image_cache,
                 run_base_dir=run_base_dir,
                 report=flyte.report.Report(name=action.name),
+                custom_context=self._custom_context,
             )
             async with ctx.replace_task_context(tctx):
                 return await run_task(tctx=tctx, controller=controller, task=obj, inputs=inputs)
@@ -421,12 +445,13 @@ class _Runner:
             raise err
         return outputs
 
-    async def _run_local(self, obj: TaskTemplate[P, R], *args: P.args, **kwargs: P.kwargs) -> Run:
+    async def _run_local(self, obj: TaskTemplate[P, R, F], *args: P.args, **kwargs: P.kwargs) -> Run:
+        from flyteidl2.common import identifier_pb2
+
         from flyte._internal.controllers import create_controller
         from flyte._internal.controllers._local_controller import LocalController
         from flyte.remote import Run
         from flyte.report import Report
-        from flyteidl2.common import identifier_pb2
 
         controller = cast(LocalController, create_controller("local"))
 
@@ -462,7 +487,9 @@ class _Runner:
             compiled_image_cache=None,
             report=Report(name=action.name),
             mode="local",
+            custom_context=self._custom_context,
         )
+
         with ctx.replace_task_context(tctx):
             # make the local version always runs on a different thread, returns a wrapped future.
             if obj._call_as_synchronous:
@@ -507,7 +534,7 @@ class _Runner:
     @syncify
     async def run(
         self,
-        task: TaskTemplate[P, Union[R, Run]] | LazyEntity,
+        task: TaskTemplate[P, Union[R, Run], F] | LazyEntity,
         *args: P.args,
         **kwargs: P.kwargs,
     ) -> Union[R, Run]:
@@ -575,6 +602,7 @@ def with_runcontext(
     log_level: int | None = None,
     disable_run_cache: bool = False,
     queue: Optional[str] = None,
+    custom_context: Dict[str, str] | None = None,
 ) -> _Runner:
     """
     Launch a new run with the given parameters as the context.
@@ -602,8 +630,8 @@ def with_runcontext(
     :param interactive_mode: Optional, can be forced to True or False.
          If not provided, it will be set based on the current environment. For example Jupyter notebooks are considered
          interactive mode, while scripts are not. This is used to determine how the code bundle is created.
-    :param raw_data_path: Use this path to store the raw data for the run. Currently only supported for local runs,
-      and can be used to store raw data in specific locations. TODO coming soon for remote runs as well.
+    :param raw_data_path: Use this path to store the raw data for the run for local and remote, and can be used to
+         store raw data in specific locations.
     :param run_base_dir: Optional The base directory to use for the run. This is used to store the metadata for the run,
      that is passed between tasks.
     :param overwrite_cache: Optional If true, the cache will be overwritten for the run
@@ -619,6 +647,9 @@ def with_runcontext(
         set using `flyte.init()`
     :param disable_run_cache: Optional If true, the run cache will be disabled. This is useful for testing purposes.
     :param queue: Optional The queue to use for the run. This is used to specify the cluster to use for the run.
+    :param custom_context: Optional global input context to pass to the task. This will be available via
+        get_custom_context() within the task and will automatically propagate to sub-tasks.
+        Acts as base/default values that can be overridden by context managers in the code.
 
     :return: runner
     """
@@ -647,11 +678,12 @@ def with_runcontext(
         log_level=log_level,
         disable_run_cache=disable_run_cache,
         queue=queue,
+        custom_context=custom_context,
     )
 
 
 @syncify
-async def run(task: TaskTemplate[P, R], *args: P.args, **kwargs: P.kwargs) -> Union[R, Run]:
+async def run(task: TaskTemplate[P, R, F], *args: P.args, **kwargs: P.kwargs) -> Union[R, Run]:
     """
     Run a task with the given parameters
     :param task: task to run

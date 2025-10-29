@@ -6,10 +6,12 @@ from typing import AsyncIterator, Dict, Generic, Iterator, List, Optional, Type,
 
 from flyteidl2.core import literals_pb2, types_pb2
 from fsspec.asyn import AsyncFileSystem
+from fsspec.utils import get_protocol
 from mashumaro.types import SerializableType
 from pydantic import BaseModel, model_validator
 
 import flyte.storage as storage
+from flyte._context import internal_ctx
 from flyte.io._file import File
 from flyte.types import TypeEngine, TypeTransformer, TypeTransformerFailedError
 
@@ -462,7 +464,15 @@ class Dir(BaseModel, Generic[T], SerializableType):
         Returns:
             The absolute path to the downloaded directory
         """
-        local_dest = str(local_path) if local_path else str(storage.get_random_local_path())
+        # If no local_path specified, create a unique path + append source directory name
+        if local_path is None:
+            unique_path = storage.get_random_local_path()
+            source_dirname = Path(self.path).name  # will need to be updated for windows
+            local_dest = str(Path(unique_path) / source_dirname)
+        else:
+            # If local_path is specified, use it directly (contents go into it)
+            local_dest = str(local_path)
+
         if not storage.is_remote(self.path):
             if not local_path or local_path == self.path:
                 # Skip copying
@@ -477,6 +487,7 @@ class Dir(BaseModel, Generic[T], SerializableType):
                     await loop.run_in_executor(None, lambda: shutil.copytree(self.path, local_dest, dirs_exist_ok=True))
 
                 await copy_tree()
+                return local_dest
         return await storage.get(self.path, local_dest, recursive=True)
 
     def download_sync(self, local_path: Optional[Union[str, Path]] = None) -> str:
@@ -510,7 +521,15 @@ class Dir(BaseModel, Generic[T], SerializableType):
         Returns:
             The absolute path to the downloaded directory
         """
-        local_dest = str(local_path) if local_path else str(storage.get_random_local_path())
+        # If no local_path specified, create a unique path + append source directory name
+        if local_path is None:
+            unique_path = storage.get_random_local_path()
+            source_dirname = Path(self.path).name
+            local_dest = str(Path(unique_path) / source_dirname)
+        else:
+            # If local_path is specified, use it directly (contents go into it)
+            local_dest = str(local_path)
+
         if not storage.is_remote(self.path):
             if not local_path or local_path == self.path:
                 # Skip copying
@@ -520,6 +539,7 @@ class Dir(BaseModel, Generic[T], SerializableType):
                 import shutil
 
                 shutil.copytree(self.path, local_dest, dirs_exist_ok=True)
+                return local_dest
 
         fs = storage.get_underlying_filesystem(path=self.path)
         fs.get(self.path, local_dest, recursive=True)
@@ -529,7 +549,7 @@ class Dir(BaseModel, Generic[T], SerializableType):
     async def from_local(
         cls,
         local_path: Union[str, Path],
-        remote_path: Optional[str] = None,
+        remote_destination: Optional[str] = None,
         dir_cache_key: Optional[str] = None,
     ) -> Dir[T]:
         """
@@ -571,7 +591,8 @@ class Dir(BaseModel, Generic[T], SerializableType):
         ```
         Args:
             local_path: Path to the local directory
-            remote_path: Optional remote path to store the directory. If None, a path will be automatically generated.
+            remote_destination: Optional remote path to store the directory. If None, a path will be automatically
+              generated.
             dir_cache_key: Optional precomputed hash value to use for cache key computation when this Dir is used
                           as an input to discoverable tasks. If not specified, the cache key will be based on
                           directory attributes.
@@ -581,15 +602,23 @@ class Dir(BaseModel, Generic[T], SerializableType):
         """
         local_path_str = str(local_path)
         dirname = os.path.basename(os.path.normpath(local_path_str))
+        resolved_remote_path = remote_destination or internal_ctx().raw_data.get_random_remote_path(dirname)
+        protocol = get_protocol(resolved_remote_path)
 
-        output_path = await storage.put(from_path=local_path_str, to_path=remote_path, recursive=True)
+        # Shortcut for local, don't copy and just return
+        if "file" in protocol and remote_destination is None:
+            output_path = str(Path(local_path).absolute())
+            return cls(path=output_path, name=dirname, hash=dir_cache_key)
+
+        # todo: in the future, mirror File and set the file to_path here
+        output_path = await storage.put(from_path=local_path_str, to_path=remote_destination, recursive=True)
         return cls(path=output_path, name=dirname, hash=dir_cache_key)
 
     @classmethod
     def from_local_sync(
         cls,
         local_path: Union[str, Path],
-        remote_path: Optional[str] = None,
+        remote_destination: Optional[str] = None,
         dir_cache_key: Optional[str] = None,
     ) -> Dir[T]:
         """
@@ -632,7 +661,8 @@ class Dir(BaseModel, Generic[T], SerializableType):
 
         Args:
             local_path: Path to the local directory
-            remote_path: Optional remote path to store the directory. If None, a path will be automatically generated.
+            remote_destination: Optional remote path to store the directory. If None, a path will be automatically
+              generated.
             dir_cache_key: Optional precomputed hash value to use for cache key computation when this Dir is used
                           as an input to discoverable tasks. If not specified, the cache key will be based on
                           directory attributes.
@@ -643,14 +673,17 @@ class Dir(BaseModel, Generic[T], SerializableType):
         local_path_str = str(local_path)
         dirname = os.path.basename(os.path.normpath(local_path_str))
 
-        if not remote_path:
-            from flyte._context import internal_ctx
+        resolved_remote_path = remote_destination or internal_ctx().raw_data.get_random_remote_path(dirname)
+        protocol = get_protocol(resolved_remote_path)
 
-            ctx = internal_ctx()
-            remote_path = ctx.raw_data.get_random_remote_path(dirname)
-        fs = storage.get_underlying_filesystem(path=remote_path)
-        fs.put(local_path_str, remote_path, recursive=True)
-        return cls(path=remote_path, name=dirname, hash=dir_cache_key)
+        # Shortcut for local, don't copy and just return
+        if "file" in protocol and remote_destination is None:
+            output_path = str(Path(local_path).absolute())
+            return cls(path=output_path, name=dirname, hash=dir_cache_key)
+
+        fs = storage.get_underlying_filesystem(path=resolved_remote_path)
+        fs.put(local_path_str, resolved_remote_path, recursive=True)
+        return cls(path=resolved_remote_path, name=dirname, hash=dir_cache_key)
 
     @classmethod
     def from_existing_remote(cls, remote_path: str, dir_cache_key: Optional[str] = None) -> Dir[T]:

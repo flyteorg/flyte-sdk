@@ -9,12 +9,14 @@ import sys
 from ._build import build
 from ._cache import Cache, CachePolicy, CacheRequest
 from ._context import ctx
+from ._custom_context import custom_context, get_custom_context
 from ._deploy import build_images, deploy
 from ._environment import Environment
 from ._excepthook import custom_excepthook
 from ._group import group
 from ._image import Image
 from ._initialize import current_domain, init, init_from_config
+from ._logging import logger
 from ._map import map
 from ._pod import PodTemplate
 from ._resources import AMD_GPU, GPU, HABANA_GAUDI, TPU, Device, DeviceClass, Neuron, Resources
@@ -90,10 +92,13 @@ __all__ = [
     "build_images",
     "ctx",
     "current_domain",
+    "custom_context",
     "deploy",
+    "get_custom_context",
     "group",
     "init",
     "init_from_config",
+    "logger",
     "map",
     "run",
     "trace",

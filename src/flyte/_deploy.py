@@ -145,7 +145,6 @@ async def _deploy_task(
     """
     ensure_client()
     import grpc.aio
-
     from flyteidl2.task import task_definition_pb2, task_service_pb2
 
     from ._internal.runtime.convert import convert_upload_default_inputs
@@ -237,10 +236,10 @@ async def _build_images(deployment: DeploymentPlan, image_refs: Dict[str, str] |
                     raise ValueError(
                         f"Image name '{env.image._ref_name}' not found in config. Available: {list(image_refs.keys())}"
                     )
-            if not env.image._layers:
-                # No additional layers, use the base_image directly without building
-                image_identifier_map[env_name] = image_uri
-                continue
+                if not env.image._layers:
+                    # No additional layers, use the base_image directly without building
+                    image_identifier_map[env_name] = image_uri
+                    continue
             logger.debug(f"Building Image for environment {env_name}, image: {env.image}")
             images.append(_build_image_bg(env_name, env.image))
 
@@ -256,7 +255,6 @@ async def _build_images(deployment: DeploymentPlan, image_refs: Dict[str, str] |
 
     for env_name, image_uri in final_images:
         logger.warning(f"Built Image for environment {env_name}, image: {image_uri}")
-        env = deployment.envs[env_name]
         image_identifier_map[env_name] = image_uri
 
     return ImageCache(image_lookup=image_identifier_map)
