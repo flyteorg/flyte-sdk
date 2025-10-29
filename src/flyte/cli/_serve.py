@@ -16,7 +16,7 @@ from rich.table import Table
 
 @click.group("serve")
 @click.pass_context
-def serve(ctx: click.Context):
+def serve(_: click.Context):
     """
     Start the specific service. For example:
 
@@ -85,7 +85,6 @@ async def _start_grpc_server(port: int, prometheus_port: int, worker: int, timeo
         from flyte.connectors._server import (
             AsyncConnectorService,
             ConnectorMetadataService,
-            SyncConnectorService,
         )
     except ImportError as e:
         raise ImportError(

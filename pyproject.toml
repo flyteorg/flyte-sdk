@@ -43,6 +43,11 @@ build-backend = "setuptools.build_meta"
 aiosqlite = [
     "aiosqlite>=0.21.0",
 ]
+connector = [
+    "grpcio-health-checking",
+    "httpx",
+    "prometheus-client",
+]
 
 [dependency-groups]
 dev = [
