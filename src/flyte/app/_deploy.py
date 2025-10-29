@@ -79,7 +79,7 @@ async def _deploy_app(
     Deploy the given app.
     """
     import grpc.aio
-    from flyteidl2.app import app_payload_pb2
+    from flyteidl2.app import app_definition_pb2, app_payload_pb2
 
     import flyte.errors
     import flyte.remote
@@ -106,8 +106,15 @@ async def _deploy_app(
             logger.info(f"Deployed app {app.name} with version {app_idl.spec.runtime_metadata.version}")
         except grpc.aio.AioRpcError as e:
             if e.code() == grpc.StatusCode.ALREADY_EXISTS:
-                logger.info(f"App {app.name} with image {image_uri} already exists, skipping deployment.")
-                return app_idl
+                logger.warning(f"App {app.name} with image {image_uri} already exists, updating...")
+                resp = await get_client().app_service.Get(app_payload_pb2.GetRequest(app_id=app_idl.metadata.id))
+                # Update the revision to match the existing app
+                updated_app = app_definition_pb2.App(
+                    metadata=resp.app.metadata, spec=app_idl.spec, status=resp.app.status
+                )
+                logger.info(f"Updating app {app.name} to revision {updated_app.metadata.revision}")
+                update_resp = await get_client().app_service.Update(app_payload_pb2.UpdateRequest(app=updated_app))
+                return update_resp.app
             raise
 
         return app_idl

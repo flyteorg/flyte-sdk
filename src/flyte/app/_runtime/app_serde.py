@@ -34,7 +34,6 @@ def get_proto_container(
     Args:
         app_env: The app environment
         serialization_context: Serialization context
-        port: Port number
 
     Returns:
         Container protobuf message
