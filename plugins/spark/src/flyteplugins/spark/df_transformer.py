@@ -16,16 +16,14 @@ class SparkToParquetEncoder(DataFrameEncoder):
         dataframe: DataFrame,
         structured_dataset_type: types_pb2.StructuredDatasetType,
     ) -> literals_pb2.StructuredDataset:
-        uri = dataframe.uri
+        path = dataframe.uri
         ctx = flyte.ctx()
-        if ctx and not uri:
-            uri = ctx.raw_data_path.get_random_remote_path()
+        if ctx and not path:
+            path = ctx.raw_data_path.get_random_remote_path()
 
         ss = pyspark.sql.SparkSession.builder.getOrCreate()
-        path = os.path.join(uri, f"{0:05}")
 
         print("[debug]: ctx:", ctx)
-        print("[debug] uri:", uri)
         print("[debug] path:", path)
 
         # Avoid generating SUCCESS files
@@ -34,7 +32,7 @@ class SparkToParquetEncoder(DataFrameEncoder):
 
         structured_dataset_type.format = PARQUET
         return literals_pb2.StructuredDataset(
-            uri=uri,
+            uri=path,
             metadata=literals_pb2.StructuredDatasetMetadata(structured_dataset_type=structured_dataset_type),
         )
 
@@ -49,10 +47,11 @@ class ParquetToSparkDecoder(DataFrameDecoder):
         current_task_metadata: literals_pb2.StructuredDatasetMetadata,
     ) -> pyspark.sql.DataFrame:
         spark = pyspark.sql.SparkSession.builder.getOrCreate()
-        path = os.path.join(flyte_value.uri, f"{0:05}")
+        path = flyte_value.uri
 
         print("[debug]: current_task_metadata:", current_task_metadata)
         print("[debug]: flyte_value.uri:", flyte_value.uri)
+        print("[debug]: path:", flyte_value.uri)
 
         if current_task_metadata.structured_dataset_type and current_task_metadata.structured_dataset_type.columns:
             columns = [c.name for c in current_task_metadata.structured_dataset_type.columns]
