@@ -80,26 +80,45 @@ class AppEnvironment(Environment):
             # args is a list
             return self.args
 
+    def _serialize_inputs(self) -> str:
+        if not self.inputs:
+            return ""
+        from ._input import SerializableInputCollection
+
+        serialized_inputs = SerializableInputCollection.from_inputs(self.inputs)
+        return serialized_inputs.to_transport
+
     def container_cmd(self, serialize_context: SerializationContext) -> List[str]:
         if self.command is None:
             # Default command
-            cmd = ["fserve"]
-            # @click.option("--inputs", "-i")
-            # @click.option("--version", required=True)
-            # @click.option("--interactive-mode", type=click.BOOL, required=False)
-            # @click.option("--image-cache", required=False)
-            # @click.option("--tgz", required=False)
-            # @click.option("--pkl", required=False)
-            # @click.option("--dest", required=False)
-            # @click.option("--project", envvar=PROJECT_NAME, required=False)
-            # @click.option("--domain", envvar=DOMAIN_NAME, required=False)
-            # @click.option("--org", envvar=ORG_NAME, required=False)
-            # @click.argument("command", nargs=-1, type=click.UNPROCESSED)
+            cmd = [
+                "fserve",
+                "--version",
+                serialize_context.version or serialize_context.code_bundle.computed_version,
+                "--project",
+                serialize_context.project,
+                "--domain",
+                serialize_context.domain,
+                "--org",
+                serialize_context.org,
+            ]
 
-            if serialize_context.code_bundle is not None:
-                # TODO: Add serve config construction when needed
-                # For now, just pass the distribution
-                pass
+            if serialize_context.image_cache and serialize_context.image_cache.serialized_form:
+                cmd = [*cmd, "--image-cache", serialize_context.image_cache.serialized_form]
+            else:
+                if serialize_context.image_cache:
+                    cmd = [*cmd, "--image-cache", serialize_context.image_cache.to_transport]
+
+            if serialize_context.code_bundle:
+                if serialize_context.code_bundle.tgz:
+                    cmd = [*cmd, *["--tgz", f"{serialize_context.code_bundle.tgz}"]]
+                elif serialize_context.code_bundle.pkl:
+                    cmd = [*cmd, *["--pkl", f"{serialize_context.code_bundle.pkl}"]]
+                cmd = [*cmd, *["--dest", f"{serialize_context.code_bundle.destination or '.'}"]]
+
+            if self.inputs:
+                cmd.append("--inputs")
+                cmd.append(self._serialize_inputs())
 
             return [*cmd, "--"]
         elif isinstance(self.command, str):

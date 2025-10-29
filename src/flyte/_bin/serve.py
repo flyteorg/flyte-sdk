@@ -4,53 +4,75 @@ Flyte runtime serve module. This is used to serve Apps/serving.
 
 import asyncio
 import logging
-from typing import List, Tuple
+from typing import Tuple
 
 import click
+
+from flyte.models import CodeBundle
 
 logger = logging.getLogger(__name__)
 
 PROJECT_NAME = "FLYTE_INTERNAL_EXECUTION_PROJECT"
 DOMAIN_NAME = "FLYTE_INTERNAL_EXECUTION_DOMAIN"
 ORG_NAME = "_U_ORG_NAME"
+_UNION_EAGER_API_KEY_ENV_VAR = "_UNION_EAGER_API_KEY"
+_F_PATH_REWRITE = "_F_PATH_REWRITE"
+ENDPOINT_OVERRIDE = "_U_EP_OVERRIDE"
 
 
-async def download_inputs(user_inputs: List[dict], dest: str) -> Tuple[dict, dict]:
+async def sync_inputs(serialized_inputs: str, dest: str) -> dict:
     """
-    Loads
+    Converts inputs into simple dict of name to value, downloading any files/directories as needed.
+
+    # TODO Do we need to return env vars too?
     Args:
-        user_inputs:
-        dest:
+        serialized_inputs (str): The serialized inputs string.
+        dest: Destination to download inputs to
 
     Returns:
 
     """
     import flyte.storage as storage
+    from flyte.app._input import SerializableInputCollection
+
+    user_inputs = SerializableInputCollection.from_transport(serialized_inputs)
 
     output = {}
-    env_vars = {}
-    for user_input in user_inputs:
-        if user_input["auto_download"]:
-            user_dest = user_input["dest"] or dest
-            if user_input["type"] == "file":
-                value = await storage.get(user_input["value"], user_dest)
-            elif user_input["type"] == "directory":
-                value = await storage.get(user_input["value"], user_dest, recursive=True)
+    for input in user_inputs.inputs:
+        if input.download:
+            user_dest = input.dest or dest
+            if input.type == "file":
+                value = await storage.get(input.value, user_dest)
+            elif input["type"] == "directory":
+                value = await storage.get(input.value, user_dest, recursive=True)
             else:
                 raise ValueError("Can only download files or directories")
         else:
-            value = user_input["value"]
+            value = input.value
 
-        output[user_input["name"]] = value
+        output[input.name] = value
 
-        if user_input["env_name"] is not None:
-            env_vars[user_input["env_name"]] = value
+    return output
 
-    return output, env_vars
+
+async def download_code_inputs(
+    serialized_inputs: str, tgz: str, pkl: str, dest: str, version: str
+) -> Tuple[dict, CodeBundle]:
+    from flyte._internal.runtime.entrypoints import download_code_bundle
+
+    user_inputs = {}
+    if serialized_inputs and len(serialized_inputs) > 0:
+        user_inputs = await sync_inputs(serialized_inputs, dest)
+    code_bundle = None
+    if tgz or pkl:
+        bundle = CodeBundle(tgz=tgz, pkl=pkl, destination=dest, computed_version=version)
+        code_bundle = await download_code_bundle(bundle)
+
+    return user_inputs, code_bundle
 
 
 @click.command()
-@click.option("--inputs", "-i")
+@click.option("--inputs", "-i", required=False)
 @click.option("--version", required=True)
 @click.option("--interactive-mode", type=click.BOOL, required=False)
 @click.option("--image-cache", required=False)
@@ -62,7 +84,7 @@ async def download_inputs(user_inputs: List[dict], dest: str) -> Tuple[dict, dic
 @click.option("--org", envvar=ORG_NAME, required=False)
 @click.argument("command", nargs=-1, type=click.UNPROCESSED)
 def main(
-    inputs: str,
+    inputs: str | None,
     version: str,
     interactive_mode: bool,
     image_cache: str,
@@ -79,31 +101,38 @@ def main(
     import signal
     from subprocess import Popen
 
-    from flyte.app._runtime import RUNTIME_CONFIG_FILE
-    from flyte.models import CodeBundle
-
-    serve_config = {}
-    env_vars = {}
+    from flyte.app._input import RUNTIME_INPUTS_FILE
 
     logger.info("Starting flyte-serve")
+    # TODO Do we need to init here?
+    # from flyte._initialize import init
+    # remote_kwargs: dict[str, Any] = {"insecure": False}
+    # if api_key := os.getenv(_UNION_EAGER_API_KEY_ENV_VAR):
+    #     logger.info("Using api key from environment")
+    #     remote_kwargs["api_key"] = api_key
+    # else:
+    #     ep = os.environ.get(ENDPOINT_OVERRIDE, "host.docker.internal:8090")
+    #     remote_kwargs["endpoint"] = ep
+    #     if "localhost" in ep or "docker" in ep:
+    #         remote_kwargs["insecure"] = True
+    #     logger.debug(f"Using controller endpoint: {ep} with kwargs: {remote_kwargs}")
+    # init(org=org, project=project, domain=domain, image_builder="remote")  # , **remote_kwargs)
 
-    inputs_json = json.loads(inputs) if inputs else None
-    code_bundle = None
-    if tgz or pkl:
-        from flyte._internal.runtime.entrypoints import download_code_bundle
+    materialized_inputs, _code_bundle = asyncio.run(
+        download_code_inputs(
+            serialized_inputs=inputs or "",
+            tgz=tgz or "",
+            pkl=pkl or "",
+            dest=dest or os.getcwd(),
+            version=version,
+        )
+    )
 
-        bundle = CodeBundle(tgz=tgz, pkl=pkl, destination=dest, computed_version=version)
-        code_bundle = download_code_bundle(bundle)
+    inputs_file = os.path.join(os.getcwd(), RUNTIME_INPUTS_FILE)
+    with open(inputs_file, "w") as f:
+        json.dump(materialized_inputs, f)
 
-    # download code bundle and inputs
-    if inputs_json:
-        asyncio.run(download_inputs(inputs_json, os.getcwd()))
-
-    serve_file = os.path.join(os.getcwd(), RUNTIME_CONFIG_FILE)
-    with open(serve_file, "w") as f:
-        json.dump(serve_config, f)
-
-    os.environ[RUNTIME_CONFIG_FILE] = serve_file
+    os.environ[RUNTIME_INPUTS_FILE] = inputs_file
 
     command_joined = " ".join(command)
     logger.info(f"Serving command: {command_joined}")

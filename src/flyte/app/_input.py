@@ -1,9 +1,17 @@
-import re
-from dataclasses import dataclass, field
-from functools import cache
-from typing import Literal, Optional
+from __future__ import annotations
 
-import flyte.io
+import re
+import typing
+from dataclasses import dataclass, field
+from functools import cache, cached_property
+from typing import List, Literal, Optional
+
+from pydantic import BaseModel
+
+if typing.TYPE_CHECKING:
+    import flyte.io
+
+RUNTIME_INPUTS_FILE = "flyte-inputs.json"
 
 InputType = Literal["file", "directory", "string"]
 
@@ -45,20 +53,106 @@ class Input:
             self.name = "i0"
 
 
+_SerializedInputType = Literal["file", "directory", "string"]
+
+
+class SerializableInput(BaseModel):
+    """
+    Serializable version of Input.
+    """
+
+    name: str
+    value: str
+    download: bool
+    type: _SerializedInputType = str
+    env_var: Optional[str] = None
+    dest: Optional[str] = None
+    ignore_patterns: List[str] = field(default_factory=list)
+
+    @classmethod
+    def from_input(cls, inp: Input) -> "SerializableInput":
+        import flyte.io
+
+        tpe: _SerializedInputType = "string"
+        if isinstance(inp.value, flyte.io.File):
+            value = inp.value.path
+            tpe = "file"
+            download = True if inp.mount is not None else inp.download
+        elif isinstance(inp.value, flyte.io.Dir):
+            value = inp.value.path
+            tpe = "directory"
+            download = True if inp.mount is not None else inp.download
+        else:
+            value = inp.value
+            download = False
+
+        return cls(
+            name=inp.name,
+            value=value,
+            type=tpe,
+            download=download,
+            env_var=inp.env_var,
+            dest=inp.mount,
+            ignore_patterns=inp.ignore_patterns,
+        )
+
+
+@dataclass
+class SerializableInputCollection(BaseModel):
+    """
+    Collection of inputs for application.
+
+    :param inputs: List of inputs.
+    """
+
+    inputs: List[SerializableInput] = field(default_factory=list)
+
+    @cached_property
+    def to_transport(self) -> str:
+        import base64
+        import gzip
+        from io import BytesIO
+
+        json_str = self.model_dump_json()
+        buf = BytesIO()
+        with gzip.GzipFile(mode="wb", fileobj=buf, mtime=0) as f:
+            f.write(json_str.encode("utf-8"))
+        return base64.b64encode(buf.getvalue()).decode("utf-8")
+
+    @classmethod
+    def from_transport(cls, s: str) -> SerializableInputCollection:
+        import base64
+        import gzip
+
+        compressed_val = base64.b64decode(s.encode("utf-8"))
+        json_str = gzip.decompress(compressed_val).decode("utf-8")
+        val = cls.model_validate_json(json_str)
+        val.serialized_form = s
+        return val
+
+    @classmethod
+    def from_inputs(cls, inputs: List[Input]) -> SerializableInputCollection:
+        return cls(inputs=[SerializableInput.from_input(inp) for inp in inputs])
+
+
 @cache
-def get_input(name: str) -> str:
-    """Get inputs for application or endpoint."""
+def _load_inputs() -> dict[str, str]:
+    """Load inputs for application or endpoint."""
     import json
     import os
 
-    from ._runtime import RUNTIME_CONFIG_FILE
-
-    config_file = os.getenv(RUNTIME_CONFIG_FILE)
+    config_file = os.getenv(RUNTIME_INPUTS_FILE)
 
     if config_file is None:
         raise ValueError("Inputs are not mounted")
 
     with open(config_file, "r") as f:
-        inputs = json.load(f)["inputs"]
+        inputs = json.load(f)
 
+    return inputs
+
+
+def get_input(name: str) -> str:
+    """Get inputs for application or endpoint."""
+    inputs = _load_inputs()
     return inputs[name]

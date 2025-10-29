@@ -5,7 +5,6 @@ from dataclasses import dataclass
 
 import flyte._deployer as deployer
 from flyte import Image
-import flyte.errors
 from flyte._initialize import ensure_client, get_client
 from flyte._logging import logger
 from flyte.models import SerializationContext
@@ -80,6 +79,7 @@ async def _deploy_app(
     import grpc.aio
     from flyteidl2.app import app_payload_pb2
 
+    import flyte.errors
     import flyte.remote
     from flyte.app._runtime import translate_app_env_to_idl
 
