@@ -41,7 +41,7 @@ class BigQueryMetadata(ResourceMeta):
 
 
 @lru_cache
-def _get_bigquery_client(
+async def _get_bigquery_client(
     project: str, location: str, user_agent: str, google_application_credentials: str
 ) -> bigquery.Client:
     if google_application_credentials is not None:

@@ -203,14 +203,15 @@ class ConnectorSecretsMixin:
         return [Secret(key=k, as_env_var=v) for k, v in self._secrets.items()]
 
 
-class AsyncConnectorExecutorMixin(TaskTemplate):
+class AsyncConnectorExecutorMixin:
     """
     This mixin class is used to run the connector task locally, and it's only used for local execution.
     Task should inherit from this class if the task can be run in the connector.
     """
 
     async def execute(self, **kwargs) -> Any:
-        connector = ConnectorRegistry.get_connector(self.task_type, self.task_type_version)
+        task = typing.cast(TaskTemplate, self)
+        connector = ConnectorRegistry.get_connector(task.task_type, task.task_type_version)
 
         ctx = internal_ctx()
         tctx = internal_ctx().data.task_context
@@ -228,7 +229,7 @@ class AsyncConnectorExecutorMixin(TaskTemplate):
             image_cache=tctx.compiled_image_cache,
             root_dir=cfg.root_dir,
         )
-        tt = get_proto_task(self, sc)
+        tt = get_proto_task(task, sc)
         resource_meta = await connector.create(task_template=tt, output_prefix=ctx.raw_data.path, inputs=kwargs)
         resource = Resource(phase=TaskExecution.RUNNING)
 
@@ -241,7 +242,7 @@ class AsyncConnectorExecutorMixin(TaskTemplate):
             await asyncio.sleep(1)
 
         if resource.phase != TaskExecution.SUCCEEDED:
-            raise RuntimeError(f"Failed to run the task {self.name} with error: {resource.message}")
+            raise RuntimeError(f"Failed to run the task {task.name} with error: {resource.message}")
 
         # TODO: Support abort
 
