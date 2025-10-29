@@ -147,7 +147,7 @@ async def to_task_trigger(
             inputs=common_pb2.Inputs(literals=literals),
         ),
         automation_spec=common_pb2.TriggerAutomationSpec(
-            type=common_pb2.TriggerAutomationSpec.Type.TYPE_SCHEDULE,
+            type=common_pb2.TriggerAutomationSpecType.TYPE_SCHEDULE,
             schedule=automation,
         ),
     )

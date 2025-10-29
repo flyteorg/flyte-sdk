@@ -284,9 +284,9 @@ class Trigger(ToJSONMixin):
         return self.pb2.active
 
     def _rich_automation(self, automation: common_pb2.TriggerAutomationSpec):
-        if automation.type == common_pb2.TriggerAutomationSpec.TYPE_NONE:
+        if automation.type == common_pb2.TriggerAutomationSpec.type.TYPE_NONE:
             yield "none", None
-        elif automation.type == common_pb2.TriggerAutomationSpec.TYPE_SCHEDULE:
+        elif automation.type == common_pb2.TriggerAutomationSpec.type.TYPE_SCHEDULE:
             if automation.schedule.cron_expression is not None:
                 yield "cron", automation.schedule.cron_expression
             elif automation.schedule.rate is not None:

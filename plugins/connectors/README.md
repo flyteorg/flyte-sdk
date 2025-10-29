@@ -11,13 +11,18 @@
 
 *Build powerful data pipelines with native integrations to popular cloud services*
 
+</div>
+
 ## 🚀 Quick Start
 
 ### Installation
 
+
 ```bash
-pip install --pre flyteplugins-connectors
+pip install --pre flyteplugins-connectors[bigquery]  # Install BigQuery connector
 ```
+
+
 
 ### BigQuery Integration
 
@@ -59,8 +64,7 @@ analytics_task = BigQueryTask(
     """
 )
 
-# Add to environment and execute
-env.add_task(analytics_task)
+env.from_task(analytics_task)
 
 # Run your workflow
 if __name__ == "__main__":
