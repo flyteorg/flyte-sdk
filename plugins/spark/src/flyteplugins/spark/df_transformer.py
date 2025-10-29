@@ -1,5 +1,3 @@
-import os
-
 import flyte
 import pyspark
 from flyte.io import PARQUET, DataFrame, DataFrameDecoder, DataFrameEncoder, DataFrameTransformerEngine

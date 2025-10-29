@@ -93,6 +93,7 @@ class PysparkFunctionTask(AsyncFunctionTaskTemplate):
             # parent action only when debugging in the interactive mode.
             # Note: The action name is always "a0" in the debug mode.
             import pyspark as _pyspark
+
             sess = _pyspark.sql.SparkSession.builder.appName(DEFAULT_SPARK_CONTEXT_NAME).getOrCreate()
             sess.stop()
 
