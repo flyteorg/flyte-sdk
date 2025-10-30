@@ -20,7 +20,7 @@ _F_PATH_REWRITE = "_F_PATH_REWRITE"
 ENDPOINT_OVERRIDE = "_U_EP_OVERRIDE"
 
 
-async def sync_inputs(serialized_inputs: str, dest: str) -> dict:
+async def sync_inputs(serialized_inputs: str, dest: str) -> Tuple[dict, dict]:
     """
     Converts inputs into simple dict of name to value, downloading any files/directories as needed.
 
@@ -38,6 +38,8 @@ async def sync_inputs(serialized_inputs: str, dest: str) -> dict:
     user_inputs = SerializableInputCollection.from_transport(serialized_inputs)
 
     output = {}
+    env_vars = {}
+
     for input in user_inputs.inputs:
         if input.download:
             user_dest = input.dest or dest
@@ -52,23 +54,26 @@ async def sync_inputs(serialized_inputs: str, dest: str) -> dict:
 
         output[input.name] = value
 
-    return output
+        if input.env_var:
+            env_vars[input.env_var] = value
+
+    return output, env_vars
 
 
 async def download_code_inputs(
     serialized_inputs: str, tgz: str, pkl: str, dest: str, version: str
-) -> Tuple[dict, CodeBundle | None]:
+) -> Tuple[dict, dict, CodeBundle | None]:
     from flyte._internal.runtime.entrypoints import download_code_bundle
 
     user_inputs = {}
     if serialized_inputs and len(serialized_inputs) > 0:
-        user_inputs = await sync_inputs(serialized_inputs, dest)
+        user_inputs, env_vars = await sync_inputs(serialized_inputs, dest)
     code_bundle: CodeBundle | None = None
     if tgz or pkl:
         bundle = CodeBundle(tgz=tgz, pkl=pkl, destination=dest, computed_version=version)
         code_bundle = await download_code_bundle(bundle)
 
-    return user_inputs, code_bundle
+    return user_inputs, env_vars, code_bundle
 
 
 @click.command()
@@ -118,7 +123,7 @@ def main(
     #     logger.debug(f"Using controller endpoint: {ep} with kwargs: {remote_kwargs}")
     # init(org=org, project=project, domain=domain, image_builder="remote")  # , **remote_kwargs)
 
-    materialized_inputs, _code_bundle = asyncio.run(
+    materialized_inputs, env_vars, _code_bundle = asyncio.run(
         download_code_inputs(
             serialized_inputs=inputs or "",
             tgz=tgz or "",
@@ -127,6 +132,11 @@ def main(
             version=version,
         )
     )
+
+    for key, value in env_vars.items():
+        # set environment variables defined in the AppEnvironment Inputs
+        logger.info(f"Setting environment variable {key}='{value}'")
+        os.environ[key] = value
 
     inputs_file = os.path.join(os.getcwd(), RUNTIME_INPUTS_FILE)
     with open(inputs_file, "w") as f:
@@ -137,7 +147,20 @@ def main(
     if command is None or len(command) == 0:
         raise ValueError("No command provided to execute")
 
-    command_joined = " ".join(command)
+    command_list = []
+    for arg in command:
+        logger.info(f"Processing arg: {arg}")
+        if arg.startswith("$"):
+            # expand environment variables in the user-defined command
+            val = os.getenv(arg[1:])
+            if val is None:
+                raise ValueError(f"Environment variable {arg[1:]} not found")
+            logger.info(f"Found env var {arg}.")
+            command_list.append(val)
+        else:
+            command_list.append(arg)
+
+    command_joined = " ".join(command_list)
     logger.info(f"Serving command: {command_joined}")
     p = Popen(command_joined, env=os.environ, shell=True)
 
