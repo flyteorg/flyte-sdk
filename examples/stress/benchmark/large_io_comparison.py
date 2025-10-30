@@ -11,6 +11,16 @@ import flyte.io
 import flyte.storage
 from flyte.extras import ContainerTask
 
+# S3fs environment for comparing with v1 flytekit-style downloads
+s3fs_env = flyte.TaskEnvironment(
+    "s3fs_benchmark",
+    resources=flyte.Resources(
+        cpu=8,
+        memory="23Gi",
+    ),
+    image=flyte.Image.from_debian_base(name="s3fs-benchmarker").with_pip_packages("s3fs", "fsspec"),
+)
+
 s5cmd_image = (
     flyte.Image.from_debian_base(name="s5cmd-benchmark")
     .with_apt_packages("wget", "ca-certificates", "bc")
@@ -31,7 +41,7 @@ s5cmd_file_task = ContainerTask(
     image=s5cmd_image,
     resources=flyte.Resources(
         cpu=8,
-        memory="32Gi",
+        memory="23Gi",
     ),
     inputs={"remote_path": str, "file_size_mb": int},
     outputs={"duration": float, "throughput_mbps": float},
@@ -62,7 +72,7 @@ s5cmd_dir_task = ContainerTask(
     image=s5cmd_image,
     resources=flyte.Resources(
         cpu=8,
-        memory="32Gi",
+        memory="23Gi",
     ),
     inputs={"remote_path": str, "expected_files": int},
     outputs={"duration": float, "throughput_mbps": float},
@@ -97,9 +107,9 @@ env = flyte.TaskEnvironment(
     "file_io_benchmark",
     resources=flyte.Resources(
         cpu=8,
-        memory="32Gi",
+        memory="23Gi",
     ),
-    depends_on=[s5cmd_env],
+    depends_on=[s5cmd_env, s3fs_env],
     image=flyte.Image.from_debian_base(name="io-benchmarker"),
 )
 
@@ -154,9 +164,6 @@ async def create_dir_with_files(num_files: int = 1000, size_megabytes: int = 5) 
 
 
 async def download(f: flyte.io.File, hang: bool = False) -> Tuple[int, float]:
-    """
-    Shared core download logic used by both new and old SDK task.
-    """
     _, tmp_path = tempfile.mkstemp()
     print(f"Will download file from {f.path} to {tmp_path}", flush=True)
     if hang:
@@ -224,6 +231,59 @@ async def read_dir_new(d: flyte.io.Dir, hang: bool = False) -> Tuple[int, float]
     return await download_dir(d, hang)
 
 
+# S3fs + fsspec benchmark tasks (similar to v1 flytekit)
+async def download_s3fs(remote_path: str, is_directory: bool = False) -> Tuple[int, float]:
+    """Download using s3fs directly (v1 flytekit-style)"""
+    import s3fs
+
+    _, tmp_path = tempfile.mkstemp() if not is_directory else (None, tempfile.mkdtemp())
+
+    # Parse S3 path
+    protocol = remote_path.split("://")[0]
+    if protocol != "s3":
+        raise ValueError(f"s3fs benchmark only supports s3:// paths, got {protocol}")
+
+    print(f"Will download from {remote_path} to {tmp_path} using s3fs", flush=True)
+
+    # Create s3fs filesystem
+    fs = s3fs.S3FileSystem(anon=False)
+
+    start = time.time()
+
+    if is_directory:
+        # Download directory
+        fs.get(remote_path, tmp_path, recursive=True)
+        end = time.time()
+        total = end - start
+
+        # Calculate total bytes
+        total_bytes = 0
+        for root, dirs, files in os.walk(tmp_path):
+            for file in files:
+                file_path = os.path.join(root, file)
+                total_bytes += os.path.getsize(file_path)
+    else:
+        # Download single file
+        fs.get(remote_path, tmp_path)
+        end = time.time()
+        total = end - start
+        total_bytes = os.path.getsize(tmp_path)
+
+    print(f"s3fs: Read {total_bytes} bytes in {total:.2f} seconds ({total_bytes / total / (1024 * 1024):.2f} MiB/s)")
+
+    return total_bytes, total
+
+
+@s3fs_env.task
+async def read_large_file_s3fs(f: flyte.io.File) -> Tuple[int, float]:
+    return await download_s3fs(f.path, is_directory=False)
+
+
+@s3fs_env.task
+async def read_dir_s3fs(d: flyte.io.Dir) -> Tuple[int, float]:
+    return await download_s3fs(d.path, is_directory=True)
+
+
 @env.task
 async def main(size_megabytes: int = 5120) -> Tuple[int, float]:
     large_file = await create_file(size_megabytes)
@@ -245,13 +305,17 @@ async def benchmark_all():
 
     print("Running all downloads in parallel...")
     t1 = asyncio.create_task(read_large_file_new(large_file))
+    t2 = asyncio.create_task(read_large_file_s3fs(large_file))
     t3 = asyncio.create_task(s5cmd_file_task(remote_path=large_file.path, file_size_mb=5120))
 
-    (bytes_new, time_new), (s5cmd_time, s5cmd_throughput) = await asyncio.gather(t1, t3)
+    (bytes_new, time_new), (bytes_s3fs, time_s3fs), (s5cmd_time, s5cmd_throughput) = await asyncio.gather(t1, t2, t3)
 
     print("\nResults for 5GB file:")
     print(
         f"  New SDK: {bytes_new / (1024**3):.2f} GB in {time_new:.2f}s ({bytes_new / time_new / (1024**2):.2f} MiB/s)"
+    )
+    print(
+        f"  s3fs:    {bytes_s3fs / (1024**3):.2f} GB in {time_s3fs:.2f}s ({bytes_s3fs / time_s3fs / (1024**2):.2f} MiB/s)"
     )
     print(f"  s5cmd:   {s5cmd_time:.2f}s ({s5cmd_throughput:.2f} MiB/s)")
 
@@ -261,14 +325,19 @@ async def benchmark_all():
 
     print("Running directory downloads in parallel...")
     td1 = asyncio.create_task(read_dir_new(file_dir))
-    td2 = asyncio.create_task(s5cmd_dir_task(remote_path=file_dir.path, expected_files=1000))
+    td2 = asyncio.create_task(read_dir_s3fs(file_dir))
+    td3 = asyncio.create_task(s5cmd_dir_task(remote_path=file_dir.path, expected_files=1000))
 
-    (dir_bytes_new, dir_time_new), (s5cmd_dir_time, s5cmd_dir_throughput) = await asyncio.gather(td1, td2)
+    (dir_bytes_new, dir_time_new), (dir_bytes_s3fs, dir_time_s3fs), (s5cmd_dir_time, s5cmd_dir_throughput) = await asyncio.gather(td1, td2, td3)
 
     print("\nResults for 1000 x 5MB files:")
     print(
         f"  New SDK: {dir_bytes_new / (1024**3):.2f} GB in {dir_time_new:.2f}s"
         f" ({dir_bytes_new / dir_time_new / (1024**2):.2f} MiB/s)"
+    )
+    print(
+        f"  s3fs:    {dir_bytes_s3fs / (1024**3):.2f} GB in {dir_time_s3fs:.2f}s"
+        f" ({dir_bytes_s3fs / dir_time_s3fs / (1024**2):.2f} MiB/s)"
     )
     print(f"  s5cmd:   {s5cmd_dir_time:.2f}s ({s5cmd_dir_throughput:.2f} MiB/s)")
 
