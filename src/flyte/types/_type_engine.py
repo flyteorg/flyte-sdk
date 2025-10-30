@@ -1911,7 +1911,6 @@ def _get_element_type(element_property: typing.Dict[str, str]) -> Type:
     return str
 
 
-# pr: han-ru is this still needed?
 def dataclass_from_dict(cls: type, src: typing.Dict[str, typing.Any]) -> typing.Any:
     """
     Utility function to construct a dataclass object from dict
@@ -1991,7 +1990,7 @@ def _handle_flyte_console_float_input_to_int(lv: Literal) -> int:
 
 def _check_and_convert_void(lv: Literal) -> None:
     if not lv.scalar.HasField("none_type"):
-        raise TypeTransformerFailedError(f"Cannot convert literal {lv} to None")
+        raise TypeTransformerFailedError(f"Cannot convert literal '{lv}' to None")
     return None
 
 

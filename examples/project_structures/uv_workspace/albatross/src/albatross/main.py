@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from bird_feeder.actions import get_feeder
+from bird_feeder.actions import bird_env, get_feeder
 from seeds.actions import get_seed
 
 import flyte
@@ -13,8 +13,8 @@ env = flyte.TaskEnvironment(
     image=flyte.Image.from_debian_base().with_uv_project(
         pyproject_file=(UV_WORKSPACE_ROOT / "pyproject.toml"),
         extra_args="--only-group albatross",  # albatross group define all the dependencies the task needs
-        project_install_mode="install_project",
     ),
+    depends_on=[bird_env],
 )
 
 
@@ -27,6 +27,6 @@ async def albatross_task() -> str:
 
 
 if __name__ == "__main__":
-    flyte.init_from_config(root_dir=Path(__file__).parent.parent)
+    flyte.init_from_config(root_dir=UV_WORKSPACE_ROOT)
     run = flyte.run(albatross_task)
     print(run.url)
