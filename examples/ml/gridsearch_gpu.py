@@ -24,6 +24,23 @@ import flyte
 import flyte.io
 
 
+image = flyte.Image.from_uv_script(__file__, name="optimizer-gpu")
+
+gpu_env = flyte.TaskEnvironment(
+    name="gpu_env",
+    resources=flyte.Resources(cpu=6, memory="4Gi", gpu="L4:1"),
+    image=image,
+    secrets=flyte.Secret(key="NIELS_WANDB_API_KEY", as_env_var="WANDB_API_KEY"),
+)
+
+driver = flyte.TaskEnvironment(
+    name="gridsearch_driver",
+    resources=flyte.Resources(cpu=4, memory="1Gi"),
+    image=image,
+    depends_on=[gpu_env],
+)
+
+
 class MNISTAutoEncoder(L.LightningModule):
     def __init__(self, encoder, decoder):
         super().__init__()
@@ -74,22 +91,6 @@ class MNISTDataModule(L.LightningDataModule):
             shuffle=True,
         )
 
-
-image = flyte.Image.from_uv_script(__file__, name="optimizer-gpu")
-
-gpu_env = flyte.TaskEnvironment(
-    name="gpu_env",
-    resources=flyte.Resources(cpu=6, memory="4Gi", gpu="L4:1"),
-    image=image,
-    secrets=flyte.Secret(key="NIELS_WANDB_API_KEY", as_env_var="WANDB_API_KEY"),
-)
-
-driver = flyte.TaskEnvironment(
-    name="gridsearch_driver",
-    resources=flyte.Resources(cpu=4, memory="1Gi"),
-    image=image,
-    depends_on=[gpu_env],
-)
 
 @gpu_env.task
 async def train_model(
