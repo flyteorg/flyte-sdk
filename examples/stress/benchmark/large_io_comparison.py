@@ -3,14 +3,22 @@ import os
 import signal
 import tempfile
 import time
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Tuple
+from typing import List, Tuple
 
 import flyte
 import flyte.io
 import flyte.report
 import flyte.storage
 from flyte.extras import ContainerTask
+
+
+@dataclass
+class BenchmarkResult:
+    """Result from a single benchmark run"""
+    bytes: int
+    duration: float
 
 # S3fs environment for comparing with v1 flytekit-style downloads
 s3fs_env = flyte.TaskEnvironment(
@@ -223,13 +231,23 @@ async def download_dir(d: flyte.io.Dir, hang: bool = False) -> Tuple[int, float]
 
 
 @env.task
-async def read_large_file_new(f: flyte.io.File, hang: bool = False) -> Tuple[int, float]:
-    return await download(f, hang)
+async def read_large_file_new(f: flyte.io.File, hang: bool = False, iterations: int = 10) -> List[BenchmarkResult]:
+    results = []
+    for i in range(iterations):
+        print(f"[New SDK File] Run {i+1}/{iterations}", flush=True)
+        bytes_val, duration = await download(f, hang)
+        results.append(BenchmarkResult(bytes=bytes_val, duration=duration))
+    return results
 
 
 @env.task
-async def read_dir_new(d: flyte.io.Dir, hang: bool = False) -> Tuple[int, float]:
-    return await download_dir(d, hang)
+async def read_dir_new(d: flyte.io.Dir, hang: bool = False, iterations: int = 10) -> List[BenchmarkResult]:
+    results = []
+    for i in range(iterations):
+        print(f"[New SDK Dir] Run {i+1}/{iterations}", flush=True)
+        bytes_val, duration = await download_dir(d, hang)
+        results.append(BenchmarkResult(bytes=bytes_val, duration=duration))
+    return results
 
 
 # S3fs + fsspec benchmark tasks (similar to v1 flytekit)
@@ -276,13 +294,23 @@ async def download_s3fs(remote_path: str, is_directory: bool = False) -> Tuple[i
 
 
 @s3fs_env.task
-async def read_large_file_s3fs(f: flyte.io.File) -> Tuple[int, float]:
-    return await download_s3fs(f.path, is_directory=False)
+async def read_large_file_s3fs(f: flyte.io.File, iterations: int = 10) -> List[BenchmarkResult]:
+    results = []
+    for i in range(iterations):
+        print(f"[s3fs File] Run {i+1}/{iterations}", flush=True)
+        bytes_val, duration = await download_s3fs(f.path, is_directory=False)
+        results.append(BenchmarkResult(bytes=bytes_val, duration=duration))
+    return results
 
 
 @s3fs_env.task
-async def read_dir_s3fs(d: flyte.io.Dir) -> Tuple[int, float]:
-    return await download_s3fs(d.path, is_directory=True)
+async def read_dir_s3fs(d: flyte.io.Dir, iterations: int = 10) -> List[BenchmarkResult]:
+    results = []
+    for i in range(iterations):
+        print(f"[s3fs Dir] Run {i+1}/{iterations}", flush=True)
+        bytes_val, duration = await download_s3fs(d.path, is_directory=True)
+        results.append(BenchmarkResult(bytes=bytes_val, duration=duration))
+    return results
 
 
 @env.task
@@ -293,101 +321,88 @@ async def main(size_megabytes: int = 5120) -> Tuple[int, float]:
     return r1
 
 
-@env.task(report=True)
-async def benchmark_all():
-    """Comprehensive benchmark comparing all download methods"""
-    print("=" * 80)
-    print("Starting comprehensive I/O benchmarks")
-    print("=" * 80)
+def generate_benchmark_report(
+    file_results_new: List[BenchmarkResult],
+    file_results_s3fs: List[BenchmarkResult],
+    file_results_s5cmd: List[BenchmarkResult],
+    dir_results_new: List[BenchmarkResult],
+    dir_results_s3fs: List[BenchmarkResult],
+    dir_results_s5cmd: List[BenchmarkResult],
+) -> str:
+    """Generate HTML report with benchmark results"""
 
-    # Test 1: Large single file (5GB)
-    print("\n--- Test 1: Single 5GB file ---")
-    large_file = await create_file(5120)
+    def calculate_stats(results: List[BenchmarkResult]):
+        """Calculate average, min, max from list of BenchmarkResult"""
+        times = [r.duration for r in results]
+        bytes_vals = [r.bytes for r in results]
+        avg_time = sum(times) / len(times)
+        avg_bytes = sum(bytes_vals) / len(bytes_vals)
+        min_time = min(times)
+        max_time = max(times)
+        avg_throughput = avg_bytes / avg_time / (1024**2)
+        return avg_bytes, avg_time, min_time, max_time, avg_throughput, times
 
-    print("Running all downloads in parallel...")
-    t1 = asyncio.create_task(read_large_file_new(large_file))
-    t2 = asyncio.create_task(read_large_file_s3fs(large_file))
-    t3 = asyncio.create_task(s5cmd_file_task(remote_path=large_file.path, file_size_mb=5120))
+    # Calculate stats for file benchmarks
+    file_new_bytes, file_new_time, file_new_min, file_new_max, file_new_tput, file_new_times = calculate_stats(file_results_new)
+    file_s3fs_bytes, file_s3fs_time, file_s3fs_min, file_s3fs_max, file_s3fs_tput, file_s3fs_times = calculate_stats(file_results_s3fs)
+    file_s5cmd_bytes, file_s5cmd_time, file_s5cmd_min, file_s5cmd_max, file_s5cmd_tput, file_s5cmd_times = calculate_stats(file_results_s5cmd)
 
-    (bytes_new, time_new), (bytes_s3fs, time_s3fs), (s5cmd_time, s5cmd_throughput) = await asyncio.gather(t1, t2, t3)
+    # Calculate stats for directory benchmarks
+    dir_new_bytes, dir_new_time, dir_new_min, dir_new_max, dir_new_tput, dir_new_times = calculate_stats(dir_results_new)
+    dir_s3fs_bytes, dir_s3fs_time, dir_s3fs_min, dir_s3fs_max, dir_s3fs_tput, dir_s3fs_times = calculate_stats(dir_results_s3fs)
+    dir_s5cmd_bytes, dir_s5cmd_time, dir_s5cmd_min, dir_s5cmd_max, dir_s5cmd_tput, dir_s5cmd_times = calculate_stats(dir_results_s5cmd)
 
-    print("\nResults for 5GB file:")
-    print(
-        f"  New SDK: {bytes_new / (1024**3):.2f} GB in {time_new:.2f}s ({bytes_new / time_new / (1024**2):.2f} MiB/s)"
-    )
-    print(
-        f"  s3fs:    {bytes_s3fs / (1024**3):.2f} GB in {time_s3fs:.2f}s ({bytes_s3fs / time_s3fs / (1024**2):.2f} MiB/s)"
-    )
-    print(f"  s5cmd:   {s5cmd_time:.2f}s ({s5cmd_throughput:.2f} MiB/s)")
-
-    # Test 2: Directory with 1000 5MB files
-    print("\n--- Test 2: Directory with 1000 x 5MB files ---")
-    file_dir = await create_dir_with_files(num_files=1000, size_megabytes=5)
-
-    print("Running directory downloads in parallel...")
-    td1 = asyncio.create_task(read_dir_new(file_dir))
-    td2 = asyncio.create_task(read_dir_s3fs(file_dir))
-    td3 = asyncio.create_task(s5cmd_dir_task(remote_path=file_dir.path, expected_files=1000))
-
-    (dir_bytes_new, dir_time_new), (dir_bytes_s3fs, dir_time_s3fs), (s5cmd_dir_time, s5cmd_dir_throughput) = await asyncio.gather(td1, td2, td3)
-
-    print("\nResults for 1000 x 5MB files:")
-    print(
-        f"  New SDK: {dir_bytes_new / (1024**3):.2f} GB in {dir_time_new:.2f}s"
-        f" ({dir_bytes_new / dir_time_new / (1024**2):.2f} MiB/s)"
-    )
-    print(
-        f"  s3fs:    {dir_bytes_s3fs / (1024**3):.2f} GB in {dir_time_s3fs:.2f}s"
-        f" ({dir_bytes_s3fs / dir_time_s3fs / (1024**2):.2f} MiB/s)"
-    )
-    print(f"  s5cmd:   {s5cmd_dir_time:.2f}s ({s5cmd_dir_throughput:.2f} MiB/s)")
-
-    print("\n" + "=" * 80)
-    print("Benchmark complete!")
-    print("=" * 80)
-
-    # Create a Deck with the results
     html = f"""
     <html>
     <head>
         <style>
             body {{ font-family: Arial, sans-serif; margin: 20px; }}
             h1 {{ color: #333; }}
+            h2 {{ color: #555; margin-top: 30px; }}
             table {{ border-collapse: collapse; width: 100%; margin: 20px 0; }}
             th, td {{ border: 1px solid #ddd; padding: 12px; text-align: left; }}
             th {{ background-color: #4CAF50; color: white; }}
             tr:nth-child(even) {{ background-color: #f2f2f2; }}
-            .winner {{ background-color: #d4edda; font-weight: bold; }}
+            .stats {{ font-size: 0.9em; color: #666; }}
+            .runs {{ font-size: 0.85em; color: #888; margin-top: 5px; }}
         </style>
     </head>
     <body>
-        <h1>I/O Benchmark Results</h1>
+        <h1>I/O Benchmark Results (10 Runs Each)</h1>
 
         <h2>Test 1: Single 5GB File Download</h2>
         <table>
             <tr>
                 <th>Method</th>
-                <th>Size (GB)</th>
-                <th>Duration (s)</th>
-                <th>Throughput (MiB/s)</th>
+                <th>Avg Size (GB)</th>
+                <th>Avg Duration (s)</th>
+                <th>Min/Max (s)</th>
+                <th>Avg Throughput (MiB/s)</th>
+                <th>All Runs (s)</th>
             </tr>
             <tr>
                 <td>New SDK (Flyte v2)</td>
-                <td>{bytes_new / (1024**3):.2f}</td>
-                <td>{time_new:.2f}</td>
-                <td>{bytes_new / time_new / (1024**2):.2f}</td>
+                <td>{file_new_bytes / (1024**3):.2f}</td>
+                <td>{file_new_time:.2f}</td>
+                <td>{file_new_min:.2f} / {file_new_max:.2f}</td>
+                <td>{file_new_tput:.2f}</td>
+                <td class="runs">{', '.join([f'{t:.2f}' for t in file_new_times])}</td>
             </tr>
             <tr>
                 <td>s3fs + fsspec (v1 style)</td>
-                <td>{bytes_s3fs / (1024**3):.2f}</td>
-                <td>{time_s3fs:.2f}</td>
-                <td>{bytes_s3fs / time_s3fs / (1024**2):.2f}</td>
+                <td>{file_s3fs_bytes / (1024**3):.2f}</td>
+                <td>{file_s3fs_time:.2f}</td>
+                <td>{file_s3fs_min:.2f} / {file_s3fs_max:.2f}</td>
+                <td>{file_s3fs_tput:.2f}</td>
+                <td class="runs">{', '.join([f'{t:.2f}' for t in file_s3fs_times])}</td>
             </tr>
             <tr>
                 <td>s5cmd (ContainerTask)</td>
                 <td>~5.00</td>
-                <td>{s5cmd_time:.2f}</td>
-                <td>{s5cmd_throughput:.2f}</td>
+                <td>{file_s5cmd_time:.2f}</td>
+                <td>{file_s5cmd_min:.2f} / {file_s5cmd_max:.2f}</td>
+                <td>{file_s5cmd_tput:.2f}</td>
+                <td class="runs">{', '.join([f'{t:.2f}' for t in file_s5cmd_times])}</td>
             </tr>
         </table>
 
@@ -395,34 +410,129 @@ async def benchmark_all():
         <table>
             <tr>
                 <th>Method</th>
-                <th>Size (GB)</th>
-                <th>Duration (s)</th>
-                <th>Throughput (MiB/s)</th>
+                <th>Avg Size (GB)</th>
+                <th>Avg Duration (s)</th>
+                <th>Min/Max (s)</th>
+                <th>Avg Throughput (MiB/s)</th>
+                <th>All Runs (s)</th>
             </tr>
             <tr>
                 <td>New SDK (Flyte v2)</td>
-                <td>{dir_bytes_new / (1024**3):.2f}</td>
-                <td>{dir_time_new:.2f}</td>
-                <td>{dir_bytes_new / dir_time_new / (1024**2):.2f}</td>
+                <td>{dir_new_bytes / (1024**3):.2f}</td>
+                <td>{dir_new_time:.2f}</td>
+                <td>{dir_new_min:.2f} / {dir_new_max:.2f}</td>
+                <td>{dir_new_tput:.2f}</td>
+                <td class="runs">{', '.join([f'{t:.2f}' for t in dir_new_times])}</td>
             </tr>
             <tr>
                 <td>s3fs + fsspec (v1 style)</td>
-                <td>{dir_bytes_s3fs / (1024**3):.2f}</td>
-                <td>{dir_time_s3fs:.2f}</td>
-                <td>{dir_bytes_s3fs / dir_time_s3fs / (1024**2):.2f}</td>
+                <td>{dir_s3fs_bytes / (1024**3):.2f}</td>
+                <td>{dir_s3fs_time:.2f}</td>
+                <td>{dir_s3fs_min:.2f} / {dir_s3fs_max:.2f}</td>
+                <td>{dir_s3fs_tput:.2f}</td>
+                <td class="runs">{', '.join([f'{t:.2f}' for t in dir_s3fs_times])}</td>
             </tr>
             <tr>
                 <td>s5cmd (ContainerTask)</td>
                 <td>~4.88</td>
-                <td>{s5cmd_dir_time:.2f}</td>
-                <td>{s5cmd_dir_throughput:.2f}</td>
+                <td>{dir_s5cmd_time:.2f}</td>
+                <td>{dir_s5cmd_min:.2f} / {dir_s5cmd_max:.2f}</td>
+                <td>{dir_s5cmd_tput:.2f}</td>
+                <td class="runs">{', '.join([f'{t:.2f}' for t in dir_s5cmd_times])}</td>
             </tr>
         </table>
 
-        <p><em>All tests run in parallel on nodes with 8 CPU, 23Gi memory</em></p>
+        <p><em>All tests run 10 times each in parallel on nodes with 8 CPU, 23Gi memory</em></p>
     </body>
     </html>
     """
+    return html
+
+
+@env.task(report=True)
+async def benchmark_all():
+    """Comprehensive benchmark comparing all download methods"""
+    print("=" * 80)
+    print("Starting comprehensive I/O benchmarks (10 runs each)")
+    print("=" * 80)
+
+    # Test 1: Large single file (5GB)
+    print("\n--- Test 1: Single 5GB file (10 runs) ---")
+    large_file = await create_file(5120)
+
+    print("Running all downloads in parallel (each method runs 10 iterations)...")
+    # Run the native tasks (they handle 10 iterations internally)
+    t1 = asyncio.create_task(read_large_file_new(large_file, iterations=10))
+    t2 = asyncio.create_task(read_large_file_s3fs(large_file, iterations=10))
+
+    # Run s5cmd 10 times in parallel
+    async def run_s5cmd_file_multiple():
+        print("[s5cmd File] Starting 10 parallel runs...", flush=True)
+        tasks = [s5cmd_file_task(remote_path=large_file.path, file_size_mb=5120) for _ in range(10)]
+        results = await asyncio.gather(*tasks)
+        # Convert s5cmd results (duration, throughput) to BenchmarkResult
+        file_size_bytes = 5120 * 1024 * 1024
+        return [BenchmarkResult(bytes=file_size_bytes, duration=r[0]) for r in results]
+
+    t3 = asyncio.create_task(run_s5cmd_file_multiple())
+
+    file_results_new, file_results_s3fs, file_results_s5cmd = await asyncio.gather(t1, t2, t3)
+
+    # Print summary
+    avg_time_new = sum(r.duration for r in file_results_new) / len(file_results_new)
+    avg_time_s3fs = sum(r.duration for r in file_results_s3fs) / len(file_results_s3fs)
+    avg_time_s5cmd = sum(r.duration for r in file_results_s5cmd) / len(file_results_s5cmd)
+
+    print("\n5GB file average results:")
+    print(f"  New SDK:  {avg_time_new:.2f}s avg")
+    print(f"  s3fs:     {avg_time_s3fs:.2f}s avg")
+    print(f"  s5cmd:    {avg_time_s5cmd:.2f}s avg")
+
+    # Test 2: Directory with 1000 5MB files
+    print("\n--- Test 2: Directory with 1000 x 5MB files (10 runs) ---")
+    file_dir = await create_dir_with_files(num_files=1000, size_megabytes=5)
+
+    print("Running directory downloads in parallel (each method runs 10 iterations)...")
+    # Run the native tasks (they handle 10 iterations internally)
+    td1 = asyncio.create_task(read_dir_new(file_dir, iterations=10))
+    td2 = asyncio.create_task(read_dir_s3fs(file_dir, iterations=10))
+
+    # Run s5cmd 10 times in parallel
+    async def run_s5cmd_dir_multiple():
+        print("[s5cmd Dir] Starting 10 parallel runs...", flush=True)
+        tasks = [s5cmd_dir_task(remote_path=file_dir.path, expected_files=1000) for _ in range(10)]
+        results = await asyncio.gather(*tasks)
+        # Convert s5cmd results (duration, throughput) to BenchmarkResult
+        dir_size_bytes = 1000 * 5 * 1024 * 1024
+        return [BenchmarkResult(bytes=dir_size_bytes, duration=r[0]) for r in results]
+
+    td3 = asyncio.create_task(run_s5cmd_dir_multiple())
+
+    dir_results_new, dir_results_s3fs, dir_results_s5cmd = await asyncio.gather(td1, td2, td3)
+
+    # Print summary
+    avg_time_new_dir = sum(r.duration for r in dir_results_new) / len(dir_results_new)
+    avg_time_s3fs_dir = sum(r.duration for r in dir_results_s3fs) / len(dir_results_s3fs)
+    avg_time_s5cmd_dir = sum(r.duration for r in dir_results_s5cmd) / len(dir_results_s5cmd)
+
+    print("\nDirectory average results:")
+    print(f"  New SDK:  {avg_time_new_dir:.2f}s avg")
+    print(f"  s3fs:     {avg_time_s3fs_dir:.2f}s avg")
+    print(f"  s5cmd:    {avg_time_s5cmd_dir:.2f}s avg")
+
+    print("\n" + "=" * 80)
+    print("Benchmark complete!")
+    print("=" * 80)
+
+    # Generate and publish report
+    html = generate_benchmark_report(
+        file_results_new=file_results_new,
+        file_results_s3fs=file_results_s3fs,
+        file_results_s5cmd=file_results_s5cmd,
+        dir_results_new=dir_results_new,
+        dir_results_s3fs=dir_results_s3fs,
+        dir_results_s5cmd=dir_results_s5cmd,
+    )
 
     await flyte.report.replace.aio(html)
     await flyte.report.flush.aio()
