@@ -504,7 +504,7 @@ class TestAutomationSpec:
 
         result = await to_task_trigger(trigger, "test_task", task_inputs, [])
 
-        assert result.automation_spec.schedule.cron_expression == "0 12 * * *"
+        assert result.automation_spec.schedule.cron_expression == f"CRON_TZ={DEFAULT_TIMEZONE} 0 12 * * *"
         assert result.automation_spec.schedule.kickoff_time_input_arg == "scheduled_at"
 
 
