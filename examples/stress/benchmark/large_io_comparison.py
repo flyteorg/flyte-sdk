@@ -8,6 +8,7 @@ from typing import Tuple
 
 import flyte
 import flyte.io
+import flyte.report
 import flyte.storage
 from flyte.extras import ContainerTask
 
@@ -292,7 +293,7 @@ async def main(size_megabytes: int = 5120) -> Tuple[int, float]:
     return r1
 
 
-@env.task
+@env.task(report=True)
 async def benchmark_all():
     """Comprehensive benchmark comparing all download methods"""
     print("=" * 80)
@@ -344,6 +345,87 @@ async def benchmark_all():
     print("\n" + "=" * 80)
     print("Benchmark complete!")
     print("=" * 80)
+
+    # Create a Deck with the results
+    html = f"""
+    <html>
+    <head>
+        <style>
+            body {{ font-family: Arial, sans-serif; margin: 20px; }}
+            h1 {{ color: #333; }}
+            table {{ border-collapse: collapse; width: 100%; margin: 20px 0; }}
+            th, td {{ border: 1px solid #ddd; padding: 12px; text-align: left; }}
+            th {{ background-color: #4CAF50; color: white; }}
+            tr:nth-child(even) {{ background-color: #f2f2f2; }}
+            .winner {{ background-color: #d4edda; font-weight: bold; }}
+        </style>
+    </head>
+    <body>
+        <h1>I/O Benchmark Results</h1>
+
+        <h2>Test 1: Single 5GB File Download</h2>
+        <table>
+            <tr>
+                <th>Method</th>
+                <th>Size (GB)</th>
+                <th>Duration (s)</th>
+                <th>Throughput (MiB/s)</th>
+            </tr>
+            <tr>
+                <td>New SDK (Flyte v2)</td>
+                <td>{bytes_new / (1024**3):.2f}</td>
+                <td>{time_new:.2f}</td>
+                <td>{bytes_new / time_new / (1024**2):.2f}</td>
+            </tr>
+            <tr>
+                <td>s3fs + fsspec (v1 style)</td>
+                <td>{bytes_s3fs / (1024**3):.2f}</td>
+                <td>{time_s3fs:.2f}</td>
+                <td>{bytes_s3fs / time_s3fs / (1024**2):.2f}</td>
+            </tr>
+            <tr>
+                <td>s5cmd (ContainerTask)</td>
+                <td>~5.00</td>
+                <td>{s5cmd_time:.2f}</td>
+                <td>{s5cmd_throughput:.2f}</td>
+            </tr>
+        </table>
+
+        <h2>Test 2: Directory with 1000 x 5MB Files</h2>
+        <table>
+            <tr>
+                <th>Method</th>
+                <th>Size (GB)</th>
+                <th>Duration (s)</th>
+                <th>Throughput (MiB/s)</th>
+            </tr>
+            <tr>
+                <td>New SDK (Flyte v2)</td>
+                <td>{dir_bytes_new / (1024**3):.2f}</td>
+                <td>{dir_time_new:.2f}</td>
+                <td>{dir_bytes_new / dir_time_new / (1024**2):.2f}</td>
+            </tr>
+            <tr>
+                <td>s3fs + fsspec (v1 style)</td>
+                <td>{dir_bytes_s3fs / (1024**3):.2f}</td>
+                <td>{dir_time_s3fs:.2f}</td>
+                <td>{dir_bytes_s3fs / dir_time_s3fs / (1024**2):.2f}</td>
+            </tr>
+            <tr>
+                <td>s5cmd (ContainerTask)</td>
+                <td>~4.88</td>
+                <td>{s5cmd_dir_time:.2f}</td>
+                <td>{s5cmd_dir_throughput:.2f}</td>
+            </tr>
+        </table>
+
+        <p><em>All tests run in parallel on nodes with 8 CPU, 23Gi memory</em></p>
+    </body>
+    </html>
+    """
+
+    await flyte.report.replace.aio(html)
+    await flyte.report.flush.aio()
 
 
 # From command line:
