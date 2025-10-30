@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import importlib
 import typing
+from importlib.metadata import entry_points
 
 from flyteidl2.core.types_pb2 import EnumType, LiteralType, UnionType
+
+from flyte import logger
 
 T = typing.TypeVar("T")
 

@@ -18,6 +18,8 @@ It is always possible to bypass the type system and use the `FlytePickle` type t
  into a pickle format. The pickle format is not human-readable, but can be passed between flyte tasks that are
  written in python. The Pickled objects cannot be represented in the UI, and may be in-efficient for large datasets.
 """
+from importlib.metadata import entry_points
+from flyte._logging import logger
 
 from ._interface import guess_interface
 from ._pickle import FlytePickle
@@ -34,3 +36,20 @@ __all__ = [
     "guess_interface",
     "literal_string_repr",
 ]
+
+
+def _load_custom_type_transformers():
+    plugins = entry_points(group="flyte_type_transformers")
+    print("tttttttttttttttttttttttttttttttt", plugins)
+    for ep in plugins:
+        try:
+            transformer: TypeTransformer = ep.load()
+            if not issubclass(transformer, TypeTransformer):
+                logger.error(f"Plugin {ep.name} did not return a type transformer, got {type(transformer).__name__}")
+                continue
+
+            type_transformer = transformer()
+            logger.debug(f"Registering type transformer '{type_transformer.name}'")
+            TypeEngine.register(type_transformer)
+        except ImportError:
+            logger.warning(f"Failed to load type transformer {ep.name}")

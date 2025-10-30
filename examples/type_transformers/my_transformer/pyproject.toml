@@ -1,0 +1,13 @@
+[project]
+name = "my_transformer"
+version = "0.1.0"
+description = "Custom type transformer"
+requires-python = ">=3.10"
+dependencies = []
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["*"]
+
+[project.entry-points.flyte_type_transformers]
+my_transformer = "my_type.my_transformer:PositiveIntTransformer"
