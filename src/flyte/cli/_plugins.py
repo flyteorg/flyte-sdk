@@ -9,12 +9,15 @@ Plugins are discovered via Python entry points.
 
 Entry Point Groups:
 - flyte.plugins.cli.commands: Register new commands
-  - Entry point name "foo" -> flyte foo
+  - Entry point name "foo" -> flyte foo (top-level command)
   - Entry point name "get.bar" -> flyte get bar (adds subcommand to get group)
+  - Note: At most one dot is supported. For nested groups, register the entire
+    group hierarchy as a top-level command (without dots).
 
 - flyte.plugins.cli.hooks: Modify existing commands
   - Entry point name "run" -> modifies flyte run
   - Entry point name "get.project" -> modifies flyte get project
+  - Note: At most one dot is supported.
 
 Example Plugin Package:
     # In your-plugin/pyproject.toml
@@ -91,6 +94,16 @@ def _load_command_plugins(root_group: click.Group):
             # Check if this is a subcommand (contains dot notation)
             if "." in ep.name:
                 group_name, command_name = ep.name.split(".", 1)
+
+                # Validate: only support one level of nesting (group.command)
+                if "." in command_name:
+                    logger.error(
+                        f"Plugin {ep.name} uses multiple dots, which is not supported. "
+                        f"Use at most one dot (e.g., 'group.command'). "
+                        f"For nested groups, register the entire group hierarchy as a top-level command."
+                    )
+                    continue
+
                 _add_subcommand_to_group(root_group, group_name, command_name, command)
             else:
                 # Top-level command
@@ -113,6 +126,15 @@ def _load_hook_plugins(root_group: click.Group):
             # Check if this is a subcommand hook (contains dot notation)
             if "." in ep.name:
                 group_name, command_name = ep.name.split(".", 1)
+
+                # Validate: only support one level of nesting (group.command)
+                if "." in command_name:
+                    logger.error(
+                        f"Plugin hook {ep.name} uses multiple dots, which is not supported. "
+                        f"Use at most one dot (e.g., 'group.command')."
+                    )
+                    continue
+
                 _apply_hook_to_subcommand(root_group, group_name, command_name, hook)
             else:
                 # Top-level command hook
@@ -143,6 +165,7 @@ def _add_subcommand_to_group(
         return
 
     group.add_command(command, name=command_name)
+    # lower to debug later
     logger.info(f"Registered plugin subcommand: flyte {group_name} {command_name}")
 
 
@@ -154,13 +177,15 @@ def _apply_hook_to_command(root_group: click.Group, command_name: str, hook: Com
         )
         return
 
+    original_command = root_group.commands[command_name]
     try:
-        original_command = root_group.commands[command_name]
         modified_command = hook(original_command)
         root_group.commands[command_name] = modified_command
+        # lower to debug later
         logger.info(f"Applied hook to command: flyte {command_name}")
     except Exception as e:
         logger.error(f"Hook failed for command {command_name}: {e}")
+        root_group.commands[command_name] = original_command
 
 
 def _apply_hook_to_subcommand(
@@ -189,10 +214,12 @@ def _apply_hook_to_subcommand(
         )
         return
 
+    original_command = group.commands[command_name]
+    original_command.callback
     try:
-        original_command = group.commands[command_name]
         modified_command = hook(original_command)
         group.commands[command_name] = modified_command
         logger.info(f"Applied hook to subcommand: flyte {group_name} {command_name}")
     except Exception as e:
         logger.error(f"Hook failed for subcommand {group_name}.{command_name}: {e}")
+        group.commands[command_name] = original_command
