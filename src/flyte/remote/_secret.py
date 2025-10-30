@@ -79,21 +79,23 @@ class Secret(ToJSONMixin):
     async def listall(cls, limit: int = 10) -> AsyncIterator[Secret]:
         ensure_client()
         cfg = get_init_config()
-        token = None
+        per_cluster_tokens = None
         while True:
             resp = await get_client().secrets_service.ListSecrets(  # type: ignore
                 request=payload_pb2.ListSecretsRequest(
                     organization=cfg.org,
                     project=cfg.project,
                     domain=cfg.domain,
-                    token=token,
+                    per_cluster_tokens=per_cluster_tokens,
                     limit=limit,
                 ),
             )
-            token = resp.token
+            per_cluster_tokens = resp.per_cluster_tokens
+            round_items = [v for _, v in per_cluster_tokens.items() if v]
+            has_next = any(round_items)
             for r in resp.secrets:
                 yield cls(r)
-            if not token:
+            if not has_next:
                 break
 
     @syncify

@@ -246,13 +246,32 @@ def _get_urun_container(
     if env_name is None:
         raise flyte.errors.RuntimeSystemError("BadConfig", f"Task {task_template.name} has no parent environment name")
 
-    img_uri = lookup_image_in_cache(serialize_context, env_name, img)
-
-    config = task_template.config(serialize_context)
-    serialized_config = []
-    if config:
-        for k, v in config.items():
-            serialized_config.append(literals_pb2.KeyValuePair(key=k, value=v))
+    if not serialize_context.image_cache:
+        # This computes the image uri, computing hashes as necessary so can fail if done remotely.
+        img_uri = task_template.image.uri
+    elif serialize_context.image_cache and env_name not in serialize_context.image_cache.image_lookup:
+        raise flyte.errors.RuntimeUserError(
+            "MissingEnvironment",
+            f"Environment '{env_name}' not found in image cache.\n\n"
+            "💡 To fix this:\n"
+            "  1. If your parent environment calls a task in another environment,"
+            " declare that dependency using 'depends_on=[...]'.\n"
+            "     Example:\n"
+            "         env1 = flyte.TaskEnvironment(\n"
+            "             name='outer',\n"
+            "             image=flyte.Image.from_debian_base().with_pip_packages('requests'),\n"
+            "             depends_on=[env2, env3],\n"
+            "         )\n"
+            "  2. If you're using os.getenv() to set the environment name,"
+            " make sure the runtime environment has the same environment variable defined.\n"
+            "     Example:\n"
+            "         env = flyte.TaskEnvironment(\n"
+            '             name=os.getenv("my-name"),\n'
+            '             env_vars={"my-name": os.getenv("my-name")},\n'
+            "         )\n",
+        )
+    else:
+        img_uri = serialize_context.image_cache.image_lookup[env_name]
 
     return tasks_pb2.Container(
         image=img_uri,
@@ -261,7 +280,7 @@ def _get_urun_container(
         resources=resources,
         env=env,
         data_config=task_template.data_loading_config(serialize_context),
-        config=serialized_config,
+        config=task_template.config(serialize_context),
     )
 
 
