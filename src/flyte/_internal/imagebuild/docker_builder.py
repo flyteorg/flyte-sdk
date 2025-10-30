@@ -47,7 +47,7 @@ FLYTE_DOCKER_BUILDER_CACHE_TO = "FLYTE_DOCKER_BUILDER_CACHE_TO"
 
 UV_LOCK_WITHOUT_PROJECT_INSTALL_TEMPLATE = Template("""\
 RUN --mount=type=cache,sharing=locked,mode=0777,target=/root/.cache/uv,id=uv \
-   --mount=type=bind,target=uv.lock,src=$UV_LOCK_PATH \
+   --mount=type=bind,target=uv.lock,src=$UV_LOCK_PATH,rw \
    --mount=type=bind,target=pyproject.toml,src=$PYPROJECT_PATH \
    $SECRET_MOUNT \
    uv sync --active --inexact $PIP_INSTALL_ARGS
@@ -267,14 +267,19 @@ class UVProjectHandler:
         layer: UVProject, context_path: Path, dockerfile: str, docker_ignore_patterns: list[str] = []
     ) -> str:
         secret_mounts = _get_secret_mounts_layer(layer.secret_mounts)
-        if layer.extra_index_urls and "--no-install-project" in layer.extra_index_urls:
+        if layer.project_install_mode == "dependencies_only":
+            pip_install_args = " ".join(layer.get_pip_install_args())
+            if "--no-install-project" not in pip_install_args:
+                pip_install_args += " --no-install-project"
+            if "--no-sources" not in pip_install_args:
+                pip_install_args += " --no-sources"
             # Only Copy pyproject.yaml and uv.lock.
             pyproject_dst = copy_files_to_context(layer.pyproject, context_path)
             uvlock_dst = copy_files_to_context(layer.uvlock, context_path)
             delta = UV_LOCK_WITHOUT_PROJECT_INSTALL_TEMPLATE.substitute(
                 UV_LOCK_PATH=uvlock_dst.relative_to(context_path),
                 PYPROJECT_PATH=pyproject_dst.relative_to(context_path),
-                PIP_INSTALL_ARGS=" ".join(layer.get_pip_install_args()),
+                PIP_INSTALL_ARGS=pip_install_args,
                 SECRET_MOUNT=secret_mounts,
             )
         else:

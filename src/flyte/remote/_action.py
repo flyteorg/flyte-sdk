@@ -28,7 +28,7 @@ from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
 
 from flyte import types
-from flyte._initialize import ensure_client, get_client, get_common_config
+from flyte._initialize import ensure_client, get_client, get_init_config
 from flyte.remote._common import ToJSONMixin
 from flyte.remote._logs import Logs
 from flyte.syncify import syncify
@@ -154,7 +154,7 @@ class Action(ToJSONMixin):
             key=sort_by[0],
             direction=(list_pb2.Sort.ASCENDING if sort_by[1] == "asc" else list_pb2.Sort.DESCENDING),
         )
-        cfg = get_common_config()
+        cfg = get_init_config()
         while True:
             req = list_pb2.ListRequest(
                 limit=100,
@@ -195,7 +195,7 @@ class Action(ToJSONMixin):
         :param name: The name of the action.
         """
         ensure_client()
-        cfg = get_common_config()
+        cfg = get_init_config()
         details: ActionDetails = await ActionDetails.get_details.aio(
             identifier_pb2.ActionIdentifier(
                 run=identifier_pb2.RunIdentifier(
@@ -460,7 +460,7 @@ class ActionDetails(ToJSONMixin):
         ensure_client()
         if not uri:
             assert name is not None and run_name is not None, "Either uri or name and run_name must be provided"
-        cfg = get_common_config()
+        cfg = get_init_config()
         return await cls.get_details.aio(
             identifier_pb2.ActionIdentifier(
                 run=identifier_pb2.RunIdentifier(

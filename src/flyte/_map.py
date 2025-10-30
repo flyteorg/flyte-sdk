@@ -1,13 +1,13 @@
 import asyncio
 import functools
 import logging
-from typing import Any, AsyncGenerator, AsyncIterator, Generic, Iterable, Iterator, List, Union, cast
+from typing import Any, AsyncGenerator, AsyncIterator, Generic, Iterable, Iterator, List, Union, cast, overload
 
 from flyte.syncify import syncify
 
 from ._group import group
 from ._logging import logger
-from ._task import P, R, TaskTemplate
+from ._task import AsyncFunctionTaskTemplate, F, P, R
 
 
 class MapAsyncIterator(Generic[P, R]):
@@ -15,7 +15,7 @@ class MapAsyncIterator(Generic[P, R]):
 
     def __init__(
         self,
-        func: TaskTemplate[P, R] | functools.partial[R],
+        func: AsyncFunctionTaskTemplate[P, R, F] | functools.partial[R],
         args: tuple,
         name: str,
         concurrency: int,
@@ -78,7 +78,7 @@ class MapAsyncIterator(Generic[P, R]):
 
         if isinstance(self.func, functools.partial):
             # Handle partial functions by merging bound args/kwargs with mapped args
-            base_func = cast(TaskTemplate, self.func.func)
+            base_func = cast(AsyncFunctionTaskTemplate, self.func.func)
             bound_args = self.func.args
             bound_kwargs = self.func.keywords or {}
 
@@ -144,7 +144,7 @@ class _Mapper(Generic[P, R]):
         :param func: partial function to validate
         :raises TypeError: if the partial function is not valid for mapping
         """
-        f = cast(TaskTemplate, func.func)
+        f = cast(AsyncFunctionTaskTemplate, func.func)
         inputs = f.native_interface.inputs
         params = list(inputs.keys())
         total_params = len(params)
@@ -172,9 +172,28 @@ class _Mapper(Generic[P, R]):
                         f"in partial function {f.name}."
                     )
 
+    @overload
     def __call__(
         self,
-        func: TaskTemplate[P, R] | functools.partial[R],
+        func: AsyncFunctionTaskTemplate[P, R, F] | functools.partial[R],
+        *args: Iterable[Any],
+        group_name: str | None = None,
+        concurrency: int = 0,
+    ) -> Iterator[R]: ...
+
+    @overload
+    def __call__(
+        self,
+        func: AsyncFunctionTaskTemplate[P, R, F] | functools.partial[R],
+        *args: Iterable[Any],
+        group_name: str | None = None,
+        concurrency: int = 0,
+        return_exceptions: bool = True,
+    ) -> Iterator[Union[R, Exception]]: ...
+
+    def __call__(
+        self,
+        func: AsyncFunctionTaskTemplate[P, R, F] | functools.partial[R],
         *args: Iterable[Any],
         group_name: str | None = None,
         concurrency: int = 0,
@@ -194,10 +213,10 @@ class _Mapper(Generic[P, R]):
             return
 
         if isinstance(func, functools.partial):
-            f = cast(TaskTemplate, func.func)
+            f = cast(AsyncFunctionTaskTemplate, func.func)
             self.validate_partial(func)
         else:
-            f = cast(TaskTemplate, func)
+            f = cast(AsyncFunctionTaskTemplate, func)
 
         name = self._get_name(f.name, group_name)
         logger.debug(f"Blocking Map for {name}")
@@ -234,7 +253,7 @@ class _Mapper(Generic[P, R]):
 
     async def aio(
         self,
-        func: TaskTemplate[P, R] | functools.partial[R],
+        func: AsyncFunctionTaskTemplate[P, R, F] | functools.partial[R],
         *args: Iterable[Any],
         group_name: str | None = None,
         concurrency: int = 0,
@@ -244,10 +263,10 @@ class _Mapper(Generic[P, R]):
             return
 
         if isinstance(func, functools.partial):
-            f = cast(TaskTemplate, func.func)
+            f = cast(AsyncFunctionTaskTemplate, func.func)
             self.validate_partial(func)
         else:
-            f = cast(TaskTemplate, func)
+            f = cast(AsyncFunctionTaskTemplate, func)
 
         name = self._get_name(f.name, group_name)
         with group(name):
@@ -277,7 +296,7 @@ class _Mapper(Generic[P, R]):
 
 @syncify
 async def _map(
-    func: TaskTemplate[P, R] | functools.partial[R],
+    func: AsyncFunctionTaskTemplate[P, R, F] | functools.partial[R],
     *args: Iterable[Any],
     name: str = "map",
     concurrency: int = 0,

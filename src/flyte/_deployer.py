@@ -29,6 +29,13 @@ class DeployedEnvironment(Protocol):
     Protocol for deployed environment representations.
     """
 
+    def get_name(self) -> str:
+        """
+        Returns the name of the deployed environment.
+        Returns:
+        """
+        ...
+
     def env_repr(self) -> List[Tuple[str, ...]]:
         """
         Returns a detailed representation of the deployed environment.

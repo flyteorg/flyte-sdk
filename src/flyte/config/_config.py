@@ -148,6 +148,7 @@ class ImageConfig(object):
     """
 
     builder: str | None = None
+    image_refs: typing.Dict[str, str] = field(default_factory=dict)
 
     @classmethod
     def auto(cls, config_file: typing.Optional[typing.Union[str, ConfigFile]] = None) -> "ImageConfig":
@@ -159,6 +160,7 @@ class ImageConfig(object):
         config_file = get_config_file(config_file)
         kwargs: typing.Dict[str, typing.Any] = {}
         kwargs = set_if_exists(kwargs, "builder", _internal.Image.BUILDER.read(config_file))
+        kwargs = set_if_exists(kwargs, "image_refs", _internal.Image.IMAGE_REFS.read(config_file))
         return ImageConfig(**kwargs)
 
 

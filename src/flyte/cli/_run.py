@@ -86,6 +86,26 @@ class RunArguments:
             )
         },
     )
+    raw_data_path: str | None = field(
+        default=None,
+        metadata={
+            "click.option": click.Option(
+                ["--raw-data-path"],
+                type=str,
+                help="Override the output prefix used to store offloaded data types. e.g. s3://bucket/",
+            )
+        },
+    )
+    service_account: str | None = field(
+        default=None,
+        metadata={
+            "click.option": click.Option(
+                ["--service-account"],
+                type=str,
+                help="Kubernetes service account. If not provided, the configured default will be used",
+            )
+        },
+    )
     name: str | None = field(
         default=None,
         metadata={
@@ -105,6 +125,30 @@ class RunArguments:
                 default=False,
                 help="Wait and watch logs for the parent action. If not provided, the CLI will exit after "
                 "successfully launching a remote execution with a link to the UI.",
+            )
+        },
+    )
+    image: List[str] = field(
+        default_factory=list,
+        metadata={
+            "click.option": click.Option(
+                ["--image"],
+                type=str,
+                multiple=True,
+                help="Image to be used in the run. Format: imagename=imageuri. Can be specified multiple times.",
+            )
+        },
+    )
+    no_sync_local_sys_paths: bool = field(
+        default=True,
+        metadata={
+            "click.option": click.Option(
+                ["--no-sync-local-sys-paths"],
+                is_flag=True,
+                flag_value=True,
+                default=False,
+                help="Disable synchronization of local sys.path entries under the root directory "
+                "to the remote container.",
             )
         },
     )
@@ -130,7 +174,14 @@ class RunTaskCommand(click.RichCommand):
         super().__init__(obj_name, *args, **kwargs)
 
     def invoke(self, ctx: click.Context):
-        obj: CLIConfig = initialize_config(ctx, self.run_args.project, self.run_args.domain, self.run_args.root_dir)
+        obj: CLIConfig = initialize_config(
+            ctx,
+            self.run_args.project,
+            self.run_args.domain,
+            self.run_args.root_dir,
+            tuple(self.run_args.image) or None,
+            not self.run_args.no_sync_local_sys_paths,
+        )
 
         async def _run():
             import flyte
@@ -140,6 +191,8 @@ class RunTaskCommand(click.RichCommand):
                 copy_style=self.run_args.copy_style,
                 mode="local" if self.run_args.local else "remote",
                 name=self.run_args.name,
+                raw_data_path=self.run_args.raw_data_path,
+                service_account=self.run_args.service_account,
             ).run.aio(self.obj, **ctx.params)
             if self.run_args.local:
                 console.print(
@@ -206,11 +259,23 @@ class TaskPerFileGroup(common.ObjectsPerFileGroup):
         return {k: v for k, v in module.__dict__.items() if isinstance(v, TaskTemplate)}
 
     def list_commands(self, ctx):
-        common.initialize_config(ctx, self.run_args.project, self.run_args.domain, self.run_args.root_dir)
+        common.initialize_config(
+            ctx,
+            self.run_args.project,
+            self.run_args.domain,
+            self.run_args.root_dir,
+            sync_local_sys_paths=not self.run_args.no_sync_local_sys_paths,
+        )
         return super().list_commands(ctx)
 
     def get_command(self, ctx, obj_name):
-        common.initialize_config(ctx, self.run_args.project, self.run_args.domain, self.run_args.root_dir)
+        common.initialize_config(
+            ctx,
+            self.run_args.project,
+            self.run_args.domain,
+            self.run_args.root_dir,
+            sync_local_sys_paths=not self.run_args.no_sync_local_sys_paths,
+        )
         return super().get_command(ctx, obj_name)
 
     def _get_command_for_obj(self, ctx: click.Context, obj_name: str, obj: Any) -> click.Command:
@@ -233,7 +298,12 @@ class RunReferenceTaskCommand(click.RichCommand):
 
     def invoke(self, ctx: click.Context):
         obj: CLIConfig = common.initialize_config(
-            ctx, self.run_args.project, self.run_args.domain, self.run_args.root_dir
+            ctx,
+            self.run_args.project,
+            self.run_args.domain,
+            self.run_args.root_dir,
+            tuple(self.run_args.image) or None,
+            not self.run_args.no_sync_local_sys_paths,
         )
 
         async def _run():
@@ -271,7 +341,12 @@ class RunReferenceTaskCommand(click.RichCommand):
         import flyte.remote
         from flyte._internal.runtime.types_serde import transform_native_to_typed_interface
 
-        common.initialize_config(ctx, self.run_args.project, self.run_args.domain)
+        common.initialize_config(
+            ctx,
+            self.run_args.project,
+            self.run_args.domain,
+            sync_local_sys_paths=not self.run_args.no_sync_local_sys_paths,
+        )
 
         task = flyte.remote.Task.get(self.task_name, auto_version="latest")
         task_details = task.fetch()
@@ -461,6 +536,28 @@ Flyte environment:
 
 ```bash
 flyte run --local hello.py my_task --arg1 value1 --arg2 value2
+```
+
+You can provide image mappings with `--image` flag. This allows you to specify
+the image URI for the task environment during CLI execution without changing
+the code. Any images defined with `Image.from_ref_name("name")` will resolve to the
+corresponding URIs you specify here.
+
+```bash
+flyte run hello.py my_task --image my_image=ghcr.io/myorg/my-image:v1.0
+```
+
+If the image name is not provided, it is regarded as a default image and will
+be used when no image is specified in TaskEnvironment:
+
+```bash
+flyte run hello.py my_task --image ghcr.io/myorg/default-image:latest
+```
+
+You can specify multiple image arguments:
+
+```bash
+flyte run hello.py my_task --image ghcr.io/org/default:latest --image gpu=ghcr.io/org/gpu:v2.0
 ```
 
 To run tasks that you've already deployed to Flyte, use the {RUN_REMOTE_CMD} command:

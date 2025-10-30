@@ -9,16 +9,43 @@ from flyte._initialize import ensure_client, get_client
 from flyte._logging import logger
 from flyte.models import SerializationContext
 
-from ._app_environment import App, AppEnvironment, AppSerializationSettings
+from ._app_environment import AppEnvironment
 
 if typing.TYPE_CHECKING:
-    from flyte._protos.app import app_definition_pb2
+    from flyteidl2.app import app_definition_pb2
+
+FILES_TAR_FILE_NAME = "code_bundle.tgz"
+
+
+async def upload_include_files(app: AppEnvironment) -> str | None:
+    import os
+    import tarfile
+    from pathlib import Path
+    from tempfile import TemporaryDirectory
+
+    import flyte.remote
+
+    with TemporaryDirectory() as temp_dir:
+        tar_path = os.path.join(temp_dir, FILES_TAR_FILE_NAME)
+        with tarfile.open(tar_path, "w:gz") as tar:
+            for resolve_include in app.include_resolved:
+                tar.add(resolve_include.src, arcname=resolve_include.dest)
+
+        _, upload_native_url = await flyte.remote.upload_file.aio(Path(tar_path))
+        return upload_native_url
 
 
 @dataclass
 class DeployedAppEnvironment(deployer.DeployedEnvironment):
     env: AppEnvironment
     deployed_app: app_definition_pb2.App
+
+    def get_name(self) -> str:
+        """
+        Returns the name of the deployed environment.
+        Returns:
+        """
+        return self.env.name
 
     def env_repr(self) -> typing.List[typing.Tuple[str, ...]]:
         return [
@@ -27,6 +54,8 @@ class DeployedAppEnvironment(deployer.DeployedEnvironment):
         ]
 
     def table_repr(self) -> typing.List[typing.List[typing.Tuple[str, ...]]]:
+        from flyteidl2.app import app_definition_pb2
+
         return [
             [
                 ("type", "App"),
@@ -34,7 +63,7 @@ class DeployedAppEnvironment(deployer.DeployedEnvironment):
                 ("version", self.deployed_app.spec.runtime_metadata.version),
                 (
                     "state",
-                    self.deployed_app.spec.desired_state.DESIRED_STATE.Name(self.deployed_app.spec.desired_state),
+                    app_definition_pb2.Spec.DesiredState.Name(self.deployed_app.spec.desired_state),
                 ),
             ],
         ]
@@ -44,41 +73,29 @@ class DeployedAppEnvironment(deployer.DeployedEnvironment):
 
 
 async def _deploy_app(
-    app: App, serialization_context: SerializationContext, dryrun: bool = False
+    app: AppEnvironment, serialization_context: SerializationContext, dryrun: bool = False
 ) -> app_definition_pb2.App:
     """
     Deploy the given app.
     """
-    ensure_client()
     import grpc.aio
+    from flyteidl2.app import app_definition_pb2, app_payload_pb2
 
+    import flyte.errors
     import flyte.remote
-    from flyte._internal.runtime.app_serde import translate_app_to_wire, upload_include_files
-    from flyte._protos.app import app_payload_pb2
+    from flyte.app._runtime import translate_app_env_to_idl
 
-    additional_distribution = await upload_include_files(app)
-    materialized_inputs = {}
-
-    settings = AppSerializationSettings(
-        org=serialization_context.org,
-        project=serialization_context.project,
-        domain=serialization_context.domain,
-        version=serialization_context.version,
-        image_uri=serialization_context.image_cache.image_lookup[app.image.identifier],
-        desired_state=app_definition_pb2.Spec.DesiredState.DESIRED_STATE_ACTIVE,
-        additional_distribution=additional_distribution,
-        materialized_inputs=materialized_inputs,
-        is_serverless=False,
-    )
+    # TODO We need to handle uploading include files, ideally this is part of code bundle
+    # The reason is at this point, we already have a code bundle created.
+    # additional_distribution = await upload_include_files(app)
+    # materialized_inputs = {}
 
     image_uri = app.image.uri if isinstance(app.image, Image) else app.image
-    app_idl = translate_app_to_wire(app, settings)
-
     try:
+        app_idl = translate_app_env_to_idl(app, serialization_context)
         if dryrun:
-            return translate_app_to_wire(app, settings)
-
-        app_idl = translate_app_to_wire(app, settings)
+            return app_idl
+        ensure_client()
         msg = f"Deploying app {app.name}, with image {image_uri} version {serialization_context.version}"
         if app_idl.spec.HasField("container") and app_idl.spec.container.args:
             msg += f" from {app_idl.spec.container.args[-3]}.{app_idl.spec.container.args[-1]}"
@@ -89,8 +106,15 @@ async def _deploy_app(
             logger.info(f"Deployed app {app.name} with version {app_idl.spec.runtime_metadata.version}")
         except grpc.aio.AioRpcError as e:
             if e.code() == grpc.StatusCode.ALREADY_EXISTS:
-                logger.info(f"App {app.name} with image {image_uri} already exists, skipping deployment.")
-                return app_idl
+                logger.warning(f"App {app.name} with image {image_uri} already exists, updating...")
+                resp = await get_client().app_service.Get(app_payload_pb2.GetRequest(app_id=app_idl.metadata.id))
+                # Update the revision to match the existing app
+                updated_app = app_definition_pb2.App(
+                    metadata=resp.app.metadata, spec=app_idl.spec, status=resp.app.status
+                )
+                logger.info(f"Updating app {app.name} to revision {updated_app.metadata.revision}")
+                update_resp = await get_client().app_service.Update(app_payload_pb2.UpdateRequest(app=updated_app))
+                return update_resp.app
             raise
 
         return app_idl
@@ -106,6 +130,6 @@ async def _deploy_app_env(context: deployer.DeploymentContext) -> deployer.Deplo
         raise TypeError(f"Expected AppEnvironment, got {type(context.environment)}")
 
     app_env = context.environment
-    deployed_app = await _deploy_app(app_env.app, context.serialization_context, dryrun=context.dryrun)
+    deployed_app = await _deploy_app(app_env, context.serialization_context, dryrun=context.dryrun)
 
     return DeployedAppEnvironment(env=app_env, deployed_app=deployed_app)
