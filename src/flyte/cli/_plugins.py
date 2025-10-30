@@ -44,13 +44,20 @@ Example Plugin Package:
     # In your-plugin/your_plugin/hooks.py
     def modify_run(command):
         '''Add behavior to flyte run command.'''
-        original_callback = command.callback
-        def wrapper(*args, **kwargs):
+        # Wrap invoke() instead of callback to ensure Click's full machinery runs
+        original_invoke = command.invoke
+
+        def wrapper(ctx):
             # Do something before
-            result = original_callback(*args, **kwargs)
+            click.echo("Plugin: Starting task...")
+
+            result = original_invoke(ctx)
+
             # Do something after
+            click.echo("Plugin: Task completed!")
             return result
-        command.callback = wrapper
+
+        command.invoke = wrapper
         return command
 """
 
@@ -86,9 +93,7 @@ def _load_command_plugins(root_group: click.Group):
         try:
             command = ep.load()
             if not isinstance(command, click.Command):
-                logger.warning(
-                    f"Plugin {ep.name} did not return a click.Command, got {type(command).__name__}"
-                )
+                logger.warning(f"Plugin {ep.name} did not return a click.Command, got {type(command).__name__}")
                 continue
 
             # Check if this is a subcommand (contains dot notation)
@@ -144,24 +149,15 @@ def _load_hook_plugins(root_group: click.Group):
             logger.error(f"Failed to apply hook {ep.name}: {e}")
 
 
-def _add_subcommand_to_group(
-    root_group: click.Group,
-    group_name: str,
-    command_name: str,
-    command: click.Command
-):
+def _add_subcommand_to_group(root_group: click.Group, group_name: str, command_name: str, command: click.Command):
     """Add a subcommand to an existing command group."""
     if group_name not in root_group.commands:
-        logger.warning(
-            f"Cannot add plugin subcommand '{command_name}' - group '{group_name}' does not exist"
-        )
+        logger.warning(f"Cannot add plugin subcommand '{command_name}' - group '{group_name}' does not exist")
         return
 
     group = root_group.commands[group_name]
     if not isinstance(group, click.Group):
-        logger.warning(
-            f"Cannot add plugin subcommand '{command_name}' - '{group_name}' is not a command group"
-        )
+        logger.warning(f"Cannot add plugin subcommand '{command_name}' - '{group_name}' is not a command group")
         return
 
     group.add_command(command, name=command_name)
@@ -172,9 +168,7 @@ def _add_subcommand_to_group(
 def _apply_hook_to_command(root_group: click.Group, command_name: str, hook: CommandHook):
     """Apply a hook to a top-level command."""
     if command_name not in root_group.commands:
-        logger.warning(
-            f"Cannot apply hook - command '{command_name}' does not exist"
-        )
+        logger.warning(f"Cannot apply hook - command '{command_name}' does not exist")
         return
 
     original_command = root_group.commands[command_name]
@@ -188,30 +182,19 @@ def _apply_hook_to_command(root_group: click.Group, command_name: str, hook: Com
         root_group.commands[command_name] = original_command
 
 
-def _apply_hook_to_subcommand(
-    root_group: click.Group,
-    group_name: str,
-    command_name: str,
-    hook: CommandHook
-):
+def _apply_hook_to_subcommand(root_group: click.Group, group_name: str, command_name: str, hook: CommandHook):
     """Apply a hook to a subcommand within a group."""
     if group_name not in root_group.commands:
-        logger.warning(
-            f"Cannot apply hook - group '{group_name}' does not exist"
-        )
+        logger.warning(f"Cannot apply hook - group '{group_name}' does not exist")
         return
 
     group = root_group.commands[group_name]
     if not isinstance(group, click.Group):
-        logger.warning(
-            f"Cannot apply hook - '{group_name}' is not a command group"
-        )
+        logger.warning(f"Cannot apply hook - '{group_name}' is not a command group")
         return
 
     if command_name not in group.commands:
-        logger.warning(
-            f"Cannot apply hook - subcommand '{command_name}' does not exist in group '{group_name}'"
-        )
+        logger.warning(f"Cannot apply hook - subcommand '{command_name}' does not exist in group '{group_name}'")
         return
 
     original_command = group.commands[command_name]

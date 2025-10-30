@@ -12,6 +12,7 @@ from ._delete import delete
 from ._deploy import deploy
 from ._gen import gen
 from ._get import get
+from ._plugins import discover_and_register_plugins
 from ._run import run
 from ._update import update
 from ._user import whoami
@@ -203,6 +204,4 @@ main.add_command(whoami)  # type: ignore
 main.add_command(update)  # type: ignore
 
 # Discover and register CLI plugins from installed packages
-from ._plugins import discover_and_register_plugins
-
 discover_and_register_plugins(main)
