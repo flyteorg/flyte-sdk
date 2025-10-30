@@ -986,3 +986,14 @@ class Trigger:
             labels=labels,
             annotations=annotations,
         )
+
+
+if __name__ == "__main__":
+    from typing import get_args
+
+    vals = get_args(Timezone)
+    with open("/tmp/timezones.txt", "w") as f:
+        for v in vals:
+            c = Cron(expression="0 0 * * *", timezone=v)
+            f.write(f"{c.timezone_expression}\n")
+    print(f"Wrote {len(vals)} timezones to /tmp/timezones.txt")
