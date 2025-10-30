@@ -198,7 +198,7 @@ class TestToTaskTrigger:
 
         assert result.name == "test_trigger"
         assert result.spec.active is True
-        assert result.automation_spec.type == common_pb2.TriggerAutomationSpec.Type.TYPE_SCHEDULE
+        assert result.automation_spec.type == common_pb2.TriggerAutomationSpecType.TYPE_SCHEDULE
         assert result.automation_spec.schedule.cron_expression == "0 * * * *"
 
     @pytest.mark.asyncio
@@ -439,7 +439,7 @@ class TestAutomationSpec:
         task_inputs = interface_pb2.VariableMap()
         result = await to_task_trigger(trigger, "test_task", task_inputs, [])
 
-        assert result.automation_spec.type == common_pb2.TriggerAutomationSpec.Type.TYPE_SCHEDULE
+        assert result.automation_spec.type == common_pb2.TriggerAutomationSpecType.TYPE_SCHEDULE
         assert result.automation_spec.schedule.cron_expression == "*/5 * * * *"
         assert result.automation_spec.schedule.kickoff_time_input_arg == ""
 
@@ -454,7 +454,7 @@ class TestAutomationSpec:
         task_inputs = interface_pb2.VariableMap()
         result = await to_task_trigger(trigger, "test_task", task_inputs, [])
 
-        assert result.automation_spec.type == common_pb2.TriggerAutomationSpec.Type.TYPE_SCHEDULE
+        assert result.automation_spec.type == common_pb2.TriggerAutomationSpecType.TYPE_SCHEDULE
         assert result.automation_spec.schedule.rate.value == 120
         assert result.automation_spec.schedule.rate.unit == common_pb2.FixedRateUnit.FIXED_RATE_UNIT_MINUTE
         assert not result.automation_spec.schedule.rate.HasField("start_time")
@@ -471,7 +471,7 @@ class TestAutomationSpec:
         task_inputs = interface_pb2.VariableMap()
         result = await to_task_trigger(trigger, "test_task", task_inputs, [])
 
-        assert result.automation_spec.type == common_pb2.TriggerAutomationSpec.Type.TYPE_SCHEDULE
+        assert result.automation_spec.type == common_pb2.TriggerAutomationSpecType.TYPE_SCHEDULE
         assert result.automation_spec.schedule.rate.value == 45
         assert result.automation_spec.schedule.rate.start_time.ToDatetime() == start
 
@@ -549,7 +549,7 @@ async def test_task_with_trigger_all_options():
     assert result.name == "comprehensive"
 
     # Validate automation_spec (FixedRate)
-    assert result.automation_spec.type == common_pb2.TriggerAutomationSpec.Type.TYPE_SCHEDULE
+    assert result.automation_spec.type == common_pb2.TriggerAutomationSpecType.TYPE_SCHEDULE
     assert result.automation_spec.schedule.rate.value == 30
     assert result.automation_spec.schedule.rate.unit == common_pb2.FixedRateUnit.FIXED_RATE_UNIT_MINUTE
     assert result.automation_spec.schedule.kickoff_time_input_arg == "trigger_time"
