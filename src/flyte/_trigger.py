@@ -696,8 +696,9 @@ class Trigger:
        values for inputs to these defaults.
     :param env_vars: (Dict[str, str]) Optional environment variables for the trigger, default is None. If provided, will
         replace the environment variables set in the config of the task.
-    :param interruptible: (bool) Whether the trigger is interruptible, default is None. If provided,
-     it overrides whatever is set in the config of the task.
+    :param interruptible: (bool) Whether the trigger run is interruptible,
+      default is None (maintains the configured behavior). If provided, it overrides whatever is set in the config
+      of the task.
     :param overwrite_cache: (bool) Whether to overwrite the cache, default is False.
     :param queue: (str) Optional queue to run the trigger in, default is None.
     :param labels: (Mapping[str, str]) Optional labels to attach to the trigger, default is None.
@@ -748,7 +749,7 @@ class Trigger:
             auto_activate (bool): Whether the trigger should be automatically activated.
             inputs (Dict[str, Any] | None): Optional inputs for the trigger.
             env_vars (Dict[str, str] | None): Optional environment variables.
-            interruptible (bool | None): Whether the trigger is interruptible.
+            interruptible (bool | None): Whether the triggered run is interruptible.
             overwrite_cache (bool): Whether to overwrite the cache.
             queue (str | None): Optional queue to run the trigger in.
             labels (Mapping[str, str] | None): Optional labels to attach to the trigger.
