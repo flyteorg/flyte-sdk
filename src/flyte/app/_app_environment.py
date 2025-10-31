@@ -73,7 +73,7 @@ class AppEnvironment(Environment):
                 raise TypeError(f"Expected links to be of type List[Link], got {type(link)}")
 
         # get instantiated file to keep track of app root directory
-        frame = inspect.currentframe().f_back.f_back
+        frame = inspect.currentframe().f_back.f_back  # two frames up to get the app filename
         self._app_filename = frame.f_code.co_filename
 
     def container_args(self, serialize_context: SerializationContext) -> List[str]:
