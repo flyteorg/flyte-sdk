@@ -1,6 +1,6 @@
+import inspect
 import os
 import re
-import inspect
 import shlex
 from dataclasses import dataclass, field
 from typing import List, Optional, Union
@@ -11,7 +11,6 @@ from flyte import Environment
 from flyte.app._input import Input
 from flyte.app._types import Domain, Link, Port, Scaling
 from flyte.models import SerializationContext
-
 
 APP_NAME_RE = re.compile(r"[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*")
 INVALID_APP_PORTS = [8012, 8022, 8112, 9090, 9091]

@@ -19,7 +19,14 @@ from rich.tree import Tree
 from flyte._logging import _get_console, logger
 
 from ._ignore import Ignore, IgnoreGroup
-from ._utils import CopyFiles, _filehash_update, _pathhash_update, ls_files, ls_relative_files, tar_strip_file_attributes
+from ._utils import (
+    CopyFiles,
+    _filehash_update,
+    _pathhash_update,
+    ls_files,
+    ls_relative_files,
+    tar_strip_file_attributes,
+)
 
 FAST_PREFIX = "fast"
 FAST_FILEENDING = ".tar.gz"

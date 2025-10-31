@@ -1,4 +1,7 @@
+from dataclasses import dataclass
 from inspect import getmembers
+
+import rich.repr
 
 import flyte.app
 from flyte._module import extract_obj_module
@@ -10,6 +13,8 @@ except ModuleNotFoundError:
     raise ModuleNotFoundError("fastapi is not installed. Please install the 'fastapi', to use FastAPI apps.")
 
 
+@rich.repr.auto
+@dataclass(kw_only=True, repr=True)
 class FastAPIAppEnvironment(flyte.app.AppEnvironment):
     app: fastapi.FastAPI
     type: str = "FastAPI"
