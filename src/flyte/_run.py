@@ -226,6 +226,7 @@ class _Runner:
             env[FLYTE_SYS_PATH] = ":".join(
                 f"./{pathlib.Path(p).relative_to(cfg.root_dir)}" for p in sys.path if p.startswith(str(cfg.root_dir))
             )
+            print("FLYTE_SYS_PATHFLYTE_SYS_PATH", env[FLYTE_SYS_PATH])
 
         if not self._dry_run:
             if get_client() is None:

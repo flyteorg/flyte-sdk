@@ -187,8 +187,10 @@ async def init(
     :return: None
     """
     from flyte._utils import get_cwd_editable_install, org_from_endpoint, sanitize_endpoint
+    from flyte.types import _load_custom_type_transformers
 
     _initialize_logger(log_level=log_level)
+    _load_custom_type_transformers()
 
     global _init_config  # noqa: PLW0603
 
