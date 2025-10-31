@@ -84,7 +84,7 @@ ENV POETRY_CACHE_DIR=/tmp/poetry_cache \
 RUN --mount=type=cache,sharing=locked,mode=0777,target=/tmp/poetry_cache,id=poetry \
    --mount=type=bind,target=/root/.flyte/$PYPROJECT_PATH,src=$PYPROJECT_PATH,rw \
    $SECRET_MOUNT \
-   poetry install $POETRY_INSTALL_ARGS
+   poetry install $POETRY_INSTALL_ARGS -C /root/.flyte/$PYPROJECT_PATH
 """)
 
 UV_PACKAGE_INSTALL_COMMAND_TEMPLATE = Template("""\
@@ -310,14 +310,17 @@ class PoetryProjectHandler:
         layer: PoetryProject, context_path: Path, dockerfile: str, docker_ignore_patterns: list[str] = []
     ) -> str:
         secret_mounts = _get_secret_mounts_layer(layer.secret_mounts)
-        if layer.extra_args and "--no-root" in layer.extra_args:
+        if layer.project_install_mode == "dependencies_only":
             # Only Copy pyproject.yaml and poetry.lock.
             pyproject_dst = copy_files_to_context(layer.pyproject, context_path)
             poetry_lock_dst = copy_files_to_context(layer.poetry_lock, context_path)
+            extra_args = layer.extra_args or ""
+            if "--no-root" not in extra_args:
+                extra_args += " --no-root"
             delta = POETRY_LOCK_WITHOUT_PROJECT_INSTALL_TEMPLATE.substitute(
                 POETRY_LOCK_PATH=poetry_lock_dst.relative_to(context_path),
                 PYPROJECT_PATH=pyproject_dst.relative_to(context_path),
-                POETRY_INSTALL_ARGS=layer.extra_args or "",
+                POETRY_INSTALL_ARGS=extra_args,
                 SECRET_MOUNT=secret_mounts,
             )
         else:
