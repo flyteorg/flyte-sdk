@@ -1,9 +1,15 @@
 from pathlib import Path
 
-import flyte
 from my_type import PositiveInt
 
-env = flyte.TaskEnvironment(name="hello_world", image=flyte.Image.from_debian_base().with_uv_project(Path(__file__).parent / "pyproject.toml", project_install_mode="install_project"))
+import flyte
+
+env = flyte.TaskEnvironment(
+    name="hello_world",
+    image=flyte.Image.from_debian_base().with_uv_project(
+        Path(__file__).parent / "my_transformer/pyproject.toml", project_install_mode="install_project", pre=True
+    ).with_local_v2(),
+)
 
 
 @env.task

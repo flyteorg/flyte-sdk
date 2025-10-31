@@ -6,9 +6,9 @@ This demonstrates how to create a type transformer for a custom integer wrapper.
 from typing import Type
 
 from flyteidl2.core import literals_pb2, types_pb2
-from flyte.types import TypeTransformer, TypeTransformerFailedError, TypeEngine
 
-from .custom_type import PositiveInt
+from flyte.types import TypeTransformer, TypeTransformerFailedError, TypeEngine
+from my_type.custom_type import PositiveInt
 
 
 class PositiveIntTransformer(TypeTransformer[PositiveInt]):
@@ -55,19 +55,13 @@ class PositiveIntTransformer(TypeTransformer[PositiveInt]):
             TypeTransformerFailedError: If the value is not a PositiveInt
         """
         if not isinstance(python_val, PositiveInt):
-            raise TypeTransformerFailedError(
-                f"Expected PositiveInt, got {type(python_val).__name__}"
-            )
+            raise TypeTransformerFailedError(f"Expected PositiveInt, got {type(python_val).__name__}")
 
         return literals_pb2.Literal(
-            scalar=literals_pb2.Scalar(
-                primitive=literals_pb2.Primitive(integer=python_val.value)
-            )
+            scalar=literals_pb2.Scalar(primitive=literals_pb2.Primitive(integer=python_val.value))
         )
 
-    async def to_python_value(
-        self, lv: literals_pb2.Literal, expected_python_type: Type[PositiveInt]
-    ) -> PositiveInt:
+    async def to_python_value(self, lv: literals_pb2.Literal, expected_python_type: Type[PositiveInt]) -> PositiveInt:
         """
         Converts a Flyte Literal back to a PositiveInt instance.
 
@@ -83,9 +77,7 @@ class PositiveIntTransformer(TypeTransformer[PositiveInt]):
             ValueError: If the integer value is not positive
         """
         if not lv.scalar or not lv.scalar.primitive:
-            raise TypeTransformerFailedError(
-                f"Cannot convert literal {lv} to PositiveInt: missing scalar primitive"
-            )
+            raise TypeTransformerFailedError(f"Cannot convert literal {lv} to PositiveInt: missing scalar primitive")
 
         value = lv.scalar.primitive.integer
 
@@ -93,13 +85,9 @@ class PositiveIntTransformer(TypeTransformer[PositiveInt]):
         try:
             return PositiveInt(value)
         except (TypeError, ValueError) as e:
-            raise TypeTransformerFailedError(
-                f"Cannot convert value {value} to PositiveInt: {e}"
-            )
+            raise TypeTransformerFailedError(f"Cannot convert value {value} to PositiveInt: {e}")
 
-    def guess_python_type(
-        self, literal_type: types_pb2.LiteralType
-    ) -> Type[PositiveInt]:
+    def guess_python_type(self, literal_type: types_pb2.LiteralType) -> Type[PositiveInt]:
         """
         Guesses the Python type from a Flyte literal type.
         This is used for reverse type inference.
@@ -115,4 +103,4 @@ class PositiveIntTransformer(TypeTransformer[PositiveInt]):
 
 # Register the transformer with the TypeEngine
 # This makes it available for use in Flyte workflows
-# TypeEngine.register(PositiveIntTransformer())
+TypeEngine.register(PositiveIntTransformer())

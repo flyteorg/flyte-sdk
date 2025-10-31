@@ -5,6 +5,10 @@ description = "Custom type transformer"
 requires-python = ">=3.10"
 dependencies = []
 
+# This section needs to be added to get uv sync to install this package (this package being seeds).
+[tool.uv]
+package = true
+
 [tool.setuptools.packages.find]
 where = ["src"]
 include = ["*"]
