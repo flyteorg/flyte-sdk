@@ -1,3 +1,4 @@
+import os
 import re
 import inspect
 import shlex
@@ -11,8 +12,10 @@ from flyte.app._input import Input
 from flyte.app._types import Domain, Link, Port, Scaling
 from flyte.models import SerializationContext
 
+
 APP_NAME_RE = re.compile(r"[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*")
 INVALID_APP_PORTS = [8012, 8022, 8112, 9090, 9091]
+INTERNAL_APP_ENDPOINT_PATTERN_ENV_VAR = "INTERNAL_APP_ENDPOINT_PATTERN"
 
 
 @rich.repr.auto
@@ -140,3 +143,14 @@ class AppEnvironment(Environment):
         if isinstance(self.port, int):
             self.port = Port(port=self.port)
         return self.port
+
+    @property
+    def endpoint(self) -> str:
+        endpoint_pattern = os.getenv(INTERNAL_APP_ENDPOINT_PATTERN_ENV_VAR)
+        if endpoint_pattern is not None:
+            return endpoint_pattern.replace("{app_fqdn}", self.name)
+
+        import flyte.remote
+
+        app = flyte.remote.App.get(name=self.name)
+        return app.endpoint
