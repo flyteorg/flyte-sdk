@@ -310,11 +310,11 @@ class PoetryProjectHandler:
         layer: PoetryProject, context_path: Path, dockerfile: str, docker_ignore_patterns: list[str] = []
     ) -> str:
         secret_mounts = _get_secret_mounts_layer(layer.secret_mounts)
+        extra_args = layer.extra_args or ""
         if layer.project_install_mode == "dependencies_only":
             # Only Copy pyproject.yaml and poetry.lock.
             pyproject_dst = copy_files_to_context(layer.pyproject, context_path)
             poetry_lock_dst = copy_files_to_context(layer.poetry_lock, context_path)
-            extra_args = layer.extra_args or ""
             if "--no-root" not in extra_args:
                 extra_args += " --no-root"
             delta = POETRY_LOCK_WITHOUT_PROJECT_INSTALL_TEMPLATE.substitute(
@@ -337,7 +337,7 @@ class PoetryProjectHandler:
 
             delta = POETRY_LOCK_INSTALL_TEMPLATE.substitute(
                 PYPROJECT_PATH=pyproject_dst.relative_to(context_path),
-                POETRY_INSTALL_ARGS=layer.extra_args or "",
+                POETRY_INSTALL_ARGS=extra_args,
                 SECRET_MOUNT=secret_mounts,
             )
         dockerfile += delta
