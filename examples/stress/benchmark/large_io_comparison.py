@@ -452,8 +452,9 @@ def generate_benchmark_report(
 @env.task(report=True)
 async def benchmark_all():
     """Comprehensive benchmark comparing all download methods"""
+    iterations = 2
     print("=" * 80)
-    print("Starting comprehensive I/O benchmarks (10 runs each)")
+    print(f"Starting comprehensive I/O benchmarks ({iterations} runs each)")
     print("=" * 80)
 
     # Test 1: Large single file (5GB)
@@ -462,13 +463,13 @@ async def benchmark_all():
 
     print("Running all downloads in parallel (each method runs 10 iterations)...")
     # Run the native tasks (they handle 10 iterations internally)
-    t1 = asyncio.create_task(read_large_file_new(large_file, iterations=10))
-    t2 = asyncio.create_task(read_large_file_s3fs(large_file, iterations=10))
+    t1 = asyncio.create_task(read_large_file_new(large_file, iterations=iterations))
+    t2 = asyncio.create_task(read_large_file_s3fs(large_file, iterations=iterations))
 
     # Run s5cmd 10 times in parallel
     async def run_s5cmd_file_multiple():
         print("[s5cmd File] Starting 10 parallel runs...", flush=True)
-        tasks = [s5cmd_file_task(remote_path=large_file.path, file_size_mb=5120) for _ in range(10)]
+        tasks = [s5cmd_file_task(remote_path=large_file.path, file_size_mb=5120) for _ in range(iterations)]
         results = await asyncio.gather(*tasks)
         # Convert s5cmd results (duration, throughput) to BenchmarkResult
         file_size_bytes = 5120 * 1024 * 1024
@@ -494,13 +495,13 @@ async def benchmark_all():
 
     print("Running directory downloads in parallel (each method runs 10 iterations)...")
     # Run the native tasks (they handle 10 iterations internally)
-    td1 = asyncio.create_task(read_dir_new(file_dir, iterations=10))
-    td2 = asyncio.create_task(read_dir_s3fs(file_dir, iterations=10))
+    td1 = asyncio.create_task(read_dir_new(file_dir, iterations=iterations))
+    td2 = asyncio.create_task(read_dir_s3fs(file_dir, iterations=iterations))
 
     # Run s5cmd 10 times in parallel
     async def run_s5cmd_dir_multiple():
         print("[s5cmd Dir] Starting 10 parallel runs...", flush=True)
-        tasks = [s5cmd_dir_task(remote_path=file_dir.path, expected_files=1000) for _ in range(10)]
+        tasks = [s5cmd_dir_task(remote_path=file_dir.path, expected_files=1000) for _ in range(iterations)]
         results = await asyncio.gather(*tasks)
         # Convert s5cmd results (duration, throughput) to BenchmarkResult
         dir_size_bytes = 1000 * 5 * 1024 * 1024
