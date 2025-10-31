@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import typing
 from dataclasses import dataclass
+from pathlib import Path
 
 import flyte._deployer as deployer
 from flyte import Image
+from flyte._code_bundle.bundle import build_code_bundle_from_relative_paths
 from flyte._initialize import ensure_client, get_client
 from flyte._logging import logger
 from flyte.models import SerializationContext
@@ -82,13 +84,11 @@ async def _deploy_app(
     from flyteidl2.app import app_definition_pb2, app_payload_pb2
 
     import flyte.errors
-    import flyte.remote
     from flyte.app._runtime import translate_app_env_to_idl
 
-    # TODO We need to handle uploading include files, ideally this is part of code bundle
-    # The reason is at this point, we already have a code bundle created.
-    # additional_distribution = await upload_include_files(app)
-    # materialized_inputs = {}
+    app_root_dir = Path(app._app_filename).parent
+    code_bundle = await build_code_bundle_from_relative_paths(tuple(app.include), from_dir=app_root_dir)
+    serialization_context.code_bundle = code_bundle
 
     image_uri = app.image.uri if isinstance(app.image, Image) else app.image
     try:

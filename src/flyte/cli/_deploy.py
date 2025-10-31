@@ -126,13 +126,13 @@ class DeployEnvCommand(click.RichCommand):
             root_dir=self.deploy_args.root_dir,
             sync_local_sys_paths=not self.deploy_args.no_sync_local_sys_paths,
         )
-        with console.status("Deploying...", spinner="dots"):
-            deployment = flyte.deploy(
-                self.env,
-                dryrun=self.deploy_args.dry_run,
-                copy_style=self.deploy_args.copy_style,
-                version=self.deploy_args.version,
-            )
+        # with console.status("Deploying...", spinner="dots"):
+        deployment = flyte.deploy(
+            self.env,
+            dryrun=self.deploy_args.dry_run,
+            copy_style=self.deploy_args.copy_style,
+            version=self.deploy_args.version,
+        )
 
         console.print(common.format("Environments", deployment[0].env_repr(), obj.output_format))
         console.print(common.format("Entities", deployment[0].table_repr(), obj.output_format))
@@ -184,13 +184,13 @@ class DeployEnvRecursiveCommand(click.Command):
             self.deploy_args.domain,
             sync_local_sys_paths=not self.deploy_args.no_sync_local_sys_paths,
         )
-        with console.status("Deploying...", spinner="dots"):
-            deployments = flyte.deploy(
-                *all_envs,
-                dryrun=self.deploy_args.dry_run,
-                copy_style=self.deploy_args.copy_style,
-                version=self.deploy_args.version,
-            )
+        # with console.status("Deploying...", spinner="dots"):
+        deployments = flyte.deploy(
+            *all_envs,
+            dryrun=self.deploy_args.dry_run,
+            copy_style=self.deploy_args.copy_style,
+            version=self.deploy_args.version,
+        )
 
         console.print(
             common.format("Environments", [env for d in deployments for env in d.env_repr()], obj.output_format)

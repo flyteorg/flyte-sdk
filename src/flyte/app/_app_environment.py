@@ -1,4 +1,5 @@
 import re
+import inspect
 import shlex
 from dataclasses import dataclass, field
 from typing import List, Optional, Union
@@ -70,6 +71,10 @@ class AppEnvironment(Environment):
         for link in self.links:
             if not isinstance(link, Link):
                 raise TypeError(f"Expected links to be of type List[Link], got {type(link)}")
+
+        # get instantiated file to keep track of app root directory
+        frame = inspect.currentframe().f_back.f_back
+        self._app_filename = frame.f_code.co_filename
 
     def container_args(self, serialize_context: SerializationContext) -> List[str]:
         if self.args is None:

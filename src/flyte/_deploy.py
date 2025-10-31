@@ -288,6 +288,8 @@ async def apply(deployment_plan: DeploymentPlan, copy_style: CopyFiles, dryrun: 
     if copy_style == "none" and not deployment_plan.version:
         raise flyte.errors.DeploymentError("Version must be set when copy_style is none")
     else:
+        # if this is an AppEnvironment.include, skip code bundling here and build a code bundle at the app._deploy._deploy_app
+        # function
         code_bundle = await build_code_bundle(from_dir=cfg.root_dir, dryrun=dryrun, copy_style=copy_style)
         if deployment_plan.version:
             version = deployment_plan.version

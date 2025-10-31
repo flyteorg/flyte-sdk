@@ -15,7 +15,7 @@ from flyte._utils import AsyncLRUCache
 from flyte.models import CodeBundle
 
 from ._ignore import GitIgnore, Ignore, StandardIgnore
-from ._packaging import create_bundle, list_files_to_bundle, print_ls_tree
+from ._packaging import create_bundle, list_files_to_bundle, list_relative_files_to_bundle, print_ls_tree
 from ._utils import CopyFiles, hash_file
 
 _pickled_file_extension = ".pkl.gz"
@@ -121,7 +121,7 @@ async def build_code_bundle(
 ) -> CodeBundle:
     """
     Build the code bundle for the current environment.
-    :param from_dir: The directory to bundle of the code to bundle. This is the root directory for the source.
+    :param from_dir: The directory of the code to bundle. This is the root directory for the source.
     :param extract_dir: The directory to extract the code bundle to, when in the container. It defaults to the current
         working directory.
     :param ignore: The list of ignores to apply. This is a list of Ignore classes.
@@ -139,6 +139,53 @@ async def build_code_bundle(
 
     logger.debug(f"Finding files to bundle, ignoring as configured by: {ignore}")
     files, digest = list_files_to_bundle(from_dir, True, *ignore, copy_style=copy_style)
+    if logger.getEffectiveLevel() <= logging.INFO:
+        print_ls_tree(from_dir, files)
+
+    logger.debug("Building code bundle.")
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        bundle_path, tar_size, archive_size = create_bundle(from_dir, pathlib.Path(tmp_dir), files, digest)
+        logger.info(f"Code bundle created at {bundle_path}, size: {tar_size} MB, archive size: {archive_size} MB")
+        if not dryrun:
+            hash_digest, remote_path = await upload_file.aio(bundle_path)
+            logger.debug(f"Code bundle uploaded to {remote_path}")
+        else:
+            remote_path = "na"
+            if copy_bundle_to:
+                import shutil
+
+                # Copy the bundle to the given path
+                shutil.copy(bundle_path, copy_bundle_to)
+                remote_path = str(copy_bundle_to / bundle_path.name)
+            _, hash_digest, _ = hash_file(file_path=bundle_path)
+        return CodeBundle(tgz=remote_path, destination=extract_dir, computed_version=hash_digest)
+
+
+@alru_cache
+async def build_code_bundle_from_relative_paths(
+    relative_paths: tuple[str, ...],
+    from_dir: Path,
+    extract_dir: str = ".",
+    dryrun: bool = False,
+    copy_bundle_to: pathlib.Path | None = None,
+) -> CodeBundle:
+    """
+    Build a code bundle from a list of relative paths.
+    :param relative_paths: The list of relative paths to bundle.
+    :param from_dir: The directory of the code to bundle. This is the root directory for the source.
+    :param ignore: The list of ignores to apply. This is a list of Ignore classes.
+    :param extract_dir: The directory to extract the code bundle to, when in the container. It defaults to the current
+        working directory.
+    :param dryrun: If dryrun is enabled, files will not be uploaded to the control plane.
+    :param copy_bundle_to: If set, the bundle will be copied to this path. This is used for testing purposes.
+    :param copy_style: What to put into the tarball. (either all, or loaded_modules. if none, skip this function)
+    :return: The code bundle, which contains the path where the code was zipped to.
+    """
+    logger.debug("Building code bundle from relative paths.")
+    from flyte.remote import upload_file
+
+    logger.debug(f"Finding files to bundle")
+    files, digest = list_relative_files_to_bundle(relative_paths, from_dir)
     if logger.getEffectiveLevel() <= logging.INFO:
         print_ls_tree(from_dir, files)
 
