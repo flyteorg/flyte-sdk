@@ -83,7 +83,7 @@ class DownloadCodeBundleWorkerPlugin(WorkerPlugin):
         Runs on each worker as it is initialized.
         """
         sys.path.insert(0, ".")
-        asyncio.run(download_code_bundle(self.code_bundle))
+        download_code_bundle(self.code_bundle)
 
 
 @dataclass(kw_only=True)
