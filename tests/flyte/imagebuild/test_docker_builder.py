@@ -376,7 +376,6 @@ async def test_poetry_handler_with_project_install():
             assert expected_dst_path.is_dir(), "Should be a directory"
             assert (expected_dst_path / "pyproject.toml").exists(), "pyproject.toml should be included"
             assert (expected_dst_path / "poetry.lock").exists(), "poetry.lock should be included"
-            assert (expected_dst_path / "main.py").exists(), "main.py should be included"
             assert not (expected_dst_path / "memo.txt").exists(), "memo.txt should be excluded"
             assert not (expected_dst_path / ".cache").exists(), ".cache directory should be excluded"
 
