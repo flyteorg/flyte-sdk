@@ -30,11 +30,7 @@ def extract_obj_module(obj: object, /, source_dir: pathlib.Path | None = None) -
     try:
         # Get the relative path to the current directory
         # Will raise ValueError if the file is not in the source directory
-        if source_dir is None:
-            # todo: clean up this function
-            raise ValueError("source_dir is None")
-
-        relative_path = file_path.relative_to(str(pathlib.Path(source_dir).absolute()))
+        relative_path = file_path.relative_to(str(source_dir))
 
         if relative_path == pathlib.Path("_internal/resolvers"):
             entity_module_name = entity_module.__name__
