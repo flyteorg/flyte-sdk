@@ -13,6 +13,8 @@ from flyte._internal.runtime.trigger_serde import (
 )
 from flyte.types import TypeEngine
 
+DEFAULT_TIMEZONE = "UTC"
+
 
 class TestToSchedule:
     """Test the _to_schedule function"""
@@ -22,7 +24,7 @@ class TestToSchedule:
         cron = Cron("0 * * * *")
         schedule = _to_schedule(cron)
 
-        assert schedule.cron_expression == "0 * * * *"
+        assert schedule.cron_expression == f"CRON_TZ={DEFAULT_TIMEZONE} 0 * * * *"
         assert schedule.kickoff_time_input_arg == ""
 
     def test_cron_with_kickoff_arg(self):
@@ -30,7 +32,7 @@ class TestToSchedule:
         cron = Cron("0 0 * * *")
         schedule = _to_schedule(cron, kickoff_arg_name="trigger_time")
 
-        assert schedule.cron_expression == "0 0 * * *"
+        assert schedule.cron_expression == f"CRON_TZ={DEFAULT_TIMEZONE} 0 0 * * *"
         assert schedule.kickoff_time_input_arg == "trigger_time"
 
     def test_fixed_rate_without_start_time(self):
@@ -65,7 +67,15 @@ class TestToSchedule:
         for expr in expressions:
             cron = Cron(expr)
             schedule = _to_schedule(cron)
-            assert schedule.cron_expression == expr
+            assert schedule.cron_expression == f"CRON_TZ={DEFAULT_TIMEZONE} {expr}"
+
+    def test_cron_with_timezone(self):
+        """Test Cron schedule with custom timezone"""
+        cron = Cron("0 * * * *", timezone="Europe/London")
+        schedule = _to_schedule(cron)
+
+        assert schedule.cron_expression == "CRON_TZ=Europe/London 0 * * * *"
+        assert schedule.kickoff_time_input_arg == ""
 
 
 class TestProcessDefaultInputs:
@@ -199,7 +209,7 @@ class TestToTaskTrigger:
         assert result.name == "test_trigger"
         assert result.spec.active is True
         assert result.automation_spec.type == common_pb2.TriggerAutomationSpecType.TYPE_SCHEDULE
-        assert result.automation_spec.schedule.cron_expression == "0 * * * *"
+        assert result.automation_spec.schedule.cron_expression == "CRON_TZ=UTC 0 * * * *"
 
     @pytest.mark.asyncio
     async def test_fixed_rate_trigger(self):
@@ -440,7 +450,7 @@ class TestAutomationSpec:
         result = await to_task_trigger(trigger, "test_task", task_inputs, [])
 
         assert result.automation_spec.type == common_pb2.TriggerAutomationSpecType.TYPE_SCHEDULE
-        assert result.automation_spec.schedule.cron_expression == "*/5 * * * *"
+        assert result.automation_spec.schedule.cron_expression == f"CRON_TZ={DEFAULT_TIMEZONE} */5 * * * *"
         assert result.automation_spec.schedule.kickoff_time_input_arg == ""
 
     @pytest.mark.asyncio
@@ -494,7 +504,7 @@ class TestAutomationSpec:
 
         result = await to_task_trigger(trigger, "test_task", task_inputs, [])
 
-        assert result.automation_spec.schedule.cron_expression == "0 12 * * *"
+        assert result.automation_spec.schedule.cron_expression == f"CRON_TZ={DEFAULT_TIMEZONE} 0 12 * * *"
         assert result.automation_spec.schedule.kickoff_time_input_arg == "scheduled_at"
 
 
