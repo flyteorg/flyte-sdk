@@ -141,6 +141,7 @@ async def build_code_bundle(
     files, digest = list_files_to_bundle(from_dir, True, *ignore, copy_style=copy_style)
     if logger.getEffectiveLevel() <= logging.INFO:
         print_ls_tree(from_dir, files)
+
     logger.debug("Building code bundle.")
     with tempfile.TemporaryDirectory() as tmp_dir:
         bundle_path, tar_size, archive_size = create_bundle(from_dir, pathlib.Path(tmp_dir), files, digest)
