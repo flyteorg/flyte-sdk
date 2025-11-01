@@ -2,9 +2,11 @@ import inspect
 import os
 import pathlib
 import sys
+from types import ModuleType
+from typing import Tuple
 
 
-def extract_obj_module(obj: object, /, source_dir: pathlib.Path | None = None) -> str:
+def extract_obj_module(obj: object, /, source_dir: pathlib.Path | None = None) -> Tuple[str, ModuleType]:
     """
     Extract the module from the given object. If source_dir is provided, the module will be relative to the source_dir.
 
@@ -65,4 +67,4 @@ def extract_obj_module(obj: object, /, source_dir: pathlib.Path | None = None) -
         main_path = pathlib.Path(fp)
         entity_module_name = main_path.stem
 
-    return entity_module_name
+    return entity_module_name, entity_module

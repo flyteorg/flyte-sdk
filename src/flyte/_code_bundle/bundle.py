@@ -184,7 +184,7 @@ async def build_code_bundle_from_relative_paths(
     logger.debug("Building code bundle from relative paths.")
     from flyte.remote import upload_file
 
-    logger.debug(f"Finding files to bundle")
+    logger.debug("Finding files to bundle")
     files, digest = list_relative_files_to_bundle(relative_paths, from_dir)
     if logger.getEffectiveLevel() <= logging.INFO:
         print_ls_tree(from_dir, files)

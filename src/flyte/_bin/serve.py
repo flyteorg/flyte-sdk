@@ -66,6 +66,7 @@ async def download_code_inputs(
     from flyte._internal.runtime.entrypoints import download_code_bundle
 
     user_inputs = {}
+    env_vars = {}
     if serialized_inputs and len(serialized_inputs) > 0:
         user_inputs, env_vars = await sync_inputs(serialized_inputs, dest)
     code_bundle: CodeBundle | None = None

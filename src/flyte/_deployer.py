@@ -103,7 +103,7 @@ def get_deployer(env_type: Type[Environment | TaskEnvironment]) -> Deployer:
     Returns:
         Deployer for the environment type, defaults to task environment deployer
     """
-    v = _ENVTYPE_REGISTRY.get(env_type)
-    if v is None:
-        raise ValueError(f"No deployer registered for environment type {env_type}")
-    return v
+    for tpe, v in _ENVTYPE_REGISTRY.items():
+        if issubclass(env_type, tpe):
+            return v
+    raise ValueError(f"No deployer registered for environment type {env_type}")
