@@ -18,6 +18,7 @@ from flyte._logging import logger
 from flyte._utils.lazy_module import is_imported
 
 from .dataframe import (
+    PARQUET,
     DataFrame,
     DataFrameDecoder,
     DataFrameEncoder,
@@ -121,6 +122,7 @@ def lazy_import_dataframe_handler():
 
 
 __all__ = [
+    "PARQUET",
     "DataFrame",
     "DataFrameDecoder",
     "DataFrameEncoder",

@@ -6,7 +6,6 @@ from operator import add
 from flyteplugins.spark.task import Spark
 
 import flyte.remote
-from flyte._context import internal_ctx
 
 image = (
     flyte.Image.from_base("apache/spark-py:v3.4.0")
@@ -53,8 +52,7 @@ async def get_pi(count: int, partitions: int) -> float:
 @spark_env.task
 async def hello_spark_nested(partitions: int = 3) -> float:
     n = 1 * partitions
-    ctx = internal_ctx()
-    spark = ctx.data.task_context.data["spark_session"]
+    spark = flyte.ctx().data["spark_session"]
     count = spark.sparkContext.parallelize(range(1, n + 1), partitions).map(f).reduce(add)
 
     return await get_pi(count, partitions)
