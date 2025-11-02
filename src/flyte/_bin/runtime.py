@@ -12,7 +12,6 @@ from typing import Any, List
 
 import click
 
-from flyte._utils.helpers import str2bool
 from flyte.models import PathRewrite
 
 # Todo: work with pvditt to make these the names
@@ -143,7 +142,7 @@ def main(
 
     # Check for insecure_skip_verify override (e.g. for self-signed certs)
     insecure_skip_verify_str = os.getenv(INSECURE_SKIP_VERIFY_OVERRIDE, "")
-    if str2bool(insecure_skip_verify_str):
+    if utils.helpers.str2bool(insecure_skip_verify_str):
         controller_kwargs["insecure_skip_verify"] = True
         logger.info("SSL certificate verification disabled (insecure_skip_verify=True)")
 
