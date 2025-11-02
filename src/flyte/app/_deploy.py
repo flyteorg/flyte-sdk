@@ -86,9 +86,10 @@ async def _deploy_app(
     import flyte.errors
     from flyte.app._runtime import translate_app_env_to_idl
 
-    app_root_dir = Path(app._app_filename).parent
-    code_bundle = await build_code_bundle_from_relative_paths(tuple(app.include), from_dir=app_root_dir)
-    serialization_context.code_bundle = code_bundle
+    if app.include:
+        app_root_dir = Path(app._app_filename).parent
+        code_bundle = await build_code_bundle_from_relative_paths(tuple(app.include), from_dir=app_root_dir)
+        serialization_context.code_bundle = code_bundle
 
     image_uri = app.image.uri if isinstance(app.image, Image) else app.image
     try:

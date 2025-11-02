@@ -1,9 +1,8 @@
 import flyte
 import flyte.app
 
-image = (
-    flyte.Image.from_debian_base(python_version=(3, 12))
-    .with_pip_packages("streamlit==1.41.1", "pandas==2.2.3", "numpy==2.2.3")
+image = flyte.Image.from_debian_base(python_version=(3, 12)).with_pip_packages(
+    "streamlit==1.41.1", "pandas==2.2.3", "numpy==2.2.3"
 )
 
 
