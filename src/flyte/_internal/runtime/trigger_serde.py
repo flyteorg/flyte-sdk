@@ -145,6 +145,7 @@ async def to_task_trigger(
             active=t.auto_activate,
             run_spec=run_spec,
             inputs=common_pb2.Inputs(literals=literals),
+            description=t.description,
         ),
         automation_spec=common_pb2.TriggerAutomationSpec(
             type=common_pb2.TriggerAutomationSpecType.TYPE_SCHEDULE,
