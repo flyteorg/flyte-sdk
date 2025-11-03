@@ -198,7 +198,8 @@ def _apply_hook_to_subcommand(root_group: click.Group, group_name: str, command_
         return
 
     original_command = group.commands[command_name]
-    original_command.callback()
+    if original_command.callback is not None:
+        original_command.callback()
     try:
         modified_command = hook(original_command)
         group.commands[command_name] = modified_command
