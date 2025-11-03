@@ -209,10 +209,10 @@ def list_all_files(source_path: pathlib.Path, deref_symlinks, ignore_group: Opti
 def _file_is_in_directory(file: str, directory: str) -> bool:
     """Return True if file is in directory and in its children."""
     try:
-        return os.path.commonpath([file, directory]) == directory
-    except ValueError as e:
-        # ValueError is raised by windows if the paths are not from the same drive
-        logger.debug(f"{file} and {directory} are not in the same drive: {e!s}")
+        return pathlib.Path(file).resolve().is_relative_to(pathlib.Path(directory).resolve())
+    except OSError as e:
+        # OSError can be raised if paths cannot be resolved (permissions, broken symlinks, etc.)
+        logger.debug(f"Failed to resolve paths for {file} and {directory}: {e!s}")
         return False
 
 
