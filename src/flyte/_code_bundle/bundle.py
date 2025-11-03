@@ -104,7 +104,7 @@ async def build_pkl_bundle(
                 import shutil
 
                 # Copy the bundle to the given path
-                shutil.copy(dest, copy_bundle_to)
+                shutil.copy(dest, copy_bundle_to, follow_symlinks=True)
                 local_path = copy_bundle_to / dest.name
                 return CodeBundle(pkl=str(local_path), computed_version=str_digest)
             return CodeBundle(pkl=str(dest), computed_version=str_digest)

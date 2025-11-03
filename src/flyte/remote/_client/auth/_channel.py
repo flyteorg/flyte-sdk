@@ -7,6 +7,7 @@ import httpx
 from grpc.experimental.aio import init_grpc_aio
 
 from flyte._logging import logger
+from flyte._utils.org_discovery import hostname_from_url
 
 from ._authenticators.base import get_async_session
 from ._authenticators.factory import (
@@ -30,16 +31,19 @@ def bootstrap_ssl_from_server(endpoint: str) -> grpc.ChannelCredentials:
     :param endpoint: The endpoint URL to retrieve the SSL certificate from, may include port number
     :return: gRPC channel credentials created from the retrieved certificate
     """
+    hostname = hostname_from_url(endpoint)
+
     # Get port from endpoint or use 443
-    endpoint_parts = endpoint.rsplit(":", 1)
+    endpoint_parts = hostname.rsplit(":", 1)
     if len(endpoint_parts) == 2 and endpoint_parts[1].isdigit():
         server_address = (endpoint_parts[0], int(endpoint_parts[1]))
     else:
-        logger.warning(f"Unrecognized port in endpoint [{endpoint}], defaulting to 443.")
-        server_address = (endpoint, 443)
+        logger.warning(f"Unrecognized port in endpoint [{hostname}], defaulting to 443.")
+        server_address = (hostname, 443)
 
-    # Run the blocking SSL certificate retrieval in a thread pool
-    cert = ssl.get_server_certificate(server_address)
+    # Run the blocking SSL certificate retrieval with a timeout
+    logger.debug(f"Retrieving SSL certificate from {server_address}")
+    cert = ssl.get_server_certificate(server_address, timeout=10)
     return grpc.ssl_channel_credentials(str.encode(cert))
 
 

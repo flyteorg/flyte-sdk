@@ -155,7 +155,8 @@ class RunArguments:
 
     @classmethod
     def from_dict(cls, d: Dict[str, Any]) -> RunArguments:
-        return cls(**d)
+        modified = {k: v for k, v in d.items() if k in {f.name for f in fields(cls)}}
+        return cls(**modified)
 
     @classmethod
     def options(cls) -> List[click.Option]:
