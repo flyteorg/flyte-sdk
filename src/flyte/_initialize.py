@@ -326,7 +326,15 @@ async def init_from_config(
     )
 
 
-async def init_in_cluster(org: str | None, project: str | None, domain: str | None) -> dict[str, typing.Any]:
+@syncify
+async def init_in_cluster(
+    org: str | None = None,
+    project: str | None = None,
+    domain: str | None = None,
+    api_key: str | None = None,
+    endpoint: str | None = None,
+    insecure: bool = False,
+) -> dict[str, typing.Any]:
     import os
 
     from flyte._utils import str2bool
@@ -341,16 +349,18 @@ async def init_in_cluster(org: str | None, project: str | None, domain: str | No
     org = org or os.getenv(ORG_NAME)
     project = project or os.getenv(PROJECT_NAME)
     domain = domain or os.getenv(DOMAIN_NAME)
+    api_key = api_key or os.getenv(_UNION_EAGER_API_KEY_ENV_VAR)
 
     remote_kwargs: dict[str, typing.Any] = {"insecure": False}
-    if api_key := os.getenv(_UNION_EAGER_API_KEY_ENV_VAR):
+    if api_key:
         logger.info("Using api key from environment")
         remote_kwargs["api_key"] = api_key
     else:
-        ep = os.environ.get(ENDPOINT_OVERRIDE, "host.docker.internal:8090")
+        ep = endpoint or os.environ.get(ENDPOINT_OVERRIDE, "host.docker.internal:8090")
         remote_kwargs["endpoint"] = ep
-        if "localhost" in ep or "docker" in ep:
-            remote_kwargs["insecure"] = True
+        if not insecure:
+            if "localhost" in ep or "docker" in ep:
+                remote_kwargs["insecure"] = True
         logger.debug(f"Using controller endpoint: {ep} with kwargs: {remote_kwargs}")
 
     # Check for insecure_skip_verify override (e.g. for self-signed certs)
@@ -359,7 +369,7 @@ async def init_in_cluster(org: str | None, project: str | None, domain: str | No
         remote_kwargs["insecure_skip_verify"] = True
         logger.info("SSL certificate verification disabled (insecure_skip_verify=True)")
 
-    init.aio(org=org, project=project, domain=domain, image_builder="remote", **remote_kwargs)
+    await init.aio(org=org, project=project, domain=domain, image_builder="remote", **remote_kwargs)
     return remote_kwargs
 
 

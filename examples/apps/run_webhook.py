@@ -45,7 +45,7 @@ async def lifespan(app: FastAPI):
     are processed, preventing race conditions and initialization errors.
     """
     # Startup: Initialize Flyte
-    await flyte.init.aio()
+    await flyte.init_in_cluster.aio()
     yield
     # Shutdown: Clean up if needed
 
