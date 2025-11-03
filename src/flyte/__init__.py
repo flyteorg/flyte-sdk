@@ -17,6 +17,7 @@ from ._excepthook import custom_excepthook
 from ._group import group
 from ._image import Image
 from ._initialize import current_domain, init, init_from_config
+from ._logging import logger
 from ._map import map
 from ._pod import PodTemplate
 from ._resources import AMD_GPU, GPU, HABANA_GAUDI, TPU, Device, DeviceClass, Neuron, Resources
@@ -98,6 +99,7 @@ __all__ = [
     "group",
     "init",
     "init_from_config",
+    "logger",
     "map",
     "new_event",
     "run",

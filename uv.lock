@@ -1,5 +1,5 @@
 version = 1
-revision = 2
+revision = 3
 requires-python = ">=3.10"
 resolution-markers = [
     "python_full_version >= '3.14'",
@@ -668,6 +668,11 @@ dependencies = [
 aiosqlite = [
     { name = "aiosqlite" },
 ]
+connector = [
+    { name = "grpcio-health-checking" },
+    { name = "httpx" },
+    { name = "prometheus-client" },
+]
 
 [package.dev-dependencies]
 dev = [
@@ -702,18 +707,21 @@ requires-dist = [
     { name = "flyteidl2", git = "https://github.com/flyteorg/flyte.git?subdirectory=gen%2Fpython&rev=v2" },
     { name = "fsspec", specifier = ">=2025.3.0" },
     { name = "grpcio", specifier = ">=1.71.0" },
+    { name = "grpcio-health-checking", marker = "extra == 'connector'" },
     { name = "httpx", specifier = ">=0.28.1,<1.0.0" },
+    { name = "httpx", marker = "extra == 'connector'" },
     { name = "keyring", specifier = ">=25.6.0" },
     { name = "mashumaro" },
     { name = "msgpack", specifier = ">=1.1.0" },
     { name = "obstore", specifier = ">=0.7.3" },
+    { name = "prometheus-client", marker = "extra == 'connector'" },
     { name = "protobuf", specifier = ">=6.30.1" },
     { name = "pydantic", specifier = ">=2.10.6" },
     { name = "pyyaml", specifier = ">=6.0.2" },
     { name = "rich-click", specifier = "==1.8.9" },
     { name = "toml", specifier = ">=0.10.2" },
 ]
-provides-extras = ["aiosqlite"]
+provides-extras = ["aiosqlite", "connector"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -751,8 +759,8 @@ wheels = [
 
 [[package]]
 name = "flyteidl2"
-version = "2.0.0a11.dev1+g2378cd5eb"
-source = { git = "https://github.com/flyteorg/flyte.git?subdirectory=gen%2Fpython&rev=v2#2378cd5ebbc30ef7090f0b38ea6e724b34a51147" }
+version = "2.0.0a11"
+source = { git = "https://github.com/flyteorg/flyte.git?subdirectory=gen%2Fpython&rev=v2#74bc4ae9cb75e902e1914a8fbf2da5b69d524301" }
 dependencies = [
     { name = "googleapis-common-protos" },
     { name = "protobuf" },
@@ -1017,6 +1025,19 @@ wheels = [
 ]
 
 [[package]]
+name = "grpcio-health-checking"
+version = "1.75.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "grpcio" },
+    { name = "protobuf" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/f9/3d/ed141f8b19b40f41b7fe5432c1ecb10c54ef002e46466cd8450f9ef621f7/grpcio_health_checking-1.75.1.tar.gz", hash = "sha256:888ea1b86ad65c02c8547486e95263562e145363e3d5400f5244f7f2c5323e63", size = 16766, upload-time = "2025-09-26T09:13:17.171Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/af/44/37245c53f61a66002a6a451ba63be080c100b7c1dfc54ae2af4403452bd9/grpcio_health_checking-1.75.1-py3-none-any.whl", hash = "sha256:f9d3eae78c13bfe81105a6433fbf7c4ad04ea1f517e9110fde35391d56ec760e", size = 18921, upload-time = "2025-09-26T09:12:37.076Z" },
+]
+
+[[package]]
 name = "grpcio-status"
 version = "1.75.1"
 source = { registry = "https://pypi.org/simple" }
@@ -1081,7 +1102,7 @@ name = "importlib-metadata"
 version = "8.7.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "zipp" },
+    { name = "zipp", marker = "python_full_version < '3.12'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/76/66/650a33bd90f786193e4de4b3ad86ea60b53c89b669a5c7be931fac31cdb0/importlib_metadata-8.7.0.tar.gz", hash = "sha256:d13b81ad223b890aa16c5471f2ac3056cf76c5f10f82d6f9292f0b415f389000", size = 56641, upload-time = "2025-04-27T15:29:01.736Z" }
 wheels = [
@@ -2581,7 +2602,7 @@ wheels = [
 
 [[package]]
 name = "pydantic"
-version = "2.12.2"
+version = "2.12.3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "annotated-types" },
@@ -2589,9 +2610,9 @@ dependencies = [
     { name = "typing-extensions" },
     { name = "typing-inspection" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/8d/35/d319ed522433215526689bad428a94058b6dd12190ce7ddd78618ac14b28/pydantic-2.12.2.tar.gz", hash = "sha256:7b8fa15b831a4bbde9d5b84028641ac3080a4ca2cbd4a621a661687e741624fd", size = 816358, upload-time = "2025-10-14T15:02:21.842Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/f3/1e/4f0a3233767010308f2fd6bd0814597e3f63f1dc98304a9112b8759df4ff/pydantic-2.12.3.tar.gz", hash = "sha256:1da1c82b0fc140bb0103bc1441ffe062154c8d38491189751ee00fd8ca65ce74", size = 819383, upload-time = "2025-10-17T15:04:21.222Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/6c/98/468cb649f208a6f1279448e6e5247b37ae79cf5e4041186f1e2ef3d16345/pydantic-2.12.2-py3-none-any.whl", hash = "sha256:25ff718ee909acd82f1ff9b1a4acfd781bb23ab3739adaa7144f19a6a4e231ae", size = 460628, upload-time = "2025-10-14T15:02:19.623Z" },
+    { url = "https://files.pythonhosted.org/packages/a1/6b/83661fa77dcefa195ad5f8cd9af3d1a7450fd57cc883ad04d65446ac2029/pydantic-2.12.3-py3-none-any.whl", hash = "sha256:6986454a854bc3bc6e5443e1369e06a3a456af9d339eda45510f517d9ea5c6bf", size = 462431, upload-time = "2025-10-17T15:04:19.346Z" },
 ]
 
 [[package]]
