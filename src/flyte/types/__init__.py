@@ -42,12 +42,9 @@ __all__ = [
 
 def _load_custom_type_transformers():
     plugins = entry_points(group="flyte_type_transformers")
-    print("tttttttttttttttttttttttttttttttttt", plugins)
     for ep in plugins:
         try:
-            transformer: TypeTransformer = ep.load()
-            if not issubclass(transformer, TypeTransformer):
-                logger.error(f"Plugin {ep.name} did not return a type transformer, got {type(transformer).__name__}")
-                continue
-        except ImportError:
-            logger.warning(f"Failed to load type transformer {ep.name}")
+            logger.info(f"Loading type transformer: {ep.name}")
+            ep.load()
+        except Exception as e:
+            logger.warning(f"Failed to load type transformer {ep.name} with error: {e}")

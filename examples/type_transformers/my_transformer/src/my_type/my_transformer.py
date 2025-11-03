@@ -7,7 +7,8 @@ from typing import Type
 
 from flyteidl2.core import literals_pb2, types_pb2
 
-from flyte.types import TypeTransformer, TypeTransformerFailedError, TypeEngine
+from flyte import logger
+from flyte.types import TypeEngine, TypeTransformer, TypeTransformerFailedError
 from my_type.custom_type import PositiveInt
 
 
@@ -101,6 +102,7 @@ class PositiveIntTransformer(TypeTransformer[PositiveInt]):
         raise ValueError(f"Cannot guess PositiveInt from literal type {literal_type}")
 
 
-# Register the transformer with the TypeEngine
-# This makes it available for use in Flyte workflows
-TypeEngine.register(PositiveIntTransformer())
+def register_positive_int_transformer():
+    """Register the PositiveIntTransformer in the TypeEngine."""
+    TypeEngine.register(PositiveIntTransformer())
+    logger.info("Registered PositiveIntTransformer in TypeEngine.")
