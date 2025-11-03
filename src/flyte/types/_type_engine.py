@@ -1914,7 +1914,6 @@ def _get_element_type(element_property: typing.Dict[str, str]) -> Type:
     return str
 
 
-# pr: han-ru is this still needed?
 def dataclass_from_dict(cls: type, src: typing.Dict[str, typing.Any]) -> typing.Any:
     """
     Utility function to construct a dataclass object from dict
