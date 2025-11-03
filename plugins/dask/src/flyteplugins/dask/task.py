@@ -78,13 +78,12 @@ class DownloadCodeBundleWorkerPlugin(WorkerPlugin):
     def __init__(self, code_bundle: CodeBundle):
         self.code_bundle = code_bundle
 
-    def setup(self, worker):
+    async def setup(self, worker):
         """
         Runs on each worker as it is initialized.
         """
         sys.path.insert(0, ".")
-        download_code_bundle(self.code_bundle)
-
+        await download_code_bundle(self.code_bundle)
 
 @dataclass(kw_only=True)
 class DaskTask(AsyncFunctionTaskTemplate):
