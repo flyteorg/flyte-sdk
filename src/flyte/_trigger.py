@@ -726,7 +726,7 @@ class Trigger:
     @classmethod
     def daily(
         cls,
-        trigger_time_input_key: str = "trigger_time",
+        trigger_time_input_key: str | None = None,
         *,
         name: str = "daily",
         description: str = "A trigger that runs daily at midnight",
@@ -743,7 +743,7 @@ class Trigger:
         Creates a Cron trigger that runs daily at midnight.
 
         Args:
-            trigger_time_input_key (str): The input key for the trigger time, default is "trigger_time".
+            trigger_time_input_key (str | None): The input key for the trigger time. If None, no trigger time input is added.
             name (str): The name of the trigger, default is "daily".
             description (str): A description of the trigger.
             auto_activate (bool): Whether the trigger should be automatically activated.
@@ -758,7 +758,9 @@ class Trigger:
         Returns:
             Trigger: A trigger that runs daily at midnight.
         """
-        final_inputs = {trigger_time_input_key: TriggerTime}
+        final_inputs = {}
+        if trigger_time_input_key is not None:
+            final_inputs[trigger_time_input_key] = TriggerTime
         if inputs:
             final_inputs.update(inputs)
 
@@ -779,7 +781,7 @@ class Trigger:
     @classmethod
     def hourly(
         cls,
-        trigger_time_input_key: str = "trigger_time",
+        trigger_time_input_key: str | None = None,
         *,
         name: str = "hourly",
         description: str = "A trigger that runs every hour",
@@ -796,7 +798,7 @@ class Trigger:
         Creates a Cron trigger that runs every hour.
 
         Args:
-            trigger_time_input_key (str): The input parameter for the trigger time, default is "trigger_time".
+            trigger_time_input_key (str | None): The input parameter for the trigger time. If None, no trigger time input is added.
             name (str): The name of the trigger, default is "hourly".
             description (str): A description of the trigger.
             auto_activate (bool): Whether the trigger should be automatically activated.
@@ -811,7 +813,9 @@ class Trigger:
         Returns:
             Trigger: A trigger that runs every hour, on the hour.
         """
-        final_inputs = {trigger_time_input_key: TriggerTime}
+        final_inputs = {}
+        if trigger_time_input_key is not None:
+            final_inputs[trigger_time_input_key] = TriggerTime
         if inputs:
             final_inputs.update(inputs)
 
@@ -832,7 +836,7 @@ class Trigger:
     @classmethod
     def minutely(
         cls,
-        trigger_time_input_key: str = "trigger_time",
+        trigger_time_input_key: str | None = None,
         *,
         name: str = "minutely",
         description: str = "A trigger that runs every minute",
@@ -849,7 +853,7 @@ class Trigger:
         Creates a Cron trigger that runs every minute.
 
         Args:
-            trigger_time_input_key (str): The input parameter for the trigger time, default is "trigger_time".
+            trigger_time_input_key (str | None): The input parameter for the trigger time. If None, no trigger time input is added.
             name (str): The name of the trigger, default is "every_minute".
             description (str): A description of the trigger.
             auto_activate (bool): Whether the trigger should be automatically activated.
@@ -864,7 +868,9 @@ class Trigger:
         Returns:
             Trigger: A trigger that runs every minute.
         """
-        final_inputs = {trigger_time_input_key: TriggerTime}
+        final_inputs = {}
+        if trigger_time_input_key is not None:
+            final_inputs[trigger_time_input_key] = TriggerTime
         if inputs:
             final_inputs.update(inputs)
 
@@ -885,7 +891,7 @@ class Trigger:
     @classmethod
     def weekly(
         cls,
-        trigger_time_input_key: str = "trigger_time",
+        trigger_time_input_key: str | None = None,
         *,
         name: str = "weekly",
         description: str = "A trigger that runs weekly on Sundays at midnight",
@@ -902,7 +908,7 @@ class Trigger:
         Creates a Cron trigger that runs weekly on Sundays at midnight.
 
         Args:
-            trigger_time_input_key (str): The input parameter for the trigger time, default is "trigger_time".
+            trigger_time_input_key (str | None): The input parameter for the trigger time. If None, no trigger time input is added.
             name (str): The name of the trigger, default is "weekly".
             description (str): A description of the trigger.
             auto_activate (bool): Whether the trigger should be automatically activated.
@@ -917,7 +923,9 @@ class Trigger:
         Returns:
             Trigger: A trigger that runs weekly on Sundays at midnight.
         """
-        final_inputs = {trigger_time_input_key: TriggerTime}
+        final_inputs = {}
+        if trigger_time_input_key is not None:
+            final_inputs[trigger_time_input_key] = TriggerTime
         if inputs:
             final_inputs.update(inputs)
 
@@ -938,7 +946,7 @@ class Trigger:
     @classmethod
     def monthly(
         cls,
-        trigger_time_input_key: str = "trigger_time",
+        trigger_time_input_key: str | None = None,
         *,
         name: str = "monthly",
         description: str = "A trigger that runs monthly on the 1st at midnight",
@@ -955,7 +963,7 @@ class Trigger:
         Creates a Cron trigger that runs monthly on the 1st at midnight.
 
         Args:
-            trigger_time_input_key (str): The input parameter for the trigger time, default is "trigger_time".
+            trigger_time_input_key (str | None): The input parameter for the trigger time. If None, no trigger time input is added.
             name (str): The name of the trigger, default is "monthly".
             description (str): A description of the trigger.
             auto_activate (bool): Whether the trigger should be automatically activated.
@@ -970,7 +978,9 @@ class Trigger:
         Returns:
             Trigger: A trigger that runs monthly on the 1st at midnight.
         """
-        final_inputs = {trigger_time_input_key: TriggerTime}
+        final_inputs = {}
+        if trigger_time_input_key is not None:
+            final_inputs[trigger_time_input_key] = TriggerTime
         if inputs:
             final_inputs.update(inputs)
 
