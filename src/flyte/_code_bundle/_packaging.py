@@ -32,15 +32,16 @@ def print_ls_tree(source: os.PathLike, ls: typing.List[str]):
         f"File structure:\n:open_file_folder: {source}",
         guide_style="bold bright_blue",
     )
-    trees = {pathlib.Path(source): tree_root}
-
+    source_path = pathlib.Path(source).resolve()
+    # trees = {pathlib.Path(source): tree_root}
+    trees = {source_path: tree_root}
     for f in ls:
         fpp = pathlib.Path(f)
         if fpp.parent not in trees:
             # add trees for all intermediate folders
             current = tree_root
-            current_path = pathlib.Path(source)
-            for subdir in fpp.parent.relative_to(source).parts:
+            current_path = source_path  # pathlib.Path(source)
+            for subdir in fpp.parent.relative_to(source_path).parts:
                 current_path = current_path / subdir
                 if current_path not in trees:
                     current = current.add(f"{subdir}", guide_style="bold bright_blue")

@@ -23,6 +23,6 @@ class DefaultTaskResolver(Resolver):
         task_def = getattr(task_module, task_name)
         return task_def
 
-    def loader_args(self, task: TaskTemplate, root_dir: Optional[Path] = None) -> List[str]:  # type:ignore
+    def loader_args(self, task: TaskTemplate, root_dir: Path) -> List[str]:  # type:ignore
         t, m = extract_task_module(task, root_dir)
         return ["mod", m, "instance", t]

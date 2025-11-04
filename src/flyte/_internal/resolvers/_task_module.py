@@ -5,7 +5,7 @@ from flyte._module import extract_obj_module
 from flyte._task import AsyncFunctionTaskTemplate, TaskTemplate
 
 
-def extract_task_module(task: TaskTemplate, /, source_dir: pathlib.Path | None = None) -> Tuple[str, str]:
+def extract_task_module(task: TaskTemplate, /, source_dir: pathlib.Path) -> Tuple[str, str]:
     """
     Extract the task module from the task template.
 
