@@ -12,6 +12,7 @@ from ._context import ctx
 from ._custom_context import custom_context, get_custom_context
 from ._deploy import build_images, deploy
 from ._environment import Environment
+from ._event import new_event
 from ._excepthook import custom_excepthook
 from ._group import group
 from ._image import Image
@@ -100,6 +101,7 @@ __all__ = [
     "init_from_config",
     "logger",
     "map",
+    "new_event",
     "run",
     "trace",
     "version",
