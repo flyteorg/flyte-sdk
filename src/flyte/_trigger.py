@@ -743,7 +743,8 @@ class Trigger:
         Creates a Cron trigger that runs daily at midnight.
 
         Args:
-            trigger_time_input_key (str | None): The input key for the trigger time. If None, no trigger time input is added.
+            trigger_time_input_key (str | None): The input key for the trigger time.
+                If None, no trigger time input is added.
             name (str): The name of the trigger, default is "daily".
             description (str): A description of the trigger.
             auto_activate (bool): Whether the trigger should be automatically activated.
@@ -798,7 +799,8 @@ class Trigger:
         Creates a Cron trigger that runs every hour.
 
         Args:
-            trigger_time_input_key (str | None): The input parameter for the trigger time. If None, no trigger time input is added.
+            trigger_time_input_key (str | None): The input parameter for the trigger time.
+                If None, no trigger time input is added.
             name (str): The name of the trigger, default is "hourly".
             description (str): A description of the trigger.
             auto_activate (bool): Whether the trigger should be automatically activated.
@@ -853,7 +855,8 @@ class Trigger:
         Creates a Cron trigger that runs every minute.
 
         Args:
-            trigger_time_input_key (str | None): The input parameter for the trigger time. If None, no trigger time input is added.
+            trigger_time_input_key (str | None): The input parameter for the trigger time.
+                If None, no trigger time input is added.
             name (str): The name of the trigger, default is "every_minute".
             description (str): A description of the trigger.
             auto_activate (bool): Whether the trigger should be automatically activated.
@@ -908,7 +911,8 @@ class Trigger:
         Creates a Cron trigger that runs weekly on Sundays at midnight.
 
         Args:
-            trigger_time_input_key (str | None): The input parameter for the trigger time. If None, no trigger time input is added.
+            trigger_time_input_key (str | None): The input parameter for the trigger time.
+                If None, no trigger time input is added.
             name (str): The name of the trigger, default is "weekly".
             description (str): A description of the trigger.
             auto_activate (bool): Whether the trigger should be automatically activated.
@@ -963,7 +967,8 @@ class Trigger:
         Creates a Cron trigger that runs monthly on the 1st at midnight.
 
         Args:
-            trigger_time_input_key (str | None): The input parameter for the trigger time. If None, no trigger time input is added.
+            trigger_time_input_key (str | None): The input parameter for the trigger time.
+                If None, no trigger time input is added.
             name (str): The name of the trigger, default is "monthly".
             description (str): A description of the trigger.
             auto_activate (bool): Whether the trigger should be automatically activated.
