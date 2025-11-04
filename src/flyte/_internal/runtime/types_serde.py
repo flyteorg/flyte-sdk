@@ -34,10 +34,12 @@ def transform_native_to_typed_interface(
         return None
     input_descriptions: Dict[str, str] = {}
     output_descriptions: Dict[str, str] = {}
+    short_description : str = ""
+    long_description: str = ""
     if interface.docstring:
-        # Fill in descriptions from docstring in the future
-        input_descriptions = {}
-        output_descriptions = {}
+        # Extract descriptions from the parsed docstring
+        input_descriptions = {k: v for k, v in interface.docstring.input_descriptions.items() if v is not None}
+        output_descriptions = {k: v for k, v in interface.docstring.output_descriptions.items() if v is not None}
 
     inputs_map = transform_variable_map(interface.get_input_types(), input_descriptions)
     outputs_map = transform_variable_map(interface.outputs, output_descriptions)
