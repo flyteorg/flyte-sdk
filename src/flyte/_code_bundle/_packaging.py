@@ -33,7 +33,6 @@ def print_ls_tree(source: os.PathLike, ls: typing.List[str]):
         guide_style="bold bright_blue",
     )
     source_path = pathlib.Path(source).resolve()
-    # trees = {pathlib.Path(source): tree_root}
     trees = {source_path: tree_root}
     for f in ls:
         fpp = pathlib.Path(f)

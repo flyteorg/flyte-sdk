@@ -1,6 +1,6 @@
 import importlib
 from pathlib import Path
-from typing import List, Optional
+from typing import List
 
 from flyte._internal.resolvers._task_module import extract_task_module
 from flyte._internal.resolvers.common import Resolver
