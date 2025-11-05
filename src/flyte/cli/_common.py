@@ -4,6 +4,7 @@ import importlib.util
 import json
 import logging
 import os
+import pathlib
 import sys
 from abc import abstractmethod
 from dataclasses import dataclass, replace
@@ -144,7 +145,7 @@ class CLIConfig:
         flyte.init_from_config(
             updated_config,
             log_level=self.log_level,
-            root_dir=root_dir,
+            root_dir=pathlib.Path(root_dir) if root_dir else None,
             images=images,
             sync_local_sys_paths=sync_local_sys_paths,
         )
