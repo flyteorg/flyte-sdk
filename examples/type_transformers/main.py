@@ -27,6 +27,7 @@ def main(x_list: list[PositiveInt]) -> float:
     y_mean = sum(y.value for y in y_list) / len(y_list)
     return y_mean
 
+
 # Note the CLI doesn't work because we don't expose CLI transformers yet, this is an area for extension in the future.
 # Does not work: flyte -vvv -c ~/.flyte/demo.yaml run main.py main --x_list '[1,3,5]'
 if __name__ == "__main__":
