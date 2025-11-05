@@ -146,6 +146,7 @@ async def init(
     images: typing.Dict[str, str] | None = None,
     source_config_path: Optional[Path] = None,
     sync_local_sys_paths: bool = True,
+    load_plugin_type_transformers: bool = True,
 ) -> None:
     """
     Initialize the Flyte system with the given configuration. This method should be called before any other Flyte
@@ -183,12 +184,17 @@ async def init(
     :param images: Optional dict of images that can be used by referencing the image name.
     :param source_config_path: Optional path to the source configuration file (This is only used for documentation)
     :param sync_local_sys_paths: Whether to include and synchronize local sys.path entries under the root directory
-     into the remote container (default: True).
+      into the remote container (default: True).
+    :param load_plugin_type_transformers: If enabled (default True), load the type transformer plugins registered under
+      the "flyte.plugins.types" entry point group.
     :return: None
     """
     from flyte._utils import get_cwd_editable_install, org_from_endpoint, sanitize_endpoint
+    from flyte.types import _load_custom_type_transformers
 
     _initialize_logger(log_level=log_level)
+    if load_plugin_type_transformers:
+        _load_custom_type_transformers()
 
     global _init_config  # noqa: PLW0603
 
