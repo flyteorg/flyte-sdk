@@ -1,5 +1,6 @@
-import flyte
 from dataclasses import dataclass
+
+import flyte
 
 env = flyte.TaskEnvironment(name="inputs_union_types")
 
@@ -7,6 +8,7 @@ env = flyte.TaskEnvironment(name="inputs_union_types")
 @dataclass
 class UserData:
     """A simple dataclass for demonstration"""
+
     name: str
     age: int
     email: str
@@ -49,4 +51,3 @@ if __name__ == "__main__":
     print(r3.name)
     print(r3.url)
     r3.wait()
-

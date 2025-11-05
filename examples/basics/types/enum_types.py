@@ -7,6 +7,7 @@ env = flyte.TaskEnvironment(name="inputs_enum_types")
 
 class Status(enum.Enum):
     """Example enum with string values"""
+
     PENDING = "pending"
     IN_PROGRESS = "in_progress"
     COMPLETED = "completed"
@@ -28,4 +29,3 @@ if __name__ == "__main__":
     print(r.name)
     print(r.url)
     r.wait()
-

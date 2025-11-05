@@ -1,5 +1,6 @@
-import flyte
 from datetime import datetime, timedelta
+
+import flyte
 
 env = flyte.TaskEnvironment(name="inputs_simple_type_defaults")
 
@@ -35,4 +36,3 @@ if __name__ == "__main__":
     print(r2.name)
     print(r2.url)
     r2.wait()
-

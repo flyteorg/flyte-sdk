@@ -1,7 +1,6 @@
-import flyte
-from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import List, Optional
+
+import flyte
 
 env = flyte.TaskEnvironment(name="inputs_simple_types")
 
@@ -17,7 +16,9 @@ def main(str: str, int: int, float: float, bool: bool, start_time: datetime, dur
 if __name__ == "__main__":
     flyte.init_from_config()
 
-    r = flyte.run(main, str="World", int=42, float=3.14, bool=True, start_time=datetime.now(), duration=timedelta(hours=1))
+    r = flyte.run(
+        main, str="World", int=42, float=3.14, bool=True, start_time=datetime.now(), duration=timedelta(hours=1)
+    )
     print(r.name)
     print(r.url)
     r.wait()

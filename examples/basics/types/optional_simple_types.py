@@ -1,8 +1,10 @@
-import flyte
 from datetime import datetime, timedelta
 from typing import Optional
 
+import flyte
+
 env = flyte.TaskEnvironment(name="inputs_optional_simple_types")
+
 
 @env.task
 def main(
@@ -15,14 +17,14 @@ def main(
 ) -> str:
     """Process optional simple types (int, float, string, bool, datetime, timedelta) or None"""
     result = "Optional types received:\n"
-    
+
     result += f"  maybe_int: {maybe_int} (provided: {maybe_int is not None})\n"
     result += f"  maybe_float: {maybe_float} (provided: {maybe_float is not None})\n"
     result += f"  maybe_str: {maybe_str} (provided: {maybe_str is not None})\n"
     result += f"  maybe_bool: {maybe_bool} (provided: {maybe_bool is not None})\n"
     result += f"  maybe_datetime: {maybe_datetime} (provided: {maybe_datetime is not None})\n"
     result += f"  maybe_duration: {maybe_duration} (provided: {maybe_duration is not None})\n"
-    
+
     return result
 
 
@@ -65,4 +67,3 @@ if __name__ == "__main__":
     print(r3.name)
     print(r3.url)
     r3.wait()
-

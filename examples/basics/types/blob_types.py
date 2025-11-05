@@ -14,7 +14,9 @@ async def process_blob(blob: File) -> str:
         content = await f.read()
         text_content = content.decode("utf-8")
         lines = text_content.strip().split("\n")
-        return f"Processed blob file: {blob.name}\nTotal lines: {len(lines)}\nFirst line: {lines[0] if lines else 'Empty file'}"
+        return f"""Processed blob file: {blob.name}
+Total lines: {len(lines)}
+First line: {lines[0] if lines else "Empty file"}"""
 
 
 if __name__ == "__main__":
@@ -29,7 +31,7 @@ if __name__ == "__main__":
     try:
         # Upload the local file to create a blob
         test_blob = File.from_local_sync(tmp_path)
-        
+
         # Process the blob
         r = flyte.run(process_blob, blob=test_blob)
         print(r.name)
@@ -38,4 +40,3 @@ if __name__ == "__main__":
     finally:
         # Clean up the temporary file
         os.unlink(tmp_path)
-
