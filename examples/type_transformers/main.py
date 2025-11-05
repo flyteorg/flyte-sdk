@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from my_type import PositiveInt
+from my_transformer import PositiveInt
 
 import flyte
 

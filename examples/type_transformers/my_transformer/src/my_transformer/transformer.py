@@ -9,7 +9,7 @@ from flyteidl2.core import literals_pb2, types_pb2
 
 from flyte import logger
 from flyte.types import TypeEngine, TypeTransformer, TypeTransformerFailedError
-from my_type.custom_type import PositiveInt
+from my_transformer.custom_type import PositiveInt
 
 
 class PositiveIntTransformer(TypeTransformer[PositiveInt]):
