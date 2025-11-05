@@ -13,5 +13,5 @@ package = true
 where = ["src"]
 include = ["*"]
 
-[project.entry-points.flyte_type_transformers]
+[project.entry-points."flyte.plugins.types"]
 my_transformer = "my_type.my_transformer:register_positive_int_transformer"

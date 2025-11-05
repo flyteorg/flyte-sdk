@@ -41,7 +41,7 @@ __all__ = [
 
 
 def _load_custom_type_transformers():
-    plugins = entry_points(group="flyte_type_transformers")
+    plugins = entry_points(group="flyte.plugins.types")
     for ep in plugins:
         try:
             logger.info(f"Loading type transformer: {ep.name}")
