@@ -55,6 +55,7 @@ class PositiveIntTransformer(TypeTransformer[PositiveInt]):
         Raises:
             TypeTransformerFailedError: If the value is not a PositiveInt
         """
+        logger.info(f"PositiveIntTransformer: Converting {python_val} to Literal")
         if not isinstance(python_val, PositiveInt):
             raise TypeTransformerFailedError(f"Expected PositiveInt, got {type(python_val).__name__}")
 
@@ -77,6 +78,7 @@ class PositiveIntTransformer(TypeTransformer[PositiveInt]):
             TypeTransformerFailedError: If the literal doesn't contain a valid integer
             ValueError: If the integer value is not positive
         """
+        logger.info(f"PositiveIntTransformer: Converting Literal {lv} to PositiveInt")
         if not lv.scalar or not lv.scalar.primitive:
             raise TypeTransformerFailedError(f"Cannot convert literal {lv} to PositiveInt: missing scalar primitive")
 
@@ -105,4 +107,4 @@ class PositiveIntTransformer(TypeTransformer[PositiveInt]):
 def register_positive_int_transformer():
     """Register the PositiveIntTransformer in the TypeEngine."""
     TypeEngine.register(PositiveIntTransformer())
-    logger.info("Registered PositiveIntTransformer in TypeEngine.")
+    logger.warning("Registered PositiveIntTransformer in TypeEngine!!!")

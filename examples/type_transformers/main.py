@@ -7,7 +7,7 @@ import flyte
 env = flyte.TaskEnvironment(
     name="hello_world",
     image=flyte.Image.from_debian_base().with_uv_project(
-        Path(__file__).parent / "my_transformer/pyproject.toml", pre=True
+        Path(__file__).parent / "my_transformer/pyproject.toml", pre=True, project_install_mode="install_project",
     ),
 )
 

@@ -45,6 +45,8 @@ def _load_custom_type_transformers():
     for ep in plugins:
         try:
             logger.info(f"Loading type transformer: {ep.name}")
-            ep.load()
+            loaded = ep.load()
+            if callable(loaded):
+                loaded()
         except Exception as e:
             logger.warning(f"Failed to load type transformer {ep.name} with error: {e}")
