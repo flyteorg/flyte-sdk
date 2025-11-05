@@ -4,7 +4,6 @@ from typing import Optional
 
 env = flyte.TaskEnvironment(name="inputs_optional_simple_types")
 
-
 @env.task
 def main(
     maybe_int: Optional[int] = None,

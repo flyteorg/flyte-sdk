@@ -8,7 +8,7 @@ env = flyte.TaskEnvironment(name="inputs_simple_types")
 
 @env.task
 def main(str: str, int: int, float: float, bool: bool, start_time: datetime, duration: timedelta) -> str:
-    """Process simple types and complex dataclass with all supported subtypes"""
+    """Process simple types"""
     result = f"Hello, simple types: str={str}, int={int}, float={float}, bool={bool}"
     result += f"\nTime: {start_time}, Duration: {duration}"
     return result

@@ -46,7 +46,7 @@ class ComplexData:
 
 @env.task
 def main(data: ComplexData) -> str:
-    """Process simple types and complex dataclass with all supported subtypes"""
+    """Process complex dataclass with all supported subtypes"""
     result = f"Hello, simple types: str={data.str_field}, int={data.int_field}, float={data.float_field}, bool={data.bool_field}"
     result += f"\nTime: {data.start_time}, Duration: {data.duration}"
     result += f"\nComplex data: {data.str_field}, {data.int_field}, {data.float_field}, {data.bool_field}"
@@ -65,7 +65,7 @@ if __name__ == "__main__":
     
     # Create complex data instance
     complex_data = ComplexData(
-        str_field="World",
+        str_field="Hello World!",
         int_field=42,
         float_field=3.14,
         bool_field=True,
