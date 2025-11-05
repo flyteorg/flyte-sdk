@@ -110,6 +110,7 @@ def initialize_logger(log_level: int = get_env_log_level(), enable_rich: bool = 
 
     # Add context filter to root handler for all logging
     root_handler.addFilter(ContextFilter())
+    root_handler.setLevel(logging.DEBUG)
     root.addHandler(root_handler)
 
     # Set up Flyte logger handler
@@ -198,6 +199,7 @@ def _setup_root_logger():
     handler = logging.StreamHandler()
     # Add context filter to ALL logging
     handler.addFilter(ContextFilter())
+    handler.setLevel(logging.DEBUG)
 
     # Simple formatter since filters handle prefixes
     root.addHandler(handler)
