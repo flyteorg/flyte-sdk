@@ -43,7 +43,8 @@ Register your type plugin with group name `flyte.plugins.types` and Flyte will b
 my_transformer = "my_transformer.transformer:register_positive_int_transformer"
 ```
 
-If the entry_point object is a callable function, it will be called at load time with no arguments.
+If the entry_point object is a callable function, it will be called at load time with no arguments. To avoid loading and initializing
+type plugins, call `flyte.init` with `load_plugin_type_transformers=False`.
 
 This folder contains an example type plugin, as well as a main.py that leverages it. To run the example, run the
 `__main__` block in the `main.py` file - running from the CLI isn't possible yet because there's currently no way to

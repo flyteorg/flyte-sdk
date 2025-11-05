@@ -193,7 +193,8 @@ async def init(
     from flyte.types import _load_custom_type_transformers
 
     _initialize_logger(log_level=log_level)
-    _load_custom_type_transformers()
+    if load_plugin_type_transformers:
+        _load_custom_type_transformers()
 
     global _init_config  # noqa: PLW0603
 
