@@ -227,13 +227,13 @@ class ContextFilter(logging.Filter):
         if c:
             action = c.action
             # Add as attributes for structured logging (JSON)
-            record.run_name = action.run_name  # type: ignore[attr-defined]
-            record.action_name = action.name  # type: ignore[attr-defined]
+            record.run_name = action.run_name
+            record.action_name = action.name
             # Also modify message for console/Rich output
             record.msg = f"[{action.run_name}][{action.name}] {record.msg}"
         else:
-            record.run_name = None  # type: ignore[attr-defined]
-            record.action_name = None  # type: ignore[attr-defined]
+            record.run_name = None
+            record.action_name = None
         return True
 
 
@@ -245,7 +245,7 @@ class FlyteInternalFilter(logging.Filter):
     def filter(self, record: logging.LogRecord) -> bool:
         is_internal = record.name.startswith("flyte")
         # Add as attribute for structured logging (JSON)
-        record.is_flyte_internal = is_internal  # type: ignore[attr-defined]
+        record.is_flyte_internal = is_internal
         # Also modify message for console/Rich output
         if is_internal:
             record.msg = f"[flyte] {record.msg}"
