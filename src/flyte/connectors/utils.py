@@ -1,6 +1,5 @@
 import importlib
-import os
-import sys
+from concurrent import futures
 from importlib.metadata import entry_points
 from typing import List
 
@@ -8,11 +7,12 @@ import click
 import grpc
 from flyteidl2.core.execution_pb2 import TaskExecution
 from flyteidl2.service import connector_pb2
-from flyteidl2.service.connector_pb2_grpc import add_AsyncConnectorServiceServicer_to_server, \
-    add_ConnectorMetadataServiceServicer_to_server
+from flyteidl2.service.connector_pb2_grpc import (
+    add_AsyncConnectorServiceServicer_to_server,
+    add_ConnectorMetadataServiceServicer_to_server,
+)
 from rich.console import Console
 from rich.table import Table
-from concurrent import futures
 
 from flyte import logger
 
@@ -42,7 +42,9 @@ def convert_to_flyte_phase(state: str) -> TaskExecution.Phase:
     raise ValueError(f"Unrecognized state: {state}")
 
 
-async def _start_grpc_server(port: int, prometheus_port: int, worker: int, timeout: int | None, modules: List[str] | None):
+async def _start_grpc_server(
+    port: int, prometheus_port: int, worker: int, timeout: int | None, modules: List[str] | None
+):
     try:
         from flyte.connectors._server import (
             AsyncConnectorService,
@@ -50,7 +52,8 @@ async def _start_grpc_server(port: int, prometheus_port: int, worker: int, timeo
         )
     except ImportError as e:
         raise ImportError(
-            "Flyte connector dependencies are not installed. Please install it using `pip install flyteplugins-connector`"
+            "Flyte connector dependencies are not installed."
+            " Please install it using `pip install flyteplugins-connector`"
         ) from e
 
     click.secho("🚀 Starting the connector service...")

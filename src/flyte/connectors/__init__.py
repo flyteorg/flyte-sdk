@@ -1,4 +1,11 @@
-from ._connector import AsyncConnector, ConnectorRegistry, Resource, ResourceMeta, AsyncConnectorExecutorMixin
+from ._connector import AsyncConnector, AsyncConnectorExecutorMixin, ConnectorRegistry, Resource, ResourceMeta
 from ._server import ConnectorService
 
-__all__ = ["AsyncConnector", "ConnectorRegistry", "Resource", "ResourceMeta", "AsyncConnectorExecutorMixin", "ConnectorService"]
+__all__ = [
+    "AsyncConnector",
+    "AsyncConnectorExecutorMixin",
+    "ConnectorRegistry",
+    "ConnectorService",
+    "Resource",
+    "ResourceMeta",
+]

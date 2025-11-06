@@ -2,7 +2,7 @@ import inspect
 import os
 import sys
 from http import HTTPStatus
-from typing import Callable, Dict, Tuple, Type, Union, List
+from typing import Callable, Dict, List, Tuple, Type, Union
 
 import grpc
 from flyteidl2.core.security_pb2 import Connection

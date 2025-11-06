@@ -8,8 +8,8 @@ from ._task_plugins import TaskPluginRegistry
 __all__ = [
     "PRIMARY_CONTAINER_DEFAULT_NAME",
     "AsyncFunctionTaskTemplate",
-    "TaskTemplate",
     "TaskPluginRegistry",
+    "TaskTemplate",
     "download_code_bundle",
     "get_proto_resources",
     "is_initialized",

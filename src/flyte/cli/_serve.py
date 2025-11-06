@@ -55,7 +55,9 @@ def serve(_: click.Context):
     help="List of additional files or module that defines the connector",
 )
 @click.pass_context
-def connector(_: click.Context, port: int, prometheus_port: int, worker: int, timeout: int | None, modules: List[str] | None):
+def connector(
+    _: click.Context, port: int, prometheus_port: int, worker: int, timeout: int | None, modules: List[str] | None
+):
     """
     Start a grpc server for the connector service.
     """

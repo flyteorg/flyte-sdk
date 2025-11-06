@@ -1,10 +1,8 @@
 import datetime
 from dataclasses import dataclass
-from functools import lru_cache
 from typing import Any, Dict, Optional
 
 from async_lru import alru_cache
-
 from flyte import logger
 from flyte.connectors import (
     AsyncConnector,

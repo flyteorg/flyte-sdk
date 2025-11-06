@@ -1,8 +1,5 @@
 import asyncio
-import importlib
 import json
-import os
-import sys
 import typing
 from abc import ABC, abstractmethod
 from dataclasses import asdict, dataclass
@@ -11,25 +8,24 @@ from typing import Any, Dict, List, Optional
 from flyteidl2.core import tasks_pb2
 from flyteidl2.core.execution_pb2 import TaskExecution, TaskLog
 from flyteidl2.plugins import connector_pb2
+from flyteidl2.plugins.connector_pb2 import Connector as ConnectorProto
 from flyteidl2.plugins.connector_pb2 import (
     GetTaskLogsResponse,
     GetTaskMetricsResponse,
     TaskCategory,
     TaskExecutionMetadata,
 )
-from flyteidl2.plugins.connector_pb2 import Connector as ConnectorProto
 from google.protobuf import json_format
 from google.protobuf.struct_pb2 import Struct
 
 from flyte import Secret
-from flyte.syncify import syncify
 from flyte._context import internal_ctx
 from flyte._initialize import get_init_config
 from flyte._internal.runtime.convert import convert_from_native_to_outputs
 from flyte._internal.runtime.task_serde import get_proto_task
 from flyte._logging import logger
 from flyte._task import TaskTemplate
-from flyte.connectors.utils import is_terminal_phase, _start_grpc_server
+from flyte.connectors.utils import is_terminal_phase
 from flyte.models import NativeInterface, SerializationContext
 from flyte.types._type_engine import dataclass_from_dict
 
