@@ -34,16 +34,6 @@ from flyte.models import NativeInterface, SerializationContext
 from flyte.types._type_engine import dataclass_from_dict
 
 
-class ConnectorService:
-    @syncify
-    @classmethod
-    async def run(cls, port: int, prometheus_port: int, worker: int, timeout: int | None, modules: List[str] | None):
-        working_dir = os.getcwd()
-        if all(os.path.realpath(path) != working_dir for path in sys.path):
-            sys.path.append(working_dir)
-        await _start_grpc_server(port, prometheus_port, worker, timeout, modules)
-
-
 @dataclass(frozen=True)
 class ConnectorRegistryKey:
     task_type_name: str

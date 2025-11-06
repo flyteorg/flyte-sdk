@@ -1,6 +1,8 @@
 import inspect
+import os
+import sys
 from http import HTTPStatus
-from typing import Callable, Dict, Tuple, Type, Union
+from typing import Callable, Dict, Tuple, Type, Union, List
 
 import grpc
 from flyteidl2.core.security_pb2 import Connection
@@ -29,7 +31,9 @@ from prometheus_client import Counter, Summary
 from flyte._internal.runtime.convert import Inputs, convert_from_inputs_to_native
 from flyte._logging import logger
 from flyte.connectors._connector import ConnectorRegistry, FlyteConnectorNotFound, get_resource_proto
+from flyte.connectors.utils import _start_grpc_server
 from flyte.models import NativeInterface, _has_default
+from flyte.syncify import syncify
 from flyte.types import TypeEngine
 
 metric_prefix = "flyte_connector_"
@@ -71,6 +75,16 @@ def _handle_exception(e: Exception, context: grpc.ServicerContext, task_type: st
         request_failure_count.labels(
             task_type=task_type, operation=operation, error_code=HTTPStatus.INTERNAL_SERVER_ERROR
         ).inc()
+
+
+class ConnectorService:
+    @syncify
+    @classmethod
+    async def run(cls, port: int, prometheus_port: int, worker: int, timeout: int | None, modules: List[str] | None):
+        working_dir = os.getcwd()
+        if all(os.path.realpath(path) != working_dir for path in sys.path):
+            sys.path.append(working_dir)
+        await _start_grpc_server(port, prometheus_port, worker, timeout, modules)
 
 
 def record_connector_metrics(func: Callable):
