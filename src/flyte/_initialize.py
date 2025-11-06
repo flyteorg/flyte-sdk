@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Callable, List, Literal, Optional, TypeVar
 from flyte.errors import InitializationError
 from flyte.syncify import syncify
 
-from ._logging import initialize_logger, logger
+from ._logging import LogFormat, initialize_logger, logger
 
 if TYPE_CHECKING:
     from flyte._internal.imagebuild import ImageBuildEngine
@@ -113,10 +113,8 @@ async def _initialize_client(
     )
 
 
-def _initialize_logger(log_level: int | None = None):
-    initialize_logger(enable_rich=True)
-    if log_level:
-        initialize_logger(log_level=log_level, enable_rich=True)
+def _initialize_logger(log_level: int | None = None, log_format: LogFormat | None = None) -> None:
+    initialize_logger(log_level=log_level, log_format=log_format, enable_rich=True)
 
 
 @syncify
@@ -126,6 +124,7 @@ async def init(
     domain: str | None = None,
     root_dir: Path | None = None,
     log_level: int | None = None,
+    log_format: LogFormat | None = None,
     endpoint: str | None = None,
     headless: bool = False,
     insecure: bool = False,
@@ -159,6 +158,7 @@ async def init(
       also use to determine all the code that needs to be copied to the remote location.
       defaults to the editable install directory if the cwd is in a Python editable install, else just the cwd.
     :param log_level: Optional logging level for the logger, default is set using the default initialization policies
+    :param log_format: Optional logging format for the logger, default is "console"
     :param api_key: Optional API key for authentication
     :param endpoint: Optional API endpoint URL
     :param headless: Optional Whether to run in headless mode
@@ -192,7 +192,7 @@ async def init(
     from flyte._utils import get_cwd_editable_install, org_from_endpoint, sanitize_endpoint
     from flyte.types import _load_custom_type_transformers
 
-    _initialize_logger(log_level=log_level)
+    _initialize_logger(log_level=log_level, log_format=log_format)
     if load_plugin_type_transformers:
         _load_custom_type_transformers()
 
@@ -249,6 +249,7 @@ async def init_from_config(
     path_or_config: str | Path | Config | None = None,
     root_dir: Path | None = None,
     log_level: int | None = None,
+    log_format: LogFormat = "console",
     storage: Storage | None = None,
     images: tuple[str, ...] | None = None,
     sync_local_sys_paths: bool = True,
@@ -264,6 +265,7 @@ async def init_from_config(
         if not available, the current working directory.
     :param log_level: Optional logging level for the framework logger,
         default is set using the default initialization policies
+    :param log_format: Optional logging format for the logger, default is "console"
     :param storage: Optional blob store (S3, GCS, Azure) configuration if needed to access (i.e. using Minio)
     :param images: List of image strings in format "imagename=imageuri" or just "imageuri".
     :param sync_local_sys_paths: Whether to include and synchronize local sys.path entries under the root directory
@@ -295,8 +297,6 @@ async def init_from_config(
     else:
         cfg = path_or_config
 
-    _initialize_logger(log_level=log_level)
-
     logger.info(f"Flyte config initialized as {cfg}", extra={"highlighter": ReprHighlighter()})
 
     # parse image, this will overwrite the image_refs set in the config file
@@ -317,6 +317,7 @@ async def init_from_config(
         client_credentials_secret=cfg.platform.client_credentials_secret,
         root_dir=root_dir,
         log_level=log_level,
+        log_format=log_format,
         image_builder=cfg.image.builder,
         images=cfg.image.image_refs,
         storage=storage,

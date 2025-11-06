@@ -18,7 +18,7 @@ from flyte._initialize import (
     requires_initialization,
     requires_storage,
 )
-from flyte._logging import logger
+from flyte._logging import LogFormat, logger
 from flyte._task import F, P, R, TaskTemplate
 from flyte.models import (
     ActionID,
@@ -95,6 +95,7 @@ class _Runner:
         annotations: Dict[str, str] | None = None,
         interruptible: bool | None = None,
         log_level: int | None = None,
+        log_format: LogFormat = "console",
         disable_run_cache: bool = False,
         queue: Optional[str] = None,
         custom_context: Dict[str, str] | None = None,
@@ -126,6 +127,7 @@ class _Runner:
         self._annotations = annotations
         self._interruptible = interruptible
         self._log_level = log_level
+        self._log_format = log_format
         self._disable_run_cache = disable_run_cache
         self._queue = queue
         self._custom_context = custom_context or {}
@@ -220,6 +222,7 @@ class _Runner:
                 env["LOG_LEVEL"] = str(self._log_level)
             else:
                 env["LOG_LEVEL"] = str(logger.getEffectiveLevel())
+        env["LOG_FORMAT"] = self._log_format
 
         # These paths will be appended to sys.path at runtime.
         if cfg.sync_local_sys_paths:
@@ -600,6 +603,7 @@ def with_runcontext(
     annotations: Dict[str, str] | None = None,
     interruptible: bool | None = None,
     log_level: int | None = None,
+    log_format: LogFormat = "console",
     disable_run_cache: bool = False,
     queue: Optional[str] = None,
     custom_context: Dict[str, str] | None = None,
@@ -645,6 +649,7 @@ def with_runcontext(
         original setting on all tasks is retained.
     :param log_level: Optional Log level to set for the run. If not provided, it will be set to the default log level
         set using `flyte.init()`
+    :param log_format: Optional Log format to set for the run. If not provided, it will be set to the default log format
     :param disable_run_cache: Optional If true, the run cache will be disabled. This is useful for testing purposes.
     :param queue: Optional The queue to use for the run. This is used to specify the cluster to use for the run.
     :param custom_context: Optional global input context to pass to the task. This will be available via
@@ -676,6 +681,7 @@ def with_runcontext(
         project=project,
         domain=domain,
         log_level=log_level,
+        log_format=log_format,
         disable_run_cache=disable_run_cache,
         queue=queue,
         custom_context=custom_context,
