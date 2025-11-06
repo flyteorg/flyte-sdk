@@ -14,9 +14,9 @@ from rich.console import Console
 from rich.table import Table
 
 
-@click.group("serve")
+@click.group("serve1")
 @click.pass_context
-def serve(_: click.Context):
+def serve1(_: click.Context):
     """
     Start the specific service. For example:
 
@@ -26,7 +26,7 @@ def serve(_: click.Context):
     """
 
 
-@serve.command()
+@serve1.command()
 @click.option(
     "--port",
     default="8000",

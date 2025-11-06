@@ -7,7 +7,9 @@ authors = [{ name = "Kevin Su", email = "pingsutw@users.noreply.github.com" }]
 requires-python = ">=3.10"
 dependencies = [
     "flyte",
-    "flyteidl"
+    "flyteidl",
+    "grpcio-health-checking",
+    "prometheus-client"
 ]
 
 [project.optional-dependencies]
@@ -15,6 +17,9 @@ bigquery = [
     "google-cloud-bigquery",
     "google-cloud-bigquery-storage",
 ]
+
+[project.entry-points."flyte.connectors"]
+bigquery = "flyteplugins.connectors.bigquery.connector:BigQueryConnector"
 
 [build-system]
 requires = ["setuptools", "setuptools_scm"]
