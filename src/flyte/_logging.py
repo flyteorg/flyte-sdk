@@ -249,9 +249,6 @@ class FlyteInternalFilter(logging.Filter):
         # Also modify message for console/Rich output
         if is_internal:
             record.msg = f"[flyte] {record.msg}"
-            print(f"here 1 = {record.msg}")
-        else:
-            print(f"here 2 = {record.name}")
         return True
 
 
