@@ -114,7 +114,7 @@ async def _initialize_client(
 
 
 def _initialize_logger(log_level: int | None = None, log_format: LogFormat | None = None) -> None:
-    initialize_logger(log_level=log_level, log_format=log_format)
+    initialize_logger(log_level=log_level, log_format=log_format, enable_rich=True)
 
 
 @syncify
