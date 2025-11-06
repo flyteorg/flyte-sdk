@@ -2,8 +2,8 @@ import re
 from dataclasses import dataclass
 from typing import Any, Dict, Optional, Type
 
-from flyte._task import TaskTemplate
-from flyte.connectors._connector import AsyncConnectorExecutorMixin
+from flyte.extend import TaskTemplate
+from flyte.connectors import AsyncConnectorExecutorMixin
 from flyte.io import DataFrame
 from flyte.models import NativeInterface, SerializationContext
 from flyteidl2.core import tasks_pb2
