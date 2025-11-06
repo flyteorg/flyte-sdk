@@ -1,5 +1,8 @@
 import asyncio
+import importlib
 import json
+import os
+import sys
 import typing
 from abc import ABC, abstractmethod
 from dataclasses import asdict, dataclass
@@ -9,25 +12,36 @@ from flyteidl2.core import tasks_pb2
 from flyteidl2.core.execution_pb2 import TaskExecution, TaskLog
 from flyteidl2.plugins import connector_pb2
 from flyteidl2.plugins.connector_pb2 import (
-    Connector,
     GetTaskLogsResponse,
     GetTaskMetricsResponse,
     TaskCategory,
     TaskExecutionMetadata,
 )
+from flyteidl2.plugins.connector_pb2 import Connector as ConnectorProto
 from google.protobuf import json_format
 from google.protobuf.struct_pb2 import Struct
 
 from flyte import Secret
+from flyte.syncify import syncify
 from flyte._context import internal_ctx
 from flyte._initialize import get_init_config
 from flyte._internal.runtime.convert import convert_from_native_to_outputs
 from flyte._internal.runtime.task_serde import get_proto_task
 from flyte._logging import logger
 from flyte._task import TaskTemplate
-from flyte.connectors.utils import is_terminal_phase
+from flyte.connectors.utils import is_terminal_phase, _start_grpc_server
 from flyte.models import NativeInterface, SerializationContext
 from flyte.types._type_engine import dataclass_from_dict
+
+
+class ConnectorService:
+    @syncify
+    @classmethod
+    async def run(cls, port: int, prometheus_port: int, worker: int, timeout: int | None, modules: List[str] | None):
+        working_dir = os.getcwd()
+        if all(os.path.realpath(path) != working_dir for path in sys.path):
+            sys.path.append(working_dir)
+        await _start_grpc_server(port, prometheus_port, worker, timeout, modules)
 
 
 @dataclass(frozen=True)
@@ -147,7 +161,7 @@ class ConnectorRegistry(object):
     """
 
     _REGISTRY: typing.ClassVar[Dict[ConnectorRegistryKey, AsyncConnector]] = {}
-    _METADATA: typing.ClassVar[Dict[str, Connector]] = {}
+    _METADATA: typing.ClassVar[Dict[str, ConnectorProto]] = {}
 
     @staticmethod
     def register(connector: AsyncConnector, override: bool = False):
@@ -167,7 +181,7 @@ class ConnectorRegistry(object):
             connector_metadata = ConnectorRegistry.get_connector_metadata(connector.name)
             connector_metadata.supported_task_categories.append(task_category)
         else:
-            connector_metadata = Connector(
+            connector_metadata = ConnectorProto(
                 name=connector.name,
                 supported_task_categories=[task_category],
             )
@@ -183,11 +197,11 @@ class ConnectorRegistry(object):
         return ConnectorRegistry._REGISTRY[key]
 
     @staticmethod
-    def list_connectors() -> List[Connector]:
+    def list_connectors() -> List[ConnectorProto]:
         return list(ConnectorRegistry._METADATA.values())
 
     @staticmethod
-    def get_connector_metadata(name: str) -> Connector:
+    def get_connector_metadata(name: str) -> ConnectorProto:
         if name not in ConnectorRegistry._METADATA:
             raise FlyteConnectorNotFound(f"Cannot find connector for name: {name}.")
         return ConnectorRegistry._METADATA[name]
