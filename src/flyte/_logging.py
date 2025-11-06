@@ -1,12 +1,16 @@
 from __future__ import annotations
 
+import json
 import logging
 import os
-from typing import Optional
+from datetime import datetime
+from typing import Literal, Optional
 
 import flyte
 
 from ._tools import ipython_check
+
+LogFormat = Literal["console", "json"]
 
 DEFAULT_LOG_LEVEL = logging.WARNING
 
@@ -33,11 +37,14 @@ def get_env_log_level() -> int:
     return int(os.environ.get("LOG_LEVEL", DEFAULT_LOG_LEVEL))
 
 
-def log_format_from_env() -> str:
+def log_format_from_env() -> LogFormat:
     """
     Get the log format from the environment variable.
     """
-    return os.environ.get("LOG_FORMAT", "json")
+    format_str = os.environ.get("LOG_FORMAT", "console")
+    if format_str not in ("console", "json"):
+        return "console"
+    return format_str  # type: ignore[return-value]
 
 
 def _get_console():
@@ -86,6 +93,29 @@ def get_rich_handler(log_level: int) -> Optional[logging.Handler]:
     return handler
 
 
+class JSONFormatter(logging.Formatter):
+    """
+    Formatter that outputs JSON strings for each log record.
+    """
+
+    def format(self, record: logging.LogRecord) -> str:
+        log_data = {
+            "timestamp": datetime.fromtimestamp(record.created).isoformat(),
+            "level": record.levelname,
+            "logger": record.name,
+            "message": record.getMessage(),
+            "filename": record.filename,
+            "lineno": record.lineno,
+            "funcName": record.funcName,
+        }
+
+        # Add exception info if present
+        if record.exc_info:
+            log_data["exc_info"] = self.formatException(record.exc_info)
+
+        return json.dumps(log_data)
+
+
 def initialize_logger(log_level: int = get_env_log_level(), enable_rich: bool = False):
     """
     Initializes the global loggers to the default configuration.
@@ -100,9 +130,17 @@ def initialize_logger(log_level: int = get_env_log_level(), enable_rich: bool = 
     flyte_logger = logging.getLogger("flyte")
     flyte_logger.handlers.clear()
 
+    # Determine log format (JSON takes precedence over Rich)
+    log_format = log_format_from_env()
+    use_json = log_format == "json"
+    use_rich = enable_rich and not use_json
+
     # Set up root logger handler
     root_handler = None
-    if enable_rich:
+    if use_json:
+        root_handler = logging.StreamHandler()
+        root_handler.setFormatter(JSONFormatter())
+    elif use_rich:
         root_handler = get_rich_handler(log_level)
 
     if root_handler is None:
@@ -115,7 +153,11 @@ def initialize_logger(log_level: int = get_env_log_level(), enable_rich: bool = 
 
     # Set up Flyte logger handler
     flyte_handler = None
-    if enable_rich:
+    if use_json:
+        flyte_handler = logging.StreamHandler()
+        flyte_handler.setLevel(log_level)
+        flyte_handler.setFormatter(JSONFormatter())
+    elif use_rich:
         flyte_handler = get_rich_handler(log_level)
 
     if flyte_handler is None:
@@ -166,7 +208,7 @@ class ContextFilter(logging.Filter):
     Applied globally to capture context for both user and Flyte internal logging.
     """
 
-    def filter(self, record):
+    def filter(self, record: logging.LogRecord) -> bool:
         from flyte._context import ctx
 
         c = ctx()
@@ -181,7 +223,7 @@ class FlyteInternalFilter(logging.Filter):
     A logging filter that adds [flyte] prefix to internal Flyte logging only.
     """
 
-    def filter(self, record):
+    def filter(self, record: logging.LogRecord) -> bool:
         if record.name.startswith("flyte"):
             record.msg = f"[flyte] {record.msg}"
         return True
