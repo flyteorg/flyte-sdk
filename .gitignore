@@ -188,3 +188,4 @@ examples/local_debug.ipynb
 examples/remote_example.py
 config.yaml
 .claude/
+Dockerfile.dev
