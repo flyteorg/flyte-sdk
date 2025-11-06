@@ -116,12 +116,17 @@ class JSONFormatter(logging.Formatter):
         return json.dumps(log_data)
 
 
-def initialize_logger(log_level: int = get_env_log_level(), enable_rich: bool = False):
+def initialize_logger(log_level: int | None = None, log_format: LogFormat | None = None, enable_rich: bool = False):
     """
     Initializes the global loggers to the default configuration.
     When enable_rich=True, upgrades to Rich handler for local CLI usage.
     """
     global logger  # noqa: PLW0603
+
+    if log_level is None:
+        log_level = get_env_log_level()
+    if log_format is None:
+        log_format = log_format_from_env()
 
     # Clear existing handlers to reconfigure
     root = logging.getLogger()
@@ -131,12 +136,11 @@ def initialize_logger(log_level: int = get_env_log_level(), enable_rich: bool = 
     flyte_logger.handlers.clear()
 
     # Determine log format (JSON takes precedence over Rich)
-    log_format = log_format_from_env()
     use_json = log_format == "json"
     use_rich = enable_rich and not use_json
 
     # Set up root logger handler
-    root_handler = None
+    root_handler: logging.Handler | None = None
     if use_json:
         root_handler = logging.StreamHandler()
         root_handler.setFormatter(JSONFormatter())
@@ -152,7 +156,7 @@ def initialize_logger(log_level: int = get_env_log_level(), enable_rich: bool = 
     root.addHandler(root_handler)
 
     # Set up Flyte logger handler
-    flyte_handler = None
+    flyte_handler: logging.Handler | None = None
     if use_json:
         flyte_handler = logging.StreamHandler()
         flyte_handler.setLevel(log_level)
