@@ -109,6 +109,14 @@ class JSONFormatter(logging.Formatter):
             "funcName": record.funcName,
         }
 
+        # Add context fields if present
+        if getattr(record, "run_name", None):
+            log_data["run_name"] = record.run_name  # type: ignore[attr-defined]
+        if getattr(record, "action_name", None):
+            log_data["action_name"] = record.action_name  # type: ignore[attr-defined]
+        if getattr(record, "is_flyte_internal", False):
+            log_data["is_flyte_internal"] = True
+
         # Add exception info if present
         if record.exc_info:
             log_data["exc_info"] = self.formatException(record.exc_info)
@@ -218,7 +226,14 @@ class ContextFilter(logging.Filter):
         c = ctx()
         if c:
             action = c.action
+            # Add as attributes for structured logging (JSON)
+            record.run_name = action.run_name  # type: ignore[attr-defined]
+            record.action_name = action.name  # type: ignore[attr-defined]
+            # Also modify message for console/Rich output
             record.msg = f"[{action.run_name}][{action.name}] {record.msg}"
+        else:
+            record.run_name = None  # type: ignore[attr-defined]
+            record.action_name = None  # type: ignore[attr-defined]
         return True
 
 
@@ -228,8 +243,15 @@ class FlyteInternalFilter(logging.Filter):
     """
 
     def filter(self, record: logging.LogRecord) -> bool:
-        if record.name.startswith("flyte"):
+        is_internal = record.name.startswith("flyte")
+        # Add as attribute for structured logging (JSON)
+        record.is_flyte_internal = is_internal  # type: ignore[attr-defined]
+        # Also modify message for console/Rich output
+        if is_internal:
             record.msg = f"[flyte] {record.msg}"
+            print(f"here 1 = {record.msg}")
+        else:
+            print(f"here 2 = {record.name}")
         return True
 
 
