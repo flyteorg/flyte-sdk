@@ -4,8 +4,7 @@ from pathlib import Path
 
 import flyte
 from flyte import Image
-from flyte._image import _detect_python_version
-from flyte._internal.imagebuild.image_builder import ImageBuildEngine
+from flyte.extend import ImageBuildEngine
 
 
 async def build_flyte_image(registry: str | None = None, name: str | None = None, builder: str | None = "local"):
@@ -34,18 +33,24 @@ async def build_flyte_connector_image(
         name:     e.g. "my-connector".
         builder:  e.g. "local" or "remote".
     """
+    from flyte._image import _detect_python_version
     from flyte._version import __version__
 
     if name is None:
         name = "flyte-connectors"
 
     if "dev" in __version__:
-        default_image = Image.from_debian_base(registry=registry, name=name).with_env_vars({"SETUPTOOLS_SCM_PRETEND_VERSION": "9.9.9"}).with_uv_project(
-            pyproject_file=(Path(__file__).parent.parent / "plugins/connectors/pyproject.toml"),
-            pre=True,
-            extra_args="--all-extras",
-            project_install_mode="install_project",
-        ).with_local_v2()
+        default_image = (
+            Image.from_debian_base(registry=registry, name=name)
+            .with_env_vars({"SETUPTOOLS_SCM_PRETEND_VERSION": "9.9.9"})
+            .with_uv_project(
+                pyproject_file=(Path(__file__).parent.parent / "plugins/connectors/pyproject.toml"),
+                pre=True,
+                extra_args="--all-extras",
+                project_install_mode="install_project",
+            )
+            .with_local_v2()
+        )
     else:
         default_image = Image.from_debian_base(registry=registry, name=name).with_pip_packages(
             "flyteplugins-connectors", pre=True, extra_args="--all-extras"
