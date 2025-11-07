@@ -23,6 +23,7 @@ from torchvision.transforms import ToTensor
 import flyte
 import flyte.io
 
+
 image = flyte.Image.from_uv_script(__file__, name="optimizer-gpu")
 
 gpu_env = flyte.TaskEnvironment(
@@ -139,7 +140,11 @@ async def gridsearch(
 ) -> tuple[flyte.io.Dir, float]:
     results = []
     for i, batch_size in enumerate(batch_sizes):
-        results.append(train_model.override(short_name=f"train-model-bs-{batch_size}")(f"{sweep_name}-{i}", batch_size))
+        results.append(
+            train_model.override(short_name=f"train-model-bs-{batch_size}")(
+                f"{sweep_name}-{i}", batch_size
+            )
+        )
 
     results = await asyncio.gather(*results)
     best_model, best_train_loss = min(results, key=lambda x: x[1])
