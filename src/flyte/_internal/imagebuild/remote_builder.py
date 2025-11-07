@@ -70,10 +70,10 @@ class RemoteImageChecker(ImageChecker):
         image_name = f"{repository.split('/')[-1]}:{tag}"
 
         try:
+            from flyteidl2.common.identifier_pb2 import ProjectIdentifier
             from flyteidl2.imagebuilder import definition_pb2 as image_definition__pb2
             from flyteidl2.imagebuilder import payload_pb2 as image_payload__pb2
             from flyteidl2.imagebuilder import service_pb2_grpc as image_service_pb2_grpc
-            from flyteidl2.common.identifier_pb2 import ProjectIdentifier
 
             from flyte._initialize import _get_init_config
 
@@ -84,10 +84,8 @@ class RemoteImageChecker(ImageChecker):
             req = image_payload__pb2.GetImageRequest(
                 id=image_id,
                 organization=cfg.org,
-                project_id=ProjectIdentifier(
-                    organization=cfg.org,
-                    domain=cfg.domain,
-                    name=cfg.project))
+                project_id=ProjectIdentifier(organization=cfg.org, domain=cfg.domain, name=cfg.project),
+            )
             if cls._images_client is None:
                 if cfg.client is None:
                     raise ValueError("remote client should not be None")
@@ -127,11 +125,13 @@ class RemoteImageBuilder(ImageBuilder):
             target_image = image_name
 
         from flyte._initialize import get_init_config
+
         cfg = get_init_config()
         run = cast(
             Run,
-            await flyte.with_runcontext(project=cfg.project, domain=cfg.domain, cache_lookup_scope="project-domain"
-                                        ).run.aio(entity, spec=spec, context=context, target_image=target_image),
+            await flyte.with_runcontext(
+                project=cfg.project, domain=cfg.domain, cache_lookup_scope="project-domain"
+            ).run.aio(entity, spec=spec, context=context, target_image=target_image),
         )
         logger.warning(f"⏳ Waiting for build to finish at: [bold cyan link={run.url}]{run.url}[/bold cyan link]")
 

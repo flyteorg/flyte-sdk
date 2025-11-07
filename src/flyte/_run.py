@@ -316,8 +316,10 @@ class _Runner:
                             security_context=security_context,
                             cache_config=run_pb2.CacheConfig(
                                 overwrite_cache=self._overwrite_cache,
-                                cache_lookup_scope=_to_cache_lookup_scope(self._cache_lookup_scope) if self._cache_lookup_scope else None,
-                            )
+                                cache_lookup_scope=_to_cache_lookup_scope(self._cache_lookup_scope)
+                                if self._cache_lookup_scope
+                                else None,
+                            ),
                         ),
                     ),
                 )
