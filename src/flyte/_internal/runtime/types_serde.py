@@ -34,8 +34,6 @@ def transform_native_to_typed_interface(
         return None
     input_descriptions: Dict[str, str] = {}
     output_descriptions: Dict[str, str] = {}
-    short_description : str = ""
-    long_description: str = ""
     if interface.docstring:
         # Extract descriptions from the parsed docstring
         input_descriptions = {k: v for k, v in interface.docstring.input_descriptions.items() if v is not None}

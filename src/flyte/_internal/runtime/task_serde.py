@@ -51,11 +51,13 @@ def translate_task_to_wire(
         _env = task.parent_env()
         if _env:
             env = environment_pb2.Environment(name=_env.name[:_MAX_ENV_NAME_LENGTH], description=_env.description)
+    description_entity = _get_description_entity(task)
     return task_definition_pb2.TaskSpec(
         task_template=tt,
         default_inputs=default_inputs,
         short_name=task.short_name[:_MAX_TASK_SHORT_NAME_LENGTH],
         environment=env,
+        description=description_entity,
     )
 
 
@@ -319,6 +321,27 @@ def _get_k8s_pod(primary_container: tasks_pb2.Container, pod_template: PodTempla
 
     metadata = tasks_pb2.K8sObjectMetadata(labels=pod_template.labels, annotations=pod_template.annotations)
     return tasks_pb2.K8sPod(pod_spec=pod_spec, metadata=metadata)
+
+
+def _get_description_entity(task_template: TaskTemplate) -> task_definition_pb2.DescriptionEntity:
+    """
+    Extract description from TaskTemplate's docstring and create a DescriptionEntity.
+    Short descriptions are truncated to 255 chars, long descriptions to 2048 chars.
+
+    :param task_template: TaskTemplate containing the interface docstring.
+    :return: DescriptionEntity with truncated short and long descriptions.
+    """
+    docstring = task_template.interface.docstring
+    short_desc = None
+    long_desc = None
+    if docstring and docstring.short_description:
+        short_desc = docstring.short_description[:255]
+    if docstring and docstring.long_description:
+        long_desc = docstring.long_description[:2048]
+    return task_definition_pb2.DescriptionEntity(
+        short_description=short_desc,
+        long_description=long_desc,
+    )
 
 
 def extract_code_bundle(
