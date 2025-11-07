@@ -1,5 +1,6 @@
 import argparse
 import asyncio
+from pathlib import Path
 
 import flyte
 from flyte import Image
@@ -36,9 +37,18 @@ async def build_flyte_connector_image(
 
     if name is None:
         name = "flyte-connectors"
-    default_image = Image.from_debian_base(registry=registry, name=name).with_pip_packages(
-        "flyteplugins-connectors", pre=True
-    )
+
+    if "dev" in __version__:
+        default_image = Image.from_debian_base(registry=registry, name=name).with_env_vars({"SETUPTOOLS_SCM_PRETEND_VERSION": "9.9.9"}).with_uv_project(
+            pyproject_file=(Path(__file__).parent.parent / "plugins/connectors/pyproject.toml"),
+            pre=True,
+            extra_args="--all-extras",
+            project_install_mode="install_project",
+        ).with_local_v2()
+    else:
+        default_image = Image.from_debian_base(registry=registry, name=name).with_pip_packages(
+            "flyteplugins-connectors", pre=True, extra_args="--all-extras"
+        )
     object.__setattr__(default_image, "_tag", __version__.replace("+", "-"))
     await ImageBuildEngine.build(default_image, builder=builder)
 
