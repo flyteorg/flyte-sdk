@@ -872,6 +872,8 @@ class Image:
             instead of the folder itself. Default is False.
         :return: Image
         """
+        if not copy_contents_only:
+            dst = str("./" + src.name)
         new_image = self.clone(addl_layer=CopyConfig(path_type=1, src=src, dst=dst))
         return new_image
 
