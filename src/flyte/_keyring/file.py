@@ -98,7 +98,7 @@ class SimplePlainTextKeyring(KeyringBackend):
             try:
                 config = get_init_config()
                 config_path = config.source_config_path
-                if config_path and str(config_path.parent) == ".flyte":
+                if config_path and str(config_path.parent.name) == ".flyte":
                     # if the config is in a .flyte directory, use that as the path
                     return config_path.parent / "keyring.cfg"
             except Exception as e:
