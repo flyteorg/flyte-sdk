@@ -87,8 +87,10 @@ async def _deploy_app(
     from flyte.app._runtime import translate_app_env_to_idl
 
     if app.include:
-        app_root_dir = Path(app._app_filename).parent
-        code_bundle = await build_code_bundle_from_relative_paths(tuple(app.include), from_dir=app_root_dir)
+        app_file = Path(app._app_filename)
+        app_root_dir = app_file.parent
+        files = tuple([app_file.name, *app.include])
+        code_bundle = await build_code_bundle_from_relative_paths(files, from_dir=app_root_dir)
         serialization_context.code_bundle = code_bundle
 
     image_uri = app.image.uri if isinstance(app.image, Image) else app.image
@@ -99,7 +101,7 @@ async def _deploy_app(
         ensure_client()
         msg = f"Deploying app {app.name}, with image {image_uri} version {serialization_context.version}"
         if app_idl.spec.HasField("container") and app_idl.spec.container.args:
-            msg += f" from {app_idl.spec.container.args[-3]}.{app_idl.spec.container.args[-1]}"
+            msg += f" with args {app_idl.spec.container.args}"
         logger.info(msg)
 
         try:
