@@ -55,7 +55,7 @@ if __name__ == "__main__":
     parser.add_argument("--registry", help="Docker registry to push to")
     parser.add_argument("--name", help="Custom image name (without tag)")
     parser.add_argument("--type", choices=["flyte", "connector", "all"], help="Type of image to build")
-    parser.add_argument("--builder", choices=["local", "remote"], default="remote", help="Image builder to use")
+    parser.add_argument("--builder", choices=["local", "remote"], default="local", help="Image builder to use")
 
     args = parser.parse_args()
     # can remove this and only specify one in the future
