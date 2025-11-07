@@ -8,7 +8,6 @@ from flyte.models import NativeInterface
 
 
 def test_transform_native_to_typed_interface_with_docstring():
-    """Test that interface with docstring correctly extracts descriptions"""
     docstring_text = """
     A function that processes user data.
 
@@ -40,7 +39,6 @@ def test_transform_native_to_typed_interface_with_docstring():
 
 
 def test_transform_native_to_typed_interface_empty_interface():
-    """Test that empty interface (no inputs/outputs) works correctly"""
     interface = NativeInterface(
         inputs={},
         outputs={},

@@ -381,7 +381,6 @@ def test_get_description_entity_truncates_short_description():
 
 
 def test_get_description_entity_exact_limits():
-    """Test that descriptions at exact limits are not truncated"""
     env = flyte.TaskEnvironment(name="test_env", image="python:3.10")
 
     # Create descriptions at exact limits
