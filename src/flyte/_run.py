@@ -286,7 +286,7 @@ class _Runner:
                 else None
             )
 
-            def _to_cache_lookup_scope(scope: CacheLookupScope = None) -> run_pb2.CacheLookupScope:
+            def _to_cache_lookup_scope(scope: CacheLookupScope | None = None) -> run_pb2.CacheLookupScope:
                 if scope == "global":
                     return run_pb2.CacheLookupScope.CACHE_LOOKUP_SCOPE_GLOBAL
                 elif scope == "project-domain":
