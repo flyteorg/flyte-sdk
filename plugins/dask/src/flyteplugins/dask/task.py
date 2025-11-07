@@ -1,4 +1,3 @@
-import asyncio
 import sys
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional
@@ -84,6 +83,7 @@ class DownloadCodeBundleWorkerPlugin(WorkerPlugin):
         """
         sys.path.insert(0, ".")
         await download_code_bundle(self.code_bundle)
+
 
 @dataclass(kw_only=True)
 class DaskTask(AsyncFunctionTaskTemplate):
