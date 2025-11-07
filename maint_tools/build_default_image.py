@@ -4,6 +4,7 @@ from pathlib import Path
 
 import flyte
 from flyte import Image
+from flyte._image import _detect_python_version
 from flyte._internal.imagebuild.image_builder import ImageBuildEngine
 
 
@@ -49,7 +50,10 @@ async def build_flyte_connector_image(
         default_image = Image.from_debian_base(registry=registry, name=name).with_pip_packages(
             "flyteplugins-connectors", pre=True, extra_args="--all-extras"
         )
-    object.__setattr__(default_image, "_tag", __version__.replace("+", "-"))
+    suffix = __version__.replace("+", "-")
+    python_version = _detect_python_version()
+    tag = f"py{python_version[0]}.{python_version[1]}-{suffix}"
+    object.__setattr__(default_image, "_tag", tag)
     await ImageBuildEngine.build(default_image, builder=builder)
 
 
