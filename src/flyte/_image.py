@@ -873,7 +873,7 @@ class Image:
         :return: Image
         """
         if not copy_contents_only:
-            dst = str("./" + src.name)
+            dst = str("./" + src.name) if dst == "." else dst
         new_image = self.clone(addl_layer=CopyConfig(path_type=1, src=src, dst=dst))
         return new_image
 
