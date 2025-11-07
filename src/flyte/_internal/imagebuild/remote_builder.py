@@ -118,9 +118,12 @@ class RemoteImageBuilder(ImageBuilder):
         else:
             # Use the default system registry in the backend.
             target_image = image_name
+
+        from flyte._initialize import get_init_config
+        cfg = get_init_config()
         run = cast(
             Run,
-            await flyte.with_runcontext(project=IMAGE_TASK_PROJECT, domain=IMAGE_TASK_DOMAIN).run.aio(
+            await flyte.with_runcontext(project=cfg.project, domain=cfg.domain).run.aio(
                 entity, spec=spec, context=context, target_image=target_image
             ),
         )
