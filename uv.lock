@@ -759,8 +759,8 @@ wheels = [
 
 [[package]]
 name = "flyteidl2"
-version = "2.0.0a11"
-source = { git = "https://github.com/flyteorg/flyte.git?subdirectory=gen%2Fpython&rev=v2#74bc4ae9cb75e902e1914a8fbf2da5b69d524301" }
+version = "2.0.0a14"
+source = { git = "https://github.com/flyteorg/flyte.git?subdirectory=gen%2Fpython&rev=v2#a4cbb59824bf3608912388ac1285d5add398d390" }
 dependencies = [
     { name = "googleapis-common-protos" },
     { name = "protobuf" },
