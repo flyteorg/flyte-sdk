@@ -164,7 +164,7 @@ class ConnectorRegistry(object):
         task_category = TaskCategory(name=connector.task_type_name, version=connector.task_type_version)
 
         if connector.name in ConnectorRegistry._METADATA:
-            connector_metadata = ConnectorRegistry.get_connector_metadata(connector.name)
+            connector_metadata = ConnectorRegistry._get_connector_metadata(connector.name)
             connector_metadata.supported_task_categories.append(task_category)
         else:
             connector_metadata = ConnectorProto(
@@ -183,11 +183,11 @@ class ConnectorRegistry(object):
         return ConnectorRegistry._REGISTRY[key]
 
     @staticmethod
-    def list_connectors() -> List[ConnectorProto]:
+    def _list_connectors() -> List[ConnectorProto]:
         return list(ConnectorRegistry._METADATA.values())
 
     @staticmethod
-    def get_connector_metadata(name: str) -> ConnectorProto:
+    def _get_connector_metadata(name: str) -> ConnectorProto:
         if name not in ConnectorRegistry._METADATA:
             raise FlyteConnectorNotFound(f"Cannot find connector for name: {name}.")
         return ConnectorRegistry._METADATA[name]

@@ -189,9 +189,9 @@ class AsyncConnectorService(AsyncConnectorServiceServicer):
 
 class ConnectorMetadataService(ConnectorMetadataServiceServicer):
     async def GetConnector(self, request: GetConnectorRequest, context: grpc.ServicerContext) -> GetConnectorResponse:
-        return GetConnectorResponse(connector=ConnectorRegistry.get_connector_metadata(request.name))
+        return GetConnectorResponse(connector=ConnectorRegistry._get_connector_metadata(request.name))
 
     async def ListConnectors(
         self, request: ListConnectorsRequest, context: grpc.ServicerContext
     ) -> ListConnectorsResponse:
-        return ListConnectorsResponse(connectors=ConnectorRegistry.list_connectors())
+        return ListConnectorsResponse(connectors=ConnectorRegistry._list_connectors())

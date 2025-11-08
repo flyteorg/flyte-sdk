@@ -105,7 +105,7 @@ def _start_health_check_server(server: grpc.Server, worker: int):
 def print_metadata():
     from flyte.connectors import ConnectorRegistry
 
-    connectors = ConnectorRegistry.list_connectors()
+    connectors = ConnectorRegistry._list_connectors()
 
     table = Table(title="Connector Metadata")
     table.add_column("Connector Name", style="cyan", no_wrap=True)
