@@ -416,7 +416,6 @@ name = "flyteplugins-connectors"
 source = { editable = "." }
 dependencies = [
     { name = "flyte" },
-    { name = "flyteidl" },
     { name = "grpcio-health-checking" },
     { name = "prometheus-client" },
 ]
@@ -430,7 +429,6 @@ bigquery = [
 [package.metadata]
 requires-dist = [
     { name = "flyte" },
-    { name = "flyteidl" },
     { name = "google-cloud-bigquery", marker = "extra == 'bigquery'" },
     { name = "google-cloud-bigquery-storage", marker = "extra == 'bigquery'" },
     { name = "grpcio-health-checking" },
