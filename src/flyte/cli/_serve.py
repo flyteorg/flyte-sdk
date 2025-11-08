@@ -2,8 +2,6 @@ from typing import List
 
 import click
 
-from flyte.connectors import ConnectorService
-
 
 @click.group("serve")
 @click.pass_context
@@ -61,4 +59,6 @@ def connector(
     """
     Start a grpc server for the connector service.
     """
+    from flyte.connectors import ConnectorService
+
     ConnectorService.run(port, prometheus_port, worker, timeout, modules)
