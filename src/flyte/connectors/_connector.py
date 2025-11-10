@@ -231,15 +231,13 @@ class AsyncConnectorExecutorMixin:
             root_dir=cfg.root_dir,
         )
         tt = get_proto_task(task, sc)
-        cfg = json.loads(tt.custom["secrets"]) if "secrets" in tt.custom else {}
-        secrets = {}
-        if "secrets" in cfg:
-            secrets = cfg["secrets"]
-            for k, v in secrets.items():
-                env_var = os.getenv(v)
-                if env_var is None:
-                    raise ValueError(f"Secret {v} not found in environment.")
-                secrets[k] = env_var
+        custom = json_format.MessageToDict(tt.custom)
+        secrets = custom["secrets"] if "secrets" in custom else {}
+        for k, v in secrets.items():
+            env_var = os.getenv(v)
+            if env_var is None:
+                raise ValueError(f"Secret {v} not found in environment.")
+            secrets[k] = env_var
         resource_meta = await connector.create(
             task_template=tt, output_prefix=ctx.raw_data.path, inputs=kwargs, **secrets
         )
