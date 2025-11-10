@@ -9,6 +9,9 @@ resolution-markers = [
     "python_full_version < '3.11'",
 ]
 
+[options]
+prerelease-mode = "allow"
+
 [[package]]
 name = "aiofiles"
 version = "25.1.0"
@@ -355,7 +358,7 @@ wheels = [
 
 [[package]]
 name = "flyte"
-version = "2.0.0b29"
+version = "2.0.0b30"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiofiles" },
@@ -380,7 +383,7 @@ dependencies = [
     { name = "toml" },
 ]
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/10/8a/ce967f654d3735c874cb665943bc61a3791191bc28316d9dea15248e1d84/flyte-2.0.0b29-py3-none-any.whl", hash = "sha256:5ba0ba77732d3a93b44fd9cae9b5c9011bb1eaf24f61a777e9e9c896c6a9fa7f", size = 389681, upload-time = "2025-11-06T22:17:00.612Z" },
+    { url = "https://files.pythonhosted.org/packages/55/72/c4e7b42f8ce6156f14775a56bf39adc510b5b10ba116c894174d7763adca/flyte-2.0.0b30-py3-none-any.whl", hash = "sha256:b7c5ad9fff9e36798027a68870b481c1774279339d91d23a74c61809c987a261", size = 390647, upload-time = "2025-11-10T18:47:50.469Z" },
 ]
 
 [[package]]
@@ -399,7 +402,7 @@ wheels = [
 
 [[package]]
 name = "flyteidl2"
-version = "2.0.0a11"
+version = "2.0.0a14"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "googleapis-common-protos" },
@@ -408,7 +411,7 @@ dependencies = [
     { name = "protovalidate" },
 ]
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/3e/83/ed4e62796135abd41d4440c220e8390b7dc026f7342c92555ac06a52da83/flyteidl2-2.0.0a11-py3-none-any.whl", hash = "sha256:17d72b25ab3aec21aef9d5b0cacf936560e25f4b898c196650e9c5a9259f5ff1", size = 192937, upload-time = "2025-10-29T22:04:42.92Z" },
+    { url = "https://files.pythonhosted.org/packages/c3/7d/ad450375398566629bfcd3c148148cc5566e898b0b05066ff9c376d0b844/flyteidl2-2.0.0a14-py3-none-any.whl", hash = "sha256:2aaede9e6e6d9922c72504f0e236b7f5197675a368a0cc20b30e4b7e5fd43a82", size = 193709, upload-time = "2025-11-07T21:56:16.118Z" },
 ]
 
 [[package]]
@@ -1512,11 +1515,11 @@ wheels = [
 
 [[package]]
 name = "types-python-dateutil"
-version = "2.9.0.20251008"
+version = "2.9.0.20251108"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/fc/83/24ed25dd0c6277a1a170c180ad9eef5879ecc9a4745b58d7905a4588c80d/types_python_dateutil-2.9.0.20251008.tar.gz", hash = "sha256:c3826289c170c93ebd8360c3485311187df740166dbab9dd3b792e69f2bc1f9c", size = 16128, upload-time = "2025-10-08T02:51:34.93Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/b0/42/18dff855130c3551d2b5159165bd24466f374dcb78670e5259d2ed51f55c/types_python_dateutil-2.9.0.20251108.tar.gz", hash = "sha256:d8a6687e197f2fa71779ce36176c666841f811368710ab8d274b876424ebfcaa", size = 16220, upload-time = "2025-11-08T02:55:53.393Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/da/af/5d24b8d49ef358468ecfdff5c556adf37f4fd28e336b96f923661a808329/types_python_dateutil-2.9.0.20251008-py3-none-any.whl", hash = "sha256:b9a5232c8921cf7661b29c163ccc56055c418ab2c6eabe8f917cbcc73a4c4157", size = 17934, upload-time = "2025-10-08T02:51:33.55Z" },
+    { url = "https://files.pythonhosted.org/packages/25/dd/9fb1f5ef742cab1ea390582f407c967677704d2f5362b48c09de0d0dc8d4/types_python_dateutil-2.9.0.20251108-py3-none-any.whl", hash = "sha256:a4a537f0ea7126f8ccc2763eec9aa31ac8609e3c8e530eb2ddc5ee234b3cd764", size = 18127, upload-time = "2025-11-08T02:55:52.291Z" },
 ]
 
 [[package]]
