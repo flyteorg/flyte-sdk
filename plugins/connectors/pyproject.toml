@@ -15,6 +15,10 @@ bigquery = [
     "google-cloud-bigquery",
     "google-cloud-bigquery-storage",
 ]
+databricks = [
+    "aiohttp",
+    "flyteplugins-spark",
+]
 
 [build-system]
 requires = ["setuptools", "setuptools_scm"]

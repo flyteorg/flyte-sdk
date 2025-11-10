@@ -26,7 +26,6 @@ def _get_databricks_job_spec(task_template: TaskTemplate) -> dict:
     custom = task_template.custom
     container = task_template.container
     envs = task_template.container.env
-    envs[FLYTE_FAIL_ON_ERROR] = "true"
     databricks_job = custom["databricksConf"]
     if databricks_job.get("existing_cluster_id") is None:
         new_cluster = databricks_job.get("new_cluster")
@@ -37,20 +36,20 @@ def _get_databricks_job_spec(task_template: TaskTemplate) -> dict:
         if not new_cluster.get("spark_conf"):
             new_cluster["spark_conf"] = custom.get("sparkConf", {})
         if not new_cluster.get("spark_env_vars"):
-            new_cluster["spark_env_vars"] = {k: v for k, v in envs.items()}
+            new_cluster["spark_env_vars"] = {env.key: env.value for env in envs}
         else:
-            new_cluster["spark_env_vars"].update({k: v for k, v in envs.items()})
+            new_cluster["spark_env_vars"].update({env.key: env.value for env in envs})
     # https://docs.databricks.com/api/workspace/jobs/submit
     databricks_job["spark_python_task"] = {
-        "python_file": "flytekitplugins/databricks/entrypoint.py",
+        "python_file": "src/flyte/_bin/runtime.py",
         "source": "GIT",
         "parameters": container.args,
     }
     databricks_job["git_source"] = {
-        "git_url": "https://github.com/flyteorg/flytetools",
+        "git_url": "https://github.com/flyteorg/flyte-sdk",
         "git_provider": "gitHub",
-        # https://github.com/flyteorg/flytetools/commit/572298df1f971fb58c258398bd70a6372f811c96
-        "git_commit": "572298df1f971fb58c258398bd70a6372f811c96",
+        # https://github.com/flyteorg/flyte-sdk/tree/f1b5e2b2b611ffa469b3b6b082159d2e9e6baf31
+        "git_commit": "f1b5e2b2b611ffa469b3b6b082159d2e9e6baf31",
     }
 
     return databricks_job
@@ -60,10 +59,14 @@ class DatabricksConnector(AsyncConnector):
     name = "Databricks Connector"
 
     def __init__(self):
-        super().__init__(task_type_name="spark", metadata_type=DatabricksJobMetadata)
+        super().__init__(task_type_name="databricks", metadata_type=DatabricksJobMetadata)
 
     async def create(
-        self, task_template: TaskTemplate, inputs: Optional[LiteralMap] = None, **kwargs
+        self,
+        task_template: TaskTemplate,
+        inputs: Optional[typing.Dict[str, typing.Any]] = None,
+        databricks_token: Optional[str] = None,
+        **kwargs
     ) -> DatabricksJobMetadata:
         data = json.dumps(_get_databricks_job_spec(task_template))
         databricks_instance = task_template.custom.get(
@@ -132,21 +135,7 @@ class DatabricksConnector(AsyncConnector):
                 await resp.json()
 
 
-class DatabricksConnectorV2(DatabricksConnector):
-    """
-    Add DatabricksConnectorV2 to support running the k8s spark and databricks spark together in the same workflow.
-    This is necessary because one task type can only be handled by a single backend plugin.
-
-    spark -> k8s spark plugin
-    databricks -> databricks connector
-    """
-
-    def __init__(self):
-        super(DatabricksConnector, self).__init__(task_type_name="databricks", metadata_type=DatabricksJobMetadata)
-
-
-def get_header() -> typing.Dict[str, str]:
-    token = get_connector_secret("FLYTE_DATABRICKS_ACCESS_TOKEN")
+def get_header(token: str) -> typing.Dict[str, str]:
     return {"Authorization": f"Bearer {token}", "content-type": "application/json"}
 
 
@@ -155,4 +144,3 @@ def result_state_is_available(life_cycle_state: str) -> bool:
 
 
 ConnectorRegistry.register(DatabricksConnector())
-ConnectorRegistry.register(DatabricksConnectorV2())

@@ -6,71 +6,14 @@ from dataclasses import dataclass
 from typing import Any, Callable, Dict, Optional, Union, cast
 
 import click
-from google.protobuf.json_format import MessageToDict
 
-from flytekit import FlyteContextManager, PythonFunctionTask, lazy_module, logger
-from flytekit.configuration import DefaultImages, SerializationSettings
-from flytekit.core.context_manager import ExecutionParameters
-from flytekit.core.pod_template import PRIMARY_CONTAINER_DEFAULT_NAME, PodTemplate
-from flytekit.extend import ExecutionState, TaskPlugins
-from flytekit.extend.backend.base_connector import AsyncConnectorExecutorMixin
-from flytekit.image_spec import DefaultImageBuilder, ImageSpec
-from flytekit.models.task import K8sPod
-
-from .models import SparkJob, SparkType
-
-pyspark_sql = lazy_module("pyspark.sql")
-SparkSession = pyspark_sql.SparkSession
-
-
-@dataclass
-class Spark(object):
-    """
-    Use this to configure a SparkContext for a your task. Task's marked with this will automatically execute
-    natively onto K8s as a distributed execution of spark
-
-    Attributes:
-        spark_conf (Optional[Dict[str, str]]): Spark configuration dictionary.
-        hadoop_conf (Optional[Dict[str, str]]): Hadoop configuration dictionary.
-        executor_path (Optional[str]): Path to the Python binary for PySpark execution.
-        applications_path (Optional[str]): Path to the main application file.
-        driver_pod (Optional[PodTemplate]): The pod template for the Spark driver pod.
-        executor_pod (Optional[PodTemplate]): The pod template for the Spark executor pod.
-    """
-
-    spark_conf: Optional[Dict[str, str]] = None
-    hadoop_conf: Optional[Dict[str, str]] = None
-    executor_path: Optional[str] = None
-    applications_path: Optional[str] = None
-    driver_pod: Optional[PodTemplate] = None
-    executor_pod: Optional[PodTemplate] = None
-
-    def __post_init__(self):
-        if self.spark_conf is None:
-            self.spark_conf = {}
-
-        if self.hadoop_conf is None:
-            self.hadoop_conf = {}
+from flyte import logger
+from flyte.connectors import AsyncConnectorExecutorMixin
+from flyteplugins.spark import Spark
 
 
 @dataclass
 class Databricks(Spark):
-    """
-    Deprecated. Use DatabricksV2 instead.
-    """
-
-    databricks_conf: Optional[Dict[str, Union[str, dict]]] = None
-    databricks_instance: Optional[str] = None
-
-    def __post_init__(self):
-        logger.warning(
-            "Databricks is deprecated. Use 'from flytekitplugins.spark import Databricks' instead,"
-            "and make sure to upgrade the version of flyte connector deployment to >v1.13.0.",
-        )
-
-
-@dataclass
-class DatabricksV2(Spark):
     """
     Use this to configure a Databricks task. Task's marked with this will automatically execute
     natively onto databricks platform as a distributed execution of spark
@@ -125,7 +68,7 @@ def new_spark_session(name: str, conf: Dict[str, str] = None):
     # sess.stop()
 
 
-class PysparkFunctionTask(AsyncConnectorExecutorMixin, PythonFunctionTask[Spark]):
+class PysparkFunctionTask(AsyncConnectorExecutorMixin, AsyncFunctionTaskTemplate):
     """
     Actual Plugin that transforms the local python code for execution within a spark context
     """
