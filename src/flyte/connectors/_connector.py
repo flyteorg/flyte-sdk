@@ -1,5 +1,6 @@
 import asyncio
 import json
+import os
 import typing
 from abc import ABC, abstractmethod
 from dataclasses import asdict, dataclass
@@ -230,11 +231,20 @@ class AsyncConnectorExecutorMixin:
             root_dir=cfg.root_dir,
         )
         tt = get_proto_task(task, sc)
-        resource_meta = await connector.create(task_template=tt, output_prefix=ctx.raw_data.path, inputs=kwargs)
+        cfg = json.loads(tt.custom["secrets"])
+        secrets = {}
+        if "secrets" in cfg:
+            secrets = cfg["secrets"]
+            for k, v in secrets.items():
+                env = os.getenv(v)
+                if env is None:
+                    raise ValueError(f"Secret {v} not found in environment.")
+                secrets[k] = env
+        resource_meta = await connector.create(task_template=tt, output_prefix=ctx.raw_data.path, inputs=kwargs, **secrets)
         resource = Resource(phase=TaskExecution.RUNNING)
 
         while not is_terminal_phase(resource.phase):
-            resource = await connector.get(resource_meta=resource_meta)
+            resource = await connector.get(resource_meta=resource_meta, **secrets)
 
             if resource.log_links:
                 for link in resource.log_links:

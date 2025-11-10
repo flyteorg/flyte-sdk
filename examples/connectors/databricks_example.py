@@ -1,0 +1,86 @@
+import random
+from operator import add
+
+from flyteplugins.connectors.databricks.task import Databricks
+
+import flyte.remote
+
+image = (
+    flyte.Image.from_base("apache/spark-py:v3.4.0")
+    .clone(name="spark", python_version=(3, 10), registry="ghcr.io/flyteorg")
+    .with_pip_packages("flyteplugins-connectors[databricks]", pre=True)
+)
+
+task_env = flyte.TaskEnvironment(
+    name="get_pi", resources=flyte.Resources(cpu=(1, 2), memory=("400Mi", "1000Mi")), image=image
+)
+
+databricks_conf = Databricks(
+    spark_conf={
+        "spark.driver.memory": "3000M",
+        "spark.executor.memory": "1000M",
+        "spark.executor.cores": "1",
+        "spark.executor.instances": "2",
+        "spark.driver.cores": "1",
+        "spark.kubernetes.file.upload.path": "/opt/spark/work-dir",
+        "spark.jars": "https://storage.googleapis.com/hadoop-lib/gcs/gcs-connector-hadoop3-latest.jar,https://repo1.maven.org/maven2/org/apache/hadoop/hadoop-aws/3.2.2/hadoop-aws-3.2.2.jar,https://repo1.maven.org/maven2/com/amazonaws/aws-java-sdk-bundle/1.12.262/aws-java-sdk-bundle-1.12.262.jar",
+    },
+    executor_path="/databricks/python3/bin/python",
+    applications_path="dbfs:///FileStore/tables/entrypoint.py",
+    databricks_conf={
+        "run_name": "flytekit databricks plugin example",
+        "job_id": "{{inputs.cluster_id}}",
+        "new_cluster": {
+            "spark_version": "13.3.x-scala2.12",
+            "node_type_id": "m6i.large",  # TODO: test m6i.large, i3.xlarge
+            "num_workers": 3,
+            "aws_attributes": {
+                "availability": "SPOT_WITH_FALLBACK",
+                "instance_profile_arn": "arn:aws:iam::546011168256:instance-profile/databricks-demo",
+                "ebs_volume_type": "GENERAL_PURPOSE_SSD",
+                    "ebs_volume_count": 1,
+                    "ebs_volume_size": 100,
+                    "first_on_demand": 1,
+                },
+            },
+            # "existing_cluster_id": "1122-085119-brus1mft",
+            "timeout_seconds": 3600,
+            "max_retries": 1,
+        },
+    databricks_instance="dbc-429786b4-2d97.cloud.databricks.com",
+)
+
+databricks_env = flyte.TaskEnvironment(
+    name="databricks_env",
+    resources=flyte.Resources(cpu=(1, 2), memory=("3000Mi", "5000Mi")),
+    plugin_config=databricks_conf,
+    image=image,
+    depends_on=[task_env],
+)
+
+
+def f(_):
+    x = random.random() * 2 - 1
+    y = random.random() * 2 - 1
+    return 1 if x**2 + y**2 <= 1 else 0
+
+
+@task_env.task
+async def get_pi(count: int, partitions: int) -> float:
+    return 4.0 * count / partitions
+
+
+@databricks_env.task
+async def hello_databricks_nested(partitions: int = 3) -> float:
+    n = 1 * partitions
+    spark = flyte.ctx().data["spark_session"]
+    count = spark.sparkContext.parallelize(range(1, n + 1), partitions).map(f).reduce(add)
+
+    return await get_pi(count, partitions)
+
+
+if __name__ == "__main__":
+    flyte.init_from_config()
+    run = flyte.run(hello_databricks_nested)
+    print("run name:", run.name)
+    print("run url:", run.url)

@@ -6,11 +6,10 @@ from dataclasses import dataclass
 from typing import Optional
 
 import aiohttp
+from flyte.connectors import AsyncConnector, ConnectorRegistry, Resource, ResourceMeta
+from flyte.connectors.utils import convert_to_flyte_phase
 from flyteidl2.core.execution_pb2 import TaskExecution, TaskLog
 from flyteidl2.core.tasks_pb2 import TaskTemplate
-
-from flyte.connectors import ResourceMeta, Resource, ConnectorRegistry, AsyncConnector
-from flyte.connectors.utils import convert_to_flyte_phase
 
 DATABRICKS_API_ENDPOINT = "/api/2.1/jobs"
 DEFAULT_DATABRICKS_INSTANCE_ENV_KEY = "FLYTE_DATABRICKS_INSTANCE"
@@ -66,7 +65,7 @@ class DatabricksConnector(AsyncConnector):
         task_template: TaskTemplate,
         inputs: Optional[typing.Dict[str, typing.Any]] = None,
         databricks_token: Optional[str] = None,
-        **kwargs
+        **kwargs,
     ) -> DatabricksJobMetadata:
         data = json.dumps(_get_databricks_job_spec(task_template))
         databricks_instance = task_template.custom.get(
@@ -75,7 +74,8 @@ class DatabricksConnector(AsyncConnector):
 
         if not databricks_instance:
             raise ValueError(
-                f"Missing databricks instance. Please set the value through the task config or set the {DEFAULT_DATABRICKS_INSTANCE_ENV_KEY} environment variable in the connector."
+                f"Missing databricks instance. Please set the value through the task config or"
+                f" set the {DEFAULT_DATABRICKS_INSTANCE_ENV_KEY} environment variable in the connector."
             )
 
         databricks_url = f"https://{databricks_instance}{DATABRICKS_API_ENDPOINT}/runs/submit"
@@ -88,14 +88,16 @@ class DatabricksConnector(AsyncConnector):
 
         return DatabricksJobMetadata(databricks_instance=databricks_instance, run_id=str(response["run_id"]))
 
-    async def get(self, resource_meta: DatabricksJobMetadata, **kwargs) -> Resource:
+    async def get(
+        self, resource_meta: DatabricksJobMetadata, databricks_token: Optional[str] = None, **kwargs
+    ) -> Resource:
         databricks_instance = resource_meta.databricks_instance
         databricks_url = (
             f"https://{databricks_instance}{DATABRICKS_API_ENDPOINT}/runs/get?run_id={resource_meta.run_id}"
         )
 
         async with aiohttp.ClientSession() as session:
-            async with session.get(databricks_url, headers=get_header()) as resp:
+            async with session.get(databricks_url, headers=get_header(databricks_token)) as resp:
                 if resp.status != http.HTTPStatus.OK:
                     raise RuntimeError(f"Failed to get databricks job {resource_meta.run_id} with error: {resp.reason}")
                 response = await resp.json()
@@ -122,12 +124,12 @@ class DatabricksConnector(AsyncConnector):
 
         return Resource(phase=cur_phase, message=message, log_links=log_links)
 
-    async def delete(self, resource_meta: DatabricksJobMetadata, **kwargs):
+    async def delete(self, resource_meta: DatabricksJobMetadata, databricks_token: Optional[str] = None, **kwargs):
         databricks_url = f"https://{resource_meta.databricks_instance}{DATABRICKS_API_ENDPOINT}/runs/cancel"
         data = json.dumps({"run_id": resource_meta.run_id})
 
         async with aiohttp.ClientSession() as session:
-            async with session.post(databricks_url, headers=get_header(), data=data) as resp:
+            async with session.post(databricks_url, headers=get_header(databricks_token), data=data) as resp:
                 if resp.status != http.HTTPStatus.OK:
                     raise RuntimeError(
                         f"Failed to cancel databricks job {resource_meta.run_id} with error: {resp.reason}"
