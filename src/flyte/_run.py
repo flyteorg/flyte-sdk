@@ -626,7 +626,7 @@ def with_runcontext(
     disable_run_cache: bool = False,
     queue: Optional[str] = None,
     custom_context: Dict[str, str] | None = None,
-    cache_lookup_scope: CacheLookupScope | None = "global",
+    cache_lookup_scope: CacheLookupScope = "global",
 ) -> _Runner:
     """
     Launch a new run with the given parameters as the context.
