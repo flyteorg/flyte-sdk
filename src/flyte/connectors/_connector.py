@@ -240,7 +240,9 @@ class AsyncConnectorExecutorMixin:
                 if env is None:
                     raise ValueError(f"Secret {v} not found in environment.")
                 secrets[k] = env
-        resource_meta = await connector.create(task_template=tt, output_prefix=ctx.raw_data.path, inputs=kwargs, **secrets)
+        resource_meta = await connector.create(
+            task_template=tt, output_prefix=ctx.raw_data.path, inputs=kwargs, **secrets
+        )
         resource = Resource(phase=TaskExecution.RUNNING)
 
         while not is_terminal_phase(resource.phase):
