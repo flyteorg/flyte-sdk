@@ -217,7 +217,7 @@ def _file_is_in_directory(file: str, directory: str) -> bool:
 
 
 def list_imported_modules_as_files(source_path: str, modules: List[ModuleType]) -> List[str]:
-    """Copies modules into destination that are in modules. The module files are copied only if:
+    """Lists the files of modules that have been loaded.  The files are only included if:
 
     1. Not a site-packages. These are installed packages and not user files.
     2. Not in the sys.base_prefix or sys.prefix. These are also installed and not user files.
@@ -258,6 +258,12 @@ def list_imported_modules_as_files(source_path: str, modules: List[ModuleType]) 
             # Only upload files where the module file in the source directory
             # print log line for files that have common ancestor with source_path, but not in it.
             logger.debug(f"{mod_file} is not in {source_path}")
+            continue
+
+        if not pathlib.Path(mod_file).is_file():
+            # Some modules have a __file__ attribute that are relative to the base package. Let's skip these,
+            # can add more rigorous logic to really pull out the correct file location if we need to.
+            logger.debug(f"Skipping {mod_file} from {mod.__name__} because it is not a file")
             continue
 
         files.add(mod_file)

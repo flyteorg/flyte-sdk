@@ -118,9 +118,12 @@ class RemoteImageBuilder(ImageBuilder):
         else:
             # Use the default system registry in the backend.
             target_image = image_name
+
+        from flyte._initialize import get_init_config
+        cfg = get_init_config()
         run = cast(
             Run,
-            await flyte.with_runcontext(project=IMAGE_TASK_PROJECT, domain=IMAGE_TASK_DOMAIN).run.aio(
+            await flyte.with_runcontext(project=cfg.project, domain=cfg.domain).run.aio(
                 entity, spec=spec, context=context, target_image=target_image
             ),
         )
@@ -292,9 +295,11 @@ def _get_layers_proto(image: Image, context_path: Path) -> "image_definition_pb2
             for line in layer.pyproject.read_text().splitlines():
                 if "tool.poetry.source" in line:
                     raise ValueError("External sources are not supported in pyproject.toml")
-
-            if layer.extra_args and "--no-root" in layer.extra_args:
+            extra_args = layer.extra_args or ""
+            if layer.project_install_mode == "dependencies_only":
                 # Copy pyproject itself
+                if "--no-root" not in extra_args:
+                    extra_args += " --no-root"
                 pyproject_dst = copy_files_to_context(layer.pyproject, context_path)
             else:
                 # Copy the entire project
@@ -304,7 +309,7 @@ def _get_layers_proto(image: Image, context_path: Path) -> "image_definition_pb2
                 poetry_project=image_definition_pb2.PoetryProject(
                     pyproject=str(pyproject_dst.relative_to(context_path)),
                     poetry_lock=str(copy_files_to_context(layer.poetry_lock, context_path).relative_to(context_path)),
-                    extra_args=layer.extra_args,
+                    extra_args=extra_args,
                     secret_mounts=secret_mounts,
                 )
             )

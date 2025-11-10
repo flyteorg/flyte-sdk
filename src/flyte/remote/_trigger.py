@@ -287,8 +287,8 @@ class Trigger(ToJSONMixin):
         if automation.type == common_pb2.TriggerAutomationSpec.type.TYPE_NONE:
             yield "none", None
         elif automation.type == common_pb2.TriggerAutomationSpec.type.TYPE_SCHEDULE:
-            if automation.schedule.cron_expression is not None:
-                yield "cron", automation.schedule.cron_expression
+            if automation.schedule.cron is not None:
+                yield "cron", automation.schedule.cron
             elif automation.schedule.rate is not None:
                 r = automation.schedule.rate
                 yield (
