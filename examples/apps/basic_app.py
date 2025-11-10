@@ -1,10 +1,4 @@
-"""A basic app that uses the built-in Streamlit `hello` app.
-
-Usage:
-```
-flyte -c ../../config.yaml deploy
-```
-"""
+"""A basic app that uses the built-in Streamlit `hello` app."""
 
 import flyte
 import flyte.app
@@ -15,7 +9,7 @@ image = flyte.Image.from_debian_base(python_version=(3, 12)).with_pip_packages("
 # Uses the `ImageSpec` declared above.
 # In this case we do not need to supply any app code
 # as we are using the built-in Streamlit `hello` app.
-app = flyte.app.AppEnvironment(
+app_env = flyte.app.AppEnvironment(
     name="streamlit-hello-v2",
     image=image,
     command="streamlit hello --server.port 8080",
