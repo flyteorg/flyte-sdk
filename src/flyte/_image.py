@@ -309,7 +309,6 @@ class CopyConfig(Layer):
     path_type: CopyConfigType
     src: Path
     dst: str
-    src_name: str
 
     def __post_init__(self):
         if self.path_type not in (0, 1):
@@ -873,12 +872,9 @@ class Image:
             instead of the folder itself. Default is False.
         :return: Image
         """
-        src_name = src.name
-        if copy_contents_only:
-            src_name = "."
-        else:
-            dst = str("./" + src_name)
-        new_image = self.clone(addl_layer=CopyConfig(path_type=1, src=src, dst=dst, src_name=src_name))
+        if not copy_contents_only:
+            dst = str("./" + src.name) if dst == "." else dst
+        new_image = self.clone(addl_layer=CopyConfig(path_type=1, src=src, dst=dst))
         return new_image
 
     def with_source_file(self, src: Path, dst: str = ".") -> Image:
@@ -890,7 +886,7 @@ class Image:
         :param dst: destination folder in the image
         :return: Image
         """
-        new_image = self.clone(addl_layer=CopyConfig(path_type=0, src=src, dst=dst, src_name=src.name))
+        new_image = self.clone(addl_layer=CopyConfig(path_type=0, src=src, dst=dst))
         return new_image
 
     def with_dockerignore(self, path: Path) -> Image:

@@ -12,7 +12,10 @@ from flyte import Cron, FixedRate, Trigger, TriggerTime
 def _to_schedule(m: Union[Cron, FixedRate], kickoff_arg_name: str | None = None) -> common_pb2.Schedule:
     if isinstance(m, Cron):
         return common_pb2.Schedule(
-            cron_expression=m.timezone_expression,
+            cron=common_pb2.Cron(
+                expression=m.expression,
+                timezone=m.timezone,
+            ),
             kickoff_time_input_arg=kickoff_arg_name,
         )
     elif isinstance(m, FixedRate):

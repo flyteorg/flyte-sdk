@@ -1,8 +1,8 @@
 import datetime
 from dataclasses import dataclass
-from functools import lru_cache
 from typing import Any, Dict, Optional
 
+from async_lru import alru_cache
 from flyte import logger
 from flyte.connectors import (
     AsyncConnector,
@@ -40,7 +40,7 @@ class BigQueryMetadata(ResourceMeta):
     user_agent: str
 
 
-@lru_cache
+@alru_cache
 async def _get_bigquery_client(
     project: str, location: str, user_agent: str, google_application_credentials: str
 ) -> bigquery.Client:
@@ -86,7 +86,7 @@ class BigQueryConnector(AsyncConnector):
         project = custom["ProjectID"]
         location = custom["Location"]
 
-        client = _get_bigquery_client(
+        client = await _get_bigquery_client(
             project=project,
             location=location,
             user_agent=user_agent,
@@ -99,7 +99,7 @@ class BigQueryConnector(AsyncConnector):
     async def get(
         self, resource_meta: BigQueryMetadata, google_application_credentials: Optional[str] = None, **kwargs
     ) -> Resource:
-        client = _get_bigquery_client(
+        client = await _get_bigquery_client(
             project=resource_meta.project,
             location=resource_meta.location,
             user_agent=resource_meta.user_agent,
@@ -129,7 +129,7 @@ class BigQueryConnector(AsyncConnector):
     async def delete(
         self, resource_meta: BigQueryMetadata, google_application_credentials: Optional[str] = None, **kwargs
     ):
-        client = _get_bigquery_client(
+        client = await _get_bigquery_client(
             project=resource_meta.project,
             location=resource_meta.location,
             user_agent=resource_meta.user_agent,
