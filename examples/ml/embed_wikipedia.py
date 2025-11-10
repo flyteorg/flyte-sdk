@@ -3,6 +3,7 @@
 # dependencies = [
 #    "flyte>=2.0.0b17",
 #    "sentence-transformers",
+#    "tokenizers==0.22.1",
 #    "huggingface-hub",
 #    "hf-transfer",
 #    "datasets",
@@ -48,13 +49,6 @@ image = flyte.Image.from_uv_script(__file__, name="embed_wikipedia_image").with_
     "unionai-reuse>=0.1.5",
 )
 
-driver = flyte.TaskEnvironment(
-    name="embed_wikipedia_driver",
-    image=image,
-    resources=flyte.Resources(cpu=1, memory="4Gi", disk="16Gi"),
-    secrets="HF_HUB_TOKEN",
-)
-
 N_GPUS = 1
 worker = flyte.TaskEnvironment(
     name="embed_wikipedia_worker",
@@ -63,6 +57,15 @@ worker = flyte.TaskEnvironment(
     env_vars={"HF_HUB_ENABLE_HF_TRANSFER": "1"},
     reusable=flyte.ReusePolicy(replicas=16, concurrency=1, idle_ttl=120, scaledown_ttl=120),
     secrets="HF_HUB_TOKEN",
+)
+
+
+driver = flyte.TaskEnvironment(
+    name="embed_wikipedia_driver",
+    image=image,
+    resources=flyte.Resources(cpu=1, memory="4Gi", disk="16Gi"),
+    secrets="HF_HUB_TOKEN",
+    depends_on=[worker],
 )
 
 
