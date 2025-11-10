@@ -100,7 +100,7 @@ class _Runner:
         disable_run_cache: bool = False,
         queue: Optional[str] = None,
         custom_context: Dict[str, str] | None = None,
-        cache_lookup_scope: CacheLookupScope | None = "global",
+        cache_lookup_scope: CacheLookupScope = "global",
     ):
         from flyte._tools import ipython_check
 
