@@ -34,7 +34,7 @@ class DatabricksFunctionTask(AsyncConnectorExecutorMixin, PysparkFunctionTask):
     Actual Plugin that transforms the local python code for execution within a spark context
     """
 
-    _DATABRICKS_TASK_TYPE = "databricks"
+    task_type: str = "databricks"
     plugin_config: Databricks
 
     def custom_config(self, sctx: SerializationContext) -> Dict[str, Any]:
@@ -55,7 +55,7 @@ class DatabricksFunctionTask(AsyncConnectorExecutorMixin, PysparkFunctionTask):
         )
 
         cfg = MessageToDict(job)
-        cfg["secrets"] = self.plugin_config.databricks_token
+        cfg["secrets"] = {"databricks_token": self.plugin_config.databricks_token}
 
         return cfg
 

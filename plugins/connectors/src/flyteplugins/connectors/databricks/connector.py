@@ -6,12 +6,14 @@ from dataclasses import dataclass
 from typing import Optional
 
 import aiohttp
+from google.protobuf.json_format import MessageToDict
+
 from flyte.connectors import AsyncConnector, ConnectorRegistry, Resource, ResourceMeta
 from flyte.connectors.utils import convert_to_flyte_phase
 from flyteidl2.core.execution_pb2 import TaskExecution, TaskLog
 from flyteidl2.core.tasks_pb2 import TaskTemplate
 
-DATABRICKS_API_ENDPOINT = "/api/2.1/jobs"
+DATABRICKS_API_ENDPOINT = "/api/2.2/jobs"
 DEFAULT_DATABRICKS_INSTANCE_ENV_KEY = "FLYTE_DATABRICKS_INSTANCE"
 
 
@@ -22,43 +24,68 @@ class DatabricksJobMetadata(ResourceMeta):
 
 
 def _get_databricks_job_spec(task_template: TaskTemplate) -> dict:
-    custom = task_template.custom
+    custom = MessageToDict(task_template.custom)
     container = task_template.container
     envs = task_template.container.env
-    databricks_job = custom["databricksConf"]
+    databricks_job = custom.get("databricksConf")
+    if databricks_job is None:
+        raise ValueError("Missing Databricks job configuration in task template.")
+    print("databricks_job", databricks_job)
     if databricks_job.get("existing_cluster_id") is None:
         new_cluster = databricks_job.get("new_cluster")
-        if new_cluster is None:
-            raise ValueError("Either existing_cluster_id or new_cluster must be specified")
-        if not new_cluster.get("docker_image"):
-            new_cluster["docker_image"] = {"url": container.image}
-        if not new_cluster.get("spark_conf"):
-            new_cluster["spark_conf"] = custom.get("sparkConf", {})
-        if not new_cluster.get("spark_env_vars"):
-            new_cluster["spark_env_vars"] = {env.key: env.value for env in envs}
-        else:
-            new_cluster["spark_env_vars"].update({env.key: env.value for env in envs})
+        # if new_cluster is None:
+        #     raise ValueError("Either existing_cluster_id or new_cluster must be specified")
+        # if not new_cluster.get("docker_image"):
+        #     new_cluster["docker_image"] = {"url": container.image}
+        # if not new_cluster.get("spark_conf"):
+        #     new_cluster["spark_conf"] = custom.get("sparkConf", {})
+        # if not new_cluster.get("spark_env_vars"):
+        #     new_cluster["spark_env_vars"] = {env.key: env.value for env in envs}
+        # else:
+        #     new_cluster["spark_env_vars"].update({env.key: env.value for env in envs})
     # https://docs.databricks.com/api/workspace/jobs/submit
-    databricks_job["spark_python_task"] = {
+    databricks_job["tasks"] = [
+    {
+      "task_key": "test",
+      "run_if": "ALL_SUCCESS",
+      "spark_python_task": {
         "python_file": "src/flyte/_bin/runtime.py",
-        "source": "GIT",
-        "parameters": container.args,
+        "parameters": [
+          "a0"
+        ],
+        "source": "GIT"
+      },
+      "timeout_seconds": 0,
+      "email_notifications": {},
+      "environment_key": "Default"
     }
+  ]
     databricks_job["git_source"] = {
         "git_url": "https://github.com/flyteorg/flyte-sdk",
         "git_provider": "gitHub",
         # https://github.com/flyteorg/flyte-sdk/tree/f1b5e2b2b611ffa469b3b6b082159d2e9e6baf31
         "git_commit": "f1b5e2b2b611ffa469b3b6b082159d2e9e6baf31",
     }
-
+    databricks_job["environments"] = [
+        {
+            "environment_key": "Default",
+            "spec": {
+                "environment_version": "4",
+                "dependencies": [
+                    "flyte",
+                    "git+https://github.com/flyteorg/flyte.git@90a4455c2cc2b3e171dfff69f605f47d48ea1ff1#subdirectory=plugins/flytekit-spark"
+                ]
+            },
+        }
+    ]
+    print("final databricks_job:", databricks_job)
     return databricks_job
 
 
 class DatabricksConnector(AsyncConnector):
-    name = "Databricks Connector"
-
-    def __init__(self):
-        super().__init__(task_type_name="databricks", metadata_type=DatabricksJobMetadata)
+    name: str = "Databricks Connector"
+    task_type_name: str = "databricks"
+    metadata_type: type = DatabricksJobMetadata
 
     async def create(
         self,
@@ -68,7 +95,8 @@ class DatabricksConnector(AsyncConnector):
         **kwargs,
     ) -> DatabricksJobMetadata:
         data = json.dumps(_get_databricks_job_spec(task_template))
-        databricks_instance = task_template.custom.get(
+        custom = MessageToDict(task_template.custom)
+        databricks_instance = custom.get(
             "databricksInstance", os.getenv(DEFAULT_DATABRICKS_INSTANCE_ENV_KEY)
         )
 
@@ -80,8 +108,9 @@ class DatabricksConnector(AsyncConnector):
 
         databricks_url = f"https://{databricks_instance}{DATABRICKS_API_ENDPOINT}/runs/submit"
 
+        print("databricks_token:", databricks_token)
         async with aiohttp.ClientSession() as session:
-            async with session.post(databricks_url, headers=get_header(), data=data) as resp:
+            async with session.post(databricks_url, headers=get_header(databricks_token), data=data) as resp:
                 response = await resp.json()
                 if resp.status != http.HTTPStatus.OK:
                     raise RuntimeError(f"Failed to create databricks job with error: {response}")
