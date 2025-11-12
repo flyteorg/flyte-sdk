@@ -53,7 +53,7 @@ async def build_flyte_connector_image(
         )
     else:
         default_image = Image.from_debian_base(registry=registry, name=name).with_pip_packages(
-            "flyteplugins-connectors", pre=True, extra_args="--all-extras"
+            "flyteplugins-connectors[bigquery]", pre=True
         )
     suffix = __version__.replace("+", "-")
     python_version = _detect_python_version()
