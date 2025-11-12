@@ -164,7 +164,7 @@ async def _deploy_task(
         # Todo: Make document_entity with description here
 
         if hasattr(task.func, '__code__') and task.func.__code__:
-            line_number = task.func.__code__.co_firstlineno
+            line_number = task.func.__code__.co_firstlineno + 1 # The function definition line number is located at the line after @env.task decorator
             file_path = task.func.__code__.co_filename
             git_config = GitConfig()
             if git_config.is_valid:
@@ -173,6 +173,7 @@ async def _deploy_task(
                 if git_host_url:
                     is_valid = await GitConfig.is_valid_url(git_host_url)
                     if is_valid:
+                        print(f"@@@Not a valid url {git_host_url}@@@")
                         # Put git_host_url in spec
                         pass
 

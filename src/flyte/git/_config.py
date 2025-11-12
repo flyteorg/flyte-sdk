@@ -71,7 +71,6 @@ class GitConfig:
             )
 
             if result.returncode != 0:
-                logger.debug("Not in a git repository")
                 return
 
             self.repo_dir = Path(result.stdout.strip())
@@ -86,7 +85,6 @@ class GitConfig:
             if result.returncode == 0:
                 self.commit_sha = result.stdout.strip()
             else:
-                logger.debug("Could not get current git commit SHA")
                 return
 
             # Check if working tree is clean
@@ -99,17 +97,15 @@ class GitConfig:
             if result.returncode == 0:
                 self.is_tree_clean = len(result.stdout.strip()) == 0
             else:
-                logger.debug("Could not check if working tree is clean")
                 return
 
             # Get remote URL
             self.remote_url = self._get_remote_url()
             if not self.remote_url:
-                logger.debug("No remote URL found")
                 return
             self.is_valid = True
 
-        except Exception:
+        except Exception as e:
             self.is_valid = False
 
     def _get_remote_url(self) -> str:
@@ -222,19 +218,14 @@ class GitConfig:
     def build_url(self, path: Path | str, line_number: int) -> str:
         """Build a git URL for the given path."""
         if not self.is_valid:
-            logger.debug("GitConfig is not valid, cannot build URL")
             return ""
         host_name = self._get_remote_host(self.remote_url)
         git_file_path = self.get_file_path(path)
-        if not host_name:
-            logger.debug("Could not get remote host name")
-            return ""
-        if not git_file_path:
-            logger.debug("Could not get git file path")
+        if not host_name or not git_file_path:
             return ""
         builder = GIT_URL_BUILDER_REGISTRY.get(host_name)
         if not builder:
-            logger.debug(f"No Git URL builder found for host {host_name}")
+            return ""
         url = builder.build_url(self.remote_url, git_file_path, self.commit_sha, line_number, self.is_tree_clean)
         return url
 
@@ -252,11 +243,9 @@ class GitConfig:
             async with httpx.AsyncClient() as client:
                 response = await client.get(url, follow_redirects=True, timeout=10.0)
                 if not response.is_success:
-                    logger.debug(f"URL validation failed for {url}: status code {response.status_code}")
                     return False
                 return True
         except Exception as e:
-            logger.debug(f"URL validation failed for {url}: {str(e)}")
             return False
 
 
