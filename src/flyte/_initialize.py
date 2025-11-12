@@ -9,7 +9,6 @@ from typing import TYPE_CHECKING, Callable, List, Literal, Optional, TypeVar
 
 from flyte.errors import InitializationError
 from flyte.syncify import syncify
-from flyte.git import GitConfig
 
 from ._logging import LogFormat, initialize_logger, logger
 
@@ -44,7 +43,6 @@ class _InitConfig(CommonInit):
     storage: Optional[Storage] = None
     image_builder: "ImageBuildEngine.ImageBuilderType" = "local"
     images: typing.Dict[str, str] = field(default_factory=dict)
-    git_config: Optional[GitConfig] = None
 
     def replace(self, **kwargs) -> _InitConfig:
         return replace(self, **kwargs)
@@ -243,7 +241,6 @@ async def init(
             images=images or {},
             source_config_path=source_config_path,
             sync_local_sys_paths=sync_local_sys_paths,
-            git_config=GitConfig(),
         )
 
 

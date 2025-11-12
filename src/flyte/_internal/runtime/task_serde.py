@@ -49,16 +49,6 @@ def translate_task_to_wire(
     tt = get_proto_task(task, serialization_context)
     env: environment_pb2.Environment | None = None
 
-    # Todo: Make document_entity with description here
-
-    if hasattr(task.func, '__code__') and task.func.__code__:
-        line_number = task.func.__code__.co_firstlineno
-        file_path = task.func.__code__.co_filename
-        git_config = get_init_config().git_config
-        if git_config and git_config.is_valid:
-            # Add source code info into document_entity
-            git_file_path = git_config.get_file_path(file_path)
-
     if task.parent_env and task.parent_env():
         _env = task.parent_env()
         if _env:

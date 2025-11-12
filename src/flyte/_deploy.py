@@ -11,6 +11,7 @@ import rich.repr
 import flyte.errors
 from flyte.models import SerializationContext
 from flyte.syncify import syncify
+from flyte.git import GitConfig
 
 from ._environment import Environment
 from ._image import Image
@@ -159,6 +160,21 @@ async def _deploy_task(
 
         default_inputs = await convert_upload_default_inputs(task.interface)
         spec = translate_task_to_wire(task, serialization_context, default_inputs=default_inputs)
+
+        # Todo: Make document_entity with description here
+
+        if hasattr(task.func, '__code__') and task.func.__code__:
+            line_number = task.func.__code__.co_firstlineno
+            file_path = task.func.__code__.co_filename
+            git_config = GitConfig()
+            if git_config.is_valid:
+                # build git host url and validate
+                git_host_url = git_config.build_url(file_path, line_number)
+                if git_host_url:
+                    is_valid = await GitConfig.is_valid_url(git_host_url)
+                    if is_valid:
+                        # Put git_host_url in spec
+                        pass
 
         msg = f"Deploying task {task.name}, with image {image_uri} version {serialization_context.version}"
         if spec.task_template.HasField("container") and spec.task_template.container.args:
