@@ -4,6 +4,7 @@ from operator import add
 from flyteplugins.connectors.databricks.task import Databricks
 
 import flyte.remote
+from flyte.storage import S3
 
 image = (
     # https://hub.docker.com/r/databricksruntime/python/tags
@@ -19,7 +20,7 @@ task_env = flyte.TaskEnvironment(
 
 databricks_conf = Databricks(
     spark_conf={
-        "spark.driver.memory": "3000M",
+        "spark.driver.memory": "2000M",
         "spark.executor.memory": "1000M",
         "spark.executor.cores": "1",
         "spark.executor.instances": "2",
@@ -30,7 +31,6 @@ databricks_conf = Databricks(
     executor_path="/databricks/python3/bin/python",
     databricks_conf={
         "run_name": "flytekit databricks plugin example",
-        # "job_id": "{{inputs.cluster_id}}",
         # "new_cluster": {
         #     "spark_version": "13.3.x-scala2.12",
         #     "autoscale": {
@@ -41,18 +41,18 @@ databricks_conf = Databricks(
         #     "num_workers": 3,
         #     "aws_attributes": {
         #         "availability": "SPOT_WITH_FALLBACK",
-        #         "instance_profile_arn": "arn:aws:iam::546011168256:instance-profile/databricks-demo",
+        #         "instance_profile_arn": "arn:aws:iam::339713193121:instance-profile/databricks-demo",
         #         "ebs_volume_type": "GENERAL_PURPOSE_SSD",
         #         "ebs_volume_count": 1,
         #         "ebs_volume_size": 100,
         #         "first_on_demand": 1,
         #     },
         # },
-        # "existing_cluster_id": "Serverless",
+        "existing_cluster_id": "1113-204018-tb9vr2fm",
         "timeout_seconds": 3600,
         "max_retries": 1,
     },
-    databricks_instance="dbc-d611958a-d119.cloud.databricks.com",
+    databricks_instance="dbc-6f73e2e6-19e4.cloud.databricks.com",
     databricks_token="DATABRICKS_TOKEN",
 )
 
@@ -86,7 +86,7 @@ async def hello_databricks_nested(partitions: int = 3) -> float:
 
 
 if __name__ == "__main__":
-    flyte.init_from_config()
-    run = flyte.with_runcontext(mode="local").run(hello_databricks_nested)
+    flyte.init_from_config(storage=S3().auto())
+    run = flyte.with_runcontext(mode="local", raw_data_path="s3://my-v2-connector/").run(hello_databricks_nested)
     print("run name:", run.name)
     print("run url:", run.url)

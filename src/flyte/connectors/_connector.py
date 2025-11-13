@@ -21,12 +21,15 @@ from google.protobuf.struct_pb2 import Struct
 
 from flyte import Secret
 from flyte._context import internal_ctx
+from flyte._deploy import build_images
 from flyte._initialize import get_init_config
-from flyte._internal.runtime.convert import convert_from_native_to_outputs
+from flyte._internal.runtime import io
+from flyte._internal.runtime.convert import convert_from_native_to_inputs, convert_from_native_to_outputs
+from flyte._internal.runtime.io import upload_inputs
 from flyte._internal.runtime.task_serde import get_proto_task
 from flyte._logging import logger
 from flyte._task import TaskTemplate
-from flyte.connectors.utils import is_terminal_phase
+from flyte.connectors.utils import _render_task_template, is_terminal_phase
 from flyte.models import NativeInterface, SerializationContext
 from flyte.types._type_engine import dataclass_from_dict
 
@@ -227,10 +230,15 @@ class AsyncConnectorExecutorMixin:
             org=tctx.action.org,
             code_bundle=tctx.code_bundle,
             version=tctx.version,
-            image_cache=tctx.compiled_image_cache,
+            image_cache=await build_images.aio(task.parent_env()),
             root_dir=cfg.root_dir,
         )
         tt = get_proto_task(task, sc)
+        tt = _render_task_template(tt, tctx.raw_data_path.get_random_remote_path())
+        inputs = await convert_from_native_to_inputs(task.native_interface, **kwargs)
+        inputs_uri = io.inputs_path(tctx.raw_data_path.path)
+        await upload_inputs(inputs, inputs_uri)
+
         custom = json_format.MessageToDict(tt.custom)
         secrets = custom["secrets"] if "secrets" in custom else {}
         for k, v in secrets.items():
@@ -249,12 +257,13 @@ class AsyncConnectorExecutorMixin:
             if resource.log_links:
                 for link in resource.log_links:
                     logger.info(f"{link.name}: {link.uri}")
-            await asyncio.sleep(1)
+            await asyncio.sleep(3)
 
         if resource.phase != TaskExecution.SUCCEEDED:
             raise RuntimeError(f"Failed to run the task {task.name} with error: {resource.message}")
 
         # TODO: Support abort
+        ctx.raw_data.get_random_remote_path()
 
         if resource.outputs is None:
             return None
