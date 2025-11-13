@@ -14,6 +14,7 @@ from google.protobuf import duration_pb2, wrappers_pb2
 
 import flyte.errors
 from flyte._cache.cache import VersionParameters, cache_from_request
+from flyte._initialize import get_init_config
 from flyte._logging import logger
 from flyte._pod import _PRIMARY_CONTAINER_NAME_FIELD, PodTemplate
 from flyte._secret import SecretRequest, secrets_from_request
@@ -47,6 +48,17 @@ def translate_task_to_wire(
     """
     tt = get_proto_task(task, serialization_context)
     env: environment_pb2.Environment | None = None
+
+    # Todo: Make document_entity with description here
+
+    if hasattr(task.func, '__code__') and task.func.__code__:
+        line_number = task.func.__code__.co_firstlineno
+        file_path = task.func.__code__.co_filename
+        git_config = get_init_config().git_config
+        if git_config and git_config.is_valid:
+            # Add source code info into document_entity
+            git_file_path = git_config.get_file_path(file_path)
+
     if task.parent_env and task.parent_env():
         _env = task.parent_env()
         if _env:
@@ -56,6 +68,7 @@ def translate_task_to_wire(
         default_inputs=default_inputs,
         short_name=task.short_name[:_MAX_TASK_SHORT_NAME_LENGTH],
         environment=env,
+        # description entity
     )
 
 
