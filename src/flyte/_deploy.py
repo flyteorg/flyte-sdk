@@ -160,6 +160,10 @@ async def _deploy_task(
         default_inputs = await convert_upload_default_inputs(task.interface)
         spec = translate_task_to_wire(task, serialization_context, default_inputs=default_inputs)
 
+        # Insert documentation entity into task spec
+        documentation_entity = _get_documentation_entity(task)
+        spec.documentation.CopyFrom(documentation_entity)
+
         msg = f"Deploying task {task.name}, with image {image_uri} version {serialization_context.version}"
         if spec.task_template.HasField("container") and spec.task_template.container.args:
             msg += f" from {spec.task_template.container.args[-3]}.{spec.task_template.container.args[-1]}"
@@ -203,6 +207,27 @@ async def _deploy_task(
             f"Failed to deploy task {task.name} file{task.source_file} with image {image_uri}, Error: {e!s}"
         ) from e
 
+def _get_documentation_entity(task_template: TaskTemplate) -> task_definition_pb2.DocumentationEntity:
+    """
+    Extract documentation from TaskTemplate's docstring and create a DocumentationEntity.
+    Short descriptions are truncated to 255 chars, long descriptions to 2048 chars.
+
+    :param task_template: TaskTemplate containing the interface docstring.
+    :return: DocumentationEntity with truncated short and long descriptions.
+    """
+    from flyteidl2.task import task_definition_pb2
+
+    docstring = task_template.interface.docstring
+    short_desc = None
+    long_desc = None
+    if docstring and docstring.short_description:
+        short_desc = docstring.short_description[:255]
+    if docstring and docstring.long_description:
+        long_desc = docstring.long_description[:2048]
+    return task_definition_pb2.DocumentationEntity(
+        short_description=short_desc,
+        long_description=long_desc,
+    )
 
 async def _build_image_bg(env_name: str, image: Image) -> Tuple[str, str]:
     """
