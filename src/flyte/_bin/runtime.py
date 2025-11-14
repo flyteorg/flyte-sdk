@@ -56,6 +56,7 @@ def _pass_through():
 @click.option("--org", envvar=ORG_NAME, required=False)
 @click.option("--debug", envvar=FLYTE_ENABLE_VSCODE_KEY, type=click.BOOL, required=False)
 @click.option("--interactive-mode", type=click.BOOL, required=False)
+@click.option("--controller-mode", type=str, required=False, default="remote")
 @click.option("--image-cache", required=False)
 @click.option("--tgz", required=False)
 @click.option("--pkl", required=False)
@@ -76,6 +77,7 @@ def main(
     org: str,
     debug: bool,
     interactive_mode: bool,
+    controller_mode: str,
     image_cache: str,
     version: str,
     inputs: str,
@@ -152,7 +154,7 @@ def main(
         bundle = CodeBundle(tgz=tgz, pkl=pkl, destination=dest, computed_version=version)
     init(org=org, project=project, domain=domain, image_builder="remote", **controller_kwargs)
     # Controller is created with the same kwargs as init, so that it can be used to run tasks
-    controller = create_controller(ct="remote", **controller_kwargs)
+    controller = create_controller(ct=controller_mode, **controller_kwargs)
 
     ic = ImageCache.from_transport(image_cache) if image_cache else None
 

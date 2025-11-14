@@ -207,7 +207,7 @@ class ConnectorSecretsMixin:
         return [Secret(key=k, as_env_var=v) for k, v in self._secrets.items()]
 
 
-class AsyncConnectorExecutorMixin:
+class AsyncConnectorExecutorMixin(TaskTemplate):
     """
     This mixin class is used to run the connector task locally, and it's only used for local execution.
     Task should inherit from this class if the task can be run in the connector.
@@ -224,19 +224,23 @@ class AsyncConnectorExecutorMixin:
         if tctx is None:
             raise RuntimeError("Task context is not set.")
 
+        if tctx.mode == "remote":
+            return await super().execute(**kwargs)
+
         sc = SerializationContext(
             project=tctx.action.project,
             domain=tctx.action.domain,
             org=tctx.action.org,
             code_bundle=tctx.code_bundle,
             version=tctx.version,
-            image_cache=await build_images.aio(task.parent_env()),
+            image_cache=await build_images.aio(task.parent_env()) if task.parent_env else None,
             root_dir=cfg.root_dir,
         )
         tt = get_proto_task(task, sc)
-        tt = _render_task_template(tt, tctx.raw_data_path.get_random_remote_path())
+        prefix = tctx.raw_data_path.get_random_remote_path()
+        tt = _render_task_template(tt, prefix)
         inputs = await convert_from_native_to_inputs(task.native_interface, **kwargs)
-        inputs_uri = io.inputs_path(tctx.raw_data_path.path)
+        inputs_uri = io.inputs_path(prefix)
         await upload_inputs(inputs, inputs_uri)
 
         custom = json_format.MessageToDict(tt.custom)
@@ -263,7 +267,7 @@ class AsyncConnectorExecutorMixin:
             raise RuntimeError(f"Failed to run the task {task.name} with error: {resource.message}")
 
         # TODO: Support abort
-        ctx.raw_data.get_random_remote_path()
+        # ctx.raw_data.get_random_remote_path()
 
         if resource.outputs is None:
             return None
