@@ -50,7 +50,7 @@ def translate_task_to_wire(
     if task.parent_env and task.parent_env():
         _env = task.parent_env()
         if _env:
-            env = environment_pb2.Environment(name=_env.name[:_MAX_ENV_NAME_LENGTH])
+            env = environment_pb2.Environment(name=_env.name[:_MAX_ENV_NAME_LENGTH], description=_env.description)
     return task_definition_pb2.TaskSpec(
         task_template=tt,
         default_inputs=default_inputs,
