@@ -197,9 +197,9 @@ async def test_async_connector_service():
         )
         assert res.body.results == ["foo", "bar"]
 
-    connector_metadata = ConnectorRegistry.get_connector_metadata(connector.name)
+    connector_metadata = ConnectorRegistry._get_connector_metadata(connector.name)
     assert connector_metadata.supported_task_categories[0].version == connector.task_type_version
     assert connector_metadata.supported_task_categories[0].name == connector.task_type_name
 
     with pytest.raises(FlyteConnectorNotFound):
-        ConnectorRegistry.get_connector_metadata("non-exist-namr")
+        ConnectorRegistry._get_connector_metadata("non-exist-namr")

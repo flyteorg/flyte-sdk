@@ -4,6 +4,7 @@ import importlib.util
 import json
 import logging
 import os
+import pathlib
 import sys
 from abc import abstractmethod
 from dataclasses import dataclass, replace
@@ -23,6 +24,7 @@ from rich.traceback import Traceback
 
 import flyte.config
 import flyte.errors
+from flyte._logging import LogFormat
 from flyte.config import Config
 
 OutputFormat = Literal["table", "json", "table-simple", "json-raw"]
@@ -102,6 +104,7 @@ class CLIConfig:
     config: Config
     ctx: click.Context
     log_level: int | None = logging.ERROR
+    log_format: LogFormat = "console"
     endpoint: str | None = None
     insecure: bool = False
     org: str | None = None
@@ -144,7 +147,8 @@ class CLIConfig:
         flyte.init_from_config(
             updated_config,
             log_level=self.log_level,
-            root_dir=root_dir,
+            log_format=self.log_format,
+            root_dir=pathlib.Path(root_dir) if root_dir else None,
             images=images,
             sync_local_sys_paths=sync_local_sys_paths,
         )

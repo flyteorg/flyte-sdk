@@ -197,6 +197,7 @@ class PoetryProject(Layer):
     pyproject: Path
     poetry_lock: Path
     extra_args: Optional[str] = None
+    project_install_mode: typing.Literal["dependencies_only", "install_project"] = "dependencies_only"
     secret_mounts: Optional[Tuple[str | Secret, ...]] = None
 
     def validate(self):
@@ -219,7 +220,7 @@ class PoetryProject(Layer):
                 hash_input += str(secret_mount)
         hasher.update(hash_input.encode("utf-8"))
 
-        if self.extra_args and "--no-root" in self.extra_args:
+        if self.project_install_mode == "dependencies_only":
             filehash_update(self.poetry_lock, hasher)
             filehash_update(self.pyproject, hasher)
         else:
@@ -308,7 +309,6 @@ class CopyConfig(Layer):
     path_type: CopyConfigType
     src: Path
     dst: str
-    src_name: str
 
     def __post_init__(self):
         if self.path_type not in (0, 1):
@@ -872,12 +872,9 @@ class Image:
             instead of the folder itself. Default is False.
         :return: Image
         """
-        src_name = src.name
-        if copy_contents_only:
-            src_name = "."
-        else:
-            dst = str("./" + src_name)
-        new_image = self.clone(addl_layer=CopyConfig(path_type=1, src=src, dst=dst, src_name=src_name))
+        if not copy_contents_only:
+            dst = str("./" + src.name) if dst == "." else dst
+        new_image = self.clone(addl_layer=CopyConfig(path_type=1, src=src, dst=dst))
         return new_image
 
     def with_source_file(self, src: Path, dst: str = ".") -> Image:
@@ -889,7 +886,7 @@ class Image:
         :param dst: destination folder in the image
         :return: Image
         """
-        new_image = self.clone(addl_layer=CopyConfig(path_type=0, src=src, dst=dst, src_name=src.name))
+        new_image = self.clone(addl_layer=CopyConfig(path_type=0, src=src, dst=dst))
         return new_image
 
     def with_dockerignore(self, path: Path) -> Image:
@@ -951,6 +948,7 @@ class Image:
         poetry_lock: Path | None = None,
         extra_args: Optional[str] = None,
         secret_mounts: Optional[SecretRequest] = None,
+        project_install_mode: typing.Literal["dependencies_only", "install_project"] = "dependencies_only",
     ):
         """
         Use this method to create a new image with the specified pyproject.toml layered on top of the current image.
@@ -970,6 +968,8 @@ class Image:
             'poetry.lock' in the same directory as `pyproject_file` (pyproject.parent / "poetry.lock").
         :param extra_args: Extra arguments to pass through to the package installer/resolver, default is None.
         :param secret_mounts: Secrets to make available during dependency resolution/build (e.g., private indexes).
+        :param project_install_mode: whether to install the project as a package or
+         only dependencies, default is "dependencies_only"
         :return: Image
         """
         if isinstance(pyproject_file, str):
@@ -980,6 +980,7 @@ class Image:
                 poetry_lock=poetry_lock or (pyproject_file.parent / "poetry.lock"),
                 extra_args=extra_args,
                 secret_mounts=_ensure_tuple(secret_mounts) if secret_mounts else None,
+                project_install_mode=project_install_mode,
             )
         )
         return new_image
