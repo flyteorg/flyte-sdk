@@ -51,7 +51,7 @@ class PysparkFunctionTask(AsyncFunctionTaskTemplate):
     """
 
     plugin_config: Spark
-    task_type: str = "spark"
+    task_type: str = "databricks"
     debuggable: bool = True
 
     async def pre(self, *args, **kwargs) -> Dict[str, Any]:

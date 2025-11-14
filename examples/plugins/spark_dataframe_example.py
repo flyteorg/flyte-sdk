@@ -1,5 +1,4 @@
 import collections
-from pathlib import Path
 from typing import Annotated, OrderedDict, Type, cast
 
 import pyspark

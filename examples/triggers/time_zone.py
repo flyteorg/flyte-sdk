@@ -10,17 +10,13 @@ env = flyte.TaskEnvironment(
 
 nyc_trigger = flyte.Trigger(
     "nyc_tz",
-    flyte.Cron(
-        "1 12 * * *", timezone="America/New_York"
-    ), # Every day at 12:01 PM ET
+    flyte.Cron("1 12 * * *", timezone="America/New_York"),  # Every day at 12:01 PM ET
     inputs={"start_time": flyte.TriggerTime, "x": 1},
 )
 
 sf_trigger = flyte.Trigger(
     "sf_tz",
-    flyte.Cron(
-        "0 9 * * *", timezone="America/Los_Angeles"
-    ), # Every day at 9 AM PT
+    flyte.Cron("0 9 * * *", timezone="America/Los_Angeles"),  # Every day at 9 AM PT
     inputs={"start_time": flyte.TriggerTime, "x": 1},
 )
 

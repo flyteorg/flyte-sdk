@@ -16,9 +16,14 @@ bigquery = [
     "google-cloud-bigquery",
     "google-cloud-bigquery-storage",
 ]
+databricks = [
+    "aiohttp",
+    "flyteplugins-spark",
+]
 
 [project.entry-points."flyte.connectors"]
 bigquery = "flyteplugins.connectors.bigquery.connector:BigQueryConnector"
+databricks = "flyteplugins.connectors.databricks.connector:DatabricksConnector"
 
 [build-system]
 requires = ["setuptools", "setuptools_scm"]
