@@ -29,7 +29,6 @@ class App(ToJSONMixin):
     @classmethod
     @syncify
     async def get(
-        self,
         cls,
         name: str,
         project: str | None = None,

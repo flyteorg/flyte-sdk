@@ -45,7 +45,6 @@ class DeployedAppEnvironment(deployer.DeployedEnvironment):
     def get_name(self) -> str:
         """
         Returns the name of the deployed environment.
-        Returns:
         """
         return self.env.name
 

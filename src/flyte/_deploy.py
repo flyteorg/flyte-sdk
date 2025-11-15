@@ -74,6 +74,12 @@ class DeployedTaskEnvironment:
     env: TaskEnvironment
     deployed_entities: List[DeployedTask]
 
+    def get_name(self) -> str:
+        """
+        Returns the name of the deployed environment.
+        """
+        return self.env.name
+
     def summary_repr(self) -> str:
         """
         Returns a summary representation of the deployment.
