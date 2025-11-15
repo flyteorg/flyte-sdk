@@ -19,7 +19,14 @@ from rich.tree import Tree
 from flyte._logging import _get_console, logger
 
 from ._ignore import Ignore, IgnoreGroup
-from ._utils import CopyFiles, _filehash_update, _pathhash_update, ls_files, tar_strip_file_attributes
+from ._utils import (
+    CopyFiles,
+    _filehash_update,
+    _pathhash_update,
+    ls_files,
+    ls_relative_files,
+    tar_strip_file_attributes,
+)
 
 FAST_PREFIX = "fast"
 FAST_FILEENDING = ".tar.gz"
@@ -97,6 +104,26 @@ def list_files_to_bundle(
     ls, ls_digest = ls_files(source, copy_style, deref_symlinks, ignore)
     logger.debug(f"Hash of files to be included in the code bundle: {ls_digest}")
     return ls, ls_digest
+
+
+def list_relative_files_to_bundle(
+    relative_paths: tuple[str, ...],
+    source: pathlib.Path,
+) -> typing.Tuple[List[str], str]:
+    """
+    List the files in the relative paths.
+
+    :param relative_paths: The list of relative paths to bundle.
+    :param source: The source directory to package.
+    :param ignores: A list of Ignore classes to use for ignoring files
+    :param copy_style: The copy style to use for the tarball
+    :return: A list of all files to be included in the code bundle and a hexdigest of the included files.
+    """
+    _source = source
+
+    all_files, digest = ls_relative_files(list(relative_paths), source)
+    logger.debug(f"Hash of files to be included in the code bundle: {digest}")
+    return all_files, digest
 
 
 def create_bundle(
