@@ -2,14 +2,12 @@ import logging
 import pathlib
 
 from fastapi import FastAPI
+from module import function
 
 import flyte
-from module import function
 from flyte.app.extras import FastAPIAppEnvironment
 
-app = FastAPI(
-    title="Multi-file FastAPI Demo", description="A FastAPI app with multiple files", version="1.0.0"
-)
+app = FastAPI(title="Multi-file FastAPI Demo", description="A FastAPI app with multiple files", version="1.0.0")
 
 app_env = FastAPIAppEnvironment(
     name="fastapi-multi-file",

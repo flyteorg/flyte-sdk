@@ -1,9 +1,8 @@
-import flyte
 import httpx
-
 from fastapi import FastAPI
-from flyte.app.extras import FastAPIAppEnvironment
 
+import flyte
+from flyte.app.extras import FastAPIAppEnvironment
 
 app = FastAPI(title="Add One", description="Adds one to the input", version="1.0.0")
 
