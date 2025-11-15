@@ -2,7 +2,7 @@
 # requires-python = "==3.13"
 # dependencies = [
 #    "flyte>=2.0.0b17",
-#    "sentence-transformers",
+#    "sentence-transformers==5.1.2",
 #    "tokenizers==0.22.1",
 #    "huggingface-hub",
 #    "hf-transfer",
@@ -55,7 +55,7 @@ worker = flyte.TaskEnvironment(
     image=image,
     resources=flyte.Resources(cpu=2, memory="8Gi", gpu=1),
     env_vars={"HF_HUB_ENABLE_HF_TRANSFER": "1"},
-    reusable=flyte.ReusePolicy(replicas=16, concurrency=1, idle_ttl=120, scaledown_ttl=120),
+    reusable=flyte.ReusePolicy(replicas=(16, 24), concurrency=1, idle_ttl=120, scaledown_ttl=120),
     secrets="HF_HUB_TOKEN",
 )
 
@@ -75,7 +75,7 @@ def get_model(model_name: str = "all-MiniLM-L6-v2") -> SentenceTransformer:
     return SentenceTransformer(model_name)
 
 
-@worker.task(cache="auto", retries=4)
+@worker.task(cache="disable", retries=4)
 async def embed_shard_to_file(repo_id: str, filename: str, model_name: str, batch_size: int = 32) -> flyte.io.File:
     """
     Stream one parquet shard, embed in batches, write embeddings to a file.
@@ -138,7 +138,7 @@ async def _aiter(sync_iterable) -> AsyncGenerator[Dict[str, Any], None]:
         yield await loop.run_in_executor(None, lambda r=row: r)
 
 
-@driver.task(cache="auto")
+@driver.task(cache="disable")
 async def main(batch_size: int = 64, shard: str = "all") -> list[flyte.io.File]:
     from huggingface_hub import HfApi
 
@@ -193,6 +193,6 @@ if __name__ == "__main__":
     # Run this with limit=-1 to embed all articles in the dataset (~61MM rows)
     # flyte.init()
     flyte.init_from_config()
-    run = flyte.run(main, 256, shard="20231101.en")
+    run = flyte.run(main, 8192, shard="20231101.en")
     print(run.url)
     # asyncio.run(high_mem_examples())
