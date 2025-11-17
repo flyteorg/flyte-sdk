@@ -326,6 +326,53 @@ async def init_from_config(
     )
 
 
+@syncify
+async def init_in_cluster(
+    org: str | None = None,
+    project: str | None = None,
+    domain: str | None = None,
+    api_key: str | None = None,
+    endpoint: str | None = None,
+    insecure: bool = False,
+) -> dict[str, typing.Any]:
+    import os
+
+    from flyte._utils import str2bool
+
+    PROJECT_NAME = "FLYTE_INTERNAL_EXECUTION_PROJECT"
+    DOMAIN_NAME = "FLYTE_INTERNAL_EXECUTION_DOMAIN"
+    ORG_NAME = "_U_ORG_NAME"
+    ENDPOINT_OVERRIDE = "_U_EP_OVERRIDE"
+    INSECURE_SKIP_VERIFY_OVERRIDE = "_U_INSECURE_SKIP_VERIFY"
+    _UNION_EAGER_API_KEY_ENV_VAR = "_UNION_EAGER_API_KEY"
+
+    org = org or os.getenv(ORG_NAME)
+    project = project or os.getenv(PROJECT_NAME)
+    domain = domain or os.getenv(DOMAIN_NAME)
+    api_key = api_key or os.getenv(_UNION_EAGER_API_KEY_ENV_VAR)
+
+    remote_kwargs: dict[str, typing.Any] = {"insecure": False}
+    if api_key:
+        logger.info("Using api key from environment")
+        remote_kwargs["api_key"] = api_key
+    else:
+        ep = endpoint or os.environ.get(ENDPOINT_OVERRIDE, "host.docker.internal:8090")
+        remote_kwargs["endpoint"] = ep
+        if not insecure:
+            if "localhost" in ep or "docker" in ep:
+                remote_kwargs["insecure"] = True
+        logger.debug(f"Using controller endpoint: {ep} with kwargs: {remote_kwargs}")
+
+    # Check for insecure_skip_verify override (e.g. for self-signed certs)
+    insecure_skip_verify_str = os.getenv(INSECURE_SKIP_VERIFY_OVERRIDE, "")
+    if str2bool(insecure_skip_verify_str):
+        remote_kwargs["insecure_skip_verify"] = True
+        logger.info("SSL certificate verification disabled (insecure_skip_verify=True)")
+
+    await init.aio(org=org, project=project, domain=domain, image_builder="remote", **remote_kwargs)
+    return remote_kwargs
+
+
 def _get_init_config() -> Optional[_InitConfig]:
     """
     Get the current initialization configuration. Thread-safe implementation.
