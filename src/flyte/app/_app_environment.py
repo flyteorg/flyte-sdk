@@ -102,16 +102,16 @@ class AppEnvironment(Environment):
             if version is None and serialize_context.code_bundle is not None:
                 version = serialize_context.code_bundle.computed_version
 
-            cmd = [
+            cmd: list[str] = [
                 "fserve",
                 "--version",
                 version or "",
                 "--project",
-                serialize_context.project,
+                serialize_context.project or "",
                 "--domain",
-                serialize_context.domain,
+                serialize_context.domain or "",
                 "--org",
-                serialize_context.org,
+                serialize_context.org or "",
             ]
 
             if serialize_context.image_cache and serialize_context.image_cache.serialized_form:

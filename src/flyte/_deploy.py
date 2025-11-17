@@ -23,7 +23,7 @@ if TYPE_CHECKING:
     from flyteidl2.task import task_definition_pb2
 
     from ._code_bundle import CopyFiles
-    from ._deployer import DeploymentContext
+    from ._deployer import DeployedEnvironment, DeploymentContext
     from ._internal.imagebuild.image_builder import ImageCache
 
 
@@ -70,7 +70,7 @@ class DeployedTask:
 
 @rich.repr.auto
 @dataclass
-class DeployedTaskEnvironment:
+class DeployedTaskEnvironment(DeployedEnvironment):
     env: TaskEnvironment
     deployed_entities: List[DeployedTask]
 
@@ -111,7 +111,7 @@ class DeployedTaskEnvironment:
 @rich.repr.auto
 @dataclass(frozen=True)
 class Deployment:
-    envs: Dict[str, DeployedTaskEnvironment]
+    envs: Dict[str, DeployedEnvironment]
 
     def summary_repr(self) -> str:
         """

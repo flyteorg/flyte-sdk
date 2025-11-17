@@ -65,8 +65,8 @@ async def download_code_inputs(
 ) -> Tuple[dict, dict, CodeBundle | None]:
     from flyte._internal.runtime.entrypoints import download_code_bundle
 
-    user_inputs = {}
-    env_vars = {}
+    user_inputs: dict[str, str] = {}
+    env_vars: dict[str, str] = {}
     if serialized_inputs and len(serialized_inputs) > 0:
         user_inputs, env_vars = await sync_inputs(serialized_inputs, dest)
     code_bundle: CodeBundle | None = None

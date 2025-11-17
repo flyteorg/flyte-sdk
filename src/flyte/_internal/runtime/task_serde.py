@@ -248,7 +248,7 @@ def _get_urun_container(
 
     if not serialize_context.image_cache:
         # This computes the image uri, computing hashes as necessary so can fail if done remotely.
-        img_uri = task_template.image.uri
+        img_uri = task_template.image.uri if not isinstance(task_template.image, str) else task_template.image
     elif serialize_context.image_cache and env_name not in serialize_context.image_cache.image_lookup:
         raise flyte.errors.RuntimeUserError(
             "MissingEnvironment",
