@@ -68,7 +68,7 @@ def test_app_environment_comprehensive_happy_path():
     # Verify port was converted from int to Port object
     assert isinstance(app_env.port, Port)
     assert app_env.get_port().port == 8501
-    assert app_env.get_port().name == "http"
+    assert app_env.get_port().name is None
 
     # Verify resources are correctly set
     assert app_env.resources.cpu == 2
@@ -403,7 +403,7 @@ def test_app_environment_port_handling():
     )
     assert isinstance(app_int_port.port, Port)
     assert app_int_port.port.port == 9000
-    assert app_int_port.port.name == "http"
+    assert app_int_port.port.name is None
     assert app_int_port.get_port().port == 9000
 
     # Test with Port object (preserved as-is)
@@ -450,12 +450,11 @@ def test_app_environment_name_validation():
     # Invalid names should fail validation
     invalid_names = ["My-App", "my_app", "-myapp", "myapp-", "my..app"]
     for name in invalid_names:
-        app = AppEnvironment(
-            name=name,
-            image=Image.from_base("python:3.11"),
-        )
         with pytest.raises(ValueError, match="must consist of lower case"):
-            app._validate_name()
+            AppEnvironment(
+                name=name,
+                image=Image.from_base("python:3.11"),
+            )
 
 
 def test_app_environment_type_validation():

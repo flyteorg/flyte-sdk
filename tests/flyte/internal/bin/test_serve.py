@@ -33,16 +33,18 @@ class TestSyncInputs:
         inputs = [
             Input(value="config-value", name="config"),
             Input(value="api-key-value", name="api_key"),
+            Input(value="test-env-var", name="test_env_var", env_var="TEST_ENV_VAR"),
         ]
         collection = SerializableInputCollection.from_inputs(inputs)
         serialized = collection.to_transport
 
         # Sync inputs
-        result = await sync_inputs(serialized, dest="/tmp/test")
+        result, env_vars = await sync_inputs(serialized, dest="/tmp/test")
 
         # Verify string values are returned as-is
         assert result["config"] == "config-value"
         assert result["api_key"] == "api-key-value"
+        assert env_vars["TEST_ENV_VAR"] == "test-env-var"
 
     @pytest.mark.asyncio
     async def test_sync_inputs_with_file_download(self):
@@ -77,10 +79,11 @@ class TestSyncInputs:
             dest_dir = os.path.join(tmpdir, "dest")
             os.makedirs(dest_dir, exist_ok=True)
 
-            result = await sync_inputs(serialized, dest=str(dest_dir))
+            result, env_vars = await sync_inputs(serialized, dest=str(dest_dir))
 
             # Verify result contains downloaded path
             assert "datafile" in result
+            assert env_vars == {}
             downloaded_path = result["datafile"]
 
             # Verify the file exists at the downloaded location
@@ -119,13 +122,14 @@ class TestSyncInputs:
             default_dest = os.path.join(tmpdir, "default")
             os.makedirs(default_dest, exist_ok=True)
 
-            result = await sync_inputs(serialized, dest=str(default_dest))
+            result, env_vars = await sync_inputs(serialized, dest=str(default_dest))
 
             # Verify file was downloaded to custom dest, not default dest
             downloaded_path = result["config"]
             assert custom_dest in downloaded_path
             assert default_dest not in downloaded_path
             assert os.path.exists(downloaded_path)
+            assert env_vars == {}
 
     @pytest.mark.asyncio
     async def test_sync_inputs_with_directory_download(self):
@@ -135,9 +139,6 @@ class TestSyncInputs:
         Tests that:
         - Directory inputs trigger recursive downloads
         - All files in the directory are downloaded
-
-        Note: There's a bug in serve.py line 46 - it uses input["type"] instead of input.type
-        This test documents the expected behavior once fixed.
         """
         from flyte.io import Dir
 
@@ -157,14 +158,20 @@ class TestSyncInputs:
 
             inputs = [
                 Input(value=dir_input, name="dataset", mount=mount_dest),  # mount implies download
+                Input(value="test-env-var", name="test_env_var", env_var="TEST_ENV_VAR"),
             ]
             collection = SerializableInputCollection.from_inputs(inputs)
             serialized = collection.to_transport
 
-            # This currently fails due to bug in serve.py line 46
-            # Once fixed, this test should pass
-            with pytest.raises(TypeError, match="not subscriptable"):
-                await sync_inputs(serialized, dest=tmpdir)
+            result, env_vars = await sync_inputs(serialized, dest=tmpdir)
+            assert os.path.exists(result["dataset"])
+            assert os.path.isdir(result["dataset"])
+            assert env_vars["TEST_ENV_VAR"] == "test-env-var"
+
+            async with aiofiles.open(os.path.join(result["dataset"], "data-dir", "file1.txt"), "r") as f:
+                assert await f.read() == "data1"
+            async with aiofiles.open(os.path.join(result["dataset"], "data-dir", "file2.txt"), "r") as f:
+                assert await f.read() == "data2"
 
     @pytest.mark.asyncio
     async def test_sync_inputs_mixed_types(self):
@@ -198,7 +205,7 @@ class TestSyncInputs:
             dest_dir = os.path.join(tmpdir, "dest")
             os.makedirs(dest_dir, exist_ok=True)
 
-            result = await sync_inputs(serialized, dest=str(dest_dir))
+            result, env_vars = await sync_inputs(serialized, dest=str(dest_dir))
 
             # Verify string values
             assert result["config"] == "string-config"
@@ -211,6 +218,9 @@ class TestSyncInputs:
             async with aiofiles.open(model_path, "rb") as f:
                 assert await f.read() == b"model data"
 
+            # Verify environment variables
+            assert env_vars == {}
+
     @pytest.mark.asyncio
     async def test_sync_inputs_empty_inputs(self):
         """
@@ -222,10 +232,11 @@ class TestSyncInputs:
         collection = SerializableInputCollection(inputs=[])
         serialized = collection.to_transport
 
-        result = await sync_inputs(serialized, dest="/tmp")
+        result, env_vars = await sync_inputs(serialized, dest="/tmp")
 
         # Verify empty result
         assert result == {}
+        assert env_vars == {}
 
 
 class TestDownloadCodeInputs:
@@ -246,7 +257,7 @@ class TestDownloadCodeInputs:
             mock_bundle = CodeBundle(tgz="s3://bucket/code.tgz", destination="/app", computed_version="v1.0.0")
             mock_download.return_value = mock_bundle
 
-            user_inputs, code_bundle = await download_code_inputs(
+            user_inputs, env_vars, code_bundle = await download_code_inputs(
                 serialized_inputs="",
                 tgz="s3://bucket/code.tgz",
                 pkl="",
@@ -259,6 +270,9 @@ class TestDownloadCodeInputs:
 
             # Verify code bundle was returned
             assert code_bundle == mock_bundle
+
+            # Verify environment variables
+            assert env_vars == {}
 
             # Verify user inputs is empty
             assert user_inputs == {}
@@ -275,7 +289,7 @@ class TestDownloadCodeInputs:
             mock_bundle = CodeBundle(pkl="s3://bucket/code.pkl", destination="/app", computed_version="v1.0.0")
             mock_download.return_value = mock_bundle
 
-            user_inputs, code_bundle = await download_code_inputs(
+            user_inputs, env_vars, code_bundle = await download_code_inputs(
                 serialized_inputs="",
                 tgz="",
                 pkl="s3://bucket/code.pkl",
@@ -289,6 +303,7 @@ class TestDownloadCodeInputs:
             # Verify code bundle was returned
             assert code_bundle == mock_bundle
             assert user_inputs == {}
+            assert env_vars == {}
 
     @pytest.mark.asyncio
     async def test_download_code_inputs_with_inputs_and_code(self):
@@ -307,7 +322,7 @@ class TestDownloadCodeInputs:
             mock_bundle = CodeBundle(tgz="s3://bucket/code.tgz", destination="/app", computed_version="v1.0.0")
             mock_download.return_value = mock_bundle
 
-            user_inputs, code_bundle = await download_code_inputs(
+            user_inputs, env_vars, code_bundle = await download_code_inputs(
                 serialized_inputs=serialized,
                 tgz="s3://bucket/code.tgz",
                 pkl="",
@@ -318,6 +333,7 @@ class TestDownloadCodeInputs:
             # Verify both inputs and code bundle
             assert user_inputs["config"] == "config-value"
             assert code_bundle == mock_bundle
+            assert env_vars == {}
 
     @pytest.mark.asyncio
     async def test_download_code_inputs_no_code_bundle(self):
@@ -331,7 +347,7 @@ class TestDownloadCodeInputs:
         collection = SerializableInputCollection.from_inputs(inputs)
         serialized = collection.to_transport
 
-        user_inputs, code_bundle = await download_code_inputs(
+        user_inputs, env_vars, code_bundle = await download_code_inputs(
             serialized_inputs=serialized, tgz="", pkl="", dest="/app", version="v1.0.0"
         )
 
@@ -340,6 +356,9 @@ class TestDownloadCodeInputs:
 
         # Verify no code bundle
         assert code_bundle is None
+
+        # Verify environment variables
+        assert env_vars == {}
 
     @pytest.mark.asyncio
     async def test_download_code_inputs_empty_inputs_with_code(self):
@@ -353,7 +372,7 @@ class TestDownloadCodeInputs:
             mock_bundle = CodeBundle(tgz="s3://bucket/code.tgz", destination="/app", computed_version="v1.0.0")
             mock_download.return_value = mock_bundle
 
-            user_inputs, code_bundle = await download_code_inputs(
+            user_inputs, env_vars, code_bundle = await download_code_inputs(
                 serialized_inputs="", tgz="s3://bucket/code.tgz", pkl="", dest="/app", version="v1.0.0"
             )
 
@@ -362,6 +381,9 @@ class TestDownloadCodeInputs:
 
             # Verify code bundle
             assert code_bundle == mock_bundle
+
+            # Verify environment variables
+            assert env_vars == {}
 
 
 class TestMainCommand:
@@ -379,7 +401,7 @@ class TestMainCommand:
             # Mock Popen (imported inside main) and asyncio.run
             with patch("subprocess.Popen") as mock_popen, patch("flyte._bin.serve.asyncio.run") as mock_run:
                 # Mock asyncio.run to return empty inputs and no code bundle
-                mock_run.return_value = ({}, None)
+                mock_run.return_value = ({}, {}, None)
 
                 # Mock process
                 mock_process = MagicMock()
@@ -420,7 +442,7 @@ class TestMainCommand:
                 # Mock Popen and asyncio to avoid actual subprocess
                 with patch("subprocess.Popen") as mock_popen, patch("flyte._bin.serve.asyncio.run") as mock_run:
                     # Mock asyncio.run to return test inputs
-                    mock_run.return_value = ({"config": "test-value"}, None)
+                    mock_run.return_value = ({"config": "test-value"}, {}, None)
 
                     # Mock process
                     mock_process = MagicMock()
@@ -460,7 +482,7 @@ class TestMainCommand:
             # Mock Popen and asyncio
             with patch("subprocess.Popen") as mock_popen, patch("flyte._bin.serve.asyncio.run") as mock_run:
                 mock_bundle = CodeBundle(tgz="s3://bucket/code.tgz", destination=tmpdir, computed_version="v1.0.0")
-                mock_run.return_value = ({}, mock_bundle)
+                mock_run.return_value = ({}, {}, mock_bundle)
 
                 # Mock process
                 mock_process = MagicMock()
@@ -501,7 +523,7 @@ class TestMainCommand:
             # Mock Popen and asyncio
             with patch("subprocess.Popen") as mock_popen, patch("flyte._bin.serve.asyncio.run") as mock_run:
                 mock_bundle = CodeBundle(pkl="s3://bucket/code.pkl", destination=tmpdir, computed_version="v1.0.0")
-                mock_run.return_value = ({}, mock_bundle)
+                mock_run.return_value = ({}, {}, mock_bundle)
 
                 # Mock process
                 mock_process = MagicMock()
@@ -538,7 +560,7 @@ class TestMainCommand:
         with tempfile.TemporaryDirectory() as tmpdir:
             # Mock Popen and asyncio
             with patch("subprocess.Popen") as mock_popen, patch("flyte._bin.serve.asyncio.run") as mock_run:
-                mock_run.return_value = ({}, None)
+                mock_run.return_value = ({}, {}, None)
 
                 # Mock process
                 mock_process = MagicMock()
@@ -581,7 +603,7 @@ class TestMainCommand:
         with tempfile.TemporaryDirectory() as tmpdir:
             # Mock Popen and asyncio
             with patch("subprocess.Popen") as mock_popen, patch("flyte._bin.serve.asyncio.run") as mock_run:
-                mock_run.return_value = ({}, None)
+                mock_run.return_value = ({}, {}, None)
 
                 # Mock process
                 mock_process = MagicMock()
@@ -624,7 +646,7 @@ class TestMainCommand:
         with tempfile.TemporaryDirectory() as tmpdir:
             # Mock Popen and asyncio
             with patch("subprocess.Popen") as mock_popen, patch("flyte._bin.serve.asyncio.run") as mock_run:
-                mock_run.return_value = ({}, None)
+                mock_run.return_value = ({}, {}, None)
 
                 # Mock process with non-zero exit code
                 mock_process = MagicMock()
@@ -658,7 +680,7 @@ class TestMainCommand:
                 patch("flyte._bin.serve.asyncio.run") as mock_run,
                 patch("signal.signal") as mock_signal,
             ):
-                mock_run.return_value = ({}, None)
+                mock_run.return_value = ({}, {}, None)
 
                 # Mock process
                 mock_process = MagicMock()
@@ -692,7 +714,7 @@ class TestMainCommand:
 
                 # Mock Popen and asyncio
                 with patch("subprocess.Popen") as mock_popen, patch("flyte._bin.serve.asyncio.run") as mock_run:
-                    mock_run.return_value = ({"test": "value"}, None)
+                    mock_run.return_value = ({"test": "value"}, {}, None)
 
                     # Mock process
                     mock_process = MagicMock()
@@ -749,7 +771,7 @@ class TestMainCommand:
         with tempfile.TemporaryDirectory() as tmpdir:
             # Mock Popen and asyncio
             with patch("subprocess.Popen") as mock_popen, patch("flyte._bin.serve.asyncio.run") as mock_run:
-                mock_run.return_value = ({}, None)
+                mock_run.return_value = ({}, {}, None)
 
                 # Mock process
                 mock_process = MagicMock()
@@ -793,6 +815,7 @@ class TestIntegration:
         inputs = [
             Input(value="config-data", name="config"),
             Input(value="api-key-secret", name="api_key"),
+            Input(value="test-env-var", name="test_env_var", env_var="TEST_ENV_VAR"),
         ]
         collection = SerializableInputCollection.from_inputs(inputs)
         serialized = collection.to_transport
@@ -803,7 +826,7 @@ class TestIntegration:
             mock_download.return_value = mock_bundle
 
             # Run full download
-            user_inputs, code_bundle = await download_code_inputs(
+            user_inputs, env_vars, code_bundle = await download_code_inputs(
                 serialized_inputs=serialized,
                 tgz="s3://bucket/code.tgz",
                 pkl="",
@@ -816,3 +839,4 @@ class TestIntegration:
             assert user_inputs["api_key"] == "api-key-secret"
             assert code_bundle == mock_bundle
             assert code_bundle.tgz == "s3://bucket/code.tgz"
+            assert env_vars["TEST_ENV_VAR"] == "test-env-var"

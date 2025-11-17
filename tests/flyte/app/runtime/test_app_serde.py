@@ -105,7 +105,7 @@ def test_get_proto_container_basic():
     assert container.image is not None
     assert len(container.ports) == 1
     assert container.ports[0].container_port == 8080
-    assert container.ports[0].name == "http"
+    assert container.ports[0].name == ""
 
 
 def test_get_proto_container_with_resources():

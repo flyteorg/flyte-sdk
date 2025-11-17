@@ -14,8 +14,9 @@ from flyte.models import SerializationContext
 from ._app_environment import AppEnvironment
 
 if typing.TYPE_CHECKING:
-    from flyte._deployer import DeployedEnvironment
     from flyteidl2.app import app_definition_pb2
+
+    from flyte._deployer import DeployedEnvironment
 
 FILES_TAR_FILE_NAME = "code_bundle.tgz"
 

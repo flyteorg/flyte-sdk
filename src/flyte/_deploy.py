@@ -23,7 +23,7 @@ if TYPE_CHECKING:
     from flyteidl2.task import task_definition_pb2
 
     from ._code_bundle import CopyFiles
-    from ._deployer import DeploymentContext, DeployedEnvironment
+    from ._deployer import DeployedEnvironment, DeploymentContext
     from ._internal.imagebuild.image_builder import ImageCache
 
 

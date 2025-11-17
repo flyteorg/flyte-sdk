@@ -24,13 +24,14 @@ async def sync_inputs(serialized_inputs: str, dest: str) -> Tuple[dict, dict]:
     """
     Converts inputs into simple dict of name to value, downloading any files/directories as needed.
 
-    # TODO Do we need to return env vars too?
     Args:
         serialized_inputs (str): The serialized inputs string.
         dest: Destination to download inputs to
 
     Returns:
-
+        Tuple[dict, dict]: A tuple containing the output dictionary and the environment variables dictionary.
+        The output dictionary maps input names to their values.
+        The environment variables dictionary maps environment variable names to their values.
     """
     import flyte.storage as storage
     from flyte.app._input import SerializableInputCollection
