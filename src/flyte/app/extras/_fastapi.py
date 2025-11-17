@@ -63,7 +63,7 @@ def _extract_fastapi_app_module_and_var(
 
     # Calculate module name relative to source_dir
     try:
-        relative_path = file_path.relative_to(serialization_context.root_dir)
+        relative_path = file_path.relative_to(serialization_context.root_dir or pathlib.Path("."))
         module_name = pathlib.Path(relative_path).with_suffix("").as_posix().replace("/", ".")
     except ValueError:
         # File is not relative to source_dir, use the stem
@@ -75,7 +75,7 @@ def _extract_fastapi_app_module_and_var(
 
     # Try to get globals from the main module if it matches our file
     if hasattr(sys.modules.get("__main__"), "__file__"):
-        main_file = pathlib.Path(sys.modules["__main__"].__file__).resolve()
+        main_file = pathlib.Path(sys.modules["__main__"].__file__ or ".").resolve()
         if main_file == file_path.resolve():
             caller_globals = sys.modules["__main__"].__dict__
 
