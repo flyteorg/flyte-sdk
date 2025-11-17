@@ -14,13 +14,14 @@ from flyte.models import SerializationContext
 from ._app_environment import AppEnvironment
 
 if typing.TYPE_CHECKING:
+    from flyte._deployer import DeployedEnvironment
     from flyteidl2.app import app_definition_pb2
 
 FILES_TAR_FILE_NAME = "code_bundle.tgz"
 
 
 @dataclass
-class DeployedAppEnvironment(deployer.DeployedEnvironment):
+class DeployedAppEnvironment:
     env: AppEnvironment
     deployed_app: app_definition_pb2.App
 
@@ -109,7 +110,7 @@ async def _deploy_app(
         ) from exc
 
 
-async def _deploy_app_env(context: deployer.DeploymentContext) -> deployer.DeployedEnvironment:
+async def _deploy_app_env(context: deployer.DeploymentContext) -> DeployedEnvironment:
     if not isinstance(context.environment, AppEnvironment):
         raise TypeError(f"Expected AppEnvironment, got {type(context.environment)}")
 
