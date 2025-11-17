@@ -12,6 +12,7 @@ import flyte.errors
 from flyte.models import SerializationContext
 from flyte.syncify import syncify
 
+from ._deployer import DeployedEnvironment
 from ._environment import Environment
 from ._image import Image
 from ._initialize import ensure_client, get_client, get_init_config, requires_initialization
@@ -23,7 +24,7 @@ if TYPE_CHECKING:
     from flyteidl2.task import task_definition_pb2
 
     from ._code_bundle import CopyFiles
-    from ._deployer import DeployedEnvironment, DeploymentContext
+    from ._deployer import DeploymentContext
     from ._internal.imagebuild.image_builder import ImageCache
 
 
