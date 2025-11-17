@@ -75,6 +75,7 @@ class Environment:
             self.image = Image.from_debian_base()
         elif isinstance(self.image, str):
             self.image = Image.from_base(str(self.image))
+        self._validate_name()
         # Automatically register this environment instance in load order
         _ENVIRONMENT_REGISTRY.append(self)
 

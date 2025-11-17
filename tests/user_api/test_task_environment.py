@@ -35,7 +35,7 @@ def test_clone_with_defaults(base_env):
     assert clone.depends_on == []
 
 
-def test_clone_with_overrides(base_env):
+def test_clone_with_overrides(base_env: flyte.TaskEnvironment):
     other = flyte.TaskEnvironment(name="other", image="x", resources=base_env.resources)
     clone = base_env.clone_with(
         name="new",
@@ -47,7 +47,7 @@ def test_clone_with_overrides(base_env):
         secrets="sec",
         depends_on=[other],
     )
-    assert clone.image == "new_img"
+    assert clone.image == flyte.Image.from_base("new_img")
     assert clone.cache == "custom"
     assert clone.reusable == flyte.ReusePolicy(replicas=1)
     assert clone.env_vars == {"A": "B"}

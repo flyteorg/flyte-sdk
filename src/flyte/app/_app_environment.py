@@ -74,6 +74,8 @@ class AppEnvironment(Environment):
             if not isinstance(link, Link):
                 raise TypeError(f"Expected links to be of type List[Link], got {type(link)}")
 
+        self._validate_name()
+
         # get instantiated file to keep track of app root directory
         frame = inspect.currentframe().f_back.f_back  # two frames up to get the app filename
         self._app_filename = frame.f_code.co_filename
