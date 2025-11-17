@@ -120,6 +120,7 @@ class RemoteImageBuilder(ImageBuilder):
             target_image = image_name
 
         from flyte._initialize import get_init_config
+
         cfg = get_init_config()
         run = cast(
             Run,
