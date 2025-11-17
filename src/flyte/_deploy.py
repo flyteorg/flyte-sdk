@@ -8,7 +8,6 @@ from typing import TYPE_CHECKING, Dict, List, Optional, Set, Tuple
 import cloudpickle
 import rich.repr
 
-import flyte.errors
 from flyte.models import SerializationContext
 from flyte.syncify import syncify
 
@@ -149,6 +148,8 @@ async def _deploy_task(
     import grpc.aio
     from flyteidl2.task import task_definition_pb2, task_service_pb2
 
+    import flyte.errors
+
     from ._internal.runtime.convert import convert_upload_default_inputs
     from ._internal.runtime.task_serde import translate_task_to_wire
     from ._internal.runtime.trigger_serde import to_task_trigger
@@ -284,6 +285,8 @@ async def _deploy_task_env(context: DeploymentContext) -> DeployedTaskEnvironmen
 
 @requires_initialization
 async def apply(deployment_plan: DeploymentPlan, copy_style: CopyFiles, dryrun: bool = False) -> Deployment:
+    import flyte.errors
+
     from ._code_bundle import build_code_bundle
     from ._deployer import DeploymentContext, get_deployer
 
