@@ -15,3 +15,9 @@ app_env = flyte.app.AppEnvironment(
     command="streamlit hello --server.port 8080",
     resources=flyte.Resources(cpu="1", memory="1Gi"),
 )
+
+
+if __name__ == "__main__":
+    flyte.init_from_config()
+    d = flyte.deploy(app_env)
+    print(d[0])

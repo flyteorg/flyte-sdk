@@ -32,4 +32,4 @@ if __name__ == "__main__":
     )
     deployments = flyte.deploy(app_env)
     d = deployments[0]
-    print(f"Deployed FastAPI app: {d.env_repr()}")
+    print(f"Deployed FastAPI app: {d.table_repr()}")

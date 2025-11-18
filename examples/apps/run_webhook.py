@@ -113,3 +113,10 @@ if __name__ == "__main__":
     if deployment_list:
         d = deployment_list[0]
         print(f"Deployed Webhook Runner app: {d.env_repr()}")
+
+
+# TO Test
+# curl -X POST "https://nameless-morning-8ff1a.apps.demo.hosted.unionai.cloud/run-task/flytesnacks/development/t1/v1" \
+#   -H "Authorization: Bearer test-api-key" \
+#   -H "Content-Type: application/json" \
+#   -d '{"input_key": "input_value"}'
