@@ -7,6 +7,7 @@ __all__ = [
     "ActionDetails",
     "ActionInputs",
     "ActionOutputs",
+    "App",
     "Phase",
     "Project",
     "Run",
@@ -14,6 +15,7 @@ __all__ = [
     "Secret",
     "SecretTypes",
     "Task",
+    "TaskDetails",
     "Trigger",
     "User",
     "create_channel",
@@ -22,11 +24,12 @@ __all__ = [
 ]
 
 from ._action import Action, ActionDetails, ActionInputs, ActionOutputs
+from ._app import App
 from ._client.auth import create_channel
 from ._data import upload_dir, upload_file
 from ._project import Project
 from ._run import Phase, Run, RunDetails
 from ._secret import Secret, SecretTypes
-from ._task import Task
+from ._task import Task, TaskDetails
 from ._trigger import Trigger
 from ._user import User

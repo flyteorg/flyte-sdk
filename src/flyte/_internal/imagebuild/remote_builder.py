@@ -70,6 +70,7 @@ class RemoteImageChecker(ImageChecker):
         image_name = f"{repository.split('/')[-1]}:{tag}"
 
         try:
+            from flyteidl2.common.identifier_pb2 import ProjectIdentifier
             from flyteidl2.imagebuilder import definition_pb2 as image_definition__pb2
             from flyteidl2.imagebuilder import payload_pb2 as image_payload__pb2
             from flyteidl2.imagebuilder import service_pb2_grpc as image_service_pb2_grpc
@@ -80,7 +81,11 @@ class RemoteImageChecker(ImageChecker):
             if cfg is None:
                 raise ValueError("Init config should not be None")
             image_id = image_definition__pb2.ImageIdentifier(name=image_name)
-            req = image_payload__pb2.GetImageRequest(id=image_id, organization=cfg.org)
+            req = image_payload__pb2.GetImageRequest(
+                id=image_id,
+                organization=cfg.org,
+                project_id=ProjectIdentifier(organization=cfg.org, domain=cfg.domain, name=cfg.project),
+            )
             if cls._images_client is None:
                 if cfg.client is None:
                     raise ValueError("remote client should not be None")
@@ -118,11 +123,15 @@ class RemoteImageBuilder(ImageBuilder):
         else:
             # Use the default system registry in the backend.
             target_image = image_name
+
+        from flyte._initialize import get_init_config
+
+        cfg = get_init_config()
         run = cast(
             Run,
-            await flyte.with_runcontext(project=IMAGE_TASK_PROJECT, domain=IMAGE_TASK_DOMAIN).run.aio(
-                entity, spec=spec, context=context, target_image=target_image
-            ),
+            await flyte.with_runcontext(
+                project=cfg.project, domain=cfg.domain, cache_lookup_scope="project-domain"
+            ).run.aio(entity, spec=spec, context=context, target_image=target_image),
         )
         logger.warning(f"⏳ Waiting for build to finish at: [bold cyan link={run.url}]{run.url}[/bold cyan link]")
 
@@ -292,9 +301,11 @@ def _get_layers_proto(image: Image, context_path: Path) -> "image_definition_pb2
             for line in layer.pyproject.read_text().splitlines():
                 if "tool.poetry.source" in line:
                     raise ValueError("External sources are not supported in pyproject.toml")
-
-            if layer.extra_args and "--no-root" in layer.extra_args:
+            extra_args = layer.extra_args or ""
+            if layer.project_install_mode == "dependencies_only":
                 # Copy pyproject itself
+                if "--no-root" not in extra_args:
+                    extra_args += " --no-root"
                 pyproject_dst = copy_files_to_context(layer.pyproject, context_path)
             else:
                 # Copy the entire project
@@ -304,7 +315,7 @@ def _get_layers_proto(image: Image, context_path: Path) -> "image_definition_pb2
                 poetry_project=image_definition_pb2.PoetryProject(
                     pyproject=str(pyproject_dst.relative_to(context_path)),
                     poetry_lock=str(copy_files_to_context(layer.poetry_lock, context_path).relative_to(context_path)),
-                    extra_args=layer.extra_args,
+                    extra_args=extra_args,
                     secret_mounts=secret_mounts,
                 )
             )

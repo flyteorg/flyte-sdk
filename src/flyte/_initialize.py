@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Callable, List, Literal, Optional, TypeVar
 from flyte.errors import InitializationError
 from flyte.syncify import syncify
 
-from ._logging import initialize_logger, logger
+from ._logging import LogFormat, initialize_logger, logger
 
 if TYPE_CHECKING:
     from flyte._internal.imagebuild import ImageBuildEngine
@@ -113,10 +113,8 @@ async def _initialize_client(
     )
 
 
-def _initialize_logger(log_level: int | None = None):
-    initialize_logger(enable_rich=True)
-    if log_level:
-        initialize_logger(log_level=log_level, enable_rich=True)
+def _initialize_logger(log_level: int | None = None, log_format: LogFormat | None = None) -> None:
+    initialize_logger(log_level=log_level, log_format=log_format, enable_rich=True)
 
 
 @syncify
@@ -126,6 +124,7 @@ async def init(
     domain: str | None = None,
     root_dir: Path | None = None,
     log_level: int | None = None,
+    log_format: LogFormat | None = None,
     endpoint: str | None = None,
     headless: bool = False,
     insecure: bool = False,
@@ -146,6 +145,7 @@ async def init(
     images: typing.Dict[str, str] | None = None,
     source_config_path: Optional[Path] = None,
     sync_local_sys_paths: bool = True,
+    load_plugin_type_transformers: bool = True,
 ) -> None:
     """
     Initialize the Flyte system with the given configuration. This method should be called before any other Flyte
@@ -158,6 +158,7 @@ async def init(
       also use to determine all the code that needs to be copied to the remote location.
       defaults to the editable install directory if the cwd is in a Python editable install, else just the cwd.
     :param log_level: Optional logging level for the logger, default is set using the default initialization policies
+    :param log_format: Optional logging format for the logger, default is "console"
     :param api_key: Optional API key for authentication
     :param endpoint: Optional API endpoint URL
     :param headless: Optional Whether to run in headless mode
@@ -183,12 +184,17 @@ async def init(
     :param images: Optional dict of images that can be used by referencing the image name.
     :param source_config_path: Optional path to the source configuration file (This is only used for documentation)
     :param sync_local_sys_paths: Whether to include and synchronize local sys.path entries under the root directory
-     into the remote container (default: True).
+      into the remote container (default: True).
+    :param load_plugin_type_transformers: If enabled (default True), load the type transformer plugins registered under
+      the "flyte.plugins.types" entry point group.
     :return: None
     """
     from flyte._utils import get_cwd_editable_install, org_from_endpoint, sanitize_endpoint
+    from flyte.types import _load_custom_type_transformers
 
-    _initialize_logger(log_level=log_level)
+    _initialize_logger(log_level=log_level, log_format=log_format)
+    if load_plugin_type_transformers:
+        _load_custom_type_transformers()
 
     global _init_config  # noqa: PLW0603
 
@@ -243,6 +249,7 @@ async def init_from_config(
     path_or_config: str | Path | Config | None = None,
     root_dir: Path | None = None,
     log_level: int | None = None,
+    log_format: LogFormat = "console",
     storage: Storage | None = None,
     images: tuple[str, ...] | None = None,
     sync_local_sys_paths: bool = True,
@@ -258,6 +265,7 @@ async def init_from_config(
         if not available, the current working directory.
     :param log_level: Optional logging level for the framework logger,
         default is set using the default initialization policies
+    :param log_format: Optional logging format for the logger, default is "console"
     :param storage: Optional blob store (S3, GCS, Azure) configuration if needed to access (i.e. using Minio)
     :param images: List of image strings in format "imagename=imageuri" or just "imageuri".
     :param sync_local_sys_paths: Whether to include and synchronize local sys.path entries under the root directory
@@ -289,8 +297,6 @@ async def init_from_config(
     else:
         cfg = path_or_config
 
-    _initialize_logger(log_level=log_level)
-
     logger.info(f"Flyte config initialized as {cfg}", extra={"highlighter": ReprHighlighter()})
 
     # parse image, this will overwrite the image_refs set in the config file
@@ -311,12 +317,60 @@ async def init_from_config(
         client_credentials_secret=cfg.platform.client_credentials_secret,
         root_dir=root_dir,
         log_level=log_level,
+        log_format=log_format,
         image_builder=cfg.image.builder,
         images=cfg.image.image_refs,
         storage=storage,
         source_config_path=cfg_path,
         sync_local_sys_paths=sync_local_sys_paths,
     )
+
+
+@syncify
+async def init_in_cluster(
+    org: str | None = None,
+    project: str | None = None,
+    domain: str | None = None,
+    api_key: str | None = None,
+    endpoint: str | None = None,
+    insecure: bool = False,
+) -> dict[str, typing.Any]:
+    import os
+
+    from flyte._utils import str2bool
+
+    PROJECT_NAME = "FLYTE_INTERNAL_EXECUTION_PROJECT"
+    DOMAIN_NAME = "FLYTE_INTERNAL_EXECUTION_DOMAIN"
+    ORG_NAME = "_U_ORG_NAME"
+    ENDPOINT_OVERRIDE = "_U_EP_OVERRIDE"
+    INSECURE_SKIP_VERIFY_OVERRIDE = "_U_INSECURE_SKIP_VERIFY"
+    _UNION_EAGER_API_KEY_ENV_VAR = "_UNION_EAGER_API_KEY"
+
+    org = org or os.getenv(ORG_NAME)
+    project = project or os.getenv(PROJECT_NAME)
+    domain = domain or os.getenv(DOMAIN_NAME)
+    api_key = api_key or os.getenv(_UNION_EAGER_API_KEY_ENV_VAR)
+
+    remote_kwargs: dict[str, typing.Any] = {"insecure": False}
+    if api_key:
+        logger.info("Using api key from environment")
+        remote_kwargs["api_key"] = api_key
+    else:
+        ep = endpoint or os.environ.get(ENDPOINT_OVERRIDE, "host.docker.internal:8090")
+        remote_kwargs["endpoint"] = ep
+        if not insecure:
+            if "localhost" in ep or "docker" in ep:
+                remote_kwargs["insecure"] = True
+        logger.debug(f"Using controller endpoint: {ep} with kwargs: {remote_kwargs}")
+
+    # Check for insecure_skip_verify override (e.g. for self-signed certs)
+    insecure_skip_verify_str = os.getenv(INSECURE_SKIP_VERIFY_OVERRIDE, "")
+    if str2bool(insecure_skip_verify_str):
+        remote_kwargs["insecure_skip_verify"] = True
+        logger.info("SSL certificate verification disabled (insecure_skip_verify=True)")
+
+    await init.aio(org=org, project=project, domain=domain, image_builder="remote", **remote_kwargs)
+    return remote_kwargs
 
 
 def _get_init_config() -> Optional[_InitConfig]:

@@ -18,7 +18,7 @@ from flyte._initialize import (
     requires_initialization,
     requires_storage,
 )
-from flyte._logging import logger
+from flyte._logging import LogFormat, logger
 from flyte._task import F, P, R, TaskTemplate
 from flyte.models import (
     ActionID,
@@ -40,6 +40,7 @@ if TYPE_CHECKING:
     from ._internal.imagebuild.image_builder import ImageCache
 
 Mode = Literal["local", "remote", "hybrid"]
+CacheLookupScope = Literal["global", "project-domain"]
 
 
 @dataclass(frozen=True)
@@ -95,9 +96,11 @@ class _Runner:
         annotations: Dict[str, str] | None = None,
         interruptible: bool | None = None,
         log_level: int | None = None,
+        log_format: LogFormat = "console",
         disable_run_cache: bool = False,
         queue: Optional[str] = None,
         custom_context: Dict[str, str] | None = None,
+        cache_lookup_scope: CacheLookupScope = "global",
     ):
         from flyte._tools import ipython_check
 
@@ -126,9 +129,11 @@ class _Runner:
         self._annotations = annotations
         self._interruptible = interruptible
         self._log_level = log_level
+        self._log_format = log_format
         self._disable_run_cache = disable_run_cache
         self._queue = queue
         self._custom_context = custom_context or {}
+        self._cache_lookup_scope = cache_lookup_scope
 
     @requires_initialization
     async def _run_remote(self, obj: TaskTemplate[P, R, F] | LazyEntity, *args: P.args, **kwargs: P.kwargs) -> Run:
@@ -220,6 +225,7 @@ class _Runner:
                 env["LOG_LEVEL"] = str(self._log_level)
             else:
                 env["LOG_LEVEL"] = str(logger.getEffectiveLevel())
+        env["LOG_FORMAT"] = self._log_format
 
         # These paths will be appended to sys.path at runtime.
         if cfg.sync_local_sys_paths:
@@ -280,6 +286,16 @@ class _Runner:
                 else None
             )
 
+            def _to_cache_lookup_scope(scope: CacheLookupScope | None = None) -> run_pb2.CacheLookupScope:
+                if scope == "global":
+                    return run_pb2.CacheLookupScope.CACHE_LOOKUP_SCOPE_GLOBAL
+                elif scope == "project-domain":
+                    return run_pb2.CacheLookupScope.CACHE_LOOKUP_SCOPE_PROJECT_DOMAIN
+                elif scope is None:
+                    return run_pb2.CacheLookupScope.CACHE_LOOKUP_SCOPE_UNSPECIFIED
+                else:
+                    raise ValueError(f"Unknown cache lookup scope: {scope}")
+
             try:
                 resp = await get_client().run_service.CreateRun(
                     run_service_pb2.CreateRunRequest(
@@ -298,6 +314,12 @@ class _Runner:
                             cluster=self._queue or task.queue,
                             raw_data_storage=raw_data_storage,
                             security_context=security_context,
+                            cache_config=run_pb2.CacheConfig(
+                                overwrite_cache=self._overwrite_cache,
+                                cache_lookup_scope=_to_cache_lookup_scope(self._cache_lookup_scope)
+                                if self._cache_lookup_scope
+                                else None,
+                            ),
                         ),
                     ),
                 )
@@ -600,9 +622,11 @@ def with_runcontext(
     annotations: Dict[str, str] | None = None,
     interruptible: bool | None = None,
     log_level: int | None = None,
+    log_format: LogFormat = "console",
     disable_run_cache: bool = False,
     queue: Optional[str] = None,
     custom_context: Dict[str, str] | None = None,
+    cache_lookup_scope: CacheLookupScope = "global",
 ) -> _Runner:
     """
     Launch a new run with the given parameters as the context.
@@ -645,11 +669,14 @@ def with_runcontext(
         original setting on all tasks is retained.
     :param log_level: Optional Log level to set for the run. If not provided, it will be set to the default log level
         set using `flyte.init()`
+    :param log_format: Optional Log format to set for the run. If not provided, it will be set to the default log format
     :param disable_run_cache: Optional If true, the run cache will be disabled. This is useful for testing purposes.
     :param queue: Optional The queue to use for the run. This is used to specify the cluster to use for the run.
     :param custom_context: Optional global input context to pass to the task. This will be available via
         get_custom_context() within the task and will automatically propagate to sub-tasks.
         Acts as base/default values that can be overridden by context managers in the code.
+    :param cache_lookup_scope: Optional Scope to use for the run. This is used to specify the scope to use for cache
+        lookups. If not specified, it will be set to the default scope (global unless overridden at the system level).
 
     :return: runner
     """
@@ -676,9 +703,11 @@ def with_runcontext(
         project=project,
         domain=domain,
         log_level=log_level,
+        log_format=log_format,
         disable_run_cache=disable_run_cache,
         queue=queue,
         custom_context=custom_context,
+        cache_lookup_scope=cache_lookup_scope,
     )
 
 
