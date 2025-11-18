@@ -93,8 +93,6 @@ def main(
     resolver_args: List[str],
 ):
     sys.path.insert(0, ".")
-    print("Flyte runtime started")
-    return 0
 
     import faulthandler
     import signal
@@ -216,13 +214,4 @@ def main(
 
 
 if __name__ == "__main__":
-    try:
-        asyncio.get_running_loop()
-        import nest_asyncio
-
-        nest_asyncio.apply()
-    except RuntimeError:
-        from flyte._logging import logger
-
-        logger.debug("No running event loop found, not applying nest_asyncio patch")
     _pass_through()
