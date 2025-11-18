@@ -15,7 +15,8 @@ env = flyte.TaskEnvironment(
     name="poetry_example",
     resources=flyte.Resources(memory="250Mi"),
     image=(
-        flyte.Image.from_debian_base().with_poetry_project(
+        flyte.Image.from_debian_base()
+        .with_poetry_project(
             pyproject_file=pathlib.Path("pyproject.toml"),
             poetry_lock=pathlib.Path("poetry.lock"),
             project_install_mode="dependencies_only",
@@ -30,7 +31,6 @@ env = flyte.TaskEnvironment(
 @env.task
 def calculate(x: int) -> int:
     """Simple calculation task."""
-    import numpy as np
 
     # Use numpy (installed via poetry)
     slope, intercept = 2, 5
@@ -90,4 +90,3 @@ if __name__ == "__main__":
 
     # Wait for completion and stream logs
     run.wait(run)
-

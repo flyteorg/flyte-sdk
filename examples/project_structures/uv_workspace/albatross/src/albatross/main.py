@@ -1,10 +1,10 @@
 from pathlib import Path
 
+from albatross.condor.strategy import get_strategy
 from bird_feeder.actions import bird_env, get_feeder
 from seeds.actions import get_seed
 
 import flyte
-from albatross.condor.strategy import get_strategy
 
 UV_WORKSPACE_ROOT = Path(__file__).parent.parent.parent
 

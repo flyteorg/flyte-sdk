@@ -1,9 +1,10 @@
 import pathlib
 from typing import Any
 
-import flyte
 from pyproject_package.data import loader, processor
 from pyproject_package.models import analyzer
+
+import flyte
 
 UV_PROJECT_ROOT = pathlib.Path(__file__).parent.parent.parent.parent
 

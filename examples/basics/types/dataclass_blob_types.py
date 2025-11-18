@@ -42,7 +42,9 @@ if __name__ == "__main__":
     flyte.init_from_config()
 
     # Create a local test file and upload it
-    test_content = "Hello, Flyte!\nThis is a blob file.\nIt contains multiple lines of text.\nUsed in a dataclass example."
+    test_content = (
+        "Hello, Flyte!\nThis is a blob file.\nIt contains multiple lines of text.\nUsed in a dataclass example."
+    )
     with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".txt") as tmp:
         tmp.write(test_content)
         tmp_path = tmp.name
@@ -67,4 +69,3 @@ if __name__ == "__main__":
     finally:
         # Clean up the temporary file
         os.unlink(tmp_path)
-
