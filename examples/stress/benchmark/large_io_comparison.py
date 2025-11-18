@@ -233,7 +233,7 @@ async def download_dir(d: flyte.io.Dir, hang: bool = False) -> Tuple[int, float]
 
 
 @env.task
-async def read_large_file_new(f: flyte.io.File, hang: bool = False, iterations: int = 10) -> List[BenchmarkResult]:
+async def read_large_file_new(f: flyte.io.File, hang: bool = False, iterations: int = 5) -> List[BenchmarkResult]:
     results = []
     for i in range(iterations):
         print(f"[New SDK File] Run {i + 1}/{iterations}", flush=True)
@@ -313,14 +313,6 @@ async def read_dir_s3fs(d: flyte.io.Dir, iterations: int = 10) -> List[Benchmark
         bytes_val, duration = await download_s3fs(d.path, is_directory=True)
         results.append(BenchmarkResult(bytes=bytes_val, duration=duration))
     return results
-
-
-@env.task
-async def main(size_megabytes: int = 5120) -> Tuple[int, float]:
-    large_file = await create_file(size_megabytes)
-    t1 = asyncio.create_task(read_large_file_new(large_file))
-    (r1,) = await asyncio.gather(t1)
-    return r1
 
 
 def generate_benchmark_report(
@@ -556,8 +548,6 @@ async def benchmark_all():
 # From command line:
 # $ flyte -c ~/.flyte/builder.remote.demo.yaml run -p flytesnacks -d development stress/benchmark/large_io_comparison.py benchmark_all  # noqa: E501
 if __name__ == "__main__":
-    import flyte.git
-
-    flyte.init_from_config(flyte.git.config_from_root())
-    r = flyte.run(main, 5)
+    flyte.init_from_config()
+    r = flyte.run(benchmark_all)
     print(r.url)
