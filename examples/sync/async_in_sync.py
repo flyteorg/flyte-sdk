@@ -23,7 +23,6 @@ def call_async() -> str:
 
 
 if __name__ == "__main__":
-
     flyte.init_from_config()
     run = flyte.run(call_async)
     print(run.url)

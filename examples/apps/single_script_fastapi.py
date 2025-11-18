@@ -13,9 +13,7 @@ import pathlib
 from fastapi import FastAPI
 
 import flyte
-
 from flyte.app.extras import FastAPIAppEnvironment
-
 
 app = FastAPI(
     title="Single script FastAPI Demo",

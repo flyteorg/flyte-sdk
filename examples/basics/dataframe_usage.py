@@ -79,7 +79,6 @@ async def get_employee_data(raw_dataframe: pd.DataFrame, flyte_dataframe: pd.Dat
 
 
 if __name__ == "__main__":
-
     flyte.init_from_config()
     # Get the data sources
 
