@@ -38,12 +38,17 @@ def get_proto_container(
     Returns:
         Container protobuf message
     """
+    from flyte import Image
+
     env = [literals_pb2.KeyValuePair(key=k, value=v) for k, v in app_env.env_vars.items()] if app_env.env_vars else None
     resources = get_proto_resources(app_env.resources)
 
-    img = app_env.image
-    if isinstance(img, str):
-        raise flyte.errors.RuntimeSystemError("BadConfig", "Image is not a valid image")
+    if app_env.image == "auto":
+        img = Image.from_debian_base()
+    elif isinstance(app_env.image, str):
+        img = Image.from_base(app_env.image)
+    else:
+        img = app_env.image
 
     env_name = app_env.name
     img_uri = lookup_image_in_cache(serialization_context, env_name, img)
