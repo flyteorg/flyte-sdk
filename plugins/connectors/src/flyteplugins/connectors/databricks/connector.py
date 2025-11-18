@@ -12,7 +12,7 @@ from flyteidl2.core.execution_pb2 import TaskExecution, TaskLog
 from flyteidl2.core.tasks_pb2 import TaskTemplate
 from google.protobuf.json_format import MessageToDict
 
-DATABRICKS_API_ENDPOINT = "/api/2.2/jobs"
+DATABRICKS_API_ENDPOINT = "/api/2.1/jobs"
 DEFAULT_DATABRICKS_INSTANCE_ENV_KEY = "FLYTE_DATABRICKS_INSTANCE"
 
 
@@ -51,8 +51,8 @@ def _get_databricks_job_spec(task_template: TaskTemplate) -> dict:
     databricks_job["git_source"] = {
         "git_url": "https://github.com/flyteorg/flyte-sdk",
         "git_provider": "gitHub",
-        # https://github.com/flyteorg/flyte-sdk/tree/487a62f1bec70008ffbc7ae4e11a05f3eb37a588
-        "git_commit": "487a62f1bec70008ffbc7ae4e11a05f3eb37a588",
+        # https://github.com/flyteorg/flyte-sdk/tree/0227af26f82353fb828d099921b15b0dffee676f
+        "git_commit": "0227af26f82353fb828d099921b15b0dffee676f",
     }
     print("final databricks_job:", databricks_job)
     return databricks_job

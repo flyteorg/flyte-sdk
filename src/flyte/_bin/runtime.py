@@ -93,6 +93,8 @@ def main(
     resolver_args: List[str],
 ):
     sys.path.insert(0, ".")
+    print("Flyte runtime started")
+    return 0
 
     import faulthandler
     import signal

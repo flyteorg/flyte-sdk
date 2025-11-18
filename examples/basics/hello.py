@@ -2,7 +2,7 @@ import flyte
 
 # TaskEnvironments provide a simple way of grouping configuration used by tasks (more later).
 env = flyte.TaskEnvironment(
-    name="hello_world", resources=flyte.Resources(memory="250Mi"), image=flyte.Image.from_debian_base()
+    name="hello_world", resources=flyte.Resources(memory="250Mi"), image=flyte.Image.from_debian_base(python_version=(3, 11))
 )
 
 
