@@ -72,7 +72,7 @@ async def _deploy_app(
     if app.include:
         app_file = Path(app._app_filename)
         app_root_dir = app_file.parent
-        files = tuple(app_file.name, *app.include)
+        files = tuple((app_file.name, *app.include))
         code_bundle = await build_code_bundle_from_relative_paths(files, from_dir=app_root_dir)
         serialization_context.code_bundle = code_bundle
 
