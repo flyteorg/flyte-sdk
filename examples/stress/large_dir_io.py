@@ -160,8 +160,7 @@ async def main(size_gigabytes: int = 5) -> Tuple[int, float, int]:
 
 
 if __name__ == "__main__":
-    import flyte.git
 
-    flyte.init_from_config(flyte.git.config_from_root())
+    flyte.init_from_config()
     r = flyte.run(main, 5)
     print(r.url)
