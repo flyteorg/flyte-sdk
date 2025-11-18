@@ -1,8 +1,5 @@
 """
-Flyte runtime module, this is the entrypoint script for the Flyte runtime.
-
-Caution: Startup time for this module is very important, as it is the entrypoint for the Flyte runtime.
-Refrain from importing any modules here. If you need to import any modules, do it inside the main function.
+Runtime entrypoint for Databricks connector.
 """
 
 import sys
@@ -17,13 +14,13 @@ def main():
     if args[1] == "a0":
         parser = _a0.make_parser(click_ctx)
         args, _, _ = parser.parse_args(args[2:])
-        _a0.callback(**args)
-
+        with click_ctx:
+            _a0.callback(**args, debug=False, interactive_mode=False, tgz=None, pkl=None, dest=None)
     else:
         raise ValueError(f"Unrecognized command: {args[1:]}")
 
 
 if __name__ == "__main__":
-    import nest_asyncio
-    nest_asyncio.apply()
+    # import nest_asyncio
+    # nest_asyncio.apply()
     main()

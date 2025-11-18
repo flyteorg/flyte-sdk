@@ -44,7 +44,7 @@ def _get_databricks_job_spec(task_template: TaskTemplate) -> dict:
             new_cluster["spark_env_vars"].update({env.key: env.value for env in envs})
     # https://docs.databricks.com/api/workspace/jobs/submit
     databricks_job["spark_python_task"] = {
-        "python_file": "src/flyte/_bin/runtime.py",
+        "python_file": "plugins/connectors/src/flyteplugins/connectors/databricks/entrypoint.py",
         "parameters": list(container.args),
         "source": "GIT",
     }
@@ -52,7 +52,7 @@ def _get_databricks_job_spec(task_template: TaskTemplate) -> dict:
         "git_url": "https://github.com/flyteorg/flyte-sdk",
         "git_provider": "gitHub",
         # https://github.com/flyteorg/flyte-sdk/tree/0227af26f82353fb828d099921b15b0dffee676f
-        "git_commit": "da35a118c2dad8d346a664b528be470d16637970",
+        "git_commit": "c7032fc7e84971a0aa815020ede90dce133ebcb0",
     }
     print("final databricks_job:", databricks_job)
     return databricks_job
