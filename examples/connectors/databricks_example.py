@@ -112,7 +112,7 @@ async def test_main():
 if __name__ == "__main__":
     flyte.init_from_config(storage=S3().auto())
     run = flyte.with_runcontext(
-        mode="local",
+        mode="remote",
         raw_data_path="s3://my-v2-connector/").run(hello_databricks_nested)
     print("run name:", run.name)
     print("run urlllll:", run.url)
