@@ -1,3 +1,4 @@
+import os
 import streamlit as st
 from utils import generate_data
 
@@ -12,3 +13,4 @@ data = all_data[columns]
 tab1, tab2 = st.tabs(["Chart", "Dataframe"])
 tab1.line_chart(data, height=250)
 tab2.dataframe(data, height=250, use_container_width=True)
+st.write(f"Environment: {os.environ}")

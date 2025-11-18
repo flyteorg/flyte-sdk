@@ -13,33 +13,15 @@ import pathlib
 from fastapi import FastAPI
 
 import flyte
+
 from flyte.app.extras import FastAPIAppEnvironment
 
+
 app = FastAPI(
-    title="Single script FastAPI Demo", description="A simple FastAPI app using a single script", version="1.0.0"
+    title="Single script FastAPI Demo",
+    description="A simple FastAPI app using a single script",
+    version="1.0.0",
 )
-
-
-@app.get("/")
-async def root() -> dict[str, str]:
-    """Root endpoint returning a welcome message."""
-    return {"message": "Hello from Single-script FastAPI!", "info": "This app is powered by a single script"}
-
-
-@app.get("/health")
-async def health_check() -> dict[str, str]:
-    """Health check endpoint."""
-    return {"status": "healthy"}
-
-
-@app.get("/items/{item_id}")
-async def read_item(item_id: int, q: str | None = None) -> dict:
-    """Example endpoint with path and query parameters."""
-    result = {"item_id": item_id}
-    if q:
-        result["q"] = q
-    return result
-
 
 env = FastAPIAppEnvironment(
     name="fastapi-script",
@@ -50,6 +32,33 @@ env = FastAPIAppEnvironment(
     resources=flyte.Resources(cpu=1, memory="512Mi"),
     requires_auth=False,
 )
+
+
+@env.app.get("/")
+async def root() -> dict[str, str]:
+    """Root endpoint returning a welcome message."""
+    return {"message": "Hello from Single-script FastAPI!", "info": "This app is powered by a single script"}
+
+
+@env.app.get("/health")
+async def health_check() -> dict[str, str]:
+    """Health check endpoint."""
+    return {"status": "healthy"}
+
+
+@env.app.get("/items/{item_id}")
+async def read_item(item_id: int, q: str | None = None) -> dict:
+    """Example endpoint with path and query parameters."""
+    result = {"item_id": item_id}
+    if q:
+        result["q"] = q
+    return result
+
+
+@env.app.get("/self")
+async def self() -> dict:
+    """Self endpoint returning the app itself."""
+    return {"endpointin": env.endpoint}
 
 
 if __name__ == "__main__":
