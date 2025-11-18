@@ -2,9 +2,11 @@ import inspect
 import os
 import pathlib
 import sys
+from types import ModuleType
+from typing import Tuple
 
 
-def extract_obj_module(obj: object, /, source_dir: pathlib.Path | None = None) -> str:
+def extract_obj_module(obj: object, /, source_dir: pathlib.Path | None = None) -> Tuple[str, ModuleType]:
     """
     Extract the module from the given object. If source_dir is provided, the module will be relative to the source_dir.
 
@@ -15,6 +17,8 @@ def extract_obj_module(obj: object, /, source_dir: pathlib.Path | None = None) -
     Returns:
         The module name as a string.
     """
+    if source_dir is None:
+        raise ValueError("extract_obj_module: source_dir cannot be None - specify root-dir")
     # Get the module containing the object
     entity_module = inspect.getmodule(obj)
     if entity_module is None:
@@ -30,7 +34,7 @@ def extract_obj_module(obj: object, /, source_dir: pathlib.Path | None = None) -
     try:
         # Get the relative path to the current directory
         # Will raise ValueError if the file is not in the source directory
-        relative_path = file_path.relative_to(str(source_dir))
+        relative_path = file_path.relative_to(str(pathlib.Path(source_dir).absolute()))
 
         if relative_path == pathlib.Path("_internal/resolvers"):
             entity_module_name = entity_module.__name__
@@ -65,4 +69,4 @@ def extract_obj_module(obj: object, /, source_dir: pathlib.Path | None = None) -
         main_path = pathlib.Path(fp)
         entity_module_name = main_path.stem
 
-    return entity_module_name
+    return entity_module_name, entity_module

@@ -79,7 +79,7 @@ class StandardIgnore(Ignore):
     by fed with custom ignore patterns from cli."""
 
     def __init__(self, root: Path, patterns: Optional[List[str]] = None):
-        super().__init__(root)
+        super().__init__(root.resolve())
         self.patterns = patterns if patterns else STANDARD_IGNORE_PATTERNS
 
     def _is_ignored(self, path: pathlib.Path) -> bool:

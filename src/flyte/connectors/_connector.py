@@ -8,8 +8,8 @@ from typing import Any, Dict, List, Optional
 from flyteidl2.core import tasks_pb2
 from flyteidl2.core.execution_pb2 import TaskExecution, TaskLog
 from flyteidl2.plugins import connector_pb2
+from flyteidl2.plugins.connector_pb2 import Connector as ConnectorProto
 from flyteidl2.plugins.connector_pb2 import (
-    Connector,
     GetTaskLogsResponse,
     GetTaskMetricsResponse,
     TaskCategory,
@@ -147,7 +147,7 @@ class ConnectorRegistry(object):
     """
 
     _REGISTRY: typing.ClassVar[Dict[ConnectorRegistryKey, AsyncConnector]] = {}
-    _METADATA: typing.ClassVar[Dict[str, Connector]] = {}
+    _METADATA: typing.ClassVar[Dict[str, ConnectorProto]] = {}
 
     @staticmethod
     def register(connector: AsyncConnector, override: bool = False):
@@ -164,10 +164,10 @@ class ConnectorRegistry(object):
         task_category = TaskCategory(name=connector.task_type_name, version=connector.task_type_version)
 
         if connector.name in ConnectorRegistry._METADATA:
-            connector_metadata = ConnectorRegistry.get_connector_metadata(connector.name)
+            connector_metadata = ConnectorRegistry._get_connector_metadata(connector.name)
             connector_metadata.supported_task_categories.append(task_category)
         else:
-            connector_metadata = Connector(
+            connector_metadata = ConnectorProto(
                 name=connector.name,
                 supported_task_categories=[task_category],
             )
@@ -183,11 +183,11 @@ class ConnectorRegistry(object):
         return ConnectorRegistry._REGISTRY[key]
 
     @staticmethod
-    def list_connectors() -> List[Connector]:
+    def _list_connectors() -> List[ConnectorProto]:
         return list(ConnectorRegistry._METADATA.values())
 
     @staticmethod
-    def get_connector_metadata(name: str) -> Connector:
+    def _get_connector_metadata(name: str) -> ConnectorProto:
         if name not in ConnectorRegistry._METADATA:
             raise FlyteConnectorNotFound(f"Cannot find connector for name: {name}.")
         return ConnectorRegistry._METADATA[name]
