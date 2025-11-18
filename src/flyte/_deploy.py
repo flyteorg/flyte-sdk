@@ -3,12 +3,11 @@ from __future__ import annotations
 import asyncio
 import hashlib
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Dict, List, Optional, Protocol, Set, Tuple, Type
+from typing import TYPE_CHECKING, Dict, List, Optional, Set, Tuple
 
 import cloudpickle
 import rich.repr
 
-import flyte.errors
 from flyte.models import SerializationContext
 from flyte.syncify import syncify
 
@@ -21,9 +20,9 @@ from ._task_environment import TaskEnvironment
 
 if TYPE_CHECKING:
     from flyteidl2.task import task_definition_pb2
-    from flyteidl2.trigger import trigger_definition_pb2
 
     from ._code_bundle import CopyFiles
+    from ._deployer import DeployedEnvironment, DeploymentContext
     from ._internal.imagebuild.image_builder import ImageCache
 
 
@@ -36,21 +35,16 @@ class DeploymentPlan:
 
 @rich.repr.auto
 @dataclass
-class DeploymentContext:
-    """
-    Context for deployment operations.
-    """
-
-    environment: Environment | TaskEnvironment
-    serialization_context: SerializationContext
-    dryrun: bool = False
-
-
-@rich.repr.auto
-@dataclass
 class DeployedTask:
     deployed_task: task_definition_pb2.TaskSpec
-    deployed_triggers: List[trigger_definition_pb2.TaskTrigger]
+    deployed_triggers: List[task_definition_pb2.TaskTrigger]
+
+    def get_name(self) -> str:
+        """
+        Returns the name of the deployed environment.
+        Returns:
+        """
+        return self.deployed_task.task_template.id.name
 
     def summary_repr(self) -> str:
         """
@@ -66,6 +60,7 @@ class DeployedTask:
         Returns a table representation of the deployed task.
         """
         return [
+            ("type", "task"),
             ("name", self.deployed_task.task_template.id.name),
             ("version", self.deployed_task.task_template.id.version),
             ("triggers", ",".join([t.name for t in self.deployed_triggers])),
@@ -74,9 +69,15 @@ class DeployedTask:
 
 @rich.repr.auto
 @dataclass
-class DeployedEnv:
-    env: Environment
+class DeployedTaskEnvironment:
+    env: TaskEnvironment
     deployed_entities: List[DeployedTask]
+
+    def get_name(self) -> str:
+        """
+        Returns the name of the deployed environment.
+        """
+        return self.env.name
 
     def summary_repr(self) -> str:
         """
@@ -109,7 +110,7 @@ class DeployedEnv:
 @rich.repr.auto
 @dataclass(frozen=True)
 class Deployment:
-    envs: Dict[str, DeployedEnv]
+    envs: Dict[str, DeployedEnvironment]
 
     def summary_repr(self) -> str:
         """
@@ -147,6 +148,8 @@ async def _deploy_task(
     import grpc.aio
     from flyteidl2.task import task_definition_pb2, task_service_pb2
 
+    import flyte.errors
+
     from ._internal.runtime.convert import convert_upload_default_inputs
     from ._internal.runtime.task_serde import translate_task_to_wire
     from ._internal.runtime.trigger_serde import to_task_trigger
@@ -172,15 +175,16 @@ async def _deploy_task(
             name=spec.task_template.id.name,
         )
 
-        deployable_triggers_coros = []
+        deployable_triggers = []
         for t in task.triggers:
             inputs = spec.task_template.interface.inputs
             default_inputs = spec.default_inputs
-            deployable_triggers_coros.append(
-                to_task_trigger(t=t, task_name=task.name, task_inputs=inputs, task_default_inputs=list(default_inputs))
+            deployable_triggers.append(
+                await to_task_trigger(
+                    t=t, task_name=task.name, task_inputs=inputs, task_default_inputs=list(default_inputs)
+                )
             )
 
-        deployable_triggers = await asyncio.gather(*deployable_triggers_coros)
         try:
             await get_client().task_service.DeployTask(
                 task_service_pb2.DeployTaskRequest(
@@ -260,25 +264,7 @@ async def _build_images(deployment: DeploymentPlan, image_refs: Dict[str, str] |
     return ImageCache(image_lookup=image_identifier_map)
 
 
-class Deployer(Protocol):
-    """
-    Protocol for deployment callables.
-    """
-
-    async def __call__(self, context: DeploymentContext) -> DeployedEnv:
-        """
-        Deploy the environment described in the context.
-
-        Args:
-            context: Deployment context containing environment, serialization context, and dryrun flag
-
-        Returns:
-            Deployment result
-        """
-        ...
-
-
-async def _deploy_task_env(context: DeploymentContext) -> DeployedEnv:
+async def _deploy_task_env(context: DeploymentContext) -> DeployedTaskEnvironment:
     """
     Deploy the given task environment.
     """
@@ -294,44 +280,15 @@ async def _deploy_task_env(context: DeploymentContext) -> DeployedEnv:
     deployed_tasks = []
     for t in deployed_task_vals:
         deployed_tasks.append(t)
-    return DeployedEnv(env=env, deployed_entities=deployed_tasks)
-
-
-_ENVTYPE_REGISTRY: Dict[Type[Environment | TaskEnvironment], Deployer] = {
-    TaskEnvironment: _deploy_task_env,
-}
-
-
-def register_deployer(env_type: Type[Environment | TaskEnvironment], deployer: Deployer) -> None:
-    """
-    Register a deployer for a specific environment type.
-
-    Args:
-        env_type: Type of environment this deployer handles
-        deployer: Deployment callable that conforms to the Deployer protocol
-    """
-    _ENVTYPE_REGISTRY[env_type] = deployer
-
-
-def get_deployer(env_type: Type[Environment | TaskEnvironment]) -> Deployer:
-    """
-    Get the registered deployer for an environment type.
-
-    Args:
-        env_type: Type of environment to get deployer for
-
-    Returns:
-        Deployer for the environment type, defaults to task environment deployer
-    """
-    v = _ENVTYPE_REGISTRY.get(env_type)
-    if v is None:
-        raise ValueError(f"No deployer registered for environment type {env_type}")
-    return v
+    return DeployedTaskEnvironment(env=env, deployed_entities=deployed_tasks)
 
 
 @requires_initialization
 async def apply(deployment_plan: DeploymentPlan, copy_style: CopyFiles, dryrun: bool = False) -> Deployment:
+    import flyte.errors
+
     from ._code_bundle import build_code_bundle
+    from ._deployer import DeploymentContext, get_deployer
 
     cfg = get_init_config()
 
@@ -340,6 +297,8 @@ async def apply(deployment_plan: DeploymentPlan, copy_style: CopyFiles, dryrun: 
     if copy_style == "none" and not deployment_plan.version:
         raise flyte.errors.DeploymentError("Version must be set when copy_style is none")
     else:
+        # if this is an AppEnvironment.include, skip code bundling here and build a code bundle at the
+        # app._deploy._deploy_app function
         code_bundle = await build_code_bundle(from_dir=cfg.root_dir, dryrun=dryrun, copy_style=copy_style)
         if deployment_plan.version:
             version = deployment_plan.version
@@ -369,7 +328,7 @@ async def apply(deployment_plan: DeploymentPlan, copy_style: CopyFiles, dryrun: 
     deployed_envs = await asyncio.gather(*deployment_coros)
     envs = {}
     for d in deployed_envs:
-        envs[d.env.name] = d
+        envs[d.get_name()] = d
 
     return Deployment(envs)
 

@@ -24,7 +24,7 @@ class TestToSchedule:
         cron = Cron("0 * * * *")
         schedule = _to_schedule(cron)
 
-        assert schedule.cron.expression == f"0 * * * *"
+        assert schedule.cron.expression == "0 * * * *"
         assert schedule.cron.timezone == DEFAULT_TIMEZONE
         assert schedule.kickoff_time_input_arg == ""
 
@@ -33,7 +33,7 @@ class TestToSchedule:
         cron = Cron("0 0 * * *")
         schedule = _to_schedule(cron, kickoff_arg_name="trigger_time")
 
-        assert schedule.cron.expression == f"0 0 * * *"
+        assert schedule.cron.expression == "0 0 * * *"
         assert schedule.cron.timezone == DEFAULT_TIMEZONE
         assert schedule.kickoff_time_input_arg == "trigger_time"
 
