@@ -1,6 +1,6 @@
-import flyte.git
 
-flyte.init_from_config(flyte.git.config_from_root())
+import flyte
+flyte.init_from_config()
 from environment_picker import entrypoint
 
 if __name__ == "__main__":
