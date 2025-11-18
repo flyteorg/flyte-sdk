@@ -1,6 +1,6 @@
 import pathlib
 
-from src.my_module import say_hello, env
+from src.my_module import env, say_hello
 
 import flyte
 

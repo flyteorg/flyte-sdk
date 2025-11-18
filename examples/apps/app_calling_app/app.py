@@ -6,7 +6,6 @@ import httpx
 from fastapi import FastAPI
 
 import flyte
-
 from flyte.app.extras import FastAPIAppEnvironment
 
 image = flyte.Image.from_debian_base(python_version=(3, 12)).with_pip_packages("fastapi", "uvicorn", "httpx")
@@ -38,19 +37,23 @@ env2 = FastAPIAppEnvironment(
     depends_on=[env1],
 )
 
+
 @app1.get("/greeting/{name}")
 async def greeting(name: str) -> str:
     return f"Hello, {name}!"
 
+
 @app2.get("/app1-endpoint")
 async def get_app1_endpoint() -> str:
     return env1.endpoint
+
 
 @app2.get("/greeting/{name}")
 async def greeting_proxy(name: str) -> typing.Any:
     async with httpx.AsyncClient() as client:
         response = await client.get(f"{env1.endpoint}/greeting/{name}")
         return response.json()
+
 
 if __name__ == "__main__":
     flyte.init_from_config(

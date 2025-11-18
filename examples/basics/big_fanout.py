@@ -2,7 +2,6 @@ import asyncio
 
 import flyte
 
-
 env = flyte.TaskEnvironment(
     name="fanout",
     resources=flyte.Resources(cpu=1, memory="1Gi"),

@@ -24,7 +24,6 @@ def main(n: int) -> list[int]:
 
 
 if __name__ == "__main__":
-
     # Another important trick is to set the root_dir correctly. if copy_contents_only is False, then we can set the
     # root_dir to the parent.parent because the folder is copied. If copy_contents_only is True, then we need to set
     # the root_dir to parent because the contents are copied

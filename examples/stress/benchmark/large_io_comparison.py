@@ -17,8 +17,10 @@ from flyte.extras import ContainerTask
 @dataclass
 class BenchmarkResult:
     """Result from a single benchmark run"""
+
     bytes: int
     duration: float
+
 
 # S3fs environment for comparing with v1 flytekit-style downloads
 s3fs_env = flyte.TaskEnvironment(
@@ -234,7 +236,7 @@ async def download_dir(d: flyte.io.Dir, hang: bool = False) -> Tuple[int, float]
 async def read_large_file_new(f: flyte.io.File, hang: bool = False, iterations: int = 10) -> List[BenchmarkResult]:
     results = []
     for i in range(iterations):
-        print(f"[New SDK File] Run {i+1}/{iterations}", flush=True)
+        print(f"[New SDK File] Run {i + 1}/{iterations}", flush=True)
         bytes_val, duration = await download(f, hang)
         results.append(BenchmarkResult(bytes=bytes_val, duration=duration))
     return results
@@ -244,7 +246,7 @@ async def read_large_file_new(f: flyte.io.File, hang: bool = False, iterations: 
 async def read_dir_new(d: flyte.io.Dir, hang: bool = False, iterations: int = 10) -> List[BenchmarkResult]:
     results = []
     for i in range(iterations):
-        print(f"[New SDK Dir] Run {i+1}/{iterations}", flush=True)
+        print(f"[New SDK Dir] Run {i + 1}/{iterations}", flush=True)
         bytes_val, duration = await download_dir(d, hang)
         results.append(BenchmarkResult(bytes=bytes_val, duration=duration))
     return results
@@ -297,7 +299,7 @@ async def download_s3fs(remote_path: str, is_directory: bool = False) -> Tuple[i
 async def read_large_file_s3fs(f: flyte.io.File, iterations: int = 10) -> List[BenchmarkResult]:
     results = []
     for i in range(iterations):
-        print(f"[s3fs File] Run {i+1}/{iterations}", flush=True)
+        print(f"[s3fs File] Run {i + 1}/{iterations}", flush=True)
         bytes_val, duration = await download_s3fs(f.path, is_directory=False)
         results.append(BenchmarkResult(bytes=bytes_val, duration=duration))
     return results
@@ -307,7 +309,7 @@ async def read_large_file_s3fs(f: flyte.io.File, iterations: int = 10) -> List[B
 async def read_dir_s3fs(d: flyte.io.Dir, iterations: int = 10) -> List[BenchmarkResult]:
     results = []
     for i in range(iterations):
-        print(f"[s3fs Dir] Run {i+1}/{iterations}", flush=True)
+        print(f"[s3fs Dir] Run {i + 1}/{iterations}", flush=True)
         bytes_val, duration = await download_s3fs(d.path, is_directory=True)
         results.append(BenchmarkResult(bytes=bytes_val, duration=duration))
     return results
@@ -317,7 +319,7 @@ async def read_dir_s3fs(d: flyte.io.Dir, iterations: int = 10) -> List[Benchmark
 async def main(size_megabytes: int = 5120) -> Tuple[int, float]:
     large_file = await create_file(size_megabytes)
     t1 = asyncio.create_task(read_large_file_new(large_file))
-    r1, = await asyncio.gather(t1)
+    (r1,) = await asyncio.gather(t1)
     return r1
 
 
@@ -343,14 +345,26 @@ def generate_benchmark_report(
         return avg_bytes, avg_time, min_time, max_time, avg_throughput, times
 
     # Calculate stats for file benchmarks
-    file_new_bytes, file_new_time, file_new_min, file_new_max, file_new_tput, file_new_times = calculate_stats(file_results_new)
-    file_s3fs_bytes, file_s3fs_time, file_s3fs_min, file_s3fs_max, file_s3fs_tput, file_s3fs_times = calculate_stats(file_results_s3fs)
-    file_s5cmd_bytes, file_s5cmd_time, file_s5cmd_min, file_s5cmd_max, file_s5cmd_tput, file_s5cmd_times = calculate_stats(file_results_s5cmd)
+    file_new_bytes, file_new_time, file_new_min, file_new_max, file_new_tput, file_new_times = calculate_stats(
+        file_results_new
+    )
+    file_s3fs_bytes, file_s3fs_time, file_s3fs_min, file_s3fs_max, file_s3fs_tput, file_s3fs_times = calculate_stats(
+        file_results_s3fs
+    )
+    _, file_s5cmd_time, file_s5cmd_min, file_s5cmd_max, file_s5cmd_tput, file_s5cmd_times = calculate_stats(
+        file_results_s5cmd
+    )
 
     # Calculate stats for directory benchmarks
-    dir_new_bytes, dir_new_time, dir_new_min, dir_new_max, dir_new_tput, dir_new_times = calculate_stats(dir_results_new)
-    dir_s3fs_bytes, dir_s3fs_time, dir_s3fs_min, dir_s3fs_max, dir_s3fs_tput, dir_s3fs_times = calculate_stats(dir_results_s3fs)
-    dir_s5cmd_bytes, dir_s5cmd_time, dir_s5cmd_min, dir_s5cmd_max, dir_s5cmd_tput, dir_s5cmd_times = calculate_stats(dir_results_s5cmd)
+    dir_new_bytes, dir_new_time, dir_new_min, dir_new_max, dir_new_tput, dir_new_times = calculate_stats(
+        dir_results_new
+    )
+    dir_s3fs_bytes, dir_s3fs_time, dir_s3fs_min, dir_s3fs_max, dir_s3fs_tput, dir_s3fs_times = calculate_stats(
+        dir_results_s3fs
+    )
+    _, dir_s5cmd_time, dir_s5cmd_min, dir_s5cmd_max, dir_s5cmd_tput, dir_s5cmd_times = calculate_stats(
+        dir_results_s5cmd
+    )
 
     html = f"""
     <html>
@@ -386,7 +400,7 @@ def generate_benchmark_report(
                 <td>{file_new_time:.2f}</td>
                 <td>{file_new_min:.2f} / {file_new_max:.2f}</td>
                 <td>{file_new_tput:.2f}</td>
-                <td class="runs">{', '.join([f'{t:.2f}' for t in file_new_times])}</td>
+                <td class="runs">{", ".join([f"{t:.2f}" for t in file_new_times])}</td>
             </tr>
             <tr>
                 <td>s3fs + fsspec (v1 style)</td>
@@ -394,7 +408,7 @@ def generate_benchmark_report(
                 <td>{file_s3fs_time:.2f}</td>
                 <td>{file_s3fs_min:.2f} / {file_s3fs_max:.2f}</td>
                 <td>{file_s3fs_tput:.2f}</td>
-                <td class="runs">{', '.join([f'{t:.2f}' for t in file_s3fs_times])}</td>
+                <td class="runs">{", ".join([f"{t:.2f}" for t in file_s3fs_times])}</td>
             </tr>
             <tr>
                 <td>s5cmd (ContainerTask)</td>
@@ -402,7 +416,7 @@ def generate_benchmark_report(
                 <td>{file_s5cmd_time:.2f}</td>
                 <td>{file_s5cmd_min:.2f} / {file_s5cmd_max:.2f}</td>
                 <td>{file_s5cmd_tput:.2f}</td>
-                <td class="runs">{', '.join([f'{t:.2f}' for t in file_s5cmd_times])}</td>
+                <td class="runs">{", ".join([f"{t:.2f}" for t in file_s5cmd_times])}</td>
             </tr>
         </table>
 
@@ -422,7 +436,7 @@ def generate_benchmark_report(
                 <td>{dir_new_time:.2f}</td>
                 <td>{dir_new_min:.2f} / {dir_new_max:.2f}</td>
                 <td>{dir_new_tput:.2f}</td>
-                <td class="runs">{', '.join([f'{t:.2f}' for t in dir_new_times])}</td>
+                <td class="runs">{", ".join([f"{t:.2f}" for t in dir_new_times])}</td>
             </tr>
             <tr>
                 <td>s3fs + fsspec (v1 style)</td>
@@ -430,7 +444,7 @@ def generate_benchmark_report(
                 <td>{dir_s3fs_time:.2f}</td>
                 <td>{dir_s3fs_min:.2f} / {dir_s3fs_max:.2f}</td>
                 <td>{dir_s3fs_tput:.2f}</td>
-                <td class="runs">{', '.join([f'{t:.2f}' for t in dir_s3fs_times])}</td>
+                <td class="runs">{", ".join([f"{t:.2f}" for t in dir_s3fs_times])}</td>
             </tr>
             <tr>
                 <td>s5cmd (ContainerTask)</td>
@@ -438,7 +452,7 @@ def generate_benchmark_report(
                 <td>{dir_s5cmd_time:.2f}</td>
                 <td>{dir_s5cmd_min:.2f} / {dir_s5cmd_max:.2f}</td>
                 <td>{dir_s5cmd_tput:.2f}</td>
-                <td class="runs">{', '.join([f'{t:.2f}' for t in dir_s5cmd_times])}</td>
+                <td class="runs">{", ".join([f"{t:.2f}" for t in dir_s5cmd_times])}</td>
             </tr>
         </table>
 

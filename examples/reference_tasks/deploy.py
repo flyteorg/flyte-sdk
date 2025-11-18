@@ -14,7 +14,6 @@ import flyte
 env.add_dependency(torch_env, spark_env)
 
 if __name__ == "__main__":
-
     flyte.init_from_config(root_dir=Path(__file__).parent)
     v = flyte.deploy(env)
     print(v[0].summary_repr())

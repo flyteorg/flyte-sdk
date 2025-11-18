@@ -200,7 +200,6 @@ async def runs_per_second(max_rps: int = 50, n: int = 500):
 
 
 if __name__ == "__main__":
-
     flyte.init_from_config()
     run = flyte.run(runs_per_second, max_rps=50, n=500)
     print(run.url)

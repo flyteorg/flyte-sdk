@@ -25,7 +25,6 @@ async def upstream_task(data: MyObject) -> dict[str, MyObject]:
 
 
 if __name__ == "__main__":
-
     flyte.init_from_config()
     obj = MyObject(name="example", value=5)
     r = flyte.run(upstream_task, data=obj)

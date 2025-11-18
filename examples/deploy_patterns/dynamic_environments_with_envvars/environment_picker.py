@@ -30,7 +30,6 @@ async def entrypoint(n: int) -> int:
 
 
 if __name__ == "__main__":
-
     flyte.init_from_config()
     r = flyte.run(entrypoint, n=5)
     print(r.url)
