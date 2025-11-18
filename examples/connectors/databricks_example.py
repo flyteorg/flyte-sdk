@@ -11,7 +11,7 @@ from flyte.storage import S3
 
 image = (
     # https://hub.docker.com/r/databricksruntime/python/tags
-    flyte.Image.from_base("databricksruntime/standard:16.4-LTS")
+    flyte.Image.from_base("databricksruntime/standard:14.3-LTS")
     .clone(name="spark", registry="ghcr.io/flyteorg", registry_secret="docker-g")
     .with_apt_packages("git", "vim")
     .with_env_vars({"UV_PYTHON": "/databricks/python3/bin/python"})
@@ -20,7 +20,7 @@ image = (
     # .with_pip_packages("flyteplugins-connectors", pre=True)
     # .with_source_folder(Path(__file__).parent.parent.parent / "plugins/connectors", "/opt/connectors")
     .with_local_v2()
-    .with_pip_packages("nest-asyncio", "aiohttp", "click==8.2.0")
+    .with_pip_packages("nest-asyncio", "aiohttp", "click==8.1.6")
     .with_env_vars({"Hello": "World2"})
 )
 
