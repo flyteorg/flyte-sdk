@@ -19,7 +19,7 @@ from flyte.app._runtime.app_serde import (
     get_proto_container,
     translate_app_env_to_idl,
 )
-from flyte.app._types import Port, Scaling
+from flyte.app._types import Domain, Port, Scaling
 from flyte.models import CodeBundle, SerializationContext
 
 
@@ -718,3 +718,38 @@ def test_get_proto_container_with_multiple_inputs():
     assert deserialized.inputs[0].env_var == "CONFIG_PATH"
     assert deserialized.inputs[1].name == "data"
     assert deserialized.inputs[2].name == "model"
+
+
+@pytest.mark.parametrize(
+    "domain",
+    [
+        None,
+        Domain(subdomain="my-custom-subdomain"),
+        Domain(custom_domain="example.com"),
+        Domain(subdomain="my-custom-subdomain", custom_domain="example.com"),
+    ],
+)
+def test_app_with_domain(domain: Domain | None):
+    """
+    GOAL: Verify default domain results in None subdomain and cname in ingress config.
+
+    Tests that when domain is None or default, the ingress config has no subdomain or cname.
+    """
+    app_env = AppEnvironment(
+        name="test-app",
+        image=Image.from_base("python:3.11"),
+        domain=domain,
+    )
+
+    ctx = SerializationContext(
+        org="test-org",
+        project="test-project",
+        domain="test-domain",
+        version="v1",
+    )
+
+    app_idl = translate_app_env_to_idl(app_env, ctx)
+    assert app_idl.spec.ingress is not None
+    assert app_idl.spec.ingress.subdomain == (domain.subdomain if domain and domain.subdomain else "")
+    assert app_idl.spec.ingress.cname == (domain.custom_domain if domain and domain.custom_domain else "")
+    assert app_idl.spec.ingress.private is False
