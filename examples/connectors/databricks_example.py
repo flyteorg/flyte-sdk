@@ -43,24 +43,24 @@ databricks_conf = Databricks(
     executor_path="/databricks/python3/bin/python",
     databricks_conf={
         "run_name": "flytekit databricks plugin example",
-        "new_cluster": {
-            "spark_version": "13.3.x-scala2.12",
-            "autoscale": {
-                "min_workers": 1,
-                "max_workers": 3,
-            },
-            "node_type_id": "m6i.large",
-            "num_workers": 3,
-            "aws_attributes": {
-                "availability": "SPOT_WITH_FALLBACK",
-                "instance_profile_arn": "arn:aws:iam::339713193121:instance-profile/databricks-demo",
-                "ebs_volume_type": "GENERAL_PURPOSE_SSD",
-                "ebs_volume_count": 1,
-                "ebs_volume_size": 100,
-                "first_on_demand": 1,
-            },
-        },
-        # "existing_cluster_id": "1113-204018-tb9vr2fm",
+        # "new_cluster": {
+        #     "spark_version": "13.3.x-scala2.12",
+        #     "autoscale": {
+        #         "min_workers": 1,
+        #         "max_workers": 3,
+        #     },
+        #     "node_type_id": "m6i.large",
+        #     "num_workers": 3,
+        #     "aws_attributes": {
+        #         "availability": "SPOT_WITH_FALLBACK",
+        #         "instance_profile_arn": "arn:aws:iam::339713193121:instance-profile/databricks-demo",
+        #         "ebs_volume_type": "GENERAL_PURPOSE_SSD",
+        #         "ebs_volume_count": 1,
+        #         "ebs_volume_size": 100,
+        #         "first_on_demand": 1,
+        #     },
+        # },
+        "existing_cluster_id": "1113-204018-tb9vr2fm",
         "timeout_seconds": 3600,
         "max_retries": 1,
     },
@@ -74,13 +74,13 @@ databricks_env = flyte.TaskEnvironment(
     plugin_config=databricks_conf,
     image=image,
     depends_on=[task_env],
-    env_vars={
-        "AWS_REGION": "us-west-1",
-        "AWS_DEFAULT_REGION": "us-west-1",
-        "AWS_ACCESS_KEY_ID": os.getenv("AWS_ACCESS_KEY_ID"),
-        "AWS_SECRET_ACCESS_KEY": os.getenv("AWS_SECRET_ACCESS_KEY"),
-        "AWS_SESSION_TOKEN": os.getenv("AWS_SESSION_TOKEN"),
-    }
+    # env_vars={
+    #     "AWS_REGION": "us-west-1",
+    #     "AWS_DEFAULT_REGION": "us-west-1",
+    #     "AWS_ACCESS_KEY_ID": os.getenv("AWS_ACCESS_KEY_ID"),
+    #     "AWS_SECRET_ACCESS_KEY": os.getenv("AWS_SECRET_ACCESS_KEY"),
+    #     "AWS_SESSION_TOKEN": os.getenv("AWS_SESSION_TOKEN"),
+    # }
 )
 
 
@@ -112,7 +112,7 @@ async def test_main():
 if __name__ == "__main__":
     flyte.init_from_config(storage=S3().auto())
     run = flyte.with_runcontext(
-        mode="remote",
+        mode="local",
         raw_data_path="s3://my-v2-connector/").run(hello_databricks_nested)
     print("run name:", run.name)
     print("run urlllll:", run.url)
