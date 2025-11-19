@@ -1,7 +1,8 @@
 import pathlib
 
-import flyte
 from my_lib.math_utils import calculate_mean, linear_function
+
+import flyte
 
 env = flyte.TaskEnvironment(
     name="uv_project_lib",
