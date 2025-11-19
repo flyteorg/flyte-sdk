@@ -1,6 +1,7 @@
 import flyte
+import os
 
-# TaskEnvironments provide a simple way of grouping configuration used by tasks (more later).
+# TaskEnvironments provide a simple way of grouping configuration used by tasks (more later). This is a very long comment line that exceeds the typical line length limit of 88 or 100 characters and should trigger a lint error.
 env = flyte.TaskEnvironment(name="hello_world", resources=flyte.Resources(memory="250Mi"))
 
 
