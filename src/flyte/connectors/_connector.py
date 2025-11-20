@@ -20,6 +20,7 @@ from google.protobuf import json_format
 from google.protobuf.struct_pb2 import Struct
 
 from flyte import Secret
+from flyte._code_bundle import build_code_bundle
 from flyte._context import internal_ctx
 from flyte._deploy import build_images
 from flyte._initialize import get_init_config
@@ -227,11 +228,15 @@ class AsyncConnectorExecutorMixin(TaskTemplate):
         if tctx.mode == "remote":
             return await super().execute(**kwargs)
 
+        code_bundle = await build_code_bundle(
+            from_dir=cfg.root_dir,
+            copy_bundle_to=ctx.raw_data.path,
+        )
         sc = SerializationContext(
             project=tctx.action.project,
             domain=tctx.action.domain,
             org=tctx.action.org,
-            code_bundle=tctx.code_bundle,
+            code_bundle=code_bundle,
             version=tctx.version,
             image_cache=await build_images.aio(task.parent_env()) if task.parent_env else None,
             root_dir=cfg.root_dir,

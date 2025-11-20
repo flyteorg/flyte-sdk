@@ -15,7 +15,7 @@ def main():
         parser = _a0.make_parser(click_ctx)
         args, _, _ = parser.parse_args(args[2:])
         with click_ctx:
-            _a0.callback(**args, debug=False, interactive_mode=False, tgz="s3://union-cloud-dogfood-1-dogfood-fast-registration/flytesnacks/development/FTOPCOGVZT4XRT7ESAN2SVJFXM======/fastcf3212e09a1fa1d077c4a3573662309a.tar.gz", pkl=None, dest=".")
+            _a0.callback(**args, debug=False, interactive_mode=False, pkl=None, dest=".")
     else:
         raise ValueError(f"Unrecognized command: {args[1:]}")
 
