@@ -362,8 +362,8 @@ async def init_in_cluster(
         if not insecure:
             if "localhost" in ep or "docker" in ep:
                 remote_kwargs["insecure"] = True
-        if insecure := os.getenv(INSECURE_OVERRIDE, ""):
-            remote_kwargs["insecure"] = str2bool(insecure)
+        if insecure := str2bool(os.getenv(INSECURE_OVERRIDE, "")):
+            remote_kwargs["insecure"] = insecure
         logger.debug(f"Using controller endpoint: {ep} with kwargs: {remote_kwargs}")
 
     # Check for insecure_skip_verify override (e.g. for self-signed certs)
