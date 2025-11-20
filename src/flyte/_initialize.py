@@ -333,7 +333,7 @@ async def init_in_cluster(
     domain: str | None = None,
     api_key: str | None = None,
     endpoint: str | None = None,
-    insecure: bool | None = None,
+    insecure: bool = False,
 ) -> dict[str, typing.Any]:
     import os
 
@@ -344,6 +344,7 @@ async def init_in_cluster(
     ORG_NAME = "_U_ORG_NAME"
     ENDPOINT_OVERRIDE = "_U_EP_OVERRIDE"
     INSECURE_SKIP_VERIFY_OVERRIDE = "_U_INSECURE_SKIP_VERIFY"
+    INSECURE_OVERRIDE = "_U_INSECURE"
     _UNION_EAGER_API_KEY_ENV_VAR = "_UNION_EAGER_API_KEY"
 
     org = org or os.getenv(ORG_NAME)
@@ -361,6 +362,8 @@ async def init_in_cluster(
         if not insecure:
             if "localhost" in ep or "docker" in ep:
                 remote_kwargs["insecure"] = True
+        if insecure := os.getenv(INSECURE_OVERRIDE, ""):
+            remote_kwargs["insecure"] = str2bool(insecure)
         logger.debug(f"Using controller endpoint: {ep} with kwargs: {remote_kwargs}")
 
     # Check for insecure_skip_verify override (e.g. for self-signed certs)
