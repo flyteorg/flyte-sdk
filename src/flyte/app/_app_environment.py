@@ -147,9 +147,16 @@ class AppEnvironment(Environment):
 
     @property
     def endpoint(self) -> str:
+        import flyte
         endpoint_pattern = os.getenv(INTERNAL_APP_ENDPOINT_PATTERN_ENV_VAR)
+        if flyte.ctx():
+            project = flyte.ctx().action.project
+            domain = flyte.ctx().action.domain
+        else:
+            project = os.getenv("FLYTE_INTERNAL_EXECUTION_PROJECT")
+            domain = os.getenv("FLYTE_INTERNAL_EXECUTION_DOMAIN")
         if endpoint_pattern is not None:
-            return endpoint_pattern.replace("{app_fqdn}", self.name)
+            return endpoint_pattern.format(app_fqdn=self.name, project=project, domain=domain)
 
         import flyte.remote
 
