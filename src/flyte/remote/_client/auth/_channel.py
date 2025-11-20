@@ -124,17 +124,7 @@ async def create_channel(
 
     assert endpoint, "Endpoint must be specified by this point"
 
-    if not ssl_credentials:
-        if insecure_skip_verify:
-            ssl_credentials = bootstrap_ssl_from_server(endpoint)
-        elif ca_cert_file_path:
-            import aiofiles
 
-            async with aiofiles.open(ca_cert_file_path, "rb") as f:
-                st_cert = await f.read()
-            ssl_credentials = grpc.ssl_channel_credentials(st_cert)
-        else:
-            ssl_credentials = grpc.ssl_channel_credentials()
 
     # Create an unauthenticated channel first to use to get the server metadata
     if insecure:
@@ -145,6 +135,18 @@ async def create_channel(
             insecure_kwargs["compression"] = compression
         unauthenticated_channel = grpc.aio.insecure_channel(endpoint, **insecure_kwargs)
     else:
+        # Only create SSL credentials if not provided and also only when using secure channel.
+        if not ssl_credentials:
+            if insecure_skip_verify:
+                ssl_credentials = bootstrap_ssl_from_server(endpoint)
+            elif ca_cert_file_path:
+                import aiofiles
+
+                async with aiofiles.open(ca_cert_file_path, "rb") as f:
+                    st_cert = await f.read()
+                ssl_credentials = grpc.ssl_channel_credentials(st_cert)
+            else:
+                ssl_credentials = grpc.ssl_channel_credentials()
         unauthenticated_channel = grpc.aio.secure_channel(
             target=endpoint,
             credentials=ssl_credentials,
