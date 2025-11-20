@@ -232,6 +232,7 @@ class AsyncConnectorExecutorMixin(TaskTemplate):
             from_dir=cfg.root_dir,
             copy_bundle_to=ctx.raw_data.path,
         )
+        print("ctx.raw_data.path", ctx.raw_data.path)
         sc = SerializationContext(
             project=tctx.action.project,
             domain=tctx.action.domain,
