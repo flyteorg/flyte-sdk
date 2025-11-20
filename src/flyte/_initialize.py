@@ -333,7 +333,7 @@ async def init_in_cluster(
     domain: str | None = None,
     api_key: str | None = None,
     endpoint: str | None = None,
-    insecure: bool = False,
+    insecure: bool | None = None,
 ) -> dict[str, typing.Any]:
     import os
 
