@@ -240,18 +240,14 @@ def _get_urun_container(
     resources = get_proto_resources(task_template.resources)
 
     img = task_template.image
-    if isinstance(img, str):
-        raise flyte.errors.RuntimeSystemError("BadConfig", "Image is not a valid image")
-
     env_name = task_template.parent_env_name
     if env_name is None:
         raise flyte.errors.RuntimeSystemError("BadConfig", f"Task {task_template.name} has no parent environment name")
 
-    ctx = internal_ctx()
-    if ctx.data and ctx.data.task_context and ctx.data.task_context.is_in_cluster():
+    if isinstance(img, flyte.Image):
         img_uri = lookup_image_in_cache(serialize_context, env_name, img)
     else:
-        img_uri = img.uri
+        img_uri = img
 
     return tasks_pb2.Container(
         image=img_uri,
