@@ -61,6 +61,7 @@ class BigQueryConnector(AsyncConnector):
         self,
         task_template: TaskTemplate,
         inputs: Optional[Dict[str, Any]] = None,
+        google_application_credentials: Optional[str] = None,
         **kwargs,
     ) -> BigQueryMetadata:
         job_config = None
@@ -89,7 +90,7 @@ class BigQueryConnector(AsyncConnector):
             project=project,
             location=location,
             user_agent=user_agent,
-            google_application_credentials=custom.get("google_application_credentials"),
+            google_application_credentials=google_application_credentials,
         )
         query_job = client.query(task_template.sql.statement, job_config=job_config)
 

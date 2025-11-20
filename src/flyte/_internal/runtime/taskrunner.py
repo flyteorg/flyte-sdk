@@ -141,7 +141,7 @@ async def convert_and_run(
         action=action,
         checkpoints=checkpoints,
         code_bundle=code_bundle,
-        input_path=input_path,
+        input_path=inputs,
         output_path=output_path,
         run_base_dir=run_base_dir,
         version=version,

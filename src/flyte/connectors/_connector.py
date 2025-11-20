@@ -1,5 +1,6 @@
 import asyncio
 import json
+import os
 import typing
 from abc import ABC, abstractmethod
 from dataclasses import asdict, dataclass
@@ -19,13 +20,17 @@ from google.protobuf import json_format
 from google.protobuf.struct_pb2 import Struct
 
 from flyte import Secret
+from flyte._code_bundle import build_code_bundle
 from flyte._context import internal_ctx
+from flyte._deploy import build_images
 from flyte._initialize import get_init_config
-from flyte._internal.runtime.convert import convert_from_native_to_outputs
+from flyte._internal.runtime import io
+from flyte._internal.runtime.convert import convert_from_native_to_inputs, convert_from_native_to_outputs
+from flyte._internal.runtime.io import upload_inputs
 from flyte._internal.runtime.task_serde import get_proto_task
 from flyte._logging import logger
 from flyte._task import TaskTemplate
-from flyte.connectors.utils import is_terminal_phase
+from flyte.connectors.utils import _render_task_template, is_terminal_phase
 from flyte.models import NativeInterface, SerializationContext
 from flyte.types._type_engine import dataclass_from_dict
 
@@ -203,7 +208,7 @@ class ConnectorSecretsMixin:
         return [Secret(key=k, as_env_var=v) for k, v in self._secrets.items()]
 
 
-class AsyncConnectorExecutorMixin:
+class AsyncConnectorExecutorMixin(TaskTemplate):
     """
     This mixin class is used to run the connector task locally, and it's only used for local execution.
     Task should inherit from this class if the task can be run in the connector.
@@ -220,31 +225,55 @@ class AsyncConnectorExecutorMixin:
         if tctx is None:
             raise RuntimeError("Task context is not set.")
 
+        if tctx.mode == "remote":
+            return await super().execute(**kwargs)
+
+        code_bundle = await build_code_bundle(
+            from_dir=cfg.root_dir,
+            copy_bundle_to=ctx.raw_data.path,
+        )
+        print("ctx.raw_data.path", ctx.raw_data.path)
         sc = SerializationContext(
             project=tctx.action.project,
             domain=tctx.action.domain,
             org=tctx.action.org,
-            code_bundle=tctx.code_bundle,
+            code_bundle=code_bundle,
             version=tctx.version,
-            image_cache=tctx.compiled_image_cache,
+            image_cache=await build_images.aio(task.parent_env()) if task.parent_env else None,
             root_dir=cfg.root_dir,
         )
         tt = get_proto_task(task, sc)
-        resource_meta = await connector.create(task_template=tt, output_prefix=ctx.raw_data.path, inputs=kwargs)
+        prefix = tctx.raw_data_path.get_random_remote_path()
+        tt = _render_task_template(tt, prefix)
+        inputs = await convert_from_native_to_inputs(task.native_interface, **kwargs)
+        inputs_uri = io.inputs_path(prefix)
+        await upload_inputs(inputs, inputs_uri)
+
+        custom = json_format.MessageToDict(tt.custom)
+        secrets = custom["secrets"] if "secrets" in custom else {}
+        for k, v in secrets.items():
+            env_var = os.getenv(v)
+            if env_var is None:
+                raise ValueError(f"Secret {v} not found in environment.")
+            secrets[k] = env_var
+        resource_meta = await connector.create(
+            task_template=tt, output_prefix=ctx.raw_data.path, inputs=kwargs, **secrets
+        )
         resource = Resource(phase=TaskExecution.RUNNING)
 
         while not is_terminal_phase(resource.phase):
-            resource = await connector.get(resource_meta=resource_meta)
+            resource = await connector.get(resource_meta=resource_meta, **secrets)
 
             if resource.log_links:
                 for link in resource.log_links:
                     logger.info(f"{link.name}: {link.uri}")
-            await asyncio.sleep(1)
+            await asyncio.sleep(3)
 
         if resource.phase != TaskExecution.SUCCEEDED:
             raise RuntimeError(f"Failed to run the task {task.name} with error: {resource.message}")
 
         # TODO: Support abort
+        # ctx.raw_data.get_random_remote_path()
 
         if resource.outputs is None:
             return None
