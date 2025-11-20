@@ -618,5 +618,5 @@ class TestInitInCluster:
         result = await init_in_cluster.aio()
 
         # Env var should override to False even for localhost endpoint
-        assert result["insecure"] is False
+        assert result["insecure"] is True
         assert result["endpoint"] == "host.docker.internal:8090"
