@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import AsyncIterator, cast
+
 from flyteidl2.app import app_definition_pb2, app_payload_pb2
 
 from flyte._initialize import ensure_client, get_client, get_init_config
@@ -55,3 +57,29 @@ class App(ToJSONMixin):
             )
         )
         return cls(pb2=resp.app)
+
+    @classmethod
+    @syncify
+    async def watch(cls, name: str, /, project: str | None = None, domain: str | None = None):
+        ensure_client()
+        cfg = get_init_config()
+        call = cast(
+            AsyncIterator[app_payload_pb2.WatchResponse],
+            get_client().app_service.Watch(
+                request=app_payload_pb2.WatchRequest(
+                    app_id=app_definition_pb2.Identifier(
+                        org=cfg.org,
+                        project=project or cfg.project,
+                        domain=domain or cfg.domain,
+                        name=name,
+                    ),
+                )
+            ),
+        )
+        async for resp in call:
+            if resp.update_event:
+                updated_app = resp.update_event.updated_app
+                current_status = updated_app.status.conditions[-1].deployment_status
+                if current_status == app_definition_pb2.Status.DeploymentStatus.DEPLOYMENT_STATUS_ACTIVE:
+                    status_name = app_definition_pb2.Status.DeploymentStatus.Name(current_status)
+                    return status_name
