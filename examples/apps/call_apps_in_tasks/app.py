@@ -36,4 +36,5 @@ async def add_one_task(x: int) -> int:
     print(f"Calling app at {app_env.endpoint}")
     async with httpx.AsyncClient() as client:
         response = await client.get(app_env.endpoint, params={"x": x})
+        response.raise_for_status()
         return response.json()["result"]

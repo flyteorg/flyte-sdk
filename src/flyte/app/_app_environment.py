@@ -147,8 +147,6 @@ class AppEnvironment(Environment):
 
     @property
     def endpoint(self) -> str:
-        import flyte
-
         endpoint_pattern = os.getenv(INTERNAL_APP_ENDPOINT_PATTERN_ENV_VAR)
         if endpoint_pattern is not None:
             return endpoint_pattern.format(app_fqdn=self.name)
