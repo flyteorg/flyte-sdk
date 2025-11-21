@@ -71,7 +71,7 @@ def _verbosity_to_loglevel(verbosity: int) -> int | None:
 
 @click.group(cls=click.RichGroup)
 @click.version_option(
-    message=f"Flyte CLI version: {flyte_version}",
+    message=f"Flyte SDK version: {flyte_version}",
 )
 @click.option(
     "--endpoint",
