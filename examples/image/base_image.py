@@ -15,8 +15,6 @@ image = (
 env = flyte.TaskEnvironment(name="t1", image=Image.from_base(image_uri="docker.io/library/debian:latest"))
 
 
-
-
 @env.task
 async def t1(data: str = "hello") -> str:
     return f"Hello {data}"

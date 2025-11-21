@@ -124,8 +124,6 @@ async def create_channel(
 
     assert endpoint, "Endpoint must be specified by this point"
 
-
-
     # Create an unauthenticated channel first to use to get the server metadata
     if insecure:
         insecure_kwargs = {}
