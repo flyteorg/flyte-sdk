@@ -32,6 +32,22 @@ def get():
     """
 
 
+@get.command(cls=click.RichCommand)
+@click.pass_obj
+def version(cfg: common.CLIConfig):
+    """
+    Show the Flyte SDK and CLI version.
+    """
+    try:
+        # Lazy import to avoid unnecessary dependency at startup
+        import flyte
+        version_str = getattr(flyte, "__version__", "unknown")
+    except ImportError:
+        version_str = "Flyte SDK not installed"
+    console = common.get_console()
+    console.print(f"[bold green]Flyte SDK version:[/bold green] {version_str}")
+    
+
 @get.command()
 @click.argument("name", type=str, required=False)
 @click.pass_obj
