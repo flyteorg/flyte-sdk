@@ -48,7 +48,7 @@ processing_env = flyte.TaskEnvironment(
         idle_ttl=300,  # Keep workers alive for 5 minutes after idle
     ),
     image=image,
-    cache=flyte.Cache("auto", "2.0"),
+    cache=flyte.Cache("auto", "3.1"),
 )
 
 # Non-reusable environment for orchestration tasks
@@ -116,42 +116,6 @@ async def aggregate_partition(
 
 
 @processing_env.task
-async def split_into_chunks(
-    table_data: flyte.io.DataFrame,
-    num_chunks: int,
-) -> List[flyte.io.DataFrame]:
-    """
-    Split a DataFrame into multiple chunks for parallel processing.
-
-    Args:
-        table_data: Flyte DataFrame to split
-        num_chunks: Number of chunks to create
-
-    Returns:
-        List of Flyte DataFrames (references only, minimizing data copies)
-    """
-    # Convert to PyArrow Table for efficient zero-copy slicing
-    table: pa.Table = await table_data.open(pa.Table).all()
-    total_rows = table.num_rows
-    chunk_size = max(1, total_rows // num_chunks)
-
-    chunks: List[flyte.io.DataFrame] = []
-    for i in range(num_chunks):
-        start_idx = i * chunk_size
-        # Last chunk gets any remaining rows
-        end_idx = total_rows if i == num_chunks - 1 else (i + 1) * chunk_size
-
-        if start_idx < total_rows:
-            # PyArrow slice is zero-copy
-            chunk = table.slice(start_idx, end_idx - start_idx)
-            # Convert each chunk to flyte.io.DataFrame - stores reference
-            chunks.append(flyte.io.DataFrame.from_df(chunk))
-
-    logger.info(f"Split {total_rows} rows into {len(chunks)} chunks")
-    return chunks
-
-
-@processing_env.task
 async def combine_results(
     partition_results: List[flyte.io.DataFrame],
     group_by_column: str,
@@ -211,7 +175,7 @@ async def process_table_parallel(
     Main orchestrator that splits data and processes partitions in parallel.
 
     This task:
-    1. Splits the input data into chunks
+    1. Splits the input data into chunks inline
     2. Launches parallel tasks for each chunk using asyncio.gather
     3. Combines and returns the final aggregated results
 
@@ -227,21 +191,35 @@ async def process_table_parallel(
     """
     logger.info(f"Starting parallel processing with {num_partitions} partitions")
 
-    # Split data into chunks
-    chunks = await split_into_chunks(table_data, num_partitions)
+    # Convert to PyArrow Table for efficient zero-copy slicing
+    table: pa.Table = await table_data.open(pa.Table).all()
+    total_rows = table.num_rows
+    chunk_size = max(1, total_rows // num_partitions)
 
-    # Process all chunks in parallel using asyncio.gather
-    # Each chunk is processed by a separate reusable worker
-    partition_coros = [
-        aggregate_partition(
-            partition_data=chunk,
-            partition_id=i,
-            group_by_column=group_by_column,
-            agg_column=agg_column,
-            agg_function=agg_function,
-        )
-        for i, chunk in enumerate(chunks)
-    ]
+    # Create chunks and launch tasks immediately
+    partition_coros = []
+    for i in range(num_partitions):
+        start_idx = i * chunk_size
+        # Last chunk gets any remaining rows
+        end_idx = total_rows if i == num_partitions - 1 else (i + 1) * chunk_size
+
+        if start_idx < total_rows:
+            # PyArrow slice is zero-copy
+            chunk = table.slice(start_idx, end_idx - start_idx)
+            chunk_df = flyte.io.DataFrame.from_df(chunk)
+
+            # Launch task immediately
+            partition_coros.append(
+                aggregate_partition(
+                    partition_data=chunk_df,
+                    partition_id=i,
+                    group_by_column=group_by_column,
+                    agg_column=agg_column,
+                    agg_function=agg_function,
+                )
+            )
+
+    logger.info(f"Launched {len(partition_coros)} partition tasks")
 
     # Run all partitions in parallel
     partition_results = await asyncio.gather(*partition_coros)
@@ -258,7 +236,7 @@ async def process_table_parallel(
 
 
 @orchestrator_env.task
-async def create_sample_data() -> flyte.io.DataFrame:
+async def create_sample_data(rows: int) -> flyte.io.DataFrame:
     """
     Create sample data for demonstration purposes.
 
@@ -272,13 +250,18 @@ async def create_sample_data() -> flyte.io.DataFrame:
     """
     import datetime
 
-    # Create sample data using PyArrow
-    categories = ["A", "B", "C", "A", "B", "C", "A", "B", "C", "A"] * 100
-    values = list(range(1, 1001))
-    regions = ["US", "EU", "ASIA"] * 333 + ["US"]
+    # Create sample data using PyArrow - all columns sized to match rows
+    category_pattern = ["A", "B", "C"]
+    region_pattern = ["US", "EU", "ASIA"]
+
+    # Generate columns with proper length
+    categories = [category_pattern[i % len(category_pattern)] for i in range(rows)]
+    values = list(range(1, rows + 1))
+    regions = [region_pattern[i % len(region_pattern)] for i in range(rows)]
+
     # Generate timestamps
     base_time = datetime.datetime(2024, 1, 1)
-    timestamps = [base_time + datetime.timedelta(hours=i) for i in range(1000)]
+    timestamps = [base_time + datetime.timedelta(hours=i) for i in range(rows)]
 
     table = pa.table(
         {
@@ -295,7 +278,7 @@ async def create_sample_data() -> flyte.io.DataFrame:
 
 
 @orchestrator_env.task
-async def main() -> flyte.io.DataFrame:
+async def main(rows: int = 1000) -> flyte.io.DataFrame:
     """
     Main entry point demonstrating the full workflow.
 
@@ -307,7 +290,7 @@ async def main() -> flyte.io.DataFrame:
     logger.info("=== PyIceberg Parallel Aggregation with Flyte ===")
 
     # Create sample data (in production: read from Iceberg table)
-    table_data = await create_sample_data()
+    table_data = await create_sample_data(rows)
 
     # Process with parallel aggregation
     result = await process_table_parallel(
@@ -327,13 +310,11 @@ if __name__ == "__main__":
     flyte.init_from_config()
 
     # Run the main workflow remotely
-    run = flyte.run(main)
+    run = flyte.run(main, 10000)
     print(f"Run URL: {run.url}")
 
     # Wait for completion and print results
     run.wait()
     outputs = run.outputs()
     if outputs:
-        result_df = outputs.to_pandas()
-        print("\nFinal Results:")
-        print(result_df)
+        print(f"\nFinal Results: {outputs[0]}")
