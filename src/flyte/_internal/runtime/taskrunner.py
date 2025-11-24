@@ -24,7 +24,7 @@ from .convert import (
     convert_from_native_to_outputs,
     convert_inputs_to_native,
 )
-from .io import load_inputs, upload_error, upload_outputs
+from .io import upload_error, upload_outputs
 
 
 def replace_task_cli(args: List[str], inputs: Inputs, tmp_path: pathlib.Path, action: ActionID) -> List[str]:
@@ -130,15 +130,13 @@ async def convert_and_run(
     """
     ctx = internal_ctx()
 
-    logger.debug("load inputs")
     # Load inputs first to get context
-    if input_path:
-        inputs = await load_inputs(input_path, path_rewrite_config=raw_data_path.path_rewrite)
+    # if input_path:
+    #     inputs = await load_inputs(input_path, path_rewrite_config=raw_data_path.path_rewrite)
 
     # Extract context from inputs
     custom_context = inputs.context if inputs else {}
 
-    logger.debug("start running")
     tctx = TaskContext(
         action=action,
         checkpoints=checkpoints,
@@ -207,5 +205,7 @@ async def extract_download_run_upload(
     if outputs is None:
         logger.info(f"Task {task.name} completed successfully, no outputs")
         return
+    logger.debug("trying to upload output")
     await upload_outputs(outputs, output_path) if output_path else None
+    logger.debug("finish upload output")
     logger.warning(f"Task {task.name} completed successfully, uploaded outputs to {output_path} in {time.time() - t}s")

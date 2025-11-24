@@ -12,6 +12,7 @@ from flyteidl2.task import common_pb2
 import flyte.storage as storage
 from flyte.models import PathRewrite
 
+from ... import logger
 from .convert import Inputs, Outputs, _clean_error_code
 
 # ------------------------------- CONSTANTS ------------------------------- #
@@ -101,6 +102,7 @@ async def load_inputs(path: str, max_bytes: int = -1, path_rewrite_config: PathR
     """
     lm = common_pb2.Inputs()
     if max_bytes == -1:
+        logger.debug("start reading")
         proto_str = b"".join([c async for c in storage.get_stream(path=path)])
     else:
         proto_bytes = []

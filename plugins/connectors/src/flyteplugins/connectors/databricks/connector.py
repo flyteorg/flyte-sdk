@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Optional
 
 import aiohttp
+from flyte import logger
 from flyte.connectors import AsyncConnector, ConnectorRegistry, Resource, ResourceMeta
 from flyte.connectors.utils import convert_to_flyte_phase
 from flyteidl2.core.execution_pb2 import TaskExecution, TaskLog
@@ -29,7 +30,6 @@ def _get_databricks_job_spec(task_template: TaskTemplate) -> dict:
     databricks_job = custom.get("databricksConf")
     if databricks_job is None:
         raise ValueError("Missing Databricks job configuration in task template.")
-    print("databricks_job", databricks_job)
     if databricks_job.get("existing_cluster_id") is None:
         new_cluster = databricks_job.get("new_cluster")
         if new_cluster is None:
@@ -54,7 +54,7 @@ def _get_databricks_job_spec(task_template: TaskTemplate) -> dict:
         # https://github.com/flyteorg/flyte-sdk/tree/0227af26f82353fb828d099921b15b0dffee676f
         "git_commit": "a426609e0b384aae311e66be9165aac40dec8e92",
     }
-    print("final databricks_job:", databricks_job)
+    logger.debug("databricks_job spec:", databricks_job)
     return databricks_job
 
 
@@ -82,7 +82,6 @@ class DatabricksConnector(AsyncConnector):
 
         databricks_url = f"https://{databricks_instance}{DATABRICKS_API_ENDPOINT}/runs/submit"
 
-        print("databricks_token:", databricks_token)
         async with aiohttp.ClientSession() as session:
             async with session.post(databricks_url, headers=get_header(databricks_token), data=data) as resp:
                 response = await resp.json()

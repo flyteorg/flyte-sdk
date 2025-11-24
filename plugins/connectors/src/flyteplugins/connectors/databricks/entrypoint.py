@@ -1,11 +1,11 @@
 """
-Runtime entrypoint for Databricks connector.
+Runtime entrypoint for Databricks jobs only.
 """
 
 import sys
-from flyte._bin.runtime import main as _a0
 
 import click
+from flyte._bin.runtime import main as _a0
 
 
 def main():
@@ -22,5 +22,6 @@ def main():
 
 if __name__ == "__main__":
     import nest_asyncio
+
     nest_asyncio.apply()
     main()

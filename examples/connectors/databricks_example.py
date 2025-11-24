@@ -1,8 +1,5 @@
-import asyncio
-import os
 import random
 from operator import add
-from pathlib import Path
 
 from flyteplugins.connectors.databricks.task import Databricks
 
@@ -10,21 +7,23 @@ import flyte.remote
 from flyte.storage import S3
 
 image = (
-    # https://hub.docker.com/r/databricksruntime/python/tags
+    # https://hub.docker.com/r/databricksruntime/standard/tags
     flyte.Image.from_base("databricksruntime/standard:16.4-LTS")
     .clone(name="spark", registry="ghcr.io/flyteorg", registry_secret="docker-g")
     .with_apt_packages("git", "vim")
     .with_env_vars({"UV_PYTHON": "/databricks/python3/bin/python"})
-    .with_pip_packages("git+https://github.com/flyteorg/flyte-sdk.git@0227af26f82353fb828d099921b15b0dffee676f#subdirectory=plugins/connectors", pre=True)
-    .with_pip_packages("git+https://github.com/flyteorg/flyte-sdk.git@0227af26f82353fb828d099921b15b0dffee676f#subdirectory=plugins/spark", pre=True)
-    # .with_pip_packages("flyteplugins-connectors", pre=True)
-    # .with_source_folder(Path(__file__).parent.parent.parent / "plugins/connectors", "/opt/connectors")
+    .with_pip_packages(
+        "git+https://github.com/flyteorg/flyte-sdk.git@0227af26f82353fb828d099921b15b0dffee676f#subdirectory=plugins/connectors",
+        pre=True,
+    )
+    .with_pip_packages(
+        "git+https://github.com/flyteorg/flyte-sdk.git@0227af26f82353fb828d099921b15b0dffee676f#subdirectory=plugins/spark",
+        pre=True,
+    )
     .with_local_v2()
     .with_pip_packages("nest-asyncio", "aiohttp", "click==8.1.6")
     .with_env_vars({"Hello": "World2", "LOG_LEVEL": 10})
 )
-
-# image = "pingsutw/spark:e0d6d6210ccdff13475ab65483ddb9b3"
 
 task_env = flyte.TaskEnvironment(
     name="get_pi", resources=flyte.Resources(cpu=(1, 2), memory=("400Mi", "1000Mi")), image=image
@@ -74,13 +73,6 @@ databricks_env = flyte.TaskEnvironment(
     plugin_config=databricks_conf,
     image=image,
     depends_on=[task_env],
-    # env_vars={
-    #     "AWS_REGION": "us-west-1",
-    #     "AWS_DEFAULT_REGION": "us-west-1",
-    #     "AWS_ACCESS_KEY_ID": os.getenv("AWS_ACCESS_KEY_ID"),
-    #     "AWS_SECRET_ACCESS_KEY": os.getenv("AWS_SECRET_ACCESS_KEY"),
-    #     "AWS_SESSION_TOKEN": os.getenv("AWS_SESSION_TOKEN"),
-    # }
 )
 
 
@@ -96,25 +88,29 @@ async def get_pi(count: int, partitions: int) -> float:
 
 
 @databricks_env.task
-async def hello_databricks_nested(partitions: int = 3) -> float:
+async def hello_databricks_nested() -> float:
+    partitions = 3
     n = 1 * partitions
     spark = flyte.ctx().data["spark_session"]
     count = spark.sparkContext.parallelize(range(1, n + 1), partitions).map(f).reduce(add)
-    print("countttt:", count, flush=True)
-    return await get_pi(count, partitions)
+    res = await get_pi(count, partitions)
+    print(f"result: {res}")
+    return res
 
 
 async def test_main():
     import flyte.storage as storage
-    proto_str = b"".join([c async for c in storage.get_stream(path="s3://my-v2-connector/test/inputs.pb")])
+
+    proto_str = b"".join(
+        [c async for c in storage.get_stream(path="s3://my-v2-connector/413771750a3ca17ed08dcc1f3690d843/inputs.pb")]
+    )
     print(proto_str)
+
 
 if __name__ == "__main__":
     flyte.init_from_config(storage=S3().auto())
-    run = flyte.with_runcontext(
-        mode="local",
-        raw_data_path="s3://my-v2-connector/").run(hello_databricks_nested)
-    print("run name:", run.name)
-    print("run urlllll:", run.url)
+    run = flyte.with_runcontext(mode="local", raw_data_path="s3://my-v2-connector/").run(hello_databricks_nested)
+    # print("run name:", run.name)
+    # print("run urlllll:", run.url)
 
     # asyncio.run(test_main())

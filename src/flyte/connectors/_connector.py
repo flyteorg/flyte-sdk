@@ -20,21 +20,22 @@ from flyteidl2.plugins.connector_pb2 import (
 from google.protobuf import json_format
 from google.protobuf.struct_pb2 import Struct
 
+import flyte.storage as storage
 from flyte import Secret
 from flyte._code_bundle import build_code_bundle
 from flyte._context import internal_ctx
 from flyte._deploy import build_images
 from flyte._initialize import get_init_config
-from flyte._internal.runtime import io
+from flyte._internal.runtime import convert, io
 from flyte._internal.runtime.convert import convert_from_native_to_inputs, convert_from_native_to_outputs
 from flyte._internal.runtime.io import upload_inputs
 from flyte._internal.runtime.task_serde import get_proto_task
 from flyte._logging import logger
-from flyte._task import TaskTemplate
+from flyte._task import AsyncFunctionTaskTemplate, TaskTemplate
 from flyte.connectors.utils import _render_task_template, is_terminal_phase
-from flyte.models import NativeInterface, SerializationContext, CodeBundle
+from flyte.models import CodeBundle, NativeInterface, SerializationContext
 from flyte.types._type_engine import dataclass_from_dict
-import flyte.storage as storage
+
 
 @dataclass(frozen=True)
 class ConnectorRegistryKey:
@@ -209,7 +210,7 @@ class ConnectorSecretsMixin:
         return [Secret(key=k, as_env_var=v) for k, v in self._secrets.items()]
 
 
-class AsyncConnectorExecutorMixin(TaskTemplate):
+class AsyncConnectorExecutorMixin:
     """
     This mixin class is used to run the connector task locally, and it's only used for local execution.
     Task should inherit from this class if the task can be run in the connector.
@@ -227,31 +228,45 @@ class AsyncConnectorExecutorMixin(TaskTemplate):
             raise RuntimeError("Task context is not set.")
 
         if tctx.mode == "remote":
-            return await super().execute(**kwargs)
+            return await AsyncFunctionTaskTemplate.execute(self, **kwargs)
 
-        local_code_bundle = await build_code_bundle(
-            from_dir=cfg.root_dir,
-            dryrun=True,
-            copy_bundle_to=Path("/tmp/test"),
-        )
-        print("ctx.raw_data.path", ctx.raw_data.path)
         prefix = tctx.raw_data_path.get_random_remote_path()
-        remote_code_path = await storage.put(local_code_bundle.tgz, prefix + "/code_bundle/")
-        sc = SerializationContext(
-            project=tctx.action.project,
-            domain=tctx.action.domain,
-            org=tctx.action.org,
-            code_bundle=CodeBundle(tgz=remote_code_path, computed_version=local_code_bundle.computed_version),
-            version=tctx.version,
-            image_cache=await build_images.aio(task.parent_env()) if task.parent_env else None,
-            root_dir=cfg.root_dir,
-        )
-        tt = get_proto_task(task, sc)
+        if isinstance(self, AsyncFunctionTaskTemplate):
+            if not storage.is_remote(tctx.raw_data_path.path):
+                return await TaskTemplate.execute(self, **kwargs)
+            else:
+                local_code_bundle = await build_code_bundle(
+                    from_dir=cfg.root_dir,
+                    dryrun=True,
+                    copy_bundle_to=Path("/tmp/test"),
+                )
+                remote_code_path = await storage.put(local_code_bundle.tgz, prefix + "/code_bundle/")
+                sc = SerializationContext(
+                    project=tctx.action.project,
+                    domain=tctx.action.domain,
+                    org=tctx.action.org,
+                    code_bundle=CodeBundle(tgz=remote_code_path, computed_version=local_code_bundle.computed_version),
+                    version=tctx.version,
+                    image_cache=await build_images.aio(task.parent_env()) if task.parent_env else None,
+                    root_dir=cfg.root_dir,
+                )
+                tt = get_proto_task(task, sc)
 
-        tt = _render_task_template(tt, prefix)
-        inputs = await convert_from_native_to_inputs(task.native_interface, **kwargs)
-        inputs_uri = io.inputs_path(prefix)
-        await upload_inputs(inputs, inputs_uri)
+                tt = _render_task_template(tt, prefix)
+                inputs = await convert_from_native_to_inputs(task.native_interface, **kwargs)
+                inputs_uri = io.inputs_path(prefix)
+                await upload_inputs(inputs, inputs_uri)
+        else:
+            sc = SerializationContext(
+                project=tctx.action.project,
+                domain=tctx.action.domain,
+                org=tctx.action.org,
+                code_bundle=tctx.code_bundle,
+                version=tctx.version,
+                image_cache=tctx.compiled_image_cache,
+                root_dir=cfg.root_dir,
+            )
+            tt = get_proto_task(task, sc)
 
         custom = json_format.MessageToDict(tt.custom)
         secrets = custom["secrets"] if "secrets" in custom else {}
@@ -277,7 +292,13 @@ class AsyncConnectorExecutorMixin(TaskTemplate):
             raise RuntimeError(f"Failed to run the task {task.name} with error: {resource.message}")
 
         # TODO: Support abort
-        # ctx.raw_data.get_random_remote_path()
+        if (
+            isinstance(self, AsyncFunctionTaskTemplate)
+            and storage.is_remote(tctx.raw_data_path.path)
+            and storage.exists(io.outputs_path(prefix))
+        ):
+            outputs = await io.load_outputs(io.outputs_path(prefix))
+            return await convert.convert_outputs_to_native(task.interface, outputs)
 
         if resource.outputs is None:
             return None

@@ -182,10 +182,8 @@ async def download_bundle(bundle: CodeBundle) -> pathlib.Path:
         downloaded_bundle = dest / os.path.basename(bundle.tgz)
         if downloaded_bundle.exists():
             return downloaded_bundle.absolute()
-        logger.debug("downloading")
         # Download the tgz file
         await storage.get(bundle.tgz, str(downloaded_bundle.absolute()))
-        logger.debug("downloaded")
         # NOTE the os.path.join(destination, ''). This is to ensure that the given path is in fact a directory and all
         # downloaded data should be copied into this directory. We do this to account for a difference in behavior in
         # fsspec, which requires a trailing slash in case of pre-existing directory.
