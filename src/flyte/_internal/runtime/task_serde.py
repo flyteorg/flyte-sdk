@@ -200,26 +200,10 @@ def get_proto_task(task: TaskTemplate, serialize_context: SerializationContext) 
     return task_template
 
 
-def _get_urun_container(
-    serialize_context: SerializationContext, task_template: TaskTemplate
-) -> Optional[tasks_pb2.Container]:
-    env = (
-        [literals_pb2.KeyValuePair(key=k, value=v) for k, v in task_template.env_vars.items()]
-        if task_template.env_vars
-        else None
-    )
-    resources = get_proto_resources(task_template.resources)
-
-    if isinstance(task_template.image, str):
-        raise flyte.errors.RuntimeSystemError("BadConfig", "Image is not a valid image")
-
-    env_name = task_template.parent_env_name
-    if env_name is None:
-        raise flyte.errors.RuntimeSystemError("BadConfig", f"Task {task_template.name} has no parent environment name")
-
+def lookup_image_in_cache(serialize_context: SerializationContext, env_name: str, image: flyte.Image) -> str:
     if not serialize_context.image_cache:
         # This computes the image uri, computing hashes as necessary so can fail if done remotely.
-        img_uri = task_template.image.uri
+        return image.uri
     elif serialize_context.image_cache and env_name not in serialize_context.image_cache.image_lookup:
         raise flyte.errors.RuntimeUserError(
             "MissingEnvironment",
@@ -241,8 +225,28 @@ def _get_urun_container(
             '             env_vars={"my-name": os.getenv("my-name")},\n'
             "         )\n",
         )
-    else:
-        img_uri = serialize_context.image_cache.image_lookup[env_name]
+    return serialize_context.image_cache.image_lookup[env_name]
+
+
+def _get_urun_container(
+    serialize_context: SerializationContext, task_template: TaskTemplate
+) -> Optional[tasks_pb2.Container]:
+    env = (
+        [literals_pb2.KeyValuePair(key=k, value=v) for k, v in task_template.env_vars.items()]
+        if task_template.env_vars
+        else None
+    )
+    resources = get_proto_resources(task_template.resources)
+
+    img = task_template.image
+    if isinstance(img, str):
+        raise flyte.errors.RuntimeSystemError("BadConfig", "Image is not a valid image")
+
+    env_name = task_template.parent_env_name
+    if env_name is None:
+        raise flyte.errors.RuntimeSystemError("BadConfig", f"Task {task_template.name} has no parent environment name")
+
+    img_uri = lookup_image_in_cache(serialize_context, env_name, img)
 
     return tasks_pb2.Container(
         image=img_uri,

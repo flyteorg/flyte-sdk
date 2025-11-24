@@ -159,7 +159,10 @@ async def convert_and_run(
         if err is not None:
             return None, convert_from_native_to_error(err)
         if task.report:
-            await flyte.report.flush.aio()
+            # Check if report has content before flushing to avoid overwriting
+            # worker reports (from Elastic/distributed tasks) with empty main process report
+            if ctx.get_report():
+                await flyte.report.flush.aio()
         return await convert_from_native_to_outputs(out, task.native_interface, task.name), None
 
 

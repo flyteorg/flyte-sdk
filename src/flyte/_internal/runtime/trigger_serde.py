@@ -123,10 +123,6 @@ async def to_task_trigger(
     if t.inputs:
         for k, v in t.inputs.items():
             if v is TriggerTime:
-                if k == "trigger_time" and k not in task_inputs.variables:
-                    # the 'trigger_time' input name that by default Triggers look for so it's always added.
-                    # Remove it here by skipping if it's not actually an input to the task
-                    continue
                 kickoff_arg_name = k
             else:
                 default_inputs[k] = v

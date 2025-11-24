@@ -214,6 +214,7 @@ async def get(from_path: str, to_path: Optional[str | pathlib.Path] = None, recu
         _is_obstore_supported_protocol(file_system.protocol)
         and hasattr(file_system, "_split_path")
         and hasattr(file_system, "_construct_store")
+        and recursive
     ):
         return await _get_obstore_bypass(from_path, to_path, recursive, **kwargs)
 
@@ -245,13 +246,13 @@ async def _get_from_filesystem(
     **kwargs,
 ):
     if isinstance(file_system, AsyncFileSystem):
-        dst = await file_system._get(from_path, to_path, recursive=recursive, **kwargs)  # pylint: disable=W0212
+        dst = await file_system._get(str(from_path), str(to_path), recursive=recursive, **kwargs)  # pylint: disable=W0212
     else:
-        dst = file_system.get(from_path, to_path, recursive=recursive, **kwargs)
+        dst = file_system.get(str(from_path), str(to_path), recursive=recursive, **kwargs)
 
     if isinstance(dst, (str, pathlib.Path)):
         return dst
-    return to_path
+    return str(to_path)
 
 
 async def put(from_path: str, to_path: Optional[str] = None, recursive: bool = False, **kwargs) -> str:

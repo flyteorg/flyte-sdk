@@ -118,8 +118,7 @@ async def main(goal: str) -> Dict[str, str]:
 
 if __name__ == "__main__":
     # asyncio.run(main("Make a peanut butter and jelly sandwich"))
-    import flyte.git
 
-    flyte.init_from_config(flyte.git.config_from_root())
+    flyte.init_from_config()
     r = flyte.run(main, goal="Make a peanut butter and jelly sandwich")
     print(r.url)

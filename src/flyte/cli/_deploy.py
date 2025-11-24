@@ -96,6 +96,17 @@ class DeployArguments:
             )
         },
     )
+    image: List[str] = field(
+        default_factory=list,
+        metadata={
+            "click.option": click.Option(
+                ["--image"],
+                type=str,
+                multiple=True,
+                help="Image to be used in the run. Format: imagename=imageuri. Can be specified multiple times.",
+            )
+        },
+    )
 
     @classmethod
     def from_dict(cls, d: Dict[str, Any]) -> "DeployArguments":
@@ -121,10 +132,11 @@ class DeployEnvCommand(click.RichCommand):
         console.print(f"Deploying root - environment: {self.env_name}")
         obj: CLIConfig = ctx.obj
         obj.init(
-            self.deploy_args.project,
-            self.deploy_args.domain,
+            project=self.deploy_args.project,
+            domain=self.deploy_args.domain,
             root_dir=self.deploy_args.root_dir,
             sync_local_sys_paths=not self.deploy_args.no_sync_local_sys_paths,
+            images=tuple(self.deploy_args.image) or None,
         )
         with console.status("Deploying...", spinner="dots"):
             deployment = flyte.deploy(
@@ -135,7 +147,7 @@ class DeployEnvCommand(click.RichCommand):
             )
 
         console.print(common.format("Environments", deployment[0].env_repr(), obj.output_format))
-        console.print(common.format("Tasks", deployment[0].table_repr(), obj.output_format))
+        console.print(common.format("Entities", deployment[0].table_repr(), obj.output_format))
 
 
 class DeployEnvRecursiveCommand(click.Command):
@@ -287,7 +299,96 @@ class EnvFiles(common.FileGroup):
 deploy = EnvFiles(
     name="deploy",
     help="""
-    Deploy one or more environments from a python file.
-    This command will create or update environments in the Flyte system.
-    """,
+Deploy one or more environments from a python file.
+
+This command will create or update environments in the Flyte system, registering
+all tasks and their dependencies.
+
+Example usage:
+
+```bash
+flyte deploy hello.py my_env
+```
+
+Arguments to the deploy command are provided right after the `deploy` command and before the file name.
+
+To deploy all environments in a file, use the `--all` flag:
+
+```bash
+flyte deploy --all hello.py
+```
+
+To recursively deploy all environments in a directory and its subdirectories, use the `--recursive` flag:
+
+```bash
+flyte deploy --recursive ./src
+```
+
+You can combine `--all` and `--recursive` to deploy everything:
+
+```bash
+flyte deploy --all --recursive ./src
+```
+
+You can provide image mappings with `--image` flag. This allows you to specify
+the image URI for the task environment during CLI execution without changing
+the code. Any images defined with `Image.from_ref_name("name")` will resolve to the
+corresponding URIs you specify here.
+
+```bash
+flyte deploy --image my_image=ghcr.io/myorg/my-image:v1.0 hello.py my_env
+```
+
+If the image name is not provided, it is regarded as a default image and will
+be used when no image is specified in TaskEnvironment:
+
+```bash
+flyte deploy --image ghcr.io/myorg/default-image:latest hello.py my_env
+```
+
+You can specify multiple image arguments:
+
+```bash
+flyte deploy --image ghcr.io/org/default:latest --image gpu=ghcr.io/org/gpu:v2.0 hello.py my_env
+```
+
+To deploy a specific version, use the `--version` flag:
+
+```bash
+flyte deploy --version v1.0.0 hello.py my_env
+```
+
+To preview what would be deployed without actually deploying, use the `--dry-run` flag:
+
+```bash
+flyte deploy --dry-run hello.py my_env
+```
+
+You can specify the `--config` flag to point to a specific Flyte cluster:
+
+```bash
+flyte deploy --config my-config.yaml hello.py my_env
+```
+
+You can override the default configured project and domain:
+
+```bash
+flyte deploy --project my-project --domain development hello.py my_env
+```
+
+If loading some files fails during recursive deployment, you can use the `--ignore-load-errors` flag
+to continue deploying the environments that loaded successfully:
+
+```bash
+flyte deploy --recursive --ignore-load-errors ./src
+```
+
+Other arguments to the deploy command are listed below.
+
+To see the environments available in a file, use `--help` after the file name:
+
+```bash
+flyte deploy hello.py --help
+```
+""",
 )

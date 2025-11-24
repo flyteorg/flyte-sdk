@@ -134,6 +134,22 @@ def ls_files(
     return all_files, digest
 
 
+def ls_relative_files(relative_paths: list[str], source_path: pathlib.Path) -> tuple[list[str], str]:
+    relative_paths = list(relative_paths)
+    relative_paths.sort()
+    hasher = hashlib.md5()
+
+    all_files = []
+    for file in relative_paths:
+        path = source_path / file
+        all_files.append(str(path))
+        _filehash_update(path, hasher)
+        _pathhash_update(path, hasher)
+
+    digest = hasher.hexdigest()
+    return all_files, digest
+
+
 def _filehash_update(path: Union[os.PathLike, str], hasher: hashlib._Hash) -> None:
     blocksize = 65536
     with open(path, "rb") as f:
