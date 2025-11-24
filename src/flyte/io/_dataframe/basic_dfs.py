@@ -188,7 +188,10 @@ class ArrowToParquetEncodingHandler(DataFrameEncoder):
         path = os.path.join(uri, f"{0:05}")
         filesystem = storage.get_underlying_filesystem(path=path)
         pq.write_table(dataframe.val, strip_protocol(path), filesystem=filesystem)
-        return literals_pb2.StructuredDataset(uri=uri, metadata=literals_pb2.StructuredDatasetMetadata(dataframe_type))
+        return literals_pb2.StructuredDataset(
+            uri=uri,
+            metadata=literals_pb2.StructuredDatasetMetadata(structured_dataset_type=dataframe_type),
+        )
 
 
 class ParquetToArrowDecodingHandler(DataFrameDecoder):
@@ -202,20 +205,21 @@ class ParquetToArrowDecodingHandler(DataFrameDecoder):
     ) -> "pa.Table":
         import pyarrow.parquet as pq
 
-        uri = proto_value.uri
-        if not storage.is_remote(uri):
-            Path(uri).parent.mkdir(parents=True, exist_ok=True)
-        _, path = split_protocol(uri)
+        path = proto_value.uri
+        if not storage.is_remote(path):
+            Path(path).parent.mkdir(parents=True, exist_ok=True)
+            _, path = split_protocol(path)
 
         columns = None
         if current_task_metadata.structured_dataset_type and current_task_metadata.structured_dataset_type.columns:
             columns = [c.name for c in current_task_metadata.structured_dataset_type.columns]
         try:
+            print(f"Reading from [{path}]", flush=True)
             return pq.read_table(path, columns=columns)
         except Exception as exc:
             if exc.__class__.__name__ == "NoCredentialsError":
                 logger.debug("S3 source detected, attempting anonymous S3 access")
-                fs = storage.get_underlying_filesystem(path=uri, anonymous=True)
+                fs = storage.get_underlying_filesystem(path=path, anonymous=True)
                 if fs is not None:
                     return pq.read_table(path, filesystem=fs, columns=columns)
                 return None

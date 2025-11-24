@@ -3,7 +3,6 @@
 # dependencies = [
 #     "pyiceberg",
 #     "pyarrow",
-#     "pandas",
 #     "unionai-reuse>=0.1.7",
 # ]
 # ///
@@ -28,7 +27,7 @@ import asyncio
 import logging
 from typing import List, Literal
 
-import pandas as pd
+import pyarrow as pa
 
 import flyte
 import flyte.io
@@ -49,7 +48,7 @@ processing_env = flyte.TaskEnvironment(
         idle_ttl=300,  # Keep workers alive for 5 minutes after idle
     ),
     image=image,
-    cache=flyte.Cache("auto", "1.0"),
+    cache=flyte.Cache("auto", "2.0"),
 )
 
 # Non-reusable environment for orchestration tasks
@@ -87,28 +86,30 @@ async def aggregate_partition(
     Returns:
         Flyte DataFrame with aggregation results for this partition
     """
-    # Convert from flyte.io.DataFrame to pandas - data is fetched only here
-    df: pd.DataFrame = await partition_data.open(pd.DataFrame).all()
-    logger.info(f"Processing partition {partition_id} with {len(df)} rows")
+    # Convert from flyte.io.DataFrame to PyArrow - data is fetched only here
+    table: pa.Table = await partition_data.open(pa.Table).all()
+    logger.info(f"Processing partition {partition_id} with {table.num_rows} rows")
 
-    # Perform aggregation based on the specified function
+    # Perform aggregation using PyArrow compute
+    grouped = table.group_by(group_by_column)
     if agg_function == "sum":
-        result = df.groupby(group_by_column)[agg_column].sum().reset_index()
+        result = grouped.aggregate([(agg_column, "sum")])
     elif agg_function == "mean":
-        result = df.groupby(group_by_column)[agg_column].mean().reset_index()
+        result = grouped.aggregate([(agg_column, "mean")])
     elif agg_function == "count":
-        result = df.groupby(group_by_column)[agg_column].count().reset_index()
+        result = grouped.aggregate([(agg_column, "count")])
     elif agg_function == "max":
-        result = df.groupby(group_by_column)[agg_column].max().reset_index()
+        result = grouped.aggregate([(agg_column, "max")])
     elif agg_function == "min":
-        result = df.groupby(group_by_column)[agg_column].min().reset_index()
+        result = grouped.aggregate([(agg_column, "min")])
     else:
         raise ValueError(f"Unsupported aggregation function: {agg_function}")
 
     # Add partition ID for tracking
-    result["partition_id"] = partition_id
+    partition_ids = pa.array([partition_id] * result.num_rows)
+    result = result.append_column("partition_id", partition_ids)
 
-    logger.info(f"Partition {partition_id} completed: {len(result)} groups")
+    logger.info(f"Partition {partition_id} completed: {result.num_rows} groups")
 
     # Return as flyte.io.DataFrame - only reference is passed to next task
     return flyte.io.DataFrame.from_df(result)
@@ -129,9 +130,9 @@ async def split_into_chunks(
     Returns:
         List of Flyte DataFrames (references only, minimizing data copies)
     """
-    # Convert to pandas DataFrame for slicing
-    df: pd.DataFrame = await table_data.open(pd.DataFrame).all()
-    total_rows = len(df)
+    # Convert to PyArrow Table for efficient zero-copy slicing
+    table: pa.Table = await table_data.open(pa.Table).all()
+    total_rows = table.num_rows
     chunk_size = max(1, total_rows // num_chunks)
 
     chunks: List[flyte.io.DataFrame] = []
@@ -141,7 +142,8 @@ async def split_into_chunks(
         end_idx = total_rows if i == num_chunks - 1 else (i + 1) * chunk_size
 
         if start_idx < total_rows:
-            chunk = df.iloc[start_idx:end_idx]
+            # PyArrow slice is zero-copy
+            chunk = table.slice(start_idx, end_idx - start_idx)
             # Convert each chunk to flyte.io.DataFrame - stores reference
             chunks.append(flyte.io.DataFrame.from_df(chunk))
 
@@ -168,35 +170,32 @@ async def combine_results(
     Returns:
         Final combined Flyte DataFrame with aggregated results
     """
-    # Fetch and combine all partition results
-    dfs = [await result.open(pd.DataFrame).all() for result in partition_results]
-    combined_df = pd.concat(dfs, ignore_index=True)
+    # Fetch and combine all partition results using PyArrow
+    tables = [await result.open(pa.Table).all() for result in partition_results]
+    combined_table = pa.concat_tables(tables)
+
+    # The aggregated column name from PyArrow includes the function suffix
+    agg_col_name = f"{agg_column}_{agg_function}"
 
     # Final aggregation across all partitions
     # (since each partition processed independently, we need to re-aggregate)
+    grouped = combined_table.group_by(group_by_column)
     if agg_function in ("sum", "count"):
-        final_result = (
-            combined_df.groupby(group_by_column).agg({agg_column: "sum", "partition_id": "count"}).reset_index()
-        )
+        final_result = grouped.aggregate([(agg_col_name, "sum"), ("partition_id", "count")])
     elif agg_function == "mean":
         # For mean, we need weighted average (simplified: just re-average)
-        final_result = (
-            combined_df.groupby(group_by_column).agg({agg_column: "mean", "partition_id": "count"}).reset_index()
-        )
+        final_result = grouped.aggregate([(agg_col_name, "mean"), ("partition_id", "count")])
     elif agg_function == "max":
-        final_result = (
-            combined_df.groupby(group_by_column).agg({agg_column: "max", "partition_id": "count"}).reset_index()
-        )
+        final_result = grouped.aggregate([(agg_col_name, "max"), ("partition_id", "count")])
     elif agg_function == "min":
-        final_result = (
-            combined_df.groupby(group_by_column).agg({agg_column: "min", "partition_id": "count"}).reset_index()
-        )
+        final_result = grouped.aggregate([(agg_col_name, "min"), ("partition_id", "count")])
     else:
         raise ValueError(f"Unsupported aggregation function: {agg_function}")
 
-    final_result.rename(columns={"partition_id": "num_partitions"}, inplace=True)
+    # Rename columns for clarity
+    final_result = final_result.rename_columns([group_by_column, agg_column, "num_partitions"])
 
-    logger.info(f"Combined results: {len(final_result)} groups from {len(partition_results)} partitions")
+    logger.info(f"Combined results: {final_result.num_rows} groups from {len(partition_results)} partitions")
     return flyte.io.DataFrame.from_df(final_result)
 
 
@@ -271,17 +270,28 @@ async def create_sample_data() -> flyte.io.DataFrame:
     Returns:
         Flyte DataFrame with sample data (reference only)
     """
-    data = {
-        "category": ["A", "B", "C", "A", "B", "C", "A", "B", "C", "A"] * 100,
-        "value": list(range(1, 1001)),
-        "region": ["US", "EU", "ASIA"] * 333 + ["US"],
-        "timestamp": pd.date_range("2024-01-01", periods=1000, freq="h"),
-    }
-    df = pd.DataFrame(data)
-    logger.info(f"Created sample data: {len(df)} rows")
+    import datetime
+
+    # Create sample data using PyArrow
+    categories = ["A", "B", "C", "A", "B", "C", "A", "B", "C", "A"] * 100
+    values = list(range(1, 1001))
+    regions = ["US", "EU", "ASIA"] * 333 + ["US"]
+    # Generate timestamps
+    base_time = datetime.datetime(2024, 1, 1)
+    timestamps = [base_time + datetime.timedelta(hours=i) for i in range(1000)]
+
+    table = pa.table(
+        {
+            "category": categories,
+            "value": values,
+            "region": regions,
+            "timestamp": pa.array(timestamps, type=pa.timestamp("us")),
+        }
+    )
+    logger.info(f"Created sample data: {table.num_rows} rows")
 
     # Return as flyte.io.DataFrame - only metadata/reference is passed
-    return flyte.io.DataFrame.from_df(df)
+    return flyte.io.DataFrame.from_df(table)
 
 
 @orchestrator_env.task
