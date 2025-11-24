@@ -124,6 +124,8 @@ class TaskTemplate(Generic[P, R, F]):
         # Auto set the image based on the image request
         if self.image == "auto":
             self.image = Image.from_debian_base()
+        elif isinstance(self.image, str):
+            self.image = Image.from_base(str(self.image))
 
         # Auto set cache based on the cache request
         if isinstance(self.cache, str):
