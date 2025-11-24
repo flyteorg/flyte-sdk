@@ -300,6 +300,8 @@ def translate_app_env_to_idl(
 
     ingress = app_definition_pb2.IngressConfig(
         private=False,
+        subdomain=app_env.domain.subdomain if app_env.domain else None,
+        cname=app_env.domain.custom_domain if app_env.domain else None,
     )
 
     # Build links

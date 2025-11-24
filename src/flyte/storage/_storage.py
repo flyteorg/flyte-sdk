@@ -214,6 +214,7 @@ async def get(from_path: str, to_path: Optional[str | pathlib.Path] = None, recu
         _is_obstore_supported_protocol(file_system.protocol)
         and hasattr(file_system, "_split_path")
         and hasattr(file_system, "_construct_store")
+        and recursive
     ):
         return await _get_obstore_bypass(from_path, to_path, recursive, **kwargs)
 

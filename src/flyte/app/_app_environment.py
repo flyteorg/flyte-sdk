@@ -149,7 +149,7 @@ class AppEnvironment(Environment):
     def endpoint(self) -> str:
         endpoint_pattern = os.getenv(INTERNAL_APP_ENDPOINT_PATTERN_ENV_VAR)
         if endpoint_pattern is not None:
-            return endpoint_pattern.replace("{app_fqdn}", self.name)
+            return endpoint_pattern.format(app_fqdn=self.name)
 
         import flyte.remote
 
