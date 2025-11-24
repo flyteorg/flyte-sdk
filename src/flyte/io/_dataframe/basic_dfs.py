@@ -214,7 +214,6 @@ class ParquetToArrowDecodingHandler(DataFrameDecoder):
         if current_task_metadata.structured_dataset_type and current_task_metadata.structured_dataset_type.columns:
             columns = [c.name for c in current_task_metadata.structured_dataset_type.columns]
         try:
-            print(f"Reading from [{path}]", flush=True)
             return pq.read_table(path, columns=columns)
         except Exception as exc:
             if exc.__class__.__name__ == "NoCredentialsError":
