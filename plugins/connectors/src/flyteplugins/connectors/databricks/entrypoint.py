@@ -15,7 +15,7 @@ def main():
         parser = _a0.make_parser(click_ctx)
         args, _, _ = parser.parse_args(args[2:])
         with click_ctx:
-            _a0.callback(**args, debug=False, interactive_mode=False, pkl=None, dest=".")
+            _a0.callback(**args, debug=False, interactive_mode=False, pkl=None)
     else:
         raise ValueError(f"Unrecognized command: {args[1:]}")
 
