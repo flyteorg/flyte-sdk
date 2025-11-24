@@ -4,6 +4,7 @@ import flyte
 from pathlib import Path
 from flyte._image import PythonWheels
 
+# actor_image=flyte.Image.from_debian_base().with_pip_packages("unionai-reuse==0.1.7"),
 actor_dist_folder = Path("/Users/ytong/go/src/github.com/unionai/flyte/fasttask/worker-v2/dist")
 wheel_layer = PythonWheels(wheel_dir=actor_dist_folder, package_name="unionai-reuse")
 base = flyte.Image.from_debian_base()
@@ -19,12 +20,12 @@ env = flyte.TaskEnvironment(
         scaledown_ttl=60,
     ),
     image=actor_image,
-    # image=flyte.Image.from_debian_base().with_pip_packages("unionai-reuse==0.1.7"),
 )
 
 
 @env.task
 async def noop(x: int) -> int:
+    flyte.logger.warning(f"This is a noop task {x}")
     return x
 
 
