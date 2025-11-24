@@ -143,7 +143,6 @@ async def test_copy_config_handler():
                 src=test_file,
                 dst="/app/main.py",
                 path_type=0,  # file
-                src_name=test_file.name,
             )
 
             # Test the handle method
@@ -206,7 +205,6 @@ async def test_copy_config_handler_skips_dockerignore():
                     src=src_dir,
                     dst=".",
                     path_type=1,  # directory
-                    src_name=src_dir.name,
                 )
 
                 result = await CopyConfigHandler.handle(
@@ -262,7 +260,6 @@ async def test_copy_config_handler_with_dockerignore_layer():
                     src=src_dir,
                     dst=".",
                     path_type=1,  # directory
-                    src_name=src_dir.name,
                 )
 
                 result = await CopyConfigHandler.handle(
@@ -376,7 +373,6 @@ async def test_poetry_handler_with_project_install():
             assert expected_dst_path.is_dir(), "Should be a directory"
             assert (expected_dst_path / "pyproject.toml").exists(), "pyproject.toml should be included"
             assert (expected_dst_path / "poetry.lock").exists(), "poetry.lock should be included"
-            assert (expected_dst_path / "main.py").exists(), "main.py should be included"
             assert not (expected_dst_path / "memo.txt").exists(), "memo.txt should be excluded"
             assert not (expected_dst_path / ".cache").exists(), ".cache directory should be excluded"
 
@@ -396,7 +392,11 @@ async def test_uvproject_handler_with_project_install():
             # Create UVProject installing the whole project
             from flyte._image import UVProject
 
-            uv_project = UVProject(pyproject=pyproject_file.absolute(), uvlock=uv_lock_file.absolute())
+            uv_project = UVProject(
+                pyproject=pyproject_file.absolute(),
+                uvlock=uv_lock_file.absolute(),
+                project_install_mode="install_project",
+            )
 
             cache_dir = user_folder / ".cache"
             cache_dir.mkdir(parents=True, exist_ok=True)

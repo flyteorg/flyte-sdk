@@ -95,4 +95,4 @@ if __name__ == "__main__":
 
     run = flyte.run(failure_recovery)
     print(run.url)
-    run.wait(run)
+    run.wait()

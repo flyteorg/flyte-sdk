@@ -1,0 +1,176 @@
+# PyProject Package Example
+
+## Overview
+
+This example demonstrates a **realistic Python project structure** using the `src/` layout with Flyte tasks. It shows how to organize a typical Python package with:
+
+- Multiple Python modules containing business logic (non-Flyte code)
+- Flyte tasks that orchestrate the business logic
+- An entrypoint script for execution
+- External dependencies managed via `pyproject.toml`
+- Async task execution
+
+## Planned Project Structure
+
+```
+pyproject_package/
+    pyproject.toml          # Project metadata and dependencies
+    README.md              # This file
+    .python-version        # Python version
+    src/
+        pyproject_package/
+            __init__.py    # Package initialization
+            main.py        # Entrypoint script with Flyte tasks
+            data/
+                __init__.py
+                loader.py  # Data loading utilities (no Flyte)
+                processor.py  # Data processing utilities (no Flyte)
+            models/
+                __init__.py
+                analyzer.py  # Analysis/ML utilities (no Flyte)
+```
+
+## Planned Components
+
+### 1. Business Logic Modules (No Flyte Dependencies)
+
+#### `data/loader.py`
+- **Purpose**: Load data from various sources
+- **Functions**:
+  - `async def fetch_data_from_api(url: str) -> dict`: Fetch data from an API using `httpx`
+  - `def load_local_data(file_path: str) -> dict`: Load data from local file
+
+#### `data/processor.py`
+- **Purpose**: Process and transform data
+- **Functions**:
+  - `def clean_data(raw_data: dict) -> dict`: Clean and validate data
+  - `def transform_data(data: dict) -> list[dict]`: Transform data structure
+  - `async def aggregate_data(items: list[dict]) -> dict`: Aggregate data asynchronously
+
+#### `models/analyzer.py`
+- **Purpose**: Perform analysis on processed data
+- **Functions**:
+  - `def calculate_statistics(data: list[dict]) -> dict`: Calculate basic statistics using `numpy`
+  - `def generate_report(stats: dict) -> str`: Generate a formatted report
+
+### 2. Flyte Tasks (`main.py`)
+
+#### TaskEnvironment
+```python
+env = flyte.TaskEnvironment(
+    name="data_pipeline",
+    image=flyte.Image.from_debian_base().with_uv_project(
+        pyproject_file=pathlib.Path("pyproject.toml")
+    ),
+    resources=flyte.Resources(memory="512Mi", cpu="500m"),
+)
+```
+
+#### Planned Tasks
+
+1. **`fetch_task(url: str) -> dict`** (async)
+   - Calls `data.loader.fetch_data_from_api()`
+   - Returns raw data
+
+2. **`process_task(raw_data: dict) -> list[dict]`** (async)
+   - Calls `data.processor.clean_data()`
+   - Calls `data.processor.transform_data()`
+   - Returns processed data
+
+3. **`analyze_task(processed_data: list[dict]) -> str`**
+   - Calls `data.processor.aggregate_data()`
+   - Calls `models.analyzer.calculate_statistics()`
+   - Calls `models.analyzer.generate_report()`
+   - Returns analysis report
+
+4. **`pipeline(api_url: str) -> str`** (main workflow)
+   - Orchestrates all tasks sequentially
+   - Demonstrates task chaining
+
+### 3. Entrypoint Script
+
+The `main.py` file will include:
+
+#### A `main()` function (for the entry point):
+```python
+def main():
+    """Main entry point for the pipeline."""
+    flyte.init_from_config()
+
+    # Run the pipeline with sample data
+    run = flyte.run(
+        pipeline,
+        api_url="https://api.example.com/data"
+    )
+
+    print(f"Run Name: {run.name}")
+    print(f"Run URL: {run.url}")
+
+    # Wait for completion and print result
+    run.wait()
+```
+
+#### A `__main__` block (for running as a script):
+```python
+if __name__ == "__main__":
+    main()
+```
+
+This pattern allows the package to be run in multiple ways:
+- Via the installed entry point: `run-pipeline` (calls `main()`)
+- As a Python module: `python -m pyproject_package.main` (calls `main()` via `__main__`)
+- Directly: `python src/pyproject_package/main.py` (calls `main()` via `__main__`)
+
+### 4. Dependencies (`pyproject.toml`)
+
+```toml
+[project]
+dependencies = [
+    "flyte>=2.0.0",
+    "httpx",           # For async HTTP requests
+    "numpy",           # For numerical operations
+    "pydantic",        # For data validation
+]
+
+[project.scripts]
+run-pipeline = "pyproject_package.main:main"
+```
+
+## Key Learning Points
+
+1. **Separation of Concerns**: Business logic (`data/`, `models/`) is separate from orchestration (`main.py`)
+2. **Reusable Code**: Non-Flyte modules can be tested independently and reused
+3. **Async Support**: Demonstrates async Flyte tasks for I/O-bound operations
+4. **Dependency Management**: Shows how external packages integrate with Flyte
+5. **Realistic Structure**: Mirrors real-world Python project organization
+6. **Entrypoint Script**: Shows how to create a runnable entry point
+
+## Usage
+
+Once implemented, you can:
+
+1. **Run locally**:
+   ```bash
+   python -m pyproject_package.main
+   ```
+
+2. **Deploy to Flyte**:
+   ```bash
+   flyte deploy .
+   ```
+
+3. **Run remotely**:
+   ```bash
+   python -m pyproject_package.main
+   ```
+
+## What This Example Demonstrates
+
+- Multiple files and modules in a package
+- Async Flyte tasks
+- Separation of business logic from orchestration
+- External dependencies (httpx, numpy, pydantic)
+- Entrypoint script pattern
+- Realistic project structure with src/ layout
+- Task chaining and data flow
+- How non-Flyte code integrates with Flyte tasks

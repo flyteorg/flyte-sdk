@@ -8,7 +8,7 @@ import flyte
 from flyte import PodTemplate
 from flyte.extend import AsyncFunctionTaskTemplate, TaskPluginRegistry
 from flyte.models import SerializationContext
-from flyteidl.plugins.spark_pb2 import SparkApplication, SparkJob
+from flyteidl2.plugins.spark_pb2 import SparkApplication, SparkJob
 from google.protobuf.json_format import MessageToDict
 
 DEFAULT_SPARK_CONTEXT_NAME = "FlyteSpark"
@@ -52,6 +52,7 @@ class PysparkFunctionTask(AsyncFunctionTaskTemplate):
 
     plugin_config: Spark
     task_type: str = "spark"
+    debuggable: bool = True
 
     async def pre(self, *args, **kwargs) -> Dict[str, Any]:
         import pyspark as _pyspark
@@ -85,10 +86,16 @@ class PysparkFunctionTask(AsyncFunctionTaskTemplate):
         return MessageToDict(job)
 
     async def post(self, return_vals: Any) -> Any:
-        import pyspark as _pyspark
+        ctx = flyte.ctx()
+        if ctx and ctx.action.name == "a0":
+            # Only stop the SparkSession if it was created by the parent task in the debug mode.
+            # This is to make sure that the SparkSession is stopped by
+            # parent action only when debugging in the interactive mode.
+            # Note: The action name is always "a0" in the debug mode.
+            import pyspark as _pyspark
 
-        sess = _pyspark.sql.SparkSession.builder.appName(DEFAULT_SPARK_CONTEXT_NAME).getOrCreate()
-        sess.stop()
+            sess = _pyspark.sql.SparkSession.builder.appName(DEFAULT_SPARK_CONTEXT_NAME).getOrCreate()
+            sess.stop()
 
 
 TaskPluginRegistry.register(Spark, PysparkFunctionTask)

@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import typing
 from typing import Type
 
@@ -14,8 +16,8 @@ class _Registry:
     A registry for task plugins.
     """
 
-    def __init__(self):
-        self._plugins: typing.Dict[Type, Type[T]] = {}
+    def __init__(self: _Registry):
+        self._plugins: typing.Dict[Type, Type[typing.Any]] = {}
 
     def register(self, config_type: Type, plugin: Type[T]):
         """

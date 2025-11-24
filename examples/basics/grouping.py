@@ -54,4 +54,4 @@ if __name__ == "__main__":
 
     run = flyte.run(group_dynamic, x=10)
     print(run.url)
-    run.wait(run)
+    run.wait()

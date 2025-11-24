@@ -22,7 +22,7 @@ downstream_env = flyte.TaskEnvironment(
         scaledown_ttl=60,
     ),
     image=flyte.Image.from_debian_base(install_flyte=False).with_pip_packages(
-        "unionai-reuse==0.1.6b0", "flyte>2.0.0b22", pre=True
+        "unionai-reuse==0.1.7", "flyte>2.0.0b22", pre=True
     ),
 )
 
@@ -200,8 +200,6 @@ async def runs_per_second(max_rps: int = 50, n: int = 500):
 
 
 if __name__ == "__main__":
-    import flyte.git
-
-    flyte.init_from_config(flyte.git.config_from_root())
+    flyte.init_from_config()
     run = flyte.run(runs_per_second, max_rps=50, n=500)
     print(run.url)

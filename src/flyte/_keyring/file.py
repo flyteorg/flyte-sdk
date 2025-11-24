@@ -10,9 +10,27 @@ _FLYTE_KEYRING_PATH: Path = Path.home() / ".flyte" / "keyring.cfg"
 
 
 class SimplePlainTextKeyring(KeyringBackend):
-    """Simple plain text keyring"""
+    """
+    Simple plain text keyring for remote notebook environments.
 
-    priority = 0.5
+    This backend is only active when running in IPython/Jupyter notebooks.
+    For local development, the system keyring is used instead.
+    """
+
+    @property
+    def priority(self):
+        """
+        Return priority based on whether we're in a notebook environment.
+        Negative priority means this backend will be skipped by keyring.
+        """
+        from flyte._tools import ipython_check
+
+        if ipython_check():
+            # In IPython/Jupyter - use this backend
+            return 0.5
+        else:
+            # Not in IPython - skip this backend, let system keyring handle it
+            return -1
 
     def get_password(self, service: str, username: str) -> Optional[str]:
         """Get password."""
@@ -72,13 +90,25 @@ class SimplePlainTextKeyring(KeyringBackend):
 
     @property
     def file_path(self) -> Path:
-        from flyte._initialize import get_common_config
+        from flyte._initialize import get_init_config, is_initialized
+        from flyte._logging import logger
 
-        config_path = get_common_config().source_config_path
-        if config_path and str(config_path.parent) == ".flyte":
-            # if the config is in a .flyte directory, use that as the path
-            return config_path.parent / "keyring.cfg"
-        # otherwise use the default path
+        # Only try to use source_config_path if flyte.init() has been called
+        if is_initialized():
+            try:
+                config = get_init_config()
+                config_path = config.source_config_path
+                if config_path and str(config_path.parent.name) == ".flyte":
+                    # if the config is in a .flyte directory, use that as the path
+                    return config_path.parent / "keyring.cfg"
+            except Exception as e:
+                # If anything fails, fall back to default path
+                logger.debug(f"Skipping config-based keyring path due to error: {e}")
+        else:
+            # flyte.init() hasn't been called, use default path
+            logger.debug("flyte.init() not called, using default keyring path")
+
+        # Default path
         return _FLYTE_KEYRING_PATH
 
     def __repr__(self):

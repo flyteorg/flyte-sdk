@@ -1168,20 +1168,26 @@ class TypeEngine(typing.Generic[T]):
                 f"Received more input values {len(lm.literals)}"
                 f" than allowed by the input spec {len(python_interface_inputs)}"
             )
-        kwargs = {}
-        try:
-            for i, k in enumerate(lm.literals):
-                kwargs[k] = asyncio.create_task(TypeEngine.to_python_value(lm.literals[k], python_interface_inputs[k]))
-            await asyncio.gather(*kwargs.values())
-        except Exception as e:
-            raise TypeTransformerFailedError(
-                f"Error converting input:\n"
-                f"Literal value: {lm.literals[k]}\n"
-                f"Expected Python type: {python_interface_inputs[k]}\n"
-                f"Exception: {e}"
-            )
+        # Create tasks for converting each kwarg
+        tasks = {}
+        for k in lm.literals:
+            tasks[k] = asyncio.create_task(TypeEngine.to_python_value(lm.literals[k], python_interface_inputs[k]))
 
-        kwargs = {k: v.result() for k, v in kwargs.items() if v is not None}
+        # Gather all tasks, returning exceptions instead of raising them
+        results = await asyncio.gather(*tasks.values(), return_exceptions=True)
+
+        # Check for exceptions and raise with specific kwarg name
+        kwargs = {}
+        for (key, task), result in zip(tasks.items(), results):
+            if isinstance(result, Exception):
+                raise TypeTransformerFailedError(
+                    f"Error converting input '{key}':\n"
+                    f"Literal value: {lm.literals[key]}\n"
+                    f"Expected Python type: {python_interface_inputs[key]}\n"
+                    f"Exception: {result}"
+                ) from result
+            kwargs[key] = result
+
         return kwargs
 
     @classmethod
@@ -1905,7 +1911,6 @@ def _get_element_type(element_property: typing.Dict[str, str]) -> Type:
     return str
 
 
-# pr: han-ru is this still needed?
 def dataclass_from_dict(cls: type, src: typing.Dict[str, typing.Any]) -> typing.Any:
     """
     Utility function to construct a dataclass object from dict
@@ -1985,7 +1990,7 @@ def _handle_flyte_console_float_input_to_int(lv: Literal) -> int:
 
 def _check_and_convert_void(lv: Literal) -> None:
     if not lv.scalar.HasField("none_type"):
-        raise TypeTransformerFailedError(f"Cannot convert literal {lv} to None")
+        raise TypeTransformerFailedError(f"Cannot convert literal '{lv}' to None")
     return None
 
 
@@ -2046,7 +2051,9 @@ DateTransformer = SimpleTransformer(
     lambda x: Literal(
         scalar=Scalar(primitive=Primitive(datetime=datetime.datetime.combine(x, datetime.time.min)))
     ),  # convert datetime to date
-    lambda x: x.scalar.primitive.datetime.date() if x.scalar.primitive.HasField("datetime") else None,
+    lambda x: x.scalar.primitive.datetime.ToDatetime().replace(tzinfo=datetime.timezone.utc).date()
+    if x.scalar.primitive.HasField("datetime")
+    else None,
 )
 
 NoneTransformer = SimpleTransformer(

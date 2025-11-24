@@ -71,7 +71,7 @@ async def upload_outputs(outputs: Outputs, output_path: str, max_bytes: int = -1
     await storage.put_stream(data_iterable=outputs.proto_outputs.SerializeToString(), to_path=output_uri)
 
 
-async def upload_error(err: execution_pb2.ExecutionError, output_prefix: str):
+async def upload_error(err: execution_pb2.ExecutionError, output_prefix: str) -> str:
     """
     :param err: execution_pb2.ExecutionError
     :param output_prefix: The output prefix of the remote uri.
@@ -88,7 +88,7 @@ async def upload_error(err: execution_pb2.ExecutionError, output_prefix: str):
         )
     )
     error_uri = error_path(output_prefix)
-    await storage.put_stream(data_iterable=error_document.SerializeToString(), to_path=error_uri)
+    return await storage.put_stream(data_iterable=error_document.SerializeToString(), to_path=error_uri)
 
 
 # ------------------------------- DOWNLOAD Methods ------------------------------- #
