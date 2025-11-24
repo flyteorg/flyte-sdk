@@ -110,7 +110,6 @@ async def main():
 
 
 if __name__ == "__main__":
-
     flyte.init_from_config()
     r = flyte.run(main)
     # r = flyte.with_runcontext(mode="local").run(main)

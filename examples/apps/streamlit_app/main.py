@@ -1,4 +1,5 @@
 import os
+
 import streamlit as st
 from utils import generate_data
 

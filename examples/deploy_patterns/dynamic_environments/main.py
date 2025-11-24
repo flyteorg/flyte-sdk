@@ -1,5 +1,5 @@
-
 import flyte
+
 flyte.init_from_config()
 from environment_picker import entrypoint
 
