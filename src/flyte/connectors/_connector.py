@@ -4,6 +4,7 @@ import os
 import typing
 from abc import ABC, abstractmethod
 from dataclasses import asdict, dataclass
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from flyteidl2.core import tasks_pb2
@@ -31,9 +32,9 @@ from flyte._internal.runtime.task_serde import get_proto_task
 from flyte._logging import logger
 from flyte._task import TaskTemplate
 from flyte.connectors.utils import _render_task_template, is_terminal_phase
-from flyte.models import NativeInterface, SerializationContext
+from flyte.models import NativeInterface, SerializationContext, CodeBundle
 from flyte.types._type_engine import dataclass_from_dict
-
+import flyte.storage as storage
 
 @dataclass(frozen=True)
 class ConnectorRegistryKey:
@@ -228,22 +229,25 @@ class AsyncConnectorExecutorMixin(TaskTemplate):
         if tctx.mode == "remote":
             return await super().execute(**kwargs)
 
-        code_bundle = await build_code_bundle(
+        local_code_bundle = await build_code_bundle(
             from_dir=cfg.root_dir,
-            copy_bundle_to=ctx.raw_data.path,
+            dryrun=True,
+            copy_bundle_to=Path("/tmp/test"),
         )
         print("ctx.raw_data.path", ctx.raw_data.path)
+        prefix = tctx.raw_data_path.get_random_remote_path()
+        remote_code_path = await storage.put(local_code_bundle.tgz, prefix + "/code_bundle/")
         sc = SerializationContext(
             project=tctx.action.project,
             domain=tctx.action.domain,
             org=tctx.action.org,
-            code_bundle=code_bundle,
+            code_bundle=CodeBundle(tgz=remote_code_path, computed_version=local_code_bundle.computed_version),
             version=tctx.version,
             image_cache=await build_images.aio(task.parent_env()) if task.parent_env else None,
             root_dir=cfg.root_dir,
         )
         tt = get_proto_task(task, sc)
-        prefix = tctx.raw_data_path.get_random_remote_path()
+
         tt = _render_task_template(tt, prefix)
         inputs = await convert_from_native_to_inputs(task.native_interface, **kwargs)
         inputs_uri = io.inputs_path(prefix)
