@@ -215,6 +215,7 @@ async def _deploy_task(
             f"Failed to deploy task {task.name} file{task.source_file} with image {image_uri}, Error: {e!s}"
         ) from e
 
+
 def _get_documentation_entity(task_template: TaskTemplate) -> task_definition_pb2.DocumentationEntity:
     """
     Extract documentation from TaskTemplate's docstring and create a DocumentationEntity.
@@ -236,6 +237,7 @@ def _get_documentation_entity(task_template: TaskTemplate) -> task_definition_pb
         short_description=short_desc,
         long_description=long_desc,
     )
+
 
 async def _build_image_bg(env_name: str, image: Image) -> Tuple[str, str]:
     """

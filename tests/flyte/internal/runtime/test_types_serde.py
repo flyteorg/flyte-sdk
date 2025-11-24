@@ -1,7 +1,5 @@
 import inspect
 
-import pytest
-
 from flyte._docstring import Docstring
 from flyte._internal.runtime.types_serde import transform_native_to_typed_interface
 from flyte.models import NativeInterface

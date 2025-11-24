@@ -1,4 +1,3 @@
-import pytest
 
 import flyte
 
@@ -17,4 +16,3 @@ def test_trigger_description_truncation():
     # Description should be truncated to exactly 255 characters
     assert len(trigger.description) == 255
     assert trigger.description == "A" * 255
-
