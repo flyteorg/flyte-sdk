@@ -2,10 +2,11 @@ import re
 from dataclasses import dataclass
 from typing import Any, Dict, Optional, Type
 
-from flyte._task import TaskTemplate
+from flyte.connectors import AsyncConnectorExecutorMixin
+from flyte.extend import TaskTemplate
 from flyte.io import DataFrame
 from flyte.models import NativeInterface, SerializationContext
-from flyteidl.core import tasks_pb2
+from flyteidl2.core import tasks_pb2
 from google.cloud import bigquery
 from google.protobuf import json_format
 from google.protobuf.struct_pb2 import Struct
@@ -22,7 +23,7 @@ class BigQueryConfig(object):
     QueryJobConfig: Optional[bigquery.QueryJobConfig] = None
 
 
-class BigQueryTask(TaskTemplate):
+class BigQueryTask(AsyncConnectorExecutorMixin, TaskTemplate):
     _TASK_TYPE = "bigquery_query_job_task"
 
     def __init__(
@@ -32,6 +33,7 @@ class BigQueryTask(TaskTemplate):
         plugin_config: BigQueryConfig,
         inputs: Optional[Dict[str, Type]] = None,
         output_dataframe_type: Optional[Type[DataFrame]] = None,
+        google_application_credentials: Optional[str] = None,
         **kwargs,
     ):
         """
@@ -44,6 +46,7 @@ class BigQueryTask(TaskTemplate):
         :param inputs: Name and type of inputs specified as an ordered dictionary
         :param output_dataframe_type: If some data is produced by this query, then you can specify the
          output dataframe type.
+         :param google_application_credentials: The name of the secret containing the Google Application Credentials.
         """
         outputs = None
         if output_dataframe_type is not None:
@@ -59,6 +62,7 @@ class BigQueryTask(TaskTemplate):
         self.output_dataframe_type = output_dataframe_type
         self.plugin_config = plugin_config
         self.query_template = re.sub(r"\s+", " ", query_template.replace("\n", " ").replace("\t", " ")).strip()
+        self.google_application_credentials = google_application_credentials
 
     def custom_config(self, sctx: SerializationContext) -> Optional[Dict[str, Any]]:
         config = {
@@ -68,6 +72,8 @@ class BigQueryTask(TaskTemplate):
         }
         if self.plugin_config.QueryJobConfig is not None:
             config.update(self.plugin_config.QueryJobConfig.to_api_repr()["query"])
+        if self.google_application_credentials is not None:
+            config["secrets"] = {"google_application_credentials:": self.google_application_credentials}
         s = Struct()
         s.update(config)
         return json_format.MessageToDict(s)

@@ -8,7 +8,7 @@ Refrain from importing any modules here. If you need to import any modules, do i
 import asyncio
 import os
 import sys
-from typing import Any, List
+from typing import List
 
 import click
 
@@ -27,6 +27,7 @@ PROJECT_NAME = "FLYTE_INTERNAL_EXECUTION_PROJECT"
 DOMAIN_NAME = "FLYTE_INTERNAL_EXECUTION_DOMAIN"
 ORG_NAME = "_U_ORG_NAME"
 ENDPOINT_OVERRIDE = "_U_EP_OVERRIDE"
+INSECURE_SKIP_VERIFY_OVERRIDE = "_U_INSECURE_SKIP_VERIFY"
 RUN_OUTPUT_BASE_DIR = "_U_RUN_BASE"
 FLYTE_ENABLE_VSCODE_KEY = "_F_E_VS"
 
@@ -97,7 +98,7 @@ def main(
     import flyte._utils as utils
     import flyte.errors
     import flyte.storage as storage
-    from flyte._initialize import init
+    from flyte._initialize import init_in_cluster
     from flyte._internal.controllers import create_controller
     from flyte._internal.imagebuild.image_builder import ImageCache
     from flyte._internal.runtime.entrypoints import load_and_run_task
@@ -126,23 +127,10 @@ def main(
 
         asyncio.run(_start_vscode_server(ctx))
 
-    # Figure out how to connect
-    # This detection of api key is a hack for now.
-    controller_kwargs: dict[str, Any] = {"insecure": False}
-    if api_key := os.getenv(_UNION_EAGER_API_KEY_ENV_VAR):
-        logger.info("Using api key from environment")
-        controller_kwargs["api_key"] = api_key
-    else:
-        ep = os.environ.get(ENDPOINT_OVERRIDE, "host.docker.internal:8090")
-        controller_kwargs["endpoint"] = ep
-        if "localhost" in ep or "docker" in ep:
-            controller_kwargs["insecure"] = True
-        logger.debug(f"Using controller endpoint: {ep} with kwargs: {controller_kwargs}")
-
+    controller_kwargs = init_in_cluster(org=org, project=project, domain=domain)
     bundle = None
     if tgz or pkl:
         bundle = CodeBundle(tgz=tgz, pkl=pkl, destination=dest, computed_version=version)
-    init(org=org, project=project, domain=domain, image_builder="remote", **controller_kwargs)
     # Controller is created with the same kwargs as init, so that it can be used to run tasks
     controller = create_controller(ct="remote", **controller_kwargs)
 

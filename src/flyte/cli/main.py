@@ -1,7 +1,8 @@
 import rich_click as click
 from typing_extensions import get_args
 
-from flyte._logging import initialize_logger, logger
+import flyte
+from flyte._logging import LogFormat, initialize_logger, logger
 
 from . import _common as common
 from ._abort import abort
@@ -12,7 +13,9 @@ from ._delete import delete
 from ._deploy import deploy
 from ._gen import gen
 from ._get import get
+from ._plugins import discover_and_register_plugins
 from ._run import run
+from ._serve import serve
 from ._update import update
 from ._user import whoami
 
@@ -67,6 +70,9 @@ def _verbosity_to_loglevel(verbosity: int) -> int | None:
 
 
 @click.group(cls=click.RichGroup)
+@click.version_option(
+    message=f"Flyte SDK version: {flyte.version()}",
+)
 @click.option(
     "--endpoint",
     type=str,
@@ -122,6 +128,16 @@ def _verbosity_to_loglevel(verbosity: int) -> int | None:
     show_default=True,
     required=False,
 )
+@click.option(
+    "--log-format",
+    type=click.Choice(get_args(LogFormat), case_sensitive=False),
+    envvar="LOG_FORMAT",
+    default="console",
+    help="Formatting for logs, defaults to 'console' which is meant to be human readable."
+    " 'json' is meant for machine parsing.",
+    show_default=True,
+    required=False,
+)
 @click.rich_config(help_config=help_config)
 @click.pass_context
 def main(
@@ -129,6 +145,7 @@ def main(
     endpoint: str | None,
     insecure: bool,
     verbose: int,
+    log_format: LogFormat,
     org: str | None,
     config_file: str | None,
     auth_type: str | None = None,
@@ -172,8 +189,8 @@ def main(
     import flyte.config as config
 
     log_level = _verbosity_to_loglevel(verbose)
-    if log_level is not None:
-        initialize_logger(log_level)
+    if log_level is not None or log_format != "console":
+        initialize_logger(log_level=log_level, log_format=log_format)
 
     cfg = config.auto(config_file=config_file)
     if cfg.source:
@@ -181,6 +198,7 @@ def main(
 
     ctx.obj = CLIConfig(
         log_level=log_level,
+        log_format=log_format,
         endpoint=endpoint,
         insecure=insecure,
         org=org,
@@ -201,3 +219,7 @@ main.add_command(delete)  # type: ignore
 main.add_command(build)
 main.add_command(whoami)  # type: ignore
 main.add_command(update)  # type: ignore
+main.add_command(serve)  # type: ignore
+
+# Discover and register CLI plugins from installed packages
+discover_and_register_plugins(main)

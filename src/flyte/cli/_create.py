@@ -24,17 +24,48 @@ def create():
     prompt="Enter secret value",
     hide_input=True,
     cls=MutuallyExclusiveOption,
-    mutually_exclusive=["from_file"],
+    mutually_exclusive=["from_file", "from_docker_config", "registry"],
 )
 @click.option(
     "--from-file",
     type=click.Path(exists=True),
     help="Path to the file with the binary secret.",
     cls=MutuallyExclusiveOption,
-    mutually_exclusive=["value"],
+    mutually_exclusive=["value", "from_docker_config", "registry"],
 )
 @click.option(
     "--type", type=click.Choice(get_args(SecretTypes)), default="regular", help="Type of the secret.", show_default=True
+)
+@click.option(
+    "--from-docker-config",
+    is_flag=True,
+    help="Create image pull secret from Docker config file (only for --type image_pull).",
+    cls=MutuallyExclusiveOption,
+    mutually_exclusive=["value", "from_file", "registry", "username", "password"],
+)
+@click.option(
+    "--docker-config-path",
+    type=click.Path(exists=True),
+    help="Path to Docker config file (defaults to ~/.docker/config.json or $DOCKER_CONFIG).",
+)
+@click.option(
+    "--registries",
+    help="Comma-separated list of registries to include (only with --from-docker-config).",
+)
+@click.option(
+    "--registry",
+    help="Registry hostname (e.g., ghcr.io, docker.io) for explicit credentials (only for --type image_pull).",
+    cls=MutuallyExclusiveOption,
+    mutually_exclusive=["value", "from_file", "from_docker_config"],
+)
+@click.option(
+    "--username",
+    help="Username for the registry (only with --registry).",
+)
+@click.option(
+    "--password",
+    help="Password for the registry (only with --registry). If not provided, will prompt.",
+    hide_input=True,
 )
 @click.pass_obj
 def secret(
@@ -43,6 +74,12 @@ def secret(
     value: str | bytes | None = None,
     from_file: str | None = None,
     type: SecretTypes = "regular",
+    from_docker_config: bool = False,
+    docker_config_path: str | None = None,
+    registries: str | None = None,
+    registry: str | None = None,
+    username: str | None = None,
+    password: str | None = None,
     project: str | None = None,
     domain: str | None = None,
 ):
@@ -73,16 +110,80 @@ def secret(
     Other secrets should be specified as `regular`.
     If no type is specified, `regular` is assumed.
 
+    For image pull secrets, you have several options:
+
+    1. Interactive mode (prompts for registry, username, password):
     ```bash
     $ flyte create secret my_secret --type image_pull
+    ```
+
+    2. With explicit credentials:
+    ```bash
+    $ flyte create secret my_secret --type image_pull --registry ghcr.io --username myuser
+    ```
+
+    3. Lastly, you can create a secret from your existing Docker installation (i.e., you've run `docker login` in
+    the past) and you just want to pull from those credentials. Since you may have logged in to multiple registries,
+    you can specify which registries to include. If no registries are specified, all registries are added.
+    ```bash
+    $ flyte create secret my_secret --type image_pull --from-docker-config --registries ghcr.io,docker.io
     ```
     """
     from flyte.remote import Secret
 
+    # todo: remove this hack when secrets creation more easily distinguishes between org and project/domain level
+    #   (and domain level) secrets
+    project = "" if project is None else project
+    domain = "" if domain is None else domain
     cfg.init(project, domain)
-    if from_file:
+
+    # Handle image pull secret creation
+    if type == "image_pull":
+        if project != "" or domain != "":
+            raise click.ClickException("Project and domain must not be set when creating an image pull secret.")
+
+        if from_docker_config:
+            # Mode 3: From Docker config
+            from flyte._utils.docker_credentials import create_dockerconfigjson_from_config
+
+            registry_list = [r.strip() for r in registries.split(",")] if registries else None
+            try:
+                value = create_dockerconfigjson_from_config(
+                    registries=registry_list,
+                    docker_config_path=docker_config_path,
+                )
+            except Exception as e:
+                raise click.ClickException(f"Failed to create dockerconfigjson from Docker config: {e}") from e
+
+        elif registry:
+            # Mode 2: Explicit credentials
+            from flyte._utils.docker_credentials import create_dockerconfigjson_from_credentials
+
+            if not username:
+                username = click.prompt("Username")
+            if not password:
+                password = click.prompt("Password", hide_input=True)
+
+            value = create_dockerconfigjson_from_credentials(registry, username, password)
+
+        else:
+            # Mode 1: Interactive prompts
+            from flyte._utils.docker_credentials import create_dockerconfigjson_from_credentials
+
+            registry = click.prompt("Registry (e.g., ghcr.io, docker.io)")
+            username = click.prompt("Username")
+            password = click.prompt("Password", hide_input=True)
+
+            value = create_dockerconfigjson_from_credentials(registry, username, password)
+
+    elif from_file:
         with open(from_file, "rb") as f:
             value = f.read()
+
+    # Encode string values to bytes
+    if isinstance(value, str):
+        value = value.encode("utf-8")
+
     Secret.create(name=name, value=value, type=type)
 
 

@@ -147,12 +147,77 @@ def _get_anonymous_filesystem(from_path):
     return get_underlying_filesystem(get_protocol(from_path), anonymous=True, asynchronous=True)
 
 
+async def _get_obstore_bypass(from_path: str, to_path: str | pathlib.Path, recursive: bool = False, **kwargs) -> str:
+    from obstore.store import ObjectStore
+
+    from flyte.storage._parallel_reader import ObstoreParallelReader
+
+    fs = get_underlying_filesystem(path=from_path)
+    bucket, prefix = fs._split_path(from_path)  # pylint: disable=W0212
+    store: ObjectStore = fs._construct_store(bucket)
+
+    download_kwargs = {}
+    if "chunk_size" in kwargs:
+        download_kwargs["chunk_size"] = kwargs["chunk_size"]
+    if "max_concurrency" in kwargs:
+        download_kwargs["max_concurrency"] = kwargs["max_concurrency"]
+
+    reader = ObstoreParallelReader(store, **download_kwargs)
+    target_path = pathlib.Path(to_path) if isinstance(to_path, str) else to_path
+
+    # if recursive, just download the prefix to the target path
+    if recursive:
+        logger.debug(f"Downloading recursively {prefix=} to {target_path=}")
+        await reader.download_files(
+            prefix,
+            target_path,
+        )
+        return str(to_path)
+
+    # if not recursive, we need to split out the file name from the prefix
+    else:
+        path_for_reader = pathlib.Path(prefix).name
+        final_prefix = pathlib.Path(prefix).parent
+        logger.debug(f"Downloading single file {final_prefix=}, {path_for_reader=} to {target_path=}")
+        await reader.download_files(
+            final_prefix,
+            target_path.parent,
+            path_for_reader,
+            destination_file_name=target_path.name,
+        )
+        return str(target_path)
+
+
 async def get(from_path: str, to_path: Optional[str | pathlib.Path] = None, recursive: bool = False, **kwargs) -> str:
     if not to_path:
-        name = pathlib.Path(from_path).name
+        name = pathlib.Path(from_path).name  # may need to be adjusted for windows
         to_path = get_random_local_path(file_path_or_file_name=name)
         logger.debug(f"Storing file from {from_path} to {to_path}")
+    else:
+        # Only apply directory logic for single files (not recursive)
+        if not recursive:
+            to_path_str = str(to_path)
+            # Check for trailing separator BEFORE converting to Path (which normalizes and removes it)
+            ends_with_sep = to_path_str.endswith(os.sep)
+            to_path_obj = pathlib.Path(to_path)
+
+            # If path ends with os.sep or is an existing directory, append source filename
+            if ends_with_sep or (to_path_obj.exists() and to_path_obj.is_dir()):
+                source_filename = pathlib.Path(from_path).name  # may need to be adjusted for windows
+                to_path = to_path_obj / source_filename
+        # For recursive=True, keep to_path as-is (it's the destination directory for contents)
+
     file_system = get_underlying_filesystem(path=from_path)
+
+    # Check if we should use obstore bypass
+    if (
+        _is_obstore_supported_protocol(file_system.protocol)
+        and hasattr(file_system, "_split_path")
+        and hasattr(file_system, "_construct_store")
+        and recursive
+    ):
+        return await _get_obstore_bypass(from_path, to_path, recursive, **kwargs)
+
     try:
         return await _get_from_filesystem(file_system, from_path, to_path, recursive=recursive, **kwargs)
     except (OSError, GenericError) as oe:
@@ -183,13 +248,13 @@ async def _get_from_filesystem(
     **kwargs,
 ):
     if isinstance(file_system, AsyncFileSystem):
-        dst = await file_system._get(from_path, to_path, recursive=recursive, **kwargs)  # pylint: disable=W0212
+        dst = await file_system._get(str(from_path), str(to_path), recursive=recursive, **kwargs)  # pylint: disable=W0212
     else:
-        dst = file_system.get(from_path, to_path, recursive=recursive, **kwargs)
+        dst = file_system.get(str(from_path), str(to_path), recursive=recursive, **kwargs)
 
     if isinstance(dst, (str, pathlib.Path)):
         return dst
-    return to_path
+    return str(to_path)
 
 
 async def put(from_path: str, to_path: Optional[str] = None, recursive: bool = False, **kwargs) -> str:
@@ -197,7 +262,7 @@ async def put(from_path: str, to_path: Optional[str] = None, recursive: bool = F
         from flyte._context import internal_ctx
 
         ctx = internal_ctx()
-        name = pathlib.Path(from_path).name if not recursive else None  # don't pass a name for folders
+        name = pathlib.Path(from_path).name
         to_path = ctx.raw_data.get_random_remote_path(file_name=name)
 
     file_system = get_underlying_filesystem(path=to_path)

@@ -5,9 +5,9 @@ import sys
 from pathlib import Path
 from typing import List, Tuple
 
-from rich.progress import BarColumn, Progress, TextColumn, TimeElapsedColumn, TimeRemainingColumn
-
 import flyte.errors
+from flyte._constants import FLYTE_SYS_PATH
+from flyte._logging import logger
 
 
 def load_python_modules(path: Path, recursive: bool = False) -> Tuple[List[str], List[Tuple[Path, str]]]:
@@ -18,6 +18,8 @@ def load_python_modules(path: Path, recursive: bool = False) -> Tuple[List[str],
     :param recursive: If True, load modules recursively from subdirectories
     :return: List of loaded module names, and list of file paths that failed to load
     """
+    from rich.progress import BarColumn, Progress, TextColumn, TimeElapsedColumn, TimeRemainingColumn
+
     loaded_modules = []
     failed_paths = []
 
@@ -87,3 +89,16 @@ def _load_module_from_file(file_path: Path) -> str | None:
 
     except Exception as e:
         raise flyte.errors.ModuleLoadError(f"Failed to load module from {file_path}: {e}") from e
+
+
+def adjust_sys_path():
+    """
+    Adjust sys.path to include local sys.path entries under the root directory.
+    """
+    if "." not in sys.path or os.getcwd() not in sys.path:
+        sys.path.insert(0, ".")
+        logger.info(f"Added {os.getcwd()} to sys.path")
+    for p in os.environ.get(FLYTE_SYS_PATH, "").split(":"):
+        if p and p not in sys.path:
+            sys.path.insert(0, p)
+            logger.info(f"Added {p} to sys.path")

@@ -1,12 +1,13 @@
+import sys
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional
 
 import flyte
-from distributed import Client, WorkerPlugin
+from distributed import Client, SchedulerPlugin, WorkerPlugin
 from flyte import Resources
 from flyte.extend import AsyncFunctionTaskTemplate, TaskPluginRegistry, download_code_bundle, get_proto_resources
 from flyte.models import CodeBundle, SerializationContext
-from flyteidl.plugins.dask_pb2 import DaskJob, DaskScheduler, DaskWorkerGroup
+from flyteidl2.plugins.dask_pb2 import DaskJob, DaskScheduler, DaskWorkerGroup
 from google.protobuf.json_format import MessageToDict
 
 
@@ -55,7 +56,20 @@ class Dask:
     workers: WorkerGroup = field(default_factory=lambda: WorkerGroup())
 
 
-class DownloadCodeBundlePlugin(WorkerPlugin):
+class DownloadCodeBundleSchedulerPlugin(SchedulerPlugin):
+    """
+    A Dask plugin to download and set up the code bundle on the scheduler.
+    """
+
+    def __init__(self, code_bundle: CodeBundle):
+        self.code_bundle = code_bundle
+
+    async def start(self, scheduler):
+        sys.path.insert(0, ".")
+        await download_code_bundle(self.code_bundle)
+
+
+class DownloadCodeBundleWorkerPlugin(WorkerPlugin):
     """
     A Dask plugin to download and set up the code bundle on each worker.
     """
@@ -63,11 +77,12 @@ class DownloadCodeBundlePlugin(WorkerPlugin):
     def __init__(self, code_bundle: CodeBundle):
         self.code_bundle = code_bundle
 
-    def setup(self, worker):
+    async def setup(self, worker):
         """
         Runs on each worker as it is initialized.
         """
-        download_code_bundle(self.code_bundle)
+        sys.path.insert(0, ".")
+        await download_code_bundle(self.code_bundle)
 
 
 @dataclass(kw_only=True)
@@ -78,13 +93,15 @@ class DaskTask(AsyncFunctionTaskTemplate):
 
     plugin_config: Dask
     task_type: str = "dask"
+    debuggable: bool = True
 
     async def pre(self, *args, **kwargs) -> Dict[str, Any]:
         ctx = flyte.ctx()
         code_bundle = ctx.code_bundle
         if ctx.is_in_cluster() and code_bundle:
             client = Client()
-            client.register_plugin(DownloadCodeBundlePlugin(code_bundle))
+            client.register_plugin(DownloadCodeBundleWorkerPlugin(code_bundle))
+            client.register_plugin(DownloadCodeBundleSchedulerPlugin(code_bundle))
 
         return {}
 
