@@ -392,14 +392,10 @@ async def get_stream(path: str, chunk_size=10 * 2**20, **kwargs) -> AsyncGenerat
     fs = get_underlying_filesystem(path=path)
     if _is_obstore_supported_protocol(fs.protocol) and hasattr(fs, "_split_path") and hasattr(fs, "_construct_store"):
         # Set buffer_size for obstore if chunk_size is provided
-        logger.debug("buffer")
         if "buffer_size" not in kwargs:
             kwargs["buffer_size"] = chunk_size
-        logger.debug("open....")
         file_handle = typing.cast("AsyncReadableFile", await _open_obstore_bypass(path, "rb", **kwargs))
-        logger.debug("readddddd")
         while chunk := await file_handle.read():
-            logger.debug("tttttttttttttttttt")
             yield bytes(chunk)
         return
 

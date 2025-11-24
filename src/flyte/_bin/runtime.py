@@ -8,7 +8,7 @@ Refrain from importing any modules here. If you need to import any modules, do i
 import asyncio
 import os
 import sys
-from typing import Any, List
+from typing import Any, List, Literal
 
 import click
 
@@ -56,7 +56,7 @@ def _pass_through():
 @click.option("--org", envvar=ORG_NAME, required=False)
 @click.option("--debug", envvar=FLYTE_ENABLE_VSCODE_KEY, type=click.BOOL, required=False)
 @click.option("--interactive-mode", type=click.BOOL, required=False)
-@click.option("--controller-mode", type=str, required=False, default="remote")
+@click.option("--controller-mode", type=Literal["remote", "local"], required=False, default="remote")
 @click.option("--image-cache", required=False)
 @click.option("--tgz", required=False)
 @click.option("--pkl", required=False)
@@ -77,7 +77,7 @@ def main(
     org: str,
     debug: bool,
     interactive_mode: bool,
-    controller_mode: str,
+    controller_mode: Literal["remote", "local"],
     image_cache: str,
     version: str,
     inputs: str,

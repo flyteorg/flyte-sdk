@@ -227,7 +227,7 @@ class AsyncConnectorExecutorMixin:
         if tctx is None:
             raise RuntimeError("Task context is not set.")
 
-        if tctx.mode == "remote":
+        if tctx.mode == "remote" and isinstance(self, AsyncFunctionTaskTemplate):
             return await AsyncFunctionTaskTemplate.execute(self, **kwargs)
 
         prefix = tctx.raw_data_path.get_random_remote_path()
@@ -240,6 +240,8 @@ class AsyncConnectorExecutorMixin:
                     dryrun=True,
                     copy_bundle_to=Path("/tmp/test"),
                 )
+                if local_code_bundle.tgz is None:
+                    raise RuntimeError("no tgz found in code bundle")
                 remote_code_path = await storage.put(local_code_bundle.tgz, prefix + "/code_bundle/")
                 sc = SerializationContext(
                     project=tctx.action.project,

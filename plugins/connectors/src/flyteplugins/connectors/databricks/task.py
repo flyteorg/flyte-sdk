@@ -34,8 +34,11 @@ class DatabricksFunctionTask(AsyncConnectorExecutorMixin, PysparkFunctionTask):
     Actual Plugin that transforms the local python code for execution within a spark context
     """
 
-    task_type: str = "databricks"
     plugin_config: Databricks
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.task_type = "databricks"
 
     def custom_config(self, sctx: SerializationContext) -> Dict[str, Any]:
         driver_pod = self.plugin_config.driver_pod.to_k8s_pod() if self.plugin_config.driver_pod else None
