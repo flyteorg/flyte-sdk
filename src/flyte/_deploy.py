@@ -163,7 +163,7 @@ async def _deploy_task(
         default_inputs = await convert_upload_default_inputs(task.interface)
         spec = translate_task_to_wire(task, serialization_context, default_inputs=default_inputs)
         # Insert ENV description into spec
-        env = task.parent_env()
+        env = task.parent_env() if task.parent_env else None
         if env and env.description:
             spec.environment.description = env.description
 
