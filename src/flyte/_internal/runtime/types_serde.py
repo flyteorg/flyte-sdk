@@ -10,17 +10,15 @@ T = TypeVar("T")
 
 def transform_variable_map(
     variable_map: Dict[str, type],
-    descriptions: Optional[Dict[str, str]] = None,
 ) -> Dict[str, interface_pb2.Variable]:
     """
     Given a map of str (names of inputs for instance) to their Python native types, return a map of the name to a
     Flyte Variable object with that type.
     """
     res = {}
-    descriptions = descriptions or {}
     if variable_map:
         for k, v in variable_map.items():
-            res[k] = transform_type(v, descriptions.get(k, k))
+            res[k] = transform_type(v)
     return res
 
 
@@ -32,23 +30,16 @@ def transform_native_to_typed_interface(
     """
     if interface is None:
         return None
-    input_descriptions: Dict[str, str] = {}
-    output_descriptions: Dict[str, str] = {}
-    if interface.docstring:
-        # Extract descriptions from the parsed docstring
-        input_descriptions = {k: v for k, v in interface.docstring.input_descriptions.items() if v is not None}
-        output_descriptions = {k: v for k, v in interface.docstring.output_descriptions.items() if v is not None}
 
-    inputs_map = transform_variable_map(interface.get_input_types(), input_descriptions)
-    outputs_map = transform_variable_map(interface.outputs, output_descriptions)
+    inputs_map = transform_variable_map(interface.get_input_types())
+    outputs_map = transform_variable_map(interface.outputs)
     return interface_pb2.TypedInterface(
         inputs=interface_pb2.VariableMap(variables=inputs_map), outputs=interface_pb2.VariableMap(variables=outputs_map)
     )
 
 
-def transform_type(x: type, description: Optional[str] = None) -> interface_pb2.Variable:
+def transform_type(x: type) -> interface_pb2.Variable:
     # add artifact handling eventually
     return interface_pb2.Variable(
         type=TypeEngine.to_literal_type(x),
-        description=description,
     )

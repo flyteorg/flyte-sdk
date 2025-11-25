@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import inspect
 from dataclasses import replace
 from unittest.mock import Mock
 
 import flyte
-from flyte._deploy import _get_documentation_entity
+from flyte._deploy import _get_documentation_entity, _update_interface_inputs_and_outputs_docstring
 from flyte._docstring import Docstring
+from flyte._internal.runtime.types_serde import transform_native_to_typed_interface
+from flyte.models import NativeInterface
 
 
 def test_get_description_entity_both_truncated():
@@ -64,3 +67,113 @@ def test_get_description_entity_none_values():
     assert env.description is None
     assert result.short_description == ""
     assert result.long_description == ""
+
+
+def test_update_interface_with_docstring():
+    docstring_text = """
+    A test function.
+
+    Args:
+        x: The input value
+        y: Another input
+
+    Returns:
+        The result
+    """
+
+    interface = NativeInterface(
+        inputs={"x": (int, inspect.Parameter.empty), "y": (str, inspect.Parameter.empty)},
+        outputs={"o0": int},
+        docstring=Docstring(docstring=docstring_text),
+    )
+
+    typed_interface = transform_native_to_typed_interface(interface)
+
+    # Before update, descriptions should be empty
+    assert typed_interface.inputs.variables["x"].description == ""
+    assert typed_interface.inputs.variables["y"].description == ""
+
+    # Update descriptions
+    result = _update_interface_inputs_and_outputs_docstring(typed_interface, interface)
+
+    # After update, descriptions should be set
+    assert result.inputs.variables["x"].description == "The input value"
+    assert result.inputs.variables["y"].description == "Another input"
+    # Same object should be returned (in-place modification)
+    assert result is typed_interface
+
+
+def test_update_interface_no_docstring():
+    interface = NativeInterface(
+        inputs={"x": (int, inspect.Parameter.empty)},
+        outputs={"o0": int},
+        docstring=None,
+    )
+
+    typed_interface = transform_native_to_typed_interface(interface)
+    result = _update_interface_inputs_and_outputs_docstring(typed_interface, interface)
+
+    # Descriptions should remain empty
+    assert result.inputs.variables["x"].description == ""
+    assert result.outputs.variables["o0"].description == ""
+
+
+def test_update_interface_empty_interface():
+    interface = NativeInterface(
+        inputs={},
+        outputs={},
+        docstring=None,
+    )
+
+    typed_interface = transform_native_to_typed_interface(interface)
+    result = _update_interface_inputs_and_outputs_docstring(typed_interface, interface)
+
+    # Should not raise any errors
+    assert len(result.inputs.variables) == 0
+    assert len(result.outputs.variables) == 0
+
+
+def test_update_interface_partial_descriptions():
+    docstring_text = """
+    A test function.
+
+    Args:
+        x: The input value
+    """
+
+    interface = NativeInterface(
+        inputs={"x": (int, inspect.Parameter.empty), "y": (str, inspect.Parameter.empty)},
+        outputs={"o0": int},
+        docstring=Docstring(docstring=docstring_text),
+    )
+
+    typed_interface = transform_native_to_typed_interface(interface)
+    result = _update_interface_inputs_and_outputs_docstring(typed_interface, interface)
+
+    # Only x should have description
+    assert result.inputs.variables["x"].description == "The input value"
+    assert result.inputs.variables["y"].description == ""
+
+
+def test_update_interface_mismatched_names():
+    docstring_text = """
+    A test function.
+
+    Args:
+        name: The user's name
+        age: The user's age
+    """
+
+    # Interface has different parameter names
+    interface = NativeInterface(
+        inputs={"x": (int, inspect.Parameter.empty), "y": (str, inspect.Parameter.empty)},
+        outputs={"o0": int},
+        docstring=Docstring(docstring=docstring_text),
+    )
+
+    typed_interface = transform_native_to_typed_interface(interface)
+    result = _update_interface_inputs_and_outputs_docstring(typed_interface, interface)
+
+    # Descriptions should not be set (names don't match)
+    assert result.inputs.variables["x"].description == ""
+    assert result.inputs.variables["y"].description == ""

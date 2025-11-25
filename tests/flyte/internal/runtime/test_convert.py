@@ -42,18 +42,17 @@ test_cases = [
 
 
 @pytest.fixture(params=test_cases)
-def generate_inputs(request) -> Tuple[Inputs, str]:
-    import asyncio
+async def generate_inputs(request) -> Tuple[Inputs, str]:
     if request.param[0] is None:
         return Inputs.empty(), request.param[1]
     interface, args = request.param[0]
     hash_val = request.param[1]
-    inputs = asyncio.run(convert.convert_from_native_to_inputs(interface, *args))
+    inputs = await convert.convert_from_native_to_inputs(interface, *args)
     return inputs, hash_val
 
 
 @pytest.mark.asyncio
-async def test_generate_sub_action_id_and_output_path_consistency_task_name(generate_inputs: Tuple[Inputs, str]):
+async def test_generate_sub_action_id_and_output_path_consistency_task_name(generate_inputs: Awaitable):
     """
     This test checks that the algorithm is consistent and has not changed.
     """
@@ -66,7 +65,7 @@ async def test_generate_sub_action_id_and_output_path_consistency_task_name(gene
         report=Report(name="test"),
     )
 
-    inputs, expected_hash = generate_inputs
+    inputs, expected_hash = await generate_inputs
     serialized_inputs = inputs.proto_inputs.SerializeToString(deterministic=True)
     inputs_hash = convert.generate_inputs_hash(serialized_inputs)
     sub_action_id, path = generate_sub_action_id_and_output_path(
