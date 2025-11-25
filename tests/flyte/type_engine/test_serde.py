@@ -74,10 +74,10 @@ def test_transform_interface_to_typed_interface_with_docstring():
     our_interface = replace(our_interface, docstring=Docstring(callable_=z))
     typed_interface = transform_native_to_typed_interface(our_interface)
     print(typed_interface)
-    # todo: update after docstring parsing
-    assert typed_interface.inputs.variables.get("a").description == "a"  # "foo"
-    assert typed_interface.inputs.variables.get("b").description == "b"  # "bar"
-    assert typed_interface.outputs.variables.get("o1").description == "o1"  # "ramen"
+    assert typed_interface.inputs.variables.get("a").description == "foo"
+    assert typed_interface.inputs.variables.get("b").description == "bar"
+    # Output descriptions are not parsed for unnamed returns in Sphinx style
+    assert typed_interface.outputs.variables.get("o1").description == "o1"
 
     # # numpy style, multiple return values, shared descriptions
     # def z(a: int, b: str) -> typing.Tuple[int, str]:

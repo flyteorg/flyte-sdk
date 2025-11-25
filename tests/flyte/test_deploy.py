@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from unittest.mock import Mock
 
 import flyte
@@ -25,7 +26,8 @@ def test_get_description_entity_both_truncated():
 
     docstring = Docstring()
     docstring._parsed_docstring = mock_parsed_docstring
-    task_both_exceed.interface.docstring = docstring
+    # Use replace since NativeInterface is frozen
+    task_both_exceed.interface = replace(task_both_exceed.interface, docstring=docstring)
 
     result = _get_documentation_entity(task_both_exceed)
 
@@ -45,13 +47,20 @@ def test_get_description_entity_none_values():
     async def task_no_docstring(x: int) -> int:
         return x * 2
 
-    # Set docstring to None
-    task_no_docstring.interface.docstring._parsed_docstring.short_description = None
-    task_no_docstring.interface.docstring._parsed_docstring.long_description = None
+    # Create a mock docstring with None descriptions
+    mock_parsed_docstring = Mock()
+    mock_parsed_docstring.short_description = None
+    mock_parsed_docstring.long_description = None
+
+    docstring = Docstring()
+    docstring._parsed_docstring = mock_parsed_docstring
+    # Use replace since NativeInterface is frozen
+    task_no_docstring.interface = replace(task_no_docstring.interface, docstring=docstring)
 
     result = _get_documentation_entity(task_no_docstring)
 
     # Verify None values are handled correctly
+    # Note: protobuf converts None to empty string for string fields
     assert env.description is None
-    assert result.short_description is None
-    assert result.long_description is None
+    assert result.short_description == ""
+    assert result.long_description == ""
