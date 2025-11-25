@@ -180,28 +180,6 @@ async def run_task(
         )
 
 
-async def create_task_for_rust(loop_from_rust, /, **kwargs):
-    """
-    Creates and returns an asyncio Task using the loop provided by Rust.
-
-    Since the event loop is managed by Rust/pyo3_async_runtimes, we take
-    the loop as a parameter from Rust rather than trying to get it from
-    the Python async context.
-
-    :param loop_from_rust: The event loop object from Rust TaskLocals
-    :param kwargs: All arguments to pass to run_task
-    :return: AsyncIO Task object that Rust can await
-    """
-    logger.info("[rusty] Creating asyncio task for Rust execution")
-    logger.info(f"[rusty] Using loop from Rust: {loop_from_rust}")
-
-    # Create the task using the loop provided by Rust
-    task = loop_from_rust.create_task(run_task(**kwargs))
-    logger.info(f"[rusty] Created task: {task}")
-
-    return task
-
-
 async def ping(name: str) -> str:
     """
     A simple hello world function to test the Rusty entrypoint.
