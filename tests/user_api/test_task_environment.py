@@ -35,7 +35,7 @@ def test_clone_with_defaults(base_env):
     assert clone.depends_on == []
 
 
-def test_clone_with_overrides(base_env):
+def test_clone_with_overrides(base_env: flyte.TaskEnvironment):
     other = flyte.TaskEnvironment(name="other", image="x", resources=base_env.resources)
     clone = base_env.clone_with(
         name="new",

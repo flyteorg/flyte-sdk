@@ -27,7 +27,7 @@ if __name__ == "__main__":
     # image:
     #   image_refs:
     #     custom-image: debian:stable
-    flyte.init_from_config()
+    flyte.init_from_config(images=("custom-image=debian:stable",))
     run = flyte.run(main)
     print(run.name)
     print(run.url)

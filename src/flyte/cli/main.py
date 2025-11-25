@@ -1,6 +1,7 @@
 import rich_click as click
 from typing_extensions import get_args
 
+import flyte
 from flyte._logging import LogFormat, initialize_logger, logger
 
 from . import _common as common
@@ -69,6 +70,9 @@ def _verbosity_to_loglevel(verbosity: int) -> int | None:
 
 
 @click.group(cls=click.RichGroup)
+@click.version_option(
+    message=f"Flyte SDK version: {flyte.version()}",
+)
 @click.option(
     "--endpoint",
     type=str,

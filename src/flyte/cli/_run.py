@@ -301,11 +301,11 @@ class RunReferenceTaskCommand(click.RichCommand):
     def invoke(self, ctx: click.Context):
         obj: CLIConfig = common.initialize_config(
             ctx,
-            self.run_args.project,
-            self.run_args.domain,
-            self.run_args.root_dir,
-            tuple(self.run_args.image) or None,
-            not self.run_args.no_sync_local_sys_paths,
+            project=self.run_args.project,
+            domain=self.run_args.domain,
+            root_dir=self.run_args.root_dir,
+            images=tuple(self.run_args.image) or None,
+            sync_local_sys_paths=not self.run_args.no_sync_local_sys_paths,
         )
 
         async def _run():
@@ -522,16 +522,14 @@ run = TaskFiles(
     help=f"""
 Run a task from a python file or deployed task.
 
-To run a remote task that already exists in Flyte, use the {RUN_REMOTE_CMD} command:
-
 Example usage:
 
 ```bash
-flyte run --project my-project --domain development hello.py my_task --arg1 value1 --arg2 value2
+flyte run hello.py my_task --arg1 value1 --arg2 value2
 ```
 
 Arguments to the run command are provided right after the `run` command and before the file name.
-For example, the command above specifies the project and domain.
+Arguments for the task itself are provided after the task name.
 
 To run a task locally, use the `--local` flag. This will run the task in the local environment instead of the remote
 Flyte environment:
@@ -546,20 +544,20 @@ the code. Any images defined with `Image.from_ref_name("name")` will resolve to 
 corresponding URIs you specify here.
 
 ```bash
-flyte run hello.py my_task --image my_image=ghcr.io/myorg/my-image:v1.0
+flyte run --image my_image=ghcr.io/myorg/my-image:v1.0 hello.py my_task
 ```
 
 If the image name is not provided, it is regarded as a default image and will
 be used when no image is specified in TaskEnvironment:
 
 ```bash
-flyte run hello.py my_task --image ghcr.io/myorg/default-image:latest
+flyte run --image ghcr.io/myorg/default-image:latest hello.py my_task
 ```
 
 You can specify multiple image arguments:
 
 ```bash
-flyte run hello.py my_task --image ghcr.io/org/default:latest --image gpu=ghcr.io/org/gpu:v2.0
+flyte run --image ghcr.io/org/default:latest --image gpu=ghcr.io/org/gpu:v2.0 hello.py my_task
 ```
 
 To run tasks that you've already deployed to Flyte, use the {RUN_REMOTE_CMD} command:
@@ -578,6 +576,12 @@ You can specify the `--config` flag to point to a specific Flyte cluster:
 
 ```bash
 flyte run --config my-config.yaml {RUN_REMOTE_CMD} ...
+```
+
+You can override the default configured project and domain:
+
+```bash
+flyte run --project my-project --domain development hello.py my_task
 ```
 
 You can discover what deployed tasks are available by running:
