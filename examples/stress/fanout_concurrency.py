@@ -14,7 +14,7 @@ env = flyte.TaskEnvironment(
     name="large_fanout_concurrent",
     resources=flyte.Resources(cpu=1, memory="1Gi"),
     reusable=flyte.ReusePolicy(
-        replicas=10,
+        replicas=1,
         idle_ttl=60,
         concurrency=50,
         scaledown_ttl=60,
@@ -23,9 +23,10 @@ env = flyte.TaskEnvironment(
 )
 
 
-@env.task
+@env.task(retries=3)
 async def noop(x: int) -> int:
     flyte.logger.warning(f"This is a noop task {x}")
+    await asyncio.sleep(10)
     return x
 
 
