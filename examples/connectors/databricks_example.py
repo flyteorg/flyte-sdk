@@ -1,3 +1,4 @@
+import asyncio
 import random
 from operator import add
 
@@ -22,7 +23,7 @@ image = (
     )
     .with_local_v2()
     .with_pip_packages("nest-asyncio", "aiohttp", "click==8.1.6")
-    .with_env_vars({"Hello": "World2", "LOG_LEVEL": 10})
+    .with_env_vars({"AWS_REGION": "us-west-1", "LOG_LEVEL": 10})
 )
 
 task_env = flyte.TaskEnvironment(
@@ -83,17 +84,18 @@ def f(_):
 
 
 @task_env.task
-async def get_pi(count: int, partitions: int) -> float:
+def get_pi(count: int, partitions: int) -> float:
     return 4.0 * count / partitions
 
 
 @databricks_env.task
-async def hello_databricks_nested() -> float:
+def hello_databricks_nested() -> float:
     partitions = 3
     n = 1 * partitions
     spark = flyte.ctx().data["spark_session"]
     count = spark.sparkContext.parallelize(range(1, n + 1), partitions).map(f).reduce(add)
-    res = await get_pi(count, partitions)
+    print("getttttt pi")
+    res = get_pi(count, partitions)
     print(f"result: {res}")
     return res
 
@@ -101,9 +103,7 @@ async def hello_databricks_nested() -> float:
 async def test_main():
     import flyte.storage as storage
 
-    proto_str = b"".join(
-        [c async for c in storage.get_stream(path="s3://my-v2-connector/413771750a3ca17ed08dcc1f3690d843/inputs.pb")]
-    )
+    proto_str = b"".join([c async for c in storage.get_stream(path="s3://my-v2-connector/a209f3771e880f2ea8eb44a24ca572cf/inputs.pb")])
     print(proto_str)
 
 

@@ -55,7 +55,7 @@ def _pass_through():
 @click.option("--org", envvar=ORG_NAME, required=False)
 @click.option("--debug", envvar=FLYTE_ENABLE_VSCODE_KEY, type=click.BOOL, required=False)
 @click.option("--interactive-mode", type=click.BOOL, required=False)
-@click.option("--controller-mode", type=Literal["remote", "local"], required=False, default="remote")
+@click.option("--controller-mode", type=str, required=False, default="remote")
 @click.option("--image-cache", required=False)
 @click.option("--tgz", required=False)
 @click.option("--pkl", required=False)
@@ -190,7 +190,7 @@ def main(
             raise
 
     asyncio.run(_run_and_stop())
-    logger.warning(f"Flyte runtime completed for action {name} with run name {run_name}")
+    logger.info(f"Flyte runtime completed for action {name} with run name {run_name}")
 
 
 if __name__ == "__main__":

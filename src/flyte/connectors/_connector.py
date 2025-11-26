@@ -238,7 +238,7 @@ class AsyncConnectorExecutorMixin:
                 local_code_bundle = await build_code_bundle(
                     from_dir=cfg.root_dir,
                     dryrun=True,
-                    copy_bundle_to=Path("/tmp/test"),
+                    # copy_bundle_to=Path("/tmp/test1"),
                 )
                 if local_code_bundle.tgz is None:
                     raise RuntimeError("no tgz found in code bundle")
