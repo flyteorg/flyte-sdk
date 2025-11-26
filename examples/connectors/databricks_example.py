@@ -14,11 +14,11 @@ image = (
     .with_apt_packages("git", "vim")
     .with_env_vars({"UV_PYTHON": "/databricks/python3/bin/python"})
     .with_pip_packages(
-        "git+https://github.com/flyteorg/flyte-sdk.git@0227af26f82353fb828d099921b15b0dffee676f#subdirectory=plugins/connectors",
+        "git+https://github.com/flyteorg/flyte-sdk.git@86da4cc1dc3f355d07167a528990cfb0b4149191#subdirectory=plugins/connectors",
         pre=True,
     )
     .with_pip_packages(
-        "git+https://github.com/flyteorg/flyte-sdk.git@0227af26f82353fb828d099921b15b0dffee676f#subdirectory=plugins/spark",
+        "git+https://github.com/flyteorg/flyte-sdk.git@86da4cc1dc3f355d07167a528990cfb0b4149191#subdirectory=plugins/spark",
         pre=True,
     )
     .with_local_v2()
@@ -43,24 +43,24 @@ databricks_conf = Databricks(
     executor_path="/databricks/python3/bin/python",
     databricks_conf={
         "run_name": "flytekit databricks plugin example",
-        # "new_cluster": {
-        #     "spark_version": "13.3.x-scala2.12",
-        #     "autoscale": {
-        #         "min_workers": 1,
-        #         "max_workers": 1,
-        #     },
-        #     "node_type_id": "m6i.large",
-        #     "num_workers": 1,
-        #     "aws_attributes": {
-        #         "availability": "SPOT_WITH_FALLBACK",
-        #         "instance_profile_arn": "arn:aws:iam::339713193121:instance-profile/databricks-demo",
-        #         "ebs_volume_type": "GENERAL_PURPOSE_SSD",
-        #         "ebs_volume_count": 1,
-        #         "ebs_volume_size": 100,
-        #         "first_on_demand": 1,
-        #     },
-        # },
-        "existing_cluster_id": "1113-204018-tb9vr2fm",
+        "new_cluster": {
+            "spark_version": "13.3.x-scala2.12",
+            "autoscale": {
+                "min_workers": 1,
+                "max_workers": 1,
+            },
+            "node_type_id": "m6i.large",
+            "num_workers": 1,
+            "aws_attributes": {
+                "availability": "SPOT_WITH_FALLBACK",
+                "instance_profile_arn": "arn:aws:iam::339713193121:instance-profile/databricks-demo",
+                "ebs_volume_type": "GENERAL_PURPOSE_SSD",
+                "ebs_volume_count": 1,
+                "ebs_volume_size": 100,
+                "first_on_demand": 1,
+            },
+        },
+        # "existing_cluster_id": "1113-204018-tb9vr2fm",
         "timeout_seconds": 3600,
         "max_retries": 1,
     },

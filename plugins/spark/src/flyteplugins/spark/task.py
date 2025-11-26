@@ -66,8 +66,10 @@ class PysparkFunctionTask(AsyncFunctionTaskTemplate):
             digest = compute_digest(os.getcwd())
             file_name = f"flyte_{digest}"
             file_format = "zip"
-            shutil.make_archive(f"{base_dir}/{file_name}", file_format, os.getcwd())
-            sess.sparkContext.addPyFile(f"{base_dir}/{file_name}.{file_format}")
+            file_path = f"{base_dir}/{file_name}.{file_format}"
+            if not os.path.exists(file_path):
+                shutil.make_archive(f"{base_dir}/{file_name}", file_format, os.getcwd())
+                sess.sparkContext.addPyFile(file_path)
 
         return {"spark_session": sess}
 
