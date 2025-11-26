@@ -1,13 +1,11 @@
 import os
 import shutil
-import tempfile
 from dataclasses import dataclass
 from typing import Any, Dict, Optional
 
-from flytekit.tools.fast_registration import compute_digest
-
 import flyte
 from flyte import PodTemplate
+from flyte._code_bundle._packaging import compute_digest
 from flyte.extend import AsyncFunctionTaskTemplate, TaskPluginRegistry
 from flyte.models import SerializationContext
 from flyteidl2.plugins.spark_pb2 import SparkApplication, SparkJob
