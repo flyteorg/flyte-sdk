@@ -398,7 +398,7 @@ class Image:
     dockerfile: Optional[Path] = field(default=None)
     registry: Optional[str] = field(default=None)
     name: Optional[str] = field(default=None)
-    platform: Tuple[Architecture, ...] = field(default=("linux/amd64",))
+    platform: Tuple[Architecture, ...] = field(default=("linux/amd64", "linux/amd64"))
     python_version: Tuple[int, int] = field(default_factory=_detect_python_version)
     # Refer to the image_refs (name:image-uri) set in CLI or config
     _ref_name: Optional[str] = field(default=None)
