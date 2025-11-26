@@ -25,9 +25,7 @@ async def upstream_task(data: MyObject) -> dict[str, MyObject]:
 
 
 if __name__ == "__main__":
-    import flyte.git
-
-    flyte.init_from_config(flyte.git.config_from_root())
+    flyte.init_from_config()
     obj = MyObject(name="example", value=5)
     r = flyte.run(upstream_task, data=obj)
     print(r.url)

@@ -79,9 +79,7 @@ async def get_employee_data(raw_dataframe: pd.DataFrame, flyte_dataframe: pd.Dat
 
 
 if __name__ == "__main__":
-    import flyte.git
-
-    flyte.init_from_config(flyte.git.config_from_root())
+    flyte.init_from_config()
     # Get the data sources
 
     raw_df = flyte.with_runcontext(mode="local").run(create_raw_dataframe)
