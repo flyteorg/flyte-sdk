@@ -121,11 +121,7 @@ class Controller:
     async def _bg_watch_for_errors(self):
         if self._failure_event is None:
             raise RuntimeError("Failure event not initialized")
-        if os.getenv("ACTION_NAME") == "a0":
-            await self._failure_event.wait()
-        else:
-            await asyncio.sleep(5)
-            self._failure_event.set()
+        await self._failure_event.wait()
         logger.warning(f"Failure event received: {self._failure_event}, cleaning up informers and exiting.")
         self._running = False
 
