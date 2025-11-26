@@ -14,11 +14,11 @@ image = (
     .with_apt_packages("git", "vim")
     .with_env_vars({"UV_PYTHON": "/databricks/python3/bin/python"})
     .with_pip_packages(
-        "git+https://github.com/flyteorg/flyte-sdk.git@ecf36e52f6ab8c6235bda62a3ed0dbfcdf3fa77c#subdirectory=plugins/connectors",
+        "git+https://github.com/flyteorg/flyte-sdk.git@ad41dcbc0a9a17209e86fd02f6a3cd53b8d0ccac#subdirectory=plugins/connectors",
         pre=True,
     )
     .with_pip_packages(
-        "git+https://github.com/flyteorg/flyte-sdk.git@ecf36e52f6ab8c6235bda62a3ed0dbfcdf3fa77c#subdirectory=plugins/spark",
+        "git+https://github.com/flyteorg/flyte-sdk.git@ad41dcbc0a9a17209e86fd02f6a3cd53b8d0ccac#subdirectory=plugins/spark",
         pre=True,
     )
     .with_local_v2()

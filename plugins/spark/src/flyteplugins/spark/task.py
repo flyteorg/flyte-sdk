@@ -1,6 +1,7 @@
 import os
 import shutil
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Dict, Optional
 
 import flyte
@@ -59,7 +60,7 @@ class PysparkFunctionTask(AsyncFunctionTaskTemplate):
         sess = _pyspark.sql.SparkSession.builder.appName(DEFAULT_SPARK_CONTEXT_NAME).getOrCreate()
 
         if flyte.ctx().is_in_cluster():
-            base_dir = ".flyte"
+            base_dir = "/tmp/.flyte"
             digest = compute_digest(os.getcwd())
             file_name = f"flyte_{digest}"
             file_format = "zip"
