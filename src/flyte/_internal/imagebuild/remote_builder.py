@@ -269,10 +269,6 @@ def _get_layers_proto(image: Image, context_path: Path) -> "image_definition_pb2
             )
             layers.append(pip_layer)
         elif isinstance(layer, UVProject):
-            for line in layer.pyproject.read_text().splitlines():
-                if "tool.uv.index" in line:
-                    raise ValueError("External sources are not supported in pyproject.toml")
-
             if layer.project_install_mode == "dependencies_only":
                 # Copy pyproject itself
                 pyproject_dst = copy_files_to_context(layer.pyproject, context_path)
@@ -298,9 +294,6 @@ def _get_layers_proto(image: Image, context_path: Path) -> "image_definition_pb2
             )
             layers.append(uv_layer)
         elif isinstance(layer, PoetryProject):
-            for line in layer.pyproject.read_text().splitlines():
-                if "tool.poetry.source" in line:
-                    raise ValueError("External sources are not supported in pyproject.toml")
             extra_args = layer.extra_args or ""
             if layer.project_install_mode == "dependencies_only":
                 # Copy pyproject itself
