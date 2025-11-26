@@ -65,7 +65,7 @@ def update_hasher_for_source(
     if isinstance(source, list):
         for src in source:
             if os.path.isdir(src):
-                compute_digest_for_dir(src)
+ef                 compute_digest_for_dir(src)
             else:
                 compute_digest_for_file(src, os.path.basename(src))
     else:

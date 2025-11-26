@@ -4,6 +4,8 @@ import tempfile
 from dataclasses import dataclass
 from typing import Any, Dict, Optional
 
+from flytekit.tools.fast_registration import compute_digest
+
 import flyte
 from flyte import PodTemplate
 from flyte.extend import AsyncFunctionTaskTemplate, TaskPluginRegistry
@@ -61,7 +63,8 @@ class PysparkFunctionTask(AsyncFunctionTaskTemplate):
 
         if flyte.ctx().is_in_cluster():
             base_dir = tempfile.mkdtemp()
-            file_name = "flyte_wf"
+            digest = compute_digest(os.getcwd())
+            file_name = f"flyte_{digest}"
             file_format = "zip"
             shutil.make_archive(f"{base_dir}/{file_name}", file_format, os.getcwd())
             sess.sparkContext.addPyFile(f"{base_dir}/{file_name}.{file_format}")
