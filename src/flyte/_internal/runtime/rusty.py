@@ -166,7 +166,6 @@ async def run_task(
         )
     except asyncio.CancelledError as e:
         logger.error(f"[rusty] Task cancellation received: {e!s}")
-        # Question: What do you think about writing the errors pb file here?
         raise
     except Exception as e:
         logger.error(f"[rusty] Task failed: {e!s}")
