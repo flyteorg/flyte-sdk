@@ -51,8 +51,8 @@ def _get_databricks_job_spec(task_template: TaskTemplate) -> dict:
     databricks_job["git_source"] = {
         "git_url": "https://github.com/flyteorg/flyte-sdk",
         "git_provider": "gitHub",
-        # https://github.com/flyteorg/flyte-sdk/tree/d93d763abdbd0cb1606a882b4af8fd5782417b36
-        "git_commit": "d93d763abdbd0cb1606a882b4af8fd5782417b36",
+        # https://github.com/flyteorg/flyte-sdk/tree/6f4b65af95f79a4bc1046e7ffa6d0cc1ae61177c
+        "git_commit": "6f4b65af95f79a4bc1046e7ffa6d0cc1ae61177c",
     }
     logger.debug("databricks_job spec:", databricks_job)
     return databricks_job
