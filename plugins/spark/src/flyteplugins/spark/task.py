@@ -5,8 +5,7 @@ from typing import Any, Dict, Optional
 
 import flyte
 from flyte import PodTemplate
-from flyte._code_bundle._packaging import compute_digest
-from flyte.extend import AsyncFunctionTaskTemplate, TaskPluginRegistry
+from flyte.extend import AsyncFunctionTaskTemplate, TaskPluginRegistry, compute_digest
 from flyte.models import SerializationContext
 from flyteidl2.plugins.spark_pb2 import SparkApplication, SparkJob
 from google.protobuf.json_format import MessageToDict
@@ -60,7 +59,7 @@ class PysparkFunctionTask(AsyncFunctionTaskTemplate):
         sess = _pyspark.sql.SparkSession.builder.appName(DEFAULT_SPARK_CONTEXT_NAME).getOrCreate()
 
         if flyte.ctx().is_in_cluster():
-            base_dir = ".flyte/"
+            base_dir = ".flyte"
             digest = compute_digest(os.getcwd())
             file_name = f"flyte_{digest}"
             file_format = "zip"

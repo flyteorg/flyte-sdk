@@ -2,6 +2,7 @@ from ._initialize import is_initialized
 from ._internal.imagebuild.image_builder import ImageBuildEngine
 from ._internal.runtime.entrypoints import download_code_bundle
 from ._internal.runtime.resources_serde import get_proto_resources
+from ._code_bundle._packaging import compute_digest
 from ._resources import PRIMARY_CONTAINER_DEFAULT_NAME, pod_spec_from_resources
 from ._task import AsyncFunctionTaskTemplate, TaskTemplate
 from ._task_plugins import TaskPluginRegistry
@@ -9,6 +10,7 @@ from ._task_plugins import TaskPluginRegistry
 __all__ = [
     "PRIMARY_CONTAINER_DEFAULT_NAME",
     "AsyncFunctionTaskTemplate",
+    "compute_digest",
     "ImageBuildEngine",
     "TaskPluginRegistry",
     "TaskTemplate",
