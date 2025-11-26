@@ -26,6 +26,7 @@ async def serve(app_env: AppEnvironment):
     import cloudpickle
 
     from flyte.app import _deploy
+    from flyte.remote import App
 
     from ._code_bundle import build_code_bundle
     from ._deploy import build_images, plan_deploy
@@ -61,3 +62,5 @@ async def serve(app_env: AppEnvironment):
 
     deployed_app = await _deploy._deploy_app(app_env, sc)
     assert deployed_app
+    app = App(pb2=deployed_app)
+    return app.watch(wait_for="stopped")
