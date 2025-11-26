@@ -131,11 +131,8 @@ async def convert_and_run(
     ctx = internal_ctx()
 
     # Load inputs first to get context
-    try:
-        if input_path:
-            inputs = await load_inputs(input_path, path_rewrite_config=raw_data_path.path_rewrite)
-    except Exception as e:
-        print("eeeeeeeeee", e)
+    if input_path:
+        inputs = await load_inputs(input_path, path_rewrite_config=raw_data_path.path_rewrite)
 
     # Extract context from inputs
     custom_context = inputs.context if inputs else {}

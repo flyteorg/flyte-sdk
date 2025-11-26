@@ -17,7 +17,6 @@ from flyte.models import CodeBundle
 from ._ignore import GitIgnore, Ignore, StandardIgnore
 from ._packaging import create_bundle, list_files_to_bundle, list_relative_files_to_bundle, print_ls_tree
 from ._utils import CopyFiles, hash_file
-from .. import storage
 
 _pickled_file_extension = ".pkl.gz"
 _tar_file_extension = ".tar.gz"
@@ -154,12 +153,14 @@ async def build_code_bundle(
             if copy_bundle_to:
                 remote_path = str(copy_bundle_to / bundle_path.name)
             else:
+                import flyte.storage as storage
+
                 base_path = storage.get_random_local_path()
                 base_path.mkdir(parents=True, exist_ok=True)
                 remote_path = str(base_path / bundle_path.name)
 
-
             import shutil
+
             # Copy the bundle to the given path
             shutil.copy(bundle_path, remote_path)
             _, hash_digest, _ = hash_file(file_path=bundle_path)

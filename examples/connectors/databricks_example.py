@@ -1,4 +1,3 @@
-import asyncio
 import random
 from operator import add
 
@@ -14,11 +13,11 @@ image = (
     .with_apt_packages("git", "vim")
     .with_env_vars({"UV_PYTHON": "/databricks/python3/bin/python"})
     .with_pip_packages(
-        "git+https://github.com/flyteorg/flyte-sdk.git@ad41dcbc0a9a17209e86fd02f6a3cd53b8d0ccac#subdirectory=plugins/connectors",
+        "git+https://github.com/flyteorg/flyte-sdk.git@62a1cf3bf4ba091beff2804263664e083038dd6c#subdirectory=plugins/connectors",
         pre=True,
     )
     .with_pip_packages(
-        "git+https://github.com/flyteorg/flyte-sdk.git@ad41dcbc0a9a17209e86fd02f6a3cd53b8d0ccac#subdirectory=plugins/spark",
+        "git+https://github.com/flyteorg/flyte-sdk.git@62a1cf3bf4ba091beff2804263664e083038dd6c#subdirectory=plugins/spark",
         pre=True,
     )
     .with_local_v2()
@@ -43,24 +42,24 @@ databricks_conf = Databricks(
     executor_path="/databricks/python3/bin/python",
     databricks_conf={
         "run_name": "flytekit databricks plugin example",
-        "new_cluster": {
-            "spark_version": "13.3.x-scala2.12",
-            "autoscale": {
-                "min_workers": 1,
-                "max_workers": 1,
-            },
-            "node_type_id": "m6i.large",
-            "num_workers": 1,
-            "aws_attributes": {
-                "availability": "SPOT_WITH_FALLBACK",
-                "instance_profile_arn": "arn:aws:iam::339713193121:instance-profile/databricks-demo",
-                "ebs_volume_type": "GENERAL_PURPOSE_SSD",
-                "ebs_volume_count": 1,
-                "ebs_volume_size": 100,
-                "first_on_demand": 1,
-            },
-        },
-        # "existing_cluster_id": "1113-204018-tb9vr2fm",
+        # "new_cluster": {
+        #     "spark_version": "13.3.x-scala2.12",
+        #     "autoscale": {
+        #         "min_workers": 1,
+        #         "max_workers": 1,
+        #     },
+        #     "node_type_id": "m6i.large",
+        #     "num_workers": 1,
+        #     "aws_attributes": {
+        #         "availability": "SPOT_WITH_FALLBACK",
+        #         "instance_profile_arn": "arn:aws:iam::339713193121:instance-profile/databricks-demo",
+        #         "ebs_volume_type": "GENERAL_PURPOSE_SSD",
+        #         "ebs_volume_count": 1,
+        #         "ebs_volume_size": 100,
+        #         "first_on_demand": 1,
+        #     },
+        # },
+        "existing_cluster_id": "1113-204018-tb9vr2fm",
         "timeout_seconds": 3600,
         "max_retries": 1,
     },
@@ -102,7 +101,9 @@ async def hello_databricks_nested() -> float:
 async def test_main():
     import flyte.storage as storage
 
-    proto_str = b"".join([c async for c in storage.get_stream(path="s3://my-v2-connector/a209f3771e880f2ea8eb44a24ca572cf/inputs.pb")])
+    proto_str = b"".join(
+        [c async for c in storage.get_stream(path="s3://my-v2-connector/a209f3771e880f2ea8eb44a24ca572cf/inputs.pb")]
+    )
     print(proto_str)
 
 

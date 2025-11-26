@@ -8,7 +8,7 @@ Refrain from importing any modules here. If you need to import any modules, do i
 import asyncio
 import os
 import sys
-from typing import List, Literal
+from typing import List
 
 import click
 
@@ -188,7 +188,7 @@ def main(
             raise
 
     asyncio.run(_run_and_stop())
-    logger.info(f"Flyte runtime completed for action {name} with run name {run_name}")
+    logger.warning(f"Flyte runtime completed for action {name} with run name {run_name}")
 
 
 if __name__ == "__main__":

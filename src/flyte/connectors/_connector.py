@@ -4,7 +4,6 @@ import os
 import typing
 from abc import ABC, abstractmethod
 from dataclasses import asdict, dataclass
-from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from flyteidl2.core import tasks_pb2
@@ -297,7 +296,7 @@ class AsyncConnectorExecutorMixin:
         if (
             isinstance(self, AsyncFunctionTaskTemplate)
             and storage.is_remote(tctx.raw_data_path.path)
-            and storage.exists(io.outputs_path(prefix))
+            and await storage.exists(io.outputs_path(prefix))
         ):
             outputs = await io.load_outputs(io.outputs_path(prefix))
             return await convert.convert_outputs_to_native(task.interface, outputs)
