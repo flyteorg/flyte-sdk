@@ -7,8 +7,9 @@ from typing import TYPE_CHECKING, Dict, List, Optional, Set, Tuple
 
 import cloudpickle
 import rich.repr
+from flyteidl2.core import interface_pb2
 
-from flyte.models import SerializationContext
+from flyte.models import NativeInterface, SerializationContext
 from flyte.syncify import syncify
 
 from ._environment import Environment
@@ -173,7 +174,9 @@ async def _deploy_task(
 
         # Update inputs and outputs descriptions from docstring
         # This is done at deploy time to avoid runtime overhead
-        updated_interface = _update_interface_inputs_and_outputs_docstring(spec.task_template.interface, task.native_interface)
+        updated_interface = _update_interface_inputs_and_outputs_docstring(
+            spec.task_template.interface, task.native_interface
+        )
         spec.task_template.interface.CopyFrom(updated_interface)
         msg = f"Deploying task {task.name}, with image {image_uri} version {serialization_context.version}"
         if spec.task_template.HasField("container") and spec.task_template.container.args:
@@ -244,36 +247,40 @@ def _get_documentation_entity(task_template: TaskTemplate) -> task_definition_pb
 
 
 def _update_interface_inputs_and_outputs_docstring(
-    typed_interface: "interface_pb2.TypedInterface", native_interface: "NativeInterface"
-) -> "interface_pb2.TypedInterface":
+    typed_interface: interface_pb2.TypedInterface, native_interface: NativeInterface
+) -> interface_pb2.TypedInterface:
     """
-    Update the descriptions of inputs and outputs in the TypedInterface from the NativeInterface docstring.
+    Create a new TypedInterface with updated descriptions from the NativeInterface docstring.
     This is done during deployment to avoid runtime overhead of parsing docstrings during task execution.
 
-    :param typed_interface: The protobuf TypedInterface to update.
+    :param typed_interface: The protobuf TypedInterface to copy.
     :param native_interface: The NativeInterface containing the docstring.
-    :return: Updated TypedInterface with descriptions from docstring.
+    :return: New TypedInterface with descriptions from docstring.
     """
     if not native_interface.docstring:
         return typed_interface
+
+    # Create a copy of the typed_interface to avoid mutating the input
+    updated_interface = interface_pb2.TypedInterface()
+    updated_interface.CopyFrom(typed_interface)
 
     # Extract descriptions from the parsed docstring
     input_descriptions = {k: v for k, v in native_interface.docstring.input_descriptions.items() if v is not None}
     output_descriptions = {k: v for k, v in native_interface.docstring.output_descriptions.items() if v is not None}
 
     # Update input variable descriptions
-    if typed_interface.inputs and typed_interface.inputs.variables:
+    if updated_interface.inputs and updated_interface.inputs.variables:
         for var_name, desc in input_descriptions.items():
-            if var_name in typed_interface.inputs.variables:
-                typed_interface.inputs.variables[var_name].description = desc
+            if var_name in updated_interface.inputs.variables:
+                updated_interface.inputs.variables[var_name].description = desc
 
     # Update output variable descriptions
-    if typed_interface.outputs and typed_interface.outputs.variables:
+    if updated_interface.outputs and updated_interface.outputs.variables:
         for var_name, desc in output_descriptions.items():
-            if var_name in typed_interface.outputs.variables:
-                typed_interface.outputs.variables[var_name].description = desc
+            if var_name in updated_interface.outputs.variables:
+                updated_interface.outputs.variables[var_name].description = desc
 
-    return typed_interface
+    return updated_interface
 
 
 async def _build_image_bg(env_name: str, image: Image) -> Tuple[str, str]:
