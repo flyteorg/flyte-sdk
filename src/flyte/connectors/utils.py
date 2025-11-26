@@ -149,7 +149,8 @@ def _render_task_template(tt: TaskTemplate, file_prefix: str) -> TaskTemplate:
         tt.container.args[i] = args[i].replace("{{.runName}}", "test_run")
         tt.container.args[i] = args[i].replace("{{.actionName}}", "a1")
 
-    tt.container.args[1:1] = ["--run-base-dir", "s3://my-v2-connector/base-dir"]
+    # Add additional required args
+    tt.container.args[1:1] = ["--run-base-dir", f"{file_prefix}/base_dir"]
     tt.container.args[1:1] = ["--org", "test-org"]
     tt.container.args[1:1] = ["--project", "test-project"]
     tt.container.args[1:1] = ["--domain", "test-domain"]

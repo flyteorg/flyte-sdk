@@ -292,10 +292,7 @@ async def _open_obstore_bypass(path: str, mode: str = "rb", **kwargs) -> AsyncRe
         file_handle = obstore.open_writer_async(store, file_path, attributes=attributes)
     else:  # read mode
         buffer_size = kwargs.pop("buffer_size", 10 * 2**20)
-        logger.debug(buffer_size)
-        logger.debug(path)
         file_handle = await obstore.open_reader_async(store, file_path, buffer_size=buffer_size)
-        logger.debug("tttttttttttttttt")
     return file_handle
 
 
