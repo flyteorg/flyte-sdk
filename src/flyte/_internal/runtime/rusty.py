@@ -164,6 +164,9 @@ async def run_task(
             input_path=input_path,
             image_cache=ImageCache.from_transport(image_cache) if image_cache else None,
         )
+    except asyncio.CancelledError as e:
+        logger.error(f"[rusty] Task cancellation received: {e!s}")
+        raise
     except Exception as e:
         logger.error(f"[rusty] Task failed: {e!s}")
         raise
