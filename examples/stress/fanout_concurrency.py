@@ -19,7 +19,8 @@ env = flyte.TaskEnvironment(
         concurrency=50,
         scaledown_ttl=60,
     ),
-    image=actor_image,
+    image=flyte.Image.from_debian_base().with_pip_packages("unionai-reuse==0.1.8b4", extra_index_urls=["https://test.pypi.org/simple/"]),
+    # image=actor_image,
 )
 
 
