@@ -236,7 +236,7 @@ async def download_bundle(bundle: CodeBundle) -> pathlib.Path:
     if bundle.tgz:
         downloaded_bundle = dest / os.path.basename(bundle.tgz)
         if downloaded_bundle.exists():
-            logger.debug("Code bundle already exists locally, skipping download.")
+            logger.debug(f"Code bundle {downloaded_bundle} already exists locally, skipping download.")
             return downloaded_bundle.absolute()
         # Download the tgz file
         logger.debug(f"Downloading code bundle from {bundle.tgz} to {downloaded_bundle.absolute()}")

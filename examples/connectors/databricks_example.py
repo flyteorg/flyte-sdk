@@ -1,5 +1,6 @@
 import random
 from operator import add
+from pathlib import Path
 
 from flyteplugins.connectors.databricks.task import Databricks
 
@@ -13,9 +14,15 @@ image = (
     .with_apt_packages("git", "vim")
     .with_env_vars({"UV_PYTHON": "/databricks/python3/bin/python"})
     .with_pip_packages(
-        "flyteplugins-connectors[databricks]",
+        "git+https://github.com/flyteorg/flyte-sdk.git@62a1cf3bf4ba091beff2804263664e083038dd6c#subdirectory=plugins/connectors",
         pre=True,
     )
+    .with_pip_packages(
+        "git+https://github.com/flyteorg/flyte-sdk.git@62a1cf3bf4ba091beff2804263664e083038dd6c#subdirectory=plugins/spark",
+        pre=True,
+    )
+    .with_pip_packages("nest-asyncio", "aiohttp", "click==8.1.6")
+    .with_local_v2()
     .with_env_vars({"AWS_REGION": "us-west-1", "LOG_LEVEL": 10})
 )
 
@@ -35,7 +42,7 @@ databricks_conf = Databricks(
     },
     executor_path="/databricks/python3/bin/python",
     databricks_conf={
-        "run_name": "flytekit databricks plugin example",
+        "run_name": "flyte databricks plugin exampleeeeee",
         "new_cluster": {
             "spark_version": "13.3.x-scala2.12",
             "autoscale": {
@@ -53,7 +60,7 @@ databricks_conf = Databricks(
                 "first_on_demand": 1,
             },
         },
-        # "existing_cluster_id": "1113-204018-tb9vr2fm",  # you can use an existing cluster by uncommenting this line
+        # "existing_cluster_id": "1113-204018-tb9vr2fm",
         "timeout_seconds": 3600,
         "max_retries": 1,
     },
@@ -86,17 +93,26 @@ async def hello_databricks_nested() -> float:
     n = 1 * partitions
     spark = flyte.ctx().data["spark_session"]
     count = spark.sparkContext.parallelize(range(1, n + 1), partitions).map(f).reduce(add)
+    print("getttttt pi")
     res = get_pi(count, partitions)
     print(f"result: {res}")
     return res
 
 
-if __name__ == "__main__":
-    flyte.init_from_config(storage=S3().auto())
-    run = flyte.with_runcontext(mode="local", raw_data_path="s3://my-connector/").run(hello_databricks_nested)
-    print(run)
+async def test_main():
+    import flyte.storage as storage
 
-    # Remote execution
-    # run = flyte.with_runcontext(mode="remote").run(hello_databricks_nested)
+    proto_str = b"".join(
+        [c async for c in storage.get_stream(path="s3://my-v2-connector/a209f3771e880f2ea8eb44a24ca572cf/inputs.pb")]
+    )
+    print(proto_str)
+
+
+if __name__ == "__main__":
+    flyte.init_from_config(storage=S3().auto(), root_dir=Path(__file__).parent)
+    run = flyte.with_runcontext(mode="local", raw_data_path="s3://my-v2-connector/").run(hello_databricks_nested)
+    print(run)
     # print("run name:", run.name)
     # print("run urlllll:", run.url)
+
+    # asyncio.run(test_main())
