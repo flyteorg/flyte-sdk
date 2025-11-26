@@ -83,7 +83,6 @@ def f(_):
     return 1 if x**2 + y**2 <= 1 else 0
 
 
-@task_env.task
 def get_pi(count: int, partitions: int) -> float:
     return 4.0 * count / partitions
 
