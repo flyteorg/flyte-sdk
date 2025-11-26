@@ -144,7 +144,9 @@ async def build_code_bundle(
 
     logger.debug("Building code bundle.")
     with tempfile.TemporaryDirectory() as tmp_dir:
-        bundle_path, tar_size, archive_size = create_bundle(from_dir, pathlib.Path(tmp_dir), files, digest)
+        bundle_path, tar_size, archive_size = create_bundle(
+            from_dir, pathlib.Path(tmp_dir), files, digest, deref_symlinks=True
+        )
         logger.info(f"Code bundle created at {bundle_path}, size: {tar_size} MB, archive size: {archive_size} MB")
         if not dryrun:
             hash_digest, remote_path = await upload_file.aio(bundle_path)
