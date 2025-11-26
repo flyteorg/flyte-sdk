@@ -107,6 +107,7 @@ class App(ToJSONMixin):
         )
         self.pb2 = resp.app
 
+    @syncify
     async def start(self, wait: bool = False):
         """
         Start the app
@@ -117,8 +118,9 @@ class App(ToJSONMixin):
             return
         await self._update_status(app_definition_pb2.Spec.DESIRED_STATE_STARTED)
         if wait:
-            await self.watch(wait_for="started")
+            await self.watch.aio(wait_for="started")
 
+    @syncify
     async def stop(self, wait: bool = False):
         """
         Stop the app
@@ -128,7 +130,7 @@ class App(ToJSONMixin):
             return
         await self._update_status(app_definition_pb2.Spec.DESIRED_STATE_STOPPED)
         if wait:
-            await self.watch(wait_for="stopped")
+            await self.watch.aio(wait_for="stopped")
 
     def __rich_repr__(self) -> rich.repr.Result:
         yield "name", self.name
@@ -140,8 +142,8 @@ class App(ToJSONMixin):
         )
         yield "desired_state", app_definition_pb2.Spec.DesiredState.Name(self.desired_state)[len("DESIRED_STATE_") :]
 
-    @classmethod
     @syncify
+    @classmethod
     async def get(
         cls,
         name: str,
@@ -170,8 +172,8 @@ class App(ToJSONMixin):
         )
         return cls(pb2=resp.app)
 
-    @classmethod
     @syncify
+    @classmethod
     async def listall(
         cls,
         created_by_subject: str | None = None,
