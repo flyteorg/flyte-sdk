@@ -100,6 +100,8 @@ class App(ToJSONMixin):
     async def _update_status(self, desired_state: app_definition_pb2.Spec.DesiredState):
         ensure_client()
         self.pb2.spec.desired_state = desired_state
+        # TODO Haytham?
+        self.pb2.status.assigned_cluster = self.pb2.status.assigned_cluster or "default"
         resp = await get_client().app_service.UpdateStatus(
             request=app_payload_pb2.UpdateStatusRequest(
                 app=self.pb2,
