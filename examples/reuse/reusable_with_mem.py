@@ -11,7 +11,8 @@ env_reuse = flyte.TaskEnvironment(
         replicas=1,
         idle_ttl=300,
     ),
-    image=flyte.Image.from_debian_base().with_pip_packages("unionai-reuse==0.1.3"),
+    # image=flyte.Image.from_debian_base().with_pip_packages("unionai-reuse==0.1.3"),
+    image=flyte.Image.from_debian_base().with_pip_packages("unionai-reuse==0.1.8b4", extra_index_urls=["https://test.pypi.org/simple/"]),
 )
 
 env = env_reuse.clone_with(
@@ -72,4 +73,4 @@ if __name__ == "__main__":
     flyte.init_from_config()  # establish remote connection from within your script.
     run = flyte.run(main, n=30)  # run remotely inline and pass data.
     print(run.url)
-    run.wait()  # wait for the run to finish.
+    # run.wait()  # wait for the run to finish.

@@ -2,9 +2,17 @@ import asyncio
 import logging
 
 import flyte
+from pathlib import Path
+from flyte._image import PythonWheels
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
+
+actor_dist_folder = Path("/Users/ytong/go/src/github.com/unionai/flyte/fasttask/worker-v2/dist")
+wheel_layer = PythonWheels(wheel_dir=actor_dist_folder, package_name="unionai-reuse")
+base = flyte.Image.from_debian_base()
+actor_image = base.clone(addl_layer=wheel_layer)
+
 
 env = flyte.TaskEnvironment(
     name="reuse_concurrency",
@@ -15,13 +23,14 @@ env = flyte.TaskEnvironment(
         concurrency=100,
         scaledown_ttl=60,
     ),
-    image=flyte.Image.from_debian_base().with_pip_packages("unionai-reuse==0.1.7"),
+    # image=flyte.Image.from_debian_base().with_pip_packages("unionai-reuse==0.1.7"),
+    image=actor_image,
 )
 
 
 @env.task
 async def noop(x: int) -> int:
-    logger.debug(f"Task noop: {x}")
+    logger.warning(f"Task noop: {x}")
     return x
 
 

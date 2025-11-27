@@ -6,7 +6,8 @@ import flyte.report
 
 env = flyte.TaskEnvironment(
     name="long_running_reuse",
-    image=flyte.Image.from_debian_base().with_pip_packages("unionai-reuse"),
+    # image=flyte.Image.from_debian_base().with_pip_packages("unionai-reuse"),
+    image=flyte.Image.from_debian_base().with_pip_packages("unionai-reuse==0.1.8b4", extra_index_urls=["https://test.pypi.org/simple/"]),
     reusable=flyte.ReusePolicy(
         replicas=1,
         concurrency=2,
