@@ -1,4 +1,3 @@
-from ._code_bundle._packaging import compute_digest
 from ._initialize import is_initialized
 from ._internal.imagebuild.image_builder import ImageBuildEngine
 from ._internal.runtime.entrypoints import download_code_bundle
@@ -13,7 +12,6 @@ __all__ = [
     "ImageBuildEngine",
     "TaskPluginRegistry",
     "TaskTemplate",
-    "compute_digest",
     "download_code_bundle",
     "get_proto_resources",
     "is_initialized",
