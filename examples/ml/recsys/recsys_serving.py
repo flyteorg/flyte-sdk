@@ -283,7 +283,7 @@ async def find_similar_items(request: SimilarItemsRequest):
     similarities.sort(key=lambda x: x[1], reverse=True)
 
     similar_items = []
-    for item_id, score in similarities[:request.top_k]:
+    for item_id, score in similarities[: request.top_k]:
         item = items_metadata[item_id]
         similar_items.append(
             ItemScore(

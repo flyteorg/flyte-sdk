@@ -6,6 +6,8 @@
 #     "datasets",
 #     "scikit-learn",
 #     "numpy",
+#     "pandas",
+#     "pyarrow",
 #     "sentence-transformers",
 # ]
 # ///
@@ -23,13 +25,13 @@ interaction history, enabling similarity-based recommendations.
 """
 
 import asyncio
-import json
 import logging
 from pathlib import Path
 from typing import List, Tuple
 
 import numpy as np
-from sentence_transformers import SentenceTransformer, InputExample, losses
+import pandas as pd
+from sentence_transformers import InputExample, SentenceTransformer, losses
 from torch.utils.data import DataLoader
 
 import flyte
@@ -54,9 +56,9 @@ async def generate_synthetic_data(
     num_users: int = 1000,
     num_items: int = 500,
     num_interactions: int = 10000,
-) -> Tuple[List[dict], List[dict], List[dict]]:
+) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """
-    Generate synthetic user-item interaction data.
+    Generate synthetic user-item interaction data as pandas DataFrames.
 
     Args:
         num_users: Number of unique users
@@ -64,66 +66,74 @@ async def generate_synthetic_data(
         num_interactions: Number of user-item interactions
 
     Returns:
-        Tuple of (users, items, interactions)
+        Tuple of (users_df, items_df, interactions_df)
     """
     logger.info(f"Generating synthetic data: {num_users} users, {num_items} items, {num_interactions} interactions")
 
-    # Generate users with profiles
-    users = []
     categories = ["tech", "sports", "fashion", "food", "travel", "gaming", "music", "books"]
 
-    for user_id in range(num_users):
-        # Each user has preferences for certain categories
-        preferred_categories = list(np.random.choice(categories, size=np.random.randint(2, 5), replace=False))
-        users.append({
-            "user_id": f"user_{user_id}",
-            "age_group": np.random.choice(["18-25", "26-35", "36-45", "46-60", "60+"]),
-            "interests": preferred_categories,
-            "profile": f"User interested in {', '.join(preferred_categories)}",
-        })
+    # Generate users DataFrame
+    user_data = {
+        "user_id": [f"user_{i}" for i in range(num_users)],
+        "age_group": np.random.choice(["18-25", "26-35", "36-45", "46-60", "60+"], size=num_users),
+        "interests": [
+            ",".join(np.random.choice(categories, size=np.random.randint(2, 5), replace=False))
+            for _ in range(num_users)
+        ],
+    }
+    users_df = pd.DataFrame(user_data)
+    users_df["profile"] = users_df["interests"].apply(lambda x: f"User interested in {x.replace(',', ', ')}")
 
-    # Generate items
-    items = []
-    for item_id in range(num_items):
-        category = np.random.choice(categories)
-        items.append({
-            "item_id": f"item_{item_id}",
-            "category": category,
-            "title": f"{category.title()} Product {item_id}",
-            "description": f"A great {category} item with unique features",
-            "tags": list(np.random.choice(["popular", "new", "trending", "sale"], size=np.random.randint(1, 3))),
-        })
+    # Generate items DataFrame
+    item_data = {
+        "item_id": [f"item_{i}" for i in range(num_items)],
+        "category": np.random.choice(categories, size=num_items),
+        "title": [f"{np.random.choice(categories).title()} Product {i}" for i in range(num_items)],
+        "description": [f"A great {np.random.choice(categories)} item with unique features" for _ in range(num_items)],
+        "tags": [
+            ",".join(np.random.choice(["popular", "new", "trending", "sale"], size=np.random.randint(1, 3)))
+            for _ in range(num_items)
+        ],
+    }
+    items_df = pd.DataFrame(item_data)
 
-    # Generate interactions (user views/purchases)
-    interactions = []
+    # Generate interactions DataFrame
+    interaction_data = []
     for _ in range(num_interactions):
-        user = np.random.choice(users)
+        # Sample random user
+        user_idx = np.random.randint(0, num_users)
+        user_interests = users_df.iloc[user_idx]["interests"].split(",")
+
         # Bias towards items in user's preferred categories
         if np.random.random() < 0.7:  # 70% chance to pick from preferred categories
-            matching_items = [item for item in items if item["category"] in user["interests"]]
-            if matching_items:
-                item = np.random.choice(matching_items)
+            matching_items = items_df[items_df["category"].isin(user_interests)]
+            if len(matching_items) > 0:
+                item_idx = matching_items.sample(1).index[0]
             else:
-                item = np.random.choice(items)
+                item_idx = np.random.randint(0, num_items)
         else:
-            item = np.random.choice(items)
+            item_idx = np.random.randint(0, num_items)
 
-        interactions.append({
-            "user_id": user["user_id"],
-            "item_id": item["item_id"],
-            "rating": np.random.randint(3, 6),  # Ratings 3-5 (positive interactions)
-            "interaction_type": np.random.choice(["view", "purchase", "like"]),
-        })
+        interaction_data.append(
+            {
+                "user_id": users_df.iloc[user_idx]["user_id"],
+                "item_id": items_df.iloc[item_idx]["item_id"],
+                "rating": np.random.randint(3, 6),  # Ratings 3-5 (positive interactions)
+                "interaction_type": np.random.choice(["view", "purchase", "like"]),
+            }
+        )
 
-    logger.info(f"Generated {len(users)} users, {len(items)} items, {len(interactions)} interactions")
-    return users, items, interactions
+    interactions_df = pd.DataFrame(interaction_data)
+
+    logger.info(f"Generated {len(users_df)} users, {len(items_df)} items, {len(interactions_df)} interactions")
+    return users_df, items_df, interactions_df
 
 
 @training_env.task
 async def prepare_training_pairs(
-    users: List[dict],
-    items: List[dict],
-    interactions: List[dict],
+    users_df: pd.DataFrame,
+    items_df: pd.DataFrame,
+    interactions_df: pd.DataFrame,
 ) -> List[InputExample]:
     """
     Prepare training pairs for contrastive learning.
@@ -132,35 +142,28 @@ async def prepare_training_pairs(
     rating as a similarity score.
 
     Args:
-        users: List of user dictionaries
-        items: List of item dictionaries
-        interactions: List of interaction dictionaries
+        users_df: Users DataFrame with columns [user_id, age_group, interests, profile]
+        items_df: Items DataFrame with columns [item_id, category, title, description, tags]
+        interactions_df: Interactions DataFrame with columns [user_id, item_id, rating, interaction_type]
 
     Returns:
         List of InputExample for training
     """
     logger.info("Preparing training pairs...")
 
-    # Create lookup dicts
-    user_dict = {u["user_id"]: u for u in users}
-    item_dict = {i["item_id"]: i for i in items}
+    # Merge interactions with user and item data
+    merged_df = interactions_df.merge(users_df, on="user_id").merge(items_df, on="item_id")
 
     training_examples = []
-
-    for interaction in interactions:
-        user = user_dict[interaction["user_id"]]
-        item = item_dict[interaction["item_id"]]
-
+    for _, row in merged_df.iterrows():
         # Create text representations
-        user_text = f"{user['profile']} Age: {user['age_group']}"
-        item_text = f"{item['title']}. {item['description']} Category: {item['category']}"
+        user_text = f"{row['profile']} Age: {row['age_group']}"
+        item_text = f"{row['title']}. {row['description']} Category: {row['category']}"
 
         # Normalize rating to 0-1 range for similarity
-        similarity_score = (interaction["rating"] - 3) / 2.0  # 3->0, 5->1
+        similarity_score = (row["rating"] - 3) / 2.0  # 3->0, 5->1
 
-        training_examples.append(
-            InputExample(texts=[user_text, item_text], label=similarity_score)
-        )
+        training_examples.append(InputExample(texts=[user_text, item_text], label=similarity_score))
 
     logger.info(f"Created {len(training_examples)} training pairs")
     return training_examples
@@ -212,70 +215,63 @@ async def train_embedding_model(
     logger.info(f"Saving model to {output_dir}")
     model.save(str(output_dir))
 
-    return flyte.io.Dir(str(output_dir))
+    return await flyte.io.Dir.from_local(output_dir)
 
 
 @training_env.task
 async def generate_embeddings(
     model_dir: flyte.io.Dir,
-    users: List[dict],
-    items: List[dict],
-) -> Tuple[dict, dict]:
+    users_df: pd.DataFrame,
+    items_df: pd.DataFrame,
+) -> Tuple[pd.DataFrame, pd.DataFrame]:
     """
     Generate embeddings for all users and items using the trained model.
 
     Args:
         model_dir: Directory containing the trained model
-        users: List of user dictionaries
-        items: List of item dictionaries
+        users_df: Users DataFrame
+        items_df: Items DataFrame
 
     Returns:
-        Tuple of (user_embeddings_dict, item_embeddings_dict)
+        Tuple of (user_embeddings_df, item_embeddings_df)
     """
     logger.info("Loading trained model...")
-    model = SentenceTransformer(str(model_dir.path))
+    path = await model_dir.download()
+    model = SentenceTransformer(path)
 
     # Generate user embeddings
-    logger.info(f"Generating embeddings for {len(users)} users...")
-    user_texts = [f"{u['profile']} Age: {u['age_group']}" for u in users]
+    logger.info(f"Generating embeddings for {len(users_df)} users...")
+    user_texts = [f"{row['profile']} Age: {row['age_group']}" for _, row in users_df.iterrows()]
     user_embeddings = await asyncio.to_thread(model.encode, user_texts, show_progress_bar=True)
 
-    user_embeddings_dict = {
-        users[i]["user_id"]: user_embeddings[i].tolist()
-        for i in range(len(users))
-    }
+    user_embeddings_df = users_df.copy()
+    user_embeddings_df["embedding"] = list(user_embeddings)
 
     # Generate item embeddings
-    logger.info(f"Generating embeddings for {len(items)} items...")
-    item_texts = [f"{i['title']}. {i['description']} Category: {i['category']}" for i in items]
+    logger.info(f"Generating embeddings for {len(items_df)} items...")
+    item_texts = [f"{row['title']}. {row['description']} Category: {row['category']}" for _, row in items_df.iterrows()]
     item_embeddings = await asyncio.to_thread(model.encode, item_texts, show_progress_bar=True)
 
-    item_embeddings_dict = {
-        items[i]["item_id"]: item_embeddings[i].tolist()
-        for i in range(len(items))
-    }
+    item_embeddings_df = items_df.copy()
+    item_embeddings_df["embedding"] = list(item_embeddings)
 
     logger.info("Embedding generation complete")
-    return user_embeddings_dict, item_embeddings_dict
+    return user_embeddings_df, item_embeddings_df
 
 
 @training_env.task
 async def save_artifacts(
     model_dir: flyte.io.Dir,
-    user_embeddings: dict,
-    item_embeddings: dict,
-    users: List[dict],
-    items: List[dict],
+    user_embeddings_df: pd.DataFrame,
+    item_embeddings_df: pd.DataFrame,
 ) -> flyte.io.Dir:
     """
     Save all artifacts needed for serving.
 
     Args:
         model_dir: Directory containing the trained model
-        user_embeddings: User embeddings dictionary
-        item_embeddings: Item embeddings dictionary
-        users: List of user dictionaries
-        items: List of item dictionaries
+        user_embeddings_df: DataFrame with user data and embeddings
+        item_embeddings_df: DataFrame with item data and embeddings
 
     Returns:
         Directory containing all artifacts
@@ -283,29 +279,20 @@ async def save_artifacts(
     output_dir = Path("/tmp/recsys_artifacts")
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    # Save embeddings
-    logger.info("Saving embeddings...")
-    with open(output_dir / "user_embeddings.json", "w") as f:
-        json.dump(user_embeddings, f)
-
-    with open(output_dir / "item_embeddings.json", "w") as f:
-        json.dump(item_embeddings, f)
-
-    # Save metadata
-    logger.info("Saving metadata...")
-    with open(output_dir / "users.json", "w") as f:
-        json.dump(users, f)
-
-    with open(output_dir / "items.json", "w") as f:
-        json.dump(items, f)
+    # Save DataFrames as parquet (efficient columnar format)
+    logger.info("Saving embeddings and metadata as parquet...")
+    user_embeddings_df.to_parquet(output_dir / "user_embeddings.parquet", index=False)
+    item_embeddings_df.to_parquet(output_dir / "item_embeddings.parquet", index=False)
 
     # Copy model
     import shutil
+
     model_output = output_dir / "model"
-    shutil.copytree(model_dir.path, model_output, dirs_exist_ok=True)
+    path = await model_dir.download()
+    shutil.copytree(path, model_output, dirs_exist_ok=True)
 
     logger.info(f"All artifacts saved to {output_dir}")
-    return flyte.io.Dir(str(output_dir))
+    return await flyte.io.Dir.from_local(output_dir)
 
 
 @training_env.task
@@ -351,17 +338,15 @@ async def training_pipeline(
     # Generate embeddings
     user_embeddings, item_embeddings = await generate_embeddings(
         model_dir=model_dir,
-        users=users,
-        items=items,
+        users_df=users,
+        items_df=items,
     )
 
     # Save all artifacts
     artifacts_dir = await save_artifacts(
         model_dir=model_dir,
-        user_embeddings=user_embeddings,
-        item_embeddings=item_embeddings,
-        users=users,
-        items=items,
+        user_embeddings_df=user_embeddings,
+        item_embeddings_df=item_embeddings,
     )
 
     logger.info("=== Training Pipeline Complete ===")
