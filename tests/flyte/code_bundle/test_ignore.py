@@ -8,7 +8,7 @@ def test_ignore_group_list_ignored():
     """Test that IgnoreGroup.list_ignored() correctly identifies ignored files"""
     # Create a temporary directory structure
     with tempfile.TemporaryDirectory() as tmpdir:
-        root_path = Path(tmpdir)
+        root_path = Path(tmpdir).resolve()
 
         # Create test files and directories
         (root_path / "main.py").write_text("print('hello')")
@@ -64,7 +64,7 @@ def test_ignore_group_list_ignored():
 def test_standard_ignore_valueerror_handling():
     """Test that StandardIgnore handles ValueError when path is not under root"""
     with tempfile.TemporaryDirectory() as tmpdir:
-        root_path = Path(tmpdir)
+        root_path = Path(tmpdir).resolve()
 
         # Create a file outside the root directory
         outside_file = Path(tmpdir).parent / "outside_file.txt"

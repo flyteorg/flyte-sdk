@@ -722,6 +722,8 @@ class Trigger:
             raise ValueError("Trigger name cannot be empty")
         if self.automation is None:
             raise ValueError("Automation cannot be None")
+        if self.description and len(self.description) > 255:
+            object.__setattr__(self, "description", self.description[:255])
 
     @classmethod
     def daily(
