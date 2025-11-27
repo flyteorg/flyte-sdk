@@ -2,7 +2,7 @@ import random
 from operator import add
 from pathlib import Path
 
-from flyteplugins.connectors.databricks.task import Databricks
+from flyteplugins.connectors.databricks import Databricks
 
 import flyte.remote
 from flyte.storage import S3

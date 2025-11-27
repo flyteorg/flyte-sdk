@@ -1,11 +1,12 @@
 import os
 import shutil
+import tempfile
 from dataclasses import dataclass
 from typing import Any, Dict, Optional
 
 import flyte
 from flyte import PodTemplate
-from flyte.extend import AsyncFunctionTaskTemplate, TaskPluginRegistry, compute_digest
+from flyte.extend import AsyncFunctionTaskTemplate, TaskPluginRegistry
 from flyte.models import SerializationContext
 from flyteidl2.plugins.spark_pb2 import SparkApplication, SparkJob
 from google.protobuf.json_format import MessageToDict
@@ -59,10 +60,9 @@ class PysparkFunctionTask(AsyncFunctionTaskTemplate):
         sess = _pyspark.sql.SparkSession.builder.appName(DEFAULT_SPARK_CONTEXT_NAME).getOrCreate()
 
         if flyte.ctx().is_in_cluster():
-            base_dir = "/tmp/.flyte"
+            base_dir = tempfile.mkdtemp()
             code_bundle_dir = flyte.ctx().code_bundle.destination
-            digest = compute_digest(code_bundle_dir)
-            file_name = f"flyte_{digest}"
+            file_name = "flyte_code_bundle"
             file_format = "zip"
             file_path = f"{base_dir}/{file_name}.{file_format}"
             if not os.path.exists(file_path):
