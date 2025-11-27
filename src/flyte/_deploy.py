@@ -257,12 +257,12 @@ def _update_interface_inputs_and_outputs_docstring(
     :param native_interface: The NativeInterface containing the docstring.
     :return: New TypedInterface with descriptions from docstring.
     """
-    if not native_interface.docstring:
-        return typed_interface
-
     # Create a copy of the typed_interface to avoid mutating the input
     updated_interface = interface_pb2.TypedInterface()
     updated_interface.CopyFrom(typed_interface)
+
+    if not native_interface.docstring:
+        return updated_interface
 
     # Extract descriptions from the parsed docstring
     input_descriptions = {k: v for k, v in native_interface.docstring.input_descriptions.items() if v is not None}
