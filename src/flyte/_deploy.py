@@ -255,7 +255,7 @@ def _update_interface_inputs_and_outputs_docstring(
 
     :param typed_interface: The protobuf TypedInterface to copy.
     :param native_interface: The NativeInterface containing the docstring.
-    :return: New TypedInterface with descriptions from docstring.
+    :return: New TypedInterface with descriptions from docstring if docstring exists.
     """
     # Create a copy of the typed_interface to avoid mutating the input
     updated_interface = interface_pb2.TypedInterface()
