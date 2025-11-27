@@ -1,9 +1,8 @@
 import pathlib
 
 import pytest
-from flyteidl2.common import identifier_pb2
+from flyteidl2.common import identifier_pb2, phase_pb2
 from flyteidl2.task import common_pb2
-from flyteidl2.workflow import run_definition_pb2
 from mock.mock import AsyncMock, patch
 
 import flyte
@@ -41,7 +40,7 @@ async def test_submit_task():
         action_id=identifier_pb2.ActionIdentifier(
             name="test_action",
         ),
-        phase=run_definition_pb2.Phase.PHASE_SUCCEEDED,
+        phase=phase_pb2.ACTION_PHASE_SUCCEEDED,
     )
 
     with (
@@ -96,7 +95,7 @@ async def test_submit_with_outputs():
         action_id=identifier_pb2.ActionIdentifier(
             name="test_action",
         ),
-        phase=run_definition_pb2.Phase.PHASE_SUCCEEDED,
+        phase=phase_pb2.ACTION_PHASE_SUCCEEDED,
         run_output_base="/tmp/outputs/base",
         realized_outputs_uri="/tmp/outputs/realized",
     )
@@ -163,7 +162,7 @@ async def test_submit_task_with_error():
         action_id=identifier_pb2.ActionIdentifier(
             name="test_action",
         ),
-        phase=run_definition_pb2.Phase.PHASE_FAILED,
+        phase=phase_pb2.ACTION_PHASE_FAILED,
         client_err=Exception("Task failed"),
         run_output_base="/tmp/outputs/base",
     )
