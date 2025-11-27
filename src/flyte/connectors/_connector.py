@@ -240,12 +240,18 @@ class AsyncConnectorExecutorMixin:
                 )
                 if local_code_bundle.tgz is None:
                     raise RuntimeError("no tgz found in code bundle")
-                remote_code_path = await storage.put(local_code_bundle.tgz, prefix + "/code_bundle/")
+                remote_code_path = await storage.put(
+                    local_code_bundle.tgz, prefix + "/code_bundle/" + os.path.basename(local_code_bundle.tgz)
+                )
                 sc = SerializationContext(
                     project=tctx.action.project,
                     domain=tctx.action.domain,
                     org=tctx.action.org,
-                    code_bundle=CodeBundle(tgz=remote_code_path, computed_version=local_code_bundle.computed_version),
+                    code_bundle=CodeBundle(
+                        tgz=remote_code_path,
+                        computed_version=local_code_bundle.computed_version,
+                        destination="/opt/flyte/",
+                    ),
                     version=tctx.version,
                     image_cache=await build_images.aio(task.parent_env()) if task.parent_env else None,
                     root_dir=cfg.root_dir,

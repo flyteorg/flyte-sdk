@@ -93,7 +93,6 @@ async def hello_databricks_nested() -> float:
     n = 1 * partitions
     spark = flyte.ctx().data["spark_session"]
     count = spark.sparkContext.parallelize(range(1, n + 1), partitions).map(f).reduce(add)
-    print("getttttt pi")
     res = get_pi(count, partitions)
     print(f"result: {res}")
     return res

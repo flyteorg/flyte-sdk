@@ -221,7 +221,7 @@ async def get(from_path: str, to_path: Optional[str | pathlib.Path] = None, recu
     try:
         return await _get_from_filesystem(file_system, from_path, to_path, recursive=recursive, **kwargs)
     except (OSError, GenericError) as oe:
-        logger.debug(f"Error in getting {from_path} to {to_path} rec {recursive} {oe}")
+        logger.debug(f"Error in getting {from_path} to {to_path}, recursive: {recursive}, error: {oe}")
         if isinstance(file_system, AsyncFileSystem):
             try:
                 exists = await file_system._exists(from_path)  # pylint: disable=W0212

@@ -229,6 +229,8 @@ async def download_bundle(bundle: CodeBundle) -> pathlib.Path:
     import flyte.storage as storage
 
     dest = pathlib.Path(bundle.destination)
+    if not dest.exists():
+        dest.mkdir(parents=True, exist_ok=True)
     if not dest.is_dir():
         raise ValueError(f"Destination path should be a directory, found {dest}, {dest.stat()}")
 
