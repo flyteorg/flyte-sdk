@@ -5,7 +5,7 @@ from typing import AsyncGenerator, AsyncIterator, Literal, Tuple
 
 import grpc
 import rich.repr
-from flyteidl2.common import identifier_pb2, list_pb2
+from flyteidl2.common import identifier_pb2, list_pb2, phase_pb2
 from flyteidl2.workflow import run_definition_pb2, run_service_pb2
 
 from flyte._initialize import ensure_client, get_client, get_init_config
@@ -69,7 +69,7 @@ class Run(ToJSONMixin):
         )
         filters = []
         if in_phase:
-            phases = [str(run_definition_pb2.Phase.Value(f"PHASE_{p.upper()}")) for p in in_phase]
+            phases = [str(phase_pb2.ActionPhase.Value(f"PHASE_{p.upper()}")) for p in in_phase]
             logger.debug(f"Fetching run phases: {phases}")
             if len(phases) > 1:
                 filters.append(
@@ -160,7 +160,7 @@ class Run(ToJSONMixin):
         return self.action.phase
 
     @property
-    def raw_phase(self) -> run_definition_pb2.Phase:
+    def raw_phase(self) -> phase_pb2.ActionPhase:
         """
         Get the raw phase of the run.
         """

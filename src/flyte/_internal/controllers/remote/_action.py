@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal, Optional
 
-from flyteidl2.common import identifier_pb2
+from flyteidl2.common import identifier_pb2, phase_pb2
 from flyteidl2.core import execution_pb2, interface_pb2
 from flyteidl2.task import common_pb2, task_definition_pb2
 from flyteidl2.workflow import (
@@ -35,7 +35,7 @@ class Action:
     run_output_base: str | None = None
     realized_outputs_uri: str | None = None
     err: execution_pb2.ExecutionError | None = None
-    phase: run_definition_pb2.Phase | None = None
+    phase: phase_pb2.ActionPhase | None = None
     started: bool = False
     retries: int = 0
     queue: Optional[str] = None  # The queue to which this action was submitted.
@@ -55,10 +55,10 @@ class Action:
         if self.phase is None:
             return False
         return self.phase in [
-            run_definition_pb2.Phase.PHASE_FAILED,
-            run_definition_pb2.Phase.PHASE_SUCCEEDED,
-            run_definition_pb2.Phase.PHASE_ABORTED,
-            run_definition_pb2.Phase.PHASE_TIMED_OUT,
+            phase_pb2.ACTION_PHASE_FAILED,
+            phase_pb2.ACTION_PHASE_SUCCEEDED,
+            phase_pb2.ACTION_PHASE_ABORTED,
+            phase_pb2.ACTION_PHASE_TIMED_OUT,
         ]
 
     def increment_retries(self):
@@ -74,7 +74,7 @@ class Action:
 
     def mark_cancelled(self):
         self.mark_started()
-        self.phase = run_definition_pb2.Phase.PHASE_ABORTED
+        self.phase = phase_pb2.ACTION_PHASE_ABORTED
 
     def merge_state(self, obj: state_service_pb2.ActionUpdate):
         """
@@ -195,11 +195,11 @@ class Action:
             group=group_data,
             inputs_uri=inputs_uri,
             realized_outputs_uri=outputs_uri,
-            phase=run_definition_pb2.Phase.PHASE_SUCCEEDED,
+            phase=phase_pb2.ACTION_PHASE_SUCCEEDED,
             run_output_base=run_output_base,
             trace=run_definition_pb2.TraceAction(
                 name=friendly_name,
-                phase=run_definition_pb2.Phase.PHASE_SUCCEEDED,
+                phase=phase_pb2.ACTION_PHASE_SUCCEEDED,
                 start_time=st,
                 end_time=et,
                 outputs=common_pb2.OutputReferences(
