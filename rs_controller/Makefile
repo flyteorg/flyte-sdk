@@ -25,7 +25,6 @@ docker run --rm \
   -v $(PWD):/io \
   -v $(PWD)/docker_cargo_cache:/root/.cargo/registry \
   -v $(CLOUD_REPO):/cloud \
-  -v $(PWD)/temp_cargo_config.toml:/io/.cargo/config.toml \
   wheel-builder:$(1) /bin/bash -c "\
     cd /io; \
     /opt/python/cp310-cp310/bin/maturin build --release --find-interpreter --out /io/dist/ \
