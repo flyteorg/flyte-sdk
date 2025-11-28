@@ -41,3 +41,9 @@ build-wheels-amd64: dist-dirs
 	$(call BUILD_WHEELS_RECIPE,amd64)
 
 build-wheels: build-wheels-arm64 build-wheels-amd64
+
+
+# This is for Mac users, since the other targets won't build macos wheels (only local arch so probably arm64)
+build-wheel-local: dist-dirs
+	python -m build --wheel --outdir dist
+

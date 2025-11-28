@@ -316,6 +316,13 @@ Flyte 2 is licensed under the [Apache 2.0 License](LICENSE).
 
 ## Developing the Core Controller
 
+Create a separate virtual environment for the Rust contoller inside the rs_controller folder. The reason for this is
+because the rust controller should be a separate pypi package. The reason it should be a separate pypi package is that
+including it into the main SDK as a core component means the entire build toolchain for the SDK will need to become
+rust/maturin based. We should probably move to this model in the future though.
+
+Keep important dependencies the same though, namely flyteidl2.
+
 The following instructions are for helping to build the default multi-arch image. Each architecture needs a different wheel. Each wheel needs to be built by a different docker image.
 
 ### Setup Builders

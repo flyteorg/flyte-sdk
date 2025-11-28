@@ -1,9 +1,12 @@
 use pyo3::prelude::*;
 
-use cloudidl::{
-    cloudidl::workflow::{ActionIdentifier, ActionUpdate, Phase, TaskSpec},
-    flyteidl::core::ExecutionError,
-};
+use flyteidl2::flyteidl::common::ActionIdentifier;
+use flyteidl2::flyteidl::workflow::ActionUpdate;
+
+use flyteidl2::flyteidl::core::ExecutionError;
+use flyteidl2::flyteidl::task::TaskSpec;
+use flyteidl2::flyteidl::workflow::Phase;
+
 use tracing::debug;
 
 #[pyclass(eq, eq_int)]
@@ -31,6 +34,7 @@ pub struct Action {
     pub retries: u32,
     pub client_err: Option<String>, // Changed from PyErr to String for serializability
     pub cache_key: Option<String>,
+    pub queue: Option<String>,
 }
 
 impl Action {
@@ -99,6 +103,7 @@ impl Action {
             retries: 0,
             client_err: None,
             cache_key: None,
+            queue: None,
         }
     }
 
@@ -139,6 +144,7 @@ impl Action {
         inputs_uri: String,
         run_output_base: String,
         cache_key: Option<String>,
+        queue: Option<String>,
     ) -> Self {
         debug!("Creating Action from task for ID {:?}", &sub_action_id);
         Action {
@@ -160,6 +166,7 @@ impl Action {
             retries: 0,
             client_err: None,
             cache_key,
+            queue,
         }
     }
 
@@ -190,6 +197,7 @@ impl Action {
             retries: 0,
             client_err: None,
             cache_key: None,
+            queue: None,
         }
     }
 

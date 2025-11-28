@@ -1,9 +1,13 @@
 use crate::action::Action;
 use crate::ControllerError;
-use cloudidl::cloudidl::workflow::state_service_client::StateServiceClient;
-use cloudidl::cloudidl::workflow::watch_request;
-use cloudidl::cloudidl::workflow::watch_response::Message;
-use cloudidl::cloudidl::workflow::{ActionIdentifier, RunIdentifier, WatchRequest, WatchResponse};
+
+use flyteidl2::flyteidl::common::ActionIdentifier;
+use flyteidl2::flyteidl::common::RunIdentifier;
+use flyteidl2::flyteidl::workflow::state_service_client::StateServiceClient;
+use flyteidl2::flyteidl::workflow::{
+    watch_request, watch_response::Message, WatchRequest, WatchResponse,
+};
+
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
@@ -132,11 +136,7 @@ impl Informer {
             filter: Some(watch_request::Filter::ParentActionId(action_id)),
         };
 
-        let mut stream = self
-            .client
-            .clone()
-            .watch(request)
-            .await;
+        let mut stream = self.client.clone().watch(request).await;
 
         let mut stream = match stream {
             Ok(s) => s.into_inner(),
@@ -151,22 +151,22 @@ impl Informer {
                 Ok(Some(response)) => {
                     let handle_response = self.handle_watch_response(response).await;
                     match handle_response {
-                        Ok(Some(action)) => {
-                            match self.shared_queue.send(action).await {
-                                Ok(_) => {
-                                    continue;
-                                }
-                                Err(e) => {
-                                    error!("Informer watch failed sending action back to shared queue: {:?}", e);
-                                    return ControllerError::RuntimeError(format!(
-                                        "Failed to send action to shared queue: {}",
-                                        e
-                                    ));
-                                }
+                        Ok(Some(action)) => match self.shared_queue.send(action).await {
+                            Ok(_) => {
+                                continue;
                             }
-                        }
+                            Err(e) => {
+                                error!("Informer watch failed sending action back to shared queue: {:?}", e);
+                                return ControllerError::RuntimeError(format!(
+                                    "Failed to send action to shared queue: {}",
+                                    e
+                                ));
+                            }
+                        },
                         Ok(None) => {
-                            debug!("Received None from handle_watch_response, continuing watch loop.");
+                            debug!(
+                                "Received None from handle_watch_response, continuing watch loop."
+                            );
                         }
                         Err(err) => {
                             // this should cascade up to the controller to restart the informer, and if there
@@ -178,13 +178,12 @@ impl Informer {
                 }
                 Ok(None) => {
                     debug!("Stream received empty message, maybe no more messages? Repeating watch loop.");
-                }, // Stream ended, exit loop
+                } // Stream ended, exit loop
                 Err(e) => {
                     error!("Error receiving message from stream: {:?}", e);
                     return ControllerError::from(e);
                 }
             }
-
         }
     }
 

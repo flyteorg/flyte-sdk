@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use futures::TryFutureExt;
 use pyo3::prelude::*;
-use tokio::sync::{mpsc, Mutex, Notify};
+use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
 
 use thiserror::Error;
@@ -14,13 +14,14 @@ use thiserror::Error;
 use crate::action::{Action, ActionType};
 use crate::informer::Informer;
 
-use cloudidl::cloudidl::workflow::queue_service_client::QueueServiceClient;
-use cloudidl::cloudidl::workflow::state_service_client::StateServiceClient;
-use cloudidl::cloudidl::workflow::{
-    enqueue_action_request, ActionIdentifier, EnqueueActionRequest, EnqueueActionResponse,
-    RunIdentifier, TaskAction, TaskIdentifier,
-};
-use cloudidl::google;
+use flyteidl2::flyteidl::common::ActionIdentifier;
+use flyteidl2::flyteidl::task::TaskIdentifier;
+use flyteidl2::flyteidl::workflow::state_service_client::StateServiceClient;
+use flyteidl2::flyteidl::workflow::{EnqueueActionRequest, EnqueueActionResponse, TaskAction};
+
+use flyteidl2::flyteidl::workflow::enqueue_action_request;
+use flyteidl2::flyteidl::workflow::queue_service_client::QueueServiceClient;
+use flyteidl2::google;
 use google::protobuf::StringValue;
 use pyo3::exceptions;
 use pyo3::types::PyAny;
@@ -80,7 +81,10 @@ impl CoreBaseController {
         let (state_client, queue_client) = rt.block_on(async {
             // Need to update to with auth to read API key
             let endpoint = Endpoint::from_static(&endpoint_static);
-            let channel = endpoint.connect().await.map_err(|e| ControllerError::from(e))?;
+            let channel = endpoint
+                .connect()
+                .await
+                .map_err(|e| ControllerError::from(e))?;
             Ok::<_, ControllerError>((
                 StateServiceClient::new(channel.clone()),
                 QueueServiceClient::new(channel),
@@ -325,6 +329,7 @@ impl CoreBaseController {
                 .cache_key
                 .as_ref()
                 .map(|ck| StringValue { value: ck.clone() }),
+            cluster: action.queue.clone().unwrap_or("".to_string()),
         };
 
         Ok(EnqueueActionRequest {
@@ -487,7 +492,7 @@ impl BaseController {
     }
 }
 
-use cloudidl::pymodules::cloud_mod;
+// use cloudidl::pymodules::cloud_mod;
 
 #[pymodule]
 fn flyte_controller_base(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
@@ -503,6 +508,5 @@ fn flyte_controller_base(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()
     m.add_class::<BaseController>()?;
     m.add_class::<Action>()?;
     m.add_class::<ActionType>()?;
-    cloud_mod(py, m)?;
     Ok(())
 }

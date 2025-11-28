@@ -1,15 +1,15 @@
 [package]
-name = "union_rust_controller"
+name = "flyte_core"
 version = "0.1.0"
 edition = "2021"
 
 [lib]
-name = "union_rust_controller"
+name = "flyte_controller_base"
 path = "src/lib.rs"
 crate-type = ["cdylib"]
 
 [dependencies]
-cloudidl = { path = "../../cloud/gen/pb_rust" }
+# cloudidl = { path = "../../cloud/gen/pb_rust" }
 pyo3 = { version = "0.24", features = ["extension-module", "abi3-py310"] }
 pyo3-async-runtimes = { version = "0.24", features = ["tokio-runtime"] }
 tokio = { version = "1.0", features = ["full"] }
@@ -24,12 +24,10 @@ tracing-subscriber = "0.3"
 async-trait = "0.1"
 thiserror = "1.0"
 pyo3-build-config = "0.24.2"
+flyteidl2 = "2.0.0-alpha14"
 
 [build-dependencies]
-pyo3 = { version = "0.24", features = [
-  "extension-module",
-  "abi3-py310",
-] } # Use your pyo3 version
+pyo3 = { version = "0.24", features = ["extension-module", "abi3-py310"] }
 
 # Need to do this for some reason otherwise maturin develop fails horribly
 # export RUSTFLAGS="-C link-arg=-undefined -C link-arg=dynamic_lookup"

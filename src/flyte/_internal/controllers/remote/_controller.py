@@ -19,7 +19,7 @@ from flyte._code_bundle import build_pkl_bundle
 from flyte._context import internal_ctx
 from flyte._internal.controllers import TraceInfo
 from flyte._internal.controllers.remote._action import Action
-# from flyte._internal.controllers.remote._core import Controller
+from flyte._internal.controllers.remote._core import Controller
 from flyte._internal.controllers.remote._service_protocol import ClientSet
 from flyte._internal.runtime import convert, io
 from flyte._internal.runtime.task_serde import translate_task_to_wire
@@ -29,16 +29,6 @@ from flyte._task import TaskTemplate
 from flyte._utils.helpers import _selector_policy
 from flyte.models import MAX_INLINE_IO_BYTES, ActionID, NativeInterface, SerializationContext
 from flyte.remote._task import TaskDetails
-
-# Import the Rust Controller instead of the Python one
-# try:
-#     from flyte._internal.controllers.remote.rust_controller import Controller
-#
-# except ImportError:
-#     # Fallback to Python implementation during development
-#     from flyte._internal.controllers.remote._core import Controller
-
-from flyte._internal.controllers.remote.rust_controller import Controller
 
 R = TypeVar("R")
 
