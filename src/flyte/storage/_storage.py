@@ -221,7 +221,7 @@ async def get(from_path: str, to_path: Optional[str | pathlib.Path] = None, recu
     try:
         return await _get_from_filesystem(file_system, from_path, to_path, recursive=recursive, **kwargs)
     except (OSError, GenericError) as oe:
-        logger.debug(f"Error in getting {from_path} to {to_path} rec {recursive} {oe}")
+        logger.debug(f"Error in getting {from_path} to {to_path}, recursive: {recursive}, error: {oe}")
         if isinstance(file_system, AsyncFileSystem):
             try:
                 exists = await file_system._exists(from_path)  # pylint: disable=W0212
@@ -293,7 +293,6 @@ async def _open_obstore_bypass(path: str, mode: str = "rb", **kwargs) -> AsyncRe
     else:  # read mode
         buffer_size = kwargs.pop("buffer_size", 10 * 2**20)
         file_handle = await obstore.open_reader_async(store, file_path, buffer_size=buffer_size)
-
     return file_handle
 
 

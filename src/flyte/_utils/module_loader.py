@@ -91,7 +91,7 @@ def _load_module_from_file(file_path: Path) -> str | None:
         raise flyte.errors.ModuleLoadError(f"Failed to load module from {file_path}: {e}") from e
 
 
-def adjust_sys_path():
+def adjust_sys_path(additional_paths: List[str] | None = None):
     """
     Adjust sys.path to include local sys.path entries under the root directory.
     """
@@ -102,3 +102,8 @@ def adjust_sys_path():
         if p and p not in sys.path:
             sys.path.insert(0, p)
             logger.info(f"Added {p} to sys.path")
+    if additional_paths:
+        for p in additional_paths:
+            if p and p not in sys.path:
+                sys.path.insert(0, p)
+                logger.info(f"Added {p} to sys.path")

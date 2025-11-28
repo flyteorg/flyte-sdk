@@ -61,10 +61,13 @@ class PysparkFunctionTask(AsyncFunctionTaskTemplate):
 
         if flyte.ctx().is_in_cluster():
             base_dir = tempfile.mkdtemp()
-            file_name = "flyte_wf"
+            code_bundle_dir = flyte.ctx().code_bundle.destination
+            file_name = "flyte_code_bundle"
             file_format = "zip"
-            shutil.make_archive(f"{base_dir}/{file_name}", file_format, os.getcwd())
-            sess.sparkContext.addPyFile(f"{base_dir}/{file_name}.{file_format}")
+            file_path = f"{base_dir}/{file_name}.{file_format}"
+            if not os.path.exists(file_path):
+                shutil.make_archive(f"{base_dir}/{file_name}", file_format, code_bundle_dir)
+                sess.sparkContext.addPyFile(file_path)
 
         return {"spark_session": sess}
 
