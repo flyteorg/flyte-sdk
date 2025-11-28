@@ -313,3 +313,21 @@ python maint_tools/build_default_image.py --registry ghcr.io/my-org --name my-fl
 ## 📄 License
 
 Flyte 2 is licensed under the [Apache 2.0 License](LICENSE).
+
+## Developing the Core Controller
+
+The following instructions are for helping to build the default multi-arch image. Each architecture needs a different wheel. Each wheel needs to be built by a different docker image.
+
+### Setup Builders
+`cd` into `rs_controller` and run `make build-builders`. This will build the builder images once, so you can keep using them as the rust code changes.
+
+### Iteration Cycle
+Make sure you have `CLOUD_REPO=/Users/<username>/go/src/github.com/unionai/cloud` exported and checked out to a branch that has the latest prost generated code. Delete this comment and update make target in the future if it gets merged/published.
+
+Then run `make build-wheels`.
+
+`cd` back up to the root folder of this project and proceed with
+```bash
+make dist
+python maint_tools/build_default_image.py
+```
