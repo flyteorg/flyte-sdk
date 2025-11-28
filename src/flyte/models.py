@@ -180,12 +180,6 @@ class RawDataPath:
 
 
 @rich.repr.auto
-@dataclass(frozen=True)
-class GroupData:
-    name: str
-
-
-@rich.repr.auto
 @dataclass(frozen=True, kw_only=True)
 class TaskContext:
     """

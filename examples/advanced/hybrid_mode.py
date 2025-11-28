@@ -60,17 +60,18 @@ if __name__ == "__main__":
     current_directory = Path(os.getcwd())
     # change to root directory of the project
     os.chdir(current_directory.parent.parent)
-    config = S3.for_sandbox()
+    # config = S3.for_sandbox()
     # config = flyte.storage.S3.auto()
-    flyte.init(
-        endpoint="dns:///localhost:8090",
-        insecure=True,
-        org="testorg",
-        project="testproject",
-        domain="development",
-        storage=config,
-        log_level=10,
-    )
+    flyte.init_from_config("/Users/ytong/.flyte/config-k3d.yaml")
+    # flyte.init(
+    #     endpoint="dns:///localhost:8090",
+    #     insecure=True,
+    #     org="testorg",
+    #     project="testproject",
+    #     domain="development",
+    #     storage=config,
+    #     log_level=10,
+    # )
     # Kick off a run of hybrid_parent_placeholder and fill in with kicked off things.
     run_name = "rxmjfwt6nz2rkwzntrtl"
     outputs = flyte.with_runcontext(

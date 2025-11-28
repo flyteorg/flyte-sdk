@@ -15,7 +15,7 @@ __all__ = ["Controller", "ControllerType", "TraceInfo", "create_controller", "ge
 if TYPE_CHECKING:
     import concurrent.futures
 
-ControllerType = Literal["local", "remote"]
+ControllerType = Literal["local", "remote", "rust"]
 
 R = TypeVar("R")
 
@@ -120,7 +120,15 @@ def create_controller(
         case "remote" | "hybrid":
             from flyte._internal.controllers.remote import create_remote_controller
 
-            controller = create_remote_controller(**kwargs)
+            # controller = create_remote_controller(**kwargs)
+            from flyte._internal.controllers.remote._r_controller import RemoteController
+
+            controller = RemoteController(endpoint="http://host.docker.internal:8090", workers=10, max_system_retries=5)
+        case "rust":
+            # hybrid case, despite the case statement above, meant for local runs not inside docker
+            from flyte._internal.controllers.remote._r_controller import RemoteController
+
+            controller = RemoteController(endpoint="http://localhost:8090", workers=10, max_system_retries=5)
         case _:
             raise ValueError(f"{ct} is not a valid controller type.")
 

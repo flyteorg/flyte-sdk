@@ -422,7 +422,8 @@ class _Runner:
         run_name = self._name
         random_id = str(uuid.uuid4())[:6]
 
-        controller = create_controller("remote", endpoint="localhost:8090", insecure=True)
+        # controller = create_controller("remote", endpoint="localhost:8090", insecure=True)
+        controller = create_controller("rust", endpoint="localhost:8090", insecure=True)
         action = ActionID(name=action_name, run_name=run_name, project=project, domain=domain, org=org)
 
         inputs = obj.native_interface.convert_to_kwargs(*args, **kwargs)
@@ -452,7 +453,7 @@ class _Runner:
                 checkpoints=checkpoints,
                 code_bundle=code_bundle,
                 output_path=output_path,
-                version=version if version else "na",
+                version=version,  # if version else "na",
                 raw_data_path=raw_data_path_obj,
                 compiled_image_cache=image_cache,
                 run_base_dir=run_base_dir,

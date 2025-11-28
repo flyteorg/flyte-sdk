@@ -234,7 +234,12 @@ async def convert_outputs_to_native(interface: NativeInterface, outputs: Outputs
         return tuple(kwargs[k] for k in interface.outputs.keys())
 
 
-def convert_error_to_native(err: execution_pb2.ExecutionError | Exception | Error) -> Exception | None:
+from flyte_controller_base import cloudidl
+
+
+def convert_error_to_native(
+    err: execution_pb2.ExecutionError | Exception | Error | cloudidl.workflow.ExecutionError,
+) -> Exception | None:
     if not err:
         return None
 

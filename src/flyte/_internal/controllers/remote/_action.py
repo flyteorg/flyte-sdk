@@ -28,7 +28,7 @@ class Action:
     parent_action_name: str
     type: ActionType = "task"  # type of action, task or trace
     friendly_name: str | None = None
-    group: GroupData | None = None
+    group: str | None = None
     task: task_definition_pb2.TaskSpec | None = None
     trace: run_definition_pb2.TraceAction | None = None
     inputs_uri: str | None = None
@@ -117,7 +117,7 @@ class Action:
         cls,
         parent_action_name: str,
         sub_action_id: identifier_pb2.ActionIdentifier,
-        group_data: GroupData | None,
+        group_data: str | None,
         task_spec: task_definition_pb2.TaskSpec,
         inputs_uri: str,
         run_output_base: str,
