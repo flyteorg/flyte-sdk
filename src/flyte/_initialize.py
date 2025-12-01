@@ -352,7 +352,7 @@ async def init_in_cluster(
     domain = domain or os.getenv(DOMAIN_NAME)
     api_key = api_key or os.getenv(_UNION_EAGER_API_KEY_ENV_VAR)
 
-    remote_kwargs: dict[str, typing.Any] = {"insecure": False}
+    remote_kwargs: dict[str, typing.Any] = {"insecure": insecure}
     if api_key:
         logger.info("Using api key from environment")
         remote_kwargs["api_key"] = api_key
