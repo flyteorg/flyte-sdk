@@ -1,3 +1,5 @@
+#![allow(clippy::too_many_arguments)]
+
 mod action;
 mod informer;
 
@@ -61,7 +63,6 @@ impl From<ControllerError> for PyErr {
 }
 
 struct CoreBaseController {
-    endpoint: String,
     state_client: StateServiceClient<tonic::transport::Channel>,
     queue_client: QueueServiceClient<tonic::transport::Channel>,
     informer: OnceCell<Arc<Informer>>,
@@ -80,11 +81,8 @@ impl CoreBaseController {
         let rt = get_runtime();
         let (state_client, queue_client) = rt.block_on(async {
             // Need to update to with auth to read API key
-            let endpoint = Endpoint::from_static(&endpoint_static);
-            let channel = endpoint
-                .connect()
-                .await
-                .map_err(|e| ControllerError::from(e))?;
+            let endpoint = Endpoint::from_static(endpoint_static);
+            let channel = endpoint.connect().await.map_err(ControllerError::from)?;
             Ok::<_, ControllerError>((
                 StateServiceClient::new(channel.clone()),
                 QueueServiceClient::new(channel),
@@ -92,7 +90,6 @@ impl CoreBaseController {
         })?;
 
         let real_base_controller = CoreBaseController {
-            endpoint,
             state_client,
             queue_client,
             informer: OnceCell::new(),

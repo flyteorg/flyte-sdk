@@ -1,10 +1,11 @@
+use flyteidl2::google::protobuf::Timestamp;
 use pyo3::prelude::*;
 
 use flyteidl2::flyteidl::common::ActionIdentifier;
-use flyteidl2::flyteidl::workflow::ActionUpdate;
+use flyteidl2::flyteidl::workflow::{ActionUpdate, TraceAction};
 
-use flyteidl2::flyteidl::core::ExecutionError;
-use flyteidl2::flyteidl::task::TaskSpec;
+use flyteidl2::flyteidl::core::{ExecutionError, TypedInterface};
+use flyteidl2::flyteidl::task::{OutputReferences, TaskSpec, TraceSpec};
 use flyteidl2::flyteidl::workflow::Phase;
 
 use tracing::debug;
@@ -35,6 +36,7 @@ pub struct Action {
     pub client_err: Option<String>, // Changed from PyErr to String for serializability
     pub cache_key: Option<String>,
     pub queue: Option<String>,
+    pub trace: Option<TraceAction>,
 }
 
 impl Action {
@@ -104,6 +106,7 @@ impl Action {
             client_err: None,
             cache_key: None,
             queue: None,
+            trace: None,
         }
     }
 
@@ -167,6 +170,7 @@ impl Action {
             client_err: None,
             cache_key,
             queue,
+            trace: None,
         }
     }
 
@@ -179,8 +183,47 @@ impl Action {
         group_data: Option<String>,
         inputs_uri: String,
         outputs_uri: String,
+        start_time: f64, // Unix timestamp in seconds with fractional seconds
+        end_time: f64,   // Unix timestamp in seconds with fractional seconds
+        run_output_base: String,
+        report_uri: Option<String>,
+        typed_interface: Option<TypedInterface>,
     ) -> Self {
         debug!("Creating Action from trace for ID {:?}", &action_id);
+        let trace_spec = TraceSpec {
+            interface: typed_interface,
+        };
+        let start_secs = start_time.floor() as i64;
+        let start_nanos = ((start_time - start_time.floor()) * 1e9) as i32;
+
+        let end_secs = end_time.floor() as i64;
+        let end_nanos = ((end_time - end_time.floor()) * 1e9) as i32;
+
+        // TraceAction expects an optional OutputReferences - let's only include it if there's something to include
+        let output_references = if report_uri.is_some() || !outputs_uri.is_empty() {
+            Some(OutputReferences {
+                output_uri: outputs_uri.clone(),
+                report_uri: report_uri.clone().unwrap_or("".to_string()),
+            })
+        } else {
+            None
+        };
+
+        let trace_action = TraceAction {
+            name: friendly_name.clone(),
+            phase: Phase::Succeeded.into(),
+            start_time: Some(Timestamp {
+                seconds: start_secs,
+                nanos: start_nanos,
+            }),
+            end_time: Some(Timestamp {
+                seconds: end_secs,
+                nanos: end_nanos,
+            }),
+            outputs: output_references,
+            spec: Some(trace_spec),
+        };
+
         Action {
             action_id,
             parent_action_name,
@@ -189,15 +232,16 @@ impl Action {
             group: group_data,
             task: None,
             inputs_uri: Some(inputs_uri),
-            run_output_base: None,
+            run_output_base: Some(run_output_base),
             realized_outputs_uri: Some(outputs_uri),
+            phase: Phase::Succeeded.into(),
             err: None,
-            phase: Some(Phase::Succeeded),
             started: true,
             retries: 0,
             client_err: None,
             cache_key: None,
             queue: None,
+            trace: Some(trace_action),
         }
     }
 
