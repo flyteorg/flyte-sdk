@@ -42,13 +42,13 @@ def walk_commands(ctx: click.Context) -> Generator[Tuple[str, click.Command, cli
         # If the command is a FileGroup, yield its file path and the command itself
         # No need to recurse further into FileGroup as most subcommands are dynamically generated
         # The exception is TaskFiles which has the special 'deployed-task' subcommand that should be documented
-        if type(command).__name__ == 'TaskFiles':
+        if type(command).__name__ == "TaskFiles":
             # For TaskFiles, we only want the special non-file-based subcommands like 'deployed-task'
             # Exclude all dynamic file-based commands
             try:
                 names = command.list_commands(ctx)
                 for name in names:
-                    if name == 'deployed-task':  # Only include the deployed-task command
+                    if name == "deployed-task":  # Only include the deployed-task command
                         try:
                             subcommand = command.get_command(ctx, name)
                             if subcommand is not None:
@@ -81,7 +81,7 @@ def walk_commands(ctx: click.Context) -> Generator[Tuple[str, click.Command, cli
 
                 # Recurse if subcommand is a MultiCommand (i.e., has its own subcommands)
                 # But skip ReferenceTaskGroup as it requires a live Flyte backend to enumerate subcommands
-                if isinstance(subcommand, click.Group) and type(subcommand).__name__ != 'ReferenceTaskGroup':
+                if isinstance(subcommand, click.Group) and type(subcommand).__name__ != "ReferenceTaskGroup":
                     yield from walk_commands(sub_ctx)
             except click.ClickException:
                 # Skip files/commands that can't be loaded
