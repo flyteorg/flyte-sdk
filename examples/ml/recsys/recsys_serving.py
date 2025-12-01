@@ -6,6 +6,9 @@
 #     "sentence-transformers",
 #     "numpy",
 #     "pydantic",
+#     "pandas",
+#     "pyarrow",
+#     "flyte>=2.0.0b29",
 # ]
 # ///
 """
@@ -25,15 +28,19 @@ API Endpoints:
 """
 
 import asyncio
-import json
 import logging
 from pathlib import Path
 from typing import List, Optional
 
 import numpy as np
+import pandas as pd
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 from sentence_transformers import SentenceTransformer
+
+import flyte.io
+from flyte.app import Input
+from flyte.app.extras import FastAPIAppEnvironment
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -43,6 +50,24 @@ app = FastAPI(
     title="Recommendation System API",
     description="Embedding-based recommendation service",
     version="1.0.0",
+)
+
+# Create Flyte FastAPI App Environment
+image = flyte.Image.from_uv_script(__file__, name="recsys-serving")
+
+env = FastAPIAppEnvironment(
+    name="recsys-serving",
+    app=app,
+    description="Recommendation system serving API with embedding-based recommendations",
+    image=image,
+    resources=flyte.Resources(cpu=2, memory="4Gi"),
+    requires_auth=False,
+    inputs=[
+        Input(
+            name="artifacts",
+            value=flyte.io.Dir.from_existing_remote("s3://..."),
+        )
+    ],
 )
 
 # Global state
@@ -94,7 +119,7 @@ class EmbedTextResponse(BaseModel):
 
 async def load_model_and_data(artifacts_dir: Path):
     """
-    Load the trained model and pre-computed embeddings.
+    Load the trained model and pre-computed embeddings from parquet files.
 
     Args:
         artifacts_dir: Path to directory containing all artifacts
@@ -105,25 +130,35 @@ async def load_model_and_data(artifacts_dir: Path):
     model_path = artifacts_dir / "model"
     model = await asyncio.to_thread(SentenceTransformer, str(model_path))
 
-    logger.info("Loading user embeddings...")
-    with open(artifacts_dir / "user_embeddings.json", "r") as f:
-        user_embeddings = json.load(f)
+    logger.info("Loading user embeddings from parquet...")
+    user_df = pd.read_parquet(artifacts_dir / "user_embeddings.parquet")
+    # Convert DataFrame to dictionaries for fast lookup
+    user_embeddings = {row["user_id"]: row["embedding"] for _, row in user_df.iterrows()}
+    users_metadata = {
+        row["user_id"]: {
+            "user_id": row["user_id"],
+            "age_group": row["age_group"],
+            "interests": row["interests"],
+            "profile": row["profile"],
+        }
+        for _, row in user_df.iterrows()
+    }
 
-    logger.info("Loading item embeddings...")
-    with open(artifacts_dir / "item_embeddings.json", "r") as f:
-        item_embeddings = json.load(f)
+    logger.info("Loading item embeddings from parquet...")
+    item_df = pd.read_parquet(artifacts_dir / "item_embeddings.parquet")
+    # Convert DataFrame to dictionaries for fast lookup
+    item_embeddings = {row["item_id"]: row["embedding"] for _, row in item_df.iterrows()}
+    items_metadata = {
+        row["item_id"]: {
+            "item_id": row["item_id"],
+            "category": row["category"],
+            "title": row["title"],
+            "description": row["description"],
+        }
+        for _, row in item_df.iterrows()
+    }
 
-    logger.info("Loading user metadata...")
-    with open(artifacts_dir / "users.json", "r") as f:
-        users_list = json.load(f)
-        users_metadata = {u["user_id"]: u for u in users_list}
-
-    logger.info("Loading item metadata...")
-    with open(artifacts_dir / "items.json", "r") as f:
-        items_list = json.load(f)
-        items_metadata = {i["item_id"]: i for i in items_list}
-
-    logger.info("Model and data loaded successfully")
+    logger.info(f"Model and data loaded successfully: {len(user_embeddings)} users, {len(item_embeddings)} items")
 
 
 async def compute_similarity(embedding1: List[float], embedding2: List[float]) -> float:
@@ -190,22 +225,6 @@ async def rank_items_for_user(
         )
 
     return results
-
-
-@app.on_event("startup")
-async def startup_event():
-    """
-    Load model and data on startup.
-    """
-    # TODO: Replace with actual path to your trained artifacts
-    artifacts_dir = Path("/tmp/recsys_artifacts")
-
-    if not artifacts_dir.exists():
-        logger.warning(f"Artifacts directory not found at {artifacts_dir}")
-        logger.warning("Please run the training pipeline first and update the path")
-        return
-
-    await load_model_and_data(artifacts_dir)
 
 
 @app.get("/health")
@@ -345,12 +364,24 @@ async def get_item_info(item_id: str):
 
 
 if __name__ == "__main__":
-    import uvicorn
-
-    # Run the FastAPI app
-    uvicorn.run(
-        app,
-        host="0.0.0.0",
-        port=8000,
-        log_level="info",
+    flyte.init_from_config(
+        root_dir=Path(__file__).parent,
+        log_level=logging.INFO,
     )
+
+    # Deploy the FastAPI app to Flyte
+    # Note: You need to provide the artifacts directory from the training pipeline
+    # You can get this by running the training pipeline first:
+    #   run = flyte.run(training_pipeline, ...)
+    #   artifacts = run.outputs()
+    #
+    # Then pass it as an input to the app:
+    #   env.inputs.add(flyte.app.Input(name="artifacts", annotation=flyte.io.Dir))
+    #
+    # For now, this is a placeholder showing how to deploy the app
+    deployments = flyte.deploy(env)
+    d = deployments[0]
+    print(f"Deployed Recommendation API: {d.table_repr()}")
+    print("\nTo serve the app with trained artifacts, run:")
+    print("  1. First run the training pipeline to get artifacts")
+    print("  2. Then use flyte.serve(env, artifacts=<artifacts_dir>)")
