@@ -38,6 +38,7 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 from sentence_transformers import SentenceTransformer
 
+import flyte
 import flyte.io
 from flyte.app import Input
 from flyte.app.extras import FastAPIAppEnvironment
@@ -70,12 +71,13 @@ env = FastAPIAppEnvironment(
     ],
 )
 
-# Global state
-model: Optional[SentenceTransformer] = None
-user_embeddings: dict = {}
-item_embeddings: dict = {}
-users_metadata: dict = {}
-items_metadata: dict = {}
+# Application state stored in app.state instead of globals
+# Initialized here to provide type hints and defaults
+app.state.model: Optional[SentenceTransformer] = None
+app.state.user_embeddings: dict = {}
+app.state.item_embeddings: dict = {}
+app.state.users_metadata: dict = {}
+app.state.items_metadata: dict = {}
 
 
 # Request/Response models
@@ -124,17 +126,15 @@ async def load_model_and_data(artifacts_dir: Path):
     Args:
         artifacts_dir: Path to directory containing all artifacts
     """
-    global model, user_embeddings, item_embeddings, users_metadata, items_metadata
-
     logger.info("Loading model...")
     model_path = artifacts_dir / "model"
-    model = await asyncio.to_thread(SentenceTransformer, str(model_path))
+    app.state.model = await asyncio.to_thread(SentenceTransformer, str(model_path))
 
     logger.info("Loading user embeddings from parquet...")
     user_df = pd.read_parquet(artifacts_dir / "user_embeddings.parquet")
     # Convert DataFrame to dictionaries for fast lookup
-    user_embeddings = {row["user_id"]: row["embedding"] for _, row in user_df.iterrows()}
-    users_metadata = {
+    app.state.user_embeddings = {row["user_id"]: row["embedding"] for _, row in user_df.iterrows()}
+    app.state.users_metadata = {
         row["user_id"]: {
             "user_id": row["user_id"],
             "age_group": row["age_group"],
@@ -147,8 +147,8 @@ async def load_model_and_data(artifacts_dir: Path):
     logger.info("Loading item embeddings from parquet...")
     item_df = pd.read_parquet(artifacts_dir / "item_embeddings.parquet")
     # Convert DataFrame to dictionaries for fast lookup
-    item_embeddings = {row["item_id"]: row["embedding"] for _, row in item_df.iterrows()}
-    items_metadata = {
+    app.state.item_embeddings = {row["item_id"]: row["embedding"] for _, row in item_df.iterrows()}
+    app.state.items_metadata = {
         row["item_id"]: {
             "item_id": row["item_id"],
             "category": row["category"],
@@ -158,7 +158,10 @@ async def load_model_and_data(artifacts_dir: Path):
         for _, row in item_df.iterrows()
     }
 
-    logger.info(f"Model and data loaded successfully: {len(user_embeddings)} users, {len(item_embeddings)} items")
+    logger.info(
+        f"Model and data loaded successfully: "
+        f"{len(app.state.user_embeddings)} users, {len(app.state.item_embeddings)} items"
+    )
 
 
 async def compute_similarity(embedding1: List[float], embedding2: List[float]) -> float:
@@ -182,7 +185,7 @@ async def compute_similarity(embedding1: List[float], embedding2: List[float]) -
 
 async def rank_items_for_user(
     user_embedding: List[float],
-    exclude_items: List[str] = None,
+    exclude_items: List[str] | None = None,
     top_k: int = 10,
 ) -> List[ItemScore]:
     """
@@ -200,7 +203,7 @@ async def rank_items_for_user(
 
     # Compute similarities in parallel
     similarities = []
-    for item_id, item_embedding in item_embeddings.items():
+    for item_id, item_embedding in app.state.item_embeddings.items():
         if item_id in exclude_set:
             continue
 
@@ -213,7 +216,7 @@ async def rank_items_for_user(
     # Take top-k and create response
     results = []
     for item_id, score in similarities[:top_k]:
-        item = items_metadata[item_id]
+        item = app.state.items_metadata[item_id]
         results.append(
             ItemScore(
                 item_id=item_id,
@@ -233,10 +236,10 @@ async def health_check():
     Health check endpoint.
     """
     return {
-        "status": "healthy" if model is not None else "not_ready",
-        "model_loaded": model is not None,
-        "num_users": len(user_embeddings),
-        "num_items": len(item_embeddings),
+        "status": "healthy" if app.state.model is not None else "not_ready",
+        "model_loaded": app.state.model is not None,
+        "num_users": len(app.state.user_embeddings),
+        "num_items": len(app.state.item_embeddings),
     }
 
 
@@ -247,16 +250,16 @@ async def get_recommendations(request: RecommendRequest):
 
     Returns items ranked by similarity to the user's embedding.
     """
-    if model is None:
+    if app.state.model is None:
         raise HTTPException(status_code=503, detail="Model not loaded")
 
-    if request.user_id not in user_embeddings:
+    if request.user_id not in app.state.user_embeddings:
         raise HTTPException(status_code=404, detail=f"User {request.user_id} not found")
 
     logger.info(f"Getting recommendations for user {request.user_id}")
 
     # Get user embedding
-    user_embedding = user_embeddings[request.user_id]
+    user_embedding = app.state.user_embeddings[request.user_id]
 
     # Rank items
     recommendations = await rank_items_for_user(
@@ -278,20 +281,20 @@ async def find_similar_items(request: SimilarItemsRequest):
 
     Useful for "customers who viewed this also viewed" features.
     """
-    if model is None:
+    if app.state.model is None:
         raise HTTPException(status_code=503, detail="Model not loaded")
 
-    if request.item_id not in item_embeddings:
+    if request.item_id not in app.state.item_embeddings:
         raise HTTPException(status_code=404, detail=f"Item {request.item_id} not found")
 
     logger.info(f"Finding similar items for {request.item_id}")
 
     # Get item embedding
-    item_embedding = item_embeddings[request.item_id]
+    item_embedding = app.state.item_embeddings[request.item_id]
 
     # Compute similarities to all other items
     similarities = []
-    for other_item_id, other_embedding in item_embeddings.items():
+    for other_item_id, other_embedding in app.state.item_embeddings.items():
         if other_item_id == request.item_id:
             continue
 
@@ -303,7 +306,7 @@ async def find_similar_items(request: SimilarItemsRequest):
 
     similar_items = []
     for item_id, score in similarities[: request.top_k]:
-        item = items_metadata[item_id]
+        item = app.state.items_metadata[item_id]
         similar_items.append(
             ItemScore(
                 item_id=item_id,
@@ -327,13 +330,13 @@ async def embed_text(request: EmbedTextRequest):
 
     Useful for creating embeddings for new users/items on the fly.
     """
-    if model is None:
+    if app.state.model is None:
         raise HTTPException(status_code=503, detail="Model not loaded")
 
     logger.info(f"Embedding text: {request.text[:50]}...")
 
     # Generate embedding
-    embedding = await asyncio.to_thread(model.encode, request.text)
+    embedding = await asyncio.to_thread(app.state.model.encode, request.text)
 
     return EmbedTextResponse(
         embedding=embedding.tolist(),
@@ -346,10 +349,10 @@ async def get_user_info(user_id: str):
     """
     Get user metadata.
     """
-    if user_id not in users_metadata:
+    if user_id not in app.state.users_metadata:
         raise HTTPException(status_code=404, detail=f"User {user_id} not found")
 
-    return users_metadata[user_id]
+    return app.state.users_metadata[user_id]
 
 
 @app.get("/items/{item_id}")
@@ -357,10 +360,10 @@ async def get_item_info(item_id: str):
     """
     Get item metadata.
     """
-    if item_id not in items_metadata:
+    if item_id not in app.state.items_metadata:
         raise HTTPException(status_code=404, detail=f"Item {item_id} not found")
 
-    return items_metadata[item_id]
+    return app.state.items_metadata[item_id]
 
 
 if __name__ == "__main__":
