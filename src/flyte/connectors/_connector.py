@@ -314,7 +314,7 @@ class AsyncConnectorExecutorMixin:
 async def get_resource_proto(resource: Resource) -> connector_pb2.Resource:
     if resource.outputs:
         interface = NativeInterface.from_types(inputs={}, outputs={k: type(v) for k, v in resource.outputs.items()})
-        outputs = await convert_from_native_to_outputs(tuple(resource.outputs.values()), interface)
+        outputs = (await convert_from_native_to_outputs(tuple(resource.outputs.values()), interface)).proto_outputs
     else:
         outputs = None
 
