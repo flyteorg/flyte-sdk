@@ -338,3 +338,8 @@ Then run `make build-wheels`.
 make dist
 python maint_tools/build_default_image.py
 ```
+
+To install the wheel locally for testing, use the following command with your venv active.
+```bash
+uv pip install --find-links ./rs_controller/dist --no-index --force-reinstall flyte_controller_base
+```
