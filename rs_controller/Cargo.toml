@@ -24,7 +24,7 @@ tracing-subscriber = "0.3"
 async-trait = "0.1"
 thiserror = "1.0"
 pyo3-build-config = "0.24.2"
-flyteidl2 = "2.0.0-alpha14"
+flyteidl2 = "=2.0.0-alpha14"
 
 [build-dependencies]
 pyo3 = { version = "0.24", features = ["extension-module", "abi3-py310"] }

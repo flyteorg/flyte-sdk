@@ -1,4 +1,5 @@
 use flyteidl2::google::protobuf::Timestamp;
+use prost::Message;
 use pyo3::prelude::*;
 
 use flyteidl2::flyteidl::common::ActionIdentifier;
@@ -140,17 +141,24 @@ impl Action {
 impl Action {
     #[staticmethod]
     pub fn from_task(
-        sub_action_id: ActionIdentifier,
+        sub_action_id_bytes: &[u8],
         parent_action_name: String,
         group_data: Option<String>,
-        task_spec: TaskSpec,  // document what this error is
+        task_spec_bytes: &[u8],
         inputs_uri: String,
         run_output_base: String,
         cache_key: Option<String>,
         queue: Option<String>,
-    ) -> Self {
+    ) -> PyResult<Self> {
+        // Deserialize bytes to Rust protobuf types since Python and Rust have different generated protobufs
+        let sub_action_id = ActionIdentifier::decode(sub_action_id_bytes)
+            .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("Failed to decode ActionIdentifier: {}", e)))?;
+
+        let task_spec = TaskSpec::decode(task_spec_bytes)
+            .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("Failed to decode TaskSpec: {}", e)))?;
+
         debug!("Creating Action from task for ID {:?}", &sub_action_id);
-        Action {
+        Ok(Action {
             action_id: sub_action_id,
             parent_action_name,
             action_type: ActionType::Task,
@@ -171,14 +179,14 @@ impl Action {
             cache_key,
             queue,
             trace: None,
-        }
+        })
     }
 
     /// This creates a new action for tracing purposes. It is used to track the execution of a trace
     #[staticmethod]
     pub fn from_trace(
         parent_action_name: String,
-        action_id: ActionIdentifier,
+        action_id_bytes: &[u8],
         friendly_name: String,
         group_data: Option<String>,
         inputs_uri: String,
@@ -187,8 +195,19 @@ impl Action {
         end_time: f64,   // Unix timestamp in seconds with fractional seconds
         run_output_base: String,
         report_uri: Option<String>,
-        typed_interface: Option<TypedInterface>,
-    ) -> Self {
+        typed_interface_bytes: Option<&[u8]>,
+    ) -> PyResult<Self> {
+        // Deserialize bytes to Rust protobuf types
+        let action_id = ActionIdentifier::decode(action_id_bytes)
+            .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("Failed to decode ActionIdentifier: {}", e)))?;
+
+        let typed_interface = if let Some(bytes) = typed_interface_bytes {
+            Some(TypedInterface::decode(bytes)
+                .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("Failed to decode TypedInterface: {}", e)))?)
+        } else {
+            None
+        };
+
         debug!("Creating Action from trace for ID {:?}", &action_id);
         let trace_spec = TraceSpec {
             interface: typed_interface,
@@ -224,7 +243,7 @@ impl Action {
             spec: Some(trace_spec),
         };
 
-        Action {
+        Ok(Action {
             action_id,
             parent_action_name,
             action_type: ActionType::Trace,
@@ -242,7 +261,7 @@ impl Action {
             cache_key: None,
             queue: None,
             trace: Some(trace_action),
-        }
+        })
     }
 
     #[getter(run_name)]

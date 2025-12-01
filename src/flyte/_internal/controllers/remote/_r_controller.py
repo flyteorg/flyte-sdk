@@ -224,19 +224,22 @@ class RemoteController(BaseController):
         serialized_inputs = None  # type: ignore
         inputs_hash = None  # type: ignore
 
-        action = Action.from_task(
-            sub_action_id=identifier_pb2.ActionIdentifier(
-                name=sub_action_id.name,
-                run=identifier_pb2.RunIdentifier(
-                    name=current_action_id.run_name,
-                    project=current_action_id.project,
-                    domain=current_action_id.domain,
-                    org=current_action_id.org,
-                ),
+        # Serialize protobuf objects to bytes for Rust interop
+        sub_action_id_pb = identifier_pb2.ActionIdentifier(
+            name=sub_action_id.name,
+            run=identifier_pb2.RunIdentifier(
+                name=current_action_id.run_name,
+                project=current_action_id.project,
+                domain=current_action_id.domain,
+                org=current_action_id.org,
             ),
+        )
+
+        action = Action.from_task(
+            sub_action_id_bytes=sub_action_id_pb.SerializeToString(),
             parent_action_name=current_action_id.name,
             group_data=str(tctx.group_data) if tctx.group_data else None,
-            task_spec=task_spec,
+            task_spec_bytes=task_spec.SerializeToString(),
             inputs_uri=inputs_uri,
             run_output_base=tctx.run_base_dir,
             cache_key=cache_key,
@@ -471,17 +474,20 @@ class RemoteController(BaseController):
 
         typed_interface = transform_native_to_typed_interface(info.interface)
 
+        # Serialize protobuf objects to bytes for Rust interop
+        action_id_pb = identifier_pb2.ActionIdentifier(
+            name=info.action.name,
+            run=identifier_pb2.RunIdentifier(
+                name=current_action_id.run_name,
+                project=current_action_id.project,
+                domain=current_action_id.domain,
+                org=current_action_id.org,
+            ),
+        )
+
         trace_action = Action.from_trace(
             parent_action_name=current_action_id.name,
-            action_id=identifier_pb2.ActionIdentifier(
-                name=info.action.name,
-                run=identifier_pb2.RunIdentifier(
-                    name=current_action_id.run_name,
-                    project=current_action_id.project,
-                    domain=current_action_id.domain,
-                    org=current_action_id.org,
-                ),
-            ),
+            action_id_bytes=action_id_pb.SerializeToString(),
             inputs_uri=info.inputs_path,
             outputs_uri=outputs_file_path,
             friendly_name=info.name,
@@ -489,7 +495,7 @@ class RemoteController(BaseController):
             run_output_base=tctx.run_base_dir,
             start_time=info.start_time,
             end_time=info.end_time,
-            typed_interface=typed_interface if typed_interface else None,
+            typed_interface_bytes=typed_interface.SerializeToString() if typed_interface else None,
         )
 
         async with self._parent_action_semaphore[unique_action_name(current_action_id)]:
@@ -547,19 +553,22 @@ class RemoteController(BaseController):
         serialized_inputs = None  # type: ignore
         inputs_hash = None  # type: ignore
 
-        action = Action.from_task(
-            sub_action_id=identifier_pb2.ActionIdentifier(
-                name=sub_action_id.name,
-                run=identifier_pb2.RunIdentifier(
-                    name=current_action_id.run_name,
-                    project=current_action_id.project,
-                    domain=current_action_id.domain,
-                    org=current_action_id.org,
-                ),
+        # Serialize protobuf objects to bytes for Rust interop
+        sub_action_id_pb = identifier_pb2.ActionIdentifier(
+            name=sub_action_id.name,
+            run=identifier_pb2.RunIdentifier(
+                name=current_action_id.run_name,
+                project=current_action_id.project,
+                domain=current_action_id.domain,
+                org=current_action_id.org,
             ),
+        )
+
+        action = Action.from_task(
+            sub_action_id_bytes=sub_action_id_pb.SerializeToString(),
             parent_action_name=current_action_id.name,
             group_data=tctx.group_data,
-            task_spec=_task.pb2.spec,
+            task_spec_bytes=_task.pb2.spec.SerializeToString(),
             inputs_uri=inputs_uri,
             run_output_base=tctx.run_base_dir,
             cache_key=cache_key,
