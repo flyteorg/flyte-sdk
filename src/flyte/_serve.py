@@ -5,10 +5,11 @@ from flyte.syncify import syncify
 
 if typing.TYPE_CHECKING:
     from flyte.app import AppEnvironment
+    from flyte.remote import App
 
 
 @syncify
-async def serve(app_env: AppEnvironment):
+async def serve(app_env: "AppEnvironment") -> "App":
     """
     This method can be used to serve a flyte app using a flyte app environment.
 
@@ -37,7 +38,7 @@ async def serve(app_env: AppEnvironment):
     deployments = plan_deploy(app_env)
     assert deployments
     app_deployment = deployments[0]
-    image_cache = await build_images.aio(app_deployment)
+    image_cache = await build_images.aio(app_env)
     assert image_cache
 
     code_bundle = await build_code_bundle(from_dir=cfg.root_dir, dryrun=False, copy_style="loaded_modules")
@@ -63,4 +64,5 @@ async def serve(app_env: AppEnvironment):
     deployed_app = await _deploy._deploy_app(app_env, sc)
     assert deployed_app
     app = App(pb2=deployed_app)
-    return app.watch.aio(wait_for="activated")
+    app.watch.aio(wait_for="activated")
+    return app

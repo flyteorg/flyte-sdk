@@ -68,6 +68,10 @@ class App(ToJSONMixin):
     def is_deactivated(self) -> bool:
         return _is_deactivated(self.deployment_status)
 
+    @property
+    def url(self) -> str:
+        return self.pb2.status.ingress.public_url
+
     @syncify
     async def watch(self, wait_for: WaitFor = "activated") -> App:
         """
