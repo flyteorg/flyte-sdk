@@ -368,3 +368,42 @@ def trigger(
         console.print(pretty_repr(Trigger.get(name=name, task_name=task_name)))
     else:
         console.print(common.format("Triggers", Trigger.listall(task_name=task_name, limit=limit), cfg.output_format))
+
+
+@get.command(cls=common.CommandBase)
+@click.argument("name", type=str, required=False)
+@click.option("--limit", type=int, default=100, help="Limit the number of apps to fetch when listing.")
+@click.option("--only-mine", is_flag=True, default=False, help="Show only apps created by the current user (you).")
+@click.pass_obj
+def app(
+    cfg: common.CLIConfig,
+    name: str | None = None,
+    project: str | None = None,
+    domain: str | None = None,
+    limit: int = 100,
+    only_mine: bool = False,
+):
+    """
+    Get a list of all apps, or details of a specific app by name.
+
+    Apps are long-running services deployed on the Flyte platform.
+    """
+    cfg.init(project=project, domain=domain)
+
+    console = common.get_console()
+    if name:
+        app_details = remote.App.get(name=name)
+        console.print(common.format(f"App {name}", [app_details], "json"))
+    else:
+        subject = None
+        if only_mine:
+            usr = remote.User.get()
+            subject = usr.subject()
+
+        console.print(
+            common.format(
+                "Apps",
+                remote.App.listall(limit=limit, created_by_subject=subject),
+                cfg.output_format,
+            )
+        )
