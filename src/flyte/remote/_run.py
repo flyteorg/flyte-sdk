@@ -14,7 +14,7 @@ from flyte.syncify import syncify
 
 from . import Action, ActionDetails, ActionInputs, ActionOutputs
 from ._action import _action_details_rich_repr, _action_rich_repr
-from ._common import ToJSONMixin
+from ._common import ToJSONMixin, filtering, sorting
 from ._console import get_run_url
 
 # @kumare3 is sadpanda, because we have to create a mirror of phase types here, because protobuf phases are ghastly
@@ -62,11 +62,7 @@ class Run(ToJSONMixin):
         """
         ensure_client()
         token = None
-        sort_by = sort_by or ("created_at", "asc")
-        sort_pb2 = list_pb2.Sort(
-            key=sort_by[0],
-            direction=(list_pb2.Sort.ASCENDING if sort_by[1] == "asc" else list_pb2.Sort.DESCENDING),
-        )
+        sort_pb2 = sorting(sort_by)
         filters = []
         if in_phase:
             phases = [str(run_definition_pb2.Phase.Value(f"PHASE_{p.upper()}")) for p in in_phase]
@@ -87,15 +83,7 @@ class Run(ToJSONMixin):
                         values=phases[0],
                     ),
                 )
-        if created_by_subject:
-            logger.debug(f"Fetching runs created by: {created_by_subject}")
-            filters.append(
-                list_pb2.Filter(
-                    function=list_pb2.Filter.Function.EQUAL,
-                    field="created_by",
-                    values=[created_by_subject],
-                ),
-            )
+        filters = filtering(created_by_subject, *filters)
 
         cfg = get_init_config()
         i = 0
