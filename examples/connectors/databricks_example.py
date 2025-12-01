@@ -9,8 +9,7 @@ from flyte.storage import S3
 image = (
     # https://hub.docker.com/r/databricksruntime/standard/tags
     flyte.Image.from_base("databricksruntime/standard:16.4-LTS")
-    .clone(name="spark", registry="ghcr.io/flyteorg", registry_secret="docker-g")
-    .with_apt_packages("git", "vim")
+    .clone(name="spark", registry="ghcr.io/flyteorg")
     .with_env_vars({"UV_PYTHON": "/databricks/python3/bin/python"})
     .with_pip_packages(
         "flyteplugins-connectors[databricks]",
@@ -99,4 +98,4 @@ if __name__ == "__main__":
     # Remote execution
     # run = flyte.with_runcontext(mode="remote").run(hello_databricks_nested)
     # print("run name:", run.name)
-    # print("run urlllll:", run.url)
+    # print("run url:", run.url)
