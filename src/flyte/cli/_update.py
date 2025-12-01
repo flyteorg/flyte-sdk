@@ -39,10 +39,12 @@ def trigger(cfg: common.CLIConfig, name: str, task_name: str, activate: bool, pr
 
 @update.command("app", cls=common.CommandBase)
 @click.argument("name", type=str)
-@click.option("--start/--stop", required=True, help="Start or stop the app.")
+@click.option("--activate/--deactivate", "is_activate", default=None, help="Activate or deactivate app.")
 @click.option("--wait", is_flag=True, default=False, help="Wait for the app to reach the desired state.")
 @click.pass_obj
-def app(cfg: common.CLIConfig, name: str, start: bool, wait: bool, project: str | None, domain: str | None):
+def app(
+    cfg: common.CLIConfig, name: str, is_activate: bool | None, wait: bool, project: str | None, domain: str | None
+):
     """
     Update an app by starting or stopping it.
 
@@ -50,29 +52,35 @@ def app(cfg: common.CLIConfig, name: str, start: bool, wait: bool, project: str 
     Example usage:
 
     ```bash
-    flyte update app <app_name> --start | --stop [--wait]
-    [--project <project_name> --domain <domain_name>]
+    flyte update app <app_name> --activate | --deactivate [--wait] [--project <project_name>] [--domain <domain_name>]
     ```
     """
+
+    if is_activate is None:
+        raise click.UsageError("Missing option '--activate' / '--deactivate'.")
 
     cfg.init(project, domain)
     console = common.get_console()
 
     app_obj = remote.App.get(name=name)
-    if start:
-        action = "Starting"
-        state = "started"
+    if is_activate:
+        if app_obj.is_active():
+            console.print(f"App [yellow]{name}[/yellow] is already active.")
+            return
+        state = "activate"
         color = "green"
-        with console.status(f"{action} app {name}..."):
-            app_obj.start(wait=wait)
+        with console.status(f"Activating app {name}..."):
+            app_obj.activate(wait=wait)
     else:
-        action = "Stopping"
-        state = "stopped"
+        state = "deactivate"
         color = "red"
-        with console.status(f"{action} app {name}..."):
-            app_obj.stop(wait=wait)
+        if app_obj.is_deactivated():
+            console.print(f"App [red]{name}[/red] is already deactivated.")
+            return
+        with console.status(f"Deactivating app {name}..."):
+            app_obj.deactivate(wait=wait)
 
     if wait:
-        console.print(f"App [{color}]{name}[/{color}] {state} successfully")
+        console.print(f"App [{color}]{name}[/{color}] {state}d successfully")
     else:
-        console.print(f"App [{color}]{name}[/{color}] {state[:-2]} initiated")
+        console.print(f"App [{color}]{name}[/{color}] {state} initiated")

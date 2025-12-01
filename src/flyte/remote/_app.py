@@ -11,18 +11,18 @@ from flyte.syncify import syncify
 
 from ._common import ToJSONMixin, filtering, sorting
 
-WaitFor = Literal["started", "stopped"]
+WaitFor = Literal["activated", "deactivated"]
 
 
-def _is_started(state: app_definition_pb2.Status.DeploymentStatus) -> bool:
-    return state == [
+def _is_active(state: app_definition_pb2.Status.DeploymentStatus) -> bool:
+    return state in [
         app_definition_pb2.Status.DeploymentStatus.DEPLOYMENT_STATUS_ACTIVE,
         app_definition_pb2.Status.DeploymentStatus.DEPLOYMENT_STATUS_STARTED,
     ]
 
 
-def _is_stopped(state: app_definition_pb2.Status.DeploymentStatus) -> bool:
-    return state == [
+def _is_deactivated(state: app_definition_pb2.Status.DeploymentStatus) -> bool:
+    return state in [
         app_definition_pb2.Status.DeploymentStatus.DEPLOYMENT_STATUS_UNASSIGNED,
         app_definition_pb2.Status.DeploymentStatus.DEPLOYMENT_STATUS_STOPPED,
     ]
@@ -62,19 +62,25 @@ class App(ToJSONMixin):
     def desired_state(self) -> app_definition_pb2.Spec.DesiredState:
         return self.pb2.spec.desired_state
 
+    def is_active(self) -> bool:
+        return _is_active(self.deployment_status)
+
+    def is_deactivated(self) -> bool:
+        return _is_deactivated(self.deployment_status)
+
     @syncify
-    async def watch(self, wait_for: WaitFor = "started") -> App:
+    async def watch(self, wait_for: WaitFor = "activated") -> App:
         """
-        Watch for the app to reach started or stopped state.
-        :param wait_for: ["started", "stopped"]
+        Watch for the app to reach activated or deactivated state.
+        :param wait_for: ["activated", "deactivated"]
 
         Returns: The app in the desired state.
         Raises: RuntimeError if the app did not reach desired state and failed!
         """
 
-        if wait_for == "started" and _is_started(self.deployment_status):
+        if wait_for == "activated" and self.is_active():
             return self
-        elif wait_for == "stopped" and _is_stopped(self.deployment_status):
+        elif wait_for == "deactivated" and self.is_deactivated():
             return self
 
         call = cast(
@@ -91,46 +97,51 @@ class App(ToJSONMixin):
                 current_status = updated_app.status.conditions[-1].deployment_status
                 if current_status == app_definition_pb2.Status.DeploymentStatus.DEPLOYMENT_STATUS_FAILED:
                     raise RuntimeError(f"App deployment for app {self.name} has failed!")
-                if wait_for == "started" and _is_started(current_status):
+                if wait_for == "activated" and _is_active(current_status):
                     return App(updated_app)
-                elif wait_for == "stopped" and _is_stopped(current_status):
+                elif wait_for == "deactivated" and _is_deactivated(current_status):
                     return App(updated_app)
         raise RuntimeError(f"App deployment for app {self.name} stalled!")
 
-    async def _update(self, desired_state: app_definition_pb2.Spec.DesiredState):
+    async def _update(self, desired_state: app_definition_pb2.Spec.DesiredState, reason: str):
         ensure_client()
         self.pb2.spec.desired_state = desired_state
-        resp = await get_client().app_service.UpdateStatus(
-            request=app_payload_pb2.UpdateStatusRequest(
+        resp = await get_client().app_service.Update(
+            request=app_payload_pb2.UpdateRequest(
                 app=self.pb2,
+                reason=reason,
             )
         )
         self.pb2 = resp.app
 
     @syncify
-    async def start(self, wait: bool = False):
+    async def activate(self, wait: bool = False):
         """
         Start the app
         :param wait: Wait for the app to reach started state
 
         """
-        if _is_started(self.deployment_status):
+        if self.is_active():
             return
-        await self._update_status(app_definition_pb2.Spec.DESIRED_STATE_STARTED)
+        await self._update(
+            app_definition_pb2.Spec.DESIRED_STATE_STARTED, "User requested to activate app from flyte-sdk"
+        )
         if wait:
-            await self.watch.aio(wait_for="started")
+            await self.watch.aio(wait_for="activated")
 
     @syncify
-    async def stop(self, wait: bool = False):
+    async def deactivate(self, wait: bool = False):
         """
         Stop the app
-        :param wait: Wait for the app to reach the stopped state
+        :param wait: Wait for the app to reach the deactivated state
         """
-        if _is_stopped(self.deployment_status):
+        if self.is_deactivated():
             return
-        await self._update_status(app_definition_pb2.Spec.DESIRED_STATE_STOPPED)
+        await self._update(
+            app_definition_pb2.Spec.DESIRED_STATE_STOPPED, "User requested to deactivate app from flyte-sdk"
+        )
         if wait:
-            await self.watch.aio(wait_for="stopped")
+            await self.watch.aio(wait_for="deactivated")
 
     def __rich_repr__(self) -> rich.repr.Result:
         yield "name", self.name
