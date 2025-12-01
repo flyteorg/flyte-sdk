@@ -47,7 +47,7 @@ training_env = flyte.TaskEnvironment(
     name="recsys_training",
     image=image,
     resources=flyte.Resources(cpu=4, memory="8Gi"),
-    cache="auto",
+    cache=flyte.Cache("auto", "1.0"),
 )
 
 
@@ -56,9 +56,9 @@ async def generate_synthetic_data(
     num_users: int = 1000,
     num_items: int = 500,
     num_interactions: int = 10000,
-) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+) -> Tuple[flyte.io.DataFrame, flyte.io.DataFrame, flyte.io.DataFrame]:
     """
-    Generate synthetic user-item interaction data as pandas DataFrames.
+    Generate synthetic user-item interaction data as flyte.io.DataFrame references.
 
     Args:
         num_users: Number of unique users
@@ -66,7 +66,7 @@ async def generate_synthetic_data(
         num_interactions: Number of user-item interactions
 
     Returns:
-        Tuple of (users_df, items_df, interactions_df)
+        Tuple of (users_df, items_df, interactions_df) as flyte.io.DataFrame references
     """
     logger.info(f"Generating synthetic data: {num_users} users, {num_items} items, {num_interactions} interactions")
 
@@ -126,14 +126,20 @@ async def generate_synthetic_data(
     interactions_df = pd.DataFrame(interaction_data)
 
     logger.info(f"Generated {len(users_df)} users, {len(items_df)} items, {len(interactions_df)} interactions")
-    return users_df, items_df, interactions_df
+
+    # Convert to flyte.io.DataFrame to avoid materialization when passing between tasks
+    return (
+        flyte.io.DataFrame.from_df(users_df),
+        flyte.io.DataFrame.from_df(items_df),
+        flyte.io.DataFrame.from_df(interactions_df),
+    )
 
 
 @training_env.task
 async def prepare_training_pairs(
-    users_df: pd.DataFrame,
-    items_df: pd.DataFrame,
-    interactions_df: pd.DataFrame,
+    users_df: flyte.io.DataFrame,
+    items_df: flyte.io.DataFrame,
+    interactions_df: flyte.io.DataFrame,
 ) -> List[InputExample]:
     """
     Prepare training pairs for contrastive learning.
@@ -142,17 +148,22 @@ async def prepare_training_pairs(
     rating as a similarity score.
 
     Args:
-        users_df: Users DataFrame with columns [user_id, age_group, interests, profile]
-        items_df: Items DataFrame with columns [item_id, category, title, description, tags]
-        interactions_df: Interactions DataFrame with columns [user_id, item_id, rating, interaction_type]
+        users_df: Users DataFrame reference with columns [user_id, age_group, interests, profile]
+        items_df: Items DataFrame reference with columns [item_id, category, title, description, tags]
+        interactions_df: Interactions DataFrame reference with columns [user_id, item_id, rating, interaction_type]
 
     Returns:
         List of InputExample for training
     """
     logger.info("Preparing training pairs...")
 
+    # Materialize the DataFrames only when needed for computation
+    users_pd = await users_df.open(pd.DataFrame).all()
+    items_pd = await items_df.open(pd.DataFrame).all()
+    interactions_pd = await interactions_df.open(pd.DataFrame).all()
+
     # Merge interactions with user and item data
-    merged_df = interactions_df.merge(users_df, on="user_id").merge(items_df, on="item_id")
+    merged_df = interactions_pd.merge(users_pd, on="user_id").merge(items_pd, on="item_id")
 
     training_examples = []
     for _, row in merged_df.iterrows():
@@ -221,57 +232,66 @@ async def train_embedding_model(
 @training_env.task
 async def generate_embeddings(
     model_dir: flyte.io.Dir,
-    users_df: pd.DataFrame,
-    items_df: pd.DataFrame,
-) -> Tuple[pd.DataFrame, pd.DataFrame]:
+    users_df: flyte.io.DataFrame,
+    items_df: flyte.io.DataFrame,
+) -> Tuple[flyte.io.DataFrame, flyte.io.DataFrame]:
     """
     Generate embeddings for all users and items using the trained model.
 
     Args:
         model_dir: Directory containing the trained model
-        users_df: Users DataFrame
-        items_df: Items DataFrame
+        users_df: Users DataFrame reference
+        items_df: Items DataFrame reference
 
     Returns:
-        Tuple of (user_embeddings_df, item_embeddings_df)
+        Tuple of (user_embeddings_df, item_embeddings_df) as flyte.io.DataFrame references
     """
     logger.info("Loading trained model...")
     path = await model_dir.download()
     model = SentenceTransformer(path)
 
+    # Materialize DataFrames for processing
+    users_pd = await users_df.open(pd.DataFrame).all()
+    items_pd = await items_df.open(pd.DataFrame).all()
+
     # Generate user embeddings
-    logger.info(f"Generating embeddings for {len(users_df)} users...")
-    user_texts = [f"{row['profile']} Age: {row['age_group']}" for _, row in users_df.iterrows()]
+    logger.info(f"Generating embeddings for {len(users_pd)} users...")
+    user_texts = [f"{row['profile']} Age: {row['age_group']}" for _, row in users_pd.iterrows()]
     user_embeddings = await asyncio.to_thread(model.encode, user_texts, show_progress_bar=True)
 
-    user_embeddings_df = users_df.copy()
+    user_embeddings_df = users_pd.copy()
     user_embeddings_df["embedding"] = list(user_embeddings)
 
     # Generate item embeddings
-    logger.info(f"Generating embeddings for {len(items_df)} items...")
-    item_texts = [f"{row['title']}. {row['description']} Category: {row['category']}" for _, row in items_df.iterrows()]
+    logger.info(f"Generating embeddings for {len(items_pd)} items...")
+    item_texts = [f"{row['title']}. {row['description']} Category: {row['category']}" for _, row in items_pd.iterrows()]
     item_embeddings = await asyncio.to_thread(model.encode, item_texts, show_progress_bar=True)
 
-    item_embeddings_df = items_df.copy()
+    item_embeddings_df = items_pd.copy()
     item_embeddings_df["embedding"] = list(item_embeddings)
 
     logger.info("Embedding generation complete")
-    return user_embeddings_df, item_embeddings_df
+
+    # Convert to flyte.io.DataFrame to avoid materialization when passing between tasks
+    return (
+        flyte.io.DataFrame.from_df(user_embeddings_df),
+        flyte.io.DataFrame.from_df(item_embeddings_df),
+    )
 
 
 @training_env.task
 async def save_artifacts(
     model_dir: flyte.io.Dir,
-    user_embeddings_df: pd.DataFrame,
-    item_embeddings_df: pd.DataFrame,
+    user_embeddings_df: flyte.io.DataFrame,
+    item_embeddings_df: flyte.io.DataFrame,
 ) -> flyte.io.Dir:
     """
     Save all artifacts needed for serving.
 
     Args:
         model_dir: Directory containing the trained model
-        user_embeddings_df: DataFrame with user data and embeddings
-        item_embeddings_df: DataFrame with item data and embeddings
+        user_embeddings_df: DataFrame reference with user data and embeddings
+        item_embeddings_df: DataFrame reference with item data and embeddings
 
     Returns:
         Directory containing all artifacts
@@ -279,10 +299,14 @@ async def save_artifacts(
     output_dir = Path("/tmp/recsys_artifacts")
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    # Materialize DataFrames for saving
+    user_embeddings_pd = await user_embeddings_df.open(pd.DataFrame).all()
+    item_embeddings_pd = await item_embeddings_df.open(pd.DataFrame).all()
+
     # Save DataFrames as parquet (efficient columnar format)
     logger.info("Saving embeddings and metadata as parquet...")
-    user_embeddings_df.to_parquet(output_dir / "user_embeddings.parquet", index=False)
-    item_embeddings_df.to_parquet(output_dir / "item_embeddings.parquet", index=False)
+    user_embeddings_pd.to_parquet(output_dir / "user_embeddings.parquet", index=False)
+    item_embeddings_pd.to_parquet(output_dir / "item_embeddings.parquet", index=False)
 
     # Copy model
     import shutil
