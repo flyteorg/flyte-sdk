@@ -200,7 +200,7 @@ class TaskContext:
     output_path: str
     run_base_dir: str
     report: Report
-    group_data: GroupData | None = None
+    group_data: str | None = None
     checkpoints: Checkpoints | None = None
     code_bundle: CodeBundle | None = None
     compiled_image_cache: ImageCache | None = None

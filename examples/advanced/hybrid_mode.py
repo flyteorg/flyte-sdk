@@ -5,7 +5,6 @@ from typing import List
 
 import flyte
 import flyte.storage
-from flyte.storage import S3
 
 env = flyte.TaskEnvironment(name="hello_world", cache="disable")
 

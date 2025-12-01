@@ -118,7 +118,7 @@ def create_controller(
 
             controller = LocalController()
         case "remote" | "hybrid":
-            from flyte._internal.controllers.remote import create_remote_controller
+            # from flyte._internal.controllers.remote import create_remote_controller
 
             # controller = create_remote_controller(**kwargs)
             from flyte._internal.controllers.remote._r_controller import RemoteController

@@ -1,7 +1,6 @@
 from contextlib import contextmanager
 
 from ._context import internal_ctx
-from .models import GroupData
 
 
 @contextmanager
@@ -26,7 +25,7 @@ def group(name: str):
         yield
         return
     tctx = ctx.data.task_context
-    new_tctx = tctx.replace(group_data=GroupData(name))
+    new_tctx = tctx.replace(group_data=name)
     with ctx.replace_task_context(new_tctx):
         yield
         # Exit the context and restore the previous context

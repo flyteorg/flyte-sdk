@@ -143,7 +143,7 @@ impl Action {
         sub_action_id: ActionIdentifier,
         parent_action_name: String,
         group_data: Option<String>,
-        task_spec: TaskSpec,
+        task_spec: TaskSpec,  // document what this error is
         inputs_uri: String,
         run_output_base: String,
         cache_key: Option<String>,

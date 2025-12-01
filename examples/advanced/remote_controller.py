@@ -64,7 +64,6 @@ async def main():
 
     result = await runner.submit_action(action)
     print("First submit done", flush=True)
-    breakpoint()
     print(result)
 
 

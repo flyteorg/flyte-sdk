@@ -4,7 +4,9 @@ import concurrent.futures
 import os
 import pathlib
 import threading
-from typing import Any, Callable, Tuple, TypeVar, Protocol
+from typing import Any, Callable, Protocol, Tuple, TypeVar
+
+from flyteidl2.task import task_definition_pb2
 
 import flyte.errors
 from flyte._cache.cache import VersionParameters, cache_from_request
@@ -21,6 +23,7 @@ from flyte.models import ActionID, NativeInterface
 from flyte.remote._task import TaskDetails
 
 R = TypeVar("R")
+
 
 class ControllerProtocol(Protocol):
     async def submit(self, _task: "TaskTemplate", *args, **kwargs) -> Any: ...
