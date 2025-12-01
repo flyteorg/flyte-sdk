@@ -118,12 +118,12 @@ def create_controller(
 
             controller = LocalController()
         case "remote" | "hybrid":
-            # from flyte._internal.controllers.remote import create_remote_controller
+            from flyte._internal.controllers.remote import create_remote_controller
 
-            # controller = create_remote_controller(**kwargs)
-            from flyte._internal.controllers.remote._r_controller import RemoteController
-
-            controller = RemoteController(endpoint="http://host.docker.internal:8090", workers=10, max_system_retries=5)
+            controller = create_remote_controller(**kwargs)
+            # from flyte._internal.controllers.remote._r_controller import RemoteController
+            #
+            # controller = RemoteController(endpoint="http://host.docker.internal:8090", workers=10, max_system_retries=5)
         case "rust":
             # hybrid case, despite the case statement above, meant for local runs not inside docker
             from flyte._internal.controllers.remote._r_controller import RemoteController

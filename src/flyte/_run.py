@@ -69,7 +69,7 @@ async def _get_code_bundle_for_run(name: str) -> CodeBundle | None:
     run = await Run.get.aio(name=name)
     if run:
         run_details = await run.details.aio()
-        spec = run_details.action_details.pb2.resolved_task_spec
+        spec = run_details.action_details.pb2.task
         return extract_code_bundle(spec)
     return None
 
@@ -422,8 +422,8 @@ class _Runner:
         run_name = self._name
         random_id = str(uuid.uuid4())[:6]
 
-        # controller = create_controller("remote", endpoint="localhost:8090", insecure=True)
-        controller = create_controller("rust", endpoint="localhost:8090", insecure=True)
+        controller = create_controller("remote", endpoint="localhost:8090", insecure=True)
+        # controller = create_controller("rust", endpoint="localhost:8090", insecure=True)
         action = ActionID(name=action_name, run_name=run_name, project=project, domain=domain, org=org)
 
         inputs = obj.native_interface.convert_to_kwargs(*args, **kwargs)

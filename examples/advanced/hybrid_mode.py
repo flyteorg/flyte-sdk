@@ -5,6 +5,7 @@ from typing import List
 
 import flyte
 import flyte.storage
+from flyte.storage import S3
 
 env = flyte.TaskEnvironment(name="hello_world", cache="disable")
 
@@ -57,22 +58,12 @@ async def hybrid_parent_placeholder():
 if __name__ == "__main__":
     # Get current working directory
     current_directory = Path(os.getcwd())
-    # change to root directory of the project
-    os.chdir(current_directory.parent.parent)
-    # config = S3.for_sandbox()
-    # config = flyte.storage.S3.auto()
-    flyte.init_from_config("/Users/ytong/.flyte/config-k3d.yaml")
-    # flyte.init(
-    #     endpoint="dns:///localhost:8090",
-    #     insecure=True,
-    #     org="testorg",
-    #     project="testproject",
-    #     domain="development",
-    #     storage=config,
-    #     log_level=10,
-    # )
+    repo_root = current_directory.parent.parent
+    s3_sandbox = S3.for_sandbox()
+    flyte.init_from_config("/Users/ytong/.flyte/config-k3d.yaml", root_dir=repo_root, storage=s3_sandbox)
+
     # Kick off a run of hybrid_parent_placeholder and fill in with kicked off things.
-    run_name = "rxmjfwt6nz2rkwzntrtl"
+    run_name = "rbddrnv8pd9lslpzw89w"
     outputs = flyte.with_runcontext(
         mode="hybrid",
         name=run_name,
