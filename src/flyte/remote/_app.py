@@ -141,7 +141,7 @@ class App(ToJSONMixin):
         """
         if self.is_active():
             return self
-        return await self.update(
+        return await self.update.aio(
             app_definition_pb2.Spec.DESIRED_STATE_STARTED,
             "User requested to activate app from flyte-sdk",
             "activated" if wait else None,
@@ -155,7 +155,7 @@ class App(ToJSONMixin):
         """
         if self.is_deactivated():
             return
-        return await self.update(
+        return await self.update.aio(
             app_definition_pb2.Spec.DESIRED_STATE_STOPPED,
             "User requested to deactivate app from flyte-sdk",
             "deactivated" if wait else None,
