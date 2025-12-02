@@ -105,7 +105,6 @@ class RemoteImageBuilder(ImageBuilder):
         return [RemoteImageChecker]
 
     async def build_image(self, image: Image, dry_run: bool = False) -> str:
-
         image_name = f"{image.name}:{image._final_tag}"
         spec, context = await _validate_configuration(image)
 

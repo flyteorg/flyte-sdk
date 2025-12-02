@@ -4,6 +4,7 @@ Flyte runtime serve module. This is used to serve Apps/serving.
 
 import asyncio
 import logging
+import os
 from typing import Tuple
 
 import click
@@ -36,7 +37,7 @@ async def sync_inputs(serialized_inputs: str, dest: str) -> Tuple[dict, dict]:
     import flyte.storage as storage
     from flyte.app._input import SerializableInputCollection
 
-    print(f"I am going to serve inputs: {serialized_inputs}", flush=True)
+    print(f"Log level: {logger.getEffectiveLevel()} is set from env {os.environ.get('LOG_LEVEL')}", flush=True)
     logger.info("Reading inputs...")
 
     user_inputs = SerializableInputCollection.from_transport(serialized_inputs)
@@ -116,7 +117,7 @@ def main(
 
     from flyte.app._input import RUNTIME_INPUTS_FILE
 
-    logger.info("Starting flyte-serve")
+    logger.info("Starting flyte-serve, ")
     # TODO Do we need to init here?
     # from flyte._initialize import init
     # remote_kwargs: dict[str, Any] = {"insecure": False}

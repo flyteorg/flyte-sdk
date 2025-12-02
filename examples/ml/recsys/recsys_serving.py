@@ -29,6 +29,7 @@ API Endpoints:
 
 import asyncio
 import logging
+import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import List, Optional
@@ -94,9 +95,7 @@ env = FastAPIAppEnvironment(
     inputs=[
         Input(
             name="artifacts",
-            value=flyte.io.Dir.from_existing_remote(
-                "s3://...",
-            ),
+            value=flyte.io.Dir.from_existing_remote(os.environ.get("ARTIFACTS_DIR", "/tmp/recsys_artifacts")),
             mount="/tmp/recsys_artifacts",
         )
     ],
@@ -409,7 +408,6 @@ if __name__ == "__main__":
     #   run = flyte.run(training_pipeline, ...)
     #   artifacts = run.outputs()
     #
-    # TODO we will support flyte.with_servecontext(env=...).serve()
     # For now, this is a placeholder showing how to deploy the app
     app = flyte.serve(env)
     print(f"Deployed Application: {app.url}")
