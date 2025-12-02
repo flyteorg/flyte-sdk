@@ -75,6 +75,7 @@ class Environment:
             raise TypeError(f"Expected pod_template to be of type str or PodTemplate, got {type(self.pod_template)}")
         if self.description is not None and len(self.description) > 255:
             self.description = parse_description(self.description, 255)
+        self._validate_name()
         # Automatically register this environment instance in load order
         _ENVIRONMENT_REGISTRY.append(self)
 
