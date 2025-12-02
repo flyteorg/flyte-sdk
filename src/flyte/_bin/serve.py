@@ -36,6 +36,9 @@ async def sync_inputs(serialized_inputs: str, dest: str) -> Tuple[dict, dict]:
     import flyte.storage as storage
     from flyte.app._input import SerializableInputCollection
 
+    print(f"I am going to serve inputs: {serialized_inputs}", flush=True)
+    logger.info("Reading inputs...")
+
     user_inputs = SerializableInputCollection.from_transport(serialized_inputs)
 
     output = {}
@@ -45,8 +48,10 @@ async def sync_inputs(serialized_inputs: str, dest: str) -> Tuple[dict, dict]:
         if input.download:
             user_dest = input.dest or dest
             if input.type == "file":
+                logger.info(f"Downloading {input.name} of type File to {user_dest}...")
                 value = await storage.get(input.value, user_dest)
             elif input.type == "directory":
+                logger.info(f"Downloading {input.name} of type Directory to {user_dest}...")
                 value = await storage.get(input.value, user_dest, recursive=True)
             else:
                 raise ValueError("Can only download files or directories")
@@ -72,6 +77,7 @@ async def download_code_inputs(
         user_inputs, env_vars = await sync_inputs(serialized_inputs, dest)
     code_bundle: CodeBundle | None = None
     if tgz or pkl:
+        logger.debug(f"Downloading Code bundle: {tgz or pkl} ...")
         bundle = CodeBundle(tgz=tgz, pkl=pkl, destination=dest, computed_version=version)
         code_bundle = await download_code_bundle(bundle)
 

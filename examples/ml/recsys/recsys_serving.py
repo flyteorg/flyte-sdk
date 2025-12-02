@@ -29,6 +29,7 @@ API Endpoints:
 
 import asyncio
 import logging
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import List, Optional
 
@@ -46,18 +47,45 @@ from flyte.app.extras import FastAPIAppEnvironment
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Initialize FastAPI app
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """
+    FastAPI lifespan context manager for startup and shutdown events.
+    """
+    # Startup: Load model and data
+    logger.info("Starting up: Loading artifacts...")
+
+    # Get artifacts from environment inputs
+    # In production, this would come from the deployed app's inputs
+    # For local testing, you can set a path here
+    artifacts_path = Path("/tmp/recsys_artifacts")  # Default for local testing
+
+    if artifacts_path.exists():
+        await load_model_and_data(artifacts_path)
+        logger.info("Startup complete: Model and data loaded")
+    else:
+        logger.warning(f"Artifacts not found at {artifacts_path}. App will start but won't be ready.")
+
+    yield
+
+    # Shutdown: Clean up resources if needed
+    logger.info("Shutting down...")
+
+
+# Initialize FastAPI app with lifespan
 app = FastAPI(
     title="Recommendation System API",
     description="Embedding-based recommendation service",
     version="1.0.0",
+    lifespan=lifespan,
 )
 
 # Create Flyte FastAPI App Environment
 image = flyte.Image.from_uv_script(__file__, name="recsys-serving")
 
 env = FastAPIAppEnvironment(
-    name="recsys-serving",
+    name="recsys-fastapi-app",
     app=app,
     description="Recommendation system serving API with embedding-based recommendations",
     image=image,
@@ -66,7 +94,10 @@ env = FastAPIAppEnvironment(
     inputs=[
         Input(
             name="artifacts",
-            value=flyte.io.Dir.from_existing_remote("s3://..."),
+            value=flyte.io.Dir.from_existing_remote(
+                "s3://...",
+            ),
+            mount="/tmp/recsys_artifacts",
         )
     ],
 )
@@ -369,7 +400,7 @@ async def get_item_info(item_id: str):
 if __name__ == "__main__":
     flyte.init_from_config(
         root_dir=Path(__file__).parent,
-        log_level=logging.INFO,
+        log_level=logging.DEBUG,
     )
 
     # Deploy the FastAPI app to Flyte
@@ -378,13 +409,7 @@ if __name__ == "__main__":
     #   run = flyte.run(training_pipeline, ...)
     #   artifacts = run.outputs()
     #
-    # Then pass it as an input to the app:
-    #   env.inputs.add(flyte.app.Input(name="artifacts", annotation=flyte.io.Dir))
-    #
+    # TODO we will support flyte.with_servecontext(env=...).serve()
     # For now, this is a placeholder showing how to deploy the app
-    deployments = flyte.deploy(env)
-    d = deployments[0]
-    print(f"Deployed Recommendation API: {d.table_repr()}")
-    print("\nTo serve the app with trained artifacts, run:")
-    print("  1. First run the training pipeline to get artifacts")
-    print("  2. Then use flyte.serve(env, artifacts=<artifacts_dir>)")
+    app = flyte.serve(env)
+    print(f"Deployed Application: {app.url}")

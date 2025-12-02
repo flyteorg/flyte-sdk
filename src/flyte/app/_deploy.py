@@ -101,14 +101,16 @@ async def _deploy_app(
                     logger.warning(f"App {app.name} with image {image_uri} already exists, updating...")
                 elif e.code() == grpc.StatusCode.ABORTED:
                     logger.warning(f"Create App {app.name} with image {image_uri} was aborted on server, check state!")
-
-                server_app = await remote.App.get.aio(
+                remote_app = await remote.App.replace.aio(
                     name=app_idl.metadata.id.name,
+                    labels=app_idl.metadata.labels,
+                    updated_app_spec=app_idl.spec,
+                    reason="User requested serve from sdk",
                     project=app_idl.metadata.id.project,
                     domain=app_idl.metadata.id.domain,
                 )
-                await server_app.activate.aio()
-                return server_app.pb2
+                return remote_app.pb2
+
             raise
 
         return app_idl
