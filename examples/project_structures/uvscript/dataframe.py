@@ -1,7 +1,7 @@
 # /// script
 # dependencies = [
 #    "polars",
-#    "flyte @ git+https://github.com/flyteorg/flyte-sdk.git@fa295db5a6bd18fc644d635d5cea627a0a82ca1f",
+#    "flyte @ file:///Users/kevin/git/flyte-sdk",
 # ]
 # ///
 

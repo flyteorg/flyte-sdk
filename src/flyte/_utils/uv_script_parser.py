@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
 import toml
-from cachetools.func import lru_cache
+from functools import lru_cache
 
 
 @dataclass
@@ -49,7 +49,6 @@ def parse_uv_script_file(path: pathlib.Path) -> UVScriptMetadata:
     pattern = re.compile(r"^flyte(\s*@.*|@.*|[><=!]=?.*)?$")
     # Remove flyte dependencies from the list since it's already included in the base image.
     filtered_dependencies = [dep for dep in dependencies if not pattern.match(dep)]
-    print("Filtered dependencies:", filtered_dependencies)
     return UVScriptMetadata(
         requires_python=data.get("requires-python"),
         dependencies=filtered_dependencies,

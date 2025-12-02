@@ -493,7 +493,6 @@ class Image:
 
         if install_flyte:
             if dev_mode:
-                print("dist folder:", dist_folder)
                 if os.path.exists(dist_folder):
                     image = image.with_local_v2()
                 else:
