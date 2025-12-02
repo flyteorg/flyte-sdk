@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
 import toml
+from cachetools.func import lru_cache
 
 
 @dataclass
@@ -24,10 +25,10 @@ def _extract_uv_metadata_block(text: str) -> str | None:
     if not match:
         return None
     lines = [line.lstrip("# ").rstrip() for line in match.group(1).splitlines()]
-    breakpoint()
     return "\n".join(lines)
 
 
+@lru_cache
 def parse_uv_script_file(path: pathlib.Path) -> UVScriptMetadata:
     if not path.exists() or not path.is_file():
         raise FileNotFoundError(f"File not found: {path}")
@@ -45,9 +46,10 @@ def parse_uv_script_file(path: pathlib.Path) -> UVScriptMetadata:
     tool_data = data.get("tool", {}).get("uv", {})
     dependencies = data.get("dependencies", [])
     # Regex pattern to match: "flyte", "flyte>=2", "flyte<2", "flyte @something", "flyte@something"
-    pattern = re.compile(r"^flyte(\s*@|@|[><=!]=?.*)?$")
-    # Remove flyte dependencies from the list since it's already included in the base image
+    pattern = re.compile(r"^flyte(\s*@.*|@.*|[><=!]=?.*)?$")
+    # Remove flyte dependencies from the list since it's already included in the base image.
     filtered_dependencies = [dep for dep in dependencies if not pattern.match(dep)]
+    print("Filtered dependencies:", filtered_dependencies)
     return UVScriptMetadata(
         requires_python=data.get("requires-python"),
         dependencies=filtered_dependencies,
