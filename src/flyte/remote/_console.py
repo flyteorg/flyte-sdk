@@ -18,3 +18,7 @@ def _get_http_domain(endpoint: str, insecure: bool) -> str:
 
 def get_run_url(endpoint: str, insecure: bool, project: str, domain: str, run_name: str) -> str:
     return f"{_get_http_domain(endpoint, insecure)}/v2/runs/project/{project}/domain/{domain}/{run_name}"
+
+
+def get_app_url(endpoint: str, insecure: bool, project: str, domain: str, app_name: str) -> str:
+    return f"{_get_http_domain(endpoint, insecure)}/console/projects/{project}/domains/{domain}/apps/{app_name}"

@@ -101,6 +101,18 @@ class ServeArguments:
             )
         },
     )
+    env_var: List[str] = field(
+        default_factory=list,
+        metadata={
+            "click.option": click.Option(
+                ["--env-var", "-e"],
+                type=str,
+                multiple=True,
+                help="Environment variable to set in the app. Format: KEY=VALUE. Can be specified multiple times. "
+                "Example: --env-var LOG_LEVEL=DEBUG --env-var DATABASE_URL=postgresql://...",
+            )
+        },
+    )
 
     @classmethod
     def from_dict(cls, d: Dict[str, Any]) -> ServeArguments:
@@ -116,7 +128,7 @@ class ServeArguments:
 
 
 class ServeAppCommand(click.RichCommand):
-    def __init__(self, obj_name: str, obj: Any, serve_args: ServeArguments, *args, **kwargs):
+    def __init__(self, obj_name: str, obj: AppEnvironment, serve_args: ServeArguments, *args, **kwargs):
         self.obj_name = obj_name
         self.obj = cast(AppEnvironment, obj)
         self.serve_args = serve_args
@@ -138,8 +150,24 @@ class ServeAppCommand(click.RichCommand):
 
             console = common.get_console()
 
-            # TODO: Add support for with_servecontext when implemented
-            app = await flyte.serve.aio(self.obj)
+            # Parse env vars from CLI (format: KEY=VALUE)
+            env_vars = {}
+            for env_var in self.serve_args.env_var:
+                if "=" in env_var:
+                    key, value = env_var.split("=", 1)
+                    env_vars[key] = value
+                else:
+                    console.print(
+                        f"[yellow]Warning: Ignoring invalid env var format: {env_var} (expected KEY=VALUE)[/yellow]"
+                    )
+
+            # Use with_servecontext to configure the serve operation
+            app = await flyte.with_servecontext(
+                copy_style=self.serve_args.copy_style,
+                project=self.serve_args.project if self.serve_args.project else None,
+                domain=self.serve_args.domain if self.serve_args.domain else None,
+                env_vars=env_vars if env_vars else None,
+            ).serve.aio(self.obj)
 
             console.print(
                 common.get_panel(

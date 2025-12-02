@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Optional, Tuple, cast
 from uuid import uuid4
 
 import aiofiles
+from flyteidl2.common import phase_pb2
 
 import flyte
 import flyte.errors
@@ -104,8 +105,6 @@ class RemoteImageBuilder(ImageBuilder):
         return [RemoteImageChecker]
 
     async def build_image(self, image: Image, dry_run: bool = False) -> str:
-        from flyteidl2.workflow import run_definition_pb2
-
         image_name = f"{image.name}:{image._final_tag}"
         spec, context = await _validate_configuration(image)
 
@@ -140,7 +139,7 @@ class RemoteImageBuilder(ImageBuilder):
 
         elapsed = str(datetime.now(timezone.utc) - start).split(".")[0]
 
-        if run_details.action_details.raw_phase == run_definition_pb2.PHASE_SUCCEEDED:
+        if run_details.action_details.raw_phase == phase_pb2.ACTION_PHASE_SUCCEEDED:
             logger.warning(f"[bold green]✅ Build completed in {elapsed}![/bold green]")
         else:
             raise flyte.errors.ImageBuildError(f"❌ Build failed in {elapsed} at {run.url}")
