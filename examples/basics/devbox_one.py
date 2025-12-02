@@ -7,6 +7,7 @@ import flyte
 env = flyte.TaskEnvironment(
     name="hello_world",
     resources=flyte.Resources(cpu=1, memory="1Gi"),
+    description="hello world task",
 )
 
 
@@ -22,8 +23,23 @@ async def square(i: int = 3) -> int:
     return i * i
 
 
-@env.task
+custom_trigger = flyte.Trigger(
+    name="custom",
+    description="custom trigger",
+    automation=flyte.Trigger.hourly(),
+)
+
+
+@env.task(triggers=custom_trigger)
 async def say_hello_nested(data: str = "default string", n: int = 3) -> str:
+    """
+    short desc
+
+    long desc
+
+    :param data: default string
+    :param n: default 3
+    """
     print(f"Hello, nested! - {flyte.ctx().action}")
     coros = []
     for i in range(n):

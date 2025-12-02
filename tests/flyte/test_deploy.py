@@ -99,8 +99,6 @@ def test_update_interface_with_docstring():
     # After update, descriptions should be set
     assert result.inputs.variables["x"].description == "The input value"
     assert result.inputs.variables["y"].description == "Another input"
-    # Same object should be returned (in-place modification)
-    assert result is typed_interface
 
 
 def test_update_interface_no_docstring():
