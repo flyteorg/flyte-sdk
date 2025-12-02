@@ -24,6 +24,7 @@ def _extract_uv_metadata_block(text: str) -> str | None:
     if not match:
         return None
     lines = [line.lstrip("# ").rstrip() for line in match.group(1).splitlines()]
+    breakpoint()
     return "\n".join(lines)
 
 
@@ -42,8 +43,13 @@ def parse_uv_script_file(path: pathlib.Path) -> UVScriptMetadata:
         raise ValueError(f"Invalid TOML in metadata block: {e}")
 
     tool_data = data.get("tool", {}).get("uv", {})
+    dependencies = data.get("dependencies", [])
+    # Regex pattern to match: "flyte", "flyte>=2", "flyte<2", "flyte @something", "flyte@something"
+    pattern = re.compile(r"^flyte(\s*@|@|[><=!]=?.*)?$")
+    # Remove flyte dependencies from the list since it's already included in the base image
+    filtered_dependencies = [dep for dep in dependencies if not pattern.match(dep)]
     return UVScriptMetadata(
         requires_python=data.get("requires-python"),
-        dependencies=data.get("dependencies", []),
+        dependencies=filtered_dependencies,
         tool={"uv": ToolUVConfig(exclude_newer=tool_data.get("exclude-newer"))} if tool_data else None,
     )
