@@ -277,4 +277,29 @@ impl Action {
     fn has_error(&self) -> bool {
         self.err.is_some() || self.client_err.is_some()
     }
+
+    /// Get action_id as serialized bytes for Python interop
+    #[getter]
+    fn action_id_bytes(&self) -> PyResult<Vec<u8>> {
+        Ok(self.action_id.encode_to_vec())
+    }
+
+    /// Get err as serialized bytes for Python interop (returns None if no error)
+    #[getter]
+    fn err_bytes(&self) -> Option<Vec<u8>> {
+        self.err.as_ref().map(|e| e.encode_to_vec())
+    }
+
+    /// Get task as serialized bytes for Python interop (returns None if no task)
+    #[getter]
+    fn task_bytes(&self) -> Option<Vec<u8>> {
+        self.task.as_ref().map(|t| t.encode_to_vec())
+    }
+
+    /// Get phase as i32 for Python interop (returns None if no phase)
+    #[getter]
+    fn phase_value(&self) -> Option<i32> {
+        self.phase.map(|p| p as i32)
+    }
 }
+

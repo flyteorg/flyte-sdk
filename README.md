@@ -343,3 +343,4 @@ To install the wheel locally for testing, use the following command with your ve
 ```bash
 uv pip install --find-links ./rs_controller/dist --no-index --force-reinstall flyte_controller_base
 ```
+Repeat this process to iterate - build new wheels, force reinstall the controller package.
