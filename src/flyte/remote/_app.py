@@ -2,14 +2,17 @@ from __future__ import annotations
 
 from typing import AsyncIterator, Literal, Mapping, Tuple, cast
 
+import grpc
 import rich.repr
 from flyteidl2.app import app_definition_pb2, app_payload_pb2
 from flyteidl2.common import identifier_pb2, list_pb2
 
 from flyte._initialize import ensure_client, get_client, get_init_config
+from flyte._logging import logger
 from flyte.syncify import syncify
 
 from ._common import ToJSONMixin, filtering, sorting
+from ._console import get_app_url
 
 WaitFor = Literal["activated", "deactivated"]
 
@@ -70,7 +73,14 @@ class App(ToJSONMixin):
 
     @property
     def url(self) -> str:
-        return self.pb2.status.ingress.public_url
+        client = get_client()
+        return get_app_url(
+            client.endpoint,
+            insecure=client.insecure,
+            project=self.pb2.metadata.id.project,
+            domain=self.pb2.metadata.id.domain,
+            app_name=self.name,
+        )
 
     @syncify
     async def watch(self, wait_for: WaitFor = "activated") -> App:
@@ -101,10 +111,14 @@ class App(ToJSONMixin):
                 current_status = updated_app.status.conditions[-1].deployment_status
                 if current_status == app_definition_pb2.Status.DeploymentStatus.DEPLOYMENT_STATUS_FAILED:
                     raise RuntimeError(f"App deployment for app {self.name} has failed!")
-                if wait_for == "activated" and _is_active(current_status):
-                    return App(updated_app)
-                elif wait_for == "deactivated" and _is_deactivated(current_status):
-                    return App(updated_app)
+                if wait_for == "activated":
+                    if _is_active(current_status):
+                        return App(updated_app)
+                    elif _is_deactivated(current_status):
+                        raise RuntimeError(f"App deployment for app {self.name} has failed!")
+                elif wait_for == "deactivated":
+                    if _is_deactivated(current_status):
+                        return App(updated_app)
         raise RuntimeError(f"App deployment for app {self.name} stalled!")
 
     async def _update(
@@ -127,7 +141,7 @@ class App(ToJSONMixin):
         """
         if self.is_active():
             return self
-        return await self.update(
+        return await self._update(
             app_definition_pb2.Spec.DESIRED_STATE_STARTED,
             "User requested to activate app from flyte-sdk",
             "activated" if wait else None,
@@ -141,7 +155,7 @@ class App(ToJSONMixin):
         """
         if self.is_deactivated():
             return
-        return await self.update(
+        return await self._update(
             app_definition_pb2.Spec.DESIRED_STATE_STOPPED,
             "User requested to deactivate app from flyte-sdk",
             "deactivated" if wait else None,
@@ -276,3 +290,28 @@ class App(ToJSONMixin):
                 yield cls(a)
             if not token:
                 break
+
+    @syncify
+    @classmethod
+    async def create(cls, app: app_definition_pb2.App) -> App:
+        ensure_client()
+        try:
+            resp = await get_client().app_service.Create(app_payload_pb2.CreateRequest(app=app))
+            created_app = cls(resp.app)
+            logger.info(f"Deployed app {created_app.name} with revision {created_app.revision}")
+            return created_app
+        except grpc.aio.AioRpcError as e:
+            if e.code() in [grpc.StatusCode.ABORTED, grpc.StatusCode.ALREADY_EXISTS]:
+                if e.code() == grpc.StatusCode.ALREADY_EXISTS:
+                    logger.warning(f"App {app.metadata.id.name} already exists, updating...")
+                elif e.code() == grpc.StatusCode.ABORTED:
+                    logger.warning(f"Create App {app.metadata.id.name} was aborted on server, check state!")
+                return await App.replace.aio(
+                    name=app.metadata.id.name,
+                    labels=app.metadata.labels,
+                    updated_app_spec=app.spec,
+                    reason="User requested serve from sdk",
+                    project=app.metadata.id.project,
+                    domain=app.metadata.id.domain,
+                )
+            raise

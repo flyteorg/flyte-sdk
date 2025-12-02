@@ -7,16 +7,15 @@ from pathlib import Path
 import flyte._deployer as deployer
 from flyte import Image
 from flyte._code_bundle.bundle import build_code_bundle_from_relative_paths
-from flyte._initialize import ensure_client, get_client
+from flyte._initialize import ensure_client
 from flyte._logging import logger
 from flyte.models import SerializationContext
 
 from ._app_environment import AppEnvironment
 
 if typing.TYPE_CHECKING:
-    from flyteidl2.app import app_definition_pb2
-
     from flyte._deployer import DeployedEnvironment
+    from flyte.remote import App
 
 FILES_TAR_FILE_NAME = "code_bundle.tgz"
 
@@ -24,7 +23,7 @@ FILES_TAR_FILE_NAME = "code_bundle.tgz"
 @dataclass
 class DeployedAppEnvironment:
     env: AppEnvironment
-    deployed_app: app_definition_pb2.App
+    deployed_app: "App"
 
     def get_name(self) -> str:
         """
@@ -44,35 +43,34 @@ class DeployedAppEnvironment:
         return [
             [
                 ("type", "App"),
-                ("name", self.deployed_app.metadata.id.name),
-                ("version", self.deployed_app.spec.runtime_metadata.version),
+                ("name", self.deployed_app.name),
+                ("revision", str(self.deployed_app.revision)),
                 (
-                    "state",
-                    app_definition_pb2.Spec.DesiredState.Name(self.deployed_app.spec.desired_state),
+                    "desired state",
+                    app_definition_pb2.Spec.DesiredState.Name(self.deployed_app.desired_state),
+                ),
+                (
+                    "current state",
+                    app_definition_pb2.Status.DeploymentStatus.Name(self.deployed_app.deployment_status),
                 ),
                 (
                     "public_url",
-                    self.deployed_app.status.ingress.public_url,
+                    self.deployed_app.endpoint,
                 ),
             ],
         ]
 
     def summary_repr(self) -> str:
-        return f"Deployed App[{self.deployed_app.metadata.id.name}] in environment {self.env.name}"
+        return f"Deployed App[{self.deployed_app.name}] in environment {self.env.name}"
 
 
-async def _deploy_app(
-    app: AppEnvironment, serialization_context: SerializationContext, dryrun: bool = False
-) -> app_definition_pb2.App:
+async def _deploy_app(app: AppEnvironment, serialization_context: SerializationContext, dryrun: bool = False) -> "App":
     """
     Deploy the given app.
     """
-    import grpc.aio
-    from flyteidl2.app import app_payload_pb2
-
     import flyte.errors
-    import flyte.remote as remote
     from flyte.app._runtime import translate_app_env_to_idl
+    from flyte.remote import App
 
     if app.include:
         app_file = Path(app._app_filename)
@@ -92,28 +90,7 @@ async def _deploy_app(
             msg += f" with args {app_idl.spec.container.args}"
         logger.info(msg)
 
-        try:
-            await get_client().app_service.Create(app_payload_pb2.CreateRequest(app=app_idl))
-            logger.info(f"Deployed app {app.name} with version {app_idl.spec.runtime_metadata.version}")
-        except grpc.aio.AioRpcError as e:
-            if e.code() in [grpc.StatusCode.ABORTED, grpc.StatusCode.ALREADY_EXISTS]:
-                if e.code() == grpc.StatusCode.ALREADY_EXISTS:
-                    logger.warning(f"App {app.name} with image {image_uri} already exists, updating...")
-                elif e.code() == grpc.StatusCode.ABORTED:
-                    logger.warning(f"Create App {app.name} with image {image_uri} was aborted on server, check state!")
-                remote_app = await remote.App.replace.aio(
-                    name=app_idl.metadata.id.name,
-                    labels=app_idl.metadata.labels,
-                    updated_app_spec=app_idl.spec,
-                    reason="User requested serve from sdk",
-                    project=app_idl.metadata.id.project,
-                    domain=app_idl.metadata.id.domain,
-                )
-                return remote_app.pb2
-
-            raise
-
-        return app_idl
+        return await App.create.aio(app_idl)
     except Exception as exc:
         logger.error(f"Failed to deploy app {app.name} with image {image_uri}: {exc}")
         raise flyte.errors.DeploymentError(

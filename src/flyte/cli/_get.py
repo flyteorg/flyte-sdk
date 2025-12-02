@@ -227,10 +227,11 @@ def logs(
         except KeyboardInterrupt:
             task.cancel()
 
+    obj: Union[remote.Action, remote.Run]
     if action_name:
         obj = remote.Action.get(run_name=run_name, name=action_name)
     else:
-        obj = remote.Run.get(run_name)
+        obj = remote.Run.get(name=run_name)
     asyncio.run(_run_log_view(obj))
 
 
@@ -295,10 +296,11 @@ def io(
 
     cfg.init(project=project, domain=domain)
     console = common.get_console()
+    obj: Union[remote.ActionDetails, remote.RunDetails]
     if action_name:
         obj = remote.ActionDetails.get(run_name=run_name, name=action_name)
     else:
-        obj = remote.RunDetails.get(run_name)
+        obj = remote.RunDetails.get(name=run_name)
 
     async def _get_io(
         details: Union[remote.RunDetails, remote.ActionDetails],
