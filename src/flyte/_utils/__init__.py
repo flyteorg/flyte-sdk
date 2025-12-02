@@ -16,6 +16,7 @@ from .uv_script_parser import parse_uv_script_file
 __all__ = [
     "AsyncLRUCache",
     "adjust_sys_path",
+    "description_parser",
     "filehash_update",
     "get_cwd_editable_install",
     "hostname_from_url",

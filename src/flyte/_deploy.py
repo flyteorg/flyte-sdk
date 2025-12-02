@@ -7,8 +7,10 @@ from typing import TYPE_CHECKING, Dict, List, Optional, Set, Tuple
 
 import cloudpickle
 import rich.repr
+from flyteidl2.core import interface_pb2
 
-from flyte.models import SerializationContext
+from flyte._utils.description_parser import parse_description
+from flyte.models import NativeInterface, SerializationContext
 from flyte.syncify import syncify
 
 from ._environment import Environment
@@ -162,7 +164,21 @@ async def _deploy_task(
 
         default_inputs = await convert_upload_default_inputs(task.interface)
         spec = translate_task_to_wire(task, serialization_context, default_inputs=default_inputs)
+        # Insert ENV description into spec
+        env = task.parent_env() if task.parent_env else None
+        if env and env.description:
+            spec.environment.description = env.description
 
+        # Insert documentation entity into task spec
+        documentation_entity = _get_documentation_entity(task)
+        spec.documentation.CopyFrom(documentation_entity)
+
+        # Update inputs and outputs descriptions from docstring
+        # This is done at deploy time to avoid runtime overhead
+        updated_interface = _update_interface_inputs_and_outputs_docstring(
+            spec.task_template.interface, task.native_interface
+        )
+        spec.task_template.interface.CopyFrom(updated_interface)
         msg = f"Deploying task {task.name}, with image {image_uri} version {serialization_context.version}"
         if spec.task_template.HasField("container") and spec.task_template.container.args:
             msg += f" from {spec.task_template.container.args[-3]}.{spec.task_template.container.args[-1]}"
@@ -206,6 +222,66 @@ async def _deploy_task(
         raise flyte.errors.DeploymentError(
             f"Failed to deploy task {task.name} file{task.source_file} with image {image_uri}, Error: {e!s}"
         ) from e
+
+
+def _get_documentation_entity(task_template: TaskTemplate) -> task_definition_pb2.DocumentationEntity:
+    """
+    Extract documentation from TaskTemplate's docstring and create a DocumentationEntity.
+    Short descriptions are truncated to 255 chars, long descriptions to 2048 chars.
+
+    :param task_template: TaskTemplate containing the interface docstring.
+    :return: DocumentationEntity with truncated short and long descriptions.
+    """
+    from flyteidl2.task import task_definition_pb2
+
+    docstring = task_template.interface.docstring
+    short_desc = None
+    long_desc = None
+    if docstring and docstring.short_description:
+        short_desc = parse_description(docstring.short_description, 255)
+    if docstring and docstring.long_description:
+        long_desc = parse_description(docstring.long_description, 2048)
+    return task_definition_pb2.DocumentationEntity(
+        short_description=short_desc,
+        long_description=long_desc,
+    )
+
+
+def _update_interface_inputs_and_outputs_docstring(
+    typed_interface: interface_pb2.TypedInterface, native_interface: NativeInterface
+) -> interface_pb2.TypedInterface:
+    """
+    Create a new TypedInterface with updated descriptions from the NativeInterface docstring.
+    This is done during deployment to avoid runtime overhead of parsing docstrings during task execution.
+
+    :param typed_interface: The protobuf TypedInterface to copy.
+    :param native_interface: The NativeInterface containing the docstring.
+    :return: New TypedInterface with descriptions from docstring if docstring exists.
+    """
+    # Create a copy of the typed_interface to avoid mutating the input
+    updated_interface = interface_pb2.TypedInterface()
+    updated_interface.CopyFrom(typed_interface)
+
+    if not native_interface.docstring:
+        return updated_interface
+
+    # Extract descriptions from the parsed docstring
+    input_descriptions = {k: v for k, v in native_interface.docstring.input_descriptions.items() if v is not None}
+    output_descriptions = {k: v for k, v in native_interface.docstring.output_descriptions.items() if v is not None}
+
+    # Update input variable descriptions
+    if updated_interface.inputs and updated_interface.inputs.variables:
+        for var_name, desc in input_descriptions.items():
+            if var_name in updated_interface.inputs.variables:
+                updated_interface.inputs.variables[var_name].description = desc
+
+    # Update output variable descriptions
+    if updated_interface.outputs and updated_interface.outputs.variables:
+        for var_name, desc in output_descriptions.items():
+            if var_name in updated_interface.outputs.variables:
+                updated_interface.outputs.variables[var_name].description = desc
+
+    return updated_interface
 
 
 async def _build_image_bg(env_name: str, image: Image) -> Tuple[str, str]:
