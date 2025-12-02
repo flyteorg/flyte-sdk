@@ -7,6 +7,6 @@ def test_description_truncation():
 
     env = Environment(name="test-env", description=long_description)
 
-    # Verify that the description was truncated to 255 characters
+    # Verify that the description was truncated to 255 characters with ...(tr.) suffix
     assert len(env.description) == 255
-    assert env.description == "a" * 255
+    assert env.description == "a" * 247 + "...(tr.)"

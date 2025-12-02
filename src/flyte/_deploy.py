@@ -9,6 +9,7 @@ import cloudpickle
 import rich.repr
 from flyteidl2.core import interface_pb2
 
+from flyte._utils.description_parser import parse_description
 from flyte.models import NativeInterface, SerializationContext
 from flyte.syncify import syncify
 
@@ -237,9 +238,9 @@ def _get_documentation_entity(task_template: TaskTemplate) -> task_definition_pb
     short_desc = None
     long_desc = None
     if docstring and docstring.short_description:
-        short_desc = docstring.short_description[:255]
+        short_desc = parse_description(docstring.short_description, 255)
     if docstring and docstring.long_description:
-        long_desc = docstring.long_description[:2048]
+        long_desc = parse_description(docstring.long_description, 2048)
     return task_definition_pb2.DocumentationEntity(
         short_description=short_desc,
         long_description=long_desc,

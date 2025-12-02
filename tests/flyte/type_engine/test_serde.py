@@ -1,10 +1,7 @@
 import typing
-from dataclasses import replace
 
-from flyte._docstring import Docstring
 from flyte._interface import extract_return_annotation
-from flyte._internal.runtime.types_serde import transform_native_to_typed_interface, transform_variable_map
-from flyte.models import NativeInterface
+from flyte._internal.runtime.types_serde import transform_variable_map
 
 
 def test_unnamed_typing_tuple():

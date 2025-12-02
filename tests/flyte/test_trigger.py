@@ -12,6 +12,6 @@ def test_trigger_description_truncation():
         description=long_description,
     )
 
-    # Description should be truncated to exactly 255 characters
+    # Description should be truncated to exactly 255 characters with ...(tr.) suffix
     assert len(trigger.description) == 255
-    assert trigger.description == "A" * 255
+    assert trigger.description == "A" * 247 + "...(tr.)"

@@ -6,6 +6,8 @@ from typing import Any, Dict, List, Literal, Optional, Union
 
 import rich.repr
 
+from flyte._utils.description_parser import parse_description
+
 from ._image import Image
 from ._pod import PodTemplate
 from ._resources import Resources
@@ -72,8 +74,7 @@ class Environment:
         if self.pod_template is not None and not isinstance(self.pod_template, (str, PodTemplate)):
             raise TypeError(f"Expected pod_template to be of type str or PodTemplate, got {type(self.pod_template)}")
         if self.description is not None and len(self.description) > 255:
-            self.description = self.description[:255]
-        self._validate_name()
+            self.description = parse_description(self.description, 255)
         # Automatically register this environment instance in load order
         _ENVIRONMENT_REGISTRY.append(self)
 

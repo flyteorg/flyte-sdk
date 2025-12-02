@@ -6,6 +6,8 @@ from typing import Any, Dict, Literal, Mapping, Union
 
 import rich.repr
 
+from flyte._utils.description_parser import parse_description
+
 Timezone = Literal[
     "Etc/GMT-5",
     "Europe/London",
@@ -723,7 +725,7 @@ class Trigger:
         if self.automation is None:
             raise ValueError("Automation cannot be None")
         if self.description and len(self.description) > 255:
-            object.__setattr__(self, "description", self.description[:255])
+            object.__setattr__(self, "description", parse_description(self.description, 255))
 
     @classmethod
     def daily(

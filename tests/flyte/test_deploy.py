@@ -34,12 +34,12 @@ def test_get_description_entity_both_truncated():
 
     result = _get_documentation_entity(task_both_exceed)
 
-    # Verify truncation
-    assert env.description == "a" * 255
+    # Verify truncation with ...(tr.) suffix
+    assert env.description == "a" * 247 + "...(tr.)"
     assert len(env.description) == 255
-    assert result.short_description == "c" * 255
+    assert result.short_description == "c" * 247 + "...(tr.)"
     assert len(result.short_description) == 255
-    assert result.long_description == "d" * 2048
+    assert result.long_description == "d" * 2040 + "...(tr.)"
     assert len(result.long_description) == 2048
 
 
