@@ -497,7 +497,7 @@ class Image:
                 if os.path.exists(dist_folder):
                     image = image.with_local_v2()
                 else:
-                    image = image.with_source_folder(src=Path(__file__).parent, dst="/opt/flyte").with_env_vars({"PYTHONPATH": "/opt/flyte:$PYTHONPATH"})
+                    image = image.with_apt_packages("git").with_source_folder(src=Path(__file__).parent, dst="/opt/flyte").with_env_vars({"PYTHONPATH": "/opt/flyte:$PYTHONPATH"})
             else:
                 flyte_version = typing.cast(str, flyte_version)
                 if Version(flyte_version).is_devrelease or Version(flyte_version).is_prerelease:
