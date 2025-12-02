@@ -8,7 +8,7 @@
 #     "pydantic",
 #     "pandas",
 #     "pyarrow",
-#     "flyte>=2.0.0b29",
+#     "flyte>=2.0.0b34",
 # ]
 # ///
 """
@@ -397,17 +397,34 @@ async def get_item_info(item_id: str):
 
 
 if __name__ == "__main__":
+    import argparse
+    import flyte.remote
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--training-run", type=str)
+    args = parser.parse_args()
+
     flyte.init_from_config(
         root_dir=Path(__file__).parent,
         log_level=logging.DEBUG,
     )
 
+    run = flyte.remote.Run.get(args.training_run)
+    artifacts_dir, *_ = run.outputs()
+
     # Deploy the FastAPI app to Flyte
     # Note: You need to provide the artifacts directory from the training pipeline
     # You can get this by running the training pipeline first:
-    #   run = flyte.run(training_pipeline, ...)
-    #   artifacts = run.outputs()
     #
-    # For now, this is a placeholder showing how to deploy the app
-    app = flyte.serve(env)
+    # `uv run recsys_training.py`
+    #
+    # Then supplying the run name to the serving script
+    #
+    # `uv run recsys_serving.py --training-run <training-run-id>`
+    #
+    # Call the endpoint:
+    #
+    # `curl -X POST https://<app-url>/embed-text "Content-Type: application/json" '{"text": "Testing testing 123"}'`
+
+    app = flyte.with_servecontext(env_vars={"ARTIFACTS_DIR": artifacts_dir.path}).serve(env)
     print(f"Deployed Application: {app.url}")
