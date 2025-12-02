@@ -580,7 +580,7 @@ def test_app_environment_default_values():
     assert app.command is None
     assert app.requires_auth is True
     assert isinstance(app.scaling, Scaling)
-    assert app.scaling.replicas == (1, 1)
+    assert app.scaling.replicas == (0, 1)
     assert isinstance(app.domain, Domain)
     assert app.links == []
     assert app.inputs == []
