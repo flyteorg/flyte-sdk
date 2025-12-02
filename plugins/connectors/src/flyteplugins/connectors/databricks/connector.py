@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Optional
 
 import aiohttp
+import flyte
 from flyte import logger
 from flyte.connectors import AsyncConnector, ConnectorRegistry, Resource, ResourceMeta
 from flyte.connectors.utils import convert_to_flyte_phase
@@ -48,12 +49,18 @@ def _get_databricks_job_spec(task_template: TaskTemplate) -> dict:
         "parameters": list(container.args),
         "source": "GIT",
     }
-    databricks_job["git_source"] = {
-        "git_url": "https://github.com/flyteorg/flyte-sdk",
-        "git_provider": "gitHub",
-        # https://github.com/flyteorg/flyte-sdk/tree/6f4b65af95f79a4bc1046e7ffa6d0cc1ae61177c
-        "git_commit": "6f4b65af95f79a4bc1046e7ffa6d0cc1ae61177c",
-    }
+    if "dev" in flyte.__version__:
+        databricks_job["git_source"] = {
+            "git_url": "https://github.com/flyteorg/flyte-sdk",
+            "git_provider": "gitHub",
+            "git_branch": "main",
+        }
+    else:
+        databricks_job["git_source"] = {
+            "git_url": "https://github.com/flyteorg/flyte-sdk",
+            "git_provider": "gitHub",
+            "git_tag": f"v{flyte.__version__}",
+        }
     logger.debug("databricks_job spec:", databricks_job)
     return databricks_job
 

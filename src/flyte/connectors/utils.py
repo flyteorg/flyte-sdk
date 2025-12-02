@@ -15,6 +15,7 @@ from flyteidl2.service.connector_pb2_grpc import (
 from rich.console import Console
 from rich.table import Table
 
+import flyte
 from flyte import logger
 
 
@@ -146,7 +147,7 @@ def _render_task_template(tt: TaskTemplate, file_prefix: str) -> TaskTemplate:
         tt.container.args[i] = args[i].replace("{{.rawOutputDataPrefix}}", f"{file_prefix}/raw_output")
         tt.container.args[i] = args[i].replace("{{.checkpointOutputPrefix}}", f"{file_prefix}/checkpoint_output")
         tt.container.args[i] = args[i].replace("{{.prevCheckpointPrefix}}", f"{file_prefix}/prev_checkpoint")
-        tt.container.args[i] = args[i].replace("{{.runName}}", "test_run")
+        tt.container.args[i] = args[i].replace("{{.runName}}", flyte.ctx().action.run_name)
         tt.container.args[i] = args[i].replace("{{.actionName}}", "a1")
 
     # Add additional required args
