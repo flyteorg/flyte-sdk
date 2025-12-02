@@ -1,7 +1,9 @@
 #![allow(clippy::too_many_arguments)]
 
 mod action;
+pub mod auth;  // Public for use in other crates
 mod informer;
+pub mod proto; // Public for use in other crates
 
 use std::sync::Arc;
 use std::time::Duration;
