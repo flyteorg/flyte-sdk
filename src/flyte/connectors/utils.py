@@ -141,13 +141,14 @@ def _render_task_template(tt: TaskTemplate, file_prefix: str) -> TaskTemplate:
     if tt.container is None:
         return tt
     args = tt.container.args
+    ctx = flyte.ctx()
     for i in range(len(args)):
         tt.container.args[i] = args[i].replace("{{.input}}", f"{file_prefix}/inputs.pb")
         tt.container.args[i] = args[i].replace("{{.outputPrefix}}", f"{file_prefix}")
         tt.container.args[i] = args[i].replace("{{.rawOutputDataPrefix}}", f"{file_prefix}/raw_output")
         tt.container.args[i] = args[i].replace("{{.checkpointOutputPrefix}}", f"{file_prefix}/checkpoint_output")
         tt.container.args[i] = args[i].replace("{{.prevCheckpointPrefix}}", f"{file_prefix}/prev_checkpoint")
-        tt.container.args[i] = args[i].replace("{{.runName}}", flyte.ctx().action.run_name)
+        tt.container.args[i] = args[i].replace("{{.runName}}", ctx.action.run_name if ctx else "test-run")
         tt.container.args[i] = args[i].replace("{{.actionName}}", "a1")
 
     # Add additional required args
