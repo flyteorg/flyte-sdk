@@ -4,12 +4,11 @@ import asyncio
 from typing import AsyncIterator, Dict, List, Optional, Tuple
 
 import pytest
-from flyteidl2.common import identifier_pb2
+from flyteidl2.common import identifier_pb2, phase_pb2
 from flyteidl2.core import execution_pb2
 from flyteidl2.task import task_definition_pb2
 from flyteidl2.workflow import (
     queue_service_pb2,
-    run_definition_pb2,
     state_service_pb2,
 )
 
@@ -40,7 +39,7 @@ class DummyService(QueueService, StateService, ClientSet):
             str,
             List[
                 Tuple[
-                    run_definition_pb2.Phase,
+                    phase_pb2.ActionPhase,
                     Optional[execution_pb2.ExecutionError],
                     Optional[str],
                 ]
@@ -57,7 +56,7 @@ class DummyService(QueueService, StateService, ClientSet):
             str,
             List[
                 Tuple[
-                    run_definition_pb2.Phase,
+                    phase_pb2.ActionPhase,
                     Optional[execution_pb2.ExecutionError],
                     Optional[str],
                 ]
@@ -72,7 +71,7 @@ class DummyService(QueueService, StateService, ClientSet):
             str,
             List[
                 Tuple[
-                    run_definition_pb2.Phase,
+                    phase_pb2.ActionPhase,
                     Optional[execution_pb2.ExecutionError],
                     Optional[str],
                 ]
@@ -157,15 +156,15 @@ async def test_basic_end_to_end_one_task():
     service = DummyService.create(
         phases={
             "subrun-1": [
-                (run_definition_pb2.Phase.PHASE_RUNNING, None, None),
-                (run_definition_pb2.Phase.PHASE_RUNNING, None, None),
-                (run_definition_pb2.Phase.PHASE_RUNNING, None, None),
-                (run_definition_pb2.Phase.PHASE_RUNNING, None, None),
-                (run_definition_pb2.Phase.PHASE_RUNNING, None, None),
-                (run_definition_pb2.Phase.PHASE_RUNNING, None, None),
-                (run_definition_pb2.Phase.PHASE_RUNNING, None, None),
+                (phase_pb2.ACTION_PHASE_RUNNING, None, None),
+                (phase_pb2.ACTION_PHASE_RUNNING, None, None),
+                (phase_pb2.ACTION_PHASE_RUNNING, None, None),
+                (phase_pb2.ACTION_PHASE_RUNNING, None, None),
+                (phase_pb2.ACTION_PHASE_RUNNING, None, None),
+                (phase_pb2.ACTION_PHASE_RUNNING, None, None),
+                (phase_pb2.ACTION_PHASE_RUNNING, None, None),
                 (
-                    run_definition_pb2.Phase.PHASE_SUCCEEDED,
+                    phase_pb2.ACTION_PHASE_SUCCEEDED,
                     None,
                     "s3://bucket/run-id/sub-action/1",
                 ),
@@ -187,8 +186,8 @@ async def test_basic_end_to_end_one_task():
     async def _run():
         final_node = await c.submit_action(input_node)
         assert final_node.started
-        assert final_node.phase == run_definition_pb2.Phase.PHASE_SUCCEEDED, (
-            f"Expected phase to be PHASE_SUCCEEDED, found {run_definition_pb2.Phase.Name(final_node.phase)},"
+        assert final_node.phase == phase_pb2.ACTION_PHASE_SUCCEEDED, (
+            f"Expected phase to be PHASE_SUCCEEDED, found {phase_pb2.ActionPhase.Name(final_node.phase)},"
             f" for {final_node.action_id.name}"
         )
         assert final_node.realized_outputs_uri == "s3://bucket/run-id/sub-action/1"
@@ -206,34 +205,34 @@ async def test_basic_three_tasks():
     )
     phases = {
         "subrun-1": [
-            (run_definition_pb2.Phase.PHASE_RUNNING, None, None),
-            (run_definition_pb2.Phase.PHASE_RUNNING, None, None),
-            (run_definition_pb2.Phase.PHASE_RUNNING, None, None),
-            (run_definition_pb2.Phase.PHASE_RUNNING, None, None),
-            (run_definition_pb2.Phase.PHASE_RUNNING, None, None),
-            (run_definition_pb2.Phase.PHASE_RUNNING, None, None),
-            (run_definition_pb2.Phase.PHASE_RUNNING, None, None),
+            (phase_pb2.ACTION_PHASE_RUNNING, None, None),
+            (phase_pb2.ACTION_PHASE_RUNNING, None, None),
+            (phase_pb2.ACTION_PHASE_RUNNING, None, None),
+            (phase_pb2.ACTION_PHASE_RUNNING, None, None),
+            (phase_pb2.ACTION_PHASE_RUNNING, None, None),
+            (phase_pb2.ACTION_PHASE_RUNNING, None, None),
+            (phase_pb2.ACTION_PHASE_RUNNING, None, None),
             (
-                run_definition_pb2.Phase.PHASE_SUCCEEDED,
+                phase_pb2.ACTION_PHASE_SUCCEEDED,
                 None,
                 "s3://bucket/run-id/sub-action1/1",
             ),
         ],
         "subrun-2": [
-            (run_definition_pb2.Phase.PHASE_RUNNING, None, None),
-            (run_definition_pb2.Phase.PHASE_RUNNING, None, None),
-            (run_definition_pb2.Phase.PHASE_RUNNING, None, None),
-            (run_definition_pb2.Phase.PHASE_RUNNING, None, None),
-            (run_definition_pb2.Phase.PHASE_RUNNING, None, None),
+            (phase_pb2.ACTION_PHASE_RUNNING, None, None),
+            (phase_pb2.ACTION_PHASE_RUNNING, None, None),
+            (phase_pb2.ACTION_PHASE_RUNNING, None, None),
+            (phase_pb2.ACTION_PHASE_RUNNING, None, None),
+            (phase_pb2.ACTION_PHASE_RUNNING, None, None),
             (
-                run_definition_pb2.Phase.PHASE_SUCCEEDED,
+                phase_pb2.ACTION_PHASE_SUCCEEDED,
                 None,
                 "s3://bucket/run-id/sub-action2/1",
             ),
         ],
         "subrun-3": [
             (
-                run_definition_pb2.Phase.PHASE_SUCCEEDED,
+                phase_pb2.ACTION_PHASE_SUCCEEDED,
                 None,
                 "s3://bucket/run-id/subrun-3/4",
             ),
@@ -260,7 +259,7 @@ async def test_basic_three_tasks():
     final_nodes = await asyncio.gather(*futs)
     for final_node in final_nodes:
         assert final_node.started
-        assert final_node.phase == run_definition_pb2.Phase.PHASE_SUCCEEDED
+        assert final_node.phase == phase_pb2.ACTION_PHASE_SUCCEEDED
         assert final_node.realized_outputs_uri
 
     await c._finalize_parent_action(run_id, parent_action_name)
@@ -275,36 +274,36 @@ async def test_recover():
     )
     phases = {
         "subrun-1": [
-            (run_definition_pb2.Phase.PHASE_RUNNING, None, None),
-            (run_definition_pb2.Phase.PHASE_RUNNING, None, None),
-            (run_definition_pb2.Phase.PHASE_RUNNING, None, None),
-            (run_definition_pb2.Phase.PHASE_RUNNING, None, None),
-            (run_definition_pb2.Phase.PHASE_RUNNING, None, None),
-            (run_definition_pb2.Phase.PHASE_RUNNING, None, None),
-            (run_definition_pb2.Phase.PHASE_RUNNING, None, None),
+            (phase_pb2.ACTION_PHASE_RUNNING, None, None),
+            (phase_pb2.ACTION_PHASE_RUNNING, None, None),
+            (phase_pb2.ACTION_PHASE_RUNNING, None, None),
+            (phase_pb2.ACTION_PHASE_RUNNING, None, None),
+            (phase_pb2.ACTION_PHASE_RUNNING, None, None),
+            (phase_pb2.ACTION_PHASE_RUNNING, None, None),
+            (phase_pb2.ACTION_PHASE_RUNNING, None, None),
             (
-                run_definition_pb2.Phase.PHASE_SUCCEEDED,
+                phase_pb2.ACTION_PHASE_SUCCEEDED,
                 None,
                 "s3://bucket/run-id/sub-action1/1",
             ),
         ],
         "subrun-2": [
-            (run_definition_pb2.Phase.PHASE_RUNNING, None, None),
-            (run_definition_pb2.Phase.PHASE_RUNNING, None, None),
-            (run_definition_pb2.Phase.PHASE_RUNNING, None, None),
-            (run_definition_pb2.Phase.PHASE_RUNNING, None, None),
-            (run_definition_pb2.Phase.PHASE_RUNNING, None, None),
+            (phase_pb2.ACTION_PHASE_RUNNING, None, None),
+            (phase_pb2.ACTION_PHASE_RUNNING, None, None),
+            (phase_pb2.ACTION_PHASE_RUNNING, None, None),
+            (phase_pb2.ACTION_PHASE_RUNNING, None, None),
+            (phase_pb2.ACTION_PHASE_RUNNING, None, None),
             (
-                run_definition_pb2.Phase.PHASE_SUCCEEDED,
+                phase_pb2.ACTION_PHASE_SUCCEEDED,
                 None,
                 "s3://bucket/run-id/sub-action2/5",
             ),
         ],
         "subrun-3": [
-            (run_definition_pb2.Phase.PHASE_RUNNING, None, None),
-            (run_definition_pb2.Phase.PHASE_RUNNING, None, None),
+            (phase_pb2.ACTION_PHASE_RUNNING, None, None),
+            (phase_pb2.ACTION_PHASE_RUNNING, None, None),
             (
-                run_definition_pb2.Phase.PHASE_SUCCEEDED,
+                phase_pb2.ACTION_PHASE_SUCCEEDED,
                 None,
                 "s3://bucket/run-id/sub-action3/1",
             ),
@@ -353,7 +352,7 @@ async def test_recover():
     final_nodes = await asyncio.gather(*futs)
     for final_node in final_nodes:
         assert final_node.started
-        assert final_node.phase == run_definition_pb2.Phase.PHASE_SUCCEEDED
+        assert final_node.phase == phase_pb2.ACTION_PHASE_SUCCEEDED
         assert final_node.realized_outputs_uri
 
     await c._finalize_parent_action(run_id=run_id, parent_action_name=parent_action_name)
@@ -368,17 +367,17 @@ async def test_multiple_submits_sequential():
     )
     phases = {
         "subrun-1": [
-            (run_definition_pb2.Phase.PHASE_RUNNING, None, None),
+            (phase_pb2.ACTION_PHASE_RUNNING, None, None),
             (
-                run_definition_pb2.Phase.PHASE_SUCCEEDED,
+                phase_pb2.ACTION_PHASE_SUCCEEDED,
                 None,
                 "s3://bucket/run-id/sub-action1/1",
             ),
         ],
         "subrun-2": [
-            (run_definition_pb2.Phase.PHASE_RUNNING, None, None),
+            (phase_pb2.ACTION_PHASE_RUNNING, None, None),
             (
-                run_definition_pb2.Phase.PHASE_SUCCEEDED,
+                phase_pb2.ACTION_PHASE_SUCCEEDED,
                 None,
                 "s3://bucket/run-id/sub-action2/1",
             ),
@@ -401,7 +400,7 @@ async def test_multiple_submits_sequential():
     )
     final_node1 = await c.submit_action(node1)
     assert final_node1.started
-    assert final_node1.phase == run_definition_pb2.Phase.PHASE_SUCCEEDED
+    assert final_node1.phase == phase_pb2.ACTION_PHASE_SUCCEEDED
 
     # Submit second node
     node2 = Action(
@@ -416,7 +415,7 @@ async def test_multiple_submits_sequential():
     )
     final_node2 = await c.submit_action(node2)
     assert final_node2.started
-    assert final_node2.phase == run_definition_pb2.Phase.PHASE_SUCCEEDED
+    assert final_node2.phase == phase_pb2.ACTION_PHASE_SUCCEEDED
     assert final_node2.realized_outputs_uri
 
     await c._finalize_parent_action(run_id=run_id, parent_action_name=parent_action_name)
@@ -431,17 +430,17 @@ async def test_submit_with_failure_phase():
     )
     phases = {
         "subrun-1": [
-            (run_definition_pb2.Phase.PHASE_RUNNING, None, None),
+            (phase_pb2.ACTION_PHASE_RUNNING, None, None),
             (
-                run_definition_pb2.Phase.PHASE_FAILED,
+                phase_pb2.ACTION_PHASE_FAILED,
                 execution_pb2.ExecutionError(message="Task failed due to timeout"),
                 None,
             ),
         ],
         "subrun-2": [
-            (run_definition_pb2.Phase.PHASE_RUNNING, None, None),
+            (phase_pb2.ACTION_PHASE_RUNNING, None, None),
             (
-                run_definition_pb2.Phase.PHASE_SUCCEEDED,
+                phase_pb2.ACTION_PHASE_SUCCEEDED,
                 None,
                 "s3://bucket/run-id/sub-action2/1",
             ),
@@ -464,7 +463,7 @@ async def test_submit_with_failure_phase():
     )
     final_node1 = await c.submit_action(node1)
     assert final_node1.started
-    assert final_node1.phase == run_definition_pb2.Phase.PHASE_FAILED
+    assert final_node1.phase == phase_pb2.ACTION_PHASE_FAILED
     assert final_node1.err.message == "Task failed due to timeout"
 
     # Submit second node (expected to succeed)
@@ -480,7 +479,7 @@ async def test_submit_with_failure_phase():
     )
     final_node2 = await c.submit_action(node2)
     assert final_node2.started
-    assert final_node2.phase == run_definition_pb2.Phase.PHASE_SUCCEEDED
+    assert final_node2.phase == phase_pb2.ACTION_PHASE_SUCCEEDED
 
     await c._finalize_parent_action(run_id=run_id, parent_action_name=parent_action_name)
     await c.stop()
@@ -494,25 +493,25 @@ async def test_multiple_submits_with_mixed_phases():
     )
     phases = {
         "subrun-1": [
-            (run_definition_pb2.Phase.PHASE_RUNNING, None, None),
+            (phase_pb2.ACTION_PHASE_RUNNING, None, None),
             (
-                run_definition_pb2.Phase.PHASE_SUCCEEDED,
+                phase_pb2.ACTION_PHASE_SUCCEEDED,
                 None,
                 "s3://bucket/run-id/sub-action1/1",
             ),
         ],
         "subrun-2": [
-            (run_definition_pb2.Phase.PHASE_RUNNING, None, None),
+            (phase_pb2.ACTION_PHASE_RUNNING, None, None),
             (
-                run_definition_pb2.Phase.PHASE_FAILED,
+                phase_pb2.ACTION_PHASE_FAILED,
                 execution_pb2.ExecutionError(message="Task failed due to error"),
                 None,
             ),
         ],
         "subrun-3": [
-            (run_definition_pb2.Phase.PHASE_RUNNING, None, None),
+            (phase_pb2.ACTION_PHASE_RUNNING, None, None),
             (
-                run_definition_pb2.Phase.PHASE_SUCCEEDED,
+                phase_pb2.ACTION_PHASE_SUCCEEDED,
                 None,
                 "s3://bucket/run-id/sub-action3/1",
             ),
@@ -543,14 +542,14 @@ async def test_multiple_submits_with_mixed_phases():
 
     # Validate results
     assert final_nodes[0].started
-    assert final_nodes[0].phase == run_definition_pb2.Phase.PHASE_SUCCEEDED
+    assert final_nodes[0].phase == phase_pb2.ACTION_PHASE_SUCCEEDED
 
     assert final_nodes[1].started
-    assert final_nodes[1].phase == run_definition_pb2.Phase.PHASE_FAILED
+    assert final_nodes[1].phase == phase_pb2.ACTION_PHASE_FAILED
     assert final_nodes[1].err.message == "Task failed due to error"
 
     assert final_nodes[2].started
-    assert final_nodes[2].phase == run_definition_pb2.Phase.PHASE_SUCCEEDED
+    assert final_nodes[2].phase == phase_pb2.ACTION_PHASE_SUCCEEDED
 
     await c._finalize_parent_action(run_id=run_id, parent_action_name=parent_action_name)
     await c.stop()
@@ -564,8 +563,8 @@ async def test_submit_with_failure_phase_no_err():
     )
     phases = {
         "subrun-1": [
-            (run_definition_pb2.Phase.PHASE_RUNNING, None, None),
-            (run_definition_pb2.Phase.PHASE_FAILED, None, None),
+            (phase_pb2.ACTION_PHASE_RUNNING, None, None),
+            (phase_pb2.ACTION_PHASE_FAILED, None, None),
         ],
     }
     service = DummyService.create(phases=phases)
@@ -585,7 +584,7 @@ async def test_submit_with_failure_phase_no_err():
     )
     final_node1 = await c.submit_action(node1)
     assert final_node1.started
-    assert final_node1.phase == run_definition_pb2.Phase.PHASE_FAILED
+    assert final_node1.phase == phase_pb2.ACTION_PHASE_FAILED
     assert final_node1.err is None
 
     await c._finalize_parent_action(run_id=run_id, parent_action_name=parent_action_name)
@@ -601,9 +600,9 @@ async def test_cancel_queued_action():
     )
     phases = {
         "subrun-1": [
-            (run_definition_pb2.Phase.PHASE_RUNNING, None, None),
-            (run_definition_pb2.Phase.PHASE_RUNNING, None, None),
-            (run_definition_pb2.Phase.PHASE_RUNNING, None, None),
+            (phase_pb2.ACTION_PHASE_RUNNING, None, None),
+            (phase_pb2.ACTION_PHASE_RUNNING, None, None),
+            (phase_pb2.ACTION_PHASE_RUNNING, None, None),
         ],
     }
 

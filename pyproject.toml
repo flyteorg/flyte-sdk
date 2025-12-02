@@ -26,7 +26,7 @@ dependencies = [
     "mashumaro",
     "dataclasses_json", # TODO: remove this dependency once we remove dataclasses_json from the code
     "aiolimiter>=1.2.1",
-    "flyteidl2==2.0.0a14",
+    "flyteidl2==2.0.0a15",
 ]
 
 [project.scripts]
@@ -138,9 +138,6 @@ ignore = ["PGH003", "PLC0415", "ASYNC210", "FURB122"]
 [tool.ruff.lint.per-file-ignores]
 "examples/*" = ["E402"]
 
-
-[tool.uv.sources]
-flyteidl2 = { git = "https://github.com/flyteorg/flyte.git", subdirectory = "gen/python", rev = "v2" }
 
 [tool.mypy]
 disable_error_code = ["import-untyped"]

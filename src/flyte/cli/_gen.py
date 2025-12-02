@@ -27,34 +27,65 @@ def docs(cfg: common.CLIConfig, doc_type: str, project: str | None = None, domai
         raise click.ClickException("Invalid documentation type: {}".format(doc_type))
 
 
-def walk_commands(ctx: click.Context) -> Generator[Tuple[str, click.Command], None, None]:
+def walk_commands(ctx: click.Context) -> Generator[Tuple[str, click.Command, click.Context], None, None]:
     """
     Recursively walk a Click command tree, starting from the given context.
 
     Yields:
-        (full_command_path, command_object)
+        (full_command_path, command_object, context)
     """
     command = ctx.command
 
     if not isinstance(command, click.Group):
-        yield ctx.command_path, command
+        yield ctx.command_path, command, ctx
     elif isinstance(command, common.FileGroup):
         # If the command is a FileGroup, yield its file path and the command itself
-        # No need to recurse further into FileGroup as it doesn't have subcommands, they are dynamically generated
-        yield ctx.command_path, command
+        # No need to recurse further into FileGroup as most subcommands are dynamically generated
+        # The exception is TaskFiles which has the special 'deployed-task' subcommand that should be documented
+        if type(command).__name__ == "TaskFiles":
+            # For TaskFiles, we only want the special non-file-based subcommands like 'deployed-task'
+            # Exclude all dynamic file-based commands
+            try:
+                names = command.list_commands(ctx)
+                for name in names:
+                    if name == "deployed-task":  # Only include the deployed-task command
+                        try:
+                            subcommand = command.get_command(ctx, name)
+                            if subcommand is not None:
+                                full_name = f"{ctx.command_path} {name}".strip()
+                                sub_ctx = click.Context(subcommand, info_name=name, parent=ctx)
+                                yield full_name, subcommand, sub_ctx
+                        except click.ClickException:
+                            continue
+            except click.ClickException:
+                pass
+
+        yield ctx.command_path, command, ctx
     else:
-        for name in command.list_commands(ctx):
-            subcommand = command.get_command(ctx, name)
-            if subcommand is None:
-                continue
+        try:
+            names = command.list_commands(ctx)
+        except click.ClickException:
+            # Some file-based commands might not have valid objects (e.g., test files)
+            # Skip these gracefully
+            return
 
-            full_name = f"{ctx.command_path} {name}".strip()
-            yield full_name, subcommand
+        for name in names:
+            try:
+                subcommand = command.get_command(ctx, name)
+                if subcommand is None:
+                    continue
 
-            # Recurse if subcommand is a MultiCommand (i.e., has its own subcommands)
-            if isinstance(subcommand, click.Group):
+                full_name = f"{ctx.command_path} {name}".strip()
                 sub_ctx = click.Context(subcommand, info_name=name, parent=ctx)
-                yield from walk_commands(sub_ctx)
+                yield full_name, subcommand, sub_ctx
+
+                # Recurse if subcommand is a MultiCommand (i.e., has its own subcommands)
+                # But skip ReferenceTaskGroup as it requires a live Flyte backend to enumerate subcommands
+                if isinstance(subcommand, click.Group) and type(subcommand).__name__ != "ReferenceTaskGroup":
+                    yield from walk_commands(sub_ctx)
+            except click.ClickException:
+                # Skip files/commands that can't be loaded
+                continue
 
 
 def markdown(cfg: common.CLIConfig):
@@ -68,8 +99,8 @@ def markdown(cfg: common.CLIConfig):
     output_noun_groups: dict[str, list[str]] = {}
 
     processed = []
-    commands = [*[("flyte", ctx.command)], *walk_commands(ctx)]
-    for cmd_path, cmd in commands:
+    commands = [*[("flyte", ctx.command, ctx)], *walk_commands(ctx)]
+    for cmd_path, cmd, cmd_ctx in commands:
         if cmd in processed:
             # We already processed this command, skip it
             continue
@@ -90,6 +121,30 @@ def markdown(cfg: common.CLIConfig):
             output_noun_groups[cmd_path_parts[2]].append(cmd_path_parts[1])
 
         output.append(f"{'#' * (len(cmd_path_parts) + 1)} {cmd_path}")
+
+        # Add usage information
+        output.append("")
+        usage_line = f"{cmd_path}"
+
+        # Add [OPTIONS] if command has options
+        if any(isinstance(p, click.Option) for p in cmd.params):
+            usage_line += " [OPTIONS]"
+
+        # Add command-specific usage pattern
+        if isinstance(cmd, click.Group):
+            usage_line += " COMMAND [ARGS]..."
+        else:
+            # Add arguments if any
+            args = [p for p in cmd.params if isinstance(p, click.Argument)]
+            for arg in args:
+                if arg.name:  # Check if name is not None
+                    if arg.required:
+                        usage_line += f" {arg.name.upper()}"
+                    else:
+                        usage_line += f" [{arg.name.upper()}]"
+
+        output.append(f"**`{usage_line}`**")
+
         if cmd.help:
             output.append("")
             output.append(f"{dedent(cmd.help)}")
@@ -97,7 +152,7 @@ def markdown(cfg: common.CLIConfig):
         if not cmd.params:
             continue
 
-        params = cmd.get_params(click.Context(cmd))
+        params = cmd.get_params(cmd_ctx)
 
         # Collect all data first to calculate column widths
         table_data = []
