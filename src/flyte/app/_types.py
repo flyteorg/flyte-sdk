@@ -106,6 +106,7 @@ class Domain:
     # SubDomain config
 
     """Subdomain to use for the domain. If not set, the default subdomain will be used."""
+
     subdomain: Optional[str] = None
 
     """Custom domain to use for the domain. If not set, the default custom domain will be used."""
