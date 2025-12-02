@@ -49,18 +49,13 @@ def _get_databricks_job_spec(task_template: TaskTemplate) -> dict:
         "parameters": list(container.args),
         "source": "GIT",
     }
-    if "dev" in flyte.__version__:
-        databricks_job["git_source"] = {
-            "git_url": "https://github.com/flyteorg/flyte-sdk",
-            "git_provider": "gitHub",
-            "git_branch": "main",
-        }
-    else:
-        databricks_job["git_source"] = {
-            "git_url": "https://github.com/flyteorg/flyte-sdk",
-            "git_provider": "gitHub",
-            "git_tag": f"v{flyte.__version__}",
-        }
+    # https://github.com/flyteorg/flytetools/blob/master/flyteplugins/databricks/entrypoint.py
+    databricks_job["git_source"] = {
+        "git_url": "https://github.com/flyteorg/flytetools",
+        "git_provider": "gitHub",
+        "git_commit": "194364210c47c49ce66c419e8fb68d6f9c06fd7e",
+    }
+
     logger.debug("databricks_job spec:", databricks_job)
     return databricks_job
 
