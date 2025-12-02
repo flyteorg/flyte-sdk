@@ -48,6 +48,8 @@ from flyte.app.extras import FastAPIAppEnvironment
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+ARTIFACTS_DIR_ENV = "ARTIFACTS_DIR"
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -95,7 +97,7 @@ env = FastAPIAppEnvironment(
     inputs=[
         Input(
             name="artifacts",
-            value=flyte.io.Dir.from_existing_remote(os.environ.get("ARTIFACTS_DIR", "/tmp/recsys_artifacts")),
+            value=flyte.io.Dir.from_existing_remote(os.environ.get(ARTIFACTS_DIR_ENV, "/tmp/recsys_artifacts")),
             mount="/tmp/recsys_artifacts",
         )
     ],
@@ -407,7 +409,10 @@ if __name__ == "__main__":
     # You can get this by running the training pipeline first:
     #   run = flyte.run(training_pipeline, ...)
     #   artifacts = run.outputs()
-    #
-    # For now, this is a placeholder showing how to deploy the app
+    #   then set `export ARTIFACTS_DIR="s3://...`
+    # then run this script
+    v = os.environ.get(ARTIFACTS_DIR_ENV, None)
+    if v is None:
+        raise RuntimeError(f"Artifacts dir not found: {v}, please set {ARTIFACTS_DIR_ENV} as an environment variable")
     app = flyte.serve(env)
     print(f"Deployed Application: {app.url}")
