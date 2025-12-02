@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import AsyncIterator, Literal, Tuple, cast
+from typing import AsyncIterator, Literal, Mapping, Tuple, cast
 
 import rich.repr
 from flyteidl2.app import app_definition_pb2, app_payload_pb2
@@ -56,7 +56,7 @@ class App(ToJSONMixin):
         if len(self.pb2.status.conditions) > 0:
             return self.pb2.status.conditions[-1].deployment_status
         else:
-            return app_definition_pb2.Status.DeploymentStatus.UNKNOWN
+            return app_definition_pb2.Status.DeploymentStatus.DEPLOYMENT_STATUS_UNSPECIFIED
 
     @property
     def desired_state(self) -> app_definition_pb2.Spec.DesiredState:
@@ -107,31 +107,31 @@ class App(ToJSONMixin):
                     return App(updated_app)
         raise RuntimeError(f"App deployment for app {self.name} stalled!")
 
-    async def _update(self, desired_state: app_definition_pb2.Spec.DesiredState, reason: str):
-        ensure_client()
-        self.pb2.spec.desired_state = desired_state
-        resp = await get_client().app_service.Update(
-            request=app_payload_pb2.UpdateRequest(
-                app=self.pb2,
-                reason=reason,
-            )
-        )
-        self.pb2 = resp.app
+    async def _update(
+        self, desired_state: app_definition_pb2.Spec.DesiredState, reason: str, wait_for: WaitFor | None = None
+    ) -> App:
+        new_pb2 = app_definition_pb2.App()
+        new_pb2.CopyFrom(self.pb2)
+        new_pb2.spec.desired_state = desired_state
+        updated_app = await App.update.aio(new_pb2, reason=reason)
+        if wait_for:
+            await updated_app.watch.aio(wait_for)
+        return updated_app
 
     @syncify
-    async def activate(self, wait: bool = False):
+    async def activate(self, wait: bool = False) -> App:
         """
         Start the app
         :param wait: Wait for the app to reach started state
 
         """
         if self.is_active():
-            return
-        await self._update(
-            app_definition_pb2.Spec.DESIRED_STATE_STARTED, "User requested to activate app from flyte-sdk"
+            return self
+        return await self.update(
+            app_definition_pb2.Spec.DESIRED_STATE_STARTED,
+            "User requested to activate app from flyte-sdk",
+            "activated" if wait else None,
         )
-        if wait:
-            await self.watch.aio(wait_for="activated")
 
     @syncify
     async def deactivate(self, wait: bool = False):
@@ -141,11 +141,11 @@ class App(ToJSONMixin):
         """
         if self.is_deactivated():
             return
-        await self._update(
-            app_definition_pb2.Spec.DESIRED_STATE_STOPPED, "User requested to deactivate app from flyte-sdk"
+        return await self.update(
+            app_definition_pb2.Spec.DESIRED_STATE_STOPPED,
+            "User requested to deactivate app from flyte-sdk",
+            "deactivated" if wait else None,
         )
-        if wait:
-            await self.watch.aio(wait_for="deactivated")
 
     def __rich_repr__(self) -> rich.repr.Result:
         yield "name", self.name
@@ -156,6 +156,52 @@ class App(ToJSONMixin):
             app_definition_pb2.Status.DeploymentStatus.Name(self.deployment_status)[len("DEPLOYMENT_STATUS_") :],
         )
         yield "desired_state", app_definition_pb2.Spec.DesiredState.Name(self.desired_state)[len("DESIRED_STATE_") :]
+
+    @syncify
+    @classmethod
+    async def update(cls, updated_app_proto: app_definition_pb2.App, reason: str) -> App:
+        ensure_client()
+        resp = await get_client().app_service.Update(
+            request=app_payload_pb2.UpdateRequest(
+                app=updated_app_proto,
+                reason=reason,
+            )
+        )
+        return App(pb2=resp.app)
+
+    @syncify
+    @classmethod
+    async def replace(
+        cls,
+        name: str,
+        updated_app_spec: app_definition_pb2.Spec,
+        reason: str,
+        labels: Mapping[str, str] | None = None,
+        project: str | None = None,
+        domain: str | None = None,
+    ) -> App:
+        """
+        Replace an existing app's that matches the given name, with a new spec and optionally labels.
+        :param name: Name of the new app
+        :param updated_app_spec: Updated app spec
+        :param labels: Optional labels for the new app
+        :param project: Optional project for the new app
+        :param domain: Optional domain for the new app
+        :return: A new app
+        """
+        ensure_client()
+        app = await cls.get.aio(name=name, project=project, domain=domain)
+        updated_app_spec.creator.CopyFrom(app.pb2.spec.creator)
+        new_app = app_definition_pb2.App(
+            metadata=app_definition_pb2.Meta(
+                id=app.pb2.metadata.id,
+                revision=app.revision,
+                labels=labels if labels else app.pb2.metadata.labels,
+            ),
+            spec=updated_app_spec,
+            status=app.pb2.status,
+        )
+        return await cls.update.aio(new_app, reason=reason)
 
     @syncify
     @classmethod

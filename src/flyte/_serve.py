@@ -64,5 +64,5 @@ async def serve(app_env: "AppEnvironment") -> "App":
     deployed_app = await _deploy._deploy_app(app_env, sc)
     assert deployed_app
     app = App(pb2=deployed_app)
-    app.watch.aio(wait_for="activated")
+    await app.watch.aio(wait_for="activated")
     return app
