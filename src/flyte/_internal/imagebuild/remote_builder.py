@@ -261,7 +261,7 @@ def _get_layers_proto(image: Image, context_path: Path) -> "image_definition_pb2
                     layers.append(
                         image_definition_pb2.Layer(
                             apt_packages=image_definition_pb2.AptPackages(
-                                packages=["git"],  # To get the version of the project
+                                packages=["git"],  # To get the version of the project.
                             ),
                         )
                     )

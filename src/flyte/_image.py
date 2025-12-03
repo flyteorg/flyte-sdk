@@ -256,6 +256,11 @@ class UVScript(PipOption, Layer):
         if h_tuple:
             hasher.update(h_tuple.__str__().encode("utf-8"))
         super().update_hash(hasher)
+        if header.pyprojects:
+            for pyproject in header.pyprojects:
+                UVProject(
+                    Path(pyproject) / "pyproject.toml", Path(pyproject) / "uv.lock", "install_project"
+                ).update_hash(hasher)
 
 
 @rich.repr.auto
