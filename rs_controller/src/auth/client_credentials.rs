@@ -90,14 +90,18 @@ impl ClientCredentialsAuthenticator {
         &self,
         channel: Channel,
     ) -> Result<Credentials, TokenError> {
+        tracing::info!("🔄 refresh_credentials_internal: Starting...");
         // First, get the client config if we don't have it (cached)
         let client_config = {
             let config_lock = self.client_config.read().await;
             if let Some(cfg) = config_lock.as_ref() {
+                tracing::info!("🔄 Using cached client_config");
                 cfg.clone()
             } else {
                 drop(config_lock);
+                tracing::info!("🔄 Fetching client_config from auth service...");
                 let cfg = self.fetch_client_config(channel.clone()).await?;
+                tracing::info!("🔄 Got client_config response");
                 let mut config_lock = self.client_config.write().await;
                 *config_lock = Some(cfg.clone());
                 cfg
@@ -144,18 +148,23 @@ impl ClientCredentialsAuthenticator {
 
     /// Get current credentials, refreshing if necessary
     pub async fn get_credentials(&self, channel: Channel) -> Result<Credentials, TokenError> {
+        tracing::info!("🔐 get_credentials: Starting...");
         // Check if we have valid credentials
         {
+            tracing::info!("🔐 get_credentials: Acquiring read lock...");
             let creds_lock = self.credentials.read().await;
+            tracing::info!("🔐 get_credentials: Got read lock");
             if let Some(creds) = creds_lock.as_ref() {
                 if !creds.is_expired() {
                     return Ok(creds.clone());
                 }
             }
         }
+        tracing::info!("🔐 get_credentials: Need to refresh, acquiring write lock...");
 
         // Need to refresh - acquire write lock
         let mut creds_lock = self.credentials.write().await;
+        tracing::info!("🔐 get_credentials: Got write lock, calling refresh_credentials_internal...");
 
         // Double-check after acquiring write lock (another thread might have refreshed)
         if let Some(creds) = creds_lock.as_ref() {

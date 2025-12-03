@@ -1,18 +1,19 @@
 #![allow(clippy::too_many_arguments)]
 
 mod action;
-pub mod auth;  // Public for use in other crates
+pub mod auth; // Public for use in other crates
 mod informer;
 pub mod proto; // Public for use in other crates
 
 use std::default;
-use std::sync::Arc;
 use std::sync::mpsc::channel;
+use std::sync::Arc;
 use std::time::Duration;
 
 use futures::TryFutureExt;
 use pyo3::prelude::*;
 use tokio::sync::mpsc;
+use tower::ServiceExt;
 use tracing::{debug, error, info, warn};
 
 use thiserror::Error;
@@ -20,14 +21,15 @@ use thiserror::Error;
 use crate::action::{Action, ActionType};
 use crate::informer::Informer;
 
+use crate::auth::{AuthConfig, AuthLayer, ClientCredentialsAuthenticator};
 use flyteidl2::flyteidl::common::{ActionIdentifier, ProjectIdentifier};
-use flyteidl2::flyteidl::task::TaskIdentifier;
-use flyteidl2::flyteidl::workflow::state_service_client::StateServiceClient;
-use flyteidl2::flyteidl::workflow::{EnqueueActionRequest, EnqueueActionResponse, TaskAction};
 use flyteidl2::flyteidl::task::task_service_client::TaskServiceClient;
+use flyteidl2::flyteidl::task::TaskIdentifier;
 use flyteidl2::flyteidl::task::{list_tasks_request, ListTasksRequest};
 use flyteidl2::flyteidl::workflow::enqueue_action_request;
 use flyteidl2::flyteidl::workflow::queue_service_client::QueueServiceClient;
+use flyteidl2::flyteidl::workflow::state_service_client::StateServiceClient;
+use flyteidl2::flyteidl::workflow::{EnqueueActionRequest, EnqueueActionResponse, TaskAction};
 use flyteidl2::google;
 use google::protobuf::StringValue;
 use pyo3::exceptions;
@@ -36,10 +38,27 @@ use pyo3_async_runtimes::tokio::future_into_py;
 use pyo3_async_runtimes::tokio::get_runtime;
 use tokio::sync::{oneshot, OnceCell};
 use tokio::time::sleep;
-use tonic::transport::Endpoint;
+use tonic::transport::{Certificate, ClientTlsConfig, Endpoint};
 use tonic::Status;
 use tracing_subscriber::FmtSubscriber;
-use crate::auth::{AuthConfig, AuthInterceptor, ClientCredentialsAuthenticator};
+
+// Helper to create TLS-configured endpoint with custom CA certificate
+fn create_tls_endpoint(url: &'static str, domain: &str) -> Result<Endpoint, ControllerError> {
+    // Load Amazon certificate chain
+    let cert_pem = std::fs::read_to_string("amazon_chain.pem")
+        .map_err(|e| ControllerError::SystemError(format!("Failed to load certificate: {}", e)))?;
+    let cert = Certificate::from_pem(cert_pem);
+
+    let tls_config = ClientTlsConfig::new()
+        .domain_name(domain)
+        .ca_certificate(cert);
+
+    let endpoint = Endpoint::from_static(url)
+        .tls_config(tls_config)
+        .map_err(|e| ControllerError::SystemError(format!("TLS config error: {}", e)))?;
+
+    Ok(endpoint)
+}
 
 #[derive(Error, Debug)]
 pub enum ControllerError {
@@ -452,63 +471,281 @@ impl BaseController {
         Ok(BaseController(core_base))
     }
 
-    #[classmethod]
-    async fn try_stuff(_cls: &Bound<'_, PyType>) -> PyResult<bool> {
-        use crate::auth::{AuthConfig, AuthInterceptor, ClientCredentialsAuthenticator};
-        use flyteidl2::flyteidl::task::task_service_client::TaskServiceClient;
-        use flyteidl2::flyteidl::task::{ListTasksRequest, list_tasks_request};
-        use flyteidl2::flyteidl::common::ProjectIdentifier;
-        use flyteidl2::flyteidl::common::ListRequest;
+    #[staticmethod]
+    fn try_list_tasks(py: Python<'_>) -> PyResult<Bound<'_, PyAny>> {
+        future_into_py(py, async move {
+            use crate::auth::{AuthConfig, AuthLayer, ClientCredentialsAuthenticator};
+            use flyteidl2::flyteidl::common::ListRequest;
+            use flyteidl2::flyteidl::common::ProjectIdentifier;
+            use flyteidl2::flyteidl::task::task_service_client::TaskServiceClient;
+            use flyteidl2::flyteidl::task::{list_tasks_request, ListTasksRequest};
+            use tonic::Code;
+            use tower::ServiceBuilder;
 
-        let endpoint_static: &'static str = "dns:///demo.hosted.unionai.cloud";
-        let endpoint = Endpoint::from_static(endpoint_static);
-        let channel = endpoint.connect().await.map_err(ControllerError::from)?;
+            let endpoint_static: &'static str = "https://demo.hosted.unionai.cloud:443";
+            let endpoint = create_tls_endpoint(endpoint_static, "demo.hosted.unionai.cloud")?;
+            let channel = endpoint.connect().await.map_err(ControllerError::from)?;
 
-        let auth_config = AuthConfig {
-            endpoint: "dns:///demo.hosted.unionai.cloud".to_string(),
-            client_id: "union-system-eager".to_string(),
-            client_secret: "".to_string(),
-            scopes: None,
-            audience: None,
-        };
-        let authenticator = Arc::new(ClientCredentialsAuthenticator::new(auth_config));
-        let auth_interceptor = AuthInterceptor::new(authenticator, channel.clone());
+            // Create a SEPARATE channel for auth metadata service calls
+            // This prevents deadlock when middleware tries to fetch credentials
+            let auth_metadata_endpoint =
+                create_tls_endpoint(endpoint_static, "demo.hosted.unionai.cloud")?;
+            let auth_metadata_channel = auth_metadata_endpoint
+                .connect()
+                .await
+                .map_err(ControllerError::from)?;
 
-        // Create a regular client (no interceptor on construction)
-        let mut task_client = TaskServiceClient::new(channel);
+            let client_secret = std::env::var("CLIENT_SECRET").unwrap_or_else(|_| {
+                warn!("CLIENT_SECRET env var not set, using empty string");
+                String::new()
+            });
 
-        let list_request_base = ListRequest {
-            limit: 100,
-            ..Default::default()
-        };
-        let req = ListTasksRequest {
-            request: Some(list_request_base),
-            known_filters: vec![],
-            scope_by: Some(list_tasks_request::ScopeBy::ProjectId(ProjectIdentifier {
-                organization: "testorg".to_string(),
+            let auth_config = AuthConfig {
+                endpoint: "https://demo.hosted.unionai.cloud".to_string(),
+                client_id: "yt-v2-test".to_string(),
+                client_secret,
+                scopes: Some(vec!["all".to_string()]),
+                audience: None,
+            };
+            let authenticator = Arc::new(ClientCredentialsAuthenticator::new(auth_config));
+
+            let auth_channel = ServiceBuilder::new()
+                .layer(AuthLayer::new(authenticator, auth_metadata_channel))
+                .service(channel);
+
+            let mut task_client = TaskServiceClient::new(auth_channel);
+
+            let list_request_base = ListRequest {
+                limit: 100,
+                ..Default::default()
+            };
+            let req = ListTasksRequest {
+                request: Some(list_request_base),
+                known_filters: vec![],
+                scope_by: Some(list_tasks_request::ScopeBy::ProjectId(ProjectIdentifier {
+                    organization: "demo".to_string(),
+                    domain: "development".to_string(),
+                    name: "flytesnacks".to_string(),
+                })),
+            };
+
+            let mut attempts = 0;
+            let final_result = loop {
+                let result = task_client.list_tasks(req.clone()).await;
+                match result {
+                    Ok(response) => {
+                        println!("Success: {:?}", response.into_inner());
+                        break Ok(true);
+                    }
+                    Err(status) if status.code() == Code::Unauthenticated && attempts < 1 => {
+                        attempts += 1;
+                        continue;
+                    }
+                    Err(status) => {
+                        eprintln!("Error calling gRPC: {}", status);
+                        break Err(exceptions::PyRuntimeError::new_err(format!(
+                            "gRPC error: {}",
+                            status
+                        )));
+                    }
+                }
+            };
+            warn!("Finished try_list_tasks with result {:?}", final_result);
+            final_result
+        })
+    }
+
+    #[staticmethod]
+    fn try_watch(py: Python<'_>) -> PyResult<Bound<'_, PyAny>> {
+        future_into_py(py, async move {
+            use crate::auth::{AuthConfig, AuthLayer, ClientCredentialsAuthenticator};
+            use flyteidl2::flyteidl::common::ActionIdentifier;
+            use flyteidl2::flyteidl::common::RunIdentifier;
+            use flyteidl2::flyteidl::workflow::state_service_client::StateServiceClient;
+            use flyteidl2::flyteidl::workflow::watch_request::Filter;
+            use flyteidl2::flyteidl::workflow::WatchRequest;
+            use std::time::Duration;
+            use tokio::time::sleep;
+            use tower::ServiceBuilder;
+
+            info!("Starting watch example with authentication and retry...");
+
+            let endpoint_static: &'static str = "https://demo.hosted.unionai.cloud:443";
+            let endpoint = create_tls_endpoint(endpoint_static, "demo.hosted.unionai.cloud")?;
+            let channel = endpoint.connect().await.map_err(ControllerError::from)?;
+
+            // Create a SEPARATE channel for auth metadata service calls
+            // This prevents deadlock when middleware tries to fetch credentials
+            let auth_metadata_endpoint =
+                create_tls_endpoint(endpoint_static, "demo.hosted.unionai.cloud")?;
+            let auth_metadata_channel = auth_metadata_endpoint
+                .connect()
+                .await
+                .map_err(ControllerError::from)?;
+
+            let client_secret = std::env::var("CLIENT_SECRET").unwrap_or_else(|_| {
+                warn!("CLIENT_SECRET env var not set, using empty string");
+                String::new()
+            });
+
+            let auth_config = AuthConfig {
+                endpoint: "https://demo.hosted.unionai.cloud".to_string(),
+                client_id: "yt-v2-test".to_string(),
+                client_secret,
+                scopes: None,
+                audience: None,
+            };
+            let authenticator = Arc::new(ClientCredentialsAuthenticator::new(auth_config));
+
+            // Wrap channel with auth layer - ALL calls now automatically authenticated!
+            let auth_channel = ServiceBuilder::new()
+                .layer(AuthLayer::new(authenticator, auth_metadata_channel))
+                .service(channel);
+
+            let mut client = StateServiceClient::new(auth_channel);
+
+            // Watch configuration (matching Python example)
+            let run_id = RunIdentifier {
+                org: "demo".to_string(),
+                project: "flytesnacks".to_string(),
                 domain: "development".to_string(),
-                name: "testproject".to_string(),
-            })),
-        };
+                name: "testrun".to_string(),
+            };
+            let parent_action_name = "test-parent-action".to_string();
 
-        // Use the with_auth! macro to make the authenticated call
-        let result = crate::with_auth!(
-            auth_interceptor,
-            task_client,
-            list_tasks,
-            req
-        );
+            // Retry parameters (matching Python defaults)
+            let min_watch_backoff = Duration::from_secs(1);
+            let max_watch_backoff = Duration::from_secs(30);
+            let max_watch_retries = 10;
 
-        match result {
-            Ok(response) => {
-                println!("Success: {:?}", response.into_inner());
-                Ok(true)
+            // Watch loop with retry logic (following Python _informer.py pattern)
+            let mut retries = 0;
+            let mut message_count = 0;
+
+            while retries < max_watch_retries {
+                if retries >= 1 {
+                    warn!("Watch retrying, attempt {}/{}", retries, max_watch_retries);
+                }
+
+                // Create watch request
+                let request = WatchRequest {
+                    filter: Some(Filter::ParentActionId(ActionIdentifier {
+                        name: parent_action_name.clone(),
+                        run: Some(run_id.clone()),
+                    })),
+                };
+
+                // Establish the watch stream
+                // The outer retry loop handles failures, middleware handles auth refresh
+                let stream_result = client.watch(request.clone()).await;
+
+                match stream_result {
+                    Ok(response) => {
+                        info!("Successfully established watch stream");
+                        let mut stream = response.into_inner();
+
+                        // Process messages from the stream
+                        loop {
+                            match stream.message().await {
+                                Ok(Some(watch_response)) => {
+                                    // Successfully received a message - reset retry counter
+                                    retries = 0;
+                                    message_count += 1;
+
+                                    // Process the message (enum with ActionUpdate or ControlMessage)
+                                    use flyteidl2::flyteidl::workflow::watch_response::Message;
+                                    match &watch_response.message {
+                                        Some(Message::ControlMessage(control_msg)) => {
+                                            if control_msg.sentinel {
+                                                info!(
+                                                    "Received Sentinel for parent action: {}",
+                                                    parent_action_name
+                                                );
+                                            }
+                                        }
+                                        Some(Message::ActionUpdate(action_update)) => {
+                                            info!(
+                                                "Received action update for: {} (phase: {:?})",
+                                                action_update
+                                                    .action_id
+                                                    .as_ref()
+                                                    .map(|id| id.name.as_str())
+                                                    .unwrap_or("unknown"),
+                                                action_update.phase
+                                            );
+
+                                            if !action_update.output_uri.is_empty() {
+                                                info!("Output URI: {}", action_update.output_uri);
+                                            }
+
+                                            if action_update.phase == 4 {
+                                                // PHASE_FAILED
+                                                if action_update.error.is_some() {
+                                                    error!(
+                                                        "Action failed with error: {:?}",
+                                                        action_update.error
+                                                    );
+                                                }
+                                            }
+                                        }
+                                        None => {
+                                            warn!("Received empty watch response");
+                                        }
+                                    }
+
+                                    // For demo purposes, exit after receiving a few messages
+                                    if message_count >= 50 {
+                                        info!("Received {} messages, exiting demo", message_count);
+                                        return Ok(true);
+                                    }
+                                }
+                                Ok(None) => {
+                                    warn!("Watch stream ended gracefully");
+                                    break; // Stream ended, retry
+                                }
+                                Err(status) => {
+                                    error!("Error receiving message from watch stream: {}", status);
+
+                                    // Check if it's an auth error
+                                    if status.code() == tonic::Code::Unauthenticated {
+                                        warn!("Unauthenticated error - credentials will be refreshed on retry");
+                                    }
+
+                                    break; // Break inner loop to retry
+                                }
+                            }
+                        }
+                    }
+                    Err(status) => {
+                        error!("Failed to establish watch stream: {}", status);
+
+                        if status.code() == tonic::Code::Unauthenticated {
+                            warn!("Unauthenticated error - credentials will be refreshed on retry");
+                        }
+                    }
+                }
+
+                // Increment retry counter and apply exponential backoff
+                retries += 1;
+                if retries < max_watch_retries {
+                    let backoff = min_watch_backoff
+                        .saturating_mul(2_u32.pow(retries as u32))
+                        .min(max_watch_backoff);
+                    warn!("Watch failed, retrying in {:?}...", backoff);
+                    sleep(backoff).await;
+                }
             }
-            Err(status) => {
-                eprintln!("Error calling gRPC: {}", status);
-                Err(exceptions::PyRuntimeError::new_err(format!("gRPC error: {}", status)))
-            }
-        }
+
+            // Exceeded max retries
+            error!(
+                "Watch failure retries crossed threshold {}/{}, exiting!",
+                retries, max_watch_retries
+            );
+            Err(exceptions::PyRuntimeError::new_err(format!(
+                "Max watch retries ({}) exceeded",
+                max_watch_retries
+            )))
+        })
     }
 
     /// `async def submit(self, action: Action) -> Action`
@@ -553,7 +790,6 @@ impl BaseController {
         py_fut
     }
 }
-
 
 #[pymodule]
 fn flyte_controller_base(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
