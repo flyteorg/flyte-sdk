@@ -95,6 +95,8 @@ env = FastAPIAppEnvironment(
     inputs=[
         Input(
             name="artifacts",
+            # if using flyte serve CLI to deploy this, set the ARTIFACTS_DIR environment variable
+            # to the remote path of the artifacts directory.
             value=flyte.io.Dir.from_existing_remote(os.environ.get("ARTIFACTS_DIR", "/tmp/recsys_artifacts")),
             mount="/tmp/recsys_artifacts",
         )
@@ -398,6 +400,7 @@ async def get_item_info(item_id: str):
 
 if __name__ == "__main__":
     import argparse
+
     import flyte.remote
 
     parser = argparse.ArgumentParser()
@@ -416,15 +419,18 @@ if __name__ == "__main__":
     # Note: You need to provide the artifacts directory from the training pipeline
     # You can get this by running the training pipeline first:
     #
-    # `uv run recsys_training.py`
+    # uv run recsys_training.py
     #
     # Then supplying the run name to the serving script
     #
-    # `uv run recsys_serving.py --training-run <training-run-id>`
+    # uv run recsys_serving.py --training-run <training-run-name>
     #
-    # Call the endpoint:
+    # Then call the serving endpoint:
     #
-    # `curl -X POST https://<app-url>/embed-text "Content-Type: application/json" '{"text": "Testing testing 123"}'`
+    # curl -X POST http://<endpoint>/embed-text -H "Content-Type: application/json" -d '{"text": "test embedding"}'
 
-    app = flyte.with_servecontext(env_vars={"ARTIFACTS_DIR": artifacts_dir.path}).serve(env)
+    input_value_overrides = {
+        env.name: {"artifacts": flyte.io.Dir.from_existing_remote(artifacts_dir.path)}
+    }
+    app = flyte.with_servecontext(input_values=input_value_overrides).serve(env)
     print(f"Deployed Application: {app.url}")

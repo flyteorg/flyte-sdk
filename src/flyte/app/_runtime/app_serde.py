@@ -27,6 +27,7 @@ from flyte.models import SerializationContext
 def get_proto_container(
     app_env: AppEnvironment,
     serialization_context: SerializationContext,
+    input_overrides: list[Input] | None = None,
 ) -> tasks_pb2.Container:
     """
     Construct the container specification.
@@ -34,7 +35,7 @@ def get_proto_container(
     Args:
         app_env: The app environment
         serialization_context: Serialization context
-
+        input_overrides: Input overrides to apply to the app environment.
     Returns:
         Container protobuf message
     """
@@ -58,7 +59,7 @@ def get_proto_container(
 
     return tasks_pb2.Container(
         image=img_uri,
-        command=app_env.container_cmd(serialization_context),
+        command=app_env.container_cmd(serialization_context, input_overrides),
         args=app_env.container_args(serialization_context),
         resources=resources,
         ports=container_ports,
@@ -233,6 +234,7 @@ def translate_inputs(inputs: List[Input]) -> app_definition_pb2.InputList:
 def translate_app_env_to_idl(
     app_env: AppEnvironment,
     serialization_context: SerializationContext,
+    input_overrides: list[Input] | None = None,
     desired_state: app_definition_pb2.Spec.DesiredState = app_definition_pb2.Spec.DesiredState.DESIRED_STATE_ACTIVE,
 ) -> app_definition_pb2.App:
     """
@@ -244,6 +246,7 @@ def translate_app_env_to_idl(
     Args:
         app_env: The app environment to serialize
         serialization_context: Serialization context containing org, project, domain, version, etc.
+        input_overrides: Input overrides to apply to the app environment.
         desired_state: Desired state of the app (ACTIVE, INACTIVE, etc.)
 
     Returns:
@@ -293,6 +296,7 @@ def translate_app_env_to_idl(
         container = get_proto_container(
             app_env,
             serialization_context,
+            input_overrides=input_overrides,
         )
     else:
         msg = "image must be a str, Image, or PodTemplate"
@@ -344,6 +348,6 @@ def translate_app_env_to_idl(
             links=links,
             container=container,
             pod=pod,
-            inputs=translate_inputs(app_env.inputs),
+            inputs=translate_inputs(input_overrides or app_env.inputs),
         ),
     )
