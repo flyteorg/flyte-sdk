@@ -43,7 +43,7 @@ function toggleConnection() {
  * Connect to WebSocket server
  */
 function connect() {
-    const wsUrl = window.WS_URL || `ws://${window.location.host}/ws`;
+    const wsUrl = window.WS_URL || `wss://${window.location.host}/ws`;
 
     ws = new WebSocket(wsUrl);
     ws.binaryType = 'arraybuffer';

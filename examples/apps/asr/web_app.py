@@ -15,7 +15,6 @@ This FastAPI application provides a web interface for real-time speech
 transcription. It receives audio streams via WebSocket and calls the
 Parakeet transcription service using app-to-app calling.
 
-Based on Modal's speech-to-text example pattern.
 """
 
 import asyncio
@@ -104,7 +103,7 @@ async def index():
         html_content = html_file.read_text()
 
         # Inject WebSocket configuration
-        ws_url = "ws://localhost:8000/ws"
+        ws_url = "wss://localhost:8000/ws"
         if hasattr(env, "endpoint") and env.endpoint:
             ws_url = env.endpoint.replace("http", "ws") + "/ws"
 
