@@ -3,7 +3,7 @@ from typing import cast
 
 import pytest
 
-from flyte._image import Image, PythonWheels, UVScript
+from flyte._image import AptPackages, Image, UVScript
 from flyte._internal.imagebuild.docker_builder import PipAndRequirementsHandler
 
 
@@ -83,7 +83,7 @@ def test_image_from_uv_script():
     assert img.uri.startswith("localhost/uvtest:")
     assert img._layers
     print(img._layers)
-    assert isinstance(img._layers[-2], PythonWheels)
+    assert isinstance(img._layers[-2], AptPackages)
     assert isinstance(img._layers[-1], UVScript)
     script: UVScript = cast(UVScript, img._layers[-1])
     assert script.script == script_path
