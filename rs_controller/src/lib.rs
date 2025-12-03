@@ -592,7 +592,7 @@ impl BaseController {
                 endpoint: "https://demo.hosted.unionai.cloud".to_string(),
                 client_id: "yt-v2-test".to_string(),
                 client_secret,
-                scopes: None,
+                scopes: Some(vec!["all".to_string()]),
                 audience: None,
             };
             let authenticator = Arc::new(ClientCredentialsAuthenticator::new(auth_config));
@@ -609,9 +609,9 @@ impl BaseController {
                 org: "demo".to_string(),
                 project: "flytesnacks".to_string(),
                 domain: "development".to_string(),
-                name: "testrun".to_string(),
+                name: "rjg79mbczx7h6kcb9zb4".to_string(),
             };
-            let parent_action_name = "test-parent-action".to_string();
+            let parent_action_name = "a0".to_string();
 
             // Retry parameters (matching Python defaults)
             let min_watch_backoff = Duration::from_secs(1);

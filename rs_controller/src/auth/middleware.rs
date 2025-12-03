@@ -3,7 +3,7 @@ use std::task::{Context, Poll};
 use tonic::body::BoxBody;
 use tonic::transport::Channel;
 use tower::{Layer, Service, ServiceExt};
-use tracing::{debug, warn};
+use tracing::{error, warn};
 
 use super::client_credentials::ClientCredentialsAuthenticator;
 
@@ -89,7 +89,7 @@ where
             }
 
             if let Err(e) = inner.ready().await {
-                warn!("Inner service failed to become ready!!!");
+                error!("Inner service failed to become ready!!!");
                 // Return the error from the inner service's ready check
                 return Err(e);
             }
