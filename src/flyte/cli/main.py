@@ -29,6 +29,10 @@ help_config = click.RichHelpConfiguration(
                 "commands": ["run", "abort"],
             },
             {
+                "name": "Serve Apps",
+                "commands": ["serve"],
+            },
+            {
                 "name": "Management of various objects.",
                 "commands": ["create", "get", "delete", "update"],
             },
