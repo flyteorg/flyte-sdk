@@ -24,7 +24,8 @@ PYTHON_3_13 = (3, 13)
 
 # 0 is a file, 1 is a directory
 CopyConfigType = Literal[0, 1]
-dist_folder = Path(__file__).parent.parent.parent / "dist"
+SOURCE_ROOT = Path(__file__).parent.parent.parent
+DIST_FOLDER = SOURCE_ROOT / "dist"
 
 T = TypeVar("T")
 
@@ -493,10 +494,8 @@ class Image:
 
         if install_flyte:
             if dev_mode:
-                if os.path.exists(dist_folder):
+                if os.path.exists(DIST_FOLDER):
                     image = image.with_local_v2()
-                else:
-                    image = image.with_apt_packages("git").with_source_folder(src=Path(__file__).parent, dst="/opt/flyte").with_env_vars({"PYTHONPATH": "/opt/flyte:$PYTHONPATH"})
             else:
                 flyte_version = typing.cast(str, flyte_version)
                 if Version(flyte_version).is_devrelease or Version(flyte_version).is_prerelease:
@@ -632,6 +631,7 @@ class Image:
         img = cls.from_debian_base(
             registry=registry,
             registry_secret=registry_secret,
+            install_flyte=False,
             name=name,
             python_version=python_version,
             platform=platform,
@@ -1032,7 +1032,7 @@ class Image:
         """
         # Manually declare the PythonWheel so we can set the hashing
         # used to compute the identifier. Can remove if we ever decide to expose the lambda in with_ commands
-        with_dist = self.clone(addl_layer=PythonWheels(wheel_dir=dist_folder, package_name="flyte", pre=True))
+        with_dist = self.clone(addl_layer=PythonWheels(wheel_dir=DIST_FOLDER, package_name="flyte", pre=True))
 
         return with_dist
 

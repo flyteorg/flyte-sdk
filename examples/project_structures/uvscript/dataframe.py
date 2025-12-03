@@ -1,6 +1,8 @@
 # /// script
 # dependencies = [
 #    "polars",
+#    "ty",
+#    "mypy",
 #    "flyte @ file:///Users/kevin/git/flyte-sdk",
 # ]
 # ///

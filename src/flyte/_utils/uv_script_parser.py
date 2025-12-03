@@ -1,10 +1,10 @@
 import pathlib
 import re
 from dataclasses import dataclass, field
+from functools import lru_cache
 from typing import Dict, List, Optional
 
 import toml
-from functools import lru_cache
 
 
 @dataclass
@@ -16,6 +16,7 @@ class ToolUVConfig:
 class UVScriptMetadata:
     requires_python: Optional[str] = None
     dependencies: List[str] = field(default_factory=list)
+    pyprojects: List[str] = field(default_factory=list)
     tool: Optional[Dict[str, ToolUVConfig]] = None
 
 
@@ -45,12 +46,13 @@ def parse_uv_script_file(path: pathlib.Path) -> UVScriptMetadata:
 
     tool_data = data.get("tool", {}).get("uv", {})
     dependencies = data.get("dependencies", [])
-    # Regex pattern to match: "flyte", "flyte>=2", "flyte<2", "flyte @something", "flyte@something"
-    pattern = re.compile(r"^flyte(\s*@.*|@.*|[><=!]=?.*)?$")
-    # Remove flyte dependencies from the list since it's already included in the base image.
-    filtered_dependencies = [dep for dep in dependencies if not pattern.match(dep)]
+    py_dependencies = [dep for dep in dependencies if "file://" not in dep]
+    pyprojects = [dep.split("file://")[-1] for dep in dependencies if "file://" in dep]
+    print("pyprojects:", pyprojects)
+    print("py_dependencies:", py_dependencies)
     return UVScriptMetadata(
         requires_python=data.get("requires-python"),
-        dependencies=filtered_dependencies,
+        dependencies=py_dependencies,
+        pyprojects=pyprojects,
         tool={"uv": ToolUVConfig(exclude_newer=tool_data.get("exclude-newer"))} if tool_data else None,
     )
