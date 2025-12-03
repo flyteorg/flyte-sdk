@@ -52,7 +52,7 @@ class GitConfig:
     def __init__(self):
         """Initialize all Git-related variables using Git commands.
 
-        If Git is not installed or .git does not exist, marks is_git_repo as False and returns.
+        If Git is not installed or .git does not exist, marks is_valid as False and returns.
         """
         self.is_valid = False
         self.is_tree_clean = False
@@ -241,7 +241,7 @@ class GitConfig:
         """
         try:
             async with httpx.AsyncClient() as client:
-                response = await client.get(url, follow_redirects=True, timeout=10.0)
+                response = await client.get(url, follow_redirects=True, timeout=5.0)
                 if not response.is_success:
                     return False
                 return True

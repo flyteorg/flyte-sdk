@@ -171,7 +171,7 @@ async def _deploy_task(
             spec.environment.description = env.description
 
         # Insert documentation entity into task spec
-        documentation_entity = _get_documentation_entity(task)
+        documentation_entity = await _get_documentation_entity(task)
         spec.documentation.CopyFrom(documentation_entity)
 
         # Update inputs and outputs descriptions from docstring
@@ -180,19 +180,6 @@ async def _deploy_task(
             spec.task_template.interface, task.native_interface
         )
         spec.task_template.interface.CopyFrom(updated_interface)
-        if hasattr(task.func, '__code__') and task.func.__code__:
-            line_number = task.func.__code__.co_firstlineno + 1  # The function definition line number is located at the line after @env.task decorator
-            file_path = task.func.__code__.co_filename
-            git_config = GitConfig()
-            if git_config.is_valid:
-                # build git host url and validate
-                git_host_url = git_config.build_url(file_path, line_number)
-                if git_host_url:
-                    is_valid = await GitConfig.is_valid_url(git_host_url)
-                    if is_valid:
-                        print(f"@@@Not a valid url {git_host_url}@@@")
-                        # Put git_host_url in spec
-                        pass
         msg = f"Deploying task {task.name}, with image {image_uri} version {serialization_context.version}"
         if spec.task_template.HasField("container") and spec.task_template.container.args:
             msg += f" from {spec.task_template.container.args[-3]}.{spec.task_template.container.args[-1]}"
@@ -238,26 +225,44 @@ async def _deploy_task(
         ) from e
 
 
-def _get_documentation_entity(task_template: TaskTemplate) -> task_definition_pb2.DocumentationEntity:
+async def _get_documentation_entity(task_template: TaskTemplate) -> task_definition_pb2.DocumentationEntity:
     """
-    Extract documentation from TaskTemplate's docstring and create a DocumentationEntity.
+    Create a DocumentationEntity with descriptions and source code url.
     Short descriptions are truncated to 255 chars, long descriptions to 2048 chars.
 
     :param task_template: TaskTemplate containing the interface docstring.
-    :return: DocumentationEntity with truncated short and long descriptions.
+    :return: DocumentationEntity with short description, long description, and source code url link.
     """
     from flyteidl2.task import task_definition_pb2
 
     docstring = task_template.interface.docstring
     short_desc = None
     long_desc = None
+    source_code = None
     if docstring and docstring.short_description:
         short_desc = parse_description(docstring.short_description, 255)
     if docstring and docstring.long_description:
         long_desc = parse_description(docstring.long_description, 2048)
+    if hasattr(task_template.func, '__code__') and task_template.func.__code__:
+        line_number = task_template.func.__code__.co_firstlineno + 1  # The function definition line number is located at the line after @env.task decorator
+        file_path = task_template.func.__code__.co_filename
+        git_config = GitConfig()
+        if git_config.is_valid:
+            # Build git host url and validate
+            git_host_url = git_config.build_url(file_path, line_number)
+            if git_host_url:
+                # If the url is not valid, we shouldn't send it to the backend
+                is_valid = await GitConfig.is_valid_url(git_host_url)
+                if is_valid:
+                    print(f"the host url is {git_host_url}")
+                    source_code = task_definition_pb2.SourceCode(source_code=git_host_url)
+                else:
+                    logger.warning(f"Invalid git host url: {git_host_url}")
+
     return task_definition_pb2.DocumentationEntity(
         short_description=short_desc,
         long_description=long_desc,
+        source_code=source_code,
     )
 
 
