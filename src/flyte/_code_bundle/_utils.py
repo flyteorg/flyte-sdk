@@ -74,9 +74,9 @@ def compress_scripts(source_path: str, destination: str, modules: List[ModuleTyp
 # intended to be passed as a filter to tarfile.add
 # https://docs.python.org/3/library/tarfile.html#tarfile.TarFile.add
 def tar_strip_file_attributes(tar_info: tarfile.TarInfo) -> tarfile.TarInfo:
-    # set time to epoch timestamp 0, aka 00:00:00 UTC on 1 January 1980
+    # set time to epoch timestamp 0, aka 00:00:00 UTC on 1 January 1981
     # note that when extracting this tarfile, this time will be shown as the modified date
-    tar_info.mtime = datetime(1980, 1, 1, tzinfo=timezone.utc).timestamp()
+    tar_info.mtime = datetime(1981, 1, 1, tzinfo=timezone.utc).timestamp()
 
     # user/group info
     tar_info.uid = 0
@@ -131,6 +131,22 @@ def ls_files(
 
     digest = hasher.hexdigest()
 
+    return all_files, digest
+
+
+def ls_relative_files(relative_paths: list[str], source_path: pathlib.Path) -> tuple[list[str], str]:
+    relative_paths = list(relative_paths)
+    relative_paths.sort()
+    hasher = hashlib.md5()
+
+    all_files = []
+    for file in relative_paths:
+        path = source_path / file
+        all_files.append(str(path))
+        _filehash_update(path, hasher)
+        _pathhash_update(path, hasher)
+
+    digest = hasher.hexdigest()
     return all_files, digest
 
 

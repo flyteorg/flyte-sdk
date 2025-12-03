@@ -150,7 +150,7 @@ class AsyncConnectorService(AsyncConnectorServiceServicer):
             inputs=native_inputs,
             output_prefix=request.output_prefix,
             task_execution_metadata=request.task_execution_metadata,
-            connection=_get_connection_kwargs(request.connection),
+            **_get_connection_kwargs(request.connection),
         )
         return CreateTaskResponse(resource_meta=resource_meta.encode())
 
@@ -160,7 +160,7 @@ class AsyncConnectorService(AsyncConnectorServiceServicer):
         logger.info(f"{connector.name} start checking the status of the job")
         res = await connector.get(
             resource_meta=connector.metadata_type.decode(request.resource_meta),
-            connection=_get_connection_kwargs(request.connection),
+            **_get_connection_kwargs(request.connection),
         )
         return GetTaskResponse(resource=await get_resource_proto(res))
 
@@ -170,7 +170,7 @@ class AsyncConnectorService(AsyncConnectorServiceServicer):
         logger.info(f"{connector.name} start deleting the job")
         await connector.delete(
             resource_meta=connector.metadata_type.decode(request.resource_meta),
-            connection=_get_connection_kwargs(request.connection),
+            **_get_connection_kwargs(request.connection),
         )
         return DeleteTaskResponse()
 

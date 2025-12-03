@@ -48,7 +48,7 @@ jobs:
             echo "No tagged version found, exiting"
             exit 1
           fi
-          sleep 120
+          sleep 300
           LINK="https://pypi.org/project/flyte/${VERSION}/"
           for i in {1..60}; do
             result=$(curl -L -I -s -f ${LINK})
@@ -101,7 +101,7 @@ jobs:
           TWINE_USERNAME: ${{ secrets.PYPI_USERNAME }}
           TWINE_PASSWORD: ${{ secrets.PYPI_PASSWORD }}
         run: |
-          uv run python -m twine upload --verbose dist/*
+          uv run --prerelease allow python -m twine upload --verbose dist/*
 
   build-and-push-flyte-docker-images:
     needs: flyte-pypi

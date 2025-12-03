@@ -40,6 +40,7 @@ if TYPE_CHECKING:
     from ._internal.imagebuild.image_builder import ImageCache
 
 Mode = Literal["local", "remote", "hybrid"]
+CacheLookupScope = Literal["global", "project-domain"]
 
 
 @dataclass(frozen=True)
@@ -99,6 +100,7 @@ class _Runner:
         disable_run_cache: bool = False,
         queue: Optional[str] = None,
         custom_context: Dict[str, str] | None = None,
+        cache_lookup_scope: CacheLookupScope = "global",
     ):
         from flyte._tools import ipython_check
 
@@ -131,6 +133,7 @@ class _Runner:
         self._disable_run_cache = disable_run_cache
         self._queue = queue
         self._custom_context = custom_context or {}
+        self._cache_lookup_scope = cache_lookup_scope
 
     @requires_initialization
     async def _run_remote(self, obj: TaskTemplate[P, R, F] | LazyEntity, *args: P.args, **kwargs: P.kwargs) -> Run:
@@ -142,7 +145,7 @@ class _Runner:
         from google.protobuf import wrappers_pb2
 
         from flyte.remote import Run
-        from flyte.remote._task import LazyEntity
+        from flyte.remote._task import LazyEntity, TaskDetails
 
         from ._code_bundle import build_code_bundle, build_pkl_bundle
         from ._deploy import build_images
@@ -153,6 +156,7 @@ class _Runner:
         project = self._project or cfg.project
         domain = self._domain or cfg.domain
 
+        task: TaskTemplate[P, R, F] | TaskDetails
         if isinstance(obj, LazyEntity):
             task = await obj.fetch.aio()
             task_spec = task.pb2.spec
@@ -283,6 +287,16 @@ class _Runner:
                 else None
             )
 
+            def _to_cache_lookup_scope(scope: CacheLookupScope | None = None) -> run_pb2.CacheLookupScope:
+                if scope == "global":
+                    return run_pb2.CacheLookupScope.CACHE_LOOKUP_SCOPE_GLOBAL
+                elif scope == "project-domain":
+                    return run_pb2.CacheLookupScope.CACHE_LOOKUP_SCOPE_PROJECT_DOMAIN
+                elif scope is None:
+                    return run_pb2.CacheLookupScope.CACHE_LOOKUP_SCOPE_UNSPECIFIED
+                else:
+                    raise ValueError(f"Unknown cache lookup scope: {scope}")
+
             try:
                 resp = await get_client().run_service.CreateRun(
                     run_service_pb2.CreateRunRequest(
@@ -301,6 +315,12 @@ class _Runner:
                             cluster=self._queue or task.queue,
                             raw_data_storage=raw_data_storage,
                             security_context=security_context,
+                            cache_config=run_pb2.CacheConfig(
+                                overwrite_cache=self._overwrite_cache,
+                                cache_lookup_scope=_to_cache_lookup_scope(self._cache_lookup_scope)
+                                if self._cache_lookup_scope
+                                else None,
+                            ),
                         ),
                     ),
                 )
@@ -453,7 +473,7 @@ class _Runner:
 
         from flyte._internal.controllers import create_controller
         from flyte._internal.controllers._local_controller import LocalController
-        from flyte.remote import Run
+        from flyte.remote import ActionOutputs, Run
         from flyte.report import Report
 
         controller = cast(LocalController, create_controller("local"))
@@ -522,19 +542,21 @@ class _Runner:
             def url(self) -> str:
                 return str(metadata_path)
 
-            def wait(
+            @syncify
+            async def wait(  # type: ignore[override]
                 self,
                 quiet: bool = False,
                 wait_for: Literal["terminal", "running"] = "terminal",
-            ):
+            ) -> None:
                 pass
 
-            def outputs(self) -> R:
-                return cast(R, self._outputs)
+            @syncify
+            async def outputs(self) -> ActionOutputs:  # type: ignore[override]
+                return cast(ActionOutputs, self._outputs)
 
         return _LocalRun(outputs)
 
-    @syncify
+    @syncify  # type: ignore[arg-type]
     async def run(
         self,
         task: TaskTemplate[P, Union[R, Run], F] | LazyEntity,
@@ -607,6 +629,7 @@ def with_runcontext(
     disable_run_cache: bool = False,
     queue: Optional[str] = None,
     custom_context: Dict[str, str] | None = None,
+    cache_lookup_scope: CacheLookupScope = "global",
 ) -> _Runner:
     """
     Launch a new run with the given parameters as the context.
@@ -655,6 +678,8 @@ def with_runcontext(
     :param custom_context: Optional global input context to pass to the task. This will be available via
         get_custom_context() within the task and will automatically propagate to sub-tasks.
         Acts as base/default values that can be overridden by context managers in the code.
+    :param cache_lookup_scope: Optional Scope to use for the run. This is used to specify the scope to use for cache
+        lookups. If not specified, it will be set to the default scope (global unless overridden at the system level).
 
     :return: runner
     """
@@ -685,11 +710,12 @@ def with_runcontext(
         disable_run_cache=disable_run_cache,
         queue=queue,
         custom_context=custom_context,
+        cache_lookup_scope=cache_lookup_scope,
     )
 
 
 @syncify
-async def run(task: TaskTemplate[P, R, F], *args: P.args, **kwargs: P.kwargs) -> Union[R, Run]:
+async def run(task: TaskTemplate[P, R, F], *args: P.args, **kwargs: P.kwargs) -> Run:
     """
     Run a task with the given parameters
     :param task: task to run

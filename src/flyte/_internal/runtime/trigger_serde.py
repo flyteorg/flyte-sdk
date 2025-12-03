@@ -12,7 +12,10 @@ from flyte import Cron, FixedRate, Trigger, TriggerTime
 def _to_schedule(m: Union[Cron, FixedRate], kickoff_arg_name: str | None = None) -> common_pb2.Schedule:
     if isinstance(m, Cron):
         return common_pb2.Schedule(
-            cron_expression=m.timezone_expression,
+            cron=common_pb2.Cron(
+                expression=m.expression,
+                timezone=m.timezone,
+            ),
             kickoff_time_input_arg=kickoff_arg_name,
         )
     elif isinstance(m, FixedRate):
@@ -120,10 +123,6 @@ async def to_task_trigger(
     if t.inputs:
         for k, v in t.inputs.items():
             if v is TriggerTime:
-                if k == "trigger_time" and k not in task_inputs.variables:
-                    # the 'trigger_time' input name that by default Triggers look for so it's always added.
-                    # Remove it here by skipping if it's not actually an input to the task
-                    continue
                 kickoff_arg_name = k
             else:
                 default_inputs[k] = v
@@ -149,6 +148,7 @@ async def to_task_trigger(
             active=t.auto_activate,
             run_spec=run_spec,
             inputs=common_pb2.Inputs(literals=literals),
+            description=t.description,
         ),
         automation_spec=common_pb2.TriggerAutomationSpec(
             type=common_pb2.TriggerAutomationSpecType.TYPE_SCHEDULE,

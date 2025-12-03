@@ -648,6 +648,7 @@ dependencies = [
     { name = "click" },
     { name = "cloudpickle" },
     { name = "dataclasses-json" },
+    { name = "docstring-parser" },
     { name = "flyteidl" },
     { name = "flyteidl2" },
     { name = "fsspec" },
@@ -703,8 +704,9 @@ requires-dist = [
     { name = "click", specifier = ">=8.2.1" },
     { name = "cloudpickle", specifier = ">=3.1.1" },
     { name = "dataclasses-json" },
+    { name = "docstring-parser", specifier = ">=0.16" },
     { name = "flyteidl", specifier = ">=1.15.4b0,<2.0.0" },
-    { name = "flyteidl2", git = "https://github.com/flyteorg/flyte.git?subdirectory=gen%2Fpython&rev=v2" },
+    { name = "flyteidl2", specifier = "==2.0.0a15" },
     { name = "fsspec", specifier = ">=2025.3.0" },
     { name = "grpcio", specifier = ">=1.71.0" },
     { name = "grpcio-health-checking", marker = "extra == 'connector'" },
@@ -759,13 +761,16 @@ wheels = [
 
 [[package]]
 name = "flyteidl2"
-version = "2.0.0a14"
-source = { git = "https://github.com/flyteorg/flyte.git?subdirectory=gen%2Fpython&rev=v2#a4cbb59824bf3608912388ac1285d5add398d390" }
+version = "2.0.0a15"
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "googleapis-common-protos" },
     { name = "protobuf" },
     { name = "protoc-gen-openapiv2" },
     { name = "protovalidate" },
+]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/22/37/a08509427879e6402585ad574743b6a1b31dd3a899dc9e877e52d338bc15/flyteidl2-2.0.0a15-py3-none-any.whl", hash = "sha256:e0cc707cd98f8089ba40e74158aa444aa4079ae163cfaa8252197fce30ea037f", size = 197364, upload-time = "2025-12-02T02:31:24.725Z" },
 ]
 
 [[package]]
@@ -1113,7 +1118,7 @@ name = "importlib-metadata"
 version = "8.7.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "zipp" },
+    { name = "zipp", marker = "python_full_version < '3.12'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/76/66/650a33bd90f786193e4de4b3ad86ea60b53c89b669a5c7be931fac31cdb0/importlib_metadata-8.7.0.tar.gz", hash = "sha256:d13b81ad223b890aa16c5471f2ac3056cf76c5f10f82d6f9292f0b415f389000", size = 56641, upload-time = "2025-04-27T15:29:01.736Z" }
 wheels = [

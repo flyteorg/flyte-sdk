@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Optional, Tuple, cast
 from uuid import uuid4
 
 import aiofiles
+from flyteidl2.common import phase_pb2
 
 import flyte
 import flyte.errors
@@ -70,6 +71,7 @@ class RemoteImageChecker(ImageChecker):
         image_name = f"{repository.split('/')[-1]}:{tag}"
 
         try:
+            from flyteidl2.common.identifier_pb2 import ProjectIdentifier
             from flyteidl2.imagebuilder import definition_pb2 as image_definition__pb2
             from flyteidl2.imagebuilder import payload_pb2 as image_payload__pb2
             from flyteidl2.imagebuilder import service_pb2_grpc as image_service_pb2_grpc
@@ -80,7 +82,11 @@ class RemoteImageChecker(ImageChecker):
             if cfg is None:
                 raise ValueError("Init config should not be None")
             image_id = image_definition__pb2.ImageIdentifier(name=image_name)
-            req = image_payload__pb2.GetImageRequest(id=image_id, organization=cfg.org)
+            req = image_payload__pb2.GetImageRequest(
+                id=image_id,
+                organization=cfg.org,
+                project_id=ProjectIdentifier(organization=cfg.org, domain=cfg.domain, name=cfg.project),
+            )
             if cls._images_client is None:
                 if cfg.client is None:
                     raise ValueError("remote client should not be None")
@@ -99,8 +105,6 @@ class RemoteImageBuilder(ImageBuilder):
         return [RemoteImageChecker]
 
     async def build_image(self, image: Image, dry_run: bool = False) -> str:
-        from flyteidl2.workflow import run_definition_pb2
-
         image_name = f"{image.name}:{image._final_tag}"
         spec, context = await _validate_configuration(image)
 
@@ -120,12 +124,13 @@ class RemoteImageBuilder(ImageBuilder):
             target_image = image_name
 
         from flyte._initialize import get_init_config
+
         cfg = get_init_config()
         run = cast(
             Run,
-            await flyte.with_runcontext(project=cfg.project, domain=cfg.domain).run.aio(
-                entity, spec=spec, context=context, target_image=target_image
-            ),
+            await flyte.with_runcontext(
+                project=cfg.project, domain=cfg.domain, cache_lookup_scope="project-domain"
+            ).run.aio(entity, spec=spec, context=context, target_image=target_image),
         )
         logger.warning(f"⏳ Waiting for build to finish at: [bold cyan link={run.url}]{run.url}[/bold cyan link]")
 
@@ -134,7 +139,7 @@ class RemoteImageBuilder(ImageBuilder):
 
         elapsed = str(datetime.now(timezone.utc) - start).split(".")[0]
 
-        if run_details.action_details.raw_phase == run_definition_pb2.PHASE_SUCCEEDED:
+        if run_details.action_details.raw_phase == phase_pb2.ACTION_PHASE_SUCCEEDED:
             logger.warning(f"[bold green]✅ Build completed in {elapsed}![/bold green]")
         else:
             raise flyte.errors.ImageBuildError(f"❌ Build failed in {elapsed} at {run.url}")
@@ -263,10 +268,6 @@ def _get_layers_proto(image: Image, context_path: Path) -> "image_definition_pb2
             )
             layers.append(pip_layer)
         elif isinstance(layer, UVProject):
-            for line in layer.pyproject.read_text().splitlines():
-                if "tool.uv.index" in line:
-                    raise ValueError("External sources are not supported in pyproject.toml")
-
             if layer.project_install_mode == "dependencies_only":
                 # Copy pyproject itself
                 pyproject_dst = copy_files_to_context(layer.pyproject, context_path)
@@ -292,9 +293,6 @@ def _get_layers_proto(image: Image, context_path: Path) -> "image_definition_pb2
             )
             layers.append(uv_layer)
         elif isinstance(layer, PoetryProject):
-            for line in layer.pyproject.read_text().splitlines():
-                if "tool.poetry.source" in line:
-                    raise ValueError("External sources are not supported in pyproject.toml")
             extra_args = layer.extra_args or ""
             if layer.project_install_mode == "dependencies_only":
                 # Copy pyproject itself

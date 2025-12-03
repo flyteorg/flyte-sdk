@@ -43,8 +43,12 @@ def test_runtime_task_coroutine_exception():
         mock_controller.watch_for_errors.__await__ = lambda: (x for x in ())  # Never completes
         mock_controller.stop = AsyncMock()
 
+        # Mock init_in_cluster to return controller kwargs
+        def mock_init_in_cluster(*args, **kwargs):
+            return {"endpoint": "test-endpoint", "insecure": True}
+
         with (
-            patch("flyte._initialize.init"),
+            patch("flyte._initialize.init_in_cluster", side_effect=mock_init_in_cluster),
             patch("flyte._internal.controllers.create_controller", return_value=mock_controller),
             patch(
                 "flyte._internal.runtime.entrypoints.load_and_run_task", new_callable=AsyncMock, side_effect=task_error
@@ -121,8 +125,12 @@ def test_runtime_controller_failure_exception():
         mock_task_coroutine = AsyncMock()
         mock_task_coroutine.__await__ = lambda: (x for x in ())  # Never completes
 
+        # Mock init_in_cluster to return controller kwargs
+        def mock_init_in_cluster(*args, **kwargs):
+            return {"endpoint": "test-endpoint", "insecure": True}
+
         with (
-            patch("flyte._initialize.init"),
+            patch("flyte._initialize.init_in_cluster", side_effect=mock_init_in_cluster),
             patch("flyte._internal.controllers.create_controller", return_value=mock_controller),
             patch("flyte._internal.runtime.entrypoints.load_and_run_task", return_value=mock_task_coroutine),
             patch("faulthandler.register"),  # Mock faulthandler to avoid fileno issues in tests

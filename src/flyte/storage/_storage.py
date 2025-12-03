@@ -214,13 +214,14 @@ async def get(from_path: str, to_path: Optional[str | pathlib.Path] = None, recu
         _is_obstore_supported_protocol(file_system.protocol)
         and hasattr(file_system, "_split_path")
         and hasattr(file_system, "_construct_store")
+        and recursive
     ):
         return await _get_obstore_bypass(from_path, to_path, recursive, **kwargs)
 
     try:
         return await _get_from_filesystem(file_system, from_path, to_path, recursive=recursive, **kwargs)
     except (OSError, GenericError) as oe:
-        logger.debug(f"Error in getting {from_path} to {to_path} rec {recursive} {oe}")
+        logger.debug(f"Error in getting {from_path} to {to_path}, recursive: {recursive}, error: {oe}")
         if isinstance(file_system, AsyncFileSystem):
             try:
                 exists = await file_system._exists(from_path)  # pylint: disable=W0212
@@ -245,13 +246,13 @@ async def _get_from_filesystem(
     **kwargs,
 ):
     if isinstance(file_system, AsyncFileSystem):
-        dst = await file_system._get(from_path, to_path, recursive=recursive, **kwargs)  # pylint: disable=W0212
+        dst = await file_system._get(str(from_path), str(to_path), recursive=recursive, **kwargs)  # pylint: disable=W0212
     else:
-        dst = file_system.get(from_path, to_path, recursive=recursive, **kwargs)
+        dst = file_system.get(str(from_path), str(to_path), recursive=recursive, **kwargs)
 
     if isinstance(dst, (str, pathlib.Path)):
         return dst
-    return to_path
+    return str(to_path)
 
 
 async def put(from_path: str, to_path: Optional[str] = None, recursive: bool = False, **kwargs) -> str:
@@ -292,7 +293,6 @@ async def _open_obstore_bypass(path: str, mode: str = "rb", **kwargs) -> AsyncRe
     else:  # read mode
         buffer_size = kwargs.pop("buffer_size", 10 * 2**20)
         file_handle = await obstore.open_reader_async(store, file_path, buffer_size=buffer_size)
-
     return file_handle
 
 
