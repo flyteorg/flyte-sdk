@@ -33,8 +33,8 @@ class Input:
         patterns to ignore.
     """
 
+    name: str
     value: str | flyte.io.File | flyte.io.Dir
-    name: Optional[str] = None
     env_var: Optional[str] = None
     download: bool = False
     mount: Optional[str] = None

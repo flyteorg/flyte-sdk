@@ -431,8 +431,6 @@ if __name__ == "__main__":
     #
     # curl -X POST http://<endpoint>/embed-text -H "Content-Type: application/json" -d '{"text": "test embedding"}'
 
-    input_value_overrides = {
-        env.name: {"artifacts": flyte.io.Dir.from_existing_remote(artifacts_dir.path)}
-    }
+    input_value_overrides = {env.name: {"artifacts": flyte.io.Dir.from_existing_remote(artifacts_dir.path)}}
     app = flyte.with_servecontext(input_values=input_value_overrides).serve(env)
     print(f"Deployed Application: {app.url}")

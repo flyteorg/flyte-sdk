@@ -9,6 +9,7 @@ import cloudpickle
 from flyte._code_bundle._utils import CopyFiles
 from flyte._initialize import get_init_config
 from flyte._logging import LogFormat, logger
+from flyte._tools import ipython_check
 from flyte.models import SerializationContext
 from flyte.syncify import syncify
 
@@ -55,8 +56,6 @@ class _Serve:
             log_format: Optional log format ("console" or "json", default: "console")
             interactive_mode: If True, raises NotImplementedError (apps don't support interactive/notebook mode)
         """
-        from flyte._tools import ipython_check
-
         self._version = version
         self._copy_style = copy_style
         self._dry_run = dry_run
