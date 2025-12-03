@@ -48,6 +48,8 @@ from flyte.app.extras import FastAPIAppEnvironment
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+ARTIFACTS_DIR_ENV = "ARTIFACTS_DIR"
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -97,7 +99,7 @@ env = FastAPIAppEnvironment(
             name="artifacts",
             # if using flyte serve CLI to deploy this, set the ARTIFACTS_DIR environment variable
             # to the remote path of the artifacts directory.
-            value=flyte.io.Dir.from_existing_remote(os.environ.get("ARTIFACTS_DIR", "/tmp/recsys_artifacts")),
+            value=flyte.io.Dir.from_existing_remote(os.environ.get(ARTIFACTS_DIR_ENV, "/tmp/recsys_artifacts")),
             mount="/tmp/recsys_artifacts",
         )
     ],

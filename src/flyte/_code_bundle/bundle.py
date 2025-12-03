@@ -152,13 +152,19 @@ async def build_code_bundle(
             hash_digest, remote_path = await upload_file.aio(bundle_path)
             logger.debug(f"Code bundle uploaded to {remote_path}")
         else:
-            remote_path = "na"
             if copy_bundle_to:
-                import shutil
-
-                # Copy the bundle to the given path
-                shutil.copy(bundle_path, copy_bundle_to)
                 remote_path = str(copy_bundle_to / bundle_path.name)
+            else:
+                import flyte.storage as storage
+
+                base_path = storage.get_random_local_path()
+                base_path.mkdir(parents=True, exist_ok=True)
+                remote_path = str(base_path / bundle_path.name)
+
+            import shutil
+
+            # Copy the bundle to the given path
+            shutil.copy(bundle_path, remote_path)
             _, hash_digest, _ = hash_file(file_path=bundle_path)
         return CodeBundle(tgz=remote_path, destination=extract_dir, computed_version=hash_digest)
 
@@ -223,6 +229,8 @@ async def download_bundle(bundle: CodeBundle) -> pathlib.Path:
     import flyte.storage as storage
 
     dest = pathlib.Path(bundle.destination)
+    if not dest.exists():
+        dest.mkdir(parents=True, exist_ok=True)
     if not dest.is_dir():
         raise ValueError(f"Destination path should be a directory, found {dest}, {dest.stat()}")
 
@@ -230,8 +238,10 @@ async def download_bundle(bundle: CodeBundle) -> pathlib.Path:
     if bundle.tgz:
         downloaded_bundle = dest / os.path.basename(bundle.tgz)
         if downloaded_bundle.exists():
+            logger.debug(f"Code bundle {downloaded_bundle} already exists locally, skipping download.")
             return downloaded_bundle.absolute()
         # Download the tgz file
+        logger.debug(f"Downloading code bundle from {bundle.tgz} to {downloaded_bundle.absolute()}")
         await storage.get(bundle.tgz, str(downloaded_bundle.absolute()))
         # NOTE the os.path.join(destination, ''). This is to ensure that the given path is in fact a directory and all
         # downloaded data should be copied into this directory. We do this to account for a difference in behavior in

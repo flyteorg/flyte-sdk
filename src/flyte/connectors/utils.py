@@ -6,6 +6,7 @@ from typing import List
 import click
 import grpc
 from flyteidl2.core.execution_pb2 import TaskExecution
+from flyteidl2.core.tasks_pb2 import TaskTemplate
 from flyteidl2.service import connector_pb2
 from flyteidl2.service.connector_pb2_grpc import (
     add_AsyncConnectorServiceServicer_to_server,
@@ -14,6 +15,7 @@ from flyteidl2.service.connector_pb2_grpc import (
 from rich.console import Console
 from rich.table import Table
 
+import flyte
 from flyte import logger
 
 
@@ -133,3 +135,25 @@ def _load_connectors(modules: List[str] | None):
     if modules:
         for m in modules:
             importlib.import_module(m)
+
+
+def _render_task_template(tt: TaskTemplate, file_prefix: str) -> TaskTemplate:
+    if tt.container is None:
+        return tt
+    args = tt.container.args
+    ctx = flyte.ctx()
+    for i in range(len(args)):
+        tt.container.args[i] = args[i].replace("{{.input}}", f"{file_prefix}/inputs.pb")
+        tt.container.args[i] = args[i].replace("{{.outputPrefix}}", f"{file_prefix}")
+        tt.container.args[i] = args[i].replace("{{.rawOutputDataPrefix}}", f"{file_prefix}/raw_output")
+        tt.container.args[i] = args[i].replace("{{.checkpointOutputPrefix}}", f"{file_prefix}/checkpoint_output")
+        tt.container.args[i] = args[i].replace("{{.prevCheckpointPrefix}}", f"{file_prefix}/prev_checkpoint")
+        tt.container.args[i] = args[i].replace("{{.runName}}", ctx.action.run_name if ctx else "test-run")
+        tt.container.args[i] = args[i].replace("{{.actionName}}", "a1")
+
+    # Add additional required args
+    tt.container.args[1:1] = ["--run-base-dir", f"{file_prefix}/base_dir"]
+    tt.container.args[1:1] = ["--org", "test-org"]
+    tt.container.args[1:1] = ["--project", "test-project"]
+    tt.container.args[1:1] = ["--domain", "test-domain"]
+    return tt
