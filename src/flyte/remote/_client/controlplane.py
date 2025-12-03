@@ -38,6 +38,14 @@ from ._protocols import (
 from .auth import create_channel
 
 
+class DummySettingService():
+    async def GetSettings(self, request):
+        return None
+
+    async def UpdateSettings(self, request):
+        return None
+
+
 class ClientSet:
     def __init__(
         self,
@@ -59,7 +67,7 @@ class ClientSet:
         self._identity_service = identity_pb2_grpc.IdentityServiceStub(channel=channel)
         self._trigger_service = trigger_service_pb2_grpc.TriggerServiceStub(channel=channel)
         # Note: Settings service stub will be initialized once settings_pb2_grpc is available
-        self._settings_service = None  # settings_pb2_grpc.SettingsServiceStub(channel=channel)
+        self._settings_service = DummySettingService()
 
     @classmethod
     async def for_endpoint(cls, endpoint: str, *, insecure: bool = False, **kwargs) -> ClientSet:

@@ -8,9 +8,14 @@ import rich_click as click
 from flyte.cli import _common as common
 
 
-@click.command(cls=common.CommandBase)
+@click.group()
+def edit():
+    pass
+
+
+@edit.command(cls=common.CommandBase)
 @click.pass_obj
-def edit(cfg: common.CLIConfig, project: str | None, domain: str | None):
+def settings(cfg: common.CLIConfig, project: str | None, domain: str | None):
     """Edit hierarchical settings interactively.
 
     Opens settings in your $EDITOR, showing:
@@ -28,6 +33,8 @@ def edit(cfg: common.CLIConfig, project: str | None, domain: str | None):
         scope_desc = f"PROJECT({domain}/{project})"
     elif domain:
         scope_desc = f"DOMAIN({domain})"
+    elif project:
+        raise click.BadOptionUsage("project", "to set project settings, domain is required")
 
     console = common.Console()
     console.print(f"[bold]Editing settings for scope:[/bold] {scope_desc}")

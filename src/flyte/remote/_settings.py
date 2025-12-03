@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from flyte.remote._common import ToJSONMixin
+from flyte.remote._settings_store import SettingsStore
 from flyte.syncify import syncify
 
 
@@ -53,6 +55,12 @@ class Settings(ToJSONMixin):
     local_settings: list[LocalSetting]
     domain: str | None = None
     project: str | None = None
+    _store: SettingsStore | None = None
+
+    def __post_init__(self):
+        """Initialize the settings store if not provided."""
+        if self._store is None:
+            object.__setattr__(self, "_store", SettingsStore())
 
     @staticmethod
     def _parse_value(raw_value: str) -> Any:
@@ -114,9 +122,9 @@ class Settings(ToJSONMixin):
         # Add local overrides section
         if self.local_settings:
             lines.append("# Local overrides")
-            for setting in self.local_settings:
-                value_str = self._format_value(setting.value)
-                lines.append(f"{setting.key}: {value_str}")
+            for l_setting in self.local_settings:
+                value_str = self._format_value(l_setting.value)
+                lines.append(f"{l_setting.key}: {value_str}")
             lines.append("")
 
         # Add inherited settings section
@@ -158,38 +166,50 @@ class Settings(ToJSONMixin):
 
     @syncify
     @classmethod
-    async def get(cls, project: str | None = None, domain: str | None = None) -> Settings:
+    async def get(
+        cls, project: str | None = None, domain: str | None = None, store_path: Path | None = None
+    ) -> Settings:
         """Retrieve settings for a given scope.
 
         Args:
             project: Project name (requires domain to be set)
             domain: Domain name
+            store_path: Optional custom path to settings store file
 
         Returns:
             Settings object with effective and local settings
         """
-        # TODO: Once the gRPC client is implemented, replace this with actual API call
+        # TODO: Once the gRPC client is implemented, replace local store with API call
         # from flyte.remote._client.controlplane import ClientSet
         # client = await ClientSet.from_env()
         # request = GetSettingsRequest(domain=domain or "", project=project or "")
         # response = await client.settings_service.GetSettings(request)
 
-        # For now, return dummy data
+        # Use local file-based store
+        store = SettingsStore(store_path)
+
+        # Get effective settings with inheritance
+        effective_dict = store.get_effective_settings(domain=domain, project=project)
         effective_settings = [
-            EffectiveSetting(key="default_queue", value="default", origin=SettingOrigin(scope_type="ROOT")),
-            EffectiveSetting(key="run_concurrency", value=10, origin=SettingOrigin(scope_type="ROOT")),
-            EffectiveSetting(key="interruptible", value=False, origin=SettingOrigin(scope_type="ROOT")),
+            EffectiveSetting(
+                key=key,
+                value=value,
+                origin=SettingOrigin(scope_type=scope_type, domain=origin_domain, project=origin_project),
+            )
+            for key, (value, scope_type, origin_domain, origin_project) in effective_dict.items()
         ]
 
-        local_settings = []
-        if domain:
-            # Add some domain-level overrides for demo
-            local_settings.append(LocalSetting(key="run_concurrency", value=20))
-            effective_settings[1] = EffectiveSetting(
-                key="run_concurrency", value=20, origin=SettingOrigin(scope_type="DOMAIN", domain=domain)
-            )
+        # Get local settings for this scope only
+        local_dict = store.get_local_settings(domain=domain, project=project)
+        local_settings = [LocalSetting(key=k, value=v) for k, v in local_dict.items()]
 
-        return cls(effective_settings=effective_settings, local_settings=local_settings, domain=domain, project=project)
+        return cls(
+            effective_settings=effective_settings,
+            local_settings=local_settings,
+            domain=domain,
+            project=project,
+            _store=store,
+        )
 
     @syncify
     async def update(self, overrides: dict[str, Any]) -> None:
@@ -201,7 +221,7 @@ class Settings(ToJSONMixin):
         Args:
             overrides: Dictionary of setting key-value pairs to set as local overrides
         """
-        # TODO: Once the gRPC client is implemented, replace this with actual API call
+        # TODO: Once the gRPC client is implemented, replace local store with API call
         # from flyte.remote._client.controlplane import ClientSet
         # client = await ClientSet.from_env()
         #
@@ -216,17 +236,22 @@ class Settings(ToJSONMixin):
         # )
         # await client.settings_service.UpdateSettings(request)
 
-        # For now, just update the local state
+        # Update local file-based store
+        if self._store is None:
+            self._store = SettingsStore()
+
+        self._store.set_local_settings(overrides, domain=self.domain, project=self.project)
+
+        # Update local state to reflect the changes
         self.local_settings = [LocalSetting(key=k, value=v) for k, v in overrides.items()]
 
-        # Update effective settings to reflect the changes
-        effective_dict = {s.key: s for s in self.effective_settings}
-        for key, value in overrides.items():
-            origin = SettingOrigin(
-                scope_type="PROJECT" if self.project else ("DOMAIN" if self.domain else "ROOT"),
-                domain=self.domain,
-                project=self.project,
+        # Recalculate effective settings with inheritance
+        effective_dict = self._store.get_effective_settings(domain=self.domain, project=self.project)
+        self.effective_settings = [
+            EffectiveSetting(
+                key=key,
+                value=value,
+                origin=SettingOrigin(scope_type=scope_type, domain=origin_domain, project=origin_project),
             )
-            effective_dict[key] = EffectiveSetting(key=key, value=value, origin=origin)
-
-        self.effective_settings = list(effective_dict.values())
+            for key, (value, scope_type, origin_domain, origin_project) in effective_dict.items()
+        ]
