@@ -14,6 +14,7 @@ __all__ = [
     "RunDetails",
     "Secret",
     "SecretTypes",
+    "Settings",
     "Task",
     "TaskDetails",
     "Trigger",
@@ -30,6 +31,7 @@ from ._data import upload_dir, upload_file
 from ._project import Project
 from ._run import Phase, Run, RunDetails
 from ._secret import Secret, SecretTypes
+from ._settings import Settings
 from ._task import Task, TaskDetails
 from ._trigger import Trigger
 from ._user import User

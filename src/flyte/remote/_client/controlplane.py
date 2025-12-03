@@ -31,6 +31,7 @@ from ._protocols import (
     RunLogsService,
     RunService,
     SecretService,
+    SettingsService,
     TaskService,
     TriggerService,
 )
@@ -57,6 +58,8 @@ class ClientSet:
         self._secrets_service = secret_pb2_grpc.SecretServiceStub(channel=channel)
         self._identity_service = identity_pb2_grpc.IdentityServiceStub(channel=channel)
         self._trigger_service = trigger_service_pb2_grpc.TriggerServiceStub(channel=channel)
+        # Note: Settings service stub will be initialized once settings_pb2_grpc is available
+        self._settings_service = None  # settings_pb2_grpc.SettingsServiceStub(channel=channel)
 
     @classmethod
     async def for_endpoint(cls, endpoint: str, *, insecure: bool = False, **kwargs) -> ClientSet:
@@ -123,6 +126,10 @@ class ClientSet:
     @property
     def trigger_service(self) -> TriggerService:
         return self._trigger_service
+
+    @property
+    def settings_service(self) -> SettingsService:
+        return self._settings_service
 
     async def close(self, grace: float | None = None):
         return await self._channel.close(grace=grace)

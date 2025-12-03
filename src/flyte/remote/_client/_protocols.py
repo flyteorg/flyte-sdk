@@ -187,3 +187,15 @@ class TriggerService(Protocol):
     async def DeleteTriggers(
         self, request: trigger_service_pb2.DeleteTriggersRequest
     ) -> trigger_service_pb2.DeleteTriggersResponse: ...
+
+
+class SettingsService(Protocol):
+    """Settings service protocol for hierarchical configuration management.
+
+    Note: This assumes the protobuf messages will be available from flyteidl2.settings
+    once the settings.proto file is compiled.
+    """
+
+    async def GetSettings(self, request) -> any: ...
+
+    async def UpdateSettings(self, request) -> any: ...
