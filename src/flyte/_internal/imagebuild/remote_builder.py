@@ -258,11 +258,13 @@ def _get_layers_proto(image: Image, context_path: Path) -> "image_definition_pb2
                     continue
                 packages: typing.Iterable[str] = header.dependencies
                 if header.pyprojects:
-                    layers.append(image_definition_pb2.Layer(
-                        apt_packages=image_definition_pb2.AptPackages(
-                            packages=["git"],
-                        ),
-                    ))
+                    layers.append(
+                        image_definition_pb2.Layer(
+                            apt_packages=image_definition_pb2.AptPackages(
+                                packages=["git"],  # To get the version of the project
+                            ),
+                        )
+                    )
                     docker_ignore_patterns = get_and_list_dockerignore(image)
 
                     for pyproject in header.pyprojects:
@@ -270,7 +272,11 @@ def _get_layers_proto(image: Image, context_path: Path) -> "image_definition_pb2
                         uv_project_layer = image_definition_pb2.Layer(
                             uv_project=image_definition_pb2.UVProject(
                                 pyproject=str(pyproject_dst.relative_to(context_path)),
-                                uvlock=str(copy_files_to_context(Path(pyproject) / "uv.lock", context_path).relative_to(context_path)),
+                                uvlock=str(
+                                    copy_files_to_context(Path(pyproject) / "uv.lock", context_path).relative_to(
+                                        context_path
+                                    )
+                                ),
                                 options=pip_options,
                                 secret_mounts=secret_mounts,
                             )
