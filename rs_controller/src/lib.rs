@@ -5,7 +5,9 @@ pub mod auth;  // Public for use in other crates
 mod informer;
 pub mod proto; // Public for use in other crates
 
+use std::default;
 use std::sync::Arc;
+use std::sync::mpsc::channel;
 use std::time::Duration;
 
 use futures::TryFutureExt;
@@ -18,11 +20,12 @@ use thiserror::Error;
 use crate::action::{Action, ActionType};
 use crate::informer::Informer;
 
-use flyteidl2::flyteidl::common::ActionIdentifier;
+use flyteidl2::flyteidl::common::{ActionIdentifier, ProjectIdentifier};
 use flyteidl2::flyteidl::task::TaskIdentifier;
 use flyteidl2::flyteidl::workflow::state_service_client::StateServiceClient;
 use flyteidl2::flyteidl::workflow::{EnqueueActionRequest, EnqueueActionResponse, TaskAction};
-
+use flyteidl2::flyteidl::task::task_service_client::TaskServiceClient;
+use flyteidl2::flyteidl::task::{list_tasks_request, ListTasksRequest};
 use flyteidl2::flyteidl::workflow::enqueue_action_request;
 use flyteidl2::flyteidl::workflow::queue_service_client::QueueServiceClient;
 use flyteidl2::google;
@@ -36,6 +39,7 @@ use tokio::time::sleep;
 use tonic::transport::Endpoint;
 use tonic::Status;
 use tracing_subscriber::FmtSubscriber;
+use crate::auth::{AuthConfig, AuthInterceptor, ClientCredentialsAuthenticator};
 
 #[derive(Error, Debug)]
 pub enum ControllerError {
@@ -448,6 +452,65 @@ impl BaseController {
         Ok(BaseController(core_base))
     }
 
+    #[classmethod]
+    async fn try_stuff(_cls: &Bound<'_, PyType>) -> PyResult<bool> {
+        use crate::auth::{AuthConfig, AuthInterceptor, ClientCredentialsAuthenticator};
+        use flyteidl2::flyteidl::task::task_service_client::TaskServiceClient;
+        use flyteidl2::flyteidl::task::{ListTasksRequest, list_tasks_request};
+        use flyteidl2::flyteidl::common::ProjectIdentifier;
+        use flyteidl2::flyteidl::common::ListRequest;
+
+        let endpoint_static: &'static str = "dns:///demo.hosted.unionai.cloud";
+        let endpoint = Endpoint::from_static(endpoint_static);
+        let channel = endpoint.connect().await.map_err(ControllerError::from)?;
+
+        let auth_config = AuthConfig {
+            endpoint: "dns:///demo.hosted.unionai.cloud".to_string(),
+            client_id: "union-system-eager".to_string(),
+            client_secret: "".to_string(),
+            scopes: None,
+            audience: None,
+        };
+        let authenticator = Arc::new(ClientCredentialsAuthenticator::new(auth_config));
+        let auth_interceptor = AuthInterceptor::new(authenticator, channel.clone());
+
+        // Create a regular client (no interceptor on construction)
+        let mut task_client = TaskServiceClient::new(channel);
+
+        let list_request_base = ListRequest {
+            limit: 100,
+            ..Default::default()
+        };
+        let req = ListTasksRequest {
+            request: Some(list_request_base),
+            known_filters: vec![],
+            scope_by: Some(list_tasks_request::ScopeBy::ProjectId(ProjectIdentifier {
+                organization: "testorg".to_string(),
+                domain: "development".to_string(),
+                name: "testproject".to_string(),
+            })),
+        };
+
+        // Use the with_auth! macro to make the authenticated call
+        let result = crate::with_auth!(
+            auth_interceptor,
+            task_client,
+            list_tasks,
+            req
+        );
+
+        match result {
+            Ok(response) => {
+                println!("Success: {:?}", response.into_inner());
+                Ok(true)
+            }
+            Err(status) => {
+                eprintln!("Error calling gRPC: {}", status);
+                Err(exceptions::PyRuntimeError::new_err(format!("gRPC error: {}", status)))
+            }
+        }
+    }
+
     /// `async def submit(self, action: Action) -> Action`
     ///
     /// Enqueue `action`.
@@ -491,7 +554,6 @@ impl BaseController {
     }
 }
 
-// use cloudidl::pymodules::cloud_mod;
 
 #[pymodule]
 fn flyte_controller_base(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
