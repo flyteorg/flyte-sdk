@@ -165,6 +165,8 @@ class AppEnvironment(Environment):
             return endpoint_pattern.format(app_fqdn=self.name)
 
         import flyte.remote
+        from flyte._initialize import ensure_client
 
+        ensure_client()
         app = flyte.remote.App.get(name=self.name)
         return app.endpoint

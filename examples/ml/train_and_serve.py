@@ -37,7 +37,7 @@ from xgboost import XGBClassifier
 
 import flyte
 import flyte.io
-from flyte.app import Input, RunOutput
+from flyte.app import Input, Link, RunOutput
 from flyte.app.extras import FastAPIAppEnvironment
 
 logging.basicConfig(level=logging.INFO)
@@ -251,6 +251,7 @@ serving_env = FastAPIAppEnvironment(
     ],
     # NOTE: this is a workaround! apps should have this env var auto-injected by the controller
     secrets=[flyte.Secret(key="UNION_API_KEY", as_env_var="_UNION_EAGER_API_KEY")],
+    links=[Link(path="/docs", title="Swagger Docs", is_relative=True)],
 )
 
 

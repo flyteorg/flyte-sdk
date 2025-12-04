@@ -35,7 +35,7 @@ async def sync_inputs(serialized_inputs: str, dest: str) -> Tuple[dict, dict]:
         The environment variables dictionary maps environment variable names to their values.
     """
     import flyte.storage as storage
-    from flyte.app._input import RunOutput, SerializableInputCollection
+    from flyte.app._input import AppEndpoint, RunOutput, SerializableInputCollection
 
     print(f"Log level: {logger.getEffectiveLevel()} is set from env {os.environ.get('LOG_LEVEL')}", flush=True)
     logger.info("Reading inputs...")
@@ -51,8 +51,11 @@ async def sync_inputs(serialized_inputs: str, dest: str) -> Tuple[dict, dict]:
 
         # handle delayed values from task outputs or run outputs
         if input.is_delayed_value:
+            delayed_value: RunOutput | AppEndpoint
             if input_type == "run_output":
                 delayed_value = RunOutput.model_validate_json(input.value)
+            elif input_type == "endpoint":
+                delayed_value = AppEndpoint.model_validate_json(input.value)
             else:
                 raise ValueError(f"Unknown delayed value type: {input_type}")
 

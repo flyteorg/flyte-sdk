@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import re
 import typing
 from dataclasses import dataclass, field
@@ -13,7 +14,7 @@ from flyte._initialize import requires_initialization
 from flyte.remote._task import AutoVersioning
 
 InputTypes = str | flyte.io.File | flyte.io.Dir
-DelayedInputTypes = Literal["string", "file", "directory"]
+DelayedInputTypes = Literal["string", "file", "directory", "endpoint"]
 
 INPUT_TYPE_MAP = {
     str: "string",
@@ -53,6 +54,12 @@ class _DelayedValue(BaseModel):
 class RunOutput(_DelayedValue):
     """
     Use a run's output for app inputs.
+
+    This enables the declaration of an app input dependency on a the output of
+    a run, givene by a specific run name, or a task name and version. If
+    `task_auto_version == 'latest'`, the latest version of the task will be used.
+    If `task_auto_version == 'current'`, the version will be derived from the callee
+    app or task context.
     """
 
     run_name: str | None = None
@@ -120,6 +127,38 @@ class RunOutput(_DelayedValue):
         return typing.cast(InputTypes, output)
 
 
+class AppEndpoint(_DelayedValue):
+    """
+    Embed an upstream app's endpoint as an app input.
+
+    This enables the declaration of an app input dependency on a the endpoint of
+    an upstream app, given by a specific app name. This gives the app access to
+    the upstream app's endpoint as a public or private url.
+    """
+
+    app_name: str
+    public: bool = False
+    type: Literal["string"] = "string"
+
+    @requires_initialization
+    async def materialize(self) -> str:
+        from flyte.app._app_environment import INTERNAL_APP_ENDPOINT_PATTERN_ENV_VAR
+
+        if self.public:
+            from flyte.remote import App
+
+            app = App.get(self.app_name)
+            return app.endpoint if self.public else app.private_url
+
+        endpoint_pattern = os.getenv(INTERNAL_APP_ENDPOINT_PATTERN_ENV_VAR)
+        if endpoint_pattern is not None:
+            return endpoint_pattern.format(app_fqdn=self.app_name)
+
+        raise ValueError(
+            f"Environment variable {INTERNAL_APP_ENDPOINT_PATTERN_ENV_VAR} is not set to create a private url."
+        )
+
+
 @dataclass
 class Input:
     """
@@ -138,7 +177,7 @@ class Input:
     """
 
     name: str
-    value: InputTypes | RunOutput
+    value: InputTypes | _DelayedValue
     env_var: Optional[str] = None
     download: bool = False
     mount: Optional[str] = None
@@ -159,7 +198,7 @@ class Input:
             self.name = "i0"
 
 
-_SerializedInputType = Literal["file", "directory", "string", "run_output"]
+_SerializedInputType = Literal[DelayedInputTypes, "run_output"]
 
 
 class SerializableInput(BaseModel):
@@ -193,13 +232,13 @@ class SerializableInput(BaseModel):
             value = inp.value.path
             tpe = "directory"
             download = True if inp.mount is not None else inp.download
-        elif isinstance(inp.value, RunOutput):
+        elif isinstance(inp.value, (RunOutput, AppEndpoint)):
             value = inp.value.model_dump_json()
-            tpe = "run_output"
+            tpe = "run_output" if isinstance(inp.value, RunOutput) else "endpoint"
             download = True if inp.mount is not None else inp.download
             is_delayed_value = True
         else:
-            value = inp.value
+            value = typing.cast(str, inp.value)
             download = False
 
         return cls(
