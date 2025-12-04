@@ -26,7 +26,6 @@ import logging
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Optional
 
 import joblib
 import pandas as pd
@@ -253,6 +252,7 @@ serving_env = FastAPIAppEnvironment(
     ],
 )
 
+
 # Request/Response models
 class PenguinFeatures(BaseModel):
     """Input features for penguin classification."""
@@ -337,4 +337,3 @@ if __name__ == "__main__":
     model_file: flyte.io.File = r.outputs()[0]
     app = flyte.with_servecontext(input_values={serving_env.name: {"model": model_file.path}}).serve(serving_env)
     print(app.url)
-

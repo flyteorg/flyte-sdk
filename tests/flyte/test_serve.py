@@ -109,6 +109,7 @@ def test_serve_explicit_interactive_mode_false():
 # Tests for with_servecontext function
 # =============================================================================
 
+
 def test_with_servecontext_passes_all_parameters():
     """
     GOAL: Verify with_servecontext passes all parameters to _Serve.
@@ -467,7 +468,6 @@ def test_with_servecontext_dependent_apps_with_input_overrides():
     the input_values dict correctly updates inputs for both apps.
     """
     import flyte.io
-
     from flyte.app._input import SerializableInputCollection
     from flyte.models import CodeBundle, SerializationContext
 
