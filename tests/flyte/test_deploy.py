@@ -4,8 +4,6 @@ import inspect
 from dataclasses import replace
 from unittest.mock import Mock
 
-import pytest
-
 import flyte
 from flyte._deploy import _get_documentation_entity, _update_interface_inputs_and_outputs_docstring
 from flyte._docstring import Docstring

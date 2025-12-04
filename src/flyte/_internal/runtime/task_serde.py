@@ -57,7 +57,6 @@ def translate_task_to_wire(
         default_inputs=default_inputs,
         short_name=task.short_name[:_MAX_TASK_SHORT_NAME_LENGTH],
         environment=env,
-        # description entity
     )
 
 
