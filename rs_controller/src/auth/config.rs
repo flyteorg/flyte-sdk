@@ -42,6 +42,10 @@ impl AuthConfig {
             .try_into()
             .unwrap();
         let [endpoint, client_id, client_secret, _org] = parts;
+
+        // the api key comes back just with the domain, we add https:// to it for rust rather than dns:///
+        let endpoint = "https://".to_owned() + &endpoint;
+
         Ok(AuthConfig {
             endpoint,
             client_id,

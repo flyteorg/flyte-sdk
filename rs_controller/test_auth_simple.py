@@ -70,7 +70,7 @@ async def main():
     import os
 
     logger.info("Starting Rust controller authentication tests")
-    logger.info(f"CLIENT_SECRET set: {'Yes' if os.getenv('CLIENT_SECRET') else 'No (will use empty string)'}")
+    logger.info(f"CLIENT_SECRET set: {'Yes' if os.getenv('EAGER_API_KEY') else 'No (will use empty string)'}")
 
     # Test 1: Unary call (list tasks)
     result1 = await test_list_tasks()

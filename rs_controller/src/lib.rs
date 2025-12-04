@@ -60,6 +60,7 @@ async fn fetch_amazon_root_ca() -> Result<Certificate, ControllerError> {
 }
 
 // Helper to create TLS-configured endpoint with Amazon CA certificate
+// todo: when we resolve the pem issue, also remove the need to have both inputs which are basically the same
 async fn create_tls_endpoint(url: &'static str, domain: &str) -> Result<Endpoint, ControllerError> {
     // Fetch Amazon root CA dynamically
     let cert = fetch_amazon_root_ca().await?;
@@ -503,17 +504,21 @@ impl BaseController {
             use tonic::Code;
             use tower::ServiceBuilder;
 
-            let endpoint_static: &'static str = "https://demo.hosted.unionai.cloud:443";
-            let endpoint =
-                create_tls_endpoint(endpoint_static, "demo.hosted.unionai.cloud").await?;
-            let channel = endpoint.connect().await.map_err(ControllerError::from)?;
-
             let api_key = std::env::var("EAGER_API_KEY").unwrap_or_else(|_| {
                 warn!("EAGER_API_KEY env var not set, using empty string");
                 String::new()
             });
 
             let auth_config = AuthConfig::new_from_api_key(api_key.as_str())?;
+            let endpoint = auth_config.endpoint.clone();
+            let static_endpoint = endpoint.clone().leak();
+            // Strip "https://" (8 chars) to get just the hostname for TLS config
+            let domain = endpoint.strip_prefix("https://").ok_or_else(|| {
+                ControllerError::SystemError("Endpoint must start with https://".to_string())
+            })?;
+            let endpoint = create_tls_endpoint(static_endpoint, domain).await?;
+            let channel = endpoint.connect().await.map_err(ControllerError::from)?;
+
             let authenticator = Arc::new(ClientCredentialsAuthenticator::new(auth_config));
 
             let auth_handling_channel = ServiceBuilder::new()
@@ -576,31 +581,27 @@ impl BaseController {
 
             info!("Starting watch example with authentication and retry...");
 
-            let endpoint_static: &'static str = "https://demo.hosted.unionai.cloud:443";
-            let endpoint =
-                create_tls_endpoint(endpoint_static, "demo.hosted.unionai.cloud").await?;
-            let channel = endpoint.connect().await.map_err(ControllerError::from)?;
-
-            // Create a SEPARATE channel for auth metadata service calls
-            // This prevents deadlock when middleware tries to fetch credentials
-            let auth_metadata_endpoint =
-                create_tls_endpoint(endpoint_static, "demo.hosted.unionai.cloud").await?;
-            let auth_metadata_channel = auth_metadata_endpoint
-                .connect()
-                .await
-                .map_err(ControllerError::from)?;
-
+            // Read in the api key which gives us the endpoint to connect to as well as the credentials
             let api_key = std::env::var("EAGER_API_KEY").unwrap_or_else(|_| {
                 warn!("EAGER_API_KEY env var not set, using empty string");
                 String::new()
             });
 
             let auth_config = AuthConfig::new_from_api_key(api_key.as_str())?;
+            let endpoint = auth_config.endpoint.clone();
+            let static_endpoint = endpoint.clone().leak();
+            // Strip "https://" (8 chars) to get just the hostname for TLS config
+            let domain = endpoint.strip_prefix("https://").ok_or_else(|| {
+                ControllerError::SystemError("Endpoint must start with https://".to_string())
+            })?;
+            let endpoint = create_tls_endpoint(static_endpoint, domain).await?;
+            let channel = endpoint.connect().await.map_err(ControllerError::from)?;
+
             let authenticator = Arc::new(ClientCredentialsAuthenticator::new(auth_config));
 
             // Wrap channel with auth layer - ALL calls now automatically authenticated!
             let auth_channel = ServiceBuilder::new()
-                .layer(AuthLayer::new(authenticator, auth_metadata_channel))
+                .layer(AuthLayer::new(authenticator, channel.clone()))
                 .service(channel);
 
             let mut client = StateServiceClient::new(auth_channel);
