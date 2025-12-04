@@ -243,7 +243,7 @@ async def _get_documentation_entity(task_template: TaskTemplate) -> task_definit
         short_desc = parse_description(docstring.short_description, 255)
     if docstring and docstring.long_description:
         long_desc = parse_description(docstring.long_description, 2048)
-    if hasattr(task_template.func, "__code__") and task_template.func.__code__:
+    if hasattr(task_template, "func") and hasattr(task_template.func, "__code__") and task_template.func.__code__:
         line_number = (
             task_template.func.__code__.co_firstlineno + 1
         )  # The function definition line number is located at the line after @env.task decorator

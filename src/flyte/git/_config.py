@@ -207,15 +207,16 @@ class GitConfig:
 
         return host
 
-    def _get_file_path(self, path: Path | str) -> Path:
+    def _get_file_path(self, path: Path | str) -> str:
         """Get the path relative to the repository root directory.
 
         :param path: Absolute or relative path to a file
-        :return: Path relative to repo_dir
+        :return: Path relative to repo_dir as string, or empty string if failed
         """
         try:
             path_obj = Path(path).resolve()
-            return path_obj.relative_to(self.repo_dir)
+            relative_path = path_obj.relative_to(self.repo_dir)
+            return str(relative_path)
         except Exception as e:
             logger.warning(f"Failed to get relative path for {path}: {e}")
             return ""
