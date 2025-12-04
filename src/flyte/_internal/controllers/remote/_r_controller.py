@@ -281,7 +281,9 @@ class RemoteController(BaseController):
         if n.phase_value == run_definition_pb2.PHASE_ABORTED:
             n_action_id_pb = identifier_pb2.ActionIdentifier()
             n_action_id_pb.ParseFromString(n.action_id_bytes)
-            logger.warning(f"Action {n_action_id_pb.name} was aborted, aborting current Action {current_action_id.name}")
+            logger.warning(
+                f"Action {n_action_id_pb.name} was aborted, aborting current Action {current_action_id.name}"
+            )
             raise flyte.errors.RunAbortedError(
                 f"Action {n_action_id_pb.name} was aborted, aborting current Action {current_action_id.name}"
             )
@@ -460,6 +462,7 @@ class RemoteController(BaseController):
             if prev_action.has_error():
                 # Deserialize err from bytes
                 from flyteidl2.core import execution_pb2
+
                 err_pb = execution_pb2.ExecutionError()
                 err_pb.ParseFromString(prev_action.err_bytes)
                 exc = convert.convert_error_to_native(err_pb)

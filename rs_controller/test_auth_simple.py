@@ -9,7 +9,6 @@ Usage:
 
 import asyncio
 import logging
-import sys
 
 # Configure logging
 logging.basicConfig(
