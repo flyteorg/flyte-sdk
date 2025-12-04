@@ -37,7 +37,7 @@ class _DelayedValue(BaseModel):
         data["type"] = INPUT_TYPE_MAP.get(data["type"], data["type"])
         return data
 
-    async def get(self) -> InputTypes:
+    async def get(self) -> str:
         value = await self.materialize()
         assert isinstance(value, (str, flyte.io.File, flyte.io.Dir)), (
             f"Materialized value must be a string, file or directory, found {type(value)}"
@@ -83,13 +83,16 @@ class RunOutput(_DelayedValue):
     async def _materialize_with_task_name(self) -> InputTypes:
         from flyte.remote import Run, RunDetails, Task, TaskDetails
 
+        assert self.task_name is not None, "task_name must be provided"
         if self.task_auto_version is not None:
             task_details: TaskDetails = Task.get(
                 self.task_name, version=self.task_version, auto_version=self.task_auto_version
             ).fetch()
             task_version = task_details.version
-        else:
+        elif self.task_version is not None:
             task_version = self.task_version
+        else:
+            raise ValueError("Either task_version or task_auto_version must be provided")
 
         run: Run = next(
             Run.listall(
@@ -104,7 +107,7 @@ class RunOutput(_DelayedValue):
         output = await run_details.outputs()
         for getter in self.getter:
             output = output[getter]
-        return output
+        return typing.cast(InputTypes, output)
 
     async def _materialize_with_run_name(self) -> InputTypes:
         from flyte.remote import Run, RunDetails
@@ -114,7 +117,7 @@ class RunOutput(_DelayedValue):
         output = await run_details.outputs()
         for getter in self.getter:
             output = output[getter]
-        return output
+        return typing.cast(InputTypes, output)
 
 
 @dataclass

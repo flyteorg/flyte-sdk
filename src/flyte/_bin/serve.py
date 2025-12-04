@@ -52,7 +52,7 @@ async def sync_inputs(serialized_inputs: str, dest: str) -> Tuple[dict, dict]:
         # handle delayed values from task outputs or run outputs
         if input.is_delayed_value:
             if input_type == "run_output":
-                delayed_value = RunOutput.model_validate_json(value)
+                delayed_value = RunOutput.model_validate_json(input.value)
             else:
                 raise ValueError(f"Unknown delayed value type: {input_type}")
 

@@ -330,7 +330,7 @@ if __name__ == "__main__":
     )
 
     # train model
-    run = flyte.run(training_pipeline, test_size=0.3, random_state=40)
+    run = flyte.run(training_pipeline, test_size=0.25, random_state=40)
     run.wait()
 
     app = flyte.serve(serving_env)
