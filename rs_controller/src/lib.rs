@@ -504,13 +504,11 @@ impl BaseController {
                 endpoint: "https://demo.hosted.unionai.cloud".to_string(),
                 client_id: "yt-v2-test".to_string(),
                 client_secret,
-                scopes: Some(vec!["all".to_string()]),
-                audience: None,
             };
             let authenticator = Arc::new(ClientCredentialsAuthenticator::new(auth_config));
 
             let auth_channel = ServiceBuilder::new()
-                .layer(AuthLayer::new(authenticator, auth_metadata_channel))
+                .layer(AuthLayer::new(authenticator, channel.clone()))
                 .service(channel);
 
             let mut task_client = TaskServiceClient::new(auth_channel);
@@ -561,7 +559,6 @@ impl BaseController {
             use crate::auth::{AuthConfig, AuthLayer, ClientCredentialsAuthenticator};
             use flyteidl2::flyteidl::common::ActionIdentifier;
             use flyteidl2::flyteidl::common::RunIdentifier;
-            use flyteidl2::flyteidl::workflow::state_service_client::StateServiceClient;
             use flyteidl2::flyteidl::workflow::watch_request::Filter;
             use flyteidl2::flyteidl::workflow::WatchRequest;
             use std::time::Duration;
@@ -592,8 +589,6 @@ impl BaseController {
                 endpoint: "https://demo.hosted.unionai.cloud".to_string(),
                 client_id: "yt-v2-test".to_string(),
                 client_secret,
-                scopes: Some(vec!["all".to_string()]),
-                audience: None,
             };
             let authenticator = Arc::new(ClientCredentialsAuthenticator::new(auth_config));
 
@@ -609,7 +604,7 @@ impl BaseController {
                 org: "demo".to_string(),
                 project: "flytesnacks".to_string(),
                 domain: "development".to_string(),
-                name: "rjg79mbczx7h6kcb9zb4".to_string(),
+                name: "r57jklb4mw4k6bkb2p88".to_string(),
             };
             let parent_action_name = "a0".to_string();
 

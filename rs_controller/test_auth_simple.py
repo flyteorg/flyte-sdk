@@ -73,16 +73,15 @@ async def main():
     logger.info(f"CLIENT_SECRET set: {'Yes' if os.getenv('CLIENT_SECRET') else 'No (will use empty string)'}")
 
     # Test 1: Unary call (list tasks)
-    # result1 = await test_list_tasks()
-    # print(result1)
+    result1 = await test_list_tasks()
+    print(result1)
 
-    # # Test 2: Streaming call (watch)
+    # Test 2: Streaming call (watch)
     result2 = await test_watch()
     print(result2)
 
     # # Summary
-    # logger.info("\n" + "=" * 60)
-    # logger.info("Test Summary")
+    # logger.info("\n" + "=" * 60)    # logger.info("Test Summary")
     # logger.info("=" * 60)
     # logger.info(f"list_tasks (unary): {'✅ PASSED' if result1 else '❌ FAILED'}")
     # logger.info(f"watch (streaming): {'✅ PASSED' if result2 else '❌ FAILED'}")

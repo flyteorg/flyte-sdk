@@ -122,18 +122,15 @@ impl ClientCredentialsAuthenticator {
             }
         };
 
-        debug!(
-            "Client credentials flow with client_id: {}, scopes: {:?}",
-            self.config.client_id, self.config.scopes
-        );
+        debug!("Client credentials flow with client_id: {}", self.config.client_id);
 
         // Request the token
         let token_response = token_client::get_token(
             &oauth2_metadata.token_endpoint,
             &self.config.client_id,
             &self.config.client_secret,
-            self.config.scopes.as_deref(),
-            self.config.audience.as_deref(),
+            Some(client_config.scopes.as_slice()),
+            Some(client_config.audience.as_str()),
             GrantType::ClientCredentials,
         )
         .await?;
@@ -192,6 +189,7 @@ impl ClientCredentialsAuthenticator {
     pub async fn get_header_key(&self) -> String {
         let config_lock = self.client_config.read().await;
         if let Some(cfg) = config_lock.as_ref() {
+            // get rid of this
             cfg.header_key().to_string()
         } else {
             "authorization".to_string()
