@@ -43,6 +43,16 @@ pub struct AuthService<S> {
     channel: Channel,
 }
 
+impl<S: std::fmt::Debug> std::fmt::Debug for AuthService<S> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AuthService")
+            .field("inner", &self.inner)
+            .field("authenticator", &self.authenticator)
+            .field("channel", &"<Channel>")
+            .finish()
+    }
+}
+
 impl<S> Service<http::Request<BoxBody>> for AuthService<S>
 where
     S: Service<http::Request<BoxBody>, Response = http::Response<BoxBody>> + Clone + Send + 'static,

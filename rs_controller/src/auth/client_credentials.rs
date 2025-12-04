@@ -37,6 +37,7 @@ impl Credentials {
 }
 
 /// Client credentials authenticator
+#[derive(Debug)]
 pub struct ClientCredentialsAuthenticator {
     config: AuthConfig,
     credentials: Arc<RwLock<Option<Credentials>>>,

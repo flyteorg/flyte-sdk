@@ -131,15 +131,16 @@ class RemoteController(BaseController):
 
     def __new__(
         cls,
-        endpoint: str,
+        endpoint: str | None = None,
         workers: int = 20,
         max_system_retries: int = 10,
     ):
+        # No endpoint means must have the api key env var
         return super().__new__(cls, endpoint=endpoint)
 
     def __init__(
         self,
-        endpoint: str,
+        endpoint: str | None = None,
         workers: int = 20,
         max_system_retries: int = 10,
     ):

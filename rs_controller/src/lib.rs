@@ -29,14 +29,16 @@ use flyteidl2::flyteidl::task::{list_tasks_request, ListTasksRequest};
 use flyteidl2::flyteidl::workflow::enqueue_action_request;
 use flyteidl2::flyteidl::workflow::queue_service_client::QueueServiceClient;
 use flyteidl2::flyteidl::workflow::state_service_client::StateServiceClient;
-use flyteidl2::flyteidl::workflow::{EnqueueActionRequest, EnqueueActionResponse, TaskAction};
+use flyteidl2::flyteidl::workflow::{EnqueueActionRequest, EnqueueActionResponse, TaskAction, WatchRequest, WatchResponse};
 use flyteidl2::google;
 use google::protobuf::StringValue;
 use pyo3::exceptions;
 use pyo3::types::PyAny;
 use pyo3_async_runtimes::tokio::future_into_py;
 use pyo3_async_runtimes::tokio::get_runtime;
-use tokio::sync::{oneshot, OnceCell};
+use tokio::sync::oneshot;
+use tokio::sync::OnceCell;
+use std::sync::OnceLock;
 use tokio::time::sleep;
 use tonic::transport::{Certificate, ClientTlsConfig, Endpoint};
 use tonic::Status;
@@ -109,37 +111,160 @@ impl From<AuthConfigError> for PyErr {
     }
 }
 
+enum ChannelType {
+    Plain(tonic::transport::Channel),
+    Authenticated(crate::auth::AuthService<tonic::transport::Channel>),
+}
+
+#[derive(Clone, Debug)]
+pub enum StateClient {
+    Plain(StateServiceClient<tonic::transport::Channel>),
+    Authenticated(StateServiceClient<crate::auth::AuthService<tonic::transport::Channel>>),
+}
+
+impl StateClient {
+    pub async fn watch(
+        &mut self,
+        request: impl tonic::IntoRequest<WatchRequest>,
+    ) -> Result<tonic::Response<tonic::codec::Streaming<WatchResponse>>, tonic::Status> {
+        match self {
+            StateClient::Plain(client) => client.watch(request).await,
+            StateClient::Authenticated(client) => client.watch(request).await,
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub enum QueueClient {
+    Plain(QueueServiceClient<tonic::transport::Channel>),
+    Authenticated(QueueServiceClient<crate::auth::AuthService<tonic::transport::Channel>>),
+}
+
+impl QueueClient {
+    pub async fn enqueue_action(
+        &mut self,
+        request: impl tonic::IntoRequest<EnqueueActionRequest>,
+    ) -> Result<tonic::Response<EnqueueActionResponse>, tonic::Status> {
+        match self {
+            QueueClient::Plain(client) => client.enqueue_action(request).await,
+            QueueClient::Authenticated(client) => client.enqueue_action(request).await,
+        }
+    }
+}
+
 struct CoreBaseController {
-    state_client: StateServiceClient<tonic::transport::Channel>,
-    queue_client: QueueServiceClient<tonic::transport::Channel>,
+    channel: ChannelType,
     informer: OnceCell<Arc<Informer>>,
+    state_client_cache: OnceLock<StateClient>,
+    queue_client_cache: OnceLock<QueueClient>,
     shared_queue: mpsc::Sender<Action>,
     rx_of_shared_queue: Arc<tokio::sync::Mutex<mpsc::Receiver<Action>>>,
 }
 
 impl CoreBaseController {
-    pub fn try_new(endpoint: String) -> Result<Arc<Self>, ControllerError> {
-        info!("Creating CoreBaseController with endpoint {:?}", endpoint);
-        // play with taking str slice instead of String instead of intentionally leaking.
+    // Helper methods to get cached clients (constructed once, reused thereafter)
+    fn state_client(&self) -> StateClient {
+        self.state_client_cache.get_or_init(|| {
+            match &self.channel {
+                ChannelType::Plain(ch) => StateClient::Plain(StateServiceClient::new(ch.clone())),
+                ChannelType::Authenticated(ch) => StateClient::Authenticated(StateServiceClient::new(ch.clone())),
+            }
+        }).clone()
+    }
+
+    fn queue_client(&self) -> QueueClient {
+        self.queue_client_cache.get_or_init(|| {
+            match &self.channel {
+                ChannelType::Plain(ch) => QueueClient::Plain(QueueServiceClient::new(ch.clone())),
+                ChannelType::Authenticated(ch) => QueueClient::Authenticated(QueueServiceClient::new(ch.clone())),
+            }
+        }).clone()
+    }
+
+    pub fn new_with_auth() -> Result<Arc<Self>, ControllerError> {
+        use crate::auth::{AuthConfig, AuthLayer, ClientCredentialsAuthenticator};
+        use tower::ServiceBuilder;
+
+        info!("Creating CoreBaseController from _UNION_EAGER_API_KEY env var (with auth)");
+        // Read from env var and use auth
+        let api_key = std::env::var("_UNION_EAGER_API_KEY")
+            .map_err(|_| ControllerError::SystemError(
+                "_UNION_EAGER_API_KEY env var must be provided".to_string()
+            ))?;
+        let auth_config = AuthConfig::new_from_api_key(&api_key).expect("Bad api key");
+        let endpoint_url = auth_config.endpoint.clone();
+
+        let endpoint_static: &'static str = Box::leak(Box::new(endpoint_url.clone().into_boxed_str()));
+        // shared queue
+        let (shared_tx, rx_of_shared_queue) = mpsc::channel::<Action>(64);
+
+        let rt = get_runtime();
+        let channel = rt.block_on(async {
+            // todo: escape hatch for localhost
+            // Strip "https://" to get just the hostname for TLS config
+            let domain = endpoint_url.strip_prefix("https://")
+                .ok_or_else(|| ControllerError::SystemError("Endpoint must start with https:// when using auth".to_string()))?;
+
+            // Create TLS-configured endpoint
+            let endpoint = create_tls_endpoint(endpoint_static, domain).await?;
+            let channel = endpoint.connect().await.map_err(ControllerError::from)?;
+
+            let authenticator = Arc::new(ClientCredentialsAuthenticator::new(auth_config.clone()));
+            let auth_channel = ServiceBuilder::new()
+                .layer(AuthLayer::new(authenticator, channel.clone()))
+                .service(channel);
+
+            Ok::<_, ControllerError>(ChannelType::Authenticated(auth_channel))
+        })?;
+
+        let real_base_controller = CoreBaseController {
+            channel,
+            informer: OnceCell::new(),
+            state_client_cache: OnceLock::new(),
+            queue_client_cache: OnceLock::new(),
+            shared_queue: shared_tx,
+            rx_of_shared_queue: Arc::new(tokio::sync::Mutex::new(rx_of_shared_queue)),
+        };
+
+        let real_base_controller = Arc::new(real_base_controller);
+        // Start the background worker
+        let controller_clone = real_base_controller.clone();
+        rt.spawn(async move {
+            controller_clone.bg_worker().await;
+        });
+        Ok(real_base_controller)
+    }
+
+    pub fn new_without_auth(endpoint: String) -> Result<Arc<Self>, ControllerError> {
         let endpoint_static: &'static str = Box::leak(Box::new(endpoint.clone().into_boxed_str()));
         // shared queue
         let (shared_tx, rx_of_shared_queue) = mpsc::channel::<Action>(64);
 
         let rt = get_runtime();
-        let (state_client, queue_client) = rt.block_on(async {
-            // Need to update to with auth to read API key
-            let endpoint = Endpoint::from_static(endpoint_static);
-            let channel = endpoint.connect().await.map_err(ControllerError::from)?;
-            Ok::<_, ControllerError>((
-                StateServiceClient::new(channel.clone()),
-                QueueServiceClient::new(channel),
-            ))
+        let channel = rt.block_on(async {
+            let chan = if endpoint.starts_with("http://") {
+                let endpoint = Endpoint::from_static(endpoint_static);
+                endpoint.connect().await.map_err(ControllerError::from)?
+            } else if endpoint.starts_with("https://") {
+                // Strip "https://" to get just the hostname for TLS config
+                let domain = endpoint.strip_prefix("https://")
+                    .ok_or_else(|| ControllerError::SystemError("Endpoint must start with https://".to_string()))?;
+
+                // Create TLS-configured endpoint
+                let endpoint = create_tls_endpoint(endpoint_static, domain).await?;
+                endpoint.connect().await.map_err(ControllerError::from)?
+            }
+            else {
+                return Err(ControllerError::SystemError(format!("Malformed endpoint {}", endpoint)));
+            };
+            Ok::<_, ControllerError>(ChannelType::Plain(chan))
         })?;
 
         let real_base_controller = CoreBaseController {
-            state_client,
-            queue_client,
+            channel,
             informer: OnceCell::new(),
+            state_client_cache: OnceLock::new(),
+            queue_client_cache: OnceLock::new(),
             shared_queue: shared_tx,
             rx_of_shared_queue: Arc::new(tokio::sync::Mutex::new(rx_of_shared_queue)),
         };
@@ -393,7 +518,7 @@ impl CoreBaseController {
             let enqueue_request = self
                 .create_enqueue_action_request(action)
                 .expect("Failed to create EnqueueActionRequest");
-            let mut client = self.queue_client.clone();
+            let mut client = self.queue_client();
             // todo: tonic doesn't seem to have wait_for_ready, or maybe the .ready is already doing this.
             let enqueue_result = client.enqueue_action(enqueue_request).await;
             match enqueue_result {
@@ -447,7 +572,7 @@ impl CoreBaseController {
             .get_or_try_init(|| async move {
                 info!("Creating informer set to run_id {:?}", run_id);
                 let inf = Arc::new(Informer::new(
-                    self.state_client.clone(),
+                    self.state_client(),
                     run_id,
                     parent_action_name,
                     self.shared_queue.clone(),
@@ -486,10 +611,15 @@ struct BaseController(Arc<CoreBaseController>);
 #[pymethods]
 impl BaseController {
     #[new]
-    #[pyo3(signature = (*, endpoint))]
-    fn new(endpoint: String) -> PyResult<Self> {
-        info!("Creating controller wrapper with endpoint {:?}", endpoint);
-        let core_base = CoreBaseController::try_new(endpoint)?;
+    #[pyo3(signature = (*, endpoint=None))]
+    fn new(endpoint: Option<String>) -> PyResult<Self> {
+        let core_base = if let Some(ep) = endpoint {
+            info!("Creating controller wrapper with endpoint {:?}", ep);
+            CoreBaseController::new_without_auth(ep)?
+        } else {
+            info!("Creating controller wrapper from _UNION_EAGER_API_KEY env var");
+            CoreBaseController::new_with_auth()?
+        };
         Ok(BaseController(core_base))
     }
 
@@ -504,8 +634,8 @@ impl BaseController {
             use tonic::Code;
             use tower::ServiceBuilder;
 
-            let api_key = std::env::var("EAGER_API_KEY").unwrap_or_else(|_| {
-                warn!("EAGER_API_KEY env var not set, using empty string");
+            let api_key = std::env::var("_UNION_EAGER_API_KEY").unwrap_or_else(|_| {
+                warn!("_UNION_EAGER_API_KEY env var not set, using empty string");
                 String::new()
             });
 
@@ -582,8 +712,8 @@ impl BaseController {
             info!("Starting watch example with authentication and retry...");
 
             // Read in the api key which gives us the endpoint to connect to as well as the credentials
-            let api_key = std::env::var("EAGER_API_KEY").unwrap_or_else(|_| {
-                warn!("EAGER_API_KEY env var not set, using empty string");
+            let api_key = std::env::var("_UNION_EAGER_API_KEY").unwrap_or_else(|_| {
+                warn!("_UNION_EAGER_API_KEY env var not set, using empty string");
                 String::new()
             });
 

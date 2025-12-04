@@ -31,8 +31,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         endpoint: endpoint.clone(),
         client_id,
         client_secret,
-        scopes: None,
-        audience: None,
     };
 
     let authenticator = Arc::new(ClientCredentialsAuthenticator::new(auth_config));
