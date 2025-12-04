@@ -37,6 +37,3 @@ http-body-util = "0.1"
 
 [build-dependencies]
 pyo3 = { version = "0.24", features = ["extension-module", "abi3-py310"] }
-
-# Need to do this for some reason otherwise maturin develop fails horribly
-# export RUSTFLAGS="-C link-arg=-undefined -C link-arg=dynamic_lookup"
