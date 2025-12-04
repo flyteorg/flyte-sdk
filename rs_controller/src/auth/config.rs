@@ -1,5 +1,5 @@
-use base64::{engine, Engine};
 use crate::auth::errors::AuthConfigError;
+use base64::{engine, Engine};
 
 /// Configuration for authentication
 #[derive(Debug, Clone)]
@@ -35,7 +35,12 @@ impl AuthConfig {
             return Err(AuthConfigError::InvalidFormat(split.len()));
         }
 
-        let parts: [String; 4] = split.into_iter().map(String::from).collect::<Vec<_>>().try_into().unwrap();
+        let parts: [String; 4] = split
+            .into_iter()
+            .map(String::from)
+            .collect::<Vec<_>>()
+            .try_into()
+            .unwrap();
         let [endpoint, client_id, client_secret, _org] = parts;
         Ok(AuthConfig {
             endpoint,

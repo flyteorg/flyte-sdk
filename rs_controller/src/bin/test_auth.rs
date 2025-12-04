@@ -5,7 +5,6 @@
 ///   FLYTE_CLIENT_ID=your_id \
 ///   FLYTE_CLIENT_SECRET=your_secret \
 ///   cargo run --bin test_auth
-
 use flyte_controller_base::auth::{AuthConfig, ClientCredentialsAuthenticator};
 use std::env;
 use std::sync::Arc;
@@ -20,12 +19,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("=== Flyte Client Credentials Authentication Test ===\n");
 
-    let endpoint = env::var("FLYTE_ENDPOINT")
-        .unwrap_or_else(|_| "dns:///localhost:8089".to_string());
-    let client_id = env::var("FLYTE_CLIENT_ID")
-        .expect("FLYTE_CLIENT_ID must be set");
-    let client_secret = env::var("FLYTE_CLIENT_SECRET")
-        .expect("FLYTE_CLIENT_SECRET must be set");
+    let endpoint =
+        env::var("FLYTE_ENDPOINT").unwrap_or_else(|_| "dns:///localhost:8089".to_string());
+    let client_id = env::var("FLYTE_CLIENT_ID").expect("FLYTE_CLIENT_ID must be set");
+    let client_secret = env::var("FLYTE_CLIENT_SECRET").expect("FLYTE_CLIENT_SECRET must be set");
 
     println!("Endpoint: {}", endpoint);
     println!("Client ID: {}\n", client_id);

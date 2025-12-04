@@ -42,12 +42,27 @@ use tonic::transport::{Certificate, ClientTlsConfig, Endpoint};
 use tonic::Status;
 use tracing_subscriber::FmtSubscriber;
 
-// Helper to create TLS-configured endpoint with custom CA certificate
-fn create_tls_endpoint(url: &'static str, domain: &str) -> Result<Endpoint, ControllerError> {
-    // Load Amazon certificate chain
-    let cert_pem = std::fs::read_to_string("amazon_chain.pem")
-        .map_err(|e| ControllerError::SystemError(format!("Failed to load certificate: {}", e)))?;
-    let cert = Certificate::from_pem(cert_pem);
+// Fetches Amazon root CA certificate from Amazon Trust Services
+async fn fetch_amazon_root_ca() -> Result<Certificate, ControllerError> {
+    // Amazon Root CA 1 - the main root used by AWS services
+    let url = "https://www.amazontrust.com/repository/AmazonRootCA1.pem";
+
+    let response = reqwest::get(url)
+        .await
+        .map_err(|e| ControllerError::SystemError(format!("Failed to fetch certificate: {}", e)))?;
+
+    let cert_pem = response
+        .text()
+        .await
+        .map_err(|e| ControllerError::SystemError(format!("Failed to read certificate: {}", e)))?;
+
+    Ok(Certificate::from_pem(cert_pem))
+}
+
+// Helper to create TLS-configured endpoint with Amazon CA certificate
+async fn create_tls_endpoint(url: &'static str, domain: &str) -> Result<Endpoint, ControllerError> {
+    // Fetch Amazon root CA dynamically
+    let cert = fetch_amazon_root_ca().await?;
 
     let tls_config = ClientTlsConfig::new()
         .domain_name(domain)
@@ -489,7 +504,8 @@ impl BaseController {
             use tower::ServiceBuilder;
 
             let endpoint_static: &'static str = "https://demo.hosted.unionai.cloud:443";
-            let endpoint = create_tls_endpoint(endpoint_static, "demo.hosted.unionai.cloud")?;
+            let endpoint =
+                create_tls_endpoint(endpoint_static, "demo.hosted.unionai.cloud").await?;
             let channel = endpoint.connect().await.map_err(ControllerError::from)?;
 
             let api_key = std::env::var("EAGER_API_KEY").unwrap_or_else(|_| {
@@ -561,13 +577,14 @@ impl BaseController {
             info!("Starting watch example with authentication and retry...");
 
             let endpoint_static: &'static str = "https://demo.hosted.unionai.cloud:443";
-            let endpoint = create_tls_endpoint(endpoint_static, "demo.hosted.unionai.cloud")?;
+            let endpoint =
+                create_tls_endpoint(endpoint_static, "demo.hosted.unionai.cloud").await?;
             let channel = endpoint.connect().await.map_err(ControllerError::from)?;
 
             // Create a SEPARATE channel for auth metadata service calls
             // This prevents deadlock when middleware tries to fetch credentials
             let auth_metadata_endpoint =
-                create_tls_endpoint(endpoint_static, "demo.hosted.unionai.cloud")?;
+                create_tls_endpoint(endpoint_static, "demo.hosted.unionai.cloud").await?;
             let auth_metadata_channel = auth_metadata_endpoint
                 .connect()
                 .await

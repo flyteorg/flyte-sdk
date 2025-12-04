@@ -123,7 +123,10 @@ impl ClientCredentialsAuthenticator {
             }
         };
 
-        debug!("Client credentials flow with client_id: {}", self.config.client_id);
+        debug!(
+            "Client credentials flow with client_id: {}",
+            self.config.client_id
+        );
 
         // Request the token
         let token_response = token_client::get_token(
@@ -162,7 +165,9 @@ impl ClientCredentialsAuthenticator {
 
         // Need to refresh - acquire write lock
         let mut creds_lock = self.credentials.write().await;
-        tracing::info!("🔐 get_credentials: Got write lock, calling refresh_credentials_internal...");
+        tracing::info!(
+            "🔐 get_credentials: Got write lock, calling refresh_credentials_internal..."
+        );
 
         // Double-check after acquiring write lock (another thread might have refreshed)
         if let Some(creds) = creds_lock.as_ref() {

@@ -1,10 +1,9 @@
+use crate::auth::errors::TokenError;
 use base64::{engine::general_purpose, Engine as _};
 use reqwest;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use crate::auth::errors::TokenError;
 use tracing::debug;
-
 
 #[derive(Debug, Clone, Copy)]
 pub enum GrantType {
