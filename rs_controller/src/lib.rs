@@ -29,16 +29,18 @@ use flyteidl2::flyteidl::task::{list_tasks_request, ListTasksRequest};
 use flyteidl2::flyteidl::workflow::enqueue_action_request;
 use flyteidl2::flyteidl::workflow::queue_service_client::QueueServiceClient;
 use flyteidl2::flyteidl::workflow::state_service_client::StateServiceClient;
-use flyteidl2::flyteidl::workflow::{EnqueueActionRequest, EnqueueActionResponse, TaskAction, WatchRequest, WatchResponse};
+use flyteidl2::flyteidl::workflow::{
+    EnqueueActionRequest, EnqueueActionResponse, TaskAction, WatchRequest, WatchResponse,
+};
 use flyteidl2::google;
 use google::protobuf::StringValue;
 use pyo3::exceptions;
 use pyo3::types::PyAny;
 use pyo3_async_runtimes::tokio::future_into_py;
 use pyo3_async_runtimes::tokio::get_runtime;
+use std::sync::OnceLock;
 use tokio::sync::oneshot;
 use tokio::sync::OnceCell;
-use std::sync::OnceLock;
 use tokio::time::sleep;
 use tonic::transport::{Certificate, ClientTlsConfig, Endpoint};
 use tonic::Status;
@@ -164,21 +166,25 @@ struct CoreBaseController {
 impl CoreBaseController {
     // Helper methods to get cached clients (constructed once, reused thereafter)
     fn state_client(&self) -> StateClient {
-        self.state_client_cache.get_or_init(|| {
-            match &self.channel {
+        self.state_client_cache
+            .get_or_init(|| match &self.channel {
                 ChannelType::Plain(ch) => StateClient::Plain(StateServiceClient::new(ch.clone())),
-                ChannelType::Authenticated(ch) => StateClient::Authenticated(StateServiceClient::new(ch.clone())),
-            }
-        }).clone()
+                ChannelType::Authenticated(ch) => {
+                    StateClient::Authenticated(StateServiceClient::new(ch.clone()))
+                }
+            })
+            .clone()
     }
 
     fn queue_client(&self) -> QueueClient {
-        self.queue_client_cache.get_or_init(|| {
-            match &self.channel {
+        self.queue_client_cache
+            .get_or_init(|| match &self.channel {
                 ChannelType::Plain(ch) => QueueClient::Plain(QueueServiceClient::new(ch.clone())),
-                ChannelType::Authenticated(ch) => QueueClient::Authenticated(QueueServiceClient::new(ch.clone())),
-            }
-        }).clone()
+                ChannelType::Authenticated(ch) => {
+                    QueueClient::Authenticated(QueueServiceClient::new(ch.clone()))
+                }
+            })
+            .clone()
     }
 
     pub fn new_with_auth() -> Result<Arc<Self>, ControllerError> {
@@ -187,14 +193,16 @@ impl CoreBaseController {
 
         info!("Creating CoreBaseController from _UNION_EAGER_API_KEY env var (with auth)");
         // Read from env var and use auth
-        let api_key = std::env::var("_UNION_EAGER_API_KEY")
-            .map_err(|_| ControllerError::SystemError(
-                "_UNION_EAGER_API_KEY env var must be provided".to_string()
-            ))?;
+        let api_key = std::env::var("_UNION_EAGER_API_KEY").map_err(|_| {
+            ControllerError::SystemError(
+                "_UNION_EAGER_API_KEY env var must be provided".to_string(),
+            )
+        })?;
         let auth_config = AuthConfig::new_from_api_key(&api_key).expect("Bad api key");
         let endpoint_url = auth_config.endpoint.clone();
 
-        let endpoint_static: &'static str = Box::leak(Box::new(endpoint_url.clone().into_boxed_str()));
+        let endpoint_static: &'static str =
+            Box::leak(Box::new(endpoint_url.clone().into_boxed_str()));
         // shared queue
         let (shared_tx, rx_of_shared_queue) = mpsc::channel::<Action>(64);
 
@@ -202,8 +210,11 @@ impl CoreBaseController {
         let channel = rt.block_on(async {
             // todo: escape hatch for localhost
             // Strip "https://" to get just the hostname for TLS config
-            let domain = endpoint_url.strip_prefix("https://")
-                .ok_or_else(|| ControllerError::SystemError("Endpoint must start with https:// when using auth".to_string()))?;
+            let domain = endpoint_url.strip_prefix("https://").ok_or_else(|| {
+                ControllerError::SystemError(
+                    "Endpoint must start with https:// when using auth".to_string(),
+                )
+            })?;
 
             // Create TLS-configured endpoint
             let endpoint = create_tls_endpoint(endpoint_static, domain).await?;
@@ -247,15 +258,18 @@ impl CoreBaseController {
                 endpoint.connect().await.map_err(ControllerError::from)?
             } else if endpoint.starts_with("https://") {
                 // Strip "https://" to get just the hostname for TLS config
-                let domain = endpoint.strip_prefix("https://")
-                    .ok_or_else(|| ControllerError::SystemError("Endpoint must start with https://".to_string()))?;
+                let domain = endpoint.strip_prefix("https://").ok_or_else(|| {
+                    ControllerError::SystemError("Endpoint must start with https://".to_string())
+                })?;
 
                 // Create TLS-configured endpoint
                 let endpoint = create_tls_endpoint(endpoint_static, domain).await?;
                 endpoint.connect().await.map_err(ControllerError::from)?
-            }
-            else {
-                return Err(ControllerError::SystemError(format!("Malformed endpoint {}", endpoint)));
+            } else {
+                return Err(ControllerError::SystemError(format!(
+                    "Malformed endpoint {}",
+                    endpoint
+                )));
             };
             Ok::<_, ControllerError>(ChannelType::Plain(chan))
         })?;

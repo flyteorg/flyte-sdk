@@ -281,7 +281,12 @@ async fn informer_main() {
         name: String::from("qdtc266r2z8clscl2lj5"),
     };
 
-    let informer = Arc::new(Informer::new(StateClient::Plain(client), run_id, "a0".to_string(), tx.clone()));
+    let informer = Arc::new(Informer::new(
+        StateClient::Plain(client),
+        run_id,
+        "a0".to_string(),
+        tx.clone(),
+    ));
 
     let watch_task = Informer::start(informer.clone()).await;
 
