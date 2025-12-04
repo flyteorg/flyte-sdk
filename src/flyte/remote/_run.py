@@ -47,6 +47,8 @@ class Run(ToJSONMixin):
     async def listall(
         cls,
         in_phase: Tuple[Phase] | None = None,
+        task_name: str | None = None,
+        task_version: str | None = None,
         created_by_subject: str | None = None,
         sort_by: Tuple[str, Literal["asc", "desc"]] | None = None,
         limit: int = 100,
@@ -55,6 +57,8 @@ class Run(ToJSONMixin):
         Get all runs for the current project and domain.
 
         :param in_phase: Filter runs by one or more phases.
+        :param task_name: Filter runs by task name.
+        :param task_version: Filter runs by task version.
         :param created_by_subject: Filter runs by the subject that created them. (this is not username, but the subject)
         :param sort_by: The sorting criteria for the project list, in the format (field, order).
         :param limit: The maximum number of runs to return.
@@ -65,7 +69,7 @@ class Run(ToJSONMixin):
         sort_pb2 = sorting(sort_by)
         filters = []
         if in_phase:
-            phases = [str(phase_pb2.ActionPhase.Value(f"PHASE_{p.upper()}")) for p in in_phase]
+            phases = [str(phase_pb2.ActionPhase.Value(f"ACTION_PHASE_{p.upper()}")) for p in in_phase]
             logger.debug(f"Fetching run phases: {phases}")
             if len(phases) > 1:
                 filters.append(
@@ -83,6 +87,24 @@ class Run(ToJSONMixin):
                         values=phases[0],
                     ),
                 )
+
+        if task_name:
+            filters.append(
+                list_pb2.Filter(
+                    function=list_pb2.Filter.Function.EQUAL,
+                    field="task_name",
+                    values=[task_name],
+                ),
+            )
+        if task_version:
+            filters.append(
+                list_pb2.Filter(
+                    function=list_pb2.Filter.Function.EQUAL,
+                    field="task_version",
+                    values=[task_version],
+                ),
+            )
+
         filters = filtering(created_by_subject, *filters)
 
         cfg = get_init_config()

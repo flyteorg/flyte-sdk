@@ -16,11 +16,10 @@ from flyteidl2.core import literals_pb2, tasks_pb2
 from google.protobuf.duration_pb2 import Duration
 
 import flyte
-import flyte.errors
 import flyte.io
 from flyte._internal.runtime.resources_serde import get_proto_extended_resources, get_proto_resources
 from flyte._internal.runtime.task_serde import get_security_context, lookup_image_in_cache
-from flyte.app import AppEnvironment, Input, Scaling
+from flyte.app import AppEnvironment, Input, RunOutput, Scaling
 from flyte.models import SerializationContext
 
 
@@ -226,6 +225,8 @@ def translate_inputs(inputs: List[Input]) -> app_definition_pb2.InputList:
             inputs_list.append(app_definition_pb2.Input(name=input.name, string_value=str(input.value.path)))
         elif isinstance(input.value, flyte.io.Dir):
             inputs_list.append(app_definition_pb2.Input(name=input.name, string_value=str(input.value.path)))
+        elif isinstance(input.value, RunOutput):
+            inputs_list.append(app_definition_pb2.Input(name=input.name, string_value=input.value.model_dump_json()))
         else:
             raise ValueError(f"Unsupported input value type: {type(input.value)}")
     return app_definition_pb2.InputList(items=inputs_list)
