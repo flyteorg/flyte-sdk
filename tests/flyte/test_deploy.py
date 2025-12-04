@@ -13,8 +13,7 @@ from flyte._internal.runtime.types_serde import transform_native_to_typed_interf
 from flyte.models import NativeInterface
 
 
-@pytest.mark.asyncio
-async def test_get_description_entity_both_descriptions_truncated():
+def test_get_description_entity_both_descriptions_truncated():
     # Create descriptions that exceed both limits
     env_desc = "a" * 300
     short_desc = "c" * 300
@@ -35,7 +34,7 @@ async def test_get_description_entity_both_descriptions_truncated():
     # Use replace since NativeInterface is frozen
     task_both_exceed.interface = replace(task_both_exceed.interface, docstring=docstring)
 
-    result = await _get_documentation_entity(task_both_exceed)
+    result = _get_documentation_entity(task_both_exceed)
 
     # Verify truncation with ...(tr.) suffix
     assert env.description == "a" * 247 + "...(tr.)"
@@ -46,8 +45,7 @@ async def test_get_description_entity_both_descriptions_truncated():
     assert len(result.long_description) == 2048
 
 
-@pytest.mark.asyncio
-async def test_get_description_entity_none_values():
+def test_get_description_entity_none_values():
     env = flyte.TaskEnvironment(name="test_env", image="python:3.10")
 
     @env.task()
@@ -64,7 +62,7 @@ async def test_get_description_entity_none_values():
     # Use replace since NativeInterface is frozen
     task_no_docstring.interface = replace(task_no_docstring.interface, docstring=docstring)
 
-    result = await _get_documentation_entity(task_no_docstring)
+    result = _get_documentation_entity(task_no_docstring)
 
     # Verify None values are handled correctly
     # Note: protobuf converts None to empty string for string fields

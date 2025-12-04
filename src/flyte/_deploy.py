@@ -225,7 +225,7 @@ async def _deploy_task(
         ) from e
 
 
-async def _get_documentation_entity(task_template: TaskTemplate) -> task_definition_pb2.DocumentationEntity:
+def _get_documentation_entity(task_template: TaskTemplate) -> task_definition_pb2.DocumentationEntity:
     """
     Create a DocumentationEntity with descriptions and source code url.
     Short descriptions are truncated to 255 chars, long descriptions to 2048 chars.
