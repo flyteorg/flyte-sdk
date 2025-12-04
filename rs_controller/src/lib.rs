@@ -21,7 +21,7 @@ use thiserror::Error;
 use crate::action::{Action, ActionType};
 use crate::informer::Informer;
 
-use crate::auth::{AuthConfig, AuthLayer, ClientCredentialsAuthenticator};
+use crate::auth::{AuthConfig, AuthConfigError, AuthLayer, ClientCredentialsAuthenticator};
 use flyteidl2::flyteidl::common::{ActionIdentifier, ProjectIdentifier};
 use flyteidl2::flyteidl::task::task_service_client::TaskServiceClient;
 use flyteidl2::flyteidl::task::TaskIdentifier;
@@ -83,6 +83,12 @@ impl From<tonic::transport::Error> for ControllerError {
 impl From<ControllerError> for PyErr {
     // can better map errors in the future
     fn from(err: ControllerError) -> Self {
+        exceptions::PyRuntimeError::new_err(err.to_string())
+    }
+}
+
+impl From<AuthConfigError> for PyErr {
+    fn from(err: AuthConfigError) -> Self {
         exceptions::PyRuntimeError::new_err(err.to_string())
     }
 }
@@ -486,32 +492,19 @@ impl BaseController {
             let endpoint = create_tls_endpoint(endpoint_static, "demo.hosted.unionai.cloud")?;
             let channel = endpoint.connect().await.map_err(ControllerError::from)?;
 
-            // Create a SEPARATE channel for auth metadata service calls
-            // This prevents deadlock when middleware tries to fetch credentials
-            let auth_metadata_endpoint =
-                create_tls_endpoint(endpoint_static, "demo.hosted.unionai.cloud")?;
-            let auth_metadata_channel = auth_metadata_endpoint
-                .connect()
-                .await
-                .map_err(ControllerError::from)?;
-
-            let client_secret = std::env::var("CLIENT_SECRET").unwrap_or_else(|_| {
-                warn!("CLIENT_SECRET env var not set, using empty string");
+            let api_key = std::env::var("EAGER_API_KEY").unwrap_or_else(|_| {
+                warn!("EAGER_API_KEY env var not set, using empty string");
                 String::new()
             });
 
-            let auth_config = AuthConfig {
-                endpoint: "https://demo.hosted.unionai.cloud".to_string(),
-                client_id: "yt-v2-test".to_string(),
-                client_secret,
-            };
+            let auth_config = AuthConfig::new_from_api_key(api_key.as_str())?;
             let authenticator = Arc::new(ClientCredentialsAuthenticator::new(auth_config));
 
-            let auth_channel = ServiceBuilder::new()
+            let auth_handling_channel = ServiceBuilder::new()
                 .layer(AuthLayer::new(authenticator, channel.clone()))
                 .service(channel);
 
-            let mut task_client = TaskServiceClient::new(auth_channel);
+            let mut task_client = TaskServiceClient::new(auth_handling_channel);
 
             let list_request_base = ListRequest {
                 limit: 100,
@@ -580,16 +573,12 @@ impl BaseController {
                 .await
                 .map_err(ControllerError::from)?;
 
-            let client_secret = std::env::var("CLIENT_SECRET").unwrap_or_else(|_| {
-                warn!("CLIENT_SECRET env var not set, using empty string");
+            let api_key = std::env::var("EAGER_API_KEY").unwrap_or_else(|_| {
+                warn!("EAGER_API_KEY env var not set, using empty string");
                 String::new()
             });
 
-            let auth_config = AuthConfig {
-                endpoint: "https://demo.hosted.unionai.cloud".to_string(),
-                client_id: "yt-v2-test".to_string(),
-                client_secret,
-            };
+            let auth_config = AuthConfig::new_from_api_key(api_key.as_str())?;
             let authenticator = Arc::new(ClientCredentialsAuthenticator::new(auth_config));
 
             // Wrap channel with auth layer - ALL calls now automatically authenticated!

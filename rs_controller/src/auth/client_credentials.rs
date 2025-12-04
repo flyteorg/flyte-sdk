@@ -5,7 +5,8 @@ use tonic::transport::Channel;
 use tracing::{debug, info};
 
 use super::config::{AuthConfig, ClientConfigExt};
-use super::token_client::{self, GrantType, TokenError, TokenResponse};
+use super::errors::TokenError;
+use super::token_client::{self, GrantType, TokenResponse};
 use crate::proto::{
     AuthMetadataServiceClient, OAuth2MetadataRequest, OAuth2MetadataResponse,
     PublicClientAuthConfigRequest, PublicClientAuthConfigResponse,

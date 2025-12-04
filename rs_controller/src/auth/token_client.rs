@@ -2,18 +2,9 @@ use base64::{engine::general_purpose, Engine as _};
 use reqwest;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use thiserror::Error;
+use crate::auth::errors::TokenError;
 use tracing::debug;
 
-#[derive(Error, Debug)]
-pub enum TokenError {
-    #[error("HTTP error: {0}")]
-    HttpError(#[from] reqwest::Error),
-    #[error("Authentication error: {0}")]
-    AuthError(String),
-    #[error("JSON error: {0}")]
-    JsonError(#[from] serde_json::Error),
-}
 
 #[derive(Debug, Clone, Copy)]
 pub enum GrantType {
