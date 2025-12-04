@@ -1,14 +1,19 @@
 #![allow(clippy::too_many_arguments)]
 
 mod action;
+pub mod auth; // Public for use in other crates
 mod informer;
+pub mod proto; // Public for use in other crates
 
+use std::default;
+use std::sync::mpsc::channel;
 use std::sync::Arc;
 use std::time::Duration;
 
 use futures::TryFutureExt;
 use pyo3::prelude::*;
 use tokio::sync::mpsc;
+use tower::ServiceExt;
 use tracing::{debug, error, info, warn};
 
 use thiserror::Error;
@@ -16,24 +21,64 @@ use thiserror::Error;
 use crate::action::{Action, ActionType};
 use crate::informer::Informer;
 
-use flyteidl2::flyteidl::common::ActionIdentifier;
+use crate::auth::{AuthConfig, AuthConfigError, AuthLayer, ClientCredentialsAuthenticator};
+use flyteidl2::flyteidl::common::{ActionIdentifier, ProjectIdentifier};
+use flyteidl2::flyteidl::task::task_service_client::TaskServiceClient;
 use flyteidl2::flyteidl::task::TaskIdentifier;
-use flyteidl2::flyteidl::workflow::state_service_client::StateServiceClient;
-use flyteidl2::flyteidl::workflow::{EnqueueActionRequest, EnqueueActionResponse, TaskAction};
-
+use flyteidl2::flyteidl::task::{list_tasks_request, ListTasksRequest};
 use flyteidl2::flyteidl::workflow::enqueue_action_request;
 use flyteidl2::flyteidl::workflow::queue_service_client::QueueServiceClient;
+use flyteidl2::flyteidl::workflow::state_service_client::StateServiceClient;
+use flyteidl2::flyteidl::workflow::{
+    EnqueueActionRequest, EnqueueActionResponse, TaskAction, WatchRequest, WatchResponse,
+};
 use flyteidl2::google;
 use google::protobuf::StringValue;
 use pyo3::exceptions;
 use pyo3::types::PyAny;
 use pyo3_async_runtimes::tokio::future_into_py;
 use pyo3_async_runtimes::tokio::get_runtime;
-use tokio::sync::{oneshot, OnceCell};
+use std::sync::OnceLock;
+use tokio::sync::oneshot;
+use tokio::sync::OnceCell;
 use tokio::time::sleep;
-use tonic::transport::Endpoint;
+use tonic::transport::{Certificate, ClientTlsConfig, Endpoint};
 use tonic::Status;
 use tracing_subscriber::FmtSubscriber;
+
+// Fetches Amazon root CA certificate from Amazon Trust Services
+async fn fetch_amazon_root_ca() -> Result<Certificate, ControllerError> {
+    // Amazon Root CA 1 - the main root used by AWS services
+    let url = "https://www.amazontrust.com/repository/AmazonRootCA1.pem";
+
+    let response = reqwest::get(url)
+        .await
+        .map_err(|e| ControllerError::SystemError(format!("Failed to fetch certificate: {}", e)))?;
+
+    let cert_pem = response
+        .text()
+        .await
+        .map_err(|e| ControllerError::SystemError(format!("Failed to read certificate: {}", e)))?;
+
+    Ok(Certificate::from_pem(cert_pem))
+}
+
+// Helper to create TLS-configured endpoint with Amazon CA certificate
+// todo: when we resolve the pem issue, also remove the need to have both inputs which are basically the same
+async fn create_tls_endpoint(url: &'static str, domain: &str) -> Result<Endpoint, ControllerError> {
+    // Fetch Amazon root CA dynamically
+    let cert = fetch_amazon_root_ca().await?;
+
+    let tls_config = ClientTlsConfig::new()
+        .domain_name(domain)
+        .ca_certificate(cert);
+
+    let endpoint = Endpoint::from_static(url)
+        .tls_config(tls_config)
+        .map_err(|e| ControllerError::SystemError(format!("TLS config error: {}", e)))?;
+
+    Ok(endpoint)
+}
 
 #[derive(Error, Debug)]
 pub enum ControllerError {
@@ -62,37 +107,178 @@ impl From<ControllerError> for PyErr {
     }
 }
 
+impl From<AuthConfigError> for PyErr {
+    fn from(err: AuthConfigError) -> Self {
+        exceptions::PyRuntimeError::new_err(err.to_string())
+    }
+}
+
+enum ChannelType {
+    Plain(tonic::transport::Channel),
+    Authenticated(crate::auth::AuthService<tonic::transport::Channel>),
+}
+
+#[derive(Clone, Debug)]
+pub enum StateClient {
+    Plain(StateServiceClient<tonic::transport::Channel>),
+    Authenticated(StateServiceClient<crate::auth::AuthService<tonic::transport::Channel>>),
+}
+
+impl StateClient {
+    pub async fn watch(
+        &mut self,
+        request: impl tonic::IntoRequest<WatchRequest>,
+    ) -> Result<tonic::Response<tonic::codec::Streaming<WatchResponse>>, tonic::Status> {
+        match self {
+            StateClient::Plain(client) => client.watch(request).await,
+            StateClient::Authenticated(client) => client.watch(request).await,
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub enum QueueClient {
+    Plain(QueueServiceClient<tonic::transport::Channel>),
+    Authenticated(QueueServiceClient<crate::auth::AuthService<tonic::transport::Channel>>),
+}
+
+impl QueueClient {
+    pub async fn enqueue_action(
+        &mut self,
+        request: impl tonic::IntoRequest<EnqueueActionRequest>,
+    ) -> Result<tonic::Response<EnqueueActionResponse>, tonic::Status> {
+        match self {
+            QueueClient::Plain(client) => client.enqueue_action(request).await,
+            QueueClient::Authenticated(client) => client.enqueue_action(request).await,
+        }
+    }
+}
+
 struct CoreBaseController {
-    state_client: StateServiceClient<tonic::transport::Channel>,
-    queue_client: QueueServiceClient<tonic::transport::Channel>,
+    channel: ChannelType,
     informer: OnceCell<Arc<Informer>>,
+    state_client_cache: OnceLock<StateClient>,
+    queue_client_cache: OnceLock<QueueClient>,
     shared_queue: mpsc::Sender<Action>,
     rx_of_shared_queue: Arc<tokio::sync::Mutex<mpsc::Receiver<Action>>>,
 }
 
 impl CoreBaseController {
-    pub fn try_new(endpoint: String) -> Result<Arc<Self>, ControllerError> {
-        info!("Creating CoreBaseController with endpoint {:?}", endpoint);
-        // play with taking str slice instead of String instead of intentionally leaking.
+    // Helper methods to get cached clients (constructed once, reused thereafter)
+    fn state_client(&self) -> StateClient {
+        self.state_client_cache
+            .get_or_init(|| match &self.channel {
+                ChannelType::Plain(ch) => StateClient::Plain(StateServiceClient::new(ch.clone())),
+                ChannelType::Authenticated(ch) => {
+                    StateClient::Authenticated(StateServiceClient::new(ch.clone()))
+                }
+            })
+            .clone()
+    }
+
+    fn queue_client(&self) -> QueueClient {
+        self.queue_client_cache
+            .get_or_init(|| match &self.channel {
+                ChannelType::Plain(ch) => QueueClient::Plain(QueueServiceClient::new(ch.clone())),
+                ChannelType::Authenticated(ch) => {
+                    QueueClient::Authenticated(QueueServiceClient::new(ch.clone()))
+                }
+            })
+            .clone()
+    }
+
+    pub fn new_with_auth() -> Result<Arc<Self>, ControllerError> {
+        use crate::auth::{AuthConfig, AuthLayer, ClientCredentialsAuthenticator};
+        use tower::ServiceBuilder;
+
+        info!("Creating CoreBaseController from _UNION_EAGER_API_KEY env var (with auth)");
+        // Read from env var and use auth
+        let api_key = std::env::var("_UNION_EAGER_API_KEY").map_err(|_| {
+            ControllerError::SystemError(
+                "_UNION_EAGER_API_KEY env var must be provided".to_string(),
+            )
+        })?;
+        let auth_config = AuthConfig::new_from_api_key(&api_key).expect("Bad api key");
+        let endpoint_url = auth_config.endpoint.clone();
+
+        let endpoint_static: &'static str =
+            Box::leak(Box::new(endpoint_url.clone().into_boxed_str()));
+        // shared queue
+        let (shared_tx, rx_of_shared_queue) = mpsc::channel::<Action>(64);
+
+        let rt = get_runtime();
+        let channel = rt.block_on(async {
+            // todo: escape hatch for localhost
+            // Strip "https://" to get just the hostname for TLS config
+            let domain = endpoint_url.strip_prefix("https://").ok_or_else(|| {
+                ControllerError::SystemError(
+                    "Endpoint must start with https:// when using auth".to_string(),
+                )
+            })?;
+
+            // Create TLS-configured endpoint
+            let endpoint = create_tls_endpoint(endpoint_static, domain).await?;
+            let channel = endpoint.connect().await.map_err(ControllerError::from)?;
+
+            let authenticator = Arc::new(ClientCredentialsAuthenticator::new(auth_config.clone()));
+            let auth_channel = ServiceBuilder::new()
+                .layer(AuthLayer::new(authenticator, channel.clone()))
+                .service(channel);
+
+            Ok::<_, ControllerError>(ChannelType::Authenticated(auth_channel))
+        })?;
+
+        let real_base_controller = CoreBaseController {
+            channel,
+            informer: OnceCell::new(),
+            state_client_cache: OnceLock::new(),
+            queue_client_cache: OnceLock::new(),
+            shared_queue: shared_tx,
+            rx_of_shared_queue: Arc::new(tokio::sync::Mutex::new(rx_of_shared_queue)),
+        };
+
+        let real_base_controller = Arc::new(real_base_controller);
+        // Start the background worker
+        let controller_clone = real_base_controller.clone();
+        rt.spawn(async move {
+            controller_clone.bg_worker().await;
+        });
+        Ok(real_base_controller)
+    }
+
+    pub fn new_without_auth(endpoint: String) -> Result<Arc<Self>, ControllerError> {
         let endpoint_static: &'static str = Box::leak(Box::new(endpoint.clone().into_boxed_str()));
         // shared queue
         let (shared_tx, rx_of_shared_queue) = mpsc::channel::<Action>(64);
 
         let rt = get_runtime();
-        let (state_client, queue_client) = rt.block_on(async {
-            // Need to update to with auth to read API key
-            let endpoint = Endpoint::from_static(endpoint_static);
-            let channel = endpoint.connect().await.map_err(ControllerError::from)?;
-            Ok::<_, ControllerError>((
-                StateServiceClient::new(channel.clone()),
-                QueueServiceClient::new(channel),
-            ))
+        let channel = rt.block_on(async {
+            let chan = if endpoint.starts_with("http://") {
+                let endpoint = Endpoint::from_static(endpoint_static);
+                endpoint.connect().await.map_err(ControllerError::from)?
+            } else if endpoint.starts_with("https://") {
+                // Strip "https://" to get just the hostname for TLS config
+                let domain = endpoint.strip_prefix("https://").ok_or_else(|| {
+                    ControllerError::SystemError("Endpoint must start with https://".to_string())
+                })?;
+
+                // Create TLS-configured endpoint
+                let endpoint = create_tls_endpoint(endpoint_static, domain).await?;
+                endpoint.connect().await.map_err(ControllerError::from)?
+            } else {
+                return Err(ControllerError::SystemError(format!(
+                    "Malformed endpoint {}",
+                    endpoint
+                )));
+            };
+            Ok::<_, ControllerError>(ChannelType::Plain(chan))
         })?;
 
         let real_base_controller = CoreBaseController {
-            state_client,
-            queue_client,
+            channel,
             informer: OnceCell::new(),
+            state_client_cache: OnceLock::new(),
+            queue_client_cache: OnceLock::new(),
             shared_queue: shared_tx,
             rx_of_shared_queue: Arc::new(tokio::sync::Mutex::new(rx_of_shared_queue)),
         };
@@ -346,7 +532,7 @@ impl CoreBaseController {
             let enqueue_request = self
                 .create_enqueue_action_request(action)
                 .expect("Failed to create EnqueueActionRequest");
-            let mut client = self.queue_client.clone();
+            let mut client = self.queue_client();
             // todo: tonic doesn't seem to have wait_for_ready, or maybe the .ready is already doing this.
             let enqueue_result = client.enqueue_action(enqueue_request).await;
             match enqueue_result {
@@ -400,7 +586,7 @@ impl CoreBaseController {
             .get_or_try_init(|| async move {
                 info!("Creating informer set to run_id {:?}", run_id);
                 let inf = Arc::new(Informer::new(
-                    self.state_client.clone(),
+                    self.state_client(),
                     run_id,
                     parent_action_name,
                     self.shared_queue.clone(),
@@ -439,11 +625,273 @@ struct BaseController(Arc<CoreBaseController>);
 #[pymethods]
 impl BaseController {
     #[new]
-    #[pyo3(signature = (*, endpoint))]
-    fn new(endpoint: String) -> PyResult<Self> {
-        info!("Creating controller wrapper with endpoint {:?}", endpoint);
-        let core_base = CoreBaseController::try_new(endpoint)?;
+    #[pyo3(signature = (*, endpoint=None))]
+    fn new(endpoint: Option<String>) -> PyResult<Self> {
+        let core_base = if let Some(ep) = endpoint {
+            info!("Creating controller wrapper with endpoint {:?}", ep);
+            CoreBaseController::new_without_auth(ep)?
+        } else {
+            info!("Creating controller wrapper from _UNION_EAGER_API_KEY env var");
+            CoreBaseController::new_with_auth()?
+        };
         Ok(BaseController(core_base))
+    }
+
+    #[staticmethod]
+    fn try_list_tasks(py: Python<'_>) -> PyResult<Bound<'_, PyAny>> {
+        future_into_py(py, async move {
+            use crate::auth::{AuthConfig, AuthLayer, ClientCredentialsAuthenticator};
+            use flyteidl2::flyteidl::common::ListRequest;
+            use flyteidl2::flyteidl::common::ProjectIdentifier;
+            use flyteidl2::flyteidl::task::task_service_client::TaskServiceClient;
+            use flyteidl2::flyteidl::task::{list_tasks_request, ListTasksRequest};
+            use tonic::Code;
+            use tower::ServiceBuilder;
+
+            let api_key = std::env::var("_UNION_EAGER_API_KEY").unwrap_or_else(|_| {
+                warn!("_UNION_EAGER_API_KEY env var not set, using empty string");
+                String::new()
+            });
+
+            let auth_config = AuthConfig::new_from_api_key(api_key.as_str())?;
+            let endpoint = auth_config.endpoint.clone();
+            let static_endpoint = endpoint.clone().leak();
+            // Strip "https://" (8 chars) to get just the hostname for TLS config
+            let domain = endpoint.strip_prefix("https://").ok_or_else(|| {
+                ControllerError::SystemError("Endpoint must start with https://".to_string())
+            })?;
+            let endpoint = create_tls_endpoint(static_endpoint, domain).await?;
+            let channel = endpoint.connect().await.map_err(ControllerError::from)?;
+
+            let authenticator = Arc::new(ClientCredentialsAuthenticator::new(auth_config));
+
+            let auth_handling_channel = ServiceBuilder::new()
+                .layer(AuthLayer::new(authenticator, channel.clone()))
+                .service(channel);
+
+            let mut task_client = TaskServiceClient::new(auth_handling_channel);
+
+            let list_request_base = ListRequest {
+                limit: 100,
+                ..Default::default()
+            };
+            let req = ListTasksRequest {
+                request: Some(list_request_base),
+                known_filters: vec![],
+                scope_by: Some(list_tasks_request::ScopeBy::ProjectId(ProjectIdentifier {
+                    organization: "demo".to_string(),
+                    domain: "development".to_string(),
+                    name: "flytesnacks".to_string(),
+                })),
+            };
+
+            let mut attempts = 0;
+            let final_result = loop {
+                let result = task_client.list_tasks(req.clone()).await;
+                match result {
+                    Ok(response) => {
+                        println!("Success: {:?}", response.into_inner());
+                        break Ok(true);
+                    }
+                    Err(status) if status.code() == Code::Unauthenticated && attempts < 1 => {
+                        attempts += 1;
+                        continue;
+                    }
+                    Err(status) => {
+                        eprintln!("Error calling gRPC: {}", status);
+                        break Err(exceptions::PyRuntimeError::new_err(format!(
+                            "gRPC error: {}",
+                            status
+                        )));
+                    }
+                }
+            };
+            warn!("Finished try_list_tasks with result {:?}", final_result);
+            final_result
+        })
+    }
+
+    #[staticmethod]
+    fn try_watch(py: Python<'_>) -> PyResult<Bound<'_, PyAny>> {
+        future_into_py(py, async move {
+            use crate::auth::{AuthConfig, AuthLayer, ClientCredentialsAuthenticator};
+            use flyteidl2::flyteidl::common::ActionIdentifier;
+            use flyteidl2::flyteidl::common::RunIdentifier;
+            use flyteidl2::flyteidl::workflow::watch_request::Filter;
+            use flyteidl2::flyteidl::workflow::WatchRequest;
+            use std::time::Duration;
+            use tokio::time::sleep;
+            use tower::ServiceBuilder;
+
+            info!("Starting watch example with authentication and retry...");
+
+            // Read in the api key which gives us the endpoint to connect to as well as the credentials
+            let api_key = std::env::var("_UNION_EAGER_API_KEY").unwrap_or_else(|_| {
+                warn!("_UNION_EAGER_API_KEY env var not set, using empty string");
+                String::new()
+            });
+
+            let auth_config = AuthConfig::new_from_api_key(api_key.as_str())?;
+            let endpoint = auth_config.endpoint.clone();
+            let static_endpoint = endpoint.clone().leak();
+            // Strip "https://" (8 chars) to get just the hostname for TLS config
+            let domain = endpoint.strip_prefix("https://").ok_or_else(|| {
+                ControllerError::SystemError("Endpoint must start with https://".to_string())
+            })?;
+            let endpoint = create_tls_endpoint(static_endpoint, domain).await?;
+            let channel = endpoint.connect().await.map_err(ControllerError::from)?;
+
+            let authenticator = Arc::new(ClientCredentialsAuthenticator::new(auth_config));
+
+            // Wrap channel with auth layer - ALL calls now automatically authenticated!
+            let auth_channel = ServiceBuilder::new()
+                .layer(AuthLayer::new(authenticator, channel.clone()))
+                .service(channel);
+
+            let mut client = StateServiceClient::new(auth_channel);
+
+            // Watch configuration (matching Python example)
+            let run_id = RunIdentifier {
+                org: "demo".to_string(),
+                project: "flytesnacks".to_string(),
+                domain: "development".to_string(),
+                name: "r57jklb4mw4k6bkb2p88".to_string(),
+            };
+            let parent_action_name = "a0".to_string();
+
+            // Retry parameters (matching Python defaults)
+            let min_watch_backoff = Duration::from_secs(1);
+            let max_watch_backoff = Duration::from_secs(30);
+            let max_watch_retries = 10;
+
+            // Watch loop with retry logic (following Python _informer.py pattern)
+            let mut retries = 0;
+            let mut message_count = 0;
+
+            while retries < max_watch_retries {
+                if retries >= 1 {
+                    warn!("Watch retrying, attempt {}/{}", retries, max_watch_retries);
+                }
+
+                // Create watch request
+                let request = WatchRequest {
+                    filter: Some(Filter::ParentActionId(ActionIdentifier {
+                        name: parent_action_name.clone(),
+                        run: Some(run_id.clone()),
+                    })),
+                };
+
+                // Establish the watch stream
+                // The outer retry loop handles failures, middleware handles auth refresh
+                let stream_result = client.watch(request.clone()).await;
+
+                match stream_result {
+                    Ok(response) => {
+                        info!("Successfully established watch stream");
+                        let mut stream = response.into_inner();
+
+                        // Process messages from the stream
+                        loop {
+                            match stream.message().await {
+                                Ok(Some(watch_response)) => {
+                                    // Successfully received a message - reset retry counter
+                                    retries = 0;
+                                    message_count += 1;
+
+                                    // Process the message (enum with ActionUpdate or ControlMessage)
+                                    use flyteidl2::flyteidl::workflow::watch_response::Message;
+                                    match &watch_response.message {
+                                        Some(Message::ControlMessage(control_msg)) => {
+                                            if control_msg.sentinel {
+                                                info!(
+                                                    "Received Sentinel for parent action: {}",
+                                                    parent_action_name
+                                                );
+                                            }
+                                        }
+                                        Some(Message::ActionUpdate(action_update)) => {
+                                            info!(
+                                                "Received action update for: {} (phase: {:?})",
+                                                action_update
+                                                    .action_id
+                                                    .as_ref()
+                                                    .map(|id| id.name.as_str())
+                                                    .unwrap_or("unknown"),
+                                                action_update.phase
+                                            );
+
+                                            if !action_update.output_uri.is_empty() {
+                                                info!("Output URI: {}", action_update.output_uri);
+                                            }
+
+                                            if action_update.phase == 4 {
+                                                // PHASE_FAILED
+                                                if action_update.error.is_some() {
+                                                    error!(
+                                                        "Action failed with error: {:?}",
+                                                        action_update.error
+                                                    );
+                                                }
+                                            }
+                                        }
+                                        None => {
+                                            warn!("Received empty watch response");
+                                        }
+                                    }
+
+                                    // For demo purposes, exit after receiving a few messages
+                                    if message_count >= 50 {
+                                        info!("Received {} messages, exiting demo", message_count);
+                                        return Ok(true);
+                                    }
+                                }
+                                Ok(None) => {
+                                    warn!("Watch stream ended gracefully");
+                                    break; // Stream ended, retry
+                                }
+                                Err(status) => {
+                                    error!("Error receiving message from watch stream: {}", status);
+
+                                    // Check if it's an auth error
+                                    if status.code() == tonic::Code::Unauthenticated {
+                                        warn!("Unauthenticated error - credentials will be refreshed on retry");
+                                    }
+
+                                    break; // Break inner loop to retry
+                                }
+                            }
+                        }
+                    }
+                    Err(status) => {
+                        error!("Failed to establish watch stream: {}", status);
+
+                        if status.code() == tonic::Code::Unauthenticated {
+                            warn!("Unauthenticated error - credentials will be refreshed on retry");
+                        }
+                    }
+                }
+
+                // Increment retry counter and apply exponential backoff
+                retries += 1;
+                if retries < max_watch_retries {
+                    let backoff = min_watch_backoff
+                        .saturating_mul(2_u32.pow(retries as u32))
+                        .min(max_watch_backoff);
+                    warn!("Watch failed, retrying in {:?}...", backoff);
+                    sleep(backoff).await;
+                }
+            }
+
+            // Exceeded max retries
+            error!(
+                "Watch failure retries crossed threshold {}/{}, exiting!",
+                retries, max_watch_retries
+            );
+            Err(exceptions::PyRuntimeError::new_err(format!(
+                "Max watch retries ({}) exceeded",
+                max_watch_retries
+            )))
+        })
     }
 
     /// `async def submit(self, action: Action) -> Action`
@@ -488,8 +936,6 @@ impl BaseController {
         py_fut
     }
 }
-
-// use cloudidl::pymodules::cloud_mod;
 
 #[pymodule]
 fn flyte_controller_base(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {

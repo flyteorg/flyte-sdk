@@ -16,6 +16,8 @@ build-amd64:
 
 CARGO_CACHE_DIR := docker_cargo_cache
 DIST_DIRS       := dist
+# Derive version from git tags, convert to PEP 440 format
+VERSION         := $(shell git describe --tags --always --dirty 2>/dev/null | sed -E 's/^v//; s/(-[0-9]+)-g([0-9a-f]+)/.dev\1+g\2/; s/\.dev-/\.dev/; s/-dirty/.dirty/')
 
 dist-dirs:
 	mkdir -p $(DIST_DIRS) $(CARGO_CACHE_DIR)
@@ -27,6 +29,7 @@ docker run --rm \
   -v $(CLOUD_REPO):/cloud \
   wheel-builder:$(1) /bin/bash -c "\
     cd /io; \
+    sed -i 's/^version = .*/version = \"$(VERSION)\"/' pyproject.toml; \
     /opt/python/cp310-cp310/bin/maturin build --release --find-interpreter --out /io/dist/ \
   "
 endef
@@ -39,10 +42,14 @@ build-wheels-arm64: dist-dirs
 build-wheels-amd64: dist-dirs
 	$(call BUILD_WHEELS_RECIPE,amd64)
 
-build-wheels: build-wheels-arm64 build-wheels-amd64
+clean_dist:
+	rm -rf $(DIST_DIRS)/*whl
 
+build-wheels: clean_dist build-wheels-arm64 build-wheels-amd64
 
 # This is for Mac users, since the other targets won't build macos wheels (only local arch so probably arm64)
 build-wheel-local: dist-dirs
+	@echo "Building version: $(VERSION)"
+	sed -i.bak 's/^version = .*/version = "$(VERSION)"/' pyproject.toml && rm pyproject.toml.bak
 	python -m build --wheel --outdir dist
 

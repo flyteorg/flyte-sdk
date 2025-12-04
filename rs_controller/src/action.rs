@@ -151,11 +151,16 @@ impl Action {
         queue: Option<String>,
     ) -> PyResult<Self> {
         // Deserialize bytes to Rust protobuf types since Python and Rust have different generated protobufs
-        let sub_action_id = ActionIdentifier::decode(sub_action_id_bytes)
-            .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("Failed to decode ActionIdentifier: {}", e)))?;
+        let sub_action_id = ActionIdentifier::decode(sub_action_id_bytes).map_err(|e| {
+            pyo3::exceptions::PyValueError::new_err(format!(
+                "Failed to decode ActionIdentifier: {}",
+                e
+            ))
+        })?;
 
-        let task_spec = TaskSpec::decode(task_spec_bytes)
-            .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("Failed to decode TaskSpec: {}", e)))?;
+        let task_spec = TaskSpec::decode(task_spec_bytes).map_err(|e| {
+            pyo3::exceptions::PyValueError::new_err(format!("Failed to decode TaskSpec: {}", e))
+        })?;
 
         debug!("Creating Action from task for ID {:?}", &sub_action_id);
         Ok(Action {
@@ -198,12 +203,20 @@ impl Action {
         typed_interface_bytes: Option<&[u8]>,
     ) -> PyResult<Self> {
         // Deserialize bytes to Rust protobuf types
-        let action_id = ActionIdentifier::decode(action_id_bytes)
-            .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("Failed to decode ActionIdentifier: {}", e)))?;
+        let action_id = ActionIdentifier::decode(action_id_bytes).map_err(|e| {
+            pyo3::exceptions::PyValueError::new_err(format!(
+                "Failed to decode ActionIdentifier: {}",
+                e
+            ))
+        })?;
 
         let typed_interface = if let Some(bytes) = typed_interface_bytes {
-            Some(TypedInterface::decode(bytes)
-                .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("Failed to decode TypedInterface: {}", e)))?)
+            Some(TypedInterface::decode(bytes).map_err(|e| {
+                pyo3::exceptions::PyValueError::new_err(format!(
+                    "Failed to decode TypedInterface: {}",
+                    e
+                ))
+            })?)
         } else {
             None
         };
@@ -276,5 +289,29 @@ impl Action {
 
     fn has_error(&self) -> bool {
         self.err.is_some() || self.client_err.is_some()
+    }
+
+    /// Get action_id as serialized bytes for Python interop
+    #[getter]
+    fn action_id_bytes(&self) -> PyResult<Vec<u8>> {
+        Ok(self.action_id.encode_to_vec())
+    }
+
+    /// Get err as serialized bytes for Python interop (returns None if no error)
+    #[getter]
+    fn err_bytes(&self) -> Option<Vec<u8>> {
+        self.err.as_ref().map(|e| e.encode_to_vec())
+    }
+
+    /// Get task as serialized bytes for Python interop (returns None if no task)
+    #[getter]
+    fn task_bytes(&self) -> Option<Vec<u8>> {
+        self.task.as_ref().map(|t| t.encode_to_vec())
+    }
+
+    /// Get phase as i32 for Python interop (returns None if no phase)
+    #[getter]
+    fn phase_value(&self) -> Option<i32> {
+        self.phase.map(|p| p as i32)
     }
 }

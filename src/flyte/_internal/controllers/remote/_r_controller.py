@@ -70,17 +70,32 @@ async def handle_action_failure(action: Action, task_name: str) -> Exception:
     Raises:
         Exception: The converted native exception or RuntimeSystemError
     """
-    err = action.err or action.client_err
-    if not err and action.phase == run_definition_pb2.PHASE_FAILED:
+    # Deserialize err from bytes if present
+    from flyteidl2.core import execution_pb2
+
+    err = None
+    if action.err_bytes:
+        err_pb = execution_pb2.ExecutionError()
+        err_pb.ParseFromString(action.err_bytes)
+        err = err_pb
+
+    err = err or action.client_err
+    if not err and action.phase_value == run_definition_pb2.PHASE_FAILED:
         logger.error(f"Server reported failure for action {action.name}, checking error file.")
         try:
-            error_path = io.error_path(f"{action.run_output_base}/{action.action_id.name}/1")
+            # Deserialize action_id to get the name
+            action_id_pb = identifier_pb2.ActionIdentifier()
+            action_id_pb.ParseFromString(action.action_id_bytes)
+            error_path = io.error_path(f"{action.run_output_base}/{action_id_pb.name}/1")
             err = await io.load_error(error_path)
         except Exception as e:
             logger.exception("Failed to load error file", e)
             err = flyte.errors.RuntimeSystemError(type(e).__name__, f"Failed to load error file: {e}")
     else:
-        logger.error(f"Server reported failure for action {action.action_id.name}, error: {err}")
+        # Deserialize action_id to get the name for logging
+        action_id_pb = identifier_pb2.ActionIdentifier()
+        action_id_pb.ParseFromString(action.action_id_bytes)
+        logger.error(f"Server reported failure for action {action_id_pb.name}, error: {err}")
 
     exc = convert.convert_error_to_native(err)
     if not exc:
@@ -116,15 +131,16 @@ class RemoteController(BaseController):
 
     def __new__(
         cls,
-        endpoint: str,
+        endpoint: str | None = None,
         workers: int = 20,
         max_system_retries: int = 10,
     ):
+        # No endpoint means must have the api key env var
         return super().__new__(cls, endpoint=endpoint)
 
     def __init__(
         self,
-        endpoint: str,
+        endpoint: str | None = None,
         workers: int = 20,
         max_system_retries: int = 10,
     ):
@@ -255,34 +271,44 @@ class RemoteController(BaseController):
             logger.info(f"Action for task [{_task.name}] action id: {action.name}, completed!")
         except asyncio.CancelledError:
             # If the action is cancelled, we need to cancel the action on the server as well
-            logger.info(f"Action {action.action_id.name} cancelled, cancelling on server")
+            action_id_pb = identifier_pb2.ActionIdentifier()
+            action_id_pb.ParseFromString(action.action_id_bytes)
+            logger.info(f"Action {action_id_pb.name} cancelled, cancelling on server")
             await self.cancel_action(action)
             raise
 
         # If the action is aborted, we should abort the controller as well
-        if n.phase == run_definition_pb2.PHASE_ABORTED:
-            logger.warning(f"Action {n.action_id.name} was aborted, aborting current Action {current_action_id.name}")
+        if n.phase_value == run_definition_pb2.PHASE_ABORTED:
+            n_action_id_pb = identifier_pb2.ActionIdentifier()
+            n_action_id_pb.ParseFromString(n.action_id_bytes)
+            logger.warning(
+                f"Action {n_action_id_pb.name} was aborted, aborting current Action {current_action_id.name}"
+            )
             raise flyte.errors.RunAbortedError(
-                f"Action {n.action_id.name} was aborted, aborting current Action {current_action_id.name}"
+                f"Action {n_action_id_pb.name} was aborted, aborting current Action {current_action_id.name}"
             )
 
-        if n.phase == run_definition_pb2.PHASE_TIMED_OUT:
+        if n.phase_value == run_definition_pb2.PHASE_TIMED_OUT:
+            n_action_id_pb = identifier_pb2.ActionIdentifier()
+            n_action_id_pb.ParseFromString(n.action_id_bytes)
             logger.warning(
-                f"Action {n.action_id.name} timed out, raising timeout exception Action {current_action_id.name}"
+                f"Action {n_action_id_pb.name} timed out, raising timeout exception Action {current_action_id.name}"
             )
             raise flyte.errors.TaskTimeoutError(
-                f"Action {n.action_id.name} timed out, raising exception in current Action {current_action_id.name}"
+                f"Action {n_action_id_pb.name} timed out, raising exception in current Action {current_action_id.name}"
             )
 
-        if n.has_error() or n.phase == run_definition_pb2.PHASE_FAILED:
-            exc = await handle_action_failure(action, _task.name)
+        if n.has_error() or n.phase_value == run_definition_pb2.PHASE_FAILED:
+            exc = await handle_action_failure(n, _task.name)
             raise exc
 
         if _task.native_interface.outputs:
             if not n.realized_outputs_uri:
+                n_action_id_pb = identifier_pb2.ActionIdentifier()
+                n_action_id_pb.ParseFromString(n.action_id_bytes)
                 raise flyte.errors.RuntimeSystemError(
                     "RuntimeError",
-                    f"Task {n.action_id.name} did not return an output path, but the task has outputs defined.",
+                    f"Task {n_action_id_pb.name} did not return an output path, but the task has outputs defined.",
                 )
             return await load_and_convert_outputs(
                 _task.native_interface, n.realized_outputs_uri, max_bytes=_task.max_inline_io_bytes
@@ -432,15 +458,23 @@ class RemoteController(BaseController):
         if prev_action is None:
             return TraceInfo(func_name, sub_action_id, _interface, inputs_uri), False
 
-        if prev_action.phase == run_definition_pb2.PHASE_FAILED:
+        if prev_action.phase_value == run_definition_pb2.PHASE_FAILED:
             if prev_action.has_error():
-                exc = convert.convert_error_to_native(prev_action.err)
+                # Deserialize err from bytes
+                from flyteidl2.core import execution_pb2
+
+                err_pb = execution_pb2.ExecutionError()
+                err_pb.ParseFromString(prev_action.err_bytes)
+                exc = convert.convert_error_to_native(err_pb)
                 return (
                     TraceInfo(func_name, sub_action_id, _interface, inputs_uri, error=exc),
                     True,
                 )
             else:
-                logger.warning(f"Action {prev_action.action_id.name} failed, but no error was found, re-running trace!")
+                # Deserialize action_id for logging
+                prev_action_id_pb = identifier_pb2.ActionIdentifier()
+                prev_action_id_pb.ParseFromString(prev_action.action_id_bytes)
+                logger.warning(f"Action {prev_action_id_pb.name} failed, but no error was found, re-running trace!")
         elif prev_action.realized_outputs_uri is not None:
             o = await io.load_outputs(prev_action.realized_outputs_uri, max_bytes=MAX_TRACE_BYTES)
             outputs = await convert.convert_outputs_to_native(_interface, o)
@@ -584,19 +618,23 @@ class RemoteController(BaseController):
             logger.info(f"Action for task [{task_name}] action id: {action.name}, completed!")
         except asyncio.CancelledError:
             # If the action is cancelled, we need to cancel the action on the server as well
-            logger.info(f"Action {action.action_id.name} cancelled, cancelling on server")
+            action_id_pb = identifier_pb2.ActionIdentifier()
+            action_id_pb.ParseFromString(action.action_id_bytes)
+            logger.info(f"Action {action_id_pb.name} cancelled, cancelling on server")
             await self.cancel_action(action)
             raise
 
-        if n.has_error() or n.phase == run_definition_pb2.PHASE_FAILED:
-            exc = await handle_action_failure(action, task_name)
+        if n.has_error() or n.phase_value == run_definition_pb2.PHASE_FAILED:
+            exc = await handle_action_failure(n, task_name)
             raise exc
 
         if native_interface.outputs:
             if not n.realized_outputs_uri:
+                n_action_id_pb = identifier_pb2.ActionIdentifier()
+                n_action_id_pb.ParseFromString(n.action_id_bytes)
                 raise flyte.errors.RuntimeSystemError(
                     "RuntimeError",
-                    f"Task {n.action_id.name} did not return an output path, but the task has outputs defined.",
+                    f"Task {n_action_id_pb.name} did not return an output path, but the task has outputs defined.",
                 )
             return await load_and_convert_outputs(native_interface, n.realized_outputs_uri, _task.max_inline_io_bytes)
         return None

@@ -1,5 +1,6 @@
 use crate::action::Action;
 use crate::ControllerError;
+use crate::StateClient;
 
 use flyteidl2::flyteidl::common::ActionIdentifier;
 use flyteidl2::flyteidl::common::RunIdentifier;
@@ -23,7 +24,7 @@ use tracing_subscriber::fmt;
 
 #[derive(Clone, Debug)]
 pub struct Informer {
-    client: StateServiceClient<Channel>,
+    client: StateClient,
     run_id: RunIdentifier,
     action_cache: Arc<RwLock<HashMap<String, Action>>>,
     parent_action_name: String,
@@ -34,7 +35,7 @@ pub struct Informer {
 
 impl Informer {
     pub fn new(
-        client: StateServiceClient<Channel>,
+        client: StateClient,
         run_id: RunIdentifier,
         parent_action_name: String,
         shared_queue: mpsc::Sender<Action>,
@@ -280,7 +281,12 @@ async fn informer_main() {
         name: String::from("qdtc266r2z8clscl2lj5"),
     };
 
-    let informer = Arc::new(Informer::new(client, run_id, "a0".to_string(), tx.clone()));
+    let informer = Arc::new(Informer::new(
+        StateClient::Plain(client),
+        run_id,
+        "a0".to_string(),
+        tx.clone(),
+    ));
 
     let watch_task = Informer::start(informer.clone()).await;
 
