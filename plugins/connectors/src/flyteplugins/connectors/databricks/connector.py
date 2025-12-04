@@ -6,7 +6,6 @@ from dataclasses import dataclass
 from typing import Optional
 
 import aiohttp
-import flyte
 from flyte import logger
 from flyte.connectors import AsyncConnector, ConnectorRegistry, Resource, ResourceMeta
 from flyte.connectors.utils import convert_to_flyte_phase

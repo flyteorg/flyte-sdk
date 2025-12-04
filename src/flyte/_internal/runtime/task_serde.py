@@ -14,7 +14,6 @@ from google.protobuf import duration_pb2, wrappers_pb2
 
 import flyte.errors
 from flyte._cache.cache import VersionParameters, cache_from_request
-from flyte._initialize import get_init_config
 from flyte._logging import logger
 from flyte._pod import _PRIMARY_CONTAINER_NAME_FIELD, PodTemplate
 from flyte._secret import SecretRequest, secrets_from_request

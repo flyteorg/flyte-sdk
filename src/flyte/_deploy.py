@@ -10,9 +10,9 @@ import rich.repr
 from flyteidl2.core import interface_pb2
 
 from flyte._utils.description_parser import parse_description
+from flyte.git import GitConfig
 from flyte.models import NativeInterface, SerializationContext
 from flyte.syncify import syncify
-from flyte.git import GitConfig
 
 from ._environment import Environment
 from ._image import Image
@@ -243,21 +243,17 @@ async def _get_documentation_entity(task_template: TaskTemplate) -> task_definit
         short_desc = parse_description(docstring.short_description, 255)
     if docstring and docstring.long_description:
         long_desc = parse_description(docstring.long_description, 2048)
-    if hasattr(task_template.func, '__code__') and task_template.func.__code__:
-        line_number = task_template.func.__code__.co_firstlineno + 1  # The function definition line number is located at the line after @env.task decorator
+    if hasattr(task_template.func, "__code__") and task_template.func.__code__:
+        line_number = (
+            task_template.func.__code__.co_firstlineno + 1
+        )  # The function definition line number is located at the line after @env.task decorator
         file_path = task_template.func.__code__.co_filename
         git_config = GitConfig()
         if git_config.is_valid:
             # Build git host url and validate
             git_host_url = git_config.build_url(file_path, line_number)
             if git_host_url:
-                # If the url is not valid, we shouldn't send it to the backend
-                is_valid = await GitConfig.is_valid_url(git_host_url)
-                if is_valid:
-                    print(f"the host url is {git_host_url}")
-                    source_code = task_definition_pb2.SourceCode(source_code=git_host_url)
-                else:
-                    logger.warning(f"Invalid git host url: {git_host_url}")
+                source_code = task_definition_pb2.SourceCode(link=git_host_url)
 
     return task_definition_pb2.DocumentationEntity(
         short_description=short_desc,

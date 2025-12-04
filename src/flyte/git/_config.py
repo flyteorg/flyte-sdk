@@ -3,10 +3,9 @@ import subprocess
 from pathlib import Path
 from typing import Dict, Protocol
 
-import httpx
-
 import flyte.config
 from flyte._logging import logger
+
 
 class GitUrlBuilder(Protocol):
     @staticmethod
@@ -34,10 +33,12 @@ class GitlabUrlBuilder(GitUrlBuilder):
             url += f"#L{line_number}"
         return url
 
+
 GIT_URL_BUILDER_REGISTRY: Dict[str, GitUrlBuilder] = {
     GithubUrlBuilder.host_name: GithubUrlBuilder,
     GitlabUrlBuilder.host_name: GitlabUrlBuilder,
 }
+
 
 class GitConfig:
     """Configuration and information about the current Git repository."""
@@ -47,19 +48,19 @@ class GitConfig:
     remote_url: str
     repo_dir: Path
     commit_sha: str
-    branch_name: str
 
     def __init__(self):
         """Initialize all Git-related variables using Git commands.
 
         If Git is not installed or .git does not exist, marks is_valid as False and returns.
+
+        :return: None
         """
         self.is_valid = False
         self.is_tree_clean = False
         self.remote_url = ""
         self.repo_dir = Path.cwd()
         self.commit_sha = ""
-        self.branch_name = ""
 
         try:
             # Check if we're in a git repository and get the root directory
@@ -71,6 +72,7 @@ class GitConfig:
             )
 
             if result.returncode != 0:
+                logger.warning("Not in a git repository or git is not installed")
                 return
 
             self.repo_dir = Path(result.stdout.strip())
@@ -85,6 +87,7 @@ class GitConfig:
             if result.returncode == 0:
                 self.commit_sha = result.stdout.strip()
             else:
+                logger.warning("Failed to get current commit SHA")
                 return
 
             # Check if working tree is clean
@@ -97,15 +100,18 @@ class GitConfig:
             if result.returncode == 0:
                 self.is_tree_clean = len(result.stdout.strip()) == 0
             else:
+                logger.warning("Failed to check if working tree is clean")
                 return
 
             # Get remote URL
             self.remote_url = self._get_remote_url()
             if not self.remote_url:
+                logger.warning("Failed to get remote URL")
                 return
             self.is_valid = True
 
         except Exception as e:
+            logger.debug(f"Failed to initialize GitConfig: {e}")
             self.is_valid = False
 
     def _get_remote_url(self) -> str:
@@ -113,6 +119,8 @@ class GitConfig:
 
         Returns the 'origin' remote push URL if it exists, otherwise returns
         the first remote alphabetically. Converts SSH/Git protocol URLs to HTTPS format.
+
+        :return: The remote push URL in HTTPS format, or empty string if not found
         """
         try:
             # Try to get origin push remote first
@@ -137,7 +145,7 @@ class GitConfig:
 
             if result.returncode == 0:
                 remotes = result.stdout.strip().split("\n")
-                if remotes and remotes[0]:
+                if remotes:
                     # Sort alphabetically and get the first one
                     remotes.sort()
                     first_remote = remotes[0]
@@ -164,10 +172,12 @@ class GitConfig:
         Examples:
             git@github.com:user/repo.git -> https://github.com/user/repo
             https://github.com/user/repo.git -> https://github.com/user/repo
+
+        :param url: The Git URL to normalize
+        :return: The normalized HTTPS URL
         """
         # Remove .git suffix first
-        if url.endswith(".git"):
-            url = url[:-4]
+        url = url.removesuffix(".git")
 
         # Handle SSH format: git@host:path or user@host:path
         if url.startswith("git@"):
@@ -181,11 +191,8 @@ class GitConfig:
     def _get_remote_host(self, url: str) -> str:
         """Get the remote host name from a normalized HTTPS URL.
 
-        Args:
-            url: URL that has been normalized to HTTPS format by _normalize_url_to_https
-
-        Returns:
-            The host name (e.g., "github.com", "gitlab.com")
+        :param url: URL that has been normalized to HTTPS format by _normalize_url_to_https
+        :return: The host name (e.g., "github.com", "gitlab.com")
         """
         parts = url.split("//", 1)
         if len(parts) < 2:
@@ -200,59 +207,51 @@ class GitConfig:
 
         return host
 
-    def get_file_path(self, path: Path | str) -> Path:
+    def _get_file_path(self, path: Path | str) -> Path:
         """Get the path relative to the repository root directory.
 
-        Args:
-            path: Absolute or relative path to a file
-
-        Returns:
-            Path relative to repo_dir
+        :param path: Absolute or relative path to a file
+        :return: Path relative to repo_dir
         """
-        path_obj = Path(path).resolve()
         try:
+            path_obj = Path(path).resolve()
             return path_obj.relative_to(self.repo_dir)
-        except ValueError:
+        except Exception as e:
+            logger.warning(f"Failed to get relative path for {path}: {e}")
             return ""
 
     def build_url(self, path: Path | str, line_number: int) -> str:
-        """Build a git URL for the given path."""
+        """Build a git URL for the given path.
+
+        :param path: Path to a file
+        :param line_number: Line number of the code file
+        :return: Path relative to repo_dir
+        """
         if not self.is_valid:
+            logger.warning("GitConfig is not valid, cannot build URL")
             return ""
         host_name = self._get_remote_host(self.remote_url)
-        git_file_path = self.get_file_path(path)
-        if not host_name or not git_file_path:
+        git_file_path = self._get_file_path(path)
+        if not host_name:
+            logger.warning(f"Failed to extract host name from remote URL: {self.remote_url}")
+            return ""
+        if not git_file_path:
             return ""
         builder = GIT_URL_BUILDER_REGISTRY.get(host_name)
         if not builder:
+            logger.warning(f"URL builder for {host_name} is not implemented")
             return ""
         url = builder.build_url(self.remote_url, git_file_path, self.commit_sha, line_number, self.is_tree_clean)
         return url
-
-    @staticmethod
-    async def is_valid_url(url: str) -> bool:
-        """Validate a git URL by sending an HTTP request.
-
-        Args:
-            url: The URL to validate
-
-        Returns:
-            True if the URL returns a success response, False otherwise
-        """
-        try:
-            async with httpx.AsyncClient() as client:
-                response = await client.get(url, follow_redirects=True, timeout=5.0)
-                if not response.is_success:
-                    return False
-                return True
-        except Exception as e:
-            return False
 
 
 def config_from_root(path: pathlib.Path | str = ".flyte/config.yaml") -> flyte.config.Config | None:
     """Get the config file from the git root directory.
 
     By default, the config file is expected to be in `.flyte/config.yaml` in the git root directory.
+
+    :param path: Path to the config file relative to git root directory (default: ".flyte/config.yaml")
+    :return: Config object if found, None otherwise
     """
     try:
         result = subprocess.run(["git", "rev-parse", "--show-toplevel"], check=False, capture_output=True, text=True)
