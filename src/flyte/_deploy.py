@@ -10,7 +10,7 @@ import rich.repr
 from flyteidl2.core import interface_pb2
 
 from flyte._utils.description_parser import parse_description
-from flyte.git import GitConfig
+from flyte.git import GitStatus
 from flyte.models import NativeInterface, SerializationContext
 from flyte.syncify import syncify
 
@@ -248,10 +248,10 @@ def _get_documentation_entity(task_template: TaskTemplate) -> task_definition_pb
             task_template.func.__code__.co_firstlineno + 1
         )  # The function definition line number is located at the line after @env.task decorator
         file_path = task_template.func.__code__.co_filename
-        git_config = GitConfig()
-        if git_config.is_valid:
-            # Build git host url and validate
-            git_host_url = git_config.build_url(file_path, line_number)
+        git_status = GitStatus.from_current_repo()
+        if git_status.is_valid:
+            # Build git host url
+            git_host_url = git_status.build_url(file_path, line_number)
             if git_host_url:
                 source_code = task_definition_pb2.SourceCode(link=git_host_url)
 

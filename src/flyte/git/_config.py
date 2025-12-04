@@ -40,7 +40,7 @@ GIT_URL_BUILDER_REGISTRY: Dict[str, GitUrlBuilder] = {
 }
 
 
-class GitConfig:
+class GitStatus:
     """Configuration and information about the current Git repository."""
 
     is_valid: bool
@@ -49,19 +49,37 @@ class GitConfig:
     repo_dir: Path
     commit_sha: str
 
-    def __init__(self):
-        """Initialize all Git-related variables using Git commands.
+    def __init__(
+        self,
+        is_valid: bool = False,
+        is_tree_clean: bool = False,
+        remote_url: str = "",
+        repo_dir: Path | None = None,
+        commit_sha: str = "",
+    ):
+        """Initialize GitStatus with provided values.
 
-        If Git is not installed or .git does not exist, marks is_valid as False and returns.
-
+        :param is_valid: Whether git repository is valid
+        :param is_tree_clean: Whether working tree is clean
+        :param remote_url: Remote URL in HTTPS format
+        :param repo_dir: Repository root directory
+        :param commit_sha: Current commit SHA
         :return: None
         """
-        self.is_valid = False
-        self.is_tree_clean = False
-        self.remote_url = ""
-        self.repo_dir = Path.cwd()
-        self.commit_sha = ""
+        self.is_valid = is_valid
+        self.is_tree_clean = is_tree_clean
+        self.remote_url = remote_url
+        self.repo_dir = repo_dir or Path.cwd()
+        self.commit_sha = commit_sha
 
+    @classmethod
+    def from_current_repo(cls) -> "GitStatus":
+        """Discover git information from the current repository.
+
+        If Git is not installed or .git does not exist, returns GitStatus with is_valid=False.
+
+        :return: GitStatus instance with discovered git information
+        """
         try:
             # Check if we're in a git repository and get the root directory
             result = subprocess.run(
@@ -73,9 +91,9 @@ class GitConfig:
 
             if result.returncode != 0:
                 logger.warning("Not in a git repository or git is not installed")
-                return
+                return cls()
 
-            self.repo_dir = Path(result.stdout.strip())
+            repo_dir = Path(result.stdout.strip())
 
             # Get current commit SHA
             result = subprocess.run(
@@ -85,10 +103,10 @@ class GitConfig:
                 text=True,
             )
             if result.returncode == 0:
-                self.commit_sha = result.stdout.strip()
+                commit_sha = result.stdout.strip()
             else:
                 logger.warning("Failed to get current commit SHA")
-                return
+                return cls(repo_dir=repo_dir)
 
             # Check if working tree is clean
             result = subprocess.run(
@@ -98,21 +116,29 @@ class GitConfig:
                 text=True,
             )
             if result.returncode == 0:
-                self.is_tree_clean = len(result.stdout.strip()) == 0
+                is_tree_clean = len(result.stdout.strip()) == 0
             else:
                 logger.warning("Failed to check if working tree is clean")
-                return
+                return cls(repo_dir=repo_dir, commit_sha=commit_sha)
 
             # Get remote URL
-            self.remote_url = self._get_remote_url()
-            if not self.remote_url:
+            instance = cls(repo_dir=repo_dir, commit_sha=commit_sha, is_tree_clean=is_tree_clean)
+            remote_url = instance._get_remote_url()
+            if not remote_url:
                 logger.warning("Failed to get remote URL")
-                return
-            self.is_valid = True
+                return cls(repo_dir=repo_dir, commit_sha=commit_sha, is_tree_clean=is_tree_clean)
+
+            return cls(
+                is_valid=True,
+                is_tree_clean=is_tree_clean,
+                remote_url=remote_url,
+                repo_dir=repo_dir,
+                commit_sha=commit_sha,
+            )
 
         except Exception as e:
-            logger.debug(f"Failed to initialize GitConfig: {e}")
-            self.is_valid = False
+            logger.debug(f"Failed to discover git repository: {e}")
+            return cls()
 
     def _get_remote_url(self) -> str:
         """Get the remote push URL.
