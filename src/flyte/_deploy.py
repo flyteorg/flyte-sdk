@@ -171,7 +171,7 @@ async def _deploy_task(
             spec.environment.description = env.description
 
         # Insert documentation entity into task spec
-        documentation_entity = await _get_documentation_entity(task)
+        documentation_entity = _get_documentation_entity(task)
         spec.documentation.CopyFrom(documentation_entity)
 
         # Update inputs and outputs descriptions from docstring
