@@ -240,7 +240,7 @@ def test_app_environment_container_cmd_custom_command():
         name="app-custom-cmd-list",
         image=Image.from_base("python:3.11"),
         command=["python", "app.py"],
-        inputs=[Input(value="config.yaml")],  # Inputs should be ignored with custom command
+        inputs=[Input(value="config.yaml", name="config")],  # Inputs should be ignored with custom command
     )
 
     ctx = SerializationContext(
@@ -779,3 +779,241 @@ def test_app_environment_multiple_links():
     assert app_env.links[0].path == "/"
     assert app_env.links[2].is_relative is False
     assert app_env.links[2].path == "https://external.com"
+
+
+def test_app_environment_serialize_inputs_with_overrides():
+    """
+    GOAL: Verify that _serialize_inputs correctly uses input_overrides when provided.
+
+    Tests that:
+    - When input_overrides is provided, the overridden values are serialized
+    - When input_overrides is None, the original inputs are serialized
+    - Overrides only affect the value field, other properties are preserved
+    """
+    from flyte.app._input import SerializableInputCollection
+
+    app_env = AppEnvironment(
+        name="app-with-inputs",
+        image=Image.from_base("python:3.11"),
+        inputs=[
+            Input(value="original-config.yaml", name="config", env_var="CONFIG_PATH"),
+            Input(value="original-data.csv", name="data"),
+            Input(value="s3://original-bucket/model.pkl", name="model", download=True),
+        ],
+    )
+
+    # Test without overrides - should use original values
+    serialized_no_override = app_env._serialize_inputs(input_overrides=None)
+    deserialized = SerializableInputCollection.from_transport(serialized_no_override)
+    assert deserialized.inputs[0].value == "original-config.yaml"
+    assert deserialized.inputs[1].value == "original-data.csv"
+    assert deserialized.inputs[2].value == "s3://original-bucket/model.pkl"
+
+    # Test with overrides - should use overridden values
+    from dataclasses import replace
+
+    input_overrides = [
+        replace(app_env.inputs[0], value="overridden-config.yaml"),
+        replace(app_env.inputs[1], value="overridden-data.csv"),
+        replace(app_env.inputs[2], value="s3://new-bucket/model.pkl"),
+    ]
+
+    serialized_with_override = app_env._serialize_inputs(input_overrides=input_overrides)
+    deserialized_override = SerializableInputCollection.from_transport(serialized_with_override)
+
+    # Verify overridden values
+    assert deserialized_override.inputs[0].value == "overridden-config.yaml"
+    assert deserialized_override.inputs[0].name == "config"  # Name preserved
+    assert deserialized_override.inputs[0].env_var == "CONFIG_PATH"  # env_var preserved
+
+    assert deserialized_override.inputs[1].value == "overridden-data.csv"
+    assert deserialized_override.inputs[1].name == "data"
+
+    assert deserialized_override.inputs[2].value == "s3://new-bucket/model.pkl"
+    assert deserialized_override.inputs[2].name == "model"
+
+
+def test_app_environment_serialize_inputs_partial_overrides():
+    """
+    GOAL: Verify that partial overrides work correctly with _serialize_inputs.
+
+    Tests that when only some inputs are overridden, the non-overridden inputs
+    retain their original values.
+    """
+    from dataclasses import replace
+
+    from flyte.app._input import SerializableInputCollection
+
+    app_env = AppEnvironment(
+        name="app-partial-override",
+        image=Image.from_base("python:3.11"),
+        inputs=[
+            Input(value="original-file1.txt", name="file1"),
+            Input(value="original-file2.txt", name="file2"),
+            Input(value="original-file3.txt", name="file3"),
+        ],
+    )
+
+    # Only override the middle input
+    input_overrides = [
+        app_env.inputs[0],  # Keep original
+        replace(app_env.inputs[1], value="overridden-file2.txt"),  # Override
+        app_env.inputs[2],  # Keep original
+    ]
+
+    serialized = app_env._serialize_inputs(input_overrides=input_overrides)
+    deserialized = SerializableInputCollection.from_transport(serialized)
+
+    assert deserialized.inputs[0].value == "original-file1.txt"
+    assert deserialized.inputs[1].value == "overridden-file2.txt"
+    assert deserialized.inputs[2].value == "original-file3.txt"
+
+
+def test_app_environment_container_cmd_with_input_overrides():
+    """
+    GOAL: Verify that container_cmd correctly uses input_overrides parameter.
+
+    Tests that:
+    - input_overrides are passed to _serialize_inputs
+    - The resulting command contains the overridden input values
+    - Other command components (version, project, domain, etc.) are unaffected
+    """
+    from dataclasses import replace
+
+    from flyte.app._input import SerializableInputCollection
+
+    app_env = AppEnvironment(
+        name="app-cmd-override",
+        image=Image.from_base("python:3.11"),
+        inputs=[
+            Input(value="original-config.yaml", name="config"),
+            Input(value="s3://original-bucket/data", name="data"),
+        ],
+    )
+
+    ctx = SerializationContext(
+        org="test-org",
+        project="test-project",
+        domain="test-domain",
+        version="v1.0.0",
+        code_bundle=CodeBundle(computed_version="v1.0.0", tgz="s3://bucket/code.tgz"),
+    )
+
+    # Generate command with overrides
+    input_overrides = [
+        replace(app_env.inputs[0], value="new-config.yaml"),
+        replace(app_env.inputs[1], value="s3://new-bucket/data"),
+    ]
+
+    cmd = app_env.container_cmd(ctx, input_overrides=input_overrides)
+
+    # Verify command structure is correct
+    assert cmd[0] == "fserve"
+    assert "--inputs" in cmd
+    assert "--version" in cmd
+    assert "v1.0.0" in cmd
+
+    # Extract and verify serialized inputs contain overridden values
+    inputs_idx = cmd.index("--inputs")
+    serialized = cmd[inputs_idx + 1]
+    deserialized = SerializableInputCollection.from_transport(serialized)
+
+    assert deserialized.inputs[0].value == "new-config.yaml"
+    assert deserialized.inputs[1].value == "s3://new-bucket/data"
+
+
+def test_app_environment_container_cmd_no_override_uses_original():
+    """
+    GOAL: Verify that container_cmd uses original inputs when no overrides provided.
+
+    Tests that when input_overrides is None or not provided, the container_cmd
+    serializes the original input values.
+    """
+    from flyte.app._input import SerializableInputCollection
+
+    app_env = AppEnvironment(
+        name="app-no-override",
+        image=Image.from_base("python:3.11"),
+        inputs=[
+            Input(value="my-config.yaml", name="config"),
+        ],
+    )
+
+    ctx = SerializationContext(
+        org="test-org",
+        project="test-project",
+        domain="test-domain",
+        version="v1.0.0",
+        code_bundle=CodeBundle(computed_version="v1.0.0", tgz="s3://bucket/code.tgz"),
+    )
+
+    # Generate command without overrides (default)
+    cmd = app_env.container_cmd(ctx)
+
+    # Extract and verify serialized inputs contain original values
+    inputs_idx = cmd.index("--inputs")
+    serialized = cmd[inputs_idx + 1]
+    deserialized = SerializableInputCollection.from_transport(serialized)
+
+    assert deserialized.inputs[0].value == "my-config.yaml"
+
+
+def test_app_environment_container_cmd_with_file_dir_input_overrides():
+    """
+    GOAL: Verify that File and Dir input overrides work correctly in container_cmd.
+
+    Tests that when File/Dir inputs are overridden with new File/Dir values,
+    the serialization correctly handles the new paths and types.
+    """
+    from dataclasses import replace
+
+    from flyte.app._input import SerializableInputCollection
+    from flyte.io import Dir, File
+
+    original_file = File(path="s3://original-bucket/original-file.txt")
+    original_dir = Dir(path="s3://original-bucket/original-dir")
+
+    app_env = AppEnvironment(
+        name="app-file-dir-override",
+        image=Image.from_base("python:3.11"),
+        inputs=[
+            Input(value=original_file, name="myfile", mount="/mnt/file"),
+            Input(value=original_dir, name="mydir", mount="/mnt/dir"),
+        ],
+    )
+
+    ctx = SerializationContext(
+        org="test-org",
+        project="test-project",
+        domain="test-domain",
+        version="v1.0.0",
+        code_bundle=CodeBundle(computed_version="v1.0.0", tgz="s3://bucket/code.tgz"),
+    )
+
+    # Create overrides with new File/Dir paths
+    new_file = File(path="s3://new-bucket/new-file.txt")
+    new_dir = Dir(path="s3://new-bucket/new-dir")
+
+    input_overrides = [
+        replace(app_env.inputs[0], value=new_file),
+        replace(app_env.inputs[1], value=new_dir),
+    ]
+
+    cmd = app_env.container_cmd(ctx, input_overrides=input_overrides)
+
+    # Extract and verify serialized inputs
+    inputs_idx = cmd.index("--inputs")
+    serialized = cmd[inputs_idx + 1]
+    deserialized = SerializableInputCollection.from_transport(serialized)
+
+    # Verify file override
+    assert deserialized.inputs[0].name == "myfile"
+    assert deserialized.inputs[0].value == "s3://new-bucket/new-file.txt"
+    assert deserialized.inputs[0].type == "file"
+    assert deserialized.inputs[0].download is True  # mount implies download
+
+    # Verify dir override
+    assert deserialized.inputs[1].name == "mydir"
+    assert deserialized.inputs[1].value == "s3://new-bucket/new-dir"
+    assert deserialized.inputs[1].type == "directory"
+    assert deserialized.inputs[1].download is True
