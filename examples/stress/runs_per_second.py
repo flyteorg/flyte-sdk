@@ -21,15 +21,15 @@ downstream_env = flyte.TaskEnvironment(
         concurrency=10,
         scaledown_ttl=60,
     ),
-    image=flyte.Image.from_debian_base(install_flyte=False).with_pip_packages(
-        "unionai-reuse==0.1.7", "flyte>2.0.0b22", pre=True
+    image=flyte.Image.from_debian_base().with_pip_packages(
+        "unionai-reuse==0.1.9",
     ),
 )
 
 
 @downstream_env.task
 async def sleeper(x: int) -> int:
-    await asyncio.sleep(1.0)
+    await asyncio.sleep(5.0)
     return x
 
 
@@ -199,7 +199,16 @@ async def runs_per_second(max_rps: int = 50, n: int = 500):
     await flyte.report.flush.aio()
 
 
+@env.task
+async def main(n: int, max_per_n: int):
+    await runs_per_second.override(short_name="primer")(max_rps=1, n=1)
+    coros = []
+    for run_number in range(n):
+        coros.append(runs_per_second(max_rps=10, n=max_per_n))
+    await asyncio.gather(*coros)
+
+
 if __name__ == "__main__":
     flyte.init_from_config()
-    run = flyte.run(runs_per_second, max_rps=10, n=50)
+    run = flyte.run(main, n=100, max_per_n=100)
     print(run.url)
