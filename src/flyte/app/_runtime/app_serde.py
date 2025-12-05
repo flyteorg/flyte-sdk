@@ -19,9 +19,9 @@ import flyte
 import flyte.io
 from flyte._internal.runtime.resources_serde import get_proto_extended_resources, get_proto_resources
 from flyte._internal.runtime.task_serde import get_security_context, lookup_image_in_cache
+from flyte.syncify import syncify
 from flyte.app import AppEndpoint, AppEnvironment, Input, RunOutput, Scaling
 from flyte.models import SerializationContext
-from flyte.syncify import syncify
 
 
 def get_proto_container(
@@ -233,6 +233,7 @@ async def translate_inputs(inputs: List[Input]) -> app_definition_pb2.InputList:
     return app_definition_pb2.InputList(items=inputs_list)
 
 
+@syncify
 async def translate_app_env_to_idl(
     app_env: AppEnvironment,
     serialization_context: SerializationContext,

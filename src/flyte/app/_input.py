@@ -35,7 +35,8 @@ class _DelayedValue(BaseModel):
     @model_validator(mode="before")
     @classmethod
     def check_type(cls, data: typing.Any) -> typing.Any:
-        data["type"] = INPUT_TYPE_MAP.get(data["type"], data["type"])
+        if "type" in data:
+            data["type"] = INPUT_TYPE_MAP.get(data["type"], data["type"])
         return data
 
     async def get(self) -> str:
@@ -190,8 +191,8 @@ class Input:
         if self.env_var is not None and env_name_re.match(self.env_var) is None:
             raise ValueError(f"env_var ({self.env_var}) is not a valid environment name for shells")
 
-        if self.value and not isinstance(self.value, (str, flyte.io.File, flyte.io.Dir, RunOutput)):
-            raise TypeError(f"Expected value to be of type str, file or dir, got {type(self.value)}")
+        if self.value and not isinstance(self.value, (str, flyte.io.File, flyte.io.Dir, RunOutput, AppEndpoint)):
+            raise TypeError(f"Expected value to be of type str, file, dir, RunOutput or AppEndpoint, got {type(self.value)}")
 
         if self.name is None:
             self.name = "i0"
