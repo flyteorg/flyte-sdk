@@ -32,6 +32,8 @@ def copy_files_to_context(src: Path, context_path: Path, ignore_patterns: list[s
         ignore_patterns = list(set(ignore_patterns + default_ignore_patterns))
         shutil.copytree(src, dst_path, dirs_exist_ok=True, ignore=shutil.ignore_patterns(*ignore_patterns))
     else:
+        print("src", src)
+        print("dst_path", dst_path)
         shutil.copy(src, dst_path)
     return dst_path
 
