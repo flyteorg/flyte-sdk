@@ -156,6 +156,7 @@ async def _validate_configuration(image: Image) -> Tuple[str, Optional[str]]:
     context_path = tmp_path / "build.uc-image-builder"
     context_path.mkdir(exist_ok=True)
 
+    print("context_path", context_path)
     image_idl = _get_layers_proto(image, context_path)
 
     spec_path = tmp_path / "spec.pb"
