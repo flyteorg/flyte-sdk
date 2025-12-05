@@ -1,16 +1,15 @@
 """
 Deployment script for Flyte Speech Transcription Demo
 
-This script deploys both the GPU transcriber service and the web frontend,
-demonstrating Flyte's app-to-app calling pattern.
+This script deploys both the GPU transcriber service and the web frontend.
 """
 
 import logging
 import pathlib
 import sys
 
-# Import both apps
-from transcriber import app as transcriber_app
+# Import both environments
+from transcriber import env as transcriber_env
 from web_app import env as web_env
 
 import flyte
@@ -33,15 +32,15 @@ def main():
     print("\n📦 Step 1/2: Deploying Parakeet Transcriber Service (GPU)...")
     print("-" * 70)
     try:
-        transcriber_deployments = flyte.deploy(transcriber_app)
+        transcriber_deployments = flyte.deploy(transcriber_env)
 
         if not transcriber_deployments:
             print("❌ Failed to deploy transcriber service")
             return 1
 
         print("✅ Transcriber service deployed successfully!")
-        for d in transcriber_deployments:
-            print(f"\n{d.table_repr()}")
+        transcriber_deployment = transcriber_deployments[0]
+        print(f"\n{transcriber_deployment.table_repr()}")
 
     except Exception as e:
         print(f"❌ Error deploying transcriber: {e}")
@@ -67,9 +66,12 @@ def main():
         print("=" * 70)
         print()
         print("📱 Access your application:")
-        print(f"   Frontend URL:    {web_deployment.endpoint}/")
-        print(f"   WebSocket:       {web_deployment.endpoint}/ws")
-        print(f"   Health Check:    {web_deployment.endpoint}/health")
+        print(f"   Frontend URL:      {web_deployment.endpoint}/")
+        print(f"   WebSocket:         {web_deployment.endpoint}/ws")
+        print(f"   Frontend Health:   {web_deployment.endpoint}/health")
+        print()
+        print(f"   Transcriber API:   {transcriber_deployment.endpoint}/")
+        print(f"   Transcriber Health: {transcriber_deployment.endpoint}/health")
         print()
         print("🎤 To use the application:")
         print("   1. Open the frontend URL in your browser")
@@ -78,8 +80,7 @@ def main():
         print("   4. Click 'Start Recording' to begin transcription")
         print("   5. Speak clearly into your microphone")
         print()
-        print("💡 The frontend automatically calls the GPU transcriber service")
-        print("   using Flyte's app-to-app calling pattern!")
+        print("💡 The frontend calls the transcriber service via HTTP API")
         print()
 
         return 0

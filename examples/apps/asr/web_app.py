@@ -29,7 +29,7 @@ from fastapi.responses import HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 # Import the transcriber (for app-to-app calling)
-from transcriber import Transcriber
+from transcriber import env as transciber_env
 
 import flyte
 from flyte.app.extras import FastAPIAppEnvironment
@@ -496,15 +496,6 @@ async def websocket_endpoint(websocket: WebSocket):
     # Create a queue for audio chunks
     audio_queue = asyncio.Queue()
 
-    # Get reference to transcriber (app-to-app calling)
-    try:
-        transcriber = Transcriber()
-    except Exception as e:
-        await manager.send_message({"type": "error", "message": f"Failed to connect to transcriber: {e}"}, stream_id)
-        manager.disconnect(stream_id)
-        await websocket.close()
-        return
-
     # Send welcome message
     await manager.send_message(
         {
@@ -547,7 +538,9 @@ async def websocket_endpoint(websocket: WebSocket):
                     break
 
                 # Call transcriber service (app-to-app calling)
-                result = transcriber.transcribe(chunk, stream_id)
+                transcriber_url = transciber_env.endpoint
+                # use http client to transcribe
+                # result = transcriber.transcribe(chunk, stream_id)
 
                 if result.get("success") and result.get("text"):
                     await manager.send_message(
@@ -584,15 +577,14 @@ if __name__ == "__main__":
         log_level=logging.DEBUG,
     )
 
-    print("Deploying Speech Transcription Web App...")
-    deployments = flyte.deploy(env)
+    print("🚀 Starting Speech Transcription Web App...")
+    print("=" * 60)
+    print("\n🎤 Real-time speech transcription interface")
+    print("\n📍 Available Endpoints:")
+    print("   GET  /              - Web UI with audio recording")
+    print("   GET  /health        - Health check")
+    print("   WS   /ws            - WebSocket for audio streaming")
+    print("\nStarting server...\n")
 
-    if deployments:
-        d = deployments[0]
-        print("\n✅ Deployed Web App:")
-        print(f"{d.table_repr()}")
-        print(f"\nFrontend URL: {d.endpoint}/")
-        print(f"WebSocket URL: {d.endpoint}/ws")
-        print(f"Health check: {d.endpoint}/health")
-    else:
-        print("\n❌ Deployment failed")
+    # Serve the web app
+    flyte.serve(env)

@@ -1,7 +1,7 @@
 # /// script
 # requires-python = ">=3.12"
 # dependencies = [
-#     "torch",
+#     "torch[gpu]",
 #     "nemo_toolkit[asr]",
 #     "numpy",
 #     "flyte>=2.0.0b29"
@@ -15,24 +15,33 @@ This module implements a GPU-accelerated speech transcription service using
 NVIDIA's Parakeet multi-talker streaming model. It can be called from other
 Flyte apps for real-time transcription.
 
-Based on Modal's parakeet_multitalker.py example.
 """
 
 import logging
+import pathlib
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Optional
 
 import numpy as np
 import torch
+from fastapi import FastAPI, File, HTTPException, UploadFile
+from pydantic import BaseModel
 
 import flyte
-from flyte.app import App
+from flyte.app.extras import FastAPIAppEnvironment
 
-# NeMo imports (will be available in the container)
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
 try:
     from nemo.collections.asr.models import ASRModel
     from nemo.collections.asr.models.multispeaker.sortformer_diar_asr_model import (
         SortformerEncLabelModel,
+    )
+    from nemo.collections.asr.parts.utils.multitask_audio_preprocessing import (
+        MultitaskAudioPreprocessingConfig,
     )
     from nemo.collections.asr.parts.utils.streaming_utils import (
         CacheAwareStreamingAudioBuffer,
@@ -41,7 +50,19 @@ try:
     NEMO_AVAILABLE = True
 except ImportError:
     NEMO_AVAILABLE = False
-    print("NeMo not available - will be installed in container")
+    logger.warning("NeMo not available - will be installed in container")
+
+
+_GPU = "T4"
+GPU = flyte.GPU("T4", 1)
+if _GPU == "T4":
+    GPU = flyte.GPU("T4", 1)
+    ASR_BATCH_SIZE = 2
+    DIAR_BATCH_SIZE = 2
+elif _GPU == "A10G":
+    GPU = flyte.GPU("A10G", 1)
+    ASR_BATCH_SIZE = 4
+    DIAR_BATCH_SIZE = 4
 
 
 @dataclass
@@ -51,8 +72,8 @@ class TranscriptionConfig:
     speaker_cache_len: int = 188
     asr_context_size: int = 10
     asr_decoder_context_len: int = 3
-    asr_batch_size: int = 4
-    diar_batch_size: int = 4
+    asr_batch_size: int = ASR_BATCH_SIZE
+    diar_batch_size: int = DIAR_BATCH_SIZE
     sample_rate: int = 16000
     chunk_size_frames: int = 13  # Number of frames per chunk
     bytes_per_sample: int = 2  # int16 audio
@@ -78,32 +99,25 @@ class TranscriptionService:
         if not NEMO_AVAILABLE:
             raise RuntimeError("NeMo is not available. This code must run in the container.")
 
-        print("Loading speaker diarization model...")
+        logger.info("Loading speaker diarization model...")
         self.diar_model = (
             SortformerEncLabelModel.from_pretrained("nvidia/diar_streaming_sortformer_4spk-v2.1")
             .eval()
             .to(torch.device("cuda"))
         )
 
-        print("Loading ASR model...")
+        logger.info("Loading ASR model...")
         self.asr_model = (
             ASRModel.from_pretrained("nvidia/multitalker-parakeet-streaming-0.6b-v1").eval().to(torch.device("cuda"))
         )
 
-        print("Initializing streaming buffer...")
+        logger.info("Initializing streaming buffer...")
         self._init_streaming_buffer()
 
-        print("Models loaded successfully!")
+        logger.info("Models loaded successfully!")
 
     def _init_streaming_buffer(self):
         """Initialize the streaming audio buffer for chunked processing."""
-        from nemo.collections.asr.parts.utils.multitask_audio_preprocessing import (
-            MultitaskAudioPreprocessingConfig,
-        )
-        from nemo.collections.asr.parts.utils.streaming_utils import (
-            CacheAwareStreamingAudioBuffer,
-        )
-
         # Create preprocessing config
         preproc_config = MultitaskAudioPreprocessingConfig(
             sample_rate=self.config.sample_rate,
@@ -207,84 +221,231 @@ class TranscriptionService:
             self.streaming_buffer.reset_buffer(stream_id=stream_id)
 
 
-# Create the Flyte app with GPU support
-app = App(
+# Global service instance
+transcription_service: Optional[TranscriptionService] = None
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Manage service lifecycle with lifespan context manager."""
+    global transcription_service
+
+    # Startup
+    logger.info("Starting up transcription service...")
+    try:
+        transcription_service = TranscriptionService()
+        transcription_service.load_models()
+        logger.info("Service startup complete!")
+    except Exception as e:
+        logger.error(f"Failed to start service: {e}")
+        raise
+
+    yield
+
+    # Shutdown
+    logger.info("Shutting down transcription service...")
+    transcription_service = None
+
+
+# Initialize FastAPI app with lifespan
+app = FastAPI(
+    title="Parakeet Transcription Service",
+    description="GPU-accelerated speech transcription service using NVIDIA NeMo Parakeet",
+    version="1.0.0",
+    lifespan=lifespan,
+)
+
+# Create FastAPI environment for Flyte
+env = FastAPIAppEnvironment(
     name="parakeet-transcriber",
+    app=app,
     description="GPU-accelerated speech transcription service using Parakeet",
-)
-
-# Define the GPU image with all dependencies
-gpu_image = flyte.Image.from_registry("nvcr.io/nvidia/nemo:24.07", python_version=(3, 10)).run_commands(
-    "pip install --upgrade pip",
-    "pip install nemo_toolkit[asr]",
-)
-
-
-@app.function(
-    image=gpu_image,
+    image=flyte.Image.from_debian_base(name="parakeet", python_version=(3, 11))
+    .with_pip_packages("torch[gpu]")
+    .with_pip_packages("nemo_toolkit[asr]")
+    .with_pip_packages(
+        "fastapi",
+        "uvicorn",
+        "python-multipart",
+    )
+    .with_pip_packages("flyte", pre=True),
     resources=flyte.Resources(
         cpu=4,
         memory="16Gi",
-        gpu=1,
-        gpu_kind="A10G",  # or "T4", "A100" depending on availability
+        gpu=GPU,
     ),
-    timeout=3600,  # 1 hour timeout
-    keep_warm=1,  # Keep one instance warm for low latency
+    requires_auth=False,
 )
-class Transcriber:
+
+
+# Pydantic models for request/response
+class TranscriptionRequest(BaseModel):
+    stream_id: int = 0
+
+
+class TranscriptionResponse(BaseModel):
+    success: bool
+    text: str = ""
+    is_final: bool = False
+    stream_id: int = 0
+    error: Optional[str] = None
+
+
+class ResetResponse(BaseModel):
+    success: bool
+    message: str
+    stream_id: int = 0
+
+
+@env.app.get("/health")
+async def health_check():
+    """Health check endpoint."""
+    if transcription_service is None or transcription_service.asr_model is None:
+        raise HTTPException(status_code=503, detail="Service not ready")
+
+    return {
+        "status": "healthy",
+        "gpu_available": torch.cuda.is_available(),
+        "models_loaded": True,
+    }
+
+
+@env.app.post("/transcribe", response_model=TranscriptionResponse)
+async def transcribe_audio(
+    audio: UploadFile = File(...),
+    stream_id: int = 0,
+):
     """
-    Flyte function class for speech transcription.
+    Transcribe audio chunk.
 
-    This class is deployed as a long-running GPU function that can be
-    called from other Flyte apps.
+    Args:
+        audio: Audio file (int16 PCM, 16kHz)
+        stream_id: Unique stream identifier for continuous transcription
+
+    Returns:
+        Transcription result with speaker information
     """
+    if transcription_service is None:
+        raise HTTPException(status_code=503, detail="Service not initialized")
 
-    def setup(self):
-        """Initialize models when the function starts."""
-        print("Setting up Transcriber...")
-        self.service = TranscriptionService()
-        self.service.load_models()
-        self.active_streams = {}
-        print("Transcriber ready!")
+    try:
+        # Read audio bytes
+        audio_bytes = await audio.read()
 
-    def transcribe(self, audio_bytes: bytes, stream_id: int = 0) -> dict:
-        """
-        Transcribe audio bytes and return the result.
+        # Transcribe
+        text, is_final = transcription_service.transcribe_chunk(audio_bytes, stream_id)
 
-        Args:
-            audio_bytes: Raw audio data (int16 PCM, 16kHz)
-            stream_id: Unique stream identifier
+        return TranscriptionResponse(
+            success=True,
+            text=text,
+            is_final=is_final,
+            stream_id=stream_id,
+        )
 
-        Returns:
-            Dictionary with transcription result
-        """
-        try:
-            text, is_final = self.service.transcribe_chunk(audio_bytes, stream_id)
+    except Exception as e:
+        logger.error(f"Transcription error: {e}")
+        return TranscriptionResponse(
+            success=False,
+            error=str(e),
+            stream_id=stream_id,
+        )
 
-            return {"success": True, "text": text, "is_final": is_final, "stream_id": stream_id}
-        except Exception as e:
-            return {"success": False, "error": str(e), "stream_id": stream_id}
 
-    def reset(self, stream_id: int = 0):
-        """Reset a transcription stream."""
-        self.service.reset_stream(stream_id)
-        return {"success": True, "message": f"Stream {stream_id} reset"}
+@env.app.post("/transcribe/bytes", response_model=TranscriptionResponse)
+async def transcribe_raw_bytes(
+    audio_bytes: bytes,
+    stream_id: int = 0,
+):
+    """
+    Transcribe raw audio bytes (alternative endpoint for direct byte upload).
+
+    Args:
+        audio_bytes: Raw audio data (int16 PCM, 16kHz)
+        stream_id: Unique stream identifier
+
+    Returns:
+        Transcription result
+    """
+    if transcription_service is None:
+        raise HTTPException(status_code=503, detail="Service not initialized")
+
+    try:
+        text, is_final = transcription_service.transcribe_chunk(audio_bytes, stream_id)
+
+        return TranscriptionResponse(
+            success=True,
+            text=text,
+            is_final=is_final,
+            stream_id=stream_id,
+        )
+
+    except Exception as e:
+        logger.error(f"Transcription error: {e}")
+        return TranscriptionResponse(
+            success=False,
+            error=str(e),
+            stream_id=stream_id,
+        )
+
+
+@env.app.post("/reset/{stream_id}", response_model=ResetResponse)
+async def reset_stream(stream_id: int):
+    """
+    Reset a transcription stream.
+
+    Args:
+        stream_id: Stream identifier to reset
+
+    Returns:
+        Success status
+    """
+    if transcription_service is None:
+        raise HTTPException(status_code=503, detail="Service not initialized")
+
+    try:
+        transcription_service.reset_stream(stream_id)
+        return ResetResponse(
+            success=True,
+            message=f"Stream {stream_id} reset successfully",
+            stream_id=stream_id,
+        )
+    except Exception as e:
+        logger.error(f"Reset error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@env.app.get("/")
+async def root():
+    """Root endpoint with service information."""
+    return {
+        "service": "Parakeet Transcription Service",
+        "version": "1.0.0",
+        "description": "GPU-accelerated streaming transcription using NVIDIA NeMo",
+        "endpoints": {
+            "health": "/health",
+            "transcribe": "/transcribe",
+            "transcribe_bytes": "/transcribe/bytes",
+            "reset": "/reset/{stream_id}",
+        },
+    }
 
 
 if __name__ == "__main__":
-    import pathlib
-
     flyte.init_from_config(
         root_dir=pathlib.Path(__file__).parent,
-        log_level=logging.DEBUG,
+        log_level=logging.INFO,
     )
 
-    print("Deploying Parakeet Transcriber service...")
-    deployments = flyte.deploy(app)
+    print("🚀 Starting Parakeet Transcription Service...")
+    print("=" * 60)
+    print("\n✅ GPU transcription service with NVIDIA NeMo Parakeet")
+    print("\n🔍 Available API Endpoints:")
+    print("   GET  /health              - Health check")
+    print("   POST /transcribe          - Transcribe audio file")
+    print("   POST /transcribe/bytes    - Transcribe raw bytes")
+    print("   POST /reset/{stream_id}   - Reset stream buffer")
+    print("\nStarting server...\n")
 
-    if deployments:
-        print("\n✅ Deployed Transcriber service:")
-        for d in deployments:
-            print(f"{d.table_repr()}")
-    else:
-        print("\n❌ Deployment failed")
+    # Serve the transcription service
+    served_app = flyte.serve(env)
+    print(f"{served_app.url} - connect at {served_app.endpoint}")
