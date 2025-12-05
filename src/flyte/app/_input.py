@@ -14,7 +14,7 @@ from flyte._initialize import requires_initialization
 from flyte.remote._task import AutoVersioning
 
 InputTypes = str | flyte.io.File | flyte.io.Dir
-DelayedInputTypes = Literal["string", "file", "directory", "endpoint"]
+_SerializedInputType = Literal["string", "file", "directory"]
 
 INPUT_TYPE_MAP = {
     str: "string",
@@ -30,7 +30,7 @@ class _DelayedValue(BaseModel):
     Delayed value for app inputs.
     """
 
-    type: DelayedInputTypes
+    type: _SerializedInputType
 
     @model_validator(mode="before")
     @classmethod
@@ -56,7 +56,7 @@ class RunOutput(_DelayedValue):
     Use a run's output for app inputs.
 
     This enables the declaration of an app input dependency on a the output of
-    a run, givene by a specific run name, or a task name and version. If
+    a run, given by a specific run name, or a task name and version. If
     `task_auto_version == 'latest'`, the latest version of the task will be used.
     If `task_auto_version == 'current'`, the version will be derived from the callee
     app or task context.
@@ -92,24 +92,23 @@ class RunOutput(_DelayedValue):
 
         assert self.task_name is not None, "task_name must be provided"
         if self.task_auto_version is not None:
-            task_details: TaskDetails = Task.get(
+            task_details: TaskDetails = await Task.get(
                 self.task_name, version=self.task_version, auto_version=self.task_auto_version
-            ).fetch()
+            ).fetch.aio()
             task_version = task_details.version
         elif self.task_version is not None:
             task_version = self.task_version
         else:
             raise ValueError("Either task_version or task_auto_version must be provided")
 
-        run: Run = next(
-            Run.listall(
-                in_phase=("succeeded",),
-                task_name=self.task_name,
-                task_version=task_version,
-                limit=1,
-                sort_by=("created_at", "desc"),
-            )
+        runs = Run.listall.aio(
+            in_phase=("succeeded",),
+            task_name=self.task_name,
+            task_version=task_version,
+            limit=1,
+            sort_by=("created_at", "desc"),
         )
+        run = await anext(runs)
         run_details: RunDetails = await run.details.aio()
         output = await run_details.outputs()
         for getter in self.getter:
@@ -148,7 +147,7 @@ class AppEndpoint(_DelayedValue):
             from flyte.remote import App
 
             app = App.get(self.app_name)
-            return app.endpoint if self.public else app.private_url
+            return app.endpoint
 
         endpoint_pattern = os.getenv(INTERNAL_APP_ENDPOINT_PATTERN_ENV_VAR)
         if endpoint_pattern is not None:
@@ -198,9 +197,6 @@ class Input:
             self.name = "i0"
 
 
-_SerializedInputType = Literal[DelayedInputTypes, "run_output"]
-
-
 class SerializableInput(BaseModel):
     """
     Serializable version of Input.
@@ -213,7 +209,6 @@ class SerializableInput(BaseModel):
     env_var: Optional[str] = None
     dest: Optional[str] = None
     ignore_patterns: List[str] = field(default_factory=list)
-    is_delayed_value: bool = False
 
     @classmethod
     def from_input(cls, inp: Input) -> "SerializableInput":
@@ -223,7 +218,6 @@ class SerializableInput(BaseModel):
         assert inp.name is not None, "Input name should be set by __post_init__"
 
         tpe: _SerializedInputType = "string"
-        is_delayed_value = False
         if isinstance(inp.value, flyte.io.File):
             value = inp.value.path
             tpe = "file"
@@ -234,9 +228,8 @@ class SerializableInput(BaseModel):
             download = True if inp.mount is not None else inp.download
         elif isinstance(inp.value, (RunOutput, AppEndpoint)):
             value = inp.value.model_dump_json()
-            tpe = "run_output" if isinstance(inp.value, RunOutput) else "endpoint"
+            tpe = inp.value.type
             download = True if inp.mount is not None else inp.download
-            is_delayed_value = True
         else:
             value = typing.cast(str, inp.value)
             download = False
@@ -249,7 +242,6 @@ class SerializableInput(BaseModel):
             env_var=inp.env_var,
             dest=inp.mount,
             ignore_patterns=inp.ignore_patterns,
-            is_delayed_value=is_delayed_value,
         )
 
 
