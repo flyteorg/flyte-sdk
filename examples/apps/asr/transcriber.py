@@ -52,7 +52,6 @@ except ImportError:
     NEMO_AVAILABLE = False
     logger.warning("NeMo not available - will be installed in container")
 
-
 _GPU = "T4"
 GPU = flyte.GPU("T4", 1)
 if _GPU == "T4":
@@ -261,7 +260,19 @@ env = FastAPIAppEnvironment(
     app=app,
     description="GPU-accelerated speech transcription service using Parakeet",
     image=flyte.Image.from_debian_base(name="parakeet", python_version=(3, 11))
-    .with_pip_packages("torch[gpu]")
+    # Install system dependencies first
+    .with_apt_packages(
+        "libsndfile1",
+        "ffmpeg",
+        "libsndfile1-dev",
+        "git",
+    )
+    # Install PyTorch with CUDA support (correct way)
+    .with_pip_packages(
+        "torch==2.1.2",
+        "torchaudio==2.1.2",
+        index_url="https://download.pytorch.org/whl/cu121"
+    )
     .with_pip_packages("nemo_toolkit[asr]")
     .with_pip_packages(
         "fastapi",
@@ -312,8 +323,8 @@ async def health_check():
 
 @env.app.post("/transcribe", response_model=TranscriptionResponse)
 async def transcribe_audio(
-    audio: UploadFile = File(...),
-    stream_id: int = 0,
+        audio: UploadFile = File(...),
+        stream_id: int = 0,
 ):
     """
     Transcribe audio chunk.
@@ -353,8 +364,8 @@ async def transcribe_audio(
 
 @env.app.post("/transcribe/bytes", response_model=TranscriptionResponse)
 async def transcribe_raw_bytes(
-    audio_bytes: bytes,
-    stream_id: int = 0,
+        audio_bytes: bytes,
+        stream_id: int = 0,
 ):
     """
     Transcribe raw audio bytes (alternative endpoint for direct byte upload).
