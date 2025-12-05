@@ -104,6 +104,7 @@ class FlyteModelLoader(DefaultModelLoader):
 
 
 def main():
+    # TODO: add CLI here to be able to pass in serialized inputs from AppEnvironment
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -121,4 +122,3 @@ def main():
         )
 
     vllm.entrypoints.cli.main.main()
-

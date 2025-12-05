@@ -50,6 +50,9 @@ class VLLMAppEnvironment(flyte.app.AppEnvironment):
     _model_mount_path: str = field(default="/root/flyte", init=False)
 
     def __post_init__(self):
+        if self.env_vars is None:
+            self.env_vars = {}
+
         if self.model_id == "":
             raise ValueError("model_id must be defined")
 
@@ -69,8 +72,7 @@ class VLLMAppEnvironment(flyte.app.AppEnvironment):
             stream_model_args.extend(["--load-format", "flyte-vllm-streaming"])
 
         self.args = [
-            "flyte-vllm-model-loader",
-            "serve",
+            "vllm-fserve",
             self._model_mount_path,
             "--served-model-name",
             self.model_id,
