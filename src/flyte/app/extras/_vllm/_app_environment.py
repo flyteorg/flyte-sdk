@@ -66,7 +66,7 @@ class VLLMAppEnvironment(flyte.app.AppEnvironment):
 
         stream_model_args = []
         if self.stream_model:
-            stream_model_args.extend(["--load-format", "flyte-streaming"])
+            stream_model_args.extend(["--load-format", "flyte-vllm-streaming"])
 
         self.args = [
             "flyte-vllm-model-loader",

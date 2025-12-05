@@ -16,10 +16,15 @@ import aiofiles.os
 import numpy as np
 import obstore
 import pydantic
-import torch
 from typing_extensions import Annotated
 
-from .config import (
+try:
+    import torch
+except ModuleNotFoundError:
+    raise ModuleNotFoundError("torch is not installed. Please install 'torch', to use the model loader.")
+
+
+from flyte.app.extras._model_loader.config import (
     CHUNK_SIZE,
     MAX_CONCURRENCY,
 )
@@ -528,4 +533,3 @@ class SafeTensorsStreamer:
             except StopAsyncIteration:
                 pass
         logger.info(f"Streamed {counter} tensors in {time.perf_counter() - start:.2f}s")
-

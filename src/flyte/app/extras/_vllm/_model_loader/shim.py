@@ -1,7 +1,17 @@
 import logging
 from typing import Generator
 
-import torch
+try:
+    import torch
+except ModuleNotFoundError:
+    raise ModuleNotFoundError("torch is not installed. Please install 'torch', to use VLLMAppEnvironment.")
+
+try:
+    import vllm
+except ModuleNotFoundError:
+    raise ModuleNotFoundError("vllm is not installed. Please install 'vllm', to use VLLMAppEnvironment.")
+
+
 import vllm.entrypoints.cli.main
 from vllm.config import ModelConfig, VllmConfig
 from vllm.distributed import get_tensor_model_parallel_rank
@@ -10,17 +20,17 @@ from vllm.model_executor.model_loader.default_loader import DefaultModelLoader
 from vllm.model_executor.model_loader.sharded_state_loader import ShardedStateLoader
 from vllm.model_executor.model_loader.utils import set_default_torch_dtype
 
-from .config import (
+from flyte.app.extras._model_loader.config import (
     LOCAL_MODEL_PATH,
     REMOTE_MODEL_PATH,
     STREAM_SAFETENSORS,
 )
-from .loader import SafeTensorsStreamer, prefetch, prefix_exists
+from flyte.app.extras._model_loader.loader import SafeTensorsStreamer, prefetch, prefix_exists
 
 logger = logging.getLogger(__name__)
 
 
-@register_model_loader("flyte-streaming")
+@register_model_loader("flyte-vllm-streaming")
 class FlyteModelLoader(DefaultModelLoader):
     """Custom model loader for streaming model weights from object storage."""
 

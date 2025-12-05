@@ -1,4 +1,4 @@
 from ._fastapi import FastAPIAppEnvironment
-from .vllm import VLLMAppEnvironment
+from ._vllm import VLLMAppEnvironment
 
 __all__ = ["FastAPIAppEnvironment", "VLLMAppEnvironment"]
