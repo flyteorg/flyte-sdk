@@ -7,20 +7,19 @@ Prerequisites
 -------------
 
 1. Cache the model to a blob store location that your Flyte deployment can access.
-   For example, you can use the Union CLI to cache a model from Hugging Face:
+   Run the cache_model.py task to download the model from Hugging Face:
 
    ```
-   flyte run cache_model.py cache_model_from_hf \
-       --model_id Qwen/Qwen3-0.6B \
-       --output_path s3://your-bucket/models/qwen3-0.6b
+   flyte run examples/genai/vllm/cache_model.py cache_model \
+       --model_id Qwen/Qwen3-0.6B
    ```
 
-   Or manually upload the model weights to your blob store.
+   The output will provide the model path (e.g., s3://your-bucket/path/to/model).
 
 2. Set the MODEL_PATH environment variable to point to your cached model:
 
    ```
-   export MODEL_PATH=s3://your-bucket/models/qwen3-0.6b
+   export MODEL_PATH=<model-path-from-cache-output>
    ```
 
 Deploy
