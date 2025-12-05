@@ -21,22 +21,17 @@ def copy_files_to_context(src: Path, context_path: Path, ignore_patterns: list[s
     :param src: The source path to copy
     :param context_path: The context path where the files should be copied to
     """
-    print("context_path", context_path)
     if src.is_absolute() or ".." in str(src):
         rel_path = PurePath(*src.parts[1:])
         dst_path = context_path / "_flyte_abs_context" / rel_path
-        print("dst_pathggggg", dst_path)
     else:
         dst_path = context_path / src
-        print("nnoooooooo")
     dst_path.parent.mkdir(parents=True, exist_ok=True)
     if src.is_dir():
         default_ignore_patterns = [".idea", ".venv"]
         ignore_patterns = list(set(ignore_patterns + default_ignore_patterns))
         shutil.copytree(src, dst_path, dirs_exist_ok=True, ignore=shutil.ignore_patterns(*ignore_patterns))
     else:
-        print("src", src)
-        print("dst_path", dst_path)
         shutil.copy(src, dst_path)
     return dst_path
 
