@@ -56,7 +56,7 @@ class GitStatus:
     is_valid: bool = False
     is_tree_clean: bool = False
     remote_url: str = ""
-    repo_dir: Path = None
+    repo_dir: Path = Path()
     commit_sha: str = ""
 
     @classmethod
