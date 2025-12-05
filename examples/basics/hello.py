@@ -4,7 +4,6 @@ import flyte
 env = flyte.TaskEnvironment(
     name="hello_world",
     resources=flyte.Resources(memory="250Mi"),
-    image=flyte.Image.from_debian_base().with_source_file("file.py")
 )
 
 
