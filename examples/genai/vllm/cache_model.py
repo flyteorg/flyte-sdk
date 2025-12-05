@@ -139,7 +139,7 @@ async def main(
         The cached model directory.
     """
     model_dir = await cache_model(model_id=model_id, revision=revision)
-    print(f"Model successfully cached!")
+    print("Model successfully cached!")
     print(f"Model path: {model_dir.path}")
     print()
     print("To use this model with VLLMAppEnvironment, set MODEL_PATH to:")
@@ -151,4 +151,3 @@ if __name__ == "__main__":
     flyte.init_from_config()
     result = flyte.run(main, model_id="Qwen/Qwen3-0.6B")
     print(f"Cached model directory: {result}")
-

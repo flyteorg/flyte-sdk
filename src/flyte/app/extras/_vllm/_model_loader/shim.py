@@ -25,7 +25,7 @@ from flyte.app.extras._model_loader.config import (
     REMOTE_MODEL_PATH,
     STREAM_SAFETENSORS,
 )
-from flyte.app.extras._model_loader.loader import SafeTensorsStreamer, prefetch, prefix_exists
+from flyte.app.extras._model_loader.loader import SafeTensorsStreamer, prefetch
 
 logger = logging.getLogger(__name__)
 
@@ -34,18 +34,20 @@ logger = logging.getLogger(__name__)
 class FlyteModelLoader(DefaultModelLoader):
     """Custom model loader for streaming model weights from object storage."""
 
-    def _get_weights_iterator(self, source) -> Generator[tuple[str, torch.Tensor], None, None]:
+    def _get_weights_iterator(
+        self, source: DefaultModelLoader.Source
+    ) -> Generator[tuple[str, torch.Tensor], None, None]:
         # Try to load weights using the Flyte SafeTensorsLoader. Fallback to the default loader otherwise.
         try:
             streamer = SafeTensorsStreamer(REMOTE_MODEL_PATH, LOCAL_MODEL_PATH)
         except ValueError:
-            return super()._get_weights_iterator(source)
+            yield from super()._get_weights_iterator(source)
         else:
             for name, tensor in streamer.get_tensors():
                 yield source.prefix + name, tensor
 
     def download_model(self, model_config: ModelConfig) -> None:
-        # Stream only - no download needed
+        # This model loader supports streaming only
         pass
 
     def _load_sharded_model(self, vllm_config: VllmConfig, model_config: ModelConfig) -> torch.nn.Module:
@@ -55,8 +57,8 @@ class FlyteModelLoader(DefaultModelLoader):
         rank = get_tensor_model_parallel_rank()
         if rank >= tensor_parallel_size:
             raise ValueError(f"Invalid rank {rank} for tensor parallel size {tensor_parallel_size}")
-        with set_default_torch_dtype(vllm_config.model_config.dtype):
-            with torch.device(vllm_config.device_config.device):
+        with set_default_torch_dtype(vllm_config.model_config.dtype):  # type: ignore[arg-type]
+            with torch.device(vllm_config.device_config.device):  # type: ignore[arg-type]
                 model = get_model(vllm_config=vllm_config, model_config=model_config)
                 for _, module in model.named_modules():
                     quant_method = getattr(module, "quant_method", None)
@@ -103,7 +105,22 @@ class FlyteModelLoader(DefaultModelLoader):
             return super().load_model(vllm_config, model_config)
 
 
+async def _get_model_files():
+    import flyte.storage as storage
+
+    if not await storage.exists(REMOTE_MODEL_PATH):
+        raise FileNotFoundError(f"Model path not found: {REMOTE_MODEL_PATH}")
+
+    await prefetch(
+        REMOTE_MODEL_PATH,
+        LOCAL_MODEL_PATH,
+        exclude_safetensors=STREAM_SAFETENSORS,
+    )
+
+
 def main():
+    import asyncio
+
     # TODO: add CLI here to be able to pass in serialized inputs from AppEnvironment
     logging.basicConfig(
         level=logging.INFO,
@@ -111,14 +128,6 @@ def main():
     )
 
     # Prefetch the model
-    if REMOTE_MODEL_PATH:
-        if not prefix_exists(REMOTE_MODEL_PATH):
-            raise FileNotFoundError(f"Model path not found: {REMOTE_MODEL_PATH}")
-
-        prefetch(
-            REMOTE_MODEL_PATH,
-            LOCAL_MODEL_PATH,
-            exclude_safetensors=STREAM_SAFETENSORS,
-        )
+    asyncio.run(_get_model_files())
 
     vllm.entrypoints.cli.main.main()

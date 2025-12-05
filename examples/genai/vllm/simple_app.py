@@ -69,15 +69,19 @@ vllm_app = VLLMAppEnvironment(
     name="qwen3-0-6b-vllm",
     model=MODEL_PATH,
     model_id="qwen3-0.6b",
-    resources=flyte.Resources(cpu="4", memory="16Gi", gpu="L40S:4", ephemeral_storage="10Gi"),
-    image=flyte.Image.from_debian_base(name="vllm-app-image", python_version=(3, 12)).with_pip_packages("vllm==0.11.0"),
+    resources=flyte.Resources(cpu="4", memory="16Gi", gpu="L40s:4", disk="10Gi"),
+    image=(
+        flyte.Image.from_debian_base(name="vllm-app-image", python_version=(3, 12), install_flyte=False)
+        .with_pip_packages("vllm==0.11.0")
+        .with_local_v2()
+    ),
     stream_model=True,  # Stream model directly from blob store to GPU
     scaling=flyte.app.Scaling(
         replicas=(0, 1),  # (min_replicas, max_replicas)
         scaledown_after=300,  # Scale down after 5 minutes of inactivity
     ),
     requires_auth=False,
-    extra_args="--max-model-len 8192",  # Limit context length for smaller GPU memory
+    extra_args=["--max-model-len 8192", "--enforce-eager"],  # Limit context length for smaller GPU memory
 )
 
 

@@ -1,6 +1,6 @@
 import shlex
 from dataclasses import dataclass, field
-from typing import List, Optional, Union
+from typing import List, Union
 
 import rich.repr
 
@@ -73,6 +73,7 @@ class VLLMAppEnvironment(flyte.app.AppEnvironment):
 
         self.args = [
             "vllm-fserve",
+            "serve",
             self._model_mount_path,
             "--served-model-name",
             self.model_id,
@@ -108,4 +109,3 @@ class VLLMAppEnvironment(flyte.app.AppEnvironment):
         if isinstance(self.args, str):
             return shlex.split(self.args)
         return self.args or []
-

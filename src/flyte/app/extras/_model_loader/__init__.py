@@ -1,3 +1,3 @@
-from .loader import SafeTensorsStreamer, prefetch, prefix_exists
+from .loader import SafeTensorsStreamer, prefetch
 
-__all__ = ["SafeTensorsStreamer", "prefetch", "prefix_exists"]
+__all__ = ["SafeTensorsStreamer", "prefetch"]
