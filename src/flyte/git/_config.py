@@ -1,5 +1,6 @@
 import pathlib
 import subprocess
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Protocol
 
@@ -40,37 +41,23 @@ GIT_URL_BUILDER_REGISTRY: Dict[str, GitUrlBuilder] = {
 }
 
 
+@dataclass(init=True, frozen=True)
 class GitStatus:
-    """Configuration and information about the current Git repository."""
+    """
+    A class representing the status of a git repository.
 
-    is_valid: bool
-    is_tree_clean: bool
-    remote_url: str
-    repo_dir: Path
-    commit_sha: str
+    :param is_valid: Whether git repository is valid
+    :param is_tree_clean: Whether working tree is clean
+    :param remote_url: Remote URL in HTTPS format
+    :param repo_dir: Repository root directory
+    :param commit_sha: Current commit SHA
+    """
 
-    def __init__(
-        self,
-        is_valid: bool = False,
-        is_tree_clean: bool = False,
-        remote_url: str = "",
-        repo_dir: Path | None = None,
-        commit_sha: str = "",
-    ):
-        """Initialize GitStatus with provided values.
-
-        :param is_valid: Whether git repository is valid
-        :param is_tree_clean: Whether working tree is clean
-        :param remote_url: Remote URL in HTTPS format
-        :param repo_dir: Repository root directory
-        :param commit_sha: Current commit SHA
-        :return: None
-        """
-        self.is_valid = is_valid
-        self.is_tree_clean = is_tree_clean
-        self.remote_url = remote_url
-        self.repo_dir = repo_dir or Path.cwd()
-        self.commit_sha = commit_sha
+    is_valid: bool = False
+    is_tree_clean: bool = False
+    remote_url: str = ""
+    repo_dir: Path = None
+    commit_sha: str = ""
 
     @classmethod
     def from_current_repo(cls) -> "GitStatus":

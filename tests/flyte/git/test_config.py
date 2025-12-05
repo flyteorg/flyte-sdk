@@ -2,8 +2,6 @@ import subprocess
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-import pytest
-
 from flyte.git._config import GitStatus
 
 
