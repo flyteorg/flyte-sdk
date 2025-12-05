@@ -24,7 +24,7 @@ def copy_files_to_context(src: Path, context_path: Path, ignore_patterns: list[s
     print("context_path", context_path)
     if src.is_absolute() or ".." in str(src):
         rel_path = src.absolute().as_posix().lstrip("/")
-        dst_path = context_path / Path("_flyte_abs_context") / rel_path
+        dst_path = context_path / "_flyte_abs_context" / rel_path
         print("dst_path", dst_path)
     else:
         dst_path = context_path / src
