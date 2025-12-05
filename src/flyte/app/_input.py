@@ -55,8 +55,8 @@ class RunOutput(_DelayedValue):
     """
     Use a run's output for app inputs.
 
-    This enables the declaration of an app input dependency on a the output of
-    a run, givene by a specific run name, or a task name and version. If
+    This enables the declaration of an app input dependency on the output of
+    a run, given by a specific run name, or a task name and version. If
     `task_auto_version == 'latest'`, the latest version of the task will be used.
     If `task_auto_version == 'current'`, the version will be derived from the callee
     app or task context.
