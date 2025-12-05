@@ -1,5 +1,5 @@
 import shutil
-from pathlib import Path
+from pathlib import Path, PurePath
 from typing import List, Optional
 
 from flyte._image import DockerIgnore, Image
@@ -23,9 +23,9 @@ def copy_files_to_context(src: Path, context_path: Path, ignore_patterns: list[s
     """
     print("context_path", context_path)
     if src.is_absolute() or ".." in str(src):
-        rel_path = src.absolute().as_posix().lstrip("/")
+        rel_path = PurePath(*src.parts[1:])
         dst_path = context_path / "_flyte_abs_context" / rel_path
-        print("dst_path", dst_path)
+        print("dst_pathggggg", dst_path)
     else:
         dst_path = context_path / src
         print("nnoooooooo")
