@@ -98,6 +98,7 @@ class VLLMAppEnvironment(flyte.app.AppEnvironment):
 
         self.inputs = [Input(name="model", value=self.model, **input_kwargs)]
         self.env_vars["FLYTE_MODEL_LOADER_LOCAL_MODEL_PATH"] = self._model_mount_path
+        self.links = [flyte.app.Link(path="/docs", title="vLLM OpenAPI Docs", is_relative=True), *self.links]
 
         if self.image is None:
             self.image = DEFAULT_VLLM_IMAGE

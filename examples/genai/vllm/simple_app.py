@@ -82,6 +82,7 @@ vllm_app = VLLMAppEnvironment(
     ),
     requires_auth=False,
     extra_args=["--max-model-len 8192", "--enforce-eager"],  # Limit context length for smaller GPU memory
+    links=[flyte.app.Link(path="/docs", title="Swagger Docs UI", is_relative=True)],
 )
 
 

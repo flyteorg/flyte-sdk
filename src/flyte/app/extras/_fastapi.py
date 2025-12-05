@@ -129,6 +129,8 @@ class FastAPIAppEnvironment(flyte.app.AppEnvironment):
         if not isinstance(self.app, fastapi.FastAPI):
             raise TypeError(f"app must be of type fastapi.FastAPI, got {type(self.app)}")
 
+        self.links = [flyte.app.Link(path="/docs", title="FastAPI OpenAPI Docs", is_relative=True), *self.links]
+
         # Capture the frame where this environment was instantiated
         # This helps us find the module where the app variable is defined
         frame = inspect.currentframe()
