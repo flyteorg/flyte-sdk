@@ -328,7 +328,7 @@ def _get_layers_proto(image: Image, context_path: Path) -> "image_definition_pb2
 
             copy_layer = image_definition_pb2.Layer(
                 copy_config=image_definition_pb2.CopyConfig(
-                    src=str(dst_path.relative_to(context_path).as_posix()),
+                    src=str(dst_path.relative_to(context_path)),
                     dst=str(layer.dst),
                 )
             )
