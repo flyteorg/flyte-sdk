@@ -192,7 +192,9 @@ class Input:
             raise ValueError(f"env_var ({self.env_var}) is not a valid environment name for shells")
 
         if self.value and not isinstance(self.value, (str, flyte.io.File, flyte.io.Dir, RunOutput, AppEndpoint)):
-            raise TypeError(f"Expected value to be of type str, file, dir, RunOutput or AppEndpoint, got {type(self.value)}")
+            raise TypeError(
+                f"Expected value to be of type str, file, dir, RunOutput or AppEndpoint, got {type(self.value)}"
+            )
 
         if self.name is None:
             self.name = "i0"
