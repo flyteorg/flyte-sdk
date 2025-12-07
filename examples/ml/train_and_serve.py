@@ -37,7 +37,7 @@ from xgboost import XGBClassifier
 
 import flyte
 import flyte.io
-from flyte.app import Input
+from flyte.app import Input, Link, RunOutput
 from flyte.app.extras import FastAPIAppEnvironment
 
 logging.basicConfig(level=logging.INFO)
@@ -246,10 +246,12 @@ serving_env = FastAPIAppEnvironment(
     inputs=[
         Input(
             name="model",
-            value=flyte.io.File.from_existing_remote(os.environ.get(MODEL_PATH_ENV, "/tmp/penguin_model/model.joblib")),
-            mount="/tmp/penguin_model/model.joblib",
-        )
+            value=RunOutput(task_name="penguin_training.training_pipeline", type=flyte.io.File),
+        ),
     ],
+    # NOTE: this is a workaround! apps should have this env var auto-injected by the controller
+    secrets=[flyte.Secret(key="UNION_API_KEY", as_env_var="_UNION_EAGER_API_KEY")],
+    links=[Link(path="/docs", title="Swagger Docs", is_relative=True)],
 )
 
 
@@ -329,11 +331,8 @@ if __name__ == "__main__":
     )
 
     # train model
-    r = flyte.run(training_pipeline, test_size=0.2, random_state=42)
-    print(r.url)
-    r.wait()
+    run = flyte.run(training_pipeline, test_size=0.25, random_state=40)
+    run.wait()
 
-    # serve the model
-    model_file: flyte.io.File = r.outputs()[0]
-    app = flyte.with_servecontext(input_values={serving_env.name: {"model": model_file.path}}).serve(serving_env)
+    app = flyte.serve(serving_env)
     print(app.url)
