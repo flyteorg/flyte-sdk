@@ -23,7 +23,7 @@ A100_80GBParts = Literal["1g.10gb", "2g.20gb", "3g.40gb", "4g.40gb", "7g.80gb"]
 Partitions for NVIDIA A100 80GB GPU.
 """
 
-H200Parts = Literal["1g.18gb", "1g.35gb", "2g.35gb", "3g.71gb", "4g.71gb", "7g.141gb"] 
+H200Parts = Literal["1g.18gb", "1g.35gb", "2g.35gb", "3g.71gb", "4g.71gb", "7g.141gb"]
 """
 Partitions for NVIDIA H200 GPU (141GB HBM3e).
 """
@@ -254,7 +254,9 @@ class Device:
             raise ValueError("GPU quantity must be at least 1")
 
 
-def GPU(device: GPUType, quantity: GPUQuantity, partition: A100Parts | A100_80GBParts | H200Parts | None = None) -> Device:
+def GPU(
+    device: GPUType, quantity: GPUQuantity, partition: A100Parts | A100_80GBParts | H200Parts | None = None
+) -> Device:
     """
     Create a GPU device instance.
     :param device: The type of GPU (e.g., "T4", "A100").
