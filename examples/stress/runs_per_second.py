@@ -9,16 +9,16 @@ import flyte.report
 env = flyte.TaskEnvironment(
     name="runs_per_second",
     resources=flyte.Resources(cpu=1, memory="1Gi"),
-    image=flyte.Image.from_debian_base().with_pip_packages("plotly", "kaleido", "numpy"),
+    image=flyte.Image.from_debian_base(flyte_version="2.0.0b34").with_pip_packages("plotly", "kaleido", "numpy"),
 )
 
 downstream_env = flyte.TaskEnvironment(
     name="downstream",
     resources=flyte.Resources(cpu=1, memory="1Gi"),
     reusable=flyte.ReusePolicy(
-        replicas=10,
+        replicas=(5, 20),
         idle_ttl=60,
-        concurrency=10,
+        concurrency=50,
         scaledown_ttl=60,
     ),
     image=flyte.Image.from_debian_base().with_pip_packages(
@@ -210,5 +210,5 @@ async def main(n: int, max_per_n: int):
 
 if __name__ == "__main__":
     flyte.init_from_config()
-    run = flyte.run(main, n=100, max_per_n=100)
+    run = flyte.run(main, n=10, max_per_n=10)
     print(run.url)
