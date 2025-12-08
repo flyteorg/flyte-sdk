@@ -21,7 +21,18 @@ INTERNAL_APP_ENDPOINT_PATTERN_ENV_VAR = "INTERNAL_APP_ENDPOINT_PATTERN"
 @dataclass(init=True, repr=True)
 class AppEnvironment(Environment):
     """
-    :param name: Name of the environment
+    :param type: Type of the environment.
+    :param port: Port to use for the app server.
+    :param args: Arguments to pass to app.
+    :param command: Command to run in the app.
+    :param requires_auth: Whether the app requires authentication.
+    :param scaling: Scaling configuration for the app environment.
+    :param domain: Domain to use for the app.
+    :param links: Links to other environments.
+    :param include: Files to include in the environment to run the app.
+    :param inputs: Inputs to pass to the app environment.
+    :param cluster_pool: Cluster pool to use for the app environment.
+    :param name: Name of the app environment
     :param image: Docker image to use for the environment. If set to "auto", will use the default image.
     :param resources: Resources to allocate for the environment.
     :param env_vars: Environment variables to set for the environment.
@@ -89,15 +100,17 @@ class AppEnvironment(Environment):
             # args is a list
             return self.args
 
-    def _serialize_inputs(self) -> str:
+    def _serialize_inputs(self, input_overrides: list[Input] | None) -> str:
         if not self.inputs:
             return ""
         from ._input import SerializableInputCollection
 
-        serialized_inputs = SerializableInputCollection.from_inputs(self.inputs)
+        serialized_inputs = SerializableInputCollection.from_inputs(input_overrides or self.inputs)
         return serialized_inputs.to_transport
 
-    def container_cmd(self, serialize_context: SerializationContext) -> List[str]:
+    def container_cmd(
+        self, serialize_context: SerializationContext, input_overrides: list[Input] | None = None
+    ) -> List[str]:
         if self.command is None:
             # Default command
             version = serialize_context.version
@@ -131,7 +144,7 @@ class AppEnvironment(Environment):
 
             if self.inputs:
                 cmd.append("--inputs")
-                cmd.append(self._serialize_inputs())
+                cmd.append(self._serialize_inputs(input_overrides))
 
             return [*cmd, "--"]
         elif isinstance(self.command, str):
@@ -152,6 +165,8 @@ class AppEnvironment(Environment):
             return endpoint_pattern.format(app_fqdn=self.name)
 
         import flyte.remote
+        from flyte._initialize import ensure_client
 
+        ensure_client()
         app = flyte.remote.App.get(name=self.name)
         return app.endpoint

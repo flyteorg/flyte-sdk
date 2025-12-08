@@ -12,6 +12,7 @@ from flyte._logging import logger
 from flyte.models import SerializationContext
 
 from ._app_environment import AppEnvironment
+from ._input import Input
 
 if typing.TYPE_CHECKING:
     from flyte._deployer import DeployedEnvironment
@@ -64,7 +65,12 @@ class DeployedAppEnvironment:
         return f"Deployed App[{self.deployed_app.name}] in environment {self.env.name}"
 
 
-async def _deploy_app(app: AppEnvironment, serialization_context: SerializationContext, dryrun: bool = False) -> "App":
+async def _deploy_app(
+    app: AppEnvironment,
+    serialization_context: SerializationContext,
+    input_overrides: list[Input] | None = None,
+    dryrun: bool = False,
+) -> "App":
     """
     Deploy the given app.
     """
@@ -81,7 +87,8 @@ async def _deploy_app(app: AppEnvironment, serialization_context: SerializationC
 
     image_uri = app.image.uri if isinstance(app.image, Image) else app.image
     try:
-        app_idl = translate_app_env_to_idl(app, serialization_context)
+        app_idl = await translate_app_env_to_idl.aio(app, serialization_context, input_overrides=input_overrides)
+
         if dryrun:
             return app_idl
         ensure_client()
