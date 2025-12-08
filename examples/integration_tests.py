@@ -64,3 +64,30 @@ async def test_spark(flyte_client):
     from examples.plugins.spark_example import hello_spark_nested
 
     await _run_and_wait(flyte_client, hello_spark_nested, "test_spark")
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_ray(flyte_client):
+    """Test the Ray plugin example."""
+    from examples.plugins.ray_example import hello_ray_nested
+
+    await _run_and_wait(flyte_client, hello_ray_nested, "test_ray")
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_dask(flyte_client):
+    """Test the Dask plugin example."""
+    from examples.plugins.dask_example import hello_dask_nested
+
+    await _run_and_wait(flyte_client, hello_dask_nested, "test_dask")
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_pytorch(flyte_client):
+    """Test the PyTorch plugin example."""
+    from examples.plugins.torch_example import torch_distributed_train
+
+    await _run_and_wait(flyte_client, torch_distributed_train, "test_pytorch", epochs=1)

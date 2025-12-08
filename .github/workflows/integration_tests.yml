@@ -36,6 +36,7 @@ jobs:
         working-directory: plugins
         run: |
           uv pip install ./ray ./pytorch ./dask ./spark
+          uv pip install ../  # Make sure the flyte sdk is installed from the current branch
           uv pip list
       - name: Run integration tests
         env:
