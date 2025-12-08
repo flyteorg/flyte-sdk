@@ -195,6 +195,7 @@ class DeployEnvRecursiveCommand(click.Command):
             self.deploy_args.project,
             self.deploy_args.domain,
             sync_local_sys_paths=not self.deploy_args.no_sync_local_sys_paths,
+            images=tuple(self.deploy_args.image) or None,
         )
         with console.status("Deploying...", spinner="dots"):
             deployments = flyte.deploy(
