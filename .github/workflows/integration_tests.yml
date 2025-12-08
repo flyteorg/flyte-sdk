@@ -42,4 +42,4 @@ jobs:
         env:
           FLYTE_SDK_CI_TOKEN: "${{ secrets.FLYTE_SDK_CI_TOKEN }}"
         run: |
-          uv run python -m pytest -n auto -v examples/integration_tests.py
+          uv run python -m pytest -v examples/integration_tests.py
