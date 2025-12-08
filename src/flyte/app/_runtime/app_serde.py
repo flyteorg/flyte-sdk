@@ -21,6 +21,7 @@ from flyte._internal.runtime.resources_serde import get_proto_extended_resources
 from flyte._internal.runtime.task_serde import get_security_context, lookup_image_in_cache
 from flyte.app import AppEndpoint, AppEnvironment, Input, RunOutput, Scaling
 from flyte.models import SerializationContext
+from flyte.syncify import syncify
 
 
 def get_proto_container(
@@ -207,7 +208,7 @@ def _get_scaling_metric(
     return None
 
 
-def translate_inputs(inputs: List[Input]) -> app_definition_pb2.InputList:
+async def translate_inputs(inputs: List[Input]) -> app_definition_pb2.InputList:
     """
     Placeholder for translating inputs to protobuf format.
 
@@ -226,13 +227,14 @@ def translate_inputs(inputs: List[Input]) -> app_definition_pb2.InputList:
         elif isinstance(input.value, flyte.io.Dir):
             inputs_list.append(app_definition_pb2.Input(name=input.name, string_value=str(input.value.path)))
         elif isinstance(input.value, (RunOutput, AppEndpoint)):
-            inputs_list.append(app_definition_pb2.Input(name=input.name, string_value=input.value.model_dump_json()))
+            inputs_list.append(app_definition_pb2.Input(name=input.name, string_value=await input.value.get()))
         else:
             raise ValueError(f"Unsupported input value type: {type(input.value)}")
     return app_definition_pb2.InputList(items=inputs_list)
 
 
-def translate_app_env_to_idl(
+@syncify
+async def translate_app_env_to_idl(
     app_env: AppEnvironment,
     serialization_context: SerializationContext,
     input_overrides: list[Input] | None = None,
@@ -349,6 +351,6 @@ def translate_app_env_to_idl(
             links=links,
             container=container,
             pod=pod,
-            inputs=translate_inputs(input_overrides or app_env.inputs),
+            inputs=await translate_inputs(input_overrides or app_env.inputs),
         ),
     )
