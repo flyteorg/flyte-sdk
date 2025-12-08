@@ -10,16 +10,26 @@ def flyte_client():
     """
     Initialize Flyte client once for all tests.
     """
-    flyte.init(
-        endpoint=os.getenv("FLYTE_ENDPOINT", "dns:///playground.canary.unionai.cloud"),
-        auth_type="ClientSecret",
-        client_id="flyte-sdk-ci",
-        client_credentials_secret=os.getenv("FLYTE_SDK_CI_TOKEN"),
-        insecure=False,
-        image_builder="remote",
-        project=os.getenv("FLYTE_PROJECT", "flyte-sdk"),
-        domain=os.getenv("FLYTE_DOMAIN", "development"),
-    )
+    if os.getenv("GITHUB_ACTIONS", "") == "true":
+        flyte.init(
+            endpoint=os.getenv("FLYTE_ENDPOINT", "dns:///playground.canary.unionai.cloud"),
+            auth_type="ClientSecret",
+            client_id="flyte-sdk-ci",
+            client_credentials_secret=os.getenv("FLYTE_SDK_CI_TOKEN"),
+            insecure=False,
+            image_builder="remote",
+            project=os.getenv("FLYTE_PROJECT", "flyte-sdk"),
+            domain=os.getenv("FLYTE_DOMAIN", "development"),
+        )
+    else:
+        flyte.init(
+            endpoint=os.getenv("FLYTE_ENDPOINT", "dns:///playground.canary.unionai.cloud"),
+            auth_type="Pkce",
+            insecure=False,
+            image_builder="remote",
+            project=os.getenv("FLYTE_PROJECT", "flyte-sdk"),
+            domain=os.getenv("FLYTE_DOMAIN", "development"),
+        )
 
     yield flyte
 
@@ -44,8 +54,11 @@ async def _run_and_wait(flyte_client, task_fn, test_name: str, **kwargs):
     print(f"  Run URL: {run.url}")
 
     run.wait()
-
-    print("  ✓ Completed successfully\n")
+    detail = await run.action.details()
+    if detail.error_info:
+        raise RuntimeError(f"Run failed with error: {detail.error_info.message}")
+    else:
+        print("  ✓ Completed successfully\n")
 
 
 @pytest.mark.integration
