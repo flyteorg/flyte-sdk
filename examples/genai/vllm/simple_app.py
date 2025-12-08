@@ -58,7 +58,7 @@ import os
 
 import flyte
 import flyte.app
-from flyte.app.extras import VLLMAppEnvironment
+from flyteplugins.vllm import VLLMAppEnvironment
 
 # Model path should point to a blob store location containing the model weights.
 # This can be set via environment variable or hardcoded for testing.

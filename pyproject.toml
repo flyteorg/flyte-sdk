@@ -33,7 +33,6 @@ dependencies = [
 flyte = "flyte.cli.main:main"
 a0 = "flyte._bin.runtime:main"
 fserve = "flyte._bin.serve:main"
-vllm-fserve = "flyte.app.extras._vllm._model_loader.shim:main"
 
 [project.entry-points."keyring.backends"]
 flyte_keyring_file = "flyte._keyring.file"
