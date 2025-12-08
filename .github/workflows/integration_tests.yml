@@ -35,4 +35,6 @@ jobs:
       - name: Run integration tests
         env:
           FLYTE_SDK_CI_TOKEN: "${{ secrets.FLYTE_SDK_CI_TOKEN }}"
-        run: pytest -n auto -v examples/integration_tests.py
+        run: |
+          uv pip list
+          uv run python -m pytest -n auto -v examples/integration_tests.py
