@@ -88,6 +88,34 @@ def walk_commands(ctx: click.Context) -> Generator[Tuple[str, click.Command, cli
                 continue
 
 
+def get_plugin_info(cmd: click.Command) -> tuple[bool, str | None]:
+    """
+    Determine if a command is from a plugin and get the plugin module name.
+
+    Returns:
+        (is_plugin, plugin_module_name)
+    """
+    if not cmd or not cmd.callback:
+        return False, None
+
+    module = cmd.callback.__module__
+    if "flyte." not in module:
+        # External plugin
+        parts = module.split(".")
+        if len(parts) == 1:
+            return True, parts[0]
+        return True, f"{parts[0]}.{parts[1]}"
+    elif module.startswith("flyte.") and not module.startswith("flyte.cli"):
+        # Check if it's from a flyte plugin (not core CLI)
+        # Core CLI modules are: flyte.cli.*
+        # Plugin modules would be things like: flyte.databricks, flyte.snowflake, etc.
+        parts = module.split(".")
+        if len(parts) > 1 and parts[1] not in ["cli", "remote", "core", "internal", "app"]:
+            return True, f"flyte.{parts[1]}"
+
+    return False, None
+
+
 def markdown(cfg: common.CLIConfig):
     """
     Generate documentation in Markdown format
@@ -95,8 +123,12 @@ def markdown(cfg: common.CLIConfig):
     ctx = cfg.ctx
 
     output = []
-    output_verb_groups: dict[str, list[str]] = {}
-    output_noun_groups: dict[str, list[str]] = {}
+    # Store verbs with their nouns: {verb_name: [(noun_name, is_plugin, plugin_module), ...]}
+    output_verb_groups: dict[str, list[tuple[str, bool, str | None]]] = {}
+    # Store verb metadata: {verb_name: (is_plugin, plugin_module)}
+    verb_metadata: dict[str, tuple[bool, str | None]] = {}
+    # Store nouns with their verbs: {noun_name: [(verb_name, is_plugin, plugin_module), ...]}
+    output_noun_groups: dict[str, list[tuple[str, bool, str | None]]] = {}
 
     processed = []
     commands = [*[("flyte", ctx.command, ctx)], *walk_commands(ctx)]
@@ -107,20 +139,42 @@ def markdown(cfg: common.CLIConfig):
         processed.append(cmd)
         output.append("")
 
+        is_plugin, plugin_module = get_plugin_info(cmd)
+
         cmd_path_parts = cmd_path.split(" ")
 
         if len(cmd_path_parts) > 1:
-            if cmd_path_parts[1] not in output_verb_groups:
-                output_verb_groups[cmd_path_parts[1]] = []
+            verb = cmd_path_parts[1]
+
+            # Store verb metadata
+            if verb not in verb_metadata:
+                verb_metadata[verb] = (is_plugin, plugin_module)
+
+            # Initialize verb group if needed
+            if verb not in output_verb_groups:
+                output_verb_groups[verb] = []
+
             if len(cmd_path_parts) > 2:
-                output_verb_groups[cmd_path_parts[1]].append(cmd_path_parts[2])
+                noun = cmd_path_parts[2]
+                # Add noun to verb's list
+                output_verb_groups[verb].append((noun, is_plugin, plugin_module))
 
         if len(cmd_path_parts) == 3:
-            if cmd_path_parts[2] not in output_noun_groups:
-                output_noun_groups[cmd_path_parts[2]] = []
-            output_noun_groups[cmd_path_parts[2]].append(cmd_path_parts[1])
+            noun = cmd_path_parts[2]
+            verb = cmd_path_parts[1]
+            if noun not in output_noun_groups:
+                output_noun_groups[noun] = []
+            output_noun_groups[noun].append((verb, is_plugin, plugin_module))
 
         output.append(f"{'#' * (len(cmd_path_parts) + 1)} {cmd_path}")
+
+        # Add plugin notice if this is a plugin command
+        if is_plugin and plugin_module:
+            output.append("")
+            output.append(
+                f"> **Note:** This command is provided by the `{plugin_module}` plugin. "
+                f"See the plugin documentation for installation instructions."
+            )
 
         # Add usage information
         output.append("")
@@ -189,27 +243,58 @@ def markdown(cfg: common.CLIConfig):
         for row in table_data:
             output.append(f"| {row[0]} | {row[1]} | {row[2]} | {row[3]} |")
 
+    # Generate verb index table
     output_verb_index = []
+    has_plugin_verbs = False
 
     if len(output_verb_groups) > 0:
         output_verb_index.append("| Action | On |")
         output_verb_index.append("| ------ | -- |")
         for verb, nouns in output_verb_groups.items():
-            entries = [f"[`{noun}`](#flyte-{verb}-{noun})" for noun in nouns]
-            if len(entries) == 0:
-                verb_link = f"[`{verb}`](#flyte-{verb})"
+            verb_is_plugin, _ = verb_metadata.get(verb, (False, None))
+            verb_display = verb
+            if verb_is_plugin:
+                verb_display = f"{verb}⁺"
+                has_plugin_verbs = True
+
+            if len(nouns) == 0:
+                verb_link = f"[`{verb_display}`](#flyte-{verb})"
                 output_verb_index.append(f"| {verb_link} | - |")
             else:
-                output_verb_index.append(f"| `{verb}` | {', '.join(entries)}  |")
+                # Create links for nouns
+                noun_links = []
+                for noun, noun_is_plugin, _ in nouns:
+                    noun_display = noun
+                    if noun_is_plugin:
+                        noun_display = f"{noun}⁺"
+                        has_plugin_verbs = True
+                    noun_links.append(f"[`{noun_display}`](#flyte-{verb}-{noun})")
+                output_verb_index.append(f"| `{verb_display}` | {', '.join(noun_links)}  |")
 
+        if has_plugin_verbs:
+            output_verb_index.append("")
+            output_verb_index.append("**⁺** Plugin command - see command documentation for installation instructions")
+
+    # Generate noun index table
     output_noun_index = []
+    has_plugin_nouns = False
 
     if len(output_noun_groups) > 0:
         output_noun_index.append("| Object | Action |")
         output_noun_index.append("| ------ | -- |")
         for obj, actions in output_noun_groups.items():
-            entries = [f"[`{action}`](#flyte-{action}-{obj})" for action in actions]
-            output_noun_index.append(f"| `{obj}` | {', '.join(entries)}  |")
+            action_links = []
+            for action, action_is_plugin, _ in actions:
+                action_display = action
+                if action_is_plugin:
+                    action_display = f"{action}⁺"
+                    has_plugin_nouns = True
+                action_links.append(f"[`{action_display}`](#flyte-{action}-{obj})")
+            output_noun_index.append(f"| `{obj}` | {', '.join(action_links)}  |")
+
+        if has_plugin_nouns:
+            output_noun_index.append("")
+            output_noun_index.append("**⁺** Plugin command - see command documentation for installation instructions")
 
     print()
     print("{{< grid >}}")
