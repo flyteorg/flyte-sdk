@@ -1,6 +1,5 @@
 use crate::action::Action;
-use crate::ControllerError;
-use crate::StateClient;
+use crate::core::{ControllerError, StateClient};
 
 use flyteidl2::flyteidl::common::ActionIdentifier;
 use flyteidl2::flyteidl::common::RunIdentifier;

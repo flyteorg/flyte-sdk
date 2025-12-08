@@ -10,7 +10,9 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 # cloudidl = { path = "../../cloud/gen/pb_rust" }
-pyo3 = { version = "0.24", features = ["extension-module", "abi3-py310"] }
+# Note: maturin automatically adds "extension-module" when building the Python module
+# We don't include it here so that binaries can link against Python
+pyo3 = { version = "0.24", features = ["abi3-py310", "auto-initialize"] }
 pyo3-async-runtimes = { version = "0.24", features = ["tokio-runtime"] }
 tokio = { version = "1.0", features = ["full"] }
 tonic = { version = "0.12", features = ["tls", "tls-native-roots"] }
@@ -23,8 +25,9 @@ tracing = "0.1"
 tracing-subscriber = "0.3"
 async-trait = "0.1"
 thiserror = "1.0"
-pyo3-build-config = "0.24.2"
-flyteidl2 = "=2.0.0-alpha14"
+# Using local flyteidl2 without extension-module
+flyteidl2 = { path = "/Users/ytong/go/src/github.com/flyteorg/flyte/gen/rust" }
+# flyteidl2 = "=2.0.0-alpha14"
 reqwest = { version = "0.12", features = ["json", "rustls-tls"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
@@ -34,6 +37,3 @@ http = "1.0"
 urlencoding = "2.1"
 bytes = "1.0"
 http-body-util = "0.1"
-
-[build-dependencies]
-pyo3 = { version = "0.24", features = ["extension-module", "abi3-py310"] }

@@ -301,7 +301,6 @@ dependencies = [
  "prost-types 0.13.5",
  "pyo3",
  "pyo3-async-runtimes",
- "pyo3-build-config",
  "reqwest",
  "serde",
  "serde_json",
@@ -318,9 +317,7 @@ dependencies = [
 
 [[package]]
 name = "flyteidl2"
-version = "2.0.0-alpha14"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5da488fa330fc42fc4c2daa03f10e8bcbc69d302673036952e7f56c92718d13e"
+version = "0.1.0"
 dependencies = [
  "async-trait",
  "futures",

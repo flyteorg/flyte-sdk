@@ -13,7 +13,6 @@ dependencies = [
 ]
 [tool.maturin]
 module-name = "flyte_controller_base"
-features = ["pyo3/extension-module"]
 
 [tool.ruff]
 line-length = 120
