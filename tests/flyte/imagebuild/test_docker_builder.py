@@ -1,5 +1,5 @@
 import tempfile
-from pathlib import Path
+from pathlib import Path, PurePath
 from unittest.mock import patch
 
 import pytest
@@ -162,8 +162,8 @@ async def test_copy_config_handler():
 
             # Verify that the file was actually copied to the correct destination path
             src_absolute = test_file.absolute()
-            dst_path_str = str(src_absolute).replace("/", "./_flyte_abs_context/", 1)
-            expected_dst_path = context_path / dst_path_str
+            rel_path = PurePath(*src_absolute.parts[1:])
+            expected_dst_path = context_path / "_flyte_abs_context" / rel_path
 
             # Verify that the file was actually copied to the expected destination
             assert expected_dst_path.exists(), f"File should be copied to {expected_dst_path}"
@@ -219,8 +219,8 @@ async def test_copy_config_handler_skips_dockerignore():
 
                 # Calculate the expected destination path using the same logic as handle method
                 src_absolute = src_dir.absolute()
-                dst_path_str = str(src_absolute).replace("/", "./_flyte_abs_context/", 1)
-                expected_dst_path = context_path / dst_path_str
+                rel_path = PurePath(*src_absolute.parts[1:])
+                expected_dst_path = context_path / "_flyte_abs_context" / rel_path
 
                 # Verify that the directory was copied and ignored files are excluded
                 assert expected_dst_path.exists(), f"Directory should be copied to {expected_dst_path}"
@@ -274,8 +274,8 @@ async def test_copy_config_handler_with_dockerignore_layer():
 
                 # Calculate expected destination path
                 src_absolute = src_dir.absolute()
-                dst_path_str = str(src_absolute).replace("/", "./_flyte_abs_context/", 1)
-                expected_dst_path = context_path / dst_path_str
+                rel_path = PurePath(*src_absolute.parts[1:])
+                expected_dst_path = context_path / "_flyte_abs_context" / rel_path
 
                 # Verify directory copy results and file exclusions
                 assert expected_dst_path.exists(), f"Directory should be copied to {expected_dst_path}"
@@ -365,8 +365,8 @@ async def test_poetry_handler_with_project_install():
 
             # Calculate expected destination path
             src_absolute = user_folder.absolute()
-            dst_path_str = str(src_absolute).replace("/", "./_flyte_abs_context/", 1)
-            expected_dst_path = context_path / dst_path_str
+            rel_path = PurePath(*src_absolute.parts[1:])
+            expected_dst_path = context_path / "_flyte_abs_context" / rel_path
 
             # Verify directory copy results and file exclusions
             assert expected_dst_path.exists(), f"Directory should be copied to {expected_dst_path}"
@@ -418,8 +418,8 @@ async def test_uvproject_handler_with_project_install():
 
             # Calculate expected destination path
             src_absolute = user_folder.absolute()
-            dst_path_str = str(src_absolute).replace("/", "./_flyte_abs_context/", 1)
-            expected_dst_path = context_path / dst_path_str
+            rel_path = PurePath(*src_absolute.parts[1:])
+            expected_dst_path = context_path / "_flyte_abs_context" / rel_path
 
             # Verify directory copy results and file exclusions
             assert expected_dst_path.exists(), f"Directory should be copied to {expected_dst_path}"
