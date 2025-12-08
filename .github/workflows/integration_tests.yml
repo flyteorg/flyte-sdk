@@ -32,7 +32,6 @@ jobs:
         run: |
           uv pip install ./ray ./pytorch ./dask ./spark
       - name: Run integration tests
-        working-directory: examples
         env:
           FLYTE_SDK_CI_TOKEN: "${{ secrets.FLYTE_SDK_CI_TOKEN }}"
         run: pytest -n auto -v examples/integration_tests.py
