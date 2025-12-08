@@ -1,11 +1,12 @@
 # /// script
 # requires-python = "==3.13"
 # dependencies = [
-#    "flyte>=2.0.0b17",
-#    "sentence-transformers",
-#    "huggingface-hub",
+#    "flyte>=2.0.0b34",
+#    "sentence-transformers>=3.0.0",
+#    "transformers>=4.41.0",
+#    "huggingface-hub>=0.24",
 #    "hf-transfer",
-#    "datasets",
+#    "datasets>=2.18",
 # ]
 # ///
 
@@ -45,7 +46,7 @@ import flyte.io
 logger = logging.getLogger(__name__)
 
 image = flyte.Image.from_uv_script(__file__, name="embed_wikipedia_image").with_pip_packages(
-    "unionai-reuse>=0.1.5",
+    "unionai-reuse>=0.1.9",
 )
 
 driver = flyte.TaskEnvironment(
