@@ -1,0 +1,8 @@
+version = 1
+revision = 3
+requires-python = ">=3.10"
+
+[[package]]
+name = "flyte-controller-base"
+version = "2.0.0b33.dev33+g3d028ba"
+source = { editable = "." }
