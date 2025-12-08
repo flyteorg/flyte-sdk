@@ -27,7 +27,13 @@ jobs:
       - name: Install flyte & Build wheel
         run: |
           make dist
+      - name: Install plugins
+        working-directory: plugins
+        run: |
+          uv pip install ./ray ./pytorch ./dask ./spark 
+
       - name: Run integration tests
+        working-directory: examples
         env:
           FLYTE_SDK_CI_TOKEN: "${{ secrets.FLYTE_SDK_CI_TOKEN }}"
-        run: uv run --directory examples python integration_tests.py
+        run: python integration_tests.py
