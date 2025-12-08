@@ -5,10 +5,12 @@ It uses the storage module to handle the actual uploading and downloading of fil
 TODO: Convert to use streaming apis
 """
 
-from flyteidl.core import errors_pb2, execution_pb2
+from flyteidl.core import errors_pb2
+from flyteidl2.core import execution_pb2
+from flyteidl2.task import common_pb2
 
 import flyte.storage as storage
-from flyte._protos.workflow import run_definition_pb2
+from flyte.models import PathRewrite
 
 from .convert import Inputs, Outputs, _clean_error_code
 
@@ -69,7 +71,7 @@ async def upload_outputs(outputs: Outputs, output_path: str, max_bytes: int = -1
     await storage.put_stream(data_iterable=outputs.proto_outputs.SerializeToString(), to_path=output_uri)
 
 
-async def upload_error(err: execution_pb2.ExecutionError, output_prefix: str):
+async def upload_error(err: execution_pb2.ExecutionError, output_prefix: str) -> str:
     """
     :param err: execution_pb2.ExecutionError
     :param output_prefix: The output prefix of the remote uri.
@@ -86,18 +88,18 @@ async def upload_error(err: execution_pb2.ExecutionError, output_prefix: str):
         )
     )
     error_uri = error_path(output_prefix)
-    await storage.put_stream(data_iterable=error_document.SerializeToString(), to_path=error_uri)
+    return await storage.put_stream(data_iterable=error_document.SerializeToString(), to_path=error_uri)
 
 
 # ------------------------------- DOWNLOAD Methods ------------------------------- #
-async def load_inputs(path: str, max_bytes: int = -1) -> Inputs:
+async def load_inputs(path: str, max_bytes: int = -1, path_rewrite_config: PathRewrite | None = None) -> Inputs:
     """
     :param path: Input file to be downloaded
     :param max_bytes: Maximum number of bytes to read from the input file. Default is -1, which means no limit.
+    :param path_rewrite_config: If provided, rewrites paths in the input blobs according to the configuration.
     :return: Inputs object
     """
-    lm = run_definition_pb2.Inputs()
-
+    lm = common_pb2.Inputs()
     if max_bytes == -1:
         proto_str = b"".join([c async for c in storage.get_stream(path=path)])
     else:
@@ -115,6 +117,16 @@ async def load_inputs(path: str, max_bytes: int = -1) -> Inputs:
         proto_str = b"".join(proto_bytes)
 
     lm.ParseFromString(proto_str)
+
+    if path_rewrite_config is not None:
+        for inp in lm.literals:
+            if inp.value.HasField("scalar") and inp.value.scalar.HasField("blob"):
+                scalar_blob = inp.value.scalar.blob
+                if scalar_blob.uri.startswith(path_rewrite_config.old_prefix):
+                    scalar_blob.uri = scalar_blob.uri.replace(
+                        path_rewrite_config.old_prefix, path_rewrite_config.new_prefix, 1
+                    )
+
     return Inputs(proto_inputs=lm)
 
 
@@ -125,7 +137,7 @@ async def load_outputs(path: str, max_bytes: int = -1) -> Outputs:
                       If -1, reads the entire file.
     :return: Outputs object
     """
-    lm = run_definition_pb2.Outputs()
+    lm = common_pb2.Outputs()
 
     if max_bytes == -1:
         proto_str = b"".join([c async for c in storage.get_stream(path=path)])
@@ -157,7 +169,7 @@ async def load_error(path: str) -> execution_pb2.ExecutionError:
     err.ParseFromString(proto_str)
 
     if err.error is not None:
-        user_code, server_code = _clean_error_code(err.error.code)
+        user_code, _server_code = _clean_error_code(err.error.code)
         return execution_pb2.ExecutionError(
             code=user_code,
             message=err.error.message,

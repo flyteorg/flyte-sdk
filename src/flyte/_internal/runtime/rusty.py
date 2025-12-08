@@ -1,7 +1,6 @@
 import asyncio
-import sys
 import time
-from typing import Any, List, Tuple
+from typing import List, Tuple
 
 from flyte._context import contextual_run
 from flyte._internal.controllers import Controller
@@ -11,7 +10,8 @@ from flyte._internal.runtime.entrypoints import download_code_bundle, load_pkl_t
 from flyte._internal.runtime.taskrunner import extract_download_run_upload
 from flyte._logging import logger
 from flyte._task import TaskTemplate
-from flyte.models import ActionID, Checkpoints, CodeBundle, RawDataPath
+from flyte._utils import adjust_sys_path
+from flyte.models import ActionID, Checkpoints, CodeBundle, PathRewrite, RawDataPath
 
 
 async def download_tgz(destination: str, version: str, tgz: str) -> CodeBundle:
@@ -23,7 +23,7 @@ async def download_tgz(destination: str, version: str, tgz: str) -> CodeBundle:
     :return: The CodeBundle object.
     """
     logger.info(f"[rusty] Downloading tgz code bundle from {tgz} to {destination} with version {version}")
-    sys.path.insert(0, ".")
+    adjust_sys_path()
 
     code_bundle = CodeBundle(
         tgz=tgz,
@@ -42,7 +42,7 @@ async def download_load_pkl(destination: str, version: str, pkl: str) -> Tuple[C
     :return: The CodeBundle object.
     """
     logger.info(f"[rusty] Downloading pkl code bundle from {pkl} to {destination} with version {version}")
-    sys.path.insert(0, ".")
+    adjust_sys_path()
 
     code_bundle = CodeBundle(
         pkl=pkl,
@@ -78,23 +78,13 @@ async def create_controller(
     """
     logger.info(f"[rusty] Creating controller with endpoint {endpoint}")
     import flyte.errors
-    from flyte._initialize import init
+    from flyte._initialize import init_in_cluster
 
     loop = asyncio.get_event_loop()
     loop.set_exception_handler(flyte.errors.silence_grpc_polling_error)
 
     # TODO Currently reference tasks are not supported in Rusty.
-    await init.aio()
-    controller_kwargs: dict[str, Any] = {"insecure": insecure}
-    if api_key:
-        logger.info("[rusty] Using api key from environment")
-        controller_kwargs["api_key"] = api_key
-    else:
-        controller_kwargs["endpoint"] = endpoint
-        if "localhost" in endpoint or "docker" in endpoint:
-            controller_kwargs["insecure"] = True
-        logger.debug(f"[rusty] Using controller endpoint: {endpoint} with kwargs: {controller_kwargs}")
-
+    controller_kwargs = await init_in_cluster.aio(api_key=api_key, endpoint=endpoint, insecure=insecure)
     return _create_controller(ct="remote", **controller_kwargs)
 
 
@@ -115,6 +105,7 @@ async def run_task(
     prev_checkpoint: str | None = None,
     code_bundle: CodeBundle | None = None,
     input_path: str | None = None,
+    path_rewrite_cfg: str | None = None,
 ):
     """
     Runs the task with the provided parameters.
@@ -134,6 +125,7 @@ async def run_task(
     :param controller: The controller to use for the task.
     :param code_bundle: Optional code bundle for the task.
     :param input_path: Optional input path for the task.
+    :param path_rewrite_cfg: Optional path rewrite configuration.
     :return: The loaded task template.
     """
     start_time = time.time()
@@ -144,6 +136,19 @@ async def run_task(
         f" at {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(start_time))}"
     )
 
+    path_rewrite = PathRewrite.from_str(path_rewrite_cfg) if path_rewrite_cfg else None
+    if path_rewrite:
+        import flyte.storage as storage
+
+        if not await storage.exists(path_rewrite.new_prefix):
+            logger.error(
+                f"[rusty] Path rewrite failed for path {path_rewrite.new_prefix}, "
+                f"not found, reverting to original path {path_rewrite.old_prefix}"
+            )
+            path_rewrite = None
+        else:
+            logger.info(f"[rusty] Using path rewrite: {path_rewrite}")
+
     try:
         await contextual_run(
             extract_download_run_upload,
@@ -151,7 +156,7 @@ async def run_task(
             action=ActionID(name=name, org=org, project=project, domain=domain, run_name=run_name),
             version=version,
             controller=controller,
-            raw_data_path=RawDataPath(path=raw_data_path),
+            raw_data_path=RawDataPath(path=raw_data_path, path_rewrite=path_rewrite),
             output_path=output_path,
             run_base_dir=run_base_dir,
             checkpoints=Checkpoints(prev_checkpoint_path=prev_checkpoint, checkpoint_path=checkpoint_path),
@@ -159,6 +164,9 @@ async def run_task(
             input_path=input_path,
             image_cache=ImageCache.from_transport(image_cache) if image_cache else None,
         )
+    except asyncio.CancelledError as e:
+        logger.error(f"[rusty] Task cancellation received: {e!s}")
+        raise
     except Exception as e:
         logger.error(f"[rusty] Task failed: {e!s}")
         raise

@@ -74,9 +74,9 @@ def compress_scripts(source_path: str, destination: str, modules: List[ModuleTyp
 # intended to be passed as a filter to tarfile.add
 # https://docs.python.org/3/library/tarfile.html#tarfile.TarFile.add
 def tar_strip_file_attributes(tar_info: tarfile.TarInfo) -> tarfile.TarInfo:
-    # set time to epoch timestamp 0, aka 00:00:00 UTC on 1 January 1980
+    # set time to epoch timestamp 0, aka 00:00:00 UTC on 1 January 1981
     # note that when extracting this tarfile, this time will be shown as the modified date
-    tar_info.mtime = datetime(1980, 1, 1, tzinfo=timezone.utc).timestamp()
+    tar_info.mtime = datetime(1981, 1, 1, tzinfo=timezone.utc).timestamp()
 
     # user/group info
     tar_info.uid = 0
@@ -134,6 +134,22 @@ def ls_files(
     return all_files, digest
 
 
+def ls_relative_files(relative_paths: list[str], source_path: pathlib.Path) -> tuple[list[str], str]:
+    relative_paths = list(relative_paths)
+    relative_paths.sort()
+    hasher = hashlib.md5()
+
+    all_files = []
+    for file in relative_paths:
+        path = source_path / file
+        all_files.append(str(path))
+        _filehash_update(path, hasher)
+        _pathhash_update(path, hasher)
+
+    digest = hasher.hexdigest()
+    return all_files, digest
+
+
 def _filehash_update(path: Union[os.PathLike, str], hasher: hashlib._Hash) -> None:
     blocksize = 65536
     with open(path, "rb") as f:
@@ -156,7 +172,7 @@ def list_all_files(source_path: pathlib.Path, deref_symlinks, ignore_group: Opti
 
     # This is needed to prevent infinite recursion when walking with followlinks
     visited_inodes = set()
-    for root, dirnames, files in source_path.walk(top_down=True, follow_symlinks=deref_symlinks):
+    for root, dirnames, files in os.walk(source_path, topdown=True, followlinks=deref_symlinks):
         dirnames[:] = [d for d in dirnames if d not in EXCLUDE_DIRS]
         if deref_symlinks:
             inode = os.stat(root).st_ino
@@ -167,7 +183,7 @@ def list_all_files(source_path: pathlib.Path, deref_symlinks, ignore_group: Opti
         ff = []
         files.sort()
         for fname in files:
-            abspath = (root / fname).absolute()
+            abspath = (pathlib.Path(root) / fname).absolute()
             # Only consider files that exist (e.g. disregard symlinks that point to non-existent files)
             if not os.path.exists(abspath):
                 logger.info(f"Skipping non-existent file {abspath}")
@@ -193,15 +209,15 @@ def list_all_files(source_path: pathlib.Path, deref_symlinks, ignore_group: Opti
 def _file_is_in_directory(file: str, directory: str) -> bool:
     """Return True if file is in directory and in its children."""
     try:
-        return os.path.commonpath([file, directory]) == directory
-    except ValueError as e:
-        # ValueError is raised by windows if the paths are not from the same drive
-        logger.debug(f"{file} and {directory} are not in the same drive: {e!s}")
+        return pathlib.Path(file).resolve().is_relative_to(pathlib.Path(directory).resolve())
+    except OSError as e:
+        # OSError can be raised if paths cannot be resolved (permissions, broken symlinks, etc.)
+        logger.debug(f"Failed to resolve paths for {file} and {directory}: {e!s}")
         return False
 
 
 def list_imported_modules_as_files(source_path: str, modules: List[ModuleType]) -> List[str]:
-    """Copies modules into destination that are in modules. The module files are copied only if:
+    """Lists the files of modules that have been loaded.  The files are only included if:
 
     1. Not a site-packages. These are installed packages and not user files.
     2. Not in the sys.base_prefix or sys.prefix. These are also installed and not user files.
@@ -211,7 +227,7 @@ def list_imported_modules_as_files(source_path: str, modules: List[ModuleType]) 
     import flyte
     from flyte._utils.lazy_module import is_imported
 
-    files = []
+    files = set()
     flyte_root = os.path.dirname(flyte.__file__)
 
     # These directories contain installed packages or modules from the Python standard library.
@@ -244,9 +260,15 @@ def list_imported_modules_as_files(source_path: str, modules: List[ModuleType]) 
             logger.debug(f"{mod_file} is not in {source_path}")
             continue
 
-        files.append(mod_file)
+        if not pathlib.Path(mod_file).is_file():
+            # Some modules have a __file__ attribute that are relative to the base package. Let's skip these,
+            # can add more rigorous logic to really pull out the correct file location if we need to.
+            logger.debug(f"Skipping {mod_file} from {mod.__name__} because it is not a file")
+            continue
 
-    return files
+        files.add(mod_file)
+
+    return list(files)
 
 
 def add_imported_modules_from_source(source_path: str, destination: str, modules: List[ModuleType]):

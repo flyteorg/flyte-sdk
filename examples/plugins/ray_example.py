@@ -35,7 +35,8 @@ ray_env = flyte.TaskEnvironment(
     name="ray_env",
     plugin_config=ray_config,
     image=image,
-    resources=flyte.Resources(cpu=(3, 4), memory=("1600Mi", "2800Mi")),
+    resources=flyte.Resources(cpu=(3, 4), memory=("3000Mi", "5000Mi")),
+    depends_on=[task_env],
 )
 
 
@@ -56,11 +57,11 @@ async def hello_ray_nested(n: int = 3) -> typing.List[int]:
 
 
 if __name__ == "__main__":
-    flyte.init_from_config("../../config.yaml")
+    flyte.init_from_config()
     run = flyte.run(hello_ray_nested)
     print("run name:", run.name)
     print("run url:", run.url)
-    run.wait(run)
+    run.wait()
 
     action_details = flyte.remote.ActionDetails.get(run_name=run.name, name="a0")
     for log in action_details.pb2.attempts[-1].log_info:

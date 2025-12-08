@@ -7,10 +7,10 @@ authors = [{ name = "Ketan Umare", email = "kumare3@users.noreply.github.com" }]
 requires-python = ">=3.10"
 dependencies = [
     "aiofiles>=24.1.0",
-    # 8.2.0 has a bug https://github.com/pallets/click/issues/2897
     "click>=8.2.1",
     "flyteidl>=1.15.4b0,<2.0.0",
     "cloudpickle>=3.1.1",
+    "docstring_parser>=0.16",
     "fsspec>=2025.3.0",
     "grpcio>=1.71.0",
     "obstore>=0.7.3",
@@ -25,15 +25,32 @@ dependencies = [
     "async-lru>=2.0.5",
     "mashumaro",
     "dataclasses_json", # TODO: remove this dependency once we remove dataclasses_json from the code
+    "aiolimiter>=1.2.1",
+    "flyteidl2==2.0.0a15",
 ]
 
 [project.scripts]
 flyte = "flyte.cli.main:main"
 a0 = "flyte._bin.runtime:main"
+fserve = "flyte._bin.serve:main"
+c0 = "flyte._bin.connect:main"
+
+[project.entry-points."keyring.backends"]
+flyte_keyring_file = "flyte._keyring.file"
 
 [build-system]
 requires = ["setuptools", "setuptools_scm"]
 build-backend = "setuptools.build_meta"
+
+[project.optional-dependencies]
+aiosqlite = [
+    "aiosqlite>=0.21.0",
+]
+connector = [
+    "grpcio-health-checking",
+    "httpx",
+    "prometheus-client",
+]
 
 [dependency-groups]
 dev = [
@@ -88,7 +105,6 @@ branch = true
 [tool.ruff]
 line-length = 120
 extend-exclude = [
-    "src/flyte/_protos",
     "src/flyte/remote/client/_protocols.py",
     "examples/reports",
 ]
@@ -118,19 +134,14 @@ select = [
     "FURB",
     "RUF",
 ]
-ignore = ["PGH003", "PLC0415", "ASYNC210"]
+ignore = ["PGH003", "PLC0415", "ASYNC210", "FURB122"]
 
 [tool.ruff.lint.per-file-ignores]
 "examples/*" = ["E402"]
 
-[tool.uv]
-dev-dependencies = [
-    "pytest>=8.3.5",
-]
 
 [tool.mypy]
 disable_error_code = ["import-untyped"]
-exclude = "src/flyte/_protos/.*"
 ignore_missing_imports = true
 
 [tool.ty.rules]

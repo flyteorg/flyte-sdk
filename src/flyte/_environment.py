@@ -6,6 +6,8 @@ from typing import Any, Dict, List, Literal, Optional, Union
 
 import rich.repr
 
+from flyte._utils.description_parser import parse_description
+
 from ._image import Image
 from ._pod import PodTemplate
 from ._resources import Resources
@@ -36,6 +38,9 @@ class Environment:
     :param resources: Resources to allocate for the environment.
     :param env_vars: Environment variables to set for the environment.
     :param secrets: Secrets to inject into the environment.
+    :param pod_template: Pod template to use for the environment.
+    :param description: Description of the environment.
+    :param interruptible: Whether the environment is interruptible and can be scheduled on spot/preemptible instances
     :param depends_on: Environment dependencies to hint, so when you deploy the environment, the dependencies are
         also deployed. This is useful when you have a set of environments that depend on each other.
     """
@@ -47,11 +52,14 @@ class Environment:
     secrets: Optional[SecretRequest] = None
     env_vars: Optional[Dict[str, str]] = None
     resources: Optional[Resources] = None
+    interruptible: bool = False
     image: Union[str, Image, Literal["auto"]] = "auto"
 
-    def __post_init__(self):
+    def _validate_name(self):
         if not is_snake_or_kebab_with_numbers(self.name):
             raise ValueError(f"Environment name '{self.name}' must be in snake_case or kebab-case format.")
+
+    def __post_init__(self):
         if not isinstance(self.image, (Image, str)):
             raise TypeError(f"Expected image to be of type str or Image, got {type(self.image)}")
         if self.secrets and not isinstance(self.secrets, (str, Secret, List)):
@@ -63,6 +71,11 @@ class Environment:
             raise TypeError(f"Expected resources to be of type Resources, got {type(self.resources)}")
         if self.env_vars is not None and not isinstance(self.env_vars, dict):
             raise TypeError(f"Expected env_vars to be of type Dict[str, str], got {type(self.env_vars)}")
+        if self.pod_template is not None and not isinstance(self.pod_template, (str, PodTemplate)):
+            raise TypeError(f"Expected pod_template to be of type str or PodTemplate, got {type(self.pod_template)}")
+        if self.description is not None and len(self.description) > 255:
+            self.description = parse_description(self.description, 255)
+        self._validate_name()
         # Automatically register this environment instance in load order
         _ENVIRONMENT_REGISTRY.append(self)
 
@@ -87,6 +100,7 @@ class Environment:
         env_vars: Optional[Dict[str, str]] = None,
         secrets: Optional[SecretRequest] = None,
         depends_on: Optional[List[Environment]] = None,
+        description: Optional[str] = None,
         **kwargs: Any,
     ) -> Environment:
         raise NotImplementedError

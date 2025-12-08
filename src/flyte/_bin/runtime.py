@@ -8,9 +8,11 @@ Refrain from importing any modules here. If you need to import any modules, do i
 import asyncio
 import os
 import sys
-from typing import Any, List
+from typing import List
 
 import click
+
+from flyte.models import PathRewrite
 
 # Todo: work with pvditt to make these the names
 # ACTION_NAME = "_U_ACTION_NAME"
@@ -21,15 +23,16 @@ import click
 
 ACTION_NAME = "ACTION_NAME"
 RUN_NAME = "RUN_NAME"
-PROJECT_NAME = "FLYTE_INTERNAL_TASK_PROJECT"
-DOMAIN_NAME = "FLYTE_INTERNAL_TASK_DOMAIN"
+PROJECT_NAME = "FLYTE_INTERNAL_EXECUTION_PROJECT"
+DOMAIN_NAME = "FLYTE_INTERNAL_EXECUTION_DOMAIN"
 ORG_NAME = "_U_ORG_NAME"
 ENDPOINT_OVERRIDE = "_U_EP_OVERRIDE"
+INSECURE_SKIP_VERIFY_OVERRIDE = "_U_INSECURE_SKIP_VERIFY"
 RUN_OUTPUT_BASE_DIR = "_U_RUN_BASE"
 FLYTE_ENABLE_VSCODE_KEY = "_F_E_VS"
 
-# TODO: Remove this after proper auth is implemented
 _UNION_EAGER_API_KEY_ENV_VAR = "_UNION_EAGER_API_KEY"
+_F_PATH_REWRITE = "_F_PATH_REWRITE"
 
 
 @click.group()
@@ -94,7 +97,8 @@ def main(
     import flyte
     import flyte._utils as utils
     import flyte.errors
-    from flyte._initialize import init
+    import flyte.storage as storage
+    from flyte._initialize import init_in_cluster
     from flyte._internal.controllers import create_controller
     from flyte._internal.imagebuild.image_builder import ImageCache
     from flyte._internal.runtime.entrypoints import load_and_run_task
@@ -123,32 +127,34 @@ def main(
 
         asyncio.run(_start_vscode_server(ctx))
 
-    # Figure out how to connect
-    # This detection of api key is a hack for now.
-    controller_kwargs: dict[str, Any] = {"insecure": False}
-    if api_key := os.getenv(_UNION_EAGER_API_KEY_ENV_VAR):
-        logger.info("Using api key from environment")
-        controller_kwargs["api_key"] = api_key
-    else:
-        ep = os.environ.get(ENDPOINT_OVERRIDE, "host.docker.internal:8090")
-        controller_kwargs["endpoint"] = ep
-        if "localhost" in ep or "docker" in ep:
-            controller_kwargs["insecure"] = True
-        logger.debug(f"Using controller endpoint: {ep} with kwargs: {controller_kwargs}")
-
-    bundle = CodeBundle(tgz=tgz, pkl=pkl, destination=dest, computed_version=version)
-    init(org=org, project=project, domain=domain, **controller_kwargs)
+    controller_kwargs = init_in_cluster(org=org, project=project, domain=domain)
+    bundle = None
+    if tgz or pkl:
+        bundle = CodeBundle(tgz=tgz, pkl=pkl, destination=dest, computed_version=version)
     # Controller is created with the same kwargs as init, so that it can be used to run tasks
     controller = create_controller(ct="remote", **controller_kwargs)
 
     ic = ImageCache.from_transport(image_cache) if image_cache else None
+
+    path_rewrite_cfg = os.getenv(_F_PATH_REWRITE, None)
+    path_rewrite = None
+    if path_rewrite_cfg:
+        potential_path_rewrite = PathRewrite.from_str(path_rewrite_cfg)
+        if storage.exists_sync(potential_path_rewrite.new_prefix):
+            path_rewrite = potential_path_rewrite
+            logger.info(f"Path rewrite configured for {path_rewrite.new_prefix}")
+        else:
+            logger.error(
+                f"Path rewrite failed for path {potential_path_rewrite.new_prefix}, "
+                f"not found, reverting to original path {potential_path_rewrite.old_prefix}"
+            )
 
     # Create a coroutine to load the task and run it
     task_coroutine = load_and_run_task(
         resolver=resolver,
         resolver_args=resolver_args,
         action=ActionID(name=name, run_name=run_name, project=project, domain=domain, org=org),
-        raw_data_path=RawDataPath(path=raw_data_path),
+        raw_data_path=RawDataPath(path=raw_data_path, path_rewrite=path_rewrite),
         checkpoints=Checkpoints(checkpoint_path, prev_checkpoint),
         code_bundle=bundle,
         input_path=inputs,
@@ -166,8 +172,20 @@ def main(
     async def _run_and_stop():
         loop = asyncio.get_event_loop()
         loop.set_exception_handler(flyte.errors.silence_grpc_polling_error)
-        await utils.run_coros(controller_failure, task_coroutine)
-        await controller.stop()
+        try:
+            await utils.run_coros(controller_failure, task_coroutine)
+            await controller.stop()
+        except flyte.errors.RuntimeSystemError as e:
+            logger.error(f"Runtime system error: {e}")
+            from flyte._internal.runtime.convert import convert_from_native_to_error
+            from flyte._internal.runtime.io import upload_error
+
+            logger.error(f"Flyte runtime failed for action {name} with run name {run_name}, error: {e}")
+            err = convert_from_native_to_error(e)
+            path = await upload_error(err.err, outputs_path)
+            logger.error(f"Run {run_name} Action {name} failed with error: {err}. Uploaded error to {path}")
+            await controller.stop()
+            raise
 
     asyncio.run(_run_and_stop())
     logger.warning(f"Flyte runtime completed for action {name} with run name {run_name}")

@@ -1,7 +1,10 @@
 import flyte
 
 # TaskEnvironments provide a simple way of grouping configuration used by tasks (more later).
-env = flyte.TaskEnvironment(name="hello_world", resources=flyte.Resources(memory="250Mi"))
+env = flyte.TaskEnvironment(
+    name="hello_world",
+    resources=flyte.Resources(memory="250Mi"),
+)
 
 
 # use TaskEnvironments to define tasks, which are regular Python functions.
@@ -24,13 +27,11 @@ def main(x_list: list[int]) -> float:
 
 
 if __name__ == "__main__":
-    import flyte.git
-
-    flyte.init_from_config(flyte.git.config_from_root())  # establish remote connection from within your script.
+    flyte.init_from_config()  # establish remote connection from within your script.
     run = flyte.run(main, x_list=list(range(10)))  # run remotely inline and pass data.
 
     # print various attributes of the run.
     print(run.name)
     print(run.url)
 
-    run.wait(run)  # stream the logs from the root action to the terminal.
+    run.wait()  # stream the logs from the root action to the terminal.

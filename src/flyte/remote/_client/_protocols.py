@@ -1,12 +1,14 @@
 from typing import AsyncIterator, Protocol
 
 from flyteidl.admin import project_attributes_pb2, project_pb2, version_pb2
-from flyteidl.service import dataproxy_pb2
+from flyteidl.service import dataproxy_pb2, identity_pb2
+from flyteidl2.app import app_payload_pb2
+from flyteidl2.secret import payload_pb2
+from flyteidl2.task import task_service_pb2
+from flyteidl2.trigger import trigger_service_pb2
+from flyteidl2.workflow import run_logs_service_pb2, run_service_pb2
 from grpc.aio import UnaryStreamCall
 from grpc.aio._typing import RequestType
-
-from flyte._protos.secret import payload_pb2
-from flyte._protos.workflow import run_logs_service_pb2, run_service_pb2, task_service_pb2
 
 
 class MetadataServiceProtocol(Protocol):
@@ -59,6 +61,26 @@ class TaskService(Protocol):
     ) -> task_service_pb2.GetTaskDetailsResponse: ...
 
     async def ListTasks(self, request: task_service_pb2.ListTasksRequest) -> task_service_pb2.ListTasksResponse: ...
+
+
+class AppService(Protocol):
+    async def Create(self, request: app_payload_pb2.CreateRequest) -> app_payload_pb2.CreateResponse: ...
+
+    async def Get(self, request: app_payload_pb2.GetRequest) -> app_payload_pb2.GetResponse: ...
+
+    async def Update(self, request: app_payload_pb2.UpdateRequest) -> app_payload_pb2.UpdateResponse: ...
+
+    async def UpdateStatus(
+        self, request: app_payload_pb2.UpdateStatusRequest
+    ) -> app_payload_pb2.UpdateStatusResponse: ...
+
+    async def Delete(self, request: app_payload_pb2.DeleteRequest) -> app_payload_pb2.DeleteResponse: ...
+
+    async def List(self, request: app_payload_pb2.ListRequest) -> app_payload_pb2.ListResponse: ...
+
+    async def Watch(self, request: app_payload_pb2.WatchRequest) -> app_payload_pb2.WatchResponse: ...
+
+    async def Lease(self, request: app_payload_pb2.LeaseRequest) -> app_payload_pb2.LeaseResponse: ...
 
 
 class RunService(Protocol):
@@ -131,3 +153,37 @@ class SecretService(Protocol):
     async def ListSecrets(self, request: payload_pb2.ListSecretsRequest) -> payload_pb2.ListSecretsResponse: ...
 
     async def DeleteSecret(self, request: payload_pb2.DeleteSecretRequest) -> payload_pb2.DeleteSecretResponse: ...
+
+
+class IdentityService(Protocol):
+    async def UserInfo(self, request: identity_pb2.UserInfoRequest) -> identity_pb2.UserInfoResponse: ...
+
+
+class TriggerService(Protocol):
+    async def DeployTrigger(
+        self, request: trigger_service_pb2.DeployTriggerRequest
+    ) -> trigger_service_pb2.DeployTriggerResponse: ...
+
+    async def GetTriggerDetails(
+        self, request: trigger_service_pb2.GetTriggerDetailsRequest
+    ) -> trigger_service_pb2.GetTriggerDetailsResponse: ...
+
+    async def GetTriggerRevisionDetails(
+        self, request: trigger_service_pb2.GetTriggerRevisionDetailsRequest
+    ) -> trigger_service_pb2.GetTriggerRevisionDetailsResponse: ...
+
+    async def ListTriggers(
+        self, request: trigger_service_pb2.ListTriggersRequest
+    ) -> trigger_service_pb2.ListTriggersResponse: ...
+
+    async def GetTriggerRevisionHistory(
+        self, request: trigger_service_pb2.GetTriggerRevisionHistoryRequest
+    ) -> trigger_service_pb2.GetTriggerRevisionHistoryResponse: ...
+
+    async def UpdateTriggers(
+        self, request: trigger_service_pb2.UpdateTriggersRequest
+    ) -> trigger_service_pb2.UpdateTriggersResponse: ...
+
+    async def DeleteTriggers(
+        self, request: trigger_service_pb2.DeleteTriggersRequest
+    ) -> trigger_service_pb2.DeleteTriggersResponse: ...

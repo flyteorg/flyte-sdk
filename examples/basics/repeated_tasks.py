@@ -20,7 +20,7 @@ async def main_task() -> int:
 
 
 if __name__ == "__main__":
-    flyte.init_from_config("../../config.yaml")
+    flyte.init_from_config()
 
     run = flyte.run(main_task)
     print(run)

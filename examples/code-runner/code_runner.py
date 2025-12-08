@@ -49,6 +49,6 @@ async def build_run_code2() -> int:
 if __name__ == "__main__":
     # NOTE the root_dir is set to the current directory so that the "copy_style=all" only copies the parent directory
     # and all files in it, including the script.
-    flyte.init_from_config("../../config.yaml", root_dir=pathlib.Path(__file__).parent)
+    flyte.init_from_config(root_dir=pathlib.Path(__file__).parent)
     r = flyte.with_runcontext(copy_style="all").run(build_run_code2)  # Copy all files, including the script
     print(r.url)

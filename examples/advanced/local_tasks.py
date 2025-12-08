@@ -3,9 +3,15 @@ from typing import AsyncGenerator, AsyncIterator, Tuple
 
 import flyte
 
+idl2 = "git+https://github.com/flyteorg/flyte.git@v2#subdirectory=gen/python"
+
+image = (
+    flyte.Image.from_debian_base(install_flyte=False).with_apt_packages("git").with_pip_packages(idl2).with_local_v2()
+)
+
 env = flyte.TaskEnvironment(
     name="traces",
-    image=flyte.Image.from_debian_base(),
+    image=image,
     resources=flyte.Resources(cpu=1),
 )
 
@@ -114,6 +120,6 @@ async def input_output_task(a: str, b: str, c: int) -> int:
 
 
 if __name__ == "__main__":
-    flyte.init_from_config("../../config.yaml", log_level="DEBUG")
+    flyte.init_from_config(log_level="DEBUG")
     a = flyte.run(parallel_main_no_io, "hello world")
     print(a.url)

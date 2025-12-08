@@ -10,13 +10,14 @@ from typing import TYPE_CHECKING, Optional, Tuple, cast
 from uuid import uuid4
 
 import aiofiles
-import click
+from flyteidl2.common import phase_pb2
 
 import flyte
 import flyte.errors
 from flyte import Image, remote
 from flyte._code_bundle._utils import tar_strip_file_attributes
 from flyte._image import (
+    _BASE_REGISTRY,
     AptPackages,
     Architecture,
     Commands,
@@ -25,6 +26,7 @@ from flyte._image import (
     Env,
     PipOption,
     PipPackages,
+    PoetryProject,
     PythonWheels,
     Requirements,
     UVProject,
@@ -32,17 +34,16 @@ from flyte._image import (
     WorkDir,
 )
 from flyte._internal.imagebuild.image_builder import ImageBuilder, ImageChecker
-from flyte._internal.imagebuild.utils import copy_files_to_context
+from flyte._internal.imagebuild.utils import copy_files_to_context, get_and_list_dockerignore
 from flyte._internal.runtime.task_serde import get_security_context
 from flyte._logging import logger
 from flyte._secret import Secret
 from flyte.remote import ActionOutputs, Run
 
 if TYPE_CHECKING:
-    from flyte._protos.imagebuilder import definition_pb2 as image_definition_pb2
+    from flyteidl2.imagebuilder import definition_pb2 as image_definition_pb2
 
 IMAGE_TASK_NAME = "build-image"
-OPTIMIZE_TASK_NAME = "optimize-task"
 IMAGE_TASK_PROJECT = "system"
 IMAGE_TASK_DOMAIN = "production"
 
@@ -70,25 +71,31 @@ class RemoteImageChecker(ImageChecker):
         image_name = f"{repository.split('/')[-1]}:{tag}"
 
         try:
+            from flyteidl2.common.identifier_pb2 import ProjectIdentifier
+            from flyteidl2.imagebuilder import definition_pb2 as image_definition__pb2
+            from flyteidl2.imagebuilder import payload_pb2 as image_payload__pb2
+            from flyteidl2.imagebuilder import service_pb2_grpc as image_service_pb2_grpc
+
             from flyte._initialize import _get_init_config
-            from flyte._protos.imagebuilder import definition_pb2 as image_definition__pb2
-            from flyte._protos.imagebuilder import payload_pb2 as image_payload__pb2
-            from flyte._protos.imagebuilder import service_pb2_grpc as image_service_pb2_grpc
 
             cfg = _get_init_config()
             if cfg is None:
                 raise ValueError("Init config should not be None")
             image_id = image_definition__pb2.ImageIdentifier(name=image_name)
-            req = image_payload__pb2.GetImageRequest(id=image_id, organization=cfg.org)
+            req = image_payload__pb2.GetImageRequest(
+                id=image_id,
+                organization=cfg.org,
+                project_id=ProjectIdentifier(organization=cfg.org, domain=cfg.domain, name=cfg.project),
+            )
             if cls._images_client is None:
                 if cfg.client is None:
                     raise ValueError("remote client should not be None")
                 cls._images_client = image_service_pb2_grpc.ImageServiceStub(cfg.client._channel)
             resp = await cls._images_client.GetImage(req)
-            logger.warning(click.style(f"Image {resp.image.fqin} found. Skip building.", fg="blue"))
+            logger.warning(f"[blue]Image {resp.image.fqin} found. Skip building.[/blue]")
             return resp.image.fqin
         except Exception:
-            logger.warning(click.style(f"Image {image_name} was not found or has expired.", fg="blue"))
+            logger.warning(f"[blue]Image {image_name} was not found or has expired.[/blue]", extra={"highlight": False})
             return None
 
 
@@ -98,8 +105,6 @@ class RemoteImageBuilder(ImageBuilder):
         return [RemoteImageChecker]
 
     async def build_image(self, image: Image, dry_run: bool = False) -> str:
-        from flyte._protos.workflow import run_definition_pb2
-
         image_name = f"{image.name}:{image._final_tag}"
         spec, context = await _validate_configuration(image)
 
@@ -110,37 +115,34 @@ class RemoteImageBuilder(ImageBuilder):
             domain=IMAGE_TASK_DOMAIN,
             auto_version="latest",
         ).override.aio(secrets=_get_build_secrets_from_image(image))
+
+        logger.warning("[bold blue]🐳 Submitting a new build...[/bold blue]")
+        if image.registry and image.registry != _BASE_REGISTRY:
+            target_image = f"{image.registry}/{image_name}"
+        else:
+            # Use the default system registry in the backend.
+            target_image = image_name
+
+        from flyte._initialize import get_init_config
+
+        cfg = get_init_config()
         run = cast(
             Run,
-            await flyte.with_runcontext(project=IMAGE_TASK_PROJECT, domain=IMAGE_TASK_DOMAIN).run.aio(
-                entity, spec=spec, context=context, target_image=image_name
-            ),
+            await flyte.with_runcontext(
+                project=cfg.project, domain=cfg.domain, cache_lookup_scope="project-domain"
+            ).run.aio(entity, spec=spec, context=context, target_image=target_image),
         )
-        logger.warning(click.style("🐳 Submitting a new build...", fg="blue", bold=True))
+        logger.warning(f"⏳ Waiting for build to finish at: [bold cyan link={run.url}]{run.url}[/bold cyan link]")
 
-        logger.warning(click.style("⏳ Waiting for build to finish at: " + click.style(run.url, fg="cyan"), bold=True))
         await run.wait.aio(quiet=True)
         run_details = await run.details.aio()
 
         elapsed = str(datetime.now(timezone.utc) - start).split(".")[0]
 
-        if run_details.action_details.raw_phase == run_definition_pb2.PHASE_SUCCEEDED:
-            logger.warning(click.style(f"✅ Build completed in {elapsed}!", bold=True, fg="green"))
-            try:
-                entity = remote.Task.get(
-                    name=OPTIMIZE_TASK_NAME,
-                    project=IMAGE_TASK_PROJECT,
-                    domain=IMAGE_TASK_DOMAIN,
-                    auto_version="latest",
-                )
-                await flyte.with_runcontext(project=IMAGE_TASK_PROJECT, domain=IMAGE_TASK_DOMAIN).run.aio(
-                    entity, target_image=image_name
-                )
-            except Exception as e:
-                # Ignore the error if optimize is not enabled in the backend.
-                logger.warning(f"Failed to run optimize task with error: {e}")
+        if run_details.action_details.raw_phase == phase_pb2.ACTION_PHASE_SUCCEEDED:
+            logger.warning(f"[bold green]✅ Build completed in {elapsed}![/bold green]")
         else:
-            raise flyte.errors.ImageBuildError(f"❌ Build failed in {elapsed} at {click.style(run.url, fg='cyan')}")
+            raise flyte.errors.ImageBuildError(f"❌ Build failed in {elapsed} at {run.url}")
 
         outputs = await run_details.outputs()
         return _get_fully_qualified_image_name(outputs)
@@ -183,11 +185,8 @@ async def _validate_configuration(image: Image) -> Tuple[str, Optional[str]]:
         context_size = tar_path.stat().st_size
         if context_size > 5 * 1024 * 1024:
             logger.warning(
-                click.style(
-                    f"Context size is {context_size / (1024 * 1024):.2f} MB, which is larger than 5 MB. "
-                    "Upload and build speed will be impacted.",
-                    fg="yellow",
-                )
+                f"[yellow]Context size is {context_size / (1024 * 1024):.2f} MB, which is larger than 5 MB. "
+                "Upload and build speed will be impacted.[/yellow]",
             )
         _, context_url = await remote.upload_file.aio(context_dst)
     else:
@@ -197,12 +196,17 @@ async def _validate_configuration(image: Image) -> Tuple[str, Optional[str]]:
 
 
 def _get_layers_proto(image: Image, context_path: Path) -> "image_definition_pb2.ImageSpec":
-    from flyte._protos.imagebuilder import definition_pb2 as image_definition_pb2
+    from flyteidl2.imagebuilder import definition_pb2 as image_definition_pb2
+
+    if image.dockerfile is not None:
+        raise flyte.errors.ImageBuildError(
+            "Custom Dockerfile is not supported with remote image builder.You can use local image builder instead."
+        )
 
     layers = []
     for layer in image._layers:
         secret_mounts = None
-        pip_options = None
+        pip_options = image_definition_pb2.PipOptions()
 
         if isinstance(layer, PipOption):
             pip_options = image_definition_pb2.PipOptions(
@@ -264,16 +268,20 @@ def _get_layers_proto(image: Image, context_path: Path) -> "image_definition_pb2
             )
             layers.append(pip_layer)
         elif isinstance(layer, UVProject):
-            for line in layer.pyproject.read_text().splitlines():
-                if "tool.uv.index" in line:
-                    raise ValueError("External sources are not supported in pyproject.toml")
-
-            if layer.extra_index_urls and "--no-install-project" in layer.extra_index_urls:
+            if layer.project_install_mode == "dependencies_only":
                 # Copy pyproject itself
                 pyproject_dst = copy_files_to_context(layer.pyproject, context_path)
+                if pip_options.extra_args:
+                    if "--no-install-project" not in pip_options.extra_args:
+                        pip_options.extra_args += " --no-install-project"
+                else:
+                    pip_options.extra_args = " --no-install-project"
+                if "--no-sources" not in pip_options.extra_args:
+                    pip_options.extra_args += " --no-sources"
             else:
                 # Copy the entire project
-                pyproject_dst = copy_files_to_context(layer.pyproject.parent, context_path)
+                docker_ignore_patterns = get_and_list_dockerignore(image)
+                pyproject_dst = copy_files_to_context(layer.pyproject.parent, context_path, docker_ignore_patterns)
 
             uv_layer = image_definition_pb2.Layer(
                 uv_project=image_definition_pb2.UVProject(
@@ -284,6 +292,26 @@ def _get_layers_proto(image: Image, context_path: Path) -> "image_definition_pb2
                 )
             )
             layers.append(uv_layer)
+        elif isinstance(layer, PoetryProject):
+            extra_args = layer.extra_args or ""
+            if layer.project_install_mode == "dependencies_only":
+                # Copy pyproject itself
+                if "--no-root" not in extra_args:
+                    extra_args += " --no-root"
+                pyproject_dst = copy_files_to_context(layer.pyproject, context_path)
+            else:
+                # Copy the entire project
+                pyproject_dst = copy_files_to_context(layer.pyproject.parent, context_path)
+
+            poetry_layer = image_definition_pb2.Layer(
+                poetry_project=image_definition_pb2.PoetryProject(
+                    pyproject=str(pyproject_dst.relative_to(context_path)),
+                    poetry_lock=str(copy_files_to_context(layer.poetry_lock, context_path).relative_to(context_path)),
+                    extra_args=extra_args,
+                    secret_mounts=secret_mounts,
+                )
+            )
+            layers.append(poetry_layer)
         elif isinstance(layer, Commands):
             commands_layer = image_definition_pb2.Layer(
                 commands=image_definition_pb2.Commands(
@@ -342,4 +370,9 @@ def _get_build_secrets_from_image(image: Image) -> Optional[typing.List[Secret]]
                 else:
                     raise ValueError(f"Unsupported secret_mount type: {type(secret_mount)}")
 
+    image_registry_secret = image._image_registry_secret
+    if image_registry_secret:
+        secrets.append(
+            Secret(key=image_registry_secret.key, group=image_registry_secret.group, mount=DEFAULT_SECRET_DIR)
+        )
     return secrets

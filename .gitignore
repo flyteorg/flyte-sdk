@@ -1,3 +1,6 @@
+.flyte
+maint_tools/copy_pb_python_from_cloud.py
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
@@ -186,3 +189,4 @@ examples/local_debug.ipynb
 examples/remote_example.py
 config.yaml
 .claude/
+tests/flyte/internal/bin/flyte-inputs.json

@@ -1,18 +1,20 @@
+from __future__ import annotations
+
 import inspect
 import time
 from dataclasses import dataclass
 from typing import Awaitable, Optional, Tuple, Union
 
 import pytest
-from flyteidl.core.interface_pb2 import TypedInterface, Variable, VariableMap
-from flyteidl.core.literals_pb2 import (
+from flyteidl2.core.interface_pb2 import TypedInterface, Variable, VariableMap
+from flyteidl2.core.literals_pb2 import (
     Literal,
     LiteralCollection,
     LiteralMap,
     Primitive,
     Scalar,
 )
-from flyteidl.core.types_pb2 import (
+from flyteidl2.core.types_pb2 import (
     BlobType,
     EnumType,
     LiteralType,
@@ -20,12 +22,12 @@ from flyteidl.core.types_pb2 import (
     StructuredDatasetType,
     UnionType,
 )
+from flyteidl2.task import common_pb2 as _task_common_pb2
+from flyteidl2.task import common_pb2 as run_definition_pb2
 
 import flyte._internal.runtime.convert as convert
 from flyte._internal.runtime.convert import Inputs, generate_sub_action_id_and_output_path
 from flyte._internal.runtime.types_serde import transform_native_to_typed_interface
-from flyte._protos.workflow import run_definition_pb2
-from flyte._protos.workflow import run_definition_pb2 as _run_definition_pb2
 from flyte.models import ActionID, NativeInterface, RawDataPath, TaskContext
 from flyte.report import Report
 from flyte.types import TypeEngine
@@ -96,7 +98,7 @@ def test_1M_action_name_with_min_diff():
     inputs_hash = convert.generate_inputs_hash(serialized_inputs)
 
     for i in range(1000000):
-        sub_action_id, path = generate_sub_action_id_and_output_path(
+        sub_action_id, _path = generate_sub_action_id_and_output_path(
             tctx=tctx,
             task_spec_or_name="t1",
             inputs_hash=inputs_hash,
@@ -127,7 +129,7 @@ async def test_generate_cache_key_hash():
 
     task_name = "test_task"
     cache_key = convert.generate_cache_key_hash(task_name, inputs_hash, typed_interface, "v1", [], inputs.proto_inputs)
-    assert cache_key == "5rqRLYOr9qd84OWUkfS0lT94IZ/Q0kH00c5LMKgsLNk="
+    assert cache_key == "3QOOTUfLNFxjNa8EXclvzJBto16syFFChVulyOJ2Ops="
 
 
 # Run 10 times to make sure ordering is consistent
@@ -155,7 +157,7 @@ async def test_generate_cache_key_hash_consistency(_):
 
     task_name = "test_task"
     cache_key = convert.generate_cache_key_hash(task_name, inputs_hash, typed_interface, "v1", [], inputs.proto_inputs)
-    assert cache_key == "gKUZZV2XwUZbIUl9tfLC7+n8tREvPR9jq9vzPEHqOKg="
+    assert cache_key == "nlphRTBV/ONbns4FPKlk7yOSqXGwl9qARlb5ommqKJs="
 
 
 @pytest.mark.asyncio
@@ -331,15 +333,13 @@ async def test_convert_from_native_to_inputs_mixed_positional_with_defaults():
     assert "kw1" in literals_dict  # Should have overridden value
 
 
-int_literal = _run_definition_pb2.NamedLiteral(
-    name="int", value=Literal(scalar=Scalar(primitive=Primitive(integer=100)))
-)
+int_literal = _task_common_pb2.NamedLiteral(name="int", value=Literal(scalar=Scalar(primitive=Primitive(integer=100))))
 
-str_literal = _run_definition_pb2.NamedLiteral(
+str_literal = _task_common_pb2.NamedLiteral(
     name="str", value=Literal(scalar=Scalar(primitive=Primitive(string_value="hello world")))
 )
 
-list_literal = _run_definition_pb2.NamedLiteral(
+list_literal = _task_common_pb2.NamedLiteral(
     name="list",
     value=Literal(
         collection=LiteralCollection(
@@ -351,7 +351,7 @@ list_literal = _run_definition_pb2.NamedLiteral(
     ),
 )
 
-map_literal = _run_definition_pb2.NamedLiteral(
+map_literal = _task_common_pb2.NamedLiteral(
     name="map",
     value=Literal(
         map=LiteralMap(
@@ -369,7 +369,7 @@ map_literal = _run_definition_pb2.NamedLiteral(
     [
         (
             "integer",
-            _run_definition_pb2.Inputs(
+            _task_common_pb2.Inputs(
                 literals=[
                     int_literal,
                 ],
@@ -378,7 +378,7 @@ map_literal = _run_definition_pb2.NamedLiteral(
         ),
         (
             "string",
-            _run_definition_pb2.Inputs(
+            _task_common_pb2.Inputs(
                 literals=[
                     str_literal,
                 ]
@@ -387,7 +387,7 @@ map_literal = _run_definition_pb2.NamedLiteral(
         ),
         (
             "collection",
-            _run_definition_pb2.Inputs(
+            _task_common_pb2.Inputs(
                 literals=[
                     list_literal,
                 ]
@@ -396,7 +396,7 @@ map_literal = _run_definition_pb2.NamedLiteral(
         ),
         (
             "map",
-            _run_definition_pb2.Inputs(
+            _task_common_pb2.Inputs(
                 literals=[
                     map_literal,
                 ]
@@ -405,10 +405,10 @@ map_literal = _run_definition_pb2.NamedLiteral(
         ),
         (
             "mixed inputs",
-            _run_definition_pb2.Inputs(literals=[int_literal, str_literal, list_literal, map_literal]),
+            _task_common_pb2.Inputs(literals=[int_literal, str_literal, list_literal, map_literal]),
             "/9dLsq0Dg9NN8izGM+UmuaoNxdOi3HAcsasTPKk9KPg=",
         ),
-        ("empty input", _run_definition_pb2.Inputs(), ""),
+        ("empty input", _task_common_pb2.Inputs(), ""),
         ("nil input", None, ""),
     ],
 )
@@ -805,14 +805,14 @@ def test_generate_inputs_hash_with_literal_hashes():
     """
     # Create inputs with some literals having hash values
     inputs = [
-        _run_definition_pb2.NamedLiteral(
+        _task_common_pb2.NamedLiteral(
             name="file1", value=Literal(scalar=Scalar(primitive=Primitive(string_value="path1")), hash="file_hash_1")
         ),
-        _run_definition_pb2.NamedLiteral(
+        _task_common_pb2.NamedLiteral(
             name="file2",
             value=Literal(scalar=Scalar(primitive=Primitive(string_value="path2"))),  # no hash
         ),
-        _run_definition_pb2.NamedLiteral(
+        _task_common_pb2.NamedLiteral(
             name="file3", value=Literal(scalar=Scalar(primitive=Primitive(string_value="path3")), hash="file_hash_3")
         ),
     ]
@@ -828,7 +828,7 @@ def test_generate_inputs_hash_with_literal_hashes():
         pytest.fail("Result should be valid base64")
 
     # Different from standard serialization
-    standard_inputs = _run_definition_pb2.Inputs(literals=inputs)
+    standard_inputs = _task_common_pb2.Inputs(literals=inputs)
     standard_hash = convert.generate_inputs_hash_from_proto(standard_inputs)
     # Note: These will be the same now since generate_inputs_hash_from_proto uses the new function
     assert result == standard_hash
@@ -840,7 +840,7 @@ def test_generate_inputs_hash_consistency():
     Test that the new hash function is consistent with itself.
     """
     inputs = [
-        _run_definition_pb2.NamedLiteral(
+        _task_common_pb2.NamedLiteral(
             name="consistent_test",
             value=Literal(scalar=Scalar(primitive=Primitive(string_value="test")), hash="consistent_hash"),
         ),
@@ -861,9 +861,9 @@ def test_generate_cache_key_hash_with_literal_hashes():
     typed_interface = transform_native_to_typed_interface(interface)
 
     # Create inputs with hash
-    inputs = _run_definition_pb2.Inputs(
+    inputs = _task_common_pb2.Inputs(
         literals=[
-            _run_definition_pb2.NamedLiteral(
+            _task_common_pb2.NamedLiteral(
                 name="file_input",
                 value=Literal(
                     scalar=Scalar(primitive=Primitive(string_value="s3://bucket/file.txt")), hash="file_content_hash"
@@ -889,7 +889,7 @@ def test_cache_key_hash_with_file_objects():
     Test cache key generation with File objects that have hash values.
     This is a larger integration test with multiple File objects.
     """
-    from flyteidl.core import literals_pb2, types_pb2
+    from flyteidl2.core import literals_pb2, types_pb2
 
     # Create literals with hash values like File objects would produce
     literal1 = Literal(
@@ -926,11 +926,11 @@ def test_cache_key_hash_with_file_objects():
         # no hash for file3
     )
 
-    inputs = _run_definition_pb2.Inputs(
+    inputs = _task_common_pb2.Inputs(
         literals=[
-            _run_definition_pb2.NamedLiteral(name="input_file1", value=literal1),
-            _run_definition_pb2.NamedLiteral(name="input_file2", value=literal2),
-            _run_definition_pb2.NamedLiteral(name="input_file3", value=literal3),
+            _task_common_pb2.NamedLiteral(name="input_file1", value=literal1),
+            _task_common_pb2.NamedLiteral(name="input_file2", value=literal2),
+            _task_common_pb2.NamedLiteral(name="input_file3", value=literal3),
         ]
     )
 
@@ -958,11 +958,11 @@ def test_cache_key_hash_with_file_objects():
 
     # Verify cache key is different when file hashes change
     literal1_modified = Literal(scalar=literal1.scalar, hash="different_content_hash_1")
-    inputs_modified = _run_definition_pb2.Inputs(
+    inputs_modified = _task_common_pb2.Inputs(
         literals=[
-            _run_definition_pb2.NamedLiteral(name="input_file1", value=literal1_modified),
-            _run_definition_pb2.NamedLiteral(name="input_file2", value=literal2),
-            _run_definition_pb2.NamedLiteral(name="input_file3", value=literal3),
+            _task_common_pb2.NamedLiteral(name="input_file1", value=literal1_modified),
+            _task_common_pb2.NamedLiteral(name="input_file2", value=literal2),
+            _task_common_pb2.NamedLiteral(name="input_file3", value=literal3),
         ]
     )
 
@@ -1001,31 +1001,31 @@ def test_generate_cache_key_hash_with_ignored_inputs():
     )
 
     # Create first set of inputs
-    inputs1 = _run_definition_pb2.Inputs(
+    inputs1 = _task_common_pb2.Inputs(
         literals=[
-            _run_definition_pb2.NamedLiteral(
+            _task_common_pb2.NamedLiteral(
                 name="required_input", value=Literal(scalar=Scalar(primitive=Primitive(string_value="test_value")))
             ),
-            _run_definition_pb2.NamedLiteral(
+            _task_common_pb2.NamedLiteral(
                 name="ignored_input", value=Literal(scalar=Scalar(primitive=Primitive(integer=42)))
             ),
-            _run_definition_pb2.NamedLiteral(
+            _task_common_pb2.NamedLiteral(
                 name="another_required", value=Literal(scalar=Scalar(primitive=Primitive(boolean=True)))
             ),
         ]
     )
 
     # Create second set of inputs where only the ignored input changes
-    inputs2 = _run_definition_pb2.Inputs(
+    inputs2 = _task_common_pb2.Inputs(
         literals=[
-            _run_definition_pb2.NamedLiteral(
+            _task_common_pb2.NamedLiteral(
                 name="required_input", value=Literal(scalar=Scalar(primitive=Primitive(string_value="test_value")))
             ),
-            _run_definition_pb2.NamedLiteral(
+            _task_common_pb2.NamedLiteral(
                 name="ignored_input",
                 value=Literal(scalar=Scalar(primitive=Primitive(integer=9999))),  # Changed value
             ),
-            _run_definition_pb2.NamedLiteral(
+            _task_common_pb2.NamedLiteral(
                 name="another_required", value=Literal(scalar=Scalar(primitive=Primitive(boolean=True)))
             ),
         ]
@@ -1061,18 +1061,18 @@ def test_generate_cache_key_hash_with_ignored_inputs():
         pytest.fail("Cache keys should be valid base64")
 
     # Test that non-ignored input changes DO affect the cache key
-    inputs3 = _run_definition_pb2.Inputs(
+    inputs3 = _task_common_pb2.Inputs(
         literals=[
-            _run_definition_pb2.NamedLiteral(
+            _task_common_pb2.NamedLiteral(
                 name="required_input",
                 value=Literal(
                     scalar=Scalar(primitive=Primitive(string_value="different_value"))
                 ),  # Changed non-ignored input
             ),
-            _run_definition_pb2.NamedLiteral(
+            _task_common_pb2.NamedLiteral(
                 name="ignored_input", value=Literal(scalar=Scalar(primitive=Primitive(integer=42)))
             ),
-            _run_definition_pb2.NamedLiteral(
+            _task_common_pb2.NamedLiteral(
                 name="another_required", value=Literal(scalar=Scalar(primitive=Primitive(boolean=True)))
             ),
         ]
@@ -1104,7 +1104,7 @@ def test_cache_key_hash_with_dir_objects():
     """
     Test cache key generation with Dir objects that have hash values.
     """
-    from flyteidl.core import literals_pb2, types_pb2
+    from flyteidl2.core import literals_pb2, types_pb2
 
     # Create literals with hash values like Dir objects would produce
     literal1 = Literal(
@@ -1141,11 +1141,11 @@ def test_cache_key_hash_with_dir_objects():
         # no hash for dir3
     )
 
-    inputs = _run_definition_pb2.Inputs(
+    inputs = _task_common_pb2.Inputs(
         literals=[
-            _run_definition_pb2.NamedLiteral(name="input_dir1", value=literal1),
-            _run_definition_pb2.NamedLiteral(name="input_dir2", value=literal2),
-            _run_definition_pb2.NamedLiteral(name="input_dir3", value=literal3),
+            _task_common_pb2.NamedLiteral(name="input_dir1", value=literal1),
+            _task_common_pb2.NamedLiteral(name="input_dir2", value=literal2),
+            _task_common_pb2.NamedLiteral(name="input_dir3", value=literal3),
         ]
     )
 
@@ -1173,11 +1173,11 @@ def test_cache_key_hash_with_dir_objects():
 
     # Verify cache key is different when dir hashes change
     literal1_modified = Literal(scalar=literal1.scalar, hash="different_dir_content_hash_1")
-    inputs_modified = _run_definition_pb2.Inputs(
+    inputs_modified = _task_common_pb2.Inputs(
         literals=[
-            _run_definition_pb2.NamedLiteral(name="input_dir1", value=literal1_modified),
-            _run_definition_pb2.NamedLiteral(name="input_dir2", value=literal2),
-            _run_definition_pb2.NamedLiteral(name="input_dir3", value=literal3),
+            _task_common_pb2.NamedLiteral(name="input_dir1", value=literal1_modified),
+            _task_common_pb2.NamedLiteral(name="input_dir2", value=literal2),
+            _task_common_pb2.NamedLiteral(name="input_dir3", value=literal3),
         ]
     )
 

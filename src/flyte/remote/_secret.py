@@ -4,9 +4,9 @@ from dataclasses import dataclass
 from typing import AsyncIterator, Literal, Union
 
 import rich.repr
+from flyteidl2.secret import definition_pb2, payload_pb2
 
-from flyte._initialize import ensure_client, get_client, get_common_config
-from flyte._protos.secret import definition_pb2, payload_pb2
+from flyte._initialize import ensure_client, get_client, get_init_config
 from flyte.remote._common import ToJSONMixin
 from flyte.syncify import syncify
 
@@ -21,12 +21,19 @@ class Secret(ToJSONMixin):
     @classmethod
     async def create(cls, name: str, value: Union[str, bytes], type: SecretTypes = "regular"):
         ensure_client()
-        cfg = get_common_config()
-        secret_type = (
-            definition_pb2.SecretType.SECRET_TYPE_GENERIC
-            if type == "regular"
-            else definition_pb2.SecretType.SECRET_TYPE_IMAGE_PULL_SECRET
-        )
+        cfg = get_init_config()
+        project = cfg.project
+        domain = cfg.domain
+
+        if type == "regular":
+            secret_type = definition_pb2.SecretType.SECRET_TYPE_GENERIC
+
+        else:
+            secret_type = definition_pb2.SecretType.SECRET_TYPE_IMAGE_PULL_SECRET
+            if project or domain:
+                raise ValueError(
+                    f"Project `{project}` or domain `{domain}` should not be set when creating the image pull secret."
+                )
 
         if isinstance(value, str):
             secret = definition_pb2.SecretSpec(
@@ -42,8 +49,8 @@ class Secret(ToJSONMixin):
             request=payload_pb2.CreateSecretRequest(
                 id=definition_pb2.SecretIdentifier(
                     organization=cfg.org,
-                    project=cfg.project,
-                    domain=cfg.domain,
+                    project=project,
+                    domain=domain,
                     name=name,
                 ),
                 secret_spec=secret,
@@ -54,7 +61,7 @@ class Secret(ToJSONMixin):
     @classmethod
     async def get(cls, name: str) -> Secret:
         ensure_client()
-        cfg = get_common_config()
+        cfg = get_init_config()
         resp = await get_client().secrets_service.GetSecret(
             request=payload_pb2.GetSecretRequest(
                 id=definition_pb2.SecretIdentifier(
@@ -69,31 +76,33 @@ class Secret(ToJSONMixin):
 
     @syncify
     @classmethod
-    async def listall(cls, limit: int = 100) -> AsyncIterator[Secret]:
+    async def listall(cls, limit: int = 10) -> AsyncIterator[Secret]:
         ensure_client()
-        cfg = get_common_config()
-        token = None
+        cfg = get_init_config()
+        per_cluster_tokens = None
         while True:
             resp = await get_client().secrets_service.ListSecrets(  # type: ignore
                 request=payload_pb2.ListSecretsRequest(
                     organization=cfg.org,
                     project=cfg.project,
                     domain=cfg.domain,
-                    token=token,
+                    per_cluster_tokens=per_cluster_tokens,
                     limit=limit,
                 ),
             )
-            token = resp.token
+            per_cluster_tokens = resp.per_cluster_tokens
+            round_items = [v for _, v in per_cluster_tokens.items() if v]
+            has_next = any(round_items)
             for r in resp.secrets:
                 yield cls(r)
-            if not token:
+            if not has_next:
                 break
 
     @syncify
     @classmethod
     async def delete(cls, name):
         ensure_client()
-        cfg = get_common_config()
+        cfg = get_init_config()
         await get_client().secrets_service.DeleteSecret(  # type: ignore
             request=payload_pb2.DeleteSecretRequest(
                 id=definition_pb2.SecretIdentifier(

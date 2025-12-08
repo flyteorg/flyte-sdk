@@ -32,7 +32,7 @@ async def large_inline_io() -> str:
 
 
 if __name__ == "__main__":
-    flyte.init_from_config("../../config.yaml", log_level=logging.DEBUG)
+    flyte.init_from_config(log_level=logging.DEBUG)
     run = flyte.run(large_inline_io)
     print(run.url)
     print("Run completed.")

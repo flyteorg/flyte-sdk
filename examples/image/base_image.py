@@ -12,7 +12,7 @@ image = (
     .with_local_v2()
 )
 
-env = flyte.TaskEnvironment(name="t1", image=image)
+env = flyte.TaskEnvironment(name="t1", image=Image.from_base(image_uri="docker.io/library/debian:latest"))
 
 
 @env.task
@@ -21,7 +21,7 @@ async def t1(data: str = "hello") -> str:
 
 
 if __name__ == "__main__":
-    flyte.init_from_config("../../config.yaml")
+    flyte.init_from_config()
     run = flyte.run(t1, data="world")
     print(run.name)
     print(run.url)

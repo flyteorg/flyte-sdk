@@ -5,10 +5,10 @@ from asyncio import Queue
 from typing import AsyncIterator, Callable, Dict, Optional, Tuple, cast
 
 import grpc.aio
+from flyteidl2.common import identifier_pb2, phase_pb2
+from flyteidl2.workflow import state_service_pb2
 
 from flyte._logging import log, logger
-from flyte._protos.common import identifier_pb2
-from flyte._protos.workflow import run_definition_pb2, state_service_pb2
 
 from ._action import Action
 from ._service_protocol import StateService
@@ -39,14 +39,14 @@ class ActionCache:
         """
         Add an action to the cache if it doesn't exist. This is invoked by the watch.
         """
-        logger.debug(f"Observing phase {run_definition_pb2.Phase.Name(state.phase)} for {state.action_id.name}")
+        logger.debug(f"Observing phase {phase_pb2.ActionPhase.Name(state.phase)} for {state.action_id.name}")
         if state.output_uri:
             logger.debug(f"Output URI: {state.output_uri}")
         else:
             logger.warning(
-                f"{state.action_id.name} has no output URI, in phase {run_definition_pb2.Phase.Name(state.phase)}"
+                f"{state.action_id.name} has no output URI, in phase {phase_pb2.ActionPhase.Name(state.phase)}"
             )
-        if state.phase == run_definition_pb2.Phase.PHASE_FAILED:
+        if state.phase == phase_pb2.ACTION_PHASE_FAILED:
             logger.error(
                 f"Action {state.action_id.name} failed with error (msg):"
                 f" [{state.error if state.HasField('error') else None}]"
@@ -132,8 +132,10 @@ class Informer:
         parent_action_name: str,
         shared_queue: Queue,
         client: Optional[StateService] = None,
-        watch_backoff_interval_sec: float = 1.0,
+        min_watch_backoff: float = 1.0,
+        max_watch_backoff: float = 30.0,
         watch_conn_timeout_sec: float = 5.0,
+        max_watch_retries: int = 10,
     ):
         self.name = self.mkname(run_name=run_id.name, parent_action_name=parent_action_name)
         self.parent_action_name = parent_action_name
@@ -144,8 +146,10 @@ class Informer:
         self._running = False
         self._watch_task: asyncio.Task | None = None
         self._ready = asyncio.Event()
-        self._watch_backoff_interval_sec = watch_backoff_interval_sec
+        self._min_watch_backoff = min_watch_backoff
+        self._max_watch_backoff = max_watch_backoff
         self._watch_conn_timeout_sec = watch_conn_timeout_sec
+        self._max_watch_retries = max_watch_retries
 
     @classmethod
     def mkname(cls, *, run_name: str, parent_action_name: str) -> str:
@@ -211,13 +215,16 @@ class Informer:
         """
         # sentinel = False
         retries = 0
-        max_retries = 5
         last_exc = None
         while self._running:
-            if retries >= max_retries:
-                logger.error(f"Informer watch failure retries crossed threshold {retries}/{max_retries}, exiting!")
+            if retries >= self._max_watch_retries:
+                logger.error(
+                    f"Informer watch failure retries crossed threshold {retries}/{self._max_watch_retries}, exiting!"
+                )
                 raise last_exc
             try:
+                if retries >= 1:
+                    logger.warning(f"Informer watch retrying, attempt {retries}/{self._max_watch_retries}")
                 watcher = self._client.Watch(
                     state_service_pb2.WatchRequest(
                         parent_action_id=identifier_pb2.ActionIdentifier(
@@ -252,7 +259,9 @@ class Informer:
                 logger.exception(f"Watch error: {self.name}", exc_info=e)
                 last_exc = e
                 retries += 1
-            await asyncio.sleep(self._watch_backoff_interval_sec)
+            backoff = min(self._min_watch_backoff * (2**retries), self._max_watch_backoff)
+            logger.warning(f"Watch for {self.name} failed, retrying in {backoff} seconds...")
+            await asyncio.sleep(backoff)
 
     @log
     async def start(self, timeout: Optional[float] = None) -> asyncio.Task:
@@ -261,7 +270,7 @@ class Informer:
             logger.warning("Informer already running")
             return cast(asyncio.Task, self._watch_task)
         self._running = True
-        self._watch_task = asyncio.create_task(self.watch())
+        self._watch_task = asyncio.create_task(self.watch(), name=f"InformerWatch-{self.parent_action_name}")
         await self.wait_for_cache_sync(timeout=timeout)
         return self._watch_task
 
@@ -364,7 +373,7 @@ class InformerCache:
         """Stop all informers and remove them from the cache"""
         async with self._lock:
             while self._cache:
-                name, informer = self._cache.popitem()
+                _name, informer = self._cache.popitem()
                 try:
                     await informer.stop()
                 except asyncio.CancelledError:

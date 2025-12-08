@@ -430,7 +430,7 @@ async def generate_satellite_images():
 
 
 if __name__ == "__main__":
-    flyte.init_from_config("../../config.yaml")
+    flyte.init_from_config()
     run = flyte.run(generate_satellite_images)
     print(run.name)
     print(run.url)

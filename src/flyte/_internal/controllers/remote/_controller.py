@@ -9,6 +9,8 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Awaitable, DefaultDict, Tuple, TypeVar
 
+from flyteidl2.common import identifier_pb2, phase_pb2
+
 import flyte
 import flyte.errors
 import flyte.storage as storage
@@ -22,8 +24,6 @@ from flyte._internal.runtime import convert, io
 from flyte._internal.runtime.task_serde import translate_task_to_wire
 from flyte._internal.runtime.types_serde import transform_native_to_typed_interface
 from flyte._logging import logger
-from flyte._protos.common import identifier_pb2
-from flyte._protos.workflow import run_definition_pb2
 from flyte._task import TaskTemplate
 from flyte._utils.helpers import _selector_policy
 from flyte.models import MAX_INLINE_IO_BYTES, ActionID, NativeInterface, SerializationContext
@@ -71,7 +71,7 @@ async def handle_action_failure(action: Action, task_name: str) -> Exception:
         Exception: The converted native exception or RuntimeSystemError
     """
     err = action.err or action.client_err
-    if not err and action.phase == run_definition_pb2.PHASE_FAILED:
+    if not err and action.phase == phase_pb2.ACTION_PHASE_FAILED:
         logger.error(f"Server reported failure for action {action.name}, checking error file.")
         try:
             error_path = io.error_path(f"{action.run_output_base}/{action.action_id.name}/1")
@@ -117,9 +117,8 @@ class RemoteController(Controller):
     def __init__(
         self,
         client_coro: Awaitable[ClientSet],
-        workers: int,
-        max_system_retries: int,
-        default_parent_concurrency: int = 100,
+        workers: int = 20,
+        max_system_retries: int = 10,
     ):
         """ """
         super().__init__(
@@ -127,6 +126,7 @@ class RemoteController(Controller):
             workers=workers,
             max_system_retries=max_system_retries,
         )
+        default_parent_concurrency = int(os.getenv("_F_P_CNC", "1000"))
         self._default_parent_concurrency = default_parent_concurrency
         self._parent_action_semaphore: DefaultDict[str, asyncio.Semaphore] = defaultdict(
             lambda: asyncio.Semaphore(default_parent_concurrency)
@@ -238,6 +238,7 @@ class RemoteController(Controller):
             inputs_uri=inputs_uri,
             run_output_base=tctx.run_base_dir,
             cache_key=cache_key,
+            queue=_task.queue,
         )
 
         try:
@@ -254,13 +255,13 @@ class RemoteController(Controller):
             raise
 
         # If the action is aborted, we should abort the controller as well
-        if n.phase == run_definition_pb2.PHASE_ABORTED:
+        if n.phase == phase_pb2.ACTION_PHASE_ABORTED:
             logger.warning(f"Action {n.action_id.name} was aborted, aborting current Action{current_action_id.name}")
             raise flyte.errors.RunAbortedError(
                 f"Action {n.action_id.name} was aborted, aborting current Action {current_action_id.name}"
             )
 
-        if n.phase == run_definition_pb2.PHASE_TIMED_OUT:
+        if n.phase == phase_pb2.ACTION_PHASE_TIMED_OUT:
             logger.warning(
                 f"Action {n.action_id.name} timed out, raising timeout exception Action {current_action_id.name}"
             )
@@ -268,7 +269,7 @@ class RemoteController(Controller):
                 f"Action {n.action_id.name} timed out, raising exception in current Action {current_action_id.name}"
             )
 
-        if n.has_error() or n.phase == run_definition_pb2.PHASE_FAILED:
+        if n.has_error() or n.phase == phase_pb2.ACTION_PHASE_FAILED:
             exc = await handle_action_failure(action, _task.name)
             raise exc
 
@@ -375,11 +376,13 @@ class RemoteController(Controller):
 
         func_name = _func.__name__
         invoke_seq_num = self.generate_task_call_sequence(_func, current_action_id)
+
         inputs = await convert.convert_from_native_to_inputs(_interface, *args, **kwargs)
         serialized_inputs = inputs.proto_inputs.SerializeToString(deterministic=True)
+        inputs_hash = convert.generate_inputs_hash_from_proto(inputs.proto_inputs)
 
         sub_action_id, sub_action_output_path = convert.generate_sub_action_id_and_output_path(
-            tctx, func_name, serialized_inputs, invoke_seq_num
+            tctx, func_name, inputs_hash, invoke_seq_num
         )
 
         inputs_uri = io.inputs_path(sub_action_output_path)
@@ -403,7 +406,7 @@ class RemoteController(Controller):
         if prev_action is None:
             return TraceInfo(func_name, sub_action_id, _interface, inputs_uri), False
 
-        if prev_action.phase == run_definition_pb2.PHASE_FAILED:
+        if prev_action.phase == phase_pb2.ACTION_PHASE_FAILED:
             if prev_action.has_error():
                 exc = convert.convert_error_to_native(prev_action.err)
                 return (
@@ -539,6 +542,7 @@ class RemoteController(Controller):
             inputs_uri=inputs_uri,
             run_output_base=tctx.run_base_dir,
             cache_key=cache_key,
+            queue=None,
         )
 
         try:
@@ -554,7 +558,7 @@ class RemoteController(Controller):
             await self.cancel_action(action)
             raise
 
-        if n.has_error() or n.phase == run_definition_pb2.PHASE_FAILED:
+        if n.has_error() or n.phase == phase_pb2.ACTION_PHASE_FAILED:
             exc = await handle_action_failure(action, task_name)
             raise exc
 

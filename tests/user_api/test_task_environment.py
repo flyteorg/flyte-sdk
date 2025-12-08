@@ -35,7 +35,7 @@ def test_clone_with_defaults(base_env):
     assert clone.depends_on == []
 
 
-def test_clone_with_overrides(base_env):
+def test_clone_with_overrides(base_env: flyte.TaskEnvironment):
     other = flyte.TaskEnvironment(name="other", image="x", resources=base_env.resources)
     clone = base_env.clone_with(
         name="new",
@@ -79,18 +79,6 @@ def test_reusable_conflict_pod_template(base_env):
         env.task(z, pod_template="tmpl")
 
 
-def test_add_task_and_duplicates(base_env):
-    class Dummy:
-        def __init__(self, name):
-            self.name = name
-
-    t1 = Dummy("t1")
-    base_env.add_task(t1)
-    assert "t1" in base_env.tasks
-    with pytest.raises(ValueError):
-        base_env.add_task(t1)
-
-
 def test_clone_no_tasks(base_env):
     # Ensure cloning does not carry over tasks
     clone = base_env.clone_with(name="clone_no_tasks")
@@ -107,7 +95,7 @@ def test_clone_no_tasks(base_env):
 
 def test_task_environment_name_validation():
     with pytest.raises(
-        ValueError, match="Environment name 'invalid-name!' must be in snake_case or kebab-case format."
+        ValueError, match=r"Environment name 'invalid-name!' must be in snake_case or kebab-case format\."
     ):
         flyte.TaskEnvironment(name="invalid-name!")
 

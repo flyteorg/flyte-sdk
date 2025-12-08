@@ -14,34 +14,40 @@ import typing
 from typing import List, Optional, Tuple, Union
 
 import click
-from rich import print as rich_print
 from rich.tree import Tree
 
-from flyte._logging import logger
+from flyte._logging import _get_console, logger
 
 from ._ignore import Ignore, IgnoreGroup
-from ._utils import CopyFiles, _filehash_update, _pathhash_update, ls_files, tar_strip_file_attributes
+from ._utils import (
+    CopyFiles,
+    _filehash_update,
+    _pathhash_update,
+    ls_files,
+    ls_relative_files,
+    tar_strip_file_attributes,
+)
 
 FAST_PREFIX = "fast"
 FAST_FILEENDING = ".tar.gz"
 
 
 def print_ls_tree(source: os.PathLike, ls: typing.List[str]):
-    click.secho("Files to be copied for fast registration...", fg="bright_blue")
+    logger.info("Files to be copied for fast registration...")
 
     tree_root = Tree(
-        f":open_file_folder: [link file://{source}]{source} (detected source root)",
+        f"File structure:\n:open_file_folder: {source}",
         guide_style="bold bright_blue",
     )
-    trees = {pathlib.Path(source): tree_root}
-
+    source_path = pathlib.Path(source).resolve()
+    trees = {source_path: tree_root}
     for f in ls:
         fpp = pathlib.Path(f)
         if fpp.parent not in trees:
             # add trees for all intermediate folders
             current = tree_root
-            current_path = pathlib.Path(source)
-            for subdir in fpp.parent.relative_to(source).parts:
+            current_path = source_path  # pathlib.Path(source)
+            for subdir in fpp.parent.relative_to(source_path).parts:
                 current_path = current_path / subdir
                 if current_path not in trees:
                     current = current.add(f"{subdir}", guide_style="bold bright_blue")
@@ -49,7 +55,12 @@ def print_ls_tree(source: os.PathLike, ls: typing.List[str]):
                 else:
                     current = trees[current_path]
         trees[fpp.parent].add(f"{fpp.name}", guide_style="bold bright_blue")
-    rich_print(tree_root)
+
+    console = _get_console()
+    with console.capture() as capture:
+        console.print(tree_root, overflow="ignore", no_wrap=True, crop=False)
+    logger.info(f"Root directory: [link=file://{source}]{source}[/link]")
+    logger.info(capture.get(), extra={"console": console})
 
 
 def _compress_tarball(source: pathlib.Path, output: pathlib.Path) -> None:
@@ -93,6 +104,26 @@ def list_files_to_bundle(
     ls, ls_digest = ls_files(source, copy_style, deref_symlinks, ignore)
     logger.debug(f"Hash of files to be included in the code bundle: {ls_digest}")
     return ls, ls_digest
+
+
+def list_relative_files_to_bundle(
+    relative_paths: tuple[str, ...],
+    source: pathlib.Path,
+) -> typing.Tuple[List[str], str]:
+    """
+    List the files in the relative paths.
+
+    :param relative_paths: The list of relative paths to bundle.
+    :param source: The source directory to package.
+    :param ignores: A list of Ignore classes to use for ignoring files
+    :param copy_style: The copy style to use for the tarball
+    :return: A list of all files to be included in the code bundle and a hexdigest of the included files.
+    """
+    _source = source
+
+    all_files, digest = ls_relative_files(list(relative_paths), source)
+    logger.debug(f"Hash of files to be included in the code bundle: {digest}")
+    return all_files, digest
 
 
 def create_bundle(

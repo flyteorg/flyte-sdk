@@ -79,12 +79,19 @@ class StandardIgnore(Ignore):
     by fed with custom ignore patterns from cli."""
 
     def __init__(self, root: Path, patterns: Optional[List[str]] = None):
-        super().__init__(root)
+        super().__init__(root.resolve())
         self.patterns = patterns if patterns else STANDARD_IGNORE_PATTERNS
 
     def _is_ignored(self, path: pathlib.Path) -> bool:
+        # Convert to relative path for pattern matching
+        try:
+            rel_path = path.relative_to(self.root)
+        except ValueError:
+            # If path is not under root, don't ignore it
+            return False
+
         for pattern in self.patterns:
-            if fnmatch(str(path), pattern):
+            if fnmatch(str(rel_path), pattern):
                 return True
         return False
 
@@ -105,9 +112,10 @@ class IgnoreGroup(Ignore):
 
     def list_ignored(self) -> List[str]:
         ignored = []
-        for dir, _, files in self.root.walk():
+        for dir, _, files in os.walk(self.root):
+            dir_path = Path(dir)
             for file in files:
-                abs_path = dir / file
+                abs_path = dir_path / file
                 if self.is_ignored(abs_path):
                     ignored.append(str(abs_path.relative_to(self.root)))
         return ignored

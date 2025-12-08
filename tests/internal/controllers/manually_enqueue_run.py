@@ -2,14 +2,16 @@ from __future__ import annotations
 
 import asyncio
 
+from flyteidl2.common import identifier_pb2
+from flyteidl2.task import task_definition_pb2
+from flyteidl2.workflow import (
+    queue_service_pb2,
+    run_definition_pb2,
+)
+
 import flyte
 from flyte._internal.controllers.remote._client import ControllerClient
 from flyte._internal.runtime.task_serde import translate_task_to_wire
-from flyte._protos.common import identifier_pb2
-from flyte._protos.workflow import (
-    queue_service_pb2,
-    task_definition_pb2,
-)
 from flyte.models import SerializationContext
 
 env = flyte.TaskEnvironment(name="hello_world")
@@ -49,7 +51,7 @@ async def enqueue_run(client: ControllerClient):
             run=run_id,
         ),
         parent_action_name="root_run",
-        task=queue_service_pb2.TaskAction(
+        task=run_definition_pb2.TaskAction(
             id=task_definition_pb2.TaskIdentifier(
                 org="testorg",
                 project="project",

@@ -5,16 +5,22 @@ from typing import AsyncGenerator, AsyncIterator, Literal, Tuple
 
 import grpc
 import rich.repr
+from flyteidl2.common import identifier_pb2, list_pb2, phase_pb2
+from flyteidl2.workflow import run_definition_pb2, run_service_pb2
 
-from flyte._initialize import ensure_client, get_client, get_common_config
-from flyte._protos.common import identifier_pb2, list_pb2
-from flyte._protos.workflow import run_definition_pb2, run_service_pb2
+from flyte._initialize import ensure_client, get_client, get_init_config
+from flyte._logging import logger
 from flyte.syncify import syncify
 
 from . import Action, ActionDetails, ActionInputs, ActionOutputs
 from ._action import _action_details_rich_repr, _action_rich_repr
-from ._common import ToJSONMixin
+from ._common import ToJSONMixin, filtering, sorting
 from ._console import get_run_url
+
+# @kumare3 is sadpanda, because we have to create a mirror of phase types here, because protobuf phases are ghastly
+Phase = Literal[
+    "queued", "waiting_for_resources", "initializing", "running", "succeeded", "failed", "aborted", "timed_out"
+]
 
 
 @dataclass
@@ -40,32 +46,75 @@ class Run(ToJSONMixin):
     @classmethod
     async def listall(
         cls,
-        filters: str | None = None,
+        in_phase: Tuple[Phase] | None = None,
+        task_name: str | None = None,
+        task_version: str | None = None,
+        created_by_subject: str | None = None,
         sort_by: Tuple[str, Literal["asc", "desc"]] | None = None,
         limit: int = 100,
     ) -> AsyncIterator[Run]:
         """
         Get all runs for the current project and domain.
 
-        :param filters: The filters to apply to the project list.
+        :param in_phase: Filter runs by one or more phases.
+        :param task_name: Filter runs by task name.
+        :param task_version: Filter runs by task version.
+        :param created_by_subject: Filter runs by the subject that created them. (this is not username, but the subject)
         :param sort_by: The sorting criteria for the project list, in the format (field, order).
         :param limit: The maximum number of runs to return.
         :return: An iterator of runs.
         """
         ensure_client()
         token = None
-        sort_by = sort_by or ("created_at", "asc")
-        sort_pb2 = list_pb2.Sort(
-            key=sort_by[0],
-            direction=(list_pb2.Sort.ASCENDING if sort_by[1] == "asc" else list_pb2.Sort.DESCENDING),
-        )
-        cfg = get_common_config()
+        sort_pb2 = sorting(sort_by)
+        filters = []
+        if in_phase:
+            phases = [str(phase_pb2.ActionPhase.Value(f"ACTION_PHASE_{p.upper()}")) for p in in_phase]
+            logger.debug(f"Fetching run phases: {phases}")
+            if len(phases) > 1:
+                filters.append(
+                    list_pb2.Filter(
+                        function=list_pb2.Filter.Function.VALUE_IN,
+                        field="phase",
+                        values=phases,
+                    ),
+                )
+            else:
+                filters.append(
+                    list_pb2.Filter(
+                        function=list_pb2.Filter.Function.EQUAL,
+                        field="phase",
+                        values=phases[0],
+                    ),
+                )
+
+        if task_name:
+            filters.append(
+                list_pb2.Filter(
+                    function=list_pb2.Filter.Function.EQUAL,
+                    field="task_name",
+                    values=[task_name],
+                ),
+            )
+        if task_version:
+            filters.append(
+                list_pb2.Filter(
+                    function=list_pb2.Filter.Function.EQUAL,
+                    field="task_version",
+                    values=[task_version],
+                ),
+            )
+
+        filters = filtering(created_by_subject, *filters)
+
+        cfg = get_init_config()
         i = 0
         while True:
             req = list_pb2.ListRequest(
                 limit=min(100, limit),
                 token=token,
                 sort_by=sort_pb2,
+                filters=filters,
             )
             resp = await get_client().run_service.ListRuns(
                 run_service_pb2.ListRunsRequest(
@@ -121,7 +170,7 @@ class Run(ToJSONMixin):
         return self.action.phase
 
     @property
-    def raw_phase(self) -> run_definition_pb2.Phase:
+    def raw_phase(self) -> phase_pb2.ActionPhase:
         """
         Get the raw phase of the run.
         """
@@ -157,9 +206,25 @@ class Run(ToJSONMixin):
         """
         Get the details of the run. This is a placeholder for getting the run details.
         """
-        if self._details is None:
+        if self._details is None or not self._details.done():
             self._details = await RunDetails.get_details.aio(self.pb2.action.id.run)
         return self._details
+
+    @syncify
+    async def inputs(self) -> ActionInputs:
+        """
+        Get the inputs of the run. This is a placeholder for getting the run inputs.
+        """
+        details = await self.details.aio()
+        return await details.inputs()
+
+    @syncify
+    async def outputs(self) -> ActionOutputs:
+        """
+        Get the outputs of the run. This is a placeholder for getting the run outputs.
+        """
+        details = await self.details.aio()
+        return await details.outputs()
 
     @property
     def url(self) -> str:
@@ -209,6 +274,7 @@ class Run(ToJSONMixin):
         """
         Rich representation of the Run object.
         """
+        yield "url", f"[blue bold][link={self.url}]link[/link][/blue bold]"
         yield from _action_rich_repr(self.pb2.action)
 
     def __repr__(self) -> str:
@@ -260,7 +326,7 @@ class RunDetails(ToJSONMixin):
         :param name: The name of the run.
         """
         ensure_client()
-        cfg = get_common_config()
+        cfg = get_init_config()
         return await RunDetails.get_details.aio(
             run_id=identifier_pb2.RunIdentifier(
                 org=cfg.org,
