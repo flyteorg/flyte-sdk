@@ -1,4 +1,3 @@
-import subprocess
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -78,7 +77,7 @@ def test_get_file_path_correct_path():
 
     file_path = Path("/home/user/project/src/main.py")
 
-    with patch.object(Path, 'resolve', side_effect=lambda: file_path):
+    with patch.object(Path, "resolve", side_effect=lambda: file_path):
         result = git_status._get_file_path(file_path)
 
     assert result == "src/main.py"
@@ -90,7 +89,7 @@ def test_get_file_path_incorrect_path():
 
     file_path = Path("/home/other/file.py")
 
-    with patch.object(Path, 'resolve', side_effect=lambda: file_path):
+    with patch.object(Path, "resolve", side_effect=lambda: file_path):
         result = git_status._get_file_path(file_path)
 
     assert result == ""
@@ -103,12 +102,12 @@ def test_build_url_github_clean_tree():
         is_tree_clean=True,
         remote_url="https://github.com/user/repo",
         repo_dir=repo_dir,
-        commit_sha="abc123"
+        commit_sha="abc123",
     )
 
     file_path = Path("/home/user/project/src/main.py")
 
-    with patch.object(Path, 'resolve', side_effect=lambda: file_path):
+    with patch.object(Path, "resolve", side_effect=lambda: file_path):
         result = git_status.build_url(file_path, line_number=42)
 
     assert result == "https://github.com/user/repo/blob/abc123/src/main.py#L42"
@@ -121,12 +120,12 @@ def test_build_url_github_dirty_tree():
         is_tree_clean=False,
         remote_url="https://github.com/user/repo",
         repo_dir=repo_dir,
-        commit_sha="abc123"
+        commit_sha="abc123",
     )
 
     file_path = Path("/home/user/project/src/main.py")
 
-    with patch.object(Path, 'resolve', side_effect=lambda: file_path):
+    with patch.object(Path, "resolve", side_effect=lambda: file_path):
         result = git_status.build_url(file_path, line_number=42)
 
     assert result == "https://github.com/user/repo/blob/abc123/src/main.py"
@@ -139,12 +138,12 @@ def test_build_url_gitlab():
         is_tree_clean=True,
         remote_url="https://gitlab.com/user/repo",
         repo_dir=repo_dir,
-        commit_sha="abc123"
+        commit_sha="abc123",
     )
 
     file_path = Path("/home/user/project/src/main.py")
 
-    with patch.object(Path, 'resolve', side_effect=lambda: file_path):
+    with patch.object(Path, "resolve", side_effect=lambda: file_path):
         result = git_status.build_url(file_path, line_number=42)
 
     assert result == "https://gitlab.com/user/repo/-/blob/abc123/src/main.py#L42"
@@ -153,15 +152,12 @@ def test_build_url_gitlab():
 def test_build_url_invalid_git_status():
     repo_dir = Path("/home/user/project")
     git_status = GitStatus(
-        is_valid=False,
-        remote_url="https://github.com/user/repo",
-        repo_dir=repo_dir,
-        commit_sha="abc123"
+        is_valid=False, remote_url="https://github.com/user/repo", repo_dir=repo_dir, commit_sha="abc123"
     )
 
     file_path = Path("/home/user/project/src/main.py")
 
-    with patch.object(Path, 'resolve', side_effect=lambda: file_path):
+    with patch.object(Path, "resolve", side_effect=lambda: file_path):
         result = git_status.build_url(file_path, line_number=42)
 
     assert result == ""
@@ -169,16 +165,11 @@ def test_build_url_invalid_git_status():
 
 def test_build_url_invalid_remote_url():
     repo_dir = Path("/home/user/project")
-    git_status = GitStatus(
-        is_valid=True,
-        remote_url="invalid-url",
-        repo_dir=repo_dir,
-        commit_sha="abc123"
-    )
+    git_status = GitStatus(is_valid=True, remote_url="invalid-url", repo_dir=repo_dir, commit_sha="abc123")
 
     file_path = Path("/home/user/project/src/main.py")
 
-    with patch.object(Path, 'resolve', side_effect=lambda: file_path):
+    with patch.object(Path, "resolve", side_effect=lambda: file_path):
         result = git_status.build_url(file_path, line_number=42)
 
     assert result == ""
@@ -187,15 +178,12 @@ def test_build_url_invalid_remote_url():
 def test_build_url_file_outside_repo():
     repo_dir = Path("/home/user/project")
     git_status = GitStatus(
-        is_valid=True,
-        remote_url="https://github.com/user/repo",
-        repo_dir=repo_dir,
-        commit_sha="abc123"
+        is_valid=True, remote_url="https://github.com/user/repo", repo_dir=repo_dir, commit_sha="abc123"
     )
 
     file_path = Path("/home/other/file.py")
 
-    with patch.object(Path, 'resolve', side_effect=lambda: file_path):
+    with patch.object(Path, "resolve", side_effect=lambda: file_path):
         result = git_status.build_url(file_path, line_number=42)
 
     assert result == ""
@@ -204,15 +192,12 @@ def test_build_url_file_outside_repo():
 def test_build_url_unsupported_host():
     repo_dir = Path("/home/user/project")
     git_status = GitStatus(
-        is_valid=True,
-        remote_url="https://bitbucket.org/user/repo",
-        repo_dir=repo_dir,
-        commit_sha="abc123"
+        is_valid=True, remote_url="https://bitbucket.org/user/repo", repo_dir=repo_dir, commit_sha="abc123"
     )
 
     file_path = Path("/home/user/project/src/main.py")
 
-    with patch.object(Path, 'resolve', side_effect=lambda: file_path):
+    with patch.object(Path, "resolve", side_effect=lambda: file_path):
         result = git_status.build_url(file_path, line_number=42)
 
     assert result == ""

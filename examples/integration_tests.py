@@ -1,5 +1,7 @@
 import os
+
 import pytest
+
 import flyte
 
 
@@ -43,7 +45,7 @@ async def _run_and_wait(flyte_client, task_fn, test_name: str, **kwargs):
 
     run.wait()
 
-    print(f"  ✓ Completed successfully\n")
+    print("  ✓ Completed successfully\n")
 
 
 @pytest.mark.integration
@@ -52,12 +54,7 @@ async def test_basics_hello(flyte_client):
     """Test the basics.hello example with a list of integers."""
     from examples.basics.hello import main
 
-    await _run_and_wait(
-        flyte_client,
-        main,
-        "test_basics_hello",
-        x_list=[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
-    )
+    await _run_and_wait(flyte_client, main, "test_basics_hello", x_list=[1, 2, 3, 4, 5, 6, 7, 8, 9, 10])
 
 
 @pytest.mark.integration
@@ -66,8 +63,4 @@ async def test_spark(flyte_client):
     """Test the Spark plugin example."""
     from examples.plugins.spark_example import hello_spark_nested
 
-    await _run_and_wait(
-        flyte_client,
-        hello_spark_nested,
-        "test_spark"
-    )
+    await _run_and_wait(flyte_client, hello_spark_nested, "test_spark")
