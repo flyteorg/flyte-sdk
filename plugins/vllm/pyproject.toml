@@ -7,8 +7,6 @@ authors = [{ name = "Niels Bantilan", email = "cosmicbboy@users.noreply.github.c
 requires-python = ">=3.10"
 dependencies = [
     "vllm>=0.11.0",
-    "torch",
-    "flyte",
 ]
 
 [build-system]
@@ -80,4 +78,3 @@ ignore = ["PGH003", "PLC0415"]
 
 [tool.uv.sources]
 flyte = { path = "../../", editable = true }
-

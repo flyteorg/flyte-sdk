@@ -100,7 +100,7 @@ class VLLMAppEnvironment(flyte.app.AppEnvironment):
         self.env_vars["FLYTE_MODEL_LOADER_LOCAL_MODEL_PATH"] = self._model_mount_path
         self.links = [flyte.app.Link(path="/docs", title="vLLM OpenAPI Docs", is_relative=True), *self.links]
 
-        if self.image is None:
+        if self.image is None or self.image == "auto":
             self.image = DEFAULT_VLLM_IMAGE
 
         super().__post_init__()
@@ -110,3 +110,4 @@ class VLLMAppEnvironment(flyte.app.AppEnvironment):
         if isinstance(self.args, str):
             return shlex.split(self.args)
         return self.args or []
+
