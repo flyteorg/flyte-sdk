@@ -31,6 +31,7 @@ jobs:
         working-directory: plugins
         run: |
           uv pip install ./ray ./pytorch ./dask ./spark
+          uv pip list
       - name: Run integration tests
         env:
           FLYTE_SDK_CI_TOKEN: "${{ secrets.FLYTE_SDK_CI_TOKEN }}"
