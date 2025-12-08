@@ -1,17 +1,3 @@
-"""
-Updated pytest-based integration tests replacing the old integration_tests.py
-
-This file shows how to migrate from the old asyncio-based integration tests
-to pytest-based tests for better test isolation and reporting.
-
-Migration from old integration_tests.py:
-- Old: Manual async function with asyncio.gather()
-- New: Pytest fixtures and parametrized tests
-
-Usage:
-    pytest examples/integration_tests_pytest.py -v
-"""
-
 import os
 import pytest
 import flyte
@@ -36,15 +22,52 @@ def flyte_client():
     yield flyte
 
 
-@pytest.mark.integration
-@pytest.mark.asyncio
-async def test_basics_hello(flyte_client):
-    from examples.basics.hello import main
-    run = await flyte.run.aio(main, x_list=[1, 2, 3, 4, 5, 6, 7, 8, 9, 10])
+async def _run_and_wait(flyte_client, task_fn, test_name: str, **kwargs):
+    """
+    Helper function to run a Flyte task and wait for completion.
 
-    print(f"\nRun name: {run.name}")
-    print(f"Run URL: {run.url}")
+    Args:
+        flyte_client: The Flyte client fixture
+        task_fn: The task function to run
+        test_name: Name of the test for logging purposes
+        **kwargs: Keyword arguments to pass to the task
+
+    Raises:
+        Any exception raised by run.wait() will propagate
+    """
+    run = await flyte.run.aio(task_fn, **kwargs)
+
+    print(f"\n[{test_name}]")
+    print(f"  Run name: {run.name}")
+    print(f"  Run URL: {run.url}")
 
     run.wait()
 
-    print(f"✓ Test completed successfully")
+    print(f"  ✓ Completed successfully\n")
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_basics_hello(flyte_client):
+    """Test the basics.hello example with a list of integers."""
+    from examples.basics.hello import main
+
+    await _run_and_wait(
+        flyte_client,
+        main,
+        "test_basics_hello",
+        x_list=[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+    )
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_spark(flyte_client):
+    """Test the Spark plugin example."""
+    from examples.plugins.spark_example import hello_spark_nested
+
+    await _run_and_wait(
+        flyte_client,
+        hello_spark_nested,
+        "test_spark"
+    )
