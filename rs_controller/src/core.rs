@@ -15,10 +15,9 @@ use tonic::Status;
 use tower::ServiceBuilder;
 use tracing::{debug, error, info, warn};
 
-use thiserror::Error;
-
 use crate::action::{Action, ActionType};
-use crate::auth::{AuthConfig, AuthConfigError, AuthLayer, ClientCredentialsAuthenticator};
+use crate::auth::{AuthConfig, AuthLayer, ClientCredentialsAuthenticator};
+use crate::error::ControllerError;
 use crate::informer::Informer;
 use flyteidl2::flyteidl::common::ActionIdentifier;
 use flyteidl2::flyteidl::task::TaskIdentifier;
@@ -66,32 +65,6 @@ pub async fn create_tls_endpoint(
         .map_err(|e| ControllerError::SystemError(format!("TLS config error: {}", e)))?;
 
     Ok(endpoint)
-}
-
-#[derive(Error, Debug)]
-pub enum ControllerError {
-    #[error("Bad context: {0}")]
-    BadContext(String),
-    #[error("Runtime error: {0}")]
-    RuntimeError(String),
-    #[error("System error: {0}")]
-    SystemError(String),
-    #[error("gRPC error: {0}")]
-    GrpcError(#[from] tonic::Status),
-    #[error("Task error: {0}")]
-    TaskError(String),
-}
-
-impl From<tonic::transport::Error> for ControllerError {
-    fn from(err: tonic::transport::Error) -> Self {
-        ControllerError::SystemError(format!("Transport error: {:?}", err))
-    }
-}
-
-impl From<AuthConfigError> for ControllerError {
-    fn from(err: AuthConfigError) -> Self {
-        ControllerError::SystemError(err.to_string())
-    }
 }
 
 enum ChannelType {

@@ -8,7 +8,7 @@ use flyteidl2::flyteidl::workflow::{ActionUpdate, TraceAction};
 use flyteidl2::flyteidl::common::ActionPhase;
 use flyteidl2::flyteidl::core::{ExecutionError, TypedInterface};
 use flyteidl2::flyteidl::task::{OutputReferences, TaskSpec, TraceSpec};
-
+use pyo3_async_runtimes::tokio::run;
 use tracing::debug;
 
 #[pyclass(eq, eq_int)]
@@ -42,10 +42,15 @@ pub struct Action {
 
 impl Action {
     pub fn get_run_name(&self) -> String {
-        match self.action_id.run.clone() {
-            Some(run_id) => run_id.name,
-            None => String::from("missing run name"),
-        }
+        let run_name = self
+            .action_id
+            .run
+            .as_ref()
+            .expect("Action ID missing run")
+            .name
+            .clone();
+        assert!(!run_name.is_empty());
+        run_name
     }
 
     pub fn get_action_name(&self) -> String {

@@ -1,5 +1,6 @@
 use crate::action::Action;
-use crate::core::{ControllerError, StateClient};
+use crate::core::StateClient;
+use crate::error::{ControllerError, InformerError};
 
 use flyteidl2::flyteidl::common::ActionIdentifier;
 use flyteidl2::flyteidl::common::RunIdentifier;
@@ -9,12 +10,12 @@ use flyteidl2::flyteidl::workflow::{
 };
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::select;
 use tokio::sync::RwLock;
 use tokio::sync::{mpsc, oneshot, Notify};
-use tokio::task::JoinHandle;
 use tokio::time::sleep;
 use tonic::transport::channel::Channel;
 use tonic::transport::Endpoint;
@@ -29,6 +30,7 @@ pub struct Informer {
     parent_action_name: String,
     shared_queue: mpsc::Sender<Action>,
     ready: Arc<Notify>,
+    is_ready: Arc<AtomicBool>,
     completion_events: Arc<RwLock<HashMap<String, oneshot::Sender<()>>>>,
 }
 
@@ -46,6 +48,7 @@ impl Informer {
             parent_action_name,
             shared_queue,
             ready: Arc::new(Notify::new()),
+            is_ready: Arc::new(AtomicBool::new(false)),
             completion_events: Arc::new(RwLock::new(HashMap::new())),
         }
     }
@@ -81,7 +84,8 @@ impl Informer {
                 Message::ControlMessage(_) => {
                     // Handle control messages if needed
                     debug!("Received sentinel for parent {}", self.parent_action_name);
-                    self.ready.notify_one();
+                    self.is_ready.store(true, Ordering::Release);
+                    self.ready.notify_waiters();
                     Ok(None)
                 }
                 Message::ActionUpdate(action_update) => {
@@ -187,33 +191,6 @@ impl Informer {
         }
     }
 
-    async fn wait_ready_or_timeout(ready: Arc<Notify>) -> Result<(), ControllerError> {
-        select! {
-            _ = ready.notified() => {
-                debug!("Ready sentinel ack'ed");
-                Ok(())
-            }
-            _ = sleep(Duration::from_millis(100)) => Err(ControllerError::SystemError("".to_string()))
-        }
-    }
-
-    pub async fn start(informer: Arc<Self>) -> Result<JoinHandle<()>, ControllerError> {
-        let me = informer.clone();
-        let ready = me.ready.clone();
-        let _watch_handle = tokio::spawn(async move {
-            // handle errors later
-            me.watch_actions().await;
-        });
-
-        match Self::wait_ready_or_timeout(ready).await {
-            Ok(()) => Ok(_watch_handle),
-            Err(_) => {
-                warn!("Timed out waiting for sentinel");
-                Ok(_watch_handle)
-            }
-        }
-    }
-
     pub async fn get_action(&self, action_name: String) -> Option<Action> {
         let cache = self.action_cache.read().await;
         cache.get(&action_name).cloned()
@@ -265,6 +242,140 @@ impl Informer {
     }
 }
 
+pub struct InformerCache {
+    cache: Arc<RwLock<HashMap<String, Arc<Informer>>>>,
+    client: StateClient,
+    shared_queue: mpsc::Sender<Action>,
+    failure_tx: mpsc::Sender<InformerError>,
+}
+
+impl InformerCache {
+    pub fn new(
+        client: StateClient,
+        shared_queue: mpsc::Sender<Action>,
+        failure_tx: mpsc::Sender<InformerError>,
+    ) -> Self {
+        Self {
+            cache: Arc::new(RwLock::new(HashMap::new())),
+            client,
+            shared_queue,
+            failure_tx,
+        }
+    }
+
+    fn mkname(run_name: &str, parent_action_name: &str) -> String {
+        format!("{}.{}", run_name, parent_action_name)
+    }
+
+    pub async fn get_or_create_informer(
+        &self,
+        run_id: RunIdentifier,
+        parent_action_name: String,
+    ) -> Arc<Informer> {
+        let informer_name = Self::mkname(&run_id.name, &parent_action_name);
+        let timeout = Duration::from_millis(100);
+
+        // Check if exists (with read lock)
+        {
+            let map = self.cache.read().await;
+            if let Some(informer) = map.get(&informer_name) {
+                let arc_informer = Arc::clone(informer);
+                // Release read lock before waiting
+                drop(map);
+                Self::wait_for_ready(&arc_informer, timeout).await;
+                return arc_informer;
+            }
+        }
+
+        // Create new informer (with write lock)
+        let mut map = self.cache.write().await;
+
+        // Double-check it wasn't created while we were waiting for write lock
+        if let Some(informer) = map.get(&informer_name) {
+            let arc_informer = Arc::clone(informer);
+            drop(map);
+            Self::wait_for_ready(&arc_informer, timeout).await;
+            return arc_informer;
+        }
+
+        // Create and add to cache
+        let informer = Arc::new(Informer::new(
+            self.client.clone(),
+            run_id,
+            parent_action_name,
+            self.shared_queue.clone(),
+        ));
+        map.insert(informer_name.clone(), Arc::clone(&informer));
+
+        // Release write lock before starting (starting involves waiting)
+        drop(map);
+
+        let me = Arc::clone(&informer);
+        let failure_tx = self.failure_tx.clone();
+
+        let _watch_handle = tokio::spawn(async move {
+            // If there are errors with the watch then notify the channel
+            let err = me.watch_actions().await;
+
+            error!(
+                "Informer watch_actions failed for run {}, parent action {}: {:?}",
+                me.run_id.name, me.parent_action_name, err
+            );
+
+            let failure = InformerError::WatchFailed {
+                run_name: me.run_id.name.clone(),
+                parent_action_name: me.parent_action_name.clone(),
+                error_message: err.to_string(),
+            };
+
+            if let Err(e) = failure_tx.send(failure).await {
+                error!("Failed to send informer failure event: {:?}", e);
+            }
+        });
+
+        // Optimistically wait for ready (sentinel) with timeout
+        Self::wait_for_ready(&informer, timeout).await;
+
+        informer
+    }
+
+    /// Wait for informer to be ready with a timeout. If timeout occurs, set ready anyway
+    /// and log a warning - this is optimistic, assuming the informer will become ready eventually.
+    /// Once ready has been set, future calls return immediately without waiting.
+    async fn wait_for_ready(informer: &Arc<Informer>, timeout: Duration) {
+        // Subscribe to notifications first, before checking ready
+        // This ensures we don't miss a notification that happens between the check and the wait
+        let ready_fut = informer.ready.notified();
+
+        // Quick check - if already ready, return immediately
+        if informer.is_ready.load(Ordering::Acquire) {
+            debug!(
+                "Informer already ready for parent_action: {}",
+                informer.parent_action_name
+            );
+            return;
+        }
+
+        // Otherwise wait with timeout
+        match tokio::time::timeout(timeout, ready_fut).await {
+            Ok(_) => {
+                info!(
+                    "Informer ready for parent_action: {}",
+                    informer.parent_action_name
+                );
+            }
+            Err(_) => {
+                warn!(
+                    "Informer cache sync timed out after {:?} for {}:{} - continuing optimistically",
+                    timeout, informer.run_id.name, informer.parent_action_name
+                );
+                // Set ready anyway so future calls don't wait
+                informer.is_ready.store(true, Ordering::Release);
+            }
+        }
+    }
+}
+
 async fn informer_main() {
     // Create an informer but first create the shared_queue that will be shared between the
     // Controller and the informer
@@ -279,18 +390,14 @@ async fn informer_main() {
         domain: String::from("development"),
         name: String::from("qdtc266r2z8clscl2lj5"),
     };
+    let (failure_tx, _failure_rx) = mpsc::channel::<InformerError>(1);
 
-    let informer = Arc::new(Informer::new(
-        StateClient::Plain(client),
-        run_id,
-        "a0".to_string(),
-        tx.clone(),
-    ));
+    let informer_cache = InformerCache::new(StateClient::Plain(client), tx.clone(), failure_tx);
+    let informer = informer_cache
+        .get_or_create_informer(run_id, "a0".to_string())
+        .await;
 
-    let watch_task = Informer::start(informer.clone()).await;
-
-    println!("{:?}: {:?}", informer, watch_task);
-    // do creation and start of informer behind a once
+    println!("{:?}", informer);
 }
 
 fn init_tracing() {

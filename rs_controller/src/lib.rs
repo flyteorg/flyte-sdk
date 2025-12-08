@@ -4,6 +4,7 @@
 pub mod action;
 pub mod auth;
 pub mod core;
+pub mod error;
 mod informer;
 pub mod proto;
 
@@ -21,7 +22,8 @@ use tracing_subscriber::FmtSubscriber;
 
 use crate::action::{Action, ActionType};
 use crate::auth::{AuthConfig, AuthLayer, ClientCredentialsAuthenticator};
-use crate::core::{ControllerError, CoreBaseController};
+use crate::core::CoreBaseController;
+use crate::error::ControllerError;
 use flyteidl2::flyteidl::common::{ActionIdentifier, ProjectIdentifier};
 use flyteidl2::flyteidl::task::task_service_client::TaskServiceClient;
 use flyteidl2::flyteidl::task::{list_tasks_request, ListTasksRequest};
