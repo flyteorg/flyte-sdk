@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import os.path
 import sys
 import typing
 from abc import abstractmethod
@@ -23,6 +24,8 @@ PYTHON_3_13 = (3, 13)
 
 # 0 is a file, 1 is a directory
 CopyConfigType = Literal[0, 1]
+SOURCE_ROOT = Path(__file__).parent.parent.parent
+DIST_FOLDER = SOURCE_ROOT / "dist"
 
 T = TypeVar("T")
 
@@ -253,6 +256,11 @@ class UVScript(PipOption, Layer):
         if h_tuple:
             hasher.update(h_tuple.__str__().encode("utf-8"))
         super().update_hash(hasher)
+        if header.pyprojects:
+            for pyproject in header.pyprojects:
+                UVProject(
+                    Path(pyproject) / "pyproject.toml", Path(pyproject) / "uv.lock", "install_project"
+                ).update_hash(hasher)
 
 
 @rich.repr.auto
@@ -491,7 +499,8 @@ class Image:
 
         if install_flyte:
             if dev_mode:
-                image = image.with_local_v2()
+                if os.path.exists(DIST_FOLDER):
+                    image = image.with_local_v2()
             else:
                 flyte_version = typing.cast(str, flyte_version)
                 if Version(flyte_version).is_devrelease or Version(flyte_version).is_prerelease:
@@ -519,7 +528,7 @@ class Image:
         Default images are multi-arch amd/arm64
 
         :param python_version: If not specified, will use the current Python version
-        :param flyte_version: Union version to use
+        :param flyte_version: Flyte version to use
         :param install_flyte: If True, will install the flyte library in the image
         :param registry: Registry to use for the image
         :param registry_secret: Secret to use to pull/push the private image.
@@ -627,6 +636,7 @@ class Image:
         img = cls.from_debian_base(
             registry=registry,
             registry_secret=registry_secret,
+            install_flyte=False,
             name=name,
             python_version=python_version,
             platform=platform,
@@ -1025,10 +1035,9 @@ class Image:
 
         :return: Image
         """
-        dist_folder = Path(__file__).parent.parent.parent / "dist"
         # Manually declare the PythonWheel so we can set the hashing
         # used to compute the identifier. Can remove if we ever decide to expose the lambda in with_ commands
-        with_dist = self.clone(addl_layer=PythonWheels(wheel_dir=dist_folder, package_name="flyte", pre=True))
+        with_dist = self.clone(addl_layer=PythonWheels(wheel_dir=DIST_FOLDER, package_name="flyte", pre=True))
 
         return with_dist
 
