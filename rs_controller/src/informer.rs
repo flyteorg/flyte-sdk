@@ -142,7 +142,7 @@ impl Informer {
             filter: Some(watch_request::Filter::ParentActionId(action_id)),
         };
 
-        let mut stream = self.client.clone().watch(request).await;
+        let stream = self.client.clone().watch(request).await;
 
         let mut stream = match stream {
             Ok(s) => s.into_inner(),
@@ -404,7 +404,7 @@ async fn informer_main() {
 
     let informer_cache = InformerCache::new(StateClient::Plain(client), tx.clone(), failure_tx);
     let informer = informer_cache
-        .get_or_create_informer(run_id, "a0".to_string())
+        .get_or_create_informer(&run_id, "a0")
         .await;
 
     println!("{:?}", informer);

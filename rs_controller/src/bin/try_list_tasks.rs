@@ -59,7 +59,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     let mut attempts = 0;
-    let final_result = loop {
+    let final_result: Result<bool, String> = loop {
         let result = task_client.list_tasks(req.clone()).await;
         match result {
             Ok(response) => {

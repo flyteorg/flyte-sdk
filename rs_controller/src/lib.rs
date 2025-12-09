@@ -342,10 +342,11 @@ impl BaseController {
         &self,
         py: Python<'py>,
         action_id: ActionIdentifier,
+        parent_action_name: String,
     ) -> PyResult<Bound<'py, PyAny>> {
         let real_base = self.0.clone();
         let py_fut = future_into_py(py, async move {
-            real_base.get_action(action_id.clone()).await.map_err(|e| {
+            real_base.get_action(action_id.clone(), parent_action_name.as_str()).await.map_err(|e| {
                 error!("Error getting action {:?}: {:?}", action_id, e);
                 exceptions::PyRuntimeError::new_err(format!("Failed to cancel action: {}", e))
             })

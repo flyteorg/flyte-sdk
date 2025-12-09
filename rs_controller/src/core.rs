@@ -305,8 +305,8 @@ impl CoreBaseController {
                                 ));
 
                                 // Fire completion event for failed action
-                                let informer = self.informer_cache.
-                                if let Some(informer) = self.informer.get() {
+                                let opt_informer = self.informer_cache.get(&action.get_run_identifier(), &action.parent_action_name).await;
+                                if let Some(informer) = opt_informer {
                                     // todo: check these two errors
 
                                     // Before firing completion event, update the action in the
@@ -317,8 +317,8 @@ impl CoreBaseController {
                                         .await;
                                 } else {
                                     error!(
-                                        "Max retries hit for action but informer still not yet initialized for action: {}",
-                                        action.action_id.name
+                                        "Max retries hit for action but informer missing: {:?}",
+                                        action.action_id
                                     );
                                 }
                             } else {
@@ -404,7 +404,7 @@ impl CoreBaseController {
         debug!("Cancelling action: {}", action.action_id.name);
         action.mark_cancelled();
 
-        if let Some(informer) = self.informer.get() {
+        if let Some(informer) = self.informer_cache.get(&action.get_run_identifier(), &action.parent_action_name).await {
             let _ = informer
                 .fire_completion_event(&action.action_id.name)
                 .await?;
@@ -417,14 +417,17 @@ impl CoreBaseController {
         Ok(())
     }
 
-    pub async fn get_action(&self, action_id: ActionIdentifier) -> Result<Action, ControllerError> {
-        if let Some(informer) = self.informer.get() {
+    pub async fn get_action(&self, action_id: ActionIdentifier, parent_action_name: &str) -> Result<Action, ControllerError> {
+        let run = action_id.run.as_ref().ok_or(ControllerError::RuntimeError(
+            format!("Action {:?} doesn't have a run, can't get action", action_id),
+        ))?;
+        if let Some(informer) = self.informer_cache.get(run, parent_action_name).await {
             let action_name = action_id.name.clone();
             match informer.get_action(action_name).await {
                 Some(action) => Ok(action),
                 None => Err(ControllerError::RuntimeError(format!(
-                    "Action not found: {}",
-                    action_id.name
+                    "Action not found getting from action_id: {:?}",
+                    action_id
                 ))),
             }
         } else {
@@ -551,24 +554,11 @@ impl CoreBaseController {
                 "Run ID missing from submit action {}",
                 action_name.clone()
             )))?;
-        let informer: &Arc<Informer> = self
-            .informer
-            .get_or_try_init(|| async move {
-                info!("Creating informer set to run_id {:?}", run_id);
-                let inf = Arc::new(Informer::new(
-                    self.state_client,
-                    run_id,
-                    parent_action_name,
-                    self.shared_queue.clone(),
-                ));
-
-                Informer::start(inf.clone()).await?;
-
-                // Using PyErr for now, but any errors coming from the informer will not really
-                // be py errs, will need to add and map later.
-                Ok::<Arc<Informer>, ControllerError>(inf)
-            })
-            .await?;
+        info!("Creating informer set to run_id {:?}", run_id);
+        let informer: Arc<Informer> = self
+            .informer_cache
+            .get_or_create_informer(&action.get_run_identifier(), &action.parent_action_name)
+            .await;
         let (done_tx, done_rx) = oneshot::channel();
         informer.submit_action(action, done_tx).await?;
 
