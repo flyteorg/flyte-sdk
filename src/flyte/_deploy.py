@@ -313,6 +313,7 @@ async def _build_images(deployment: DeploymentPlan, image_refs: Dict[str, str] |
     """
     Build the images for the given deployment plan and update the environment with the built image.
     """
+    from flyte._image import _DEFAULT_IMAGE_REF_NAME
     from ._internal.imagebuild.image_builder import ImageCache
 
     if image_refs is None:
@@ -339,9 +340,9 @@ async def _build_images(deployment: DeploymentPlan, image_refs: Dict[str, str] |
             images.append(_build_image_bg(env_name, env.image))
 
         elif env.image == "auto" and "auto" not in image_identifier_map:
-            if "default" in image_refs:
+            if _DEFAULT_IMAGE_REF_NAME in image_refs:
                 # If the default image is set through CLI, use it instead
-                image_uri = image_refs["default"]
+                image_uri = image_refs[_DEFAULT_IMAGE_REF_NAME]
                 image_identifier_map[env_name] = image_uri
                 continue
             auto_image = Image.from_debian_base()

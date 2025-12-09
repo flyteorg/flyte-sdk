@@ -22,7 +22,6 @@ from rich.pretty import pretty_repr
 from rich.table import Table
 from rich.traceback import Traceback
 
-import flyte.config
 import flyte.errors
 from flyte._logging import LogFormat
 from flyte.config import Config
@@ -143,7 +142,6 @@ class CLIConfig:
         platform_cfg = self.config.platform.replace(**kwargs)
 
         updated_config = self.config.with_params(platform_cfg, task_cfg)
-
         flyte.init_from_config(
             updated_config,
             log_level=self.log_level,
@@ -438,6 +436,8 @@ def parse_images(cfg: Config, values: tuple[str, ...] | None) -> None:
         cfg: The Config object to write images to
         values: List of image strings in format "imagename=imageuri" or just "imageuri"
     """
+    from flyte._image import _DEFAULT_IMAGE_REF_NAME
+
     if values is None:
         return
     for value in values:
@@ -446,7 +446,7 @@ def parse_images(cfg: Config, values: tuple[str, ...] | None) -> None:
             cfg.image.image_refs[image_name] = image_uri
         else:
             # If no name specified, use "default" as the name
-            cfg.image.image_refs["default"] = value
+            cfg.image.image_refs[_DEFAULT_IMAGE_REF_NAME] = value
 
 
 @lru_cache()

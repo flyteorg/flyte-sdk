@@ -368,7 +368,7 @@ flyte deploy --dry-run hello.py my_env
 You can specify the `--config` flag to point to a specific Flyte cluster:
 
 ```bash
-flyte deploy --config my-config.yaml hello.py my_env
+flyte --config my-config.yaml deploy hello.py my_env
 ```
 
 You can override the default configured project and domain:
