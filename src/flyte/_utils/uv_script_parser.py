@@ -48,8 +48,6 @@ def parse_uv_script_file(path: pathlib.Path) -> UVScriptMetadata:
     dependencies = data.get("dependencies", [])
     py_dependencies = [dep for dep in dependencies if "file://" not in dep]
     pyprojects = [dep.split("file://")[-1] for dep in dependencies if "file://" in dep]
-    print("pyprojects:", pyprojects)
-    print("py_dependencies:", py_dependencies)
     return UVScriptMetadata(
         requires_python=data.get("requires-python"),
         dependencies=py_dependencies,
