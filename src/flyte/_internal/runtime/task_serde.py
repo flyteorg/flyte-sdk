@@ -120,7 +120,6 @@ def get_proto_task(task: TaskTemplate, serialize_context: SerializationContext) 
         version=serialize_context.version,
     )
 
-    # TODO Add support for extra_config, custom
     extra_config: typing.Dict[str, str] = {}
 
     if task.pod_template and not isinstance(task.pod_template, str):
@@ -130,6 +129,9 @@ def get_proto_task(task: TaskTemplate, serialize_context: SerializationContext) 
     else:
         container = _get_urun_container(serialize_context, task)
         pod = None
+
+    if task.link:
+        extra_config.update(task.link.get_config())
 
     custom = task.custom_config(serialize_context)
 
