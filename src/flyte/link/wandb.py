@@ -10,16 +10,16 @@ class Wandb(Link):
     entity: str
     id: str
     host: Optional[str] = "https://wandb.ai"
-    port: Optional[str] = None
+
+    def __post_init__(self):
+        if self.id is None:
+            self.link_type = "wandb-execution-id"
+        else:
+            self.link_type = "wandb-custom-id"
 
     def get_config(self) -> Dict[str, str]:
-        if id is None:
-            link_type = "wandb-execution-id"
-        else:
-            link_type = "wandb-custom-id"
-
         return {
-            "link_type": link_type,
+            "link_type": self.link_type,
             "project": self.project,
             "entity": self.entity,
             "id": self.id,
