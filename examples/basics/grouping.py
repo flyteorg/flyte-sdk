@@ -12,26 +12,6 @@ async def double(x: int) -> int:
 
 
 @env.task
-async def root_wf(x: int) -> List[int]:
-    print(x)
-    vals = []
-    with flyte.group("double-list-1"):
-        for x in range(x):
-            vals.append(double(x))
-
-        o1 = await asyncio.gather(*vals)
-
-    vals = []
-    with flyte.group("double-list-2"):
-        for x in range(x):
-            vals.append(double(x))
-
-        o2 = await asyncio.gather(*vals)
-
-    return o1 + o2
-
-
-@env.task
 async def group_dynamic(x: int) -> List[int]:
     vals = {"even": [], "odd": []}
     for x in range(x):
