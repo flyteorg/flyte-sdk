@@ -451,10 +451,11 @@ def pod_spec_from_resources(
     2. Environment variable FLYTE_K8S_GPU_RESOURCE_KEY if set
     3. Default value "nvidia.com/gpu"
 
-    :param primary_container_name: Name of the primary container
-    :param requests: Resource requests
-    :param limits: Resource limits
-    :param k8s_gpu_resource_key: Kubernetes GPU resource key (e.g., "nvidia.com/gpu", "amd.com/gpu")
+    :param primary_container_name: Name of the primary container. Defaults to PRIMARY_CONTAINER_DEFAULT_NAME.
+    :param requests: Resource requests (CPU, memory, GPU, etc.). Optional.
+    :param limits: Resource limits (CPU, memory, GPU, etc.). Optional.
+    :param k8s_gpu_resource_key: Kubernetes GPU resource key (e.g., "nvidia.com/gpu", "amd.com/gpu").
+                                  If None, will use FLYTE_K8S_GPU_RESOURCE_KEY env var or default to "nvidia.com/gpu".
     :return: V1PodSpec with configured resource requirements
     """
     # Resolve GPU resource key: explicit argument > env var > default
