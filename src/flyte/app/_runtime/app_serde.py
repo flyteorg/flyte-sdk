@@ -8,6 +8,7 @@ the AppIDL protobuf format, using SerializationContext for configuration.
 from __future__ import annotations
 
 from copy import deepcopy
+from dataclasses import replace
 from typing import List, Optional, Union
 
 from flyteidl2.app import app_definition_pb2
@@ -16,17 +17,19 @@ from flyteidl2.core import literals_pb2, tasks_pb2
 from google.protobuf.duration_pb2 import Duration
 
 import flyte
-import flyte.errors
 import flyte.io
 from flyte._internal.runtime.resources_serde import get_proto_extended_resources, get_proto_resources
 from flyte._internal.runtime.task_serde import get_security_context, lookup_image_in_cache
 from flyte.app import AppEnvironment, Input, Scaling
+from flyte.app._input import _DelayedValue
 from flyte.models import SerializationContext
+from flyte.syncify import syncify
 
 
 def get_proto_container(
     app_env: AppEnvironment,
     serialization_context: SerializationContext,
+    input_overrides: list[Input] | None = None,
 ) -> tasks_pb2.Container:
     """
     Construct the container specification.
@@ -34,7 +37,7 @@ def get_proto_container(
     Args:
         app_env: The app environment
         serialization_context: Serialization context
-
+        input_overrides: Input overrides to apply to the app environment.
     Returns:
         Container protobuf message
     """
@@ -58,7 +61,7 @@ def get_proto_container(
 
     return tasks_pb2.Container(
         image=img_uri,
-        command=app_env.container_cmd(serialization_context),
+        command=app_env.container_cmd(serialization_context, input_overrides),
         args=app_env.container_args(serialization_context),
         resources=resources,
         ports=container_ports,
@@ -207,7 +210,31 @@ def _get_scaling_metric(
     return None
 
 
-def translate_inputs(inputs: List[Input]) -> app_definition_pb2.InputList:
+async def _materialize_inputs_with_delayed_values(inputs: List[Input]) -> List[Input]:
+    """
+    Materialize the inputs that contain delayed values. This is important for both
+    serializing the input for the container command and for the app idl inputs collection.
+
+    Args:
+        inputs: The inputs to materialize.
+
+    Returns:
+        The materialized inputs.
+    """
+    _inputs = []
+    for input in inputs:
+        if isinstance(input.value, _DelayedValue):
+            value = await input.value.get()
+            assert isinstance(value, (str, flyte.io.File, flyte.io.Dir)), (
+                f"Materialized value must be a string, file or directory, found {type(value)}"
+            )
+            _inputs.append(replace(input, value=await input.value.get()))
+        else:
+            _inputs.append(input)
+    return _inputs
+
+
+async def translate_inputs(inputs: List[Input]) -> app_definition_pb2.InputList:
     """
     Placeholder for translating inputs to protobuf format.
 
@@ -230,9 +257,11 @@ def translate_inputs(inputs: List[Input]) -> app_definition_pb2.InputList:
     return app_definition_pb2.InputList(items=inputs_list)
 
 
-def translate_app_env_to_idl(
+@syncify
+async def translate_app_env_to_idl(
     app_env: AppEnvironment,
     serialization_context: SerializationContext,
+    input_overrides: list[Input] | None = None,
     desired_state: app_definition_pb2.Spec.DesiredState = app_definition_pb2.Spec.DesiredState.DESIRED_STATE_ACTIVE,
 ) -> app_definition_pb2.App:
     """
@@ -244,6 +273,7 @@ def translate_app_env_to_idl(
     Args:
         app_env: The app environment to serialize
         serialization_context: Serialization context containing org, project, domain, version, etc.
+        input_overrides: Input overrides to apply to the app environment.
         desired_state: Desired state of the app (ACTIVE, INACTIVE, etc.)
 
     Returns:
@@ -279,6 +309,7 @@ def translate_app_env_to_idl(
     )
 
     # Build spec based on image type
+    inputs = await _materialize_inputs_with_delayed_values(input_overrides or app_env.inputs)
     container = None
     pod = None
     if app_env.pod_template:
@@ -293,6 +324,7 @@ def translate_app_env_to_idl(
         container = get_proto_container(
             app_env,
             serialization_context,
+            input_overrides=inputs,
         )
     else:
         msg = "image must be a str, Image, or PodTemplate"
@@ -344,6 +376,6 @@ def translate_app_env_to_idl(
             links=links,
             container=container,
             pod=pod,
-            inputs=translate_inputs(app_env.inputs),
+            inputs=await translate_inputs(inputs),
         ),
     )

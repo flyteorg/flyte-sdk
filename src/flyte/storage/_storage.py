@@ -14,6 +14,7 @@ from fsspec.asyn import AsyncFileSystem
 from fsspec.utils import get_protocol
 from obstore.exceptions import GenericError
 from obstore.fsspec import register
+from obstore.store import ObjectStore
 
 from flyte._initialize import get_storage
 from flyte._logging import logger
@@ -147,9 +148,13 @@ def _get_anonymous_filesystem(from_path):
     return get_underlying_filesystem(get_protocol(from_path), anonymous=True, asynchronous=True)
 
 
-async def _get_obstore_bypass(from_path: str, to_path: str | pathlib.Path, recursive: bool = False, **kwargs) -> str:
-    from obstore.store import ObjectStore
-
+async def _get_obstore_bypass(
+    from_path: str,
+    to_path: str | pathlib.Path,
+    recursive: bool = False,
+    exclude: list[str] | None = None,
+    **kwargs,
+) -> str:
     from flyte.storage._parallel_reader import ObstoreParallelReader
 
     fs = get_underlying_filesystem(path=from_path)
@@ -171,6 +176,7 @@ async def _get_obstore_bypass(from_path: str, to_path: str | pathlib.Path, recur
         await reader.download_files(
             prefix,
             target_path,
+            exclude=exclude,
         )
         return str(to_path)
 
@@ -279,7 +285,6 @@ async def _open_obstore_bypass(path: str, mode: str = "rb", **kwargs) -> AsyncRe
     """
     Simple obstore bypass for opening files. No fallbacks, obstore only.
     """
-    from obstore.store import ObjectStore
 
     fs = get_underlying_filesystem(path=path)
     bucket, file_path = fs._split_path(path)  # pylint: disable=W0212

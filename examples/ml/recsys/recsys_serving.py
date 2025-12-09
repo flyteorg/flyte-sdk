@@ -8,7 +8,7 @@
 #     "pydantic",
 #     "pandas",
 #     "pyarrow",
-#     "flyte>=2.0.0b29",
+#     "flyte>=2.0.0b34",
 # ]
 # ///
 """
@@ -97,6 +97,8 @@ env = FastAPIAppEnvironment(
     inputs=[
         Input(
             name="artifacts",
+            # if using flyte serve CLI to deploy this, set the ARTIFACTS_DIR environment variable
+            # to the remote path of the artifacts directory.
             value=flyte.io.Dir.from_existing_remote(os.environ.get(ARTIFACTS_DIR_ENV, "/tmp/recsys_artifacts")),
             mount="/tmp/recsys_artifacts",
         )
@@ -399,20 +401,36 @@ async def get_item_info(item_id: str):
 
 
 if __name__ == "__main__":
+    import argparse
+
+    import flyte.remote
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--training-run", type=str)
+    args = parser.parse_args()
+
     flyte.init_from_config(
         root_dir=Path(__file__).parent,
         log_level=logging.DEBUG,
     )
 
+    run = flyte.remote.Run.get(args.training_run)
+    artifacts_dir, *_ = run.outputs()
+
     # Deploy the FastAPI app to Flyte
     # Note: You need to provide the artifacts directory from the training pipeline
     # You can get this by running the training pipeline first:
-    #   run = flyte.run(training_pipeline, ...)
-    #   artifacts = run.outputs()
-    #   then set `export ARTIFACTS_DIR="s3://...`
-    # then run this script
-    v = os.environ.get(ARTIFACTS_DIR_ENV, None)
-    if v is None:
-        raise RuntimeError(f"Artifacts dir not found: {v}, please set {ARTIFACTS_DIR_ENV} as an environment variable")
-    app = flyte.serve(env)
+    #
+    # uv run recsys_training.py
+    #
+    # Then supplying the run name to the serving script
+    #
+    # uv run recsys_serving.py --training-run <training-run-name>
+    #
+    # Then call the serving endpoint:
+    #
+    # curl -X POST http://<endpoint>/embed-text -H "Content-Type: application/json" -d '{"text": "test embedding"}'
+
+    input_value_overrides = {env.name: {"artifacts": flyte.io.Dir.from_existing_remote(artifacts_dir.path)}}
+    app = flyte.with_servecontext(input_values=input_value_overrides).serve(env)
     print(f"Deployed Application: {app.url}")

@@ -1,11 +1,12 @@
 # /// script
 # requires-python = "==3.13"
 # dependencies = [
-#    "flyte>=2.0.0b17",
-#    "sentence-transformers",
-#    "huggingface-hub",
+#    "flyte>=2.0.0b34",
+#    "sentence-transformers>=3.0.0",
+#    "transformers>=4.41.0",
+#    "huggingface-hub>=0.24",
 #    "hf-transfer",
-#    "datasets",
+#    "datasets>=2.18",
 # ]
 # ///
 
@@ -45,14 +46,7 @@ import flyte.io
 logger = logging.getLogger(__name__)
 
 image = flyte.Image.from_uv_script(__file__, name="embed_wikipedia_image").with_pip_packages(
-    "unionai-reuse>=0.1.5",
-)
-
-driver = flyte.TaskEnvironment(
-    name="embed_wikipedia_driver",
-    image=image,
-    resources=flyte.Resources(cpu=1, memory="4Gi", disk="16Gi"),
-    secrets="HF_HUB_TOKEN",
+    "unionai-reuse>=0.1.9",
 )
 
 N_GPUS = 1
@@ -63,6 +57,14 @@ worker = flyte.TaskEnvironment(
     env_vars={"HF_HUB_ENABLE_HF_TRANSFER": "1"},
     reusable=flyte.ReusePolicy(replicas=16, concurrency=1, idle_ttl=120, scaledown_ttl=120),
     secrets="HF_HUB_TOKEN",
+)
+
+driver = flyte.TaskEnvironment(
+    name="embed_wikipedia_driver",
+    image=image,
+    resources=flyte.Resources(cpu=1, memory="4Gi", disk="16Gi"),
+    secrets="HF_HUB_TOKEN",
+    depends_on=[worker],
 )
 
 
