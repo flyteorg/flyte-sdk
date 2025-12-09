@@ -375,8 +375,8 @@ async def init_from_api_key(
                 "API key must be provided either as a parameter or via the FLYTE_API_KEY environment variable.",
             )
 
-    # Sanitize the endpoint and extract org from it
-    endpoint = sanitize_endpoint(endpoint)
+    # Sanitize the endpoint and extract org from it - sanitize should never return None if input is not None
+    endpoint = sanitize_endpoint(endpoint)  # type: ignore[assignment]
     org = org_from_endpoint(endpoint)
 
     await init.aio(
