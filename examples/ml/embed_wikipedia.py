@@ -64,7 +64,7 @@ driver = flyte.TaskEnvironment(
     image=image,
     resources=flyte.Resources(cpu=1, memory="4Gi", disk="16Gi"),
     secrets="HF_HUB_TOKEN",
-    depends_on=[worker]
+    depends_on=[worker],
 )
 
 

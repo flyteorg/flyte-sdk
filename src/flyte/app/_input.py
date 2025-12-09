@@ -56,17 +56,44 @@ class RunOutput(_DelayedValue):
     """
     Use a run's output for app inputs.
 
-    This enables the declaration of an app input dependency on a the output of
+    This enables the declaration of an app input dependency on the output of
     a run, given by a specific run name, or a task name and version. If
     `task_auto_version == 'latest'`, the latest version of the task will be used.
     If `task_auto_version == 'current'`, the version will be derived from the callee
-    app or task context.
+    app or task context. To get the latest task run for ephemeral task runs, set
+    `task_version` and `task_auto_version` should both be set to `None` (which is the default).
+
+    Examples:
+
+    Get the output of a specific run:
+
+    ```python
+    run_output = RunOutput(run_name="my-run-123")
+    ```
+
+    Get the latest output of an ephemeral task run:
+
+    ```python
+    run_output = RunOutput(task_name="env.my_task")
+    ```
+
+    Get the latest output of a deployed task run:
+
+    ```python
+    run_output = RunOutput(task_name="env.my_task", task_auto_version="latest")
+    ```
+
+    Get the output of a specific task run:
+
+    ```python
+    run_output = RunOutput(task_name="env.my_task", task_version="xyz")
+    ```
     """
 
     run_name: str | None = None
     task_name: str | None = None
     task_version: str | None = None
-    task_auto_version: AutoVersioning | None = "latest"
+    task_auto_version: AutoVersioning | None = None
     getter: tuple[typing.Any, ...] = (0,)
 
     def __post_init__(self):
@@ -74,10 +101,6 @@ class RunOutput(_DelayedValue):
             raise ValueError("Either run_name or task_name must be provided")
         if self.run_name is not None and self.task_name is not None:
             raise ValueError("Only one of run_name or task_name must be provided")
-        if self.task_name is not None and (self.task_version is None and self.task_auto_version is None):
-            raise ValueError("Either task_version or task_auto_version must be provided")
-        if self.task_name is not None and (self.task_version is not None and self.task_auto_version is not None):
-            raise ValueError("Only one of task_version or task_auto_version must be provided")
 
     @requires_initialization
     async def materialize(self) -> InputTypes:
@@ -100,7 +123,7 @@ class RunOutput(_DelayedValue):
         elif self.task_version is not None:
             task_version = self.task_version
         else:
-            raise ValueError("Either task_version or task_auto_version must be provided")
+            task_version = None
 
         runs = Run.listall.aio(
             in_phase=("succeeded",),
