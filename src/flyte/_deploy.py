@@ -314,6 +314,7 @@ async def _build_images(deployment: DeploymentPlan, image_refs: Dict[str, str] |
     Build the images for the given deployment plan and update the environment with the built image.
     """
     from flyte._image import _DEFAULT_IMAGE_REF_NAME
+
     from ._internal.imagebuild.image_builder import ImageCache
 
     if image_refs is None:
