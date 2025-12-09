@@ -8,6 +8,7 @@ the AppIDL protobuf format, using SerializationContext for configuration.
 from __future__ import annotations
 
 from copy import deepcopy
+from dataclasses import replace
 from typing import List, Optional, Union
 
 from flyteidl2.app import app_definition_pb2
@@ -19,7 +20,8 @@ import flyte
 import flyte.io
 from flyte._internal.runtime.resources_serde import get_proto_extended_resources, get_proto_resources
 from flyte._internal.runtime.task_serde import get_security_context, lookup_image_in_cache
-from flyte.app import AppEndpoint, AppEnvironment, Input, RunOutput, Scaling
+from flyte.app import AppEnvironment, Input, Scaling
+from flyte.app._input import _DelayedValue
 from flyte.models import SerializationContext
 from flyte.syncify import syncify
 
@@ -208,6 +210,30 @@ def _get_scaling_metric(
     return None
 
 
+async def _materialize_inputs_with_delayed_values(inputs: List[Input]) -> List[Input]:
+    """
+    Materialize the inputs that contain delayed values. This is important for both
+    serializing the input for the container command and for the app idl inputs collection.
+
+    Args:
+        inputs: The inputs to materialize.
+
+    Returns:
+        The materialized inputs.
+    """
+    _inputs = []
+    for input in inputs:
+        if isinstance(input.value, _DelayedValue):
+            value = await input.value.get()
+            assert isinstance(value, (str, flyte.io.File, flyte.io.Dir)), (
+                f"Materialized value must be a string, file or directory, found {type(value)}"
+            )
+            _inputs.append(replace(input, value=await input.value.get()))
+        else:
+            _inputs.append(input)
+    return _inputs
+
+
 async def translate_inputs(inputs: List[Input]) -> app_definition_pb2.InputList:
     """
     Placeholder for translating inputs to protobuf format.
@@ -226,8 +252,6 @@ async def translate_inputs(inputs: List[Input]) -> app_definition_pb2.InputList:
             inputs_list.append(app_definition_pb2.Input(name=input.name, string_value=str(input.value.path)))
         elif isinstance(input.value, flyte.io.Dir):
             inputs_list.append(app_definition_pb2.Input(name=input.name, string_value=str(input.value.path)))
-        elif isinstance(input.value, (RunOutput, AppEndpoint)):
-            inputs_list.append(app_definition_pb2.Input(name=input.name, string_value=await input.value.get()))
         else:
             raise ValueError(f"Unsupported input value type: {type(input.value)}")
     return app_definition_pb2.InputList(items=inputs_list)
@@ -285,6 +309,7 @@ async def translate_app_env_to_idl(
     )
 
     # Build spec based on image type
+    inputs = await _materialize_inputs_with_delayed_values(input_overrides or app_env.inputs)
     container = None
     pod = None
     if app_env.pod_template:
@@ -299,7 +324,7 @@ async def translate_app_env_to_idl(
         container = get_proto_container(
             app_env,
             serialization_context,
-            input_overrides=input_overrides,
+            input_overrides=inputs,
         )
     else:
         msg = "image must be a str, Image, or PodTemplate"
@@ -351,6 +376,6 @@ async def translate_app_env_to_idl(
             links=links,
             container=container,
             pod=pod,
-            inputs=await translate_inputs(input_overrides or app_env.inputs),
+            inputs=await translate_inputs(inputs),
         ),
     )

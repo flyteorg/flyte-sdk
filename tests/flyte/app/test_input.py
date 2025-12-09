@@ -176,7 +176,7 @@ def test_run_output_with_run_name():
     assert ro.run_name == "my-run-123"
     assert ro.task_name is None
     assert ro.task_version is None
-    assert ro.task_auto_version == "latest"
+    assert ro.task_auto_version is None
     assert ro.getter == (0,)
 
 
