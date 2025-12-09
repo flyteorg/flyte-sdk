@@ -557,7 +557,7 @@ class Image:
         return img
 
     @classmethod
-    def from_ref_name(cls, name: str=_DEFAULT_IMAGE_REF_NAME) -> Image:
+    def from_ref_name(cls, name: str = _DEFAULT_IMAGE_REF_NAME) -> Image:
         # NOTE: set image name as _ref_name to enable adding additional layers.
         # See: https://github.com/flyteorg/flyte-sdk/blob/14de802701aab7b8615ffb99c650a36305ef01f7/src/flyte/_image.py#L642
         img = cls._new(name=name, _ref_name=name)
@@ -751,6 +751,7 @@ class Image:
             tag = self._final_tag
             return f"{self.registry}/{self.name}:{tag}"
         elif self._ref_name and len(self._layers) == 0:
+            assert self.base_image is not None, f"Base image is not set for image ref name {self._ref_name}"
             return self.base_image
         elif self.name:
             return f"{self.name}:{self._final_tag}"
