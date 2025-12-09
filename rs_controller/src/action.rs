@@ -2,13 +2,12 @@ use flyteidl2::google::protobuf::Timestamp;
 use prost::Message;
 use pyo3::prelude::*;
 
-use flyteidl2::flyteidl::common::ActionIdentifier;
+use flyteidl2::flyteidl::common::{ActionIdentifier, RunIdentifier};
 use flyteidl2::flyteidl::workflow::{ActionUpdate, TraceAction};
 
 use flyteidl2::flyteidl::common::ActionPhase;
 use flyteidl2::flyteidl::core::{ExecutionError, TypedInterface};
 use flyteidl2::flyteidl::task::{OutputReferences, TaskSpec, TraceSpec};
-use pyo3_async_runtimes::tokio::run;
 use tracing::debug;
 
 #[pyclass(eq, eq_int)]
@@ -51,6 +50,26 @@ impl Action {
             .clone();
         assert!(!run_name.is_empty());
         run_name
+    }
+
+    pub fn get_run_identifier(&self) -> RunIdentifier {
+        self
+            .action_id
+            .run
+            .as_ref()
+            .expect("Action ID missing run")
+            .clone()
+    }
+
+    pub fn get_full_name(&self) -> String {
+        format!("{}:{}", &self
+            .action_id
+            .run
+            .as_ref()
+            .expect("Action ID missing run")
+            .name,
+            self.action_id.name
+            )
     }
 
     pub fn get_action_name(&self) -> String {

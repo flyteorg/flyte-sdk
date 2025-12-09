@@ -13,6 +13,7 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
+use pyo3_async_runtimes::tokio::run;
 use tokio::select;
 use tokio::sync::RwLock;
 use tokio::sync::{mpsc, oneshot, Notify};
@@ -20,6 +21,7 @@ use tokio::time::sleep;
 use tonic::transport::channel::Channel;
 use tonic::transport::Endpoint;
 use tracing::{debug, error, info, warn};
+use tracing::log::Level::Info;
 use tracing_subscriber::fmt;
 
 #[derive(Clone, Debug)]
@@ -269,10 +271,10 @@ impl InformerCache {
 
     pub async fn get_or_create_informer(
         &self,
-        run_id: RunIdentifier,
-        parent_action_name: String,
+        run_id: &RunIdentifier,
+        parent_action_name: &str,
     ) -> Arc<Informer> {
-        let informer_name = Self::mkname(&run_id.name, &parent_action_name);
+        let informer_name = Self::mkname(&run_id.name, parent_action_name);
         let timeout = Duration::from_millis(100);
 
         // Check if exists (with read lock)
@@ -301,8 +303,8 @@ impl InformerCache {
         // Create and add to cache
         let informer = Arc::new(Informer::new(
             self.client.clone(),
-            run_id,
-            parent_action_name,
+            run_id.clone(),
+            parent_action_name.to_string(),
             self.shared_queue.clone(),
         ));
         map.insert(informer_name.clone(), Arc::clone(&informer));
@@ -313,6 +315,7 @@ impl InformerCache {
         let me = Arc::clone(&informer);
         let failure_tx = self.failure_tx.clone();
 
+        // todo: Add stop and terminate watch handle
         let _watch_handle = tokio::spawn(async move {
             // If there are errors with the watch then notify the channel
             let err = me.watch_actions().await;
@@ -337,6 +340,13 @@ impl InformerCache {
         Self::wait_for_ready(&informer, timeout).await;
 
         informer
+    }
+
+    pub async fn get(&self, run_id: &RunIdentifier,
+                 parent_action_name: &str) -> Option<Arc<Informer>> {
+        let map = self.cache.read().await;
+        let opt_informer = map.get(&InformerCache::mkname(&run_id.name, parent_action_name)).cloned();
+        opt_informer
     }
 
     /// Wait for informer to be ready with a timeout. If timeout occurs, set ready anyway
@@ -379,7 +389,7 @@ impl InformerCache {
 async fn informer_main() {
     // Create an informer but first create the shared_queue that will be shared between the
     // Controller and the informer
-    let (tx, rx) = mpsc::channel::<Action>(64);
+    let (tx, _rx) = mpsc::channel::<Action>(64);
     let endpoint = Endpoint::from_static("http://localhost:8090");
     let channel = endpoint.connect().await.unwrap();
     let client = StateServiceClient::new(channel);

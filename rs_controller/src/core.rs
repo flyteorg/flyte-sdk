@@ -17,8 +17,8 @@ use tracing::{debug, error, info, warn};
 
 use crate::action::{Action, ActionType};
 use crate::auth::{AuthConfig, AuthLayer, ClientCredentialsAuthenticator};
-use crate::error::ControllerError;
-use crate::informer::Informer;
+use crate::error::{ControllerError, InformerError};
+use crate::informer::{Informer, InformerCache};
 use flyteidl2::flyteidl::common::ActionIdentifier;
 use flyteidl2::flyteidl::task::TaskIdentifier;
 use flyteidl2::flyteidl::workflow::enqueue_action_request;
@@ -110,37 +110,15 @@ impl QueueClient {
 
 pub struct CoreBaseController {
     channel: ChannelType,
-    informer: OnceCell<Arc<Informer>>,
-    state_client_cache: OnceLock<StateClient>,
-    queue_client_cache: OnceLock<QueueClient>,
+    informer_cache: InformerCache,
+    state_client: StateClient,
+    queue_client: QueueClient,
     shared_queue: mpsc::Sender<Action>,
-    rx_of_shared_queue: Arc<tokio::sync::Mutex<mpsc::Receiver<Action>>>,
+    shared_queue_rx: Arc<tokio::sync::Mutex<mpsc::Receiver<Action>>>,
+    failure_rx: mpsc::Receiver<InformerError>,
 }
 
 impl CoreBaseController {
-    // Helper methods to get cached clients (constructed once, reused thereafter)
-    fn state_client(&self) -> StateClient {
-        self.state_client_cache
-            .get_or_init(|| match &self.channel {
-                ChannelType::Plain(ch) => StateClient::Plain(StateServiceClient::new(ch.clone())),
-                ChannelType::Authenticated(ch) => {
-                    StateClient::Authenticated(StateServiceClient::new(ch.clone()))
-                }
-            })
-            .clone()
-    }
-
-    fn queue_client(&self) -> QueueClient {
-        self.queue_client_cache
-            .get_or_init(|| match &self.channel {
-                ChannelType::Plain(ch) => QueueClient::Plain(QueueServiceClient::new(ch.clone())),
-                ChannelType::Authenticated(ch) => {
-                    QueueClient::Authenticated(QueueServiceClient::new(ch.clone()))
-                }
-            })
-            .clone()
-    }
-
     pub fn new_with_auth() -> Result<Arc<Self>, ControllerError> {
         info!("Creating CoreBaseController from _UNION_EAGER_API_KEY env var (with auth)");
         // Read from env var and use auth
@@ -155,7 +133,7 @@ impl CoreBaseController {
         let endpoint_static: &'static str =
             Box::leak(Box::new(endpoint_url.clone().into_boxed_str()));
         // shared queue
-        let (shared_tx, rx_of_shared_queue) = mpsc::channel::<Action>(64);
+        let (shared_tx, shared_queue_rx) = mpsc::channel::<Action>(64);
 
         let rt = get_runtime();
         let channel = rt.block_on(async {
@@ -179,13 +157,32 @@ impl CoreBaseController {
             Ok::<_, ControllerError>(ChannelType::Authenticated(auth_channel))
         })?;
 
+        let (failure_tx, failure_rx) = mpsc::channel::<InformerError>(10);
+
+        let state_client = match &channel {
+            ChannelType::Plain(ch) => StateClient::Plain(StateServiceClient::new(ch.clone())),
+            ChannelType::Authenticated(ch) => {
+                StateClient::Authenticated(StateServiceClient::new(ch.clone()))
+            }
+        };
+
+        let queue_client = match &channel {
+            ChannelType::Plain(ch) => QueueClient::Plain(QueueServiceClient::new(ch.clone())),
+            ChannelType::Authenticated(ch) => {
+                QueueClient::Authenticated(QueueServiceClient::new(ch.clone()))
+            }
+        };
+
+        let informer_cache = InformerCache::new(state_client.clone(),shared_tx.clone(), failure_tx);
+
         let real_base_controller = CoreBaseController {
             channel,
-            informer: OnceCell::new(),
-            state_client_cache: OnceLock::new(),
-            queue_client_cache: OnceLock::new(),
+            informer_cache,
+            state_client,
+            queue_client,
             shared_queue: shared_tx,
-            rx_of_shared_queue: Arc::new(tokio::sync::Mutex::new(rx_of_shared_queue)),
+            shared_queue_rx: Arc::new(tokio::sync::Mutex::new(shared_queue_rx)),
+            failure_rx,
         };
 
         let real_base_controller = Arc::new(real_base_controller);
@@ -200,7 +197,7 @@ impl CoreBaseController {
     pub fn new_without_auth(endpoint: String) -> Result<Arc<Self>, ControllerError> {
         let endpoint_static: &'static str = Box::leak(Box::new(endpoint.clone().into_boxed_str()));
         // shared queue
-        let (shared_tx, rx_of_shared_queue) = mpsc::channel::<Action>(64);
+        let (shared_tx, shared_queue_rx) = mpsc::channel::<Action>(64);
 
         let rt = get_runtime();
         let channel = rt.block_on(async {
@@ -225,13 +222,32 @@ impl CoreBaseController {
             Ok::<_, ControllerError>(ChannelType::Plain(chan))
         })?;
 
+        let (failure_tx, failure_rx) = mpsc::channel::<InformerError>(10);
+
+        let state_client = match &channel {
+            ChannelType::Plain(ch) => StateClient::Plain(StateServiceClient::new(ch.clone())),
+            ChannelType::Authenticated(ch) => {
+                StateClient::Authenticated(StateServiceClient::new(ch.clone()))
+            }
+        };
+
+        let queue_client = match &channel {
+            ChannelType::Plain(ch) => QueueClient::Plain(QueueServiceClient::new(ch.clone())),
+            ChannelType::Authenticated(ch) => {
+                QueueClient::Authenticated(QueueServiceClient::new(ch.clone()))
+            }
+        };
+
+        let informer_cache = InformerCache::new(state_client.clone(),shared_tx.clone(), failure_tx);
+
         let real_base_controller = CoreBaseController {
             channel,
-            informer: OnceCell::new(),
-            state_client_cache: OnceLock::new(),
-            queue_client_cache: OnceLock::new(),
+            informer_cache,
+            state_client,
+            queue_client,
             shared_queue: shared_tx,
-            rx_of_shared_queue: Arc::new(tokio::sync::Mutex::new(rx_of_shared_queue)),
+            shared_queue_rx: Arc::new(tokio::sync::Mutex::new(shared_queue_rx)),
+            failure_rx,
         };
 
         let real_base_controller = Arc::new(real_base_controller);
@@ -253,7 +269,7 @@ impl CoreBaseController {
         );
         loop {
             // Receive actions from shared queue
-            let mut rx = self.rx_of_shared_queue.lock().await;
+            let mut rx = self.shared_queue_rx.lock().await;
             match rx.recv().await {
                 Some(mut action) => {
                     let run_name = &action
@@ -289,6 +305,7 @@ impl CoreBaseController {
                                 ));
 
                                 // Fire completion event for failed action
+                                let informer = self.informer_cache.
                                 if let Some(informer) = self.informer.get() {
                                     // todo: check these two errors
 
@@ -331,22 +348,22 @@ impl CoreBaseController {
             self.bg_launch(action).await?;
         } else if action.is_action_terminal() {
             // Action is terminal, fire completion event
-            if let Some(informer) = self.informer.get() {
+            if let Some(arc_informer) = self.informer_cache.get(&action.get_run_identifier(), &action.parent_action_name).await {
                 debug!(
                     "handle action firing completion event for {:?}",
                     &action.action_id.name
                 );
-                informer
+                arc_informer
                     .fire_completion_event(&action.action_id.name)
                     .await?;
             } else {
                 error!(
-                    "Informer not yet initialized for action: {}",
-                    action.action_id.name
+                    "Unable to find informer to fire completion event for action: {}",
+                    action.get_full_name(),
                 );
                 return Err(ControllerError::BadContext(format!(
-                    "Informer not initialized for action: {}. This may be because the informer is still starting up.",
-                    action.action_id.name
+                    "Informer missing for action: {} while handling.",
+                    action.get_full_name()
                 )));
             }
         } else {
@@ -484,7 +501,7 @@ impl CoreBaseController {
             let enqueue_request = self
                 .create_enqueue_action_request(action)
                 .expect("Failed to create EnqueueActionRequest");
-            let mut client = self.queue_client();
+            let mut client = self.queue_client.clone();
             // todo: tonic doesn't seem to have wait_for_ready, or maybe the .ready is already doing this.
             let enqueue_result = client.enqueue_action(enqueue_request).await;
             // Add logic from resiliency pr here, return certain errors, but change others to be a specific slowdown error.
@@ -535,11 +552,11 @@ impl CoreBaseController {
                 action_name.clone()
             )))?;
         let informer: &Arc<Informer> = self
-            .informer // OnceCell<Arc<Informer>>
+            .informer
             .get_or_try_init(|| async move {
                 info!("Creating informer set to run_id {:?}", run_id);
                 let inf = Arc::new(Informer::new(
-                    self.state_client(),
+                    self.state_client,
                     run_id,
                     parent_action_name,
                     self.shared_queue.clone(),
