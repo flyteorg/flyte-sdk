@@ -4,7 +4,7 @@ import shutil
 import subprocess
 import tempfile
 import typing
-from pathlib import Path
+from pathlib import Path, PurePath
 from string import Template
 from typing import ClassVar, Optional, Protocol, cast
 
@@ -357,7 +357,8 @@ class CopyConfigHandler:
     ) -> str:
         # Copy the source config file or directory to the context path
         if layer.src.is_absolute() or ".." in str(layer.src):
-            dst_path = context_path / str(layer.src.absolute()).replace("/", "./_flyte_abs_context/", 1)
+            rel_path = PurePath(*layer.src.parts[1:])
+            dst_path = context_path / "_flyte_abs_context" / rel_path
         else:
             dst_path = context_path / layer.src
 
