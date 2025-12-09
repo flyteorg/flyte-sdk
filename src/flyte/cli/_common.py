@@ -128,23 +128,30 @@ class CLIConfig:
         from flyte.config._config import TaskConfig
 
         # Check if FLYTE_API_KEY is set and no config file was found
-        breakpoint()
         api_key = os.getenv("FLYTE_API_KEY")
         has_config_file = self.config.source is not None
 
-        # Use API key initialization if:
+        # Use API key initialization only if:
         # 1. FLYTE_API_KEY is set AND
-        # 2. Either no config file exists OR endpoint is explicitly provided via CLI
-        if api_key and (not has_config_file or self.endpoint):
-            # Use init_from_api_key for API key authentication
+        # 2. No config file exists
+        if api_key and not has_config_file:
+            # Require the endpoint arg in the init_from_api_key function for future proofing.
+            # But for the flyte CLI, we can decode since there's already a --endpoint arg.
+            endpoint = self.endpoint
+            if not endpoint:
+                # Decode the API key to get the endpoint
+                from flyte.remote._client.auth._auth_utils import decode_api_key
+
+                endpoint, _, _, _ = decode_api_key(api_key)
+
             flyte.init_from_api_key(
+                endpoint=endpoint,
                 api_key=api_key,
                 project=project if project is not None else self.config.task.project,
                 domain=domain if domain is not None else self.config.task.domain,
                 log_level=self.log_level,
                 log_format=self.log_format,
                 root_dir=pathlib.Path(root_dir) if root_dir else None,
-                insecure=False,
                 sync_local_sys_paths=sync_local_sys_paths,
             )
         else:

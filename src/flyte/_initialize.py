@@ -75,7 +75,7 @@ async def _initialize_client(
     """
     from flyte.remote._client.controlplane import ClientSet
 
-    if endpoint:
+    if endpoint and api_key is None:
         return await ClientSet.for_endpoint(
             endpoint,
             insecure=insecure,
@@ -335,8 +335,6 @@ async def init_from_api_key(
     root_dir: Path | None = None,
     log_level: int | None = None,
     log_format: LogFormat | None = None,
-    insecure: bool = False,
-    insecure_skip_verify: bool = False,
     storage: Storage | None = None,
     batch_size: int = 1000,
     image_builder: ImageBuildEngine.ImageBuilderType = "local",
@@ -355,8 +353,6 @@ async def init_from_api_key(
       defaults to the editable install directory if the cwd is in a Python editable install, else just the cwd.
     :param log_level: Optional logging level for the logger
     :param log_format: Optional logging format for the logger, default is "console"
-    :param insecure: Whether to use insecure connection
-    :param insecure_skip_verify: Whether to skip SSL certificate verification
     :param storage: Optional blob store (S3, GCS, Azure) configuration
     :param batch_size: Optional batch size for operations that use listings, defaults to 1000
     :param image_builder: Optional image builder configuration
@@ -393,8 +389,8 @@ async def init_from_api_key(
         root_dir=root_dir,
         log_level=log_level,
         log_format=log_format,
-        insecure=insecure,
-        insecure_skip_verify=insecure_skip_verify,
+        insecure=False,
+        insecure_skip_verify=False,
         storage=storage,
         batch_size=batch_size,
         image_builder=image_builder,
