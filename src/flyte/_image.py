@@ -519,7 +519,7 @@ class Image:
         Default images are multi-arch amd/arm64
 
         :param python_version: If not specified, will use the current Python version
-        :param flyte_version: Union version to use
+        :param flyte_version: Flyte version to use
         :param install_flyte: If True, will install the flyte library in the image
         :param registry: Registry to use for the image
         :param registry_secret: Secret to use to pull/push the private image.

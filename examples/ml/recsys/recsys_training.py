@@ -1,6 +1,7 @@
 # /// script
 # requires-python = ">=3.12"
 # dependencies = [
+#     "flyte>=2.0.0b34",
 #     "transformers[torch]",
 #     "torch",
 #     "datasets",

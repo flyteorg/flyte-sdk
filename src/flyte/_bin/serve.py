@@ -46,18 +46,20 @@ async def sync_inputs(serialized_inputs: str, dest: str) -> Tuple[dict, dict]:
     env_vars = {}
 
     for input in user_inputs.inputs:
+        input_type = input.type
+        value = input.value
+
+        # download files or directories
         if input.download:
             user_dest = input.dest or dest
-            if input.type == "file":
+            if input_type == "file":
                 logger.info(f"Downloading {input.name} of type File to {user_dest}...")
-                value = await storage.get(input.value, user_dest)
-            elif input.type == "directory":
+                value = await storage.get(value, user_dest)
+            elif input_type == "directory":
                 logger.info(f"Downloading {input.name} of type Directory to {user_dest}...")
-                value = await storage.get(input.value, user_dest, recursive=True)
+                value = await storage.get(value, user_dest, recursive=True)
             else:
                 raise ValueError("Can only download files or directories")
-        else:
-            value = input.value
 
         output[input.name] = value
 
@@ -115,22 +117,11 @@ def main(
     import signal
     from subprocess import Popen
 
+    import flyte
     from flyte.app._input import RUNTIME_INPUTS_FILE
 
-    logger.info("Starting flyte-serve, ")
-    # TODO Do we need to init here?
-    # from flyte._initialize import init
-    # remote_kwargs: dict[str, Any] = {"insecure": False}
-    # if api_key := os.getenv(_UNION_EAGER_API_KEY_ENV_VAR):
-    #     logger.info("Using api key from environment")
-    #     remote_kwargs["api_key"] = api_key
-    # else:
-    #     ep = os.environ.get(ENDPOINT_OVERRIDE, "host.docker.internal:8090")
-    #     remote_kwargs["endpoint"] = ep
-    #     if "localhost" in ep or "docker" in ep:
-    #         remote_kwargs["insecure"] = True
-    #     logger.debug(f"Using controller endpoint: {ep} with kwargs: {remote_kwargs}")
-    # init(org=org, project=project, domain=domain, image_builder="remote")  # , **remote_kwargs)
+    logger.info(f"Starting flyte-serve, org: {org}, project: {project}, domain: {domain}")
+    flyte.init_in_cluster(org=org, project=project, domain=domain)
 
     materialized_inputs, env_vars, _code_bundle = asyncio.run(
         download_code_inputs(
