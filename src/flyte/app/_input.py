@@ -60,7 +60,34 @@ class RunOutput(_DelayedValue):
     a run, given by a specific run name, or a task name and version. If
     `task_auto_version == 'latest'`, the latest version of the task will be used.
     If `task_auto_version == 'current'`, the version will be derived from the callee
-    app or task context.
+    app or task context. To get the latest task run for ephemeral task runs, set
+    `task_version` and `task_auto_version` should both be set to `None` (which is the default).
+
+    Examples:
+
+    Get the output of a specific run:
+
+    ```python
+    run_output = RunOutput(run_name="my-run-123")
+    ```
+
+    Get the latest output of an ephemeral task run:
+
+    ```python
+    run_output = RunOutput(task_name="env.my_task")
+    ```
+
+    Get the latest output of a deployed task run:
+
+    ```python
+    run_output = RunOutput(task_name="env.my_task", task_auto_version="latest")
+    ```
+
+    Get the output of a specific task run:
+
+    ```python
+    run_output = RunOutput(task_name="env.my_task", task_version="xyz")
+    ```
     """
 
     run_name: str | None = None
