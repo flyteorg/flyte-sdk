@@ -1,17 +1,8 @@
 import logging
 from typing import Generator
 
-try:
-    import torch
-except ModuleNotFoundError:
-    raise ModuleNotFoundError("torch is not installed. Please install 'torch', to use VLLMAppEnvironment.")
-
-try:
-    import vllm
-except ModuleNotFoundError:
-    raise ModuleNotFoundError("vllm is not installed. Please install 'vllm', to use VLLMAppEnvironment.")
-
-
+import torch
+import vllm
 import vllm.entrypoints.cli.main
 from flyte.app.extras._model_loader.config import (
     LOCAL_MODEL_PATH,

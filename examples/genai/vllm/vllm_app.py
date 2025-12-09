@@ -70,7 +70,7 @@ vllm_app = VLLMAppEnvironment(
         .with_pip_packages("vllm==0.11.0")
         # .with_local_v2()
         .clone(addl_layer=PythonWheels(wheel_dir=DIST_FOLDER, package_name="flyte", pre=True))
-        # # NOTE: due to a dependency conflict, the vllm flyte plugin needs to be installed from source as a separate layer:
+        # # NOTE: due to a dependency conflict, the vllm flyte plugin needs to be installed as a separate layer:
         # # Run the following command to build the wheel:
         # # `uv run python -m build --wheel --installer uv --outdir ./dist-plugins plugins/vllm`
         # # Once a release of the plugin is out, you can installed it via `with_pip_packages("flyteplugins-vllm")`
