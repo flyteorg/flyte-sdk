@@ -2,8 +2,13 @@ import logging
 import os
 
 import pytest
-
+from flyte._code_bundle import build_code_bundle
 import flyte
+
+
+@pytest.fixture(autouse=True)
+def clear_lru_caches():
+    build_code_bundle.cache_clear()
 
 
 @pytest.fixture(scope="session")
