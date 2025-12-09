@@ -242,12 +242,15 @@ class Device:
     :param device: The type of device (e.g., "T4", "A100").
     :param quantity: The number of devices of this type.
     :param partition: The partition of the device (e.g., "1g.5gb", "2g.10gb" for gpus) or ("1x1", ... for tpus).
+    :param k8s_resource_key: Optional Kubernetes resource key for GPUs (e.g., "nvidia.com/mig-1g.10gb").
+                              If not specified, defaults to "nvidia.com/gpu" or synthesized MIG key from partition.
     """
 
     quantity: int
     device_class: DeviceClass
     device: str | None = None
     partition: str | None = None
+    k8s_resource_key: str | None = None
 
     def __post_init__(self):
         if self.quantity < 1:
@@ -255,13 +258,18 @@ class Device:
 
 
 def GPU(
-    device: GPUType, quantity: GPUQuantity, partition: A100Parts | A100_80GBParts | H200Parts | None = None
+    device: GPUType,
+    quantity: GPUQuantity,
+    partition: A100Parts | A100_80GBParts | H200Parts | None = None,
+    k8s_resource_key: str | None = None,
 ) -> Device:
     """
     Create a GPU device instance.
     :param device: The type of GPU (e.g., "T4", "A100").
     :param quantity: The number of GPUs of this type.
     :param partition: The partition of the GPU (e.g., "1g.5gb", "2g.10gb" for gpus) or ("1x1", ... for tpus).
+    :param k8s_resource_key: Optional Kubernetes resource key (e.g., "nvidia.com/mig-1g.10gb").
+                              If not specified, defaults to "nvidia.com/gpu" or synthesized from partition.
     :return: Device instance.
     """
     if quantity < 1:
@@ -277,7 +285,9 @@ def GPU(
     elif partition is not None and device == "H200":
         if partition not in get_args(H200Parts):
             raise ValueError(f"Invalid partition for H200: {partition}. Must be one of {get_args(H200Parts)}")
-    return Device(device=device, quantity=quantity, partition=partition, device_class="GPU")
+    return Device(
+        device=device, quantity=quantity, partition=partition, device_class="GPU", k8s_resource_key=k8s_resource_key
+    )
 
 
 def TPU(device: TPUType, partition: V5PParts | V6EParts | None = None):
@@ -436,6 +446,34 @@ def _check_resource_is_singular(resource: Resources):
     return resource
 
 
+def _get_gpu_resource_key(device: Optional[Device], default_key: str = "nvidia.com/gpu") -> str:
+    """
+    Get the Kubernetes resource key for a GPU device.
+    
+    Priority:
+    1. Explicit k8s_resource_key from device
+    2. Synthesized MIG key from partition (e.g., "nvidia.com/mig-1g.10gb")
+    3. Default key (e.g., "nvidia.com/gpu")
+    
+    :param device: The device object, may be None
+    :param default_key: Default resource key if no explicit key or partition is present
+    :return: The Kubernetes resource key to use
+    """
+    if device is None:
+        return default_key
+    
+    # Priority 1: Explicit k8s_resource_key
+    if device.k8s_resource_key is not None:
+        return device.k8s_resource_key
+    
+    # Priority 2: Synthesize MIG key from partition for GPU devices
+    if device.device_class == "GPU" and device.partition is not None:
+        return f"nvidia.com/mig-{device.partition}"
+    
+    # Priority 3: Default key
+    return default_key
+
+
 def pod_spec_from_resources(
     primary_container_name: str = _PRIMARY_CONTAINER_DEFAULT_NAME,
     requests: Optional[Resources] = None,
@@ -444,14 +482,18 @@ def pod_spec_from_resources(
 ) -> "V1PodSpec":
     from kubernetes.client import V1Container, V1PodSpec, V1ResourceRequirements
 
-    def _construct_k8s_pods_resources(resources: Optional[Resources], k8s_gpu_resource_key: str):
+    def _construct_k8s_pods_resources(resources: Optional[Resources], default_gpu_key: str):
         if resources is None:
             return None
+
+        # Determine the GPU resource key to use
+        device = resources.get_device()
+        gpu_key = _get_gpu_resource_key(device, default_gpu_key)
 
         resources_map = {
             "cpu": "cpu",
             "memory": "memory",
-            "gpu": k8s_gpu_resource_key,
+            "gpu": gpu_key,
             "ephemeral_storage": "ephemeral-storage",
         }
 
@@ -465,8 +507,8 @@ def pod_spec_from_resources(
 
         return k8s_pod_resources
 
-    requests = _construct_k8s_pods_resources(resources=requests, k8s_gpu_resource_key=k8s_gpu_resource_key)
-    limits = _construct_k8s_pods_resources(resources=limits, k8s_gpu_resource_key=k8s_gpu_resource_key)
+    requests = _construct_k8s_pods_resources(resources=requests, default_gpu_key=k8s_gpu_resource_key)
+    limits = _construct_k8s_pods_resources(resources=limits, default_gpu_key=k8s_gpu_resource_key)
     requests = requests or limits
     limits = limits or requests
 
