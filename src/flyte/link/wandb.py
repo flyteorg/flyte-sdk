@@ -9,7 +9,7 @@ class Wandb(Link):
     project: str
     entity: str
     id: str
-    host: Optional[str] = "https://wandb.ai"
+    host: str = "https://wandb.ai"
 
     def __post_init__(self):
         if self.id is None:
