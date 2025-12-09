@@ -75,7 +75,7 @@ async def _initialize_client(
     """
     from flyte.remote._client.controlplane import ClientSet
 
-    if endpoint:
+    if endpoint and api_key is None:
         return await ClientSet.for_endpoint(
             endpoint,
             insecure=insecure,
@@ -322,6 +322,79 @@ async def init_from_config(
         images=cfg.image.image_refs,
         storage=storage,
         source_config_path=cfg_path,
+        sync_local_sys_paths=sync_local_sys_paths,
+    )
+
+
+@syncify
+async def init_from_api_key(
+    endpoint: str,
+    api_key: str | None = None,
+    project: str | None = None,
+    domain: str | None = None,
+    root_dir: Path | None = None,
+    log_level: int | None = None,
+    log_format: LogFormat | None = None,
+    storage: Storage | None = None,
+    batch_size: int = 1000,
+    image_builder: ImageBuildEngine.ImageBuilderType = "local",
+    images: typing.Dict[str, str] | None = None,
+    sync_local_sys_paths: bool = True,
+) -> None:
+    """
+    Initialize the Flyte system using an API key for authentication. This is a convenience
+    method for API key-based authentication. Thread-safe implementation.
+
+    :param endpoint: The Flyte API endpoint URL
+    :param api_key: Optional API key for authentication. If None, reads from FLYTE_API_KEY environment variable.
+    :param project: Optional project name
+    :param domain: Optional domain name
+    :param root_dir: Optional root directory from which to determine how to load files, and find paths to files.
+      defaults to the editable install directory if the cwd is in a Python editable install, else just the cwd.
+    :param log_level: Optional logging level for the logger
+    :param log_format: Optional logging format for the logger, default is "console"
+    :param storage: Optional blob store (S3, GCS, Azure) configuration
+    :param batch_size: Optional batch size for operations that use listings, defaults to 1000
+    :param image_builder: Optional image builder configuration
+    :param images: Optional dict of images that can be used by referencing the image name
+    :param sync_local_sys_paths: Whether to include and synchronize local sys.path entries under the root directory
+      into the remote container (default: True)
+    :return: None
+    """
+    import os
+
+    from flyte._utils import org_from_endpoint, sanitize_endpoint
+
+    # If api_key is not provided, read from environment variable
+    if api_key is None:
+        api_key = os.getenv("FLYTE_API_KEY")
+        if api_key is None:
+            raise InitializationError(
+                "MissingApiKeyError",
+                "user",
+                "API key must be provided either as a parameter or via the FLYTE_API_KEY environment variable.",
+            )
+
+    # Sanitize the endpoint and extract org from it - sanitize should never return None if input is not None
+    endpoint = sanitize_endpoint(endpoint)  # type: ignore[assignment]
+    org = org_from_endpoint(endpoint)
+
+    await init.aio(
+        org=org,
+        project=project,
+        domain=domain,
+        endpoint=endpoint,
+        api_key=api_key,
+        auth_type="ClientSecret",  # API keys use client credentials flow
+        root_dir=root_dir,
+        log_level=log_level,
+        log_format=log_format,
+        insecure=False,
+        insecure_skip_verify=False,
+        storage=storage,
+        batch_size=batch_size,
+        image_builder=image_builder,
+        images=images,
         sync_local_sys_paths=sync_local_sys_paths,
     )
 
