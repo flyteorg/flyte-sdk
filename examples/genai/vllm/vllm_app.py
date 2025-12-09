@@ -10,7 +10,7 @@ Prerequisites
    Run the cache_model.py task to download the model from Hugging Face:
 
    ```
-   flyte run examples/genai/vllm/cache_model.py cache_model \
+   flyte run examples/genai/vllm/cache_model.py main \
        --model_id Qwen/Qwen3-0.6B
    ```
 
@@ -28,7 +28,7 @@ Deploy
 Deploy this app using the Flyte CLI:
 
 ```
-flyte deploy examples/genai/vllm/simple_app.py
+flyte deploy examples/genai/vllm/vllm_app.py vllm_app
 ```
 
 Usage
@@ -58,6 +58,7 @@ import os
 
 import flyte
 import flyte.app
+from flyte._image import PythonWheels, DIST_FOLDER
 from flyteplugins.vllm import VLLMAppEnvironment
 
 # Model path should point to a blob store location containing the model weights.
@@ -73,7 +74,13 @@ vllm_app = VLLMAppEnvironment(
     image=(
         flyte.Image.from_debian_base(name="vllm-app-image", python_version=(3, 12), install_flyte=False)
         .with_pip_packages("vllm==0.11.0")
-        .with_local_v2()
+        # .with_local_v2()
+        .clone(addl_layer=PythonWheels(wheel_dir=DIST_FOLDER, package_name="flyte", pre=True))
+        # # NOTE: due to a dependency conflict, the vllm flyte plugin needs to be installed from source as a separate layer:
+        # # Run the following command to build the wheel:
+        # # `uv run python -m build --wheel --installer uv --outdir ./dist-plugins plugins/vllm`
+        # # Once a release of the plugin is out, you can installed it via `with_pip_packages("flyteplugins-vllm")`
+        .clone(addl_layer=PythonWheels(wheel_dir=DIST_FOLDER.parent / "dist-plugins", package_name="flyteplugins-vllm", pre=True))
     ),
     stream_model=True,  # Stream model directly from blob store to GPU
     scaling=flyte.app.Scaling(

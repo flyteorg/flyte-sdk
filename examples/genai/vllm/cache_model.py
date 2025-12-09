@@ -19,14 +19,14 @@ Usage
 Run the task to cache the Qwen3-0.6B model:
 
 ```
-flyte run examples/genai/vllm/cache_model.py cache_model \
+flyte run examples/genai/vllm/cache_model.py main \
     --model_id Qwen/Qwen3-0.6B
 ```
 
-Or with a custom output path:
+Or with a custom revision:
 
 ```
-flyte run examples/genai/vllm/cache_model.py cache_model \
+flyte run examples/genai/vllm/cache_model.py main \
     --model_id Qwen/Qwen3-0.6B \
     --revision main
 ```
@@ -59,7 +59,6 @@ cache_env = flyte.TaskEnvironment(
 )
 
 
-@cache_env.task(cache="auto")
 async def cache_model(
     model_id: str = "Qwen/Qwen3-0.6B",
     revision: Optional[str] = None,
@@ -141,7 +140,6 @@ async def main(
     model_dir = await cache_model(model_id=model_id, revision=revision)
     print("Model successfully cached!")
     print(f"Model path: {model_dir.path}")
-    print()
     print("To use this model with VLLMAppEnvironment, set MODEL_PATH to:")
     print(f"  export MODEL_PATH={model_dir.path}")
     return model_dir
