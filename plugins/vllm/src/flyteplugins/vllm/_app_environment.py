@@ -2,10 +2,9 @@ import shlex
 from dataclasses import dataclass, field
 from typing import List, Union
 
-import rich.repr
-
 import flyte.app
-from flyte.app._input import Input
+import rich.repr
+from flyte.app import Input, RunOutput
 from flyte.models import SerializationContext
 
 DEFAULT_VLLM_IMAGE = "ghcr.io/unionai/serving-vllm:py3.12-latest"
@@ -44,7 +43,7 @@ class VLLMAppEnvironment(flyte.app.AppEnvironment):
     port: int = 8000
     type: str = "vLLM"
     extra_args: Union[str, List[str]] = ""
-    model: str = ""
+    model: str | RunOutput = ""
     model_id: str = ""
     stream_model: bool = True
     _model_mount_path: str = field(default="/root/flyte", init=False)
@@ -110,4 +109,3 @@ class VLLMAppEnvironment(flyte.app.AppEnvironment):
         if isinstance(self.args, str):
             return shlex.split(self.args)
         return self.args or []
-

@@ -13,19 +13,18 @@ except ModuleNotFoundError:
 
 
 import vllm.entrypoints.cli.main
-from vllm.config import ModelConfig, VllmConfig
-from vllm.distributed import get_tensor_model_parallel_rank
-from vllm.model_executor.model_loader import get_model, register_model_loader
-from vllm.model_executor.model_loader.default_loader import DefaultModelLoader
-from vllm.model_executor.model_loader.sharded_state_loader import ShardedStateLoader
-from vllm.model_executor.model_loader.utils import set_default_torch_dtype
-
 from flyte.app.extras._model_loader.config import (
     LOCAL_MODEL_PATH,
     REMOTE_MODEL_PATH,
     STREAM_SAFETENSORS,
 )
 from flyte.app.extras._model_loader.loader import SafeTensorsStreamer, prefetch
+from vllm.config import ModelConfig, VllmConfig
+from vllm.distributed import get_tensor_model_parallel_rank
+from vllm.model_executor.model_loader import get_model, register_model_loader
+from vllm.model_executor.model_loader.default_loader import DefaultModelLoader
+from vllm.model_executor.model_loader.sharded_state_loader import ShardedStateLoader
+from vllm.model_executor.model_loader.utils import set_default_torch_dtype
 
 logger = logging.getLogger(__name__)
 
@@ -131,4 +130,3 @@ def main():
     asyncio.run(_get_model_files())
 
     vllm.entrypoints.cli.main.main()
-

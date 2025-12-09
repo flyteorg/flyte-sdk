@@ -1,15 +1,13 @@
 """Unit tests for VLLMAppEnvironment."""
 
-import pytest
-
 import flyte
 import flyte.app
+import pytest
 from flyte.app._input import Input
 from flyte.models import SerializationContext
 
 from flyteplugins.vllm import VLLMAppEnvironment
 from flyteplugins.vllm._app_environment import DEFAULT_VLLM_IMAGE
-
 
 # Tests for VLLMAppEnvironment initialization
 

@@ -49,7 +49,7 @@ image = flyte.Image.from_debian_base(python_version=(3, 12)).with_pip_packages(
 
 # TaskEnvironment for caching models from Hugging Face
 cache_env = flyte.TaskEnvironment(
-    name="cache-model-env",
+    name="cache_model_env",
     image=image,
     resources=flyte.Resources(cpu="4", memory="16Gi", disk="50Gi"),
     secrets="HF_TOKEN",  # Hugging Face token for private models

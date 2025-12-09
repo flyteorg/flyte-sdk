@@ -16,12 +16,6 @@ Prerequisites
 
    The output will provide the model path (e.g., s3://your-bucket/path/to/model).
 
-2. Set the MODEL_PATH environment variable to point to your cached model:
-
-   ```
-   export MODEL_PATH=<model-path-from-cache-output>
-   ```
-
 Deploy
 ------
 
@@ -30,6 +24,10 @@ Deploy this app using the Flyte CLI:
 ```
 flyte deploy examples/genai/vllm/vllm_app.py vllm_app
 ```
+
+Note that `model=flyte.app.RunOutput(run_name="cache-model-env", task_name="main")`
+is used to specify the model to use. It will automatically materialize the correct
+model path from the latest run of the `cache-model-env.main` task.
 
 Usage
 -----
@@ -54,21 +52,17 @@ print(response.choices[0].message.content)
 ```
 """
 
-import os
+from flyteplugins.vllm import VLLMAppEnvironment
 
 import flyte
 import flyte.app
-from flyte._image import PythonWheels, DIST_FOLDER
-from flyteplugins.vllm import VLLMAppEnvironment
-
-# Model path should point to a blob store location containing the model weights.
-# This can be set via environment variable or hardcoded for testing.
-MODEL_PATH = os.environ.get("MODEL_PATH", "s3://your-bucket/models/qwen3-0.6b")
+import flyte.io
+from flyte._image import DIST_FOLDER, PythonWheels
 
 # Define the vLLM app environment for the smallest Qwen3 model
 vllm_app = VLLMAppEnvironment(
     name="qwen3-0-6b-vllm",
-    model=MODEL_PATH,
+    model=flyte.app.RunOutput(type=flyte.io.Dir, task_name="cache_model_env.main"),
     model_id="qwen3-0.6b",
     resources=flyte.Resources(cpu="4", memory="16Gi", gpu="L40s:4", disk="10Gi"),
     image=(
@@ -80,7 +74,11 @@ vllm_app = VLLMAppEnvironment(
         # # Run the following command to build the wheel:
         # # `uv run python -m build --wheel --installer uv --outdir ./dist-plugins plugins/vllm`
         # # Once a release of the plugin is out, you can installed it via `with_pip_packages("flyteplugins-vllm")`
-        .clone(addl_layer=PythonWheels(wheel_dir=DIST_FOLDER.parent / "dist-plugins", package_name="flyteplugins-vllm", pre=True))
+        .clone(
+            addl_layer=PythonWheels(
+                wheel_dir=DIST_FOLDER.parent / "dist-plugins", package_name="flyteplugins-vllm", pre=True
+            )
+        )
     ),
     stream_model=True,  # Stream model directly from blob store to GPU
     scaling=flyte.app.Scaling(
@@ -89,7 +87,6 @@ vllm_app = VLLMAppEnvironment(
     ),
     requires_auth=False,
     extra_args=["--max-model-len 8192", "--enforce-eager"],  # Limit context length for smaller GPU memory
-    links=[flyte.app.Link(path="/docs", title="Swagger Docs UI", is_relative=True)],
 )
 
 

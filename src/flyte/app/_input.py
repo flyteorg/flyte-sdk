@@ -66,7 +66,7 @@ class RunOutput(_DelayedValue):
     run_name: str | None = None
     task_name: str | None = None
     task_version: str | None = None
-    task_auto_version: AutoVersioning | None = "latest"
+    task_auto_version: AutoVersioning | None = None
     getter: tuple[typing.Any, ...] = (0,)
 
     def __post_init__(self):
@@ -74,10 +74,6 @@ class RunOutput(_DelayedValue):
             raise ValueError("Either run_name or task_name must be provided")
         if self.run_name is not None and self.task_name is not None:
             raise ValueError("Only one of run_name or task_name must be provided")
-        if self.task_name is not None and (self.task_version is None and self.task_auto_version is None):
-            raise ValueError("Either task_version or task_auto_version must be provided")
-        if self.task_name is not None and (self.task_version is not None and self.task_auto_version is not None):
-            raise ValueError("Only one of task_version or task_auto_version must be provided")
 
     @requires_initialization
     async def materialize(self) -> InputTypes:
@@ -100,7 +96,7 @@ class RunOutput(_DelayedValue):
         elif self.task_version is not None:
             task_version = self.task_version
         else:
-            raise ValueError("Either task_version or task_auto_version must be provided")
+            task_version = None
 
         runs = Run.listall.aio(
             in_phase=("succeeded",),
