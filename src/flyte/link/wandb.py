@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Dict
+from typing import Dict, Optional
 
 from flyte.link import Link
 
@@ -8,7 +8,7 @@ from flyte.link import Link
 class Wandb(Link):
     project: str
     entity: str
-    id: str
+    id: Optional[str] = None
     host: str = "https://wandb.ai"
 
     def __post_init__(self):
@@ -22,7 +22,7 @@ class Wandb(Link):
             "link_type": self.link_type,
             "project": self.project,
             "entity": self.entity,
-            "id": self.id,
+            "id": self.id if self.id else "",
             "host": self.host,
             "port": self.port,
         }
