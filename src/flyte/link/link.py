@@ -1,14 +1,12 @@
-from dataclasses import dataclass
-from typing import Dict
+from typing import Dict, Protocol
 
 
-@dataclass
-class Link:
+class Link(Protocol):
     link_type: str
     port: str
 
     def get_config(self) -> Dict[str, str]:
-        return {
-            "link_type": self.link_type,
-            "port": self.port,
-        }
+        """
+        Returns a dictionary representation of the link configuration.
+        """
+        raise NotImplementedError

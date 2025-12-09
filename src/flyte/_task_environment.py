@@ -31,6 +31,7 @@ from ._reusable_environment import ReusePolicy
 from ._secret import SecretRequest
 from ._task import AsyncFunctionTaskTemplate, TaskTemplate
 from ._trigger import Trigger
+from .app import Link
 from .models import MAX_INLINE_IO_BYTES, NativeInterface
 
 if TYPE_CHECKING:
@@ -166,6 +167,7 @@ class TaskEnvironment(Environment):
         max_inline_io_bytes: int = MAX_INLINE_IO_BYTES,
         queue: Optional[str] = None,
         triggers: Tuple[Trigger, ...] | Trigger = (),
+        link: Link | None = None,
     ) -> Callable[[Callable[P, R]], AsyncFunctionTaskTemplate[P, R, Callable[P, R]]]: ...
 
     @overload
@@ -190,6 +192,7 @@ class TaskEnvironment(Environment):
         max_inline_io_bytes: int = MAX_INLINE_IO_BYTES,
         queue: Optional[str] = None,
         triggers: Tuple[Trigger, ...] | Trigger = (),
+        link: Link | None = None,
     ) -> Callable[[F], AsyncFunctionTaskTemplate[P, R, F]] | AsyncFunctionTaskTemplate[P, R, F]:
         """
         Decorate a function to be a task.
@@ -209,6 +212,7 @@ class TaskEnvironment(Environment):
          task (e.g., primitives, strings, dicts). Does not apply to files, directories, or dataframes.
         :param triggers: Optional A tuple of triggers to associate with the task. This allows the task to be run on a
          schedule or in response to events. Triggers can be defined using the `flyte.trigger` module.
+        :param link: Optional A custom link to add to the task.
         :param interruptible: Optional Whether the task is interruptible, defaults to environment setting.
         :param queue: Optional queue name to use for this task. If not set, the environment's queue will be used.
 
@@ -269,6 +273,7 @@ class TaskEnvironment(Environment):
                 queue=queue or self.queue,
                 interruptible=interruptible if interruptible is not None else self.interruptible,
                 triggers=triggers if isinstance(triggers, tuple) else (triggers,),
+                link=link,
             )
             self._tasks[task_name] = tmpl
             return tmpl
