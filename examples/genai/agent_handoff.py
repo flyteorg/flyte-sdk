@@ -28,12 +28,16 @@ from pydantic import BaseModel, Field
 
 import flyte
 
-# Configure environment with OpenAI API key
+# Configure reusable environment with OpenAI API key
 env = flyte.TaskEnvironment(
     "agent-handoff",
-    resources=flyte.Resources(cpu=1, memory="1Gi"),
+    resources=flyte.Resources(cpu=2, memory="2Gi"),
     secrets=[flyte.Secret(key="openai-api-key", as_env_var="OPENAI_API_KEY")],
-    image=flyte.Image.from_uv_script(__file__, name="agent-handoff", pre=True),
+    image=flyte.Image.from_uv_script(__file__, name="agent-handoff", pre=True).with_pip_packages("unionai-reuse>=0.1.9"),
+    reusable=flyte.ReusePolicy(
+        replicas=(1, 5),
+        concurrency=10,
+    ),
 )
 
 
@@ -132,7 +136,7 @@ AGENT_REGISTRY = [
 ]
 
 
-@env.task
+@flyte.trace
 async def extract_tags_from_query(query: str) -> List[str]:
     """
     Use OpenAI to extract relevant workflow tags from the user query.
@@ -151,7 +155,7 @@ async def extract_tags_from_query(query: str) -> List[str]:
     prompt = f"""Given the following user query, identify the most relevant workflow tags from the list below.
 Return only the tags that are directly relevant to the query, as a comma-separated list.
 
-Available tags: {', '.join(all_tags)}
+Available tags: {", ".join(all_tags)}
 
 User query: "{query}"
 
@@ -183,10 +187,10 @@ Relevant tags:"""
     return valid_tags
 
 
-@env.task
-async def filter_agents_by_tags(agents: List[Agent], tags: List[str]) -> List[Agent]:
+def filter_agents_by_tags(agents: List[Agent], tags: List[str]) -> List[Agent]:
     """
     Filter agents that have at least one matching tag.
+    Pure function - no external calls, deterministic logic only.
 
     Args:
         agents: List of all agents
@@ -202,7 +206,7 @@ async def filter_agents_by_tags(agents: List[Agent], tags: List[str]) -> List[Ag
     return filtered if filtered else agents  # Return all if no matches
 
 
-@env.task
+@flyte.trace
 async def get_embedding(text: str) -> List[float]:
     """
     Get OpenAI embedding for text.
@@ -218,7 +222,7 @@ async def get_embedding(text: str) -> List[float]:
     return response.data[0].embedding
 
 
-@env.task
+@flyte.trace
 async def score_agents(query: str, agents: List[Agent]) -> List[AgentScore]:
     """
     Score agents based on semantic similarity between query and agent descriptions.
@@ -242,7 +246,7 @@ async def score_agents(query: str, agents: List[Agent]) -> List[AgentScore]:
         agent_norm = sum(x * x for x in agent_embedding) ** 0.5
         similarity = dot_product / (query_norm * agent_norm)
 
-        reasoning = f"Similarity score based on semantic match between query and agent description"
+        reasoning = "Similarity score based on semantic match between query and agent description"
 
         return AgentScore(agent=agent, score=float(similarity), reasoning=reasoning)
 
@@ -255,10 +259,10 @@ async def score_agents(query: str, agents: List[Agent]) -> List[AgentScore]:
     return scores
 
 
-@env.task
-async def select_agent(scored_agents: List[AgentScore], threshold: float = 0.7) -> Optional[Agent]:
+def select_agent(scored_agents: List[AgentScore], threshold: float = 0.7) -> Optional[Agent]:
     """
     Select the top-scoring agent if it meets the threshold.
+    Pure function - deterministic selection logic only.
 
     Args:
         scored_agents: List of agents with scores
@@ -277,7 +281,7 @@ async def select_agent(scored_agents: List[AgentScore], threshold: float = 0.7) 
     return None
 
 
-@env.task
+@flyte.trace
 async def handoff_to_agent(agent: Agent, query: str) -> str:
     """
     Simulate handing off the query to the selected agent.
@@ -298,7 +302,7 @@ Query: "{query}"
 
 Agent Description: {agent.description}
 
-Tags: {', '.join(agent.tags)}
+Tags: {", ".join(agent.tags)}
 
 [Agent would process the query here and return results]
 """
@@ -319,24 +323,22 @@ async def agent_handoff_workflow(query: str, threshold: float = 0.7, show_top_n:
     """
     result = HandoffResult()
 
-    # Step 1: Extract tags from query
-    with flyte.group("tag-extraction"):
+    # Consolidated agent selection group with traces underneath
+    with flyte.group("agent-selection"):
+        # Extract tags from query (trace)
         extracted_tags = await extract_tags_from_query(query)
         result.extracted_tags = extracted_tags
 
-    # Step 2: Filter agents by tags
-    with flyte.group("agent-filtering"):
-        filtered_agents = await filter_agents_by_tags(AGENT_REGISTRY, extracted_tags)
+        # Filter agents by tags (pure function, no await)
+        filtered_agents = filter_agents_by_tags(AGENT_REGISTRY, extracted_tags)
         result.filtered_count = len(filtered_agents)
 
-    # Step 3: Score candidate agents
-    with flyte.group("agent-scoring"):
+        # Score candidate agents (trace)
         scored_agents = await score_agents(query, filtered_agents)
         result.all_scores = scored_agents[:show_top_n]  # Keep top N for reporting
 
-    # Step 4: Select agent if score meets threshold
-    with flyte.group("agent-selection"):
-        selected = await select_agent(scored_agents, threshold)
+        # Select agent if score meets threshold (pure function, no await)
+        selected = select_agent(scored_agents, threshold)
 
         if selected:
             result.selected_agent = selected
@@ -346,7 +348,7 @@ async def agent_handoff_workflow(query: str, threshold: float = 0.7, show_top_n:
             result.handoff_successful = False
             top_scores_text = "\n".join(
                 [
-                    f"  {i+1}. {s.agent.name} (ID: {s.agent.id}) - Score: {s.score:.3f}"
+                    f"  {i + 1}. {s.agent.name} (ID: {s.agent.id}) - Score: {s.score:.3f}"
                     for i, s in enumerate(scored_agents[:show_top_n])
                 ]
             )
@@ -377,7 +379,7 @@ async def run_handoff(query: str, threshold: float = 0.7) -> str:
         response = await handoff_to_agent(result.selected_agent, query)
         return f""" HANDOFF SUCCESSFUL
 
-Extracted Tags: {', '.join(result.extracted_tags) if result.extracted_tags else 'none'}
+Extracted Tags: {", ".join(result.extracted_tags) if result.extracted_tags else "none"}
 Filtered Agents: {result.filtered_count}
 Selected Agent: {result.selected_agent.name} (Score: {result.all_scores[0].score:.3f})
 
@@ -416,37 +418,37 @@ if __name__ == "__main__":
     print(f"Run URL: {run1.url}")
     run1.wait()
 
-    # Example 2: ML Query
-    print("\n" + "=" * 80)
-    print("Example 2: Machine Learning Query")
-    print("=" * 80)
-    run2 = flyte.run(run_handoff, EXAMPLE_QUERIES[1], threshold=0.6)
-    print(f"Run URL: {run2.url}")
-    run2.wait()
-
-    # Example 3: Ambiguous query with high threshold (should fail)
-    print("\n" + "=" * 80)
-    print("Example 3: Ambiguous Query (High Threshold)")
-    print("=" * 80)
-    try:
-        run3 = flyte.run(run_handoff, EXAMPLE_QUERIES[5], threshold=0.8)
-        print(f"Run URL: {run3.url}")
-        run3.wait()
-    except Exception as e:
-        print(f"Expected failure: {e}")
-
-    # Example 4: Get detailed workflow result
-    print("\n" + "=" * 80)
-    print("Example 4: DevOps Query with Detailed Result")
-    print("=" * 80)
-    run4 = flyte.run(agent_handoff_workflow, EXAMPLE_QUERIES[2], threshold=0.6)
-    print(f"Run URL: {run4.url}")
-    run4.wait()
-    result = run4.result()
-    print(f"\nDetailed Result:")
-    print(f"  Extracted Tags: {result.extracted_tags}")
-    print(f"  Filtered Count: {result.filtered_count}")
-    print(f"  Selected Agent: {result.selected_agent.name if result.selected_agent else 'None'}")
-    print(f"  Top 3 Scores:")
-    for i, score in enumerate(result.all_scores[:3], 1):
-        print(f"    {i}. {score.agent.name}: {score.score:.3f}")
+    # # Example 2: ML Query
+    # print("\n" + "=" * 80)
+    # print("Example 2: Machine Learning Query")
+    # print("=" * 80)
+    # run2 = flyte.run(run_handoff, EXAMPLE_QUERIES[1], threshold=0.6)
+    # print(f"Run URL: {run2.url}")
+    # run2.wait()
+    #
+    # # Example 3: Ambiguous query with high threshold (should fail)
+    # print("\n" + "=" * 80)
+    # print("Example 3: Ambiguous Query (High Threshold)")
+    # print("=" * 80)
+    # try:
+    #     run3 = flyte.run(run_handoff, EXAMPLE_QUERIES[5], threshold=0.8)
+    #     print(f"Run URL: {run3.url}")
+    #     run3.wait()
+    # except Exception as e:
+    #     print(f"Expected failure: {e}")
+    #
+    # # Example 4: Get detailed workflow result
+    # print("\n" + "=" * 80)
+    # print("Example 4: DevOps Query with Detailed Result")
+    # print("=" * 80)
+    # run4 = flyte.run(agent_handoff_workflow, EXAMPLE_QUERIES[2], threshold=0.6)
+    # print(f"Run URL: {run4.url}")
+    # run4.wait()
+    # result = run4.result()
+    # print("\nDetailed Result:")
+    # print(f"  Extracted Tags: {result.extracted_tags}")
+    # print(f"  Filtered Count: {result.filtered_count}")
+    # print(f"  Selected Agent: {result.selected_agent.name if result.selected_agent else 'None'}")
+    # print("  Top 3 Scores:")
+    # for i, score in enumerate(result.all_scores[:3], 1):
+    #     print(f"    {i}. {score.agent.name}: {score.score:.3f}")
