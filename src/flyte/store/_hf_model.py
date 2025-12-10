@@ -1,7 +1,7 @@
 """
-HuggingFace model pull utilities for Flyte.
+HuggingFace model store utilities for Flyte.
 
-This module provides functionality to pull HuggingFace models to remote storage,
+This module provides functionality to store HuggingFace models to remote storage,
 with support for optional sharding using vLLM.
 """
 
@@ -78,10 +78,10 @@ class ShardConfig:
 @dataclass
 class HuggingFaceModelInfo:
     """
-    Information about a HuggingFace model to pull.
+    Information about a HuggingFace model to store.
 
     :param repo: The HuggingFace repository ID (e.g., 'meta-llama/Llama-2-7b-hf').
-    :param artifact_name: Optional name for the pulled artifact. If not provided,
+    :param artifact_name: Optional name for the stored artifact. If not provided,
         the repo name will be used (with '.' replaced by '-').
     :param architecture: Model architecture from HuggingFace config.json.
     :param task: Model task (e.g., 'generate', 'classify', 'embed').
@@ -104,13 +104,13 @@ class HuggingFaceModelInfo:
 
 
 @dataclass
-class PulledModelInfo:
+class StoredModelInfo:
     """
-    Information about a pulled model.
+    Information about a stored model.
 
-    :param artifact_name: Name of the pulled artifact.
-    :param path: Path to the pulled model directory.
-    :param metadata: Metadata about the pulled model.
+    :param artifact_name: Name of the stored artifact.
+    :param path: Path to the stored model directory.
+    :param metadata: Metadata about the stored model.
     """
 
     artifact_name: str
@@ -118,7 +118,7 @@ class PulledModelInfo:
     metadata: Dict[str, str]
 
 
-# Image definitions for the pull task
+# Image definitions for the store task
 HF_DOWNLOAD_IMAGE_PACKAGES = [
     "huggingface-hub>=0.27.0",
     "hf-transfer>=0.1.8",
@@ -385,12 +385,12 @@ def hf_model(
     force: int = 0,
 ) -> Run:
     """
-    Pull a HuggingFace model to remote storage.
+    Store a HuggingFace model to remote storage.
 
     This function downloads a model from the HuggingFace Hub and stores it in
     remote storage. It supports optional sharding using vLLM for large models.
 
-    The pull behavior follows this priority:
+    The store behavior follows this priority:
     1. If the model isn't being sharded, stream files directly to remote storage.
     2. If streaming fails, fall back to downloading a snapshot and uploading.
     3. If sharding is configured, download locally, shard with vLLM, then upload.
@@ -402,17 +402,17 @@ def hf_model(
 
     flyte.init(endpoint="my-flyte-endpoint")
 
-    # Pull a model without sharding
-    run = flyte.pull.hf_model(
+    # Store a model without sharding
+    run = flyte.store.hf_model(
         repo="meta-llama/Llama-2-7b-hf",
         hf_token_key="HF_TOKEN",
     )
     run.wait()
 
-    # Pull and shard a model
-    from flyte.pull import ShardConfig, VLLMShardArgs
+    # Store and shard a model
+    from flyte.store import ShardConfig, VLLMShardArgs
 
-    run = flyte.pull.hf_model(
+    run = flyte.store.hf_model(
         repo="meta-llama/Llama-2-70b-hf",
         shard_config=ShardConfig(
             engine="vllm",
@@ -426,7 +426,7 @@ def hf_model(
     ```
 
     :param repo: The HuggingFace repository ID (e.g., 'meta-llama/Llama-2-7b-hf').
-    :param artifact_name: Optional name for the pulled artifact. If not provided,
+    :param artifact_name: Optional name for the stored artifact. If not provided,
         the repo name will be used (with '.' replaced by '-').
     :param architecture: Model architecture from HuggingFace config.json.
     :param task: Model task (e.g., 'generate', 'classify', 'embed'). Default: 'auto'.
@@ -436,17 +436,17 @@ def hf_model(
     :param short_description: Short description of the model.
     :param shard_config: Optional configuration for model sharding with vLLM.
     :param hf_token_key: Name of the secret containing the HuggingFace token. Default: 'HF_TOKEN'.
-    :param cpu: CPU request for the pull task (e.g., '2').
-    :param gpu: GPU request for the pull task (e.g., '1').
-    :param mem: Memory request for the pull task (e.g., '16Gi').
+    :param cpu: CPU request for the store task (e.g., '2').
+    :param gpu: GPU request for the store task (e.g., '1').
+    :param mem: Memory request for the store task (e.g., '16Gi').
     :param ephemeral_storage: Ephemeral storage request (e.g., '100Gi').
     :param accelerator: Accelerator type (e.g., 'nvidia-a100', 'nvidia-l4').
-    :param project: Project to run the pull task in.
-    :param domain: Domain to run the pull task in.
-    :param wait: Whether to wait for the pull task to complete. Default: False.
-    :param force: Force re-pull. Increment to force a new pull. Default: 0.
+    :param project: Project to run the store task in.
+    :param domain: Domain to run the store task in.
+    :param wait: Whether to wait for the store task to complete. Default: False.
+    :param force: Force re-store. Increment to force a new store. Default: 0.
 
-    :return: A Run object representing the pull task execution.
+    :return: A Run object representing the store task execution.
     """
     import flyte
     from flyte import Resources, Secret, TaskEnvironment
@@ -482,7 +482,7 @@ def hf_model(
 
     # Build environment kwargs
     env_kwargs: Dict[str, Any] = {
-        "name": "hf-model-pull",
+        "name": "hf-model-store",
         "image": image,
         "resources": resources,
         "secrets": [Secret(key=hf_token_key)],
@@ -511,12 +511,12 @@ def hf_model(
     env = TaskEnvironment(**env_kwargs)
 
     @env.task(cache="auto")
-    def pull_hf_model_task(
+    def store_hf_model_task(
         info: HuggingFaceModelInfo,
         hf_token_key: str,
         force: int,
     ) -> Dir:
-        """Task to pull a HuggingFace model."""
+        """Task to store a HuggingFace model."""
         # All imports inside the task body
         import os
         import tempfile
@@ -705,7 +705,7 @@ def hf_model(
                     print("Uploading to remote storage...", flush=True)
                     result_dir = Dir.from_local_sync(local_model_dir)
 
-        print(f"Model pulled successfully at {result_dir.path}", flush=True)
+        print(f"Model stored successfully at {result_dir.path}", flush=True)
         return result_dir
 
     # Get config for project/domain
@@ -717,7 +717,7 @@ def hf_model(
     run = flyte.with_runcontext(
         project=run_project,
         domain=run_domain,
-    ).run(pull_hf_model_task, info, hf_token_key, force)
+    ).run(store_hf_model_task, info, hf_token_key, force)
 
     if wait:
         run.wait()

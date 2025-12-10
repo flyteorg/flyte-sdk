@@ -13,7 +13,7 @@ from ._delete import delete
 from ._deploy import deploy
 from ._gen import gen
 from ._get import get
-from ._pull import pull
+from ._store import store
 from ._plugins import discover_and_register_plugins
 from ._run import run
 from ._serve import serve
@@ -42,8 +42,8 @@ help_config = click.RichHelpConfiguration(
                 "commands": ["build", "deploy"],
             },
             {
-                "name": "Pull artifacts from remote registries.",
-                "commands": ["pull"],
+                "name": "Store artifacts from remote registries.",
+                "commands": ["store"],
             },
             {
                 "name": "Documentation generation",
@@ -229,7 +229,7 @@ main.add_command(build)
 main.add_command(whoami)  # type: ignore
 main.add_command(update)  # type: ignore
 main.add_command(serve)  # type: ignore
-main.add_command(pull)  # type: ignore
+main.add_command(store)  # type: ignore
 
 # Discover and register CLI plugins from installed packages
 discover_and_register_plugins(main)

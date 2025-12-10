@@ -1,13 +1,13 @@
 """
-Pull utilities for Flyte.
+Store utilities for Flyte.
 
-This module provides functionality to pull various artifacts from remote registries,
+This module provides functionality to store various artifacts from remote registries,
 such as HuggingFace models.
 """
 
 from ._hf_model import (
     HuggingFaceModelInfo,
-    PulledModelInfo,
+    StoredModelInfo,
     ShardConfig,
     VLLMShardArgs,
     hf_model,
@@ -15,7 +15,7 @@ from ._hf_model import (
 
 __all__ = [
     "HuggingFaceModelInfo",
-    "PulledModelInfo",
+    "StoredModelInfo",
     "ShardConfig",
     "VLLMShardArgs",
     "hf_model",

@@ -1,5 +1,5 @@
 """
-CLI commands for pulling artifacts from remote registries.
+CLI commands for storing artifacts from remote registries.
 """
 
 from pathlib import Path
@@ -11,12 +11,12 @@ from rich.console import Console
 from flyte.cli._common import CommandBase
 
 
-@click.group(name="pull")
-def pull():
+@click.group(name="store")
+def store():
     """
-    Pull artifacts from remote registries.
+    Store artifacts from remote registries.
 
-    These commands help you download and pull artifacts like HuggingFace models
+    These commands help you download and store artifacts like HuggingFace models
     to your Flyte storage for faster access during task execution.
     """
 
@@ -37,7 +37,7 @@ ACCELERATOR_CHOICES = [
 ]
 
 
-@pull.command(name="hf-model", cls=CommandBase)
+@store.command(name="hf-model", cls=CommandBase)
 @click.argument("repo", type=str)
 @click.option(
     "--artifact-name",
@@ -45,7 +45,7 @@ ACCELERATOR_CHOICES = [
     required=False,
     default=None,
     help=(
-        "Artifact name to use for the pulled model. Must only contain alphanumeric characters, "
+        "Artifact name to use for the stored model. Must only contain alphanumeric characters, "
         "underscores, and hyphens. If not provided, the repo name will be used (replacing '.' with '-')."
     ),
 )
@@ -93,12 +93,12 @@ ACCELERATOR_CHOICES = [
     "--force",
     type=int,
     default=0,
-    help="Force pull of the model. Increment value (--force=1, --force=2, ...) to force a new pull.",
+    help="Force store of the model. Increment value (--force=1, --force=2, ...) to force a new store.",
 )
 @click.option(
     "--wait",
     is_flag=True,
-    help="Wait for the model to be pulled before returning.",
+    help="Wait for the model to be stored before returning.",
 )
 @click.option(
     "--hf-token-key",
@@ -110,22 +110,22 @@ ACCELERATOR_CHOICES = [
 @click.option(
     "--cpu",
     type=str,
-    help="CPU request for the pull task (e.g., '2', '4').",
+    help="CPU request for the store task (e.g., '2', '4').",
 )
 @click.option(
     "--gpu",
     type=str,
-    help="GPU request for the pull task (e.g., '1', '8').",
+    help="GPU request for the store task (e.g., '1', '8').",
 )
 @click.option(
     "--mem",
     type=str,
-    help="Memory request for the pull task (e.g., '16Gi', '64Gi').",
+    help="Memory request for the store task (e.g., '16Gi', '64Gi').",
 )
 @click.option(
     "--ephemeral-storage",
     type=str,
-    help="Ephemeral storage request for the pull task (e.g., '100Gi', '500Gi').",
+    help="Ephemeral storage request for the store task (e.g., '100Gi', '500Gi').",
 )
 @click.option(
     "--accelerator",
@@ -165,19 +165,19 @@ def hf_model(
     domain: Optional[str] = None,
 ):
     """
-    Pull a HuggingFace model to Flyte storage.
+    Store a HuggingFace model to Flyte storage.
 
     Downloads a model from the HuggingFace Hub and stores it in your configured
     Flyte storage backend. This is useful for:
 
-    - Pre-pulling large models before running inference tasks
+    - Pre-storing large models before running inference tasks
     - Sharding models for tensor-parallel inference
     - Avoiding repeated downloads during development
 
     **Basic Usage:**
 
     ```bash
-    $ flyte pull hf-model meta-llama/Llama-2-7b-hf --hf-token-key HF_TOKEN
+    $ flyte store hf-model meta-llama/Llama-2-7b-hf --hf-token-key HF_TOKEN
     ```
 
     **With Sharding:**
@@ -195,7 +195,7 @@ def hf_model(
     Then run:
 
     ```bash
-    $ flyte pull hf-model meta-llama/Llama-2-70b-hf \\
+    $ flyte store hf-model meta-llama/Llama-2-70b-hf \\
         --shard-config shard_config.yaml \\
         --gpu 8 \\
         --accelerator nvidia-a100 \\
@@ -205,12 +205,12 @@ def hf_model(
     **Wait for Completion:**
 
     ```bash
-    $ flyte pull hf-model meta-llama/Llama-2-7b-hf --wait
+    $ flyte store hf-model meta-llama/Llama-2-7b-hf --wait
     ```
     """
     import yaml
 
-    from flyte.pull import HuggingFaceModelInfo, ShardConfig, VLLMShardArgs, hf_model as pull_hf_model
+    from flyte.store import HuggingFaceModelInfo, ShardConfig, VLLMShardArgs, hf_model as store_hf_model
     from flyte.cli._common import initialize_config
 
     # Initialize flyte config
@@ -229,8 +229,8 @@ def hf_model(
 
     console = Console()
 
-    with console.status("[bold green]Starting model pull task..."):
-        run = pull_hf_model(
+    with console.status("[bold green]Starting model store task..."):
+        run = store_hf_model(
             repo=repo,
             artifact_name=artifact_name,
             architecture=architecture,
@@ -254,14 +254,14 @@ def hf_model(
 
     url = run.url
     console.print(
-        f"🔄 Started background process to pull model from HuggingFace repo [bold]{repo}[/bold].\n"
+        f"🔄 Started background process to store model from HuggingFace repo [bold]{repo}[/bold].\n"
         f"   Check the console for status at [link={url}]{url}[/link]"
     )
 
     if wait:
-        with console.status("[bold green]Waiting for model to be pulled...", spinner="dots"):
+        with console.status("[bold green]Waiting for model to be stored...", spinner="dots"):
             run.wait()
 
         outputs = run.outputs()
-        console.print(f"\n✅ Model pulled successfully!")
+        console.print(f"\n✅ Model stored successfully!")
         console.print(f"   Path: [cyan]{outputs.path}[/cyan]")
