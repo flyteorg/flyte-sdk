@@ -27,6 +27,7 @@ docker run --rm \
   -v $(PWD):/io \
   -v $(PWD)/docker_cargo_cache:/root/.cargo/registry \
   -v $(CLOUD_REPO):/cloud \
+  -v /Users/ytong/go/src/github.com/flyteorg/flyte/gen/rust:/Users/ytong/go/src/github.com/flyteorg/flyte/gen/rust \
   wheel-builder:$(1) /bin/bash -c "\
     cd /io; \
     sed -i 's/^version = .*/version = \"$(VERSION)\"/' pyproject.toml; \

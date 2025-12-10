@@ -563,7 +563,6 @@ impl CoreBaseController {
 
     pub async fn submit_action(&self, action: Action) -> Result<Action, ControllerError> {
         let action_name = action.action_id.name.clone();
-        let parent_action_name = action.parent_action_name.clone();
         // The first action that gets submitted determines the run_id that will be used.
         // This is obviously not going to work,
 

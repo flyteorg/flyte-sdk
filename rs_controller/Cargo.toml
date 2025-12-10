@@ -9,7 +9,6 @@ path = "src/lib.rs"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-# cloudidl = { path = "../../cloud/gen/pb_rust" }
 # Note: maturin automatically adds "extension-module" when building the Python module
 # We don't include it here so that binaries can link against Python
 pyo3 = { version = "0.24", features = ["abi3-py310", "auto-initialize"] }
