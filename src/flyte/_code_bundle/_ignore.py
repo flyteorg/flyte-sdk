@@ -71,7 +71,25 @@ class GitIgnore(Ignore):
         return False
 
 
-STANDARD_IGNORE_PATTERNS = ["*.pyc", ".cache", ".cache/*", "__pycache__", "**/__pycache__"]
+STANDARD_IGNORE_PATTERNS = [
+    "*.pyc",
+    "__pycache__",
+    "**/__pycache__",
+    ".cache",
+    ".cache/*",
+    ".pytest_cache",
+    "**/.pytest_cache",
+    ".venv",
+    "venv",
+    "env",
+    "*.log",
+    ".env",
+    "*.egg-info",
+    "*.egg",
+    "dist",
+    "build",
+    "*.whl",
+]
 
 
 class StandardIgnore(Ignore):
