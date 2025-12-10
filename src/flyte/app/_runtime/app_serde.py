@@ -20,6 +20,7 @@ import flyte
 import flyte.io
 from flyte._internal.runtime.resources_serde import get_proto_extended_resources, get_proto_resources
 from flyte._internal.runtime.task_serde import get_security_context, lookup_image_in_cache
+from flyte._logging import logger
 from flyte.app import AppEnvironment, Input, Scaling
 from flyte.app._input import _DelayedValue
 from flyte.models import SerializationContext
@@ -224,6 +225,7 @@ async def _materialize_inputs_with_delayed_values(inputs: List[Input]) -> List[I
     _inputs = []
     for input in inputs:
         if isinstance(input.value, _DelayedValue):
+            logger.info(f"Materializing {input.name} with delayed values of type {input.value.type}")
             value = await input.value.get()
             assert isinstance(value, (str, flyte.io.File, flyte.io.Dir)), (
                 f"Materialized value must be a string, file or directory, found {type(value)}"

@@ -11,6 +11,7 @@ from pydantic import BaseModel, model_validator
 
 import flyte.io
 from flyte._initialize import requires_initialization
+from flyte._logging import logger
 from flyte.remote._task import AutoVersioning
 
 InputTypes = str | flyte.io.File | flyte.io.Dir
@@ -39,13 +40,13 @@ class _DelayedValue(BaseModel):
             data["type"] = INPUT_TYPE_MAP.get(data["type"], data["type"])
         return data
 
-    async def get(self) -> str:
+    async def get(self) -> str | flyte.io.File | flyte.io.Dir:
         value = await self.materialize()
         assert isinstance(value, (str, flyte.io.File, flyte.io.Dir)), (
             f"Materialized value must be a string, file or directory, found {type(value)}"
         )
         if isinstance(value, (flyte.io.File, flyte.io.Dir)):
-            return value.path
+            return value
         return value
 
     async def materialize(self) -> InputTypes:
@@ -137,6 +138,7 @@ class RunOutput(_DelayedValue):
         output = await run_details.outputs()
         for getter in self.getter:
             output = output[getter]
+        logger.debug("Materialized output: %s", output)
         return typing.cast(InputTypes, output)
 
     async def _materialize_with_run_name(self) -> InputTypes:

@@ -9,7 +9,7 @@
 #     "pyarrow",
 #     "joblib",
 #     "pydantic",
-#     "flyte>=2.0.0b34",
+#     "flyte>=2.0.0b35",
 # ]
 # ///
 """
@@ -50,7 +50,7 @@ logger = logging.getLogger(__name__)
 MODEL_PATH_ENV = "MODEL_PATH"
 
 # Create image from script dependencies
-image = flyte.Image.from_uv_script(__file__, name="penguin-classifier")
+image = flyte.Image.from_uv_script(__file__, name="penguin-classifier", pre=True)
 
 # Training environment
 training_env = flyte.TaskEnvironment(
@@ -246,7 +246,7 @@ serving_env = FastAPIAppEnvironment(
     inputs=[
         Input(
             name="model",
-            value=RunOutput(task_name="penguin_training.training_pipeline", type=flyte.io.File),
+            value=RunOutput(task_name="penguin_training.training_pipeline", type="file"),
         ),
     ],
     # NOTE: this is a workaround! apps should have this env var auto-injected by the controller

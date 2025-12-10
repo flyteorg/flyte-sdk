@@ -96,8 +96,6 @@ env = FastAPIAppEnvironment(
     inputs=[
         Input(
             name="artifacts",
-            # if using flyte serve CLI to deploy this, set the ARTIFACTS_DIR environment variable
-            # to the remote path of the artifacts directory.
             value=flyte.app.RunOutput(task_name="recsys_training.training_pipeline", type="directory"),
             mount="/tmp/recsys_artifacts",
         )
@@ -402,6 +400,7 @@ async def get_item_info(item_id: str):
 if __name__ == "__main__":
     flyte.init_from_config(
         root_dir=Path(__file__).parent,
+        log_level=logging.DEBUG,
     )
 
     app = flyte.serve(env)
