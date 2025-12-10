@@ -9,7 +9,7 @@ env = flyte.TaskEnvironment(
     name="single_cpu",
     resources=flyte.Resources(cpu="1"),
     reusable=flyte.ReusePolicy(replicas=20, idle_ttl=30),
-    image=reusable_image
+    image=reusable_image,
 )
 
 

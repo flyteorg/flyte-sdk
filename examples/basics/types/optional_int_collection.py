@@ -10,17 +10,17 @@ def main(numbers: Optional[list[int]] = None) -> str:
     """Process an optional collection of integers"""
     if numbers is None:
         return "No numbers provided (None)"
-    
+
     if not numbers:
         return "Empty list provided"
-    
+
     result = f"Received {len(numbers)} integers:\n"
     result += f"  Numbers: {numbers}\n"
     result += f"  Sum: {sum(numbers)}\n"
     result += f"  Average: {sum(numbers) / len(numbers):.2f}\n"
     result += f"  Min: {min(numbers)}\n"
     result += f"  Max: {max(numbers)}"
-    
+
     return result
 
 
@@ -54,4 +54,3 @@ if __name__ == "__main__":
     print(r4.name)
     print(r4.url)
     r4.wait()
-

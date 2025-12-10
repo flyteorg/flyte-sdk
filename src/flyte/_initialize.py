@@ -419,11 +419,12 @@ async def init_in_cluster(
     INSECURE_SKIP_VERIFY_OVERRIDE = "_U_INSECURE_SKIP_VERIFY"
     INSECURE_OVERRIDE = "_U_INSECURE"
     _UNION_EAGER_API_KEY_ENV_VAR = "_UNION_EAGER_API_KEY"
+    EAGER_API_KEY = "EAGER_API_KEY"
 
     org = org or os.getenv(ORG_NAME)
     project = project or os.getenv(PROJECT_NAME)
     domain = domain or os.getenv(DOMAIN_NAME)
-    api_key = api_key or os.getenv(_UNION_EAGER_API_KEY_ENV_VAR)
+    api_key = api_key or os.getenv(_UNION_EAGER_API_KEY_ENV_VAR) or os.getenv(EAGER_API_KEY)
 
     remote_kwargs: dict[str, typing.Any] = {"insecure": insecure}
     if api_key:
