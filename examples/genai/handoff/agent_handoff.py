@@ -1,12 +1,3 @@
-# /// script
-# requires-python = ">=3.11"
-# dependencies = [
-#     "flyte==2.0.0b35",
-#     "openai>=1.0.0",
-#     "pydantic>=2.0.0",
-# ]
-# ///
-
 """
 Agent Handoff System Example
 
@@ -21,6 +12,7 @@ The system uses 10 dummy agents, each with tags and descriptions.
 """
 
 import asyncio
+import pathlib
 from typing import List, Optional
 
 from openai import AsyncOpenAI
@@ -33,9 +25,8 @@ env = flyte.TaskEnvironment(
     "agent-handoff",
     resources=flyte.Resources(cpu=2, memory="2Gi"),
     secrets=[flyte.Secret(key="openai-api-key", as_env_var="OPENAI_API_KEY")],
-    image=flyte.Image.from_uv_script(__file__, name="agent-handoff", pre=True).with_pip_packages(
-        "unionai-reuse>=0.1.9"
-    ),
+    image=flyte.Image.from_debian_base().with_uv_project(
+        pyproject_file=pathlib.Path(__file__).parent / "pyproject.toml", pre=True),
     reusable=flyte.ReusePolicy(
         replicas=(1, 5),
         concurrency=10,
@@ -80,7 +71,7 @@ AGENT_REGISTRY = [
         id="data-analyst",
         name="Data Analytics Agent",
         description="Specializes in data analysis, SQL queries, data visualization, "
-        "and generating insights from datasets",
+                    "and generating insights from datasets",
         tags=["data", "analytics", "sql", "visualization", "reporting"],
     ),
     Agent(
@@ -410,7 +401,6 @@ EXAMPLE_QUERIES = [
     "I need some help with my project",
 ]
 
-
 if __name__ == "__main__":
     flyte.init_from_config()
 
@@ -418,7 +408,7 @@ if __name__ == "__main__":
     print("=" * 80)
     print("Example 1: Data Analytics Query")
     print("=" * 80)
-    run1 = flyte.run(run_handoff, EXAMPLE_QUERIES[0], threshold=0.5)
+    run1 = flyte.run(run_handoff, EXAMPLE_QUERIES[1], threshold=0.5)
     print(f"Run URL: {run1.url}")
     run1.wait()
 
