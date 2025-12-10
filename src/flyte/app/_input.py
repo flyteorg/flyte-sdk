@@ -30,7 +30,7 @@ class _DelayedValue(BaseModel):
     Delayed value for app inputs.
     """
 
-    type: InputTypes
+    type: _SerializedInputType
 
     @model_validator(mode="before")
     @classmethod
