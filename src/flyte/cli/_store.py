@@ -2,6 +2,7 @@
 CLI commands for storing artifacts from remote registries.
 """
 
+import typing
 from pathlib import Path
 from typing import List, Optional, Tuple
 
@@ -9,6 +10,10 @@ import rich_click as click
 from rich.console import Console
 
 from flyte.cli._common import CommandBase
+from flyte._resources import Accelerators
+
+# Get all valid accelerator choices from the Accelerators literal type
+ACCELERATOR_CHOICES = list(typing.get_args(Accelerators))
 
 
 @click.group(name="store")
@@ -19,22 +24,6 @@ def store():
     These commands help you download and store artifacts like HuggingFace models
     to your Flyte storage for faster access during task execution.
     """
-
-
-ACCELERATOR_CHOICES = [
-    "nvidia-l4",
-    "nvidia-l4-vws",
-    "nvidia-l40s",
-    "nvidia-a100",
-    "nvidia-a100-80gb",
-    "nvidia-a10g",
-    "nvidia-tesla-k80",
-    "nvidia-tesla-m60",
-    "nvidia-tesla-p4",
-    "nvidia-tesla-p100",
-    "nvidia-tesla-t4",
-    "nvidia-tesla-v100",
-]
 
 
 @store.command(name="hf-model", cls=CommandBase)
@@ -113,11 +102,6 @@ ACCELERATOR_CHOICES = [
     help="CPU request for the store task (e.g., '2', '4').",
 )
 @click.option(
-    "--gpu",
-    type=str,
-    help="GPU request for the store task (e.g., '1', '8').",
-)
-@click.option(
     "--mem",
     type=str,
     help="Memory request for the store task (e.g., '16Gi', '64Gi').",
@@ -131,7 +115,7 @@ ACCELERATOR_CHOICES = [
     "--accelerator",
     type=click.Choice(ACCELERATOR_CHOICES),
     default=None,
-    help="The accelerator to use for downloading and (optionally) sharding the model.",
+    help="The accelerator to use for downloading and (optionally) sharding the model. Format: '{type}:{quantity}' (e.g., 'A100:8', 'L4:1').",
 )
 @click.option(
     "--shard-config",
@@ -156,7 +140,6 @@ def hf_model(
     wait: bool,
     hf_token_key: str,
     cpu: Optional[str],
-    gpu: Optional[str],
     mem: Optional[str],
     ephemeral_storage: Optional[str],
     accelerator: Optional[str],
@@ -197,8 +180,7 @@ def hf_model(
     ```bash
     $ flyte store hf-model meta-llama/Llama-2-70b-hf \\
         --shard-config shard_config.yaml \\
-        --gpu 8 \\
-        --accelerator nvidia-a100 \\
+        --accelerator A100:8 \\
         --hf-token-key HF_TOKEN
     ```
 
@@ -242,7 +224,6 @@ def hf_model(
             shard_config=parsed_shard_config,
             hf_token_key=hf_token_key,
             cpu=cpu,
-            gpu=gpu,
             mem=mem,
             ephemeral_storage=ephemeral_storage,
             accelerator=accelerator,

@@ -10,9 +10,10 @@ from __future__ import annotations
 import os
 import re
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Tuple, get_args
 
 if TYPE_CHECKING:
+    from flyte._resources import Accelerators
     from flyte.io import Dir
     from flyte.remote import Run
 
@@ -375,10 +376,9 @@ def hf_model(
     shard_config: Optional[ShardConfig] = None,
     hf_token_key: str = "HF_TOKEN",
     cpu: Optional[str] = None,
-    gpu: Optional[str] = None,
     mem: Optional[str] = None,
     ephemeral_storage: Optional[str] = None,
-    accelerator: Optional[str] = None,
+    accelerator: Optional["Accelerators"] = None,
     project: Optional[str] = None,
     domain: Optional[str] = None,
     wait: bool = False,
@@ -418,8 +418,7 @@ def hf_model(
             engine="vllm",
             args=VLLMShardArgs(tensor_parallel_size=8),
         ),
-        gpu="8",
-        accelerator="nvidia-a100",
+        accelerator="A100:8",
         hf_token_key="HF_TOKEN",
     )
     run.wait()
@@ -437,10 +436,9 @@ def hf_model(
     :param shard_config: Optional configuration for model sharding with vLLM.
     :param hf_token_key: Name of the secret containing the HuggingFace token. Default: 'HF_TOKEN'.
     :param cpu: CPU request for the store task (e.g., '2').
-    :param gpu: GPU request for the store task (e.g., '1').
     :param mem: Memory request for the store task (e.g., '16Gi').
     :param ephemeral_storage: Ephemeral storage request (e.g., '100Gi').
-    :param accelerator: Accelerator type (e.g., 'nvidia-a100', 'nvidia-l4').
+    :param accelerator: Accelerator type in format '{type}:{quantity}' (e.g., 'A100:8', 'L4:1').
     :param project: Project to run the store task in.
     :param domain: Domain to run the store task in.
     :param wait: Whether to wait for the store task to complete. Default: False.
@@ -451,6 +449,7 @@ def hf_model(
     import flyte
     from flyte import Resources, Secret, TaskEnvironment
     from flyte._initialize import get_init_config
+    from flyte._resources import Accelerators
 
     _validate_artifact_name(artifact_name)
 
@@ -466,12 +465,19 @@ def hf_model(
         shard_config=shard_config,
     )
 
-    # Build resources
+    # Validate accelerator if provided
+    if accelerator is not None and accelerator not in get_args(Accelerators):
+        raise ValueError(
+            f"Invalid accelerator: {accelerator}. Must be one of the valid Accelerators types "
+            f"in format '{{type}}:{{quantity}}' (e.g., 'A100:8', 'L4:1')"
+        )
+
+    # Build resources - use accelerator directly since Resources.gpu accepts Accelerators strings
     resources = Resources(
         cpu=cpu or "2",
-        mem=mem or "8Gi",
-        gpu=gpu,
-        ephemeral_storage=ephemeral_storage or "50Gi",
+        memory=mem or "8Gi",
+        gpu=accelerator,  # Accelerators string like "A100:8" or "L4:1"
+        disk=ephemeral_storage or "50Gi",
     )
 
     # Select image based on whether sharding is needed
@@ -487,26 +493,6 @@ def hf_model(
         "resources": resources,
         "secrets": [Secret(key=hf_token_key)],
     }
-
-    # Add accelerator if specified
-    if accelerator:
-        # Map accelerator names to Flyte accelerator types
-        accelerator_map = {
-            "nvidia-l4": flyte.GPU("nvidia-l4"),
-            "nvidia-l4-vws": flyte.GPU("nvidia-l4-vws"),
-            "nvidia-l40s": flyte.GPU("nvidia-l40s"),
-            "nvidia-a100": flyte.GPU("nvidia-a100"),
-            "nvidia-a100-80gb": flyte.GPU("nvidia-a100-80gb"),
-            "nvidia-a10g": flyte.GPU("nvidia-a10g"),
-            "nvidia-tesla-k80": flyte.GPU("nvidia-tesla-k80"),
-            "nvidia-tesla-m60": flyte.GPU("nvidia-tesla-m60"),
-            "nvidia-tesla-p4": flyte.GPU("nvidia-tesla-p4"),
-            "nvidia-tesla-p100": flyte.GPU("nvidia-tesla-p100"),
-            "nvidia-tesla-t4": flyte.GPU("nvidia-tesla-t4"),
-            "nvidia-tesla-v100": flyte.GPU("nvidia-tesla-v100"),
-        }
-        if accelerator in accelerator_map:
-            env_kwargs["resources"] = resources.with_device(accelerator_map[accelerator])
 
     env = TaskEnvironment(**env_kwargs)
 
