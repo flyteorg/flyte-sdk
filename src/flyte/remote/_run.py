@@ -26,7 +26,7 @@ Phase = Literal[
 @dataclass
 class Run(ToJSONMixin):
     """
-    A class representing a run of a task. It is used to manage the run of a task and its ste on the remote
+    A class representing a run of a task. It is used to manage the run of a task and its state on the remote
     Union API.
     """
 
