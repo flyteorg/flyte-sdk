@@ -855,7 +855,8 @@ async def test_materialize_inputs_with_run_output_dir_type():
     assert len(result) == 1
     assert result[0].name == "data"
     # The value should be the path string after .get() is called
-    assert result[0].value == "s3://bucket/data-dir"
+    assert isinstance(result[0].value, flyte.io.Dir)
+    assert result[0].value.path == "s3://bucket/data-dir"
 
 
 @pytest.mark.asyncio
