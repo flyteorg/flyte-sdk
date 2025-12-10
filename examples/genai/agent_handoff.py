@@ -1,7 +1,7 @@
 # /// script
 # requires-python = ">=3.11"
 # dependencies = [
-#     "flyte==2.0.0b0",
+#     "flyte==2.0.0b35",
 #     "openai>=1.0.0",
 #     "pydantic>=2.0.0",
 # ]
@@ -33,11 +33,14 @@ env = flyte.TaskEnvironment(
     "agent-handoff",
     resources=flyte.Resources(cpu=2, memory="2Gi"),
     secrets=[flyte.Secret(key="openai-api-key", as_env_var="OPENAI_API_KEY")],
-    image=flyte.Image.from_uv_script(__file__, name="agent-handoff", pre=True).with_pip_packages("unionai-reuse>=0.1.9"),
+    image=flyte.Image.from_uv_script(__file__, name="agent-handoff", pre=True).with_pip_packages(
+        "unionai-reuse>=0.1.9"
+    ),
     reusable=flyte.ReusePolicy(
         replicas=(1, 5),
         concurrency=10,
     ),
+    cache="auto",
 )
 
 
@@ -76,7 +79,8 @@ AGENT_REGISTRY = [
     Agent(
         id="data-analyst",
         name="Data Analytics Agent",
-        description="Specializes in data analysis, SQL queries, data visualization, and generating insights from datasets",
+        description="Specializes in data analysis, SQL queries, data visualization, "
+        "and generating insights from datasets",
         tags=["data", "analytics", "sql", "visualization", "reporting"],
     ),
     Agent(
@@ -150,7 +154,7 @@ async def extract_tags_from_query(query: str) -> List[str]:
     client = AsyncOpenAI()
 
     # Get all unique tags from the registry
-    all_tags = sorted(set(tag for agent in AGENT_REGISTRY for tag in agent.tags))
+    all_tags = sorted({tag for agent in AGENT_REGISTRY for tag in agent.tags})
 
     prompt = f"""Given the following user query, identify the most relevant workflow tags from the list below.
 Return only the tags that are directly relevant to the query, as a comma-separated list.
@@ -281,7 +285,7 @@ def select_agent(scored_agents: List[AgentScore], threshold: float = 0.7) -> Opt
     return None
 
 
-@flyte.trace
+@env.task
 async def handoff_to_agent(agent: Agent, query: str) -> str:
     """
     Simulate handing off the query to the selected agent.
@@ -414,7 +418,7 @@ if __name__ == "__main__":
     print("=" * 80)
     print("Example 1: Data Analytics Query")
     print("=" * 80)
-    run1 = flyte.run(run_handoff, EXAMPLE_QUERIES[0], threshold=0.6)
+    run1 = flyte.run(run_handoff, EXAMPLE_QUERIES[0], threshold=0.5)
     print(f"Run URL: {run1.url}")
     run1.wait()
 
