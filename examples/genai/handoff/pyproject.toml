@@ -1,0 +1,34 @@
+[project]
+name = "agent-handoff"
+version = "0.1.0"
+description = "Agent handoff system with tag-based routing and semantic similarity matching"
+requires-python = ">=3.11"
+dependencies = [
+    "flyte>=2.0.0b35",
+    "openai>=1.0.0",
+    "pydantic>=2.0.0",
+    "unionai-reuse>=0.1.9",
+    "fastapi>=0.104.0",
+    "uvicorn[standard]>=0.24.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "ruff>=0.1.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W"]
+ignore = ["E501"]  # Line too long (handled by formatter)
+
+[tool.uv]
+dev-dependencies = []

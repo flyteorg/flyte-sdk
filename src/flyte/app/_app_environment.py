@@ -67,6 +67,51 @@ class AppEnvironment(Environment):
                 "and must start and end with an alphanumeric character."
             )
 
+    def _get_app_filename(self) -> str:
+        """
+        Get the filename of the file that declares this app environment.
+
+        Returns the actual file path instead of <string>, skipping flyte SDK internal files.
+        """
+
+        def is_user_file(filename: str) -> bool:
+            """Check if a file is a user file (not part of flyte SDK)."""
+            if filename in ("<string>", "<stdin>"):
+                return False
+            if not os.path.exists(filename):
+                return False
+            # Skip files that are part of the flyte SDK
+            abs_path = os.path.abspath(filename)
+            # Check if file is in flyte package
+            return ("site-packages/flyte" not in abs_path and "/flyte/" not in abs_path) or "/examples/" in abs_path
+
+        # Try frame inspection first - walk up the stack to find user file
+        frame = inspect.currentframe()
+        while frame is not None:
+            filename = frame.f_code.co_filename
+            if is_user_file(filename):
+                return os.path.abspath(filename)
+            frame = frame.f_back
+
+        # Fallback: Inspect the full stack to find the first user file
+        stack = inspect.stack()
+        for frame_info in stack:
+            filename = frame_info.filename
+            if is_user_file(filename):
+                return os.path.abspath(filename)
+
+        # Last fallback: Try to get from __main__ module
+        import sys
+
+        if hasattr(sys.modules.get("__main__"), "__file__"):
+            main_file = sys.modules["__main__"].__file__
+            if main_file and os.path.exists(main_file):
+                return os.path.abspath(main_file)
+
+        # Last resort: return the current working directory with a placeholder
+        # This shouldn't happen in normal usage
+        return os.path.join(os.getcwd(), "app.py")
+
     def __post_init__(self):
         super().__post_init__()
         if self.args is not None and not isinstance(self.args, (list, str)):
@@ -88,8 +133,7 @@ class AppEnvironment(Environment):
         self._validate_name()
 
         # get instantiated file to keep track of app root directory
-        frame = inspect.currentframe().f_back.f_back  # two frames up to get the app filename
-        self._app_filename = frame.f_code.co_filename
+        self._app_filename = self._get_app_filename()
 
     def container_args(self, serialize_context: SerializationContext) -> List[str]:
         if self.args is None:
