@@ -435,44 +435,46 @@ impl InformerCache {
     }
 }
 
-async fn informer_main() {
-    // Create an informer but first create the shared_queue that will be shared between the
-    // Controller and the informer
-    let (tx, _rx) = mpsc::channel::<Action>(64);
-    let endpoint = Endpoint::from_static("http://localhost:8090");
-    let channel = endpoint.connect().await.unwrap();
-    let client = StateServiceClient::new(channel);
-
-    let run_id = RunIdentifier {
-        org: String::from("testorg"),
-        project: String::from("testproject"),
-        domain: String::from("development"),
-        name: String::from("qdtc266r2z8clscl2lj5"),
-    };
-    let (failure_tx, _failure_rx) = mpsc::channel::<InformerError>(1);
-
-    let informer_cache = InformerCache::new(StateClient::Plain(client), tx.clone(), failure_tx);
-    let informer = informer_cache.get_or_create_informer(&run_id, "a0").await;
-
-    println!("{:?}", informer);
-}
-
-fn init_tracing() {
-    static INIT: std::sync::Once = std::sync::Once::new();
-    INIT.call_once(|| {
-        let subscriber = fmt()
-            .with_max_level(tracing::Level::DEBUG)
-            .with_test_writer() // so logs show in test output
-            .finish();
-        tracing::subscriber::set_global_default(subscriber)
-            .expect("setting default subscriber failed");
-    });
-}
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    async fn informer_main() {
+        // Create an informer but first create the shared_queue that will be shared between the
+        // Controller and the informer
+        let (tx, _rx) = mpsc::channel::<Action>(64);
+        let endpoint = Endpoint::from_static("http://localhost:8090");
+        let channel = endpoint.connect().await.unwrap();
+        let client = StateServiceClient::new(channel);
+
+        let run_id = RunIdentifier {
+            org: String::from("testorg"),
+            project: String::from("testproject"),
+            domain: String::from("development"),
+            name: String::from("rchn685b8jgwtvz4k795"),
+        };
+        let (failure_tx, _failure_rx) = mpsc::channel::<InformerError>(1);
+
+        let informer_cache = InformerCache::new(StateClient::Plain(client), tx.clone(), failure_tx);
+        let informer = informer_cache.get_or_create_informer(&run_id, "a0").await;
+
+        println!("{:?}", informer);
+    }
+
+    fn init_tracing() {
+        static INIT: std::sync::Once = std::sync::Once::new();
+        INIT.call_once(|| {
+            let subscriber = fmt()
+                .with_max_level(tracing::Level::DEBUG)
+                .with_test_writer() // so logs show in test output
+                .finish();
+            tracing::subscriber::set_global_default(subscriber)
+                .expect("setting default subscriber failed");
+        });
+    }
+
+    // cargo test --lib informer::tests:test_informer -- --nocapture --show-output
     #[test]
     fn test_informer() {
         init_tracing();
