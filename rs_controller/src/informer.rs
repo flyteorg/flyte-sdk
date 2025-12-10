@@ -301,47 +301,65 @@ impl InformerCache {
         parent_action_name: &str,
     ) -> Arc<Informer> {
         let informer_name = Self::mkname(&run_id.name, parent_action_name);
+        info!(">>> get_or_create_informer called for: {}", informer_name);
         let timeout = Duration::from_millis(100);
 
         // Check if exists (with read lock)
         {
+            debug!("Acquiring read lock to check cache for: {}", informer_name);
             let map = self.cache.read().await;
+            debug!("Read lock acquired, checking cache...");
             if let Some(informer) = map.get(&informer_name) {
+                info!("CACHE HIT: Found existing informer for: {}", informer_name);
                 let arc_informer = Arc::clone(informer);
                 // Release read lock before waiting
                 drop(map);
+                debug!("Read lock released, waiting for ready...");
                 Self::wait_for_ready(&arc_informer, timeout).await;
+                info!("<<< Returning existing informer for: {}", informer_name);
                 return arc_informer;
             }
+            debug!("CACHE MISS: Informer not found in cache: {}", informer_name);
         }
 
         // Create new informer (with write lock)
+        debug!("Acquiring write lock to create informer for: {}", informer_name);
         let mut map = self.cache.write().await;
+        info!("Write lock acquired for: {}", informer_name);
 
         // Double-check it wasn't created while we were waiting for write lock
         if let Some(informer) = map.get(&informer_name) {
+            info!("RACE: Informer was created while waiting for write lock: {}", informer_name);
             let arc_informer = Arc::clone(informer);
             drop(map);
+            debug!("Write lock released after race condition");
             Self::wait_for_ready(&arc_informer, timeout).await;
+            info!("<<< Returning race-created informer for: {}", informer_name);
             return arc_informer;
         }
 
         // Create and add to cache
+        info!("CREATING new informer for: {}", informer_name);
         let informer = Arc::new(Informer::new(
             self.client.clone(),
             run_id.clone(),
             parent_action_name.to_string(),
             self.shared_queue.clone(),
         ));
+        debug!("Informer object created, inserting into cache...");
         map.insert(informer_name.clone(), Arc::clone(&informer));
+        info!("Informer inserted into cache: {}", informer_name);
 
         // Release write lock before starting (starting involves waiting)
         drop(map);
+        debug!("Write lock released for: {}", informer_name);
 
         let me = Arc::clone(&informer);
         let failure_tx = self.failure_tx.clone();
 
+        info!("Spawning watch task for: {}", informer_name);
         let _watch_handle = tokio::spawn(async move {
+            debug!("Watch task started for: {}", me.parent_action_name);
             let watch_actions_result = me.watch_actions().await;
 
             // If there are errors with the watch then notify the channel
@@ -362,17 +380,20 @@ impl InformerCache {
                     error!("Failed to send informer failure event: {:?}", e);
                 }
             } else {
-                warn!("Informer watch_actions succeeded for {}", me.run_id.name);
+                info!("Informer watch_actions completed successfully for {}", me.run_id.name);
             }
         });
 
         // save the value and ignore the returned reference.
+        debug!("Acquiring write lock to save watch handle for: {}", informer_name);
         let _ = informer.watch_handle.write().await.insert(_watch_handle);
-        warn!("Saved watch handle {:?}", informer.run_id);
+        info!("Watch handle saved for: {}", informer_name);
 
         // Optimistically wait for ready (sentinel) with timeout
+        debug!("Waiting for informer to be ready: {}", informer_name);
         Self::wait_for_ready(&informer, timeout).await;
 
+        info!("<<< Returning newly created informer for: {}", informer_name);
         informer
     }
 
@@ -381,10 +402,15 @@ impl InformerCache {
         run_id: &RunIdentifier,
         parent_action_name: &str,
     ) -> Option<Arc<Informer>> {
+        let informer_name = InformerCache::mkname(&run_id.name, parent_action_name);
+        debug!("InformerCache::get called for: {}", informer_name);
         let map = self.cache.read().await;
-        let opt_informer = map
-            .get(&InformerCache::mkname(&run_id.name, parent_action_name))
-            .cloned();
+        let opt_informer = map.get(&informer_name).cloned();
+        if opt_informer.is_some() {
+            debug!("InformerCache::get - found: {}", informer_name);
+        } else {
+            debug!("InformerCache::get - not found: {}", informer_name);
+        }
         opt_informer
     }
 
@@ -392,30 +418,27 @@ impl InformerCache {
     /// and log a warning - this is optimistic, assuming the informer will become ready eventually.
     /// Once ready has been set, future calls return immediately without waiting.
     async fn wait_for_ready(informer: &Arc<Informer>, timeout: Duration) {
+        debug!("wait_for_ready called for: {}", informer.parent_action_name);
+
         // Subscribe to notifications first, before checking ready
         // This ensures we don't miss a notification that happens between the check and the wait
         let ready_fut = informer.ready.notified();
 
         // Quick check - if already ready, return immediately
         if informer.is_ready.load(Ordering::Acquire) {
-            debug!(
-                "Informer already ready for parent_action: {}",
-                informer.parent_action_name
-            );
+            info!("Informer already ready for: {}", informer.parent_action_name);
             return;
         }
 
+        debug!("Waiting for ready signal with timeout {:?}...", timeout);
         // Otherwise wait with timeout
         match tokio::time::timeout(timeout, ready_fut).await {
             Ok(_) => {
-                info!(
-                    "Informer ready for parent_action: {}",
-                    informer.parent_action_name
-                );
+                info!("Informer ready signal received for: {}", informer.parent_action_name);
             }
             Err(_) => {
                 warn!(
-                    "Informer cache sync timed out after {:?} for {}:{} - continuing optimistically",
+                    "Informer ready TIMEOUT after {:?} for {}:{} - continuing optimistically",
                     timeout, informer.run_id.name, informer.parent_action_name
                 );
                 // Set ready anyway so future calls don't wait
@@ -429,8 +452,15 @@ impl InformerCache {
         run_id: &RunIdentifier,
         parent_action_name: &str,
     ) -> Option<Arc<Informer>> {
+        let informer_name = InformerCache::mkname(&run_id.name, parent_action_name);
+        info!("InformerCache::remove called for: {}", informer_name);
         let mut map = self.cache.write().await;
-        let opt_informer = map.remove(&InformerCache::mkname(&run_id.name, parent_action_name));
+        let opt_informer = map.remove(&informer_name);
+        if opt_informer.is_some() {
+            info!("InformerCache::remove - removed: {}", informer_name);
+        } else {
+            warn!("InformerCache::remove - not found: {}", informer_name);
+        }
         opt_informer
     }
 }
