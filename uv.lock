@@ -716,7 +716,7 @@ requires-dist = [
     { name = "dataclasses-json" },
     { name = "docstring-parser", specifier = ">=0.16" },
     { name = "flyteidl", specifier = ">=1.15.4b0,<2.0.0" },
-    { name = "flyteidl2", specifier = "==2.0.0a15" },
+    { name = "flyteidl2" },
     { name = "fsspec", specifier = ">=2025.3.0" },
     { name = "grpcio", specifier = ">=1.71.0" },
     { name = "grpcio-health-checking", marker = "extra == 'connector'" },
