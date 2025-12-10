@@ -15,10 +15,9 @@ import asyncio
 import pathlib
 from typing import List, Optional
 
+import flyte
 from openai import AsyncOpenAI
 from pydantic import BaseModel, Field
-
-import flyte
 
 # Configure reusable environment with OpenAI API key
 env = flyte.TaskEnvironment(
@@ -26,7 +25,8 @@ env = flyte.TaskEnvironment(
     resources=flyte.Resources(cpu=2, memory="2Gi"),
     secrets=[flyte.Secret(key="openai-api-key", as_env_var="OPENAI_API_KEY")],
     image=flyte.Image.from_debian_base().with_uv_project(
-        pyproject_file=pathlib.Path(__file__).parent / "pyproject.toml", pre=True),
+        pyproject_file=pathlib.Path(__file__).parent / "pyproject.toml", pre=True
+    ),
     reusable=flyte.ReusePolicy(
         replicas=(1, 5),
         concurrency=10,
@@ -71,7 +71,7 @@ AGENT_REGISTRY = [
         id="data-analyst",
         name="Data Analytics Agent",
         description="Specializes in data analysis, SQL queries, data visualization, "
-                    "and generating insights from datasets",
+        "and generating insights from datasets",
         tags=["data", "analytics", "sql", "visualization", "reporting"],
     ),
     Agent(
