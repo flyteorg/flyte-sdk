@@ -2,6 +2,8 @@ name: Main
 
 on:
   workflow_dispatch:
+  schedule:
+    - cron: "0 10 * * *" # This schedule runs at 10am UTC every day
   pull_request:
     paths:
       - 'examples/integration_tests.py'
