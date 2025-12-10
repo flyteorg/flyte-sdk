@@ -7,6 +7,7 @@ from flyte._logging import LogFormat, initialize_logger, logger
 from . import _common as common
 from ._abort import abort
 from ._build import build
+from ._cache import cache
 from ._common import CLIConfig
 from ._create import create
 from ._delete import delete
@@ -39,6 +40,10 @@ help_config = click.RichHelpConfiguration(
             {
                 "name": "Build and deploy environments, tasks and images.",
                 "commands": ["build", "deploy"],
+            },
+            {
+                "name": "Cache artifacts from remote registries.",
+                "commands": ["cache"],
             },
             {
                 "name": "Documentation generation",
@@ -224,6 +229,7 @@ main.add_command(build)
 main.add_command(whoami)  # type: ignore
 main.add_command(update)  # type: ignore
 main.add_command(serve)  # type: ignore
+main.add_command(cache)  # type: ignore
 
 # Discover and register CLI plugins from installed packages
 discover_and_register_plugins(main)
