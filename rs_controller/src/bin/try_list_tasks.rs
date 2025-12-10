@@ -2,7 +2,6 @@
 ///
 /// Usage:
 ///   _UNION_EAGER_API_KEY=your_api_key cargo run --bin try_list_tasks
-
 use std::sync::Arc;
 use tower::ServiceBuilder;
 use tracing::warn;
@@ -33,7 +32,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let domain = endpoint.strip_prefix("https://").ok_or_else(|| {
         ControllerError::SystemError("Endpoint must start with https://".to_string())
     })?;
-    let endpoint = flyte_controller_base::core::create_tls_endpoint(static_endpoint, domain).await?;
+    let endpoint =
+        flyte_controller_base::core::create_tls_endpoint(static_endpoint, domain).await?;
     let channel = endpoint.connect().await.map_err(ControllerError::from)?;
 
     let authenticator = Arc::new(ClientCredentialsAuthenticator::new(auth_config));
@@ -48,6 +48,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         limit: 100,
         ..Default::default()
     };
+
     let req = ListTasksRequest {
         request: Some(list_request_base),
         known_filters: vec![],

@@ -53,8 +53,7 @@ impl Action {
     }
 
     pub fn get_run_identifier(&self) -> RunIdentifier {
-        self
-            .action_id
+        self.action_id
             .run
             .as_ref()
             .expect("Action ID missing run")
@@ -62,14 +61,16 @@ impl Action {
     }
 
     pub fn get_full_name(&self) -> String {
-        format!("{}:{}", &self
-            .action_id
-            .run
-            .as_ref()
-            .expect("Action ID missing run")
-            .name,
+        format!(
+            "{}:{}",
+            &self
+                .action_id
+                .run
+                .as_ref()
+                .expect("Action ID missing run")
+                .name,
             self.action_id.name
-            )
+        )
     }
 
     pub fn get_action_name(&self) -> String {

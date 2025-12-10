@@ -173,7 +173,8 @@ impl CoreBaseController {
             }
         };
 
-        let informer_cache = InformerCache::new(state_client.clone(),shared_tx.clone(), failure_tx);
+        let informer_cache =
+            InformerCache::new(state_client.clone(), shared_tx.clone(), failure_tx);
 
         let real_base_controller = CoreBaseController {
             channel,
@@ -238,7 +239,8 @@ impl CoreBaseController {
             }
         };
 
-        let informer_cache = InformerCache::new(state_client.clone(),shared_tx.clone(), failure_tx);
+        let informer_cache =
+            InformerCache::new(state_client.clone(), shared_tx.clone(), failure_tx);
 
         let real_base_controller = CoreBaseController {
             channel,
@@ -305,7 +307,10 @@ impl CoreBaseController {
                                 ));
 
                                 // Fire completion event for failed action
-                                let opt_informer = self.informer_cache.get(&action.get_run_identifier(), &action.parent_action_name).await;
+                                let opt_informer = self
+                                    .informer_cache
+                                    .get(&action.get_run_identifier(), &action.parent_action_name)
+                                    .await;
                                 if let Some(informer) = opt_informer {
                                     // todo: check these two errors
 
@@ -348,7 +353,11 @@ impl CoreBaseController {
             self.bg_launch(action).await?;
         } else if action.is_action_terminal() {
             // Action is terminal, fire completion event
-            if let Some(arc_informer) = self.informer_cache.get(&action.get_run_identifier(), &action.parent_action_name).await {
+            if let Some(arc_informer) = self
+                .informer_cache
+                .get(&action.get_run_identifier(), &action.parent_action_name)
+                .await
+            {
                 debug!(
                     "handle action firing completion event for {:?}",
                     &action.action_id.name
@@ -404,7 +413,11 @@ impl CoreBaseController {
         debug!("Cancelling action: {}", action.action_id.name);
         action.mark_cancelled();
 
-        if let Some(informer) = self.informer_cache.get(&action.get_run_identifier(), &action.parent_action_name).await {
+        if let Some(informer) = self
+            .informer_cache
+            .get(&action.get_run_identifier(), &action.parent_action_name)
+            .await
+        {
             let _ = informer
                 .fire_completion_event(&action.action_id.name)
                 .await?;
@@ -417,10 +430,18 @@ impl CoreBaseController {
         Ok(())
     }
 
-    pub async fn get_action(&self, action_id: ActionIdentifier, parent_action_name: &str) -> Result<Action, ControllerError> {
-        let run = action_id.run.as_ref().ok_or(ControllerError::RuntimeError(
-            format!("Action {:?} doesn't have a run, can't get action", action_id),
-        ))?;
+    pub async fn get_action(
+        &self,
+        action_id: ActionIdentifier,
+        parent_action_name: &str,
+    ) -> Result<Action, ControllerError> {
+        let run = action_id
+            .run
+            .as_ref()
+            .ok_or(ControllerError::RuntimeError(format!(
+                "Action {:?} doesn't have a run, can't get action",
+                action_id
+            )))?;
         if let Some(informer) = self.informer_cache.get(run, parent_action_name).await {
             let action_name = action_id.name.clone();
             match informer.get_action(action_name).await {

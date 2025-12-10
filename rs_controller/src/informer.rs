@@ -9,19 +9,19 @@ use flyteidl2::flyteidl::workflow::{
     watch_request, watch_response::Message, WatchRequest, WatchResponse,
 };
 
+use pyo3_async_runtimes::tokio::run;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
-use pyo3_async_runtimes::tokio::run;
 use tokio::select;
 use tokio::sync::RwLock;
 use tokio::sync::{mpsc, oneshot, Notify};
 use tokio::time::sleep;
 use tonic::transport::channel::Channel;
 use tonic::transport::Endpoint;
-use tracing::{debug, error, info, warn};
 use tracing::log::Level::Info;
+use tracing::{debug, error, info, warn};
 use tracing_subscriber::fmt;
 
 #[derive(Clone, Debug)]
@@ -342,10 +342,15 @@ impl InformerCache {
         informer
     }
 
-    pub async fn get(&self, run_id: &RunIdentifier,
-                 parent_action_name: &str) -> Option<Arc<Informer>> {
+    pub async fn get(
+        &self,
+        run_id: &RunIdentifier,
+        parent_action_name: &str,
+    ) -> Option<Arc<Informer>> {
         let map = self.cache.read().await;
-        let opt_informer = map.get(&InformerCache::mkname(&run_id.name, parent_action_name)).cloned();
+        let opt_informer = map
+            .get(&InformerCache::mkname(&run_id.name, parent_action_name))
+            .cloned();
         opt_informer
     }
 
@@ -403,9 +408,7 @@ async fn informer_main() {
     let (failure_tx, _failure_rx) = mpsc::channel::<InformerError>(1);
 
     let informer_cache = InformerCache::new(StateClient::Plain(client), tx.clone(), failure_tx);
-    let informer = informer_cache
-        .get_or_create_informer(&run_id, "a0")
-        .await;
+    let informer = informer_cache.get_or_create_informer(&run_id, "a0").await;
 
     println!("{:?}", informer);
 }
