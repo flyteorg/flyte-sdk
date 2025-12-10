@@ -8,7 +8,7 @@
 #     "pydantic",
 #     "pandas",
 #     "pyarrow",
-#     "flyte>=2.0.0b34",
+#     "flyte>=2.0.0b35",
 # ]
 # ///
 """
@@ -29,7 +29,6 @@ API Endpoints:
 
 import asyncio
 import logging
-import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import List, Optional
@@ -85,7 +84,7 @@ app = FastAPI(
 )
 
 # Create Flyte FastAPI App Environment
-image = flyte.Image.from_uv_script(__file__, name="recsys-serving")
+image = flyte.Image.from_uv_script(__file__, name="recsys-serving", pre=True)
 
 env = FastAPIAppEnvironment(
     name="recsys-fastapi-app",
@@ -99,7 +98,7 @@ env = FastAPIAppEnvironment(
             name="artifacts",
             # if using flyte serve CLI to deploy this, set the ARTIFACTS_DIR environment variable
             # to the remote path of the artifacts directory.
-            value=flyte.io.Dir.from_existing_remote(os.environ.get(ARTIFACTS_DIR_ENV, "/tmp/recsys_artifacts")),
+            value=flyte.app.RunOutput(task_name="recsys_training.training_pipeline", type="directory"),
             mount="/tmp/recsys_artifacts",
         )
     ],
@@ -401,36 +400,9 @@ async def get_item_info(item_id: str):
 
 
 if __name__ == "__main__":
-    import argparse
-
-    import flyte.remote
-
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--training-run", type=str)
-    args = parser.parse_args()
-
     flyte.init_from_config(
         root_dir=Path(__file__).parent,
-        log_level=logging.DEBUG,
     )
 
-    run = flyte.remote.Run.get(args.training_run)
-    artifacts_dir, *_ = run.outputs()
-
-    # Deploy the FastAPI app to Flyte
-    # Note: You need to provide the artifacts directory from the training pipeline
-    # You can get this by running the training pipeline first:
-    #
-    # uv run recsys_training.py
-    #
-    # Then supplying the run name to the serving script
-    #
-    # uv run recsys_serving.py --training-run <training-run-name>
-    #
-    # Then call the serving endpoint:
-    #
-    # curl -X POST http://<endpoint>/embed-text -H "Content-Type: application/json" -d '{"text": "test embedding"}'
-
-    input_value_overrides = {env.name: {"artifacts": flyte.io.Dir.from_existing_remote(artifacts_dir.path)}}
-    app = flyte.with_servecontext(input_values=input_value_overrides).serve(env)
+    app = flyte.serve(env)
     print(f"Deployed Application: {app.url}")
