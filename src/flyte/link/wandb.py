@@ -24,5 +24,4 @@ class Wandb(Link):
             "entity": self.entity,
             "id": self.id if self.id else "",
             "host": self.host,
-            "port": self.port,
         }
