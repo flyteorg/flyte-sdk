@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Flyte Speech Transcription</title>
+    <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🎤 Flyte Speech Transcription</h1>
+            <p class="subtitle">Real-time multi-speaker transcription powered by NVIDIA Parakeet</p>
+        </header>
+
+        <div class="status-panel">
+            <div id="status" class="status disconnected">
+                <span class="status-indicator"></span>
+                <span class="status-text">Disconnected</span>
+            </div>
+            <div class="audio-level-container">
+                <span>Audio Level:</span>
+                <div class="audio-level-bar">
+                    <div id="audioLevelFill" class="audio-level-fill"></div>
+                </div>
+            </div>
+        </div>
+
+        <div class="controls">
+            <button id="connectBtn" class="btn btn-primary" onclick="toggleConnection()">
+                <span class="btn-icon">🔌</span>
+                Connect
+            </button>
+            <button id="recordBtn" class="btn btn-danger" onclick="toggleRecording()" disabled>
+                <span class="btn-icon">🎙️</span>
+                Start Recording
+            </button>
+            <button class="btn btn-secondary" onclick="clearTranscription()">
+                <span class="btn-icon">🗑️</span>
+                Clear
+            </button>
+        </div>
+
+        <div class="info-panel">
+            <div class="info-header">📋 Instructions</div>
+            <ol class="info-list">
+                <li>Click <strong>Connect</strong> to establish WebSocket connection</li>
+                <li>Allow microphone access when prompted by your browser</li>
+                <li>Click <strong>Start Recording</strong> to begin transcription</li>
+                <li>Speak clearly into your microphone</li>
+                <li>Click <strong>Stop Recording</strong> when finished</li>
+            </ol>
+        </div>
+
+        <div class="transcription-panel">
+            <div class="panel-header">
+                <h2>📝 Transcription</h2>
+                <span id="wordCount">0 words</span>
+            </div>
+            <div id="transcription" class="transcription-content">
+                <p class="placeholder">Transcription will appear here...</p>
+            </div>
+        </div>
+
+        <div class="tech-info">
+            <div class="tech-badge">
+                <span class="badge-label">Model</span>
+                <span class="badge-value">NVIDIA Parakeet</span>
+            </div>
+            <div class="tech-badge">
+                <span class="badge-label">Backend</span>
+                <span class="badge-value">Flyte GPU</span>
+            </div>
+            <div class="tech-badge">
+                <span class="badge-label">Multi-speaker</span>
+                <span class="badge-value">✓ Enabled</span>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>

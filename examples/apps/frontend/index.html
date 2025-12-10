@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Flyte WebSocket Demo</title>
+    <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🚀 Flyte WebSocket Demo</h1>
+            <p class="subtitle">Real-time bidirectional communication with FastAPI</p>
+        </header>
+
+        <div class="status-panel">
+            <div id="status" class="status disconnected">
+                <span class="status-indicator"></span>
+                <span class="status-text">Disconnected</span>
+            </div>
+            <div class="connection-info">
+                <span id="connectionCount">0</span> active connections
+            </div>
+        </div>
+
+        <div class="main-content">
+            <div class="messages-panel">
+                <div class="panel-header">
+                    <h2>Messages</h2>
+                    <button id="clearButton" onclick="clearMessages()">Clear</button>
+                </div>
+                <div id="messages" class="messages-container"></div>
+            </div>
+
+            <div class="input-panel">
+                <input
+                    type="text"
+                    id="messageInput"
+                    placeholder="Type a message and press Enter..."
+                    disabled
+                    autocomplete="off"
+                >
+                <button id="sendButton" onclick="sendMessage()" disabled>
+                    Send
+                </button>
+                <button id="connectButton" onclick="toggleConnection()">
+                    Connect
+                </button>
+            </div>
+        </div>
+
+        <div class="info-panel">
+            <h3>Features:</h3>
+            <ul>
+                <li>✅ Real-time WebSocket communication</li>
+                <li>✅ Message echo and broadcast</li>
+                <li>✅ Connection management</li>
+                <li>✅ Auto-reconnect support</li>
+            </ul>
+        </div>
+    </div>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>
