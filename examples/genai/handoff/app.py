@@ -137,6 +137,9 @@ env = FastAPIAppEnvironment(
     resources=flyte.Resources(cpu=1, memory="1Gi"),
     include=[str(current_file.parent / "static" / "index.html"), str(current_file.parent / "agent_handoff.py")],
     secrets=flyte.Secret(key="EAGER_API_KEY", as_env_var="EAGER_API_KEY"),
+    scaling=flyte.app.Scaling(
+        replicas=1,
+    ),
 )
 
 if __name__ == "__main__":
