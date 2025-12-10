@@ -25,9 +25,9 @@ Deploy this app using the Flyte CLI:
 flyte deploy examples/genai/vllm/vllm_app.py vllm_app
 ```
 
-Note that `model=flyte.app.RunOutput(run_name="cache-model-env", task_name="main")`
+Note that `model=flyte.app.RunOutput(run_name="cache_model_env", task_name="main")`
 is used to specify the model to use. It will automatically materialize the correct
-model path from the latest run of the `cache-model-env.main` task.
+model path from the latest run of the `cache_model_env.main` task.
 
 Usage
 -----
@@ -62,7 +62,7 @@ from flyte._image import DIST_FOLDER, PythonWheels
 # Define the vLLM app environment for the smallest Qwen3 model
 vllm_app = VLLMAppEnvironment(
     name="qwen3-0-6b-vllm",
-    model=flyte.app.RunOutput(type=flyte.io.Dir, task_name="cache_model_env.main"),
+    model_path=flyte.app.RunOutput(type=flyte.io.Dir, task_name="cache_model_env.main"),
     model_id="qwen3-0.6b",
     resources=flyte.Resources(cpu="4", memory="16Gi", gpu="L40s:4", disk="10Gi"),
     image=(

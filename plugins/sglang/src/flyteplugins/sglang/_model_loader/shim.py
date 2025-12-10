@@ -19,7 +19,10 @@ from sglang.srt.utils import kill_process_tree
 try:
     from sglang.srt.server import launch_server
 except (ModuleNotFoundError, AttributeError, ImportError):
-    from sglang.launch_server import launch_server
+    try:
+        from sglang.launch_server import launch_server
+    except (ModuleNotFoundError, AttributeError, ImportError):
+        from sglang.launch_server import run_server as launch_server
 
 
 logger = logging.getLogger(__name__)
@@ -137,9 +140,13 @@ def main():
         level=logging.INFO,
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     )
+    logger.info(f"REMOTE_MODEL_PATH: {REMOTE_MODEL_PATH}")
+    logger.info(f"LOCAL_MODEL_PATH: {LOCAL_MODEL_PATH}")
+    logger.info(f"STREAM_SAFETENSORS: {STREAM_SAFETENSORS}")
 
     # Prefetch the model
     if REMOTE_MODEL_PATH:
+        logger.info("Prefetching model files...")
         asyncio.run(_get_model_files())
 
     server_args = prepare_server_args(sys.argv[1:])
@@ -147,4 +154,3 @@ def main():
         launch_server(server_args)
     finally:
         kill_process_tree(os.getpid(), include_parent=False)
-

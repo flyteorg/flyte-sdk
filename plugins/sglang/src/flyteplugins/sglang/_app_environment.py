@@ -32,7 +32,8 @@ class SGLangAppEnvironment(flyte.app.AppEnvironment):
     :param type: Type of app.
     :param extra_args: Extra args to pass to `python -m sglang.launch_server`. See
         https://docs.sglang.ai/backend/server_arguments.html for details.
-    :param model: Remote path to model (e.g., s3://bucket/path/to/model).
+    :param model_path: Remote path to model (e.g., s3://bucket/path/to/model).
+    :param model_hf_path: Hugging Face path to model (e.g., Qwen/Qwen3-0.6B).
     :param model_id: Model id that is exposed by SGLang.
     :param stream_model: Set to True to stream model from blob store to the GPU directly.
         If False, the model will be downloaded to the local file system first and then loaded
@@ -42,7 +43,8 @@ class SGLangAppEnvironment(flyte.app.AppEnvironment):
     port: int = 8000
     type: str = "SGLang"
     extra_args: Union[str, List[str]] = ""
-    model: str | RunOutput = ""
+    model_path: str | RunOutput = ""
+    model_hf_path: str = ""
     model_id: str = ""
     stream_model: bool = True
     _model_mount_path: str = field(default="/root/flyte", init=False)
@@ -54,8 +56,13 @@ class SGLangAppEnvironment(flyte.app.AppEnvironment):
         if self.model_id == "":
             raise ValueError("model_id must be defined")
 
-        if self.model == "":
-            raise ValueError("model must be defined")
+        if self.model_path == "" and self.model_hf_path == "":
+            raise ValueError("model_path or model_hf_path must be defined")
+        if self.model_path != "" and self.model_hf_path != "":
+            raise ValueError("model_path and model_hf_path cannot be set at the same time")
+
+        if self.model_hf_path:
+            self._model_mount_path = self.model_hf_path
 
         if self.args:
             raise ValueError("args cannot be set for SGLangAppEnvironment. Use `extra_args` to add extra arguments.")
@@ -89,7 +96,9 @@ class SGLangAppEnvironment(flyte.app.AppEnvironment):
             input_kwargs["download"] = True
             input_kwargs["mount"] = self._model_mount_path
 
-        self.inputs = [Input(name="model", value=self.model, **input_kwargs)]
+        if self.model_path:
+            self.inputs = [Input(name="model", value=self.model_path, **input_kwargs)]
+
         self.env_vars["FLYTE_MODEL_LOADER_LOCAL_MODEL_PATH"] = self._model_mount_path
         self.links = [flyte.app.Link(path="/docs", title="SGLang OpenAPI Docs", is_relative=True), *self.links]
 
@@ -103,4 +112,3 @@ class SGLangAppEnvironment(flyte.app.AppEnvironment):
         if isinstance(self.args, str):
             return shlex.split(self.args)
         return self.args or []
-

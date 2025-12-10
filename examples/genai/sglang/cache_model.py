@@ -149,4 +149,3 @@ if __name__ == "__main__":
     flyte.init_from_config()
     result = flyte.run(main, model_id="Qwen/Qwen3-0.6B")
     print(f"Cached model directory: {result}")
-
