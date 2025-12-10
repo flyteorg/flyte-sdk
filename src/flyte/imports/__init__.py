@@ -1,23 +1,22 @@
 """
-Cache utilities for Flyte.
+Import utilities for Flyte.
 
-This module provides functionality to cache various artifacts from remote registries,
+This module provides functionality to import various artifacts from remote registries,
 such as HuggingFace models.
 """
 
 from ._hf_model import (
-    CachedModelInfo,
     HuggingFaceModelInfo,
+    ImportedModelInfo,
     ShardConfig,
     VLLMShardArgs,
     hf_model,
 )
 
 __all__ = [
-    "CachedModelInfo",
     "HuggingFaceModelInfo",
+    "ImportedModelInfo",
     "ShardConfig",
     "VLLMShardArgs",
     "hf_model",
 ]
-

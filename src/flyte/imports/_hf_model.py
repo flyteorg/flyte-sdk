@@ -1,7 +1,7 @@
 """
-HuggingFace model caching utilities for Flyte.
+HuggingFace model import utilities for Flyte.
 
-This module provides functionality to cache HuggingFace models to remote storage,
+This module provides functionality to import HuggingFace models to remote storage,
 with support for optional sharding using vLLM.
 """
 
@@ -78,10 +78,10 @@ class ShardConfig:
 @dataclass
 class HuggingFaceModelInfo:
     """
-    Information about a HuggingFace model to cache.
+    Information about a HuggingFace model to import.
 
     :param repo: The HuggingFace repository ID (e.g., 'meta-llama/Llama-2-7b-hf').
-    :param artifact_name: Optional name for the cached artifact. If not provided,
+    :param artifact_name: Optional name for the imported artifact. If not provided,
         the repo name will be used (with '.' replaced by '-').
     :param architecture: Model architecture from HuggingFace config.json.
     :param task: Model task (e.g., 'generate', 'classify', 'embed').
@@ -104,13 +104,13 @@ class HuggingFaceModelInfo:
 
 
 @dataclass
-class CachedModelInfo:
+class ImportedModelInfo:
     """
-    Information about a cached model.
+    Information about an imported model.
 
-    :param artifact_name: Name of the cached artifact.
-    :param path: Path to the cached model directory.
-    :param metadata: Metadata about the cached model.
+    :param artifact_name: Name of the imported artifact.
+    :param path: Path to the imported model directory.
+    :param metadata: Metadata about the imported model.
     """
 
     artifact_name: str
@@ -118,7 +118,7 @@ class CachedModelInfo:
     metadata: Dict[str, str]
 
 
-# Image definitions for the caching task
+# Image definitions for the import task
 HF_DOWNLOAD_IMAGE_PACKAGES = [
     "huggingface-hub>=0.27.0",
     "hf-transfer>=0.1.8",
@@ -385,12 +385,12 @@ def hf_model(
     force: int = 0,
 ) -> Run:
     """
-    Cache a HuggingFace model to remote storage.
+    Import a HuggingFace model to remote storage.
 
-    This function downloads a model from the HuggingFace Hub and caches it to
+    This function downloads a model from the HuggingFace Hub and imports it to
     remote storage. It supports optional sharding using vLLM for large models.
 
-    The caching behavior follows this priority:
+    The import behavior follows this priority:
     1. If the model isn't being sharded, stream files directly to remote storage.
     2. If streaming fails, fall back to downloading a snapshot and uploading.
     3. If sharding is configured, download locally, shard with vLLM, then upload.
@@ -402,17 +402,17 @@ def hf_model(
 
     flyte.init(endpoint="my-flyte-endpoint")
 
-    # Cache a model without sharding
-    run = flyte.cache.hf_model(
+    # Import a model without sharding
+    run = flyte.imports.hf_model(
         repo="meta-llama/Llama-2-7b-hf",
         hf_token_key="HF_TOKEN",
     )
     run.wait()
 
-    # Cache and shard a model
-    from flyte.cache import ShardConfig, VLLMShardArgs
+    # Import and shard a model
+    from flyte.imports import ShardConfig, VLLMShardArgs
 
-    run = flyte.cache.hf_model(
+    run = flyte.imports.hf_model(
         repo="meta-llama/Llama-2-70b-hf",
         shard_config=ShardConfig(
             engine="vllm",
@@ -426,7 +426,7 @@ def hf_model(
     ```
 
     :param repo: The HuggingFace repository ID (e.g., 'meta-llama/Llama-2-7b-hf').
-    :param artifact_name: Optional name for the cached artifact. If not provided,
+    :param artifact_name: Optional name for the imported artifact. If not provided,
         the repo name will be used (with '.' replaced by '-').
     :param architecture: Model architecture from HuggingFace config.json.
     :param task: Model task (e.g., 'generate', 'classify', 'embed'). Default: 'auto'.
@@ -436,17 +436,17 @@ def hf_model(
     :param short_description: Short description of the model.
     :param shard_config: Optional configuration for model sharding with vLLM.
     :param hf_token_key: Name of the secret containing the HuggingFace token. Default: 'HF_TOKEN'.
-    :param cpu: CPU request for the caching task (e.g., '2').
-    :param gpu: GPU request for the caching task (e.g., '1').
-    :param mem: Memory request for the caching task (e.g., '16Gi').
+    :param cpu: CPU request for the import task (e.g., '2').
+    :param gpu: GPU request for the import task (e.g., '1').
+    :param mem: Memory request for the import task (e.g., '16Gi').
     :param ephemeral_storage: Ephemeral storage request (e.g., '100Gi').
     :param accelerator: Accelerator type (e.g., 'nvidia-a100', 'nvidia-l4').
-    :param project: Project to run the caching task in.
-    :param domain: Domain to run the caching task in.
-    :param wait: Whether to wait for the caching task to complete. Default: False.
-    :param force: Force re-caching. Increment to force a new cache. Default: 0.
+    :param project: Project to run the import task in.
+    :param domain: Domain to run the import task in.
+    :param wait: Whether to wait for the import task to complete. Default: False.
+    :param force: Force re-import. Increment to force a new import. Default: 0.
 
-    :return: A Run object representing the caching task execution.
+    :return: A Run object representing the import task execution.
     """
     import flyte
     from flyte import Resources, Secret, TaskEnvironment
@@ -482,7 +482,7 @@ def hf_model(
 
     # Build environment kwargs
     env_kwargs: Dict[str, Any] = {
-        "name": "hf-model-cache",
+        "name": "hf-model-import",
         "image": image,
         "resources": resources,
         "secrets": [Secret(key=hf_token_key)],
@@ -511,12 +511,12 @@ def hf_model(
     env = TaskEnvironment(**env_kwargs)
 
     @env.task(cache="auto")
-    def cache_hf_model_task(
+    def import_hf_model_task(
         info: HuggingFaceModelInfo,
         hf_token_key: str,
         force: int,
     ) -> Dir:
-        """Task to cache a HuggingFace model."""
+        """Task to import a HuggingFace model."""
         # All imports inside the task body
         import os
         import tempfile
@@ -705,7 +705,7 @@ def hf_model(
                     print("Uploading to remote storage...", flush=True)
                     result_dir = Dir.from_local_sync(local_model_dir)
 
-        print(f"Model cached successfully at {result_dir.path}", flush=True)
+        print(f"Model imported successfully at {result_dir.path}", flush=True)
         return result_dir
 
     # Get config for project/domain
@@ -717,10 +717,9 @@ def hf_model(
     run = flyte.with_runcontext(
         project=run_project,
         domain=run_domain,
-    ).run(cache_hf_model_task, info, hf_token_key, force)
+    ).run(import_hf_model_task, info, hf_token_key, force)
 
     if wait:
         run.wait()
 
     return run
-

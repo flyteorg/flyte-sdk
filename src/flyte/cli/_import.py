@@ -1,5 +1,5 @@
 """
-CLI commands for caching artifacts from remote registries.
+CLI commands for importing artifacts from remote registries.
 """
 
 from pathlib import Path
@@ -11,12 +11,12 @@ from rich.console import Console
 from flyte.cli._common import CommandBase
 
 
-@click.group(name="cache")
-def cache():
+@click.group(name="import")
+def import_cmd():
     """
-    Cache artifacts from remote registries.
+    Import artifacts from remote registries.
 
-    These commands help you download and cache artifacts like HuggingFace models
+    These commands help you download and import artifacts like HuggingFace models
     to your Flyte storage for faster access during task execution.
     """
 
@@ -37,7 +37,7 @@ ACCELERATOR_CHOICES = [
 ]
 
 
-@cache.command(name="hf-model", cls=CommandBase)
+@import_cmd.command(name="hf-model", cls=CommandBase)
 @click.argument("repo", type=str)
 @click.option(
     "--artifact-name",
@@ -45,7 +45,7 @@ ACCELERATOR_CHOICES = [
     required=False,
     default=None,
     help=(
-        "Artifact name to use for the cached model. Must only contain alphanumeric characters, "
+        "Artifact name to use for the imported model. Must only contain alphanumeric characters, "
         "underscores, and hyphens. If not provided, the repo name will be used (replacing '.' with '-')."
     ),
 )
@@ -93,12 +93,12 @@ ACCELERATOR_CHOICES = [
     "--force",
     type=int,
     default=0,
-    help="Force caching of the model. Increment value (--force=1, --force=2, ...) to force a new cache.",
+    help="Force import of the model. Increment value (--force=1, --force=2, ...) to force a new import.",
 )
 @click.option(
     "--wait",
     is_flag=True,
-    help="Wait for the model to be cached before returning.",
+    help="Wait for the model to be imported before returning.",
 )
 @click.option(
     "--hf-token-key",
@@ -110,22 +110,22 @@ ACCELERATOR_CHOICES = [
 @click.option(
     "--cpu",
     type=str,
-    help="CPU request for the caching task (e.g., '2', '4').",
+    help="CPU request for the import task (e.g., '2', '4').",
 )
 @click.option(
     "--gpu",
     type=str,
-    help="GPU request for the caching task (e.g., '1', '8').",
+    help="GPU request for the import task (e.g., '1', '8').",
 )
 @click.option(
     "--mem",
     type=str,
-    help="Memory request for the caching task (e.g., '16Gi', '64Gi').",
+    help="Memory request for the import task (e.g., '16Gi', '64Gi').",
 )
 @click.option(
     "--ephemeral-storage",
     type=str,
-    help="Ephemeral storage request for the caching task (e.g., '100Gi', '500Gi').",
+    help="Ephemeral storage request for the import task (e.g., '100Gi', '500Gi').",
 )
 @click.option(
     "--accelerator",
@@ -165,19 +165,19 @@ def hf_model(
     domain: Optional[str] = None,
 ):
     """
-    Cache a HuggingFace model to Flyte storage.
+    Import a HuggingFace model to Flyte storage.
 
-    Downloads a model from the HuggingFace Hub and caches it to your configured
+    Downloads a model from the HuggingFace Hub and imports it to your configured
     Flyte storage backend. This is useful for:
 
-    - Pre-caching large models before running inference tasks
+    - Pre-importing large models before running inference tasks
     - Sharding models for tensor-parallel inference
     - Avoiding repeated downloads during development
 
     **Basic Usage:**
 
     ```bash
-    $ flyte cache hf-model meta-llama/Llama-2-7b-hf --hf-token-key HF_TOKEN
+    $ flyte import hf-model meta-llama/Llama-2-7b-hf --hf-token-key HF_TOKEN
     ```
 
     **With Sharding:**
@@ -195,7 +195,7 @@ def hf_model(
     Then run:
 
     ```bash
-    $ flyte cache hf-model meta-llama/Llama-2-70b-hf \\
+    $ flyte import hf-model meta-llama/Llama-2-70b-hf \\
         --shard-config shard_config.yaml \\
         --gpu 8 \\
         --accelerator nvidia-a100 \\
@@ -205,12 +205,12 @@ def hf_model(
     **Wait for Completion:**
 
     ```bash
-    $ flyte cache hf-model meta-llama/Llama-2-7b-hf --wait
+    $ flyte import hf-model meta-llama/Llama-2-7b-hf --wait
     ```
     """
     import yaml
 
-    from flyte.cache import HuggingFaceModelInfo, ShardConfig, VLLMShardArgs, hf_model as cache_hf_model
+    from flyte.imports import HuggingFaceModelInfo, ShardConfig, VLLMShardArgs, hf_model as import_hf_model
     from flyte.cli._common import initialize_config
 
     # Initialize flyte config
@@ -229,8 +229,8 @@ def hf_model(
 
     console = Console()
 
-    with console.status("[bold green]Starting model caching task..."):
-        run = cache_hf_model(
+    with console.status("[bold green]Starting model import task..."):
+        run = import_hf_model(
             repo=repo,
             artifact_name=artifact_name,
             architecture=architecture,
@@ -254,15 +254,14 @@ def hf_model(
 
     url = run.url
     console.print(
-        f"🔄 Started background process to cache model from HuggingFace repo [bold]{repo}[/bold].\n"
+        f"🔄 Started background process to import model from HuggingFace repo [bold]{repo}[/bold].\n"
         f"   Check the console for status at [link={url}]{url}[/link]"
     )
 
     if wait:
-        with console.status("[bold green]Waiting for model to be cached...", spinner="dots"):
+        with console.status("[bold green]Waiting for model to be imported...", spinner="dots"):
             run.wait()
 
         outputs = run.outputs()
-        console.print(f"\n✅ Model cached successfully!")
+        console.print(f"\n✅ Model imported successfully!")
         console.print(f"   Path: [cyan]{outputs.path}[/cyan]")
-
