@@ -1,6 +1,7 @@
 use crate::action::Action;
 use crate::core::StateClient;
 use crate::error::{ControllerError, InformerError};
+use tokio_util::sync::CancellationToken;
 
 use flyteidl2::flyteidl::common::ActionIdentifier;
 use flyteidl2::flyteidl::common::RunIdentifier;
@@ -34,6 +35,8 @@ pub struct Informer {
     ready: Arc<Notify>,
     is_ready: Arc<AtomicBool>,
     completion_events: Arc<RwLock<HashMap<String, oneshot::Sender<()>>>>,
+    cancellation_token: CancellationToken,
+    watch_handle: Arc<RwLock<Option<tokio::task::JoinHandle<()>>>>,
 }
 
 impl Informer {
@@ -52,6 +55,8 @@ impl Informer {
             ready: Arc::new(Notify::new()),
             is_ready: Arc::new(AtomicBool::new(false)),
             completion_events: Arc::new(RwLock::new(HashMap::new())),
+            cancellation_token: CancellationToken::new(),
+            watch_handle: Arc::new(RwLock::new(None)),
         }
     }
 
@@ -133,7 +138,7 @@ impl Informer {
         }
     }
 
-    async fn watch_actions(&self) -> ControllerError {
+    async fn watch_actions(&self) -> Result<(), ControllerError> {
         let action_id = ActionIdentifier {
             name: self.parent_action_name.clone(),
             run: Some(self.run_id.clone()),
@@ -148,46 +153,55 @@ impl Informer {
             Ok(s) => s.into_inner(),
             Err(e) => {
                 error!("Failed to start watch stream: {:?}", e);
-                return ControllerError::from(e);
+                return Err(ControllerError::from(e));
             }
         };
 
         loop {
-            match stream.message().await {
-                Ok(Some(response)) => {
-                    let handle_response = self.handle_watch_response(response).await;
-                    match handle_response {
-                        Ok(Some(action)) => match self.shared_queue.send(action).await {
-                            Ok(_) => {
-                                continue;
+            select! {
+                _ = self.cancellation_token.cancelled() => {
+                    warn!("Cancellation token got - exiting from watch_actions: {}", self.parent_action_name);
+                    return Ok(())
+                }
+
+                result = stream.message() => {
+                    match result {
+                        Ok(Some(response)) => {
+                            let handle_response = self.handle_watch_response(response).await;
+                            match handle_response {
+                                Ok(Some(action)) => match self.shared_queue.send(action).await {
+                                    Ok(_) => {
+                                        continue;
+                                    }
+                                    Err(e) => {
+                                        error!("Informer watch failed sending action back to shared queue: {:?}", e);
+                                        return Err(ControllerError::RuntimeError(format!(
+                                            "Failed to send action to shared queue: {}",
+                                            e
+                                        )));
+                                    }
+                                },
+                                Ok(None) => {
+                                    debug!(
+                                        "Received None from handle_watch_response, continuing watch loop."
+                                    );
+                                }
+                                Err(err) => {
+                                    // this should cascade up to the controller to restart the informer, and if there
+                                    // are too many informer restarts, the controller should fail
+                                    error!("Error in informer watch {:?}", err);
+                                    return Err(err);
+                                }
                             }
-                            Err(e) => {
-                                error!("Informer watch failed sending action back to shared queue: {:?}", e);
-                                return ControllerError::RuntimeError(format!(
-                                    "Failed to send action to shared queue: {}",
-                                    e
-                                ));
-                            }
-                        },
-                        Ok(None) => {
-                            debug!(
-                                "Received None from handle_watch_response, continuing watch loop."
-                            );
                         }
-                        Err(err) => {
-                            // this should cascade up to the controller to restart the informer, and if there
-                            // are too many informer restarts, the controller should fail
-                            error!("Error in informer watch {:?}", err);
-                            return err;
+                        Ok(None) => {
+                            debug!("Stream received empty message, maybe no more messages? Repeating watch loop.");
+                        } // Stream ended, exit loop
+                        Err(e) => {
+                            error!("Error receiving message from stream: {:?}", e);
+                            return Err(ControllerError::from(e));
                         }
                     }
-                }
-                Ok(None) => {
-                    debug!("Stream received empty message, maybe no more messages? Repeating watch loop.");
-                } // Stream ended, exit loop
-                Err(e) => {
-                    error!("Error receiving message from stream: {:?}", e);
-                    return ControllerError::from(e);
                 }
             }
         }
@@ -241,6 +255,18 @@ impl Informer {
             )));
         }
         Ok(())
+    }
+
+    pub async fn stop(&self) {
+        self.cancellation_token.cancel();
+        if let Some(handle) = self.watch_handle.write().await.take() {
+            warn!("Awaiting taken handle");
+            let _ = handle.await;
+            warn!("Taken handle finished...");
+        } else {
+            warn!("No handle to take ------------------------");
+        }
+        warn!("Stopped informer {:?}", self.parent_action_name);
     }
 }
 
@@ -315,26 +341,34 @@ impl InformerCache {
         let me = Arc::clone(&informer);
         let failure_tx = self.failure_tx.clone();
 
-        // todo: Add stop and terminate watch handle
         let _watch_handle = tokio::spawn(async move {
+            let watch_actions_result = me.watch_actions().await;
+
             // If there are errors with the watch then notify the channel
-            let err = me.watch_actions().await;
+            if watch_actions_result.is_err() {
+                let err = watch_actions_result.err().unwrap();
+                error!(
+                    "Informer watch_actions failed for run {}, parent action {}: {:?}",
+                    me.run_id.name, me.parent_action_name, err
+                );
 
-            error!(
-                "Informer watch_actions failed for run {}, parent action {}: {:?}",
-                me.run_id.name, me.parent_action_name, err
-            );
+                let failure = InformerError::WatchFailed {
+                    run_name: me.run_id.name.clone(),
+                    parent_action_name: me.parent_action_name.clone(),
+                    error_message: err.to_string(),
+                };
 
-            let failure = InformerError::WatchFailed {
-                run_name: me.run_id.name.clone(),
-                parent_action_name: me.parent_action_name.clone(),
-                error_message: err.to_string(),
-            };
-
-            if let Err(e) = failure_tx.send(failure).await {
-                error!("Failed to send informer failure event: {:?}", e);
+                if let Err(e) = failure_tx.send(failure).await {
+                    error!("Failed to send informer failure event: {:?}", e);
+                }
+            } else {
+                warn!("Informer watch_actions succeeded for {}", me.run_id.name);
             }
         });
+
+        // save the value and ignore the returned reference.
+        let _ = informer.watch_handle.write().await.insert(_watch_handle);
+        warn!("Saved watch handle {:?}", informer.run_id);
 
         // Optimistically wait for ready (sentinel) with timeout
         Self::wait_for_ready(&informer, timeout).await;
@@ -388,6 +422,16 @@ impl InformerCache {
                 informer.is_ready.store(true, Ordering::Release);
             }
         }
+    }
+
+    pub async fn remove(
+        &self,
+        run_id: &RunIdentifier,
+        parent_action_name: &str,
+    ) -> Option<Arc<Informer>> {
+        let mut map = self.cache.write().await;
+        let opt_informer = map.remove(&InformerCache::mkname(&run_id.name, parent_action_name));
+        opt_informer
     }
 }
 

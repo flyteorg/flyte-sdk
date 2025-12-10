@@ -19,7 +19,7 @@ use crate::action::{Action, ActionType};
 use crate::auth::{AuthConfig, AuthLayer, ClientCredentialsAuthenticator};
 use crate::error::{ControllerError, InformerError};
 use crate::informer::{Informer, InformerCache};
-use flyteidl2::flyteidl::common::ActionIdentifier;
+use flyteidl2::flyteidl::common::{ActionIdentifier, RunIdentifier};
 use flyteidl2::flyteidl::task::TaskIdentifier;
 use flyteidl2::flyteidl::workflow::enqueue_action_request;
 use flyteidl2::flyteidl::workflow::queue_service_client::QueueServiceClient;
@@ -596,5 +596,20 @@ impl CoreBaseController {
         final_action.ok_or(ControllerError::BadContext(String::from(
             "Action not found after done",
         )))
+    }
+
+    pub async fn finalize_parent_action(&self, run_id: &RunIdentifier, parent_action_name: &str) {
+        let opt_informer = self.informer_cache.remove(run_id, parent_action_name).await;
+        match opt_informer {
+            Some(informer) => {
+                informer.stop().await;
+            }
+            None => {
+                warn!(
+                    "No informer found when finalizing parent action {}",
+                    parent_action_name
+                );
+            }
+        }
     }
 }

@@ -24,7 +24,7 @@ use crate::action::{Action, ActionType};
 use crate::auth::{AuthConfig, AuthLayer, ClientCredentialsAuthenticator};
 use crate::core::CoreBaseController;
 use crate::error::ControllerError;
-use flyteidl2::flyteidl::common::{ActionIdentifier, ProjectIdentifier};
+use flyteidl2::flyteidl::common::{ActionIdentifier, ProjectIdentifier, RunIdentifier};
 use flyteidl2::flyteidl::task::task_service_client::TaskServiceClient;
 use flyteidl2::flyteidl::task::{list_tasks_request, ListTasksRequest};
 use flyteidl2::flyteidl::workflow::state_service_client::StateServiceClient;
@@ -104,6 +104,23 @@ impl BaseController {
                     error!("Error getting action {:?}: {:?}", action_id, e);
                     exceptions::PyRuntimeError::new_err(format!("Failed to cancel action: {}", e))
                 })
+        });
+        py_fut
+    }
+
+    fn finalize_parent_action<'py>(
+        &self,
+        py: Python<'py>,
+        run_id: RunIdentifier,
+        parent_action_name: &str,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let base = self.0.clone();
+        let parent_action_string = parent_action_name.to_string();
+        let py_fut = future_into_py(py, async move {
+            base.finalize_parent_action(&run_id, &parent_action_string)
+                .await;
+            warn!("Parent action finalize: {}", parent_action_string);
+            Ok(())
         });
         py_fut
     }
