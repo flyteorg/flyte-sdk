@@ -168,7 +168,7 @@ def compute_digest(source: Union[os.PathLike, List[os.PathLike]], filter: Option
     :param callable filter:
     :return Text:
     """
-    hasher = hashlib.md5()
+    hasher = hashlib.blake2b()
 
     def compute_digest_for_file(path: os.PathLike, rel_path: os.PathLike) -> None:
         # Only consider files that exist (e.g. disregard symlinks that point to non-existent files)
