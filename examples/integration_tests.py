@@ -2,8 +2,9 @@ import logging
 import os
 
 import pytest
-from flyte._code_bundle import build_code_bundle
+
 import flyte
+from flyte._code_bundle import build_code_bundle
 
 
 @pytest.fixture(autouse=True)

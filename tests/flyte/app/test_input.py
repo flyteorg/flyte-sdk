@@ -118,7 +118,7 @@ async def test_delayed_value_get_returns_path_from_file():
 
     dv = ConcreteDelayedValue(type="file")
     result = await dv.get()
-    assert result == "/path/to/file.txt"
+    assert result.path == "/path/to/file.txt"
 
 
 @pytest.mark.asyncio
@@ -133,7 +133,7 @@ async def test_delayed_value_get_returns_path_from_dir():
 
     dv = ConcreteDelayedValue(type="directory")
     result = await dv.get()
-    assert result == "/path/to/directory"
+    assert result.path == "/path/to/directory"
 
 
 @pytest.mark.asyncio

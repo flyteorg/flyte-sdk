@@ -1,7 +1,7 @@
 # /// script
 # requires-python = "==3.13"
 # dependencies = [
-#    "flyte>=2.0.0b34",
+#    "flyte>=2.0.0b35",
 #    "sentence-transformers>=3.0.0",
 #    "transformers>=4.41.0",
 #    "huggingface-hub>=0.24",
@@ -45,7 +45,7 @@ import flyte.io
 # Configure logging
 logger = logging.getLogger(__name__)
 
-image = flyte.Image.from_uv_script(__file__, name="embed_wikipedia_image").with_pip_packages(
+image = flyte.Image.from_uv_script(__file__, name="embed_wikipedia_image", pre=True).with_pip_packages(
     "unionai-reuse>=0.1.9",
 )
 
