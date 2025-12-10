@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import sys
 
-from . import imports
 from ._build import build
 from ._cache import Cache, CachePolicy, CacheRequest
 from ._context import ctx
@@ -98,7 +97,6 @@ __all__ = [
     "deploy",
     "get_custom_context",
     "group",
-    "imports",
     "init",
     "init_from_api_key",
     "init_from_config",
