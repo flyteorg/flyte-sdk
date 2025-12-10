@@ -9,29 +9,22 @@ from __future__ import annotations
 
 import os
 import re
-from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Tuple, get_args
+import shutil
+import tempfile
+from typing import TYPE_CHECKING, Any, Dict, Literal, Optional, Tuple, get_args
+
+from flyte.io import Dir
+from flyte._logging import logger
+from flyte._task_environment import TaskEnvironment
+from pydantic import BaseModel, Field
+
 
 if TYPE_CHECKING:
     from flyte._resources import Accelerators
-    from flyte.io import Dir
     from flyte.remote import Run
 
 
-# Keys for model partition metadata
-ARCHITECTURE_KEY = "architecture"
-TASK_KEY = "task"
-FORMAT_KEY = "format"
-HUGGINGFACE_SOURCE_KEY = "huggingface_source"
-COMMIT_KEY = "commit"
-MODALITY_KEY = "modality"
-MODEL_TYPE_KEY = "model_type"
-SHARD_ENGINE_KEY = "shard_engine"
-SHARD_PARALLELISM_KEY = "shard_parallelism"
-
-
-@dataclass
-class VLLMShardArgs:
+class VLLMShardArgs(BaseModel):
     """
     Arguments for sharding a model using vLLM.
 
@@ -63,8 +56,7 @@ class VLLMShardArgs:
         return args
 
 
-@dataclass
-class ShardConfig:
+class ShardConfig(BaseModel):
     """
     Configuration for model sharding.
 
@@ -73,11 +65,10 @@ class ShardConfig:
     """
 
     engine: Literal["vllm"] = "vllm"
-    args: VLLMShardArgs = field(default_factory=VLLMShardArgs)
+    args: VLLMShardArgs = Field(default_factory=VLLMShardArgs)
 
 
-@dataclass
-class HuggingFaceModelInfo:
+class HuggingFaceModelInfo(BaseModel):
     """
     Information about a HuggingFace model to store.
 
@@ -104,8 +95,7 @@ class HuggingFaceModelInfo:
     shard_config: Optional[ShardConfig] = None
 
 
-@dataclass
-class StoredModelInfo:
+class StoredModelInfo(BaseModel):
     """
     Information about a stored model.
 
@@ -123,12 +113,14 @@ class StoredModelInfo:
 HF_DOWNLOAD_IMAGE_PACKAGES = [
     "huggingface-hub>=0.27.0",
     "hf-transfer>=0.1.8",
+    "markdown>=3.10",
 ]
 
 VLLM_SHARDING_IMAGE_PACKAGES = [
     "huggingface-hub>=0.27.0",
     "hf-transfer>=0.1.8",
     "vllm>=0.6.0",
+    "markdown>=3.10",
 ]
 
 
@@ -166,27 +158,6 @@ def _lookup_huggingface_model_info(model_repo: str, commit: str, token: Optional
     return model_type, arch
 
 
-def _get_partition_keys(info: HuggingFaceModelInfo, commit: str) -> Dict[str, str]:
-    """
-    Get partition keys for a model.
-
-    :param info: The model info.
-    :param commit: The commit ID.
-    :return: Dictionary of partition keys.
-    """
-    return {
-        ARCHITECTURE_KEY: info.architecture or "",
-        TASK_KEY: info.task,
-        FORMAT_KEY: info.serial_format or "",
-        HUGGINGFACE_SOURCE_KEY: info.repo,
-        COMMIT_KEY: commit,
-        MODALITY_KEY: ",".join(info.modality),
-        MODEL_TYPE_KEY: info.model_type or "",
-        SHARD_ENGINE_KEY: str(info.shard_config.engine) if info.shard_config else "None",
-        SHARD_PARALLELISM_KEY: str(info.shard_config.args.tensor_parallel_size) if info.shard_config else "None",
-    }
-
-
 def _stream_to_remote_dir(
     repo_id: str,
     commit: str,
@@ -219,18 +190,18 @@ def _stream_to_remote_dir(
             with open(temp_file.name, "r") as f:
                 card = f.read()
     except FileNotFoundError:
-        print("No README.md file found", flush=True)
+        logger.info("No README.md file found")
 
     # List all files in the repo
     repo_files = hfs.ls(f"{repo_id}", revision=commit, detail=True)
 
-    print(f"Streaming {len(repo_files)} files to {remote_dir_path}", flush=True)
+    logger.info(f"Streaming {len(repo_files)} files to {remote_dir_path}")
 
     for file_info in repo_files:
         if file_info["type"] == "file":
             file_name = file_info["name"].split("/")[-1]
             remote_file_path = f"{remote_dir_path}/{file_name}"
-            print(f"  Streaming {file_name}...", flush=True)
+            logger.info(f"  Streaming {file_name}...")
 
             # Stream file content directly to remote
             with hfs.open(file_info["name"], "rb", revision=commit) as src:
@@ -276,9 +247,9 @@ def _download_snapshot_to_local(
             with open(temp_file.name, "r") as f:
                 card = f.read()
     except FileNotFoundError:
-        print("No README.md file found", flush=True)
+        logger.info("No README.md file found")
 
-    print(f"Downloading model from {repo_id} to {local_dir}", flush=True)
+    logger.info(f"Downloading model from {repo_id} to {local_dir}")
     snapshot_download(
         repo_id=repo_id,
         revision=commit,
@@ -289,7 +260,10 @@ def _download_snapshot_to_local(
 
 
 def _shard_model(
+    repo: str,
+    commit: str,
     shard_config: ShardConfig,
+    token: str,
     model_path: str,
     output_dir: str,
 ) -> str:
@@ -301,39 +275,42 @@ def _shard_model(
     :param output_dir: Directory to save sharded model.
     :return: Path to sharded model directory.
     """
-    import shutil
-
     from vllm import LLM
+    from huggingface_hub import HfFileSystem, snapshot_download
 
     assert shard_config.engine == "vllm", "'vllm' is the only supported sharding engine for now"
 
+    # Download snapshot
+    hfs = HfFileSystem(token=token)
+    try:
+        readme_info = hfs.info(f"{repo}/README.md", revision=commit)
+        with tempfile.NamedTemporaryFile() as temp_file:
+            hfs.download(readme_info["name"], temp_file.name, revision=commit)
+            with open(temp_file.name, "r") as f:
+                card = f.read()
+    except FileNotFoundError:
+        logger.warning("No README.md found")
+
+    logger.info(f"Downloading model to {model_path}")
+    snapshot_download(
+        repo_id=repo,
+        revision=commit,
+        local_dir=model_path,
+        token=token,
+    )
+
     # Create LLM instance
     llm = LLM(**shard_config.args.get_vllm_args(model_path))
-    print(f"LLM initialized: {llm}")
+    logger.info(f"LLM initialized: {llm}")
 
-    # Check which engine version is being used
-    is_v1_engine = hasattr(llm.llm_engine, "engine_core")
-
-    if is_v1_engine:
-        # For V1 engine
-        print("Using V1 engine save path")
-        llm.llm_engine.engine_core.save_sharded_state(
-            path=output_dir,
-            pattern=shard_config.args.file_pattern,
-            max_size=shard_config.args.max_file_size,
-        )
-    else:
-        # For V0 engine
-        print("Using V0 engine save path")
-        model_executor = llm.llm_engine.model_executor
-        model_executor.save_sharded_state(
-            path=output_dir,
-            pattern=shard_config.args.file_pattern,
-            max_size=shard_config.args.max_file_size,
-        )
+    llm.llm_engine.engine_core.save_sharded_state(
+        path=output_dir,
+        pattern=shard_config.args.file_pattern,
+        max_size=shard_config.args.max_file_size,
+    )
 
     # Copy metadata files to output directory
-    print(f"Copying metadata files to {output_dir}")
+    logger.info(f"Copying metadata files to {output_dir}")
     for file in os.listdir(model_path):
         if os.path.splitext(file)[1] not in (".bin", ".pt", ".safetensors"):
             src_path = os.path.join(model_path, file)
@@ -346,21 +323,88 @@ def _shard_model(
     return output_dir
 
 
-def _get_latest_commit(repo_id: str, token: Optional[str]) -> str:
-    """
-    Get the latest commit ID for a HuggingFace repository.
+def store_hf_model_task(info: HuggingFaceModelInfo) -> Dir:
+    """Task to store a HuggingFace model."""
 
-    :param repo_id: The HuggingFace repository ID.
-    :param token: HuggingFace token.
-    :return: The latest commit ID.
-    """
+    import flyte.report
     from huggingface_hub import list_repo_commits, repo_exists
 
-    if not repo_exists(repo_id, token=token):
-        raise ValueError(f"Repository {repo_id} does not exist in HuggingFace.")
+    # Get HF token from secrets
+    token = os.environ.get("HF_TOKEN")
 
-    commit = list_repo_commits(repo_id, token=token)[0]
-    return commit.commit_id
+    # Validate repo exists and get latest commit
+    if not repo_exists(info.repo, token=token):
+        raise ValueError(f"Repository {info.repo} does not exist in HuggingFace.")
+
+    commit = list_repo_commits(info.repo, token=token)[0].commit_id
+    logger.info(f"Latest commit: {commit}")
+
+    # Lookup model info if not provided
+    if not info.model_type or not info.architecture:
+        logger.info("Looking up HuggingFace model info...")
+        try:
+            info.model_type, info.architecture = _lookup_huggingface_model_info(info.repo, commit, token)
+        except Exception as e:
+            logger.warning(f"Warning: Could not lookup model info: {e}")
+            info.model_type = "custom"
+            info.architecture = "custom"
+
+    logger.info(f"Model type: {info.model_type}, architecture: {info.architecture}")
+
+    # Determine artifact name
+    if info.artifact_name is None:
+        artifact_name = info.repo.split("/")[-1].replace(".", "-")
+    else:
+        artifact_name = info.artifact_name
+
+    card = None
+
+    # If sharding is needed, we must download locally first
+    if info.shard_config is not None:
+        logger.info(f"Sharding requested with {info.shard_config.engine} engine")
+
+        # Download to local temp directory
+        sharded_dir = tempfile.mkdtemp()
+        with tempfile.TemporaryDirectory() as local_model_dir:
+            _shard_model(info.repo, commit, info.shard_config, token, local_model_dir, sharded_dir)
+
+            # Upload sharded model
+            logger.info("Uploading sharded model...")
+            result_dir = Dir.from_local_sync(sharded_dir)
+
+    else:
+        # Try direct streaming first
+        try:
+            logger.info("Attempting direct streaming to remote storage...")
+
+            remote_path = flyte.ctx().raw_data_path.get_random_remote_path(artifact_name)
+            remote_path, card = _stream_to_remote_dir(info.repo, commit, token, remote_path)
+            result_dir = Dir.from_existing_remote(remote_path)
+            logger.info(f"Direct streaming completed to {remote_path}")
+
+        except Exception as e:
+            logger.error(f"Direct streaming failed: {e}")
+            logger.error("Falling back to snapshot download...")
+
+            # Fallback: download snapshot and upload
+            with tempfile.TemporaryDirectory() as local_model_dir:
+                local_model_dir, card = _download_snapshot_to_local(info.repo, commit, token, local_model_dir)
+                result_dir = Dir.from_local_sync(local_model_dir)
+
+    # create report from the markdown `card`
+    if card:
+        # Try to convert markdown to HTML for richer presentation, fallback to plain text
+        try:
+            # Try to import markdown if available (don't add import; just use if exists)
+            import markdown  # noqa: F401
+            report = markdown.markdown(card)
+        except Exception:
+            report = card  # fallback to plain markdown content
+        flyte.report.log(report)
+        flyte.report.flush()
+
+    logger.info(f"Model stored successfully at {result_dir.path}")
+    return result_dir
 
 
 def hf_model(
@@ -379,9 +423,6 @@ def hf_model(
     mem: Optional[str] = None,
     ephemeral_storage: Optional[str] = None,
     accelerator: Optional["Accelerators"] = None,
-    project: Optional[str] = None,
-    domain: Optional[str] = None,
-    wait: bool = False,
     force: int = 0,
 ) -> Run:
     """
@@ -439,16 +480,13 @@ def hf_model(
     :param mem: Memory request for the store task (e.g., '16Gi').
     :param ephemeral_storage: Ephemeral storage request (e.g., '100Gi').
     :param accelerator: Accelerator type in format '{type}:{quantity}' (e.g., 'A100:8', 'L4:1').
-    :param project: Project to run the store task in.
-    :param domain: Domain to run the store task in.
     :param wait: Whether to wait for the store task to complete. Default: False.
     :param force: Force re-store. Increment to force a new store. Default: 0.
 
     :return: A Run object representing the store task execution.
     """
     import flyte
-    from flyte import Resources, Secret, TaskEnvironment
-    from flyte._initialize import get_init_config
+    from flyte import Resources, Secret
     from flyte._resources import Accelerators
 
     _validate_artifact_name(artifact_name)
@@ -482,230 +520,20 @@ def hf_model(
 
     # Select image based on whether sharding is needed
     if shard_config is not None:
-        image = flyte.Image.from_debian_base().with_packages(VLLM_SHARDING_IMAGE_PACKAGES)
+        image = flyte.Image.from_debian_base().with_pip_packages(*VLLM_SHARDING_IMAGE_PACKAGES)
     else:
-        image = flyte.Image.from_debian_base().with_packages(HF_DOWNLOAD_IMAGE_PACKAGES)
+        image = flyte.Image.from_debian_base().with_pip_packages(*HF_DOWNLOAD_IMAGE_PACKAGES)
 
     # Build environment kwargs
     env_kwargs: Dict[str, Any] = {
-        "name": "hf-model-store",
+        "name": "store-hf-model",
         "image": image,
         "resources": resources,
-        "secrets": [Secret(key=hf_token_key)],
+        "secrets": [Secret(key=hf_token_key, as_env_var="HF_TOKEN")],
     }
 
-    env = TaskEnvironment(**env_kwargs)
-
-    @env.task(cache="auto")
-    def store_hf_model_task(
-        info: HuggingFaceModelInfo,
-        hf_token_key: str,
-        force: int,
-    ) -> Dir:
-        """Task to store a HuggingFace model."""
-        # All imports inside the task body
-        import os
-        import tempfile
-
-        from huggingface_hub import HfFileSystem, list_repo_commits, repo_exists, snapshot_download
-        import flyte
-        from flyte import ctx
-        from flyte.io import Dir
-        import flyte.storage as storage
-
-        # Get HF token from secrets
-        token = ctx.secrets.get(key=hf_token_key)
-
-        # Validate repo exists and get latest commit
-        if not repo_exists(info.repo, token=token):
-            raise ValueError(f"Repository {info.repo} does not exist in HuggingFace.")
-
-        commit = list_repo_commits(info.repo, token=token)[0].commit_id
-        print(f"Latest commit: {commit}", flush=True)
-
-        # Lookup model info if not provided
-        if not info.model_type or not info.architecture:
-            print("Looking up HuggingFace model info...", flush=True)
-            try:
-                import json
-                from huggingface_hub import hf_hub_download
-
-                config_file = hf_hub_download(
-                    repo_id=info.repo,
-                    filename="config.json",
-                    revision=commit,
-                    token=token,
-                )
-                with open(config_file, "r") as f:
-                    j = json.load(f)
-                    if not info.architecture:
-                        arch = j.get("architecture", None) or j.get("architectures", None)
-                        if isinstance(arch, list):
-                            arch = ",".join(arch)
-                        info.architecture = arch
-                    if not info.model_type:
-                        info.model_type = j.get("model_type", "custom")
-            except Exception as e:
-                print(f"Warning: Could not lookup model info: {e}", flush=True)
-                info.model_type = info.model_type or "custom"
-                info.architecture = info.architecture or "custom"
-
-        print(f"Model type: {info.model_type}, architecture: {info.architecture}", flush=True)
-
-        # Determine artifact name
-        if info.artifact_name is None:
-            artifact_name = info.repo.split("/")[-1].replace(".", "-")
-        else:
-            artifact_name = info.artifact_name
-
-        card = None
-
-        # If sharding is needed, we must download locally first
-        if info.shard_config is not None:
-            print(f"Sharding requested with {info.shard_config.engine} engine", flush=True)
-
-            # Download to local temp directory
-            with tempfile.TemporaryDirectory() as local_model_dir:
-                # Download snapshot
-                hfs = HfFileSystem(token=token)
-                try:
-                    readme_info = hfs.info(f"{info.repo}/README.md", revision=commit)
-                    with tempfile.NamedTemporaryFile() as temp_file:
-                        hfs.download(readme_info["name"], temp_file.name, revision=commit)
-                        with open(temp_file.name, "r") as f:
-                            card = f.read()
-                except FileNotFoundError:
-                    print("No README.md found", flush=True)
-
-                print(f"Downloading model to {local_model_dir}", flush=True)
-                snapshot_download(
-                    repo_id=info.repo,
-                    revision=commit,
-                    local_dir=local_model_dir,
-                    token=token,
-                )
-
-                # Shard the model
-                import shutil
-                from vllm import LLM
-
-                sharded_dir = tempfile.mkdtemp()
-                print(f"Sharding model to {sharded_dir}", flush=True)
-
-                llm = LLM(**info.shard_config.args.get_vllm_args(local_model_dir))
-
-                is_v1_engine = hasattr(llm.llm_engine, "engine_core")
-                if is_v1_engine:
-                    llm.llm_engine.engine_core.save_sharded_state(
-                        path=sharded_dir,
-                        pattern=info.shard_config.args.file_pattern,
-                        max_size=info.shard_config.args.max_file_size,
-                    )
-                else:
-                    model_executor = llm.llm_engine.model_executor
-                    model_executor.save_sharded_state(
-                        path=sharded_dir,
-                        pattern=info.shard_config.args.file_pattern,
-                        max_size=info.shard_config.args.max_file_size,
-                    )
-
-                # Copy metadata files
-                for file in os.listdir(local_model_dir):
-                    if os.path.splitext(file)[1] not in (".bin", ".pt", ".safetensors"):
-                        src = os.path.join(local_model_dir, file)
-                        dst = os.path.join(sharded_dir, file)
-                        if os.path.isdir(src):
-                            shutil.copytree(src, dst, dirs_exist_ok=True)
-                        else:
-                            shutil.copy(src, dst)
-
-                # Upload sharded model
-                print(f"Uploading sharded model...", flush=True)
-                result_dir = Dir.from_local_sync(sharded_dir)
-                shutil.rmtree(sharded_dir)
-
-        else:
-            # Try direct streaming first
-            try:
-                print("Attempting direct streaming to remote storage...", flush=True)
-                remote_path = ctx.raw_data.get_random_remote_path(artifact_name)
-                fs = storage.get_underlying_filesystem(path=remote_path)
-                fs.makedirs(remote_path, exist_ok=True)
-
-                hfs = HfFileSystem(token=token)
-
-                # Get README if available
-                try:
-                    readme_info = hfs.info(f"{info.repo}/README.md", revision=commit)
-                    with tempfile.NamedTemporaryFile() as temp_file:
-                        hfs.download(readme_info["name"], temp_file.name, revision=commit)
-                        with open(temp_file.name, "r") as f:
-                            card = f.read()
-                except FileNotFoundError:
-                    print("No README.md found", flush=True)
-
-                # List and stream all files
-                repo_files = hfs.ls(info.repo, revision=commit, detail=True)
-                for file_info in repo_files:
-                    if file_info["type"] == "file":
-                        file_name = file_info["name"].split("/")[-1]
-                        remote_file_path = f"{remote_path}/{file_name}"
-                        print(f"  Streaming {file_name}...", flush=True)
-
-                        with hfs.open(file_info["name"], "rb", revision=commit) as src:
-                            with fs.open(remote_file_path, "wb") as dst:
-                                chunk_size = 64 * 1024 * 1024  # 64MB chunks
-                                while True:
-                                    chunk = src.read(chunk_size)
-                                    if not chunk:
-                                        break
-                                    dst.write(chunk)
-
-                result_dir = Dir.from_existing_remote(remote_path)
-                print(f"Direct streaming completed to {remote_path}", flush=True)
-
-            except Exception as e:
-                print(f"Direct streaming failed: {e}", flush=True)
-                print("Falling back to snapshot download...", flush=True)
-
-                # Fallback: download snapshot and upload
-                with tempfile.TemporaryDirectory() as local_model_dir:
-                    hfs = HfFileSystem(token=token)
-                    try:
-                        readme_info = hfs.info(f"{info.repo}/README.md", revision=commit)
-                        with tempfile.NamedTemporaryFile() as temp_file:
-                            hfs.download(readme_info["name"], temp_file.name, revision=commit)
-                            with open(temp_file.name, "r") as f:
-                                card = f.read()
-                    except FileNotFoundError:
-                        print("No README.md found", flush=True)
-
-                    print(f"Downloading snapshot to {local_model_dir}", flush=True)
-                    snapshot_download(
-                        repo_id=info.repo,
-                        revision=commit,
-                        local_dir=local_model_dir,
-                        token=token,
-                    )
-
-                    print("Uploading to remote storage...", flush=True)
-                    result_dir = Dir.from_local_sync(local_model_dir)
-
-        print(f"Model stored successfully at {result_dir.path}", flush=True)
-        return result_dir
-
-    # Get config for project/domain
-    cfg = get_init_config()
-    run_project = project or cfg.project
-    run_domain = domain or cfg.domain
-
-    # Run the task
-    run = flyte.with_runcontext(
-        project=run_project,
-        domain=run_domain,
-    ).run(store_hf_model_task, info, hf_token_key, force)
-
-    if wait:
-        run.wait()
-
+    # Create a task from the module-level function with the configured environment
+    cache = "disable" if force > 0 else "auto"
+    task = TaskEnvironment(**env_kwargs).task(cache=cache, report=True)(store_hf_model_task)
+    run = flyte.with_runcontext(interactive_mode=True).run(task, info)
     return run

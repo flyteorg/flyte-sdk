@@ -851,6 +851,9 @@ class Image:
         :param secret_mounts: list of secret to mount for the build process.
         :return: Image
         """
+        for package in packages:
+            assert isinstance(package, str), f"Package {package} is not a string"
+
         new_packages: Optional[Tuple] = packages or None
         new_extra_index_urls: Optional[Tuple] = _ensure_tuple(extra_index_urls) if extra_index_urls else None
 

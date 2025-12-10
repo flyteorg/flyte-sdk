@@ -4,13 +4,14 @@ CLI commands for storing artifacts from remote registries.
 
 import typing
 from pathlib import Path
-from typing import List, Optional, Tuple
 
 import rich_click as click
 from rich.console import Console
 
 from flyte.cli._common import CommandBase
 from flyte._resources import Accelerators
+from flyte.remote import Run
+from flyte.syncify import syncify
 
 # Get all valid accelerator choices from the Accelerators literal type
 ACCELERATOR_CHOICES = list(typing.get_args(Accelerators))
@@ -93,7 +94,11 @@ def store():
     "--hf-token-key",
     type=str,
     default="HF_TOKEN",
-    help="Name of the Flyte secret containing your HuggingFace token.",
+    help=(
+        "Name of the Flyte secret containing your HuggingFace token. "
+        "Note: This is not the HuggingFace token itself, but the name of the "
+        "secret in the Flyte secret store."
+    ),
     show_default=True,
 )
 @click.option(
@@ -129,23 +134,23 @@ def store():
 def hf_model(
     cfg,
     repo: str,
-    artifact_name: Optional[str],
-    architecture: Optional[str],
+    artifact_name: str | None,
+    architecture: str | None,
     task: str,
-    modality: Tuple[str, ...],
-    serial_format: Optional[str],
-    model_type: Optional[str],
-    short_description: Optional[str],
+    modality: tuple[str, ...],
+    serial_format: str | None,
+    model_type: str | None,
+    short_description: str | None,
     force: int,
     wait: bool,
     hf_token_key: str,
-    cpu: Optional[str],
-    mem: Optional[str],
-    ephemeral_storage: Optional[str],
-    accelerator: Optional[str],
-    shard_config: Optional[Path],
-    project: Optional[str] = None,
-    domain: Optional[str] = None,
+    cpu: str | None,
+    mem: str | None,
+    ephemeral_storage: str | None,
+    accelerator: Accelerators | None,
+    shard_config: Path | None,
+    project: str | None,
+    domain: str | None,
 ):
     """
     Store a HuggingFace model to Flyte storage.
@@ -192,11 +197,15 @@ def hf_model(
     """
     import yaml
 
-    from flyte.store import HuggingFaceModelInfo, ShardConfig, VLLMShardArgs, hf_model as store_hf_model
-    from flyte.cli._common import initialize_config
+    from flyte.store import ShardConfig, VLLMShardArgs, hf_model as store_hf_model
+    from flyte.cli._run import initialize_config
 
     # Initialize flyte config
-    initialize_config(cfg.ctx, project or "", domain or "")
+    cfg = initialize_config(
+        cfg.ctx,
+        project or cfg.config.task.project,
+        domain or cfg.config.task.domain,
+    )
 
     # Parse shard config if provided
     parsed_shard_config = None
@@ -227,9 +236,6 @@ def hf_model(
             mem=mem,
             ephemeral_storage=ephemeral_storage,
             accelerator=accelerator,
-            project=project,
-            domain=domain,
-            wait=False,  # We handle waiting ourselves for better UX
             force=force,
         )
 
@@ -240,9 +246,29 @@ def hf_model(
     )
 
     if wait:
-        with console.status("[bold green]Waiting for model to be stored...", spinner="dots"):
-            run.wait()
+        run.wait()
+        try:
+            model_path = _get_output_path(run)
+            console.print(f"\n✅ Model stored successfully!")
+            console.print(f"Remote path: [cyan]{model_path}[/cyan]")
+        except Exception as e:
+            console.print(f"\n❌ Model store failed!")
+            console.print(f"Error: {e}")
 
-        outputs = run.outputs()
-        console.print(f"\n✅ Model stored successfully!")
-        console.print(f"   Path: [cyan]{outputs.path}[/cyan]")
+
+@syncify
+async def _get_output_path(run: Run) -> str:
+    """Get the output path of the run.
+    
+    NOTE: This is a workaround to get the output path of the run, since the type
+    engine can't handle re-hydrating nested Pydantic models in interactive mode.
+    """
+    from flyte._initialize import get_client
+    from flyteidl2.workflow import run_service_pb2
+
+    resp = await get_client().run_service.GetActionData(
+        request=run_service_pb2.GetActionDataRequest(
+            action_id=(await run.details.aio()).action_details.action_id,
+        )
+    )
+    return resp.outputs.literals[0].value.scalar.blob.uri
