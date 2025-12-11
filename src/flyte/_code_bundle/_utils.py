@@ -153,10 +153,10 @@ def ls_relative_files(relative_paths: list[str], source_path: pathlib.Path) -> t
 def _filehash_update(path: Union[os.PathLike, str], hasher: hashlib._Hash) -> None:
     blocksize = 65536
     with open(path, "rb") as f:
-        bytes = f.read(blocksize)
-        while bytes:
-            hasher.update(bytes)
-            bytes = f.read(blocksize)
+        chunk = f.read(blocksize)
+        while chunk:
+            hasher.update(chunk)
+            chunk = f.read(blocksize)
 
 
 def _pathhash_update(path: Union[os.PathLike, str], hasher: hashlib._Hash) -> None:
