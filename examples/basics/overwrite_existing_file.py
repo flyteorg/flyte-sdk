@@ -89,8 +89,7 @@ async def main() -> None:
     # Step 3: Overwrite the file with new content
     print("\nStep 3: Overwriting file with new content...")
     updated_file = await overwrite_existing_file(
-        remote_path=initial_file.path,
-        new_content="Updated content - version 2"
+        remote_path=initial_file.path, new_content="Updated content - version 2"
     )
 
     # Step 4: Read and verify the new content
@@ -116,4 +115,3 @@ if __name__ == "__main__":
     flyte.init_from_config()
     r = flyte.run(main)
     print(r.url)
-

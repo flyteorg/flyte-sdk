@@ -443,7 +443,8 @@ class Image:
     def _new(cls, **kwargs) -> Image:
         # call the normal __init__, injecting a private keyword that users won't know
         obj = cls.__new__(cls)  # allocate
-        object.__setattr__(obj, "_guard", cls._token)  # set guard to prevent direct construction
+        # set guard to prevent direct construction
+        object.__setattr__(obj, "_guard", cls._token)
         cls.__init__(obj, **kwargs)  # run dataclass generated __init__
         return obj
 
@@ -583,7 +584,7 @@ class Image:
         python_version: Optional[Tuple[int, int]] = None,
         index_url: Optional[str] = None,
         extra_index_urls: Union[str, List[str], Tuple[str, ...], None] = None,
-        pre: bool = False,
+        pre: bool = True,
         extra_args: Optional[str] = None,
         platform: Optional[Tuple[Architecture, ...]] = None,
         secret_mounts: Optional[SecretRequest] = None,
@@ -615,7 +616,7 @@ class Image:
         :param platform: architecture to use for the image, default is linux/amd64, use tuple for multiple values
         :param python_version: Python version for the image, if not specified, will use the current Python version
         :param index_url: index url to use for pip install, default is None
-        :param extra_index_urls: extra index urls to use for pip install, default is None
+        :param extra_index_urls: extra index urls to use for pip install, default is True
         :param pre: whether to allow pre-release versions, default is False
         :param extra_args: extra arguments to pass to pip install, default is None
         :param secret_mounts: Secret mounts to use for the image, default is None.
