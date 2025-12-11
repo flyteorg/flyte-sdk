@@ -1,0 +1,8 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "my_pkg"
+version = "0.1.0"
+description = "Test package for src layout"
