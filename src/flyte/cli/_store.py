@@ -8,8 +8,8 @@ from pathlib import Path
 import rich_click as click
 from rich.console import Console
 
-from flyte.cli._common import CommandBase
 from flyte._resources import Accelerators
+from flyte.cli._common import CommandBase
 from flyte.remote import Run
 from flyte.syncify import syncify
 
@@ -42,7 +42,7 @@ def store():
 @click.option(
     "--architecture",
     type=str,
-    help="Model architecture, as given in HuggingFace config.json. For non-transformer models use XGBoost, Custom, etc.",
+    help="Model architecture, as given in HuggingFace config.json.",
 )
 @click.option(
     "--task",
@@ -120,7 +120,10 @@ def store():
     "--accelerator",
     type=click.Choice(ACCELERATOR_CHOICES),
     default=None,
-    help="The accelerator to use for downloading and (optionally) sharding the model. Format: '{type}:{quantity}' (e.g., 'A100:8', 'L4:1').",
+    help=(
+        "The accelerator to use for downloading and (optionally) sharding the model. "
+        "Format: '{type}:{quantity}' (e.g., 'A100:8', 'L4:1').",
+    ),
 )
 @click.option(
     "--shard-config",
@@ -197,8 +200,9 @@ def hf_model(
     """
     import yaml
 
-    from flyte.store import ShardConfig, VLLMShardArgs, hf_model as store_hf_model
     from flyte.cli._run import initialize_config
+    from flyte.store import ShardConfig, VLLMShardArgs
+    from flyte.store import hf_model as store_hf_model
 
     # Initialize flyte config
     cfg = initialize_config(
@@ -249,22 +253,23 @@ def hf_model(
         run.wait()
         try:
             model_path = _get_output_path(run)
-            console.print(f"\n✅ Model stored successfully!")
+            console.print("\n✅ Model stored successfully!")
             console.print(f"Remote path: [cyan]{model_path}[/cyan]")
         except Exception as e:
-            console.print(f"\n❌ Model store failed!")
+            console.print("\n❌ Model store failed!")
             console.print(f"Error: {e}")
 
 
 @syncify
 async def _get_output_path(run: Run) -> str:
     """Get the output path of the run.
-    
+
     NOTE: This is a workaround to get the output path of the run, since the type
     engine can't handle re-hydrating nested Pydantic models in interactive mode.
     """
-    from flyte._initialize import get_client
     from flyteidl2.workflow import run_service_pb2
+
+    from flyte._initialize import get_client
 
     resp = await get_client().run_service.GetActionData(
         request=run_service_pb2.GetActionDataRequest(

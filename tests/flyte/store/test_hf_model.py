@@ -3,28 +3,26 @@
 import json
 import os
 import tempfile
-from pathlib import Path
-from typing import get_args
-from unittest.mock import AsyncMock, MagicMock, Mock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from flyte.store._hf_model import (
+    HF_DOWNLOAD_IMAGE_PACKAGES,
+    VLLM_SHARDING_IMAGE_PACKAGES,
     HuggingFaceModelInfo,
     ShardConfig,
     StoredModelInfo,
     VLLMShardArgs,
-    _validate_artifact_name,
-    _lookup_huggingface_model_info,
     _download_snapshot_to_local,
-    HF_DOWNLOAD_IMAGE_PACKAGES,
-    VLLM_SHARDING_IMAGE_PACKAGES,
+    _lookup_huggingface_model_info,
+    _validate_artifact_name,
 )
-
 
 # =============================================================================
 # VLLMShardArgs Tests
 # =============================================================================
+
 
 def test_vllm_shard_args_default_values():
     """Test default values are set correctly."""
@@ -59,7 +57,7 @@ def test_vllm_shard_args_get_vllm_args_basic():
     """Test get_vllm_args returns correct dictionary."""
     args = VLLMShardArgs(tensor_parallel_size=4)
     result = args.get_vllm_args("/path/to/model")
-    
+
     assert result["model"] == "/path/to/model"
     assert result["tensor_parallel_size"] == 4
     assert result["dtype"] == "auto"
@@ -71,7 +69,7 @@ def test_vllm_shard_args_get_vllm_args_with_max_model_len():
     """Test get_vllm_args includes max_model_len when set."""
     args = VLLMShardArgs(max_model_len=2048)
     result = args.get_vllm_args("/path/to/model")
-    
+
     assert result["max_model_len"] == 2048
 
 
@@ -106,6 +104,7 @@ def test_vllm_shard_args_custom_max_file_size():
 # ShardConfig Tests
 # =============================================================================
 
+
 def test_shard_config_default_values():
     """Test default values are set correctly."""
     config = ShardConfig()
@@ -117,7 +116,7 @@ def test_shard_config_custom_args():
     """Test custom args are set correctly."""
     custom_args = VLLMShardArgs(tensor_parallel_size=8)
     config = ShardConfig(args=custom_args)
-    
+
     assert config.engine == "vllm"
     assert config.args.tensor_parallel_size == 8
 
@@ -126,10 +125,11 @@ def test_shard_config_custom_args():
 # HuggingFaceModelInfo Tests
 # =============================================================================
 
+
 def test_huggingface_model_info_minimal_init():
     """Test initialization with only required field."""
     info = HuggingFaceModelInfo(repo="meta-llama/Llama-2-7b-hf")
-    
+
     assert info.repo == "meta-llama/Llama-2-7b-hf"
     assert info.artifact_name is None
     assert info.architecture is None
@@ -155,7 +155,7 @@ def test_huggingface_model_info_full_init():
         short_description="Llama 2 7B model",
         shard_config=shard_config,
     )
-    
+
     assert info.repo == "meta-llama/Llama-2-7b-hf"
     assert info.artifact_name == "llama-2-7b"
     assert info.architecture == "LlamaForCausalLM"
@@ -175,7 +175,7 @@ def test_huggingface_model_info_model_dump():
         artifact_name="llama-7b",
         task="generate",
     )
-    
+
     dumped = info.model_dump()
     assert dumped["repo"] == "meta-llama/Llama-2-7b-hf"
     assert dumped["artifact_name"] == "llama-7b"
@@ -188,7 +188,7 @@ def test_huggingface_model_info_model_json():
         repo="meta-llama/Llama-2-7b-hf",
         shard_config=ShardConfig(args=VLLMShardArgs(tensor_parallel_size=4)),
     )
-    
+
     json_str = info.model_dump_json()
     assert "meta-llama/Llama-2-7b-hf" in json_str
     assert "tensor_parallel_size" in json_str
@@ -201,12 +201,9 @@ def test_huggingface_model_info_from_dict():
         "artifact_name": "llama-7b",
         "task": "generate",
         "modality": ("text",),
-        "shard_config": {
-            "engine": "vllm",
-            "args": {"tensor_parallel_size": 8}
-        }
+        "shard_config": {"engine": "vllm", "args": {"tensor_parallel_size": 8}},
     }
-    
+
     info = HuggingFaceModelInfo(**data)
     assert info.repo == "meta-llama/Llama-2-7b-hf"
     assert info.shard_config.args.tensor_parallel_size == 8
@@ -216,6 +213,7 @@ def test_huggingface_model_info_from_dict():
 # StoredModelInfo Tests
 # =============================================================================
 
+
 def test_stored_model_info_init():
     """Test initialization."""
     info = StoredModelInfo(
@@ -223,7 +221,7 @@ def test_stored_model_info_init():
         path="s3://bucket/path/to/model",
         metadata={"version": "1.0", "format": "safetensors"},
     )
-    
+
     assert info.artifact_name == "my-model"
     assert info.path == "s3://bucket/path/to/model"
     assert info.metadata == {"version": "1.0", "format": "safetensors"}
@@ -232,6 +230,7 @@ def test_stored_model_info_init():
 # =============================================================================
 # _validate_artifact_name Tests
 # =============================================================================
+
 
 def test_validate_artifact_name_valid_names():
     """Test valid artifact names don't raise."""
@@ -275,6 +274,7 @@ def test_validate_artifact_name_invalid_names():
 # _lookup_huggingface_model_info Tests
 # =============================================================================
 
+
 @patch("huggingface_hub.hf_hub_download")
 def test_lookup_huggingface_model_info_with_architectures_list(mock_download, tmp_path):
     """Test lookup when config has architectures list."""
@@ -286,9 +286,7 @@ def test_lookup_huggingface_model_info_with_architectures_list(mock_download, tm
     config_file.write_text(json.dumps(config_data))
     mock_download.return_value = str(config_file)
 
-    model_type, arch = _lookup_huggingface_model_info(
-        "meta-llama/Llama-2-7b-hf", "abc123", "token"
-    )
+    model_type, arch = _lookup_huggingface_model_info("meta-llama/Llama-2-7b-hf", "abc123", "token")
 
     assert model_type == "llama"
     assert arch == "LlamaForCausalLM"
@@ -352,31 +350,36 @@ def test_lookup_huggingface_model_info_with_missing_fields(mock_download, tmp_pa
 # _download_snapshot_to_local Tests
 # =============================================================================
 
+
 @patch("huggingface_hub.snapshot_download")
 @patch("huggingface_hub.HfFileSystem")
 def test_download_snapshot_to_local_with_readme(mock_hf_fs_class, mock_snapshot):
     """Test downloading snapshot with README."""
     mock_hfs = MagicMock()
     mock_hf_fs_class.return_value = mock_hfs
-    
+
     # Mock README info
     mock_hfs.info.return_value = {"name": "repo/README.md"}
-    
+
     with tempfile.TemporaryDirectory() as local_dir:
         with patch("tempfile.NamedTemporaryFile") as mock_temp:
             mock_temp_file = MagicMock()
             mock_temp_file.name = "/tmp/readme"
             mock_temp.return_value.__enter__.return_value = mock_temp_file
-            
-            with patch("builtins.open", MagicMock(return_value=MagicMock(
-                __enter__=MagicMock(return_value=MagicMock(read=MagicMock(return_value="# README"))),
-                __exit__=MagicMock()
-            ))):
-                result_dir, card = _download_snapshot_to_local(
-                    "test-repo", "abc123", "token", local_dir
-                )
+
+            with patch(
+                "builtins.open",
+                MagicMock(
+                    return_value=MagicMock(
+                        __enter__=MagicMock(return_value=MagicMock(read=MagicMock(return_value="# README"))),
+                        __exit__=MagicMock(),
+                    )
+                ),
+            ):
+                result_dir, card = _download_snapshot_to_local("test-repo", "abc123", "token", local_dir)
 
         assert result_dir == local_dir
+        assert card is not None
         mock_snapshot.assert_called_once_with(
             repo_id="test-repo",
             revision="abc123",
@@ -394,9 +397,7 @@ def test_download_snapshot_to_local_without_readme(mock_hf_fs_class, mock_snapsh
     mock_hfs.info.side_effect = FileNotFoundError("No README")
 
     with tempfile.TemporaryDirectory() as local_dir:
-        result_dir, card = _download_snapshot_to_local(
-            "test-repo", "main", None, local_dir
-        )
+        result_dir, card = _download_snapshot_to_local("test-repo", "main", None, local_dir)
 
     assert result_dir == local_dir
     assert card is None
@@ -405,6 +406,7 @@ def test_download_snapshot_to_local_without_readme(mock_hf_fs_class, mock_snapsh
 # =============================================================================
 # Image Package Constants Tests
 # =============================================================================
+
 
 def test_hf_download_image_packages():
     """Test HF download image packages are defined."""
@@ -424,6 +426,7 @@ def test_vllm_sharding_image_packages():
 # =============================================================================
 # hf_model Function Tests
 # =============================================================================
+
 
 def test_hf_model_invalid_artifact_name_raises():
     """Test that invalid artifact name raises ValueError."""
@@ -451,6 +454,7 @@ def test_hf_model_invalid_accelerator_raises():
 # store_hf_model_task Tests
 # =============================================================================
 
+
 @patch("huggingface_hub.list_repo_commits")
 @patch("huggingface_hub.repo_exists")
 def test_store_hf_model_task_nonexistent_repo_raises(mock_repo_exists, mock_list_commits):
@@ -470,14 +474,15 @@ def test_store_hf_model_task_nonexistent_repo_raises(mock_repo_exists, mock_list
 # _shard_model Tests
 # =============================================================================
 
+
 def test_shard_model_invalid_engine():
     """Test that non-vllm engines raise an assertion error."""
     from flyte.store._hf_model import _shard_model
-    
+
     # Create a ShardConfig with modified engine (bypassing Literal validation)
     shard_config = ShardConfig()
     object.__setattr__(shard_config, "engine", "invalid_engine")
-    
+
     with pytest.raises(AssertionError, match="vllm"):
         _shard_model(
             repo="test/model",

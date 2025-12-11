@@ -13,10 +13,10 @@ from ._delete import delete
 from ._deploy import deploy
 from ._gen import gen
 from ._get import get
-from ._store import store
 from ._plugins import discover_and_register_plugins
 from ._run import run
 from ._serve import serve
+from ._store import store
 from ._update import update
 from ._user import whoami
 

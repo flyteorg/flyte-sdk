@@ -7,16 +7,16 @@ such as HuggingFace models.
 
 from ._hf_model import (
     HuggingFaceModelInfo,
-    StoredModelInfo,
     ShardConfig,
+    StoredModelInfo,
     VLLMShardArgs,
     hf_model,
 )
 
 __all__ = [
     "HuggingFaceModelInfo",
-    "StoredModelInfo",
     "ShardConfig",
+    "StoredModelInfo",
     "VLLMShardArgs",
     "hf_model",
 ]

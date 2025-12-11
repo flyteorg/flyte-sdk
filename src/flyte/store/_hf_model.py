@@ -13,11 +13,11 @@ import shutil
 import tempfile
 from typing import TYPE_CHECKING, Any, Dict, Literal, Optional, Tuple, get_args
 
-from flyte.io import Dir
-from flyte._logging import logger
-from flyte._task_environment import TaskEnvironment
 from pydantic import BaseModel, Field
 
+from flyte._logging import logger
+from flyte._task_environment import TaskEnvironment
+from flyte.io import Dir
 
 if TYPE_CHECKING:
     from flyte._resources import Accelerators
@@ -117,22 +117,20 @@ HF_DOWNLOAD_IMAGE_PACKAGES = [
 ]
 
 VLLM_SHARDING_IMAGE_PACKAGES = [
-    "huggingface-hub>=0.27.0",
-    "hf-transfer>=0.1.8",
+    *HF_DOWNLOAD_IMAGE_PACKAGES,
     "vllm>=0.6.0",
-    "markdown>=3.10",
 ]
 
 
 def _validate_artifact_name(name: Optional[str]) -> None:
     """Validate that artifact name contains only allowed characters."""
     if name is not None and not re.match(r"^[a-zA-Z0-9_-]+$", name):
-        raise ValueError(
-            f"Artifact name '{name}' must only contain alphanumeric characters, underscores, and hyphens"
-        )
+        raise ValueError(f"Artifact name '{name}' must only contain alphanumeric characters, underscores, and hyphens")
 
 
-def _lookup_huggingface_model_info(model_repo: str, commit: str, token: Optional[str]) -> Tuple[Optional[str], Optional[str]]:
+def _lookup_huggingface_model_info(
+    model_repo: str, commit: str, token: Optional[str]
+) -> Tuple[Optional[str], Optional[str]]:
     """
     Lookup HuggingFace model info from config.json.
 
@@ -141,8 +139,9 @@ def _lookup_huggingface_model_info(model_repo: str, commit: str, token: Optional
     :param token: HuggingFace token for private models.
     :return: Tuple of (model_type, architecture).
     """
-    from huggingface_hub import hf_hub_download
     import json
+
+    from huggingface_hub import hf_hub_download
 
     config_file = hf_hub_download(repo_id=model_repo, filename="config.json", revision=commit, token=token)
     arch = None
@@ -173,8 +172,10 @@ def _stream_to_remote_dir(
     :param remote_dir_path: Path to the remote directory.
     :return: Tuple of (remote_dir_path, readme_content).
     """
-    from huggingface_hub import HfFileSystem
     import tempfile
+
+    from huggingface_hub import HfFileSystem
+
     import flyte.storage as storage
 
     hfs = HfFileSystem(token=token)
@@ -198,6 +199,9 @@ def _stream_to_remote_dir(
     logger.info(f"Streaming {len(repo_files)} files to {remote_dir_path}")
 
     for file_info in repo_files:
+        if isinstance(file_info, str):
+            logger.info(f"  Skipping {file_info}...")
+            continue
         if file_info["type"] == "file":
             file_name = file_info["name"].split("/")[-1]
             remote_file_path = f"{remote_dir_path}/{file_name}"
@@ -232,8 +236,9 @@ def _download_snapshot_to_local(
     :param local_dir: Local directory to download to.
     :return: Tuple of (local_dir, readme_content).
     """
-    from huggingface_hub import HfFileSystem, snapshot_download
     import tempfile
+
+    from huggingface_hub import HfFileSystem, snapshot_download
 
     card = None
     hfs = HfFileSystem(token=token)
@@ -266,7 +271,7 @@ def _shard_model(
     token: str,
     model_path: str,
     output_dir: str,
-) -> str:
+) -> tuple[str, str | None]:
     """
     Shard a model using vLLM.
 
@@ -275,8 +280,8 @@ def _shard_model(
     :param output_dir: Directory to save sharded model.
     :return: Path to sharded model directory.
     """
-    from vllm import LLM
     from huggingface_hub import HfFileSystem, snapshot_download
+    from vllm import LLM
 
     assert shard_config.engine == "vllm", "'vllm' is the only supported sharding engine for now"
 
@@ -320,17 +325,19 @@ def _shard_model(
             else:
                 shutil.copy(src_path, dst_path)
 
-    return output_dir
+    return output_dir, card
 
 
 def store_hf_model_task(info: HuggingFaceModelInfo) -> Dir:
     """Task to store a HuggingFace model."""
 
-    import flyte.report
     from huggingface_hub import list_repo_commits, repo_exists
+
+    import flyte.report
 
     # Get HF token from secrets
     token = os.environ.get("HF_TOKEN")
+    assert token is not None, "HF_TOKEN environment variable is not set"
 
     # Validate repo exists and get latest commit
     if not repo_exists(info.repo, token=token):
@@ -358,6 +365,7 @@ def store_hf_model_task(info: HuggingFaceModelInfo) -> Dir:
         artifact_name = info.artifact_name
 
     card = None
+    result_dir: Dir
 
     # If sharding is needed, we must download locally first
     if info.shard_config is not None:
@@ -366,7 +374,7 @@ def store_hf_model_task(info: HuggingFaceModelInfo) -> Dir:
         # Download to local temp directory
         sharded_dir = tempfile.mkdtemp()
         with tempfile.TemporaryDirectory() as local_model_dir:
-            _shard_model(info.repo, commit, info.shard_config, token, local_model_dir, sharded_dir)
+            sharded_dir, card = _shard_model(info.repo, commit, info.shard_config, token, local_model_dir, sharded_dir)
 
             # Upload sharded model
             logger.info("Uploading sharded model...")
@@ -377,7 +385,7 @@ def store_hf_model_task(info: HuggingFaceModelInfo) -> Dir:
         try:
             logger.info("Attempting direct streaming to remote storage...")
 
-            remote_path = flyte.ctx().raw_data_path.get_random_remote_path(artifact_name)
+            remote_path = flyte.ctx().raw_data_path.get_random_remote_path(artifact_name)  # type: ignore [union-attr]
             remote_path, card = _stream_to_remote_dir(info.repo, commit, token, remote_path)
             result_dir = Dir.from_existing_remote(remote_path)
             logger.info(f"Direct streaming completed to {remote_path}")
@@ -388,15 +396,16 @@ def store_hf_model_task(info: HuggingFaceModelInfo) -> Dir:
 
             # Fallback: download snapshot and upload
             with tempfile.TemporaryDirectory() as local_model_dir:
-                local_model_dir, card = _download_snapshot_to_local(info.repo, commit, token, local_model_dir)
-                result_dir = Dir.from_local_sync(local_model_dir)
+                _local_model_dir, card = _download_snapshot_to_local(info.repo, commit, token, local_model_dir)
+                result_dir = Dir.from_local_sync(_local_model_dir)
 
     # create report from the markdown `card`
     if card:
         # Try to convert markdown to HTML for richer presentation, fallback to plain text
         try:
             # Try to import markdown if available (don't add import; just use if exists)
-            import markdown  # noqa: F401
+            import markdown
+
             report = markdown.markdown(card)
         except Exception:
             report = card  # fallback to plain markdown content
@@ -488,6 +497,7 @@ def hf_model(
     import flyte
     from flyte import Resources, Secret
     from flyte._resources import Accelerators
+    from flyte._cache import CacheRequest
 
     _validate_artifact_name(artifact_name)
 
@@ -524,16 +534,15 @@ def hf_model(
     else:
         image = flyte.Image.from_debian_base().with_pip_packages(*HF_DOWNLOAD_IMAGE_PACKAGES)
 
-    # Build environment kwargs
-    env_kwargs: Dict[str, Any] = {
-        "name": "store-hf-model",
-        "image": image,
-        "resources": resources,
-        "secrets": [Secret(key=hf_token_key, as_env_var="HF_TOKEN")],
-    }
-
     # Create a task from the module-level function with the configured environment
-    cache = "disable" if force > 0 else "auto"
-    task = TaskEnvironment(**env_kwargs).task(cache=cache, report=True)(store_hf_model_task)
+    cache: CacheRequest = "disable" if force > 0 else "auto"
+    env = TaskEnvironment(
+        name="store-hf-model",
+        image=image,
+        resources=resources,
+        secrets=[Secret(key=hf_token_key, as_env_var="HF_TOKEN")],
+        cache=cache,
+    )
+    task = env.task(report=True)(store_hf_model_task)  # type: ignore [assignment]
     run = flyte.with_runcontext(interactive_mode=True).run(task, info)
     return run

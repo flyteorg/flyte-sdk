@@ -1,14 +1,12 @@
 """Tests for flyte.cli._store module."""
 
-import pathlib
 import tempfile
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 from click.testing import CliRunner
 
-from flyte.cli._store import store, hf_model, ACCELERATOR_CHOICES
+from flyte.cli._store import store
 
 
 @pytest.fixture
@@ -30,6 +28,7 @@ def mock_cfg():
 # Store Group Tests
 # =============================================================================
 
+
 def test_store_help(runner):
     """Test store command group help."""
     result = runner.invoke(store, ["--help"])
@@ -48,6 +47,7 @@ def test_store_hf_model_subcommand_exists(runner):
 # hf-model Command Tests
 # =============================================================================
 
+
 def test_hf_model_help(runner):
     """Test hf-model command help."""
     result = runner.invoke(store, ["hf-model", "--help"])
@@ -59,7 +59,7 @@ def test_hf_model_help_shows_all_options(runner):
     """Test hf-model help shows all expected options."""
     result = runner.invoke(store, ["hf-model", "--help"])
     assert result.exit_code == 0, result.output
-    
+
     expected_options = [
         "--artifact-name",
         "--architecture",
@@ -97,7 +97,8 @@ def test_hf_model_invalid_accelerator(runner, mock_cfg):
         [
             "hf-model",
             "meta-llama/Llama-2-7b-hf",
-            "--accelerator", "InvalidGPU:1",
+            "--accelerator",
+            "InvalidGPU:1",
         ],
         obj=mock_cfg,
     )
@@ -113,7 +114,8 @@ def test_hf_model_shard_config_file_not_found(runner, mock_cfg):
         [
             "hf-model",
             "meta-llama/Llama-2-7b-hf",
-            "--shard-config", "/nonexistent/path/config.yaml",
+            "--shard-config",
+            "/nonexistent/path/config.yaml",
         ],
         obj=mock_cfg,
     )
@@ -123,49 +125,21 @@ def test_hf_model_shard_config_file_not_found(runner, mock_cfg):
 
 
 # =============================================================================
-# Accelerator Choices Tests
-# =============================================================================
-
-def test_accelerator_choices_not_empty():
-    """Test that accelerator choices are populated."""
-    assert len(ACCELERATOR_CHOICES) > 0
-
-
-def test_accelerator_choices_has_common_gpus():
-    """Test that common GPU accelerators are included."""
-    assert "A100:1" in ACCELERATOR_CHOICES
-    assert "A100:8" in ACCELERATOR_CHOICES
-    assert "H100:1" in ACCELERATOR_CHOICES
-    assert "L4:1" in ACCELERATOR_CHOICES
-    assert "T4:1" in ACCELERATOR_CHOICES
-
-
-def test_accelerator_choices_format():
-    """Test that accelerator choices follow the expected format."""
-    for choice in ACCELERATOR_CHOICES:
-        # Each choice should be in format "TYPE:QUANTITY"
-        assert ":" in choice, f"Accelerator {choice} missing colon separator"
-        parts = choice.split(":")
-        assert len(parts) == 2, f"Accelerator {choice} has unexpected format"
-        # Quantity should be a number
-        assert parts[1].isdigit(), f"Accelerator {choice} quantity is not a digit"
-
-
-# =============================================================================
 # Shard Config Parsing Tests
 # =============================================================================
+
 
 @patch("flyte.store.hf_model")
 @patch("flyte.cli._run.initialize_config")
 def test_shard_config_parsing(mock_init_config, mock_store, runner, mock_cfg):
     """Test parsing shard config file."""
     mock_init_config.return_value = mock_cfg
-    
+
     mock_run = MagicMock()
     mock_run.url = "https://console.example.com/run/123"
     mock_store.return_value = mock_run
 
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
         f.write("""
 engine: vllm
 args:
@@ -182,8 +156,10 @@ args:
             [
                 "hf-model",
                 "meta-llama/Llama-2-70b-hf",
-                "--shard-config", shard_config_path,
-                "--accelerator", "A100:8",
+                "--shard-config",
+                shard_config_path,
+                "--accelerator",
+                "A100:8",
             ],
             obj=mock_cfg,
         )
@@ -198,6 +174,7 @@ args:
         assert call_kwargs["shard_config"].args.max_model_len == 4096
     finally:
         import os
+
         os.unlink(shard_config_path)
 
 
@@ -206,12 +183,12 @@ args:
 def test_shard_config_minimal(mock_init_config, mock_store, runner, mock_cfg):
     """Test parsing minimal shard config file."""
     mock_init_config.return_value = mock_cfg
-    
+
     mock_run = MagicMock()
     mock_run.url = "https://console.example.com/run/123"
     mock_store.return_value = mock_run
 
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
         f.write("""
 engine: vllm
 args: {}
@@ -224,7 +201,8 @@ args: {}
             [
                 "hf-model",
                 "meta-llama/Llama-2-70b-hf",
-                "--shard-config", shard_config_path,
+                "--shard-config",
+                shard_config_path,
             ],
             obj=mock_cfg,
         )
@@ -237,6 +215,7 @@ args: {}
         assert call_kwargs["shard_config"].args.tensor_parallel_size == 1
     finally:
         import os
+
         os.unlink(shard_config_path)
 
 
@@ -244,12 +223,13 @@ args: {}
 # Basic Invocation Tests
 # =============================================================================
 
+
 @patch("flyte.store.hf_model")
 @patch("flyte.cli._run.initialize_config")
 def test_hf_model_basic_call(mock_init_config, mock_store, runner, mock_cfg):
     """Test basic hf-model command invocation."""
     mock_init_config.return_value = mock_cfg
-    
+
     mock_run = MagicMock()
     mock_run.url = "https://console.example.com/run/123"
     mock_store.return_value = mock_run
@@ -259,7 +239,7 @@ def test_hf_model_basic_call(mock_init_config, mock_store, runner, mock_cfg):
         ["hf-model", "meta-llama/Llama-2-7b-hf"],
         obj=mock_cfg,
     )
-    
+
     assert result.exit_code == 0, result.output
     mock_store.assert_called_once()
     call_kwargs = mock_store.call_args.kwargs
@@ -272,7 +252,7 @@ def test_hf_model_basic_call(mock_init_config, mock_store, runner, mock_cfg):
 def test_hf_model_with_all_options(mock_init_config, mock_store, runner, mock_cfg):
     """Test hf-model command with all options."""
     mock_init_config.return_value = mock_cfg
-    
+
     mock_run = MagicMock()
     mock_run.url = "https://console.example.com/run/123"
     mock_store.return_value = mock_run
@@ -282,20 +262,34 @@ def test_hf_model_with_all_options(mock_init_config, mock_store, runner, mock_cf
         [
             "hf-model",
             "meta-llama/Llama-2-7b-hf",
-            "--artifact-name", "llama-2-7b",
-            "--architecture", "LlamaForCausalLM",
-            "--task", "generate",
-            "--modality", "text",
-            "--modality", "image",
-            "--format", "safetensors",
-            "--model-type", "llama",
-            "--short-description", "Test model",
-            "--force", "1",
-            "--hf-token-key", "MY_HF_TOKEN",
-            "--cpu", "4",
-            "--mem", "32Gi",
-            "--ephemeral-storage", "100Gi",
-            "--accelerator", "A100:1",
+            "--artifact-name",
+            "llama-2-7b",
+            "--architecture",
+            "LlamaForCausalLM",
+            "--task",
+            "generate",
+            "--modality",
+            "text",
+            "--modality",
+            "image",
+            "--format",
+            "safetensors",
+            "--model-type",
+            "llama",
+            "--short-description",
+            "Test model",
+            "--force",
+            "1",
+            "--hf-token-key",
+            "MY_HF_TOKEN",
+            "--cpu",
+            "4",
+            "--mem",
+            "32Gi",
+            "--ephemeral-storage",
+            "100Gi",
+            "--accelerator",
+            "A100:1",
         ],
         obj=mock_cfg,
     )
@@ -323,19 +317,20 @@ def test_hf_model_with_all_options(mock_init_config, mock_store, runner, mock_cf
 # Wait Flag Tests
 # =============================================================================
 
+
 @patch("flyte.store.hf_model")
 @patch("flyte.cli._run.initialize_config")
 def test_hf_model_with_wait_flag(mock_init_config, mock_store, runner, mock_cfg):
     """Test hf-model command with --wait flag."""
     mock_init_config.return_value = mock_cfg
-    
+
     mock_run = MagicMock()
     mock_run.url = "https://console.example.com/run/123"
     mock_store.return_value = mock_run
 
     with patch("flyte.cli._store._get_output_path") as mock_get_output:
         mock_get_output.return_value = "s3://bucket/model"
-        
+
         result = runner.invoke(
             store,
             ["hf-model", "meta-llama/Llama-2-7b-hf", "--wait"],
@@ -352,14 +347,14 @@ def test_hf_model_with_wait_flag(mock_init_config, mock_store, runner, mock_cfg)
 def test_hf_model_wait_with_failure(mock_init_config, mock_store, runner, mock_cfg):
     """Test hf-model command with --wait when execution fails."""
     mock_init_config.return_value = mock_cfg
-    
+
     mock_run = MagicMock()
     mock_run.url = "https://console.example.com/run/123"
     mock_store.return_value = mock_run
 
     with patch("flyte.cli._store._get_output_path") as mock_get_output:
         mock_get_output.side_effect = Exception("Run failed")
-        
+
         result = runner.invoke(
             store,
             ["hf-model", "meta-llama/Llama-2-7b-hf", "--wait"],
@@ -374,12 +369,13 @@ def test_hf_model_wait_with_failure(mock_init_config, mock_store, runner, mock_c
 # Multiple Modalities Tests
 # =============================================================================
 
+
 @patch("flyte.store.hf_model")
 @patch("flyte.cli._run.initialize_config")
 def test_hf_model_single_modality(mock_init_config, mock_store, runner, mock_cfg):
     """Test hf-model with single modality."""
     mock_init_config.return_value = mock_cfg
-    
+
     mock_run = MagicMock()
     mock_run.url = "https://console.example.com/run/123"
     mock_store.return_value = mock_run
@@ -400,7 +396,7 @@ def test_hf_model_single_modality(mock_init_config, mock_store, runner, mock_cfg
 def test_hf_model_multiple_modalities(mock_init_config, mock_store, runner, mock_cfg):
     """Test hf-model with multiple modalities."""
     mock_init_config.return_value = mock_cfg
-    
+
     mock_run = MagicMock()
     mock_run.url = "https://console.example.com/run/123"
     mock_store.return_value = mock_run
@@ -408,10 +404,14 @@ def test_hf_model_multiple_modalities(mock_init_config, mock_store, runner, mock
     result = runner.invoke(
         store,
         [
-            "hf-model", "openai/clip-vit-base-patch32",
-            "--modality", "text",
-            "--modality", "image",
-            "--modality", "audio",
+            "hf-model",
+            "openai/clip-vit-base-patch32",
+            "--modality",
+            "text",
+            "--modality",
+            "image",
+            "--modality",
+            "audio",
         ],
         obj=mock_cfg,
     )
@@ -426,7 +426,7 @@ def test_hf_model_multiple_modalities(mock_init_config, mock_store, runner, mock
 def test_hf_model_default_modality(mock_init_config, mock_store, runner, mock_cfg):
     """Test hf-model uses default text modality when not specified."""
     mock_init_config.return_value = mock_cfg
-    
+
     mock_run = MagicMock()
     mock_run.url = "https://console.example.com/run/123"
     mock_store.return_value = mock_run

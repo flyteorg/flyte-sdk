@@ -118,7 +118,6 @@ def ls_files(
     if copy_file_detection == "loaded_modules":
         sys_modules = list(sys.modules.values())
         all_files = list_imported_modules_as_files(str(source_path), sys_modules)
-        import ipdb; ipdb.set_trace()
     # this is --copy all (--copy none should never invoke this function)
     else:
         all_files = list_all_files(source_path, deref_symlinks, ignore_group)
