@@ -10,3 +10,7 @@ def hello_regular_bar():
 def task_regular_bar():
     """Task in regular package with relative import"""
     return "regular task_bar executed"
+
+
+# Loading message
+print(f"In 3a_regular_package example: {__file__} module")

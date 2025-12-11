@@ -8,3 +8,6 @@ def hello_from_namespace_bar():
 def task_namespace_bar():
     """Another task in namespace package"""
     return "namespace task_bar executed"
+
+# Loading message
+print(f"In 2_namespace_package example: {__file__} module")
