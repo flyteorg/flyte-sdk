@@ -1,4 +1,4 @@
-"""Unit tests for VLLMAppEnvironment."""
+"""Unit tests for SGLangAppEnvironment."""
 
 import flyte
 import flyte.app
@@ -6,15 +6,15 @@ import pytest
 from flyte.app._input import Input
 from flyte.models import SerializationContext
 
-from flyteplugins.vllm import VLLMAppEnvironment
-from flyteplugins.vllm._app_environment import DEFAULT_VLLM_IMAGE
+from flyteplugins.sglang import SGLangAppEnvironment
+from flyteplugins.sglang._app_environment import DEFAULT_SGLANG_IMAGE
 
-# Tests for VLLMAppEnvironment initialization
+# Tests for SGLangAppEnvironment initialization
 
 
 def test_basic_init_with_model_path():
     """Test basic initialization with model_path."""
-    app = VLLMAppEnvironment(
+    app = SGLangAppEnvironment(
         name="test-app",
         model_path="s3://bucket/model",
         model_id="test-model",
@@ -23,14 +23,14 @@ def test_basic_init_with_model_path():
     assert app.model_path == "s3://bucket/model"
     assert app.model_id == "test-model"
     assert app.port.port == 8000
-    assert app.type == "vLLM"
+    assert app.type == "SGLang"
     assert app.stream_model is True
-    assert app.image == DEFAULT_VLLM_IMAGE
+    assert app.image == DEFAULT_SGLANG_IMAGE
 
 
 def test_basic_init_with_model_hf_path():
     """Test basic initialization with model_hf_path."""
-    app = VLLMAppEnvironment(
+    app = SGLangAppEnvironment(
         name="test-app",
         model_hf_path="Qwen/Qwen3-0.6B",
         model_id="test-model",
@@ -39,8 +39,8 @@ def test_basic_init_with_model_hf_path():
     assert app.model_hf_path == "Qwen/Qwen3-0.6B"
     assert app.model_id == "test-model"
     assert app.port.port == 8000
-    assert app.type == "vLLM"
-    assert app.image == DEFAULT_VLLM_IMAGE
+    assert app.type == "SGLang"
+    assert app.image == DEFAULT_SGLANG_IMAGE
     # When using model_hf_path, no inputs should be created
     assert app.inputs == []
     # The model mount path should be set to the HF path
@@ -49,8 +49,8 @@ def test_basic_init_with_model_hf_path():
 
 def test_custom_image():
     """Test that custom image overrides the default."""
-    custom_image = "my-registry/vllm:custom"
-    app = VLLMAppEnvironment(
+    custom_image = "my-registry/sglang:custom"
+    app = SGLangAppEnvironment(
         name="test-app",
         model_path="s3://bucket/model",
         model_id="test-model",
@@ -61,7 +61,7 @@ def test_custom_image():
 
 def test_custom_port():
     """Test custom port configuration."""
-    app = VLLMAppEnvironment(
+    app = SGLangAppEnvironment(
         name="test-app",
         model_path="s3://bucket/model",
         model_id="test-model",
@@ -72,13 +72,13 @@ def test_custom_port():
     assert "8080" in app.args
 
 
-# Tests for VLLMAppEnvironment validation
+# Tests for SGLangAppEnvironment validation
 
 
 def test_missing_model_id_raises_error():
     """Test that missing model_id raises ValueError."""
     with pytest.raises(ValueError, match="model_id must be defined"):
-        VLLMAppEnvironment(
+        SGLangAppEnvironment(
             name="test-app",
             model_path="s3://bucket/model",
             model_id="",
@@ -88,7 +88,7 @@ def test_missing_model_id_raises_error():
 def test_missing_model_path_and_hf_path_raises_error():
     """Test that missing both model_path and model_hf_path raises ValueError."""
     with pytest.raises(ValueError, match="model_path or model_hf_path must be defined"):
-        VLLMAppEnvironment(
+        SGLangAppEnvironment(
             name="test-app",
             model_id="test-model",
         )
@@ -97,7 +97,7 @@ def test_missing_model_path_and_hf_path_raises_error():
 def test_both_model_path_and_hf_path_raises_error():
     """Test that setting both model_path and model_hf_path raises ValueError."""
     with pytest.raises(ValueError, match="model_path and model_hf_path cannot be set at the same time"):
-        VLLMAppEnvironment(
+        SGLangAppEnvironment(
             name="test-app",
             model_path="s3://bucket/model",
             model_hf_path="Qwen/Qwen3-0.6B",
@@ -107,8 +107,8 @@ def test_both_model_path_and_hf_path_raises_error():
 
 def test_args_set_raises_error():
     """Test that setting args raises ValueError."""
-    with pytest.raises(ValueError, match="args cannot be set for VLLMAppEnvironment"):
-        VLLMAppEnvironment(
+    with pytest.raises(ValueError, match="args cannot be set for SGLangAppEnvironment"):
+        SGLangAppEnvironment(
             name="test-app",
             model_path="s3://bucket/model",
             model_id="test-model",
@@ -118,8 +118,8 @@ def test_args_set_raises_error():
 
 def test_inputs_set_raises_error():
     """Test that setting inputs raises ValueError."""
-    with pytest.raises(ValueError, match="inputs cannot be set for VLLMAppEnvironment"):
-        VLLMAppEnvironment(
+    with pytest.raises(ValueError, match="inputs cannot be set for SGLangAppEnvironment"):
+        SGLangAppEnvironment(
             name="test-app",
             model_path="s3://bucket/model",
             model_id="test-model",
@@ -132,15 +132,12 @@ def test_inputs_set_raises_error():
 
 def test_stream_model_true_with_model_path():
     """Test stream_model=True configuration with model_path."""
-    app = VLLMAppEnvironment(
+    app = SGLangAppEnvironment(
         name="test-app",
         model_path="s3://bucket/model",
         model_id="test-model",
         stream_model=True,
     )
-    # Should have streaming load format
-    assert "--load-format" in app.args
-    assert "flyte-vllm-streaming" in app.args
 
     # Check env vars
     assert app.env_vars["FLYTE_MODEL_LOADER_STREAM_SAFETENSORS"] == "true"
@@ -157,15 +154,12 @@ def test_stream_model_true_with_model_path():
 
 def test_stream_model_false_with_model_path():
     """Test stream_model=False configuration with model_path."""
-    app = VLLMAppEnvironment(
+    app = SGLangAppEnvironment(
         name="test-app",
         model_path="s3://bucket/model",
         model_id="test-model",
         stream_model=False,
     )
-    # Should NOT have streaming load format
-    assert "--load-format" not in app.args
-    assert "flyte-vllm-streaming" not in app.args
 
     # Check env vars
     assert app.env_vars["FLYTE_MODEL_LOADER_STREAM_SAFETENSORS"] == "false"
@@ -179,7 +173,7 @@ def test_stream_model_false_with_model_path():
 
 def test_model_hf_path_no_inputs():
     """Test that model_hf_path creates no inputs and sets correct mount path."""
-    app = VLLMAppEnvironment(
+    app = SGLangAppEnvironment(
         name="test-app",
         model_hf_path="meta-llama/Llama-2-7b",
         model_id="test-model",
@@ -197,7 +191,7 @@ def test_model_hf_path_no_inputs():
 
 def test_extra_args_as_string():
     """Test extra_args provided as a string."""
-    app = VLLMAppEnvironment(
+    app = SGLangAppEnvironment(
         name="test-app",
         model_path="s3://bucket/model",
         model_id="test-model",
@@ -210,7 +204,7 @@ def test_extra_args_as_string():
 
 def test_extra_args_as_list():
     """Test extra_args provided as a list."""
-    app = VLLMAppEnvironment(
+    app = SGLangAppEnvironment(
         name="test-app",
         model_path="s3://bucket/model",
         model_id="test-model",
@@ -224,15 +218,15 @@ def test_extra_args_as_list():
 
 def test_extra_args_empty_string():
     """Test extra_args as empty string (default)."""
-    app = VLLMAppEnvironment(
+    app = SGLangAppEnvironment(
         name="test-app",
         model_path="s3://bucket/model",
         model_id="test-model",
         extra_args="",
     )
     # Should have base args but no extra args
-    assert "vllm-fserve" in app.args
-    assert "serve" in app.args
+    assert "sglang-fserve" in app.args
+    assert "--model-path" in app.args
 
 
 # Tests for container_args method
@@ -240,7 +234,7 @@ def test_extra_args_empty_string():
 
 def test_container_args_returns_list():
     """Test that container_args returns the args list."""
-    app = VLLMAppEnvironment(
+    app = SGLangAppEnvironment(
         name="test-app",
         model_path="s3://bucket/model",
         model_id="test-model",
@@ -249,15 +243,15 @@ def test_container_args_returns_list():
     result = app.container_args(sctx)
 
     assert isinstance(result, list)
-    assert "vllm-fserve" in result
-    assert "serve" in result
+    assert "sglang-fserve" in result
+    assert "--model-path" in result
     assert "--served-model-name" in result
     assert "test-model" in result
 
 
 def test_container_args_includes_port():
     """Test that container_args includes port."""
-    app = VLLMAppEnvironment(
+    app = SGLangAppEnvironment(
         name="test-app",
         model_path="s3://bucket/model",
         model_id="test-model",
@@ -274,24 +268,24 @@ def test_container_args_includes_port():
 
 
 def test_default_link_added():
-    """Test that vLLM OpenAPI docs link is added by default."""
-    app = VLLMAppEnvironment(
+    """Test that SGLang OpenAPI docs link is added by default."""
+    app = SGLangAppEnvironment(
         name="test-app",
         model_path="s3://bucket/model",
         model_id="test-model",
     )
-    # First link should be the vLLM docs
+    # First link should be the SGLang docs
     assert len(app.links) >= 1
     docs_link = app.links[0]
     assert docs_link.path == "/docs"
-    assert docs_link.title == "vLLM OpenAPI Docs"
+    assert docs_link.title == "SGLang OpenAPI Docs"
     assert docs_link.is_relative is True
 
 
 def test_custom_links_preserved():
     """Test that custom links are preserved alongside default link."""
     custom_link = flyte.app.Link(path="/custom", title="Custom Link")
-    app = VLLMAppEnvironment(
+    app = SGLangAppEnvironment(
         name="test-app",
         model_path="s3://bucket/model",
         model_id="test-model",
@@ -308,7 +302,7 @@ def test_custom_links_preserved():
 
 def test_env_vars_initialized_if_none():
     """Test that env_vars is initialized if None."""
-    app = VLLMAppEnvironment(
+    app = SGLangAppEnvironment(
         name="test-app",
         model_path="s3://bucket/model",
         model_id="test-model",
@@ -320,7 +314,7 @@ def test_env_vars_initialized_if_none():
 
 def test_custom_env_vars_preserved():
     """Test that custom env vars are preserved."""
-    app = VLLMAppEnvironment(
+    app = SGLangAppEnvironment(
         name="test-app",
         model_path="s3://bucket/model",
         model_id="test-model",
