@@ -32,21 +32,13 @@ class ModuleLoader:
         self.root_dir_for_sys_path = None
         self.package_prefix = ""
 
-    # -------------------------------------------------------------------------
-    # Helpers
-    # -------------------------------------------------------------------------
-
     @staticmethod
     def looks_like_pkg_name(name: str) -> bool:
-        return name.isidentifier() and name not in {"src", "code", "scripts"}
+        return name.isidentifier() and name not in {".", "src", "code", "scripts"}
 
     def log(self, *args):
         if self.verbose:
             print("[ModuleLoader]", *args)
-
-    # -------------------------------------------------------------------------
-    # STEP 1 + STEP 2: Compute import plan
-    # -------------------------------------------------------------------------
 
     def compute_import_plan(self):
         """
@@ -65,6 +57,8 @@ class ModuleLoader:
         while True:
             if (cur / "__init__.py").is_file():
                 pkg_ancestors.append(cur)
+            else:
+                break
 
             parent = cur.parent
             if parent == cur:
@@ -79,7 +73,7 @@ class ModuleLoader:
             parts = rel_path.parts
 
             self.package_prefix = ".".join(parts)
-            top_pkg_name = parts[0]
+            top_pkg_name = parts[0]  # fix this later
 
             # Check if package is already importable (editable install etc.)
             if importlib.util.find_spec(top_pkg_name) is not None:
@@ -96,6 +90,7 @@ class ModuleLoader:
 
         # ---- STEP 2: Namespace package or flat directory ----
 
+        # Replace this with root dir from init config.
         cwd = Path.cwd()
         self.root_dir_for_sys_path = cwd  # your rule: use cwd as root for namespace cases
         rel_path = load_dir.relative_to(cwd)
