@@ -1,16 +1,22 @@
+from __future__ import annotations
+
 import inspect
 import os
 import re
 import shlex
-from dataclasses import dataclass, field
-from typing import List, Optional, Union
+from dataclasses import dataclass, field, replace
+from typing import TYPE_CHECKING, Any, List, Literal, Optional, Union
 
 import rich.repr
 
-from flyte import Environment
+from flyte import Environment, Image, Resources, SecretRequest
 from flyte.app._input import Input
 from flyte.app._types import Domain, Link, Port, Scaling
 from flyte.models import SerializationContext
+
+if TYPE_CHECKING:
+    pass
+
 
 APP_NAME_RE = re.compile(r"[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*")
 INVALID_APP_PORTS = [8012, 8022, 8112, 9090, 9091]
@@ -214,3 +220,70 @@ class AppEnvironment(Environment):
         ensure_client()
         app = flyte.remote.App.get(name=self.name)
         return app.endpoint
+
+    def clone_with(
+        self,
+        name: str,
+        image: Optional[Union[str, Image, Literal["auto"]]] = None,
+        resources: Optional[Resources] = None,
+        env_vars: Optional[dict[str, str]] = None,
+        secrets: Optional[SecretRequest] = None,
+        depends_on: Optional[List[Environment]] = None,
+        description: Optional[str] = None,
+        interruptible: Optional[bool] = None,
+        **kwargs: Any,
+    ) -> AppEnvironment:
+        # validate unknown kwargs if needed
+
+        type = kwargs.pop("type", None)
+        port = kwargs.pop("port", None)
+        args = kwargs.pop("args", None)
+        command = kwargs.pop("command", None)
+        requires_auth = kwargs.pop("requires_auth", None)
+        scaling = kwargs.pop("scaling", None)
+        domain = kwargs.pop("domain", None)
+        links = kwargs.pop("links", None)
+        include = kwargs.pop("include", None)
+        inputs = kwargs.pop("inputs", None)
+        cluster_pool = kwargs.pop("cluster_pool", None)
+
+        if kwargs:
+            raise TypeError(f"Unexpected keyword arguments: {list(kwargs.keys())}")
+
+        kwargs = self._get_kwargs()
+        kwargs["name"] = name
+        if image is not None:
+            kwargs["image"] = image
+        if resources is not None:
+            kwargs["resources"] = resources
+        if env_vars is not None:
+            kwargs["env_vars"] = env_vars
+        if secrets is not None:
+            kwargs["secrets"] = secrets
+        if depends_on is not None:
+            kwargs["depends_on"] = depends_on
+        if description is not None:
+            kwargs["description"] = description
+        if type is not None:
+            kwargs["type"] = type
+        if port is not None:
+            kwargs["port"] = port
+        if args is not None:
+            kwargs["args"] = args
+        if command is not None:
+            kwargs["command"] = command
+        if requires_auth is not None:
+            kwargs["requires_auth"] = requires_auth
+        if scaling is not None:
+            kwargs["scaling"] = scaling
+        if domain is not None:
+            kwargs["domain"] = domain
+        if links is not None:
+            kwargs["links"] = links
+        if include is not None:
+            kwargs["include"] = include
+        if inputs is not None:
+            kwargs["inputs"] = inputs
+        if cluster_pool is not None:
+            kwargs["cluster_pool"] = cluster_pool
+        return replace(self, **kwargs)

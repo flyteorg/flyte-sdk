@@ -11,7 +11,8 @@ import os
 import re
 import shutil
 import tempfile
-from typing import TYPE_CHECKING, Any, Dict, Literal, Optional, Tuple, get_args
+import typing
+from typing import TYPE_CHECKING, Any, Literal, get_args
 
 from pydantic import BaseModel, Field
 
@@ -39,11 +40,11 @@ class VLLMShardArgs(BaseModel):
     tensor_parallel_size: int = 1
     dtype: str = "auto"
     trust_remote_code: bool = True
-    max_model_len: Optional[int] = None
+    max_model_len: int | None = None
     file_pattern: str = "*.safetensors"
     max_file_size: int = 5 * 1024**3  # 5GB default
 
-    def get_vllm_args(self, model_path: str) -> Dict[str, Any]:
+    def get_vllm_args(self, model_path: str) -> dict[str, Any]:
         """Get arguments dict for vLLM LLM constructor."""
         args = {
             "model": model_path,
@@ -85,14 +86,14 @@ class HuggingFaceModelInfo(BaseModel):
     """
 
     repo: str
-    artifact_name: Optional[str] = None
-    architecture: Optional[str] = None
+    artifact_name: str | None = None
+    architecture: str | None = None
     task: str = "auto"
-    modality: Tuple[str, ...] = ("text",)
-    serial_format: Optional[str] = None
-    model_type: Optional[str] = None
-    short_description: Optional[str] = None
-    shard_config: Optional[ShardConfig] = None
+    modality: tuple[str, ...] = ("text",)
+    serial_format: str | None = None
+    model_type: str | None = None
+    short_description: str | None = None
+    shard_config: ShardConfig | None = None
 
 
 class StoredModelInfo(BaseModel):
@@ -106,7 +107,7 @@ class StoredModelInfo(BaseModel):
 
     artifact_name: str
     path: str
-    metadata: Dict[str, str]
+    metadata: dict[str, str]
 
 
 # Image definitions for the store task
@@ -122,15 +123,13 @@ VLLM_SHARDING_IMAGE_PACKAGES = [
 ]
 
 
-def _validate_artifact_name(name: Optional[str]) -> None:
+def _validate_artifact_name(name: str | None) -> None:
     """Validate that artifact name contains only allowed characters."""
     if name is not None and not re.match(r"^[a-zA-Z0-9_-]+$", name):
         raise ValueError(f"Artifact name '{name}' must only contain alphanumeric characters, underscores, and hyphens")
 
 
-def _lookup_huggingface_model_info(
-    model_repo: str, commit: str, token: Optional[str]
-) -> Tuple[Optional[str], Optional[str]]:
+def _lookup_huggingface_model_info(model_repo: str, commit: str, token: str | None) -> tuple[str | None, str | None]:
     """
     Lookup HuggingFace model info from config.json.
 
@@ -160,9 +159,9 @@ def _lookup_huggingface_model_info(
 def _stream_to_remote_dir(
     repo_id: str,
     commit: str,
-    token: Optional[str],
+    token: str | None,
     remote_dir_path: str,
-) -> Tuple[str, Optional[str]]:
+) -> tuple[str, str | None]:
     """
     Stream files directly from HuggingFace to a remote directory.
 
@@ -224,9 +223,9 @@ def _stream_to_remote_dir(
 def _download_snapshot_to_local(
     repo_id: str,
     commit: str,
-    token: Optional[str],
+    token: str | None,
     local_dir: str,
-) -> Tuple[str, Optional[str]]:
+) -> tuple[str, str | None]:
     """
     Download model snapshot to local directory.
 
@@ -328,7 +327,10 @@ def _shard_model(
     return output_dir, card
 
 
-def store_hf_model_task(info: HuggingFaceModelInfo) -> Dir:
+# NOTE: the info argument is a json string instead of a HuggingFaceModelInfo
+# object because the type engine cannot handle nested pydantic or dataclass
+# objects when run in interactive mode.
+def store_hf_model_task(info: str) -> Dir:
     """Task to store a HuggingFace model."""
 
     from huggingface_hub import list_repo_commits, repo_exists
@@ -340,41 +342,44 @@ def store_hf_model_task(info: HuggingFaceModelInfo) -> Dir:
     assert token is not None, "HF_TOKEN environment variable is not set"
 
     # Validate repo exists and get latest commit
-    if not repo_exists(info.repo, token=token):
-        raise ValueError(f"Repository {info.repo} does not exist in HuggingFace.")
+    _info: HuggingFaceModelInfo = HuggingFaceModelInfo.model_validate_json(info)
+    if not repo_exists(_info.repo, token=token):
+        raise ValueError(f"Repository {_info.repo} does not exist in HuggingFace.")
 
-    commit = list_repo_commits(info.repo, token=token)[0].commit_id
+    commit = list_repo_commits(_info.repo, token=token)[0].commit_id
     logger.info(f"Latest commit: {commit}")
 
     # Lookup model info if not provided
-    if not info.model_type or not info.architecture:
+    if not _info.model_type or not _info.architecture:
         logger.info("Looking up HuggingFace model info...")
         try:
-            info.model_type, info.architecture = _lookup_huggingface_model_info(info.repo, commit, token)
+            _info.model_type, _info.architecture = _lookup_huggingface_model_info(_info.repo, commit, token)
         except Exception as e:
             logger.warning(f"Warning: Could not lookup model info: {e}")
-            info.model_type = "custom"
-            info.architecture = "custom"
+            _info.model_type = "custom"
+            _info.architecture = "custom"
 
-    logger.info(f"Model type: {info.model_type}, architecture: {info.architecture}")
+    logger.info(f"Model type: {_info.model_type}, architecture: {_info.architecture}")
 
     # Determine artifact name
-    if info.artifact_name is None:
-        artifact_name = info.repo.split("/")[-1].replace(".", "-")
+    if _info.artifact_name is None:
+        artifact_name = _info.repo.split("/")[-1].replace(".", "-")
     else:
-        artifact_name = info.artifact_name
+        artifact_name = _info.artifact_name
 
     card = None
     result_dir: Dir
 
     # If sharding is needed, we must download locally first
-    if info.shard_config is not None:
-        logger.info(f"Sharding requested with {info.shard_config.engine} engine")
+    if _info.shard_config is not None:
+        logger.info(f"Sharding requested with {_info.shard_config.engine} engine")
 
         # Download to local temp directory
         sharded_dir = tempfile.mkdtemp()
         with tempfile.TemporaryDirectory() as local_model_dir:
-            sharded_dir, card = _shard_model(info.repo, commit, info.shard_config, token, local_model_dir, sharded_dir)
+            sharded_dir, card = _shard_model(
+                _info.repo, commit, _info.shard_config, token, local_model_dir, sharded_dir
+            )
 
             # Upload sharded model
             logger.info("Uploading sharded model...")
@@ -386,7 +391,7 @@ def store_hf_model_task(info: HuggingFaceModelInfo) -> Dir:
             logger.info("Attempting direct streaming to remote storage...")
 
             remote_path = flyte.ctx().raw_data_path.get_random_remote_path(artifact_name)  # type: ignore [union-attr]
-            remote_path, card = _stream_to_remote_dir(info.repo, commit, token, remote_path)
+            remote_path, card = _stream_to_remote_dir(_info.repo, commit, token, remote_path)
             result_dir = Dir.from_existing_remote(remote_path)
             logger.info(f"Direct streaming completed to {remote_path}")
 
@@ -396,7 +401,7 @@ def store_hf_model_task(info: HuggingFaceModelInfo) -> Dir:
 
             # Fallback: download snapshot and upload
             with tempfile.TemporaryDirectory() as local_model_dir:
-                _local_model_dir, card = _download_snapshot_to_local(info.repo, commit, token, local_model_dir)
+                _local_model_dir, card = _download_snapshot_to_local(_info.repo, commit, token, local_model_dir)
                 result_dir = Dir.from_local_sync(_local_model_dir)
 
     # create report from the markdown `card`
@@ -419,19 +424,19 @@ def store_hf_model_task(info: HuggingFaceModelInfo) -> Dir:
 def hf_model(
     repo: str,
     *,
-    artifact_name: Optional[str] = None,
-    architecture: Optional[str] = None,
+    artifact_name: str | None = None,
+    architecture: str | None = None,
     task: str = "auto",
-    modality: Tuple[str, ...] = ("text",),
-    serial_format: Optional[str] = None,
-    model_type: Optional[str] = None,
-    short_description: Optional[str] = None,
-    shard_config: Optional[ShardConfig] = None,
+    modality: tuple[str, ...] = ("text",),
+    serial_format: str | None = None,
+    model_type: str | None = None,
+    short_description: str | None = None,
+    shard_config: ShardConfig | None = None,
     hf_token_key: str = "HF_TOKEN",
-    cpu: Optional[str] = None,
-    mem: Optional[str] = None,
-    ephemeral_storage: Optional[str] = None,
-    accelerator: Optional["Accelerators"] = None,
+    cpu: str | None = None,
+    mem: str | None = None,
+    ephemeral_storage: str | None = None,
+    accelerator: Accelerators | None = None,
     force: int = 0,
 ) -> Run:
     """
@@ -496,8 +501,9 @@ def hf_model(
     """
     import flyte
     from flyte import Resources, Secret
-    from flyte._resources import Accelerators
     from flyte._cache import CacheRequest
+    from flyte._resources import Accelerators
+    from flyte.remote import Run
 
     _validate_artifact_name(artifact_name)
 
@@ -544,5 +550,5 @@ def hf_model(
         cache=cache,
     )
     task = env.task(report=True)(store_hf_model_task)  # type: ignore [assignment]
-    run = flyte.with_runcontext(interactive_mode=True).run(task, info)
-    return run
+    run = flyte.with_runcontext(interactive_mode=True).run(task, info.model_dump_json())
+    return typing.cast(Run, run)

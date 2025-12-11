@@ -86,17 +86,28 @@ sglang_app = SGLangAppEnvironment(
         scaledown_after=300,  # Scale down after 5 minutes of inactivity
     ),
     requires_auth=False,
-    extra_args=["--context-length", "8192"],  # Limit context length for smaller GPU memory
+    extra_args=[
+        "--context-length",
+        "8192",
+        "--tensor-parallel-size",
+        "4",
+        "--mem-fraction-static",
+        "0.8",
+    ],
 )
 
 
 if __name__ == "__main__":
     from flyte.remote import Run
+    from flyte.store import ShardConfig, VLLMShardArgs
 
     flyte.init_from_config()
 
     # store the Qwen3-0.6B model into flyte object store
-    run: Run = flyte.store.hf_model(repo="Qwen/Qwen3-0.6B")
+    run: Run = flyte.store.hf_model(
+        repo="Qwen/Qwen3-8B",
+        shard_config=ShardConfig(engine="vllm", args=VLLMShardArgs(tensor_parallel_size=4)),
+    )
     run.wait()
 
     app = flyte.serve(

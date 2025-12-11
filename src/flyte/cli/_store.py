@@ -10,8 +10,6 @@ from rich.console import Console
 
 from flyte._resources import Accelerators
 from flyte.cli._common import CommandBase
-from flyte.remote import Run
-from flyte.syncify import syncify
 
 # Get all valid accelerator choices from the Accelerators literal type
 ACCELERATOR_CHOICES = list(typing.get_args(Accelerators))
@@ -122,7 +120,7 @@ def store():
     default=None,
     help=(
         "The accelerator to use for downloading and (optionally) sharding the model. "
-        "Format: '{type}:{quantity}' (e.g., 'A100:8', 'L4:1').",
+        "Format: '{type}:{quantity}' (e.g., 'A100:8', 'L4:1')."
     ),
 )
 @click.option(
@@ -245,35 +243,16 @@ def hf_model(
 
     url = run.url
     console.print(
-        f"🔄 Started background process to store model from HuggingFace repo [bold]{repo}[/bold].\n"
+        f"🔄 Started run {run.name} to store model from HuggingFace repo [bold]{repo}[/bold].\n"
         f"   Check the console for status at [link={url}]{url}[/link]"
     )
 
     if wait:
         run.wait()
         try:
-            model_path = _get_output_path(run)
+            model_path = run.outputs()[0].path
             console.print("\n✅ Model stored successfully!")
             console.print(f"Remote path: [cyan]{model_path}[/cyan]")
         except Exception as e:
             console.print("\n❌ Model store failed!")
             console.print(f"Error: {e}")
-
-
-@syncify
-async def _get_output_path(run: Run) -> str:
-    """Get the output path of the run.
-
-    NOTE: This is a workaround to get the output path of the run, since the type
-    engine can't handle re-hydrating nested Pydantic models in interactive mode.
-    """
-    from flyteidl2.workflow import run_service_pb2
-
-    from flyte._initialize import get_client
-
-    resp = await get_client().run_service.GetActionData(
-        request=run_service_pb2.GetActionDataRequest(
-            action_id=(await run.details.aio()).action_details.action_id,
-        )
-    )
-    return resp.outputs.literals[0].value.scalar.blob.uri
