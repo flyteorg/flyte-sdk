@@ -250,7 +250,11 @@ def prepare_launch_json(ctx: click.Context, pid: int):
     with open(os.path.join(vscode_directory, "launch.json"), "w") as file:
         json.dump(launch_json, file, indent=4)
 
-    settings_json = {"python.defaultInterpreterPath": sys.executable, "remote.autoForwardPorts": False}
+    settings_json = {
+        "python.defaultInterpreterPath": sys.executable,
+        "remote.autoForwardPorts": False,
+        "remote.autoForwardPortsFallback": 0,
+    }
     with open(os.path.join(vscode_directory, "settings.json"), "w") as file:
         json.dump(settings_json, file, indent=4)
 
