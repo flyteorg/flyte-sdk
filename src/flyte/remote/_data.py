@@ -54,6 +54,117 @@ def hash_file(file_path: typing.Union[os.PathLike, str]) -> Tuple[bytes, str, in
     return h.digest(), h.hexdigest(), size
 
 
+class _RetryableUploadError(Exception):
+    """Internal exception to signal retryable upload failure."""
+    pass
+
+
+def _is_retryable_status_code(status_code: int) -> bool:
+    """Check if HTTP status code indicates a retryable error."""
+    return status_code in [408, 429, 500, 502, 503, 504]
+
+
+async def _upload_with_retry(
+    fp: Path,
+    signed_url: str,
+    extra_headers: dict,
+    verify: bool,
+    max_retries: int = 3,
+    min_backoff_sec: float = 0.5,
+    max_backoff_sec: float = 10.0,
+) -> httpx.Response:
+    """
+    Upload file to signed URL with exponential backoff retry.
+
+    Retries on transient network errors and 5xx/429/408 HTTP errors.
+    Does not retry on 4xx client errors (except 408/429).
+
+    Args:
+        fp: Path to file to upload
+        signed_url: Pre-signed URL for upload
+        extra_headers: Headers including Content-MD5, Content-Length
+        verify: Whether to verify SSL certificates
+        max_retries: Maximum retry attempts (default: 3)
+        min_backoff_sec: Initial backoff delay (default: 0.5)
+        max_backoff_sec: Maximum backoff delay (default: 10.0)
+
+    Returns:
+        httpx.Response from successful upload
+
+    Raises:
+        RuntimeSystemError: If upload fails after all retries
+    """
+    from flyte._logging import logger
+
+    retry_attempt = 0
+    last_error = None
+
+    while retry_attempt <= max_retries:
+        try:
+            # Open file fresh for each attempt to reset cursor
+            async with aiofiles.open(str(fp), "rb") as file:
+                async with httpx.AsyncClient(verify=verify) as aclient:
+                    put_resp = await aclient.put(signed_url, headers=extra_headers, content=file)
+
+                    # Success
+                    if put_resp.status_code in [200, 201, 204]:
+                        if retry_attempt > 0:
+                            logger.info(f"Upload succeeded after {retry_attempt} retries for {fp.name}")
+                        return put_resp
+
+                    # Check if retryable status code
+                    if _is_retryable_status_code(put_resp.status_code):
+                        raise _RetryableUploadError(
+                            f"HTTP {put_resp.status_code}: {put_resp.text[:200]}"
+                        )
+                    else:
+                        # Non-retryable HTTP error
+                        raise RuntimeSystemError(
+                            "UploadFailed",
+                            f"Failed to upload {fp} to {signed_url}, status code: {put_resp.status_code}, "
+                            f"response: {put_resp.text}",
+                        )
+
+        except (
+            httpx.TimeoutException,
+            httpx.ConnectError,
+            httpx.ReadError,
+            httpx.WriteError,
+            httpx.NetworkError,
+            httpx.ProxyError,
+        ) as e:
+            last_error = f"Network error: {type(e).__name__}: {str(e)}"
+            if retry_attempt >= max_retries:
+                raise RuntimeSystemError(
+                    "UploadFailed",
+                    f"Failed to upload {fp} after {max_retries} retries due to network error: {e}",
+                ) from e
+
+        except _RetryableUploadError as e:
+            last_error = str(e)
+            if retry_attempt >= max_retries:
+                raise RuntimeSystemError(
+                    "UploadFailed",
+                    f"Failed to upload {fp} after {max_retries} retries: {e}",
+                ) from e
+
+        # Backoff and retry
+        retry_attempt += 1
+        if retry_attempt <= max_retries:
+            backoff_delay = min(min_backoff_sec * (2 ** (retry_attempt - 1)), max_backoff_sec)
+            logger.warning(
+                f"Upload failed for {fp.name}, backing off for {backoff_delay:.2f}s "
+                f"[retry {retry_attempt}/{max_retries}]: {last_error}"
+            )
+            await asyncio.sleep(backoff_delay)
+
+    # Should not reach here
+    raise RuntimeSystemError(
+        "UploadFailed",
+        f"Failed to upload {fp} after {max_retries} retries, last error: {last_error}",
+    )
+
+
 @require_project_and_domain
 async def _upload_single_file(
     cfg: CommonInit, fp: Path, verify: bool = True, basedir: str | None = None
@@ -97,19 +208,19 @@ async def _upload_single_file(
     encoded_md5 = b64encode(md5_bytes)
     content_length = fp.stat().st_size
 
-    async with aiofiles.open(str(fp), "rb") as file:
-        extra_headers.update({"Content-Length": str(content_length), "Content-MD5": encoded_md5.decode("utf-8")})
-        async with httpx.AsyncClient(verify=verify) as aclient:
-            put_resp = await aclient.put(resp.signed_url, headers=extra_headers, content=file)
-            if put_resp.status_code not in [200, 201, 204]:
-                raise RuntimeSystemError(
-                    "UploadFailed",
-                    f"Failed to upload {fp} to {resp.signed_url}, status code: {put_resp.status_code}, "
-                    f"response: {put_resp.text}",
-                )
-        # TODO in old code we did this
-        #             if self._config.platform.insecure_skip_verify is True
-        #             else self._config.platform.ca_cert_file_path,
+    # Update headers with MD5 and content length
+    extra_headers.update({"Content-Length": str(content_length), "Content-MD5": encoded_md5.decode("utf-8")})
+
+    await _upload_with_retry(
+        fp=fp,
+        signed_url=resp.signed_url,
+        extra_headers=extra_headers,
+        verify=verify,
+        max_retries=3,
+        min_backoff_sec=0.5,
+        max_backoff_sec=10.0,
+    )
+
     logger.debug(f"Uploaded with digest {str_digest}, blob location is {resp.native_url}")
     return str_digest, resp.native_url
 
