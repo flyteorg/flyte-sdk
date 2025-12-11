@@ -17,6 +17,7 @@ rs_controller/
 build/
 develop-eggs/
 dist/
+dist-plugins/
 downloads/
 eggs/
 .eggs/
