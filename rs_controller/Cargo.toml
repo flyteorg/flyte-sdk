@@ -6,12 +6,19 @@ edition = "2021"
 [lib]
 name = "flyte_controller_base"
 path = "src/lib.rs"
-crate-type = ["cdylib", "rlib"]
+# Default to rlib for Rust users and binaries
+# Maturin will override to ["cdylib"] when building wheels
+crate-type = ["rlib", "cdylib"]
+
+[features]
+# Default features for Rust crate users (includes auto-initialize for binaries)
+default = ["pyo3/auto-initialize"]
+# Extension module feature for Python wheels (no auto-initialize, no linking)
+extension-module = ["pyo3/extension-module"]
 
 [dependencies]
-# Note: maturin automatically adds "extension-module" when building the Python module
-# We don't include it here so that binaries can link against Python
-pyo3 = { version = "0.24", features = ["abi3-py310", "auto-initialize"] }
+# Use abi3 for stable API, auto-initialize only when not building extension-module
+pyo3 = { version = "0.24", features = ["abi3-py310"] }
 pyo3-async-runtimes = { version = "0.24", features = ["tokio-runtime"] }
 tokio = { version = "1.0", features = ["full"] }
 tokio-util = "0.7"

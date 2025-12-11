@@ -344,3 +344,34 @@ To install the wheel locally for testing, use the following command with your ve
 uv pip install --find-links ./rs_controller/dist --no-index --force-reinstall flyte_controller_base
 ```
 Repeat this process to iterate - build new wheels, force reinstall the controller package.
+
+### Build Configuration Summary
+
+In order to support both Rust crate publication and Python wheel distribution, we have
+to sometimes use and sometimes not use the 'pyo3/extension-module' feature. To do this, this
+project's Cargo.toml itself can toggle this on and off.
+
+  [features]
+  default = ["pyo3/auto-initialize"]     # For Rust crate users (links to libpython)
+  extension-module = ["pyo3/extension-module"]  # For Python wheels (no libpython linking)
+
+The cargo file contains
+
+  # Cargo.toml
+  [lib]
+  crate-type = ["rlib", "cdylib"]  # Support both Rust and Python usage
+
+When using 'default', 'auto-initialize' is turned on, which requires linking to libpython, which exists on local Mac so
+this works nicely. It is not available in manylinux however, so trying to build with this feature in a manylinux docker
+image will fail. But that's okay, because the purpose of the manylinux container is to build wheels,
+and for wheels, we need the 'extension-module' feature, which disables linking to libpython.
+
+The key insight: auto-initialize is for embedding Python in Rust (needs libpython), while
+extension-module is for extending Python with Rust (must NOT link libpython for portability).
+
+This setup makes it possible to build wheels and also run Rust binaries with `cargo run --bin`. 
+
+(not sure if this is needed)
+  # pyproject.toml
+  [tool.maturin]
+  features = ["extension-module"]  # Tells maturin to use extension-module feature
