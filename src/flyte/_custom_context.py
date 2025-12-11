@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 
-from flyte._context import Context, ctx
+from flyte._context import ctx
 
 from ._context import internal_ctx
 
@@ -36,7 +36,7 @@ def get_custom_context() -> dict[str, str]:
 
 
 @contextmanager
-def custom_context(**context: str) -> Context | None:
+def custom_context(**context: str):
     """
     Synchronous context manager to set input context for tasks spawned within this block.
 

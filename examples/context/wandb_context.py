@@ -9,8 +9,9 @@ import os
 import random
 from dataclasses import dataclass
 
-import flyte
 import wandb
+
+import flyte
 from flyte.link import Wandb
 
 # Configure the task environment with wandb
