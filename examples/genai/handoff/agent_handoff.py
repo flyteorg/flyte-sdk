@@ -30,8 +30,9 @@ env = flyte.TaskEnvironment(
     reusable=flyte.ReusePolicy(
         replicas=(1, 5),
         concurrency=10,
+        idle_ttl=30 * 60,
     ),
-    cache="auto",
+    cache=flyte.Cache("auto", version_override="1.0"),
 )
 
 
@@ -159,6 +160,8 @@ Instructions:
 - Only use tags from the available list
 - Return as comma-separated values
 - If no tags are relevant, return "none"
+
+Always return 5 tags.
 
 Relevant tags:"""
 
