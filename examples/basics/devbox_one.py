@@ -2,9 +2,8 @@ import asyncio
 import logging
 from typing import List
 
-from kubernetes.client import V1Container, V1PodSpec, V1Toleration
-
 import flyte
+from kubernetes.client import V1Container, V1PodSpec, V1Toleration
 
 pod_template = flyte.PodTemplate(
     pod_spec=V1PodSpec(
@@ -24,7 +23,9 @@ pod_template = flyte.PodTemplate(
 env = flyte.TaskEnvironment(
     name="hello_world",
     resources=flyte.Resources(cpu=1, memory="1Gi"),
-    image=flyte.Image.from_base("ghcr.io/flyteorg/flyte:py3.12-v2.0.0b31"),
+    image=flyte.Image.from_base(
+        "376129846803.dkr.ecr.us-east-2.amazonaws.com/union/dogfood:flyte-e795f7d9"
+    ),
     pod_template=pod_template,
 )
 

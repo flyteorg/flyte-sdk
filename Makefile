@@ -90,4 +90,4 @@ debug-optimize-build:
 	nydusify convert --source $(TARGET_IMAGE) --target $(TARGET_IMAGE)-opt --fs-version 6 --work-dir /tmp/nydusify --with-referrer --oci-ref
 
 debug-optimize-run:
-	uv run python examples/basics/devbox_one.py
+	uv run --python 3.12 python examples/basics/devbox_one.py
