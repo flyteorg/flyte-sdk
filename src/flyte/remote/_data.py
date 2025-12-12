@@ -54,16 +54,6 @@ def hash_file(file_path: typing.Union[os.PathLike, str]) -> Tuple[bytes, str, in
     return h.digest(), h.hexdigest(), size
 
 
-class _RetryableUploadError(Exception):
-    """Internal exception to signal retryable upload failure."""
-
-
-
-def _is_retryable_status_code(status_code: int) -> bool:
-    """Check if HTTP status code indicates a retryable error."""
-    return status_code in [408, 429, 500, 502, 503, 504]
-
-
 async def _upload_with_retry(
     fp: Path,
     signed_url: str,
