@@ -36,6 +36,7 @@ from ._reusable_environment import ReusePolicy
 from ._secret import SecretRequest
 from ._timeout import TimeoutType
 from ._trigger import Trigger
+from .link import Link
 from .models import MAX_INLINE_IO_BYTES, NativeInterface, SerializationContext
 
 if TYPE_CHECKING:
@@ -116,6 +117,7 @@ class TaskTemplate(Generic[P, R, F]):
     ref: bool = field(default=False, init=False, repr=False, compare=False)
     max_inline_io_bytes: int = MAX_INLINE_IO_BYTES
     triggers: Tuple[Trigger, ...] = field(default_factory=tuple)
+    link: Optional[Link] = None
 
     # Only used in python 3.10 and 3.11, where we cannot use markcoroutinefunction
     _call_as_synchronous: bool = False
@@ -356,6 +358,7 @@ class TaskTemplate(Generic[P, R, F]):
         pod_template: Optional[Union[str, PodTemplate]] = None,
         queue: Optional[str] = None,
         interruptible: Optional[bool] = None,
+        link: Optional[Link] = None,
         **kwargs: Any,
     ) -> TaskTemplate:
         """
@@ -374,6 +377,8 @@ class TaskTemplate(Generic[P, R, F]):
          passed directly to the task.
         :param pod_template: Optional override for the pod template to use for the task.
         :param queue: Optional override for the queue to use for the task.
+        :param interruptible: Optional override for the interruptible policy for the task.
+        :param link: Optional override for the Link associated with the task.
         :param kwargs: Additional keyword arguments for further overrides. Some fields like name, image, docs,
          and interface cannot be overridden.
 
@@ -438,6 +443,7 @@ class TaskTemplate(Generic[P, R, F]):
             pod_template=pod_template,
             interruptible=interruptible,
             queue=queue or self.queue,
+            link=link or self.link,
             **kwargs,
         )
 
