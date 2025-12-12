@@ -21,6 +21,7 @@ from flyte._task import AsyncFunctionTaskTemplate, TaskTemplate
 from flyte.models import CodeBundle, SerializationContext
 
 from ... import ReusePolicy
+from ..._context import internal_ctx
 from ..._retry import RetryStrategy
 from ..._timeout import TimeoutType, timeout_from_request
 from .resources_serde import get_proto_extended_resources, get_proto_resources
@@ -131,7 +132,18 @@ def get_proto_task(task: TaskTemplate, serialize_context: SerializationContext) 
         pod = None
 
     if task.link:
-        extra_config.update(task.link.get_config())
+        ctx = internal_ctx()
+        action = ctx.data.task_context.action
+        extra_config.update(
+            task.link.get_config(
+                run_name=action.run_name,
+                project=action.project,
+                domain=action.domain,
+                context=ctx.data.task_context.custom_context,
+                parent_action_name=action.name,
+                action_name="{{.action.name}}",
+            )
+        )
 
     custom = task.custom_config(serialize_context)
 
