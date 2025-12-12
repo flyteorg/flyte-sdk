@@ -3,21 +3,19 @@ import inspect
 import pathlib
 import sys
 from dataclasses import dataclass
-from typing import Tuple
+from typing import TYPE_CHECKING, Tuple
 
 import rich.repr
 
 import flyte.app
 from flyte.models import SerializationContext
 
-try:
+if TYPE_CHECKING:
     import fastapi
-except ModuleNotFoundError:
-    raise ModuleNotFoundError("fastapi is not installed. Please install the 'fastapi', to use FastAPI apps.")
 
 
 def _extract_fastapi_app_module_and_var(
-    app: fastapi.FastAPI, caller_frame: inspect.FrameInfo | None, serialization_context: SerializationContext
+    app: "fastapi.FastAPI", caller_frame: inspect.FrameInfo | None, serialization_context: SerializationContext
 ) -> Tuple[str, str]:
     """
     Extract the module name and variable name for a FastAPI app instance.
@@ -55,6 +53,11 @@ def _extract_fastapi_app_module_and_var(
         >>> # Returns: ("examples.apps.my_app", "app")
         >>> # Can be used as: uvicorn examples.apps.my_app:app
     """
+    try:
+        import fastapi
+    except ModuleNotFoundError:
+        raise ModuleNotFoundError("fastapi is not installed. Please install 'fastapi' to use FastAPI apps.")
+
     if caller_frame is None:
         raise RuntimeError("Caller frame cannot be None")
 
@@ -64,6 +67,7 @@ def _extract_fastapi_app_module_and_var(
     # Calculate module name relative to source_dir
     try:
         relative_path = file_path.relative_to(serialization_context.root_dir or pathlib.Path("."))
+        print(f"Relative path: {relative_path}, {serialization_context.root_dir} {pathlib.Path('.')}")
         module_name = pathlib.Path(relative_path).with_suffix("").as_posix().replace("/", ".")
     except ValueError:
         # File is not relative to source_dir, use the stem
@@ -110,16 +114,23 @@ def _extract_fastapi_app_module_and_var(
 @rich.repr.auto
 @dataclass(kw_only=True, repr=True)
 class FastAPIAppEnvironment(flyte.app.AppEnvironment):
-    app: fastapi.FastAPI
+    app: "fastapi.FastAPI"
     type: str = "FastAPI"
     _caller_frame: inspect.FrameInfo | None = None
 
     def __post_init__(self):
+        try:
+            import fastapi
+        except ModuleNotFoundError:
+            raise ModuleNotFoundError("fastapi is not installed. Please install 'fastapi' to use FastAPI apps.")
+
         super().__post_init__()
         if self.app is None:
             raise ValueError("app cannot be None for FastAPIAppEnvironment")
         if not isinstance(self.app, fastapi.FastAPI):
             raise TypeError(f"app must be of type fastapi.FastAPI, got {type(self.app)}")
+
+        self.links = [flyte.app.Link(path="/docs", title="FastAPI OpenAPI Docs", is_relative=True), *self.links]
 
         # Capture the frame where this environment was instantiated
         # This helps us find the module where the app variable is defined

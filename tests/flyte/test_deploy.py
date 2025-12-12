@@ -11,7 +11,7 @@ from flyte._internal.runtime.types_serde import transform_native_to_typed_interf
 from flyte.models import NativeInterface
 
 
-def test_get_description_entity_both_truncated():
+def test_get_description_entity_both_descriptions_truncated():
     # Create descriptions that exceed both limits
     env_desc = "a" * 300
     short_desc = "c" * 300

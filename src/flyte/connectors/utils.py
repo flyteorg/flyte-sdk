@@ -130,7 +130,7 @@ def _load_connectors(modules: List[str] | None):
             logger.info(f"Loading connector: {ep.name}")
             ep.load()
         except Exception as e:
-            logger.warning(f"Failed to load type transformer {ep.name} with error: {e}")
+            logger.warning(f"Failed to load connector '{ep.name}' with error: {e}")
 
     if modules:
         for m in modules:

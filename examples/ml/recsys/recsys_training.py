@@ -1,6 +1,7 @@
 # /// script
 # requires-python = ">=3.12"
 # dependencies = [
+#     "flyte>=2.0.0b34",
 #     "transformers[torch]",
 #     "torch",
 #     "datasets",
@@ -41,7 +42,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Create image from script dependencies
-image = flyte.Image.from_uv_script(__file__, name="recsys_training")
+image = flyte.Image.from_uv_script(__file__, name="recsys_training", pre=True)
 
 training_env = flyte.TaskEnvironment(
     name="recsys_training",

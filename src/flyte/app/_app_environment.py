@@ -21,7 +21,18 @@ INTERNAL_APP_ENDPOINT_PATTERN_ENV_VAR = "INTERNAL_APP_ENDPOINT_PATTERN"
 @dataclass(init=True, repr=True)
 class AppEnvironment(Environment):
     """
-    :param name: Name of the environment
+    :param type: Type of the environment.
+    :param port: Port to use for the app server.
+    :param args: Arguments to pass to app.
+    :param command: Command to run in the app.
+    :param requires_auth: Whether the app requires authentication.
+    :param scaling: Scaling configuration for the app environment.
+    :param domain: Domain to use for the app.
+    :param links: Links to other environments.
+    :param include: Files to include in the environment to run the app.
+    :param inputs: Inputs to pass to the app environment.
+    :param cluster_pool: Cluster pool to use for the app environment.
+    :param name: Name of the app environment
     :param image: Docker image to use for the environment. If set to "auto", will use the default image.
     :param resources: Resources to allocate for the environment.
     :param env_vars: Environment variables to set for the environment.
@@ -56,6 +67,51 @@ class AppEnvironment(Environment):
                 "and must start and end with an alphanumeric character."
             )
 
+    def _get_app_filename(self) -> str:
+        """
+        Get the filename of the file that declares this app environment.
+
+        Returns the actual file path instead of <string>, skipping flyte SDK internal files.
+        """
+
+        def is_user_file(filename: str) -> bool:
+            """Check if a file is a user file (not part of flyte SDK)."""
+            if filename in ("<string>", "<stdin>"):
+                return False
+            if not os.path.exists(filename):
+                return False
+            # Skip files that are part of the flyte SDK
+            abs_path = os.path.abspath(filename)
+            # Check if file is in flyte package
+            return ("site-packages/flyte" not in abs_path and "/flyte/" not in abs_path) or "/examples/" in abs_path
+
+        # Try frame inspection first - walk up the stack to find user file
+        frame = inspect.currentframe()
+        while frame is not None:
+            filename = frame.f_code.co_filename
+            if is_user_file(filename):
+                return os.path.abspath(filename)
+            frame = frame.f_back
+
+        # Fallback: Inspect the full stack to find the first user file
+        stack = inspect.stack()
+        for frame_info in stack:
+            filename = frame_info.filename
+            if is_user_file(filename):
+                return os.path.abspath(filename)
+
+        # Last fallback: Try to get from __main__ module
+        import sys
+
+        if hasattr(sys.modules.get("__main__"), "__file__"):
+            main_file = sys.modules["__main__"].__file__
+            if main_file and os.path.exists(main_file):
+                return os.path.abspath(main_file)
+
+        # Last resort: return the current working directory with a placeholder
+        # This shouldn't happen in normal usage
+        return os.path.join(os.getcwd(), "app.py")
+
     def __post_init__(self):
         super().__post_init__()
         if self.args is not None and not isinstance(self.args, (list, str)):
@@ -77,8 +133,7 @@ class AppEnvironment(Environment):
         self._validate_name()
 
         # get instantiated file to keep track of app root directory
-        frame = inspect.currentframe().f_back.f_back  # two frames up to get the app filename
-        self._app_filename = frame.f_code.co_filename
+        self._app_filename = self._get_app_filename()
 
     def container_args(self, serialize_context: SerializationContext) -> List[str]:
         if self.args is None:
@@ -89,15 +144,17 @@ class AppEnvironment(Environment):
             # args is a list
             return self.args
 
-    def _serialize_inputs(self) -> str:
+    def _serialize_inputs(self, input_overrides: list[Input] | None) -> str:
         if not self.inputs:
             return ""
         from ._input import SerializableInputCollection
 
-        serialized_inputs = SerializableInputCollection.from_inputs(self.inputs)
+        serialized_inputs = SerializableInputCollection.from_inputs(input_overrides or self.inputs)
         return serialized_inputs.to_transport
 
-    def container_cmd(self, serialize_context: SerializationContext) -> List[str]:
+    def container_cmd(
+        self, serialize_context: SerializationContext, input_overrides: list[Input] | None = None
+    ) -> List[str]:
         if self.command is None:
             # Default command
             version = serialize_context.version
@@ -131,7 +188,7 @@ class AppEnvironment(Environment):
 
             if self.inputs:
                 cmd.append("--inputs")
-                cmd.append(self._serialize_inputs())
+                cmd.append(self._serialize_inputs(input_overrides))
 
             return [*cmd, "--"]
         elif isinstance(self.command, str):
@@ -152,6 +209,8 @@ class AppEnvironment(Environment):
             return endpoint_pattern.format(app_fqdn=self.name)
 
         import flyte.remote
+        from flyte._initialize import ensure_client
 
+        ensure_client()
         app = flyte.remote.App.get(name=self.name)
         return app.endpoint

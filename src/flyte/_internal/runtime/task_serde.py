@@ -47,6 +47,7 @@ def translate_task_to_wire(
     """
     tt = get_proto_task(task, serialization_context)
     env: environment_pb2.Environment | None = None
+
     if task.parent_env and task.parent_env():
         _env = task.parent_env()
         if _env:

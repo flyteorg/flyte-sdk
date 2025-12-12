@@ -33,6 +33,7 @@ dependencies = [
 flyte = "flyte.cli.main:main"
 a0 = "flyte._bin.runtime:main"
 fserve = "flyte._bin.serve:main"
+c0 = "flyte._bin.connect:main"
 
 [project.entry-points."keyring.backends"]
 flyte_keyring_file = "flyte._keyring.file"
@@ -56,6 +57,7 @@ dev = [
     "build>=1.2.2.post1",
     "mock>=5.2.0",
     "pytest>=8.3.5",
+    "pytest-xdist",
     "pytest-asyncio>=0.26.0",
     "pytest-benchmark>=5.1.0",
     "ruff>=0.11.0",
