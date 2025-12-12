@@ -100,7 +100,6 @@ async def load_inputs(path: str, max_bytes: int = -1, path_rewrite_config: PathR
     :return: Inputs object
     """
     lm = common_pb2.Inputs()
-
     if max_bytes == -1:
         proto_str = b"".join([c async for c in storage.get_stream(path=path)])
     else:

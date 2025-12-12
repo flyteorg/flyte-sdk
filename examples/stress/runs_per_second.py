@@ -9,27 +9,27 @@ import flyte.report
 env = flyte.TaskEnvironment(
     name="runs_per_second",
     resources=flyte.Resources(cpu=1, memory="1Gi"),
-    image=flyte.Image.from_debian_base().with_pip_packages("plotly", "kaleido", "numpy"),
+    image=flyte.Image.from_debian_base(flyte_version="2.0.0b34").with_pip_packages("plotly", "kaleido", "numpy"),
 )
 
 downstream_env = flyte.TaskEnvironment(
     name="downstream",
     resources=flyte.Resources(cpu=1, memory="1Gi"),
     reusable=flyte.ReusePolicy(
-        replicas=10,
+        replicas=(5, 20),
         idle_ttl=60,
-        concurrency=10,
+        concurrency=50,
         scaledown_ttl=60,
     ),
-    image=flyte.Image.from_debian_base(install_flyte=False).with_pip_packages(
-        "unionai-reuse==0.1.7", "flyte>2.0.0b22", pre=True
+    image=flyte.Image.from_debian_base().with_pip_packages(
+        "unionai-reuse==0.1.9",
     ),
 )
 
 
 @downstream_env.task
 async def sleeper(x: int) -> int:
-    await asyncio.sleep(1.0)
+    await asyncio.sleep(5.0)
     return x
 
 
@@ -199,7 +199,16 @@ async def runs_per_second(max_rps: int = 50, n: int = 500):
     await flyte.report.flush.aio()
 
 
+@env.task
+async def main(n: int, max_per_n: int):
+    await runs_per_second.override(short_name="primer")(max_rps=1, n=1)
+    coros = []
+    for run_number in range(n):
+        coros.append(runs_per_second(max_rps=10, n=max_per_n))
+    await asyncio.gather(*coros)
+
+
 if __name__ == "__main__":
     flyte.init_from_config()
-    run = flyte.run(runs_per_second, max_rps=50, n=500)
+    run = flyte.run(main, n=10, max_per_n=10)
     print(run.url)

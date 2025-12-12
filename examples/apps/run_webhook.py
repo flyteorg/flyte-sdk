@@ -3,7 +3,7 @@
 # dependencies = [
 #     "fastapi",
 #     "uvicorn",
-#     "flyte>=2.0.0b27"
+#     "flyte>=2.0.0b35"
 # ]
 # ///
 import logging
@@ -101,7 +101,7 @@ env = FastAPIAppEnvironment(
     name="webhook-runner",
     app=app,
     description="A webhook service that triggers Flyte task runs",
-    image=flyte.Image.from_uv_script(__file__, name="webhook-runner"),
+    image=flyte.Image.from_uv_script(__file__, name="webhook-runner", pre=True),
     resources=flyte.Resources(cpu=1, memory="512Mi"),
     requires_auth=False,
     env_vars={"WEBHOOK_API_KEY": os.getenv("WEBHOOK_API_KEY", "test-api-key")},

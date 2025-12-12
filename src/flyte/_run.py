@@ -145,7 +145,7 @@ class _Runner:
         from google.protobuf import wrappers_pb2
 
         from flyte.remote import Run
-        from flyte.remote._task import LazyEntity
+        from flyte.remote._task import LazyEntity, TaskDetails
 
         from ._code_bundle import build_code_bundle, build_pkl_bundle
         from ._deploy import build_images
@@ -156,6 +156,7 @@ class _Runner:
         project = self._project or cfg.project
         domain = self._domain or cfg.domain
 
+        task: TaskTemplate[P, R, F] | TaskDetails
         if isinstance(obj, LazyEntity):
             task = await obj.fetch.aio()
             task_spec = task.pb2.spec
@@ -473,7 +474,7 @@ class _Runner:
 
         from flyte._internal.controllers import create_controller
         from flyte._internal.controllers._local_controller import LocalController
-        from flyte.remote import Run
+        from flyte.remote import ActionOutputs, Run
         from flyte.report import Report
 
         controller = cast(LocalController, create_controller("local"))
@@ -542,19 +543,21 @@ class _Runner:
             def url(self) -> str:
                 return str(metadata_path)
 
-            def wait(
+            @syncify
+            async def wait(  # type: ignore[override]
                 self,
                 quiet: bool = False,
                 wait_for: Literal["terminal", "running"] = "terminal",
-            ):
+            ) -> None:
                 pass
 
-            def outputs(self) -> R:
-                return cast(R, self._outputs)
+            @syncify
+            async def outputs(self) -> ActionOutputs:  # type: ignore[override]
+                return cast(ActionOutputs, self._outputs)
 
         return _LocalRun(outputs)
 
-    @syncify
+    @syncify  # type: ignore[arg-type]
     async def run(
         self,
         task: TaskTemplate[P, Union[R, Run], F] | LazyEntity,
@@ -713,7 +716,7 @@ def with_runcontext(
 
 
 @syncify
-async def run(task: TaskTemplate[P, R, F], *args: P.args, **kwargs: P.kwargs) -> Union[R, Run]:
+async def run(task: TaskTemplate[P, R, F], *args: P.args, **kwargs: P.kwargs) -> Run:
     """
     Run a task with the given parameters
     :param task: task to run

@@ -1,0 +1,46 @@
+name: Main
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 10 * * *" # This schedule runs at 10am UTC every day
+  pull_request:
+    paths:
+      - 'examples/integration_tests.py'
+
+jobs:
+  integration-tests:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.12"]
+      fail-fast: false
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+      - name: Set up the environment
+        uses: ./.github/actions/setup-python-env
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Cache uv packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/uv
+          key: uv-${{ runner.os }}-${{ matrix.python-version }}
+      - name: Install flyte & Build wheel
+        run: |
+          make dist
+      - name: Install plugins
+        working-directory: plugins
+        run: |
+          uv pip install ./ray ./pytorch ./dask ./spark
+          uv pip install ../  # Make sure the flyte sdk is installed from the current branch
+          uv pip list
+      - name: Run integration tests
+        env:
+          FLYTE_SDK_CI_TOKEN: "${{ secrets.FLYTE_SDK_CI_TOKEN }}"
+        run: |
+          uv run python -m pytest -n auto -v examples/integration_tests.py

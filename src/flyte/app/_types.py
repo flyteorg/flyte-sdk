@@ -23,6 +23,8 @@ class Port:
 @rich.repr.auto
 @dataclass(frozen=True)
 class Link:
+    """Custom links to add to the app"""
+
     path: str
     title: str
     is_relative: bool = False
@@ -57,8 +59,13 @@ class Scaling:
             if self.val < 1:
                 raise ValueError("Request rate must be greater than or equal to 1")
 
-    replicas: Union[int, Tuple[int, int]] = (1, 1)
+    """Number of replicas to run. Can be a single int or a tuple of two ints representing the min and max replicas."""
+    replicas: Union[int, Tuple[int, int]] = (0, 1)
+
+    """Metric to use for autoscaling. Can be a concurrency or request rate."""
     metric: Optional[Union[Concurrency, RequestRate]] = None
+
+    """Time to wait after the last request before scaling down. Can be a number of seconds or a timedelta."""
     scaledown_after: int | timedelta | None = None
 
     def __post_init__(self):
@@ -97,5 +104,10 @@ class Scaling:
 @dataclass
 class Domain:
     # SubDomain config
+
+    """Subdomain to use for the domain. If not set, the default subdomain will be used."""
+
     subdomain: Optional[str] = None
+
+    """Custom domain to use for the domain. If not set, the default custom domain will be used."""
     custom_domain: Optional[str] = None

@@ -376,7 +376,11 @@ class NativeInterface:
 
         # Get return type
         outputs = extract_return_annotation(hints.get("return", sig.return_annotation))
-        return cls(inputs=param_info, outputs=outputs)
+
+        # Parse docstring if available
+        docstring = Docstring(callable_=func) if func.__doc__ else None
+
+        return cls(inputs=param_info, outputs=outputs, docstring=docstring)
 
     def convert_to_kwargs(self, *args, **kwargs) -> Dict[str, Any]:
         """

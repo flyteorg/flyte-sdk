@@ -5,16 +5,20 @@ These tests verify that app_serde.py correctly converts AppEnvironment objects
 into protobuf IDL format without using mocks.
 """
 
+from unittest.mock import AsyncMock, MagicMock, patch
+
 import pytest
 from flyteidl2.core import tasks_pb2
 
+import flyte.io
 from flyte._image import Image
 from flyte._internal.imagebuild.image_builder import ImageCache
 from flyte._resources import Resources
 from flyte.app import AppEnvironment
-from flyte.app._input import Input
+from flyte.app._input import Input, RunOutput
 from flyte.app._runtime.app_serde import (
     _get_scaling_metric,
+    _materialize_inputs_with_delayed_values,
     _sanitize_resource_name,
     get_proto_container,
     translate_app_env_to_idl,
@@ -753,3 +757,194 @@ def test_app_with_domain(domain: Domain | None):
     assert app_idl.spec.ingress.subdomain == (domain.subdomain if domain and domain.subdomain else "")
     assert app_idl.spec.ingress.cname == (domain.custom_domain if domain and domain.custom_domain else "")
     assert app_idl.spec.ingress.private is False
+
+
+# =============================================================================
+# Tests for _materialize_inputs_with_delayed_values
+# =============================================================================
+
+
+@pytest.mark.asyncio
+async def test_materialize_inputs_with_no_delayed_values():
+    """
+    GOAL: Verify that inputs without delayed values pass through unchanged.
+
+    Tests that regular string, File, and Dir inputs are returned as-is.
+    """
+    inputs = [
+        Input(name="config", value="config.yaml"),
+        Input(name="model", value=flyte.io.File(path="s3://bucket/model.pkl")),
+        Input(name="data", value=flyte.io.Dir(path="s3://bucket/data")),
+    ]
+
+    result = await _materialize_inputs_with_delayed_values(inputs)
+
+    assert len(result) == 3
+    assert result[0].name == "config"
+    assert result[0].value == "config.yaml"
+    assert result[1].name == "model"
+    assert isinstance(result[1].value, flyte.io.File)
+    assert result[2].name == "data"
+    assert isinstance(result[2].value, flyte.io.Dir)
+
+
+@pytest.mark.asyncio
+async def test_materialize_inputs_with_run_output():
+    """
+    GOAL: Verify that RunOutput delayed values are materialized correctly.
+
+    Tests that RunOutput inputs are replaced with their materialized values.
+    """
+    # Create mock for RunOutput materialization
+    mock_run_details = MagicMock()
+    mock_run_details.outputs = AsyncMock(return_value=["s3://bucket/materialized/model"])
+
+    mock_run = MagicMock()
+    mock_run.details = MagicMock()
+    mock_run.details.aio = AsyncMock(return_value=mock_run_details)
+
+    inputs = [
+        Input(name="config", value="config.yaml"),
+        Input(name="model", value=RunOutput(type="string", run_name="my-run-123")),
+    ]
+
+    with (
+        patch("flyte.remote.Run") as MockRun,
+        patch("flyte._initialize.is_initialized", return_value=True),
+    ):
+        MockRun.get = MagicMock()
+        MockRun.get.aio = AsyncMock(return_value=mock_run)
+
+        result = await _materialize_inputs_with_delayed_values(inputs)
+
+    assert len(result) == 2
+    assert result[0].name == "config"
+    assert result[0].value == "config.yaml"
+    assert result[1].name == "model"
+    assert result[1].value == "s3://bucket/materialized/model"
+
+
+@pytest.mark.asyncio
+async def test_materialize_inputs_with_run_output_dir_type():
+    """
+    GOAL: Verify that RunOutput with Dir type materializes to a Dir path.
+
+    Tests that RunOutput returning a Dir is properly materialized.
+    """
+    # Create mock for RunOutput materialization
+    mock_run_details = MagicMock()
+    mock_run_details.outputs = AsyncMock(return_value=[flyte.io.Dir(path="s3://bucket/data-dir")])
+
+    mock_run = MagicMock()
+    mock_run.details = MagicMock()
+    mock_run.details.aio = AsyncMock(return_value=mock_run_details)
+
+    inputs = [
+        Input(name="data", value=RunOutput(type=flyte.io.Dir, run_name="my-run-123")),
+    ]
+
+    with (
+        patch("flyte.remote.Run") as MockRun,
+        patch("flyte._initialize.is_initialized", return_value=True),
+    ):
+        MockRun.get = MagicMock()
+        MockRun.get.aio = AsyncMock(return_value=mock_run)
+
+        result = await _materialize_inputs_with_delayed_values(inputs)
+
+    assert len(result) == 1
+    assert result[0].name == "data"
+    # The value should be the path string after .get() is called
+    assert isinstance(result[0].value, flyte.io.Dir)
+    assert result[0].value.path == "s3://bucket/data-dir"
+
+
+@pytest.mark.asyncio
+async def test_materialize_inputs_empty_list():
+    """
+    GOAL: Verify that empty input list returns empty list.
+
+    Tests edge case where no inputs are provided.
+    """
+    result = await _materialize_inputs_with_delayed_values([])
+    assert result == []
+
+
+@pytest.mark.asyncio
+async def test_materialize_inputs_mixed_delayed_and_regular():
+    """
+    GOAL: Verify that mixed inputs with some delayed values work correctly.
+
+    Tests that only delayed values are materialized while regular values pass through.
+    """
+    mock_run_details = MagicMock()
+    mock_run_details.outputs = AsyncMock(return_value=["materialized-value"])
+
+    mock_run = MagicMock()
+    mock_run.details = MagicMock()
+    mock_run.details.aio = AsyncMock(return_value=mock_run_details)
+
+    inputs = [
+        Input(name="static-config", value="static.yaml"),
+        Input(name="dynamic-model", value=RunOutput(type="string", run_name="run-1")),
+        Input(name="static-file", value=flyte.io.File(path="s3://bucket/file.txt")),
+    ]
+
+    with (
+        patch("flyte.remote.Run") as MockRun,
+        patch("flyte._initialize.is_initialized", return_value=True),
+    ):
+        MockRun.get = MagicMock()
+        MockRun.get.aio = AsyncMock(return_value=mock_run)
+
+        result = await _materialize_inputs_with_delayed_values(inputs)
+
+    assert len(result) == 3
+    # Static string unchanged
+    assert result[0].value == "static.yaml"
+    # RunOutput materialized
+    assert result[1].value == "materialized-value"
+    # Static File unchanged
+    assert isinstance(result[2].value, flyte.io.File)
+    assert result[2].value.path == "s3://bucket/file.txt"
+
+
+@pytest.mark.asyncio
+async def test_materialize_inputs_preserves_other_input_properties():
+    """
+    GOAL: Verify that materialization preserves other Input properties.
+
+    Tests that env_var, mount, download, etc. are preserved after materialization.
+    """
+    mock_run_details = MagicMock()
+    mock_run_details.outputs = AsyncMock(return_value=["s3://bucket/materialized"])
+
+    mock_run = MagicMock()
+    mock_run.details = MagicMock()
+    mock_run.details.aio = AsyncMock(return_value=mock_run_details)
+
+    inputs = [
+        Input(
+            name="model",
+            value=RunOutput(type="string", run_name="my-run"),
+            env_var="MODEL_PATH",
+            mount="/mnt/model",
+            download=True,
+        ),
+    ]
+
+    with (
+        patch("flyte.remote.Run") as MockRun,
+        patch("flyte._initialize.is_initialized", return_value=True),
+    ):
+        MockRun.get = MagicMock()
+        MockRun.get.aio = AsyncMock(return_value=mock_run)
+
+        result = await _materialize_inputs_with_delayed_values(inputs)
+
+    assert len(result) == 1
+    assert result[0].name == "model"
+    assert result[0].value == "s3://bucket/materialized"
+    assert result[0].env_var == "MODEL_PATH"
+    assert result[0].mount == "/mnt/model"
+    assert result[0].download is True

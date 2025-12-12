@@ -195,6 +195,7 @@ class DeployEnvRecursiveCommand(click.Command):
             self.deploy_args.project,
             self.deploy_args.domain,
             sync_local_sys_paths=not self.deploy_args.no_sync_local_sys_paths,
+            images=tuple(self.deploy_args.image) or None,
         )
         with console.status("Deploying...", spinner="dots"):
             deployments = flyte.deploy(
@@ -367,7 +368,7 @@ flyte deploy --dry-run hello.py my_env
 You can specify the `--config` flag to point to a specific Flyte cluster:
 
 ```bash
-flyte deploy --config my-config.yaml hello.py my_env
+flyte --config my-config.yaml deploy hello.py my_env
 ```
 
 You can override the default configured project and domain:

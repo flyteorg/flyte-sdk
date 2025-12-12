@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Optional, Tuple, cast
 from uuid import uuid4
 
 import aiofiles
+from flyteidl2.common import phase_pb2
 
 import flyte
 import flyte.errors
@@ -104,8 +105,6 @@ class RemoteImageBuilder(ImageBuilder):
         return [RemoteImageChecker]
 
     async def build_image(self, image: Image, dry_run: bool = False) -> str:
-        from flyteidl2.workflow import run_definition_pb2
-
         image_name = f"{image.name}:{image._final_tag}"
         spec, context = await _validate_configuration(image)
 
@@ -140,7 +139,7 @@ class RemoteImageBuilder(ImageBuilder):
 
         elapsed = str(datetime.now(timezone.utc) - start).split(".")[0]
 
-        if run_details.action_details.raw_phase == run_definition_pb2.PHASE_SUCCEEDED:
+        if run_details.action_details.raw_phase == phase_pb2.ACTION_PHASE_SUCCEEDED:
             logger.warning(f"[bold green]✅ Build completed in {elapsed}![/bold green]")
         else:
             raise flyte.errors.ImageBuildError(f"❌ Build failed in {elapsed} at {run.url}")
@@ -258,6 +257,32 @@ def _get_layers_proto(image: Image, context_path: Path) -> "image_definition_pb2
                 if not header.dependencies:
                     continue
                 packages: typing.Iterable[str] = header.dependencies
+                if header.pyprojects:
+                    layers.append(
+                        image_definition_pb2.Layer(
+                            apt_packages=image_definition_pb2.AptPackages(
+                                packages=["git"],  # To get the version of the project.
+                            ),
+                        )
+                    )
+                    docker_ignore_patterns = get_and_list_dockerignore(image)
+
+                    for pyproject in header.pyprojects:
+                        pyproject_dst = copy_files_to_context(Path(pyproject), context_path, docker_ignore_patterns)
+                        uv_project_layer = image_definition_pb2.Layer(
+                            uv_project=image_definition_pb2.UVProject(
+                                pyproject=str(pyproject_dst.relative_to(context_path)),
+                                uvlock=str(
+                                    copy_files_to_context(Path(pyproject) / "uv.lock", context_path).relative_to(
+                                        context_path
+                                    )
+                                ),
+                                options=pip_options,
+                                secret_mounts=secret_mounts,
+                            )
+                        )
+                        layers.append(uv_project_layer)
+
             else:
                 packages = layer.packages or []
             pip_layer = image_definition_pb2.Layer(

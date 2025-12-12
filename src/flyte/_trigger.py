@@ -722,6 +722,10 @@ class Trigger:
             raise ValueError("Trigger name cannot be empty")
         if self.automation is None:
             raise ValueError("Automation cannot be None")
+        if self.description and len(self.description) > 255:
+            from flyte._utils.description_parser import parse_description
+
+            object.__setattr__(self, "description", parse_description(self.description, 255))
 
     @classmethod
     def daily(

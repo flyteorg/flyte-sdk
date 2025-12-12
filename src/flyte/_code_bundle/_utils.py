@@ -74,9 +74,9 @@ def compress_scripts(source_path: str, destination: str, modules: List[ModuleTyp
 # intended to be passed as a filter to tarfile.add
 # https://docs.python.org/3/library/tarfile.html#tarfile.TarFile.add
 def tar_strip_file_attributes(tar_info: tarfile.TarInfo) -> tarfile.TarInfo:
-    # set time to epoch timestamp 0, aka 00:00:00 UTC on 1 January 1980
+    # set time to epoch timestamp 0, aka 00:00:00 UTC on 1 January 1981
     # note that when extracting this tarfile, this time will be shown as the modified date
-    tar_info.mtime = datetime(1980, 1, 1, tzinfo=timezone.utc).timestamp()
+    tar_info.mtime = datetime(1981, 1, 1, tzinfo=timezone.utc).timestamp()
 
     # user/group info
     tar_info.uid = 0
@@ -153,10 +153,10 @@ def ls_relative_files(relative_paths: list[str], source_path: pathlib.Path) -> t
 def _filehash_update(path: Union[os.PathLike, str], hasher: hashlib._Hash) -> None:
     blocksize = 65536
     with open(path, "rb") as f:
-        bytes = f.read(blocksize)
-        while bytes:
-            hasher.update(bytes)
-            bytes = f.read(blocksize)
+        chunk = f.read(blocksize)
+        while chunk:
+            hasher.update(chunk)
+            chunk = f.read(blocksize)
 
 
 def _pathhash_update(path: Union[os.PathLike, str], hasher: hashlib._Hash) -> None:

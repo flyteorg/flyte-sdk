@@ -71,6 +71,10 @@ class Environment:
             raise TypeError(f"Expected env_vars to be of type Dict[str, str], got {type(self.env_vars)}")
         if self.pod_template is not None and not isinstance(self.pod_template, (str, PodTemplate)):
             raise TypeError(f"Expected pod_template to be of type str or PodTemplate, got {type(self.pod_template)}")
+        if self.description is not None and len(self.description) > 255:
+            from flyte._utils.description_parser import parse_description
+
+            self.description = parse_description(self.description, 255)
         self._validate_name()
         # Automatically register this environment instance in load order
         _ENVIRONMENT_REGISTRY.append(self)

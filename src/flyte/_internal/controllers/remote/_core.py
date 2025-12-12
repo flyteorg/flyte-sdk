@@ -425,19 +425,20 @@ class Controller:
             action = await self._shared_queue.get()
             logger.debug(f"{threading.current_thread().name} Got resource {action.name}")
             try:
-                await self._bg_process(action)
-            except flyte.errors.SlowDownError as e:
-                action.retries += 1
-                if action.retries > self._max_retries:
-                    raise
-                backoff = min(self._min_backoff_on_err * (2 ** (action.retries - 1)), self._max_backoff_on_err)
-                logger.warning(
-                    f"[{worker_id}] Backing off for {backoff} [retry {action.retries}/{self._max_retries}] "
-                    f"on action {action.name} due to error: {e}"
-                )
-                await asyncio.sleep(backoff)
-                logger.warning(f"[{worker_id}] Retrying action {action.name} after backoff")
-                await self._shared_queue.put(action)
+                try:
+                    await self._bg_process(action)
+                except flyte.errors.SlowDownError as e:
+                    action.retries += 1
+                    if action.retries > self._max_retries:
+                        raise
+                    backoff = min(self._min_backoff_on_err * (2 ** (action.retries - 1)), self._max_backoff_on_err)
+                    logger.warning(
+                        f"[{worker_id}] Backing off for {backoff} [retry {action.retries}/{self._max_retries}] "
+                        f"on action {action.name} due to error: {e}"
+                    )
+                    await asyncio.sleep(backoff)
+                    logger.warning(f"[{worker_id}] Retrying action {action.name} after backoff")
+                    await self._shared_queue.put(action)
             except Exception as e:
                 logger.error(f"[{worker_id}] Error in controller loop for {action.name}: {e}")
                 err = flyte.errors.RuntimeSystemError(

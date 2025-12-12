@@ -4,7 +4,7 @@ import shutil
 import subprocess
 import tempfile
 import typing
-from pathlib import Path
+from pathlib import Path, PurePath
 from string import Template
 from typing import ClassVar, Optional, Protocol, cast
 
@@ -357,7 +357,8 @@ class CopyConfigHandler:
     ) -> str:
         # Copy the source config file or directory to the context path
         if layer.src.is_absolute() or ".." in str(layer.src):
-            dst_path = context_path / str(layer.src.absolute()).replace("/", "./_flyte_abs_context/", 1)
+            rel_path = PurePath(*layer.src.parts[1:])
+            dst_path = context_path / "_flyte_abs_context" / rel_path
         else:
             dst_path = context_path / layer.src
 
@@ -466,6 +467,22 @@ async def _process_layer(
                     extra_index_urls=layer.extra_index_urls,
                 )
                 dockerfile = await PipAndRequirementsHandler.handle(pip, context_path, dockerfile)
+            if header.pyprojects:
+                # To get the version of the project.
+                dockerfile = await AptPackagesHandler.handle(AptPackages(packages=("git",)), context_path, dockerfile)
+
+                for project_path in header.pyprojects:
+                    uv_project = UVProject(
+                        pyproject=Path(project_path) / "pyproject.toml",
+                        uvlock=Path(project_path) / "uv.lock",
+                        project_install_mode="install_project",
+                        secret_mounts=layer.secret_mounts,
+                        pre=layer.pre,
+                        extra_args=layer.extra_args,
+                    )
+                    dockerfile = await UVProjectHandler.handle(
+                        uv_project, context_path, dockerfile, docker_ignore_patterns
+                    )
 
         case Requirements() | PipPackages():
             # Handle pip packages and requirements

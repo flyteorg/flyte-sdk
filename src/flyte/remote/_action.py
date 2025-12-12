@@ -20,7 +20,7 @@ from typing import (
 import grpc
 import rich.pretty
 import rich.repr
-from flyteidl2.common import identifier_pb2, list_pb2
+from flyteidl2.common import identifier_pb2, list_pb2, phase_pb2
 from flyteidl2.task import common_pb2
 from flyteidl2.workflow import run_definition_pb2, run_service_pb2
 from flyteidl2.workflow.run_service_pb2 import WatchActionDetailsResponse
@@ -45,10 +45,10 @@ def _action_time_phase(
     start_time = action.status.start_time.ToDatetime().replace(tzinfo=timezone.utc)
     yield "start_time", start_time.isoformat()
     if action.status.phase in [
-        run_definition_pb2.PHASE_FAILED,
-        run_definition_pb2.PHASE_SUCCEEDED,
-        run_definition_pb2.PHASE_ABORTED,
-        run_definition_pb2.PHASE_TIMED_OUT,
+        phase_pb2.ACTION_PHASE_FAILED,
+        phase_pb2.ACTION_PHASE_SUCCEEDED,
+        phase_pb2.ACTION_PHASE_ABORTED,
+        phase_pb2.ACTION_PHASE_TIMED_OUT,
     ]:
         end_time = action.status.end_time.ToDatetime().replace(tzinfo=timezone.utc)
         yield "end_time", end_time.isoformat()
@@ -56,7 +56,7 @@ def _action_time_phase(
     else:
         yield "end_time", None
         yield "run_time", f"{(datetime.now(timezone.utc) - start_time).seconds} secs"
-    yield "phase", run_definition_pb2.Phase.Name(action.status.phase)
+    yield "phase", phase_pb2.ActionPhase.Name(action.status.phase)
     if isinstance(action, run_definition_pb2.ActionDetails):
         yield (
             "error",
@@ -87,7 +87,7 @@ def _attempt_rich_repr(
 ) -> rich.repr.Result:
     for attempt in action:
         yield "attempt", attempt.attempt
-        yield "phase", run_definition_pb2.Phase.Name(attempt.phase)
+        yield "phase", phase_pb2.ActionPhase.Name(attempt.phase)
         yield "logs_available", attempt.logs_available
 
 
@@ -105,20 +105,20 @@ def _action_details_rich_repr(
         yield "task_version", action.task.task_template.id.version
     yield "attempts", action.attempts
     yield "error", (f"{action.error_info.kind}: {action.error_info.message}" if action.HasField("error_info") else "NA")
-    yield "phase", run_definition_pb2.Phase.Name(action.status.phase)
+    yield "phase", phase_pb2.ActionPhase.Name(action.status.phase)
     yield "group", action.metadata.group
     yield "parent", action.metadata.parent
 
 
-def _action_done_check(phase: run_definition_pb2.Phase) -> bool:
+def _action_done_check(phase: phase_pb2.ActionPhase) -> bool:
     """
     Check if the action is done.
     """
     return phase in [
-        run_definition_pb2.PHASE_FAILED,
-        run_definition_pb2.PHASE_SUCCEEDED,
-        run_definition_pb2.PHASE_ABORTED,
-        run_definition_pb2.PHASE_TIMED_OUT,
+        phase_pb2.ACTION_PHASE_FAILED,
+        phase_pb2.ACTION_PHASE_SUCCEEDED,
+        phase_pb2.ACTION_PHASE_ABORTED,
+        phase_pb2.ACTION_PHASE_TIMED_OUT,
     ]
 
 
@@ -221,10 +221,10 @@ class Action(ToJSONMixin):
         """
         Get the phase of the action.
         """
-        return run_definition_pb2.Phase.Name(self.pb2.status.phase)
+        return phase_pb2.ActionPhase.Name(self.pb2.status.phase)
 
     @property
-    def raw_phase(self) -> run_definition_pb2.Phase:
+    def raw_phase(self) -> phase_pb2.ActionPhase:
         """
         Get the raw phase of the action.
         """
@@ -259,6 +259,13 @@ class Action(ToJSONMixin):
         Get the action ID.
         """
         return self.pb2.id
+
+    @property
+    def start_time(self) -> datetime:
+        """
+        Get the start time of the action.
+        """
+        return self.pb2.status.start_time.ToDatetime().replace(tzinfo=timezone.utc)
 
     @syncify
     async def show_logs(
@@ -322,7 +329,7 @@ class Action(ToJSONMixin):
         console = Console()
         if self.done():
             if not quiet:
-                if self.pb2.status.phase == run_definition_pb2.PHASE_SUCCEEDED:
+                if self.pb2.status.phase == phase_pb2.ACTION_PHASE_SUCCEEDED:
                     console.print(
                         f"[bold green]Action '{self.name}' in Run '{self.run_name}'"
                         f" completed successfully.[/bold green]"
@@ -372,7 +379,7 @@ class Action(ToJSONMixin):
                     if ad.done():
                         progress.stop_task(task_id)
                         if not quiet:
-                            if ad.pb2.status.phase == run_definition_pb2.PHASE_SUCCEEDED:
+                            if ad.pb2.status.phase == phase_pb2.ACTION_PHASE_SUCCEEDED:
                                 console.print(f"[bold green]Run '{self.run_name}' completed successfully.[/bold green]")
                             else:
                                 error_message = ad.error_info.message if ad.error_info else ""
@@ -518,10 +525,10 @@ class ActionDetails(ToJSONMixin):
         """
         Get the phase of the action.
         """
-        return run_definition_pb2.Phase.Name(self.status.phase)
+        return phase_pb2.ActionPhase.Name(self.status.phase)
 
     @property
-    def raw_phase(self) -> run_definition_pb2.Phase:
+    def raw_phase(self) -> phase_pb2.ActionPhase:
         """
         Get the raw phase of the action.
         """
@@ -532,7 +539,7 @@ class ActionDetails(ToJSONMixin):
         """
         Check if the action is currently running.
         """
-        return self.status.phase == run_definition_pb2.PHASE_RUNNING
+        return self.status.phase == phase_pb2.ACTION_PHASE_RUNNING
 
     @property
     def name(self) -> str:

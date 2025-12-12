@@ -5,8 +5,8 @@ from asyncio import Queue
 from typing import AsyncIterator, Callable, Dict, Optional, Tuple, cast
 
 import grpc.aio
-from flyteidl2.common import identifier_pb2
-from flyteidl2.workflow import run_definition_pb2, state_service_pb2
+from flyteidl2.common import identifier_pb2, phase_pb2
+from flyteidl2.workflow import state_service_pb2
 
 from flyte._logging import log, logger
 
@@ -39,14 +39,14 @@ class ActionCache:
         """
         Add an action to the cache if it doesn't exist. This is invoked by the watch.
         """
-        logger.debug(f"Observing phase {run_definition_pb2.Phase.Name(state.phase)} for {state.action_id.name}")
+        logger.debug(f"Observing phase {phase_pb2.ActionPhase.Name(state.phase)} for {state.action_id.name}")
         if state.output_uri:
             logger.debug(f"Output URI: {state.output_uri}")
         else:
             logger.warning(
-                f"{state.action_id.name} has no output URI, in phase {run_definition_pb2.Phase.Name(state.phase)}"
+                f"{state.action_id.name} has no output URI, in phase {phase_pb2.ActionPhase.Name(state.phase)}"
             )
-        if state.phase == run_definition_pb2.Phase.PHASE_FAILED:
+        if state.phase == phase_pb2.ACTION_PHASE_FAILED:
             logger.error(
                 f"Action {state.action_id.name} failed with error (msg):"
                 f" [{state.error if state.HasField('error') else None}]"
