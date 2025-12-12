@@ -6,7 +6,7 @@ from typing import Any, Callable, Optional, TypeVar, cast
 import wandb
 
 import flyte
-from flyte import TaskTemplate
+from flyte._task import AsyncFunctionTaskTemplate
 
 from .context import get_wandb_context
 from .link import Wandb as WandbLink
@@ -60,7 +60,8 @@ def wandb_init(_func: Optional[F] = None) -> F:
     """
 
     def decorator(func: F) -> F:
-        if not isinstance(func, TaskTemplate):
+        # Check if it's a Flyte task
+        if not isinstance(func, AsyncFunctionTaskTemplate):
             raise TypeError("@wandb_init must be applied to a Flyte task.")
 
         # Attach wandb link that pulls from context
