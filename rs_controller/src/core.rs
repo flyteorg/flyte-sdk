@@ -352,6 +352,7 @@ impl CoreBaseController {
     async fn handle_action(&self, action: &mut Action) -> Result<(), ControllerError> {
         if !action.started {
             // Action not started, launch it
+            warn!("Action is not started, launching action {:?}", action);
             self.bg_launch(action).await?;
         } else if action.is_action_terminal() {
             // Action is terminal, fire completion event

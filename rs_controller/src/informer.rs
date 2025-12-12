@@ -219,14 +219,29 @@ impl Informer {
     ) -> Result<(), ControllerError> {
         let action_name = action.action_id.name.clone();
 
+        let merged_action = {
+            let mut cache = self.action_cache.write().await;
+            let cached_action = cache.get_mut(&action_name);
+            if let Some(some_action) = cached_action {
+                warn!("Submitting action {} and it's already in the cache!!! Existing {:?} <<<--->>> New: {:?}", action_name, some_action, action);
+                some_action.merge_from_submit(&action);
+                some_action.clone()
+            } else {
+                // don't need to write anything. return the original
+                action
+            }
+        };
+        warn!("Merged action: ===> {} {:?}", action_name, merged_action);
+
         // Store the completion event sender
         {
             let mut completion_events = self.completion_events.write().await;
             completion_events.insert(action_name.clone(), done_tx);
+            warn!("---------> Adding completion event in submit action {:?}", action_name);
         }
 
         // Add action to shared queue
-        self.shared_queue.send(action).await.map_err(|e| {
+        self.shared_queue.send(merged_action).await.map_err(|e| {
             ControllerError::RuntimeError(format!("Failed to send action to shared queue: {}", e))
         })?;
 
@@ -244,15 +259,12 @@ impl Informer {
                 ))
             })?;
         } else {
-            error!(
+            warn!(
                 "No completion event found for action---------------------: {}",
                 action_name,
             );
-            // Return error, which should cause informer to re-enqueue
-            return Err(ControllerError::RuntimeError(format!(
-                "No completion event found for action: {}. This may be because the informer is still starting up.",
-                action_name
-            )));
+            // Maybe the action hasn't started yet.
+            return Ok(())
         }
         Ok(())
     }
