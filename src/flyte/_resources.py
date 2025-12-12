@@ -1,3 +1,4 @@
+import os
 import typing
 from dataclasses import dataclass, fields
 from typing import TYPE_CHECKING, Dict, Literal, Optional, Tuple, Union, get_args
@@ -440,8 +441,26 @@ def pod_spec_from_resources(
     primary_container_name: str = _PRIMARY_CONTAINER_DEFAULT_NAME,
     requests: Optional[Resources] = None,
     limits: Optional[Resources] = None,
-    k8s_gpu_resource_key: str = "nvidia.com/gpu",
+    k8s_gpu_resource_key: Optional[str] = None,
 ) -> "V1PodSpec":
+    """
+    Create a Kubernetes V1PodSpec with resource requirements.
+
+    The GPU resource key is resolved in the following order:
+    1. Explicit k8s_gpu_resource_key argument if provided (not None)
+    2. Environment variable FLYTE_K8S_GPU_RESOURCE_KEY if set
+    3. Default value "nvidia.com/gpu"
+
+    :param primary_container_name: Name of the primary container. Defaults to PRIMARY_CONTAINER_DEFAULT_NAME.
+    :param requests: Resource requests (CPU, memory, GPU, etc.). Optional.
+    :param limits: Resource limits (CPU, memory, GPU, etc.). Optional.
+    :param k8s_gpu_resource_key: Kubernetes GPU resource key (e.g., "nvidia.com/gpu", "amd.com/gpu").
+                                  If None, will use FLYTE_K8S_GPU_RESOURCE_KEY env var or default to "nvidia.com/gpu".
+    :return: V1PodSpec with configured resource requirements
+    """
+    # Resolve GPU resource key: explicit argument > env var > default
+    if k8s_gpu_resource_key is None:
+        k8s_gpu_resource_key = os.environ.get("FLYTE_K8S_GPU_RESOURCE_KEY", "nvidia.com/gpu")
     from kubernetes.client import V1Container, V1PodSpec, V1ResourceRequirements
 
     def _construct_k8s_pods_resources(resources: Optional[Resources], k8s_gpu_resource_key: str):
