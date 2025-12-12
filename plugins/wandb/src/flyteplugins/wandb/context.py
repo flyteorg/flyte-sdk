@@ -72,6 +72,9 @@ class _WandBConfig:
     def __getitem__(self, key):
         return self.to_dict()[key]
 
+    def items(self):
+        return self.to_dict().items()
+
     # Context manager implementation
     def __enter__(self):
         self._ctx = flyte.custom_context(**self).__enter__()
