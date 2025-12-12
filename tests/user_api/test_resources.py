@@ -505,3 +505,160 @@ def test_habana_gaudi_type_accelerators_synchronization():
     assert not missing_in_habana_gaudi_type, (
         f"Habana Gaudi types in Accelerators but missing in HABANA_GAUDIType: {missing_in_habana_gaudi_type}"
     )
+
+
+# Tests for k8s_resource_key functionality
+def test_gpu_with_explicit_k8s_resource_key():
+    """Test GPU with explicitly specified k8s_resource_key"""
+    gpu = GPU(device="A100", quantity=1, k8s_resource_key="nvidia.com/mig-1g.10gb")
+    assert gpu.k8s_resource_key == "nvidia.com/mig-1g.10gb"
+    assert gpu.device == "A100"
+    assert gpu.quantity == 1
+    assert gpu.device_class == "GPU"
+
+
+def test_gpu_with_partition_and_explicit_k8s_resource_key():
+    """Test GPU with both partition and explicit k8s_resource_key (explicit should take precedence)"""
+    gpu = GPU(device="A100", quantity=1, partition="1g.5gb", k8s_resource_key="custom.com/gpu")
+    assert gpu.k8s_resource_key == "custom.com/gpu"
+    assert gpu.partition == "1g.5gb"
+    assert gpu.device == "A100"
+
+
+def test_gpu_without_k8s_resource_key():
+    """Test GPU without explicit k8s_resource_key (should be None)"""
+    gpu = GPU(device="T4", quantity=1)
+    assert gpu.k8s_resource_key is None
+    assert gpu.device == "T4"
+
+
+def test_device_with_k8s_resource_key():
+    """Test Device with k8s_resource_key"""
+    from flyte._resources import Device
+
+    device = Device(
+        quantity=2, device_class="GPU", device="A100", partition="1g.10gb", k8s_resource_key="nvidia.com/mig-1g.10gb"
+    )
+    assert device.k8s_resource_key == "nvidia.com/mig-1g.10gb"
+    assert device.partition == "1g.10gb"
+    assert device.quantity == 2
+
+
+def test_get_gpu_resource_key_with_explicit_key():
+    """Test _get_gpu_resource_key with explicit k8s_resource_key"""
+    from flyte._resources import _get_gpu_resource_key
+
+    device = GPU(device="A100", quantity=1, k8s_resource_key="nvidia.com/mig-custom")
+    key = _get_gpu_resource_key(device)
+    assert key == "nvidia.com/mig-custom"
+
+
+def test_get_gpu_resource_key_with_partition():
+    """Test _get_gpu_resource_key synthesizes MIG key from partition"""
+    from flyte._resources import _get_gpu_resource_key
+
+    device = GPU(device="A100", quantity=1, partition="1g.5gb")
+    key = _get_gpu_resource_key(device)
+    assert key == "nvidia.com/mig-1g.5gb"
+
+
+def test_get_gpu_resource_key_default():
+    """Test _get_gpu_resource_key returns default when no key or partition"""
+    from flyte._resources import _get_gpu_resource_key
+
+    device = GPU(device="T4", quantity=1)
+    key = _get_gpu_resource_key(device)
+    assert key == "nvidia.com/gpu"
+
+
+def test_get_gpu_resource_key_explicit_over_partition():
+    """Test explicit k8s_resource_key takes precedence over partition"""
+    from flyte._resources import _get_gpu_resource_key
+
+    device = GPU(device="A100", quantity=1, partition="1g.5gb", k8s_resource_key="custom.com/gpu")
+    key = _get_gpu_resource_key(device)
+    assert key == "custom.com/gpu"
+
+
+def test_get_gpu_resource_key_none_device():
+    """Test _get_gpu_resource_key with None device returns default"""
+    from flyte._resources import _get_gpu_resource_key
+
+    key = _get_gpu_resource_key(None)
+    assert key == "nvidia.com/gpu"
+
+
+def test_get_gpu_resource_key_custom_default():
+    """Test _get_gpu_resource_key with custom default"""
+    from flyte._resources import _get_gpu_resource_key
+
+    device = GPU(device="T4", quantity=1)
+    key = _get_gpu_resource_key(device, default_key="custom.com/gpu")
+    assert key == "custom.com/gpu"
+
+
+def test_pod_spec_from_resources_with_explicit_k8s_resource_key():
+    """Test pod_spec_from_resources uses explicit k8s_resource_key from Device"""
+    from flyte._resources import pod_spec_from_resources
+
+    gpu = GPU(device="A100", quantity=1, k8s_resource_key="nvidia.com/mig-1g.10gb")
+    resources = Resources(gpu=gpu)
+    pod_spec = pod_spec_from_resources(requests=resources)
+
+    container = pod_spec.containers[0]
+    assert "nvidia.com/mig-1g.10gb" in container.resources.requests
+    assert container.resources.requests["nvidia.com/mig-1g.10gb"] == gpu
+
+
+def test_pod_spec_from_resources_with_partition_synthesized_key():
+    """Test pod_spec_from_resources synthesizes MIG key from partition"""
+    from flyte._resources import pod_spec_from_resources
+
+    gpu = GPU(device="A100", quantity=2, partition="2g.10gb")
+    resources = Resources(gpu=gpu)
+    pod_spec = pod_spec_from_resources(requests=resources)
+
+    container = pod_spec.containers[0]
+    assert "nvidia.com/mig-2g.10gb" in container.resources.requests
+    assert container.resources.requests["nvidia.com/mig-2g.10gb"] == gpu
+
+
+def test_pod_spec_from_resources_with_default_key():
+    """Test pod_spec_from_resources uses default nvidia.com/gpu key"""
+    from flyte._resources import pod_spec_from_resources
+
+    gpu = GPU(device="T4", quantity=1)
+    resources = Resources(gpu=gpu)
+    pod_spec = pod_spec_from_resources(requests=resources)
+
+    container = pod_spec.containers[0]
+    assert "nvidia.com/gpu" in container.resources.requests
+    assert container.resources.requests["nvidia.com/gpu"] == gpu
+
+
+def test_pod_spec_from_resources_with_custom_default_key():
+    """Test pod_spec_from_resources with custom default k8s_gpu_resource_key parameter"""
+    from flyte._resources import pod_spec_from_resources
+
+    gpu = GPU(device="T4", quantity=1)
+    resources = Resources(gpu=gpu)
+    pod_spec = pod_spec_from_resources(requests=resources, k8s_gpu_resource_key="custom.com/gpu")
+
+    container = pod_spec.containers[0]
+    assert "custom.com/gpu" in container.resources.requests
+    assert container.resources.requests["custom.com/gpu"] == gpu
+
+
+def test_pod_spec_from_resources_explicit_key_overrides_default():
+    """Test explicit k8s_resource_key on Device overrides k8s_gpu_resource_key parameter"""
+    from flyte._resources import pod_spec_from_resources
+
+    gpu = GPU(device="A100", quantity=1, k8s_resource_key="nvidia.com/mig-1g.5gb")
+    resources = Resources(gpu=gpu)
+    # Pass a different default, but explicit key should take precedence
+    pod_spec = pod_spec_from_resources(requests=resources, k8s_gpu_resource_key="nvidia.com/gpu")
+
+    container = pod_spec.containers[0]
+    assert "nvidia.com/mig-1g.5gb" in container.resources.requests
+    assert "nvidia.com/gpu" not in container.resources.requests
+    assert container.resources.requests["nvidia.com/mig-1g.5gb"] == gpu
