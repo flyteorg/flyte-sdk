@@ -536,7 +536,20 @@ def hf_model(
 
     # Select image based on whether sharding is needed
     if shard_config is not None:
-        image = flyte.Image.from_debian_base().with_pip_packages(*VLLM_SHARDING_IMAGE_PACKAGES)
+        image = (
+            flyte.Image.from_debian_base()
+            .with_apt_packages("gcc", "wget")
+            .with_commands(
+                [
+                    "wget https://developer.download.nvidia.com/compute/cuda/repos/debian12/x86_64/cuda-keyring_1.1-1_all.deb",
+                    "dpkg -i cuda-keyring_1.1-1_all.deb",
+                    "apt-get update",
+                    "apt-get install -y cuda-toolkit-12-9",
+                ]
+            )
+            .with_env_vars({"CUDA_HOME": "/usr/local/cuda-12.9"})
+            .with_pip_packages(*VLLM_SHARDING_IMAGE_PACKAGES)
+        )
     else:
         image = flyte.Image.from_debian_base().with_pip_packages(*HF_DOWNLOAD_IMAGE_PACKAGES)
 

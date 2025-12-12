@@ -87,23 +87,23 @@ vllm_app = VLLMAppEnvironment(
 
 
 if __name__ == "__main__":
-    from flyte.remote import Run
     from flyte.store import ShardConfig, VLLMShardArgs
 
     flyte.init_from_config()
 
     # store the Qwen3-0.6B model into flyte object store
-    run: Run = flyte.store.hf_model(
+    run= flyte.store.hf_model(
         repo="Qwen/Qwen3-8B",
         shard_config=ShardConfig(engine="vllm", args=VLLMShardArgs(tensor_parallel_size=4)),
     )
+    print(run.url)
     run.wait()
 
-    app = flyte.serve(
-        vllm_app.clone_with(
-            name=vllm_app.name,
-            model_path=flyte.app.RunOutput(type="directory", run_name=run.name),
-            model_hf_path=None,
-        )
-    )
-    print(f"Deployed vLLM app: {app.url}")
+    # app = flyte.serve(
+    #     vllm_app.clone_with(
+    #         name=vllm_app.name,
+    #         model_path=flyte.app.RunOutput(type="directory", run_name=run.name),
+    #         model_hf_path=None,
+    #     )
+    # )
+    # print(f"Deployed vLLM app: {app.url}")
