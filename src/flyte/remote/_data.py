@@ -56,7 +56,7 @@ def hash_file(file_path: typing.Union[os.PathLike, str]) -> Tuple[bytes, str, in
 
 class _RetryableUploadError(Exception):
     """Internal exception to signal retryable upload failure."""
-    pass
+
 
 
 def _is_retryable_status_code(status_code: int) -> bool:
@@ -100,69 +100,43 @@ async def _upload_with_retry(
     last_error = None
 
     while retry_attempt <= max_retries:
-        try:
-            # Open file fresh for each attempt to reset cursor
-            async with aiofiles.open(str(fp), "rb") as file:
-                async with httpx.AsyncClient(verify=verify) as aclient:
-                    put_resp = await aclient.put(signed_url, headers=extra_headers, content=file)
+        async with aiofiles.open(str(fp), "rb") as file:
+            async with httpx.AsyncClient(verify=verify) as aclient:
+                put_resp = await aclient.put(signed_url, headers=extra_headers, content=file)
 
-                    # Success
-                    if put_resp.status_code in [200, 201, 204]:
-                        if retry_attempt > 0:
-                            logger.info(f"Upload succeeded after {retry_attempt} retries for {fp.name}")
-                        return put_resp
+                # Success
+                if put_resp.status_code in [200, 201, 204]:
+                    if retry_attempt > 0:
+                        logger.info(f"Upload succeeded after {retry_attempt} retries for {fp.name}")
+                    return put_resp
 
-                    # Check if retryable status code
-                    if _is_retryable_status_code(put_resp.status_code):
-                        raise _RetryableUploadError(
-                            f"HTTP {put_resp.status_code}: {put_resp.text[:200]}"
-                        )
-                    else:
-                        # Non-retryable HTTP error
+                # Check if retryable status code
+                if put_resp.status_code in [408, 429, 500, 502, 503, 504]:
+                    if retry_attempt >= max_retries:
                         raise RuntimeSystemError(
                             "UploadFailed",
-                            f"Failed to upload {fp} to {signed_url}, status code: {put_resp.status_code}, "
-                            f"response: {put_resp.text}",
+                            f"Failed to upload {fp} after {max_retries} retries: {put_resp.text}",
                         )
 
-        except (
-            httpx.TimeoutException,
-            httpx.ConnectError,
-            httpx.ReadError,
-            httpx.WriteError,
-            httpx.NetworkError,
-            httpx.ProxyError,
-        ) as e:
-            last_error = f"Network error: {type(e).__name__}: {str(e)}"
-            if retry_attempt >= max_retries:
-                raise RuntimeSystemError(
-                    "UploadFailed",
-                    f"Failed to upload {fp} after {max_retries} retries due to network error: {e}",
-                ) from e
+                    # Backoff and retry
+                    retry_attempt += 1
+                    if retry_attempt <= max_retries:
+                        backoff_delay = min(min_backoff_sec * (2 ** (retry_attempt - 1)), max_backoff_sec)
+                        logger.warning(
+                            f"Upload failed for {fp.name}, backing off for {backoff_delay:.2f}s "
+                            f"[retry {retry_attempt}/{max_retries}]: {last_error}"
+                        )
+                        await asyncio.sleep(backoff_delay)
+                else:
+                    # Non-retryable HTTP error
+                    raise RuntimeSystemError(
+                        "UploadFailed",
+                        f"Failed to upload {fp} to {signed_url}, status code: {put_resp.status_code}, "
+                        f"response: {put_resp.text}",
+                    )
+        return put_resp
 
-        except _RetryableUploadError as e:
-            last_error = str(e)
-            if retry_attempt >= max_retries:
-                raise RuntimeSystemError(
-                    "UploadFailed",
-                    f"Failed to upload {fp} after {max_retries} retries: {e}",
-                ) from e
-
-        # Backoff and retry
-        retry_attempt += 1
-        if retry_attempt <= max_retries:
-            backoff_delay = min(min_backoff_sec * (2 ** (retry_attempt - 1)), max_backoff_sec)
-            logger.warning(
-                f"Upload failed for {fp.name}, backing off for {backoff_delay:.2f}s "
-                f"[retry {retry_attempt}/{max_retries}]: {last_error}"
-            )
-            await asyncio.sleep(backoff_delay)
-
-    # Should not reach here
-    raise RuntimeSystemError(
-        "UploadFailed",
-        f"Failed to upload {fp} after {max_retries} retries, last error: {last_error}",
-    )
+    return None
 
 
 @require_project_and_domain
