@@ -34,6 +34,10 @@ def create_remote_controller(
     # https://grpc.io/docs/guides/keepalive/#keepalive-configuration-specification
     channel_options = [
         ("grpc.keepalive_permit_without_calls", 1),
+        ("grpc.keepalive_time_ms", 30000),  # Send keepalive ping every 30 seconds
+        ("grpc.keepalive_timeout_ms", 10000),  # Wait 10 seconds for keepalive response
+        ("grpc.http2.max_pings_without_data", 0),  # Allow unlimited pings without data
+        ("grpc.http2.min_ping_interval_without_data_ms", 30000),  # Min 30s between pings
     ]
 
     if endpoint:
