@@ -24,7 +24,7 @@ pod_template = flyte.PodTemplate(
 env = flyte.TaskEnvironment(
     name="hello_world",
     resources=flyte.Resources(cpu=1, memory="1Gi"),
-    image="ghcr.io/flyteorg/flyte:py3.12-v2.0.0b31",
+    image=flyte.Image.from_base("ghcr.io/flyteorg/flyte:py3.12-v2.0.0b31"),
     pod_template=pod_template,
 )
 

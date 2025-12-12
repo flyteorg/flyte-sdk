@@ -39,7 +39,7 @@ dist-plugins: clean
 dist-all: dist dist-plugins
 
 .PHONY: clean
-clean: 
+clean:
 	rm -rf dist/
 	rm -rf plugins/**/dist/
 	rm -rf build/
@@ -83,3 +83,11 @@ unit_test_plugins:
 cli-docs-gen: ## Generate CLI documentation
 	@echo "📖 Generating CLI documentation..."
 	@uv run flyte gen docs --type markdown
+
+debug-optimize-build: TARGET_IMAGE=376129846803.dkr.ecr.us-east-2.amazonaws.com/union/dogfood:flyte-$(shell git rev-parse --short HEAD)
+debug-optimize-build:
+	docker buildx build --platform linux/amd64 -f examples/basics/Dockerfile.devbox_one -t $(TARGET_IMAGE) --push .
+	nydusify convert --source $(TARGET_IMAGE) --target $(TARGET_IMAGE)-opt --fs-version 6 --work-dir /tmp/nydusify --with-referrer --oci-ref
+
+debug-optimize-run:
+	uv run python examples/basics/devbox_one.py
