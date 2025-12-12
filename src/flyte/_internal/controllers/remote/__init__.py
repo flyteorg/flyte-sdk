@@ -31,6 +31,11 @@ def create_remote_controller(
     from ._client import ControllerClient
     from ._controller import RemoteController
 
+    # https://grpc.io/docs/guides/keepalive/#keepalive-configuration-specification
+    channel_options = [
+        ("grpc.keepalive_permit_without_calls", 1),
+    ]
+
     if endpoint:
         client_coro = ControllerClient.for_endpoint(
             endpoint,
@@ -40,6 +45,7 @@ def create_remote_controller(
             client_id=client_id,
             client_credentials_secret=client_credentials_secret,
             auth_type=auth_type,
+            grpc_options=channel_options,
         )
     elif api_key:
         client_coro = ControllerClient.for_api_key(
@@ -50,6 +56,7 @@ def create_remote_controller(
             client_id=client_id,
             client_credentials_secret=client_credentials_secret,
             auth_type=auth_type,
+            grpc_options=channel_options,
         )
 
     controller = RemoteController(
