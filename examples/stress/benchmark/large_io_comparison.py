@@ -14,6 +14,9 @@ import flyte.storage
 from flyte.extras import ContainerTask
 
 
+CPU = 5
+MEMORY = "10Gi"
+
 @dataclass
 class BenchmarkResult:
     """Result from a single benchmark run"""
@@ -26,8 +29,8 @@ class BenchmarkResult:
 s3fs_env = flyte.TaskEnvironment(
     "s3fs_benchmark",
     resources=flyte.Resources(
-        cpu=8,
-        memory="23Gi",
+        cpu=CPU,
+        memory=MEMORY,
     ),
     image=flyte.Image.from_debian_base(name="s3fs-benchmarker").with_pip_packages("s3fs", "fsspec"),
 )
@@ -51,8 +54,8 @@ s5cmd_file_task = ContainerTask(
     name="s5cmd_download_file",
     image=s5cmd_image,
     resources=flyte.Resources(
-        cpu=8,
-        memory="23Gi",
+        cpu=CPU,
+        memory=MEMORY,
     ),
     inputs={"remote_path": str, "file_size_mb": int},
     outputs={"duration": float, "throughput_mbps": float},
@@ -82,8 +85,8 @@ s5cmd_dir_task = ContainerTask(
     name="s5cmd_download_dir",
     image=s5cmd_image,
     resources=flyte.Resources(
-        cpu=8,
-        memory="23Gi",
+        cpu=CPU,
+        memory=MEMORY,
     ),
     inputs={"remote_path": str, "expected_files": int},
     outputs={"duration": float, "throughput_mbps": float},
@@ -117,8 +120,8 @@ s5cmd_env = flyte.TaskEnvironment.from_task("s5cmd_env", s5cmd_file_task, s5cmd_
 env = flyte.TaskEnvironment(
     "file_io_benchmark",
     resources=flyte.Resources(
-        cpu=8,
-        memory="23Gi",
+        cpu=CPU,
+        memory=MEMORY,
     ),
     depends_on=[s5cmd_env, s3fs_env],
     image=flyte.Image.from_debian_base(name="io-benchmarker"),
@@ -316,12 +319,12 @@ async def read_dir_s3fs(d: flyte.io.Dir, iterations: int = 10) -> List[Benchmark
 
 
 def generate_benchmark_report(
-    file_results_new: List[BenchmarkResult],
-    file_results_s3fs: List[BenchmarkResult],
-    file_results_s5cmd: List[BenchmarkResult],
-    dir_results_new: List[BenchmarkResult],
-    dir_results_s3fs: List[BenchmarkResult],
-    dir_results_s5cmd: List[BenchmarkResult],
+    file_results_new: List[BenchmarkResult] | None,
+    file_results_s3fs: List[BenchmarkResult] | None,
+    file_results_s5cmd: List[BenchmarkResult] | None,
+    dir_results_new: List[BenchmarkResult] | None,
+    dir_results_s3fs: List[BenchmarkResult] | None,
+    dir_results_s5cmd: List[BenchmarkResult] | None,
 ) -> str:
     """Generate HTML report with benchmark results"""
 
@@ -388,27 +391,27 @@ def generate_benchmark_report(
             </tr>
             <tr>
                 <td>New SDK (Flyte v2)</td>
-                <td>{file_new_bytes / (1024**3):.2f}</td>
-                <td>{file_new_time:.2f}</td>
-                <td>{file_new_min:.2f} / {file_new_max:.2f}</td>
-                <td>{file_new_tput:.2f}</td>
-                <td class="runs">{", ".join([f"{t:.2f}" for t in file_new_times])}</td>
+                <td>{file_new_bytes / (1024**3):.2f if file_new_bytes is not None else "N/A"}</td>
+                <td>{file_new_time:.2f if file_new_time is not None else "N/A"}</td>
+                <td>{f"{file_new_min:.2f} / {file_new_max:.2f}" if file_new_min is not None and file_new_max is not None else "N/A"}</td>
+                <td>{file_new_tput:.2f if file_new_tput is not None else "N/A"}</td>
+                <td class="runs">{", ".join([f"{t:.2f}" for t in file_new_times]) if file_new_times is not None else "N/A"}</td>
             </tr>
             <tr>
                 <td>s3fs + fsspec (v1 style)</td>
-                <td>{file_s3fs_bytes / (1024**3):.2f}</td>
-                <td>{file_s3fs_time:.2f}</td>
-                <td>{file_s3fs_min:.2f} / {file_s3fs_max:.2f}</td>
-                <td>{file_s3fs_tput:.2f}</td>
-                <td class="runs">{", ".join([f"{t:.2f}" for t in file_s3fs_times])}</td>
+                <td>{file_s3fs_bytes / (1024**3):.2f if file_s3fs_bytes is not None else "N/A"}</td>
+                <td>{file_s3fs_time:.2f if file_s3fs_time is not None else "N/A"}</td>
+                <td>{f"{file_s3fs_min:.2f} / {file_s3fs_max:.2f}" if file_s3fs_min is not None and file_s3fs_max is not None else "N/A"}</td>
+                <td>{file_s3fs_tput:.2f if file_s3fs_tput is not None else "N/A"}</td>
+                <td class="runs">{", ".join([f"{t:.2f}" for t in file_s3fs_times]) if file_s3fs_times is not None else "N/A"}</td>
             </tr>
             <tr>
                 <td>s5cmd (ContainerTask)</td>
                 <td>~5.00</td>
-                <td>{file_s5cmd_time:.2f}</td>
-                <td>{file_s5cmd_min:.2f} / {file_s5cmd_max:.2f}</td>
-                <td>{file_s5cmd_tput:.2f}</td>
-                <td class="runs">{", ".join([f"{t:.2f}" for t in file_s5cmd_times])}</td>
+                <td>{file_s5cmd_time:.2f if file_s5cmd_time is not None else "N/A"}</td>
+                <td>{f"{file_s5cmd_min:.2f} / {file_s5cmd_max:.2f}" if file_s5cmd_min is not None and file_s5cmd_max is not None else "N/A"}</td>
+                <td>{file_s5cmd_tput:.2f if file_s5cmd_tput is not None else "N/A"}</td>
+                <td class="runs">{", ".join([f"{t:.2f}" for t in file_s5cmd_times]) if file_s5cmd_times is not None else "N/A"}</td>
             </tr>
         </table>
 
@@ -424,31 +427,31 @@ def generate_benchmark_report(
             </tr>
             <tr>
                 <td>New SDK (Flyte v2)</td>
-                <td>{dir_new_bytes / (1024**3):.2f}</td>
-                <td>{dir_new_time:.2f}</td>
-                <td>{dir_new_min:.2f} / {dir_new_max:.2f}</td>
-                <td>{dir_new_tput:.2f}</td>
-                <td class="runs">{", ".join([f"{t:.2f}" for t in dir_new_times])}</td>
+                <td>{dir_new_bytes / (1024**3):.2f if dir_new_bytes is not None else "N/A"}</td>
+                <td>{dir_new_time:.2f if dir_new_time is not None else "N/A"}</td>
+                <td>{f"{dir_new_min:.2f} / {dir_new_max:.2f}" if dir_new_min is not None and dir_new_max is not None else "N/A"}</td>
+                <td>{dir_new_tput:.2f if dir_new_tput is not None else "N/A"}</td>
+                <td class="runs">{", ".join([f"{t:.2f}" for t in dir_new_times]) if dir_new_times is not None else "N/A"}</td>
             </tr>
             <tr>
                 <td>s3fs + fsspec (v1 style)</td>
-                <td>{dir_s3fs_bytes / (1024**3):.2f}</td>
-                <td>{dir_s3fs_time:.2f}</td>
-                <td>{dir_s3fs_min:.2f} / {dir_s3fs_max:.2f}</td>
-                <td>{dir_s3fs_tput:.2f}</td>
-                <td class="runs">{", ".join([f"{t:.2f}" for t in dir_s3fs_times])}</td>
+                <td>{dir_s3fs_bytes / (1024**3):.2f if dir_s3fs_bytes is not None else "N/A"}</td>
+                <td>{dir_s3fs_time:.2f if dir_s3fs_time is not None else "N/A"}</td>
+                <td>{f"{dir_s3fs_min:.2f} / {dir_s3fs_max:.2f}" if dir_s3fs_min is not None and dir_s3fs_max is not None else "N/A"}</td>
+                <td>{dir_s3fs_tput:.2f if dir_s3fs_tput is not None else "N/A"}</td>
+                <td class="runs">{", ".join([f"{t:.2f}" for t in dir_s3fs_times]) if dir_s3fs_times is not None else "N/A"}</td>
             </tr>
             <tr>
                 <td>s5cmd (ContainerTask)</td>
                 <td>~4.88</td>
-                <td>{dir_s5cmd_time:.2f}</td>
-                <td>{dir_s5cmd_min:.2f} / {dir_s5cmd_max:.2f}</td>
-                <td>{dir_s5cmd_tput:.2f}</td>
-                <td class="runs">{", ".join([f"{t:.2f}" for t in dir_s5cmd_times])}</td>
+                <td>{dir_s5cmd_time:.2f if dir_s5cmd_time is not None else "N/A"}</td>
+                <td>{f"{dir_s5cmd_min:.2f} / {dir_s5cmd_max:.2f}" if dir_s5cmd_min is not None and dir_s5cmd_max is not None else "N/A"}</td>
+                <td>{dir_s5cmd_tput:.2f if dir_s5cmd_tput is not None else "N/A"}</td>
+                <td class="runs">{", ".join([f"{t:.2f}" for t in dir_s5cmd_times]) if dir_s5cmd_times is not None else "N/A"}</td>
             </tr>
         </table>
 
-        <p><em>All tests run 10 times each in parallel on nodes with 8 CPU, 23Gi memory</em></p>
+        <p><em>All tests run 10 times each in parallel on nodes with {CPU} CPU, {MEMORY} memory</em></p>
     </body>
     </html>
     """
@@ -456,76 +459,78 @@ def generate_benchmark_report(
 
 
 @env.task(report=True)
-async def benchmark_all():
+async def benchmark_all(test_file: bool = True, test_dir: bool = True):
     """Comprehensive benchmark comparing all download methods"""
     iterations = 2
     print("=" * 80)
     print(f"Starting comprehensive I/O benchmarks ({iterations} runs each)")
     print("=" * 80)
 
-    # Test 1: Large single file (5GB)
-    print("\n--- Test 1: Single 5GB file (10 runs) ---")
-    large_file = await create_file(5120)
+    if test_file:
+        # Test 1: Large single file (5GB)
+        print("\n--- Test 1: Single 5GB file (10 runs) ---")
+        large_file = await create_file(5120)
 
-    print("Running all downloads in parallel (each method runs 10 iterations)...")
-    # Run the native tasks (they handle 10 iterations internally)
-    t1 = asyncio.create_task(read_large_file_new(large_file, iterations=iterations))
-    t2 = asyncio.create_task(read_large_file_s3fs(large_file, iterations=iterations))
+        print("Running all downloads in parallel (each method runs 10 iterations)...")
+        # Run the native tasks (they handle 10 iterations internally)
+        t1 = asyncio.create_task(read_large_file_new(large_file, iterations=iterations))
+        t2 = asyncio.create_task(read_large_file_s3fs(large_file, iterations=iterations))
 
-    # Run s5cmd 10 times in parallel
-    async def run_s5cmd_file_multiple():
-        print("[s5cmd File] Starting 10 parallel runs...", flush=True)
-        tasks = [s5cmd_file_task(remote_path=large_file.path, file_size_mb=5120) for _ in range(iterations)]
-        results = await asyncio.gather(*tasks)
-        # Convert s5cmd results (duration, throughput) to BenchmarkResult
-        file_size_bytes = 5120 * 1024 * 1024
-        return [BenchmarkResult(bytes=file_size_bytes, duration=r[0]) for r in results]
+        # Run s5cmd 10 times in parallel
+        async def run_s5cmd_file_multiple():
+            print("[s5cmd File] Starting 10 parallel runs...", flush=True)
+            tasks = [s5cmd_file_task(remote_path=large_file.path, file_size_mb=5120) for _ in range(iterations)]
+            results = await asyncio.gather(*tasks)
+            # Convert s5cmd results (duration, throughput) to BenchmarkResult
+            file_size_bytes = 5120 * 1024 * 1024
+            return [BenchmarkResult(bytes=file_size_bytes, duration=r[0]) for r in results]
 
-    t3 = asyncio.create_task(run_s5cmd_file_multiple())
+        t3 = asyncio.create_task(run_s5cmd_file_multiple())
 
-    file_results_new, file_results_s3fs, file_results_s5cmd = await asyncio.gather(t1, t2, t3)
+        file_results_new, file_results_s3fs, file_results_s5cmd = await asyncio.gather(t1, t2, t3)
 
-    # Print summary
-    avg_time_new = sum(r.duration for r in file_results_new) / len(file_results_new)
-    avg_time_s3fs = sum(r.duration for r in file_results_s3fs) / len(file_results_s3fs)
-    avg_time_s5cmd = sum(r.duration for r in file_results_s5cmd) / len(file_results_s5cmd)
+        # Print summary
+        avg_time_new = sum(r.duration for r in file_results_new) / len(file_results_new)
+        avg_time_s3fs = sum(r.duration for r in file_results_s3fs) / len(file_results_s3fs)
+        avg_time_s5cmd = sum(r.duration for r in file_results_s5cmd) / len(file_results_s5cmd)
 
-    print("\n5GB file average results:")
-    print(f"  New SDK:  {avg_time_new:.2f}s avg")
-    print(f"  s3fs:     {avg_time_s3fs:.2f}s avg")
-    print(f"  s5cmd:    {avg_time_s5cmd:.2f}s avg")
+        print("\n5GB file average results:")
+        print(f"  New SDK:  {avg_time_new:.2f}s avg")
+        print(f"  s3fs:     {avg_time_s3fs:.2f}s avg")
+        print(f"  s5cmd:    {avg_time_s5cmd:.2f}s avg")
 
-    # Test 2: Directory with 1000 5MB files
-    print("\n--- Test 2: Directory with 1000 x 5MB files (10 runs) ---")
-    file_dir = await create_dir_with_files(num_files=1000, size_megabytes=5)
+    if test_dir:
+        # Test 2: Directory with 1000 5MB files
+        print("\n--- Test 2: Directory with 1000 x 5MB files (10 runs) ---")
+        file_dir = await create_dir_with_files(num_files=1000, size_megabytes=5)
 
-    print("Running directory downloads in parallel (each method runs 10 iterations)...")
-    # Run the native tasks (they handle 10 iterations internally)
-    td1 = asyncio.create_task(read_dir_new(file_dir, iterations=iterations))
-    td2 = asyncio.create_task(read_dir_s3fs(file_dir, iterations=iterations))
+        print("Running directory downloads in parallel (each method runs 10 iterations)...")
+        # Run the native tasks (they handle 10 iterations internally)
+        td1 = asyncio.create_task(read_dir_new(file_dir, iterations=iterations))
+        td2 = asyncio.create_task(read_dir_s3fs(file_dir, iterations=iterations))
 
-    # Run s5cmd 10 times in parallel
-    async def run_s5cmd_dir_multiple():
-        print("[s5cmd Dir] Starting 10 parallel runs...", flush=True)
-        tasks = [s5cmd_dir_task(remote_path=file_dir.path, expected_files=1000) for _ in range(iterations)]
-        results = await asyncio.gather(*tasks)
-        # Convert s5cmd results (duration, throughput) to BenchmarkResult
-        dir_size_bytes = 1000 * 5 * 1024 * 1024
-        return [BenchmarkResult(bytes=dir_size_bytes, duration=r[0]) for r in results]
+        # Run s5cmd 10 times in parallel
+        async def run_s5cmd_dir_multiple():
+            print("[s5cmd Dir] Starting 10 parallel runs...", flush=True)
+            tasks = [s5cmd_dir_task(remote_path=file_dir.path, expected_files=1000) for _ in range(iterations)]
+            results = await asyncio.gather(*tasks)
+            # Convert s5cmd results (duration, throughput) to BenchmarkResult
+            dir_size_bytes = 1000 * 5 * 1024 * 1024
+            return [BenchmarkResult(bytes=dir_size_bytes, duration=r[0]) for r in results]
 
-    td3 = asyncio.create_task(run_s5cmd_dir_multiple())
+        td3 = asyncio.create_task(run_s5cmd_dir_multiple())
 
-    dir_results_new, dir_results_s3fs, dir_results_s5cmd = await asyncio.gather(td1, td2, td3)
+        dir_results_new, dir_results_s3fs, dir_results_s5cmd = await asyncio.gather(td1, td2, td3)
 
-    # Print summary
-    avg_time_new_dir = sum(r.duration for r in dir_results_new) / len(dir_results_new)
-    avg_time_s3fs_dir = sum(r.duration for r in dir_results_s3fs) / len(dir_results_s3fs)
-    avg_time_s5cmd_dir = sum(r.duration for r in dir_results_s5cmd) / len(dir_results_s5cmd)
+        # Print summary
+        avg_time_new_dir = sum(r.duration for r in dir_results_new) / len(dir_results_new)
+        avg_time_s3fs_dir = sum(r.duration for r in dir_results_s3fs) / len(dir_results_s3fs)
+        avg_time_s5cmd_dir = sum(r.duration for r in dir_results_s5cmd) / len(dir_results_s5cmd)
 
-    print("\nDirectory average results:")
-    print(f"  New SDK:  {avg_time_new_dir:.2f}s avg")
-    print(f"  s3fs:     {avg_time_s3fs_dir:.2f}s avg")
-    print(f"  s5cmd:    {avg_time_s5cmd_dir:.2f}s avg")
+        print("\nDirectory average results:")
+        print(f"  New SDK:  {avg_time_new_dir:.2f}s avg")
+        print(f"  s3fs:     {avg_time_s3fs_dir:.2f}s avg")
+        print(f"  s5cmd:    {avg_time_s5cmd_dir:.2f}s avg")
 
     print("\n" + "=" * 80)
     print("Benchmark complete!")
@@ -549,5 +554,5 @@ async def benchmark_all():
 # $ flyte -c ~/.flyte/builder.remote.demo.yaml run -p flytesnacks -d development stress/benchmark/large_io_comparison.py benchmark_all  # noqa: E501
 if __name__ == "__main__":
     flyte.init_from_config()
-    r = flyte.run(benchmark_all)
+    r = flyte.run(benchmark_all, test_file=True, test_dir=False)
     print(r.url)
