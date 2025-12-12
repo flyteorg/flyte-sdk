@@ -326,16 +326,16 @@ def test_hf_model_with_wait_flag(mock_init_config, mock_store, runner, mock_cfg)
 
     mock_run = MagicMock()
     mock_run.url = "https://console.example.com/run/123"
+    mock_output = MagicMock()
+    mock_output.path = "s3://bucket/model"
+    mock_run.outputs.return_value = [mock_output]
     mock_store.return_value = mock_run
 
-    with patch("flyte.cli._store._get_output_path") as mock_get_output:
-        mock_get_output.return_value = "s3://bucket/model"
-
-        result = runner.invoke(
-            store,
-            ["hf-model", "meta-llama/Llama-2-7b-hf", "--wait"],
-            obj=mock_cfg,
-        )
+    result = runner.invoke(
+        store,
+        ["hf-model", "meta-llama/Llama-2-7b-hf", "--wait"],
+        obj=mock_cfg,
+    )
 
     assert result.exit_code == 0, result.output
     mock_run.wait.assert_called_once()
@@ -350,16 +350,14 @@ def test_hf_model_wait_with_failure(mock_init_config, mock_store, runner, mock_c
 
     mock_run = MagicMock()
     mock_run.url = "https://console.example.com/run/123"
+    mock_run.outputs.side_effect = Exception("Run failed")
     mock_store.return_value = mock_run
 
-    with patch("flyte.cli._store._get_output_path") as mock_get_output:
-        mock_get_output.side_effect = Exception("Run failed")
-
-        result = runner.invoke(
-            store,
-            ["hf-model", "meta-llama/Llama-2-7b-hf", "--wait"],
-            obj=mock_cfg,
-        )
+    result = runner.invoke(
+        store,
+        ["hf-model", "meta-llama/Llama-2-7b-hf", "--wait"],
+        obj=mock_cfg,
+    )
 
     assert result.exit_code == 0, result.output  # CLI doesn't fail, just reports
     assert "Model store failed" in result.output

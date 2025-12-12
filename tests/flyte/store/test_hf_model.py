@@ -467,7 +467,7 @@ def test_store_hf_model_task_nonexistent_repo_raises(mock_repo_exists, mock_list
 
     with patch.dict(os.environ, {"HF_TOKEN": "test-token"}):
         with pytest.raises(ValueError, match="does not exist"):
-            store_hf_model_task(info)
+            store_hf_model_task(info.model_dump_json())
 
 
 # =============================================================================
