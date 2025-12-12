@@ -13,9 +13,9 @@ import flyte.report
 import flyte.storage
 from flyte.extras import ContainerTask
 
-
 CPU = 5
 MEMORY = "10Gi"
+
 
 @dataclass
 class BenchmarkResult:
@@ -325,6 +325,7 @@ def generate_benchmark_report(
     dir_results_new: List[BenchmarkResult] | None,
     dir_results_s3fs: List[BenchmarkResult] | None,
     dir_results_s5cmd: List[BenchmarkResult] | None,
+    iterations: int = 10,
 ) -> str:
     """Generate HTML report with benchmark results"""
 
@@ -339,27 +340,107 @@ def generate_benchmark_report(
         avg_throughput = avg_bytes / avg_time / (1024**2)
         return avg_bytes, avg_time, min_time, max_time, avg_throughput, times
 
-    # Calculate stats for file benchmarks
-    file_new_bytes, file_new_time, file_new_min, file_new_max, file_new_tput, file_new_times = calculate_stats(
-        file_results_new
-    )
-    file_s3fs_bytes, file_s3fs_time, file_s3fs_min, file_s3fs_max, file_s3fs_tput, file_s3fs_times = calculate_stats(
-        file_results_s3fs
-    )
-    _, file_s5cmd_time, file_s5cmd_min, file_s5cmd_max, file_s5cmd_tput, file_s5cmd_times = calculate_stats(
-        file_results_s5cmd
-    )
+    file_result = ""
+    dir_result = ""
 
-    # Calculate stats for directory benchmarks
-    dir_new_bytes, dir_new_time, dir_new_min, dir_new_max, dir_new_tput, dir_new_times = calculate_stats(
-        dir_results_new
-    )
-    dir_s3fs_bytes, dir_s3fs_time, dir_s3fs_min, dir_s3fs_max, dir_s3fs_tput, dir_s3fs_times = calculate_stats(
-        dir_results_s3fs
-    )
-    _, dir_s5cmd_time, dir_s5cmd_min, dir_s5cmd_max, dir_s5cmd_tput, dir_s5cmd_times = calculate_stats(
-        dir_results_s5cmd
-    )
+    if file_results_new and file_results_s3fs and file_results_s5cmd:
+        # Calculate stats for file benchmarks
+        file_new_bytes, file_new_time, file_new_min, file_new_max, file_new_tput, file_new_times = calculate_stats(
+            file_results_new
+        )
+        file_s3fs_bytes, file_s3fs_time, file_s3fs_min, file_s3fs_max, file_s3fs_tput, file_s3fs_times = (
+            calculate_stats(file_results_s3fs)
+        )
+        _, file_s5cmd_time, file_s5cmd_min, file_s5cmd_max, file_s5cmd_tput, file_s5cmd_times = calculate_stats(
+            file_results_s5cmd
+        )
+        file_result = f"""
+        <h2>Test 1: Single 5GB File Download</h2>
+        <table>
+            <tr>
+                <th>Method</th>
+                <th>Avg Size (GB)</th>
+                <th>Avg Duration (s)</th>
+                <th>Min/Max (s)</th>
+                <th>Avg Throughput (MiB/s)</th>
+                <th>All Runs (s)</th>
+            </tr>
+            <tr>
+                <td>New SDK (Flyte v2)</td>
+                <td>{file_new_bytes / (1024**3):.2f}</td>
+                <td>{file_new_time:.2f}</td>
+                <td>{f"{file_new_min:.2f} / {file_new_max:.2f}"}</td>
+                <td>{file_new_tput:.2f}</td>
+                <td class="runs">{", ".join([f"{t:.2f}" for t in file_new_times])}</td>
+            </tr>
+            <tr>
+                <td>s3fs + fsspec (v1 style)</td>
+                <td>{file_s3fs_bytes / (1024**3):.2f}</td>
+                <td>{file_s3fs_time:.2f}</td>
+                <td>{f"{file_s3fs_min:.2f} / {file_s3fs_max:.2f}"}</td>
+                <td>{file_s3fs_tput:.2f}</td>
+                <td class="runs">{", ".join([f"{t:.2f}" for t in file_s3fs_times])}</td>
+            </tr>
+            <tr>
+                <td>s5cmd (ContainerTask)</td>
+                <td>~5.00</td>
+                <td>{file_s5cmd_time:.2f}</td>
+                <td>{f"{file_s5cmd_min:.2f} / {file_s5cmd_max:.2f}"}</td>
+                <td>{file_s5cmd_tput:.2f}</td>
+                <td class="runs">{", ".join([f"{t:.2f}" for t in file_s5cmd_times])}</td>
+            </tr>
+        </table>
+"""
+
+    if dir_results_new and dir_results_s3fs and dir_results_s5cmd:
+        # Calculate stats for directory benchmarks
+        dir_new_bytes, dir_new_time, dir_new_min, dir_new_max, dir_new_tput, dir_new_times = calculate_stats(
+            dir_results_new
+        )
+        dir_s3fs_bytes, dir_s3fs_time, dir_s3fs_min, dir_s3fs_max, dir_s3fs_tput, dir_s3fs_times = calculate_stats(
+            dir_results_s3fs
+        )
+        _, dir_s5cmd_time, dir_s5cmd_min, dir_s5cmd_max, dir_s5cmd_tput, dir_s5cmd_times = calculate_stats(
+            dir_results_s5cmd
+        )
+        dir_result = f"""
+        <h2>Test 2: Directory with 1000 x 5MB Files</h2>
+        <table>
+            <tr>
+                <th>Method</th>
+                <th>Avg Size (GB)</th>
+                <th>Avg Duration (s)</th>
+                <th>Min/Max (s)</th>
+                <th>Avg Throughput (MiB/s)</th>
+                <th>All Runs (s)</th>
+            </tr>
+            <tr>
+                <td>New SDK (Flyte v2)</td>
+                <td>{dir_new_bytes / (1024**3):.2f}</td>
+                <td>{dir_new_time:.2f}</td>
+                <td>{f"{dir_new_min:.2f} / {dir_new_max:.2f}"}</td>
+                <td>{dir_new_tput:.2f}</td>
+                <td class="runs">{", ".join([f"{t:.2f}" for t in dir_new_times])}</td>
+            </tr>
+            <tr>
+                <td>s3fs + fsspec (v1 style)</td>
+                <td>{dir_s3fs_bytes / (1024**3):.2f}</td>
+                <td>{dir_s3fs_time:.2f}</td>
+                <td>{f"{dir_s3fs_min:.2f} / {dir_s3fs_max:.2f}"}</td>
+                <td>{dir_s3fs_tput:.2f}</td>
+                <td class="runs">{", ".join([f"{t:.2f}" for t in dir_s3fs_times])}</td>
+            </tr>
+            <tr>
+                <td>s5cmd (ContainerTask)</td>
+                <td>~4.88</td>
+                <td>{dir_s5cmd_time:.2f}</td>
+                <td>{f"{dir_s5cmd_min:.2f} / {dir_s5cmd_max:.2f}"}</td>
+                <td>{dir_s5cmd_tput:.2f}</td>
+                <td class="runs">{", ".join([f"{t:.2f}" for t in dir_s5cmd_times])}</td>
+            </tr>
+        </table>        
+        
+"""
 
     html = f"""
     <html>
@@ -378,80 +459,9 @@ def generate_benchmark_report(
     </head>
     <body>
         <h1>I/O Benchmark Results (10 Runs Each)</h1>
-
-        <h2>Test 1: Single 5GB File Download</h2>
-        <table>
-            <tr>
-                <th>Method</th>
-                <th>Avg Size (GB)</th>
-                <th>Avg Duration (s)</th>
-                <th>Min/Max (s)</th>
-                <th>Avg Throughput (MiB/s)</th>
-                <th>All Runs (s)</th>
-            </tr>
-            <tr>
-                <td>New SDK (Flyte v2)</td>
-                <td>{file_new_bytes / (1024**3):.2f if file_new_bytes is not None else "N/A"}</td>
-                <td>{file_new_time:.2f if file_new_time is not None else "N/A"}</td>
-                <td>{f"{file_new_min:.2f} / {file_new_max:.2f}" if file_new_min is not None and file_new_max is not None else "N/A"}</td>
-                <td>{file_new_tput:.2f if file_new_tput is not None else "N/A"}</td>
-                <td class="runs">{", ".join([f"{t:.2f}" for t in file_new_times]) if file_new_times is not None else "N/A"}</td>
-            </tr>
-            <tr>
-                <td>s3fs + fsspec (v1 style)</td>
-                <td>{file_s3fs_bytes / (1024**3):.2f if file_s3fs_bytes is not None else "N/A"}</td>
-                <td>{file_s3fs_time:.2f if file_s3fs_time is not None else "N/A"}</td>
-                <td>{f"{file_s3fs_min:.2f} / {file_s3fs_max:.2f}" if file_s3fs_min is not None and file_s3fs_max is not None else "N/A"}</td>
-                <td>{file_s3fs_tput:.2f if file_s3fs_tput is not None else "N/A"}</td>
-                <td class="runs">{", ".join([f"{t:.2f}" for t in file_s3fs_times]) if file_s3fs_times is not None else "N/A"}</td>
-            </tr>
-            <tr>
-                <td>s5cmd (ContainerTask)</td>
-                <td>~5.00</td>
-                <td>{file_s5cmd_time:.2f if file_s5cmd_time is not None else "N/A"}</td>
-                <td>{f"{file_s5cmd_min:.2f} / {file_s5cmd_max:.2f}" if file_s5cmd_min is not None and file_s5cmd_max is not None else "N/A"}</td>
-                <td>{file_s5cmd_tput:.2f if file_s5cmd_tput is not None else "N/A"}</td>
-                <td class="runs">{", ".join([f"{t:.2f}" for t in file_s5cmd_times]) if file_s5cmd_times is not None else "N/A"}</td>
-            </tr>
-        </table>
-
-        <h2>Test 2: Directory with 1000 x 5MB Files</h2>
-        <table>
-            <tr>
-                <th>Method</th>
-                <th>Avg Size (GB)</th>
-                <th>Avg Duration (s)</th>
-                <th>Min/Max (s)</th>
-                <th>Avg Throughput (MiB/s)</th>
-                <th>All Runs (s)</th>
-            </tr>
-            <tr>
-                <td>New SDK (Flyte v2)</td>
-                <td>{dir_new_bytes / (1024**3):.2f if dir_new_bytes is not None else "N/A"}</td>
-                <td>{dir_new_time:.2f if dir_new_time is not None else "N/A"}</td>
-                <td>{f"{dir_new_min:.2f} / {dir_new_max:.2f}" if dir_new_min is not None and dir_new_max is not None else "N/A"}</td>
-                <td>{dir_new_tput:.2f if dir_new_tput is not None else "N/A"}</td>
-                <td class="runs">{", ".join([f"{t:.2f}" for t in dir_new_times]) if dir_new_times is not None else "N/A"}</td>
-            </tr>
-            <tr>
-                <td>s3fs + fsspec (v1 style)</td>
-                <td>{dir_s3fs_bytes / (1024**3):.2f if dir_s3fs_bytes is not None else "N/A"}</td>
-                <td>{dir_s3fs_time:.2f if dir_s3fs_time is not None else "N/A"}</td>
-                <td>{f"{dir_s3fs_min:.2f} / {dir_s3fs_max:.2f}" if dir_s3fs_min is not None and dir_s3fs_max is not None else "N/A"}</td>
-                <td>{dir_s3fs_tput:.2f if dir_s3fs_tput is not None else "N/A"}</td>
-                <td class="runs">{", ".join([f"{t:.2f}" for t in dir_s3fs_times]) if dir_s3fs_times is not None else "N/A"}</td>
-            </tr>
-            <tr>
-                <td>s5cmd (ContainerTask)</td>
-                <td>~4.88</td>
-                <td>{dir_s5cmd_time:.2f if dir_s5cmd_time is not None else "N/A"}</td>
-                <td>{f"{dir_s5cmd_min:.2f} / {dir_s5cmd_max:.2f}" if dir_s5cmd_min is not None and dir_s5cmd_max is not None else "N/A"}</td>
-                <td>{dir_s5cmd_tput:.2f if dir_s5cmd_tput is not None else "N/A"}</td>
-                <td class="runs">{", ".join([f"{t:.2f}" for t in dir_s5cmd_times]) if dir_s5cmd_times is not None else "N/A"}</td>
-            </tr>
-        </table>
-
-        <p><em>All tests run 10 times each in parallel on nodes with {CPU} CPU, {MEMORY} memory</em></p>
+        {file_result}
+        {dir_result}
+        <p><em>All tests run {iterations} times each in parallel on nodes with {CPU} CPU, {MEMORY} memory</em></p>
     </body>
     </html>
     """
@@ -461,10 +471,17 @@ def generate_benchmark_report(
 @env.task(report=True)
 async def benchmark_all(test_file: bool = True, test_dir: bool = True):
     """Comprehensive benchmark comparing all download methods"""
-    iterations = 2
+    iterations = 10
     print("=" * 80)
     print(f"Starting comprehensive I/O benchmarks ({iterations} runs each)")
     print("=" * 80)
+
+    file_results_new = None
+    file_results_s3fs = None
+    file_results_s5cmd = None
+    dir_results_new = None
+    dir_results_s3fs = None
+    dir_results_s5cmd = None
 
     if test_file:
         # Test 1: Large single file (5GB)
@@ -544,6 +561,7 @@ async def benchmark_all(test_file: bool = True, test_dir: bool = True):
         dir_results_new=dir_results_new,
         dir_results_s3fs=dir_results_s3fs,
         dir_results_s5cmd=dir_results_s5cmd,
+        iterations=iterations,
     )
 
     await flyte.report.replace.aio(html)
