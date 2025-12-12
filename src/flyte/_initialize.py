@@ -75,6 +75,15 @@ async def _initialize_client(
     """
     from flyte.remote._client.controlplane import ClientSet
 
+    # https://grpc.io/docs/guides/keepalive/#keepalive-configuration-specification
+    channel_options = [
+        ("grpc.keepalive_permit_without_calls", 1),
+        ("grpc.keepalive_time_ms", 30000),  # Send keepalive ping every 30 seconds
+        ("grpc.keepalive_timeout_ms", 10000),  # Wait 10 seconds for keepalive response
+        ("grpc.http2.max_pings_without_data", 0),  # Allow unlimited pings without data
+        ("grpc.http2.min_ping_interval_without_data_ms", 30000),  # Min 30s between pings
+    ]
+
     if endpoint and api_key is None:
         return await ClientSet.for_endpoint(
             endpoint,
@@ -90,6 +99,7 @@ async def _initialize_client(
             client_config=client_config,
             rpc_retries=rpc_retries,
             http_proxy_url=http_proxy_url,
+            grpc_options=channel_options,
         )
     elif api_key:
         return await ClientSet.for_api_key(
@@ -106,6 +116,7 @@ async def _initialize_client(
             client_config=client_config,
             rpc_retries=rpc_retries,
             http_proxy_url=http_proxy_url,
+            grpc_options=channel_options,
         )
 
     raise InitializationError(

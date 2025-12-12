@@ -11,16 +11,25 @@
 PyIceberg Parallel Batch Aggregation Example using Flyte
 
 This script demonstrates how to:
-1. Read data from an Iceberg table using PyIceberg
-2. Split the data into partitions for parallel processing
-3. Use Flyte tasks with ReusePolicy to maximize CPU utilization
-4. Use flyte.io.DataFrame to minimize data copies by passing references
-5. Combine results from all partitions
+1. Read data from an Iceberg table using PyIceberg WITHOUT loading the entire table
+2. Use scan().plan_files() to get parquet file paths instead of .to_arrow()
+3. Pass file paths (strings) between tasks for zero-copy data passing
+4. Each worker reads only its assigned parquet files directly
+5. Use Flyte tasks with ReusePolicy to maximize CPU utilization
+6. Combine results from all partitions
+
+Key optimization: Instead of loading the entire table with table.scan().to_arrow(),
+use table.scan().plan_files() to get file paths, distribute them across workers,
+and let each worker read only its assigned files. This achieves:
+- Zero-copy data passing (only file paths are serialized)
+- No full table load into memory
+- True parallel file processing
 
 Key patterns demonstrated:
+- PyIceberg scan().plan_files() for efficient file-level parallelism
+- Zero-copy data passing by passing file paths instead of data
 - flyte.TaskEnvironment with ReusePolicy for efficient resource utilization
-- flyte.io.DataFrame for passing dataframe references (metadata only, not data copies)
-- asyncio.gather for parallel processing of chunks
+- asyncio.gather for parallel processing of parquet files
 - Async tasks for concurrent execution
 """
 
@@ -29,6 +38,7 @@ import logging
 from typing import List, Literal
 
 import pyarrow as pa
+import pyarrow.parquet as pq
 
 import flyte
 import flyte.io
@@ -49,7 +59,7 @@ processing_env = flyte.TaskEnvironment(
         idle_ttl=300,  # Keep workers alive for 5 minutes after idle
     ),
     image=image,
-    cache=flyte.Cache("auto", "3.2"),
+    cache=flyte.Cache("auto", "4.0"),
 )
 
 # Non-reusable environment for orchestration tasks
@@ -65,20 +75,20 @@ AggFunction = Literal["sum", "mean", "count", "max", "min"]
 
 @processing_env.task
 async def aggregate_partition(
-    partition_data: flyte.io.DataFrame,
+    file_paths: List[str],
     partition_id: int,
     group_by_column: str,
     agg_column: str,
     agg_function: AggFunction = "sum",
 ) -> flyte.io.DataFrame:
     """
-    Perform aggregation on a single partition of data.
+    Perform aggregation on a single partition of data by reading parquet files.
 
     This task runs on reusable workers, maximizing CPU utilization across
     multiple partitions processed in parallel.
 
     Args:
-        partition_data: Flyte DataFrame containing the partition's data (reference only)
+        file_paths: List of parquet file paths to process for this partition
         partition_id: Identifier for this partition
         group_by_column: Column name to group by
         agg_column: Column name to aggregate
@@ -87,9 +97,10 @@ async def aggregate_partition(
     Returns:
         Flyte DataFrame with aggregation results for this partition
     """
-    # Convert from flyte.io.DataFrame to PyArrow - data is fetched only here
-    table: pa.Table = await partition_data.open(pa.Table).all()
-    logger.info(f"Processing partition {partition_id} with {table.num_rows} rows")
+    # Read parquet files directly - only load files assigned to this partition
+    tables = [pq.read_table(f) for f in file_paths]
+    table = pa.concat_tables(tables) if len(tables) > 1 else tables[0]
+    logger.info(f"Processing partition {partition_id} with {table.num_rows} rows from {len(file_paths)} files")
 
     # Perform aggregation using PyArrow compute
     grouped = table.group_by(group_by_column)
@@ -166,22 +177,28 @@ async def combine_results(
 
 @orchestrator_env.task
 async def process_table_parallel(
-    table_data: flyte.io.DataFrame,
+    file_paths: List[str],
     group_by_column: str,
     agg_column: str,
     agg_function: AggFunction = "sum",
     num_partitions: int = 4,
 ) -> flyte.io.DataFrame:
     """
-    Main orchestrator that splits data and processes partitions in parallel.
+    Main orchestrator that distributes parquet files across partitions for parallel processing.
+
+    Optimized for Iceberg tables: instead of loading the entire table with .to_arrow(),
+    use scan().plan_files() to get file paths, then process files in parallel.
+
+    Zero-copy data passing: only file paths (strings) are passed between tasks.
+    Each worker reads parquet files directly when needed.
 
     This task:
-    1. Splits the input data into chunks inline
-    2. Launches parallel tasks for each chunk using asyncio.gather
+    1. Distributes parquet file paths across partitions (zero data copying!)
+    2. Launches parallel tasks for each partition using asyncio.gather
     3. Combines and returns the final aggregated results
 
     Args:
-        table_data: Flyte DataFrame containing all data (reference only)
+        file_paths: List of parquet file paths from Iceberg table scan().plan_files()
         group_by_column: Column to group by for aggregation
         agg_column: Column to aggregate
         agg_function: Aggregation function to apply
@@ -190,29 +207,21 @@ async def process_table_parallel(
     Returns:
         Combined Flyte DataFrame with aggregated results from all partitions
     """
-    logger.info(f"Starting parallel processing with {num_partitions} partitions")
+    logger.info(f"Starting parallel processing with {num_partitions} partitions for {len(file_paths)} files")
 
-    # Convert to PyArrow Table for efficient zero-copy slicing
-    table: pa.Table = await table_data.open(pa.Table).all()
-    total_rows = table.num_rows
-    chunk_size = max(1, total_rows // num_partitions)
+    # Distribute file paths across partitions (round-robin)
+    partition_files = [[] for _ in range(num_partitions)]
+    for idx, file_path in enumerate(file_paths):
+        partition_idx = idx % num_partitions
+        partition_files[partition_idx].append(file_path)
 
-    # Create chunks and launch tasks immediately
+    # Launch tasks for each partition - just pass file paths!
     partition_coros = []
-    for i in range(num_partitions):
-        start_idx = i * chunk_size
-        # Last chunk gets any remaining rows
-        end_idx = total_rows if i == num_partitions - 1 else (i + 1) * chunk_size
-
-        if start_idx < total_rows:
-            # PyArrow slice is zero-copy
-            chunk = table.slice(start_idx, end_idx - start_idx)
-            chunk_df = flyte.io.DataFrame.from_df(chunk)
-
-            # Launch task immediately
+    for i, files in enumerate(partition_files):
+        if files:  # Only process non-empty partitions
             partition_coros.append(
                 aggregate_partition(
-                    partition_data=chunk_df,
+                    file_paths=files,
                     partition_id=i,
                     group_by_column=group_by_column,
                     agg_column=agg_column,
@@ -237,19 +246,52 @@ async def process_table_parallel(
 
 
 @orchestrator_env.task
-async def create_sample_data(rows: int) -> flyte.io.DataFrame:
+async def load_iceberg_table(catalog_config: dict, table_name: str) -> List[str]:
     """
-    Create sample data for demonstration purposes.
+    Load an Iceberg table and return file paths for parallel processing.
 
-    In production, this would be replaced by reading from an actual Iceberg table:
-        catalog = load_catalog("my_catalog", **catalog_config)
-        table = catalog.load_table("my_namespace.my_table")
-        table_data = table.scan().to_arrow()
+    This uses scan().plan_files() to get parquet file paths WITHOUT loading the entire table.
+
+    Args:
+        catalog_config: Catalog configuration (e.g., {"uri": "thrift://...", "type": "hive"})
+        table_name: Fully qualified table name (e.g., "database.table_name")
 
     Returns:
-        Flyte DataFrame with sample data (reference only)
+        List of parquet file paths from the Iceberg table
+    """
+    from pyiceberg.catalog import load_catalog
+
+    # Load catalog and table
+    catalog = load_catalog("my_catalog", **catalog_config)
+    table = catalog.load_table(table_name)
+
+    # Get file paths using scan - does NOT load data!
+    file_paths = []
+    scan = table.scan()
+    for task in scan.plan_files():
+        file_paths.append(task.file.file_path)
+
+    logger.info(f"Found {len(file_paths)} parquet files in Iceberg table {table_name}")
+    return file_paths
+
+
+@orchestrator_env.task
+async def create_sample_data(rows: int, num_files: int = 4) -> List[str]:
+    """
+    Create sample data for demonstration purposes and return file paths.
+
+    In production, use load_iceberg_table() instead.
+
+    Args:
+        rows: Total number of rows to generate
+        num_files: Number of parquet files to create
+
+    Returns:
+        List of parquet file paths
     """
     import datetime
+    import os
+    import tempfile
 
     # Create sample data using PyArrow - all columns sized to match rows
     category_pattern = ["A", "B", "C"]
@@ -274,8 +316,24 @@ async def create_sample_data(rows: int) -> flyte.io.DataFrame:
     )
     logger.info(f"Created sample data: {table.num_rows} rows")
 
-    # Return as flyte.io.DataFrame - only metadata/reference is passed
-    return flyte.io.DataFrame.from_df(table)
+    # Write to temporary parquet files (simulating Iceberg table files)
+    temp_dir = tempfile.mkdtemp()
+    file_paths = []
+    rows_per_file = rows // num_files
+
+    for i in range(num_files):
+        start_idx = i * rows_per_file
+        end_idx = rows if i == num_files - 1 else (i + 1) * rows_per_file
+        file_table = table.slice(start_idx, end_idx - start_idx)
+
+        file_path = os.path.join(temp_dir, f"part_{i}.parquet")
+        pq.write_table(file_table, file_path)
+        uploaded_file = await flyte.io.File.from_local(file_path)
+        file_paths.append(uploaded_file.path)
+
+    logger.info(f"Wrote {len(file_paths)} parquet files to {temp_dir}")
+    # upload files
+    return file_paths
 
 
 @orchestrator_env.task
@@ -284,18 +342,24 @@ async def main(rows: int = 1000) -> flyte.io.DataFrame:
     Main entry point demonstrating the full workflow.
 
     This orchestrates:
-    1. Loading data (simulated with sample data)
-    2. Processing it in parallel batches across reusable workers
+    1. Loading data file paths (simulated with sample data, or use load_iceberg_table)
+    2. Processing files in parallel batches across reusable workers
     3. Returning combined results
+
+    In production, replace create_sample_data with load_iceberg_table:
+        file_paths = await load_iceberg_table(
+            catalog_config={"uri": "thrift://localhost:9083", "type": "hive"},
+            table_name="database.table_name"
+        )
     """
     logger.info("=== PyIceberg Parallel Aggregation with Flyte ===")
 
-    # Create sample data (in production: read from Iceberg table)
-    table_data = await create_sample_data(rows)
+    # Get file paths (in production: use load_iceberg_table)
+    file_paths = await create_sample_data(rows, num_files=8)
 
-    # Process with parallel aggregation
+    # Process with parallel aggregation - files are distributed across workers
     result = await process_table_parallel(
-        table_data=table_data,
+        file_paths=file_paths,
         group_by_column="category",
         agg_column="value",
         agg_function="sum",
