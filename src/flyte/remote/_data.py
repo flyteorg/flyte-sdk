@@ -62,7 +62,7 @@ async def _upload_with_retry(
     max_retries: int = 3,
     min_backoff_sec: float = 0.5,
     max_backoff_sec: float = 10.0,
-) -> httpx.Response:
+):
     """
     Upload file to signed URL with exponential backoff retry.
 
@@ -77,9 +77,6 @@ async def _upload_with_retry(
         max_retries: Maximum retry attempts (default: 3)
         min_backoff_sec: Initial backoff delay (default: 0.5)
         max_backoff_sec: Maximum backoff delay (default: 10.0)
-
-    Returns:
-        httpx.Response from successful upload
 
     Raises:
         RuntimeSystemError: If upload fails after all retries
@@ -124,8 +121,6 @@ async def _upload_with_retry(
                         f"Failed to upload {fp} to {signed_url}, status code: {put_resp.status_code}, "
                         f"response: {put_resp.text}",
                     )
-        return put_resp
-
     return None
 
 
