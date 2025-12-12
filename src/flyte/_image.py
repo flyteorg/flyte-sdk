@@ -1,3 +1,14 @@
+# TODO: Alex Chien - Optimize layer granularity for Docker build caching
+#
+# PROBLEM:  Current layers mix dependencies with different change frequencies,
+# causing unnecessary rebuilds when Docker cache invalidates
+#
+# SOLUTION:  Separate layers by stability: 
+# 1. System packages (apt) - most stable
+# 2. Base Python packages - stable  
+# 3. Project requirements - less stable
+# 4. Local code - changes frequently
+
 from __future__ import annotations
 
 import hashlib
