@@ -2,13 +2,12 @@ use flyteidl2::google::protobuf::Timestamp;
 use prost::Message;
 use pyo3::prelude::*;
 
-use flyteidl2::flyteidl::common::ActionIdentifier;
+use flyteidl2::flyteidl::common::{ActionIdentifier, RunIdentifier};
 use flyteidl2::flyteidl::workflow::{ActionUpdate, TraceAction};
 
+use flyteidl2::flyteidl::common::ActionPhase;
 use flyteidl2::flyteidl::core::{ExecutionError, TypedInterface};
 use flyteidl2::flyteidl::task::{OutputReferences, TaskSpec, TraceSpec};
-use flyteidl2::flyteidl::workflow::Phase;
-
 use tracing::debug;
 
 #[pyclass(eq, eq_int)]
@@ -31,7 +30,7 @@ pub struct Action {
     pub run_output_base: Option<String>,
     pub realized_outputs_uri: Option<String>,
     pub err: Option<ExecutionError>,
-    pub phase: Option<Phase>,
+    pub phase: Option<ActionPhase>,
     pub started: bool,
     pub retries: u32,
     pub client_err: Option<String>, // Changed from PyErr to String for serializability
@@ -42,10 +41,36 @@ pub struct Action {
 
 impl Action {
     pub fn get_run_name(&self) -> String {
-        match self.action_id.run.clone() {
-            Some(run_id) => run_id.name,
-            None => String::from("missing run name"),
-        }
+        let run_name = self
+            .action_id
+            .run
+            .as_ref()
+            .expect("Action ID missing run")
+            .name
+            .clone();
+        assert!(!run_name.is_empty());
+        run_name
+    }
+
+    pub fn get_run_identifier(&self) -> RunIdentifier {
+        self.action_id
+            .run
+            .as_ref()
+            .expect("Action ID missing run")
+            .clone()
+    }
+
+    pub fn get_full_name(&self) -> String {
+        format!(
+            "{}:{}",
+            &self
+                .action_id
+                .run
+                .as_ref()
+                .expect("Action ID missing run")
+                .name,
+            self.action_id.name
+        )
     }
 
     pub fn get_action_name(&self) -> String {
@@ -63,7 +88,7 @@ impl Action {
     pub fn mark_cancelled(&mut self) {
         debug!("Marking action {:?} as cancelled", self.action_id);
         self.mark_started();
-        self.phase = Some(Phase::Aborted);
+        self.phase = Some(ActionPhase::Aborted);
     }
 
     pub fn mark_started(&mut self) {
@@ -73,7 +98,7 @@ impl Action {
     }
 
     pub fn merge_update(&mut self, obj: &ActionUpdate) {
-        if let Ok(new_phase) = Phase::try_from(obj.phase) {
+        if let Ok(new_phase) = ActionPhase::try_from(obj.phase) {
             if self.phase.is_none() || self.phase != Some(new_phase) {
                 self.phase = Some(new_phase);
                 if obj.error.is_some() {
@@ -89,7 +114,7 @@ impl Action {
 
     pub fn new_from_update(parent_action_name: String, obj: ActionUpdate) -> Self {
         let action_id = obj.action_id.unwrap();
-        let phase = Phase::try_from(obj.phase).unwrap();
+        let phase = ActionPhase::try_from(obj.phase).unwrap();
         Action {
             action_id: action_id.clone(),
             parent_action_name,
@@ -115,7 +140,10 @@ impl Action {
         if let Some(phase) = &self.phase {
             matches!(
                 phase,
-                Phase::Succeeded | Phase::Failed | Phase::Aborted | Phase::TimedOut
+                ActionPhase::Succeeded
+                    | ActionPhase::Failed
+                    | ActionPhase::Aborted
+                    | ActionPhase::TimedOut
             )
         } else {
             false
@@ -177,7 +205,7 @@ impl Action {
             run_output_base: Some(run_output_base),
             realized_outputs_uri: None,
             err: None,
-            phase: Some(Phase::Unspecified),
+            phase: Some(ActionPhase::Unspecified),
             started: false,
             retries: 0,
             client_err: None,
@@ -243,7 +271,7 @@ impl Action {
 
         let trace_action = TraceAction {
             name: friendly_name.clone(),
-            phase: Phase::Succeeded.into(),
+            phase: ActionPhase::Succeeded.into(),
             start_time: Some(Timestamp {
                 seconds: start_secs,
                 nanos: start_nanos,
@@ -266,7 +294,7 @@ impl Action {
             inputs_uri: Some(inputs_uri),
             run_output_base: Some(run_output_base),
             realized_outputs_uri: Some(outputs_uri),
-            phase: Phase::Succeeded.into(),
+            phase: ActionPhase::Succeeded.into(),
             err: None,
             started: true,
             retries: 0,

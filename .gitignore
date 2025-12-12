@@ -190,3 +190,4 @@ examples/remote_example.py
 config.yaml
 .claude/
 tests/flyte/internal/bin/flyte-inputs.json
+.cargo/

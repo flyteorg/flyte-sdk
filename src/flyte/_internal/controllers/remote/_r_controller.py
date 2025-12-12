@@ -395,16 +395,15 @@ class RemoteController(BaseController):
         This method is invoked when the parent action is finished. It will finalize the run and upload the outputs
         to the control plane.
         """
-        # todo-pr: implement any cleanup
         # translate the ActionID python object to something handleable in pyo3
         # will need to do this after we have multiple informers.
-        # run_id = identifier_pb2.RunIdentifier(
-        #     name=action_id.run_name,
-        #     project=action_id.project,
-        #     domain=action_id.domain,
-        #     org=action_id.org,
-        # )
-        # await super()._finalize_parent_action(run_id=run_id, parent_action_name=action_id.name)
+        run_id = identifier_pb2.RunIdentifier(
+            name=action_id.run_name,
+            project=action_id.project,
+            domain=action_id.domain,
+            org=action_id.org,
+        )
+        await super().finalize_parent_action(run_id_bytes=run_id.SerializeToString(), parent_action_name=action_id.name)
         self._parent_action_semaphore.pop(unique_action_name(action_id), None)
         self._parent_action_task_call_sequence.pop(unique_action_name(action_id), None)
 

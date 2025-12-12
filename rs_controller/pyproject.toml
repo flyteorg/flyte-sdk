@@ -4,14 +4,16 @@ build-backend = "maturin"
 
 [project]
 name = "flyte_controller_base"
-version = "2.0.0b33.dev33+g3d028ba"
+version = "2.0.0b33.dev35+g4f8cb912.dirty"
 description = "Rust controller for Union"
 requires-python = ">=3.10"
 classifiers = ["Programming Language :: Python", "Programming Language :: Rust"]
-
+dependencies = [
+    "flyteidl2>=2.0.0a14",
+]
 [tool.maturin]
 module-name = "flyte_controller_base"
-features = ["pyo3/extension-module"]
+features = ["extension-module"]
 
 [tool.ruff]
 line-length = 120
