@@ -50,21 +50,9 @@ images = [
 
 async def main():
     print("Starting stress test with 10 image builds in parallel...")
-
-    # Create all build tasks using the async version (.aio)
     build_tasks = [flyte.build.aio(image) for image in images]
-
-    # Run all builds in parallel
-    builds = await asyncio.gather(*build_tasks)
-
-    # Print results
+    await asyncio.gather(*build_tasks)
     print("\n✅ All 10 image builds triggered successfully!")
-    for i, build in enumerate(builds, 1):
-        print(f"\nBuild {i}/10:")
-        print(f"  Name: {build.name}")
-        print(f"  URL: {build.url}")
-
-    print(f"\nTotal builds: {len(builds)}")
 
 
 if __name__ == "__main__":
