@@ -63,7 +63,7 @@ if __name__ == "__main__":
     flyte.init_from_config("/Users/ytong/.flyte/config-k3d.yaml", root_dir=repo_root, storage=s3_sandbox)
 
     # Kick off a run of hybrid_parent_placeholder and fill in with kicked off things.
-    run_name = "rt26xx54p886brkhcns2"
+    run_name = "rf2rwkn4prt69lnm4rz8"
     outputs = flyte.with_runcontext(
         mode="hybrid",
         name=run_name,

@@ -28,6 +28,7 @@ use flyteidl2::flyteidl::common::{ActionIdentifier, ProjectIdentifier, RunIdenti
 use flyteidl2::flyteidl::task::task_service_client::TaskServiceClient;
 use flyteidl2::flyteidl::task::{list_tasks_request, ListTasksRequest};
 use flyteidl2::flyteidl::workflow::state_service_client::StateServiceClient;
+use prost::Message;
 use tonic::transport::Endpoint;
 
 // Python error conversions
@@ -111,11 +112,18 @@ impl BaseController {
     fn finalize_parent_action<'py>(
         &self,
         py: Python<'py>,
-        run_id: RunIdentifier,
+        // run_id: RunIdentifier,
+        run_id_bytes: &[u8],
         parent_action_name: &str,
     ) -> PyResult<Bound<'py, PyAny>> {
         let base = self.0.clone();
         let parent_action_string = parent_action_name.to_string();
+        let run_id = RunIdentifier::decode(run_id_bytes).map_err(|e| {
+            pyo3::exceptions::PyValueError::new_err(format!(
+                "Failed to decode RunIdentifier: {}",
+                e
+            ))
+        })?;
         let py_fut = future_into_py(py, async move {
             base.finalize_parent_action(&run_id, &parent_action_string)
                 .await;

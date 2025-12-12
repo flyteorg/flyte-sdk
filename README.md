@@ -329,9 +329,9 @@ The following instructions are for helping to build the default multi-arch image
 `cd` into `rs_controller` and run `make build-builders`. This will build the builder images once, so you can keep using them as the rust code changes.
 
 ### Iteration Cycle
-Make sure you have `CLOUD_REPO=/Users/<username>/go/src/github.com/unionai/cloud` exported and checked out to a branch that has the latest prost generated code. Delete this comment and update make target in the future if it gets merged/published.
-
-Then run `make build-wheels`.
+Run `make build-wheels` to actually build the multi-arch wheels. This command should probably be updated to build all three,
+currently it only builds for linux/amd64 and linux/arm64... the `make build-wheel-local` command builds a macosx wheel,
+unclear what the difference is between that and the arm64 one, and unclear if both are present, which one pip chooses.
 
 `cd` back up to the root folder of this project and proceed with
 ```bash
@@ -341,7 +341,7 @@ python maint_tools/build_default_image.py
 
 To install the wheel locally for testing, use the following command with your venv active.
 ```bash
-uv pip install --find-links ./rs_controller/dist --no-index --force-reinstall flyte_controller_base
+uv pip install --find-links ./rs_controller/dist --no-index --force-reinstall --no-deps flyte_controller_base
 ```
 Repeat this process to iterate - build new wheels, force reinstall the controller package.
 

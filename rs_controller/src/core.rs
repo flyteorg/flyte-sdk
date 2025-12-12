@@ -62,7 +62,8 @@ pub async fn create_tls_endpoint(
 
     let endpoint = Endpoint::from_static(url)
         .tls_config(tls_config)
-        .map_err(|e| ControllerError::SystemError(format!("TLS config error: {}", e)))?;
+        .map_err(|e| ControllerError::SystemError(format!("TLS config error: {}", e)))?
+        .keep_alive_while_idle(true);
 
     Ok(endpoint)
 }
@@ -203,7 +204,8 @@ impl CoreBaseController {
         let rt = get_runtime();
         let channel = rt.block_on(async {
             let chan = if endpoint.starts_with("http://") {
-                let endpoint = Endpoint::from_static(endpoint_static);
+                let endpoint = Endpoint::from_static(endpoint_static)
+                    .keep_alive_while_idle(true);
                 endpoint.connect().await.map_err(ControllerError::from)?
             } else if endpoint.starts_with("https://") {
                 // Strip "https://" to get just the hostname for TLS config
@@ -531,7 +533,7 @@ impl CoreBaseController {
             // Add logic from resiliency pr here, return certain errors, but change others to be a specific slowdown error.
             match enqueue_result {
                 Ok(response) => {
-                    debug!("Successfully launched action: {:?}", action.action_id);
+                    debug!("Successfully enqueued action: {:?}", action.action_id);
                     Ok(response.into_inner())
                 }
                 Err(e) => {
