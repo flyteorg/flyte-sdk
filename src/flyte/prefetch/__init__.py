@@ -1,7 +1,7 @@
 """
-Store utilities for Flyte.
+Prefetch utilities for Flyte.
 
-This module provides functionality to store various artifacts from remote registries,
+This module provides functionality to prefetch various artifacts from remote registries,
 such as HuggingFace models.
 """
 

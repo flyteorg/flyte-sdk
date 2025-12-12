@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import sys
 
-from . import store
+from . import prefetch
 from ._build import build
 from ._cache import Cache, CachePolicy, CacheRequest
 from ._context import ctx
@@ -106,7 +106,7 @@ __all__ = [
     "map",
     "run",
     "serve",
-    "store",
+    "prefetch",
     "trace",
     "version",
     "with_runcontext",

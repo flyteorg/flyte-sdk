@@ -16,7 +16,7 @@ from ._get import get
 from ._plugins import discover_and_register_plugins
 from ._run import run
 from ._serve import serve
-from ._store import store
+from ._prefetch import prefetch
 from ._update import update
 from ._user import whoami
 
@@ -42,8 +42,8 @@ help_config = click.RichHelpConfiguration(
                 "commands": ["build", "deploy"],
             },
             {
-                "name": "Store artifacts from remote registries.",
-                "commands": ["store"],
+                "name": "Prefetch artifacts from remote registries.",
+                "commands": ["prefetch"],
             },
             {
                 "name": "Documentation generation",
@@ -229,7 +229,7 @@ main.add_command(build)
 main.add_command(whoami)  # type: ignore
 main.add_command(update)  # type: ignore
 main.add_command(serve)  # type: ignore
-main.add_command(store)  # type: ignore
+main.add_command(prefetch)  # type: ignore
 
 # Discover and register CLI plugins from installed packages
 discover_and_register_plugins(main)

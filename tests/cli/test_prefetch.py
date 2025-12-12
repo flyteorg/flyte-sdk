@@ -1,4 +1,4 @@
-"""Tests for flyte.cli._store module."""
+"""Tests for flyte.cli._prefetch module."""
 
 import tempfile
 from unittest.mock import MagicMock, patch
@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from click.testing import CliRunner
 
-from flyte.cli._store import store
+from flyte.cli._prefetch import prefetch
 
 
 @pytest.fixture
@@ -25,20 +25,20 @@ def mock_cfg():
 
 
 # =============================================================================
-# Store Group Tests
+# Prefetch Group Tests
 # =============================================================================
 
 
-def test_store_help(runner):
-    """Test store command group help."""
-    result = runner.invoke(store, ["--help"])
+def test_prefetch_help(runner):
+    """Test prefetch command group help."""
+    result = runner.invoke(prefetch, ["--help"])
     assert result.exit_code == 0, result.output
-    assert "Store artifacts from remote registries" in result.output
+    assert "Prefetch artifacts from remote registries" in result.output
 
 
-def test_store_hf_model_subcommand_exists(runner):
+def test_prefetch_hf_model_subcommand_exists(runner):
     """Test hf-model subcommand is available."""
-    result = runner.invoke(store, ["--help"])
+    result = runner.invoke(prefetch, ["--help"])
     assert result.exit_code == 0, result.output
     assert "hf-model" in result.output
 
@@ -50,14 +50,14 @@ def test_store_hf_model_subcommand_exists(runner):
 
 def test_hf_model_help(runner):
     """Test hf-model command help."""
-    result = runner.invoke(store, ["hf-model", "--help"])
+    result = runner.invoke(prefetch, ["hf-model", "--help"])
     assert result.exit_code == 0, result.output
-    assert "Store a HuggingFace model" in result.output
+    assert "Prefetch a HuggingFace model" in result.output
 
 
 def test_hf_model_help_shows_all_options(runner):
     """Test hf-model help shows all expected options."""
-    result = runner.invoke(store, ["hf-model", "--help"])
+    result = runner.invoke(prefetch, ["hf-model", "--help"])
     assert result.exit_code == 0, result.output
 
     expected_options = [
@@ -85,7 +85,7 @@ def test_hf_model_help_shows_all_options(runner):
 
 def test_hf_model_requires_repo_argument(runner):
     """Test hf-model command requires repo argument."""
-    result = runner.invoke(store, ["hf-model"])
+    result = runner.invoke(prefetch, ["hf-model"])
     assert result.exit_code != 0
     assert "Missing argument" in result.output or "REPO" in result.output
 
@@ -93,7 +93,7 @@ def test_hf_model_requires_repo_argument(runner):
 def test_hf_model_invalid_accelerator(runner, mock_cfg):
     """Test hf-model command rejects invalid accelerator."""
     result = runner.invoke(
-        store,
+        prefetch,
         [
             "hf-model",
             "meta-llama/Llama-2-7b-hf",
@@ -110,7 +110,7 @@ def test_hf_model_invalid_accelerator(runner, mock_cfg):
 def test_hf_model_shard_config_file_not_found(runner, mock_cfg):
     """Test hf-model command fails with non-existent shard config file."""
     result = runner.invoke(
-        store,
+        prefetch,
         [
             "hf-model",
             "meta-llama/Llama-2-7b-hf",
@@ -129,15 +129,15 @@ def test_hf_model_shard_config_file_not_found(runner, mock_cfg):
 # =============================================================================
 
 
-@patch("flyte.store.hf_model")
+@patch("flyte.prefetch.hf_model")
 @patch("flyte.cli._run.initialize_config")
-def test_shard_config_parsing(mock_init_config, mock_store, runner, mock_cfg):
+def test_shard_config_parsing(mock_init_config, mock_prefetch, runner, mock_cfg):
     """Test parsing shard config file."""
     mock_init_config.return_value = mock_cfg
 
     mock_run = MagicMock()
     mock_run.url = "https://console.example.com/run/123"
-    mock_store.return_value = mock_run
+    mock_prefetch.return_value = mock_run
 
     with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
         f.write("""
@@ -152,7 +152,7 @@ args:
 
     try:
         result = runner.invoke(
-            store,
+            prefetch,
             [
                 "hf-model",
                 "meta-llama/Llama-2-70b-hf",
@@ -165,8 +165,8 @@ args:
         )
 
         assert result.exit_code == 0, result.output
-        mock_store.assert_called_once()
-        call_kwargs = mock_store.call_args.kwargs
+        mock_prefetch.assert_called_once()
+        call_kwargs = mock_prefetch.call_args.kwargs
         assert call_kwargs["shard_config"] is not None
         assert call_kwargs["shard_config"].engine == "vllm"
         assert call_kwargs["shard_config"].args.tensor_parallel_size == 8
@@ -178,15 +178,15 @@ args:
         os.unlink(shard_config_path)
 
 
-@patch("flyte.store.hf_model")
+@patch("flyte.prefetch.hf_model")
 @patch("flyte.cli._run.initialize_config")
-def test_shard_config_minimal(mock_init_config, mock_store, runner, mock_cfg):
+def test_shard_config_minimal(mock_init_config, mock_prefetch, runner, mock_cfg):
     """Test parsing minimal shard config file."""
     mock_init_config.return_value = mock_cfg
 
     mock_run = MagicMock()
     mock_run.url = "https://console.example.com/run/123"
-    mock_store.return_value = mock_run
+    mock_prefetch.return_value = mock_run
 
     with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
         f.write("""
@@ -197,7 +197,7 @@ args: {}
 
     try:
         result = runner.invoke(
-            store,
+            prefetch,
             [
                 "hf-model",
                 "meta-llama/Llama-2-70b-hf",
@@ -208,7 +208,7 @@ args: {}
         )
 
         assert result.exit_code == 0, result.output
-        call_kwargs = mock_store.call_args.kwargs
+        call_kwargs = mock_prefetch.call_args.kwargs
         assert call_kwargs["shard_config"] is not None
         assert call_kwargs["shard_config"].engine == "vllm"
         # Should use defaults for args
@@ -224,41 +224,41 @@ args: {}
 # =============================================================================
 
 
-@patch("flyte.store.hf_model")
+@patch("flyte.prefetch.hf_model")
 @patch("flyte.cli._run.initialize_config")
-def test_hf_model_basic_call(mock_init_config, mock_store, runner, mock_cfg):
+def test_hf_model_basic_call(mock_init_config, mock_prefetch, runner, mock_cfg):
     """Test basic hf-model command invocation."""
     mock_init_config.return_value = mock_cfg
 
     mock_run = MagicMock()
     mock_run.url = "https://console.example.com/run/123"
-    mock_store.return_value = mock_run
+    mock_prefetch.return_value = mock_run
 
     result = runner.invoke(
-        store,
+        prefetch,
         ["hf-model", "meta-llama/Llama-2-7b-hf"],
         obj=mock_cfg,
     )
 
     assert result.exit_code == 0, result.output
-    mock_store.assert_called_once()
-    call_kwargs = mock_store.call_args.kwargs
+    mock_prefetch.assert_called_once()
+    call_kwargs = mock_prefetch.call_args.kwargs
     assert call_kwargs["repo"] == "meta-llama/Llama-2-7b-hf"
     assert call_kwargs["hf_token_key"] == "HF_TOKEN"  # default
 
 
-@patch("flyte.store.hf_model")
+@patch("flyte.prefetch.hf_model")
 @patch("flyte.cli._run.initialize_config")
-def test_hf_model_with_all_options(mock_init_config, mock_store, runner, mock_cfg):
+def test_hf_model_with_all_options(mock_init_config, mock_prefetch, runner, mock_cfg):
     """Test hf-model command with all options."""
     mock_init_config.return_value = mock_cfg
 
     mock_run = MagicMock()
     mock_run.url = "https://console.example.com/run/123"
-    mock_store.return_value = mock_run
+    mock_prefetch.return_value = mock_run
 
     result = runner.invoke(
-        store,
+        prefetch,
         [
             "hf-model",
             "meta-llama/Llama-2-7b-hf",
@@ -295,8 +295,8 @@ def test_hf_model_with_all_options(mock_init_config, mock_store, runner, mock_cf
     )
 
     assert result.exit_code == 0, result.output
-    mock_store.assert_called_once()
-    call_kwargs = mock_store.call_args.kwargs
+    mock_prefetch.assert_called_once()
+    call_kwargs = mock_prefetch.call_args.kwargs
     assert call_kwargs["repo"] == "meta-llama/Llama-2-7b-hf"
     assert call_kwargs["artifact_name"] == "llama-2-7b"
     assert call_kwargs["architecture"] == "LlamaForCausalLM"
@@ -318,9 +318,9 @@ def test_hf_model_with_all_options(mock_init_config, mock_store, runner, mock_cf
 # =============================================================================
 
 
-@patch("flyte.store.hf_model")
+@patch("flyte.prefetch.hf_model")
 @patch("flyte.cli._run.initialize_config")
-def test_hf_model_with_wait_flag(mock_init_config, mock_store, runner, mock_cfg):
+def test_hf_model_with_wait_flag(mock_init_config, mock_prefetch, runner, mock_cfg):
     """Test hf-model command with --wait flag."""
     mock_init_config.return_value = mock_cfg
 
@@ -329,38 +329,38 @@ def test_hf_model_with_wait_flag(mock_init_config, mock_store, runner, mock_cfg)
     mock_output = MagicMock()
     mock_output.path = "s3://bucket/model"
     mock_run.outputs.return_value = [mock_output]
-    mock_store.return_value = mock_run
+    mock_prefetch.return_value = mock_run
 
     result = runner.invoke(
-        store,
+        prefetch,
         ["hf-model", "meta-llama/Llama-2-7b-hf", "--wait"],
         obj=mock_cfg,
     )
 
     assert result.exit_code == 0, result.output
     mock_run.wait.assert_called_once()
-    assert "Model stored successfully" in result.output
+    assert "Model prefetched successfully" in result.output
 
 
-@patch("flyte.store.hf_model")
+@patch("flyte.prefetch.hf_model")
 @patch("flyte.cli._run.initialize_config")
-def test_hf_model_wait_with_failure(mock_init_config, mock_store, runner, mock_cfg):
+def test_hf_model_wait_with_failure(mock_init_config, mock_prefetch, runner, mock_cfg):
     """Test hf-model command with --wait when execution fails."""
     mock_init_config.return_value = mock_cfg
 
     mock_run = MagicMock()
     mock_run.url = "https://console.example.com/run/123"
     mock_run.outputs.side_effect = Exception("Run failed")
-    mock_store.return_value = mock_run
+    mock_prefetch.return_value = mock_run
 
     result = runner.invoke(
-        store,
+        prefetch,
         ["hf-model", "meta-llama/Llama-2-7b-hf", "--wait"],
         obj=mock_cfg,
     )
 
     assert result.exit_code == 0, result.output  # CLI doesn't fail, just reports
-    assert "Model store failed" in result.output
+    assert "Model prefetch failed" in result.output
 
 
 # =============================================================================
@@ -368,39 +368,39 @@ def test_hf_model_wait_with_failure(mock_init_config, mock_store, runner, mock_c
 # =============================================================================
 
 
-@patch("flyte.store.hf_model")
+@patch("flyte.prefetch.hf_model")
 @patch("flyte.cli._run.initialize_config")
-def test_hf_model_single_modality(mock_init_config, mock_store, runner, mock_cfg):
+def test_hf_model_single_modality(mock_init_config, mock_prefetch, runner, mock_cfg):
     """Test hf-model with single modality."""
     mock_init_config.return_value = mock_cfg
 
     mock_run = MagicMock()
     mock_run.url = "https://console.example.com/run/123"
-    mock_store.return_value = mock_run
+    mock_prefetch.return_value = mock_run
 
     result = runner.invoke(
-        store,
+        prefetch,
         ["hf-model", "meta-llama/Llama-2-7b-hf", "--modality", "text"],
         obj=mock_cfg,
     )
 
     assert result.exit_code == 0, result.output
-    call_kwargs = mock_store.call_args.kwargs
+    call_kwargs = mock_prefetch.call_args.kwargs
     assert call_kwargs["modality"] == ("text",)
 
 
-@patch("flyte.store.hf_model")
+@patch("flyte.prefetch.hf_model")
 @patch("flyte.cli._run.initialize_config")
-def test_hf_model_multiple_modalities(mock_init_config, mock_store, runner, mock_cfg):
+def test_hf_model_multiple_modalities(mock_init_config, mock_prefetch, runner, mock_cfg):
     """Test hf-model with multiple modalities."""
     mock_init_config.return_value = mock_cfg
 
     mock_run = MagicMock()
     mock_run.url = "https://console.example.com/run/123"
-    mock_store.return_value = mock_run
+    mock_prefetch.return_value = mock_run
 
     result = runner.invoke(
-        store,
+        prefetch,
         [
             "hf-model",
             "openai/clip-vit-base-patch32",
@@ -415,26 +415,26 @@ def test_hf_model_multiple_modalities(mock_init_config, mock_store, runner, mock
     )
 
     assert result.exit_code == 0, result.output
-    call_kwargs = mock_store.call_args.kwargs
+    call_kwargs = mock_prefetch.call_args.kwargs
     assert call_kwargs["modality"] == ("text", "image", "audio")
 
 
-@patch("flyte.store.hf_model")
+@patch("flyte.prefetch.hf_model")
 @patch("flyte.cli._run.initialize_config")
-def test_hf_model_default_modality(mock_init_config, mock_store, runner, mock_cfg):
+def test_hf_model_default_modality(mock_init_config, mock_prefetch, runner, mock_cfg):
     """Test hf-model uses default text modality when not specified."""
     mock_init_config.return_value = mock_cfg
 
     mock_run = MagicMock()
     mock_run.url = "https://console.example.com/run/123"
-    mock_store.return_value = mock_run
+    mock_prefetch.return_value = mock_run
 
     result = runner.invoke(
-        store,
+        prefetch,
         ["hf-model", "meta-llama/Llama-2-7b-hf"],
         obj=mock_cfg,
     )
 
     assert result.exit_code == 0, result.output
-    call_kwargs = mock_store.call_args.kwargs
+    call_kwargs = mock_prefetch.call_args.kwargs
     assert call_kwargs["modality"] == ("text",)

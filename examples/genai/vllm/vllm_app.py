@@ -61,7 +61,7 @@ vllm_app = VLLMAppEnvironment(
         .clone(addl_layer=PythonWheels(wheel_dir=DIST_FOLDER, package_name="flyte", pre=True))
         # NOTE: due to a dependency conflict, the vllm flyte plugin needs to be installed as a separate layer:
         # Run the following command to build the wheel:
-        # `rm -rf ./dist-plugins && uv run python -m build --wheel --installer uv --outdir ./dist-plugins plugins/vllm`
+        # `rm -rf ./dist-plugins && uv run python -m build --wheel --installer uv --outdir ./dist-plugins plugins/vllm`s
         # Once a release of the plugin is out, you can installed it via `with_pip_packages("flyteplugins-vllm")`
         .clone(
             addl_layer=PythonWheels(
@@ -84,8 +84,8 @@ if __name__ == "__main__":
 
     flyte.init_from_config()
 
-    # store the Qwen3-0.6B model into flyte object store
-    run: Run = flyte.store.hf_model(repo="Qwen/Qwen3-0.6B")
+    # prefetch the Qwen3-0.6B model into flyte object store
+    run: Run = flyte.prefetch.hf_model(repo="Qwen/Qwen3-0.6B")
     run.wait()
 
     app = flyte.serve(

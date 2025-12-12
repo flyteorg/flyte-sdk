@@ -1,4 +1,4 @@
-"""Tests for flyte.store._hf_model module."""
+"""Tests for flyte.prefetch._hf_model module."""
 
 import json
 import os
@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from flyte.store._hf_model import (
+from flyte.prefetch._hf_model import (
     HF_DOWNLOAD_IMAGE_PACKAGES,
     VLLM_SHARDING_IMAGE_PACKAGES,
     HuggingFaceModelInfo,
@@ -430,7 +430,7 @@ def test_vllm_sharding_image_packages():
 
 def test_hf_model_invalid_artifact_name_raises():
     """Test that invalid artifact name raises ValueError."""
-    from flyte.store._hf_model import hf_model
+    from flyte.prefetch._hf_model import hf_model
 
     with pytest.raises(ValueError, match="must only contain alphanumeric characters"):
         hf_model(
@@ -441,7 +441,7 @@ def test_hf_model_invalid_artifact_name_raises():
 
 def test_hf_model_invalid_accelerator_raises():
     """Test that invalid accelerator raises ValueError."""
-    from flyte.store._hf_model import hf_model
+    from flyte.prefetch._hf_model import hf_model
 
     with pytest.raises(ValueError, match="Invalid accelerator"):
         hf_model(
@@ -451,15 +451,15 @@ def test_hf_model_invalid_accelerator_raises():
 
 
 # =============================================================================
-# store_hf_model_task Tests
+# prefetch_hf_model_task Tests
 # =============================================================================
 
 
 @patch("huggingface_hub.list_repo_commits")
 @patch("huggingface_hub.repo_exists")
-def test_store_hf_model_task_nonexistent_repo_raises(mock_repo_exists, mock_list_commits):
-    """Test store task raises for non-existent repo."""
-    from flyte.store._hf_model import store_hf_model_task
+def test_prefetch_hf_model_task_nonexistent_repo_raises(mock_repo_exists, mock_list_commits):
+    """Test prefetch task raises for non-existent repo."""
+    from flyte.prefetch._hf_model import store_hf_model_task
 
     mock_repo_exists.return_value = False
 
@@ -477,7 +477,7 @@ def test_store_hf_model_task_nonexistent_repo_raises(mock_repo_exists, mock_list
 
 def test_shard_model_invalid_engine():
     """Test that non-vllm engines raise an assertion error."""
-    from flyte.store._hf_model import _shard_model
+    from flyte.prefetch._hf_model import _shard_model
 
     # Create a ShardConfig with modified engine (bypassing Literal validation)
     shard_config = ShardConfig()

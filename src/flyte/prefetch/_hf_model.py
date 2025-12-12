@@ -1,7 +1,7 @@
 """
-HuggingFace model store utilities for Flyte.
+HuggingFace model prefetch utilities for Flyte.
 
-This module provides functionality to store HuggingFace models to remote storage,
+This module provides functionality to prefetch HuggingFace models to remote storage,
 with support for optional sharding using vLLM.
 """
 
@@ -442,10 +442,10 @@ def hf_model(
     """
     Store a HuggingFace model to remote storage.
 
-    This function downloads a model from the HuggingFace Hub and stores it in
+    This function downloads a model from the HuggingFace Hub and prefetches it to
     remote storage. It supports optional sharding using vLLM for large models.
 
-    The store behavior follows this priority:
+    The prefetch behavior follows this priority:
     1. If the model isn't being sharded, stream files directly to remote storage.
     2. If streaming fails, fall back to downloading a snapshot and uploading.
     3. If sharding is configured, download locally, shard with vLLM, then upload.
@@ -458,16 +458,16 @@ def hf_model(
     flyte.init(endpoint="my-flyte-endpoint")
 
     # Store a model without sharding
-    run = flyte.store.hf_model(
+    run = flyte.prefetch.hf_model(
         repo="meta-llama/Llama-2-7b-hf",
         hf_token_key="HF_TOKEN",
     )
     run.wait()
 
-    # Store and shard a model
-    from flyte.store import ShardConfig, VLLMShardArgs
+    # Prefetch and shard a model
+    from flyte.prefetch import ShardConfig, VLLMShardArgs
 
-    run = flyte.store.hf_model(
+    run = flyte.prefetch.hf_model(
         repo="meta-llama/Llama-2-70b-hf",
         shard_config=ShardConfig(
             engine="vllm",
@@ -490,14 +490,14 @@ def hf_model(
     :param short_description: Short description of the model.
     :param shard_config: Optional configuration for model sharding with vLLM.
     :param hf_token_key: Name of the secret containing the HuggingFace token. Default: 'HF_TOKEN'.
-    :param cpu: CPU request for the store task (e.g., '2').
-    :param mem: Memory request for the store task (e.g., '16Gi').
+    :param cpu: CPU request for the prefetch task (e.g., '2').
+    :param mem: Memory request for the prefetch task (e.g., '16Gi').
     :param ephemeral_storage: Ephemeral storage request (e.g., '100Gi').
     :param accelerator: Accelerator type in format '{type}:{quantity}' (e.g., 'A100:8', 'L4:1').
-    :param wait: Whether to wait for the store task to complete. Default: False.
-    :param force: Force re-store. Increment to force a new store. Default: 0.
+    :param wait: Whether to wait for the prefetch task to complete. Default: False.
+    :param force: Force re-prefetch. Increment to force a new prefetch. Default: 0.
 
-    :return: A Run object representing the store task execution.
+    :return: A Run object representing the prefetch task execution.
     """
     import flyte
     from flyte import Resources, Secret
@@ -547,7 +547,12 @@ def hf_model(
                     "apt-get install -y cuda-toolkit-12-9",
                 ]
             )
-            .with_env_vars({"CUDA_HOME": "/usr/local/cuda-12.9"})
+            .with_env_vars({
+                "CUDA_HOME": "/usr/local/cuda-12.9",
+                # "PATH": "/usr/local/cuda-12.9/bin:${PATH}",
+                "LD_LIBRARY_PATH": "/usr/local/cuda-12.9/lib64",
+                "VLLM_USE_V1": "1",
+            })
             .with_pip_packages(*VLLM_SHARDING_IMAGE_PACKAGES)
         )
     else:
@@ -556,7 +561,7 @@ def hf_model(
     # Create a task from the module-level function with the configured environment
     cache: CacheRequest = "disable" if force > 0 else "auto"
     env = TaskEnvironment(
-        name="store-hf-model",
+        name="prefetch-hf-model",
         image=image,
         resources=resources,
         secrets=[Secret(key=hf_token_key, as_env_var="HF_TOKEN")],

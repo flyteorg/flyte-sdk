@@ -1,5 +1,5 @@
 """
-CLI commands for storing artifacts from remote registries.
+CLI commands for prefetching artifacts from remote registries.
 """
 
 import typing
@@ -15,17 +15,17 @@ from flyte.cli._common import CommandBase
 ACCELERATOR_CHOICES = list(typing.get_args(Accelerators))
 
 
-@click.group(name="store")
-def store():
+@click.group(name="prefetch")
+def prefetch():
     """
-    Store artifacts from remote registries.
+    Prefetch artifacts from remote registries.
 
-    These commands help you download and store artifacts like HuggingFace models
+    These commands help you download and prefetch artifacts like HuggingFace models
     to your Flyte storage for faster access during task execution.
     """
 
 
-@store.command(name="hf-model", cls=CommandBase)
+@prefetch.command(name="hf-model", cls=CommandBase)
 @click.argument("repo", type=str)
 @click.option(
     "--artifact-name",
@@ -102,17 +102,17 @@ def store():
 @click.option(
     "--cpu",
     type=str,
-    help="CPU request for the store task (e.g., '2', '4').",
+    help="CPU request for the prefetch task (e.g., '2', '4').",
 )
 @click.option(
     "--mem",
     type=str,
-    help="Memory request for the store task (e.g., '16Gi', '64Gi').",
+    help="Memory request for the prefetch task (e.g., '16Gi', '64Gi').",
 )
 @click.option(
     "--ephemeral-storage",
     type=str,
-    help="Ephemeral storage request for the store task (e.g., '100Gi', '500Gi').",
+    help="Ephemeral storage request for the prefetch task (e.g., '100Gi', '500Gi').",
 )
 @click.option(
     "--accelerator",
@@ -154,19 +154,19 @@ def hf_model(
     domain: str | None,
 ):
     """
-    Store a HuggingFace model to Flyte storage.
+    Prefetch a HuggingFace model to Flyte storage.
 
-    Downloads a model from the HuggingFace Hub and stores it in your configured
+    Downloads a model from the HuggingFace Hub and prefetches it to your configured
     Flyte storage backend. This is useful for:
 
-    - Pre-storing large models before running inference tasks
+    - Pre-fetching large models before running inference tasks
     - Sharding models for tensor-parallel inference
     - Avoiding repeated downloads during development
 
     **Basic Usage:**
 
     ```bash
-    $ flyte store hf-model meta-llama/Llama-2-7b-hf --hf-token-key HF_TOKEN
+    $ flyte prefetch hf-model meta-llama/Llama-2-7b-hf --hf-token-key HF_TOKEN
     ```
 
     **With Sharding:**
@@ -184,7 +184,7 @@ def hf_model(
     Then run:
 
     ```bash
-    $ flyte store hf-model meta-llama/Llama-2-70b-hf \\
+    $ flyte prefetch hf-model meta-llama/Llama-2-70b-hf \\
         --shard-config shard_config.yaml \\
         --accelerator A100:8 \\
         --hf-token-key HF_TOKEN
@@ -193,14 +193,14 @@ def hf_model(
     **Wait for Completion:**
 
     ```bash
-    $ flyte store hf-model meta-llama/Llama-2-7b-hf --wait
+    $ flyte prefetch hf-model meta-llama/Llama-2-7b-hf --wait
     ```
     """
     import yaml
 
     from flyte.cli._run import initialize_config
-    from flyte.store import ShardConfig, VLLMShardArgs
-    from flyte.store import hf_model as store_hf_model
+    from flyte.prefetch import ShardConfig, VLLMShardArgs
+    from flyte.prefetch import hf_model as prefetch_hf_model
 
     # Initialize flyte config
     cfg = initialize_config(
@@ -222,8 +222,8 @@ def hf_model(
 
     console = Console()
 
-    with console.status("[bold green]Starting model store task..."):
-        run = store_hf_model(
+    with console.status("[bold green]Starting model prefetch task..."):
+        run = prefetch_hf_model(
             repo=repo,
             artifact_name=artifact_name,
             architecture=architecture,
@@ -243,7 +243,7 @@ def hf_model(
 
     url = run.url
     console.print(
-        f"🔄 Started run {run.name} to store model from HuggingFace repo [bold]{repo}[/bold].\n"
+        f"🔄 Started run {run.name} to prefetch model from HuggingFace repo [bold]{repo}[/bold].\n"
         f"   Check the console for status at [link={url}]{url}[/link]"
     )
 
@@ -251,8 +251,8 @@ def hf_model(
         run.wait()
         try:
             model_path = run.outputs()[0].path
-            console.print("\n✅ Model stored successfully!")
+            console.print("\n✅ Model prefetched successfully!")
             console.print(f"Remote path: [cyan]{model_path}[/cyan]")
         except Exception as e:
-            console.print("\n❌ Model store failed!")
+            console.print("\n❌ Model prefetch failed!")
             console.print(f"Error: {e}")

@@ -87,12 +87,12 @@ vllm_app = VLLMAppEnvironment(
 
 
 if __name__ == "__main__":
-    from flyte.store import ShardConfig, VLLMShardArgs
+    from flyte.prefetch import ShardConfig, VLLMShardArgs
 
     flyte.init_from_config()
 
-    # store the Qwen3-0.6B model into flyte object store
-    run= flyte.store.hf_model(
+    # prefetch the Qwen3-0.6B model into flyte object store
+    run= flyte.prefetch.hf_model(
         repo="Qwen/Qwen3-8B",
         shard_config=ShardConfig(engine="vllm", args=VLLMShardArgs(tensor_parallel_size=4)),
     )
