@@ -18,6 +18,7 @@ from flyte.prefetch._hf_model import (
     _lookup_huggingface_model_info,
     _validate_artifact_name,
 )
+import flyte.prefetch._hf_model as hf_model_module
 
 # =============================================================================
 # VLLMShardArgs Tests
@@ -26,12 +27,14 @@ from flyte.prefetch._hf_model import (
 
 def test_vllm_shard_args_default_values():
     """Test default values are set correctly."""
+    from flyte.prefetch._hf_model import DEFAULT_SHARD_PATTERN
+
     args = VLLMShardArgs()
     assert args.tensor_parallel_size == 1
     assert args.dtype == "auto"
     assert args.trust_remote_code is True
     assert args.max_model_len is None
-    assert args.file_pattern is None  # Uses ShardedStateLoader.DEFAULT_PATTERN when None
+    assert args.file_pattern == DEFAULT_SHARD_PATTERN
     assert args.max_file_size == 5 * 1024**3  # 5GB
 
 
@@ -275,8 +278,7 @@ def test_validate_artifact_name_invalid_names():
 # =============================================================================
 
 
-@patch("huggingface_hub.hf_hub_download")
-def test_lookup_huggingface_model_info_with_architectures_list(mock_download, tmp_path):
+def test_lookup_huggingface_model_info_with_architectures_list(tmp_path):
     """Test lookup when config has architectures list."""
     config_file = tmp_path / "config.json"
     config_data = {
@@ -284,22 +286,27 @@ def test_lookup_huggingface_model_info_with_architectures_list(mock_download, tm
         "model_type": "llama",
     }
     config_file.write_text(json.dumps(config_data))
-    mock_download.return_value = str(config_file)
 
-    model_type, arch = _lookup_huggingface_model_info("meta-llama/Llama-2-7b-hf", "abc123", "token")
+    mock_hf_hub = MagicMock()
+    mock_hf_hub.hf_hub_download.return_value = str(config_file)
+    original_hf_hub = hf_model_module.huggingface_hub
+    hf_model_module.huggingface_hub = mock_hf_hub
+    try:
+        model_type, arch = _lookup_huggingface_model_info("meta-llama/Llama-2-7b-hf", "abc123", "token")
 
-    assert model_type == "llama"
-    assert arch == "LlamaForCausalLM"
-    mock_download.assert_called_once_with(
-        repo_id="meta-llama/Llama-2-7b-hf",
-        filename="config.json",
-        revision="abc123",
-        token="token",
-    )
+        assert model_type == "llama"
+        assert arch == "LlamaForCausalLM"
+        mock_hf_hub.hf_hub_download.assert_called_once_with(
+            repo_id="meta-llama/Llama-2-7b-hf",
+            filename="config.json",
+            revision="abc123",
+            token="token",
+        )
+    finally:
+        hf_model_module.huggingface_hub = original_hf_hub
 
 
-@patch("huggingface_hub.hf_hub_download")
-def test_lookup_huggingface_model_info_with_single_architecture(mock_download, tmp_path):
+def test_lookup_huggingface_model_info_with_single_architecture(tmp_path):
     """Test lookup when config has single architecture string."""
     config_file = tmp_path / "config.json"
     config_data = {
@@ -307,16 +314,21 @@ def test_lookup_huggingface_model_info_with_single_architecture(mock_download, t
         "model_type": "gpt2",
     }
     config_file.write_text(json.dumps(config_data))
-    mock_download.return_value = str(config_file)
 
-    model_type, arch = _lookup_huggingface_model_info("gpt2", "main", None)
+    mock_hf_hub = MagicMock()
+    mock_hf_hub.hf_hub_download.return_value = str(config_file)
+    original_hf_hub = hf_model_module.huggingface_hub
+    hf_model_module.huggingface_hub = mock_hf_hub
+    try:
+        model_type, arch = _lookup_huggingface_model_info("gpt2", "main", None)
 
-    assert model_type == "gpt2"
-    assert arch == "GPT2LMHeadModel"
+        assert model_type == "gpt2"
+        assert arch == "GPT2LMHeadModel"
+    finally:
+        hf_model_module.huggingface_hub = original_hf_hub
 
 
-@patch("huggingface_hub.hf_hub_download")
-def test_lookup_huggingface_model_info_with_multiple_architectures(mock_download, tmp_path):
+def test_lookup_huggingface_model_info_with_multiple_architectures(tmp_path):
     """Test lookup when config has multiple architectures."""
     config_file = tmp_path / "config.json"
     config_data = {
@@ -324,26 +336,37 @@ def test_lookup_huggingface_model_info_with_multiple_architectures(mock_download
         "model_type": "bert",
     }
     config_file.write_text(json.dumps(config_data))
-    mock_download.return_value = str(config_file)
 
-    model_type, arch = _lookup_huggingface_model_info("bert-base", "main", None)
+    mock_hf_hub = MagicMock()
+    mock_hf_hub.hf_hub_download.return_value = str(config_file)
+    original_hf_hub = hf_model_module.huggingface_hub
+    hf_model_module.huggingface_hub = mock_hf_hub
+    try:
+        model_type, arch = _lookup_huggingface_model_info("bert-base", "main", None)
 
-    assert model_type == "bert"
-    assert arch == "BertModel,BertForMaskedLM"
+        assert model_type == "bert"
+        assert arch == "BertModel,BertForMaskedLM"
+    finally:
+        hf_model_module.huggingface_hub = original_hf_hub
 
 
-@patch("huggingface_hub.hf_hub_download")
-def test_lookup_huggingface_model_info_with_missing_fields(mock_download, tmp_path):
+def test_lookup_huggingface_model_info_with_missing_fields(tmp_path):
     """Test lookup when config is missing fields."""
     config_file = tmp_path / "config.json"
     config_data = {"hidden_size": 768}  # No architecture or model_type
     config_file.write_text(json.dumps(config_data))
-    mock_download.return_value = str(config_file)
 
-    model_type, arch = _lookup_huggingface_model_info("custom-model", "main", None)
+    mock_hf_hub = MagicMock()
+    mock_hf_hub.hf_hub_download.return_value = str(config_file)
+    original_hf_hub = hf_model_module.huggingface_hub
+    hf_model_module.huggingface_hub = mock_hf_hub
+    try:
+        model_type, arch = _lookup_huggingface_model_info("custom-model", "main", None)
 
-    assert model_type is None
-    assert arch is None
+        assert model_type is None
+        assert arch is None
+    finally:
+        hf_model_module.huggingface_hub = original_hf_hub
 
 
 # =============================================================================
@@ -351,56 +374,64 @@ def test_lookup_huggingface_model_info_with_missing_fields(mock_download, tmp_pa
 # =============================================================================
 
 
-@patch("huggingface_hub.snapshot_download")
-@patch("huggingface_hub.HfFileSystem")
-def test_download_snapshot_to_local_with_readme(mock_hf_fs_class, mock_snapshot):
+def test_download_snapshot_to_local_with_readme():
     """Test downloading snapshot with README."""
+    mock_hf_hub = MagicMock()
     mock_hfs = MagicMock()
-    mock_hf_fs_class.return_value = mock_hfs
+    mock_hf_hub.HfFileSystem.return_value = mock_hfs
 
     # Mock README info
     mock_hfs.info.return_value = {"name": "repo/README.md"}
 
-    with tempfile.TemporaryDirectory() as local_dir:
-        with patch("tempfile.NamedTemporaryFile") as mock_temp:
-            mock_temp_file = MagicMock()
-            mock_temp_file.name = "/tmp/readme"
-            mock_temp.return_value.__enter__.return_value = mock_temp_file
+    original_hf_hub = hf_model_module.huggingface_hub
+    hf_model_module.huggingface_hub = mock_hf_hub
+    try:
+        with tempfile.TemporaryDirectory() as local_dir:
+            with patch("tempfile.NamedTemporaryFile") as mock_temp:
+                mock_temp_file = MagicMock()
+                mock_temp_file.name = "/tmp/readme"
+                mock_temp.return_value.__enter__.return_value = mock_temp_file
 
-            with patch(
-                "builtins.open",
-                MagicMock(
-                    return_value=MagicMock(
-                        __enter__=MagicMock(return_value=MagicMock(read=MagicMock(return_value="# README"))),
-                        __exit__=MagicMock(),
-                    )
-                ),
-            ):
-                result_dir, card = _download_snapshot_to_local("test-repo", "abc123", "token", local_dir)
+                with patch(
+                    "builtins.open",
+                    MagicMock(
+                        return_value=MagicMock(
+                            __enter__=MagicMock(return_value=MagicMock(read=MagicMock(return_value="# README"))),
+                            __exit__=MagicMock(),
+                        )
+                    ),
+                ):
+                    result_dir, card = _download_snapshot_to_local("test-repo", "abc123", "token", local_dir)
 
-        assert result_dir == local_dir
-        assert card is not None
-        mock_snapshot.assert_called_once_with(
-            repo_id="test-repo",
-            revision="abc123",
-            local_dir=local_dir,
-            token="token",
-        )
+            assert result_dir == local_dir
+            assert card is not None
+            mock_hf_hub.snapshot_download.assert_called_once_with(
+                repo_id="test-repo",
+                revision="abc123",
+                local_dir=local_dir,
+                token="token",
+            )
+    finally:
+        hf_model_module.huggingface_hub = original_hf_hub
 
 
-@patch("huggingface_hub.snapshot_download")
-@patch("huggingface_hub.HfFileSystem")
-def test_download_snapshot_to_local_without_readme(mock_hf_fs_class, mock_snapshot):
+def test_download_snapshot_to_local_without_readme():
     """Test downloading snapshot when README doesn't exist."""
+    mock_hf_hub = MagicMock()
     mock_hfs = MagicMock()
-    mock_hf_fs_class.return_value = mock_hfs
+    mock_hf_hub.HfFileSystem.return_value = mock_hfs
     mock_hfs.info.side_effect = FileNotFoundError("No README")
 
-    with tempfile.TemporaryDirectory() as local_dir:
-        result_dir, card = _download_snapshot_to_local("test-repo", "main", None, local_dir)
+    original_hf_hub = hf_model_module.huggingface_hub
+    hf_model_module.huggingface_hub = mock_hf_hub
+    try:
+        with tempfile.TemporaryDirectory() as local_dir:
+            result_dir, card = _download_snapshot_to_local("test-repo", "main", None, local_dir)
 
-    assert result_dir == local_dir
-    assert card is None
+        assert result_dir == local_dir
+        assert card is None
+    finally:
+        hf_model_module.huggingface_hub = original_hf_hub
 
 
 # =============================================================================
@@ -456,19 +487,23 @@ def test_hf_model_invalid_accelerator_raises():
 # =============================================================================
 
 
-@patch("huggingface_hub.list_repo_commits")
-@patch("huggingface_hub.repo_exists")
-def test_prefetch_hf_model_task_nonexistent_repo_raises(mock_repo_exists, mock_list_commits):
+def test_prefetch_hf_model_task_nonexistent_repo_raises():
     """Test prefetch task raises for non-existent repo."""
     from flyte.prefetch._hf_model import store_hf_model_task
 
-    mock_repo_exists.return_value = False
+    mock_hf_hub = MagicMock()
+    mock_hf_hub.repo_exists.return_value = False
 
-    info = HuggingFaceModelInfo(repo="nonexistent/model")
+    original_hf_hub = hf_model_module.huggingface_hub
+    hf_model_module.huggingface_hub = mock_hf_hub
+    try:
+        info = HuggingFaceModelInfo(repo="nonexistent/model")
 
-    with patch.dict(os.environ, {"HF_TOKEN": "test-token"}):
-        with pytest.raises(ValueError, match="does not exist"):
-            store_hf_model_task(info.model_dump_json())
+        with patch.dict(os.environ, {"HF_TOKEN": "test-token"}):
+            with pytest.raises(ValueError, match="does not exist"):
+                store_hf_model_task(info.model_dump_json())
+    finally:
+        hf_model_module.huggingface_hub = original_hf_hub
 
 
 # =============================================================================

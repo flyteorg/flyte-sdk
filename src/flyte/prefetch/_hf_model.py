@@ -18,11 +18,19 @@ from pydantic import BaseModel, Field
 
 from flyte._logging import logger
 from flyte._task_environment import TaskEnvironment
+from flyte._utils.lazy_module import lazy_module
 from flyte.io import Dir
 
 if TYPE_CHECKING:
     from flyte._resources import Resources
     from flyte.remote import Run
+
+
+huggingface_hub = lazy_module("huggingface_hub")
+vllm = lazy_module("vllm")
+
+
+DEFAULT_SHARD_PATTERN = "model-rank-{rank}-part-{part}.safetensors"
 
 
 class VLLMShardArgs(BaseModel):
@@ -41,7 +49,7 @@ class VLLMShardArgs(BaseModel):
     dtype: str = "auto"
     trust_remote_code: bool = True
     max_model_len: int | None = None
-    file_pattern: str | None = None
+    file_pattern: str | None = DEFAULT_SHARD_PATTERN
     max_file_size: int = 5 * 1024**3  # 5GB default
 
     def get_vllm_args(self, model_path: str) -> dict[str, Any]:
@@ -140,9 +148,7 @@ def _lookup_huggingface_model_info(model_repo: str, commit: str, token: str | No
     """
     import json
 
-    from huggingface_hub import hf_hub_download
-
-    config_file = hf_hub_download(repo_id=model_repo, filename="config.json", revision=commit, token=token)
+    config_file = huggingface_hub.hf_hub_download(repo_id=model_repo, filename="config.json", revision=commit, token=token)
     arch = None
     model_type = None
     with open(config_file, "r") as f:
@@ -171,13 +177,9 @@ def _stream_to_remote_dir(
     :param remote_dir_path: Path to the remote directory.
     :return: Tuple of (remote_dir_path, readme_content).
     """
-    import tempfile
-
-    from huggingface_hub import HfFileSystem
-
     import flyte.storage as storage
 
-    hfs = HfFileSystem(token=token)
+    hfs = huggingface_hub.HfFileSystem(token=token)
     fs = storage.get_underlying_filesystem(path=remote_dir_path)
     card = None
 
@@ -235,12 +237,9 @@ def _download_snapshot_to_local(
     :param local_dir: Local directory to download to.
     :return: Tuple of (local_dir, readme_content).
     """
-    import tempfile
-
-    from huggingface_hub import HfFileSystem, snapshot_download
 
     card = None
-    hfs = HfFileSystem(token=token)
+    hfs = huggingface_hub.HfFileSystem(token=token)
 
     # Try to get README
     try:
@@ -254,7 +253,7 @@ def _download_snapshot_to_local(
         logger.info("No README.md file found")
 
     logger.info(f"Downloading model from {repo_id} to {local_dir}")
-    snapshot_download(
+    huggingface_hub.snapshot_download(
         repo_id=repo_id,
         revision=commit,
         local_dir=local_dir,
@@ -279,14 +278,10 @@ def _shard_model(
     :param output_dir: Directory to save sharded model.
     :return: Path to sharded model directory.
     """
-    from huggingface_hub import HfFileSystem, snapshot_download
-    from vllm import LLM
-    from vllm.model_executor.model_loader import ShardedStateLoader
-
     assert shard_config.engine == "vllm", "'vllm' is the only supported sharding engine for now"
 
     # Download snapshot
-    hfs = HfFileSystem(token=token)
+    hfs = huggingface_hub.HfFileSystem(token=token)
     try:
         readme_info = hfs.info(f"{repo}/README.md", revision=commit)
         with tempfile.NamedTemporaryFile() as temp_file:
@@ -297,7 +292,7 @@ def _shard_model(
         logger.warning("No README.md found")
 
     logger.info(f"Downloading model to {model_path}")
-    snapshot_download(
+    huggingface_hub.snapshot_download(
         repo_id=repo,
         revision=commit,
         local_dir=model_path,
@@ -305,12 +300,12 @@ def _shard_model(
     )
 
     # Create LLM instance
-    llm = LLM(**shard_config.args.get_vllm_args(model_path))
+    llm = vllm.LLM(**shard_config.args.get_vllm_args(model_path))
     logger.info(f"LLM initialized: {llm}")
 
     llm.llm_engine.engine_core.save_sharded_state(
         path=output_dir,
-        pattern=shard_config.args.file_pattern or ShardedStateLoader.DEFAULT_PATTERN,
+        pattern=shard_config.args.file_pattern,
         max_size=shard_config.args.max_file_size,
     )
 
@@ -334,8 +329,6 @@ def _shard_model(
 def store_hf_model_task(info: str) -> Dir:
     """Task to store a HuggingFace model."""
 
-    from huggingface_hub import list_repo_commits, repo_exists
-
     import flyte.report
 
     # Get HF token from secrets
@@ -344,10 +337,10 @@ def store_hf_model_task(info: str) -> Dir:
 
     # Validate repo exists and get latest commit
     _info: HuggingFaceModelInfo = HuggingFaceModelInfo.model_validate_json(info)
-    if not repo_exists(_info.repo, token=token):
+    if not huggingface_hub.repo_exists(_info.repo, token=token):
         raise ValueError(f"Repository {_info.repo} does not exist in HuggingFace.")
 
-    commit = list_repo_commits(_info.repo, token=token)[0].commit_id
+    commit = huggingface_hub.list_repo_commits(_info.repo, token=token)[0].commit_id
     logger.info(f"Latest commit: {commit}")
 
     # Lookup model info if not provided

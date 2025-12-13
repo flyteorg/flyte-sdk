@@ -226,26 +226,26 @@ def hf_model(
 
     console = Console()
 
-    with console.status("[bold green]Starting model prefetch task..."):
-        run = prefetch_hf_model(
-            repo=repo,
-            artifact_name=artifact_name,
-            architecture=architecture,
-            task=task,
-            modality=modality,
-            serial_format=serial_format,
-            model_type=model_type,
-            short_description=short_description,
-            shard_config=parsed_shard_config,
-            hf_token_key=hf_token_key,
-            resources=Resources(
-                cpu=cpu,
-                memory=mem,
-                disk=ephemeral_storage,
-                gpu=accelerator,
-            ),
-            force=force,
-        )
+    console.print("[bold green]Starting model prefetch task...")
+    run = prefetch_hf_model(
+        repo=repo,
+        artifact_name=artifact_name,
+        architecture=architecture,
+        task=task,
+        modality=modality,
+        serial_format=serial_format,
+        model_type=model_type,
+        short_description=short_description,
+        shard_config=parsed_shard_config,
+        hf_token_key=hf_token_key,
+        resources=Resources(
+            cpu=cpu,
+            memory=mem,
+            disk=ephemeral_storage,
+            gpu=accelerator,
+        ),
+        force=force,
+    )
 
     url = run.url
     console.print(

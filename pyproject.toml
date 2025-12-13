@@ -71,8 +71,6 @@ dev = [
     "ipywidgets>=8.1.7",
     "mypy>=1.16.0",
     "kubernetes",
-    "huggingface-hub>=0.27.0",
-    "vllm>=0.11.0",
 ]
 
 [tool.setuptools]
