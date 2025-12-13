@@ -626,6 +626,11 @@ class Image:
         Args:
             secret_mounts:
         """
+
+        from ._utils import parse_uv_script_file
+        metadata = parse_uv_script_file(Path(script))
+        dependencies = metadata.dependencies
+
         ll = UVScript(
             script=Path(script),
             index_url=index_url,
@@ -644,6 +649,9 @@ class Image:
             platform=platform,
         )
 
+        if dependencies:
+            img = img.with_pip_packages(*dependencies)
+  
         return img.clone(addl_layer=ll)
 
     def clone(
@@ -851,18 +859,53 @@ class Image:
         :param secret_mounts: list of secret to mount for the build process.
         :return: Image
         """
-        new_packages: Optional[Tuple] = packages or None
-        new_extra_index_urls: Optional[Tuple] = _ensure_tuple(extra_index_urls) if extra_index_urls else None
 
-        ll = PipPackages(
-            packages=new_packages,
-            index_url=index_url,
-            extra_index_urls=new_extra_index_urls,
-            pre=pre,
-            extra_args=extra_args,
-            secret_mounts=_ensure_tuple(secret_mounts) if secret_mounts else None,
-        )
-        new_image = self.clone(addl_layer=ll)
+        PACKAGE_IMPORTANCE = {
+            # Layer 0: ~1GB+ | Rebuild cost: High | Freq: Very Low
+            "heavy_ml": ["tensorflow", "torch", "torchaudio", "torchvision"],
+            # -----------------[ MIDDLE ]----------------- #
+            # Layer 1: ~200MB | Rebuild cost: Med  | Freq: Low
+            "core_data": ["numpy", "scipy", "pandas", "polars", "scikit-learn", "pydantic"],
+            # Layer 2: ~50MB  | Rebuild cost: Low  | Freq: Med
+            "utils": ["requests", "httpx", "boto3", "python-dotenv", "tqdm", "fastapi", "uvicorn"],
+            # ------------------[ TOP ]------------------- #
+            # Layer 3: ~50MB  | Rebuild cost: Low  | Freq: Med
+            "viz": ["matplotlib", "seaborn", "plotly", "altair"],
+            # Layer 4: ~20MB  | Rebuild cost: Inst | Freq: High
+            "dev": ["jupyter", "jupyterlab", "ruff", "pytest", "mypy", "ipython"]
+        }
+        
+        # Automatically categorize the packages
+        categorized = {"heavy_ml": [], "core_data": [], "utils": [], "viz": [], "dev": [], "unknown": []}
+        
+        for pkg in packages:
+            pkg_name = pkg.split(">=")[0].split("==")[0]
+            
+            category = "unknown"
+            for cat, pkg_list in PACKAGE_IMPORTANCE.items():
+                if pkg_name in pkg_list:
+                    category = cat
+                    break
+            categorized[category].append(pkg)
+        
+        # Helper function to create a layer
+        def create_pip_layer(pkgs):
+            return PipPackages(
+                packages=tuple(pkgs),
+                index_url=index_url,
+                extra_index_urls=_ensure_tuple(extra_index_urls) if extra_index_urls else None,
+                pre=pre,
+                extra_args=extra_args,
+                secret_mounts=_ensure_tuple(secret_mounts) if secret_mounts else None,
+            )
+        
+        # Create layers in priority order (core first, dev last)
+        new_image = self
+        for category in categorized.keys():
+            if categorized[category]:
+                layer = create_pip_layer(categorized[category])
+                new_image = new_image.clone(addl_layer=layer)
+        
         return new_image
 
     def with_env_vars(self, env_vars: Dict[str, str]) -> Image:
