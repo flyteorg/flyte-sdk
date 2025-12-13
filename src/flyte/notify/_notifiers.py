@@ -14,8 +14,6 @@ Template Variables:
   - {run.url}: URL to run details page
   - {project}: Flyte project name
   - {domain}: Flyte domain name
-  - {inputs.<param>}: Task input parameter
-  - {outputs.<result>}: Task output (SUCCEEDED phase only)
 """
 
 from dataclasses import dataclass
@@ -105,7 +103,6 @@ class Slack(Notification):
             on_phase="FAILED",
             webhook_url="https://hooks.slack.com/services/YOUR/WEBHOOK/URL",
             message="🚨 Task {task.name} failed: {run.error}\n{run.url}",
-            channel="#alerts"
         )
         ```
 
@@ -113,14 +110,12 @@ class Slack(Notification):
         on_phase: Phase(s) to trigger notification
         webhook_url: Slack webhook URL
         message: Simple text message (supports template variables)
-        channel: Optional channel override (e.g., "#alerts" or "@username")
         blocks: Optional Slack Block Kit blocks for rich formatting
             (if provided, message is ignored). See: https://api.slack.com/block-kit
     """
 
     webhook_url: str
     message: Optional[str] = None
-    channel: Optional[str] = None
     blocks: Optional[Tuple[Dict[str, Any], ...]] = None
 
     def __post_init__(self):
@@ -209,7 +204,6 @@ class Webhook(Notification):
                 "domain": "{domain}",
                 "error": "{run.error}",
                 "url": "{run.url}",
-                "inputs": {"data_path": "{inputs.data_path}"}
             }
         )
         ```

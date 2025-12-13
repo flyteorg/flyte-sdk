@@ -14,8 +14,27 @@ trig1 = flyte.Trigger(
     notifications=flyte.notify.Slack(
         on_phase="FAILED",
         webhook_url="https://webhook.site/",
-        channel="#notifications",
         message="Hello world! from {task.name}",
+        blocks=(
+            {"type": "header", "text": {"type": "plain_text", "text": "🚨 Run Failed"}},
+            {
+                "type": "section",
+                "fields": [
+                    {"type": "mrkdwn", "text": "*Workflow:*\n{run.name}"},
+                    {"type": "mrkdwn", "text": "*Error:*\n{run.error}"},
+                ],
+            },
+            {
+                "type": "actions",
+                "elements": [
+                    {
+                        "type": "button",
+                        "text": {"type": "plain_text", "text": "View Logs"},
+                        "url": "https://logs.example.com/{run.name}",
+                    }
+                ],
+            },
+        ),
     ),
 )
 
@@ -30,7 +49,6 @@ trig2 = flyte.Trigger(
                 "TIMED OUT",
             ),
             webhook_url="https://webhook.site/",
-            channel="#notifications",
             message="Hello world! from {task.name}",
         ),
         flyte.notify.Webhook(

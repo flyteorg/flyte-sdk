@@ -56,8 +56,6 @@ Template Variables:
     - {run.url}: URL to run details page
     - {project}: Flyte project name
     - {domain}: Flyte domain name
-    - {inputs.<param>}: Task input parameter
-    - {outputs.<result>}: Task output (SUCCEEDED only)
 """
 
 from flyte.notify._notifiers import (
