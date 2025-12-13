@@ -43,7 +43,6 @@ from flyteplugins.sglang import SGLangAppEnvironment
 
 import flyte
 import flyte.app
-import flyte.io
 from flyte._image import DIST_FOLDER, PythonWheels
 
 image = (
@@ -78,7 +77,7 @@ sglang_app = SGLangAppEnvironment(
     name="qwen3-14b-sglang-sharded",
     model_hf_path="Qwen/Qwen3-14B",
     model_id="qwen3-14b",
-    resources=flyte.Resources(cpu="4", memory="16Gi", gpu="L40s:4", disk="10Gi", shm="auto"),
+    resources=flyte.Resources(cpu="36", memory="300Gi", gpu="L40s:4", disk="300Gi", shm="auto"),
     image=image,
     stream_model=True,  # Stream model directly from blob store to GPU
     scaling=flyte.app.Scaling(
@@ -99,15 +98,21 @@ sglang_app = SGLangAppEnvironment(
 
 if __name__ == "__main__":
     from flyte.prefetch import ShardConfig, VLLMShardArgs
-    from flyte.remote import Run
 
     flyte.init_from_config()
 
     # prefetch the Qwen3-14B model into flyte object store
-    run: Run = flyte.prefetch.hf_model(
+    run = flyte.prefetch.hf_model(
         repo="Qwen/Qwen3-14B",
-        accelerator="L40s:4",
-        shard_config=ShardConfig(engine="vllm", args=VLLMShardArgs(tensor_parallel_size=4)),
+        resources=flyte.Resources(cpu="36", memory="300Gi", gpu="L40s:4", disk="300Gi"),
+        shard_config=ShardConfig(
+            engine="vllm",
+            args=VLLMShardArgs(
+                tensor_parallel_size=4,
+                gpu_memory_utilization=0.9,
+                max_model_len=16384,
+            ),
+        ),
     )
     run.wait()
 
