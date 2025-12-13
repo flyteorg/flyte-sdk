@@ -846,14 +846,22 @@ class Image:
         """
 
         PACKAGE_IMPORTANCE = {
-        "core": ["pandas", "numpy", "scipy", "requests", "urllib3"],
-        "ml": ["scikit-learn", "xgboost", "lightgbm", "tensorflow", "torch"],
-        "viz": ["matplotlib", "plotly", "seaborn", "bokeh"],
-        "dev": ["jupyter", "pytest", "black", "mypy", "ipython"]
+            # Layer 0: ~1GB+ | Rebuild cost: High | Freq: Very Low
+            "heavy_ml": ["tensorflow", "torch", "torchaudio", "torchvision"],
+            # -----------------[ MIDDLE ]----------------- #
+            # Layer 1: ~200MB | Rebuild cost: Med  | Freq: Low
+            "core_data": ["numpy", "scipy", "pandas", "polars", "scikit-learn", "pydantic"],
+            # Layer 2: ~50MB  | Rebuild cost: Low  | Freq: Med
+            "utils": ["requests", "httpx", "boto3", "python-dotenv", "tqdm", "fastapi", "uvicorn"],
+            # ------------------[ TOP ]------------------- #
+            # Layer 3: ~50MB  | Rebuild cost: Low  | Freq: Med
+            "viz": ["matplotlib", "seaborn", "plotly", "altair"],
+            # Layer 4: ~20MB  | Rebuild cost: Inst | Freq: High
+            "dev": ["jupyter", "jupyterlab", "ruff", "pytest", "mypy", "ipython"]
         }
         
         # Automatically categorize the packages
-        categorized = {"core": [], "ml": [], "viz": [], "dev": [], "unknown": []}
+        categorized = {"heavy_ml": [], "core_data": [], "utils": [], "viz": [], "dev": [], "unknown": []}
         
         for pkg in packages:
             pkg_name = pkg.split(">=")[0].split("==")[0]
