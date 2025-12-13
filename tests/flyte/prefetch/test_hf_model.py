@@ -31,7 +31,7 @@ def test_vllm_shard_args_default_values():
     assert args.dtype == "auto"
     assert args.trust_remote_code is True
     assert args.max_model_len is None
-    assert args.file_pattern == "*.safetensors"
+    assert args.file_pattern is None  # Uses ShardedStateLoader.DEFAULT_PATTERN when None
     assert args.max_file_size == 5 * 1024**3  # 5GB
 
 
@@ -419,7 +419,7 @@ def test_vllm_sharding_image_packages():
     """Test vLLM sharding image packages are defined."""
     assert "huggingface-hub>=0.27.0" in VLLM_SHARDING_IMAGE_PACKAGES
     assert "hf-transfer>=0.1.8" in VLLM_SHARDING_IMAGE_PACKAGES
-    assert "vllm>=0.6.0" in VLLM_SHARDING_IMAGE_PACKAGES
+    assert "vllm>=0.11.0" in VLLM_SHARDING_IMAGE_PACKAGES
     assert "markdown>=3.10" in VLLM_SHARDING_IMAGE_PACKAGES
 
 
@@ -440,13 +440,14 @@ def test_hf_model_invalid_artifact_name_raises():
 
 
 def test_hf_model_invalid_accelerator_raises():
-    """Test that invalid accelerator raises ValueError."""
+    """Test that invalid accelerator in Resources raises ValueError."""
+    from flyte._resources import Resources
     from flyte.prefetch._hf_model import hf_model
 
-    with pytest.raises(ValueError, match="Invalid accelerator"):
+    with pytest.raises(ValueError, match="gpu"):
         hf_model(
             repo="meta-llama/Llama-2-7b-hf",
-            accelerator="InvalidGPU:1",  # type: ignore
+            resources=Resources(gpu="InvalidGPU:1"),  # type: ignore
         )
 
 

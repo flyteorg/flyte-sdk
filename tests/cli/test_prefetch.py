@@ -307,10 +307,11 @@ def test_hf_model_with_all_options(mock_init_config, mock_prefetch, runner, mock
     assert call_kwargs["short_description"] == "Test model"
     assert call_kwargs["force"] == 1
     assert call_kwargs["hf_token_key"] == "MY_HF_TOKEN"
-    assert call_kwargs["cpu"] == "4"
-    assert call_kwargs["mem"] == "32Gi"
-    assert call_kwargs["ephemeral_storage"] == "100Gi"
-    assert call_kwargs["accelerator"] == "A100:1"
+    # Resources are now passed as a Resources object
+    assert call_kwargs["resources"].cpu == "4"
+    assert call_kwargs["resources"].memory == "32Gi"
+    assert call_kwargs["resources"].disk == "100Gi"
+    assert call_kwargs["resources"].gpu == "A100:1"
 
 
 # =============================================================================

@@ -14,9 +14,9 @@ from ._deploy import deploy
 from ._gen import gen
 from ._get import get
 from ._plugins import discover_and_register_plugins
+from ._prefetch import prefetch
 from ._run import run
 from ._serve import serve
-from ._prefetch import prefetch
 from ._update import update
 from ._user import whoami
 

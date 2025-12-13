@@ -102,16 +102,19 @@ def prefetch():
 @click.option(
     "--cpu",
     type=str,
+    default="2",
     help="CPU request for the prefetch task (e.g., '2', '4').",
 )
 @click.option(
     "--mem",
     type=str,
+    default="8Gi",
     help="Memory request for the prefetch task (e.g., '16Gi', '64Gi').",
 )
 @click.option(
     "--ephemeral-storage",
     type=str,
+    default="50Gi",
     help="Ephemeral storage request for the prefetch task (e.g., '100Gi', '500Gi').",
 )
 @click.option(
@@ -198,6 +201,7 @@ def hf_model(
     """
     import yaml
 
+    from flyte._resources import Resources
     from flyte.cli._run import initialize_config
     from flyte.prefetch import ShardConfig, VLLMShardArgs
     from flyte.prefetch import hf_model as prefetch_hf_model
@@ -234,10 +238,12 @@ def hf_model(
             short_description=short_description,
             shard_config=parsed_shard_config,
             hf_token_key=hf_token_key,
-            cpu=cpu,
-            mem=mem,
-            ephemeral_storage=ephemeral_storage,
-            accelerator=accelerator,
+            resources=Resources(
+                cpu=cpu,
+                memory=mem,
+                disk=ephemeral_storage,
+                gpu=accelerator,
+            ),
             force=force,
         )
 

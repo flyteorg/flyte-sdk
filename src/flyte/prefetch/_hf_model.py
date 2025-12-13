@@ -12,7 +12,7 @@ import re
 import shutil
 import tempfile
 import typing
-from typing import TYPE_CHECKING, Any, Literal, get_args
+from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -21,7 +21,7 @@ from flyte._task_environment import TaskEnvironment
 from flyte.io import Dir
 
 if TYPE_CHECKING:
-    from flyte._resources import Accelerators
+    from flyte._resources import Resources
     from flyte.remote import Run
 
 
@@ -41,7 +41,7 @@ class VLLMShardArgs(BaseModel):
     dtype: str = "auto"
     trust_remote_code: bool = True
     max_model_len: int | None = None
-    file_pattern: str = "*.safetensors"
+    file_pattern: str | None = None
     max_file_size: int = 5 * 1024**3  # 5GB default
 
     def get_vllm_args(self, model_path: str) -> dict[str, Any]:
@@ -119,7 +119,7 @@ HF_DOWNLOAD_IMAGE_PACKAGES = [
 
 VLLM_SHARDING_IMAGE_PACKAGES = [
     *HF_DOWNLOAD_IMAGE_PACKAGES,
-    "vllm>=0.6.0",
+    "vllm>=0.11.0",
 ]
 
 
@@ -281,6 +281,7 @@ def _shard_model(
     """
     from huggingface_hub import HfFileSystem, snapshot_download
     from vllm import LLM
+    from vllm.model_executor.model_loader import ShardedStateLoader
 
     assert shard_config.engine == "vllm", "'vllm' is the only supported sharding engine for now"
 
@@ -309,7 +310,7 @@ def _shard_model(
 
     llm.llm_engine.engine_core.save_sharded_state(
         path=output_dir,
-        pattern=shard_config.args.file_pattern,
+        pattern=shard_config.args.file_pattern or ShardedStateLoader.DEFAULT_PATTERN,
         max_size=shard_config.args.max_file_size,
     )
 
@@ -433,10 +434,7 @@ def hf_model(
     short_description: str | None = None,
     shard_config: ShardConfig | None = None,
     hf_token_key: str = "HF_TOKEN",
-    cpu: str | None = None,
-    mem: str | None = None,
-    ephemeral_storage: str | None = None,
-    accelerator: Accelerators | None = None,
+    resources: Resources | None = None,
     force: int = 0,
 ) -> Run:
     """
@@ -502,7 +500,6 @@ def hf_model(
     import flyte
     from flyte import Resources, Secret
     from flyte._cache import CacheRequest
-    from flyte._resources import Accelerators
     from flyte.remote import Run
 
     _validate_artifact_name(artifact_name)
@@ -519,25 +516,17 @@ def hf_model(
         shard_config=shard_config,
     )
 
-    # Validate accelerator if provided
-    if accelerator is not None and accelerator not in get_args(Accelerators):
-        raise ValueError(
-            f"Invalid accelerator: {accelerator}. Must be one of the valid Accelerators types "
-            f"in format '{{type}}:{{quantity}}' (e.g., 'A100:8', 'L4:1')"
-        )
-
     # Build resources - use accelerator directly since Resources.gpu accepts Accelerators strings
-    resources = Resources(
-        cpu=cpu or "2",
-        memory=mem or "8Gi",
-        gpu=accelerator,  # Accelerators string like "A100:8" or "L4:1"
-        disk=ephemeral_storage or "50Gi",
+    resources = resources or Resources(
+        cpu="2",
+        memory="8Gi",
+        disk="50Gi",
     )
 
     # Select image based on whether sharding is needed
     if shard_config is not None:
         image = (
-            flyte.Image.from_debian_base()
+            flyte.Image.from_debian_base(name="prefetch-hf-model-image")
             .with_apt_packages("gcc", "wget")
             .with_commands(
                 [
@@ -547,16 +536,19 @@ def hf_model(
                     "apt-get install -y cuda-toolkit-12-9",
                 ]
             )
-            .with_env_vars({
-                "CUDA_HOME": "/usr/local/cuda-12.9",
-                # "PATH": "/usr/local/cuda-12.9/bin:${PATH}",
-                "LD_LIBRARY_PATH": "/usr/local/cuda-12.9/lib64",
-                "VLLM_USE_V1": "1",
-            })
+            .with_env_vars(
+                {
+                    "CUDA_HOME": "/usr/local/cuda-12.9",
+                    "LD_LIBRARY_PATH": "/usr/local/cuda-12.9/lib64/stubs",
+                    "VLLM_USE_V1": "1",
+                }
+            )
             .with_pip_packages(*VLLM_SHARDING_IMAGE_PACKAGES)
         )
     else:
-        image = flyte.Image.from_debian_base().with_pip_packages(*HF_DOWNLOAD_IMAGE_PACKAGES)
+        image = flyte.Image.from_debian_base(name="prefetch-hf-model-image").with_pip_packages(
+            *HF_DOWNLOAD_IMAGE_PACKAGES
+        )
 
     # Create a task from the module-level function with the configured environment
     cache: CacheRequest = "disable" if force > 0 else "auto"

@@ -87,6 +87,7 @@ if __name__ == "__main__":
     # prefetch the Qwen3-0.6B model into flyte object store
     run: Run = flyte.prefetch.hf_model(repo="Qwen/Qwen3-0.6B")
     run.wait()
+    print(run.url)
 
     app = flyte.serve(
         vllm_app.clone_with(

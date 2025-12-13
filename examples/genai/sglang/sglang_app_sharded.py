@@ -30,7 +30,7 @@ client = OpenAI(
 )
 
 response = client.chat.completions.create(
-    model="qwen3-0.6b",
+    model="qwen3-14b",
     messages=[
         {"role": "user", "content": "Hello, how are you?"}
     ],
@@ -75,10 +75,10 @@ image = (
 
 # Define the SGLang app environment for the smallest Qwen3 model
 sglang_app = SGLangAppEnvironment(
-    name="qwen3-0-6b-sglang",
-    model_hf_path="Qwen/Qwen3-0.6B",
-    model_id="qwen3-0.6b",
-    resources=flyte.Resources(cpu="4", memory="16Gi", gpu="L40s:4", disk="10Gi"),
+    name="qwen3-14b-sglang-sharded",
+    model_hf_path="Qwen/Qwen3-14B",
+    model_id="qwen3-14b",
+    resources=flyte.Resources(cpu="4", memory="16Gi", gpu="L40s:4", disk="10Gi", shm="auto"),
     image=image,
     stream_model=True,  # Stream model directly from blob store to GPU
     scaling=flyte.app.Scaling(
@@ -98,14 +98,15 @@ sglang_app = SGLangAppEnvironment(
 
 
 if __name__ == "__main__":
-    from flyte.remote import Run
     from flyte.prefetch import ShardConfig, VLLMShardArgs
+    from flyte.remote import Run
 
     flyte.init_from_config()
 
-    # prefetch the Qwen3-0.6B model into flyte object store
+    # prefetch the Qwen3-14B model into flyte object store
     run: Run = flyte.prefetch.hf_model(
-        repo="Qwen/Qwen3-8B",
+        repo="Qwen/Qwen3-14B",
+        accelerator="L40s:4",
         shard_config=ShardConfig(engine="vllm", args=VLLMShardArgs(tensor_parallel_size=4)),
     )
     run.wait()
