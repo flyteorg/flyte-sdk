@@ -847,18 +847,45 @@ class Image:
         :param secret_mounts: list of secret to mount for the build process.
         :return: Image
         """
-        new_packages: Optional[Tuple] = packages or None
-        new_extra_index_urls: Optional[Tuple] = _ensure_tuple(extra_index_urls) if extra_index_urls else None
 
-        ll = PipPackages(
-            packages=new_packages,
-            index_url=index_url,
-            extra_index_urls=new_extra_index_urls,
-            pre=pre,
-            extra_args=extra_args,
-            secret_mounts=_ensure_tuple(secret_mounts) if secret_mounts else None,
-        )
-        new_image = self.clone(addl_layer=ll)
+        PACKAGE_IMPORTANCE = {
+        "core": ["pandas", "numpy", "scipy", "requests", "urllib3"],
+        "ml": ["scikit-learn", "xgboost", "lightgbm", "tensorflow", "torch"],
+        "viz": ["matplotlib", "plotly", "seaborn", "bokeh"],
+        "dev": ["jupyter", "pytest", "black", "mypy", "ipython"]
+        }
+        
+        # Automatically categorize the packages
+        categorized = {"core": [], "ml": [], "viz": [], "dev": [], "unknown": []}
+        
+        for pkg in packages:
+            pkg_name = pkg.split(">=")[0].split("==")[0]
+            
+            category = "unknown"
+            for cat, pkg_list in PACKAGE_IMPORTANCE.items():
+                if pkg_name in pkg_list:
+                    category = cat
+                    break
+            categorized[category].append(pkg)
+        
+        # Helper function to create a layer
+        def create_pip_layer(pkgs):
+            return PipPackages(
+                packages=tuple(pkgs),
+                index_url=index_url,
+                extra_index_urls=_ensure_tuple(extra_index_urls) if extra_index_urls else None,
+                pre=pre,
+                extra_args=extra_args,
+                secret_mounts=_ensure_tuple(secret_mounts) if secret_mounts else None,
+            )
+        
+        # Create layers in priority order (core first, dev last)
+        new_image = self
+        for category in categorized.keys():
+            if categorized[category]:
+                layer = create_pip_layer(categorized[category])
+                new_image = new_image.clone(addl_layer=layer)
+        
         return new_image
 
     def with_env_vars(self, env_vars: Dict[str, str]) -> Image:
