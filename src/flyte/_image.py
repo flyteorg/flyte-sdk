@@ -1,14 +1,3 @@
-# TODO: Alex Chien - Optimize layer granularity for Docker build caching
-#
-# PROBLEM:  Current layers mix dependencies with different change frequencies,
-# causing unnecessary rebuilds when Docker cache invalidates
-#
-# SOLUTION:  Separate layers by stability: 
-# 1. System packages (apt) - most stable
-# 2. Base Python packages - stable  
-# 3. Project requirements - less stable
-# 4. Local code - changes frequently
-
 from __future__ import annotations
 
 import hashlib
@@ -626,6 +615,11 @@ class Image:
         Args:
             secret_mounts:
         """
+
+        from ._utils import parse_uv_script_file
+        metadata = parse_uv_script_file(Path(script))
+        dependencies = metadata.dependencies
+
         ll = UVScript(
             script=Path(script),
             index_url=index_url,
@@ -643,6 +637,9 @@ class Image:
             platform=platform,
         )
 
+        if dependencies:
+            img = img.with_pip_packages(*dependencies)
+  
         return img.clone(addl_layer=ll)
 
     def clone(

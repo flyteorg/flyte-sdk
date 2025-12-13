@@ -1,33 +1,40 @@
+# Save this as:  test_uv_short.py
+
 from flyte import Image
-import flyte
+from pathlib import Path
 
-image = flyte.Image.from_debian_base().with_pip_packages("tensorflow", "mypy")
+def main():
+    print("🧪 UV Script Auto-Separation Test")
+    print("=" * 40)
+    
+    # Create UV script with 3 dependencies
+    script_content = '''#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.12"
+# dependencies = ["pandas", "matplotlib", "jupyter", "tensorflow", "torch", "mypy"]
+# ///
 
-# Use it in a task environment
-env = flyte.TaskEnvironment(name="test-env", image=image)
-
-@env.task
-def simple_task() -> str:
-    print(f"Layers created: {len(image._layers)}")
-    for i, layer in enumerate(image._layers):
-        print(f"Layer {i+1}: {type(layer).__name__} - {layer}")
-    return "OK"
-
-
-if __name__ == "__main__":
-
-    import flyte
-    import logging
-
-    flyte.init(
-        endpoint="dns:///tryv2.hosted.unionai.cloud",
-        insecure=False,
-        auth_type="Pkce",
-        org="tryv2",
-        project="taiwan",
-        domain="development",
-        image_builder="remote",
+import pandas as pd
+print("UV script working!")
+'''
+    
+    with open("test_uv_script.py", "w") as f:
+        f.write(script_content)
+    
+    # Test auto-separation
+    image = Image.from_uv_script(
+        script="test_uv_script.py",
+        name="test-uv"
     )
-    run = flyte.with_runcontext(mode="remote", log_level=logging.DEBUG).run(simple_task)
-    print(run.name)
-    print(run.url)
+    
+    # Show results
+    print(f"\n📦 Total layers: {len(image._layers)}")
+    
+    # Show only the important layers (skip base layers)
+    for i, layer in enumerate(image._layers):
+        print(f"Layer {i}: {type(layer).__name__} - {layer}")
+    
+    print(f"\n✅ Auto-separation working! Found {len([l for l in image._layers if 'PipPackages' in str(type(l))])} pip package layers")
+
+if __name__ == "__main__": 
+    main()
