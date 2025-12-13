@@ -6,17 +6,6 @@ from unittest.mock import MagicMock
 import grpc
 import pytest
 from flyteidl.core.tasks_pb2 import TaskTemplate
-from flyteidl2.core import literals_pb2
-from flyteidl2.core.execution_pb2 import TaskExecution, TaskLog
-from flyteidl2.core.identifier_pb2 import (
-    Identifier,
-    NodeExecutionIdentifier,
-    ResourceType,
-    TaskExecutionIdentifier,
-    WorkflowExecutionIdentifier,
-)
-from flyteidl2.core.metrics_pb2 import ExecutionMetricResult
-from flyteidl2.core.security_pb2 import Identity
 from flyteidl2.connector.connector_pb2 import (
     CreateTaskRequest,
     DeleteTaskRequest,
@@ -30,6 +19,17 @@ from flyteidl2.connector.connector_pb2 import (
     TaskCategory,
     TaskExecutionMetadata,
 )
+from flyteidl2.core import literals_pb2
+from flyteidl2.core.execution_pb2 import TaskExecution, TaskLog
+from flyteidl2.core.identifier_pb2 import (
+    Identifier,
+    NodeExecutionIdentifier,
+    ResourceType,
+    TaskExecutionIdentifier,
+    WorkflowExecutionIdentifier,
+)
+from flyteidl2.core.metrics_pb2 import ExecutionMetricResult
+from flyteidl2.core.security_pb2 import Identity
 from flyteidl2.task import common_pb2
 
 import flyte
