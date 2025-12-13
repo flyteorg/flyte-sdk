@@ -1,10 +1,14 @@
+from __future__ import annotations
+
 import shlex
-from dataclasses import dataclass, field
-from typing import List, Union
+from dataclasses import dataclass, field, replace
+from typing import Any, Literal, Optional, Union
 
 import flyte.app
 import rich.repr
+from flyte import Environment, Image, Resources, SecretRequest
 from flyte.app import Input, RunOutput
+from flyte.app._types import Port
 from flyte.models import SerializationContext
 
 DEFAULT_SGLANG_IMAGE = "ghcr.io/unionai/serving-sglang:py3.12-latest"
@@ -40,9 +44,9 @@ class SGLangAppEnvironment(flyte.app.AppEnvironment):
         into the GPU.
     """
 
-    port: int = 8000
+    port: int | Port = 8080
     type: str = "SGLang"
-    extra_args: Union[str, List[str]] = ""
+    extra_args: str | list[str] = ""
     model_path: str | RunOutput = ""
     model_hf_path: str = ""
     model_id: str = ""
@@ -79,7 +83,7 @@ class SGLangAppEnvironment(flyte.app.AppEnvironment):
             "--served-model-name",
             self.model_id,
             "--port",
-            str(self.port),
+            str(self.get_port().port),
             *extra_args,
         ]
 
@@ -97,18 +101,82 @@ class SGLangAppEnvironment(flyte.app.AppEnvironment):
             input_kwargs["mount"] = self._model_mount_path
 
         if self.model_path:
-            self.inputs = [Input(name="model", value=self.model_path, **input_kwargs)]
+            self.inputs = [Input(name="model_path", value=self.model_path, **input_kwargs)]
 
         self.env_vars["FLYTE_MODEL_LOADER_LOCAL_MODEL_PATH"] = self._model_mount_path
-        self.links = [flyte.app.Link(path="/docs", title="SGLang OpenAPI Docs", is_relative=True), *self.links]
+        self.links = [flyte.app.Link(path="/docs", title="SGLang OpenAPI Docs", is_relative=True)]
 
         if self.image is None or self.image == "auto":
             self.image = DEFAULT_SGLANG_IMAGE
 
         super().__post_init__()
 
-    def container_args(self, serialization_context: SerializationContext) -> List[str]:
+    def container_args(self, serialization_context: SerializationContext) -> list[str]:
         """Return the container arguments for SGLang."""
         if isinstance(self.args, str):
             return shlex.split(self.args)
         return self.args or []
+
+    def clone_with(
+        self,
+        name: str,
+        image: Optional[Union[str, Image, Literal["auto"]]] = None,
+        resources: Optional[Resources] = None,
+        env_vars: Optional[dict[str, str]] = None,
+        secrets: Optional[SecretRequest] = None,
+        depends_on: Optional[list[Environment]] = None,
+        description: Optional[str] = None,
+        interruptible: Optional[bool] = None,
+        **kwargs: Any,
+    ) -> SGLangAppEnvironment:
+        port = kwargs.pop("port", None)
+        extra_args = kwargs.pop("extra_args", None)
+        if "model_path" in kwargs:
+            set_model_path = True
+            model_path = kwargs.pop("model_path", "") or ""
+        else:
+            set_model_path = False
+            model_path = self.model_path
+        if "model_hf_path" in kwargs:
+            set_model_hf_path = True
+            model_hf_path = kwargs.pop("model_hf_path", "") or ""
+        else:
+            set_model_hf_path = False
+            model_hf_path = self.model_hf_path
+        model_id = kwargs.pop("model_id", None)
+        stream_model = kwargs.pop("stream_model", None)
+
+        if kwargs:
+            raise TypeError(f"Unexpected keyword arguments: {list(kwargs.keys())}")
+
+        kwargs = self._get_kwargs()
+        kwargs["name"] = name
+        kwargs["args"] = None
+        kwargs["inputs"] = None
+        if image is not None:
+            kwargs["image"] = image
+        if resources is not None:
+            kwargs["resources"] = resources
+        if env_vars is not None:
+            kwargs["env_vars"] = env_vars
+        if secrets is not None:
+            kwargs["secrets"] = secrets
+        if depends_on is not None:
+            kwargs["depends_on"] = depends_on
+        if description is not None:
+            kwargs["description"] = description
+        if interruptible is not None:
+            kwargs["interruptible"] = interruptible
+        if port is not None:
+            kwargs["port"] = port
+        if extra_args is not None:
+            kwargs["extra_args"] = extra_args
+        if set_model_path:
+            kwargs["model_path"] = model_path
+        if set_model_hf_path:
+            kwargs["model_hf_path"] = model_hf_path
+        if model_id is not None:
+            kwargs["model_id"] = model_id
+        if stream_model is not None:
+            kwargs["stream_model"] = stream_model
+        return replace(self, **kwargs)

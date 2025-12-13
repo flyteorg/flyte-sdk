@@ -364,6 +364,8 @@ class Resources:
         strings, or a tuple of two ints or strings.
     :param gpu: The amount of GPU to allocate to the task. This can be an Accelerators enum, an int, or None.
     :param disk: The amount of disk to allocate to the task. This is a string of the form "10GiB".
+    :param shm: The amount of shared memory to allocate to the task. This is a string of the form "10GiB" or "auto".
+        If "auto", then the shared memory will be set to max amount of shared memory available on the node.
     """
 
     cpu: Union[CPUBaseType, Tuple[CPUBaseType, CPUBaseType], None] = None

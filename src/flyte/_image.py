@@ -847,7 +847,6 @@ class Image:
         :param extra_index_urls: extra index urls to use for pip install, default is None
         :param pre: whether to allow pre-release versions, default is False
         :param extra_args: extra arguments to pass to pip install, default is None
-        :param extra_args: extra arguments to pass to pip install, default is None
         :param secret_mounts: list of secret to mount for the build process.
         :return: Image
         """

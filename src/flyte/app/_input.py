@@ -69,25 +69,25 @@ class RunOutput(_DelayedValue):
     Get the output of a specific run:
 
     ```python
-    run_output = RunOutput(run_name="my-run-123")
+    run_output = RunOutput(type="directory", run_name="my-run-123")
     ```
 
     Get the latest output of an ephemeral task run:
 
     ```python
-    run_output = RunOutput(task_name="env.my_task")
+    run_output = RunOutput(type="file", task_name="env.my_task")
     ```
 
     Get the latest output of a deployed task run:
 
     ```python
-    run_output = RunOutput(task_name="env.my_task", task_auto_version="latest")
+    run_output = RunOutput(type="file", task_name="env.my_task", task_auto_version="latest")
     ```
 
     Get the output of a specific task run:
 
     ```python
-    run_output = RunOutput(task_name="env.my_task", task_version="xyz")
+    run_output = RunOutput(type="file", task_name="env.my_task", task_version="xyz")
     ```
     """
 
