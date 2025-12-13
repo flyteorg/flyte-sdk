@@ -5,13 +5,12 @@ from typing import List
 
 import click
 import grpc
+from flyteidl2.connector.service_pb2_grpc import add_AsyncConnectorServiceServicer_to_server, \
+    add_ConnectorMetadataServiceServicer_to_server
 from flyteidl2.core.execution_pb2 import TaskExecution
 from flyteidl2.core.tasks_pb2 import TaskTemplate
-from flyteidl2.service import connector_pb2
-from flyteidl2.service.connector_pb2_grpc import (
-    add_AsyncConnectorServiceServicer_to_server,
-    add_ConnectorMetadataServiceServicer_to_server,
-)
+from flyteidl2.connector import service_pb2
+
 from rich.console import Console
 from rich.table import Table
 
@@ -94,7 +93,7 @@ def _start_health_check_server(server: grpc.Server, worker: int):
             experimental_thread_pool=futures.ThreadPoolExecutor(max_workers=worker),
         )
 
-        for service in connector_pb2.DESCRIPTOR.services_by_name.values():
+        for service in service_pb2.DESCRIPTOR.services_by_name.values():
             health_servicer.set(service.full_name, health_pb2.HealthCheckResponse.SERVING)
         health_servicer.set(health.SERVICE_NAME, health_pb2.HealthCheckResponse.SERVING)
 
