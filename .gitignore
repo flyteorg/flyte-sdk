@@ -9,9 +9,6 @@ __pycache__/
 # C extensions
 *.so
 
-# Temporary
-rs_controller/
-
 # Distribution / packaging
 .Python
 build/
