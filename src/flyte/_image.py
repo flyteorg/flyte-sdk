@@ -602,6 +602,7 @@ class Image:
         extra_args: Optional[str] = None,
         platform: Optional[Tuple[Architecture, ...]] = None,
         secret_mounts: Optional[SecretRequest] = None,
+        optimize_layers: bool=True,
     ) -> Image:
         """
         Use this method to create a new image with the specified uv script.
@@ -634,16 +635,17 @@ class Image:
         :param pre: whether to allow pre-release versions, default is False
         :param extra_args: extra arguments to pass to pip install, default is None
         :param secret_mounts: Secret mounts to use for the image, default is None.
+        :param optimize_layers: Caching dependencies for future performance, default is True
 
         :return: Image
 
         Args:
             secret_mounts:
         """
-
-        from ._utils import parse_uv_script_file
-        metadata = parse_uv_script_file(Path(script))
-        dependencies = metadata.dependencies
+        if optimize_layers:
+            from ._utils import parse_uv_script_file
+            metadata = parse_uv_script_file(Path(script))
+            dependencies = metadata.dependencies
 
         ll = UVScript(
             script=Path(script),
@@ -663,7 +665,7 @@ class Image:
             platform=platform,
         )
 
-        if dependencies:
+        if optimize_layers and dependencies:
             img = img.with_pip_packages(*dependencies)
   
         return img.clone(addl_layer=ll)
@@ -834,6 +836,7 @@ class Image:
         pre: bool = False,
         extra_args: Optional[str] = None,
         secret_mounts: Optional[SecretRequest] = None,
+        optimize_layers: bool=True,
     ) -> Image:
         """
         Use this method to create a new image with the specified pip packages layered on top of the current image
@@ -871,6 +874,8 @@ class Image:
         :param extra_args: extra arguments to pass to pip install, default is None
         :param extra_args: extra arguments to pass to pip install, default is None
         :param secret_mounts: list of secret to mount for the build process.
+        :param optimize_layers: Caching dependencies for future performance, default is True
+
         :return: Image
         """
         
@@ -879,12 +884,12 @@ class Image:
         
         for pkg in packages:
             pkg_name = pkg.split(">=")[0].split("==")[0]
-            
             category = "unknown"
-            for cat, pkg_list in PACKAGE_IMPORTANCE.items():
-                if pkg_name in pkg_list:
-                    category = cat
-                    break
+            if optimize_layers:
+                for cat, pkg_list in PACKAGE_IMPORTANCE.items():
+                    if pkg_name in pkg_list:
+                        category = cat
+                        break
             categorized[category].append(pkg)
         
         # Helper function to create a layer

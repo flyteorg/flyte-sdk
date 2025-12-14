@@ -11,7 +11,7 @@ env = flyte.TaskEnvironment(
 
 @env.task()
 def main():
-    
+
     # Show results
     print(f"\n📦 Total layers: {len(image._layers)}")
     
