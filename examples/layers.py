@@ -3,10 +3,10 @@ import flyte
 from flyte import Image
 from pathlib import Path
 
-image = Image.from_debian_base().with_pip_packages("tensorflow", "mypy")
+image = Image.from_debian_base().with_env_vars({"CACHE_BUST": "With layers"}).with_pip_packages("tensorflow", "mypy")
 env = flyte.TaskEnvironment(
     name="hello_world_env",
-    image=Image.from_debian_base().with_pip_packages("tensorflow", "mypy")
+    image=Image.from_debian_base().with_env_vars({"CACHE_BUST": "With layers"}).with_pip_packages("tensorflow", "mypy")
 )
 
 @env.task()
