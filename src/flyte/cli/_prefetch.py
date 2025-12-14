@@ -28,6 +28,13 @@ def prefetch():
 @prefetch.command(name="hf-model", cls=CommandBase)
 @click.argument("repo", type=str)
 @click.option(
+    "--s3-path",
+    type=str,
+    required=False,
+    default=None,
+    help="S3 path to store the model. If not provided, the model will be stored using the default Flyte storage layer.",
+)
+@click.option(
     "--artifact-name",
     type=str,
     required=False,
@@ -138,6 +145,7 @@ def prefetch():
 def hf_model(
     cfg,
     repo: str,
+    s3_path: str | None,
     artifact_name: str | None,
     architecture: str | None,
     task: str,
@@ -229,6 +237,7 @@ def hf_model(
     console.print("[bold green]Starting model prefetch task...")
     run = prefetch_hf_model(
         repo=repo,
+        s3_path=s3_path,
         artifact_name=artifact_name,
         architecture=architecture,
         task=task,

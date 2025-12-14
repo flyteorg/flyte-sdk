@@ -18,16 +18,11 @@ from pydantic import BaseModel, Field
 
 from flyte._logging import logger
 from flyte._task_environment import TaskEnvironment
-from flyte._utils.lazy_module import lazy_module
 from flyte.io import Dir
 
 if TYPE_CHECKING:
     from flyte._resources import Resources
     from flyte.remote import Run
-
-
-huggingface_hub = lazy_module("huggingface_hub")
-vllm = lazy_module("vllm")
 
 
 DEFAULT_SHARD_PATTERN = "model-rank-{rank}-part-{part}.safetensors"
@@ -148,7 +143,11 @@ def _lookup_huggingface_model_info(model_repo: str, commit: str, token: str | No
     """
     import json
 
-    config_file = huggingface_hub.hf_hub_download(repo_id=model_repo, filename="config.json", revision=commit, token=token)
+    import huggingface_hub
+
+    config_file = huggingface_hub.hf_hub_download(
+        repo_id=model_repo, filename="config.json", revision=commit, token=token
+    )
     arch = None
     model_type = None
     with open(config_file, "r") as f:
@@ -177,6 +176,8 @@ def _stream_to_remote_dir(
     :param remote_dir_path: Path to the remote directory.
     :return: Tuple of (remote_dir_path, readme_content).
     """
+    import huggingface_hub
+
     import flyte.storage as storage
 
     hfs = huggingface_hub.HfFileSystem(token=token)
@@ -237,6 +238,7 @@ def _download_snapshot_to_local(
     :param local_dir: Local directory to download to.
     :return: Tuple of (local_dir, readme_content).
     """
+    import huggingface_hub
 
     card = None
     hfs = huggingface_hub.HfFileSystem(token=token)
@@ -278,6 +280,9 @@ def _shard_model(
     :param output_dir: Directory to save sharded model.
     :return: Path to sharded model directory.
     """
+    import huggingface_hub
+    import vllm
+
     assert shard_config.engine == "vllm", "'vllm' is the only supported sharding engine for now"
 
     # Download snapshot
@@ -326,8 +331,10 @@ def _shard_model(
 # NOTE: the info argument is a json string instead of a HuggingFaceModelInfo
 # object because the type engine cannot handle nested pydantic or dataclass
 # objects when run in interactive mode.
-def store_hf_model_task(info: str) -> Dir:
+def store_hf_model_task(info: str, s3_path: str | None = None) -> Dir:
     """Task to store a HuggingFace model."""
+
+    import huggingface_hub
 
     import flyte.report
 
@@ -377,14 +384,18 @@ def store_hf_model_task(info: str) -> Dir:
 
             # Upload sharded model
             logger.info("Uploading sharded model...")
-            result_dir = Dir.from_local_sync(sharded_dir)
+            result_dir = Dir.from_local_sync(sharded_dir, remote_destination=s3_path)
 
     else:
         # Try direct streaming first
         try:
             logger.info("Attempting direct streaming to remote storage...")
 
-            remote_path = flyte.ctx().raw_data_path.get_random_remote_path(artifact_name)  # type: ignore [union-attr]
+            if s3_path is not None:
+                remote_path = s3_path
+            else:
+                remote_path = flyte.ctx().raw_data_path.get_random_remote_path(artifact_name)  # type: ignore [union-attr]
+
             remote_path, card = _stream_to_remote_dir(_info.repo, commit, token, remote_path)
             result_dir = Dir.from_existing_remote(remote_path)
             logger.info(f"Direct streaming completed to {remote_path}")
@@ -396,7 +407,7 @@ def store_hf_model_task(info: str) -> Dir:
             # Fallback: download snapshot and upload
             with tempfile.TemporaryDirectory() as local_model_dir:
                 _local_model_dir, card = _download_snapshot_to_local(_info.repo, commit, token, local_model_dir)
-                result_dir = Dir.from_local_sync(_local_model_dir)
+                result_dir = Dir.from_local_sync(_local_model_dir, remote_destination=s3_path)
 
     # create report from the markdown `card`
     if card:
@@ -418,6 +429,7 @@ def store_hf_model_task(info: str) -> Dir:
 def hf_model(
     repo: str,
     *,
+    s3_path: str | None = None,
     artifact_name: str | None = None,
     architecture: str | None = None,
     task: str = "auto",
@@ -492,7 +504,6 @@ def hf_model(
     """
     import flyte
     from flyte import Resources, Secret
-    from flyte._cache import CacheRequest
     from flyte.remote import Run
 
     _validate_artifact_name(artifact_name)
@@ -544,14 +555,15 @@ def hf_model(
         )
 
     # Create a task from the module-level function with the configured environment
-    cache: CacheRequest = "disable" if force > 0 else "auto"
+    disable_run_cache = force > 0
     env = TaskEnvironment(
         name="prefetch-hf-model",
         image=image,
         resources=resources,
         secrets=[Secret(key=hf_token_key, as_env_var="HF_TOKEN")],
-        cache=cache,
     )
     task = env.task(report=True)(store_hf_model_task)  # type: ignore [assignment]
-    run = flyte.with_runcontext(interactive_mode=True).run(task, info.model_dump_json())
+    run = flyte.with_runcontext(interactive_mode=True, disable_run_cache=disable_run_cache).run(
+        task, info.model_dump_json(), s3_path
+    )
     return typing.cast(Run, run)

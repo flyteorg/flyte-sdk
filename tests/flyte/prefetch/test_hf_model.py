@@ -2,6 +2,7 @@
 
 import json
 import os
+import sys
 import tempfile
 from unittest.mock import MagicMock, patch
 
@@ -14,11 +15,8 @@ from flyte.prefetch._hf_model import (
     ShardConfig,
     StoredModelInfo,
     VLLMShardArgs,
-    _download_snapshot_to_local,
-    _lookup_huggingface_model_info,
     _validate_artifact_name,
 )
-import flyte.prefetch._hf_model as hf_model_module
 
 # =============================================================================
 # VLLMShardArgs Tests
@@ -289,9 +287,10 @@ def test_lookup_huggingface_model_info_with_architectures_list(tmp_path):
 
     mock_hf_hub = MagicMock()
     mock_hf_hub.hf_hub_download.return_value = str(config_file)
-    original_hf_hub = hf_model_module.huggingface_hub
-    hf_model_module.huggingface_hub = mock_hf_hub
-    try:
+
+    with patch.dict(sys.modules, {"huggingface_hub": mock_hf_hub}):
+        from flyte.prefetch._hf_model import _lookup_huggingface_model_info
+
         model_type, arch = _lookup_huggingface_model_info("meta-llama/Llama-2-7b-hf", "abc123", "token")
 
         assert model_type == "llama"
@@ -302,8 +301,6 @@ def test_lookup_huggingface_model_info_with_architectures_list(tmp_path):
             revision="abc123",
             token="token",
         )
-    finally:
-        hf_model_module.huggingface_hub = original_hf_hub
 
 
 def test_lookup_huggingface_model_info_with_single_architecture(tmp_path):
@@ -317,15 +314,14 @@ def test_lookup_huggingface_model_info_with_single_architecture(tmp_path):
 
     mock_hf_hub = MagicMock()
     mock_hf_hub.hf_hub_download.return_value = str(config_file)
-    original_hf_hub = hf_model_module.huggingface_hub
-    hf_model_module.huggingface_hub = mock_hf_hub
-    try:
+
+    with patch.dict(sys.modules, {"huggingface_hub": mock_hf_hub}):
+        from flyte.prefetch._hf_model import _lookup_huggingface_model_info
+
         model_type, arch = _lookup_huggingface_model_info("gpt2", "main", None)
 
         assert model_type == "gpt2"
         assert arch == "GPT2LMHeadModel"
-    finally:
-        hf_model_module.huggingface_hub = original_hf_hub
 
 
 def test_lookup_huggingface_model_info_with_multiple_architectures(tmp_path):
@@ -339,15 +335,14 @@ def test_lookup_huggingface_model_info_with_multiple_architectures(tmp_path):
 
     mock_hf_hub = MagicMock()
     mock_hf_hub.hf_hub_download.return_value = str(config_file)
-    original_hf_hub = hf_model_module.huggingface_hub
-    hf_model_module.huggingface_hub = mock_hf_hub
-    try:
+
+    with patch.dict(sys.modules, {"huggingface_hub": mock_hf_hub}):
+        from flyte.prefetch._hf_model import _lookup_huggingface_model_info
+
         model_type, arch = _lookup_huggingface_model_info("bert-base", "main", None)
 
         assert model_type == "bert"
         assert arch == "BertModel,BertForMaskedLM"
-    finally:
-        hf_model_module.huggingface_hub = original_hf_hub
 
 
 def test_lookup_huggingface_model_info_with_missing_fields(tmp_path):
@@ -358,15 +353,14 @@ def test_lookup_huggingface_model_info_with_missing_fields(tmp_path):
 
     mock_hf_hub = MagicMock()
     mock_hf_hub.hf_hub_download.return_value = str(config_file)
-    original_hf_hub = hf_model_module.huggingface_hub
-    hf_model_module.huggingface_hub = mock_hf_hub
-    try:
+
+    with patch.dict(sys.modules, {"huggingface_hub": mock_hf_hub}):
+        from flyte.prefetch._hf_model import _lookup_huggingface_model_info
+
         model_type, arch = _lookup_huggingface_model_info("custom-model", "main", None)
 
         assert model_type is None
         assert arch is None
-    finally:
-        hf_model_module.huggingface_hub = original_hf_hub
 
 
 # =============================================================================
@@ -383,9 +377,9 @@ def test_download_snapshot_to_local_with_readme():
     # Mock README info
     mock_hfs.info.return_value = {"name": "repo/README.md"}
 
-    original_hf_hub = hf_model_module.huggingface_hub
-    hf_model_module.huggingface_hub = mock_hf_hub
-    try:
+    with patch.dict(sys.modules, {"huggingface_hub": mock_hf_hub}):
+        from flyte.prefetch._hf_model import _download_snapshot_to_local
+
         with tempfile.TemporaryDirectory() as local_dir:
             with patch("tempfile.NamedTemporaryFile") as mock_temp:
                 mock_temp_file = MagicMock()
@@ -411,8 +405,6 @@ def test_download_snapshot_to_local_with_readme():
                 local_dir=local_dir,
                 token="token",
             )
-    finally:
-        hf_model_module.huggingface_hub = original_hf_hub
 
 
 def test_download_snapshot_to_local_without_readme():
@@ -422,16 +414,14 @@ def test_download_snapshot_to_local_without_readme():
     mock_hf_hub.HfFileSystem.return_value = mock_hfs
     mock_hfs.info.side_effect = FileNotFoundError("No README")
 
-    original_hf_hub = hf_model_module.huggingface_hub
-    hf_model_module.huggingface_hub = mock_hf_hub
-    try:
+    with patch.dict(sys.modules, {"huggingface_hub": mock_hf_hub}):
+        from flyte.prefetch._hf_model import _download_snapshot_to_local
+
         with tempfile.TemporaryDirectory() as local_dir:
             result_dir, card = _download_snapshot_to_local("test-repo", "main", None, local_dir)
 
         assert result_dir == local_dir
         assert card is None
-    finally:
-        hf_model_module.huggingface_hub = original_hf_hub
 
 
 # =============================================================================
@@ -494,21 +484,37 @@ def test_prefetch_hf_model_task_nonexistent_repo_raises():
     mock_hf_hub = MagicMock()
     mock_hf_hub.repo_exists.return_value = False
 
-    original_hf_hub = hf_model_module.huggingface_hub
-    hf_model_module.huggingface_hub = mock_hf_hub
-    try:
+    with patch.dict(sys.modules, {"huggingface_hub": mock_hf_hub}):
+        from flyte.prefetch._hf_model import store_hf_model_task
+
         info = HuggingFaceModelInfo(repo="nonexistent/model")
 
         with patch.dict(os.environ, {"HF_TOKEN": "test-token"}):
             with pytest.raises(ValueError, match="does not exist"):
                 store_hf_model_task(info.model_dump_json())
-    finally:
-        hf_model_module.huggingface_hub = original_hf_hub
 
 
 # =============================================================================
 # _shard_model Tests
 # =============================================================================
+
+
+def test_shard_model_valid_engine(tmp_path):
+    """Test that valid vllm engines do not raise an assertion error."""
+    from flyte.prefetch._hf_model import _shard_model
+
+    shard_config = ShardConfig(engine="vllm")
+    with patch.dict(sys.modules, {"vllm": MagicMock(), "huggingface_hub": MagicMock()}):
+        from flyte.prefetch._hf_model import _shard_model
+
+        _shard_model(
+            repo="test/model",
+            commit="abc123",
+            shard_config=shard_config,
+            token="token",
+            model_path=str(tmp_path),
+            output_dir=str(tmp_path),
+        )
 
 
 def test_shard_model_invalid_engine():
@@ -519,12 +525,15 @@ def test_shard_model_invalid_engine():
     shard_config = ShardConfig()
     object.__setattr__(shard_config, "engine", "invalid_engine")
 
-    with pytest.raises(AssertionError, match="vllm"):
-        _shard_model(
-            repo="test/model",
-            commit="abc123",
-            shard_config=shard_config,
-            token="token",
-            model_path="/tmp/model",
-            output_dir="/tmp/output",
-        )
+    with patch.dict(sys.modules, {"vllm": MagicMock(), "huggingface_hub": MagicMock()}):
+        from flyte.prefetch._hf_model import _shard_model
+
+        with pytest.raises(AssertionError, match="vllm"):
+            _shard_model(
+                repo="test/model",
+                commit="abc123",
+                shard_config=shard_config,
+                token="token",
+                model_path="/tmp/model",
+                output_dir="/tmp/output",
+            )
