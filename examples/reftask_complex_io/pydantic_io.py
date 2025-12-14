@@ -61,6 +61,6 @@ def run_wrapper():
 
 if __name__ == "__main__":
     flyte.init_from_config()
-    # run_direct()
+    run_direct()
     run_ref()
-    # run_wrapper()
+    run_wrapper()
