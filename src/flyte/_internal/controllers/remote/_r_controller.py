@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any, DefaultDict, Tuple, TypeVar
 
 from flyte_controller_base import Action, BaseController
-from flyteidl2.common import identifier_pb2
+from flyteidl2.common import identifier_pb2, phase_pb2
 from flyteidl2.workflow import run_definition_pb2
 
 import flyte
@@ -80,7 +80,7 @@ async def handle_action_failure(action: Action, task_name: str) -> Exception:
         err = err_pb
 
     err = err or action.client_err
-    if not err and action.phase_value == run_definition_pb2.PHASE_FAILED:
+    if not err and action.phase_value == phase_pb2.ACTION_PHASE_FAILED:
         logger.error(f"Server reported failure for action {action.name}, checking error file.")
         try:
             # Deserialize action_id to get the name
@@ -278,7 +278,7 @@ class RemoteController(BaseController):
             raise
 
         # If the action is aborted, we should abort the controller as well
-        if n.phase_value == run_definition_pb2.PHASE_ABORTED:
+        if n.phase_value == phase_pb2.ACTION_PHASE_ABORTED:
             n_action_id_pb = identifier_pb2.ActionIdentifier()
             n_action_id_pb.ParseFromString(n.action_id_bytes)
             logger.warning(
@@ -288,7 +288,7 @@ class RemoteController(BaseController):
                 f"Action {n_action_id_pb.name} was aborted, aborting current Action {current_action_id.name}"
             )
 
-        if n.phase_value == run_definition_pb2.PHASE_TIMED_OUT:
+        if n.phase_value == phase_pb2.ACTION_PHASE_TIMED_OUT:
             n_action_id_pb = identifier_pb2.ActionIdentifier()
             n_action_id_pb.ParseFromString(n.action_id_bytes)
             logger.warning(
@@ -298,7 +298,7 @@ class RemoteController(BaseController):
                 f"Action {n_action_id_pb.name} timed out, raising exception in current Action {current_action_id.name}"
             )
 
-        if n.has_error() or n.phase_value == run_definition_pb2.PHASE_FAILED:
+        if n.has_error() or n.phase_value == phase_pb2.ACTION_PHASE_FAILED:
             exc = await handle_action_failure(n, _task.name)
             raise exc
 
@@ -457,7 +457,7 @@ class RemoteController(BaseController):
         if prev_action is None:
             return TraceInfo(func_name, sub_action_id, _interface, inputs_uri), False
 
-        if prev_action.phase_value == run_definition_pb2.PHASE_FAILED:
+        if prev_action.phase_value == phase_pb2.ACTION_PHASE_FAILED:
             if prev_action.has_error():
                 # Deserialize err from bytes
                 from flyteidl2.core import execution_pb2
@@ -623,7 +623,7 @@ class RemoteController(BaseController):
             await self.cancel_action(action)
             raise
 
-        if n.has_error() or n.phase_value == run_definition_pb2.PHASE_FAILED:
+        if n.has_error() or n.phase_value == phase_pb2.ACTION_PHASE_FAILED:
             exc = await handle_action_failure(n, task_name)
             raise exc
 

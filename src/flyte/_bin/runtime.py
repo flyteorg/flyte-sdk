@@ -132,7 +132,7 @@ def main(
     if tgz or pkl:
         bundle = CodeBundle(tgz=tgz, pkl=pkl, destination=dest, computed_version=version)
     # Controller is created with the same kwargs as init, so that it can be used to run tasks
-    controller = create_controller(ct="remote", **controller_kwargs)
+    controller = create_controller(ct="rust", **controller_kwargs)
 
     ic = ImageCache.from_transport(image_cache) if image_cache else None
 
