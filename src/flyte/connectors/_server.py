@@ -5,8 +5,6 @@ from http import HTTPStatus
 from typing import Callable, Dict, List, Tuple, Type, Union
 
 import grpc
-from flyteidl2.connector.service_pb2_grpc import AsyncConnectorServiceServicer, ConnectorMetadataServiceServicer
-from flyteidl2.core.security_pb2 import Connection
 from flyteidl2.connector.connector_pb2 import (
     CreateTaskRequest,
     CreateTaskResponse,
@@ -23,7 +21,8 @@ from flyteidl2.connector.connector_pb2 import (
     ListConnectorsRequest,
     ListConnectorsResponse,
 )
-
+from flyteidl2.connector.service_pb2_grpc import AsyncConnectorServiceServicer, ConnectorMetadataServiceServicer
+from flyteidl2.core.security_pb2 import Connection
 from prometheus_client import Counter, Summary
 
 from flyte._internal.runtime.convert import Inputs, convert_from_inputs_to_native
