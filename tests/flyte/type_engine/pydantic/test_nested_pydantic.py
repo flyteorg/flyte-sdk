@@ -18,7 +18,7 @@ class MyInput(BaseModel):
 async def test_simple_pydantic():
     input = MyNestedModel(x=1)
     lit = TypeEngine.to_literal_type(MyNestedModel)
-    lv = TypeEngine.to_literal(input, MyNestedModel, lit)
+    lv = await TypeEngine.to_literal(input, MyNestedModel, lit)
 
     assert lit
     assert lv
@@ -26,14 +26,18 @@ async def test_simple_pydantic():
     guessed = TypeEngine.guess_python_type(lit)
     assert guessed
     v = guessed(x=1)
-    assert v.__dict__ == input.model_dump()
+    new_lv = await TypeEngine.to_literal(v, guessed, lit)
+    assert new_lv == lv
+    pv = await TypeEngine.to_python_value(new_lv, MyNestedModel)
+    assert pv
+    assert pv == input
 
 
 @pytest.mark.asyncio
 async def test_nested_pydantic():
     input = MyInput(x=1, y=2, m=MyNestedModel(x=1))
     lit = TypeEngine.to_literal_type(MyInput)
-    lv = TypeEngine.to_literal(input, python_type=MyInput, expected=lit)
+    lv = await TypeEngine.to_literal(input, python_type=MyInput, expected=lit)
 
     assert lit
     assert lv
@@ -41,3 +45,9 @@ async def test_nested_pydantic():
     guessed = TypeEngine.guess_python_type(lit)
     assert guessed
     print(guessed)
+    v = guessed(x=1, y=2, m={"x": 1})
+    new_lv = await TypeEngine.to_literal(v, guessed, lit)
+    assert new_lv == lv
+    pv = await TypeEngine.to_python_value(new_lv, MyInput)
+    assert pv
+    assert pv == input
