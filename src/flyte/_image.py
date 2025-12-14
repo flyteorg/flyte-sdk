@@ -8,8 +8,9 @@ from abc import abstractmethod
 from dataclasses import dataclass, field
 from functools import cached_property
 from pathlib import Path
-from typing import TYPE_CHECKING, ClassVar, Dict, List, Literal, Optional, Tuple, TypeVar, Union
 from types import MappingProxyType
+from typing import TYPE_CHECKING, ClassVar, Dict, List, Literal, Optional, Tuple, TypeVar, Union
+
 import rich.repr
 from packaging.version import Version
 
@@ -29,20 +30,23 @@ DIST_FOLDER = SOURCE_ROOT / "dist"
 
 T = TypeVar("T")
 
-PACKAGE_IMPORTANCE = MappingProxyType({
-            # Layer 0: ~1GB+ | Rebuild cost: High | Freq: Very Low
-            "heavy_ml": ("tensorflow", "torch", "torchaudio", "torchvision"),
-            # -----------------[ MIDDLE ]----------------- #
-            # Layer 1: ~200MB | Rebuild cost: Med  | Freq: Low
-            "core_data": ("numpy", "scipy", "pandas", "polars", "scikit-learn", "pydantic"),
-            # Layer 2: ~50MB  | Rebuild cost: Low  | Freq: Med
-            "utils": ("requests", "httpx", "boto3", "python-dotenv", "tqdm", "fastapi", "uvicorn"),
-            # ------------------[ TOP ]------------------- #
-            # Layer 3: ~50MB  | Rebuild cost: Low  | Freq: Med
-            "viz": ("matplotlib", "seaborn", "plotly", "altair"),
-            # Layer 4: ~20MB  | Rebuild cost: Inst | Freq: High
-            "dev": ("jupyter", "jupyterlab", "ruff", "pytest", "mypy", "ipython")
-        })
+PACKAGE_IMPORTANCE = MappingProxyType(
+    {
+        # Layer 0: ~1GB+ | Rebuild cost: High | Freq: Very Low
+        "heavy_ml": ("tensorflow", "torch", "torchaudio", "torchvision"),
+        # -----------------[ MIDDLE ]----------------- #
+        # Layer 1: ~200MB | Rebuild cost: Med  | Freq: Low
+        "core_data": ("numpy", "scipy", "pandas", "polars", "scikit-learn", "pydantic"),
+        # Layer 2: ~50MB  | Rebuild cost: Low  | Freq: Med
+        "utils": ("requests", "httpx", "boto3", "python-dotenv", "tqdm", "fastapi", "uvicorn"),
+        # ------------------[ TOP ]------------------- #
+        # Layer 3: ~50MB  | Rebuild cost: Low  | Freq: Med
+        "viz": ("matplotlib", "seaborn", "plotly", "altair"),
+        # Layer 4: ~20MB  | Rebuild cost: Inst | Freq: High
+        "dev": ("jupyter", "jupyterlab", "ruff", "pytest", "mypy", "ipython"),
+    }
+)
+
 
 def _ensure_tuple(val: Union[T, List[T], Tuple[T, ...]]) -> Tuple[T] | Tuple[T, ...]:
     """
@@ -602,7 +606,7 @@ class Image:
         extra_args: Optional[str] = None,
         platform: Optional[Tuple[Architecture, ...]] = None,
         secret_mounts: Optional[SecretRequest] = None,
-        optimize_layers: bool=True,
+        optimize_layers: bool = True,
     ) -> Image:
         """
         Use this method to create a new image with the specified uv script.
@@ -644,6 +648,7 @@ class Image:
         """
         if optimize_layers:
             from ._utils import parse_uv_script_file
+
             metadata = parse_uv_script_file(Path(script))
             dependencies = metadata.dependencies
 
@@ -667,7 +672,7 @@ class Image:
 
         if optimize_layers and dependencies:
             img = img.with_pip_packages(*dependencies)
-  
+
         return img.clone(addl_layer=ll)
 
     def clone(
@@ -836,7 +841,7 @@ class Image:
         pre: bool = False,
         extra_args: Optional[str] = None,
         secret_mounts: Optional[SecretRequest] = None,
-        optimize_layers: bool=True,
+        optimize_layers: bool = True,
     ) -> Image:
         """
         Use this method to create a new image with the specified pip packages layered on top of the current image
@@ -878,10 +883,17 @@ class Image:
 
         :return: Image
         """
-        
+
         # Automatically categorize the packages
-        categorized = {"heavy_ml": [], "core_data": [], "utils": [], "viz": [], "dev": [], "unknown": []}
-        
+        categorized: dict[str, list[str]] = {
+            "heavy_ml": [],
+            "core_data": [],
+            "utils": [],
+            "viz": [],
+            "dev": [],
+            "unknown": [],
+        }
+
         for pkg in packages:
             pkg_name = pkg.split(">=")[0].split("==")[0]
             category = "unknown"
@@ -891,7 +903,7 @@ class Image:
                         category = cat
                         break
             categorized[category].append(pkg)
-        
+
         # Helper function to create a layer
         def create_pip_layer(pkgs):
             return PipPackages(
@@ -902,14 +914,14 @@ class Image:
                 extra_args=extra_args,
                 secret_mounts=_ensure_tuple(secret_mounts) if secret_mounts else None,
             )
-        
+
         # Create layers in priority order (core first, dev last)
         new_image = self
-        for category in categorized.keys():
-            if categorized[category]:
-                layer = create_pip_layer(categorized[category])
+        for category, lst in categorized.items():
+            if lst:
+                layer = create_pip_layer(lst)
                 new_image = new_image.clone(addl_layer=layer)
-        
+
         return new_image
 
     def with_env_vars(self, env_vars: Dict[str, str]) -> Image:
