@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 from functools import cached_property
 from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar, Dict, List, Literal, Optional, Tuple, TypeVar, Union
-
+from types import MappingProxyType
 import rich.repr
 from packaging.version import Version
 
@@ -29,6 +29,20 @@ DIST_FOLDER = SOURCE_ROOT / "dist"
 
 T = TypeVar("T")
 
+PACKAGE_IMPORTANCE = MappingProxyType({
+            # Layer 0: ~1GB+ | Rebuild cost: High | Freq: Very Low
+            "heavy_ml": ("tensorflow", "torch", "torchaudio", "torchvision"),
+            # -----------------[ MIDDLE ]----------------- #
+            # Layer 1: ~200MB | Rebuild cost: Med  | Freq: Low
+            "core_data": ("numpy", "scipy", "pandas", "polars", "scikit-learn", "pydantic"),
+            # Layer 2: ~50MB  | Rebuild cost: Low  | Freq: Med
+            "utils": ("requests", "httpx", "boto3", "python-dotenv", "tqdm", "fastapi", "uvicorn"),
+            # ------------------[ TOP ]------------------- #
+            # Layer 3: ~50MB  | Rebuild cost: Low  | Freq: Med
+            "viz": ("matplotlib", "seaborn", "plotly", "altair"),
+            # Layer 4: ~20MB  | Rebuild cost: Inst | Freq: High
+            "dev": ("jupyter", "jupyterlab", "ruff", "pytest", "mypy", "ipython")
+        })
 
 def _ensure_tuple(val: Union[T, List[T], Tuple[T, ...]]) -> Tuple[T] | Tuple[T, ...]:
     """
@@ -859,21 +873,6 @@ class Image:
         :param secret_mounts: list of secret to mount for the build process.
         :return: Image
         """
-
-        PACKAGE_IMPORTANCE = {
-            # Layer 0: ~1GB+ | Rebuild cost: High | Freq: Very Low
-            "heavy_ml": ["tensorflow", "torch", "torchaudio", "torchvision"],
-            # -----------------[ MIDDLE ]----------------- #
-            # Layer 1: ~200MB | Rebuild cost: Med  | Freq: Low
-            "core_data": ["numpy", "scipy", "pandas", "polars", "scikit-learn", "pydantic"],
-            # Layer 2: ~50MB  | Rebuild cost: Low  | Freq: Med
-            "utils": ["requests", "httpx", "boto3", "python-dotenv", "tqdm", "fastapi", "uvicorn"],
-            # ------------------[ TOP ]------------------- #
-            # Layer 3: ~50MB  | Rebuild cost: Low  | Freq: Med
-            "viz": ["matplotlib", "seaborn", "plotly", "altair"],
-            # Layer 4: ~20MB  | Rebuild cost: Inst | Freq: High
-            "dev": ["jupyter", "jupyterlab", "ruff", "pytest", "mypy", "ipython"]
-        }
         
         # Automatically categorize the packages
         categorized = {"heavy_ml": [], "core_data": [], "utils": [], "viz": [], "dev": [], "unknown": []}

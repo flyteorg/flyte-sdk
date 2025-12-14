@@ -1,31 +1,16 @@
 # Save this as:  test_uv_short.py
-
+import flyte
 from flyte import Image
 from pathlib import Path
 
-def main():
-    print("🧪 UV Script Auto-Separation Test")
-    print("=" * 40)
-    
-    # Create UV script with 3 dependencies
-    script_content = '''#!/usr/bin/env -S uv run --script
-# /// script
-# requires-python = ">=3.12"
-# dependencies = ["pandas", "matplotlib", "jupyter", "tensorflow", "torch", "mypy"]
-# ///
+image = Image.from_debian_base().with_pip_packages("tensorflow", "mypy")
+env = flyte.TaskEnvironment(
+    name="hello_world_env",
+    image=Image.from_debian_base().with_pip_packages("tensorflow", "mypy")
+)
 
-import pandas as pd
-print("UV script working!")
-'''
-    
-    with open("test_uv_script.py", "w") as f:
-        f.write(script_content)
-    
-    # Test auto-separation
-    image = Image.from_uv_script(
-        script="test_uv_script.py",
-        name="test-uv"
-    )
+@env.task()
+def main():
     
     # Show results
     print(f"\n📦 Total layers: {len(image._layers)}")
@@ -36,5 +21,11 @@ print("UV script working!")
     
     print(f"\n✅ Auto-separation working! Found {len([l for l in image._layers if 'PipPackages' in str(type(l))])} pip package layers")
 
-if __name__ == "__main__": 
-    main()
+if __name__ == "__main__":
+
+    import flyte, logging 
+
+    flyte.init_from_config(log_level=logging.DEBUG)
+    run = flyte.with_runcontext(mode="remote", log_level=logging.DEBUG).run(main)
+    print(run.name)
+    print(run.url)
