@@ -3,10 +3,10 @@ from flyte import Image
 from pathlib import Path
 import time
 
-image = Image.from_debian_base().with_env_vars({"CACHE_BUST": str(time.time_ns())}).with_pip_packages("mypy")
+image = Image.from_debian_base().with_env_vars({"CACHE_BUST": "No Layer"}).with_pip_packages("tensorflow", "mypy")
 env = flyte.TaskEnvironment(
     name="test_without",
-    image=Image.from_debian_base().with_env_vars({"CACHE_BUST": str(time.time_ns())}).with_pip_packages("mypy")
+    image=Image.from_debian_base().with_env_vars({"CACHE_BUST": "No Layer"}).with_pip_packages("tensorflow", "mypy")
 )
 
 @env.task()
