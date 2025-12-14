@@ -843,7 +843,10 @@ def generate_attribute_list_from_dataclass_json_mixin(schema: dict, schema_name:
             # Get the referenced schema from $defs (or definitions for older schemas)
             defs = schema.get("$defs", schema.get("definitions", {}))
             if ref_name in defs:
-                ref_schema = defs[ref_name]
+                ref_schema = defs[ref_name].copy()
+                # Include $defs so nested models can resolve their own $refs
+                if "$defs" not in ref_schema and defs:
+                    ref_schema["$defs"] = defs
                 nested_class: type = convert_mashumaro_json_schema_to_python_class(ref_schema, ref_name)
                 attribute_list.append(
                     (
