@@ -32,9 +32,9 @@ tracing = "0.1"
 tracing-subscriber = "0.3"
 async-trait = "0.1"
 thiserror = "1.0"
-# Using local flyteidl2 without extension-module
-flyteidl2 = { path = "/Users/ytong/go/src/github.com/flyteorg/flyte/gen/rust" }
-# flyteidl2 = "=2.0.0-alpha14"
+# Uncomment this if you need to use local flyteidl2
+#flyteidl2 = { path = "/Users/ytong/go/src/github.com/flyteorg/flyte/gen/rust" }
+flyteidl2 = "=2.0.0-alpha15"
 reqwest = { version = "0.12", features = ["json", "rustls-tls"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
