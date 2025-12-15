@@ -14,6 +14,8 @@ pub enum ControllerError {
     GrpcError(#[from] tonic::Status),
     #[error("Task error: {0}")]
     TaskError(String),
+    #[error("Informer error: {0}")]
+    Informer(#[from] InformerError),
 }
 
 impl From<tonic::transport::Error> for ControllerError {

@@ -112,7 +112,7 @@ pub struct CoreBaseController {
     queue_client: QueueClient,
     shared_queue: mpsc::Sender<Action>,
     shared_queue_rx: Arc<tokio::sync::Mutex<mpsc::Receiver<Action>>>,
-    failure_rx: mpsc::Receiver<InformerError>,
+    failure_rx: Arc<std::sync::Mutex<Option<mpsc::Receiver<InformerError>>>>,
     bg_worker_handle: Arc<std::sync::Mutex<Option<tokio::task::JoinHandle<()>>>>,
 }
 
@@ -179,7 +179,7 @@ impl CoreBaseController {
             queue_client,
             shared_queue: shared_tx,
             shared_queue_rx: Arc::new(tokio::sync::Mutex::new(shared_queue_rx)),
-            failure_rx,
+            failure_rx: Arc::new(std::sync::Mutex::new(Some(failure_rx))),
             bg_worker_handle: Arc::new(std::sync::Mutex::new(None)),
         };
 
@@ -204,8 +204,7 @@ impl CoreBaseController {
         let rt = get_runtime();
         let channel = rt.block_on(async {
             let chan = if endpoint.starts_with("http://") {
-                let endpoint = Endpoint::from_static(endpoint_static)
-                    .keep_alive_while_idle(true);
+                let endpoint = Endpoint::from_static(endpoint_static).keep_alive_while_idle(true);
                 endpoint.connect().await.map_err(ControllerError::from)?
             } else if endpoint.starts_with("https://") {
                 // Strip "https://" to get just the hostname for TLS config
@@ -249,7 +248,7 @@ impl CoreBaseController {
             queue_client,
             shared_queue: shared_tx,
             shared_queue_rx: Arc::new(tokio::sync::Mutex::new(shared_queue_rx)),
-            failure_rx,
+            failure_rx: Arc::new(std::sync::Mutex::new(Some(failure_rx))),
             bg_worker_handle: Arc::new(std::sync::Mutex::new(None)),
         };
 
@@ -260,7 +259,7 @@ impl CoreBaseController {
             controller_clone.bg_worker().await;
         });
 
-        // Store the handle - no async needed with std::sync::Mutex
+        // Store the handle
         *real_base_controller.bg_worker_handle.lock().unwrap() = Some(handle);
 
         Ok(real_base_controller)
@@ -322,16 +321,20 @@ impl CoreBaseController {
                                     // todo: gain a better understanding of these two errors and handle
                                     let res = informer.set_action_client_err(&action).await;
                                     match res {
-                                        Ok(()) => {},
+                                        Ok(()) => {}
                                         Err(e) => {
-                                            error!("Error setting error for failed action {}: {}", &action.get_full_name(), e)
+                                            error!(
+                                                "Error setting error for failed action {}: {}",
+                                                &action.get_full_name(),
+                                                e
+                                            )
                                         }
                                     }
                                     let res = informer
                                         .fire_completion_event(&action.action_id.name)
                                         .await;
                                     match res {
-                                        Ok(()) => {},
+                                        Ok(()) => {}
                                         Err(e) => {
                                             error!("Error firing completion event for failed action {}: {}", &action.get_full_name(), e)
                                         }
@@ -630,39 +633,60 @@ impl CoreBaseController {
     }
 
     pub async fn watch_for_errors(&self) -> Result<(), ControllerError> {
-        // Take the handle (can only be called once)
+        // Take ownership of both (can only be called once)
         let handle = self.bg_worker_handle.lock().unwrap().take();
+        let mut failure_rx = self.failure_rx.lock().unwrap().take();
 
-        if let Some(handle) = handle {
-            match handle.await {
-                Ok(_) => {
-                    // bg_worker completed normally, which shouldn't happen
-                    error!("Background worker exited unexpectedly");
-                    Err(ControllerError::RuntimeError(
-                        "Background worker exited unexpectedly".to_string(),
-                    ))
-                }
-                Err(e) if e.is_panic() => {
-                    // bg_worker panicked
-                    error!("Background worker panicked: {:?}", e);
-                    Err(ControllerError::RuntimeError(format!(
-                        "Background worker panicked: {:?}",
-                        e
-                    )))
-                }
-                Err(e) => {
-                    // bg_worker was cancelled
-                    error!("Background worker was cancelled: {:?}", e);
-                    Err(ControllerError::RuntimeError(format!(
-                        "Background worker cancelled: {:?}",
-                        e
-                    )))
+        match (handle, failure_rx) {
+            (Some(handle), Some(mut rx)) => {
+                // Race bg_worker completion vs informer errors
+                tokio::select! {
+                    // bg_worker completed or panicked
+                    result = handle => {
+                        match result {
+                            Ok(_) => {
+                                error!("Background worker exited unexpectedly");
+                                Err(ControllerError::RuntimeError(
+                                    "Background worker exited unexpectedly".to_string(),
+                                ))
+                            }
+                            Err(e) if e.is_panic() => {
+                                error!("Background worker panicked: {:?}", e);
+                                Err(ControllerError::RuntimeError(format!(
+                                    "Background worker panicked: {:?}",
+                                    e
+                                )))
+                            }
+                            Err(e) => {
+                                error!("Background worker was cancelled: {:?}", e);
+                                Err(ControllerError::RuntimeError(format!(
+                                    "Background worker cancelled: {:?}",
+                                    e
+                                )))
+                            }
+                        }
+                    }
+
+                    // Informer error received
+                    informer_err = rx.recv() => {
+                        match informer_err {
+                            Some(err) => {
+                                error!("Informer error received: {:?}", err);
+                                Err(ControllerError::Informer(err))
+                            }
+                            None => {
+                                error!("Informer error channel closed unexpectedly");
+                                Err(ControllerError::RuntimeError(
+                                    "Informer error channel closed unexpectedly".to_string(),
+                                ))
+                            }
+                        }
+                    }
                 }
             }
-        } else {
-            Err(ControllerError::RuntimeError(
-                "watch_for_errors already called or handle not available".to_string(),
-            ))
+            _ => Err(ControllerError::RuntimeError(
+                "watch_for_errors already called or resources not available".to_string(),
+            )),
         }
     }
 }

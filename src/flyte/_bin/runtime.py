@@ -172,6 +172,8 @@ def main(
     async def _run_and_stop():
         loop = asyncio.get_event_loop()
         loop.set_exception_handler(flyte.errors.silence_grpc_polling_error)
+        # # Create coroutine to watch for errors (must be inside async context for Rust controller)
+        # controller_failure = controller.watch_for_errors()
         try:
             await utils.run_coros(controller_failure, task_coroutine)
             await controller.stop()

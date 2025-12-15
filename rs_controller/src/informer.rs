@@ -230,7 +230,10 @@ impl Informer {
         {
             let mut completion_events = self.completion_events.write().await;
             completion_events.insert(action_name.clone(), done_tx);
-            warn!("---------> Adding completion event in submit action {:?}", action_name);
+            warn!(
+                "---------> Adding completion event in submit action {:?}",
+                action_name
+            );
         }
 
         // Add action to shared queue
@@ -257,7 +260,7 @@ impl Informer {
                 action_name,
             );
             // Maybe the action hasn't started yet.
-            return Ok(())
+            return Ok(());
         }
         Ok(())
     }
@@ -328,13 +331,19 @@ impl InformerCache {
         }
 
         // Create new informer (with write lock)
-        debug!("Acquiring write lock to create informer for: {}", informer_name);
+        debug!(
+            "Acquiring write lock to create informer for: {}",
+            informer_name
+        );
         let mut map = self.cache.write().await;
         info!("Write lock acquired for: {}", informer_name);
 
         // Double-check it wasn't created while we were waiting for write lock
         if let Some(informer) = map.get(&informer_name) {
-            info!("RACE: Informer was created while waiting for write lock: {}", informer_name);
+            info!(
+                "RACE: Informer was created while waiting for write lock: {}",
+                informer_name
+            );
             let arc_informer = Arc::clone(informer);
             drop(map);
             debug!("Write lock released after race condition");
@@ -385,12 +394,18 @@ impl InformerCache {
                     error!("Failed to send informer failure event: {:?}", e);
                 }
             } else {
-                info!("Informer watch_actions completed successfully for {}", me.run_id.name);
+                info!(
+                    "Informer watch_actions completed successfully for {}",
+                    me.run_id.name
+                );
             }
         });
 
         // save the value and ignore the returned reference.
-        debug!("Acquiring write lock to save watch handle for: {}", informer_name);
+        debug!(
+            "Acquiring write lock to save watch handle for: {}",
+            informer_name
+        );
         let _ = informer.watch_handle.write().await.insert(_watch_handle);
         info!("Watch handle saved for: {}", informer_name);
 
@@ -398,7 +413,10 @@ impl InformerCache {
         debug!("Waiting for informer to be ready: {}", informer_name);
         Self::wait_for_ready(&informer, timeout).await;
 
-        info!("<<< Returning newly created informer for: {}", informer_name);
+        info!(
+            "<<< Returning newly created informer for: {}",
+            informer_name
+        );
         informer
     }
 
@@ -431,7 +449,10 @@ impl InformerCache {
 
         // Quick check - if already ready, return immediately
         if informer.is_ready.load(Ordering::Acquire) {
-            info!("Informer already ready for: {}", informer.parent_action_name);
+            info!(
+                "Informer already ready for: {}",
+                informer.parent_action_name
+            );
             return;
         }
 
@@ -439,7 +460,10 @@ impl InformerCache {
         // Otherwise wait with timeout
         match tokio::time::timeout(timeout, ready_fut).await {
             Ok(_) => {
-                info!("Informer ready signal received for: {}", informer.parent_action_name);
+                info!(
+                    "Informer ready signal received for: {}",
+                    informer.parent_action_name
+                );
             }
             Err(_) => {
                 warn!(
@@ -469,7 +493,6 @@ impl InformerCache {
         opt_informer
     }
 }
-
 
 #[cfg(test)]
 mod tests {
