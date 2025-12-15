@@ -9,7 +9,7 @@ Deploy
 Deploy this app using the Flyte CLI:
 
 ```
-flyte deploy examples/genai/vllm/vllm_app.py vllm_app
+flyte deploy examples/genai/vllm/vllm_app_sharded.py vllm_app_sharded
 ```
 
 Note that `model=flyte.app.RunOutput(run_name="cache_model_env", task_name="main")`
@@ -48,10 +48,10 @@ from flyte._image import DIST_FOLDER, PythonWheels
 
 # Define the vLLM app environment for the smallest Qwen3 model
 vllm_app = VLLMAppEnvironment(
-    name="qwen3-0-6b-vllm",
-    model_hf_path="Qwen/Qwen3-0.6B",
-    model_id="qwen3-0.6b",
-    resources=flyte.Resources(cpu="4", memory="16Gi", gpu="L40s:4", disk="10Gi"),
+    name="qwen3-14b-vllm-sharded",
+    model_hf_path="Qwen/Qwen3-14B",
+    model_id="qwen3-14b",
+    resources=flyte.Resources(cpu="36", memory="300Gi", gpu="L40s:4", disk="300Gi", shm="auto"),
     image=(
         flyte.Image.from_debian_base(name="vllm-app-image", python_version=(3, 12), install_flyte=False)
         .with_pip_packages("flashinfer-python", "flashinfer-cubin")
@@ -75,19 +75,37 @@ vllm_app = VLLMAppEnvironment(
         scaledown_after=300,  # Scale down after 5 minutes of inactivity
     ),
     requires_auth=False,
-    extra_args=["--max-model-len 8192"],  # Limit context length for smaller GPU memory
+    extra_args=[
+        "--max-model-len",
+        "8192",
+        "--tensor-parallel-size",
+        "4",
+        "--gpu-memory-utilization",
+        "0.8",
+    ],
 )
 
 
 if __name__ == "__main__":
-    from flyte.remote import Run
+    from flyte.prefetch import ShardConfig, VLLMShardArgs
 
     flyte.init_from_config()
 
-    # prefetch the Qwen3-0.6B model into flyte object store
-    run: Run = flyte.prefetch.hf_model(repo="Qwen/Qwen3-0.6B")
-    run.wait()
+    # prefetch the Qwen3-14B into flyte object store
+    run = flyte.prefetch.hf_model(
+        repo="Qwen/Qwen3-14B",
+        resources=flyte.Resources(cpu="36", memory="300Gi", gpu="L40s:4", disk="300Gi"),
+        shard_config=ShardConfig(
+            engine="vllm",
+            args=VLLMShardArgs(
+                tensor_parallel_size=4,
+                gpu_memory_utilization=0.9,
+                max_model_len=16384,
+            ),
+        ),
+    )
     print(run.url)
+    run.wait()
 
     app = flyte.serve(
         vllm_app.clone_with(
