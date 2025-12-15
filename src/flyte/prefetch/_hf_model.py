@@ -331,7 +331,7 @@ def _shard_model(
 # NOTE: the info argument is a json string instead of a HuggingFaceModelInfo
 # object because the type engine cannot handle nested pydantic or dataclass
 # objects when run in interactive mode.
-def store_hf_model_task(info: str, s3_path: str | None = None) -> Dir:
+def store_hf_model_task(info: str, obstore_path: str | None = None) -> Dir:
     """Task to store a HuggingFace model."""
 
     import huggingface_hub
@@ -384,15 +384,15 @@ def store_hf_model_task(info: str, s3_path: str | None = None) -> Dir:
 
             # Upload sharded model
             logger.info("Uploading sharded model...")
-            result_dir = Dir.from_local_sync(sharded_dir, remote_destination=s3_path)
+            result_dir = Dir.from_local_sync(sharded_dir, remote_destination=obstore_path)
 
     else:
         # Try direct streaming first
         try:
             logger.info("Attempting direct streaming to remote storage...")
 
-            if s3_path is not None:
-                remote_path = s3_path
+            if obstore_path is not None:
+                remote_path = obstore_path
             else:
                 remote_path = flyte.ctx().raw_data_path.get_random_remote_path(artifact_name)  # type: ignore [union-attr]
 
@@ -407,7 +407,7 @@ def store_hf_model_task(info: str, s3_path: str | None = None) -> Dir:
             # Fallback: download snapshot and upload
             with tempfile.TemporaryDirectory() as local_model_dir:
                 _local_model_dir, card = _download_snapshot_to_local(_info.repo, commit, token, local_model_dir)
-                result_dir = Dir.from_local_sync(_local_model_dir, remote_destination=s3_path)
+                result_dir = Dir.from_local_sync(_local_model_dir, remote_destination=obstore_path)
 
     # create report from the markdown `card`
     if card:
@@ -429,7 +429,7 @@ def store_hf_model_task(info: str, s3_path: str | None = None) -> Dir:
 def hf_model(
     repo: str,
     *,
-    s3_path: str | None = None,
+    obstore_path: str | None = None,
     artifact_name: str | None = None,
     architecture: str | None = None,
     task: str = "auto",
@@ -564,6 +564,6 @@ def hf_model(
     )
     task = env.task(report=True)(store_hf_model_task)  # type: ignore [assignment]
     run = flyte.with_runcontext(interactive_mode=True, disable_run_cache=disable_run_cache).run(
-        task, info.model_dump_json(), s3_path
+        task, info.model_dump_json(), obstore_path
     )
     return typing.cast(Run, run)
