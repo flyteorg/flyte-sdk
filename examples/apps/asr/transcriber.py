@@ -4,7 +4,7 @@
 #     "torch[gpu]",
 #     "nemo_toolkit[asr]",
 #     "numpy",
-#     "flyte>=2.0.0b29"
+#     "flyte>=2.0.0b35"
 # ]
 # ///
 

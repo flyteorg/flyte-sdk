@@ -4,7 +4,7 @@
 #     "fastapi",
 #     "uvicorn",
 #     "websockets",
-#     "flyte>=2.0.0b29"
+#     "flyte>=2.0.0b35"
 # ]
 # ///
 
