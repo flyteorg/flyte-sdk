@@ -260,6 +260,13 @@ class Action(ToJSONMixin):
         """
         return self.pb2.id
 
+    @property
+    def start_time(self) -> datetime:
+        """
+        Get the start time of the action.
+        """
+        return self.pb2.status.start_time.ToDatetime().replace(tzinfo=timezone.utc)
+
     @syncify
     async def show_logs(
         self,

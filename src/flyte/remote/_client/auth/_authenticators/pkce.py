@@ -410,7 +410,7 @@ class OAuthCallbackHandler:
         :param reader: The StreamReader for reading the incoming request
         :param writer: The StreamWriter for writing the response
         """
-        data = await reader.read(1024)
+        data = await reader.read()
         message = data.decode()
         headers = message.split("\r\n")
         path = headers[0].split(" ")[1]

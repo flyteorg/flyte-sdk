@@ -33,7 +33,8 @@ class VLLMAppEnvironment(flyte.app.AppEnvironment):
     :param extra_args: Extra args to pass to `vllm serve`. See
         https://docs.vllm.ai/en/stable/serving/engine_args.html
         or run `vllm serve --help` for details.
-    :param model: Remote path to model (e.g., s3://bucket/path/to/model).
+    :param model_path: Remote path to model (e.g., s3://bucket/path/to/model).
+    :param model_hf_path: Hugging Face path to model (e.g., Qwen/Qwen3-0.6B).
     :param model_id: Model id that is exposed by vllm.
     :param stream_model: Set to True to stream model from blob store to the GPU directly.
         If False, the model will be downloaded to the local file system first and then loaded
@@ -44,6 +45,8 @@ class VLLMAppEnvironment(flyte.app.AppEnvironment):
     type: str = "vLLM"
     extra_args: Union[str, List[str]] = ""
     model: str | RunOutput = ""
+    model_path: str = ""
+    model_hf_path: str = ""
     model_id: str = ""
     stream_model: bool = True
     _model_mount_path: str = field(default="/root/flyte", init=False)
@@ -55,8 +58,13 @@ class VLLMAppEnvironment(flyte.app.AppEnvironment):
         if self.model_id == "":
             raise ValueError("model_id must be defined")
 
-        if self.model == "":
-            raise ValueError("model must be defined")
+        if self.model_path == "" and self.model_hf_path == "":
+            raise ValueError("model_path or model_hf_path must be defined")
+        if self.model_path != "" and self.model_hf_path != "":
+            raise ValueError("model_path and model_hf_path cannot be set at the same time")
+
+        if self.model_hf_path:
+            self._model_mount_path = self.model_hf_path
 
         if self.args:
             raise ValueError("args cannot be set for VLLMAppEnvironment. Use `extra_args` to add extra arguments.")
@@ -95,7 +103,9 @@ class VLLMAppEnvironment(flyte.app.AppEnvironment):
             input_kwargs["download"] = True
             input_kwargs["mount"] = self._model_mount_path
 
-        self.inputs = [Input(name="model", value=self.model, **input_kwargs)]
+        if self.model_path:
+            self.inputs = [Input(name="model", value=self.model_path, **input_kwargs)]
+
         self.env_vars["FLYTE_MODEL_LOADER_LOCAL_MODEL_PATH"] = self._model_mount_path
         self.links = [flyte.app.Link(path="/docs", title="vLLM OpenAPI Docs", is_relative=True), *self.links]
 

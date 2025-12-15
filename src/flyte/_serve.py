@@ -6,7 +6,6 @@ from typing import TYPE_CHECKING, Optional
 
 import cloudpickle
 
-from flyte._code_bundle._utils import CopyFiles
 from flyte._initialize import get_init_config
 from flyte._logging import LogFormat, logger
 from flyte._tools import ipython_check
@@ -17,6 +16,8 @@ if TYPE_CHECKING:
     import flyte.io
     from flyte.app import AppEnvironment
     from flyte.remote import App
+
+    from ._code_bundle import CopyFiles
 
 
 class _Serve:

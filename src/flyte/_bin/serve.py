@@ -117,11 +117,9 @@ def main(
     import signal
     from subprocess import Popen
 
-    import flyte
     from flyte.app._input import RUNTIME_INPUTS_FILE
 
     logger.info(f"Starting flyte-serve, org: {org}, project: {project}, domain: {domain}")
-    flyte.init_in_cluster(org=org, project=project, domain=domain)
 
     materialized_inputs, env_vars, _code_bundle = asyncio.run(
         download_code_inputs(

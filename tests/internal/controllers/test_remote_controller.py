@@ -1,15 +1,18 @@
+import asyncio
 import pathlib
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from flyteidl2.common import identifier_pb2, phase_pb2
 from flyteidl2.task import common_pb2
-from mock.mock import AsyncMock, patch
 
 import flyte
+import flyte.errors
 import flyte.report
 from flyte._context import internal_ctx
 from flyte._internal.controllers.remote._action import Action
 from flyte._internal.controllers.remote._controller import RemoteController
+from flyte._internal.controllers.remote._core import Controller
 from flyte._internal.controllers.remote._service_protocol import ClientSet
 from flyte._internal.runtime.convert import Outputs
 from flyte.models import ActionID, CodeBundle, RawDataPath, TaskContext
@@ -421,3 +424,49 @@ async def test_record_trace_with_error():
         mock_convert_error.assert_called_once_with(test_error)
         mock_upload_error.assert_called_once()
         mock_submit_action.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_bg_run_slowdown_error_translated_clean():
+    # Create instance without running __init__
+    controller = object.__new__(Controller)
+
+    # Minimal attributes needed by _bg_run
+    controller._running = True  # start the controller in running
+    controller._shared_queue = asyncio.Queue()
+    controller._max_retries = 1
+    controller._min_backoff_on_err = 0.1
+    controller._max_backoff_on_err = 0.1
+
+    informer = AsyncMock()
+    controller._informers = MagicMock()
+    controller._informers.get = AsyncMock(return_value=informer)
+
+    class FakeAction:
+        def __init__(self):
+            self.name = "A"
+            self.run_name = "run"
+            self.parent_action_name = "parent"
+            self.retries = 1  # exceeds limit → triggers outer handler
+            self.set_client_error = MagicMock()
+
+    action = FakeAction()
+    await controller._shared_queue.put(action)
+
+    async def fake_bg_process(action):
+        controller._running = False  # Run once only, switch it off here.
+        raise flyte.errors.SlowDownError("boom")
+
+    controller._bg_process = fake_bg_process
+
+    await controller._bg_run(worker_id="w1")
+
+    # Assertions
+    action.set_client_error.assert_called_once()
+    err = action.set_client_error.call_args[0][0]
+    assert action.retries == 2
+
+    assert isinstance(err, flyte.errors.RuntimeSystemError)
+    assert isinstance(err.__cause__, flyte.errors.SlowDownError)
+
+    informer.fire_completion_event.assert_awaited_once_with("A")

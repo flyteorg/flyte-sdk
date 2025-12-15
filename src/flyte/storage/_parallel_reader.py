@@ -161,13 +161,16 @@ class ObstoreParallelReader:
                     if task is sentinel:
                         inq.put_nowait(sentinel)
                         break
-                    chunk_source_offset = task.chunk.offset
+                    # chunk.offset is the local offset within the source (e.g., 0, chunk_size, 2*chunk_size)
+                    # source.offset is the offset within the file where the source data starts
+                    # The actual file position is the sum of both
+                    file_offset = task.chunk.offset + task.source.offset
                     buf = active[task.source.id]
                     data_to_write = await obstore.get_range_async(
                         self._store,
                         str(task.source.path),
-                        start=chunk_source_offset,
-                        end=chunk_source_offset + task.chunk.length,
+                        start=file_offset,
+                        end=file_offset + task.chunk.length,
                     )
                     await buf.write(
                         task.chunk.offset,
