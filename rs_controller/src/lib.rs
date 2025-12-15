@@ -132,6 +132,17 @@ impl BaseController {
         });
         py_fut
     }
+
+    fn watch_for_errors<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        let base = self.0.clone();
+        let py_fut = future_into_py(py, async move {
+            base.watch_for_errors().await.map_err(|e| {
+                error!("Controller watch_for_errors detected failure: {:?}", e);
+                exceptions::PyRuntimeError::new_err(format!("Controller watch ended with failure: {}", e))
+            })
+        });
+        py_fut
+    }
 }
 
 #[pymodule]

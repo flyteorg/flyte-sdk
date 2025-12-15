@@ -373,11 +373,6 @@ class RemoteController(BaseController):
         fut = asyncio.run_coroutine_threadsafe(coro, self._submit_loop)
         return fut
 
-    # will be implemented in the future, should await for errors coming from the rust layer
-    async def watch_for_errors(self):
-        e = Event()
-        await e.wait()
-
     async def stop(self):
         """
         Stop the controller. Incomplete, needs to gracefully shut down the rust controller as well.

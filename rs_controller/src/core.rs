@@ -110,13 +110,12 @@ impl QueueClient {
 }
 
 pub struct CoreBaseController {
-    channel: ChannelType,
     informer_cache: InformerCache,
-    state_client: StateClient,
     queue_client: QueueClient,
     shared_queue: mpsc::Sender<Action>,
     shared_queue_rx: Arc<tokio::sync::Mutex<mpsc::Receiver<Action>>>,
     failure_rx: mpsc::Receiver<InformerError>,
+    bg_worker_handle: Arc<std::sync::Mutex<Option<tokio::task::JoinHandle<()>>>>,
 }
 
 impl CoreBaseController {
@@ -178,21 +177,24 @@ impl CoreBaseController {
             InformerCache::new(state_client.clone(), shared_tx.clone(), failure_tx);
 
         let real_base_controller = CoreBaseController {
-            channel,
             informer_cache,
-            state_client,
             queue_client,
             shared_queue: shared_tx,
             shared_queue_rx: Arc::new(tokio::sync::Mutex::new(shared_queue_rx)),
             failure_rx,
+            bg_worker_handle: Arc::new(std::sync::Mutex::new(None)),
         };
 
         let real_base_controller = Arc::new(real_base_controller);
         // Start the background worker
         let controller_clone = real_base_controller.clone();
-        rt.spawn(async move {
+        let handle = rt.spawn(async move {
             controller_clone.bg_worker().await;
         });
+
+        // Store the handle
+        *real_base_controller.bg_worker_handle.lock().unwrap() = Some(handle);
+
         Ok(real_base_controller)
     }
 
@@ -245,21 +247,24 @@ impl CoreBaseController {
             InformerCache::new(state_client.clone(), shared_tx.clone(), failure_tx);
 
         let real_base_controller = CoreBaseController {
-            channel,
             informer_cache,
-            state_client,
             queue_client,
             shared_queue: shared_tx,
             shared_queue_rx: Arc::new(tokio::sync::Mutex::new(shared_queue_rx)),
             failure_rx,
+            bg_worker_handle: Arc::new(std::sync::Mutex::new(None)),
         };
 
         let real_base_controller = Arc::new(real_base_controller);
         // Start the background worker
         let controller_clone = real_base_controller.clone();
-        rt.spawn(async move {
+        let handle = rt.spawn(async move {
             controller_clone.bg_worker().await;
         });
+
+        // Store the handle - no async needed with std::sync::Mutex
+        *real_base_controller.bg_worker_handle.lock().unwrap() = Some(handle);
+
         Ok(real_base_controller)
     }
 
@@ -314,14 +319,25 @@ impl CoreBaseController {
                                     .get(&action.get_run_identifier(), &action.parent_action_name)
                                     .await;
                                 if let Some(informer) = opt_informer {
-                                    // todo: check these two errors
-
                                     // Before firing completion event, update the action in the
                                     // informer, otherwise client_err will not be set.
-                                    let _ = informer.set_action_client_err(&action).await;
-                                    let _ = informer
+                                    // todo: gain a better understanding of these two errors and handle
+                                    let res = informer.set_action_client_err(&action).await;
+                                    match res {
+                                        Ok(()) => {},
+                                        Err(e) => {
+                                            error!("Error setting error for failed action {}: {}", &action.get_full_name(), e)
+                                        }
+                                    }
+                                    let res = informer
                                         .fire_completion_event(&action.action_id.name)
                                         .await;
+                                    match res {
+                                        Ok(()) => {},
+                                        Err(e) => {
+                                            error!("Error firing completion event for failed action {}: {}", &action.get_full_name(), e)
+                                        }
+                                    }
                                 } else {
                                     error!(
                                         "Max retries hit for action but informer missing: {:?}",
@@ -612,6 +628,43 @@ impl CoreBaseController {
                     parent_action_name
                 );
             }
+        }
+    }
+
+    pub async fn watch_for_errors(&self) -> Result<(), ControllerError> {
+        // Take the handle (can only be called once)
+        let handle = self.bg_worker_handle.lock().unwrap().take();
+
+        if let Some(handle) = handle {
+            match handle.await {
+                Ok(_) => {
+                    // bg_worker completed normally, which shouldn't happen
+                    error!("Background worker exited unexpectedly");
+                    Err(ControllerError::RuntimeError(
+                        "Background worker exited unexpectedly".to_string(),
+                    ))
+                }
+                Err(e) if e.is_panic() => {
+                    // bg_worker panicked
+                    error!("Background worker panicked: {:?}", e);
+                    Err(ControllerError::RuntimeError(format!(
+                        "Background worker panicked: {:?}",
+                        e
+                    )))
+                }
+                Err(e) => {
+                    // bg_worker was cancelled
+                    error!("Background worker was cancelled: {:?}", e);
+                    Err(ControllerError::RuntimeError(format!(
+                        "Background worker cancelled: {:?}",
+                        e
+                    )))
+                }
+            }
+        } else {
+            Err(ControllerError::RuntimeError(
+                "watch_for_errors already called or handle not available".to_string(),
+            ))
         }
     }
 }
