@@ -49,9 +49,10 @@ def _wandb_run():
 
     run = wandb.init(**init_kwargs)
 
-    # Set current run ID
+    # Set current run ID and active flag
     if ctx and ctx.custom_context is not None:
         ctx.custom_context["_wandb_run_id"] = run.id
+        ctx.custom_context["_wandb_init_active"] = "true"
 
     try:
         yield run
@@ -60,8 +61,9 @@ def _wandb_run():
         run.finish(exit_code=1)
         raise
     finally:
-        # Restore previous run ID
+        # Remove active flag and restore previous run ID
         if ctx and ctx.custom_context is not None:
+            ctx.custom_context.pop("_wandb_init_active", None)
             if saved_run_id is not None:
                 ctx.custom_context["_wandb_run_id"] = saved_run_id
             else:
@@ -132,10 +134,16 @@ def get_wandb_run():
     """
     Get the current wandb run.
 
-    Reconstructs the run object from the run ID and config stored in custom_context.
+    Only works when called within a @wandb_init decorated task/trace.
+    Reconstructs the run object from the run ID stored in custom_context.
     """
     ctx = flyte.ctx()
-    if ctx and ctx.custom_context is not None and "_wandb_run_id" in ctx.custom_context:
+    if (
+        ctx
+        and ctx.custom_context is not None
+        and "_wandb_init_active" in ctx.custom_context
+        and "_wandb_run_id" in ctx.custom_context
+    ):
         return wandb.init(
             id=ctx.custom_context["_wandb_run_id"], reinit="return_previous"
         )
