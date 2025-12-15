@@ -2,20 +2,18 @@
 //! This module can be used by both Python bindings and standalone Rust binaries
 
 use std::sync::Arc;
-use std::sync::OnceLock;
 use std::time::Duration;
 
 use pyo3_async_runtimes::tokio::get_runtime;
 use tokio::sync::mpsc;
 use tokio::sync::oneshot;
-use tokio::sync::OnceCell;
 use tokio::time::sleep;
 use tonic::transport::{Certificate, ClientTlsConfig, Endpoint};
 use tonic::Status;
 use tower::ServiceBuilder;
 use tracing::{debug, error, info, warn};
 
-use crate::action::{Action, ActionType};
+use crate::action::Action;
 use crate::auth::{AuthConfig, AuthLayer, ClientCredentialsAuthenticator};
 use crate::error::{ControllerError, InformerError};
 use crate::informer::{Informer, InformerCache};

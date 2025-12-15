@@ -10,26 +10,19 @@ pub mod proto;
 
 // Python bindings - thin wrappers around core types
 use std::sync::Arc;
-use std::time::Duration;
 
 use pyo3::exceptions;
 use pyo3::prelude::*;
 use pyo3::types::PyAny;
 use pyo3_async_runtimes::tokio::future_into_py;
-use tower::ServiceBuilder;
 use tracing::{error, info, warn};
 use tracing_subscriber::FmtSubscriber;
 
 use crate::action::{Action, ActionType};
-use crate::auth::{AuthConfig, AuthLayer, ClientCredentialsAuthenticator};
 use crate::core::CoreBaseController;
 use crate::error::ControllerError;
-use flyteidl2::flyteidl::common::{ActionIdentifier, ProjectIdentifier, RunIdentifier};
-use flyteidl2::flyteidl::task::task_service_client::TaskServiceClient;
-use flyteidl2::flyteidl::task::{list_tasks_request, ListTasksRequest};
-use flyteidl2::flyteidl::workflow::state_service_client::StateServiceClient;
+use flyteidl2::flyteidl::common::{ActionIdentifier, RunIdentifier};
 use prost::Message;
-use tonic::transport::Endpoint;
 
 // Python error conversions
 impl From<ControllerError> for PyErr {

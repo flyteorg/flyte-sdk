@@ -5,12 +5,10 @@ use tokio_util::sync::CancellationToken;
 
 use flyteidl2::flyteidl::common::ActionIdentifier;
 use flyteidl2::flyteidl::common::RunIdentifier;
-use flyteidl2::flyteidl::workflow::state_service_client::StateServiceClient;
 use flyteidl2::flyteidl::workflow::{
     watch_request, watch_response::Message, WatchRequest, WatchResponse,
 };
 
-use pyo3_async_runtimes::tokio::run;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -18,12 +16,7 @@ use std::time::Duration;
 use tokio::select;
 use tokio::sync::RwLock;
 use tokio::sync::{mpsc, oneshot, Notify};
-use tokio::time::sleep;
-use tonic::transport::channel::Channel;
-use tonic::transport::Endpoint;
-use tracing::log::Level::Info;
 use tracing::{debug, error, info, warn};
-use tracing_subscriber::fmt;
 
 #[derive(Clone, Debug)]
 pub struct Informer {
