@@ -430,7 +430,8 @@ impl CoreBaseController {
             return Ok(());
         }
 
-        debug!("Cancelling action: {}", action.action_id.name);
+        // debug
+        warn!("Cancelling action!!!: {}", action.action_id.name);
         action.mark_cancelled();
 
         if let Some(informer) = self
@@ -635,7 +636,7 @@ impl CoreBaseController {
     pub async fn watch_for_errors(&self) -> Result<(), ControllerError> {
         // Take ownership of both (can only be called once)
         let handle = self.bg_worker_handle.lock().unwrap().take();
-        let mut failure_rx = self.failure_rx.lock().unwrap().take();
+        let failure_rx = self.failure_rx.lock().unwrap().take();
 
         match (handle, failure_rx) {
             (Some(handle), Some(mut rx)) => {
