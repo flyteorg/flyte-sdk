@@ -5,12 +5,13 @@ from typing import List
 
 import click
 import grpc
-from flyteidl2.connector.service_pb2_grpc import add_AsyncConnectorServiceServicer_to_server, \
-    add_ConnectorMetadataServiceServicer_to_server
+from flyteidl2.connector import service_pb2
+from flyteidl2.connector.service_pb2_grpc import (
+    add_AsyncConnectorServiceServicer_to_server,
+    add_ConnectorMetadataServiceServicer_to_server,
+)
 from flyteidl2.core.execution_pb2 import TaskExecution
 from flyteidl2.core.tasks_pb2 import TaskTemplate
-from flyteidl2.connector import service_pb2
-
 from rich.console import Console
 from rich.table import Table
 
