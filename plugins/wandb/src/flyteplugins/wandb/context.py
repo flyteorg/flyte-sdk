@@ -77,13 +77,32 @@ class _WandBConfig:
 
     # Context manager implementation
     def __enter__(self):
+        # Save current wandb config keys from parent context
+        ctx = flyte.ctx()
+        self._saved_config = {}
+        if ctx and ctx.custom_context:
+            for key in list(ctx.custom_context.keys()):
+                if key.startswith("wandb_"):
+                    self._saved_config[key] = ctx.custom_context[key]
+
+        # Set new wandb config
         self._ctx = flyte.custom_context(**self)
         self._ctx.__enter__()
         return self
 
     def __exit__(self, *args):
         if self._ctx:
-            return self._ctx.__exit__(*args)
+            self._ctx.__exit__(*args)
+
+        # Restore parent wandb config
+        ctx = flyte.ctx()
+        if ctx and ctx.custom_context:
+            # Remove current wandb keys
+            for key in list(ctx.custom_context.keys()):
+                if key.startswith("wandb_") and key != "_wandb_run_id":
+                    del ctx.custom_context[key]
+            # Restore saved keys
+            ctx.custom_context.update(self._saved_config)
 
 
 def get_wandb_context() -> Optional[_WandBConfig]:

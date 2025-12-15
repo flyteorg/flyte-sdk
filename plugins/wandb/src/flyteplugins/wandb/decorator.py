@@ -18,6 +18,13 @@ F = TypeVar("F", bound=Callable[..., Any])
 @contextmanager
 def _wandb_run():
     """Context manager for wandb run lifecycle."""
+    ctx = flyte.ctx()
+
+    # Save current run ID (if any)
+    saved_run_id = (
+        ctx.custom_context.get("_wandb_run_id") if ctx and ctx.custom_context else None
+    )
+
     context_config = get_wandb_context()
 
     # Convert to wandb.init kwargs
@@ -41,8 +48,7 @@ def _wandb_run():
 
     run = wandb.init(**init_kwargs)
 
-    # Store run ID in custom_context
-    ctx = flyte.ctx()
+    # Set current run ID
     if ctx and ctx.custom_context is not None:
         ctx.custom_context["_wandb_run_id"] = run.id
 
@@ -53,9 +59,13 @@ def _wandb_run():
         run.finish(exit_code=1)
         raise
     finally:
-        # Clean up the run ID from custom_context
+        # Restore previous run ID
         if ctx and ctx.custom_context is not None:
-            ctx.custom_context.pop("_wandb_run_id", None)
+            if saved_run_id is not None:
+                ctx.custom_context["_wandb_run_id"] = saved_run_id
+            else:
+                # No previous run ID, remove the key
+                ctx.custom_context.pop("_wandb_run_id", None)
 
 
 def wandb_init(_func: Optional[F] = None) -> F:
@@ -68,19 +78,6 @@ def wandb_init(_func: Optional[F] = None) -> F:
     3. Makes the run available via get_wandb_run()
     4. Automatically finishes the run after completion
     5. For tasks: automatically attaches wandb link (pulls config from context)
-
-    Usage:
-        # With Flyte tasks
-        @wandb_init
-        @env.task
-        async def my_task():
-            ...
-
-        # With traced functions
-        @wandb_init
-        @flyte.trace
-        async def my_function():
-            ...
     """
 
     def decorator(func: F) -> F:
@@ -132,15 +129,11 @@ def wandb_init(_func: Optional[F] = None) -> F:
 
 def get_wandb_run():
     """
-    Get the current wandb run for this task.
+    Get the current wandb run.
 
     Reconstructs the run object from the run ID stored in custom_context.
-    This allows parent and child tasks to each have their own wandb runs.
     """
     ctx = flyte.ctx()
-    if ctx and ctx.custom_context is not None:
-        run_id = ctx.custom_context.get("_wandb_run_id")
-        if run_id:
-            # Reconstruct run from ID
-            return wandb.init(id=run_id, resume="allow")
+    if ctx and ctx.custom_context is not None and "_wandb_run_id" in ctx.custom_context:
+        return wandb.init(id=ctx.custom_context["_wandb_run_id"], resume="allow")
     return None
