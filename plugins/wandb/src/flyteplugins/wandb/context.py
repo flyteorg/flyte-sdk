@@ -77,11 +77,13 @@ class _WandBConfig:
 
     # Context manager implementation
     def __enter__(self):
-        self._ctx = flyte.custom_context(**self).__enter__()
+        self._ctx = flyte.custom_context(**self)
+        self._ctx.__enter__()
         return self
 
     def __exit__(self, *args):
-        return self._ctx.__exit__(*args)
+        if self._ctx:
+            return self._ctx.__exit__(*args)
 
 
 def get_wandb_context() -> Optional[_WandBConfig]:

@@ -1,7 +1,7 @@
-from .context import wandb_config
+from .context import get_wandb_context, wandb_config
 from .decorator import get_wandb_run, wandb_init
 from .link import Wandb
 
-__all__ = ["wandb_config", "wandb_init", "get_wandb_run", "Wandb"]
+__all__ = ["wandb_config", "get_wandb_context", "wandb_init", "get_wandb_run", "Wandb"]
 
 __version__ = "0.1.0"
