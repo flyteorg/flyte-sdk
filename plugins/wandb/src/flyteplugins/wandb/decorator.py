@@ -43,9 +43,7 @@ def _wandb_run():
 
     # Store run ID in custom_context
     ctx = flyte.ctx()
-    original_custom_context = None
     if ctx and ctx.custom_context is not None:
-        original_custom_context = ctx.custom_context.copy()
         ctx.custom_context["_wandb_run_id"] = run.id
 
     try:
@@ -55,9 +53,9 @@ def _wandb_run():
         run.finish(exit_code=1)
         raise
     finally:
-        # Restore original custom_context
-        if ctx and original_custom_context is not None:
-            ctx.custom_context = original_custom_context
+        # Clean up the run ID from custom_context
+        if ctx and ctx.custom_context is not None:
+            ctx.custom_context.pop("_wandb_run_id", None)
 
 
 def wandb_init(_func: Optional[F] = None) -> F:
