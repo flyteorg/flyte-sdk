@@ -15,6 +15,19 @@ from .link import Wandb as WandbLink
 F = TypeVar("F", bound=Callable[..., Any])
 
 
+def _build_init_kwargs() -> dict[str, Any]:
+    """Build wandb.init() kwargs from current context config."""
+    context_config = get_wandb_context()
+    if context_config:
+        config_dict = asdict(context_config)
+        extra_kwargs = config_dict.pop("kwargs", None) or {}
+        return {
+            **extra_kwargs,
+            **{k: v for k, v in config_dict.items() if v is not None},
+        }
+    return {}
+
+
 @contextmanager
 def _wandb_run():
     """Context manager for wandb run lifecycle."""
@@ -25,20 +38,8 @@ def _wandb_run():
         ctx.custom_context.get("_wandb_run_id") if ctx and ctx.custom_context else None
     )
 
-    context_config = get_wandb_context()
-
-    # Convert to wandb.init kwargs
-    if context_config:
-        config_dict = asdict(context_config)
-        # Extract kwargs separately
-        extra_kwargs = config_dict.pop("kwargs", None) or {}
-        # Merge: explicit fields + extra kwargs (extra_kwargs has lower priority)
-        init_kwargs = {
-            **extra_kwargs,
-            **{k: v for k, v in config_dict.items() if v is not None},
-        }
-    else:
-        init_kwargs = {}
+    # Build init kwargs from context
+    init_kwargs = _build_init_kwargs()
 
     # Auto-generate ID if not provided
     if "id" not in init_kwargs or init_kwargs["id"] is None:
@@ -131,9 +132,11 @@ def get_wandb_run():
     """
     Get the current wandb run.
 
-    Reconstructs the run object from the run ID stored in custom_context.
+    Reconstructs the run object from the run ID and config stored in custom_context.
     """
     ctx = flyte.ctx()
     if ctx and ctx.custom_context is not None and "_wandb_run_id" in ctx.custom_context:
-        return wandb.init(id=ctx.custom_context["_wandb_run_id"], resume="allow")
+        return wandb.init(
+            id=ctx.custom_context["_wandb_run_id"], reinit="return_previous"
+        )
     return None
