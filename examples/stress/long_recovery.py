@@ -5,7 +5,17 @@ import typing
 import flyte
 import flyte.errors
 
-env = flyte.TaskEnvironment(name="controller_stressor")
+from pathlib import Path
+
+import flyte
+from flyte._image import PythonWheels
+
+controller_dist_folder = Path("/Users/ytong/go/src/github.com/flyteorg/flyte-sdk/rs_controller/dist")
+wheel_layer = PythonWheels(wheel_dir=controller_dist_folder, package_name="flyte_controller_base")
+base = flyte.Image.from_debian_base()
+rs_controller_image = base.clone(addl_layer=wheel_layer)
+
+env = flyte.TaskEnvironment(name="controller_stressor", image=rs_controller_image)
 
 
 @env.task

@@ -449,7 +449,7 @@ class RemoteController(BaseController):
             ),
         )
         prev_action = await self.get_action(
-            sub_action_id_pb,
+            sub_action_id_pb.SerializeToString(),
             current_action_id.name,
         )
 

@@ -86,10 +86,17 @@ impl BaseController {
     fn get_action<'py>(
         &self,
         py: Python<'py>,
-        action_id: ActionIdentifier,
+        // action_id: ActionIdentifier,
+        action_id_bytes: &[u8],
         parent_action_name: String,
     ) -> PyResult<Bound<'py, PyAny>> {
         let real_base = self.0.clone();
+        let action_id = ActionIdentifier::decode(action_id_bytes).map_err(|e| {
+            pyo3::exceptions::PyValueError::new_err(format!(
+                "Failed to decode ActionIdentifier: {}",
+                e
+            ))
+        })?;
         let py_fut = future_into_py(py, async move {
             real_base
                 .get_action(action_id.clone(), parent_action_name.as_str())
