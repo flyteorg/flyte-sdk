@@ -1,7 +1,7 @@
 [project]
 name = "flyteplugins-wandb"
 dynamic = ["version"]
-description = "Weights & Biases plugin for flyte"
+description = "Weights & Biases plugin for Flyte"
 readme = "README.md"
 authors = [{ name = "Flyte Contributors" }]
 requires-python = ">=3.10"

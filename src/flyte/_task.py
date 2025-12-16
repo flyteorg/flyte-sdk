@@ -116,7 +116,6 @@ class TaskTemplate(Generic[P, R, F]):
     ref: bool = field(default=False, init=False, repr=False, compare=False)
     max_inline_io_bytes: int = MAX_INLINE_IO_BYTES
     triggers: Tuple[Trigger, ...] = field(default_factory=tuple)
-    link: Optional[Link] = None
 
     # Only used in python 3.10 and 3.11, where we cannot use markcoroutinefunction
     _call_as_synchronous: bool = False

@@ -8,14 +8,13 @@ import flyte
 @dataclass
 class _WandBConfig:
     """
-    Additional parameters via kwargs:
-        Pass any other wandb.init() parameters via kwargs dict:
-        - notes, dir, job_type, save_code
-        - resume, resume_from, fork_from, reinit
-        - anonymous, allow_val_change, force
-        - settings, and more
+    Pass any other wandb.init() parameters via kwargs dict:
+      - notes, dir, job_type, save_code
+      - resume, resume_from, fork_from, reinit
+      - anonymous, allow_val_change, force
+      - settings, and more
 
-        See: https://docs.wandb.ai/ref/python/init
+    See: https://docs.wandb.ai/ref/python/init
     """
 
     # Essential fields (most commonly used)
@@ -65,7 +64,7 @@ class _WandBConfig:
                     kwargs[field_name] = value
         return cls(**kwargs)
 
-    # Dict protocol - minimal implementation for ** unpacking
+    # Dict protocol - for ** unpacking
     def keys(self):
         return self.to_dict().keys()
 
@@ -99,7 +98,7 @@ class _WandBConfig:
         if ctx and ctx.custom_context:
             # Remove current wandb keys
             for key in list(ctx.custom_context.keys()):
-                if key.startswith("wandb_") and key != "_wandb_run_id":
+                if key.startswith("wandb_"):
                     del ctx.custom_context[key]
             # Restore saved keys
             ctx.custom_context.update(self._saved_config)
