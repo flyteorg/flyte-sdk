@@ -61,6 +61,7 @@ def test_hf_model_help_shows_all_options(runner):
     assert result.exit_code == 0, result.output
 
     expected_options = [
+        "--obstore-path",
         "--artifact-name",
         "--architecture",
         "--task",
