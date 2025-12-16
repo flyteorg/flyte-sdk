@@ -42,6 +42,11 @@ def trace(func: Callable[..., T]) -> Callable[..., T]:
             else:
                 logger.debug(f"No existing trace info found for {func}, proceeding to execute.")
             start_time = time.time()
+
+            # Store the original action ID and temporarily replace it with the trace's action ID
+            original_action = ctx.data.task_context.action
+            ctx.data.task_context = ctx.data.task_context.replace(action=info.action)
+
             try:
                 # Cast to Awaitable to satisfy mypy
                 coroutine_result = cast(Awaitable[Any], func(*args, **kwargs))
@@ -55,6 +60,9 @@ def trace(func: Callable[..., T]) -> Callable[..., T]:
                 info.add_error(e, start_time=start_time, end_time=time.time())
                 await controller.record_trace(info)
                 raise e
+            finally:
+                # Restore the original action ID
+                ctx.data.task_context = ctx.data.task_context.replace(action=original_action)
         else:
             # If we are not in a task context, we can just call the function normally
             # Cast to Awaitable to satisfy mypy
@@ -85,6 +93,11 @@ def trace(func: Callable[..., T]) -> Callable[..., T]:
                 elif info.error:
                     raise info.error
             start_time = time.time()
+
+            # Store the original action ID and temporarily replace it with the trace's action ID
+            original_action = ctx.data.task_context.action
+            ctx.data.task_context = ctx.data.task_context.replace(action=info.action)
+
             try:
                 items = []
                 result = func(*args, **kwargs)
@@ -102,6 +115,9 @@ def trace(func: Callable[..., T]) -> Callable[..., T]:
                 info.add_error(e, start_time=start_time, end_time=time.time())
                 await controller.record_trace(info)
                 raise e
+            finally:
+                # Restore the original action ID
+                ctx.data.task_context = ctx.data.task_context.replace(action=original_action)
         else:
             result = func(*args, **kwargs)
             if is_async_iterable(result):
