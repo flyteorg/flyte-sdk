@@ -92,7 +92,7 @@ class DeployArguments:
                 flag_value=True,
                 default=False,
                 help="Disable synchronization of local sys.path entries under the root directory "
-                     "to the remote container.",
+                "to the remote container.",
             )
         },
     )
@@ -269,10 +269,10 @@ class EnvFiles(common.FileGroup):
     common_options_enabled = False
 
     def __init__(
-            self,
-            *args,
-            directory: Path | None = None,
-            **kwargs,
+        self,
+        *args,
+        directory: Path | None = None,
+        **kwargs,
     ):
         if "params" not in kwargs:
             kwargs["params"] = []

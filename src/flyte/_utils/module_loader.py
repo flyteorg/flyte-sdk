@@ -1,4 +1,3 @@
-import glob
 import importlib.util
 import os
 import sys
@@ -10,7 +9,9 @@ from flyte._constants import FLYTE_SYS_PATH
 from flyte._logging import logger
 
 
-def load_python_modules(path: Path, root_dir: Path, recursive: bool = False) -> Tuple[List[str], List[Tuple[Path, str]]]:
+def load_python_modules(
+    path: Path, root_dir: Path, recursive: bool = False
+) -> Tuple[List[str], List[Tuple[Path, str]]]:
     """
     Load all Python modules from a path and return list of loaded module names.
 
@@ -56,11 +57,7 @@ def load_python_modules(path: Path, root_dir: Path, recursive: bool = False) -> 
                 TimeRemainingColumn(),
                 TextColumn("• {task.fields[current_file]}"),
             ) as progress:
-                task = progress.add_task(
-                    f"Loading {len(python_files)} files",
-                    total=len(python_files),
-                    current_file=""
-                )
+                task = progress.add_task(f"Loading {len(python_files)} files", total=len(python_files), current_file="")
 
                 for file_path in python_files:
                     progress.update(task, advance=1, current_file=file_path.name)
