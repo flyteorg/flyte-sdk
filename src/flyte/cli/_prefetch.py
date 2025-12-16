@@ -128,11 +128,11 @@ def prefetch():
     help="Ephemeral storage request for the prefetch task (e.g., '100Gi', '500Gi').",
 )
 @click.option(
-    "--accelerator",
+    "--gpu",
     type=click.Choice(ACCELERATOR_CHOICES),
     default=None,
     help=(
-        "The accelerator to use for downloading and (optionally) sharding the model. "
+        "The gpu to use for downloading and (optionally) sharding the model. "
         "Format: '{type}:{quantity}' (e.g., 'A100:8', 'L4:1')."
     ),
 )
@@ -162,7 +162,7 @@ def hf_model(
     cpu: str | None,
     mem: str | None,
     ephemeral_storage: str | None,
-    accelerator: Accelerators | None,
+    gpu: Accelerators | None,
     shard_config: Path | None,
     project: str | None,
     domain: str | None,
@@ -254,7 +254,7 @@ def hf_model(
             cpu=cpu,
             memory=mem,
             disk=ephemeral_storage,
-            gpu=accelerator,
+            gpu=gpu,
         ),
         force=force,
     )
