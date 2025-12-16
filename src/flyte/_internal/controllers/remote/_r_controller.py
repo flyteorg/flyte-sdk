@@ -382,9 +382,23 @@ class RemoteController(BaseController):
         Stop the controller. Incomplete, needs to gracefully shut down the rust controller as well.
         """
         if self._submit_loop is not None:
+            print(f"===>>> Loop is_running: {self._submit_loop.is_running()}", flush=True)
+            print(f"===>>> Loop is_closed: {self._submit_loop.is_closed()}", flush=True)
+
+            all_tasks = asyncio.all_tasks(self._submit_loop)
+            print(f"===>>> Number of pending tasks on loop: {len(all_tasks)}", flush=True)
+            for task in all_tasks:
+                print(f"===>>>   Task: {task}", flush=True)
+                print(f"===>>>   Task done: {task.done()}", flush=True)
+
+            print(f"===>>> r_controller about to stop", flush=True)
             self._submit_loop.stop()
+            print(f"===>>> r_controller stopped", flush=True)
             if self._submit_thread is not None:
-                self._submit_thread.join()
+                print(f"===>>> Thread is_alive: {self._submit_thread.is_alive()}", flush=True)
+                print(f"===>>> r_controller about to join", flush=True)
+                self._submit_thread.join(0.01)
+                print(f"===>>> r_controller joined", flush=True)
             self._submit_loop = None
             self._submit_thread = None
         logger.info("RemoteController stopped.")
