@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import functools
+import sys
 import threading
 import typing
 from dataclasses import dataclass, field, replace
@@ -239,6 +240,8 @@ async def init(
             else:
                 logger.info("No editable install found, using current working directory as root directory.")
                 root_dir = Path.cwd()
+        # We will inject the root_dir into the sys,path for module resolution
+        sys.path.append(str(root_dir))
 
         _init_config = _InitConfig(
             root_dir=root_dir,

@@ -167,6 +167,15 @@ class DeployEnvRecursiveCommand(click.Command):
         from flyte._utils import load_python_modules
 
         obj: CLIConfig = ctx.obj
+        # Now start connection and deploy all environments
+        common.initialize_config(
+            ctx=ctx,
+            project=self.deploy_args.project,
+            domain=self.deploy_args.domain,
+            sync_local_sys_paths=not self.deploy_args.no_sync_local_sys_paths,
+            images=tuple(self.deploy_args.image) or None,
+            root_dir=self.deploy_args.root_dir,
+        )
         console = common.get_console()
 
         # Load all python modules
@@ -190,13 +199,7 @@ class DeployEnvRecursiveCommand(click.Command):
             raise click.ClickException(
                 f"Failed to load {len(failed_paths)} files. Use --ignore-load-errors to ignore these errors."
             )
-        # Now start connection and deploy all environments
-        obj.init(
-            self.deploy_args.project,
-            self.deploy_args.domain,
-            sync_local_sys_paths=not self.deploy_args.no_sync_local_sys_paths,
-            images=tuple(self.deploy_args.image) or None,
-        )
+
         with console.status("Deploying...", spinner="dots"):
             deployments = flyte.deploy(
                 *all_envs,
