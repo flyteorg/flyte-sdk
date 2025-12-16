@@ -15,6 +15,9 @@ from flyte._logging import logger
 
 if TYPE_CHECKING:
     from flyte.remote._task import AutoVersioning
+else:
+    AutoVersioning = Literal["latest", "current"]
+
 
 InputTypes = str | flyte.io.File | flyte.io.Dir
 _SerializedInputType = Literal["string", "file", "directory"]
