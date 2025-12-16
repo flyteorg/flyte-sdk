@@ -3,15 +3,12 @@ import os
 import signal
 import tempfile
 import time
+from pathlib import Path
 from typing import Tuple
 
 import flyte
 import flyte.io
 import flyte.storage
-
-from pathlib import Path
-
-import flyte
 from flyte._image import PythonWheels
 
 controller_dist_folder = Path("/Users/ytong/go/src/github.com/flyteorg/flyte-sdk/rs_controller/dist")

@@ -33,6 +33,7 @@ FLYTE_ENABLE_VSCODE_KEY = "_F_E_VS"
 
 _UNION_EAGER_API_KEY_ENV_VAR = "_UNION_EAGER_API_KEY"
 _F_PATH_REWRITE = "_F_PATH_REWRITE"
+_F_USE_RUST_CONTROLLER = "_F_USE_RUST_CONTROLLER"
 
 
 @click.group()
@@ -132,7 +133,10 @@ def main(
     if tgz or pkl:
         bundle = CodeBundle(tgz=tgz, pkl=pkl, destination=dest, computed_version=version)
     # Controller is created with the same kwargs as init, so that it can be used to run tasks
-    controller = create_controller(ct="rust", **controller_kwargs)
+    # Use Rust controller if env var is set, otherwise default to Python controller
+    use_rust = os.getenv(_F_USE_RUST_CONTROLLER, "").lower() in ("1", "true", "yes")
+    controller_type = "rust" if use_rust else "remote"
+    controller = create_controller(ct=controller_type, **controller_kwargs)
 
     ic = ImageCache.from_transport(image_cache) if image_cache else None
 
