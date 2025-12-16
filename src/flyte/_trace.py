@@ -3,6 +3,7 @@ import inspect
 import time
 from typing import Any, AsyncGenerator, AsyncIterator, Awaitable, Callable, TypeGuard, TypeVar, Union, cast
 
+import flyte.errors
 from flyte._logging import logger
 from flyte.models import NativeInterface
 
@@ -42,6 +43,9 @@ def trace(func: Callable[..., T]) -> Callable[..., T]:
             else:
                 logger.debug(f"No existing trace info found for {func}, proceeding to execute.")
             start_time = time.time()
+
+            if ctx.data.task_context is None:
+                raise flyte.errors.RuntimeSystemError("BadContext", "Task context not initialized")
 
             # Create a new context with the trace's action ID
             trace_task_context = ctx.data.task_context.replace(action=info.action)
@@ -98,6 +102,9 @@ def trace(func: Callable[..., T]) -> Callable[..., T]:
                 elif info.error:
                     raise info.error
             start_time = time.time()
+
+            if ctx.data.task_context is None:
+                raise flyte.errors.RuntimeSystemError("BadContext", "Task context not initialized")
 
             # Create a new context with the trace's action ID
             trace_task_context = ctx.data.task_context.replace(action=info.action)
