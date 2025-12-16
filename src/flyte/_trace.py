@@ -43,26 +43,25 @@ def trace(func: Callable[..., T]) -> Callable[..., T]:
                 logger.debug(f"No existing trace info found for {func}, proceeding to execute.")
             start_time = time.time()
 
-            # Store the original action ID and temporarily replace it with the trace's action ID
-            original_action = ctx.data.task_context.action
-            ctx.data.task_context = ctx.data.task_context.replace(action=info.action)
+            # Create a new context with the trace's action ID
+            trace_task_context = ctx.data.task_context.replace(action=info.action)
+            trace_context = ctx.replace_task_context(trace_task_context)
 
-            try:
-                # Cast to Awaitable to satisfy mypy
-                coroutine_result = cast(Awaitable[Any], func(*args, **kwargs))
-                results = await coroutine_result
-                info.add_outputs(results, start_time=start_time, end_time=time.time())
-                await controller.record_trace(info)
-                logger.debug(f"Finished trace for {func}, {info}")
-                return results
-            except Exception as e:
-                # If there is an error, we need to record it
-                info.add_error(e, start_time=start_time, end_time=time.time())
-                await controller.record_trace(info)
-                raise e
-            finally:
-                # Restore the original action ID
-                ctx.data.task_context = ctx.data.task_context.replace(action=original_action)
+            # Use the trace context for the duration of the trace execution
+            async with trace_context:
+                try:
+                    # Cast to Awaitable to satisfy mypy
+                    coroutine_result = cast(Awaitable[Any], func(*args, **kwargs))
+                    results = await coroutine_result
+                    info.add_outputs(results, start_time=start_time, end_time=time.time())
+                    await controller.record_trace(info)
+                    logger.debug(f"Finished trace for {func}, {info}")
+                    return results
+                except Exception as e:
+                    # If there is an error, we need to record it
+                    info.add_error(e, start_time=start_time, end_time=time.time())
+                    await controller.record_trace(info)
+                    raise e
         else:
             # If we are not in a task context, we can just call the function normally
             # Cast to Awaitable to satisfy mypy
@@ -94,30 +93,29 @@ def trace(func: Callable[..., T]) -> Callable[..., T]:
                     raise info.error
             start_time = time.time()
 
-            # Store the original action ID and temporarily replace it with the trace's action ID
-            original_action = ctx.data.task_context.action
-            ctx.data.task_context = ctx.data.task_context.replace(action=info.action)
+            # Create a new context with the trace's action ID
+            trace_task_context = ctx.data.task_context.replace(action=info.action)
+            trace_context = ctx.replace_task_context(trace_task_context)
 
-            try:
-                items = []
-                result = func(*args, **kwargs)
-                # TODO ideally we should use streaming into the type-engine so that it stream uploads large blocks
-                if inspect.isasyncgen(result) or is_async_iterable(result):
-                    # If it's directly an async generator
-                    async_iter = result
-                    async for item in async_iter:
-                        items.append(item)
-                        yield item
-                info.add_outputs(items, start_time=start_time, end_time=time.time())
-                await controller.record_trace(info)
-                return
-            except Exception as e:
-                info.add_error(e, start_time=start_time, end_time=time.time())
-                await controller.record_trace(info)
-                raise e
-            finally:
-                # Restore the original action ID
-                ctx.data.task_context = ctx.data.task_context.replace(action=original_action)
+            # Use the trace context for the duration of the trace execution
+            async with trace_context:
+                try:
+                    items = []
+                    result = func(*args, **kwargs)
+                    # TODO ideally we should use streaming into the type-engine so that it stream uploads large blocks
+                    if inspect.isasyncgen(result) or is_async_iterable(result):
+                        # If it's directly an async generator
+                        async_iter = result
+                        async for item in async_iter:
+                            items.append(item)
+                            yield item
+                    info.add_outputs(items, start_time=start_time, end_time=time.time())
+                    await controller.record_trace(info)
+                    return
+                except Exception as e:
+                    info.add_error(e, start_time=start_time, end_time=time.time())
+                    await controller.record_trace(info)
+                    raise e
         else:
             result = func(*args, **kwargs)
             if is_async_iterable(result):
