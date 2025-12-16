@@ -2,20 +2,18 @@
 //! This module can be used by both Python bindings and standalone Rust binaries
 
 use std::sync::Arc;
-use std::sync::OnceLock;
 use std::time::Duration;
 
 use pyo3_async_runtimes::tokio::get_runtime;
 use tokio::sync::mpsc;
 use tokio::sync::oneshot;
-use tokio::sync::OnceCell;
 use tokio::time::sleep;
 use tonic::transport::{Certificate, ClientTlsConfig, Endpoint};
 use tonic::Status;
 use tower::ServiceBuilder;
 use tracing::{debug, error, info, warn};
 
-use crate::action::{Action, ActionType};
+use crate::action::Action;
 use crate::auth::{AuthConfig, AuthLayer, ClientCredentialsAuthenticator};
 use crate::error::{ControllerError, InformerError};
 use crate::informer::{Informer, InformerCache};
@@ -110,13 +108,12 @@ impl QueueClient {
 }
 
 pub struct CoreBaseController {
-    channel: ChannelType,
     informer_cache: InformerCache,
-    state_client: StateClient,
     queue_client: QueueClient,
     shared_queue: mpsc::Sender<Action>,
     shared_queue_rx: Arc<tokio::sync::Mutex<mpsc::Receiver<Action>>>,
-    failure_rx: mpsc::Receiver<InformerError>,
+    failure_rx: Arc<std::sync::Mutex<Option<mpsc::Receiver<InformerError>>>>,
+    bg_worker_handle: Arc<std::sync::Mutex<Option<tokio::task::JoinHandle<()>>>>,
 }
 
 impl CoreBaseController {
@@ -178,21 +175,24 @@ impl CoreBaseController {
             InformerCache::new(state_client.clone(), shared_tx.clone(), failure_tx);
 
         let real_base_controller = CoreBaseController {
-            channel,
             informer_cache,
-            state_client,
             queue_client,
             shared_queue: shared_tx,
             shared_queue_rx: Arc::new(tokio::sync::Mutex::new(shared_queue_rx)),
-            failure_rx,
+            failure_rx: Arc::new(std::sync::Mutex::new(Some(failure_rx))),
+            bg_worker_handle: Arc::new(std::sync::Mutex::new(None)),
         };
 
         let real_base_controller = Arc::new(real_base_controller);
         // Start the background worker
         let controller_clone = real_base_controller.clone();
-        rt.spawn(async move {
+        let handle = rt.spawn(async move {
             controller_clone.bg_worker().await;
         });
+
+        // Store the handle
+        *real_base_controller.bg_worker_handle.lock().unwrap() = Some(handle);
+
         Ok(real_base_controller)
     }
 
@@ -204,8 +204,7 @@ impl CoreBaseController {
         let rt = get_runtime();
         let channel = rt.block_on(async {
             let chan = if endpoint.starts_with("http://") {
-                let endpoint = Endpoint::from_static(endpoint_static)
-                    .keep_alive_while_idle(true);
+                let endpoint = Endpoint::from_static(endpoint_static).keep_alive_while_idle(true);
                 endpoint.connect().await.map_err(ControllerError::from)?
             } else if endpoint.starts_with("https://") {
                 // Strip "https://" to get just the hostname for TLS config
@@ -245,21 +244,24 @@ impl CoreBaseController {
             InformerCache::new(state_client.clone(), shared_tx.clone(), failure_tx);
 
         let real_base_controller = CoreBaseController {
-            channel,
             informer_cache,
-            state_client,
             queue_client,
             shared_queue: shared_tx,
             shared_queue_rx: Arc::new(tokio::sync::Mutex::new(shared_queue_rx)),
-            failure_rx,
+            failure_rx: Arc::new(std::sync::Mutex::new(Some(failure_rx))),
+            bg_worker_handle: Arc::new(std::sync::Mutex::new(None)),
         };
 
         let real_base_controller = Arc::new(real_base_controller);
         // Start the background worker
         let controller_clone = real_base_controller.clone();
-        rt.spawn(async move {
+        let handle = rt.spawn(async move {
             controller_clone.bg_worker().await;
         });
+
+        // Store the handle
+        *real_base_controller.bg_worker_handle.lock().unwrap() = Some(handle);
+
         Ok(real_base_controller)
     }
 
@@ -314,14 +316,29 @@ impl CoreBaseController {
                                     .get(&action.get_run_identifier(), &action.parent_action_name)
                                     .await;
                                 if let Some(informer) = opt_informer {
-                                    // todo: check these two errors
-
                                     // Before firing completion event, update the action in the
                                     // informer, otherwise client_err will not be set.
-                                    let _ = informer.set_action_client_err(&action).await;
-                                    let _ = informer
+                                    // todo: gain a better understanding of these two errors and handle
+                                    let res = informer.set_action_client_err(&action).await;
+                                    match res {
+                                        Ok(()) => {}
+                                        Err(e) => {
+                                            error!(
+                                                "Error setting error for failed action {}: {}",
+                                                &action.get_full_name(),
+                                                e
+                                            )
+                                        }
+                                    }
+                                    let res = informer
                                         .fire_completion_event(&action.action_id.name)
                                         .await;
+                                    match res {
+                                        Ok(()) => {}
+                                        Err(e) => {
+                                            error!("Error firing completion event for failed action {}: {}", &action.get_full_name(), e)
+                                        }
+                                    }
                                 } else {
                                     error!(
                                         "Max retries hit for action but informer missing: {:?}",
@@ -413,7 +430,8 @@ impl CoreBaseController {
             return Ok(());
         }
 
-        debug!("Cancelling action: {}", action.action_id.name);
+        // debug
+        warn!("Cancelling action!!!: {}", action.action_id.name);
         action.mark_cancelled();
 
         if let Some(informer) = self
@@ -612,6 +630,64 @@ impl CoreBaseController {
                     parent_action_name
                 );
             }
+        }
+    }
+
+    pub async fn watch_for_errors(&self) -> Result<(), ControllerError> {
+        // Take ownership of both (can only be called once)
+        let handle = self.bg_worker_handle.lock().unwrap().take();
+        let failure_rx = self.failure_rx.lock().unwrap().take();
+
+        match (handle, failure_rx) {
+            (Some(handle), Some(mut rx)) => {
+                // Race bg_worker completion vs informer errors
+                tokio::select! {
+                    // bg_worker completed or panicked
+                    result = handle => {
+                        match result {
+                            Ok(_) => {
+                                error!("Background worker exited unexpectedly");
+                                Err(ControllerError::RuntimeError(
+                                    "Background worker exited unexpectedly".to_string(),
+                                ))
+                            }
+                            Err(e) if e.is_panic() => {
+                                error!("Background worker panicked: {:?}", e);
+                                Err(ControllerError::RuntimeError(format!(
+                                    "Background worker panicked: {:?}",
+                                    e
+                                )))
+                            }
+                            Err(e) => {
+                                error!("Background worker was cancelled: {:?}", e);
+                                Err(ControllerError::RuntimeError(format!(
+                                    "Background worker cancelled: {:?}",
+                                    e
+                                )))
+                            }
+                        }
+                    }
+
+                    // Informer error received
+                    informer_err = rx.recv() => {
+                        match informer_err {
+                            Some(err) => {
+                                error!("Informer error received: {:?}", err);
+                                Err(ControllerError::Informer(err))
+                            }
+                            None => {
+                                error!("Informer error channel closed unexpectedly");
+                                Err(ControllerError::RuntimeError(
+                                    "Informer error channel closed unexpectedly".to_string(),
+                                ))
+                            }
+                        }
+                    }
+                }
+            }
+            _ => Err(ControllerError::RuntimeError(
+                "watch_for_errors already called or resources not available".to_string(),
+            )),
         }
     }
 }

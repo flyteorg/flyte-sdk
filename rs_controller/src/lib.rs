@@ -10,26 +10,19 @@ pub mod proto;
 
 // Python bindings - thin wrappers around core types
 use std::sync::Arc;
-use std::time::Duration;
 
 use pyo3::exceptions;
 use pyo3::prelude::*;
 use pyo3::types::PyAny;
 use pyo3_async_runtimes::tokio::future_into_py;
-use tower::ServiceBuilder;
 use tracing::{error, info, warn};
 use tracing_subscriber::FmtSubscriber;
 
 use crate::action::{Action, ActionType};
-use crate::auth::{AuthConfig, AuthLayer, ClientCredentialsAuthenticator};
 use crate::core::CoreBaseController;
 use crate::error::ControllerError;
-use flyteidl2::flyteidl::common::{ActionIdentifier, ProjectIdentifier, RunIdentifier};
-use flyteidl2::flyteidl::task::task_service_client::TaskServiceClient;
-use flyteidl2::flyteidl::task::{list_tasks_request, ListTasksRequest};
-use flyteidl2::flyteidl::workflow::state_service_client::StateServiceClient;
+use flyteidl2::flyteidl::common::{ActionIdentifier, RunIdentifier};
 use prost::Message;
-use tonic::transport::Endpoint;
 
 // Python error conversions
 impl From<ControllerError> for PyErr {
@@ -93,10 +86,17 @@ impl BaseController {
     fn get_action<'py>(
         &self,
         py: Python<'py>,
-        action_id: ActionIdentifier,
+        // action_id: ActionIdentifier,
+        action_id_bytes: &[u8],
         parent_action_name: String,
     ) -> PyResult<Bound<'py, PyAny>> {
         let real_base = self.0.clone();
+        let action_id = ActionIdentifier::decode(action_id_bytes).map_err(|e| {
+            pyo3::exceptions::PyValueError::new_err(format!(
+                "Failed to decode ActionIdentifier: {}",
+                e
+            ))
+        })?;
         let py_fut = future_into_py(py, async move {
             real_base
                 .get_action(action_id.clone(), parent_action_name.as_str())
@@ -129,6 +129,20 @@ impl BaseController {
                 .await;
             warn!("Parent action finalize: {}", parent_action_string);
             Ok(())
+        });
+        py_fut
+    }
+
+    fn watch_for_errors<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        let base = self.0.clone();
+        let py_fut = future_into_py(py, async move {
+            base.watch_for_errors().await.map_err(|e| {
+                error!("Controller watch_for_errors detected failure: {:?}", e);
+                exceptions::PyRuntimeError::new_err(format!(
+                    "Controller watch ended with failure: {}",
+                    e
+                ))
+            })
         });
         py_fut
     }

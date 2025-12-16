@@ -373,10 +373,9 @@ class RemoteController(BaseController):
         fut = asyncio.run_coroutine_threadsafe(coro, self._submit_loop)
         return fut
 
-    # will be implemented in the future, should await for errors coming from the rust layer
     async def watch_for_errors(self):
-        e = Event()
-        await e.wait()
+        """ This pattern works better with utils.run_coros """
+        await super().watch_for_errors()
 
     async def stop(self):
         """
@@ -385,7 +384,7 @@ class RemoteController(BaseController):
         if self._submit_loop is not None:
             self._submit_loop.stop()
             if self._submit_thread is not None:
-                self._submit_thread.join()
+                self._submit_thread.join(0.01)
             self._submit_loop = None
             self._submit_thread = None
         logger.info("RemoteController stopped.")
@@ -450,7 +449,7 @@ class RemoteController(BaseController):
             ),
         )
         prev_action = await self.get_action(
-            sub_action_id_pb,
+            sub_action_id_pb.SerializeToString(),
             current_action_id.name,
         )
 

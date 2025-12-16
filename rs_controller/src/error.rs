@@ -14,6 +14,8 @@ pub enum ControllerError {
     GrpcError(#[from] tonic::Status),
     #[error("Task error: {0}")]
     TaskError(String),
+    #[error("Informer error: {0}")]
+    Informer(#[from] InformerError),
 }
 
 impl From<tonic::transport::Error> for ControllerError {
@@ -28,7 +30,7 @@ impl From<AuthConfigError> for ControllerError {
     }
 }
 
-#[derive(Error, Debug)]
+#[derive(Error, Debug, Clone)]
 pub enum InformerError {
     #[error("Informer watch failed for run {run_name}, parent action {parent_action_name}: {error_message}")]
     WatchFailed {
@@ -36,4 +38,20 @@ pub enum InformerError {
         parent_action_name: String,
         error_message: String,
     },
+    #[error("gRPC error in watch stream: {0}")]
+    GrpcError(String),
+    #[error("Stream error: {0}")]
+    StreamError(String),
+    #[error("Failed to send action to queue: {0}")]
+    QueueSendError(String),
+    #[error("Watch cancelled")]
+    Cancelled,
+    #[error("Bad context: {0}")]
+    BadContext(String),
+}
+
+impl From<tonic::Status> for InformerError {
+    fn from(status: tonic::Status) -> Self {
+        InformerError::GrpcError(format!("{:?}", status))
+    }
 }

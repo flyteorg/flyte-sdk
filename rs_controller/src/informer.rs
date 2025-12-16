@@ -1,16 +1,29 @@
 use crate::action::Action;
 use crate::core::StateClient;
 use crate::error::{ControllerError, InformerError};
+use tokio::time;
 use tokio_util::sync::CancellationToken;
+/// Determine if an InformerError is retryable
+fn is_retryable_error(err: &InformerError) -> bool {
+    match err {
+        // Retryable gRPC and stream errors
+        InformerError::GrpcError(_) => true,
+        InformerError::StreamError(_) => true,
+
+        // Don't retry these
+        InformerError::Cancelled => false,
+        InformerError::BadContext(_) => false,
+        InformerError::QueueSendError(_) => false,
+        InformerError::WatchFailed { .. } => false,
+    }
+}
 
 use flyteidl2::flyteidl::common::ActionIdentifier;
 use flyteidl2::flyteidl::common::RunIdentifier;
-use flyteidl2::flyteidl::workflow::state_service_client::StateServiceClient;
 use flyteidl2::flyteidl::workflow::{
     watch_request, watch_response::Message, WatchRequest, WatchResponse,
 };
 
-use pyo3_async_runtimes::tokio::run;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -18,12 +31,7 @@ use std::time::Duration;
 use tokio::select;
 use tokio::sync::RwLock;
 use tokio::sync::{mpsc, oneshot, Notify};
-use tokio::time::sleep;
-use tonic::transport::channel::Channel;
-use tonic::transport::Endpoint;
-use tracing::log::Level::Info;
 use tracing::{debug, error, info, warn};
-use tracing_subscriber::fmt;
 
 #[derive(Clone, Debug)]
 pub struct Informer {
@@ -81,7 +89,7 @@ impl Informer {
     async fn handle_watch_response(
         &self,
         response: WatchResponse,
-    ) -> Result<Option<Action>, ControllerError> {
+    ) -> Result<Option<Action>, InformerError> {
         debug!(
             "Informer for {:?}::{} processing incoming message {:?}",
             self.run_id.name, self.parent_action_name, &response
@@ -103,7 +111,7 @@ impl Informer {
                         .action_id
                         .as_ref()
                         .map(|act_id| act_id.name.clone())
-                        .ok_or(ControllerError::RuntimeError(format!(
+                        .ok_or(InformerError::StreamError(format!(
                             "Action update received without a name: {:?}",
                             action_update
                         )))?;
@@ -132,13 +140,13 @@ impl Informer {
                 }
             }
         } else {
-            Err(ControllerError::BadContext(
+            Err(InformerError::BadContext(
                 "No message in response".to_string(),
             ))
         }
     }
 
-    async fn watch_actions(&self) -> Result<(), ControllerError> {
+    async fn watch_actions(&self) -> Result<(), InformerError> {
         let action_id = ActionIdentifier {
             name: self.parent_action_name.clone(),
             run: Some(self.run_id.clone()),
@@ -153,7 +161,7 @@ impl Informer {
             Ok(s) => s.into_inner(),
             Err(e) => {
                 error!("Failed to start watch stream: {:?}", e);
-                return Err(ControllerError::from(e));
+                return Err(InformerError::from(e));
             }
         };
 
@@ -161,7 +169,7 @@ impl Informer {
             select! {
                 _ = self.cancellation_token.cancelled() => {
                     warn!("Cancellation token got - exiting from watch_actions: {}", self.parent_action_name);
-                    return Ok(())
+                    return Err(InformerError::Cancelled)
                 }
 
                 result = stream.message() => {
@@ -175,7 +183,7 @@ impl Informer {
                                     }
                                     Err(e) => {
                                         error!("Informer watch failed sending action back to shared queue: {:?}", e);
-                                        return Err(ControllerError::RuntimeError(format!(
+                                        return Err(InformerError::QueueSendError(format!(
                                             "Failed to send action to shared queue: {}",
                                             e
                                         )));
@@ -187,8 +195,7 @@ impl Informer {
                                     );
                                 }
                                 Err(err) => {
-                                    // this should cascade up to the controller to restart the informer, and if there
-                                    // are too many informer restarts, the controller should fail
+                                    // this should cascade up to retry logic
                                     error!("Error in informer watch {:?}", err);
                                     return Err(err);
                                 }
@@ -199,7 +206,7 @@ impl Informer {
                         } // Stream ended, exit loop
                         Err(e) => {
                             error!("Error receiving message from stream: {:?}", e);
-                            return Err(ControllerError::from(e));
+                            return Err(InformerError::from(e));
                         }
                     }
                 }
@@ -237,7 +244,10 @@ impl Informer {
         {
             let mut completion_events = self.completion_events.write().await;
             completion_events.insert(action_name.clone(), done_tx);
-            warn!("---------> Adding completion event in submit action {:?}", action_name);
+            warn!(
+                "---------> Adding completion event in submit action {:?}",
+                action_name
+            );
         }
 
         // Add action to shared queue
@@ -264,7 +274,7 @@ impl Informer {
                 action_name,
             );
             // Maybe the action hasn't started yet.
-            return Ok(())
+            return Ok(());
         }
         Ok(())
     }
@@ -335,13 +345,19 @@ impl InformerCache {
         }
 
         // Create new informer (with write lock)
-        debug!("Acquiring write lock to create informer for: {}", informer_name);
+        debug!(
+            "Acquiring write lock to create informer for: {}",
+            informer_name
+        );
         let mut map = self.cache.write().await;
         info!("Write lock acquired for: {}", informer_name);
 
         // Double-check it wasn't created while we were waiting for write lock
         if let Some(informer) = map.get(&informer_name) {
-            info!("RACE: Informer was created while waiting for write lock: {}", informer_name);
+            info!(
+                "RACE: Informer was created while waiting for write lock: {}",
+                informer_name
+            );
             let arc_informer = Arc::clone(informer);
             drop(map);
             debug!("Write lock released after race condition");
@@ -371,33 +387,99 @@ impl InformerCache {
 
         info!("Spawning watch task for: {}", informer_name);
         let _watch_handle = tokio::spawn(async move {
-            debug!("Watch task started for: {}", me.parent_action_name);
-            let watch_actions_result = me.watch_actions().await;
+            const MAX_RETRIES: u32 = 10;
+            const MIN_BACKOFF_SECS: f64 = 1.0;
+            const MAX_BACKOFF_SECS: f64 = 30.0;
 
-            // If there are errors with the watch then notify the channel
-            if watch_actions_result.is_err() {
-                let err = watch_actions_result.err().unwrap();
+            let mut retries = 0;
+            let mut last_error: Option<InformerError> = None;
+            debug!("Watch task started for: {}", me.parent_action_name);
+
+            while retries < MAX_RETRIES {
+                if retries > 0 {
+                    warn!(
+                        "Informer watch retrying for {}, attempt {}/{}",
+                        me.parent_action_name,
+                        retries + 1,
+                        MAX_RETRIES
+                    );
+                }
+
+                let watch_result = me.watch_actions().await;
+                match watch_result {
+                    Ok(()) => {
+                        // Clean exit (should only happen on cancellation)
+                        info!("Watch completed cleanly for {}", me.parent_action_name);
+                        last_error = None;
+                        break;
+                    }
+                    Err(InformerError::Cancelled) => {
+                        // Don't retry cancellations
+                        info!(
+                            "Watch cancelled for {}, exiting without retry",
+                            me.parent_action_name
+                        );
+                        last_error = None;
+                        break;
+                    }
+                    Err(err) if is_retryable_error(&err) => {
+                        retries += 1;
+                        last_error = Some(err.clone());
+
+                        warn!(
+                            "Watch failed for {} (retry {}/{}): {:?}",
+                            me.parent_action_name, retries, MAX_RETRIES, err
+                        );
+
+                        if retries < MAX_RETRIES {
+                            // Exponential backoff: 1s, 2s, 4s, 8s, 16s, 30s (capped)
+                            let backoff = MIN_BACKOFF_SECS * 2_f64.powi((retries - 1) as i32);
+                            let backoff = backoff.min(MAX_BACKOFF_SECS);
+                            warn!("Backing off for {:.2}s before retry", backoff);
+                            time::sleep(Duration::from_secs_f64(backoff)).await;
+                        }
+                    }
+                    Err(err) => {
+                        // Non-retryable error
+                        error!(
+                            "Non-retryable error for {}: {:?}",
+                            me.parent_action_name, err
+                        );
+                        last_error = Some(err);
+                        break;
+                    }
+                }
+            }
+
+            // Only send error if we have one (clean exits and cancellations set last_error = None)
+            if let Some(err) = last_error {
+                // We have an error - either exhausted retries or non-retryable
                 error!(
-                    "Informer watch_actions failed for run {}, parent action {}: {:?}",
-                    me.run_id.name, me.parent_action_name, err
+                    "Informer watch failed for run {}, parent action {} (retries: {}/{}): {:?}",
+                    me.run_id.name, me.parent_action_name, retries, MAX_RETRIES, err
                 );
 
                 let failure = InformerError::WatchFailed {
                     run_name: me.run_id.name.clone(),
                     parent_action_name: me.parent_action_name.clone(),
-                    error_message: err.to_string(),
+                    error_message: format!(
+                        "Retries ({}/{}) exhausted. Last error: {}",
+                        retries, MAX_RETRIES, err
+                    ),
                 };
 
                 if let Err(e) = failure_tx.send(failure).await {
                     error!("Failed to send informer failure event: {:?}", e);
                 }
-            } else {
-                info!("Informer watch_actions completed successfully for {}", me.run_id.name);
             }
+            // If last_error is None, it's a clean exit (Ok or Cancelled) - no error to send
         });
 
         // save the value and ignore the returned reference.
-        debug!("Acquiring write lock to save watch handle for: {}", informer_name);
+        debug!(
+            "Acquiring write lock to save watch handle for: {}",
+            informer_name
+        );
         let _ = informer.watch_handle.write().await.insert(_watch_handle);
         info!("Watch handle saved for: {}", informer_name);
 
@@ -405,7 +487,10 @@ impl InformerCache {
         debug!("Waiting for informer to be ready: {}", informer_name);
         Self::wait_for_ready(&informer, timeout).await;
 
-        info!("<<< Returning newly created informer for: {}", informer_name);
+        info!(
+            "<<< Returning newly created informer for: {}",
+            informer_name
+        );
         informer
     }
 
@@ -438,7 +523,10 @@ impl InformerCache {
 
         // Quick check - if already ready, return immediately
         if informer.is_ready.load(Ordering::Acquire) {
-            info!("Informer already ready for: {}", informer.parent_action_name);
+            info!(
+                "Informer already ready for: {}",
+                informer.parent_action_name
+            );
             return;
         }
 
@@ -446,7 +534,10 @@ impl InformerCache {
         // Otherwise wait with timeout
         match tokio::time::timeout(timeout, ready_fut).await {
             Ok(_) => {
-                info!("Informer ready signal received for: {}", informer.parent_action_name);
+                info!(
+                    "Informer ready signal received for: {}",
+                    informer.parent_action_name
+                );
             }
             Err(_) => {
                 warn!(
@@ -476,7 +567,6 @@ impl InformerCache {
         opt_informer
     }
 }
-
 
 #[cfg(test)]
 mod tests {

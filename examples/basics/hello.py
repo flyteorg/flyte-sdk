@@ -1,9 +1,18 @@
 import flyte
 
+from flyte._image import PythonWheels
+from pathlib import Path
+
+controller_dist_folder = Path("/Users/ytong/go/src/github.com/flyteorg/flyte-sdk/rs_controller/dist")
+wheel_layer = PythonWheels(wheel_dir=controller_dist_folder, package_name="flyte_controller_base")
+base = flyte.Image.from_debian_base()
+rs_controller_image = base.clone(addl_layer=wheel_layer)
+
 # TaskEnvironments provide a simple way of grouping configuration used by tasks (more later).
 env = flyte.TaskEnvironment(
     name="hello_world",
     resources=flyte.Resources(memory="250Mi"),
+    image=rs_controller_image,
 )
 
 
@@ -24,6 +33,13 @@ def main(x_list: list[int]) -> float:
     y_list = list(flyte.map(fn, x_list))  # flyte.map is like Python map, but runs in parallel.
     y_mean = sum(y_list) / len(y_list)
     return y_mean
+
+
+@env.task
+def main2(x_list: list[int]) -> float:
+    y = fn(x_list[0])
+    print(f"y = {y}!!!", flush=True)
+    return float(y)
 
 
 if __name__ == "__main__":
