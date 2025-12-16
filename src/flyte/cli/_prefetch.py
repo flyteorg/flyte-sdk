@@ -28,7 +28,7 @@ def prefetch():
 @prefetch.command(name="hf-model", cls=CommandBase)
 @click.argument("repo", type=str)
 @click.option(
-    "--obstore-path",
+    "--raw-data-path",
     type=str,
     required=False,
     default=None,
@@ -154,7 +154,7 @@ def prefetch():
 def hf_model(
     cfg,
     repo: str,
-    obstore_path: str | None,
+    raw_data_path: str | None,
     artifact_name: str | None,
     architecture: str | None,
     task: str,
@@ -261,7 +261,7 @@ def hf_model(
 
     run = prefetch_hf_model(
         repo=repo,
-        obstore_path=obstore_path,
+        raw_data_path=raw_data_path,
         artifact_name=artifact_name,
         architecture=architecture,
         task=task,
