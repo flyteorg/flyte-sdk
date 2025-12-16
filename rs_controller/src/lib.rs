@@ -152,8 +152,14 @@ impl BaseController {
 fn flyte_controller_base(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     static INIT: std::sync::Once = std::sync::Once::new();
     INIT.call_once(|| {
+        // Check if running remotely by checking if FLYTE_INTERNAL_EXECUTION_PROJECT is set
+        let is_remote = std::env::var("FLYTE_INTERNAL_EXECUTION_PROJECT").is_ok();
+        let is_rich_logging_disabled = std::env::var("DISABLE_RICH_LOGGING").is_ok();
+        let disable_ansi = is_remote || is_rich_logging_disabled;
+
         let subscriber = FmtSubscriber::builder()
             .with_max_level(tracing::Level::DEBUG)
+            .with_ansi(!disable_ansi)
             .finish();
         tracing::subscriber::set_global_default(subscriber)
             .expect("Failed to set global tracing subscriber");

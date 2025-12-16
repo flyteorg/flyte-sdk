@@ -135,7 +135,8 @@ def create_controller(
             # hybrid case, despite the case statement above, meant for local runs not inside docker
             from flyte._internal.controllers.remote._r_controller import RemoteController
 
-            # controller = RemoteController(endpoint="http://localhost:8090", workers=10, max_system_retries=5)
+            # for devbox
+            # controller = RemoteController(endpoint="http://host.docker.internal:8090", workers=10, max_system_retries=5)  # noqa: E501
             controller = RemoteController(workers=10, max_system_retries=5)
         case _:
             raise ValueError(f"{ct} is not a valid controller type.")

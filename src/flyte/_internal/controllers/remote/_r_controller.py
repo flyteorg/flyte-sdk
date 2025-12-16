@@ -382,9 +382,9 @@ class RemoteController(BaseController):
         Stop the controller. Incomplete, needs to gracefully shut down the rust controller as well.
         """
         if self._submit_loop is not None:
-            self._submit_loop.stop()
+            self._submit_loop.call_soon_threadsafe(self._submit_loop.stop)
             if self._submit_thread is not None:
-                self._submit_thread.join(0.01)
+                self._submit_thread.join()
             self._submit_loop = None
             self._submit_thread = None
         logger.info("RemoteController stopped.")
