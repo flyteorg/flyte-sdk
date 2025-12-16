@@ -1,5 +1,13 @@
 # Weights & Biases Plugin
 
+- Parent and child tasks can log metrics to the same run by setting `new_run=False` in the `wandb_init` decorator.
+- Traces can be used to initialize a W&B run independently of the parent task.
+- `wandb_run` is added to the Flyte task context and can be accessed via `flyte.ctx().wandb_run`.
+- `wandb_run` is set to `None` for tasks that are not initialized with `wandb_init`.
+- If a child task needs to use the same run as its parent, `wandb_config` should not be set, as it will overwrite the run name and tags (this must be ensured by the user).
+- `wandb_config` can be used to pass configuration to tasks enclosed within the context manager and can also be provided via `with_runcontext`.
+- When the context manager exits, the configuration falls back to the parent task’s config.
+
 ```python
 import flyte
 from flyteplugins.wandb import (
@@ -12,8 +20,8 @@ env = flyte.TaskEnvironment(
     image=flyte.Image.from_debian_base()
     .with_apt_packages("git")
     .with_pip_packages(
-        "git+https://github.com/flyteorg/flyte-sdk.git@a678dce90ef197e2cc6d7473ca80b1cfbc549df4",
-        "git+https://github.com/flyteorg/flyte-sdk.git@a678dce90ef197e2cc6d7473ca80b1cfbc549df4#subdirectory=plugins/wandb",
+        "git+https://github.com/flyteorg/flyte-sdk.git@991f788289cbfc16a9b49e61efd9f388a358e8d5",
+        "git+https://github.com/flyteorg/flyte-sdk.git@8b1d5b85fc6a4082cb2c094c9c9a44b44e5fc08d#subdirectory=plugins/wandb",
     ),
     secrets=[flyte.Secret(key="wandb-api-key", as_env_var="WANDB_API_KEY")],
 )
@@ -22,7 +30,6 @@ env = flyte.TaskEnvironment(
 @flyte.trace
 @wandb_init
 async def traced_child_task(x: int) -> str:
-    """Traced child task that logs metrics to wandb."""
     run = flyte.ctx().wandb_run
 
     print(f"Traced Child task - Run ID: {run.id}")
@@ -38,7 +45,7 @@ async def traced_child_task(x: int) -> str:
 
 
 @env.task
-@wandb_init(new_run=False)  # Use existing run
+@wandb_init(new_run=False)  # Use existing run from parent
 async def grandchild_task(x: int) -> str:
     run = flyte.ctx().wandb_run
 

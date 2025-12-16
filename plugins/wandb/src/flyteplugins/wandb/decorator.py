@@ -59,7 +59,7 @@ def _wandb_run(new_run: bool = True):
             # Reuse parent's run ID
             init_kwargs["id"] = saved_run_id
 
-    # Configure shared mode settings
+    # Configure shared mode settings - necessary to allow parent-child tasks to log to the same run
     is_primary = new_run or not saved_run_id
 
     # Get existing settings as dict
