@@ -2,6 +2,7 @@ import importlib.util
 import os
 import sys
 from pathlib import Path
+from types import ModuleType
 from typing import List, Tuple
 
 import flyte.errors
@@ -11,7 +12,7 @@ from flyte._logging import logger
 
 def load_python_modules(
     path: Path, root_dir: Path, recursive: bool = False
-) -> Tuple[List[str], List[Tuple[Path, str]]]:
+) -> Tuple[List[ModuleType], List[Tuple[Path, str]]]:
     """
     Load all Python modules from a path and return list of loaded module names.
 
@@ -44,8 +45,8 @@ def load_python_modules(
             try:
                 rel_path = path.resolve().relative_to(root_dir)
                 mod = ".".join(rel_path.parts)
-                importlib.import_module(mod)
-                loaded_modules.append(mod)
+                imported_module = importlib.import_module(mod)
+                loaded_modules.append(imported_module)
             except (ValueError, ModuleNotFoundError):
                 pass
         else:
