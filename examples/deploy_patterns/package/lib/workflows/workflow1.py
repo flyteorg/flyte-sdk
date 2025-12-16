@@ -1,10 +1,10 @@
 from lib.workflows import env
 from lib.workflows import utils
 
-from flyte import task, workflow
+from flyte import task
 
 
-@task
+@env.task
 def process_task(value: int) -> str:
     """Example task using imported modules."""
     if not utils.validate_input(value):
@@ -15,7 +15,7 @@ def process_task(value: int) -> str:
     return result
 
 
-@workflow
+@env.task
 def example_workflow(input_value: int = 42) -> str:
     """Example workflow."""
     return process_task(value=input_value)

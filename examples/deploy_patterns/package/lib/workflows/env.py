@@ -1,11 +1,7 @@
+import flyte
 
-def get_env_var(key: str, default: str = "") -> str:
-    """Get environment variable."""
-    import os
-    return os.environ.get(key, default)
+env = flyte.TaskEnvironment(
+    name="folder-example",
+    resources=flyte.Resources(cpu=1, memory="1Gi"),
+)
 
-
-ENV_CONFIG = {
-    "environment": "development",
-    "debug": True,
-}
