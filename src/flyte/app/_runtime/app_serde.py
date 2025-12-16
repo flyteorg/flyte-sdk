@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import replace
-from typing import List, Optional, Union
+from typing import List, Optional, Union, Dict
 
 from flyteidl2.app import app_definition_pb2
 from flyteidl2.common import runtime_version_pb2
@@ -84,6 +84,7 @@ def _sanitize_resource_name(resource: tasks_pb2.Resources.ResourceEntry) -> str:
 
 def _get_mig_resources_from_extended_resources(
     extended_resources: Optional[tasks_pb2.ExtendedResources],
+    device_quantity: Optional[int] = None,
     mig_resource_prefix: Optional[str] = None,
 ) -> Dict[str, str]:
     """
@@ -94,6 +95,7 @@ def _get_mig_resources_from_extended_resources(
 
     :param extended_resources: The extended resources containing GPU accelerator info
     :param mig_resource_prefix: Custom MIG resource prefix (defaults to "nvidia.com/mig")
+    :param device_quantity: The quantity of GPUs/partitions requested
     :return: Dict mapping MIG resource name to quantity (e.g., {"nvidia.com/mig-1g. 5gb": "1"})
     """
     mig_resources = {}
@@ -111,7 +113,8 @@ def _get_mig_resources_from_extended_resources(
     prefix = mig_resource_prefix if mig_resource_prefix is not None else "nvidia.com/mig"
     resource_name = f"{prefix}-{partition}"
 
-    mig_resources[resource_name] = "1"
+    quantity = device_quantity if device_quantity is not None else 1
+    mig_resources[resource_name] = str(quantity)
 
     return mig_resources
 
@@ -173,7 +176,10 @@ def _serialized_pod_spec(
                 
                 # Add MIG resources if GPU partitions are specified
                 mig_prefix = app_env.resources.gpu_partition_resource_prefix if app_env.resources else None
-                mig_resources = _get_mig_resources_from_extended_resources(extended_resources, mig_prefix)
+                # Get device quantity from resources
+                device = app_env. resources.get_device() if app_env.resources else None
+                device_quantity = device.quantity if device else None
+                mig_resources = _get_mig_resources_from_extended_resources(extended_resources, device_quantity, mig_prefix)
                 requests.update(mig_resources)
 
                 resource_requirements = V1ResourceRequirements(limits=limits, requests=requests)

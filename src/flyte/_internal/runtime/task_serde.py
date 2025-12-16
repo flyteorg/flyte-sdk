@@ -265,6 +265,7 @@ def _sanitize_resource_name(resource: tasks_pb2.Resources.ResourceEntry) -> str:
 
 def _get_mig_resources_from_extended_resources(
     extended_resources: Optional[tasks_pb2.ExtendedResources],
+    device_quantity: Optional[int] = None,
     mig_resource_prefix: Optional[str] = None,
 ) -> Dict[str, str]:
     """
@@ -275,6 +276,7 @@ def _get_mig_resources_from_extended_resources(
 
     :param extended_resources: The extended resources containing GPU accelerator info
     :param mig_resource_prefix: Custom MIG resource prefix (defaults to "nvidia.com/mig")
+    :param device_quantity: The quantity of GPUs/partitions requested
     :return: Dict mapping MIG resource name to quantity (e.g., {"nvidia.com/mig-1g.5gb": "1"})
     """
     mig_resources = {}
@@ -292,8 +294,9 @@ def _get_mig_resources_from_extended_resources(
     prefix = mig_resource_prefix if mig_resource_prefix is not None else DEFAULT_GPU_PARTITION_RESOURCE_PREFIX
     resource_name = f"{prefix}-{partition}"
 
-    # MIG resources are typically requested as 1 partition instance
-    mig_resources[resource_name] = "1"
+
+    quantity = device_quantity if device_quantity is not None else 1
+    mig_resources[resource_name] = str(quantity)
 
     return mig_resources
 
@@ -342,7 +345,10 @@ def _get_k8s_pod(primary_container: tasks_pb2.Container, pod_template: PodTempla
             
             # Add MIG resources if GPU partitions are specified
             mig_prefix = task_template.resources.gpu_partition_resource_prefix if task_template.resources else None
-            mig_resources = _get_mig_resources_from_extended_resources(extended_resources, mig_prefix)
+            # Get device quantity from resources
+            device = task_template.resources.get_device() if task_template.resources else None
+            device_quantity = device.quantity if device else None
+            mig_resources = _get_mig_resources_from_extended_resources(extended_resources, device_quantity, mig_prefix)
             requests.update(mig_resources)
 
             resource_requirements = V1ResourceRequirements(limits=limits, requests=requests)
