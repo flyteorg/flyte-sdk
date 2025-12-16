@@ -30,25 +30,27 @@ def _build_init_kwargs() -> dict[str, Any]:
 
 @contextmanager
 def _wandb_run():
-    """Context manager for wandb run lifecycle."""
+    """Context manager for wandb run lifecycle and action marking."""
     ctx = flyte.ctx()
 
-    # Save existing run ID (if any) to restore later
-    saved_run_id = (
-        ctx.custom_context.get("_wandb_run_id") if ctx and ctx.custom_context else None
-    )
+    # Save existing state to restore later
+    saved_run = ctx.data.get("_wandb_run")
+    saved_action = ctx.data.get("_wandb_init_action")
+
+    # Mark which action has @wandb_init
+    ctx.data["_wandb_init_action"] = ctx.action.name
 
     # Build init kwargs from context
     init_kwargs = _build_init_kwargs()
 
     # Auto-generate ID if not provided
     if "id" not in init_kwargs or init_kwargs["id"] is None:
-        init_kwargs["id"] = f"{flyte.ctx().action.run_name}-{flyte.ctx().action.name}"
+        init_kwargs["id"] = f"{ctx.action.run_name}-{ctx.action.name}"
 
     run = wandb.init(**init_kwargs)
 
-    # Store this run's ID
-    ctx.custom_context["_wandb_run_id"] = run.id
+    # Store run object directly in ctx.data
+    ctx.data["_wandb_run"] = run
 
     try:
         yield run
@@ -57,12 +59,16 @@ def _wandb_run():
         run.finish(exit_code=1)
         raise
     finally:
-        # Restore previous run ID
-        if ctx and ctx.custom_context is not None:
-            if saved_run_id is not None:
-                ctx.custom_context["_wandb_run_id"] = saved_run_id
-            else:
-                ctx.custom_context.pop("_wandb_run_id", None)
+        # Restore previous state
+        if saved_run is not None:
+            ctx.data["_wandb_run"] = saved_run
+        else:
+            ctx.data.pop("_wandb_run", None)
+
+        if saved_action is not None:
+            ctx.data["_wandb_init_action"] = saved_action
+        else:
+            ctx.data.pop("_wandb_init_action", None)
 
 
 def wandb_init(_func: Optional[F] = None) -> F:
@@ -72,7 +78,7 @@ def wandb_init(_func: Optional[F] = None) -> F:
     This decorator:
     1. Initializes a wandb run before execution
     2. Auto-generates unique run ID from Flyte action context (if not provided)
-    3. Makes the run available via get_wandb_run()
+    3. Makes the run available via flyte.ctx().wandb_run
     4. Automatically finishes the run after completion
     5. For tasks: automatically attaches wandb link (pulls config from context)
     """
@@ -89,41 +95,15 @@ def wandb_init(_func: Optional[F] = None) -> F:
             if iscoroutinefunction(original_execute):
 
                 async def wrapped_execute(*args, **kwargs):
-                    ctx = flyte.ctx()
-                    # Mark which action has @wandb_init
-                    current_action = ctx.action.name
-                    saved_action = ctx.custom_context.get("_wandb_init_action")
-                    ctx.custom_context["_wandb_init_action"] = current_action
-
-                    try:
-                        with _wandb_run():
-                            return await original_execute(*args, **kwargs)
-                    finally:
-                        # Restore previous action marker
-                        if saved_action:
-                            ctx.custom_context["_wandb_init_action"] = saved_action
-                        else:
-                            ctx.custom_context.pop("_wandb_init_action", None)
+                    with _wandb_run():
+                        return await original_execute(*args, **kwargs)
 
                 func.execute = wrapped_execute
             else:
 
                 def wrapped_execute(*args, **kwargs):
-                    ctx = flyte.ctx()
-                    # Mark which action has @wandb_init
-                    current_action = ctx.action.name
-                    saved_action = ctx.custom_context.get("_wandb_init_action")
-                    ctx.custom_context["_wandb_init_action"] = current_action
-
-                    try:
-                        with _wandb_run():
-                            return original_execute(*args, **kwargs)
-                    finally:
-                        # Restore previous action marker
-                        if saved_action:
-                            ctx.custom_context["_wandb_init_action"] = saved_action
-                        else:
-                            ctx.custom_context.pop("_wandb_init_action", None)
+                    with _wandb_run():
+                        return original_execute(*args, **kwargs)
 
                 func.execute = wrapped_execute
 
@@ -134,64 +114,17 @@ def wandb_init(_func: Optional[F] = None) -> F:
 
                 @functools.wraps(func)
                 async def async_wrapper(*args, **kwargs):
-                    ctx = flyte.ctx()
-                    current_action = ctx.action.name
-                    saved_action = ctx.custom_context.get("_wandb_init_action")
-                    ctx.custom_context["_wandb_init_action"] = current_action
-
-                    try:
-                        with _wandb_run():
-                            return await func(*args, **kwargs)
-                    finally:
-                        if saved_action:
-                            ctx.custom_context["_wandb_init_action"] = saved_action
-                        else:
-                            ctx.custom_context.pop("_wandb_init_action", None)
+                    with _wandb_run():
+                        return await func(*args, **kwargs)
 
                 return cast(F, async_wrapper)
             else:
 
                 @functools.wraps(func)
                 def sync_wrapper(*args, **kwargs):
-                    ctx = flyte.ctx()
-                    current_action = ctx.action.name
-                    saved_action = ctx.custom_context.get("_wandb_init_action")
-                    ctx.custom_context["_wandb_init_action"] = current_action
-
-                    try:
-                        with _wandb_run():
-                            return func(*args, **kwargs)
-                    finally:
-                        if saved_action:
-                            ctx.custom_context["_wandb_init_action"] = saved_action
-                        else:
-                            ctx.custom_context.pop("_wandb_init_action", None)
+                    with _wandb_run():
+                        return func(*args, **kwargs)
 
                 return cast(F, sync_wrapper)
 
     return decorator(_func)
-
-
-def get_wandb_run():
-    """
-    Get the current wandb run.
-
-    Only returns run if called from within a @wandb_init decorated function.
-    Returns None if called from a child function without @wandb_init.
-    """
-    ctx = flyte.ctx()
-    if not ctx or not ctx.custom_context:
-        return None
-
-    # Check if current action matches the action that has @wandb_init
-    current_action = ctx.action.name
-    wandb_action = ctx.custom_context.get("_wandb_init_action")
-
-    if current_action != wandb_action:
-        return None  # Called from different action without @wandb_init
-
-    run_id = ctx.custom_context.get("_wandb_run_id")
-    if not run_id:
-        return None
-
-    return wandb.init(id=run_id, reinit="return_previous")
