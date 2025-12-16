@@ -6,7 +6,7 @@ It includes a Resolver interface for loading tasks, and functions to load classe
 import copy
 import typing
 from datetime import timedelta
-from typing import Optional, cast
+from typing import Optional, cast, Dict
 
 from flyteidl2.core import identifier_pb2, literals_pb2, security_pb2, tasks_pb2
 from flyteidl2.task import common_pb2, environment_pb2, task_definition_pb2
@@ -23,7 +23,7 @@ from flyte.models import CodeBundle, SerializationContext
 from ... import ReusePolicy
 from ..._retry import RetryStrategy
 from ..._timeout import TimeoutType, timeout_from_request
-from .resources_serde import get_proto_extended_resources, get_proto_resources
+from .resources_serde import DEFAULT_GPU_PARTITION_RESOURCE_PREFIX, get_proto_extended_resources, get_proto_resources
 from .reuse import add_reusable
 from .types_serde import transform_native_to_typed_interface
 
@@ -263,6 +263,39 @@ def _get_urun_container(
 def _sanitize_resource_name(resource: tasks_pb2.Resources.ResourceEntry) -> str:
     return tasks_pb2.Resources.ResourceName.Name(resource.name).lower().replace("_", "-")
 
+def _get_mig_resources_from_extended_resources(
+    extended_resources: Optional[tasks_pb2.ExtendedResources],
+    mig_resource_prefix: Optional[str] = None,
+) -> Dict[str, str]:
+    """
+    Generate MIG-specific resources from GPUAccelerator partition info.
+
+    When a GPU has a partition_size specified, generate a custom resource name
+    for that partition instead of using the generic GPU resource.
+
+    :param extended_resources: The extended resources containing GPU accelerator info
+    :param mig_resource_prefix: Custom MIG resource prefix (defaults to "nvidia.com/mig")
+    :return: Dict mapping MIG resource name to quantity (e.g., {"nvidia.com/mig-1g.5gb": "1"})
+    """
+    mig_resources = {}
+
+    if extended_resources is None or not extended_resources.gpu_accelerator:
+        return mig_resources
+
+    gpu_accel = extended_resources.gpu_accelerator
+    partition = gpu_accel.partition_size
+
+    if not partition:
+        return mig_resources
+
+    # Default to "nvidia.com/mig" if not specified
+    prefix = mig_resource_prefix if mig_resource_prefix is not None else DEFAULT_GPU_PARTITION_RESOURCE_PREFIX
+    resource_name = f"{prefix}-{partition}"
+
+    # MIG resources are typically requested as 1 partition instance
+    mig_resources[resource_name] = "1"
+
+    return mig_resources
 
 def _get_k8s_pod(primary_container: tasks_pb2.Container, pod_template: PodTemplate) -> Optional[tasks_pb2.K8sPod]:
     """
@@ -306,9 +339,14 @@ def _get_k8s_pod(primary_container: tasks_pb2.Container, pod_template: PodTempla
                 limits[_sanitize_resource_name(resource)] = resource.value
             for resource in primary_container.resources.requests:
                 requests[_sanitize_resource_name(resource)] = resource.value
+            
+            # Add MIG resources if GPU partitions are specified
+            mig_prefix = task_template.resources.gpu_partition_resource_prefix if task_template.resources else None
+            mig_resources = _get_mig_resources_from_extended_resources(extended_resources, mig_prefix)
+            requests.update(mig_resources)
 
             resource_requirements = V1ResourceRequirements(limits=limits, requests=requests)
-            if len(limits) > 0 or len(requests) > 0:
+            if len(limits) > 0 or len(requests) > 0 or mig_resources:
                 # Important! Only copy over resource requirements if they are non-empty.
                 container.resources = resource_requirements
 

@@ -82,6 +82,38 @@ def _sanitize_resource_name(resource: tasks_pb2.Resources.ResourceEntry) -> str:
     """
     return tasks_pb2.Resources.ResourceName.Name(resource.name).lower().replace("_", "-")
 
+def _get_mig_resources_from_extended_resources(
+    extended_resources: Optional[tasks_pb2.ExtendedResources],
+    mig_resource_prefix: Optional[str] = None,
+) -> Dict[str, str]:
+    """
+    Generate MIG-specific resources from GPUAccelerator partition info.
+
+    When a GPU has a partition_size specified, generate a custom resource name
+    for that partition instead of using the generic GPU resource.
+
+    :param extended_resources: The extended resources containing GPU accelerator info
+    :param mig_resource_prefix: Custom MIG resource prefix (defaults to "nvidia.com/mig")
+    :return: Dict mapping MIG resource name to quantity (e.g., {"nvidia.com/mig-1g. 5gb": "1"})
+    """
+    mig_resources = {}
+
+    if extended_resources is None or not extended_resources.gpu_accelerator:
+        return mig_resources
+
+    gpu_accel = extended_resources.gpu_accelerator
+    partition = gpu_accel.partition_size
+
+    if not partition:
+        return mig_resources
+
+    # Default to "nvidia.com/mig" if not specified
+    prefix = mig_resource_prefix if mig_resource_prefix is not None else "nvidia.com/mig"
+    resource_name = f"{prefix}-{partition}"
+
+    mig_resources[resource_name] = "1"
+
+    return mig_resources
 
 def _serialized_pod_spec(
     app_env: AppEnvironment,
@@ -138,10 +170,15 @@ def _serialized_pod_spec(
                     limits[_sanitize_resource_name(resource)] = resource.value
                 for resource in resources.requests:
                     requests[_sanitize_resource_name(resource)] = resource.value
+                
+                # Add MIG resources if GPU partitions are specified
+                mig_prefix = app_env.resources.gpu_partition_resource_prefix if app_env.resources else None
+                mig_resources = _get_mig_resources_from_extended_resources(extended_resources, mig_prefix)
+                requests.update(mig_resources)
 
                 resource_requirements = V1ResourceRequirements(limits=limits, requests=requests)
 
-                if limits or requests:
+                if limits or requests or mig_resources:
                     container.resources = resource_requirements
 
             if app_env.env_vars:
