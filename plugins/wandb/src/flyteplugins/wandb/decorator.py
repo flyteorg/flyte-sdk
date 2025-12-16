@@ -59,6 +59,21 @@ def _wandb_run(new_run: bool = True):
             # Reuse parent's run ID
             init_kwargs["id"] = saved_run_id
 
+    # Configure shared mode settings
+    settings = init_kwargs.get("settings")
+    if not isinstance(settings, wandb.Settings):
+        settings = wandb.Settings(**(settings or {}))
+
+    is_primary = new_run or not saved_run_id
+    settings.update(
+        {
+            "mode": "shared",
+            "x_primary": is_primary,
+            **({"x_update_finish_state": False} if not is_primary else {}),
+        }
+    )
+    init_kwargs["settings"] = settings
+
     run = wandb.init(**init_kwargs)
 
     # Store run ID in custom_context (shared with child tasks)
