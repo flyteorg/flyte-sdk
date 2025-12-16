@@ -22,9 +22,9 @@ from lib.workflows.env import env
 from lib.workflows import utils
 ```
 
-## Running Locally
+## Running Locally or Remote
 
-When running workflows locally, you need to update the `PYTHONPATH` environment variable:
+When running workflows, you need to update the `PYTHONPATH` environment variable:
 
 ```bash
 PYTHONPATH=.:$PYTHONPATH flyte run lib/workflows/workflow1.py process_workflow
@@ -54,7 +54,7 @@ When Flyte loads modules locally, it assumes it's running in a correctly configu
 
 At runtime, when code is deployed to a Flyte cluster:
 - Flyte packages and copies your code to the execution environment
-- The current working directory is automatically added to `PYTHONPATH` in the runtime container
+- The `--root-dir` is specified or `current working directory` is automatically added to `PYTHONPATH` in the runtime container
 - This ensures your package imports work correctly in the remote environment
 
 The local behavior intentionally differs to prevent assumptions that might not hold in production.
