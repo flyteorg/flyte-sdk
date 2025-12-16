@@ -10,11 +10,12 @@ from flyte._constants import FLYTE_SYS_PATH
 from flyte._logging import logger
 
 
-def load_python_modules(path: Path, recursive: bool = False) -> Tuple[List[str], List[Tuple[Path, str]]]:
+def load_python_modules(path: Path, root_dir: Path, recursive: bool = False) -> Tuple[List[str], List[Tuple[Path, str]]]:
     """
     Load all Python modules from a path and return list of loaded module names.
 
     :param path: File or directory path
+    :param root_dir: Root directory to search for modules
     :param recursive: If True, load modules recursively from subdirectories
     :return: List of loaded module names, and list of file paths that failed to load
     """
@@ -24,40 +25,55 @@ def load_python_modules(path: Path, recursive: bool = False) -> Tuple[List[str],
     failed_paths = []
 
     if path.is_file() and path.suffix == ".py":
-        # Single file case
-        module_name = _load_module_from_file(path)
-        if module_name:
-            loaded_modules.append(module_name)
+        rel_path = path.resolve().relative_to(root_dir)
+        mod = (".".join(rel_path.parts))[:-3]
+        imported_module = importlib.import_module(mod)
+        loaded_modules.append(imported_module)
 
     elif path.is_dir():
-        # Directory case
+        # Directory case - find all Python files
         pattern = "**/*.py" if recursive else "*.py"
-        python_files = glob.glob(str(path / pattern), recursive=recursive)
+        python_files = list(path.glob(pattern))
 
-        with Progress(
-            TextColumn("[progress.description]{task.description}"),
-            BarColumn(),
-            "[progress.percentage]{task.percentage:>3.0f}%",
-            TimeElapsedColumn(),
-            TimeRemainingColumn(),
-            TextColumn("• {task.fields[current_file]}"),
-        ) as progress:
-            task = progress.add_task(f"Loading {len(python_files)} files", total=len(python_files), current_file="")
-            for file_path in python_files:
-                p = Path(file_path)
-                progress.update(task, advance=1, current_file=p.name)
-                # Skip __init__.py files
-                if p.name == "__init__.py":
-                    continue
+        # Filter out __init__.py files
+        python_files = [f for f in python_files if f.name != "__init__.py"]
 
-                try:
-                    module_name = _load_module_from_file(p)
-                    if module_name:
-                        loaded_modules.append(module_name)
-                except flyte.errors.ModuleLoadError as e:
-                    failed_paths.append((p, str(e)))
+        if not python_files:
+            # If no .py files found, try importing as a module
+            try:
+                rel_path = path.resolve().relative_to(root_dir)
+                mod = ".".join(rel_path.parts)
+                importlib.import_module(mod)
+                loaded_modules.append(mod)
+            except (ValueError, ModuleNotFoundError):
+                pass
+        else:
+            with Progress(
+                TextColumn("[progress.description]{task.description}"),
+                BarColumn(),
+                "[progress.percentage]{task.percentage:>3.0f}%",
+                TimeElapsedColumn(),
+                TimeRemainingColumn(),
+                TextColumn("• {task.fields[current_file]}"),
+            ) as progress:
+                task = progress.add_task(
+                    f"Loading {len(python_files)} files",
+                    total=len(python_files),
+                    current_file=""
+                )
 
-            progress.update(task, advance=1, current_file="[green]Done[/green]")
+                for file_path in python_files:
+                    progress.update(task, advance=1, current_file=file_path.name)
+
+                    try:
+                        rel_path = file_path.resolve().relative_to(root_dir)
+                        mod = (".".join(rel_path.parts))[:-3]
+                        imported_module = importlib.import_module(mod)
+                        loaded_modules.append(imported_module)
+                    except flyte.errors.ModuleLoadError as e:
+                        failed_paths.append((file_path, str(e)))
+
+                progress.update(task, current_file="[green]Done[/green]")
 
     return loaded_modules, failed_paths
 

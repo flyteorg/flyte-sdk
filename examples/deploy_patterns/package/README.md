@@ -24,44 +24,44 @@ from lib.workflows import utils
 
 ## Running Locally or Remote
 
-When running workflows, you need to update the `PYTHONPATH` environment variable:
+When running workflows with a package structure, use the `--root-dir` flag to specify the root directory of your package:
 
 ```bash
-PYTHONPATH=.:$PYTHONPATH flyte run lib/workflows/workflow1.py process_workflow
+flyte run --root-dir . lib/workflows/workflow1.py process_workflow
 ```
 
 Or for workflow2:
 
 ```bash
-PYTHONPATH=.:$PYTHONPATH flyte run lib/workflows/workflow2.py math_workflow --n 6
+flyte run --root-dir . lib/workflows/workflow2.py math_workflow --n 6
 ```
 
-### Why PYTHONPATH is Required
+### How `--root-dir` Works
 
-When Flyte loads modules locally, it assumes it's running in a correctly configured Python environment and does **not** automatically modify the Python path. This is intentional behavior because:
+The `--root-dir` flag automatically sets the Python path (`sys.path`) to the location pointed by `--root-dir`. This ensures that:
 
-1. **Avoiding Unintended Side Effects**: Automatically adding the current directory to `PYTHONPATH` could lead to:
-   - Module name conflicts with system or site packages
-   - Accidental shadowing of standard library modules
-   - Inconsistent behavior between local development and remote execution
-   - Difficulties in reproducing bugs if the local environment differs from production
+1. **Local execution**: Your package imports work correctly when running locally
+2. **Consistent behavior**: The same Python path configuration is used both locally and at runtime
+3. **No manual PYTHONPATH**: You don't need to manually export or modify `PYTHONPATH` environment variables
 
-2. **Environment Isolation**: Modifying `PYTHONPATH` globally could affect other Python processes and tools running on your system.
+### Runtime and Deploy Behavior
 
-3. **Explicit Configuration**: Requiring explicit `PYTHONPATH` configuration makes dependencies clear and prevents "it works on my machine" issues.
-
-### Runtime Behavior
-
-At runtime, when code is deployed to a Flyte cluster:
+When code is executed remotely (via `flyte run` without `--local` or `flyte deploy`):
 - Flyte packages and copies your code to the execution environment
-- The `--root-dir` is specified or `current working directory` is automatically added to `PYTHONPATH` in the runtime container
-- This ensures your package imports work correctly in the remote environment
+- The same package structure is preserved in the runtime container
+- The `--root-dir` location is automatically added to `sys.path` in the runtime environment
+- This ensures your package imports work identically in both local and remote execution
 
-The local behavior intentionally differs to prevent assumptions that might not hold in production.
+The `flyte deploy` command follows the same pattern:
+```bash
+flyte deploy --root-dir . lib/workflows/workflow1.py
+```
+
+This will package the code from the root directory and configure the runtime to use the same Python path.
 
 ## Alternative: Using a Python Project
 
-A common and recommended solution is to create a proper Python project with a `pyproject.toml` file. This allows you to install your package in development mode:
+For larger projects, you can create a proper Python project with a `pyproject.toml` file:
 
 ```toml
 # pyproject.toml
@@ -80,10 +80,17 @@ Then install in editable mode:
 pip install -e .
 ```
 
-After this, you can run workflows without modifying `PYTHONPATH`:
+After this, you can run workflows without the `--root-dir` flag:
 
 ```bash
 flyte run lib/workflows/workflow1.py process_workflow
 ```
 
-This approach is cleaner for larger projects and provides better integration with Python tooling.
+However, when deploying or running remotely, you should still use `--root-dir` to ensure consistent package structure:
+
+```bash
+flyte run --root-dir . lib/workflows/workflow1.py process_workflow
+flyte deploy --root-dir . lib/workflows/workflow1.py
+```
+
+This approach provides better integration with Python tooling and dependency management while maintaining consistency between local and remote execution.

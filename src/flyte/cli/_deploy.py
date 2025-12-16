@@ -92,7 +92,7 @@ class DeployArguments:
                 flag_value=True,
                 default=False,
                 help="Disable synchronization of local sys.path entries under the root directory "
-                "to the remote container.",
+                     "to the remote container.",
             )
         },
     )
@@ -178,8 +178,11 @@ class DeployEnvRecursiveCommand(click.Command):
         )
         console = common.get_console()
 
+        root_dir = Path.cwd()
+        if self.deploy_args.root_dir:
+            root_dir = pathlib.Path(self.deploy_args.root_dir).resolve()
         # Load all python modules
-        loaded_modules, failed_paths = load_python_modules(self.path, self.deploy_args.recursive)
+        loaded_modules, failed_paths = load_python_modules(self.path, root_dir, self.deploy_args.recursive)
         if failed_paths:
             console.print(f"Loaded {len(loaded_modules)} modules with, but failed to load {len(failed_paths)} paths:")
             console.print(
@@ -266,10 +269,10 @@ class EnvFiles(common.FileGroup):
     common_options_enabled = False
 
     def __init__(
-        self,
-        *args,
-        directory: Path | None = None,
-        **kwargs,
+            self,
+            *args,
+            directory: Path | None = None,
+            **kwargs,
     ):
         if "params" not in kwargs:
             kwargs["params"] = []
