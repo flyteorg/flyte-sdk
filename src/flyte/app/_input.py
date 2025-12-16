@@ -5,14 +5,19 @@ import re
 import typing
 from dataclasses import dataclass, field
 from functools import cache, cached_property
-from typing import List, Literal, Optional
+from typing import TYPE_CHECKING, List, Literal, Optional
 
 from pydantic import BaseModel, model_validator
 
 import flyte.io
 from flyte._initialize import requires_initialization
 from flyte._logging import logger
-from flyte.remote._task import AutoVersioning
+
+if TYPE_CHECKING:
+    from flyte.remote._task import AutoVersioning
+else:
+    AutoVersioning = Literal["latest", "current"]
+
 
 InputTypes = str | flyte.io.File | flyte.io.Dir
 _SerializedInputType = Literal["string", "file", "directory"]
