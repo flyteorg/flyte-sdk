@@ -50,6 +50,8 @@ def _wandb_run(new_run: bool = True):
         if new_run or not saved_run_id:
             # Create new run ID
             init_kwargs["id"] = f"{ctx.action.run_name}-{ctx.action.name}"
+            if "reinit" not in init_kwargs:
+                init_kwargs["reinit"] = "create_new"
         else:
             if not saved_run_id:
                 raise RuntimeError("Expected saved_run_id when reusing parent's run ID")
