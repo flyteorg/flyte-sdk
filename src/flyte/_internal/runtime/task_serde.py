@@ -131,9 +131,6 @@ def get_proto_task(task: TaskTemplate, serialize_context: SerializationContext) 
         container = _get_urun_container(serialize_context, task)
         pod = None
 
-    if task.link:
-        extra_config.update(task.link.get_config())
-
     custom = task.custom_config(serialize_context)
 
     sql = task.sql(serialize_context)
