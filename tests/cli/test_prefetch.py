@@ -74,8 +74,9 @@ def test_hf_model_help_shows_all_options(runner):
         "--hf-token-key",
         "--cpu",
         "--mem",
-        "--ephemeral-storage",
-        "--accelerator",
+        "--disk",
+        "--gpu",
+        "--shm",
         "--shard-config",
         "--project",
         "--domain",
@@ -91,14 +92,14 @@ def test_hf_model_requires_repo_argument(runner):
     assert "Missing argument" in result.output or "REPO" in result.output
 
 
-def test_hf_model_invalid_accelerator(runner, mock_cfg):
-    """Test hf-model command rejects invalid accelerator."""
+def test_hf_model_invalid_gpu(runner, mock_cfg):
+    """Test hf-model command rejects invalid gpu."""
     result = runner.invoke(
         prefetch,
         [
             "hf-model",
             "meta-llama/Llama-2-7b-hf",
-            "--accelerator",
+            "--gpu",
             "InvalidGPU:1",
         ],
         obj=mock_cfg,
@@ -159,7 +160,7 @@ args:
                 "meta-llama/Llama-2-70b-hf",
                 "--shard-config",
                 shard_config_path,
-                "--accelerator",
+                "--gpu",
                 "A100:8",
             ],
             obj=mock_cfg,
@@ -287,9 +288,9 @@ def test_hf_model_with_all_options(mock_init_config, mock_prefetch, runner, mock
             "4",
             "--mem",
             "32Gi",
-            "--ephemeral-storage",
+            "--disk",
             "100Gi",
-            "--accelerator",
+            "--gpu",
             "A100:1",
         ],
         obj=mock_cfg,
@@ -308,7 +309,7 @@ def test_hf_model_with_all_options(mock_init_config, mock_prefetch, runner, mock
     assert call_kwargs["short_description"] == "Test model"
     assert call_kwargs["force"] == 1
     assert call_kwargs["hf_token_key"] == "MY_HF_TOKEN"
-    # Resources are now passed as a Resources object
+    # Resources are passed as a Resources object
     assert call_kwargs["resources"].cpu == "4"
     assert call_kwargs["resources"].memory == "32Gi"
     assert call_kwargs["resources"].disk == "100Gi"

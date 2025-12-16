@@ -17,11 +17,11 @@ from typing import TYPE_CHECKING, Any, Literal
 from pydantic import BaseModel, Field
 
 from flyte._logging import logger
+from flyte._resources import Resources
 from flyte._task_environment import TaskEnvironment
 from flyte.io import Dir
 
 if TYPE_CHECKING:
-    from flyte._resources import Resources
     from flyte.remote import Run
 
 
@@ -439,7 +439,7 @@ def hf_model(
     short_description: str | None = None,
     shard_config: ShardConfig | None = None,
     hf_token_key: str = "HF_TOKEN",
-    resources: Resources | None = None,
+    resources: Resources = Resources(cpu="2", memory="8Gi", disk="50Gi"),
     force: int = 0,
 ) -> Run:
     """
@@ -495,15 +495,16 @@ def hf_model(
     :param hf_token_key: Name of the secret containing the HuggingFace token. Default: 'HF_TOKEN'.
     :param cpu: CPU request for the prefetch task (e.g., '2').
     :param mem: Memory request for the prefetch task (e.g., '16Gi').
-    :param ephemeral_storage: Ephemeral storage request (e.g., '100Gi').
-    :param accelerator: Accelerator type in format '{type}:{quantity}' (e.g., 'A100:8', 'L4:1').
+    :param disk: Disk storage request (e.g., '100Gi').
+    :param gpu: Accelerator type in format '{type}:{quantity}' (e.g., 'A100:8', 'L4:1').
+    :param shm: Shared memory request (e.g., '100Gi', 'auto').
     :param wait: Whether to wait for the prefetch task to complete. Default: False.
     :param force: Force re-prefetch. Increment to force a new prefetch. Default: 0.
 
     :return: A Run object representing the prefetch task execution.
     """
     import flyte
-    from flyte import Resources, Secret
+    from flyte import Secret
     from flyte.remote import Run
 
     _validate_artifact_name(artifact_name)
@@ -518,13 +519,6 @@ def hf_model(
         model_type=model_type,
         short_description=short_description,
         shard_config=shard_config,
-    )
-
-    # Build resources - use accelerator directly since Resources.gpu accepts Accelerators strings
-    resources = resources or Resources(
-        cpu="2",
-        memory="8Gi",
-        disk="50Gi",
     )
 
     # Select image based on whether sharding is needed

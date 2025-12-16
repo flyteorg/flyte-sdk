@@ -460,8 +460,8 @@ def test_hf_model_invalid_artifact_name_raises():
         )
 
 
-def test_hf_model_invalid_accelerator_raises():
-    """Test that invalid accelerator in Resources raises ValueError."""
+def test_hf_model_invalid_gpu_raises():
+    """Test that invalid gpu accelerator raises ValueError."""
     from flyte._resources import Resources
     from flyte.prefetch._hf_model import hf_model
 
