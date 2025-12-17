@@ -1,9 +1,22 @@
 from flyte.models import TaskContext
 
-from .context import get_wandb_context, wandb_config
-from .decorator import wandb_init
+from .context import (
+    get_wandb_context,
+    get_wandb_sweep_context,
+    wandb_config,
+    wandb_sweep_config,
+)
+from .decorator import wandb_init, wandb_sweep
 
-__all__ = ["wandb_config", "get_wandb_context", "wandb_init", "Wandb"]
+__all__ = [
+    "wandb_config",
+    "get_wandb_context",
+    "wandb_init",
+    "wandb_sweep_config",
+    "get_wandb_sweep_context",
+    "wandb_sweep",
+    "Wandb",
+]
 
 __version__ = "0.1.0"
 
@@ -29,5 +42,19 @@ def _wandb_run_property(self):
     return self.data.get("_wandb_run")
 
 
-# Monkey-patch the property onto TaskContext
+# Add wandb_sweep_id property to TaskContext
+def _wandb_sweep_id_property(self):
+    """
+    Get the current wandb sweep_id if within a @wandb_sweep decorated task.
+    Returns None otherwise.
+    """
+    if not self.custom_context:
+        return None
+
+    # Return the sweep_id
+    return self.custom_context.get("_wandb_sweep_id")
+
+
+# Monkey-patch the properties onto TaskContext
 TaskContext.wandb_run = property(_wandb_run_property)
+TaskContext.wandb_sweep_id = property(_wandb_sweep_id_property)

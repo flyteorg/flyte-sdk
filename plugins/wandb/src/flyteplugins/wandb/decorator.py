@@ -9,7 +9,7 @@ import wandb
 import flyte
 from flyte._task import AsyncFunctionTaskTemplate
 
-from .context import get_wandb_context
+from .context import get_wandb_context, get_wandb_sweep_context
 
 F = TypeVar("F", bound=Callable[..., Any])
 
@@ -162,6 +162,99 @@ def wandb_init(_func: Optional[F] = None, *, new_run: bool = True) -> F:
                 @functools.wraps(func)
                 def sync_wrapper(*args, **kwargs):
                     with _wandb_run(new_run=new_run):
+                        return func(*args, **kwargs)
+
+                return cast(F, sync_wrapper)
+
+    if _func is None:
+        return decorator
+    return decorator(_func)
+
+
+@contextmanager
+def _create_sweep():
+    """Context manager for wandb sweep creation."""
+    ctx = flyte.ctx()
+
+    # Get sweep config from context
+    sweep_config = get_wandb_sweep_context()
+    if not sweep_config:
+        raise RuntimeError(
+            "No wandb sweep config found. Use wandb_sweep_config() "
+            "with flyte.with_runcontext() or as a context manager."
+        )
+
+    # Get wandb config for project/entity (fallback)
+    wandb_config = get_wandb_context()
+    project = sweep_config.project or (wandb_config.project if wandb_config else None)
+    entity = sweep_config.entity or (wandb_config.entity if wandb_config else None)
+
+    # Create the sweep
+    sweep_id = wandb.sweep(
+        sweep=sweep_config.to_sweep_config(),
+        project=project,
+        entity=entity,
+    )
+
+    # Store sweep_id in context (string, so custom_context is sufficient)
+    ctx.custom_context["_wandb_sweep_id"] = sweep_id
+
+    try:
+        yield sweep_id
+    finally:
+        # Clean up
+        ctx.custom_context.pop("_wandb_sweep_id", None)
+
+
+def wandb_sweep(_func: Optional[F] = None) -> F:
+    """
+    Decorator to create a wandb sweep and make sweep_id available.
+
+    This decorator:
+    1. Creates a wandb sweep using config from context
+    2. Makes sweep_id available via flyte.ctx().wandb_sweep_id
+    3. Use with wandb.controller() (recommended) or wandb.agent()
+
+    The local controller pattern is recommended for production workloads with Flyte,
+    as it allows Flyte to handle orchestration while W&B provides the sweep algorithm.
+    """
+
+    def decorator(func: F) -> F:
+        # Check if it's a Flyte task (AsyncFunctionTaskTemplate)
+        if isinstance(func, AsyncFunctionTaskTemplate):
+            original_execute = func.execute
+
+            if iscoroutinefunction(original_execute):
+
+                async def wrapped_execute(*args, **kwargs):
+                    with _create_sweep():
+                        return await original_execute(*args, **kwargs)
+
+                func.execute = wrapped_execute
+            else:
+
+                def wrapped_execute(*args, **kwargs):
+                    with _create_sweep():
+                        return original_execute(*args, **kwargs)
+
+                func.execute = wrapped_execute
+
+            return cast(F, func)
+        else:
+            # Regular function (e.g. @flyte.trace)
+            if iscoroutinefunction(func):
+
+                @functools.wraps(func)
+                async def async_wrapper(*args, **kwargs):
+                    with _create_sweep():
+                        return await func(*args, **kwargs)
+
+                return cast(F, async_wrapper)
+            else:
+
+                @functools.wraps(func)
+                def sync_wrapper(*args, **kwargs):
+                    with _create_sweep():
                         return func(*args, **kwargs)
 
                 return cast(F, sync_wrapper)
