@@ -1,10 +1,13 @@
 """A single-script Streamlit app example."""
 
 import sys
+from pathlib import Path
+
 import streamlit as st
+
 import flyte
 import flyte.app
-from pathlib import Path
+
 
 def main():
     st.set_page_config(page_title="Simple Streamlit App", page_icon="🚀")
@@ -23,9 +26,7 @@ def main():
 file_name = Path(__file__).name
 app_env = flyte.app.AppEnvironment(
     name="streamlit-single-script",
-    image=flyte.Image.from_debian_base(python_version=(3, 12)).with_pip_packages(
-        "streamlit==1.41.1"
-    ),
+    image=flyte.Image.from_debian_base(python_version=(3, 12)).with_pip_packages("streamlit==1.41.1"),
     args=[
         "streamlit",
         "run",

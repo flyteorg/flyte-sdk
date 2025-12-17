@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import glob
 import gzip
 import hashlib
 import importlib.util
@@ -139,12 +140,25 @@ def ls_relative_files(relative_paths: list[str], source_path: pathlib.Path) -> t
     relative_paths.sort()
     hasher = hashlib.md5()
 
-    all_files = []
+    all_files: list[str] = []
     for file in relative_paths:
         path = source_path / file
-        all_files.append(str(path))
-        _filehash_update(path, hasher)
-        _pathhash_update(path, hasher)
+        if path.is_dir():
+            # Filter out directories, only include files
+            all_files.extend([str(p) for p in path.glob("**/*") if p.is_file()])
+        elif path.is_file():
+            all_files.append(str(path))
+        else:
+            glob_files = glob.glob(str(path))
+            if glob_files:
+                # Filter out directories from glob results
+                all_files.extend([str(f) for f in glob_files if pathlib.Path(f).is_file()])
+            else:
+                raise ValueError(f"File {path} is not a valid file, directory, or glob pattern")
+
+    for p in all_files:
+        _filehash_update(p, hasher)
+        _pathhash_update(p, hasher)
 
     digest = hasher.hexdigest()
     return all_files, digest

@@ -1,17 +1,16 @@
 """A plain Python HTTP server example - the simplest possible app."""
 
-import flyte
-import flyte.app
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
-from http.server import HTTPServer, BaseHTTPRequestHandler
+import flyte
+import flyte.app
 
 
 class SimpleHandler(BaseHTTPRequestHandler):
     """A simple HTTP server handler."""
 
     def do_GET(self):
-
         if self.path == "/":
             self.send_response(200)
             self.send_header("Content-type", "text/html")

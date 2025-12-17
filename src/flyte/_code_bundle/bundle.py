@@ -166,7 +166,7 @@ async def build_code_bundle(
             # Copy the bundle to the given path
             shutil.copy(bundle_path, remote_path)
             _, hash_digest, _ = hash_file(file_path=bundle_path)
-        return CodeBundle(tgz=remote_path, destination=extract_dir, computed_version=hash_digest)
+        return CodeBundle(tgz=remote_path, destination=extract_dir, computed_version=hash_digest, files=files)
 
 
 @alru_cache
@@ -213,7 +213,7 @@ async def build_code_bundle_from_relative_paths(
                 shutil.copy(bundle_path, copy_bundle_to)
                 remote_path = str(copy_bundle_to / bundle_path.name)
             _, hash_digest, _ = hash_file(file_path=bundle_path)
-        return CodeBundle(tgz=remote_path, destination=extract_dir, computed_version=hash_digest)
+        return CodeBundle(tgz=remote_path, destination=extract_dir, computed_version=hash_digest, files=files)
 
 
 @log(level=logging.INFO)
