@@ -26,9 +26,21 @@ def _to_dict_helper(obj, prefix: str) -> dict[str, str]:
 def _from_dict_helper(cls, d: dict[str, str], prefix: str):
     """Create dataclass from custom_context dict."""
     kwargs = {}
-    prefix_len = len(prefix) + 1
+    prefix_with_underscore = f"{prefix}_"
+    prefix_len = len(prefix_with_underscore)
+
+    # Exclude keys that match longer/more-specific prefixes
+    # (e.g., when processing "wandb", exclude "wandb_sweep")
+    exclude_prefixes = []
+    if prefix == "wandb":
+        exclude_prefixes = ["wandb_sweep_"]
+
     for key, value in d.items():
-        if key.startswith(f"{prefix}_"):
+        if key.startswith(prefix_with_underscore):
+            # Skip if this key matches a more specific prefix
+            if any(key.startswith(excl) for excl in exclude_prefixes):
+                continue
+
             field_name = key[prefix_len:]
             try:
                 kwargs[field_name] = json.loads(value)
