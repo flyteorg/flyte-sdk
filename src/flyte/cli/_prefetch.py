@@ -28,7 +28,7 @@ def prefetch():
 @prefetch.command(name="hf-model", cls=CommandBase)
 @click.argument("repo", type=str)
 @click.option(
-    "--obstore-path",
+    "--raw-data-path",
     type=str,
     required=False,
     default=None,
@@ -113,28 +113,34 @@ def prefetch():
     "--cpu",
     type=str,
     default="2",
-    help="CPU request for the prefetch task (e.g., '2', '4').",
+    help="CPU request for the prefetch task (e.g., '2', '4', '2,4' for 2-4 CPUs).",
 )
 @click.option(
     "--mem",
     type=str,
     default="8Gi",
-    help="Memory request for the prefetch task (e.g., '16Gi', '64Gi').",
+    help="Memory request for the prefetch task (e.g., '16Gi', '64Gi', '16Gi,64Gi' for 16-64GB).",
 )
 @click.option(
-    "--ephemeral-storage",
-    type=str,
-    default="50Gi",
-    help="Ephemeral storage request for the prefetch task (e.g., '100Gi', '500Gi').",
-)
-@click.option(
-    "--accelerator",
+    "--gpu",
     type=click.Choice(ACCELERATOR_CHOICES),
     default=None,
     help=(
-        "The accelerator to use for downloading and (optionally) sharding the model. "
+        "The gpu to use for downloading and (optionally) sharding the model. "
         "Format: '{type}:{quantity}' (e.g., 'A100:8', 'L4:1')."
     ),
+)
+@click.option(
+    "--disk",
+    type=str,
+    default="50Gi",
+    help="Disk storage request for the prefetch task (e.g., '100Gi', '500Gi').",
+)
+@click.option(
+    "--shm",
+    type=str,
+    default=None,
+    help="Shared memory request for the prefetch task (e.g., '100Gi', 'auto').",
 )
 @click.option(
     "--shard-config",
@@ -148,7 +154,7 @@ def prefetch():
 def hf_model(
     cfg,
     repo: str,
-    obstore_path: str | None,
+    raw_data_path: str | None,
     artifact_name: str | None,
     architecture: str | None,
     task: str,
@@ -161,8 +167,9 @@ def hf_model(
     hf_token_key: str,
     cpu: str | None,
     mem: str | None,
-    ephemeral_storage: str | None,
-    accelerator: Accelerators | None,
+    disk: str | None,
+    gpu: Accelerators | None,
+    shm: str | None,
     shard_config: Path | None,
     project: str | None,
     domain: str | None,
@@ -238,9 +245,23 @@ def hf_model(
     console = Console()
 
     console.print("[bold green]Starting model prefetch task...")
+
+    # Parse cpu and mem for range syntax (e.g., "2, 4" -> ("2", "4"))
+    parsed_cpu: str | tuple[str, str] | None = cpu
+    if cpu is not None:
+        cpu_parts = cpu.split(", ")
+        if len(cpu_parts) > 1:
+            parsed_cpu = (cpu_parts[0], cpu_parts[1])
+
+    parsed_mem: str | tuple[str, str] | None = mem
+    if mem is not None:
+        mem_parts = mem.split(", ")
+        if len(mem_parts) > 1:
+            parsed_mem = (mem_parts[0], mem_parts[1])
+
     run = prefetch_hf_model(
         repo=repo,
-        obstore_path=obstore_path,
+        raw_data_path=raw_data_path,
         artifact_name=artifact_name,
         architecture=architecture,
         task=task,
@@ -250,12 +271,7 @@ def hf_model(
         short_description=short_description,
         shard_config=parsed_shard_config,
         hf_token_key=hf_token_key,
-        resources=Resources(
-            cpu=cpu,
-            memory=mem,
-            disk=ephemeral_storage,
-            gpu=accelerator,
-        ),
+        resources=Resources(cpu=parsed_cpu, memory=parsed_mem, disk=disk, gpu=gpu, shm=shm),
         force=force,
     )
 

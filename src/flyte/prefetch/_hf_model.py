@@ -17,11 +17,11 @@ from typing import TYPE_CHECKING, Any, Literal
 from pydantic import BaseModel, Field
 
 from flyte._logging import logger
+from flyte._resources import Resources
 from flyte._task_environment import TaskEnvironment
 from flyte.io import Dir
 
 if TYPE_CHECKING:
-    from flyte._resources import Resources
     from flyte.remote import Run
 
 
@@ -331,7 +331,7 @@ def _shard_model(
 # NOTE: the info argument is a json string instead of a HuggingFaceModelInfo
 # object because the type engine cannot handle nested pydantic or dataclass
 # objects when run in interactive mode.
-def store_hf_model_task(info: str, obstore_path: str | None = None) -> Dir:
+def store_hf_model_task(info: str, raw_data_path: str | None = None) -> Dir:
     """Task to store a HuggingFace model."""
 
     import huggingface_hub
@@ -384,15 +384,15 @@ def store_hf_model_task(info: str, obstore_path: str | None = None) -> Dir:
 
             # Upload sharded model
             logger.info("Uploading sharded model...")
-            result_dir = Dir.from_local_sync(sharded_dir, remote_destination=obstore_path)
+            result_dir = Dir.from_local_sync(sharded_dir, remote_destination=raw_data_path)
 
     else:
         # Try direct streaming first
         try:
             logger.info("Attempting direct streaming to remote storage...")
 
-            if obstore_path is not None:
-                remote_path = obstore_path
+            if raw_data_path is not None:
+                remote_path = raw_data_path
             else:
                 remote_path = flyte.ctx().raw_data_path.get_random_remote_path(artifact_name)  # type: ignore [union-attr]
 
@@ -407,7 +407,7 @@ def store_hf_model_task(info: str, obstore_path: str | None = None) -> Dir:
             # Fallback: download snapshot and upload
             with tempfile.TemporaryDirectory() as local_model_dir:
                 _local_model_dir, card = _download_snapshot_to_local(_info.repo, commit, token, local_model_dir)
-                result_dir = Dir.from_local_sync(_local_model_dir, remote_destination=obstore_path)
+                result_dir = Dir.from_local_sync(_local_model_dir, remote_destination=raw_data_path)
 
     # create report from the markdown `card`
     if card:
@@ -429,7 +429,7 @@ def store_hf_model_task(info: str, obstore_path: str | None = None) -> Dir:
 def hf_model(
     repo: str,
     *,
-    obstore_path: str | None = None,
+    raw_data_path: str | None = None,
     artifact_name: str | None = None,
     architecture: str | None = None,
     task: str = "auto",
@@ -439,7 +439,7 @@ def hf_model(
     short_description: str | None = None,
     shard_config: ShardConfig | None = None,
     hf_token_key: str = "HF_TOKEN",
-    resources: Resources | None = None,
+    resources: Resources = Resources(cpu="2", memory="8Gi", disk="50Gi"),
     force: int = 0,
 ) -> Run:
     """
@@ -495,15 +495,16 @@ def hf_model(
     :param hf_token_key: Name of the secret containing the HuggingFace token. Default: 'HF_TOKEN'.
     :param cpu: CPU request for the prefetch task (e.g., '2').
     :param mem: Memory request for the prefetch task (e.g., '16Gi').
-    :param ephemeral_storage: Ephemeral storage request (e.g., '100Gi').
-    :param accelerator: Accelerator type in format '{type}:{quantity}' (e.g., 'A100:8', 'L4:1').
+    :param disk: Disk storage request (e.g., '100Gi').
+    :param gpu: Accelerator type in format '{type}:{quantity}' (e.g., 'A100:8', 'L4:1').
+    :param shm: Shared memory request (e.g., '100Gi', 'auto').
     :param wait: Whether to wait for the prefetch task to complete. Default: False.
     :param force: Force re-prefetch. Increment to force a new prefetch. Default: 0.
 
     :return: A Run object representing the prefetch task execution.
     """
     import flyte
-    from flyte import Resources, Secret
+    from flyte import Secret
     from flyte.remote import Run
 
     _validate_artifact_name(artifact_name)
@@ -518,13 +519,6 @@ def hf_model(
         model_type=model_type,
         short_description=short_description,
         shard_config=shard_config,
-    )
-
-    # Build resources - use accelerator directly since Resources.gpu accepts Accelerators strings
-    resources = resources or Resources(
-        cpu="2",
-        memory="8Gi",
-        disk="50Gi",
     )
 
     # Select image based on whether sharding is needed
@@ -564,6 +558,6 @@ def hf_model(
     )
     task = env.task(report=True)(store_hf_model_task)  # type: ignore [assignment]
     run = flyte.with_runcontext(interactive_mode=True, disable_run_cache=disable_run_cache).run(
-        task, info.model_dump_json(), obstore_path
+        task, info.model_dump_json(), raw_data_path
     )
     return typing.cast(Run, run)
