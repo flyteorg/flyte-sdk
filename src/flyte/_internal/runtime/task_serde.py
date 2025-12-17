@@ -287,7 +287,7 @@ def _get_mig_resources_from_extended_resources(
                                 Can be overridden via Resources.gpu_partition_resource_prefix
     :return: Dict mapping MIG resource name to quantity (e.g., {"nvidia.com/mig-1g.10gb": "1"})
     """
-    mig_resources = {}
+    mig_resources = Dict[str, str] = {}
 
     if extended_resources is None or not extended_resources.gpu_accelerator:
         return mig_resources
