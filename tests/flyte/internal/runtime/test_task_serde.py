@@ -16,6 +16,7 @@ from kubernetes.client import (
 
 import flyte
 from flyte import PodTemplate
+from flyte._internal.runtime.resources_serde import get_proto_extended_resources
 from flyte._internal.runtime.task_serde import (
     _get_k8s_pod,
     _get_urun_container,
@@ -242,7 +243,8 @@ def test_get_proto_k8s_pod_task():
     assert isinstance(proto_task, tasks_pb2.TaskTemplate)
 
     # Check k8s_pod
-    k8s_pod = _get_k8s_pod(_get_urun_container(context, t1), pod_template1)
+    extended_resources = get_proto_extended_resources(t1.resources)
+    k8s_pod = _get_k8s_pod(_get_urun_container(context, t1), pod_template1, t1, extended_resources)
     assert proto_task.k8s_pod == k8s_pod
     assert proto_task.k8s_pod.metadata.labels == {"foo": "bar"}
     assert proto_task.k8s_pod.metadata.annotations == {"baz": "qux"}
