@@ -367,8 +367,8 @@ class Resources:
     :param shm: The amount of shared memory to allocate to the task. This is a string of the form "10GiB" or "auto".
         If "auto", then the shared memory will be set to max amount of shared memory available on the node.
     :param gpu_partition_resource_prefix: Optional override for the GPU partition (MIG) resource name prefix.
-+       Defaults to "nvidia.com/mig" when a GPU partition is specified.  Only applies when GPU partition is requested.
-+       For example, set to "custom. company.com/mig" to override the resource name prefix.
+        Defaults to "nvidia.com/mig" when a GPU partition is specified. Only applies when GPU partition is requested.
+        For example, set to "custom.company.com/mig" to override the resource name prefix.
     """
 
     cpu: Union[CPUBaseType, Tuple[CPUBaseType, CPUBaseType], None] = None

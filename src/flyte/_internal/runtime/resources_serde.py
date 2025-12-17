@@ -89,7 +89,7 @@ def _get_disk_resource_entry(disk: str) -> tasks_pb2.Resources.ResourceEntry:
 def get_proto_extended_resources(resources: Resources | None) -> Optional[tasks_pb2.ExtendedResources]:
     """
     Get extended resources (GPU accelerator, shared memory) for the task.
-    
+
     :param resources: Resources object containing GPU and shared memory configuration
     :return: ExtendedResources protobuf or None if no extended resources are configured
     """
@@ -138,7 +138,6 @@ def _convert_resources_to_resource_entries(
                 # Partitioned GPUs (MIG) are handled separately at Pod spec creation
                 if device.partition is None:
                     request_entries.append(_get_gpu_resource_entry(device.quantity))
-
 
     if resources.disk is not None:
         request_entries.append(_get_disk_resource_entry(resources.disk))
