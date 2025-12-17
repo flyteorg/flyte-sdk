@@ -258,6 +258,7 @@ class CodeBundle:
     tgz: str | None = None
     pkl: str | None = None
     downloaded_path: pathlib.Path | None = None
+    files: List[str] | None = None
 
     # runtime_dependencies: Tuple[str, ...] = field(default_factory=tuple)  In the future if we want we could add this
     # but this messes up actors, spark etc
