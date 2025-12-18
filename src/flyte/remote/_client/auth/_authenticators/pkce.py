@@ -246,10 +246,10 @@ class AuthorizationClient(object):
         query = _urlencode(self._request_auth_code_params)
         endpoint = _urlparse.urlunparse((scheme, netloc, path, None, query, None))
         logger.debug(f"Requesting authorization code through {endpoint}")
-
-        success = webbrowser.open_new_tab(endpoint)  # type: ignore
-        if not success:
-            click.secho(f"Please open the following link in your browser to authenticate: {endpoint}")
+        return
+        # success = webbrowser.open_new_tab(endpoint)  # type: ignore
+        # if not success:
+        #     click.secho(f"Please open the following link in your browser to authenticate: {endpoint}")
 
     async def _credentials_from_response(self, auth_token_resp) -> Credentials:
         """
@@ -410,10 +410,11 @@ class OAuthCallbackHandler:
         :param reader: The StreamReader for reading the incoming request
         :param writer: The StreamWriter for writing the response
         """
-        data = await reader.read()
-        message = data.decode()
-        headers = message.split("\r\n")
-        path = headers[0].split(" ")[1]
+        # Read only the first line of the HTTP request (e.g., "GET /callback?code=...&state=... HTTP/1.1")
+        # Using readline() instead of read() because read() waits for EOF, which won't come
+        # until the client closes the connection - but the client is waiting for our response first.
+        request_line = await reader.readline()
+        path = request_line.decode().split(" ")[1]
         url = _urlparse.urlparse(path)
         if url.path.strip("/") == self.redirect_path.strip("/"):
             response = f"HTTP/1.1 {_StatusCodes.OK.value} {_StatusCodes.OK.phrase}\r\n"
