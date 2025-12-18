@@ -137,6 +137,7 @@ class Action(ToJSONMixin):
     async def listall(
         cls,
         for_run_name: str,
+        in_phase: Tuple[ActionPhase | str, ...] | None = None,
         filters: str | None = None,
         sort_by: Tuple[str, Literal["asc", "desc"]] | None = None,
     ) -> Union[Iterator[Action], AsyncIterator[Action]]:
@@ -144,9 +145,10 @@ class Action(ToJSONMixin):
         Get all actions for a given run.
 
         :param for_run_name: The name of the run.
+        :param in_phase: Filter actions by one or more phases.
         :param filters: The filters to apply to the project list.
         :param sort_by: The sorting criteria for the project list, in the format (field, order).
-        :return: An iterator of projects.
+        :return: An iterator of actions.
         """
         ensure_client()
         token = None
@@ -155,12 +157,44 @@ class Action(ToJSONMixin):
             key=sort_by[0],
             direction=(list_pb2.Sort.ASCENDING if sort_by[1] == "asc" else list_pb2.Sort.DESCENDING),
         )
+
+        # Build filters for phase
+        filter_list = []
+        if in_phase:
+            from flyteidl2.common import phase_pb2
+            from flyte._logging import logger
+
+            phases = [
+                str(p.to_protobuf_value())
+                if isinstance(p, ActionPhase)
+                else str(phase_pb2.ActionPhase.Value(f"ACTION_PHASE_{p.upper()}"))
+                for p in in_phase
+            ]
+            logger.debug(f"Fetching action phases: {phases}")
+            if len(phases) > 1:
+                filter_list.append(
+                    list_pb2.Filter(
+                        function=list_pb2.Filter.Function.VALUE_IN,
+                        field="phase",
+                        values=phases,
+                    ),
+                )
+            else:
+                filter_list.append(
+                    list_pb2.Filter(
+                        function=list_pb2.Filter.Function.EQUAL,
+                        field="phase",
+                        values=phases[0],
+                    ),
+                )
+
         cfg = get_init_config()
         while True:
             req = list_pb2.ListRequest(
                 limit=100,
                 token=token,
                 sort_by=sort_pb2,
+                filters=filter_list if filter_list else None,
             )
             resp = await get_client().run_service.ListActions(
                 run_service_pb2.ListActionsRequest(

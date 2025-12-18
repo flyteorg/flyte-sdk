@@ -139,11 +139,17 @@ def task(
 @get.command(cls=common.CommandBase)
 @click.argument("run_name", type=str, required=True)
 @click.argument("action_name", type=str, required=False)
+@click.option(
+    "--in-phase",
+    type=click.Choice([p.value for p in ActionPhase], case_sensitive=False),
+    help="Filter actions by their phase.",
+)
 @click.pass_obj
 def action(
     cfg: common.CLIConfig,
     run_name: str,
     action_name: str | None = None,
+    in_phase: str | None = None,
     project: str | None = None,
     domain: str | None = None,
 ):
@@ -161,8 +167,17 @@ def action(
         )
     else:
         # List all actions for the run
+        if in_phase:
+            in_phase_tuple = (ActionPhase(in_phase),)
+        else:
+            in_phase_tuple = None
+
         console.print(
-            common.format(f"Actions for {run_name}", remote.Action.listall(for_run_name=run_name), cfg.output_format)
+            common.format(
+                f"Actions for {run_name}",
+                remote.Action.listall(for_run_name=run_name, in_phase=in_phase_tuple),
+                cfg.output_format,
+            )
         )
 
 
