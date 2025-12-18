@@ -9,6 +9,7 @@ import rich.repr
 
 import flyte.app
 from flyte.models import SerializationContext
+from flyte._logging import logger
 
 if TYPE_CHECKING:
     import fastapi
@@ -67,7 +68,7 @@ def _extract_fastapi_app_module_and_var(
     # Calculate module name relative to source_dir
     try:
         relative_path = file_path.relative_to(serialization_context.root_dir or pathlib.Path("."))
-        print(f"Relative path: {relative_path}, {serialization_context.root_dir} {pathlib.Path('.')}")
+        logger.info(f"Relative path: {relative_path}, {serialization_context.root_dir} {pathlib.Path('.')}")
         module_name = pathlib.Path(relative_path).with_suffix("").as_posix().replace("/", ".")
     except ValueError:
         # File is not relative to source_dir, use the stem
