@@ -20,6 +20,7 @@ DEFAULT_VLLM_IMAGE = (
     .with_pip_packages("flyteplugins-vllm", pre=True)
 )
 
+
 @rich.repr.auto
 @dataclass(kw_only=True, repr=True)
 class VLLMAppEnvironment(flyte.app.AppEnvironment):

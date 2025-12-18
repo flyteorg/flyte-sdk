@@ -11,7 +11,6 @@ from flyte.app import Input, RunOutput
 from flyte.app._types import Port
 from flyte.models import SerializationContext
 
-
 DEFAULT_SGLANG_IMAGE = (
     flyte.Image.from_debian_base(name="sglang-app-image", python_version=(3, 12))
     # install system dependencies, including CUDA toolkit
