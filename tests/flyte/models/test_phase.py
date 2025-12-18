@@ -78,9 +78,14 @@ class TestActionPhase:
         assert ActionPhase.SUCCEEDED.value == "succeeded"
         assert ActionPhase.RUNNING.value == "running"
 
-        # Can be used in string contexts
+        # Can be used in string contexts - the enum compares equal to its value
         assert ActionPhase.QUEUED == "queued"
-        assert f"{ActionPhase.SUCCEEDED}" == "ActionPhase.SUCCEEDED"  # str() gives enum name
+        assert ActionPhase.SUCCEEDED == "succeeded"
+
+        # Note: str() behavior differs between Python 3.10 and 3.11+
+        # In 3.10: str(ActionPhase.SUCCEEDED) == "succeeded"
+        # In 3.11+: str(ActionPhase.SUCCEEDED) == "ActionPhase.SUCCEEDED"
+        # We rely on the enum's equality with its string value, not str() representation
 
     def test_enum_can_be_used_in_sets(self):
         """Test that enum can be used in sets and dictionaries."""

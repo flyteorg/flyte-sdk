@@ -162,6 +162,7 @@ class Action(ToJSONMixin):
         filter_list = []
         if in_phase:
             from flyteidl2.common import phase_pb2
+
             from flyte._logging import logger
 
             phases = [
