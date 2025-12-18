@@ -28,10 +28,29 @@ def _build_init_kwargs() -> dict[str, Any]:
 
 
 @contextmanager
-def _wandb_run(new_run: bool = True):
-    """Context manager for wandb run lifecycle and action marking."""
+def _wandb_run(new_run: bool = True, **decorator_kwargs):
+    """
+    Context manager for wandb run lifecycle and action marking.
+
+    Works with or without Flyte context:
+    - With Flyte context: Full features (parent-child tracking, shared runs, config from context)
+    - Without Flyte context: Basic wandb.init() (useful for sweep objectives)
+    """
+    # Try to get Flyte context
     ctx = flyte.ctx()
 
+    # Fallback mode: No Flyte context available
+    # This enables @wandb_init to work in wandb.agent() callbacks (sweep objectives)
+    if ctx is None:
+        # Use config from decorator params
+        run = wandb.init(**decorator_kwargs)
+        try:
+            yield run
+        finally:
+            run.finish()
+        return
+
+    # Full Flyte-aware mode with enhanced features
     # Save existing state to restore later (task-local)
     saved_run = ctx.data.get("_wandb_run")
 
@@ -44,6 +63,9 @@ def _wandb_run(new_run: bool = True):
 
     # Build init kwargs from context
     init_kwargs = _build_init_kwargs()
+
+    # Merge with decorator params (decorator params take precedence)
+    init_kwargs.update(decorator_kwargs)
 
     # Determine run ID
     if "id" not in init_kwargs or init_kwargs["id"] is None:
@@ -109,23 +131,47 @@ def _wandb_run(new_run: bool = True):
             ctx.custom_context.pop("_wandb_init_action", None)
 
 
-def wandb_init(_func: Optional[F] = None, *, new_run: bool = True) -> F:
+def wandb_init(
+    _func: Optional[F] = None,
+    *,
+    new_run: bool = True,
+    project: Optional[str] = None,
+    entity: Optional[str] = None,
+    **kwargs,
+) -> F:
     """
     Decorator to automatically initialize wandb for Flyte tasks and traces.
+
+    Works with or without Flyte context - decorator params provide config when context unavailable.
 
     Args:
         new_run: If True (default), creates a new wandb run with a unique ID.
                  If False, reuses the parent's run ID (useful for child tasks
                  that should log to the same run as their parent).
+        project: W&B project name (overrides context config if provided)
+        entity: W&B entity/team name (overrides context config if provided)
+        **kwargs: Additional wandb.init() parameters (tags, config, mode, etc.)
+
+    Behavior:
+        - Without Flyte context: Uses decorator params directly
+        - With Flyte context: Merges context config + decorator params (decorator wins)
 
     This decorator:
     1. Initializes a wandb run before execution
-    2. Auto-generates unique run ID from Flyte action context (if not provided)
-    3. Makes the run available via flyte.ctx().wandb_run
+    2. Auto-generates unique run ID from Flyte action context (if available)
+    3. Makes the run available via flyte.ctx().wandb_run (or wandb.run in fallback mode)
     4. Automatically finishes the run after completion
     """
 
     def decorator(func: F) -> F:
+        # Build decorator kwargs dict to pass to _wandb_run
+        decorator_kwargs = {}
+        if project is not None:
+            decorator_kwargs["project"] = project
+        if entity is not None:
+            decorator_kwargs["entity"] = entity
+        decorator_kwargs.update(kwargs)
+
         # Check if it's a Flyte task (AsyncFunctionTaskTemplate)
         if isinstance(func, AsyncFunctionTaskTemplate):
             # Wrap the task's execute method with wandb_run
@@ -133,16 +179,16 @@ def wandb_init(_func: Optional[F] = None, *, new_run: bool = True) -> F:
 
             if iscoroutinefunction(original_execute):
 
-                async def wrapped_execute(*args, **kwargs):
-                    with _wandb_run(new_run=new_run):
-                        return await original_execute(*args, **kwargs)
+                async def wrapped_execute(*args, **exec_kwargs):
+                    with _wandb_run(new_run=new_run, **decorator_kwargs):
+                        return await original_execute(*args, **exec_kwargs)
 
                 func.execute = wrapped_execute
             else:
 
-                def wrapped_execute(*args, **kwargs):
-                    with _wandb_run(new_run=new_run):
-                        return original_execute(*args, **kwargs)
+                def wrapped_execute(*args, **exec_kwargs):
+                    with _wandb_run(new_run=new_run, **decorator_kwargs):
+                        return original_execute(*args, **exec_kwargs)
 
                 func.execute = wrapped_execute
 
@@ -152,17 +198,17 @@ def wandb_init(_func: Optional[F] = None, *, new_run: bool = True) -> F:
             if iscoroutinefunction(func):
 
                 @functools.wraps(func)
-                async def async_wrapper(*args, **kwargs):
-                    with _wandb_run(new_run=new_run):
-                        return await func(*args, **kwargs)
+                async def async_wrapper(*args, **wrapper_kwargs):
+                    with _wandb_run(new_run=new_run, **decorator_kwargs):
+                        return await func(*args, **wrapper_kwargs)
 
                 return cast(F, async_wrapper)
             else:
 
                 @functools.wraps(func)
-                def sync_wrapper(*args, **kwargs):
-                    with _wandb_run(new_run=new_run):
-                        return func(*args, **kwargs)
+                def sync_wrapper(*args, **wrapper_kwargs):
+                    with _wandb_run(new_run=new_run, **decorator_kwargs):
+                        return func(*args, **wrapper_kwargs)
 
                 return cast(F, sync_wrapper)
 
