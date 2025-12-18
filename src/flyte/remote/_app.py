@@ -12,7 +12,6 @@ from flyte._logging import logger
 from flyte.syncify import syncify
 
 from ._common import ToJSONMixin, filtering, sorting
-from ._console import get_app_url
 
 WaitFor = Literal["activated", "deactivated"]
 
@@ -74,9 +73,7 @@ class App(ToJSONMixin):
     @property
     def url(self) -> str:
         client = get_client()
-        return get_app_url(
-            client.endpoint,
-            insecure=client.insecure,
+        return client.console.app_url(
             project=self.pb2.metadata.id.project,
             domain=self.pb2.metadata.id.domain,
             app_name=self.name,

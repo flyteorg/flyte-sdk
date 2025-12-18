@@ -8,8 +8,8 @@ from typing import TYPE_CHECKING, Tuple
 import rich.repr
 
 import flyte.app
-from flyte.models import SerializationContext
 from flyte._logging import logger
+from flyte.models import SerializationContext
 
 if TYPE_CHECKING:
     import fastapi
