@@ -10,16 +10,12 @@ from flyteidl2.workflow import run_definition_pb2, run_service_pb2
 
 from flyte._initialize import ensure_client, get_client, get_init_config
 from flyte._logging import logger
+from flyte.models import ActionPhase
 from flyte.syncify import syncify
 
 from . import Action, ActionDetails, ActionInputs, ActionOutputs
 from ._action import _action_details_rich_repr, _action_rich_repr
 from ._common import ToJSONMixin, filtering, sorting
-
-# @kumare3 is sadpanda, because we have to create a mirror of phase types here, because protobuf phases are ghastly
-Phase = Literal[
-    "queued", "waiting_for_resources", "initializing", "running", "succeeded", "failed", "aborted", "timed_out"
-]
 
 
 @dataclass
@@ -45,7 +41,7 @@ class Run(ToJSONMixin):
     @classmethod
     async def listall(
         cls,
-        in_phase: Tuple[Phase] | None = None,
+        in_phase: Tuple[ActionPhase | str, ...] | None = None,
         task_name: str | None = None,
         task_version: str | None = None,
         created_by_subject: str | None = None,
@@ -68,7 +64,12 @@ class Run(ToJSONMixin):
         sort_pb2 = sorting(sort_by)
         filters = []
         if in_phase:
-            phases = [str(phase_pb2.ActionPhase.Value(f"ACTION_PHASE_{p.upper()}")) for p in in_phase]
+            phases = [
+                str(p.to_protobuf_value())
+                if isinstance(p, ActionPhase)
+                else str(phase_pb2.ActionPhase.Value(f"ACTION_PHASE_{p.upper()}"))
+                for p in in_phase
+            ]
             logger.debug(f"Fetching run phases: {phases}")
             if len(phases) > 1:
                 filters.append(
