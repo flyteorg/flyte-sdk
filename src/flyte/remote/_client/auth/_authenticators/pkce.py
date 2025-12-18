@@ -410,10 +410,12 @@ class OAuthCallbackHandler:
         :param reader: The StreamReader for reading the incoming request
         :param writer: The StreamWriter for writing the response
         """
-        data = await reader.read()
-        message = data.decode()
-        headers = message.split("\r\n")
-        path = headers[0].split(" ")[1]
+        # Read only the first line of the HTTP request (e.g., "GET /callback?code=...&state=... HTTP/1.1")
+        # Using readline() instead of read() because read() waits for EOF, which won't come
+        # until the client closes the connection - but the client is waiting for our response first.
+        request_line = await reader.readline()
+        # request_line looks like this: 'GET /callback?code=ABC&state=FOO HTTP/1.1'
+        path = request_line.decode().split(" ")[1]
         url = _urlparse.urlparse(path)
         if url.path.strip("/") == self.redirect_path.strip("/"):
             response = f"HTTP/1.1 {_StatusCodes.OK.value} {_StatusCodes.OK.phrase}\r\n"
