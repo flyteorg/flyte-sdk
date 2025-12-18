@@ -11,7 +11,25 @@ from flyte.app import Input, RunOutput
 from flyte.app._types import Port
 from flyte.models import SerializationContext
 
-DEFAULT_SGLANG_IMAGE = "ghcr.io/unionai/serving-sglang:py3.12-latest"
+
+DEFAULT_SGLANG_IMAGE = (
+    flyte.Image.from_debian_base(name="sglang-app-image", python_version=(3, 12))
+    # install system dependencies, including CUDA toolkit
+    .with_apt_packages("libnuma-dev", "wget")
+    .with_commands(
+        [
+            "wget https://developer.download.nvidia.com/compute/cuda/repos/debian12/x86_64/cuda-keyring_1.1-1_all.deb",
+            "dpkg -i cuda-keyring_1.1-1_all.deb",
+            "apt-get update",
+            "apt-get install -y cuda-toolkit-12-8",
+        ]
+    )
+    # install flash-infer
+    .with_pip_packages("flashinfer-python", "flashinfer-cubin")
+    .with_pip_packages("flashinfer-jit-cache", index_url="https://flashinfer.ai/whl/cu128")
+    .with_pip_packages("flyteplugins-sglang", pre=True)
+    .with_env_vars({"CUDA_HOME": "/usr/local/cuda-12.8"})
+)
 
 
 @rich.repr.auto
@@ -51,6 +69,7 @@ class SGLangAppEnvironment(flyte.app.AppEnvironment):
     model_hf_path: str = ""
     model_id: str = ""
     stream_model: bool = True
+    image: str | Image | Literal["auto"] = DEFAULT_SGLANG_IMAGE
     _model_mount_path: str = field(default="/root/flyte", init=False)
 
     def __post_init__(self):
