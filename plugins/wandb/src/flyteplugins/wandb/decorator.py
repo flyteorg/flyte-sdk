@@ -29,20 +29,14 @@ def _build_init_kwargs() -> dict[str, Any]:
 
 @contextmanager
 def _wandb_run(new_run: bool = True, **decorator_kwargs):
-    """
-    Context manager for wandb run lifecycle and action marking.
-
-    Works with or without Flyte context:
-    - With Flyte context: Full features (parent-child tracking, shared runs, config from context)
-    - Without Flyte context: Basic wandb.init() (useful for sweep objectives)
-    """
+    """Context manager for wandb run lifecycle and action marking."""
     # Try to get Flyte context
     ctx = flyte.ctx()
 
     # Fallback mode: No Flyte context available
     # This enables @wandb_init to work in wandb.agent() callbacks (sweep objectives)
     if ctx is None:
-        # Use config from decorator params
+        # Use config from decorator params (no lazy init for fallback mode)
         run = wandb.init(**decorator_kwargs)
         try:
             yield run
@@ -50,69 +44,41 @@ def _wandb_run(new_run: bool = True, **decorator_kwargs):
             run.finish()
         return
 
-    # Full Flyte-aware mode with enhanced features
-    # Save existing state to restore later (task-local)
+    # Full Flyte-aware mode with lazy initialization
+    # Save existing state to restore later
     saved_run = ctx.data.get("_wandb_run")
-
-    # Save state from custom_context (shared between tasks)
     saved_run_id = ctx.custom_context.get("_wandb_run_id")
     saved_action = ctx.custom_context.get("_wandb_init_action")
-
-    # Mark which action has @wandb_init (shared via custom_context)
-    ctx.custom_context["_wandb_init_action"] = ctx.action.name
+    saved_init_kwargs = ctx.data.get("_wandb_init_kwargs")
 
     # Build init kwargs from context
     init_kwargs = _build_init_kwargs()
-
-    # Merge with decorator params (decorator params take precedence)
     init_kwargs.update(decorator_kwargs)
 
-    # Determine run ID
-    if "id" not in init_kwargs or init_kwargs["id"] is None:
-        if new_run or not saved_run_id:
-            # Create new run ID
-            init_kwargs["id"] = f"{ctx.action.run_name}-{ctx.action.name}"
-            if "reinit" not in init_kwargs:
-                init_kwargs["reinit"] = "create_new"
-        else:
-            if not saved_run_id:
-                raise RuntimeError("Expected saved_run_id when reusing parent's run ID")
-
-            # Reuse parent's run ID
-            init_kwargs["id"] = saved_run_id
-
-    # Configure shared mode settings - necessary to allow parent-child tasks to log to the same run
-    is_primary = new_run or not saved_run_id
-
-    # Get existing settings as dict
-    existing_settings = init_kwargs.get("settings", {})
-
-    # Build shared mode configuration
-    shared_config = {
-        "mode": "shared",
-        "x_primary": is_primary,
+    # Store initialization parameters for lazy init
+    # The wandb_run property will call wandb.init() on first access
+    ctx.data["_wandb_init_kwargs"] = {
+        "new_run": new_run,
+        "init_kwargs": init_kwargs,
+        "saved_run_id": saved_run_id,
     }
-    if not is_primary:
-        shared_config["x_update_finish_state"] = False
-
-    # Merge and create Settings object
-    init_kwargs["settings"] = wandb.Settings(**{**existing_settings, **shared_config})
-
-    run = wandb.init(**init_kwargs)
-
-    # Store run ID in custom_context (shared with child tasks)
-    ctx.custom_context["_wandb_run_id"] = run.id
-
-    # Store run object in ctx.data (task-local only)
-    ctx.data["_wandb_run"] = run
 
     try:
-        yield run
-        run.finish(exit_code=0)
-    except Exception:
-        run.finish(exit_code=1)
-        raise
+        yield None
     finally:
+        # Clean up the run if it was initialized
+        run = ctx.data.get("_wandb_run")
+        if run and run != saved_run:  # Only finish if we created it
+            try:
+                # Check if there was an exception (handled by caller)
+                run.finish(exit_code=0)
+            except Exception:
+                try:
+                    run.finish(exit_code=1)
+                except Exception:
+                    pass  # Ignore errors during cleanup
+                raise
+
         # Restore task-local state
         if saved_run is not None:
             ctx.data["_wandb_run"] = saved_run
@@ -130,6 +96,12 @@ def _wandb_run(new_run: bool = True, **decorator_kwargs):
         else:
             ctx.custom_context.pop("_wandb_init_action", None)
 
+        # Restore init kwargs
+        if saved_init_kwargs is not None:
+            ctx.data["_wandb_init_kwargs"] = saved_init_kwargs
+        else:
+            ctx.data.pop("_wandb_init_kwargs", None)
+
 
 def wandb_init(
     _func: Optional[F] = None,
@@ -141,6 +113,10 @@ def wandb_init(
 ) -> F:
     """
     Decorator to automatically initialize wandb for Flyte tasks and traces.
+
+    Uses lazy initialization: wandb.init() is called when flyte.ctx().wandb_run is first
+    accessed, ensuring all decorators (including @flyte.trace) have set up their contexts.
+    This means @wandb_init works with ANY decorator ordering.
 
     Works with or without Flyte context - decorator params provide config when context unavailable.
 
@@ -157,10 +133,18 @@ def wandb_init(
         - With Flyte context: Merges context config + decorator params (decorator wins)
 
     This decorator:
-    1. Initializes a wandb run before execution
-    2. Auto-generates unique run ID from Flyte action context (if available)
+    1. Lazily initializes wandb on first access to flyte.ctx().wandb_run
+    2. Auto-generates unique run ID from Flyte action context (reads action name at init time)
     3. Makes the run available via flyte.ctx().wandb_run (or wandb.run in fallback mode)
     4. Automatically finishes the run after completion
+
+    Example with @flyte.trace (any decorator order works):
+        @wandb_init
+        @flyte.trace
+        async def my_trace(x: int) -> str:
+            run = flyte.ctx().wandb_run  # Initialized here with correct trace action
+            run.log({"value": x})
+            return f"processed: {x}"
     """
 
     def decorator(func: F) -> F:
@@ -234,12 +218,14 @@ def _create_sweep():
     wandb_config = get_wandb_context()
     project = sweep_config.project or (wandb_config.project if wandb_config else None)
     entity = sweep_config.entity or (wandb_config.entity if wandb_config else None)
+    prior_runs = sweep_config.prior_runs or []
 
     # Create the sweep
     sweep_id = wandb.sweep(
         sweep=sweep_config.to_sweep_config(),
         project=project,
         entity=entity,
+        prior_runs=prior_runs,
     )
 
     # Store sweep_id in context (string, so custom_context is sufficient)

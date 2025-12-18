@@ -194,9 +194,10 @@ class _WandBSweepConfig:
     metric: Optional[dict[str, Any]] = None
     parameters: Optional[dict[str, Any]] = None
 
-    # Project/entity for the sweep
+    # Sweep metadata
     project: Optional[str] = None
     entity: Optional[str] = None
+    prior_runs: Optional[list[str]] = None
 
     # Catch-all for additional sweep config parameters
     # (e.g. early_terminate, name, description, command, controller, etc.)
@@ -209,6 +210,7 @@ class _WandBSweepConfig:
         # Remove fields that aren't part of the sweep config
         config.pop("project", None)
         config.pop("entity", None)
+        config.pop("prior_runs", None)
 
         # Merge kwargs into the main config
         extra_kwargs = config.pop("kwargs", None)
@@ -267,6 +269,7 @@ def wandb_sweep_config(
     parameters: Optional[dict[str, Any]] = None,
     project: Optional[str] = None,
     entity: Optional[str] = None,
+    prior_runs: Optional[list[str]] = None,
     **kwargs: Any,
 ) -> _WandBSweepConfig:
     """
@@ -278,6 +281,7 @@ def wandb_sweep_config(
         parameters: Parameter definitions
         project: W&B project for the sweep
         entity: W&B entity for the sweep
+        prior_runs: List of prior run IDs to include in the sweep analysis
         **kwargs: Additional sweep config parameters like:
             - early_terminate: Early termination config
             - name: Sweep name
@@ -293,5 +297,6 @@ def wandb_sweep_config(
         parameters=parameters,
         project=project,
         entity=entity,
+        prior_runs=prior_runs,
         kwargs=kwargs if kwargs else None,
     )
