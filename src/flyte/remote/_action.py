@@ -29,6 +29,7 @@ from rich.progress import Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
 
 from flyte import types
 from flyte._initialize import ensure_client, get_client, get_init_config
+from flyte.models import ActionPhase
 from flyte.remote._common import ToJSONMixin
 from flyte.remote._logs import Logs
 from flyte.syncify import syncify
@@ -217,11 +218,14 @@ class Action(ToJSONMixin):
         )
 
     @property
-    def phase(self) -> str:
+    def phase(self) -> ActionPhase:
         """
         Get the phase of the action.
+
+        Returns:
+            The current execution phase as an ActionPhase enum
         """
-        return phase_pb2.ActionPhase.Name(self.pb2.status.phase)
+        return ActionPhase.from_protobuf(self.pb2.status.phase)
 
     @property
     def raw_phase(self) -> phase_pb2.ActionPhase:
@@ -521,11 +525,14 @@ class ActionDetails(ToJSONMixin):
             await self._cache_data.aio()
 
     @property
-    def phase(self) -> str:
+    def phase(self) -> ActionPhase:
         """
         Get the phase of the action.
+
+        Returns:
+            The current execution phase as an ActionPhase enum
         """
-        return phase_pb2.ActionPhase.Name(self.status.phase)
+        return ActionPhase.from_protobuf(self.status.phase)
 
     @property
     def raw_phase(self) -> phase_pb2.ActionPhase:

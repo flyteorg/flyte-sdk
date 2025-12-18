@@ -1,10 +1,11 @@
 import asyncio
-from typing import Tuple, Union, get_args
+from typing import Tuple, Union
 
 import rich_click as click
 from rich.pretty import pretty_repr
 
 import flyte.remote as remote
+from flyte.models import ActionPhase
 
 from . import _common as common
 
@@ -53,7 +54,7 @@ def project(cfg: common.CLIConfig, name: str | None = None):
 @click.option("--limit", type=int, default=100, help="Limit the number of runs to fetch when listing.")
 @click.option(
     "--in-phase",  # multiple=True, TODO support multiple phases once values in works
-    type=click.Choice(get_args(remote.Phase), case_sensitive=False),
+    type=click.Choice([p.value for p in ActionPhase], case_sensitive=False),
     help="Filter runs by their status.",
 )
 @click.option("--only-mine", is_flag=True, default=False, help="Show only runs created by the current user (you).")
@@ -83,7 +84,7 @@ def run(
         console.print(common.format(f"Run {name}", [details], "json"))
     else:
         if in_phase and isinstance(in_phase, str):
-            in_phase = (in_phase,)
+            in_phase = (ActionPhase(in_phase),)
 
         subject = None
         if only_mine:
