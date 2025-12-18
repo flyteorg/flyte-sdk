@@ -181,14 +181,26 @@ class Run(ToJSONMixin):
         """
         Wait for the run to complete, displaying a rich progress panel with status transitions,
         time elapsed, and error details in case of failure.
+
+        This method updates the Run's internal state, ensuring that properties like
+        `run.action.phase` reflect the final state after waiting completes.
         """
-        return await self.action.wait(quiet=quiet, wait_for=wait_for)
+        await self.action.wait(quiet=quiet, wait_for=wait_for)
+        # Update the Run's pb2.action to keep it in sync after waiting
+        self.pb2.action.CopyFrom(self.action.pb2)
 
     async def watch(self, cache_data_on_done: bool = False) -> AsyncGenerator[ActionDetails, None]:
         """
-        Get the details of the run. This is a placeholder for getting the run details.
+        Watch the run for updates, updating the internal Run state with latest details.
+
+        This method updates the Run's action state, ensuring that properties like
+        `run.action.phase` reflect the current state after watching.
         """
-        return self.action.watch(cache_data_on_done=cache_data_on_done)
+        async for ad in self.action.watch(cache_data_on_done=cache_data_on_done):
+            # The action's pb2 is already updated by Action.watch()
+            # Update the Run's pb2.action to keep it in sync
+            self.pb2.action.CopyFrom(self.action.pb2)
+            yield ad
 
     @syncify
     async def show_logs(

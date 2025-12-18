@@ -343,13 +343,19 @@ class Action(ToJSONMixin):
         self, cache_data_on_done: bool = False, wait_for: WaitFor = "terminal"
     ) -> AsyncGenerator[ActionDetails, None]:
         """
-        Watch the action for updates. This is a placeholder for watching the action.
+        Watch the action for updates, updating the internal Action state with latest details.
+
+        This method updates both the cached details and the protobuf representation,
+        ensuring that properties like `phase` reflect the current state.
         """
         ad = None
         async for ad in ActionDetails.watch.aio(self.action_id):
             if ad is None:
                 return
             self._details = ad
+            # Update the protobuf with the latest status and metadata
+            self.pb2.status.CopyFrom(ad.pb2.status)
+            self.pb2.metadata.CopyFrom(ad.pb2.metadata)
             yield ad
             if wait_for == "running" and ad.is_running:
                 break
