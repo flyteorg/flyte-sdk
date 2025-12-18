@@ -60,11 +60,30 @@ class DeployedTask:
         """
         Returns a table representation of the deployed task.
         """
+        from flyte._initialize import get_client
+
+        client = get_client()
+        task_id = self.deployed_task.task_template.id
+        task_url = client.console.task_url(
+            project=task_id.project,
+            domain=task_id.domain,
+            task_name=task_id.name,
+        )
+        triggers = []
+        for t in self.deployed_triggers:
+            trigger_url = client.console.trigger_url(
+                project=task_id.project,
+                domain=task_id.domain,
+                task_name=task_id.name,
+                trigger_name=t.name,
+            )
+            triggers.append(f"[link={trigger_url}]{t.name}[/link]")
+
         return [
             ("type", "task"),
-            ("name", self.deployed_task.task_template.id.name),
-            ("version", self.deployed_task.task_template.id.version),
-            ("triggers", ",".join([t.name for t in self.deployed_triggers])),
+            ("name", f"[link={task_url}]{task_id.name}[/link]"),
+            ("version", task_id.version),
+            ("triggers", ",".join(triggers)),
         ]
 
 

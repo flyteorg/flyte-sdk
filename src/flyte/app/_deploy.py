@@ -44,7 +44,7 @@ class DeployedAppEnvironment:
         return [
             [
                 ("type", "App"),
-                ("name", self.deployed_app.name),
+                ("name", f"[link={self.deployed_app.url}]{self.deployed_app.name}[/link]"),
                 ("revision", str(self.deployed_app.revision)),
                 (
                     "desired state",

@@ -15,7 +15,6 @@ from flyte.syncify import syncify
 from . import Action, ActionDetails, ActionInputs, ActionOutputs
 from ._action import _action_details_rich_repr, _action_rich_repr
 from ._common import ToJSONMixin, filtering, sorting
-from ._console import get_run_url
 
 # @kumare3 is sadpanda, because we have to create a mirror of phase types here, because protobuf phases are ghastly
 Phase = Literal[
@@ -232,9 +231,7 @@ class Run(ToJSONMixin):
         Get the URL of the run.
         """
         client = get_client()
-        return get_run_url(
-            client.endpoint,
-            insecure=client.insecure,
+        return client.console.run_url(
             project=self.pb2.action.id.run.project,
             domain=self.pb2.action.id.run.domain,
             run_name=self.name,
