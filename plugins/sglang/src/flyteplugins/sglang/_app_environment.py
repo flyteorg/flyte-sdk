@@ -52,7 +52,7 @@ class SGLangAppEnvironment(flyte.app.AppEnvironment):
     :param requires_auth: Whether the public URL requires authentication.
     :param type: Type of app.
     :param extra_args: Extra args to pass to `python -m sglang.launch_server`. See
-        https://docs.sglang.ai/backend/server_arguments.html for details.
+        https://docs.sglang.io/advanced_features/server_arguments.html for details.
     :param model_path: Remote path to model (e.g., s3://bucket/path/to/model).
     :param model_hf_path: Hugging Face path to model (e.g., Qwen/Qwen3-0.6B).
     :param model_id: Model id that is exposed by SGLang.
