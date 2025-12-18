@@ -35,7 +35,7 @@ def _wandb_run_property(self):
     if not self.data or not self.custom_context:
         return None
 
-    # Check if run is already initialized
+    # Check if run is already initialized for THIS action
     run = self.data.get("_wandb_run")
     if run:
         # Verify current action matches the action that has @wandb_init
@@ -43,7 +43,7 @@ def _wandb_run_property(self):
         wandb_action = self.custom_context.get("_wandb_init_action")
         if current_action == wandb_action:
             return run
-        return None
+        # If actions don't match, this is a parent's run - fall through to check for lazy init
 
     # Check if we have init kwargs for lazy initialization
     init_kwargs_data = self.data.get("_wandb_init_kwargs")
