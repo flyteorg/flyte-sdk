@@ -177,8 +177,14 @@ impl Informer {
                         Ok(Some(response)) => {
                             let handle_response = self.handle_watch_response(response).await;
                             match handle_response {
-                                Ok(Some(action)) => match self.shared_queue.send(action).await {
+                                // Send to the shared queue
+                                Ok(Some(action)) => match self.shared_queue.send(action.clone()).await {
                                     Ok(_) => {
+                                        if action.get_action_name() == "a0" && action.is_action_terminal() {
+                                            // MOCK: Simulate failure for testing after put
+                                            // terminal actor to channel
+                                            return Err(InformerError::BadContext("Simulated failure for testing".to_string()));
+                                        }
                                         continue;
                                     }
                                     Err(e) => {
