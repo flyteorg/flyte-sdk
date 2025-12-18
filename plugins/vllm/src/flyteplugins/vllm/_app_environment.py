@@ -11,7 +11,14 @@ from flyte.app import Input, RunOutput
 from flyte.app._types import Port
 from flyte.models import SerializationContext
 
-DEFAULT_VLLM_IMAGE = "ghcr.io/unionai/serving-vllm:py3.12-latest"
+DEFAULT_VLLM_IMAGE = (
+    flyte.Image.from_debian_base(name="vllm-app-image", python_version=(3, 12))
+    # install flashinfer and vllm
+    .with_pip_packages("flashinfer-python", "flashinfer-cubin")
+    .with_pip_packages("flashinfer-jit-cache", index_url="https://flashinfer.ai/whl/cu129")
+    # install the vllm flyte plugin
+    .with_pip_packages("flyteplugins-vllm", pre=True)
+)
 
 
 @rich.repr.auto
@@ -52,6 +59,7 @@ class VLLMAppEnvironment(flyte.app.AppEnvironment):
     model_hf_path: str = ""
     model_id: str = ""
     stream_model: bool = True
+    image: str | Image | Literal["auto"] = DEFAULT_VLLM_IMAGE
     _model_mount_path: str = field(default="/root/flyte", init=False)
 
     def __post_init__(self):
