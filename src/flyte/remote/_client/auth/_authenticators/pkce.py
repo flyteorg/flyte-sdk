@@ -246,10 +246,10 @@ class AuthorizationClient(object):
         query = _urlencode(self._request_auth_code_params)
         endpoint = _urlparse.urlunparse((scheme, netloc, path, None, query, None))
         logger.debug(f"Requesting authorization code through {endpoint}")
-        return
-        # success = webbrowser.open_new_tab(endpoint)  # type: ignore
-        # if not success:
-        #     click.secho(f"Please open the following link in your browser to authenticate: {endpoint}")
+
+        success = webbrowser.open_new_tab(endpoint)  # type: ignore
+        if not success:
+            click.secho(f"Please open the following link in your browser to authenticate: {endpoint}")
 
     async def _credentials_from_response(self, auth_token_resp) -> Credentials:
         """
@@ -414,6 +414,7 @@ class OAuthCallbackHandler:
         # Using readline() instead of read() because read() waits for EOF, which won't come
         # until the client closes the connection - but the client is waiting for our response first.
         request_line = await reader.readline()
+        # request_line looks like this: 'GET /callback?code=I0akGBEEJE39J17JmPhDpzajGcDV2zDwHJl-s0Swe3k&state=KED2i7WKe27FZZntCBFBbiNsZHILfRDCuUD4iwMTnoz2TI5a0gj1vw HTTP/1.1'
         path = request_line.decode().split(" ")[1]
         url = _urlparse.urlparse(path)
         if url.path.strip("/") == self.redirect_path.strip("/"):
