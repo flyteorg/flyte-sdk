@@ -47,7 +47,7 @@ NeuronType = Literal["Inf1", "Inf2", "Trn1", "Trn1n", "Trn2", "Trn2u"]
 
 AMD_GPUType = Literal["MI100", "MI210", "MI250", "MI250X", "MI300A", "MI300X", "MI325X", "MI350X", "MI355X"]
 
-HABANA_GAUDIType = Literal["Gaudi1"]
+HABANA_GAUDIType = Literal["GAUDI1"]
 
 Accelerators = Literal[
     # A10
@@ -328,7 +328,7 @@ def AMD_GPU(device: AMD_GPUType) -> Device:
 def HABANA_GAUDI(device: HABANA_GAUDIType) -> Device:
     """
     Create a Habana Gaudi device instance.
-    :param device: Device type (e.g., "DL1").
+    :param device: Device type (e.g., "GAUDI1").
     :return: Device instance.
     """
     if device not in get_args(HABANA_GAUDIType):

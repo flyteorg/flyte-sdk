@@ -10,9 +10,7 @@ class Secret:
     Secrets are used to inject sensitive information into tasks or image build context.
     Secrets can be mounted as environment variables or files.
      The secret key is the name of the secret in the secret store. The group is optional and maybe used with some
-    secret stores to organize secrets. The secret_mount is used to specify how the secret should be mounted. If the
-    secret_mount is set to "env" the secret will be mounted as an environment variable. If the secret_mount is set to
-    "file" the secret will be mounted as a file. The as_env_var is an optional parameter that can be used to specify the
+    secret stores to organize secrets. The as_env_var is an optional parameter that can be used to specify the
     name of the environment variable that the secret should be mounted as.
 
     Example:
@@ -31,7 +29,7 @@ class Secret:
 
     :param key: The name of the secret in the secret store.
     :param group: The group of the secret in the secret store.
-    :param mount: Use this to specify the path where the secret should be mounted.
+    :param mount: For now, the only supported mount path is "/etc/flyte/secrets".
     TODO: support arbitrary mount paths. Today only "/etc/flyte/secrets" is supported
     :param as_env_var: The name of the environment variable that the secret should be mounted as.
     """
@@ -45,6 +43,9 @@ class Secret:
         if not self.mount and not self.as_env_var:
             self.as_env_var = f"{self.group}_{self.key}" if self.group else self.key
             self.as_env_var = self.as_env_var.replace("-", "_").upper()
+        if self.mount:
+            if str(self.mount) != "/etc/flyte/secrets":
+                raise ValueError("Only /etc/flyte/secrets is supported as secret mount path today.")
         if self.as_env_var is not None:
             pattern = r"^[A-Z_][A-Z0-9_]*$"
             if not re.match(pattern, self.as_env_var):
