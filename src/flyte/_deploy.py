@@ -69,12 +69,21 @@ class DeployedTask:
             domain=task_id.domain,
             task_name=task_id.name,
         )
+        triggers = []
+        for t in self.deployed_triggers:
+            trigger_url = client.console.trigger_url(
+                project=task_id.project,
+                domain=task_id.domain,
+                task_name=task_id.name,
+                trigger_name=t.name,
+            )
+            triggers.append(f"[link={trigger_url}]{t.name}[/link]")
 
         return [
             ("type", "task"),
             ("name", f"[link={task_url}]{task_id.name}[/link]"),
             ("version", task_id.version),
-            ("triggers", ",".join([t.name for t in self.deployed_triggers])),
+            ("triggers", ",".join(triggers)),
         ]
 
 

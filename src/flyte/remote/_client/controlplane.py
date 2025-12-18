@@ -185,7 +185,7 @@ class ClientSet:
         self.endpoint = endpoint
         self.insecure = insecure
         self._channel = channel
-        self._console = None
+        self._console = Console(self.endpoint, self.insecure)
         self._admin_client = admin_pb2_grpc.AdminServiceStub(channel=channel)
         self._task_service = task_service_pb2_grpc.TaskServiceStub(channel=channel)
         self._app_service = app_service_pb2_grpc.AppServiceStub(channel=channel)
@@ -277,8 +277,6 @@ class ClientSet:
             >>> client = get_client()
             >>> url = client.console.task_url(project="myproj", domain="dev", task_name="mytask")
         """
-        if self._console is None:
-            self._console = Console(self.endpoint, self.insecure)
         return self._console
 
     async def close(self, grace: float | None = None):
