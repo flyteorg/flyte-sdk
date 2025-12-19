@@ -211,10 +211,10 @@ def _get_scaling_metric(
     return None
 
 
-async def _materialize_inputs_with_delayed_values(parameters: List[Parameter]) -> List[Parameter]:
+async def _materialize_parameters_with_delayed_values(parameters: List[Parameter]) -> List[Parameter]:
     """
     Materialize the parameters that contain delayed values. This is important for both
-    serializing the parameter for the container command and for the app idl inputs collection.
+    serializing the parameter for the container command and for the app idl parameters collection.
 
     Args:
         parameters: The parameters to materialize.
@@ -236,9 +236,9 @@ async def _materialize_inputs_with_delayed_values(parameters: List[Parameter]) -
     return _parameters
 
 
-async def translate_inputs(parameters: List[Parameter]) -> app_definition_pb2.InputList:
+async def translate_parameters(parameters: List[Parameter]) -> app_definition_pb2.InputList:
     """
-    Placeholder for translating parameters to protobuf format.
+    Translate parameters to protobuf format.
 
     Returns:
         InputList protobuf message
@@ -246,17 +246,17 @@ async def translate_inputs(parameters: List[Parameter]) -> app_definition_pb2.In
     if not parameters:
         return app_definition_pb2.InputList()
 
-    inputs_list = []
+    parameters_list = []
     for param in parameters:
         if isinstance(param.value, str):
-            inputs_list.append(app_definition_pb2.Input(name=param.name, string_value=param.value))
+            parameters_list.append(app_definition_pb2.Input(name=param.name, string_value=param.value))
         elif isinstance(param.value, flyte.io.File):
-            inputs_list.append(app_definition_pb2.Input(name=param.name, string_value=str(param.value.path)))
+            parameters_list.append(app_definition_pb2.Input(name=param.name, string_value=str(param.value.path)))
         elif isinstance(param.value, flyte.io.Dir):
-            inputs_list.append(app_definition_pb2.Input(name=param.name, string_value=str(param.value.path)))
+            parameters_list.append(app_definition_pb2.Input(name=param.name, string_value=str(param.value.path)))
         else:
             raise ValueError(f"Unsupported parameter value type: {type(param.value)}")
-    return app_definition_pb2.InputList(items=inputs_list)
+    return app_definition_pb2.InputList(items=parameters_list)
 
 
 @syncify
@@ -311,7 +311,7 @@ async def translate_app_env_to_idl(
     )
 
     # Build spec based on image type
-    parameters = await _materialize_inputs_with_delayed_values(parameter_overrides or app_env.parameters)
+    parameters = await _materialize_parameters_with_delayed_values(parameter_overrides or app_env.parameters)
     container = None
     pod = None
     if app_env.pod_template:
@@ -378,6 +378,6 @@ async def translate_app_env_to_idl(
             links=links,
             container=container,
             pod=pod,
-            inputs=await translate_inputs(parameters),
+            inputs=await translate_parameters(parameters),
         ),
     )

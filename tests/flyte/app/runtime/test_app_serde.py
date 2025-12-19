@@ -18,7 +18,7 @@ from flyte.app import AppEnvironment
 from flyte.app._parameter import Parameter, RunOutput
 from flyte.app._runtime.app_serde import (
     _get_scaling_metric,
-    _materialize_inputs_with_delayed_values,
+    _materialize_parameters_with_delayed_values,
     _sanitize_resource_name,
     get_proto_container,
     translate_app_env_to_idl,
@@ -263,19 +263,19 @@ def test_get_proto_container_with_args_and_inputs():
     assert container.command[0] == "fserve"
     assert "--parameters" in container.command
 
-    # Verify inputs are serialized
+    # Verify parameters are serialized
     cmd_list = list(container.command)
-    inputs_idx = cmd_list.index("--parameters")
-    assert inputs_idx >= 0
-    serialized_parameters = cmd_list[inputs_idx + 1]
+    parameters_idx = cmd_list.index("--parameters")
+    assert parameters_idx >= 0
+    serialized_parameters = cmd_list[parameters_idx + 1]
     assert len(serialized_parameters) > 0  # Should have base64 gzip encoded content
 
 
-def test_get_proto_container_with_string_args_and_inputs():
+def test_get_proto_container_with_string_args_and_parameters():
     """
-    GOAL: Verify string args are split correctly when app has inputs.
+    GOAL: Verify string args are split correctly when app has parameters.
 
-    Tests that string args are parsed using shlex while inputs remain in command.
+    Tests that string args are parsed using shlex while parameters remain in command.
     """
     app_env = AppEnvironment(
         name="test-app",
@@ -679,8 +679,8 @@ def test_get_proto_container_with_multiple_inputs():
     GOAL: Verify multiple inputs are serialized correctly.
 
     Tests that:
-    - Multiple inputs are all included
-    - Each input's properties are preserved
+    - Multiple parameters are all included
+    - Each parameter's properties are preserved
     - Serialization is successful
     """
     app_env = AppEnvironment(
@@ -707,13 +707,13 @@ def test_get_proto_container_with_multiple_inputs():
     # Args should still be present
     assert container.args == ["--verbose"]
 
-    # Command should have inputs
+    # Command should have parameters
     assert "--parameters" in container.command
     cmd_list = list(container.command)
-    inputs_idx = cmd_list.index("--parameters")
-    serialized_parameters = cmd_list[inputs_idx + 1]
+    parameters_idx = cmd_list.index("--parameters")
+    serialized_parameters = cmd_list[parameters_idx + 1]
 
-    # Verify inputs can be deserialized
+    # Verify parameters can be deserialized
     from flyte.app._parameter import SerializableParameterCollection
 
     deserialized = SerializableParameterCollection.from_transport(serialized_parameters)
@@ -760,24 +760,24 @@ def test_app_with_domain(domain: Domain | None):
 
 
 # =============================================================================
-# Tests for _materialize_inputs_with_delayed_values
+# Tests for _materialize_parameters_with_delayed_values
 # =============================================================================
 
 
 @pytest.mark.asyncio
-async def test_materialize_inputs_with_no_delayed_values():
+async def test_materialize_parameters_with_no_delayed_values():
     """
-    GOAL: Verify that inputs without delayed values pass through unchanged.
+    GOAL: Verify that parameters without delayed values pass through unchanged.
 
-    Tests that regular string, File, and Dir inputs are returned as-is.
+    Tests that regular string, File, and Dir parameters are returned as-is.
     """
-    inputs = [
+    parameters = [
         Parameter(name="config", value="config.yaml"),
         Parameter(name="model", value=flyte.io.File(path="s3://bucket/model.pkl")),
         Parameter(name="data", value=flyte.io.Dir(path="s3://bucket/data")),
     ]
 
-    result = await _materialize_inputs_with_delayed_values(inputs)
+    result = await _materialize_parameters_with_delayed_values(parameters)
 
     assert len(result) == 3
     assert result[0].name == "config"
@@ -789,11 +789,11 @@ async def test_materialize_inputs_with_no_delayed_values():
 
 
 @pytest.mark.asyncio
-async def test_materialize_inputs_with_run_output():
+async def test_materialize_parameters_with_run_output():
     """
     GOAL: Verify that RunOutput delayed values are materialized correctly.
 
-    Tests that RunOutput inputs are replaced with their materialized values.
+    Tests that RunOutput parameters are replaced with their materialized values.
     """
     # Create mock for RunOutput materialization
     mock_run_details = MagicMock()
@@ -803,7 +803,7 @@ async def test_materialize_inputs_with_run_output():
     mock_run.details = MagicMock()
     mock_run.details.aio = AsyncMock(return_value=mock_run_details)
 
-    inputs = [
+    parameters = [
         Parameter(name="config", value="config.yaml"),
         Parameter(name="model", value=RunOutput(type="string", run_name="my-run-123")),
     ]
@@ -815,7 +815,7 @@ async def test_materialize_inputs_with_run_output():
         MockRun.get = MagicMock()
         MockRun.get.aio = AsyncMock(return_value=mock_run)
 
-        result = await _materialize_inputs_with_delayed_values(inputs)
+        result = await _materialize_parameters_with_delayed_values(parameters)
 
     assert len(result) == 2
     assert result[0].name == "config"
@@ -825,7 +825,7 @@ async def test_materialize_inputs_with_run_output():
 
 
 @pytest.mark.asyncio
-async def test_materialize_inputs_with_run_output_dir_type():
+async def test_materialize_parameters_with_run_output_dir_type():
     """
     GOAL: Verify that RunOutput with Dir type materializes to a Dir path.
 
@@ -839,7 +839,7 @@ async def test_materialize_inputs_with_run_output_dir_type():
     mock_run.details = MagicMock()
     mock_run.details.aio = AsyncMock(return_value=mock_run_details)
 
-    inputs = [
+    parameters = [
         Parameter(name="data", value=RunOutput(type=flyte.io.Dir, run_name="my-run-123")),
     ]
 
@@ -850,7 +850,7 @@ async def test_materialize_inputs_with_run_output_dir_type():
         MockRun.get = MagicMock()
         MockRun.get.aio = AsyncMock(return_value=mock_run)
 
-        result = await _materialize_inputs_with_delayed_values(inputs)
+        result = await _materialize_parameters_with_delayed_values(parameters)
 
     assert len(result) == 1
     assert result[0].name == "data"
@@ -860,20 +860,20 @@ async def test_materialize_inputs_with_run_output_dir_type():
 
 
 @pytest.mark.asyncio
-async def test_materialize_inputs_empty_list():
+async def test_materialize_parameters_empty_list():
     """
-    GOAL: Verify that empty input list returns empty list.
+    GOAL: Verify that empty parameter list returns empty list.
 
-    Tests edge case where no inputs are provided.
+    Tests edge case where no parameters are provided.
     """
-    result = await _materialize_inputs_with_delayed_values([])
+    result = await _materialize_parameters_with_delayed_values([])
     assert result == []
 
 
 @pytest.mark.asyncio
-async def test_materialize_inputs_mixed_delayed_and_regular():
+async def test_materialize_parameters_mixed_delayed_and_regular():
     """
-    GOAL: Verify that mixed inputs with some delayed values work correctly.
+    GOAL: Verify that mixed parameters with some delayed values work correctly.
 
     Tests that only delayed values are materialized while regular values pass through.
     """
@@ -884,7 +884,7 @@ async def test_materialize_inputs_mixed_delayed_and_regular():
     mock_run.details = MagicMock()
     mock_run.details.aio = AsyncMock(return_value=mock_run_details)
 
-    inputs = [
+    parameters = [
         Parameter(name="static-config", value="static.yaml"),
         Parameter(name="dynamic-model", value=RunOutput(type="string", run_name="run-1")),
         Parameter(name="static-file", value=flyte.io.File(path="s3://bucket/file.txt")),
@@ -897,7 +897,7 @@ async def test_materialize_inputs_mixed_delayed_and_regular():
         MockRun.get = MagicMock()
         MockRun.get.aio = AsyncMock(return_value=mock_run)
 
-        result = await _materialize_inputs_with_delayed_values(inputs)
+        result = await _materialize_parameters_with_delayed_values(parameters)
 
     assert len(result) == 3
     # Static string unchanged
@@ -910,9 +910,9 @@ async def test_materialize_inputs_mixed_delayed_and_regular():
 
 
 @pytest.mark.asyncio
-async def test_materialize_inputs_preserves_other_input_properties():
+async def test_materialize_parameters_preserves_other_parameter_properties():
     """
-    GOAL: Verify that materialization preserves other Input properties.
+    GOAL: Verify that materialization preserves other Parameter properties.
 
     Tests that env_var, mount, download, etc. are preserved after materialization.
     """
@@ -923,7 +923,7 @@ async def test_materialize_inputs_preserves_other_input_properties():
     mock_run.details = MagicMock()
     mock_run.details.aio = AsyncMock(return_value=mock_run_details)
 
-    inputs = [
+    parameters = [
         Parameter(
             name="model",
             value=RunOutput(type="string", run_name="my-run"),
@@ -940,7 +940,7 @@ async def test_materialize_inputs_preserves_other_input_properties():
         MockRun.get = MagicMock()
         MockRun.get.aio = AsyncMock(return_value=mock_run)
 
-        result = await _materialize_inputs_with_delayed_values(inputs)
+        result = await _materialize_parameters_with_delayed_values(parameters)
 
     assert len(result) == 1
     assert result[0].name == "model"

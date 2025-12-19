@@ -50,9 +50,8 @@ logger = logging.getLogger(__name__)
 MODEL_PATH_ENV = "MODEL_PATH"
 
 # Create image from script dependencies
-image = (
-    flyte.Image.from_debian_base(python_version=(3, 12))
-    .with_pip_packages("fastapi", "uvicorn", "xgboost", "scikit-learn", "pandas", "pyarrow", "joblib", "pydantic")
+image = flyte.Image.from_debian_base(python_version=(3, 12)).with_pip_packages(
+    "fastapi", "uvicorn", "xgboost", "scikit-learn", "pandas", "pyarrow", "joblib", "pydantic"
 )
 
 # Training environment
