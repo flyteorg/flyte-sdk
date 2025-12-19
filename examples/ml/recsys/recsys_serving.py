@@ -93,7 +93,7 @@ env = FastAPIAppEnvironment(
     image=image,
     resources=flyte.Resources(cpu=2, memory="4Gi"),
     requires_auth=False,
-        parameters=[
+    parameters=[
         Parameter(
             name="artifacts",
             value=flyte.app.RunOutput(task_name="recsys_training.training_pipeline", type="directory"),

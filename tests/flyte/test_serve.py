@@ -186,7 +186,7 @@ async def test_serve_extracts_parameter_overrides_for_matching_app():
     app_env = AppEnvironment(
         name="my-test-app",
         image=Image.from_base("python:3.11"),
-            parameters=[
+        parameters=[
             Parameter(value="original-config.yaml", name="config"),
             Parameter(value="s3://original/data", name="data"),
         ],
@@ -231,7 +231,7 @@ async def test_serve_no_overrides_for_non_matching_app():
     app_env = AppEnvironment(
         name="different-app",
         image=Image.from_base("python:3.11"),
-            parameters=[
+        parameters=[
             Parameter(value="config.yaml", name="config"),
         ],
     )
@@ -262,7 +262,7 @@ async def test_serve_partial_parameter_overrides():
     app_env = AppEnvironment(
         name="partial-override-app",
         image=Image.from_base("python:3.11"),
-            parameters=[
+        parameters=[
             Parameter(value="original-config.yaml", name="config"),
             Parameter(value="original-model.pkl", name="model"),
             Parameter(value="original-data.csv", name="data"),
@@ -308,7 +308,7 @@ async def test_serve_with_file_dir_parameter_overrides():
     app_env = AppEnvironment(
         name="file-dir-app",
         image=Image.from_base("python:3.11"),
-            parameters=[
+        parameters=[
             Parameter(value=original_file, name="myfile"),
             Parameter(value=original_dir, name="mydir"),
         ],
@@ -362,7 +362,7 @@ def test_parameter_overrides_affect_container_cmd():
     app_env = AppEnvironment(
         name="integration-app",
         image=Image.from_base("python:3.11"),
-            parameters=[
+        parameters=[
             Parameter(value="original-config.yaml", name="config"),
             Parameter(value="s3://original/data", name="data"),
         ],
@@ -420,7 +420,7 @@ def test_multiple_app_environments_with_different_overrides():
     app_one = AppEnvironment(
         name="app-one",
         image=Image.from_base("python:3.11"),
-            parameters=[
+        parameters=[
             Parameter(value="app-one-config.yaml", name="config"),
         ],
     )
@@ -428,7 +428,7 @@ def test_multiple_app_environments_with_different_overrides():
     app_two = AppEnvironment(
         name="app-two",
         image=Image.from_base("python:3.11"),
-            parameters=[
+        parameters=[
             Parameter(value="app-two-config.yaml", name="config"),
         ],
     )
@@ -475,7 +475,7 @@ def test_with_servecontext_dependent_apps_with_parameter_overrides():
     backend_app = AppEnvironment(
         name="backend-api",
         image=Image.from_base("python:3.11"),
-            parameters=[
+        parameters=[
             Parameter(value="postgres://localhost:5432/db", name="database_url"),
             Parameter(value="redis://localhost:6379", name="cache_url"),
             Parameter(value=flyte.io.File(path="s3://bucket/model.pkl"), name="model_file"),
@@ -487,7 +487,7 @@ def test_with_servecontext_dependent_apps_with_parameter_overrides():
         name="frontend-app",
         image=Image.from_base("python:3.11"),
         depends_on=[backend_app],
-            parameters=[
+        parameters=[
             Parameter(value="http://localhost:8000", name="api_endpoint"),
             Parameter(value="default-theme", name="theme"),
             Parameter(value=flyte.io.Dir(path="s3://bucket/assets"), name="static_assets"),

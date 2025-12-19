@@ -13,7 +13,6 @@ import pytest
 
 import flyte.io
 from flyte.app._parameter import (
-    PARAMETER_TYPE_MAP,
     AppEndpoint,
     Parameter,
     RunOutput,
