@@ -17,7 +17,6 @@ from urllib.parse import urlencode as _urlencode
 import click
 import httpx
 import pydantic
-from h11 import Response
 
 from flyte._logging import logger
 from flyte.remote._client.auth._authenticators.base import Authenticator
