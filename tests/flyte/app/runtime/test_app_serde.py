@@ -259,13 +259,13 @@ def test_get_proto_container_with_args_and_inputs():
     # Args should be in the args field
     assert container.args == ["--arg1", "value1", "--arg2", "value2"]
 
-    # Command should contain fserve with --inputs flag
+    # Command should contain fserve with --parameters flag
     assert container.command[0] == "fserve"
-    assert "--inputs" in container.command
+    assert "--parameters" in container.command
 
     # Verify inputs are serialized
     cmd_list = list(container.command)
-    inputs_idx = cmd_list.index("--inputs")
+    inputs_idx = cmd_list.index("--parameters")
     assert inputs_idx >= 0
     serialized_parameters = cmd_list[inputs_idx + 1]
     assert len(serialized_parameters) > 0  # Should have base64 gzip encoded content
@@ -298,7 +298,7 @@ def test_get_proto_container_with_string_args_and_inputs():
     assert container.args == ["--host", "0.0.0.0", "--port", "8080"]
 
     # Inputs should be in command
-    assert "--inputs" in container.command
+    assert "--parameters" in container.command
 
 
 def test_get_proto_container_with_only_inputs_no_args():
@@ -332,7 +332,7 @@ def test_get_proto_container_with_only_inputs_no_args():
     assert container.args == []
 
     # Inputs should be in command
-    assert "--inputs" in container.command
+    assert "--parameters" in container.command
 
 
 def test_get_proto_container_with_custom_command_and_inputs():
@@ -368,7 +368,7 @@ def test_get_proto_container_with_custom_command_and_inputs():
     assert container.args == ["--custom-arg"]
 
     # Inputs should NOT be in command (custom commands don't auto-add inputs)
-    assert "--inputs" not in container.command
+    assert "--parameters" not in container.command
 
 
 def test_get_proto_container_with_string_image():
@@ -614,7 +614,7 @@ def test_get_proto_container_comprehensive():
 
     # Verify command has fserve and inputs
     assert container.command[0] == "fserve"
-    assert "--inputs" in container.command
+    assert "--parameters" in container.command
     assert "--version" in container.command
 
     # Verify args
@@ -708,20 +708,20 @@ def test_get_proto_container_with_multiple_inputs():
     assert container.args == ["--verbose"]
 
     # Command should have inputs
-    assert "--inputs" in container.command
+    assert "--parameters" in container.command
     cmd_list = list(container.command)
-    inputs_idx = cmd_list.index("--inputs")
+    inputs_idx = cmd_list.index("--parameters")
     serialized_parameters = cmd_list[inputs_idx + 1]
 
     # Verify inputs can be deserialized
     from flyte.app._parameter import SerializableParameterCollection
 
     deserialized = SerializableParameterCollection.from_transport(serialized_parameters)
-    assert len(deserialized.inputs) == 3
-    assert deserialized.inputs[0].name == "config"
-    assert deserialized.inputs[0].env_var == "CONFIG_PATH"
-    assert deserialized.inputs[1].name == "data"
-    assert deserialized.inputs[2].name == "model"
+    assert len(deserialized.parameters) == 3
+    assert deserialized.parameters[0].name == "config"
+    assert deserialized.parameters[0].env_var == "CONFIG_PATH"
+    assert deserialized.parameters[1].name == "data"
+    assert deserialized.parameters[2].name == "model"
 
 
 @pytest.mark.parametrize(
@@ -772,9 +772,9 @@ async def test_materialize_inputs_with_no_delayed_values():
     Tests that regular string, File, and Dir inputs are returned as-is.
     """
     inputs = [
-        Input(name="config", value="config.yaml"),
-        Input(name="model", value=flyte.io.File(path="s3://bucket/model.pkl")),
-        Input(name="data", value=flyte.io.Dir(path="s3://bucket/data")),
+        Parameter(name="config", value="config.yaml"),
+        Parameter(name="model", value=flyte.io.File(path="s3://bucket/model.pkl")),
+        Parameter(name="data", value=flyte.io.Dir(path="s3://bucket/data")),
     ]
 
     result = await _materialize_inputs_with_delayed_values(inputs)
@@ -804,8 +804,8 @@ async def test_materialize_inputs_with_run_output():
     mock_run.details.aio = AsyncMock(return_value=mock_run_details)
 
     inputs = [
-        Input(name="config", value="config.yaml"),
-        Input(name="model", value=RunOutput(type="string", run_name="my-run-123")),
+        Parameter(name="config", value="config.yaml"),
+        Parameter(name="model", value=RunOutput(type="string", run_name="my-run-123")),
     ]
 
     with (
@@ -840,7 +840,7 @@ async def test_materialize_inputs_with_run_output_dir_type():
     mock_run.details.aio = AsyncMock(return_value=mock_run_details)
 
     inputs = [
-        Input(name="data", value=RunOutput(type=flyte.io.Dir, run_name="my-run-123")),
+        Parameter(name="data", value=RunOutput(type=flyte.io.Dir, run_name="my-run-123")),
     ]
 
     with (
@@ -885,9 +885,9 @@ async def test_materialize_inputs_mixed_delayed_and_regular():
     mock_run.details.aio = AsyncMock(return_value=mock_run_details)
 
     inputs = [
-        Input(name="static-config", value="static.yaml"),
-        Input(name="dynamic-model", value=RunOutput(type="string", run_name="run-1")),
-        Input(name="static-file", value=flyte.io.File(path="s3://bucket/file.txt")),
+        Parameter(name="static-config", value="static.yaml"),
+        Parameter(name="dynamic-model", value=RunOutput(type="string", run_name="run-1")),
+        Parameter(name="static-file", value=flyte.io.File(path="s3://bucket/file.txt")),
     ]
 
     with (
@@ -924,7 +924,7 @@ async def test_materialize_inputs_preserves_other_input_properties():
     mock_run.details.aio = AsyncMock(return_value=mock_run_details)
 
     inputs = [
-        Input(
+        Parameter(
             name="model",
             value=RunOutput(type="string", run_name="my-run"),
             env_var="MODEL_PATH",

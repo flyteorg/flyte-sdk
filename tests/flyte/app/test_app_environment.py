@@ -97,13 +97,13 @@ def test_app_environment_comprehensive_happy_path():
     assert app_env.links[1].path == "/docs"
 
     # Verify parameters are correctly set
-    assert len(app_env.inputs) == 2
-    assert app_env.inputs[0].name == "config"
-    assert app_env.inputs[0].value == "config.yaml"
-    assert app_env.inputs[0].env_var == "CONFIG_PATH"
-    assert app_env.inputs[1].name == "data"
-    assert app_env.inputs[1].download is True
-    assert app_env.inputs[1].mount == "/mnt/data"
+    assert len(app_env.parameters) == 2
+    assert app_env.parameters[0].name == "config"
+    assert app_env.parameters[0].value == "config.yaml"
+    assert app_env.parameters[0].env_var == "CONFIG_PATH"
+    assert app_env.parameters[1].name == "data"
+    assert app_env.parameters[1].download is True
+    assert app_env.parameters[1].mount == "/mnt/data"
 
     # Verify includes
     assert app_env.include == ["*.py", "requirements.txt"]
@@ -142,9 +142,9 @@ def test_app_environment_comprehensive_happy_path():
     assert "s3://bucket/code.tgz" in cmd
     assert "--dest" in cmd
     assert "/app" in cmd
-    assert "--inputs" in cmd
+    assert "--parameters" in cmd
     # Inputs should be serialized (base64 gzip encoded)
-    inputs_idx = cmd.index("--inputs")
+    inputs_idx = cmd.index("--parameters")
     assert inputs_idx >= 0
     assert len(cmd[inputs_idx + 1]) > 0  # Should have serialized parameters
     assert cmd[-1] == "--"  # Command should end with "--"
@@ -181,21 +181,21 @@ def test_app_environment_container_cmd_with_inputs():
     cmd = app_env.container_cmd(ctx)
 
     # Verify --parameters flag is present
-    assert "--inputs" in cmd
-    inputs_idx = cmd.index("--inputs")
+    assert "--parameters" in cmd
+    inputs_idx = cmd.index("--parameters")
     serialized_parameters = cmd[inputs_idx + 1]
 
     # Verify serialized parameters can be deserialized correctly
     from flyte.app._parameter import SerializableParameterCollection
 
     deserialized = SerializableParameterCollection.from_transport(serialized_parameters)
-    assert len(deserialized.inputs) == 3
-    assert deserialized.inputs[0].name == "input1"
-    assert deserialized.inputs[0].value == "file1.txt"
-    assert deserialized.inputs[0].env_var == "INPUT1"
-    assert deserialized.inputs[1].name == "input2"
-    assert deserialized.inputs[2].name == "input3"
-    assert deserialized.inputs[2].download is False  # String type doesn't auto-download
+    assert len(deserialized.parameters) == 3
+    assert deserialized.parameters[0].name == "input1"
+    assert deserialized.parameters[0].value == "file1.txt"
+    assert deserialized.parameters[0].env_var == "INPUT1"
+    assert deserialized.parameters[1].name == "input2"
+    assert deserialized.parameters[2].name == "input3"
+    assert deserialized.parameters[2].download is False  # String type doesn't auto-download
 
 
 def test_app_environment_container_cmd_without_inputs():
@@ -221,7 +221,7 @@ def test_app_environment_container_cmd_without_inputs():
     cmd = app_env.container_cmd(ctx)
 
     # Verify parameters flag is NOT in command when no parameters
-    assert "--inputs" not in cmd
+    assert "--parameters" not in cmd
     assert cmd[-1] == "--"
 
 
@@ -252,7 +252,7 @@ def test_app_environment_container_cmd_custom_command():
 
     cmd_list = app_env_list.container_cmd(ctx)
     assert cmd_list == ["python", "app.py"]
-    assert "--inputs" not in cmd_list  # Parameters not added for custom commands
+    assert "--parameters" not in cmd_list  # Parameters not added for custom commands
 
     # Test with string command (will be split using shlex)
     app_env_str = AppEnvironment(
@@ -583,7 +583,7 @@ def test_app_environment_default_values():
     assert app.scaling.replicas == (0, 1)
     assert isinstance(app.domain, Domain)
     assert app.links == []
-    assert app.inputs == []
+    assert app.parameters == []
     assert app.cluster_pool == "default"
     assert app.include == []
     assert app.env_vars is None
@@ -626,37 +626,37 @@ def test_app_environment_with_file_and_dir_inputs():
     )
 
     cmd = app_env.container_cmd(ctx)
-    assert "--inputs" in cmd
+    assert "--parameters" in cmd
 
     # Deserialize and verify types and properties
-    inputs_idx = cmd.index("--inputs")
+    inputs_idx = cmd.index("--parameters")
     serialized = cmd[inputs_idx + 1]
 
     from flyte.app._parameter import SerializableParameterCollection
 
     deserialized = SerializableParameterCollection.from_transport(serialized)
-    assert len(deserialized.inputs) == 3
+    assert len(deserialized.parameters) == 3
 
     # File input
-    assert deserialized.inputs[0].name == "myfile"
-    assert deserialized.inputs[0].type == "file"
-    assert deserialized.inputs[0].value == "s3://bucket/file.txt"
-    assert deserialized.inputs[0].download is True  # mount implies download
-    assert deserialized.inputs[0].dest == "/mnt/file"
+    assert deserialized.parameters[0].name == "myfile"
+    assert deserialized.parameters[0].type == "file"
+    assert deserialized.parameters[0].value == "s3://bucket/file.txt"
+    assert deserialized.parameters[0].download is True  # mount implies download
+    assert deserialized.parameters[0].dest == "/mnt/file"
 
     # Dir input
-    assert deserialized.inputs[1].name == "mydir"
-    assert deserialized.inputs[1].type == "directory"
-    assert deserialized.inputs[1].value == "s3://bucket/directory"
-    assert deserialized.inputs[1].download is True
-    assert deserialized.inputs[1].dest == "/mnt/dir"
-    assert deserialized.inputs[1].ignore_patterns == ["*.log", "*.tmp"]
+    assert deserialized.parameters[1].name == "mydir"
+    assert deserialized.parameters[1].type == "directory"
+    assert deserialized.parameters[1].value == "s3://bucket/directory"
+    assert deserialized.parameters[1].download is True
+    assert deserialized.parameters[1].dest == "/mnt/dir"
+    assert deserialized.parameters[1].ignore_patterns == ["*.log", "*.tmp"]
 
     # String input
-    assert deserialized.inputs[2].name == "mystring"
-    assert deserialized.inputs[2].type == "string"
-    assert deserialized.inputs[2].value == "plain-string"
-    assert deserialized.inputs[2].download is False
+    assert deserialized.parameters[2].name == "mystring"
+    assert deserialized.parameters[2].type == "string"
+    assert deserialized.parameters[2].value == "plain-string"
+    assert deserialized.parameters[2].download is False
 
 
 def test_app_environment_empty_inputs():
@@ -681,7 +681,7 @@ def test_app_environment_empty_inputs():
     )
 
     cmd = app_env.container_cmd(ctx)
-    assert "--inputs" not in cmd
+    assert "--parameters" not in cmd
 
 
 def test_app_environment_container_cmd_version_handling():
@@ -805,32 +805,32 @@ def test_app_environment_serialize_inputs_with_overrides():
     # Test without overrides - should use original values
     serialized_no_override = app_env._serialize_parameters(parameter_overrides=None)
     deserialized = SerializableParameterCollection.from_transport(serialized_no_override)
-    assert deserialized.inputs[0].value == "original-config.yaml"
-    assert deserialized.inputs[1].value == "original-data.csv"
-    assert deserialized.inputs[2].value == "s3://original-bucket/model.pkl"
+    assert deserialized.parameters[0].value == "original-config.yaml"
+    assert deserialized.parameters[1].value == "original-data.csv"
+    assert deserialized.parameters[2].value == "s3://original-bucket/model.pkl"
 
     # Test with overrides - should use overridden values
     from dataclasses import replace
 
     parameter_overrides = [
-        replace(app_env.inputs[0], value="overridden-config.yaml"),
-        replace(app_env.inputs[1], value="overridden-data.csv"),
-        replace(app_env.inputs[2], value="s3://new-bucket/model.pkl"),
+        replace(app_env.parameters[0], value="overridden-config.yaml"),
+        replace(app_env.parameters[1], value="overridden-data.csv"),
+        replace(app_env.parameters[2], value="s3://new-bucket/model.pkl"),
     ]
 
     serialized_with_override = app_env._serialize_parameters(parameter_overrides=parameter_overrides)
     deserialized_override = SerializableParameterCollection.from_transport(serialized_with_override)
 
     # Verify overridden values
-    assert deserialized_override.inputs[0].value == "overridden-config.yaml"
-    assert deserialized_override.inputs[0].name == "config"  # Name preserved
-    assert deserialized_override.inputs[0].env_var == "CONFIG_PATH"  # env_var preserved
+    assert deserialized_override.parameters[0].value == "overridden-config.yaml"
+    assert deserialized_override.parameters[0].name == "config"  # Name preserved
+    assert deserialized_override.parameters[0].env_var == "CONFIG_PATH"  # env_var preserved
 
-    assert deserialized_override.inputs[1].value == "overridden-data.csv"
-    assert deserialized_override.inputs[1].name == "data"
+    assert deserialized_override.parameters[1].value == "overridden-data.csv"
+    assert deserialized_override.parameters[1].name == "data"
 
-    assert deserialized_override.inputs[2].value == "s3://new-bucket/model.pkl"
-    assert deserialized_override.inputs[2].name == "model"
+    assert deserialized_override.parameters[2].value == "s3://new-bucket/model.pkl"
+    assert deserialized_override.parameters[2].name == "model"
 
 
 def test_app_environment_serialize_inputs_partial_overrides():
@@ -856,17 +856,17 @@ def test_app_environment_serialize_inputs_partial_overrides():
 
     # Only override the middle input
     parameter_overrides = [
-        app_env.inputs[0],  # Keep original
-        replace(app_env.inputs[1], value="overridden-file2.txt"),  # Override
-        app_env.inputs[2],  # Keep original
+        app_env.parameters[0],  # Keep original
+        replace(app_env.parameters[1], value="overridden-file2.txt"),  # Override
+        app_env.parameters[2],  # Keep original
     ]
 
     serialized = app_env._serialize_parameters(parameter_overrides=parameter_overrides)
     deserialized = SerializableParameterCollection.from_transport(serialized)
 
-    assert deserialized.inputs[0].value == "original-file1.txt"
-    assert deserialized.inputs[1].value == "overridden-file2.txt"
-    assert deserialized.inputs[2].value == "original-file3.txt"
+    assert deserialized.parameters[0].value == "original-file1.txt"
+    assert deserialized.parameters[1].value == "overridden-file2.txt"
+    assert deserialized.parameters[2].value == "original-file3.txt"
 
 
 def test_app_environment_container_cmd_with_parameter_overrides():
@@ -901,25 +901,25 @@ def test_app_environment_container_cmd_with_parameter_overrides():
 
     # Generate command with overrides
     parameter_overrides = [
-        replace(app_env.inputs[0], value="new-config.yaml"),
-        replace(app_env.inputs[1], value="s3://new-bucket/data"),
+        replace(app_env.parameters[0], value="new-config.yaml"),
+        replace(app_env.parameters[1], value="s3://new-bucket/data"),
     ]
 
     cmd = app_env.container_cmd(ctx, parameter_overrides=parameter_overrides)
 
     # Verify command structure is correct
     assert cmd[0] == "fserve"
-    assert "--inputs" in cmd
+    assert "--parameters" in cmd
     assert "--version" in cmd
     assert "v1.0.0" in cmd
 
     # Extract and verify serialized inputs contain overridden values
-    inputs_idx = cmd.index("--inputs")
+    inputs_idx = cmd.index("--parameters")
     serialized = cmd[inputs_idx + 1]
     deserialized = SerializableParameterCollection.from_transport(serialized)
 
-    assert deserialized.inputs[0].value == "new-config.yaml"
-    assert deserialized.inputs[1].value == "s3://new-bucket/data"
+    assert deserialized.parameters[0].value == "new-config.yaml"
+    assert deserialized.parameters[1].value == "s3://new-bucket/data"
 
 
 def test_app_environment_container_cmd_no_override_uses_original():
@@ -951,11 +951,11 @@ def test_app_environment_container_cmd_no_override_uses_original():
     cmd = app_env.container_cmd(ctx)
 
     # Extract and verify serialized inputs contain original values
-    inputs_idx = cmd.index("--inputs")
+    inputs_idx = cmd.index("--parameters")
     serialized = cmd[inputs_idx + 1]
     deserialized = SerializableParameterCollection.from_transport(serialized)
 
-    assert deserialized.inputs[0].value == "my-config.yaml"
+    assert deserialized.parameters[0].value == "my-config.yaml"
 
 
 def test_app_environment_container_cmd_with_file_dir_parameter_overrides():
@@ -995,25 +995,25 @@ def test_app_environment_container_cmd_with_file_dir_parameter_overrides():
     new_dir = Dir(path="s3://new-bucket/new-dir")
 
     parameter_overrides = [
-        replace(app_env.inputs[0], value=new_file),
-        replace(app_env.inputs[1], value=new_dir),
+        replace(app_env.parameters[0], value=new_file),
+        replace(app_env.parameters[1], value=new_dir),
     ]
 
     cmd = app_env.container_cmd(ctx, parameter_overrides=parameter_overrides)
 
     # Extract and verify serialized inputs
-    inputs_idx = cmd.index("--inputs")
+    inputs_idx = cmd.index("--parameters")
     serialized = cmd[inputs_idx + 1]
     deserialized = SerializableParameterCollection.from_transport(serialized)
 
     # Verify file override
-    assert deserialized.inputs[0].name == "myfile"
-    assert deserialized.inputs[0].value == "s3://new-bucket/new-file.txt"
-    assert deserialized.inputs[0].type == "file"
-    assert deserialized.inputs[0].download is True  # mount implies download
+    assert deserialized.parameters[0].name == "myfile"
+    assert deserialized.parameters[0].value == "s3://new-bucket/new-file.txt"
+    assert deserialized.parameters[0].type == "file"
+    assert deserialized.parameters[0].download is True  # mount implies download
 
     # Verify dir override
-    assert deserialized.inputs[1].name == "mydir"
-    assert deserialized.inputs[1].value == "s3://new-bucket/new-dir"
-    assert deserialized.inputs[1].type == "directory"
-    assert deserialized.inputs[1].download is True
+    assert deserialized.parameters[1].name == "mydir"
+    assert deserialized.parameters[1].value == "s3://new-bucket/new-dir"
+    assert deserialized.parameters[1].type == "directory"
+    assert deserialized.parameters[1].download is True

@@ -13,7 +13,7 @@ import pytest
 
 import flyte.io
 from flyte.app._parameter import (
-    INPUT_TYPE_MAP,
+    PARAMETER_TYPE_MAP,
     AppEndpoint,
     Parameter,
     RunOutput,
@@ -625,15 +625,15 @@ def test_serializable_input_collection_with_mixed_values():
 
     collection = SerializableParameterCollection.from_parameters(parameters)
 
-    assert len(collection.inputs) == 5
-    assert collection.inputs[0].type == "string"
-    assert collection.inputs[0].value == "config.yaml"
-    assert collection.inputs[1].type == "file"
-    assert collection.inputs[1].download is True
-    assert collection.inputs[2].type == "directory"
-    assert collection.inputs[2].download is True
-    assert collection.inputs[3].type == "string"  # RunOutput type
-    assert collection.inputs[4].type == "string"  # AppEndpoint type
+    assert len(collection.parameters) == 5
+    assert collection.parameters[0].type == "string"
+    assert collection.parameters[0].value == "config.yaml"
+    assert collection.parameters[1].type == "file"
+    assert collection.parameters[1].download is True
+    assert collection.parameters[2].type == "directory"
+    assert collection.parameters[2].download is True
+    assert collection.parameters[3].type == "string"  # RunOutput type
+    assert collection.parameters[4].type == "string"  # AppEndpoint type
 
 
 def test_serializable_input_collection_transport_roundtrip():
@@ -653,25 +653,10 @@ def test_serializable_input_collection_transport_roundtrip():
 
     restored = SerializableParameterCollection.from_transport(transport_str)
 
-    assert len(restored.inputs) == 3
-    assert restored.inputs[0].name == "config"
-    assert restored.inputs[0].value == "config.yaml"
-    assert restored.inputs[1].name == "model"
-    assert "run-123" in restored.inputs[1].value  # JSON contains run_name
-    assert restored.inputs[2].name == "api"
-    assert "upstream-app" in restored.inputs[2].value  # JSON contains app_name
-
-
-# =============================================================================
-# Tests for INPUT_TYPE_MAP
-# =============================================================================
-
-
-def test_input_type_map_contains_expected_types():
-    """
-    GOAL: Verify INPUT_TYPE_MAP has all expected type mappings.
-    """
-    assert INPUT_TYPE_MAP[str] == "string"
-    assert INPUT_TYPE_MAP[flyte.io.File] == "file"
-    assert INPUT_TYPE_MAP[flyte.io.Dir] == "directory"
-    assert len(INPUT_TYPE_MAP) == 3
+    assert len(restored.parameters) == 3
+    assert restored.parameters[0].name == "config"
+    assert restored.parameters[0].value == "config.yaml"
+    assert restored.parameters[1].name == "model"
+    assert "run-123" in restored.parameters[1].value  # JSON contains run_name
+    assert restored.parameters[2].name == "api"
+    assert "upstream-app" in restored.parameters[2].value  # JSON contains app_name

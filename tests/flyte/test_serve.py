@@ -207,7 +207,7 @@ async def test_serve_extracts_parameter_overrides_for_matching_app():
     assert app_env_input_values is not None
 
     parameter_overrides = []
-    for _input in app_env.inputs:
+    for _input in app_env.parameters:
         value = app_env_input_values.get(_input.name, _input.value)
         parameter_overrides.append(replace(_input, value=value))
 
@@ -283,7 +283,7 @@ async def test_serve_partial_parameter_overrides():
     assert app_env_input_values is not None
 
     parameter_overrides = []
-    for _input in app_env.inputs:
+    for _input in app_env.parameters:
         value = app_env_input_values.get(_input.name, _input.value)
         parameter_overrides.append(replace(_input, value=value))
 
@@ -331,7 +331,7 @@ async def test_serve_with_file_dir_parameter_overrides():
     assert app_env_input_values is not None
 
     parameter_overrides = []
-    for _input in app_env.inputs:
+    for _input in app_env.parameters:
         value = app_env_input_values.get(_input.name, _input.value)
         parameter_overrides.append(replace(_input, value=value))
 
@@ -381,7 +381,7 @@ def test_parameter_overrides_affect_container_cmd():
     # Extract input overrides (replicating serve method logic)
     app_env_input_values = serve._input_values.get(app_env.name)
     parameter_overrides = []
-    for _input in app_env.inputs:
+    for _input in app_env.parameters:
         value = app_env_input_values.get(_input.name, _input.value)
         parameter_overrides.append(replace(_input, value=value))
 
@@ -398,13 +398,13 @@ def test_parameter_overrides_affect_container_cmd():
     cmd = app_env.container_cmd(ctx, parameter_overrides=parameter_overrides)
 
     # Verify the command contains overridden inputs
-    assert "--inputs" in cmd
-    inputs_idx = cmd.index("--inputs")
+    assert "--parameters" in cmd
+    inputs_idx = cmd.index("--parameters")
     serialized = cmd[inputs_idx + 1]
 
     deserialized = SerializableParameterCollection.from_transport(serialized)
-    assert deserialized.inputs[0].value == "overridden-config.yaml"
-    assert deserialized.inputs[1].value == "s3://overridden/data"
+    assert deserialized.parameters[0].value == "overridden-config.yaml"
+    assert deserialized.parameters[1].value == "s3://overridden/data"
 
 
 def test_multiple_app_environments_with_different_overrides():
@@ -444,14 +444,14 @@ def test_multiple_app_environments_with_different_overrides():
     # Extract overrides for app-one
     app_one_values = serve._input_values.get(app_one.name)
     app_one_overrides = []
-    for _input in app_one.inputs:
+    for _input in app_one.parameters:
         value = app_one_values.get(_input.name, _input.value)
         app_one_overrides.append(replace(_input, value=value))
 
     # Extract overrides for app-two
     app_two_values = serve._input_values.get(app_two.name)
     app_two_overrides = []
-    for _input in app_two.inputs:
+    for _input in app_two.parameters:
         value = app_two_values.get(_input.name, _input.value)
         app_two_overrides.append(replace(_input, value=value))
 
@@ -526,7 +526,7 @@ def test_with_servecontext_dependent_apps_with_parameter_overrides():
     assert backend_input_values is not None
 
     backend_overrides = []
-    for _input in backend_app.inputs:
+    for _input in backend_app.parameters:
         value = backend_input_values.get(_input.name, _input.value)
         backend_overrides.append(replace(_input, value=value))
 
@@ -544,7 +544,7 @@ def test_with_servecontext_dependent_apps_with_parameter_overrides():
     assert frontend_input_values is not None
 
     frontend_overrides = []
-    for _input in frontend_app.inputs:
+    for _input in frontend_app.parameters:
         value = frontend_input_values.get(_input.name, _input.value)
         frontend_overrides.append(replace(_input, value=value))
 
@@ -571,18 +571,18 @@ def test_with_servecontext_dependent_apps_with_parameter_overrides():
 
     # Check backend app command serialization
     backend_cmd = backend_app.container_cmd(ctx, parameter_overrides=backend_overrides)
-    assert "--inputs" in backend_cmd
-    backend_inputs_idx = backend_cmd.index("--inputs")
-    backend_serialized = backend_cmd[backend_inputs_idx + 1]
+    assert "--parameters" in backend_cmd
+    backend_parameters_idx = backend_cmd.index("--parameters")
+    backend_serialized = backend_cmd[backend_parameters_idx + 1]
     backend_deserialized = SerializableParameterCollection.from_transport(backend_serialized)
-    assert backend_deserialized.inputs[0].value == "postgres://prod-db:5432/production"
-    assert backend_deserialized.inputs[1].value == "redis://prod-cache:6379"
+    assert backend_deserialized.parameters[0].value == "postgres://prod-db:5432/production"
+    assert backend_deserialized.parameters[1].value == "redis://prod-cache:6379"
 
     # Check frontend app command serialization
     frontend_cmd = frontend_app.container_cmd(ctx, parameter_overrides=frontend_overrides)
-    assert "--inputs" in frontend_cmd
-    frontend_inputs_idx = frontend_cmd.index("--inputs")
-    frontend_serialized = frontend_cmd[frontend_inputs_idx + 1]
+    assert "--parameters" in frontend_cmd
+    frontend_parameters_idx = frontend_cmd.index("--parameters")
+    frontend_serialized = frontend_cmd[frontend_parameters_idx + 1]
     frontend_deserialized = SerializableParameterCollection.from_transport(frontend_serialized)
-    assert frontend_deserialized.inputs[0].value == "https://api.production.example.com"
-    assert frontend_deserialized.inputs[1].value == "production-theme"
+    assert frontend_deserialized.parameters[0].value == "https://api.production.example.com"
+    assert frontend_deserialized.parameters[1].value == "production-theme"
