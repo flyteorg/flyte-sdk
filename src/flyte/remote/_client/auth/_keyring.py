@@ -101,7 +101,9 @@ class KeyringStore:
         access_token = ""
         try:
             refresh_token = keyring.get_password(for_endpoint, KeyringStore._refresh_token_key)
-            access_token = keyring.get_password(for_endpoint, KeyringStore._access_token_key)
+            access_token_opt = keyring.get_password(for_endpoint, KeyringStore._access_token_key)
+            if access_token_opt:
+                access_token = access_token_opt
         except NoKeyringError as e:
             logger.debug(f"KeyRing not available, tokens will not be cached. Error: {e}")
             return None

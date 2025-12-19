@@ -363,7 +363,7 @@ class AuthorizationClient(object):
 
         data.update(self._refresh_access_token_params)
 
-        resp = await self._http_session.post(
+        resp: httpx.Response = await self._http_session.post(
             url=self._token_endpoint,
             data=data,
             headers=self._headers,
