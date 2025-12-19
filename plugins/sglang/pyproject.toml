@@ -7,6 +7,7 @@ authors = [{ name = "Niels Bantilan", email = "cosmicbboy@users.noreply.github.c
 requires-python = ">=3.10"
 dependencies = [
     "sglang>=0.5.2",
+    "flyte",
 ]
 
 [build-system]
