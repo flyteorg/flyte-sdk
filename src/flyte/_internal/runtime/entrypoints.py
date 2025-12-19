@@ -9,6 +9,7 @@ from flyte._context import contextual_run
 from flyte._internal import Controller
 from flyte._internal.imagebuild.image_builder import ImageCache
 from flyte._logging import log, logger
+from flyte._metrics import async_timer
 from flyte._task import TaskTemplate
 from flyte.models import ActionID, Checkpoints, CodeBundle, RawDataPath
 
@@ -124,7 +125,8 @@ async def download_code_bundle(code_bundle: CodeBundle) -> CodeBundle:
     """
     adjust_sys_path([str(code_bundle.destination)])
     logger.debug(f"Downloading {code_bundle}")
-    downloaded_path = await download_bundle(code_bundle)
+    async with async_timer("download_code_bundle"):
+        downloaded_path = await download_bundle(code_bundle)
     return code_bundle.with_downloaded_path(downloaded_path)
 
 
@@ -135,7 +137,8 @@ async def _download_and_load_task(
         logger.debug(f"Downloading {code_bundle}")
         code_bundle = await download_code_bundle(code_bundle)
         if code_bundle.pkl:
-            return load_pkl_task(code_bundle)
+            async with async_timer("load_pkl_task"):
+                return load_pkl_task(code_bundle)
 
         if not resolver or not resolver_args:
             raise flyte.errors.RuntimeSystemError(
@@ -144,11 +147,13 @@ async def _download_and_load_task(
         logger.debug(
             f"Loading task from tgz: {code_bundle.downloaded_path}, resolver: {resolver}, args: {resolver_args}"
         )
-        return load_task(resolver, *resolver_args)
+        async with async_timer("load_task_from_tgz"):
+            return load_task(resolver, *resolver_args)
     if not resolver or not resolver_args:
         raise flyte.errors.RuntimeSystemError("MalformedCommand", "Resolver and resolver args are required. for task")
     logger.debug(f"No code bundle provided, loading task from resolver: {resolver}, args: {resolver_args}")
-    return load_task(resolver, *resolver_args)
+    async with async_timer("load_task_from_resolver"):
+        return load_task(resolver, *resolver_args)
 
 
 @log
@@ -185,20 +190,21 @@ async def load_and_run_task(
     :param image_cache: Mappings of Image identifiers to image URIs.
     :param interactive_mode: Whether to run the task in interactive mode.
     """
-    task = await _download_and_load_task(code_bundle, resolver, resolver_args)
+    async with async_timer("load_and_run_task_total"):
+        task = await _download_and_load_task(code_bundle, resolver, resolver_args)
 
-    await contextual_run(
-        extract_download_run_upload,
-        task,
-        action=action,
-        version=version,
-        controller=controller,
-        raw_data_path=raw_data_path,
-        output_path=output_path,
-        run_base_dir=run_base_dir,
-        checkpoints=checkpoints,
-        code_bundle=code_bundle,
-        input_path=input_path,
-        image_cache=image_cache,
-        interactive_mode=interactive_mode,
-    )
+        await contextual_run(
+            extract_download_run_upload,
+            task,
+            action=action,
+            version=version,
+            controller=controller,
+            raw_data_path=raw_data_path,
+            output_path=output_path,
+            run_base_dir=run_base_dir,
+            checkpoints=checkpoints,
+            code_bundle=code_bundle,
+            input_path=input_path,
+            image_cache=image_cache,
+            interactive_mode=interactive_mode,
+        )
