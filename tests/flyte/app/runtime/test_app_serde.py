@@ -267,8 +267,8 @@ def test_get_proto_container_with_args_and_inputs():
     cmd_list = list(container.command)
     inputs_idx = cmd_list.index("--inputs")
     assert inputs_idx >= 0
-    serialized_inputs = cmd_list[inputs_idx + 1]
-    assert len(serialized_inputs) > 0  # Should have base64 gzip encoded content
+    serialized_parameters = cmd_list[inputs_idx + 1]
+    assert len(serialized_parameters) > 0  # Should have base64 gzip encoded content
 
 
 def test_get_proto_container_with_string_args_and_inputs():
@@ -711,12 +711,12 @@ def test_get_proto_container_with_multiple_inputs():
     assert "--inputs" in container.command
     cmd_list = list(container.command)
     inputs_idx = cmd_list.index("--inputs")
-    serialized_inputs = cmd_list[inputs_idx + 1]
+    serialized_parameters = cmd_list[inputs_idx + 1]
 
     # Verify inputs can be deserialized
-    from flyte.app._input import SerializableInputCollection
+    from flyte.app._input import SerializableParameterCollection
 
-    deserialized = SerializableInputCollection.from_transport(serialized_inputs)
+    deserialized = SerializableParameterCollection.from_transport(serialized_parameters)
     assert len(deserialized.inputs) == 3
     assert deserialized.inputs[0].name == "config"
     assert deserialized.inputs[0].env_var == "CONFIG_PATH"

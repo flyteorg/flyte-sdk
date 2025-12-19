@@ -153,10 +153,10 @@ class AppEnvironment(Environment):
     def _serialize_inputs(self, parameter_overrides: list[Parameter] | None) -> str:
         if not self.inputs:
             return ""
-        from ._input import SerializableInputCollection
+        from ._input import SerializableParameterCollection
 
-        serialized_inputs = SerializableInputCollection.from_parameters(parameter_overrides or self.inputs)
-        return serialized_inputs.to_transport
+        serialized_parameters = SerializableParameterCollection.from_parameters(parameter_overrides or self.inputs)
+        return serialized_parameters.to_transport
 
     def container_cmd(
         self, serialize_context: SerializationContext, input_overrides: list[Parameter] | None = None

@@ -230,7 +230,7 @@ class Parameter:
             self.name = "i0"
 
 
-class SerializableInput(BaseModel):
+class SerializableParameter(BaseModel):
     """
     Serializable version of Parameter.
     """
@@ -244,7 +244,7 @@ class SerializableInput(BaseModel):
     ignore_patterns: List[str] = field(default_factory=list)
 
     @classmethod
-    def from_parameter(cls, param: Parameter) -> "SerializableInput":
+    def from_parameter(cls, param: Parameter) -> "SerializableParameter":
         import flyte.io
 
         # param.name is guaranteed to be set by Parameter.__post_init__
@@ -278,14 +278,14 @@ class SerializableInput(BaseModel):
         )
 
 
-class SerializableInputCollection(BaseModel):
+class SerializableParameterCollection(BaseModel):
     """
     Collection of parameters for application.
 
     :param inputs: List of parameters.
     """
 
-    inputs: List[SerializableInput] = field(default_factory=list)
+    inputs: List[SerializableParameter] = field(default_factory=list)
 
     @cached_property
     def to_transport(self) -> str:
@@ -300,7 +300,7 @@ class SerializableInputCollection(BaseModel):
         return base64.b64encode(buf.getvalue()).decode("utf-8")
 
     @classmethod
-    def from_transport(cls, s: str) -> SerializableInputCollection:
+    def from_transport(cls, s: str) -> SerializableParameterCollection:
         import base64
         import gzip
 
@@ -309,8 +309,8 @@ class SerializableInputCollection(BaseModel):
         return cls.model_validate_json(json_str)
 
     @classmethod
-    def from_parameters(cls, parameters: List[Parameter]) -> SerializableInputCollection:
-        return cls(inputs=[SerializableInput.from_parameter(param) for param in parameters])
+    def from_parameters(cls, parameters: List[Parameter]) -> SerializableParameterCollection:
+        return cls(inputs=[SerializableParameter.from_parameter(param) for param in parameters])
 
 
 @cache

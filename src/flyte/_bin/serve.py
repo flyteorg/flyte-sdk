@@ -21,26 +21,26 @@ _F_PATH_REWRITE = "_F_PATH_REWRITE"
 ENDPOINT_OVERRIDE = "_U_EP_OVERRIDE"
 
 
-async def sync_inputs(serialized_inputs: str, dest: str) -> Tuple[dict, dict]:
+async def sync_parameters(serialized_parameters: str, dest: str) -> Tuple[dict, dict]:
     """
-    Converts inputs into simple dict of name to value, downloading any files/directories as needed.
+    Converts parameters into simple dict of name to value, downloading any files/directories as needed.
 
     Args:
-        serialized_inputs (str): The serialized inputs string.
-        dest: Destination to download inputs to
+        serialized_parameters (str): The serialized parameters string.
+        dest: Destination to download parameters to
 
     Returns:
         Tuple[dict, dict]: A tuple containing the output dictionary and the environment variables dictionary.
-        The output dictionary maps input names to their values.
+        The output dictionary maps parameter names to their values.
         The environment variables dictionary maps environment variable names to their values.
     """
     import flyte.storage as storage
-    from flyte.app._input import SerializableInputCollection
+    from flyte.app._input import SerializableParameterCollection
 
     print(f"Log level: {logger.getEffectiveLevel()} is set from env {os.environ.get('LOG_LEVEL')}", flush=True)
-    logger.info("Reading inputs...")
+    logger.info("Reading parameters...")
 
-    user_inputs = SerializableInputCollection.from_transport(serialized_inputs)
+    user_inputs = SerializableParameterCollection.from_transport(serialized_parameters)
 
     output = {}
     env_vars = {}
@@ -70,14 +70,14 @@ async def sync_inputs(serialized_inputs: str, dest: str) -> Tuple[dict, dict]:
 
 
 async def download_code_inputs(
-    serialized_inputs: str, tgz: str, pkl: str, dest: str, version: str
+    serialized_parameters: str, tgz: str, pkl: str, dest: str, version: str
 ) -> Tuple[dict, dict, CodeBundle | None]:
     from flyte._internal.runtime.entrypoints import download_code_bundle
 
     user_inputs: dict[str, str] = {}
     env_vars: dict[str, str] = {}
-    if serialized_inputs and len(serialized_inputs) > 0:
-        user_inputs, env_vars = await sync_inputs(serialized_inputs, dest)
+    if serialized_parameters and len(serialized_parameters) > 0:
+        user_inputs, env_vars = await sync_parameters(serialized_parameters, dest)
     code_bundle: CodeBundle | None = None
     if tgz or pkl:
         logger.debug(f"Downloading Code bundle: {tgz or pkl} ...")
@@ -121,9 +121,9 @@ def main(
 
     logger.info(f"Starting flyte-serve, org: {org}, project: {project}, domain: {domain}")
 
-    materialized_inputs, env_vars, _code_bundle = asyncio.run(
+    materialized_parameters, env_vars, _code_bundle = asyncio.run(
         download_code_inputs(
-            serialized_inputs=inputs or "",
+            serialized_parameters=inputs or "",
             tgz=tgz or "",
             pkl=pkl or "",
             dest=dest or os.getcwd(),
@@ -132,13 +132,13 @@ def main(
     )
 
     for key, value in env_vars.items():
-        # set environment variables defined in the AppEnvironment Inputs
+        # set environment variables defined in the AppEnvironment Parameters
         logger.info(f"Setting environment variable {key}='{value}'")
         os.environ[key] = value
 
     inputs_file = os.path.join(os.getcwd(), RUNTIME_INPUTS_FILE)
     with open(inputs_file, "w") as f:
-        json.dump(materialized_inputs, f)
+        json.dump(materialized_parameters, f)
 
     os.environ[RUNTIME_INPUTS_FILE] = inputs_file
 

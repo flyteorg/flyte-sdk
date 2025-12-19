@@ -355,7 +355,7 @@ def test_input_overrides_affect_container_cmd():
     """
     from dataclasses import replace
 
-    from flyte.app._input import SerializableInputCollection
+    from flyte.app._input import SerializableParameterCollection
     from flyte.models import CodeBundle, SerializationContext
 
     # Create app environment
@@ -402,7 +402,7 @@ def test_input_overrides_affect_container_cmd():
     inputs_idx = cmd.index("--inputs")
     serialized = cmd[inputs_idx + 1]
 
-    deserialized = SerializableInputCollection.from_transport(serialized)
+    deserialized = SerializableParameterCollection.from_transport(serialized)
     assert deserialized.inputs[0].value == "overridden-config.yaml"
     assert deserialized.inputs[1].value == "s3://overridden/data"
 
@@ -468,7 +468,7 @@ def test_with_servecontext_dependent_apps_with_input_overrides():
     the input_values dict correctly updates inputs for both apps.
     """
     import flyte.io
-    from flyte.app._input import SerializableInputCollection
+    from flyte.app._input import SerializableParameterCollection
     from flyte.models import CodeBundle, SerializationContext
 
     # Create the backend app (dependency) with multiple inputs
@@ -574,7 +574,7 @@ def test_with_servecontext_dependent_apps_with_input_overrides():
     assert "--inputs" in backend_cmd
     backend_inputs_idx = backend_cmd.index("--inputs")
     backend_serialized = backend_cmd[backend_inputs_idx + 1]
-    backend_deserialized = SerializableInputCollection.from_transport(backend_serialized)
+    backend_deserialized = SerializableParameterCollection.from_transport(backend_serialized)
     assert backend_deserialized.inputs[0].value == "postgres://prod-db:5432/production"
     assert backend_deserialized.inputs[1].value == "redis://prod-cache:6379"
 
@@ -583,6 +583,6 @@ def test_with_servecontext_dependent_apps_with_input_overrides():
     assert "--inputs" in frontend_cmd
     frontend_inputs_idx = frontend_cmd.index("--inputs")
     frontend_serialized = frontend_cmd[frontend_inputs_idx + 1]
-    frontend_deserialized = SerializableInputCollection.from_transport(frontend_serialized)
+    frontend_deserialized = SerializableParameterCollection.from_transport(frontend_serialized)
     assert frontend_deserialized.inputs[0].value == "https://api.production.example.com"
     assert frontend_deserialized.inputs[1].value == "production-theme"

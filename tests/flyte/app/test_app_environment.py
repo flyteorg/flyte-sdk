@@ -183,12 +183,12 @@ def test_app_environment_container_cmd_with_inputs():
     # Verify --inputs flag is present
     assert "--inputs" in cmd
     inputs_idx = cmd.index("--inputs")
-    serialized_inputs = cmd[inputs_idx + 1]
+    serialized_parameters = cmd[inputs_idx + 1]
 
     # Verify serialized inputs can be deserialized correctly
-    from flyte.app._input import SerializableInputCollection
+    from flyte.app._input import SerializableParameterCollection
 
-    deserialized = SerializableInputCollection.from_transport(serialized_inputs)
+    deserialized = SerializableParameterCollection.from_transport(serialized_parameters)
     assert len(deserialized.inputs) == 3
     assert deserialized.inputs[0].name == "input1"
     assert deserialized.inputs[0].value == "file1.txt"
@@ -632,9 +632,9 @@ def test_app_environment_with_file_and_dir_inputs():
     inputs_idx = cmd.index("--inputs")
     serialized = cmd[inputs_idx + 1]
 
-    from flyte.app._input import SerializableInputCollection
+    from flyte.app._input import SerializableParameterCollection
 
-    deserialized = SerializableInputCollection.from_transport(serialized)
+    deserialized = SerializableParameterCollection.from_transport(serialized)
     assert len(deserialized.inputs) == 3
 
     # File input
@@ -790,7 +790,7 @@ def test_app_environment_serialize_inputs_with_overrides():
     - When input_overrides is None, the original inputs are serialized
     - Overrides only affect the value field, other properties are preserved
     """
-    from flyte.app._input import SerializableInputCollection
+    from flyte.app._input import SerializableParameterCollection
 
     app_env = AppEnvironment(
         name="app-with-inputs",
@@ -804,7 +804,7 @@ def test_app_environment_serialize_inputs_with_overrides():
 
     # Test without overrides - should use original values
     serialized_no_override = app_env._serialize_inputs(input_overrides=None)
-    deserialized = SerializableInputCollection.from_transport(serialized_no_override)
+    deserialized = SerializableParameterCollection.from_transport(serialized_no_override)
     assert deserialized.inputs[0].value == "original-config.yaml"
     assert deserialized.inputs[1].value == "original-data.csv"
     assert deserialized.inputs[2].value == "s3://original-bucket/model.pkl"
@@ -819,7 +819,7 @@ def test_app_environment_serialize_inputs_with_overrides():
     ]
 
     serialized_with_override = app_env._serialize_inputs(input_overrides=input_overrides)
-    deserialized_override = SerializableInputCollection.from_transport(serialized_with_override)
+    deserialized_override = SerializableParameterCollection.from_transport(serialized_with_override)
 
     # Verify overridden values
     assert deserialized_override.inputs[0].value == "overridden-config.yaml"
@@ -842,7 +842,7 @@ def test_app_environment_serialize_inputs_partial_overrides():
     """
     from dataclasses import replace
 
-    from flyte.app._input import SerializableInputCollection
+    from flyte.app._input import SerializableParameterCollection
 
     app_env = AppEnvironment(
         name="app-partial-override",
@@ -862,7 +862,7 @@ def test_app_environment_serialize_inputs_partial_overrides():
     ]
 
     serialized = app_env._serialize_inputs(input_overrides=input_overrides)
-    deserialized = SerializableInputCollection.from_transport(serialized)
+    deserialized = SerializableParameterCollection.from_transport(serialized)
 
     assert deserialized.inputs[0].value == "original-file1.txt"
     assert deserialized.inputs[1].value == "overridden-file2.txt"
@@ -880,7 +880,7 @@ def test_app_environment_container_cmd_with_input_overrides():
     """
     from dataclasses import replace
 
-    from flyte.app._input import SerializableInputCollection
+    from flyte.app._input import SerializableParameterCollection
 
     app_env = AppEnvironment(
         name="app-cmd-override",
@@ -916,7 +916,7 @@ def test_app_environment_container_cmd_with_input_overrides():
     # Extract and verify serialized inputs contain overridden values
     inputs_idx = cmd.index("--inputs")
     serialized = cmd[inputs_idx + 1]
-    deserialized = SerializableInputCollection.from_transport(serialized)
+    deserialized = SerializableParameterCollection.from_transport(serialized)
 
     assert deserialized.inputs[0].value == "new-config.yaml"
     assert deserialized.inputs[1].value == "s3://new-bucket/data"
@@ -929,7 +929,7 @@ def test_app_environment_container_cmd_no_override_uses_original():
     Tests that when input_overrides is None or not provided, the container_cmd
     serializes the original input values.
     """
-    from flyte.app._input import SerializableInputCollection
+    from flyte.app._input import SerializableParameterCollection
 
     app_env = AppEnvironment(
         name="app-no-override",
@@ -953,7 +953,7 @@ def test_app_environment_container_cmd_no_override_uses_original():
     # Extract and verify serialized inputs contain original values
     inputs_idx = cmd.index("--inputs")
     serialized = cmd[inputs_idx + 1]
-    deserialized = SerializableInputCollection.from_transport(serialized)
+    deserialized = SerializableParameterCollection.from_transport(serialized)
 
     assert deserialized.inputs[0].value == "my-config.yaml"
 
@@ -967,7 +967,7 @@ def test_app_environment_container_cmd_with_file_dir_input_overrides():
     """
     from dataclasses import replace
 
-    from flyte.app._input import SerializableInputCollection
+    from flyte.app._input import SerializableParameterCollection
     from flyte.io import Dir, File
 
     original_file = File(path="s3://original-bucket/original-file.txt")
@@ -1004,7 +1004,7 @@ def test_app_environment_container_cmd_with_file_dir_input_overrides():
     # Extract and verify serialized inputs
     inputs_idx = cmd.index("--inputs")
     serialized = cmd[inputs_idx + 1]
-    deserialized = SerializableInputCollection.from_transport(serialized)
+    deserialized = SerializableParameterCollection.from_transport(serialized)
 
     # Verify file override
     assert deserialized.inputs[0].name == "myfile"

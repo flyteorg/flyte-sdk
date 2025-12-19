@@ -17,8 +17,8 @@ from flyte.app._input import (
     AppEndpoint,
     Parameter,
     RunOutput,
-    SerializableInput,
-    SerializableInputCollection,
+    SerializableParameter,
+    SerializableParameterCollection,
     _DelayedValue,
 )
 
@@ -552,20 +552,20 @@ def test_input_with_dir_value():
 
 
 # =============================================================================
-# Tests for SerializableInput with delayed values
+# Tests for SerializableParameter with delayed values
 # =============================================================================
 
 
 def test_serializable_input_from_run_output():
     """
-    GOAL: Verify SerializableInput.from_parameter() handles RunOutput correctly.
+    GOAL: Verify SerializableParameter.from_parameter() handles RunOutput correctly.
 
     Tests that RunOutput is serialized to JSON and type is preserved.
     """
     ro = RunOutput(type="file", run_name="my-run-123", getter=(0,))
     param = Parameter(name="model", value=ro)
 
-    serialized = SerializableInput.from_parameter(param)
+    serialized = SerializableParameter.from_parameter(param)
 
     assert serialized.name == "model"
     assert serialized.type == "file"
@@ -576,14 +576,14 @@ def test_serializable_input_from_run_output():
 
 def test_serializable_input_from_run_output_with_mount():
     """
-    GOAL: Verify SerializableInput.from_parameter() handles RunOutput with mount.
+    GOAL: Verify SerializableParameter.from_parameter() handles RunOutput with mount.
 
     Tests that download is set to True when mount is specified.
     """
     ro = RunOutput(type="file", run_name="my-run-123")
     param = Parameter(name="model", value=ro, mount="/mnt/model")
 
-    serialized = SerializableInput.from_parameter(param)
+    serialized = SerializableParameter.from_parameter(param)
 
     assert serialized.name == "model"
     assert serialized.download is True
@@ -592,14 +592,14 @@ def test_serializable_input_from_run_output_with_mount():
 
 def test_serializable_input_from_app_endpoint():
     """
-    GOAL: Verify SerializableInput.from_parameter() handles AppEndpoint correctly.
+    GOAL: Verify SerializableParameter.from_parameter() handles AppEndpoint correctly.
 
     Tests that AppEndpoint is serialized to JSON with type 'string'.
     """
     ae = AppEndpoint(app_name="upstream-app", public=True)
     param = Parameter(name="api_url", value=ae, env_var="API_URL")
 
-    serialized = SerializableInput.from_parameter(param)
+    serialized = SerializableParameter.from_parameter(param)
 
     assert serialized.name == "api_url"
     assert serialized.type == "string"
@@ -610,7 +610,7 @@ def test_serializable_input_from_app_endpoint():
 
 def test_serializable_input_collection_with_mixed_values():
     """
-    GOAL: Verify SerializableInputCollection handles mixed parameter types.
+    GOAL: Verify SerializableParameterCollection handles mixed parameter types.
 
     Tests that a collection with string, File, Dir, RunOutput, and AppEndpoint
     all serialize correctly.
@@ -623,7 +623,7 @@ def test_serializable_input_collection_with_mixed_values():
         Parameter(name="api_url", value=AppEndpoint(app_name="upstream-app")),
     ]
 
-    collection = SerializableInputCollection.from_parameters(parameters)
+    collection = SerializableParameterCollection.from_parameters(parameters)
 
     assert len(collection.inputs) == 5
     assert collection.inputs[0].type == "string"
@@ -638,7 +638,7 @@ def test_serializable_input_collection_with_mixed_values():
 
 def test_serializable_input_collection_transport_roundtrip():
     """
-    GOAL: Verify SerializableInputCollection can be transported and restored.
+    GOAL: Verify SerializableParameterCollection can be transported and restored.
 
     Tests the full round-trip: parameters -> serialization -> transport -> deserialization.
     """
@@ -648,10 +648,10 @@ def test_serializable_input_collection_transport_roundtrip():
         Parameter(name="api", value=AppEndpoint(app_name="upstream-app")),
     ]
 
-    collection = SerializableInputCollection.from_parameters(parameters)
+    collection = SerializableParameterCollection.from_parameters(parameters)
     transport_str = collection.to_transport
 
-    restored = SerializableInputCollection.from_transport(transport_str)
+    restored = SerializableParameterCollection.from_transport(transport_str)
 
     assert len(restored.inputs) == 3
     assert restored.inputs[0].name == "config"
