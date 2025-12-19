@@ -68,7 +68,7 @@ class DeployedAppEnvironment:
 async def _deploy_app(
     app: AppEnvironment,
     serialization_context: SerializationContext,
-    input_overrides: list[Parameter] | None = None,
+    parameter_overrides: list[Parameter] | None = None,
     dryrun: bool = False,
 ) -> "App":
     """
@@ -89,7 +89,9 @@ async def _deploy_app(
 
     image_uri = app.image.uri if isinstance(app.image, Image) else app.image
     try:
-        app_idl = await translate_app_env_to_idl.aio(app, serialization_context, input_overrides=input_overrides)
+        app_idl = await translate_app_env_to_idl.aio(
+            app, serialization_context, parameter_overrides=parameter_overrides
+        )
 
         if dryrun:
             return app_idl
