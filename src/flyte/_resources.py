@@ -328,7 +328,7 @@ def AMD_GPU(device: AMD_GPUType) -> Device:
 def HABANA_GAUDI(device: HABANA_GAUDIType) -> Device:
     """
     Create a Habana Gaudi device instance.
-    :param device: Device type (e.g., "DL1").
+    :param device: Device type (e.g., "Gaudi1").
     :return: Device instance.
     """
     if device not in get_args(HABANA_GAUDIType):
