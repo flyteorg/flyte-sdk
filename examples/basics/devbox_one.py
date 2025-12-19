@@ -2,30 +2,11 @@ import asyncio
 import logging
 from typing import List
 
-from kubernetes.client import V1Container, V1PodSpec, V1Toleration
-
 import flyte
-
-pod_template = flyte.PodTemplate(
-    pod_spec=V1PodSpec(
-        containers=[V1Container(name="primary")],
-        node_selector={"union.ai/containerd-snapshotter": "nydus"},
-        tolerations=[
-            V1Toleration(
-                key="union.ai/containerd-snapshotter",
-                operator="Equal",
-                value="nydus",
-                effect="NoSchedule",
-            )
-        ],
-    ),
-)
 
 env = flyte.TaskEnvironment(
     name="hello_world",
     resources=flyte.Resources(cpu=1, memory="1Gi"),
-    image=flyte.Image.from_debian_base().with_pip_packages("kubernetes"),
-    pod_template=pod_template,
 )
 
 
