@@ -2,7 +2,7 @@
 Comprehensive unit tests for AppEnvironment.
 
 These tests verify AppEnvironment functionality without using mocks,
-focusing on container_cmd, container_args, and Input handling.
+focusing on container_cmd, container_args, and Parameter handling.
 """
 
 import pytest
@@ -11,7 +11,7 @@ from flyte._image import Image
 from flyte._internal.imagebuild.image_builder import ImageCache
 from flyte._resources import Resources
 from flyte.app import AppEnvironment
-from flyte.app._input import Input
+from flyte.app._input import Parameter
 from flyte.app._types import Domain, Link, Port, Scaling
 from flyte.models import CodeBundle, SerializationContext
 
@@ -25,7 +25,7 @@ def test_app_environment_comprehensive_happy_path():
     Tests the complete lifecycle of creating an AppEnvironment with:
     - All configuration parameters (image, resources, env_vars, secrets, scaling, domain, links)
     - Port conversion from int to Port object
-    - Input serialization and inclusion in container_cmd
+    - Parameter serialization and inclusion in container_cmd
     - Command generation with code bundle, version, and inputs
     - Args handling
 
@@ -51,8 +51,8 @@ def test_app_environment_comprehensive_happy_path():
             Link(path="/docs", title="Documentation", is_relative=True),
         ],
         inputs=[
-            Input(value="config.yaml", name="config", env_var="CONFIG_PATH"),
-            Input(value="s3://bucket/data", name="data", download=True, mount="/mnt/data"),
+            Parameter(value="config.yaml", name="config", env_var="CONFIG_PATH"),
+            Parameter(value="s3://bucket/data", name="data", download=True, mount="/mnt/data"),
         ],
         cluster_pool="gpu-pool",
         include=["*.py", "requirements.txt"],
@@ -164,9 +164,9 @@ def test_app_environment_container_cmd_with_inputs():
         name="app-with-inputs",
         image=Image.from_base("python:3.11"),
         inputs=[
-            Input(value="file1.txt", name="input1", env_var="INPUT1"),
-            Input(value="file2.txt", name="input2"),
-            Input(value="s3://bucket/file3.txt", name="input3", download=True),
+            Parameter(value="file1.txt", name="input1", env_var="INPUT1"),
+            Parameter(value="file2.txt", name="input2"),
+            Parameter(value="s3://bucket/file3.txt", name="input3", download=True),
         ],
     )
 
@@ -240,7 +240,7 @@ def test_app_environment_container_cmd_custom_command():
         name="app-custom-cmd-list",
         image=Image.from_base("python:3.11"),
         command=["python", "app.py"],
-        inputs=[Input(value="config.yaml", name="config")],  # Inputs should be ignored with custom command
+        inputs=[Parameter(value="config.yaml", name="config")],  # Parameters should be ignored with custom command
     )
 
     ctx = SerializationContext(
@@ -611,9 +611,9 @@ def test_app_environment_with_file_and_dir_inputs():
         name="app-with-file-dir",
         image=Image.from_base("python:3.11"),
         inputs=[
-            Input(value=file_input, name="myfile", mount="/mnt/file"),
-            Input(value=dir_input, name="mydir", mount="/mnt/dir", ignore_patterns=["*.log", "*.tmp"]),
-            Input(value="plain-string", name="mystring"),
+            Parameter(value=file_input, name="myfile", mount="/mnt/file"),
+            Parameter(value=dir_input, name="mydir", mount="/mnt/dir", ignore_patterns=["*.log", "*.tmp"]),
+            Parameter(value="plain-string", name="mystring"),
         ],
     )
 
@@ -796,9 +796,9 @@ def test_app_environment_serialize_inputs_with_overrides():
         name="app-with-inputs",
         image=Image.from_base("python:3.11"),
         inputs=[
-            Input(value="original-config.yaml", name="config", env_var="CONFIG_PATH"),
-            Input(value="original-data.csv", name="data"),
-            Input(value="s3://original-bucket/model.pkl", name="model", download=True),
+            Parameter(value="original-config.yaml", name="config", env_var="CONFIG_PATH"),
+            Parameter(value="original-data.csv", name="data"),
+            Parameter(value="s3://original-bucket/model.pkl", name="model", download=True),
         ],
     )
 
@@ -848,9 +848,9 @@ def test_app_environment_serialize_inputs_partial_overrides():
         name="app-partial-override",
         image=Image.from_base("python:3.11"),
         inputs=[
-            Input(value="original-file1.txt", name="file1"),
-            Input(value="original-file2.txt", name="file2"),
-            Input(value="original-file3.txt", name="file3"),
+            Parameter(value="original-file1.txt", name="file1"),
+            Parameter(value="original-file2.txt", name="file2"),
+            Parameter(value="original-file3.txt", name="file3"),
         ],
     )
 
@@ -886,8 +886,8 @@ def test_app_environment_container_cmd_with_input_overrides():
         name="app-cmd-override",
         image=Image.from_base("python:3.11"),
         inputs=[
-            Input(value="original-config.yaml", name="config"),
-            Input(value="s3://original-bucket/data", name="data"),
+            Parameter(value="original-config.yaml", name="config"),
+            Parameter(value="s3://original-bucket/data", name="data"),
         ],
     )
 
@@ -935,7 +935,7 @@ def test_app_environment_container_cmd_no_override_uses_original():
         name="app-no-override",
         image=Image.from_base("python:3.11"),
         inputs=[
-            Input(value="my-config.yaml", name="config"),
+            Parameter(value="my-config.yaml", name="config"),
         ],
     )
 
@@ -977,8 +977,8 @@ def test_app_environment_container_cmd_with_file_dir_input_overrides():
         name="app-file-dir-override",
         image=Image.from_base("python:3.11"),
         inputs=[
-            Input(value=original_file, name="myfile", mount="/mnt/file"),
-            Input(value=original_dir, name="mydir", mount="/mnt/dir"),
+            Parameter(value=original_file, name="myfile", mount="/mnt/file"),
+            Parameter(value=original_dir, name="mydir", mount="/mnt/dir"),
         ],
     )
 

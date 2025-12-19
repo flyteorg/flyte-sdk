@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any, List, Literal, Optional, Union
 import rich.repr
 
 from flyte import Environment, Image, Resources, SecretRequest
-from flyte.app._input import Input
+from flyte.app._input import Parameter
 from flyte.app._types import Domain, Link, Port, Scaling
 from flyte.models import SerializationContext
 
@@ -36,7 +36,7 @@ class AppEnvironment(Environment):
     :param domain: Domain to use for the app.
     :param links: Links to other environments.
     :param include: Files to include in the environment to run the app.
-    :param inputs: Inputs to pass to the app environment.
+    :param inputs: Parameters to pass to the app environment.
     :param cluster_pool: Cluster pool to use for the app environment.
     :param name: Name of the app environment
     :param image: Docker image to use for the environment. If set to "auto", will use the default image.
@@ -59,7 +59,7 @@ class AppEnvironment(Environment):
 
     # Code
     include: List[str] = field(default_factory=list)
-    inputs: List[Input] = field(default_factory=list)
+    inputs: List[Parameter] = field(default_factory=list)
 
     # queue / cluster_pool
     cluster_pool: str = "default"
@@ -150,16 +150,16 @@ class AppEnvironment(Environment):
             # args is a list
             return self.args
 
-    def _serialize_inputs(self, input_overrides: list[Input] | None) -> str:
+    def _serialize_inputs(self, parameter_overrides: list[Parameter] | None) -> str:
         if not self.inputs:
             return ""
         from ._input import SerializableInputCollection
 
-        serialized_inputs = SerializableInputCollection.from_inputs(input_overrides or self.inputs)
+        serialized_inputs = SerializableInputCollection.from_parameters(parameter_overrides or self.inputs)
         return serialized_inputs.to_transport
 
     def container_cmd(
-        self, serialize_context: SerializationContext, input_overrides: list[Input] | None = None
+        self, serialize_context: SerializationContext, input_overrides: list[Parameter] | None = None
     ) -> List[str]:
         if self.command is None:
             # Default command
@@ -244,7 +244,7 @@ class AppEnvironment(Environment):
         domain = kwargs.pop("domain", None)
         links = kwargs.pop("links", None)
         include = kwargs.pop("include", None)
-        inputs = kwargs.pop("inputs", None)
+        parameters = kwargs.pop("inputs", None)
         cluster_pool = kwargs.pop("cluster_pool", None)
 
         if kwargs:
@@ -282,8 +282,8 @@ class AppEnvironment(Environment):
             kwargs["links"] = links
         if include is not None:
             kwargs["include"] = include
-        if inputs is not None:
-            kwargs["inputs"] = inputs
+        if parameters is not None:
+            kwargs["inputs"] = parameters
         if cluster_pool is not None:
             kwargs["cluster_pool"] = cluster_pool
         return replace(self, **kwargs)

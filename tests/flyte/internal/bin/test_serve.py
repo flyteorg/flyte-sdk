@@ -15,7 +15,7 @@ import pytest
 from click.testing import CliRunner
 
 from flyte._bin.serve import download_code_inputs, main, sync_inputs
-from flyte.app._input import Input, SerializableInputCollection
+from flyte.app._input import Parameter, SerializableInputCollection
 from flyte.models import CodeBundle
 
 
@@ -31,11 +31,11 @@ class TestSyncInputs:
         """
         # Create inputs with string values
         inputs = [
-            Input(value="config-value", name="config"),
-            Input(value="api-key-value", name="api_key"),
-            Input(value="test-env-var", name="test_env_var", env_var="TEST_ENV_VAR"),
+            Parameter(value="config-value", name="config"),
+            Parameter(value="api-key-value", name="api_key"),
+            Parameter(value="test-env-var", name="test_env_var", env_var="TEST_ENV_VAR"),
         ]
-        collection = SerializableInputCollection.from_inputs(inputs)
+        collection = SerializableInputCollection.from_parameters(inputs)
         serialized = collection.to_transport
 
         # Sync inputs
@@ -71,9 +71,9 @@ class TestSyncInputs:
             # Create a File input with download enabled using file:// URL
             file_obj = File(path=f"file://{source_file}")
             inputs = [
-                Input(value=file_obj, name="datafile", download=True),
+                Parameter(value=file_obj, name="datafile", download=True),
             ]
-            collection = SerializableInputCollection.from_inputs(inputs)
+            collection = SerializableInputCollection.from_parameters(inputs)
             serialized = collection.to_transport
 
             dest_dir = os.path.join(tmpdir, "dest")
@@ -114,9 +114,9 @@ class TestSyncInputs:
             # Create File input with custom destination (mount)
             file_obj = File(path=f"file://{source_file}")
             inputs = [
-                Input(value=file_obj, name="config", mount=custom_dest),  # mount implies download
+                Parameter(value=file_obj, name="config", mount=custom_dest),  # mount implies download
             ]
-            collection = SerializableInputCollection.from_inputs(inputs)
+            collection = SerializableInputCollection.from_parameters(inputs)
             serialized = collection.to_transport
 
             default_dest = os.path.join(tmpdir, "default")
@@ -157,10 +157,10 @@ class TestSyncInputs:
             os.makedirs(mount_dest, exist_ok=True)
 
             inputs = [
-                Input(value=dir_input, name="dataset", mount=mount_dest),  # mount implies download
-                Input(value="test-env-var", name="test_env_var", env_var="TEST_ENV_VAR"),
+                Parameter(value=dir_input, name="dataset", mount=mount_dest),  # mount implies download
+                Parameter(value="test-env-var", name="test_env_var", env_var="TEST_ENV_VAR"),
             ]
-            collection = SerializableInputCollection.from_inputs(inputs)
+            collection = SerializableInputCollection.from_parameters(inputs)
             serialized = collection.to_transport
 
             result, env_vars = await sync_inputs(serialized, dest=tmpdir)
@@ -195,11 +195,11 @@ class TestSyncInputs:
 
             file_obj = File(path=f"file://{source_file}")
             inputs = [
-                Input(value="string-config", name="config"),
-                Input(value=file_obj, name="model", download=True),
-                Input(value="another-string", name="param"),
+                Parameter(value="string-config", name="config"),
+                Parameter(value=file_obj, name="model", download=True),
+                Parameter(value="another-string", name="param"),
             ]
-            collection = SerializableInputCollection.from_inputs(inputs)
+            collection = SerializableInputCollection.from_parameters(inputs)
             serialized = collection.to_transport
 
             dest_dir = os.path.join(tmpdir, "dest")
@@ -313,8 +313,8 @@ class TestDownloadCodeInputs:
         Tests that both user inputs and code bundle are downloaded and returned.
         """
         # Create serialized inputs
-        inputs = [Input(value="config-value", name="config")]
-        collection = SerializableInputCollection.from_inputs(inputs)
+        inputs = [Parameter(value="config-value", name="config")]
+        collection = SerializableInputCollection.from_parameters(inputs)
         serialized = collection.to_transport
 
         # Mock download_code_bundle
@@ -343,8 +343,8 @@ class TestDownloadCodeInputs:
         Tests that when no tgz or pkl is provided, only inputs are processed.
         """
         # Create serialized inputs
-        inputs = [Input(value="test-value", name="param")]
-        collection = SerializableInputCollection.from_inputs(inputs)
+        inputs = [Parameter(value="test-value", name="param")]
+        collection = SerializableInputCollection.from_parameters(inputs)
         serialized = collection.to_transport
 
         user_inputs, env_vars, code_bundle = await download_code_inputs(
@@ -429,8 +429,8 @@ class TestMainCommand:
         runner = CliRunner()
 
         # Create serialized inputs
-        inputs = [Input(value="test-value", name="config")]
-        collection = SerializableInputCollection.from_inputs(inputs)
+        inputs = [Parameter(value="test-value", name="config")]
+        collection = SerializableInputCollection.from_parameters(inputs)
         serialized = collection.to_transport
 
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -813,9 +813,9 @@ class TestIntegration:
         """
         # Create test inputs
         inputs = [
-            Input(value="config-data", name="config"),
-            Input(value="api-key-secret", name="api_key"),
-            Input(value="test-env-var", name="test_env_var", env_var="TEST_ENV_VAR"),
+            Parameter(value="config-data", name="config"),
+            Parameter(value="api-key-secret", name="api_key"),
+            Parameter(value="test-env-var", name="test_env_var", env_var="TEST_ENV_VAR"),
         ]
         collection = SerializableInputCollection.from_inputs(inputs)
         serialized = collection.to_transport

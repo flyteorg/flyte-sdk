@@ -33,7 +33,7 @@ RUNTIME_INPUTS_FILE = "flyte-inputs.json"
 
 class _DelayedValue(BaseModel):
     """
-    Delayed value for app inputs.
+    Delayed value for app parameters.
     """
 
     type: _SerializedInputType
@@ -60,9 +60,9 @@ class _DelayedValue(BaseModel):
 
 class RunOutput(_DelayedValue):
     """
-    Use a run's output for app inputs.
+    Use a run's output for app parameters.
 
-    This enables the declaration of an app input dependency on the output of
+    This enables the declaration of an app parameter dependency on the output of
     a run, given by a specific run name, or a task name and version. If
     `task_auto_version == 'latest'`, the latest version of the task will be used.
     If `task_auto_version == 'current'`, the version will be derived from the callee
@@ -159,9 +159,9 @@ class RunOutput(_DelayedValue):
 
 class AppEndpoint(_DelayedValue):
     """
-    Embed an upstream app's endpoint as an app input.
+    Embed an upstream app's endpoint as an app parameter.
 
-    This enables the declaration of an app input dependency on a the endpoint of
+    This enables the declaration of an app parameter dependency on a the endpoint of
     an upstream app, given by a specific app name. This gives the app access to
     the upstream app's endpoint as a public or private url.
     """
@@ -190,14 +190,14 @@ class AppEndpoint(_DelayedValue):
 
 
 @dataclass
-class Input:
+class Parameter:
     """
-    Input for application.
+    Parameter for application.
 
-    :param name: Name of input.
-    :param value: Value for input.
+    :param name: Name of parameter.
+    :param value: Value for parameter.
     :param env_var: Environment name to set the value in the serving environment.
-    :param download: When True, the input will be automatically downloaded. This
+    :param download: When True, the parameter will be automatically downloaded. This
         only works if the value refers to an item in a object store. i.e. `s3://...`
     :param mount: If `value` is a directory, then the directory will be available
         at `mount`. If `value` is a file, then the file will be downloaded into the
@@ -232,7 +232,7 @@ class Input:
 
 class SerializableInput(BaseModel):
     """
-    Serializable version of Input.
+    Serializable version of Parameter.
     """
 
     name: str
@@ -244,45 +244,45 @@ class SerializableInput(BaseModel):
     ignore_patterns: List[str] = field(default_factory=list)
 
     @classmethod
-    def from_input(cls, inp: Input) -> "SerializableInput":
+    def from_parameter(cls, param: Parameter) -> "SerializableInput":
         import flyte.io
 
-        # inp.name is guaranteed to be set by Input.__post_init__
-        assert inp.name is not None, "Input name should be set by __post_init__"
+        # param.name is guaranteed to be set by Parameter.__post_init__
+        assert param.name is not None, "Parameter name should be set by __post_init__"
 
         tpe: _SerializedInputType = "string"
-        if isinstance(inp.value, flyte.io.File):
-            value = inp.value.path
+        if isinstance(param.value, flyte.io.File):
+            value = param.value.path
             tpe = "file"
-            download = True if inp.mount is not None else inp.download
-        elif isinstance(inp.value, flyte.io.Dir):
-            value = inp.value.path
+            download = True if param.mount is not None else param.download
+        elif isinstance(param.value, flyte.io.Dir):
+            value = param.value.path
             tpe = "directory"
-            download = True if inp.mount is not None else inp.download
-        elif isinstance(inp.value, (RunOutput, AppEndpoint)):
-            value = inp.value.model_dump_json()
-            tpe = inp.value.type
-            download = True if inp.mount is not None else inp.download
+            download = True if param.mount is not None else param.download
+        elif isinstance(param.value, (RunOutput, AppEndpoint)):
+            value = param.value.model_dump_json()
+            tpe = param.value.type
+            download = True if param.mount is not None else param.download
         else:
-            value = typing.cast(str, inp.value)
+            value = typing.cast(str, param.value)
             download = False
 
         return cls(
-            name=inp.name,
+            name=param.name,
             value=value,
             type=tpe,
             download=download,
-            env_var=inp.env_var,
-            dest=inp.mount,
-            ignore_patterns=inp.ignore_patterns,
+            env_var=param.env_var,
+            dest=param.mount,
+            ignore_patterns=param.ignore_patterns,
         )
 
 
 class SerializableInputCollection(BaseModel):
     """
-    Collection of inputs for application.
+    Collection of parameters for application.
 
-    :param inputs: List of inputs.
+    :param inputs: List of parameters.
     """
 
     inputs: List[SerializableInput] = field(default_factory=list)
@@ -309,20 +309,20 @@ class SerializableInputCollection(BaseModel):
         return cls.model_validate_json(json_str)
 
     @classmethod
-    def from_inputs(cls, inputs: List[Input]) -> SerializableInputCollection:
-        return cls(inputs=[SerializableInput.from_input(inp) for inp in inputs])
+    def from_parameters(cls, parameters: List[Parameter]) -> SerializableInputCollection:
+        return cls(inputs=[SerializableInput.from_parameter(param) for param in parameters])
 
 
 @cache
 def _load_inputs() -> dict[str, str]:
-    """Load inputs for application or endpoint."""
+    """Load parameters for application or endpoint."""
     import json
     import os
 
     config_file = os.getenv(RUNTIME_INPUTS_FILE)
 
     if config_file is None:
-        raise ValueError("Inputs are not mounted")
+        raise ValueError("Parameters are not mounted")
 
     with open(config_file, "r") as f:
         inputs = json.load(f)
@@ -331,6 +331,6 @@ def _load_inputs() -> dict[str, str]:
 
 
 def get_input(name: str) -> str:
-    """Get inputs for application or endpoint."""
+    """Get parameters for application or endpoint."""
     inputs = _load_inputs()
     return inputs[name]

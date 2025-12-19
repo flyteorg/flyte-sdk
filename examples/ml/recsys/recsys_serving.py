@@ -41,7 +41,7 @@ from sentence_transformers import SentenceTransformer
 
 import flyte
 import flyte.io
-from flyte.app import Input
+from flyte.app import Parameter
 from flyte.app.extras import FastAPIAppEnvironment
 
 logging.basicConfig(level=logging.INFO)
@@ -94,7 +94,7 @@ env = FastAPIAppEnvironment(
     resources=flyte.Resources(cpu=2, memory="4Gi"),
     requires_auth=False,
     inputs=[
-        Input(
+        Parameter(
             name="artifacts",
             value=flyte.app.RunOutput(task_name="recsys_training.training_pipeline", type="directory"),
             mount="/tmp/recsys_artifacts",

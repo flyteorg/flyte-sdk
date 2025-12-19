@@ -37,7 +37,7 @@ from xgboost import XGBClassifier
 
 import flyte
 import flyte.io
-from flyte.app import Input, Link, RunOutput
+from flyte.app import Link, Parameter, RunOutput
 from flyte.app.extras import FastAPIAppEnvironment
 
 logging.basicConfig(level=logging.INFO)
@@ -244,7 +244,7 @@ serving_env = FastAPIAppEnvironment(
     resources=flyte.Resources(cpu=1, memory="1Gi"),
     requires_auth=False,
     inputs=[
-        Input(
+        Parameter(
             name="model",
             value=RunOutput(task_name="penguin_training.training_pipeline", type="file"),
         ),

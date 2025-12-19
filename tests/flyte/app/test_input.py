@@ -15,7 +15,7 @@ import flyte.io
 from flyte.app._input import (
     INPUT_TYPE_MAP,
     AppEndpoint,
-    Input,
+    Parameter,
     RunOutput,
     SerializableInput,
     SerializableInputCollection,
@@ -481,74 +481,74 @@ async def test_app_endpoint_materialize_private_no_env_var():
 
 
 # =============================================================================
-# Tests for Input class with delayed values
+# Tests for Parameter class with delayed values
 # =============================================================================
 
 
 def test_input_with_run_output():
     """
-    GOAL: Verify Input can accept RunOutput as a value.
+    GOAL: Verify Parameter can accept RunOutput as a value.
 
-    Tests that Input properly validates and stores RunOutput delayed values.
+    Tests that Parameter properly validates and stores RunOutput delayed values.
     """
     ro = RunOutput(type="string", run_name="my-run-123")
-    inp = Input(name="model_path", value=ro)
+    param = Parameter(name="model_path", value=ro)
 
-    assert inp.name == "model_path"
-    assert isinstance(inp.value, RunOutput)
-    assert inp.value.run_name == "my-run-123"
+    assert param.name == "model_path"
+    assert isinstance(param.value, RunOutput)
+    assert param.value.run_name == "my-run-123"
 
 
 def test_input_with_app_endpoint():
     """
-    GOAL: Verify Input can accept AppEndpoint as a value.
+    GOAL: Verify Parameter can accept AppEndpoint as a value.
 
-    Tests that Input properly validates and stores AppEndpoint delayed values.
+    Tests that Parameter properly validates and stores AppEndpoint delayed values.
     """
     ae = AppEndpoint(app_name="upstream-app")
-    inp = Input(name="api_url", value=ae)
+    param = Parameter(name="api_url", value=ae)
 
-    assert inp.name == "api_url"
-    assert isinstance(inp.value, AppEndpoint)
-    assert inp.value.app_name == "upstream-app"
+    assert param.name == "api_url"
+    assert isinstance(param.value, AppEndpoint)
+    assert param.value.app_name == "upstream-app"
 
 
 def test_input_with_string_value():
     """
-    GOAL: Verify Input still works with plain string values.
+    GOAL: Verify Parameter still works with plain string values.
 
     Tests backward compatibility with string values.
     """
-    inp = Input(name="config", value="config.yaml")
+    param = Parameter(name="config", value="config.yaml")
 
-    assert inp.name == "config"
-    assert inp.value == "config.yaml"
+    assert param.name == "config"
+    assert param.value == "config.yaml"
 
 
 def test_input_with_file_value():
     """
-    GOAL: Verify Input works with flyte.io.File values.
+    GOAL: Verify Parameter works with flyte.io.File values.
 
-    Tests that File objects are accepted as input values.
+    Tests that File objects are accepted as parameter values.
     """
     file = flyte.io.File(path="s3://bucket/file.txt")
-    inp = Input(name="model", value=file)
+    param = Parameter(name="model", value=file)
 
-    assert inp.name == "model"
-    assert isinstance(inp.value, flyte.io.File)
+    assert param.name == "model"
+    assert isinstance(param.value, flyte.io.File)
 
 
 def test_input_with_dir_value():
     """
-    GOAL: Verify Input works with flyte.io.Dir values.
+    GOAL: Verify Parameter works with flyte.io.Dir values.
 
-    Tests that Dir objects are accepted as input values.
+    Tests that Dir objects are accepted as parameter values.
     """
     dir_val = flyte.io.Dir(path="s3://bucket/data/")
-    inp = Input(name="data", value=dir_val)
+    param = Parameter(name="data", value=dir_val)
 
-    assert inp.name == "data"
-    assert isinstance(inp.value, flyte.io.Dir)
+    assert param.name == "data"
+    assert isinstance(param.value, flyte.io.Dir)
 
 
 # =============================================================================
@@ -558,14 +558,14 @@ def test_input_with_dir_value():
 
 def test_serializable_input_from_run_output():
     """
-    GOAL: Verify SerializableInput.from_input() handles RunOutput correctly.
+    GOAL: Verify SerializableInput.from_parameter() handles RunOutput correctly.
 
     Tests that RunOutput is serialized to JSON and type is preserved.
     """
     ro = RunOutput(type="file", run_name="my-run-123", getter=(0,))
-    inp = Input(name="model", value=ro)
+    param = Parameter(name="model", value=ro)
 
-    serialized = SerializableInput.from_input(inp)
+    serialized = SerializableInput.from_parameter(param)
 
     assert serialized.name == "model"
     assert serialized.type == "file"
@@ -576,14 +576,14 @@ def test_serializable_input_from_run_output():
 
 def test_serializable_input_from_run_output_with_mount():
     """
-    GOAL: Verify SerializableInput.from_input() handles RunOutput with mount.
+    GOAL: Verify SerializableInput.from_parameter() handles RunOutput with mount.
 
     Tests that download is set to True when mount is specified.
     """
     ro = RunOutput(type="file", run_name="my-run-123")
-    inp = Input(name="model", value=ro, mount="/mnt/model")
+    param = Parameter(name="model", value=ro, mount="/mnt/model")
 
-    serialized = SerializableInput.from_input(inp)
+    serialized = SerializableInput.from_parameter(param)
 
     assert serialized.name == "model"
     assert serialized.download is True
@@ -592,14 +592,14 @@ def test_serializable_input_from_run_output_with_mount():
 
 def test_serializable_input_from_app_endpoint():
     """
-    GOAL: Verify SerializableInput.from_input() handles AppEndpoint correctly.
+    GOAL: Verify SerializableInput.from_parameter() handles AppEndpoint correctly.
 
     Tests that AppEndpoint is serialized to JSON with type 'string'.
     """
     ae = AppEndpoint(app_name="upstream-app", public=True)
-    inp = Input(name="api_url", value=ae, env_var="API_URL")
+    param = Parameter(name="api_url", value=ae, env_var="API_URL")
 
-    serialized = SerializableInput.from_input(inp)
+    serialized = SerializableInput.from_parameter(param)
 
     assert serialized.name == "api_url"
     assert serialized.type == "string"
@@ -610,20 +610,20 @@ def test_serializable_input_from_app_endpoint():
 
 def test_serializable_input_collection_with_mixed_values():
     """
-    GOAL: Verify SerializableInputCollection handles mixed input types.
+    GOAL: Verify SerializableInputCollection handles mixed parameter types.
 
     Tests that a collection with string, File, Dir, RunOutput, and AppEndpoint
     all serialize correctly.
     """
-    inputs = [
-        Input(name="config", value="config.yaml"),
-        Input(name="model_file", value=flyte.io.File(path="s3://bucket/model.pkl"), mount="/mnt/model"),
-        Input(name="data_dir", value=flyte.io.Dir(path="s3://bucket/data/"), mount="/mnt/data"),
-        Input(name="run_output", value=RunOutput(type="string", run_name="run-123")),
-        Input(name="api_url", value=AppEndpoint(app_name="upstream-app")),
+    parameters = [
+        Parameter(name="config", value="config.yaml"),
+        Parameter(name="model_file", value=flyte.io.File(path="s3://bucket/model.pkl"), mount="/mnt/model"),
+        Parameter(name="data_dir", value=flyte.io.Dir(path="s3://bucket/data/"), mount="/mnt/data"),
+        Parameter(name="run_output", value=RunOutput(type="string", run_name="run-123")),
+        Parameter(name="api_url", value=AppEndpoint(app_name="upstream-app")),
     ]
 
-    collection = SerializableInputCollection.from_inputs(inputs)
+    collection = SerializableInputCollection.from_parameters(parameters)
 
     assert len(collection.inputs) == 5
     assert collection.inputs[0].type == "string"
@@ -640,15 +640,15 @@ def test_serializable_input_collection_transport_roundtrip():
     """
     GOAL: Verify SerializableInputCollection can be transported and restored.
 
-    Tests the full round-trip: inputs -> serialization -> transport -> deserialization.
+    Tests the full round-trip: parameters -> serialization -> transport -> deserialization.
     """
-    inputs = [
-        Input(name="config", value="config.yaml"),
-        Input(name="model", value=RunOutput(type="file", run_name="run-123")),
-        Input(name="api", value=AppEndpoint(app_name="upstream-app")),
+    parameters = [
+        Parameter(name="config", value="config.yaml"),
+        Parameter(name="model", value=RunOutput(type="file", run_name="run-123")),
+        Parameter(name="api", value=AppEndpoint(app_name="upstream-app")),
     ]
 
-    collection = SerializableInputCollection.from_inputs(inputs)
+    collection = SerializableInputCollection.from_parameters(parameters)
     transport_str = collection.to_transport
 
     restored = SerializableInputCollection.from_transport(transport_str)

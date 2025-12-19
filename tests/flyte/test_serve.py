@@ -4,7 +4,7 @@ Unit tests for flyte._serve module.
 These tests verify the serve context functionality including:
 - _Serve class initialization and configuration
 - with_servecontext() function
-- Input value override handling
+- Parameter value override handling
 """
 
 from dataclasses import replace
@@ -15,7 +15,7 @@ import pytest
 from flyte._image import Image
 from flyte._serve import _Serve, with_servecontext
 from flyte.app import AppEnvironment
-from flyte.app._input import Input
+from flyte.app._input import Parameter
 
 
 def test_serve_default_initialization():
@@ -187,8 +187,8 @@ async def test_serve_extracts_input_overrides_for_matching_app():
         name="my-test-app",
         image=Image.from_base("python:3.11"),
         inputs=[
-            Input(value="original-config.yaml", name="config"),
-            Input(value="s3://original/data", name="data"),
+            Parameter(value="original-config.yaml", name="config"),
+            Parameter(value="s3://original/data", name="data"),
         ],
     )
 
@@ -232,7 +232,7 @@ async def test_serve_no_overrides_for_non_matching_app():
         name="different-app",
         image=Image.from_base("python:3.11"),
         inputs=[
-            Input(value="config.yaml", name="config"),
+            Parameter(value="config.yaml", name="config"),
         ],
     )
 
@@ -263,9 +263,9 @@ async def test_serve_partial_input_overrides():
         name="partial-override-app",
         image=Image.from_base("python:3.11"),
         inputs=[
-            Input(value="original-config.yaml", name="config"),
-            Input(value="original-model.pkl", name="model"),
-            Input(value="original-data.csv", name="data"),
+            Parameter(value="original-config.yaml", name="config"),
+            Parameter(value="original-model.pkl", name="model"),
+            Parameter(value="original-data.csv", name="data"),
         ],
     )
 
@@ -309,8 +309,8 @@ async def test_serve_with_file_dir_input_overrides():
         name="file-dir-app",
         image=Image.from_base("python:3.11"),
         inputs=[
-            Input(value=original_file, name="myfile"),
-            Input(value=original_dir, name="mydir"),
+            Parameter(value=original_file, name="myfile"),
+            Parameter(value=original_dir, name="mydir"),
         ],
     )
 
@@ -363,8 +363,8 @@ def test_input_overrides_affect_container_cmd():
         name="integration-app",
         image=Image.from_base("python:3.11"),
         inputs=[
-            Input(value="original-config.yaml", name="config"),
-            Input(value="s3://original/data", name="data"),
+            Parameter(value="original-config.yaml", name="config"),
+            Parameter(value="s3://original/data", name="data"),
         ],
     )
 
@@ -421,7 +421,7 @@ def test_multiple_app_environments_with_different_overrides():
         name="app-one",
         image=Image.from_base("python:3.11"),
         inputs=[
-            Input(value="app-one-config.yaml", name="config"),
+            Parameter(value="app-one-config.yaml", name="config"),
         ],
     )
 
@@ -429,7 +429,7 @@ def test_multiple_app_environments_with_different_overrides():
         name="app-two",
         image=Image.from_base("python:3.11"),
         inputs=[
-            Input(value="app-two-config.yaml", name="config"),
+            Parameter(value="app-two-config.yaml", name="config"),
         ],
     )
 
@@ -476,9 +476,9 @@ def test_with_servecontext_dependent_apps_with_input_overrides():
         name="backend-api",
         image=Image.from_base("python:3.11"),
         inputs=[
-            Input(value="postgres://localhost:5432/db", name="database_url"),
-            Input(value="redis://localhost:6379", name="cache_url"),
-            Input(value=flyte.io.File(path="s3://bucket/model.pkl"), name="model_file"),
+            Parameter(value="postgres://localhost:5432/db", name="database_url"),
+            Parameter(value="redis://localhost:6379", name="cache_url"),
+            Parameter(value=flyte.io.File(path="s3://bucket/model.pkl"), name="model_file"),
         ],
     )
 
@@ -488,9 +488,9 @@ def test_with_servecontext_dependent_apps_with_input_overrides():
         image=Image.from_base("python:3.11"),
         depends_on=[backend_app],
         inputs=[
-            Input(value="http://localhost:8000", name="api_endpoint"),
-            Input(value="default-theme", name="theme"),
-            Input(value=flyte.io.Dir(path="s3://bucket/assets"), name="static_assets"),
+            Parameter(value="http://localhost:8000", name="api_endpoint"),
+            Parameter(value="default-theme", name="theme"),
+            Parameter(value=flyte.io.Dir(path="s3://bucket/assets"), name="static_assets"),
         ],
     )
 

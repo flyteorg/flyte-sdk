@@ -12,7 +12,7 @@ from flyte._logging import logger
 from flyte.models import SerializationContext
 
 from ._app_environment import AppEnvironment
-from ._input import Input
+from ._input import Parameter
 
 if typing.TYPE_CHECKING:
     from flyte._deployer import DeployedEnvironment
@@ -68,7 +68,7 @@ class DeployedAppEnvironment:
 async def _deploy_app(
     app: AppEnvironment,
     serialization_context: SerializationContext,
-    input_overrides: list[Input] | None = None,
+    input_overrides: list[Parameter] | None = None,
     dryrun: bool = False,
 ) -> "App":
     """

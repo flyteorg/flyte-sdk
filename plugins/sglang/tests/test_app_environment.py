@@ -3,7 +3,7 @@
 import flyte
 import flyte.app
 import pytest
-from flyte.app._input import Input
+from flyte.app._input import Parameter
 from flyte.models import SerializationContext
 
 from flyteplugins.sglang import SGLangAppEnvironment
@@ -123,7 +123,7 @@ def test_inputs_set_raises_error():
             name="test-app",
             model_path="s3://bucket/model",
             model_id="test-model",
-            inputs=[Input(name="foo", value="bar")],
+            inputs=[Parameter(name="foo", value="bar")],
         )
 
 
