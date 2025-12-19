@@ -7,6 +7,7 @@ These tests verify the serve context functionality including:
 - Parameter value override handling
 """
 
+import pathlib
 from dataclasses import replace
 from unittest.mock import patch
 
@@ -392,6 +393,7 @@ def test_parameter_overrides_affect_container_cmd():
         domain="test-domain",
         version="v1.0.0",
         code_bundle=CodeBundle(computed_version="v1.0.0", tgz="s3://bucket/code.tgz"),
+        root_dir=pathlib.Path.cwd(),
     )
 
     # Generate container command with overrides
@@ -567,6 +569,7 @@ def test_with_servecontext_dependent_apps_with_parameter_overrides():
         domain="prod",
         version="v1.0.0",
         code_bundle=CodeBundle(computed_version="v1.0.0", tgz="s3://bucket/code.tgz"),
+        root_dir=pathlib.Path.cwd(),
     )
 
     # Check backend app command serialization

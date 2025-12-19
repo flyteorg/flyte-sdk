@@ -14,6 +14,7 @@ env = FastAPIAppEnvironment(
     port=8080,
 )
 
+
 @app.get("/")
 async def root() -> str:
     return "Hello, World!"

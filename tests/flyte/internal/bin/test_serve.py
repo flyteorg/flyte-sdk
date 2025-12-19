@@ -484,21 +484,33 @@ class TestMainCommand:
                 mock_process.wait.return_value = 0
                 mock_popen.return_value = mock_process
 
-                # Run command with tgz
-                result = runner.invoke(
-                    main,
-                    [
-                        "--version",
-                        "v1.0.0",
-                        "--tgz",
-                        "s3://bucket/code.tgz",
-                        "--dest",
-                        tmpdir,
-                        "--",
-                        "python",
-                        "app.py",
-                    ],
-                )
+                # Mock load_app_env to avoid actual loading
+                with patch("flyte._bin.serve.load_app_env") as mock_load:
+                    from flyte._image import Image
+                    from flyte.app import AppEnvironment
+
+                    mock_app_env = AppEnvironment(name="test-app", image=Image.from_base("python:3.11"))
+                    mock_load.return_value = mock_app_env
+
+                    # Run command with tgz
+                    result = runner.invoke(
+                        main,
+                        [
+                            "--version",
+                            "v1.0.0",
+                            "--tgz",
+                            "s3://bucket/code.tgz",
+                            "--dest",
+                            tmpdir,
+                            "--resolver",
+                            "flyte._internal.resolvers.app_env.AppEnvResolver",
+                            "--resolver-args",
+                            "test.module:app_env",
+                            "--",
+                            "python",
+                            "app.py",
+                        ],
+                    )
 
                 # Verify command succeeded
                 assert result.exit_code == 0
@@ -517,7 +529,26 @@ class TestMainCommand:
         with tempfile.TemporaryDirectory() as tmpdir:
             # Mock Popen and asyncio
             with patch("subprocess.Popen") as mock_popen, patch("flyte._bin.serve.asyncio.run") as mock_run:
+                # Create a temporary pkl file for the mock bundle
+                import gzip
+                import os
+
+                import cloudpickle
+
+                pkl_file = os.path.join(tmpdir, "code.pkl")
+                # Create a minimal pickled app env
+                from flyte._image import Image
+                from flyte.app import AppEnvironment
+
+                mock_app_env = AppEnvironment(name="test-app", image=Image.from_base("python:3.11"))
+                with gzip.open(pkl_file, "wb") as f:
+                    cloudpickle.dump(mock_app_env, f)
+
+                # Create bundle with downloaded_path using dataclasses.replace
+                from dataclasses import replace
+
                 mock_bundle = CodeBundle(pkl="s3://bucket/code.pkl", destination=tmpdir, computed_version="v1.0.0")
+                mock_bundle = replace(mock_bundle, downloaded_path=pkl_file)
                 mock_run.return_value = ({}, {}, mock_bundle)
 
                 # Mock process

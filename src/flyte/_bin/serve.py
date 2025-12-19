@@ -202,6 +202,8 @@ def main(
         elif code_bundle.tgz:
             # TODO: implement a way to extract the app environment object from
             # the tgz bundle, similar to task resolver
+            if resolver is None or resolver_args is None:
+                raise ValueError("--resolver and --resolver-args are required when using --tgz code bundle")
             app_env = load_app_env(code_bundle, resolver, resolver_args)
         else:
             raise ValueError("Code bundle did not contain a tgz or pkl file")
@@ -217,7 +219,7 @@ def main(
 
     os.environ[RUNTIME_PARAMETERS_FILE] = parameters_file
 
-    if app_env._startup_fn is not None:
+    if code_bundle is not None and app_env._startup_fn is not None:
         logger.info("Running app via startup function")
         app_env._startup_fn()
 

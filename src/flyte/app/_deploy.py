@@ -92,9 +92,10 @@ async def _deploy_app(
         serialization_context.code_bundle = code_bundle
 
     if serialization_context.code_bundle and serialization_context.code_bundle.pkl:
-        assert app._startup_fn is not None, \
-            "Startup function is required for pkl code bundles, use the app_env.startup() decorator to define the " \
+        assert app._startup_fn is not None, (
+            "Startup function is required for pkl code bundles, use the app_env.startup() decorator to define the "
             "startup function."
+        )
 
     image_uri = app.image.uri if isinstance(app.image, Image) else app.image
     try:
