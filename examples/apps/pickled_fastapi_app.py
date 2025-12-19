@@ -1,5 +1,4 @@
 import fastapi
-import uvicorn
 
 import flyte
 from flyte.app.extras import FastAPIAppEnvironment
@@ -14,12 +13,6 @@ env = FastAPIAppEnvironment(
     requires_auth=False,
     port=8080,
 )
-
-
-@env.startup
-def startup_fn():
-    uvicorn.run(app, port=8080)
-
 
 @app.get("/")
 async def root() -> str:

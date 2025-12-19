@@ -5,6 +5,8 @@ These tests verify AppEnvironment functionality without using mocks,
 focusing on container_cmd, container_args, and Parameter handling.
 """
 
+import pathlib
+
 import pytest
 
 from flyte._image import Image
@@ -114,6 +116,7 @@ def test_app_environment_comprehensive_happy_path():
         project="test-project",
         domain="test-domain",
         version="v1.0.0",
+        root_dir=pathlib.Path.cwd(),
     )
     args = app_env.container_args(ctx)
     assert args == ["--arg1", "value1"]
@@ -125,6 +128,7 @@ def test_app_environment_comprehensive_happy_path():
         domain="test-domain",
         version="v1.0.0",
         code_bundle=CodeBundle(computed_version="v1.0.0", tgz="s3://bucket/code.tgz", destination="/app"),
+        root_dir=pathlib.Path.cwd(),
     )
     cmd = app_env.container_cmd(ctx_with_bundle)
 
@@ -176,6 +180,7 @@ def test_app_environment_container_cmd_with_parameters():
         domain="test-domain",
         version="v1.0.0",
         code_bundle=CodeBundle(computed_version="v1.0.0", tgz="s3://bucket/code.tgz"),
+        root_dir=pathlib.Path.cwd(),
     )
 
     cmd = app_env.container_cmd(ctx)
@@ -216,6 +221,7 @@ def test_app_environment_container_cmd_without_parameters():
         domain="test-domain",
         version="v1.0.0",
         code_bundle=CodeBundle(computed_version="v1.0.0", tgz="s3://bucket/code.tgz"),
+        root_dir=pathlib.Path.cwd(),
     )
 
     cmd = app_env.container_cmd(ctx)
@@ -248,6 +254,7 @@ def test_app_environment_container_cmd_custom_command():
         project="test-project",
         domain="test-domain",
         version="v1.0.0",
+        root_dir=pathlib.Path.cwd(),
     )
 
     cmd_list = app_env_list.container_cmd(ctx)
@@ -280,6 +287,7 @@ def test_app_environment_container_args_variations():
         project="test-project",
         domain="test-domain",
         version="v1.0.0",
+        root_dir=pathlib.Path.cwd(),
     )
 
     # Test with list args
@@ -337,6 +345,7 @@ def test_app_environment_container_cmd_with_image_cache():
         version="v1.0.0",
         code_bundle=CodeBundle(computed_version="v1.0.0", tgz="s3://bucket/code.tgz"),
         image_cache=ImageCache(image_lookup={"default": "python:3.11"}, serialized_form="base64encodedcache"),
+        root_dir=pathlib.Path.cwd(),
     )
 
     cmd = app_env.container_cmd(ctx_serialized)
@@ -352,6 +361,7 @@ def test_app_environment_container_cmd_with_image_cache():
         version="v1.0.0",
         code_bundle=CodeBundle(computed_version="v1.0.0", tgz="s3://bucket/code.tgz"),
         image_cache=ImageCache(image_lookup={"default": "python:3.11"}),
+        root_dir=pathlib.Path.cwd(),
     )
 
     cmd2 = app_env.container_cmd(ctx_non_serialized)
@@ -377,6 +387,7 @@ def test_app_environment_container_cmd_with_pkl_bundle():
         domain="test-domain",
         version="v1.0.0",
         code_bundle=CodeBundle(computed_version="v1.0.0", pkl="s3://bucket/code.pkl", destination="/app"),
+        root_dir=pathlib.Path.cwd(),
     )
 
     cmd = app_env.container_cmd(ctx)
@@ -623,6 +634,7 @@ def test_app_environment_with_file_and_dir_inputs():
         domain="test-domain",
         version="v1.0.0",
         code_bundle=CodeBundle(computed_version="v1.0.0", tgz="s3://bucket/code.tgz"),
+        root_dir=pathlib.Path.cwd(),
     )
 
     cmd = app_env.container_cmd(ctx)
@@ -678,6 +690,7 @@ def test_app_environment_empty_inputs():
         domain="test-domain",
         version="v1.0.0",
         code_bundle=CodeBundle(computed_version="v1.0.0", tgz="s3://bucket/code.tgz"),
+        root_dir=pathlib.Path.cwd(),
     )
 
     cmd = app_env.container_cmd(ctx)
@@ -704,6 +717,7 @@ def test_app_environment_container_cmd_version_handling():
         domain="test-domain",
         version="v2.5.0",
         code_bundle=CodeBundle(computed_version="v2.5.1", tgz="s3://bucket/code.tgz"),
+        root_dir=pathlib.Path.cwd(),
     )
 
     cmd = app_env.container_cmd(ctx_explicit)
@@ -718,6 +732,7 @@ def test_app_environment_container_cmd_version_handling():
         domain="test-domain",
         version=None,  # type: ignore
         code_bundle=CodeBundle(computed_version="v2.5.1", tgz="s3://bucket/code.tgz"),
+        root_dir=pathlib.Path.cwd(),
     )
 
     cmd2 = app_env.container_cmd(ctx_computed)
@@ -743,6 +758,7 @@ def test_app_environment_container_cmd_no_code_bundle():
         domain="test-domain",
         version="v1.0.0",
         code_bundle=None,
+        root_dir=pathlib.Path.cwd(),
     )
 
     cmd = app_env.container_cmd(ctx)
@@ -897,6 +913,7 @@ def test_app_environment_container_cmd_with_parameter_overrides():
         domain="test-domain",
         version="v1.0.0",
         code_bundle=CodeBundle(computed_version="v1.0.0", tgz="s3://bucket/code.tgz"),
+        root_dir=pathlib.Path.cwd(),
     )
 
     # Generate command with overrides
@@ -945,6 +962,7 @@ def test_app_environment_container_cmd_no_override_uses_original():
         domain="test-domain",
         version="v1.0.0",
         code_bundle=CodeBundle(computed_version="v1.0.0", tgz="s3://bucket/code.tgz"),
+        root_dir=pathlib.Path.cwd(),
     )
 
     # Generate command without overrides (default)
@@ -988,6 +1006,7 @@ def test_app_environment_container_cmd_with_file_dir_parameter_overrides():
         domain="test-domain",
         version="v1.0.0",
         code_bundle=CodeBundle(computed_version="v1.0.0", tgz="s3://bucket/code.tgz"),
+        root_dir=pathlib.Path.cwd(),
     )
 
     # Create overrides with new File/Dir paths

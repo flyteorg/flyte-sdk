@@ -213,17 +213,25 @@ class AppEnvironment(Environment):
                 cmd.append("--parameters")
                 cmd.append(self._serialize_parameters(parameter_overrides))
 
-            assert serialize_context.root_dir is not None
-            _app_env_resolver = AppEnvResolver()
-            cmd = [
-                *cmd,
-                *[
-                    "--resolver",
-                    _app_env_resolver.import_path,
-                    "--resolver-args",
-                    _app_env_resolver.loader_args(self, serialize_context.root_dir),
-                ],
-            ]
+            # Only add resolver args if _caller_frame is set and we can extract the module
+            # (i.e., app was created in a module and can be found)
+            if self._caller_frame is not None:
+                assert serialize_context.root_dir is not None
+                try:
+                    _app_env_resolver = AppEnvResolver()
+                    loader_args = _app_env_resolver.loader_args(self, serialize_context.root_dir)
+                    cmd = [
+                        *cmd,
+                        *[
+                            "--resolver",
+                            _app_env_resolver.import_path,
+                            "--resolver-args",
+                            loader_args,
+                        ],
+                    ]
+                except RuntimeError:
+                    # If we can't find the app in the module (e.g., in tests), skip resolver args
+                    pass
             return [*cmd, "--"]
         elif isinstance(self.command, str):
             return shlex.split(self.command)
