@@ -22,7 +22,7 @@ from flyte._internal.runtime.resources_serde import get_proto_extended_resources
 from flyte._internal.runtime.task_serde import get_security_context, lookup_image_in_cache
 from flyte._logging import logger
 from flyte.app import AppEnvironment, Parameter, Scaling
-from flyte.app._input import _DelayedValue
+from flyte.app._parameter import _DelayedValue
 from flyte.models import SerializationContext
 from flyte.syncify import syncify
 
@@ -30,7 +30,7 @@ from flyte.syncify import syncify
 def get_proto_container(
     app_env: AppEnvironment,
     serialization_context: SerializationContext,
-    input_overrides: list[Parameter] | None = None,
+    parameter_overrides: list[Parameter] | None = None,
 ) -> tasks_pb2.Container:
     """
     Construct the container specification.
@@ -38,7 +38,7 @@ def get_proto_container(
     Args:
         app_env: The app environment
         serialization_context: Serialization context
-        input_overrides: Parameter overrides to apply to the app environment.
+        parameter_overrides: Parameter overrides to apply to the app environment.
     Returns:
         Container protobuf message
     """
@@ -62,7 +62,7 @@ def get_proto_container(
 
     return tasks_pb2.Container(
         image=img_uri,
-        command=app_env.container_cmd(serialization_context, input_overrides),
+        command=app_env.container_cmd(serialization_context, parameter_overrides),
         args=app_env.container_args(serialization_context),
         resources=resources,
         ports=container_ports,
@@ -263,7 +263,7 @@ async def translate_inputs(parameters: List[Parameter]) -> app_definition_pb2.In
 async def translate_app_env_to_idl(
     app_env: AppEnvironment,
     serialization_context: SerializationContext,
-    input_overrides: list[Parameter] | None = None,
+    parameter_overrides: list[Parameter] | None = None,
     desired_state: app_definition_pb2.Spec.DesiredState = app_definition_pb2.Spec.DesiredState.DESIRED_STATE_ACTIVE,
 ) -> app_definition_pb2.App:
     """
@@ -275,7 +275,7 @@ async def translate_app_env_to_idl(
     Args:
         app_env: The app environment to serialize
         serialization_context: Serialization context containing org, project, domain, version, etc.
-        input_overrides: Parameter overrides to apply to the app environment.
+        parameter_overrides: Parameter overrides to apply to the app environment.
         desired_state: Desired state of the app (ACTIVE, INACTIVE, etc.)
 
     Returns:
@@ -311,7 +311,7 @@ async def translate_app_env_to_idl(
     )
 
     # Build spec based on image type
-    parameters = await _materialize_inputs_with_delayed_values(input_overrides or app_env.inputs)
+    parameters = await _materialize_inputs_with_delayed_values(parameter_overrides or app_env.parameters)
     container = None
     pod = None
     if app_env.pod_template:
@@ -326,7 +326,7 @@ async def translate_app_env_to_idl(
         container = get_proto_container(
             app_env,
             serialization_context,
-            input_overrides=parameters,
+            parameter_overrides=parameters,
         )
     else:
         msg = "image must be a str, Image, or PodTemplate"

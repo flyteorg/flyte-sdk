@@ -12,7 +12,7 @@ from flyte._logging import logger
 from flyte.models import SerializationContext
 
 from ._app_environment import AppEnvironment
-from ._input import Parameter
+from ._parameter import Parameter
 
 if typing.TYPE_CHECKING:
     from flyte._deployer import DeployedEnvironment

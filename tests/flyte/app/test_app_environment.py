@@ -11,7 +11,7 @@ from flyte._image import Image
 from flyte._internal.imagebuild.image_builder import ImageCache
 from flyte._resources import Resources
 from flyte.app import AppEnvironment
-from flyte.app._input import Parameter
+from flyte.app._parameter import Parameter
 from flyte.app._types import Domain, Link, Port, Scaling
 from flyte.models import CodeBundle, SerializationContext
 
@@ -26,7 +26,7 @@ def test_app_environment_comprehensive_happy_path():
     - All configuration parameters (image, resources, env_vars, secrets, scaling, domain, links)
     - Port conversion from int to Port object
     - Parameter serialization and inclusion in container_cmd
-    - Command generation with code bundle, version, and inputs
+    - Command generation with code bundle, version, and parameters
     - Args handling
 
     This ensures all components work together harmoniously.
@@ -50,7 +50,7 @@ def test_app_environment_comprehensive_happy_path():
             Link(path="/health", title="Health Check", is_relative=True),
             Link(path="/docs", title="Documentation", is_relative=True),
         ],
-        inputs=[
+        parameters=[
             Parameter(value="config.yaml", name="config", env_var="CONFIG_PATH"),
             Parameter(value="s3://bucket/data", name="data", download=True, mount="/mnt/data"),
         ],
@@ -96,7 +96,7 @@ def test_app_environment_comprehensive_happy_path():
     assert app_env.links[0].title == "Health Check"
     assert app_env.links[1].path == "/docs"
 
-    # Verify inputs are correctly set
+    # Verify parameters are correctly set
     assert len(app_env.inputs) == 2
     assert app_env.inputs[0].name == "config"
     assert app_env.inputs[0].value == "config.yaml"
@@ -146,24 +146,24 @@ def test_app_environment_comprehensive_happy_path():
     # Inputs should be serialized (base64 gzip encoded)
     inputs_idx = cmd.index("--inputs")
     assert inputs_idx >= 0
-    assert len(cmd[inputs_idx + 1]) > 0  # Should have serialized inputs
+    assert len(cmd[inputs_idx + 1]) > 0  # Should have serialized parameters
     assert cmd[-1] == "--"  # Command should end with "--"
 
 
 def test_app_environment_container_cmd_with_inputs():
     """
-    GOAL: Verify that inputs are correctly serialized and included in container_cmd.
+    GOAL: Verify that parameters are correctly serialized and included in container_cmd.
 
     Tests that:
-    - Multiple inputs can be configured
-    - Each input with different properties (env_var, download) is handled
-    - Inputs are serialized into base64 gzip format
-    - Serialized inputs can be deserialized back to verify correctness
+    - Multiple parameters can be configured
+    - Each parameter with different properties (env_var, download) is handled
+    - Parameters are serialized into base64 gzip format
+    - Serialized parameters can be deserialized back to verify correctness
     """
     app_env = AppEnvironment(
         name="app-with-inputs",
         image=Image.from_base("python:3.11"),
-        inputs=[
+        parameters=[
             Parameter(value="file1.txt", name="input1", env_var="INPUT1"),
             Parameter(value="file2.txt", name="input2"),
             Parameter(value="s3://bucket/file3.txt", name="input3", download=True),
@@ -180,13 +180,13 @@ def test_app_environment_container_cmd_with_inputs():
 
     cmd = app_env.container_cmd(ctx)
 
-    # Verify --inputs flag is present
+    # Verify --parameters flag is present
     assert "--inputs" in cmd
     inputs_idx = cmd.index("--inputs")
     serialized_parameters = cmd[inputs_idx + 1]
 
-    # Verify serialized inputs can be deserialized correctly
-    from flyte.app._input import SerializableParameterCollection
+    # Verify serialized parameters can be deserialized correctly
+    from flyte.app._parameter import SerializableParameterCollection
 
     deserialized = SerializableParameterCollection.from_transport(serialized_parameters)
     assert len(deserialized.inputs) == 3
@@ -200,9 +200,9 @@ def test_app_environment_container_cmd_with_inputs():
 
 def test_app_environment_container_cmd_without_inputs():
     """
-    GOAL: Verify that container_cmd works correctly when no inputs are provided.
+    GOAL: Verify that container_cmd works correctly when no parameters are provided.
 
-    Tests that the --inputs flag is NOT added to the command when inputs list is empty,
+    Tests that the --parameters flag is NOT added to the command when parameters list is empty,
     ensuring the command is clean and doesn't include unnecessary flags.
     """
     app_env = AppEnvironment(
@@ -220,7 +220,7 @@ def test_app_environment_container_cmd_without_inputs():
 
     cmd = app_env.container_cmd(ctx)
 
-    # Verify inputs flag is NOT in command when no inputs
+    # Verify parameters flag is NOT in command when no parameters
     assert "--inputs" not in cmd
     assert cmd[-1] == "--"
 
@@ -233,14 +233,14 @@ def test_app_environment_container_cmd_custom_command():
     - List-format custom commands are used as-is
     - String-format custom commands are split using shlex
     - Custom commands completely replace the default fserve command
-    - Inputs are NOT added when using custom commands (they're user-managed)
+    - Parameters are NOT added when using custom commands (they're user-managed)
     """
     # Test with list command
     app_env_list = AppEnvironment(
         name="app-custom-cmd-list",
         image=Image.from_base("python:3.11"),
         command=["python", "app.py"],
-        inputs=[Parameter(value="config.yaml", name="config")],  # Parameters should be ignored with custom command
+        parameters=[Parameter(value="config.yaml", name="config")],  # Parameters should be ignored with custom command
     )
 
     ctx = SerializationContext(
@@ -252,7 +252,7 @@ def test_app_environment_container_cmd_custom_command():
 
     cmd_list = app_env_list.container_cmd(ctx)
     assert cmd_list == ["python", "app.py"]
-    assert "--inputs" not in cmd_list  # Inputs not added for custom commands
+    assert "--inputs" not in cmd_list  # Parameters not added for custom commands
 
     # Test with string command (will be split using shlex)
     app_env_str = AppEnvironment(
@@ -592,12 +592,12 @@ def test_app_environment_default_values():
 
 def test_app_environment_with_file_and_dir_inputs():
     """
-    GOAL: Verify that File and Dir inputs are correctly serialized.
+    GOAL: Verify that File and Dir parameters are correctly serialized.
 
     Tests that:
-    - File inputs are serialized with type="file"
-    - Dir inputs are serialized with type="directory"
-    - String inputs are serialized with type="string"
+    - File parameters are serialized with type="file"
+    - Dir parameters are serialized with type="directory"
+    - String parameters are serialized with type="string"
     - Mount paths enable auto-download
     - Ignore patterns are preserved for directories
     """
@@ -610,7 +610,7 @@ def test_app_environment_with_file_and_dir_inputs():
     app_env = AppEnvironment(
         name="app-with-file-dir",
         image=Image.from_base("python:3.11"),
-        inputs=[
+        parameters=[
             Parameter(value=file_input, name="myfile", mount="/mnt/file"),
             Parameter(value=dir_input, name="mydir", mount="/mnt/dir", ignore_patterns=["*.log", "*.tmp"]),
             Parameter(value="plain-string", name="mystring"),
@@ -632,7 +632,7 @@ def test_app_environment_with_file_and_dir_inputs():
     inputs_idx = cmd.index("--inputs")
     serialized = cmd[inputs_idx + 1]
 
-    from flyte.app._input import SerializableParameterCollection
+    from flyte.app._parameter import SerializableParameterCollection
 
     deserialized = SerializableParameterCollection.from_transport(serialized)
     assert len(deserialized.inputs) == 3
@@ -661,15 +661,15 @@ def test_app_environment_with_file_and_dir_inputs():
 
 def test_app_environment_empty_inputs():
     """
-    GOAL: Verify that empty inputs list doesn't add unnecessary --inputs flag.
+    GOAL: Verify that empty parameters list doesn't add unnecessary --parameters flag.
 
-    Tests that when inputs=[] (empty list), the container_cmd doesn't include
-    the --inputs flag, keeping the command clean.
+    Tests that when parameters=[] (empty list), the container_cmd doesn't include
+    the --parameters flag, keeping the command clean.
     """
     app_env = AppEnvironment(
         name="app-empty-inputs",
         image=Image.from_base("python:3.11"),
-        inputs=[],
+        parameters=[],
     )
 
     ctx = SerializationContext(
@@ -783,19 +783,19 @@ def test_app_environment_multiple_links():
 
 def test_app_environment_serialize_inputs_with_overrides():
     """
-    GOAL: Verify that _serialize_inputs correctly uses input_overrides when provided.
+    GOAL: Verify that _serialize_parameters correctly uses parameter_overrides when provided.
 
     Tests that:
-    - When input_overrides is provided, the overridden values are serialized
-    - When input_overrides is None, the original inputs are serialized
+    - When parameter_overrides is provided, the overridden values are serialized
+    - When parameter_overrides is None, the original parameters are serialized
     - Overrides only affect the value field, other properties are preserved
     """
-    from flyte.app._input import SerializableParameterCollection
+    from flyte.app._parameter import SerializableParameterCollection
 
     app_env = AppEnvironment(
         name="app-with-inputs",
         image=Image.from_base("python:3.11"),
-        inputs=[
+        parameters=[
             Parameter(value="original-config.yaml", name="config", env_var="CONFIG_PATH"),
             Parameter(value="original-data.csv", name="data"),
             Parameter(value="s3://original-bucket/model.pkl", name="model", download=True),
@@ -803,7 +803,7 @@ def test_app_environment_serialize_inputs_with_overrides():
     )
 
     # Test without overrides - should use original values
-    serialized_no_override = app_env._serialize_inputs(input_overrides=None)
+    serialized_no_override = app_env._serialize_parameters(parameter_overrides=None)
     deserialized = SerializableParameterCollection.from_transport(serialized_no_override)
     assert deserialized.inputs[0].value == "original-config.yaml"
     assert deserialized.inputs[1].value == "original-data.csv"
@@ -812,13 +812,13 @@ def test_app_environment_serialize_inputs_with_overrides():
     # Test with overrides - should use overridden values
     from dataclasses import replace
 
-    input_overrides = [
+    parameter_overrides = [
         replace(app_env.inputs[0], value="overridden-config.yaml"),
         replace(app_env.inputs[1], value="overridden-data.csv"),
         replace(app_env.inputs[2], value="s3://new-bucket/model.pkl"),
     ]
 
-    serialized_with_override = app_env._serialize_inputs(input_overrides=input_overrides)
+    serialized_with_override = app_env._serialize_parameters(parameter_overrides=parameter_overrides)
     deserialized_override = SerializableParameterCollection.from_transport(serialized_with_override)
 
     # Verify overridden values
@@ -835,19 +835,19 @@ def test_app_environment_serialize_inputs_with_overrides():
 
 def test_app_environment_serialize_inputs_partial_overrides():
     """
-    GOAL: Verify that partial overrides work correctly with _serialize_inputs.
+    GOAL: Verify that partial overrides work correctly with _serialize_parameters.
 
-    Tests that when only some inputs are overridden, the non-overridden inputs
+    Tests that when only some parameters are overridden, the non-overridden parameters
     retain their original values.
     """
     from dataclasses import replace
 
-    from flyte.app._input import SerializableParameterCollection
+    from flyte.app._parameter import SerializableParameterCollection
 
     app_env = AppEnvironment(
         name="app-partial-override",
         image=Image.from_base("python:3.11"),
-        inputs=[
+        parameters=[
             Parameter(value="original-file1.txt", name="file1"),
             Parameter(value="original-file2.txt", name="file2"),
             Parameter(value="original-file3.txt", name="file3"),
@@ -855,13 +855,13 @@ def test_app_environment_serialize_inputs_partial_overrides():
     )
 
     # Only override the middle input
-    input_overrides = [
+    parameter_overrides = [
         app_env.inputs[0],  # Keep original
         replace(app_env.inputs[1], value="overridden-file2.txt"),  # Override
         app_env.inputs[2],  # Keep original
     ]
 
-    serialized = app_env._serialize_inputs(input_overrides=input_overrides)
+    serialized = app_env._serialize_parameters(parameter_overrides=parameter_overrides)
     deserialized = SerializableParameterCollection.from_transport(serialized)
 
     assert deserialized.inputs[0].value == "original-file1.txt"
@@ -869,23 +869,23 @@ def test_app_environment_serialize_inputs_partial_overrides():
     assert deserialized.inputs[2].value == "original-file3.txt"
 
 
-def test_app_environment_container_cmd_with_input_overrides():
+def test_app_environment_container_cmd_with_parameter_overrides():
     """
-    GOAL: Verify that container_cmd correctly uses input_overrides parameter.
+    GOAL: Verify that container_cmd correctly uses parameter_overrides parameter.
 
     Tests that:
-    - input_overrides are passed to _serialize_inputs
-    - The resulting command contains the overridden input values
+    - parameter_overrides are passed to _serialize_parameters
+    - The resulting command contains the overridden parameter values
     - Other command components (version, project, domain, etc.) are unaffected
     """
     from dataclasses import replace
 
-    from flyte.app._input import SerializableParameterCollection
+    from flyte.app._parameter import SerializableParameterCollection
 
     app_env = AppEnvironment(
         name="app-cmd-override",
         image=Image.from_base("python:3.11"),
-        inputs=[
+        parameters=[
             Parameter(value="original-config.yaml", name="config"),
             Parameter(value="s3://original-bucket/data", name="data"),
         ],
@@ -900,12 +900,12 @@ def test_app_environment_container_cmd_with_input_overrides():
     )
 
     # Generate command with overrides
-    input_overrides = [
+    parameter_overrides = [
         replace(app_env.inputs[0], value="new-config.yaml"),
         replace(app_env.inputs[1], value="s3://new-bucket/data"),
     ]
 
-    cmd = app_env.container_cmd(ctx, input_overrides=input_overrides)
+    cmd = app_env.container_cmd(ctx, parameter_overrides=parameter_overrides)
 
     # Verify command structure is correct
     assert cmd[0] == "fserve"
@@ -926,15 +926,15 @@ def test_app_environment_container_cmd_no_override_uses_original():
     """
     GOAL: Verify that container_cmd uses original inputs when no overrides provided.
 
-    Tests that when input_overrides is None or not provided, the container_cmd
+    Tests that when parameter_overrides is None or not provided, the container_cmd
     serializes the original input values.
     """
-    from flyte.app._input import SerializableParameterCollection
+    from flyte.app._parameter import SerializableParameterCollection
 
     app_env = AppEnvironment(
         name="app-no-override",
         image=Image.from_base("python:3.11"),
-        inputs=[
+        parameters=[
             Parameter(value="my-config.yaml", name="config"),
         ],
     )
@@ -958,7 +958,7 @@ def test_app_environment_container_cmd_no_override_uses_original():
     assert deserialized.inputs[0].value == "my-config.yaml"
 
 
-def test_app_environment_container_cmd_with_file_dir_input_overrides():
+def test_app_environment_container_cmd_with_file_dir_parameter_overrides():
     """
     GOAL: Verify that File and Dir input overrides work correctly in container_cmd.
 
@@ -967,7 +967,7 @@ def test_app_environment_container_cmd_with_file_dir_input_overrides():
     """
     from dataclasses import replace
 
-    from flyte.app._input import SerializableParameterCollection
+    from flyte.app._parameter import SerializableParameterCollection
     from flyte.io import Dir, File
 
     original_file = File(path="s3://original-bucket/original-file.txt")
@@ -976,7 +976,7 @@ def test_app_environment_container_cmd_with_file_dir_input_overrides():
     app_env = AppEnvironment(
         name="app-file-dir-override",
         image=Image.from_base("python:3.11"),
-        inputs=[
+        parameters=[
             Parameter(value=original_file, name="myfile", mount="/mnt/file"),
             Parameter(value=original_dir, name="mydir", mount="/mnt/dir"),
         ],
@@ -994,12 +994,12 @@ def test_app_environment_container_cmd_with_file_dir_input_overrides():
     new_file = File(path="s3://new-bucket/new-file.txt")
     new_dir = Dir(path="s3://new-bucket/new-dir")
 
-    input_overrides = [
+    parameter_overrides = [
         replace(app_env.inputs[0], value=new_file),
         replace(app_env.inputs[1], value=new_dir),
     ]
 
-    cmd = app_env.container_cmd(ctx, input_overrides=input_overrides)
+    cmd = app_env.container_cmd(ctx, parameter_overrides=parameter_overrides)
 
     # Extract and verify serialized inputs
     inputs_idx = cmd.index("--inputs")

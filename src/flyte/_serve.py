@@ -152,15 +152,15 @@ class _Serve:
         )
 
         # Inject input overrides from the serve
-        input_overrides = None
+        parameter_overrides = None
         if app_env_input_values := self._input_values.get(app_env.name):
-            input_overrides = []
+            parameter_overrides = []
             for _input in app_env.inputs:
                 value = app_env_input_values.get(_input.name, _input.value)
-                input_overrides.append(replace(_input, value=value))
+                parameter_overrides.append(replace(_input, value=value))
 
         # Deploy app
-        deployed_app = await _deploy._deploy_app(app_env, sc, input_overrides=input_overrides)
+        deployed_app = await _deploy._deploy_app(app_env, sc, parameter_overrides=parameter_overrides)
         assert deployed_app
 
         # Mutate app_idl if env_vars or cluster_pool are provided

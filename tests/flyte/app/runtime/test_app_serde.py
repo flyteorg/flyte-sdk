@@ -15,7 +15,7 @@ from flyte._image import Image
 from flyte._internal.imagebuild.image_builder import ImageCache
 from flyte._resources import Resources
 from flyte.app import AppEnvironment
-from flyte.app._input import Parameter, RunOutput
+from flyte.app._parameter import Parameter, RunOutput
 from flyte.app._runtime.app_serde import (
     _get_scaling_metric,
     _materialize_inputs_with_delayed_values,
@@ -240,7 +240,7 @@ def test_get_proto_container_with_args_and_inputs():
         name="test-app",
         image=Image.from_base("python:3.11"),
         args=["--arg1", "value1", "--arg2", "value2"],
-        inputs=[
+        parameters=[
             Parameter(value="config.yaml", name="config"),
             Parameter(value="data.csv", name="data"),
         ],
@@ -281,7 +281,7 @@ def test_get_proto_container_with_string_args_and_inputs():
         name="test-app",
         image=Image.from_base("python:3.11"),
         args="--host 0.0.0.0 --port 8080",
-        inputs=[Input(value="config.yaml", name="config")],
+        parameters=[Parameter(value="config.yaml", name="config")],
     )
 
     ctx = SerializationContext(
@@ -312,7 +312,7 @@ def test_get_proto_container_with_only_inputs_no_args():
     app_env = AppEnvironment(
         name="test-app",
         image=Image.from_base("python:3.11"),
-        inputs=[
+        parameters=[
             Parameter(value="file1.txt", name="input1"),
             Parameter(value="file2.txt", name="input2"),
         ],
@@ -349,7 +349,7 @@ def test_get_proto_container_with_custom_command_and_inputs():
         image=Image.from_base("python:3.11"),
         command=["python", "app.py"],
         args=["--custom-arg"],
-        inputs=[Input(value="config.yaml", name="config")],  # Should be ignored
+        parameters=[Parameter(value="config.yaml", name="config")],  # Should be ignored
     )
 
     ctx = SerializationContext(
@@ -576,7 +576,7 @@ def test_get_proto_container_comprehensive():
         args=["--arg1", "value1"],
         resources=Resources(cpu=(1, 2), memory=("1Gi", "2Gi"), gpu=1),
         env_vars={"ENV": "production", "LOG_LEVEL": "info"},
-        inputs=[
+        parameters=[
             Parameter(value="config.yaml", name="config"),
             Parameter(value="model.pkl", name="model"),
         ],
@@ -686,7 +686,7 @@ def test_get_proto_container_with_multiple_inputs():
     app_env = AppEnvironment(
         name="test-app",
         image=Image.from_base("python:3.11"),
-        inputs=[
+        parameters=[
             Parameter(value="config.yaml", name="config", env_var="CONFIG_PATH"),
             Parameter(value="data.csv", name="data"),
             Parameter(value="s3://bucket/model.pkl", name="model", download=True),
@@ -714,7 +714,7 @@ def test_get_proto_container_with_multiple_inputs():
     serialized_parameters = cmd_list[inputs_idx + 1]
 
     # Verify inputs can be deserialized
-    from flyte.app._input import SerializableParameterCollection
+    from flyte.app._parameter import SerializableParameterCollection
 
     deserialized = SerializableParameterCollection.from_transport(serialized_parameters)
     assert len(deserialized.inputs) == 3

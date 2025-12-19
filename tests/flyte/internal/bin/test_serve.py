@@ -15,7 +15,7 @@ import pytest
 from click.testing import CliRunner
 
 from flyte._bin.serve import download_code_inputs, main, sync_parameters
-from flyte.app._input import Parameter, SerializableParameterCollection
+from flyte.app._parameter import Parameter, SerializableParameterCollection
 from flyte.models import CodeBundle
 
 
@@ -737,7 +737,7 @@ class TestMainCommand:
                     )
 
                     # Verify RUNTIME_INPUTS_FILE is in environment
-                    from flyte.app._input import RUNTIME_INPUTS_FILE
+                    from flyte.app._parameter import RUNTIME_INPUTS_FILE
 
                     assert RUNTIME_INPUTS_FILE in captured_env
                     assert captured_env[RUNTIME_INPUTS_FILE].endswith("flyte-inputs.json")

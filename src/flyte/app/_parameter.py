@@ -19,16 +19,16 @@ else:
     AutoVersioning = Literal["latest", "current"]
 
 
-InputTypes = str | flyte.io.File | flyte.io.Dir
-_SerializedInputType = Literal["string", "file", "directory"]
+ParameterTypes = str | flyte.io.File | flyte.io.Dir
+_SerializedParameterType = Literal["string", "file", "directory"]
 
-INPUT_TYPE_MAP = {
+PARAMETER_TYPE_MAP = {
     str: "string",
     flyte.io.File: "file",
     flyte.io.Dir: "directory",
 }
 
-RUNTIME_INPUTS_FILE = "flyte-inputs.json"
+RUNTIME_PARAMETERS_FILE = "flyte-parameters.json"
 
 
 class _DelayedValue(BaseModel):
@@ -36,13 +36,13 @@ class _DelayedValue(BaseModel):
     Delayed value for app parameters.
     """
 
-    type: _SerializedInputType
+    type: _SerializedParameterType
 
     @model_validator(mode="before")
     @classmethod
     def check_type(cls, data: typing.Any) -> typing.Any:
         if "type" in data:
-            data["type"] = INPUT_TYPE_MAP.get(data["type"], data["type"])
+            data["type"] = PARAMETER_TYPE_MAP.get(data["type"], data["type"])
         return data
 
     async def get(self) -> str | flyte.io.File | flyte.io.Dir:
@@ -54,7 +54,7 @@ class _DelayedValue(BaseModel):
             return value
         return value
 
-    async def materialize(self) -> InputTypes:
+    async def materialize(self) -> ParameterTypes:
         raise NotImplementedError("Subclasses must implement this method")
 
 
@@ -109,7 +109,7 @@ class RunOutput(_DelayedValue):
             raise ValueError("Only one of run_name or task_name must be provided")
 
     @requires_initialization
-    async def materialize(self) -> InputTypes:
+    async def materialize(self) -> ParameterTypes:
         if self.run_name is not None:
             return await self._materialize_with_run_name()
         elif self.task_name is not None:
@@ -117,7 +117,7 @@ class RunOutput(_DelayedValue):
         else:
             raise ValueError("Either run_name or task_name must be provided")
 
-    async def _materialize_with_task_name(self) -> InputTypes:
+    async def _materialize_with_task_name(self) -> ParameterTypes:
         from flyte.remote import Run, RunDetails, Task, TaskDetails
 
         assert self.task_name is not None, "task_name must be provided"
@@ -144,9 +144,9 @@ class RunOutput(_DelayedValue):
         for getter in self.getter:
             output = output[getter]
         logger.debug("Materialized output: %s", output)
-        return typing.cast(InputTypes, output)
+        return typing.cast(ParameterTypes, output)
 
-    async def _materialize_with_run_name(self) -> InputTypes:
+    async def _materialize_with_run_name(self) -> ParameterTypes:
         from flyte.remote import Run, RunDetails
 
         run: Run = await Run.get.aio(self.run_name)
@@ -154,7 +154,7 @@ class RunOutput(_DelayedValue):
         output = await run_details.outputs()
         for getter in self.getter:
             output = output[getter]
-        return typing.cast(InputTypes, output)
+        return typing.cast(ParameterTypes, output)
 
 
 class AppEndpoint(_DelayedValue):
@@ -207,7 +207,7 @@ class Parameter:
     """
 
     name: str
-    value: InputTypes | _DelayedValue
+    value: ParameterTypes | _DelayedValue
     env_var: Optional[str] = None
     download: bool = False
     mount: Optional[str] = None
@@ -238,7 +238,7 @@ class SerializableParameter(BaseModel):
     name: str
     value: str
     download: bool
-    type: _SerializedInputType = "string"
+    type: _SerializedParameterType = "string"
     env_var: Optional[str] = None
     dest: Optional[str] = None
     ignore_patterns: List[str] = field(default_factory=list)
@@ -250,7 +250,7 @@ class SerializableParameter(BaseModel):
         # param.name is guaranteed to be set by Parameter.__post_init__
         assert param.name is not None, "Parameter name should be set by __post_init__"
 
-        tpe: _SerializedInputType = "string"
+        tpe: _SerializedParameterType = "string"
         if isinstance(param.value, flyte.io.File):
             value = param.value.path
             tpe = "file"
@@ -282,10 +282,10 @@ class SerializableParameterCollection(BaseModel):
     """
     Collection of parameters for application.
 
-    :param inputs: List of parameters.
+    :param parameters: List of parameters.
     """
 
-    inputs: List[SerializableParameter] = field(default_factory=list)
+    parameters: List[SerializableParameter] = field(default_factory=list)
 
     @cached_property
     def to_transport(self) -> str:
@@ -310,27 +310,27 @@ class SerializableParameterCollection(BaseModel):
 
     @classmethod
     def from_parameters(cls, parameters: List[Parameter]) -> SerializableParameterCollection:
-        return cls(inputs=[SerializableParameter.from_parameter(param) for param in parameters])
+        return cls(parameters=[SerializableParameter.from_parameter(param) for param in parameters])
 
 
 @cache
-def _load_inputs() -> dict[str, str]:
+def _load_parameters() -> dict[str, str]:
     """Load parameters for application or endpoint."""
     import json
     import os
 
-    config_file = os.getenv(RUNTIME_INPUTS_FILE)
+    config_file = os.getenv(RUNTIME_PARAMETERS_FILE)
 
     if config_file is None:
         raise ValueError("Parameters are not mounted")
 
     with open(config_file, "r") as f:
-        inputs = json.load(f)
+        parameters = json.load(f)
 
-    return inputs
+    return parameters
 
 
-def get_input(name: str) -> str:
+def get_parameter(name: str) -> str:
     """Get parameters for application or endpoint."""
-    inputs = _load_inputs()
-    return inputs[name]
+    parameters = _load_parameters()
+    return parameters[name]

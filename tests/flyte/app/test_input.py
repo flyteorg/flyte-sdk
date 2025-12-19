@@ -12,7 +12,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 import flyte.io
-from flyte.app._input import (
+from flyte.app._parameter import (
     INPUT_TYPE_MAP,
     AppEndpoint,
     Parameter,

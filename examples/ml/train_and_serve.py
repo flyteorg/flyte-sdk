@@ -243,7 +243,7 @@ serving_env = FastAPIAppEnvironment(
     image=image,
     resources=flyte.Resources(cpu=1, memory="1Gi"),
     requires_auth=False,
-    inputs=[
+    parameters=[
         Parameter(
             name="model",
             value=RunOutput(task_name="penguin_training.training_pipeline", type="file"),

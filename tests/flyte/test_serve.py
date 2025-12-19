@@ -15,7 +15,7 @@ import pytest
 from flyte._image import Image
 from flyte._serve import _Serve, with_servecontext
 from flyte.app import AppEnvironment
-from flyte.app._input import Parameter
+from flyte.app._parameter import Parameter
 
 
 def test_serve_default_initialization():
@@ -174,7 +174,7 @@ def test_input_values_dict_structure():
 
 
 @pytest.mark.asyncio
-async def test_serve_extracts_input_overrides_for_matching_app():
+async def test_serve_extracts_parameter_overrides_for_matching_app():
     """
     GOAL: Verify serve method correctly extracts input overrides for matching app.
 
@@ -186,7 +186,7 @@ async def test_serve_extracts_input_overrides_for_matching_app():
     app_env = AppEnvironment(
         name="my-test-app",
         image=Image.from_base("python:3.11"),
-        inputs=[
+            parameters=[
             Parameter(value="original-config.yaml", name="config"),
             Parameter(value="s3://original/data", name="data"),
         ],
@@ -206,17 +206,17 @@ async def test_serve_extracts_input_overrides_for_matching_app():
     app_env_input_values = serve._input_values.get(app_env.name)
     assert app_env_input_values is not None
 
-    input_overrides = []
+    parameter_overrides = []
     for _input in app_env.inputs:
         value = app_env_input_values.get(_input.name, _input.value)
-        input_overrides.append(replace(_input, value=value))
+        parameter_overrides.append(replace(_input, value=value))
 
     # Verify overrides were created correctly
-    assert len(input_overrides) == 2
-    assert input_overrides[0].name == "config"
-    assert input_overrides[0].value == "overridden-config.yaml"
-    assert input_overrides[1].name == "data"
-    assert input_overrides[1].value == "s3://new/data"
+    assert len(parameter_overrides) == 2
+    assert parameter_overrides[0].name == "config"
+    assert parameter_overrides[0].value == "overridden-config.yaml"
+    assert parameter_overrides[1].name == "data"
+    assert parameter_overrides[1].value == "s3://new/data"
 
 
 @pytest.mark.asyncio
@@ -231,7 +231,7 @@ async def test_serve_no_overrides_for_non_matching_app():
     app_env = AppEnvironment(
         name="different-app",
         image=Image.from_base("python:3.11"),
-        inputs=[
+            parameters=[
             Parameter(value="config.yaml", name="config"),
         ],
     )
@@ -251,18 +251,18 @@ async def test_serve_no_overrides_for_non_matching_app():
 
 
 @pytest.mark.asyncio
-async def test_serve_partial_input_overrides():
+async def test_serve_partial_parameter_overrides():
     """
-    GOAL: Verify serve method handles partial input overrides correctly.
+    GOAL: Verify serve method handles partial parameter overrides correctly.
 
-    Tests that when only some inputs are overridden, the non-overridden
-    inputs retain their original values.
+    Tests that when only some parameters are overridden, the non-overridden
+    parameters retain their original values.
     """
     # Create an app environment with multiple inputs
     app_env = AppEnvironment(
         name="partial-override-app",
         image=Image.from_base("python:3.11"),
-        inputs=[
+            parameters=[
             Parameter(value="original-config.yaml", name="config"),
             Parameter(value="original-model.pkl", name="model"),
             Parameter(value="original-data.csv", name="data"),
@@ -282,19 +282,19 @@ async def test_serve_partial_input_overrides():
     app_env_input_values = serve._input_values.get(app_env.name)
     assert app_env_input_values is not None
 
-    input_overrides = []
+    parameter_overrides = []
     for _input in app_env.inputs:
         value = app_env_input_values.get(_input.name, _input.value)
-        input_overrides.append(replace(_input, value=value))
+        parameter_overrides.append(replace(_input, value=value))
 
     # Verify partial overrides
-    assert input_overrides[0].value == "original-config.yaml"  # Not overridden
-    assert input_overrides[1].value == "new-model.pkl"  # Overridden
-    assert input_overrides[2].value == "original-data.csv"  # Not overridden
+    assert parameter_overrides[0].value == "original-config.yaml"  # Not overridden
+    assert parameter_overrides[1].value == "new-model.pkl"  # Overridden
+    assert parameter_overrides[2].value == "original-data.csv"  # Not overridden
 
 
 @pytest.mark.asyncio
-async def test_serve_with_file_dir_input_overrides():
+async def test_serve_with_file_dir_parameter_overrides():
     """
     GOAL: Verify serve method handles File/Dir input overrides correctly.
 
@@ -308,7 +308,7 @@ async def test_serve_with_file_dir_input_overrides():
     app_env = AppEnvironment(
         name="file-dir-app",
         image=Image.from_base("python:3.11"),
-        inputs=[
+            parameters=[
             Parameter(value=original_file, name="myfile"),
             Parameter(value=original_dir, name="mydir"),
         ],
@@ -330,16 +330,16 @@ async def test_serve_with_file_dir_input_overrides():
     app_env_input_values = serve._input_values.get(app_env.name)
     assert app_env_input_values is not None
 
-    input_overrides = []
+    parameter_overrides = []
     for _input in app_env.inputs:
         value = app_env_input_values.get(_input.name, _input.value)
-        input_overrides.append(replace(_input, value=value))
+        parameter_overrides.append(replace(_input, value=value))
 
     # Verify File/Dir overrides
-    assert isinstance(input_overrides[0].value, flyte.io.File)
-    assert input_overrides[0].value.path == "s3://new/file.txt"
-    assert isinstance(input_overrides[1].value, flyte.io.Dir)
-    assert input_overrides[1].value.path == "s3://new/dir"
+    assert isinstance(parameter_overrides[0].value, flyte.io.File)
+    assert parameter_overrides[0].value.path == "s3://new/file.txt"
+    assert isinstance(parameter_overrides[1].value, flyte.io.Dir)
+    assert parameter_overrides[1].value.path == "s3://new/dir"
 
 
 # =============================================================================
@@ -347,7 +347,7 @@ async def test_serve_with_file_dir_input_overrides():
 # =============================================================================
 
 
-def test_input_overrides_affect_container_cmd():
+def test_parameter_overrides_affect_container_cmd():
     """
     GOAL: Verify that input overrides from serve context affect the container command.
 
@@ -355,14 +355,14 @@ def test_input_overrides_affect_container_cmd():
     """
     from dataclasses import replace
 
-    from flyte.app._input import SerializableParameterCollection
+    from flyte.app._parameter import SerializableParameterCollection
     from flyte.models import CodeBundle, SerializationContext
 
     # Create app environment
     app_env = AppEnvironment(
         name="integration-app",
         image=Image.from_base("python:3.11"),
-        inputs=[
+            parameters=[
             Parameter(value="original-config.yaml", name="config"),
             Parameter(value="s3://original/data", name="data"),
         ],
@@ -380,10 +380,10 @@ def test_input_overrides_affect_container_cmd():
 
     # Extract input overrides (replicating serve method logic)
     app_env_input_values = serve._input_values.get(app_env.name)
-    input_overrides = []
+    parameter_overrides = []
     for _input in app_env.inputs:
         value = app_env_input_values.get(_input.name, _input.value)
-        input_overrides.append(replace(_input, value=value))
+        parameter_overrides.append(replace(_input, value=value))
 
     # Create serialization context
     ctx = SerializationContext(
@@ -395,7 +395,7 @@ def test_input_overrides_affect_container_cmd():
     )
 
     # Generate container command with overrides
-    cmd = app_env.container_cmd(ctx, input_overrides=input_overrides)
+    cmd = app_env.container_cmd(ctx, parameter_overrides=parameter_overrides)
 
     # Verify the command contains overridden inputs
     assert "--inputs" in cmd
@@ -420,7 +420,7 @@ def test_multiple_app_environments_with_different_overrides():
     app_one = AppEnvironment(
         name="app-one",
         image=Image.from_base("python:3.11"),
-        inputs=[
+            parameters=[
             Parameter(value="app-one-config.yaml", name="config"),
         ],
     )
@@ -428,7 +428,7 @@ def test_multiple_app_environments_with_different_overrides():
     app_two = AppEnvironment(
         name="app-two",
         image=Image.from_base("python:3.11"),
-        inputs=[
+            parameters=[
             Parameter(value="app-two-config.yaml", name="config"),
         ],
     )
@@ -460,7 +460,7 @@ def test_multiple_app_environments_with_different_overrides():
     assert app_two_overrides[0].value == "app-two-override.yaml"
 
 
-def test_with_servecontext_dependent_apps_with_input_overrides():
+def test_with_servecontext_dependent_apps_with_parameter_overrides():
     """
     GOAL: Verify with_servecontext correctly applies input overrides to dependent apps.
 
@@ -468,14 +468,14 @@ def test_with_servecontext_dependent_apps_with_input_overrides():
     the input_values dict correctly updates inputs for both apps.
     """
     import flyte.io
-    from flyte.app._input import SerializableParameterCollection
+    from flyte.app._parameter import SerializableParameterCollection
     from flyte.models import CodeBundle, SerializationContext
 
     # Create the backend app (dependency) with multiple inputs
     backend_app = AppEnvironment(
         name="backend-api",
         image=Image.from_base("python:3.11"),
-        inputs=[
+            parameters=[
             Parameter(value="postgres://localhost:5432/db", name="database_url"),
             Parameter(value="redis://localhost:6379", name="cache_url"),
             Parameter(value=flyte.io.File(path="s3://bucket/model.pkl"), name="model_file"),
@@ -487,7 +487,7 @@ def test_with_servecontext_dependent_apps_with_input_overrides():
         name="frontend-app",
         image=Image.from_base("python:3.11"),
         depends_on=[backend_app],
-        inputs=[
+            parameters=[
             Parameter(value="http://localhost:8000", name="api_endpoint"),
             Parameter(value="default-theme", name="theme"),
             Parameter(value=flyte.io.Dir(path="s3://bucket/assets"), name="static_assets"),
@@ -570,7 +570,7 @@ def test_with_servecontext_dependent_apps_with_input_overrides():
     )
 
     # Check backend app command serialization
-    backend_cmd = backend_app.container_cmd(ctx, input_overrides=backend_overrides)
+    backend_cmd = backend_app.container_cmd(ctx, parameter_overrides=backend_overrides)
     assert "--inputs" in backend_cmd
     backend_inputs_idx = backend_cmd.index("--inputs")
     backend_serialized = backend_cmd[backend_inputs_idx + 1]
@@ -579,7 +579,7 @@ def test_with_servecontext_dependent_apps_with_input_overrides():
     assert backend_deserialized.inputs[1].value == "redis://prod-cache:6379"
 
     # Check frontend app command serialization
-    frontend_cmd = frontend_app.container_cmd(ctx, input_overrides=frontend_overrides)
+    frontend_cmd = frontend_app.container_cmd(ctx, parameter_overrides=frontend_overrides)
     assert "--inputs" in frontend_cmd
     frontend_inputs_idx = frontend_cmd.index("--inputs")
     frontend_serialized = frontend_cmd[frontend_inputs_idx + 1]

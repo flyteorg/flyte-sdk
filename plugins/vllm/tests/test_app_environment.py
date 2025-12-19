@@ -3,7 +3,7 @@
 import flyte
 import flyte.app
 import pytest
-from flyte.app._input import Parameter
+from flyte.app._parameter import Parameter
 from flyte.models import SerializationContext
 
 from flyteplugins.vllm import VLLMAppEnvironment
@@ -41,7 +41,7 @@ def test_basic_init_with_model_hf_path():
     assert app.port.port == 8000
     assert app.type == "vLLM"
     assert app.image == DEFAULT_VLLM_IMAGE
-    # When using model_hf_path, no inputs should be created
+    # When using model_hf_path, no parameters should be created
     assert app.inputs == []
     # The model mount path should be set to the HF path
     assert app.env_vars["FLYTE_MODEL_LOADER_LOCAL_MODEL_PATH"] == "Qwen/Qwen3-0.6B"
@@ -118,12 +118,12 @@ def test_args_set_raises_error():
 
 def test_inputs_set_raises_error():
     """Test that setting inputs raises ValueError."""
-    with pytest.raises(ValueError, match="inputs cannot be set for VLLMAppEnvironment"):
+    with pytest.raises(ValueError, match="parameters cannot be set for VLLMAppEnvironment"):
         VLLMAppEnvironment(
             name="test-app",
             model_path="s3://bucket/model",
             model_id="test-model",
-            inputs=[Parameter(name="foo", value="bar")],
+            parameters=[Parameter(name="foo", value="bar")],
         )
 
 
@@ -146,7 +146,7 @@ def test_stream_model_true_with_model_path():
     assert app.env_vars["FLYTE_MODEL_LOADER_STREAM_SAFETENSORS"] == "true"
     assert app.env_vars["FLYTE_MODEL_LOADER_LOCAL_MODEL_PATH"] == "/root/flyte"
 
-    # Check inputs
+    # Check parameters
     assert len(app.inputs) == 1
     model_input = app.inputs[0]
     assert model_input.name == "model"
@@ -170,7 +170,7 @@ def test_stream_model_false_with_model_path():
     # Check env vars
     assert app.env_vars["FLYTE_MODEL_LOADER_STREAM_SAFETENSORS"] == "false"
 
-    # Check inputs - should download instead of stream
+    # Check parameters - should download instead of stream
     assert len(app.inputs) == 1
     model_input = app.inputs[0]
     assert model_input.download is True
@@ -178,14 +178,14 @@ def test_stream_model_false_with_model_path():
 
 
 def test_model_hf_path_no_inputs():
-    """Test that model_hf_path creates no inputs and sets correct mount path."""
+    """Test that model_hf_path creates no parameters and sets correct mount path."""
     app = VLLMAppEnvironment(
         name="test-app",
         model_hf_path="meta-llama/Llama-2-7b",
         model_id="test-model",
     )
 
-    # No inputs should be created for HF path
+    # No parameters should be created for HF path
     assert app.inputs == []
 
     # Mount path should be set to the HF path
