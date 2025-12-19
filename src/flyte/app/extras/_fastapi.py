@@ -125,6 +125,25 @@ class FastAPIAppEnvironment(flyte.app.AppEnvironment):
         except ModuleNotFoundError:
             raise ModuleNotFoundError("fastapi is not installed. Please install 'fastapi' to use FastAPI apps.")
 
+        # starlette is a dependency of fastapi, so if fastapi is installed, starlette is also installed.
+        from starlette.datastructures import State
+
+        class PicklableState(State):
+            def __getstate__(self):
+                state = self.__dict__.copy()
+                # Replace the unpicklable State with an empty dict
+                state["_state"] = {}
+                return state
+
+            def __setstate__(self, state):
+                self.__dict__.update(state)
+                # Restore a fresh State object
+                self.state = State()
+
+        # NOTE: since FastAPI cannot be pickled (because starlette.datastructures.State cannot be pickled due to
+        # circular references), we need to patch the state object to make it picklable.
+        self.app.state = PicklableState()
+
         super().__post_init__()
         if self.app is None:
             raise ValueError("app cannot be None for FastAPIAppEnvironment")

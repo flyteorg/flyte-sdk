@@ -5,7 +5,7 @@ import os
 import re
 import shlex
 from dataclasses import dataclass, field, replace
-from typing import TYPE_CHECKING, Any, List, Literal, Optional, Union
+from typing import TYPE_CHECKING, Any, Callable, List, Literal, Optional, Union
 
 import rich.repr
 
@@ -65,6 +65,7 @@ class AppEnvironment(Environment):
     cluster_pool: str = "default"
 
     # config: Optional[AppConfigProtocol] = None
+    _startup_fn: Callable[[], None] | None = field(init=False, default=None)
 
     def _validate_name(self):
         if not APP_NAME_RE.fullmatch(self.name):
@@ -141,6 +142,16 @@ class AppEnvironment(Environment):
         # get instantiated file to keep track of app root directory
         self._app_filename = self._get_app_filename()
 
+        # Capture the frame where this environment was instantiated
+        # This helps us find the module where the app variable is defined
+        frame = inspect.currentframe()
+        if frame and frame.f_back:
+            # Go up the call stack to find the user's module
+            # Skip the dataclass __init__ frame
+            caller_frame = frame.f_back
+            if caller_frame and caller_frame.f_back:
+                self._caller_frame = inspect.getframeinfo(caller_frame.f_back)
+
     def container_args(self, serialize_context: SerializationContext) -> List[str]:
         if self.args is None:
             return []
@@ -158,9 +169,15 @@ class AppEnvironment(Environment):
         serialized_parameters = SerializableParameterCollection.from_parameters(parameter_overrides or self.parameters)
         return serialized_parameters.to_transport
 
+    def startup(self, fn: Callable[[], None]) -> Callable[[], None]:
+        self._startup_fn = fn
+        return self._startup_fn
+
     def container_cmd(
         self, serialize_context: SerializationContext, parameter_overrides: list[Parameter] | None = None
     ) -> List[str]:
+        from flyte._internal.resolvers.app_env import AppEnvResolver
+
         if self.command is None:
             # Default command
             version = serialize_context.version
@@ -196,6 +213,17 @@ class AppEnvironment(Environment):
                 cmd.append("--parameters")
                 cmd.append(self._serialize_parameters(parameter_overrides))
 
+            assert serialize_context.root_dir is not None
+            _app_env_resolver = AppEnvResolver()
+            cmd = [
+                *cmd,
+                *[
+                    "--resolver",
+                    _app_env_resolver.import_path,
+                    "--resolver-args",
+                    _app_env_resolver.loader_args(self, serialize_context.root_dir),
+                ],
+            ]
             return [*cmd, "--"]
         elif isinstance(self.command, str):
             return shlex.split(self.command)
