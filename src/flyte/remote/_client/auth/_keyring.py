@@ -98,12 +98,10 @@ class KeyringStore:
                  or if the system keyring is not available
         """
         for_endpoint = strip_scheme(for_endpoint)
-        access_token = ""
+        access_token: str | None = None
         try:
             refresh_token = keyring.get_password(for_endpoint, KeyringStore._refresh_token_key)
-            access_token_opt = keyring.get_password(for_endpoint, KeyringStore._access_token_key)
-            if access_token_opt:
-                access_token = access_token_opt
+            access_token = keyring.get_password(for_endpoint, KeyringStore._access_token_key)
         except NoKeyringError as e:
             logger.debug(f"KeyRing not available, tokens will not be cached. Error: {e}")
             return None
@@ -111,12 +109,12 @@ class KeyringStore:
             logger.debug(f"Failed to retrieve tokens from keyring. Error: {e}")
             return None
 
-        if not access_token and not refresh_token:
-            logger.debug("No access token found in keyring.")
-            return None
-
-        if not access_token and refresh_token:
-            access_token = ""
+        if not access_token:
+            if not refresh_token:
+                logger.debug("No access token found in keyring.")
+                return None
+            else:
+                access_token = ""
 
         return Credentials(
             access_token=access_token,
