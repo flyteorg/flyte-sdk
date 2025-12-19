@@ -14,6 +14,14 @@ env = FastAPIAppEnvironment(
     port=8080,
 )
 
+@env.server()
+async def fastapi_app_server():
+    import uvicorn
+
+    config = uvicorn.Config(app, port=8080)
+    server = uvicorn.Server(config)
+    await server.serve()
+
 
 @app.get("/")
 async def root() -> str:

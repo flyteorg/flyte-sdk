@@ -151,7 +151,6 @@ class FastAPIAppEnvironment(flyte.app.AppEnvironment):
             raise TypeError(f"app must be of type fastapi.FastAPI, got {type(self.app)}")
 
         self.links = [flyte.app.Link(path="/docs", title="FastAPI OpenAPI Docs", is_relative=True), *self.links]
-        self.startup(self._fastapi_startup_fn)
 
         # Capture the frame where this environment was instantiated
         # This helps us find the module where the app variable is defined
@@ -162,11 +161,6 @@ class FastAPIAppEnvironment(flyte.app.AppEnvironment):
             caller_frame = frame.f_back
             if caller_frame and caller_frame.f_back:
                 self._caller_frame = inspect.getframeinfo(caller_frame.f_back)
-
-    def _fastapi_startup_fn(self):
-        import uvicorn
-
-        uvicorn.run(self.app, port=self.get_port().port)
 
     def container_args(self, serialization_context: SerializationContext) -> list[str]:
         """

@@ -11,6 +11,7 @@ import typing
 
 import click
 
+import flyte.io
 from flyte._logging import logger
 from flyte.models import CodeBundle
 
@@ -47,31 +48,51 @@ async def sync_parameters(serialized_parameters: str, dest: str) -> tuple[dict, 
 
     user_parameters = SerializableParameterCollection.from_transport(serialized_parameters)
 
-    output = {}
+    # these will be serialized to json, the app can fetch these values via
+    # env var or with flyte.app.get_input()
+    serializable_parameters = {}
+
+    # these will be passed into the AppEnvironment._server function.
+    materialized_parameters = {}
+
     env_vars = {}
 
     for parameter in user_parameters.parameters:
         parameter_type = parameter.type
-        value = parameter.value
+        ser_value = parameter.value
+
+        # for files and directories, default to remote paths for the materialized value
+        if parameter_type == "file":
+            materialized_value = flyte.io.File(path=ser_value)
+        elif parameter_type == "directory":
+            materialized_value = flyte.io.Dir(path=ser_value)
+        else:
+            materialized_value = ser_value
 
         # download files or directories
         if parameter.download:
             user_dest = parameter.dest or dest
+
+            # replace file and directory inputs with the local paths if download is True
             if parameter_type == "file":
                 logger.info(f"Downloading {parameter.name} of type File to {user_dest}...")
-                value = await storage.get(value, user_dest)
+                ser_value = await storage.get(ser_value, user_dest)
+                materialized_value = flyte.io.File(path=ser_value)
+
             elif parameter_type == "directory":
                 logger.info(f"Downloading {parameter.name} of type Directory to {user_dest}...")
-                value = await storage.get(value, user_dest, recursive=True)
+                ser_value = await storage.get(ser_value, user_dest, recursive=True)
+                materialized_value = flyte.io.Dir(path=ser_value)
             else:
                 raise ValueError("Can only download files or directories")
 
-        output[parameter.name] = value
+        serializable_parameters[parameter.name] = ser_value
+        materialized_parameters[parameter.name] = materialized_value
 
         if parameter.env_var:
-            env_vars[parameter.env_var] = value
+            env_vars[parameter.env_var] = ser_value
 
-    return output, env_vars
+    return serializable_parameters, materialized_parameters, env_vars
 
 
 async def download_code_parameters(
@@ -79,18 +100,18 @@ async def download_code_parameters(
 ) -> tuple[dict, dict, CodeBundle | None]:
     from flyte._internal.runtime.entrypoints import download_code_bundle
 
-    user_parameters: dict[str, str] = {}
+    serializable_parameters: dict[str, str] = {}
+    materialized_parameters: dict[str, str | flyte.io.File | flyte.io.Dir] = {}
     env_vars: dict[str, str] = {}
     if serialized_parameters and len(serialized_parameters) > 0:
-        user_parameters, env_vars = await sync_parameters(serialized_parameters, dest)
+        serializable_parameters, materialized_parameters, env_vars = await sync_parameters(serialized_parameters, dest)
     code_bundle: CodeBundle | None = None
     if tgz or pkl:
         logger.debug(f"Downloading Code bundle: {tgz or pkl} ...")
         bundle = CodeBundle(tgz=tgz, pkl=pkl, destination=dest, computed_version=version)
         code_bundle = await download_code_bundle(bundle)
 
-    return user_parameters, env_vars, code_bundle
-
+    return serializable_parameters, materialized_parameters, env_vars, code_bundle
 
 def load_app_env(
     code_bundle: CodeBundle,
@@ -186,22 +207,20 @@ def main(
 
     logger.info(f"Starting flyte-serve, org: {org}, project: {project}, domain: {domain}")
 
-    materialized_parameters, env_vars, code_bundle = asyncio.run(
+    serializable_parameters, materialized_parameters, env_vars, code_bundle = asyncio.run(
         download_code_parameters(
             serialized_parameters=parameters or "",
             tgz=tgz or "",
             pkl=pkl or "",
             dest=dest or os.getcwd(),
             version=version,
-        )
+        ),
     )
 
     if code_bundle is not None:
         if code_bundle.pkl:
             app_env = load_pkl_app_env(code_bundle)
         elif code_bundle.tgz:
-            # TODO: implement a way to extract the app environment object from
-            # the tgz bundle, similar to task resolver
             if resolver is None or resolver_args is None:
                 raise ValueError("--resolver and --resolver-args are required when using --tgz code bundle")
             app_env = load_app_env(code_bundle, resolver, resolver_args)
@@ -215,13 +234,22 @@ def main(
 
     parameters_file = os.path.join(os.getcwd(), RUNTIME_PARAMETERS_FILE)
     with open(parameters_file, "w") as f:
-        json.dump(materialized_parameters, f)
+        json.dump(serializable_parameters, f)
 
     os.environ[RUNTIME_PARAMETERS_FILE] = parameters_file
 
-    if code_bundle is not None and app_env._startup_fn is not None:
-        logger.info("Running app via startup function")
-        app_env._startup_fn()
+    if code_bundle is not None and app_env._server is not None:
+        logger.info("Running app via server function")
+        if asyncio.iscoroutinefunction(app_env._server):
+            if materialized_parameters:
+                asyncio.run(app_env._server(**materialized_parameters))
+            else:
+                asyncio.run(app_env._server())
+        else:
+            if materialized_parameters:
+                app_env._server(**materialized_parameters)
+            else:
+                app_env._server()
 
     if command is None or len(command) == 0:
         raise ValueError("No command provided to execute")

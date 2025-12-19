@@ -80,7 +80,7 @@ async def _deploy_app(
 
     if app.include and serialization_context.code_bundle and serialization_context.code_bundle.pkl is None:
         # Only bundle the include files if the code bundle is a tgz bundle. If this
-        # is a pkl bundle, assume that the AppEnvironment has a startup function
+        # is a pkl bundle, assume that the AppEnvironment has a server function
         # that will be used to serve the app. This function should contain all
         # of the code needed to serve the app.
         app_file = Path(app._app_filename)
@@ -92,9 +92,9 @@ async def _deploy_app(
         serialization_context.code_bundle = code_bundle
 
     if serialization_context.code_bundle and serialization_context.code_bundle.pkl:
-        assert app._startup_fn is not None, (
-            "Startup function is required for pkl code bundles, use the app_env.startup() decorator to define the "
-            "startup function."
+        assert app._server is not None, (
+            "Server function is required for pkl code bundles, use the app_env.server() decorator to define the "
+            "server function."
         )
 
     image_uri = app.image.uri if isinstance(app.image, Image) else app.image

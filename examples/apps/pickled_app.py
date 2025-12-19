@@ -8,20 +8,21 @@ env = flyte.app.AppEnvironment(
     name="pickled-app",
     image=flyte.Image.from_debian_base().with_pip_packages("fastapi", "uvicorn"),
     resources=flyte.Resources(cpu=1, memory="512Mi"),
+    inputs=[flyte.app.Input(name="foo", value="bar")],
     requires_auth=False,
     port=8080,
 )
 
 
-@env.startup
-def fastapi_app():
+@env.server
+def fastapi_app_startup(foo: str):
     # NOTE: since FastAPI cannot be pickled (because starlette.datastructures.State cannot be pickled due to
     # circular references), we need to use a factory pattern to create the app instance. In the startup function.
     app = fastapi.FastAPI()
 
     @app.get("/")
     async def root() -> str:
-        return "Hello, World!"
+        return f"Hello, World! {foo}"
 
     uvicorn.run(app, port=8080)
 

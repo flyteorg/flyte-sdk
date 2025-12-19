@@ -64,8 +64,8 @@ class AppEnvironment(Environment):
     # queue / cluster_pool
     cluster_pool: str = "default"
 
-    # config: Optional[AppConfigProtocol] = None
-    _startup_fn: Callable[[], None] | None = field(init=False, default=None)
+    # private field
+    _server: Callable[[], None] | None = field(init=False, default=None)
 
     def _validate_name(self):
         if not APP_NAME_RE.fullmatch(self.name):
@@ -169,9 +169,9 @@ class AppEnvironment(Environment):
         serialized_parameters = SerializableParameterCollection.from_parameters(parameter_overrides or self.parameters)
         return serialized_parameters.to_transport
 
-    def startup(self, fn: Callable[[], None]) -> Callable[[], None]:
-        self._startup_fn = fn
-        return self._startup_fn
+    def server(self, fn: Callable[[], None]) -> Callable[[], None]:
+        self._server = fn
+        return self._server
 
     def container_cmd(
         self, serialize_context: SerializationContext, parameter_overrides: list[Parameter] | None = None

@@ -71,8 +71,6 @@ class _Serve:
         self._log_level = log_level
         self._log_format = log_format
         self._interactive_mode = interactive_mode if interactive_mode is not None else ipython_check()
-        if self._interactive_mode:
-            raise NotImplementedError("Apps do not support running from notebooks or interactive environments")
         self._copy_bundle_to = copy_bundle_to
 
     @syncify
