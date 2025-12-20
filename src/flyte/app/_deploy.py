@@ -12,6 +12,7 @@ from flyte._logging import logger
 from flyte.models import SerializationContext
 
 from ._app_environment import AppEnvironment
+from ._parameter import Parameter
 
 if typing.TYPE_CHECKING:
     from flyte._deployer import DeployedEnvironment
@@ -43,7 +44,7 @@ class DeployedAppEnvironment:
         return [
             [
                 ("type", "App"),
-                ("name", self.deployed_app.name),
+                ("name", f"[link={self.deployed_app.url}]{self.deployed_app.name}[/link]"),
                 ("revision", str(self.deployed_app.revision)),
                 (
                     "desired state",
@@ -64,7 +65,12 @@ class DeployedAppEnvironment:
         return f"Deployed App[{self.deployed_app.name}] in environment {self.env.name}"
 
 
-async def _deploy_app(app: AppEnvironment, serialization_context: SerializationContext, dryrun: bool = False) -> "App":
+async def _deploy_app(
+    app: AppEnvironment,
+    serialization_context: SerializationContext,
+    parameter_overrides: list[Parameter] | None = None,
+    dryrun: bool = False,
+) -> "App":
     """
     Deploy the given app.
     """
@@ -75,13 +81,18 @@ async def _deploy_app(app: AppEnvironment, serialization_context: SerializationC
     if app.include:
         app_file = Path(app._app_filename)
         app_root_dir = app_file.parent
-        files = (app_file.name, *app.include)
+        assert serialization_context.code_bundle is not None
+        _files = serialization_context.code_bundle.files or []
+        files = (*_files, *[f for f in app.include if f not in _files])
         code_bundle = await build_code_bundle_from_relative_paths(files, from_dir=app_root_dir)
         serialization_context.code_bundle = code_bundle
 
     image_uri = app.image.uri if isinstance(app.image, Image) else app.image
     try:
-        app_idl = translate_app_env_to_idl(app, serialization_context)
+        app_idl = await translate_app_env_to_idl.aio(
+            app, serialization_context, parameter_overrides=parameter_overrides
+        )
+
         if dryrun:
             return app_idl
         ensure_client()

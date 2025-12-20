@@ -1,10 +1,11 @@
 import asyncio
-from typing import Tuple, Union, get_args
+from typing import Tuple, Union
 
 import rich_click as click
 from rich.pretty import pretty_repr
 
 import flyte.remote as remote
+from flyte.models import ActionPhase
 
 from . import _common as common
 
@@ -53,7 +54,7 @@ def project(cfg: common.CLIConfig, name: str | None = None):
 @click.option("--limit", type=int, default=100, help="Limit the number of runs to fetch when listing.")
 @click.option(
     "--in-phase",  # multiple=True, TODO support multiple phases once values in works
-    type=click.Choice(get_args(remote.Phase), case_sensitive=False),
+    type=click.Choice([p.value for p in ActionPhase], case_sensitive=False),
     help="Filter runs by their status.",
 )
 @click.option("--only-mine", is_flag=True, default=False, help="Show only runs created by the current user (you).")
@@ -83,7 +84,7 @@ def run(
         console.print(common.format(f"Run {name}", [details], "json"))
     else:
         if in_phase and isinstance(in_phase, str):
-            in_phase = (in_phase,)
+            in_phase = (ActionPhase(in_phase),)
 
         subject = None
         if only_mine:
@@ -138,11 +139,17 @@ def task(
 @get.command(cls=common.CommandBase)
 @click.argument("run_name", type=str, required=True)
 @click.argument("action_name", type=str, required=False)
+@click.option(
+    "--in-phase",
+    type=click.Choice([p.value for p in ActionPhase], case_sensitive=False),
+    help="Filter actions by their phase.",
+)
 @click.pass_obj
 def action(
     cfg: common.CLIConfig,
     run_name: str,
     action_name: str | None = None,
+    in_phase: str | None = None,
     project: str | None = None,
     domain: str | None = None,
 ):
@@ -160,8 +167,17 @@ def action(
         )
     else:
         # List all actions for the run
+        if in_phase:
+            in_phase_tuple = (ActionPhase(in_phase),)
+        else:
+            in_phase_tuple = None
+
         console.print(
-            common.format(f"Actions for {run_name}", remote.Action.listall(for_run_name=run_name), cfg.output_format)
+            common.format(
+                f"Actions for {run_name}",
+                remote.Action.listall(for_run_name=run_name, in_phase=in_phase_tuple),
+                cfg.output_format,
+            )
         )
 
 

@@ -7,9 +7,7 @@ from typing import TYPE_CHECKING, Dict, List, Optional, Set, Tuple
 
 import cloudpickle
 import rich.repr
-from flyteidl2.core import interface_pb2
 
-from flyte._utils.description_parser import parse_description
 from flyte.models import NativeInterface, SerializationContext
 from flyte.syncify import syncify
 
@@ -21,6 +19,7 @@ from ._task import TaskTemplate
 from ._task_environment import TaskEnvironment
 
 if TYPE_CHECKING:
+    from flyteidl2.core import interface_pb2
     from flyteidl2.task import task_definition_pb2
 
     from ._code_bundle import CopyFiles
@@ -61,11 +60,30 @@ class DeployedTask:
         """
         Returns a table representation of the deployed task.
         """
+        from flyte._initialize import get_client
+
+        client = get_client()
+        task_id = self.deployed_task.task_template.id
+        task_url = client.console.task_url(
+            project=task_id.project,
+            domain=task_id.domain,
+            task_name=task_id.name,
+        )
+        triggers = []
+        for t in self.deployed_triggers:
+            trigger_url = client.console.trigger_url(
+                project=task_id.project,
+                domain=task_id.domain,
+                task_name=task_id.name,
+                trigger_name=t.name,
+            )
+            triggers.append(f"[link={trigger_url}]{t.name}[/link]")
+
         return [
             ("type", "task"),
-            ("name", self.deployed_task.task_template.id.name),
-            ("version", self.deployed_task.task_template.id.version),
-            ("triggers", ",".join([t.name for t in self.deployed_triggers])),
+            ("name", f"[link={task_url}]{task_id.name}[/link]"),
+            ("version", task_id.version),
+            ("triggers", ",".join(triggers)),
         ]
 
 
@@ -226,24 +244,41 @@ async def _deploy_task(
 
 def _get_documentation_entity(task_template: TaskTemplate) -> task_definition_pb2.DocumentationEntity:
     """
-    Extract documentation from TaskTemplate's docstring and create a DocumentationEntity.
+    Create a DocumentationEntity with descriptions and source code url.
     Short descriptions are truncated to 255 chars, long descriptions to 2048 chars.
 
     :param task_template: TaskTemplate containing the interface docstring.
-    :return: DocumentationEntity with truncated short and long descriptions.
+    :return: DocumentationEntity with short description, long description, and source code url link.
     """
     from flyteidl2.task import task_definition_pb2
+
+    from flyte._utils.description_parser import parse_description
+    from flyte.git import GitStatus
 
     docstring = task_template.interface.docstring
     short_desc = None
     long_desc = None
+    source_code = None
     if docstring and docstring.short_description:
         short_desc = parse_description(docstring.short_description, 255)
     if docstring and docstring.long_description:
         long_desc = parse_description(docstring.long_description, 2048)
+    if hasattr(task_template, "func") and hasattr(task_template.func, "__code__") and task_template.func.__code__:
+        line_number = (
+            task_template.func.__code__.co_firstlineno + 1
+        )  # The function definition line number is located at the line after @env.task decorator
+        file_path = task_template.func.__code__.co_filename
+        git_status = GitStatus.from_current_repo()
+        if git_status.is_valid:
+            # Build git host url
+            git_host_url = git_status.build_url(file_path, line_number)
+            if git_host_url:
+                source_code = task_definition_pb2.SourceCode(link=git_host_url)
+
     return task_definition_pb2.DocumentationEntity(
         short_description=short_desc,
         long_description=long_desc,
+        source_code=source_code,
     )
 
 
@@ -258,6 +293,8 @@ def _update_interface_inputs_and_outputs_docstring(
     :param native_interface: The NativeInterface containing the docstring.
     :return: New TypedInterface with descriptions from docstring if docstring exists.
     """
+    from flyteidl2.core import interface_pb2
+
     # Create a copy of the typed_interface to avoid mutating the input
     updated_interface = interface_pb2.TypedInterface()
     updated_interface.CopyFrom(typed_interface)
@@ -298,6 +335,8 @@ async def _build_images(deployment: DeploymentPlan, image_refs: Dict[str, str] |
     """
     Build the images for the given deployment plan and update the environment with the built image.
     """
+    from flyte._image import _DEFAULT_IMAGE_REF_NAME
+
     from ._internal.imagebuild.image_builder import ImageCache
 
     if image_refs is None:
@@ -324,9 +363,9 @@ async def _build_images(deployment: DeploymentPlan, image_refs: Dict[str, str] |
             images.append(_build_image_bg(env_name, env.image))
 
         elif env.image == "auto" and "auto" not in image_identifier_map:
-            if "default" in image_refs:
+            if _DEFAULT_IMAGE_REF_NAME in image_refs:
                 # If the default image is set through CLI, use it instead
-                image_uri = image_refs["default"]
+                image_uri = image_refs[_DEFAULT_IMAGE_REF_NAME]
                 image_identifier_map[env_name] = image_uri
                 continue
             auto_image = Image.from_debian_base()

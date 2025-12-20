@@ -8,6 +8,7 @@ the AppIDL protobuf format, using SerializationContext for configuration.
 from __future__ import annotations
 
 from copy import deepcopy
+from dataclasses import replace
 from typing import List, Optional, Union
 
 from flyteidl2.app import app_definition_pb2
@@ -16,17 +17,20 @@ from flyteidl2.core import literals_pb2, tasks_pb2
 from google.protobuf.duration_pb2 import Duration
 
 import flyte
-import flyte.errors
 import flyte.io
 from flyte._internal.runtime.resources_serde import get_proto_extended_resources, get_proto_resources
 from flyte._internal.runtime.task_serde import get_security_context, lookup_image_in_cache
-from flyte.app import AppEnvironment, Input, Scaling
+from flyte._logging import logger
+from flyte.app import AppEnvironment, Parameter, Scaling
+from flyte.app._parameter import _DelayedValue
 from flyte.models import SerializationContext
+from flyte.syncify import syncify
 
 
 def get_proto_container(
     app_env: AppEnvironment,
     serialization_context: SerializationContext,
+    parameter_overrides: list[Parameter] | None = None,
 ) -> tasks_pb2.Container:
     """
     Construct the container specification.
@@ -34,7 +38,7 @@ def get_proto_container(
     Args:
         app_env: The app environment
         serialization_context: Serialization context
-
+        parameter_overrides: Parameter overrides to apply to the app environment.
     Returns:
         Container protobuf message
     """
@@ -58,7 +62,7 @@ def get_proto_container(
 
     return tasks_pb2.Container(
         image=img_uri,
-        command=app_env.container_cmd(serialization_context),
+        command=app_env.container_cmd(serialization_context, parameter_overrides),
         args=app_env.container_args(serialization_context),
         resources=resources,
         ports=container_ports,
@@ -207,32 +211,59 @@ def _get_scaling_metric(
     return None
 
 
-def translate_inputs(inputs: List[Input]) -> app_definition_pb2.InputList:
+async def _materialize_parameters_with_delayed_values(parameters: List[Parameter]) -> List[Parameter]:
     """
-    Placeholder for translating inputs to protobuf format.
+    Materialize the parameters that contain delayed values. This is important for both
+    serializing the parameter for the container command and for the app idl parameters collection.
+
+    Args:
+        parameters: The parameters to materialize.
+
+    Returns:
+        The materialized parameters.
+    """
+    _parameters = []
+    for param in parameters:
+        if isinstance(param.value, _DelayedValue):
+            logger.info(f"Materializing {param.name} with delayed values of type {param.value.type}")
+            value = await param.value.get()
+            assert isinstance(value, (str, flyte.io.File, flyte.io.Dir)), (
+                f"Materialized value must be a string, file or directory, found {type(value)}"
+            )
+            _parameters.append(replace(param, value=await param.value.get()))
+        else:
+            _parameters.append(param)
+    return _parameters
+
+
+async def translate_parameters(parameters: List[Parameter]) -> app_definition_pb2.InputList:
+    """
+    Translate parameters to protobuf format.
 
     Returns:
         InputList protobuf message
     """
-    if not inputs:
+    if not parameters:
         return app_definition_pb2.InputList()
 
-    inputs_list = []
-    for input in inputs:
-        if isinstance(input.value, str):
-            inputs_list.append(app_definition_pb2.Input(name=input.name, string_value=input.value))
-        elif isinstance(input.value, flyte.io.File):
-            inputs_list.append(app_definition_pb2.Input(name=input.name, string_value=str(input.value.path)))
-        elif isinstance(input.value, flyte.io.Dir):
-            inputs_list.append(app_definition_pb2.Input(name=input.name, string_value=str(input.value.path)))
+    parameters_list = []
+    for param in parameters:
+        if isinstance(param.value, str):
+            parameters_list.append(app_definition_pb2.Input(name=param.name, string_value=param.value))
+        elif isinstance(param.value, flyte.io.File):
+            parameters_list.append(app_definition_pb2.Input(name=param.name, string_value=str(param.value.path)))
+        elif isinstance(param.value, flyte.io.Dir):
+            parameters_list.append(app_definition_pb2.Input(name=param.name, string_value=str(param.value.path)))
         else:
-            raise ValueError(f"Unsupported input value type: {type(input.value)}")
-    return app_definition_pb2.InputList(items=inputs_list)
+            raise ValueError(f"Unsupported parameter value type: {type(param.value)}")
+    return app_definition_pb2.InputList(items=parameters_list)
 
 
-def translate_app_env_to_idl(
+@syncify
+async def translate_app_env_to_idl(
     app_env: AppEnvironment,
     serialization_context: SerializationContext,
+    parameter_overrides: list[Parameter] | None = None,
     desired_state: app_definition_pb2.Spec.DesiredState = app_definition_pb2.Spec.DesiredState.DESIRED_STATE_ACTIVE,
 ) -> app_definition_pb2.App:
     """
@@ -244,6 +275,7 @@ def translate_app_env_to_idl(
     Args:
         app_env: The app environment to serialize
         serialization_context: Serialization context containing org, project, domain, version, etc.
+        parameter_overrides: Parameter overrides to apply to the app environment.
         desired_state: Desired state of the app (ACTIVE, INACTIVE, etc.)
 
     Returns:
@@ -279,6 +311,7 @@ def translate_app_env_to_idl(
     )
 
     # Build spec based on image type
+    parameters = await _materialize_parameters_with_delayed_values(parameter_overrides or app_env.parameters)
     container = None
     pod = None
     if app_env.pod_template:
@@ -293,6 +326,7 @@ def translate_app_env_to_idl(
         container = get_proto_container(
             app_env,
             serialization_context,
+            parameter_overrides=parameters,
         )
     else:
         msg = "image must be a str, Image, or PodTemplate"
@@ -344,6 +378,6 @@ def translate_app_env_to_idl(
             links=links,
             container=container,
             pod=pod,
-            inputs=translate_inputs(app_env.inputs),
+            inputs=await translate_parameters(parameters),
         ),
     )

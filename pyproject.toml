@@ -26,13 +26,14 @@ dependencies = [
     "mashumaro",
     "dataclasses_json", # TODO: remove this dependency once we remove dataclasses_json from the code
     "aiolimiter>=1.2.1",
-    "flyteidl2==2.0.0a15",
+    "flyteidl2==2.0.0a16",
 ]
 
 [project.scripts]
 flyte = "flyte.cli.main:main"
 a0 = "flyte._bin.runtime:main"
 fserve = "flyte._bin.serve:main"
+c0 = "flyte._bin.connect:main"
 
 [project.entry-points."keyring.backends"]
 flyte_keyring_file = "flyte._keyring.file"
@@ -56,6 +57,7 @@ dev = [
     "build>=1.2.2.post1",
     "mock>=5.2.0",
     "pytest>=8.3.5",
+    "pytest-xdist",
     "pytest-asyncio>=0.26.0",
     "pytest-benchmark>=5.1.0",
     "ruff>=0.11.0",

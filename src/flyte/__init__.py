@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import sys
 
+from . import prefetch
 from ._build import build
 from ._cache import Cache, CachePolicy, CacheRequest
 from ._context import ctx
@@ -15,7 +16,7 @@ from ._environment import Environment
 from ._excepthook import custom_excepthook
 from ._group import group
 from ._image import Image
-from ._initialize import current_domain, init, init_from_config, init_in_cluster
+from ._initialize import current_domain, init, init_from_api_key, init_from_config, init_in_cluster
 from ._logging import logger
 from ._map import map
 from ._pod import PodTemplate
@@ -98,10 +99,12 @@ __all__ = [
     "get_custom_context",
     "group",
     "init",
+    "init_from_api_key",
     "init_from_config",
     "init_in_cluster",
     "logger",
     "map",
+    "prefetch",
     "run",
     "serve",
     "trace",

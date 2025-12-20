@@ -3,7 +3,7 @@
 # dependencies = [
 #     "fastapi",
 #     "uvicorn",
-#     "flyte>=2.0.0b27"
+#     "flyte @ file:///Users/ketanumare/src/flyte-sdk",
 # ]
 # ///
 import logging
@@ -22,6 +22,7 @@ from flyte.app.extras import FastAPIAppEnvironment
 
 WEBHOOK_API_KEY = os.getenv("WEBHOOK_API_KEY", "test-api-key")
 security = HTTPBearer()
+logger = logging.getLogger(__name__)
 
 
 async def verify_token(
@@ -45,7 +46,7 @@ async def lifespan(app: FastAPI):
     are processed, preventing race conditions and initialization errors.
     """
     # Startup: Initialize Flyte
-    await flyte.init_in_cluster.aio()
+    await flyte.init_in_cluster.aio(org="demo")
     yield
     # Shutdown: Clean up if needed
 
@@ -90,18 +91,19 @@ async def run_task(
     Returns:
         Dictionary containing the launched run information:
         - url: URL to view the run in the Flyte UI
-        - id: Unique identifier for the launched run
+        - name: Name of the run
     """
-    tk = await remote.TaskDetails.fetch(project=project, domain=domain, name=name, version=version)
+    logger.info(f"Running task: {name} {version}, with inputs: {inputs}")
+    tk = remote.TaskDetails.get(project=project, domain=domain, name=name, version=version)
     r = await flyte.run.aio(tk, **inputs)
-    return {"url": r.url, "id": r.id}
+    return {"url": r.url, "name": r.name}
 
 
 env = FastAPIAppEnvironment(
     name="webhook-runner",
     app=app,
     description="A webhook service that triggers Flyte task runs",
-    image=flyte.Image.from_uv_script(__file__, name="webhook-runner"),
+    image=flyte.Image.from_uv_script(__file__, name="webhook-runner", pre=True),
     resources=flyte.Resources(cpu=1, memory="512Mi"),
     requires_auth=False,
     env_vars={"WEBHOOK_API_KEY": os.getenv("WEBHOOK_API_KEY", "test-api-key")},
@@ -116,7 +118,19 @@ if __name__ == "__main__":
 
 
 # TO Test
-# curl -X POST "https://nameless-morning-8ff1a.apps.demo.hosted.unionai.cloud/run-task/flytesnacks/development/t1/v1" \
+# curl -X POST "https://<url>/run-task/<project>/development/py-io.dynamic_wf/cacbbbd8447421fc8ff0c32cf5dc177c" \
 #   -H "Authorization: Bearer test-api-key" \
 #   -H "Content-Type: application/json" \
-#   -d '{"input_key": "input_value"}'
+#   -d '{
+#         "workflow_config": {
+#           "x": 1,
+#           "y": 2,
+#           "m": {"x": 1},
+#           "m2": {"y": 1, "m": {"j": 1}}
+#         },
+#         "user_params": {
+#           "y": ""
+#         },
+#         "x": 1,
+#         "y": "Hello"
+#       }'

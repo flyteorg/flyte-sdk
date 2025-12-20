@@ -5,16 +5,20 @@ These tests verify that app_serde.py correctly converts AppEnvironment objects
 into protobuf IDL format without using mocks.
 """
 
+from unittest.mock import AsyncMock, MagicMock, patch
+
 import pytest
 from flyteidl2.core import tasks_pb2
 
+import flyte.io
 from flyte._image import Image
 from flyte._internal.imagebuild.image_builder import ImageCache
 from flyte._resources import Resources
 from flyte.app import AppEnvironment
-from flyte.app._input import Input
+from flyte.app._parameter import Parameter, RunOutput
 from flyte.app._runtime.app_serde import (
     _get_scaling_metric,
+    _materialize_parameters_with_delayed_values,
     _sanitize_resource_name,
     get_proto_container,
     translate_app_env_to_idl,
@@ -236,9 +240,9 @@ def test_get_proto_container_with_args_and_inputs():
         name="test-app",
         image=Image.from_base("python:3.11"),
         args=["--arg1", "value1", "--arg2", "value2"],
-        inputs=[
-            Input(value="config.yaml", name="config"),
-            Input(value="data.csv", name="data"),
+        parameters=[
+            Parameter(value="config.yaml", name="config"),
+            Parameter(value="data.csv", name="data"),
         ],
     )
 
@@ -255,29 +259,29 @@ def test_get_proto_container_with_args_and_inputs():
     # Args should be in the args field
     assert container.args == ["--arg1", "value1", "--arg2", "value2"]
 
-    # Command should contain fserve with --inputs flag
+    # Command should contain fserve with --parameters flag
     assert container.command[0] == "fserve"
-    assert "--inputs" in container.command
+    assert "--parameters" in container.command
 
-    # Verify inputs are serialized
+    # Verify parameters are serialized
     cmd_list = list(container.command)
-    inputs_idx = cmd_list.index("--inputs")
-    assert inputs_idx >= 0
-    serialized_inputs = cmd_list[inputs_idx + 1]
-    assert len(serialized_inputs) > 0  # Should have base64 gzip encoded content
+    parameters_idx = cmd_list.index("--parameters")
+    assert parameters_idx >= 0
+    serialized_parameters = cmd_list[parameters_idx + 1]
+    assert len(serialized_parameters) > 0  # Should have base64 gzip encoded content
 
 
-def test_get_proto_container_with_string_args_and_inputs():
+def test_get_proto_container_with_string_args_and_parameters():
     """
-    GOAL: Verify string args are split correctly when app has inputs.
+    GOAL: Verify string args are split correctly when app has parameters.
 
-    Tests that string args are parsed using shlex while inputs remain in command.
+    Tests that string args are parsed using shlex while parameters remain in command.
     """
     app_env = AppEnvironment(
         name="test-app",
         image=Image.from_base("python:3.11"),
         args="--host 0.0.0.0 --port 8080",
-        inputs=[Input(value="config.yaml", name="config")],
+        parameters=[Parameter(value="config.yaml", name="config")],
     )
 
     ctx = SerializationContext(
@@ -294,7 +298,7 @@ def test_get_proto_container_with_string_args_and_inputs():
     assert container.args == ["--host", "0.0.0.0", "--port", "8080"]
 
     # Inputs should be in command
-    assert "--inputs" in container.command
+    assert "--parameters" in container.command
 
 
 def test_get_proto_container_with_only_inputs_no_args():
@@ -308,9 +312,9 @@ def test_get_proto_container_with_only_inputs_no_args():
     app_env = AppEnvironment(
         name="test-app",
         image=Image.from_base("python:3.11"),
-        inputs=[
-            Input(value="file1.txt", name="input1"),
-            Input(value="file2.txt", name="input2"),
+        parameters=[
+            Parameter(value="file1.txt", name="input1"),
+            Parameter(value="file2.txt", name="input2"),
         ],
     )
 
@@ -328,7 +332,7 @@ def test_get_proto_container_with_only_inputs_no_args():
     assert container.args == []
 
     # Inputs should be in command
-    assert "--inputs" in container.command
+    assert "--parameters" in container.command
 
 
 def test_get_proto_container_with_custom_command_and_inputs():
@@ -345,7 +349,7 @@ def test_get_proto_container_with_custom_command_and_inputs():
         image=Image.from_base("python:3.11"),
         command=["python", "app.py"],
         args=["--custom-arg"],
-        inputs=[Input(value="config.yaml", name="config")],  # Should be ignored
+        parameters=[Parameter(value="config.yaml", name="config")],  # Should be ignored
     )
 
     ctx = SerializationContext(
@@ -364,7 +368,7 @@ def test_get_proto_container_with_custom_command_and_inputs():
     assert container.args == ["--custom-arg"]
 
     # Inputs should NOT be in command (custom commands don't auto-add inputs)
-    assert "--inputs" not in container.command
+    assert "--parameters" not in container.command
 
 
 def test_get_proto_container_with_string_image():
@@ -572,9 +576,9 @@ def test_get_proto_container_comprehensive():
         args=["--arg1", "value1"],
         resources=Resources(cpu=(1, 2), memory=("1Gi", "2Gi"), gpu=1),
         env_vars={"ENV": "production", "LOG_LEVEL": "info"},
-        inputs=[
-            Input(value="config.yaml", name="config"),
-            Input(value="model.pkl", name="model"),
+        parameters=[
+            Parameter(value="config.yaml", name="config"),
+            Parameter(value="model.pkl", name="model"),
         ],
     )
 
@@ -610,7 +614,7 @@ def test_get_proto_container_comprehensive():
 
     # Verify command has fserve and inputs
     assert container.command[0] == "fserve"
-    assert "--inputs" in container.command
+    assert "--parameters" in container.command
     assert "--version" in container.command
 
     # Verify args
@@ -675,17 +679,17 @@ def test_get_proto_container_with_multiple_inputs():
     GOAL: Verify multiple inputs are serialized correctly.
 
     Tests that:
-    - Multiple inputs are all included
-    - Each input's properties are preserved
+    - Multiple parameters are all included
+    - Each parameter's properties are preserved
     - Serialization is successful
     """
     app_env = AppEnvironment(
         name="test-app",
         image=Image.from_base("python:3.11"),
-        inputs=[
-            Input(value="config.yaml", name="config", env_var="CONFIG_PATH"),
-            Input(value="data.csv", name="data"),
-            Input(value="s3://bucket/model.pkl", name="model", download=True),
+        parameters=[
+            Parameter(value="config.yaml", name="config", env_var="CONFIG_PATH"),
+            Parameter(value="data.csv", name="data"),
+            Parameter(value="s3://bucket/model.pkl", name="model", download=True),
         ],
         args=["--verbose"],
     )
@@ -703,21 +707,21 @@ def test_get_proto_container_with_multiple_inputs():
     # Args should still be present
     assert container.args == ["--verbose"]
 
-    # Command should have inputs
-    assert "--inputs" in container.command
+    # Command should have parameters
+    assert "--parameters" in container.command
     cmd_list = list(container.command)
-    inputs_idx = cmd_list.index("--inputs")
-    serialized_inputs = cmd_list[inputs_idx + 1]
+    parameters_idx = cmd_list.index("--parameters")
+    serialized_parameters = cmd_list[parameters_idx + 1]
 
-    # Verify inputs can be deserialized
-    from flyte.app._input import SerializableInputCollection
+    # Verify parameters can be deserialized
+    from flyte.app._parameter import SerializableParameterCollection
 
-    deserialized = SerializableInputCollection.from_transport(serialized_inputs)
-    assert len(deserialized.inputs) == 3
-    assert deserialized.inputs[0].name == "config"
-    assert deserialized.inputs[0].env_var == "CONFIG_PATH"
-    assert deserialized.inputs[1].name == "data"
-    assert deserialized.inputs[2].name == "model"
+    deserialized = SerializableParameterCollection.from_transport(serialized_parameters)
+    assert len(deserialized.parameters) == 3
+    assert deserialized.parameters[0].name == "config"
+    assert deserialized.parameters[0].env_var == "CONFIG_PATH"
+    assert deserialized.parameters[1].name == "data"
+    assert deserialized.parameters[2].name == "model"
 
 
 @pytest.mark.parametrize(
@@ -753,3 +757,194 @@ def test_app_with_domain(domain: Domain | None):
     assert app_idl.spec.ingress.subdomain == (domain.subdomain if domain and domain.subdomain else "")
     assert app_idl.spec.ingress.cname == (domain.custom_domain if domain and domain.custom_domain else "")
     assert app_idl.spec.ingress.private is False
+
+
+# =============================================================================
+# Tests for _materialize_parameters_with_delayed_values
+# =============================================================================
+
+
+@pytest.mark.asyncio
+async def test_materialize_parameters_with_no_delayed_values():
+    """
+    GOAL: Verify that parameters without delayed values pass through unchanged.
+
+    Tests that regular string, File, and Dir parameters are returned as-is.
+    """
+    parameters = [
+        Parameter(name="config", value="config.yaml"),
+        Parameter(name="model", value=flyte.io.File(path="s3://bucket/model.pkl")),
+        Parameter(name="data", value=flyte.io.Dir(path="s3://bucket/data")),
+    ]
+
+    result = await _materialize_parameters_with_delayed_values(parameters)
+
+    assert len(result) == 3
+    assert result[0].name == "config"
+    assert result[0].value == "config.yaml"
+    assert result[1].name == "model"
+    assert isinstance(result[1].value, flyte.io.File)
+    assert result[2].name == "data"
+    assert isinstance(result[2].value, flyte.io.Dir)
+
+
+@pytest.mark.asyncio
+async def test_materialize_parameters_with_run_output():
+    """
+    GOAL: Verify that RunOutput delayed values are materialized correctly.
+
+    Tests that RunOutput parameters are replaced with their materialized values.
+    """
+    # Create mock for RunOutput materialization
+    mock_run_details = MagicMock()
+    mock_run_details.outputs = AsyncMock(return_value=["s3://bucket/materialized/model"])
+
+    mock_run = MagicMock()
+    mock_run.details = MagicMock()
+    mock_run.details.aio = AsyncMock(return_value=mock_run_details)
+
+    parameters = [
+        Parameter(name="config", value="config.yaml"),
+        Parameter(name="model", value=RunOutput(type="string", run_name="my-run-123")),
+    ]
+
+    with (
+        patch("flyte.remote.Run") as MockRun,
+        patch("flyte._initialize.is_initialized", return_value=True),
+    ):
+        MockRun.get = MagicMock()
+        MockRun.get.aio = AsyncMock(return_value=mock_run)
+
+        result = await _materialize_parameters_with_delayed_values(parameters)
+
+    assert len(result) == 2
+    assert result[0].name == "config"
+    assert result[0].value == "config.yaml"
+    assert result[1].name == "model"
+    assert result[1].value == "s3://bucket/materialized/model"
+
+
+@pytest.mark.asyncio
+async def test_materialize_parameters_with_run_output_dir_type():
+    """
+    GOAL: Verify that RunOutput with Dir type materializes to a Dir path.
+
+    Tests that RunOutput returning a Dir is properly materialized.
+    """
+    # Create mock for RunOutput materialization
+    mock_run_details = MagicMock()
+    mock_run_details.outputs = AsyncMock(return_value=[flyte.io.Dir(path="s3://bucket/data-dir")])
+
+    mock_run = MagicMock()
+    mock_run.details = MagicMock()
+    mock_run.details.aio = AsyncMock(return_value=mock_run_details)
+
+    parameters = [
+        Parameter(name="data", value=RunOutput(type=flyte.io.Dir, run_name="my-run-123")),
+    ]
+
+    with (
+        patch("flyte.remote.Run") as MockRun,
+        patch("flyte._initialize.is_initialized", return_value=True),
+    ):
+        MockRun.get = MagicMock()
+        MockRun.get.aio = AsyncMock(return_value=mock_run)
+
+        result = await _materialize_parameters_with_delayed_values(parameters)
+
+    assert len(result) == 1
+    assert result[0].name == "data"
+    # The value should be the path string after .get() is called
+    assert isinstance(result[0].value, flyte.io.Dir)
+    assert result[0].value.path == "s3://bucket/data-dir"
+
+
+@pytest.mark.asyncio
+async def test_materialize_parameters_empty_list():
+    """
+    GOAL: Verify that empty parameter list returns empty list.
+
+    Tests edge case where no parameters are provided.
+    """
+    result = await _materialize_parameters_with_delayed_values([])
+    assert result == []
+
+
+@pytest.mark.asyncio
+async def test_materialize_parameters_mixed_delayed_and_regular():
+    """
+    GOAL: Verify that mixed parameters with some delayed values work correctly.
+
+    Tests that only delayed values are materialized while regular values pass through.
+    """
+    mock_run_details = MagicMock()
+    mock_run_details.outputs = AsyncMock(return_value=["materialized-value"])
+
+    mock_run = MagicMock()
+    mock_run.details = MagicMock()
+    mock_run.details.aio = AsyncMock(return_value=mock_run_details)
+
+    parameters = [
+        Parameter(name="static-config", value="static.yaml"),
+        Parameter(name="dynamic-model", value=RunOutput(type="string", run_name="run-1")),
+        Parameter(name="static-file", value=flyte.io.File(path="s3://bucket/file.txt")),
+    ]
+
+    with (
+        patch("flyte.remote.Run") as MockRun,
+        patch("flyte._initialize.is_initialized", return_value=True),
+    ):
+        MockRun.get = MagicMock()
+        MockRun.get.aio = AsyncMock(return_value=mock_run)
+
+        result = await _materialize_parameters_with_delayed_values(parameters)
+
+    assert len(result) == 3
+    # Static string unchanged
+    assert result[0].value == "static.yaml"
+    # RunOutput materialized
+    assert result[1].value == "materialized-value"
+    # Static File unchanged
+    assert isinstance(result[2].value, flyte.io.File)
+    assert result[2].value.path == "s3://bucket/file.txt"
+
+
+@pytest.mark.asyncio
+async def test_materialize_parameters_preserves_other_parameter_properties():
+    """
+    GOAL: Verify that materialization preserves other Parameter properties.
+
+    Tests that env_var, mount, download, etc. are preserved after materialization.
+    """
+    mock_run_details = MagicMock()
+    mock_run_details.outputs = AsyncMock(return_value=["s3://bucket/materialized"])
+
+    mock_run = MagicMock()
+    mock_run.details = MagicMock()
+    mock_run.details.aio = AsyncMock(return_value=mock_run_details)
+
+    parameters = [
+        Parameter(
+            name="model",
+            value=RunOutput(type="string", run_name="my-run"),
+            env_var="MODEL_PATH",
+            mount="/mnt/model",
+            download=True,
+        ),
+    ]
+
+    with (
+        patch("flyte.remote.Run") as MockRun,
+        patch("flyte._initialize.is_initialized", return_value=True),
+    ):
+        MockRun.get = MagicMock()
+        MockRun.get.aio = AsyncMock(return_value=mock_run)
+
+        result = await _materialize_parameters_with_delayed_values(parameters)
+
+    assert len(result) == 1
+    assert result[0].name == "model"
+    assert result[0].value == "s3://bucket/materialized"
+    assert result[0].env_var == "MODEL_PATH"
+    assert result[0].mount == "/mnt/model"
+    assert result[0].download is True

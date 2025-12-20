@@ -11,7 +11,9 @@ if TYPE_CHECKING:
 
 PRIMARY_CONTAINER_DEFAULT_NAME = "primary"
 
-GPUType = Literal["A10", "A10G", "A100", "A100 80G", "B200", "H100", "H200", "L4", "L40s", "T4", "V100", "RTX PRO 6000"]
+GPUType = Literal[
+    "A10", "A10G", "A100", "A100 80G", "B200", "H100", "H200", "L4", "L40s", "T4", "V100", "RTX PRO 6000", "GB10"
+]
 GPUQuantity = Literal[1, 2, 3, 4, 5, 6, 7, 8]
 A100Parts = Literal["1g.5gb", "2g.10gb", "3g.20gb", "4g.20gb", "7g.40gb"]
 """
@@ -21,6 +23,11 @@ Partitions for NVIDIA A100 GPU.
 A100_80GBParts = Literal["1g.10gb", "2g.20gb", "3g.40gb", "4g.40gb", "7g.80gb"]
 """
 Partitions for NVIDIA A100 80GB GPU.
+"""
+
+H200Parts = Literal["1g.18gb", "1g.35gb", "2g.35gb", "3g.71gb", "4g.71gb", "7g.141gb"]
+"""
+Partitions for NVIDIA H200 GPU (141GB HBM3e).
 """
 
 TPUType = Literal["V5P", "V6E"]
@@ -137,6 +144,8 @@ Accelerators = Literal[
     "V100:8",
     # RTX 6000
     "RTX PRO 6000:1",
+    # GB10
+    "GB10:1",
     # T4
     "T4:1",
     "T4:2",
@@ -249,7 +258,9 @@ class Device:
             raise ValueError("GPU quantity must be at least 1")
 
 
-def GPU(device: GPUType, quantity: GPUQuantity, partition: A100Parts | A100_80GBParts | None = None) -> Device:
+def GPU(
+    device: GPUType, quantity: GPUQuantity, partition: A100Parts | A100_80GBParts | H200Parts | None = None
+) -> Device:
     """
     Create a GPU device instance.
     :param device: The type of GPU (e.g., "T4", "A100").
@@ -267,6 +278,9 @@ def GPU(device: GPUType, quantity: GPUQuantity, partition: A100Parts | A100_80GB
     elif partition is not None and device == "A100 80G":
         if partition not in get_args(A100_80GBParts):
             raise ValueError(f"Invalid partition for A100 80G: {partition}. Must be one of {get_args(A100_80GBParts)}")
+    elif partition is not None and device == "H200":
+        if partition not in get_args(H200Parts):
+            raise ValueError(f"Invalid partition for H200: {partition}. Must be one of {get_args(H200Parts)}")
     return Device(device=device, quantity=quantity, partition=partition, device_class="GPU")
 
 
@@ -318,7 +332,7 @@ def AMD_GPU(device: AMD_GPUType) -> Device:
 def HABANA_GAUDI(device: HABANA_GAUDIType) -> Device:
     """
     Create a Habana Gaudi device instance.
-    :param device: Device type (e.g., "DL1").
+    :param device: Device type (e.g., "Gaudi1").
     :return: Device instance.
     """
     if device not in get_args(HABANA_GAUDIType):
@@ -354,6 +368,8 @@ class Resources:
         strings, or a tuple of two ints or strings.
     :param gpu: The amount of GPU to allocate to the task. This can be an Accelerators enum, an int, or None.
     :param disk: The amount of disk to allocate to the task. This is a string of the form "10GiB".
+    :param shm: The amount of shared memory to allocate to the task. This is a string of the form "10GiB" or "auto".
+        If "auto", then the shared memory will be set to max amount of shared memory available on the node.
     """
 
     cpu: Union[CPUBaseType, Tuple[CPUBaseType, CPUBaseType], None] = None

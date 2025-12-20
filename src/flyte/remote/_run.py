@@ -10,17 +10,12 @@ from flyteidl2.workflow import run_definition_pb2, run_service_pb2
 
 from flyte._initialize import ensure_client, get_client, get_init_config
 from flyte._logging import logger
+from flyte.models import ActionPhase
 from flyte.syncify import syncify
 
 from . import Action, ActionDetails, ActionInputs, ActionOutputs
 from ._action import _action_details_rich_repr, _action_rich_repr
 from ._common import ToJSONMixin, filtering, sorting
-from ._console import get_run_url
-
-# @kumare3 is sadpanda, because we have to create a mirror of phase types here, because protobuf phases are ghastly
-Phase = Literal[
-    "queued", "waiting_for_resources", "initializing", "running", "succeeded", "failed", "aborted", "timed_out"
-]
 
 
 @dataclass
@@ -46,7 +41,9 @@ class Run(ToJSONMixin):
     @classmethod
     async def listall(
         cls,
-        in_phase: Tuple[Phase] | None = None,
+        in_phase: Tuple[ActionPhase | str, ...] | None = None,
+        task_name: str | None = None,
+        task_version: str | None = None,
         created_by_subject: str | None = None,
         sort_by: Tuple[str, Literal["asc", "desc"]] | None = None,
         limit: int = 100,
@@ -55,6 +52,8 @@ class Run(ToJSONMixin):
         Get all runs for the current project and domain.
 
         :param in_phase: Filter runs by one or more phases.
+        :param task_name: Filter runs by task name.
+        :param task_version: Filter runs by task version.
         :param created_by_subject: Filter runs by the subject that created them. (this is not username, but the subject)
         :param sort_by: The sorting criteria for the project list, in the format (field, order).
         :param limit: The maximum number of runs to return.
@@ -65,7 +64,12 @@ class Run(ToJSONMixin):
         sort_pb2 = sorting(sort_by)
         filters = []
         if in_phase:
-            phases = [str(phase_pb2.ActionPhase.Value(f"PHASE_{p.upper()}")) for p in in_phase]
+            phases = [
+                str(p.to_protobuf_value())
+                if isinstance(p, ActionPhase)
+                else str(phase_pb2.ActionPhase.Value(f"ACTION_PHASE_{p.upper()}"))
+                for p in in_phase
+            ]
             logger.debug(f"Fetching run phases: {phases}")
             if len(phases) > 1:
                 filters.append(
@@ -83,6 +87,24 @@ class Run(ToJSONMixin):
                         values=phases[0],
                     ),
                 )
+
+        if task_name:
+            filters.append(
+                list_pb2.Filter(
+                    function=list_pb2.Filter.Function.EQUAL,
+                    field="task_name",
+                    values=[task_name],
+                ),
+            )
+        if task_version:
+            filters.append(
+                list_pb2.Filter(
+                    function=list_pb2.Filter.Function.EQUAL,
+                    field="task_version",
+                    values=[task_version],
+                ),
+            )
+
         filters = filtering(created_by_subject, *filters)
 
         cfg = get_init_config()
@@ -159,14 +181,26 @@ class Run(ToJSONMixin):
         """
         Wait for the run to complete, displaying a rich progress panel with status transitions,
         time elapsed, and error details in case of failure.
+
+        This method updates the Run's internal state, ensuring that properties like
+        `run.action.phase` reflect the final state after waiting completes.
         """
-        return await self.action.wait(quiet=quiet, wait_for=wait_for)
+        await self.action.wait(quiet=quiet, wait_for=wait_for)
+        # Update the Run's pb2.action to keep it in sync after waiting
+        self.pb2.action.CopyFrom(self.action.pb2)
 
     async def watch(self, cache_data_on_done: bool = False) -> AsyncGenerator[ActionDetails, None]:
         """
-        Get the details of the run. This is a placeholder for getting the run details.
+        Watch the run for updates, updating the internal Run state with latest details.
+
+        This method updates the Run's action state, ensuring that properties like
+        `run.action.phase` reflect the current state after watching.
         """
-        return self.action.watch(cache_data_on_done=cache_data_on_done)
+        async for ad in self.action.watch(cache_data_on_done=cache_data_on_done):
+            # The action's pb2 is already updated by Action.watch()
+            # Update the Run's pb2.action to keep it in sync
+            self.pb2.action.CopyFrom(self.action.pb2)
+            yield ad
 
     @syncify
     async def show_logs(
@@ -210,9 +244,7 @@ class Run(ToJSONMixin):
         Get the URL of the run.
         """
         client = get_client()
-        return get_run_url(
-            client.endpoint,
-            insecure=client.insecure,
+        return client.console.run_url(
             project=self.pb2.action.id.run.project,
             domain=self.pb2.action.id.run.domain,
             run_name=self.name,

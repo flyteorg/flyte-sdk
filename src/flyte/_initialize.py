@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import functools
+import sys
 import threading
 import typing
 from dataclasses import dataclass, field, replace
@@ -75,7 +76,16 @@ async def _initialize_client(
     """
     from flyte.remote._client.controlplane import ClientSet
 
-    if endpoint:
+    # https://grpc.io/docs/guides/keepalive/#keepalive-configuration-specification
+    channel_options = [
+        ("grpc.keepalive_permit_without_calls", 1),
+        ("grpc.keepalive_time_ms", 30000),  # Send keepalive ping every 30 seconds
+        ("grpc.keepalive_timeout_ms", 10000),  # Wait 10 seconds for keepalive response
+        ("grpc.http2.max_pings_without_data", 0),  # Allow unlimited pings without data
+        ("grpc.http2.min_ping_interval_without_data_ms", 30000),  # Min 30s between pings
+    ]
+
+    if endpoint and api_key is None:
         return await ClientSet.for_endpoint(
             endpoint,
             insecure=insecure,
@@ -90,6 +100,7 @@ async def _initialize_client(
             client_config=client_config,
             rpc_retries=rpc_retries,
             http_proxy_url=http_proxy_url,
+            grpc_options=channel_options,
         )
     elif api_key:
         return await ClientSet.for_api_key(
@@ -106,6 +117,7 @@ async def _initialize_client(
             client_config=client_config,
             rpc_retries=rpc_retries,
             http_proxy_url=http_proxy_url,
+            grpc_options=channel_options,
         )
 
     raise InitializationError(
@@ -228,6 +240,8 @@ async def init(
             else:
                 logger.info("No editable install found, using current working directory as root directory.")
                 root_dir = Path.cwd()
+        # We will inject the root_dir into the sys,path for module resolution
+        sys.path.append(str(root_dir))
 
         _init_config = _InitConfig(
             root_dir=root_dir,
@@ -250,7 +264,11 @@ async def init_from_config(
     root_dir: Path | None = None,
     log_level: int | None = None,
     log_format: LogFormat = "console",
+    project: str | None = None,
+    domain: str | None = None,
     storage: Storage | None = None,
+    batch_size: int = 1000,
+    image_builder: ImageBuildEngine.ImageBuilderType | None = None,
     images: tuple[str, ...] | None = None,
     sync_local_sys_paths: bool = True,
 ) -> None:
@@ -259,6 +277,8 @@ async def init_from_config(
     other Flyte remote API methods are called. Thread-safe implementation.
 
     :param path_or_config: Path to the configuration file or Config object
+    :param project: Project name, this will override any project names in the configuration file
+    :param domain: Domain name, this will override any domain names in the configuration file
     :param root_dir: Optional root directory from which to determine how to load files, and find paths to
         files like config etc. For example if one uses the copy-style=="all", it is essential to determine the
         root directory for the current project. If not provided, it defaults to the editable install directory or
@@ -270,6 +290,9 @@ async def init_from_config(
     :param images: List of image strings in format "imagename=imageuri" or just "imageuri".
     :param sync_local_sys_paths: Whether to include and synchronize local sys.path entries under the root directory
      into the remote container (default: True).
+    :param batch_size: Optional batch size for operations that use listings, defaults to 1000
+    :param image_builder: Optional image builder configuration, if provided,
+        will override any defaults set in the configuration.
     :return: None
     """
     from rich.highlighter import ReprHighlighter
@@ -304,8 +327,8 @@ async def init_from_config(
 
     await init.aio(
         org=cfg.task.org,
-        project=cfg.task.project,
-        domain=cfg.task.domain,
+        project=project or cfg.task.project,
+        domain=domain or cfg.task.domain,
         endpoint=cfg.platform.endpoint,
         insecure=cfg.platform.insecure,
         insecure_skip_verify=cfg.platform.insecure_skip_verify,
@@ -318,10 +341,84 @@ async def init_from_config(
         root_dir=root_dir,
         log_level=log_level,
         log_format=log_format,
-        image_builder=cfg.image.builder,
+        image_builder=image_builder or cfg.image.builder,
+        batch_size=batch_size,
         images=cfg.image.image_refs,
         storage=storage,
         source_config_path=cfg_path,
+        sync_local_sys_paths=sync_local_sys_paths,
+    )
+
+
+@syncify
+async def init_from_api_key(
+    endpoint: str,
+    api_key: str | None = None,
+    project: str | None = None,
+    domain: str | None = None,
+    root_dir: Path | None = None,
+    log_level: int | None = None,
+    log_format: LogFormat | None = None,
+    storage: Storage | None = None,
+    batch_size: int = 1000,
+    image_builder: ImageBuildEngine.ImageBuilderType = "local",
+    images: typing.Dict[str, str] | None = None,
+    sync_local_sys_paths: bool = True,
+) -> None:
+    """
+    Initialize the Flyte system using an API key for authentication. This is a convenience
+    method for API key-based authentication. Thread-safe implementation.
+
+    :param endpoint: The Flyte API endpoint URL
+    :param api_key: Optional API key for authentication. If None, reads from FLYTE_API_KEY environment variable.
+    :param project: Optional project name
+    :param domain: Optional domain name
+    :param root_dir: Optional root directory from which to determine how to load files, and find paths to files.
+      defaults to the editable install directory if the cwd is in a Python editable install, else just the cwd.
+    :param log_level: Optional logging level for the logger
+    :param log_format: Optional logging format for the logger, default is "console"
+    :param storage: Optional blob store (S3, GCS, Azure) configuration
+    :param batch_size: Optional batch size for operations that use listings, defaults to 1000
+    :param image_builder: Optional image builder configuration
+    :param images: Optional dict of images that can be used by referencing the image name
+    :param sync_local_sys_paths: Whether to include and synchronize local sys.path entries under the root directory
+      into the remote container (default: True)
+    :return: None
+    """
+    import os
+
+    from flyte._utils import org_from_endpoint, sanitize_endpoint
+
+    # If api_key is not provided, read from environment variable
+    if api_key is None:
+        api_key = os.getenv("FLYTE_API_KEY")
+        if api_key is None:
+            raise InitializationError(
+                "MissingApiKeyError",
+                "user",
+                "API key must be provided either as a parameter or via the FLYTE_API_KEY environment variable.",
+            )
+
+    # Sanitize the endpoint and extract org from it - sanitize should never return None if input is not None
+    endpoint = sanitize_endpoint(endpoint)  # type: ignore[assignment]
+    org = org_from_endpoint(endpoint)
+
+    await init.aio(
+        org=org,
+        project=project,
+        domain=domain,
+        endpoint=endpoint,
+        api_key=api_key,
+        auth_type="ClientSecret",  # API keys use client credentials flow
+        root_dir=root_dir,
+        log_level=log_level,
+        log_format=log_format,
+        insecure=False,
+        insecure_skip_verify=False,
+        storage=storage,
+        batch_size=batch_size,
+        image_builder=image_builder,
+        images=images,
         sync_local_sys_paths=sync_local_sys_paths,
     )
 
@@ -346,11 +443,12 @@ async def init_in_cluster(
     INSECURE_SKIP_VERIFY_OVERRIDE = "_U_INSECURE_SKIP_VERIFY"
     INSECURE_OVERRIDE = "_U_INSECURE"
     _UNION_EAGER_API_KEY_ENV_VAR = "_UNION_EAGER_API_KEY"
+    EAGER_API_KEY = "EAGER_API_KEY"
 
     org = org or os.getenv(ORG_NAME)
     project = project or os.getenv(PROJECT_NAME)
     domain = domain or os.getenv(DOMAIN_NAME)
-    api_key = api_key or os.getenv(_UNION_EAGER_API_KEY_ENV_VAR)
+    api_key = api_key or os.getenv(_UNION_EAGER_API_KEY_ENV_VAR) or os.getenv(EAGER_API_KEY)
 
     remote_kwargs: dict[str, typing.Any] = {"insecure": insecure}
     if api_key:

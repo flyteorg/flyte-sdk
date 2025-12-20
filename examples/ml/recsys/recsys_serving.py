@@ -8,7 +8,7 @@
 #     "pydantic",
 #     "pandas",
 #     "pyarrow",
-#     "flyte>=2.0.0b29",
+#     "flyte>=2.0.0b35",
 # ]
 # ///
 """
@@ -29,7 +29,6 @@ API Endpoints:
 
 import asyncio
 import logging
-import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import List, Optional
@@ -42,7 +41,7 @@ from sentence_transformers import SentenceTransformer
 
 import flyte
 import flyte.io
-from flyte.app import Input
+from flyte.app import Parameter
 from flyte.app.extras import FastAPIAppEnvironment
 
 logging.basicConfig(level=logging.INFO)
@@ -59,8 +58,8 @@ async def lifespan(app: FastAPI):
     # Startup: Load model and data
     logger.info("Starting up: Loading artifacts...")
 
-    # Get artifacts from environment inputs
-    # In production, this would come from the deployed app's inputs
+    # Get artifacts from environment parameters
+    # In production, this would come from the deployed app's parameters
     # For local testing, you can set a path here
     artifacts_path = Path("/tmp/recsys_artifacts")  # Default for local testing
 
@@ -85,7 +84,7 @@ app = FastAPI(
 )
 
 # Create Flyte FastAPI App Environment
-image = flyte.Image.from_uv_script(__file__, name="recsys-serving")
+image = flyte.Image.from_uv_script(__file__, name="recsys-serving", pre=True)
 
 env = FastAPIAppEnvironment(
     name="recsys-fastapi-app",
@@ -94,10 +93,10 @@ env = FastAPIAppEnvironment(
     image=image,
     resources=flyte.Resources(cpu=2, memory="4Gi"),
     requires_auth=False,
-    inputs=[
-        Input(
+    parameters=[
+        Parameter(
             name="artifacts",
-            value=flyte.io.Dir.from_existing_remote(os.environ.get(ARTIFACTS_DIR_ENV, "/tmp/recsys_artifacts")),
+            value=flyte.app.RunOutput(task_name="recsys_training.training_pipeline", type="directory"),
             mount="/tmp/recsys_artifacts",
         )
     ],
@@ -404,15 +403,5 @@ if __name__ == "__main__":
         log_level=logging.DEBUG,
     )
 
-    # Deploy the FastAPI app to Flyte
-    # Note: You need to provide the artifacts directory from the training pipeline
-    # You can get this by running the training pipeline first:
-    #   run = flyte.run(training_pipeline, ...)
-    #   artifacts = run.outputs()
-    #   then set `export ARTIFACTS_DIR="s3://...`
-    # then run this script
-    v = os.environ.get(ARTIFACTS_DIR_ENV, None)
-    if v is None:
-        raise RuntimeError(f"Artifacts dir not found: {v}, please set {ARTIFACTS_DIR_ENV} as an environment variable")
     app = flyte.serve(env)
     print(f"Deployed Application: {app.url}")

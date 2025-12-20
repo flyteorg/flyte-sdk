@@ -1,18 +1,23 @@
+import asyncio
+
 import flyte
 
 env = flyte.TaskEnvironment(
-    name="from_scratch",
+    "from_scratch",
 )
 
 
 @env.task
-def square(x: int) -> int:
+async def square(x: int) -> int:
     return x * x
 
 
 @env.task
-def main(n: int = 10) -> int:
-    results = list(flyte.map(square, range(n)))
+async def main(n: int) -> int:
+    coros = []
+    for i in range(n):
+        coros.append(square(i))
+    results = await asyncio.gather(*coros)
     return sum(results)
 
 

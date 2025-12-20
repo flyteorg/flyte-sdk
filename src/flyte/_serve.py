@@ -1,19 +1,23 @@
 from __future__ import annotations
 
 import hashlib
-from typing import TYPE_CHECKING, Dict, Optional
+from dataclasses import replace
+from typing import TYPE_CHECKING, Optional
 
 import cloudpickle
 
-from flyte._code_bundle._utils import CopyFiles
 from flyte._initialize import get_init_config
 from flyte._logging import LogFormat, logger
+from flyte._tools import ipython_check
 from flyte.models import SerializationContext
 from flyte.syncify import syncify
 
 if TYPE_CHECKING:
+    import flyte.io
     from flyte.app import AppEnvironment
     from flyte.remote import App
+
+    from ._code_bundle import CopyFiles
 
 
 class _Serve:
@@ -30,7 +34,8 @@ class _Serve:
         dry_run: bool = False,
         project: str | None = None,
         domain: str | None = None,
-        env_vars: Dict[str, str] | None = None,
+        env_vars: dict[str, str] | None = None,
+        parameter_values: dict[str, dict[str, str | flyte.io.File | flyte.io.Dir]] | None = None,
         cluster_pool: str | None = None,
         log_level: int | None = None,
         log_format: LogFormat = "console",
@@ -46,19 +51,19 @@ class _Serve:
             project: Optional project override
             domain: Optional domain override
             env_vars: Optional environment variables to inject into the app
+            parameter_values: Optional parameter values to inject into the app
             cluster_pool: Optional cluster pool override
             log_level: Optional log level to set for the app (e.g., logging.INFO)
             log_format: Optional log format ("console" or "json", default: "console")
             interactive_mode: If True, raises NotImplementedError (apps don't support interactive/notebook mode)
         """
-        from flyte._tools import ipython_check
-
         self._version = version
         self._copy_style = copy_style
         self._dry_run = dry_run
         self._project = project
         self._domain = domain
         self._env_vars = env_vars or {}
+        self._parameter_values = parameter_values or {}
         self._cluster_pool = cluster_pool
         self._log_level = log_level
         self._log_format = log_format
@@ -84,6 +89,8 @@ class _Serve:
         Raises:
             NotImplementedError: If interactive mode is detected
         """
+        from copy import deepcopy
+
         from flyte.app import _deploy
 
         from ._code_bundle import build_code_bundle
@@ -144,15 +151,21 @@ class _Serve:
             root_dir=cfg.root_dir,
         )
 
+        # Inject parameter overrides from the serve
+        parameter_overrides = None
+        if app_env_parameter_values := self._parameter_values.get(app_env.name):
+            parameter_overrides = []
+            for parameter in app_env.parameters:
+                value = app_env_parameter_values.get(parameter.name, parameter.value)
+                parameter_overrides.append(replace(parameter, value=value))
+
         # Deploy app
-        deployed_app = await _deploy._deploy_app(app_env, sc)
+        deployed_app = await _deploy._deploy_app(app_env, sc, parameter_overrides=parameter_overrides)
         assert deployed_app
 
         # Mutate app_idl if env_vars or cluster_pool are provided
         # This is a temporary solution until the update/create APIs support these attributes
         if self._env_vars or self._cluster_pool:
-            from copy import deepcopy
-
             from flyteidl2.core import literals_pb2
 
             app_idl = deepcopy(deployed_app.pb2)
@@ -196,7 +209,8 @@ def with_servecontext(
     dry_run: bool = False,
     project: str | None = None,
     domain: str | None = None,
-    env_vars: Dict[str, str] | None = None,
+    env_vars: dict[str, str] | None = None,
+    parameter_values: dict[str, dict[str, str | flyte.io.File | flyte.io.Dir]] | None = None,
     cluster_pool: str | None = None,
     log_level: int | None = None,
     log_format: LogFormat = "console",
@@ -235,6 +249,8 @@ def with_servecontext(
         project: Optional project override
         domain: Optional domain override
         env_vars: Optional environment variables to inject/override in the app container
+        parameter_values: Optional parameter values to inject/override in the app container. Must be a dictionary that
+            maps app environment names to a dictionary of parameter names to values.
         cluster_pool: Optional cluster pool to deploy the app to
         log_level: Optional log level (e.g., logging.DEBUG, logging.INFO). If not provided, uses init config or default
         log_format: Optional log format ("console" or "json", default: "console")
@@ -258,6 +274,7 @@ def with_servecontext(
         project=project,
         domain=domain,
         env_vars=env_vars,
+        parameter_values=parameter_values,
         cluster_pool=cluster_pool,
         log_level=log_level,
         log_format=log_format,

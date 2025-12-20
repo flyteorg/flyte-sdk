@@ -1,8 +1,18 @@
 from flyte.app._app_environment import AppEnvironment
-from flyte.app._input import Input, get_input
+from flyte.app._parameter import AppEndpoint, Parameter, RunOutput, get_parameter
 from flyte.app._types import Domain, Link, Port, Scaling
 
-__all__ = ["AppEnvironment", "Domain", "Input", "Link", "Port", "Scaling", "get_input"]
+__all__ = [
+    "AppEndpoint",
+    "AppEnvironment",
+    "Domain",
+    "Link",
+    "Parameter",
+    "Port",
+    "RunOutput",
+    "Scaling",
+    "get_parameter",
+]
 
 
 def register_app_deployer():

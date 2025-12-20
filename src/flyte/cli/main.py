@@ -15,6 +15,7 @@ from ._edit import edit
 from ._gen import gen
 from ._get import get
 from ._plugins import discover_and_register_plugins
+from ._prefetch import prefetch
 from ._run import run
 from ._serve import serve
 from ._update import update
@@ -44,6 +45,10 @@ help_config = click.RichHelpConfiguration(
             {
                 "name": "Build and deploy environments, tasks and images.",
                 "commands": ["build", "deploy"],
+            },
+            {
+                "name": "Prefetch artifacts from remote registries.",
+                "commands": ["prefetch"],
             },
             {
                 "name": "Documentation generation",
@@ -229,6 +234,7 @@ main.add_command(build)
 main.add_command(whoami)  # type: ignore
 main.add_command(update)  # type: ignore
 main.add_command(serve)  # type: ignore
+main.add_command(prefetch)  # type: ignore
 main.add_command(edit)  # type: ignore
 
 # Discover and register CLI plugins from installed packages
