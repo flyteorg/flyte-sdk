@@ -241,3 +241,13 @@ class OnlyAsyncIOSupportedError(RuntimeUserError):
 
     def __init__(self, message: str):
         super().__init__("OnlyAsyncIOSupportedError", message, "user")
+
+
+class ParameterMaterializationError(RuntimeUserError):
+    """
+    This error is raised when the user tries to use a Parameter in an App, that has delayed Materialization,
+    but the materialization fails.
+    """
+
+    def __init__(self, message: str):
+        super().__init__("ParameterMaterializationError", message, "user")

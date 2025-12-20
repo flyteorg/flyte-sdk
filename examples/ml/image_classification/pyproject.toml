@@ -1,0 +1,64 @@
+[project]
+name = "image-classification-example"
+version = "0.1.0"
+description = "Flyte example for fine-tuning and serving image classification models"
+requires-python = ">=3.12"
+dependencies = [
+    "flyte>=2.0.0b40",
+]
+
+[project.optional-dependencies]
+# Training dependencies - needed for model fine-tuning
+training = [
+    "transformers[torch]",
+    "torch",
+    "torchvision",
+    "datasets",
+    "pillow",
+    "numpy",
+    "accelerate",  # For efficient training
+]
+
+# Serving dependencies - needed for model inference API
+serving = [
+    "transformers",
+    "torch",
+    "pillow",
+    "fastapi",
+    "uvicorn",
+    "python-multipart",
+]
+
+# Batch inference dependencies - for large-scale inference
+batch = [
+    "transformers",
+    "torch",
+    "pillow",
+    "pandas",
+    "pyarrow",
+    "unionai-reuse>=0.1.9",
+]
+
+# All dependencies - for local development and testing
+all = [
+    "transformers[torch]",
+    "torch",
+    "torchvision",
+    "datasets",
+    "pillow",
+    "numpy",
+    "accelerate",
+    "fastapi",
+    "uvicorn",
+    "python-multipart",
+    "pandas",
+    "pyarrow",
+    "unionai-reuse>=0.1.9",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.uv]
+dev-dependencies = []

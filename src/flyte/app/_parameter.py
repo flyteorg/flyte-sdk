@@ -18,7 +18,6 @@ if TYPE_CHECKING:
 else:
     AutoVersioning = Literal["latest", "current"]
 
-
 ParameterTypes = str | flyte.io.File | flyte.io.Dir
 _SerializedParameterType = Literal["string", "file", "directory"]
 
@@ -119,6 +118,7 @@ class RunOutput(_DelayedValue):
 
     async def _materialize_with_task_name(self) -> ParameterTypes:
         from flyte.remote import Run, RunDetails, Task, TaskDetails
+        import flyte.errors
 
         assert self.task_name is not None, "task_name must be provided"
         if self.task_auto_version is not None:
@@ -138,13 +138,19 @@ class RunOutput(_DelayedValue):
             limit=1,
             sort_by=("created_at", "desc"),
         )
-        run = await anext(runs)
-        run_details: RunDetails = await run.details.aio()
-        output = await run_details.outputs()
-        for getter in self.getter:
-            output = output[getter]
-        logger.debug("Materialized output: %s", output)
-        return typing.cast(ParameterTypes, output)
+        try:
+            run = await anext(runs)
+            run_details: RunDetails = await run.details.aio()
+            output = await run_details.outputs()
+            for getter in self.getter:
+                output = output[getter]
+            logger.debug("Materialized output: %s", output)
+            return typing.cast(ParameterTypes, output)
+        except StopAsyncIteration:
+            raise flyte.errors.ParameterMaterializationError(f"No runs found for task {self.task_name}")
+        except Exception as e:
+            raise flyte.errors.ParameterMaterializationError(
+                f"Failed to materialize output for task {self.task_name}") from e
 
     async def _materialize_with_run_name(self) -> ParameterTypes:
         from flyte.remote import Run, RunDetails
