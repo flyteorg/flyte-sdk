@@ -114,7 +114,7 @@ async def _get_model_files():
 def main():
     import asyncio
 
-    # TODO: add CLI here to be able to pass in serialized inputs from AppEnvironment
+    # TODO: add CLI here to be able to pass in serialized parameters from AppEnvironment
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
