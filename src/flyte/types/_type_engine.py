@@ -44,6 +44,7 @@ from flyte._utils.helpers import load_proto_from_file
 from flyte.models import NativeInterface
 
 from ._utils import literal_types_match
+from flyte.errors import RestrictedTypeError
 
 T = typing.TypeVar("T")
 
@@ -79,17 +80,17 @@ def modify_literal_uris(lit: Literal):
             modify_literal_uris(v)
     elif lit.HasField("scalar"):
         if (
-            lit.scalar.HasField("blob")
-            and lit.scalar.blob.uri
-            and lit.scalar.blob.uri.startswith(RemoteFSPathResolver.protocol)
+                lit.scalar.HasField("blob")
+                and lit.scalar.blob.uri
+                and lit.scalar.blob.uri.startswith(RemoteFSPathResolver.protocol)
         ):
             lit.scalar.blob.uri = RemoteFSPathResolver.resolve_remote_path(lit.scalar.blob.uri)
         elif lit.scalar.HasField("union"):
             modify_literal_uris(lit.scalar.union.value)
         elif (
-            lit.scalar.HasField("structured_dataset")
-            and lit.scalar.structured_dataset.uri
-            and lit.scalar.structured_dataset.uri.startswith(RemoteFSPathResolver.protocol)
+                lit.scalar.HasField("structured_dataset")
+                and lit.scalar.structured_dataset.uri
+                and lit.scalar.structured_dataset.uri.startswith(RemoteFSPathResolver.protocol)
         ):
             lit.scalar.structured_dataset.uri = RemoteFSPathResolver.resolve_remote_path(
                 lit.scalar.structured_dataset.uri
@@ -229,12 +230,12 @@ class SimpleTransformer(TypeTransformer[T]):
     """
 
     def __init__(
-        self,
-        name: str,
-        t: Type[T],
-        lt: types_pb2.LiteralType,
-        to_literal_transformer: typing.Callable[[T], Literal],
-        from_literal_transformer: typing.Callable[[Literal], Optional[T]],
+            self,
+            name: str,
+            t: Type[T],
+            lt: types_pb2.LiteralType,
+            to_literal_transformer: typing.Callable[[T], Literal],
+            from_literal_transformer: typing.Callable[[Literal], Optional[T]],
     ):
         super().__init__(name, t)
         self._type = t
@@ -331,10 +332,6 @@ class SimpleTransformer(TypeTransformer[T]):
         raise ValueError(f"Transformer {self} cannot reverse {literal_type}")
 
 
-class RestrictedTypeError(Exception):
-    pass
-
-
 class RestrictedTypeTransformer(TypeTransformer[T], ABC):
     """
     Types registered with the RestrictedTypeTransformer are not allowed to be converted to and from literals.
@@ -379,10 +376,10 @@ class PydanticTransformer(TypeTransformer[BaseModel]):
         )
 
     async def to_literal(
-        self,
-        python_val: BaseModel,
-        python_type: Type[BaseModel],
-        expected: LiteralType,
+            self,
+            python_val: BaseModel,
+            python_type: Type[BaseModel],
+            expected: LiteralType,
     ) -> Literal:
         json_str = python_val.model_dump_json()
         dict_obj = json.loads(json_str)
@@ -419,10 +416,10 @@ class PydanticSchemaPlugin(BasePlugin):
     """This allows us to generate proper schemas for Pydantic models."""
 
     def get_schema(
-        self,
-        instance: Instance,
-        ctx: Context,
-        schema: JSONSchema | None = None,
+            self,
+            instance: Instance,
+            ctx: Context,
+            schema: JSONSchema | None = None,
     ) -> JSONSchema | None:
         from pydantic import BaseModel
 
@@ -968,9 +965,9 @@ class TypeEngine(typing.Generic[T]):
 
     @classmethod
     def register(
-        cls,
-        transformer: TypeTransformer,
-        additional_types: Optional[typing.List[Type]] = None,
+            cls,
+            transformer: TypeTransformer,
+            additional_types: Optional[typing.List[Type]] = None,
     ):
         """
         This should be used for all types that respond with the right type annotation when you use type(...) function
@@ -987,9 +984,9 @@ class TypeEngine(typing.Generic[T]):
 
     @classmethod
     def register_restricted_type(
-        cls,
-        name: str,
-        type: Type[T],
+            cls,
+            name: str,
+            type: Type[T],
     ):
         cls._RESTRICTED_TYPES.append(type)
         cls.register(RestrictedTypeTransformer(name, type))  # type: ignore
@@ -1102,16 +1099,16 @@ class TypeEngine(typing.Generic[T]):
                 "return v.x, instead of v, even if this has a single element"
             )
         if (
-            (python_val is None and python_type is not type(None))
-            and expected
-            and expected.union_type is None
-            and python_type is not Any
+                (python_val is None and python_type is not type(None))
+                and expected
+                and expected.union_type is None
+                and python_type is not Any
         ):
             raise TypeTransformerFailedError(f"Python value cannot be None, expected {python_type}/{expected}")
 
     @classmethod
     async def to_literal(
-        cls, python_val: typing.Any, python_type: Type[T], expected: types_pb2.LiteralType
+            cls, python_val: typing.Any, python_type: Type[T], expected: types_pb2.LiteralType
     ) -> literals_pb2.Literal:
         transformer = cls.get_transformer(python_type)
 
@@ -1172,10 +1169,10 @@ class TypeEngine(typing.Generic[T]):
 
     @classmethod
     async def literal_map_to_kwargs(
-        cls,
-        lm: LiteralMap,
-        python_types: typing.Optional[typing.Dict[str, type]] = None,
-        literal_types: typing.Optional[typing.Dict[str, interface_pb2.Variable]] = None,
+            cls,
+            lm: LiteralMap,
+            python_types: typing.Optional[typing.Dict[str, type]] = None,
+            literal_types: typing.Optional[typing.Dict[str, interface_pb2.Variable]] = None,
     ) -> typing.Dict[str, typing.Any]:
         """
         Given a ``LiteralMap`` (usually an input into a task - intermediate), convert to kwargs for the task
@@ -1222,9 +1219,9 @@ class TypeEngine(typing.Generic[T]):
 
     @classmethod
     async def dict_to_literal_map(
-        cls,
-        d: typing.Dict[str, typing.Any],
-        type_hints: Optional[typing.Dict[str, type]] = None,
+            cls,
+            d: typing.Dict[str, typing.Any],
+            type_hints: Optional[typing.Dict[str, type]] = None,
     ) -> LiteralMap:
         """
         Given a dictionary mapping string keys to python values and a dictionary containing guessed types for such
@@ -1269,7 +1266,7 @@ class TypeEngine(typing.Generic[T]):
 
     @classmethod
     def guess_python_types(
-        cls, flyte_variable_dict: typing.Dict[str, interface_pb2.Variable]
+            cls, flyte_variable_dict: typing.Dict[str, interface_pb2.Variable]
     ) -> typing.Dict[str, Type[Any]]:
         """
         Transforms a dictionary of flyte-specific ``Variable`` objects to a dictionary of regular python values.
@@ -1356,7 +1353,7 @@ class ListTransformer(TypeTransformer[T]):
         return Literal(collection=LiteralCollection(literals=lit_list))
 
     async def to_python_value(  # type: ignore
-        self, lv: Literal, expected_python_type: Type[T]
+            self, lv: Literal, expected_python_type: Type[T]
     ) -> typing.Optional[typing.List[T]]:
         if lv and lv.HasField("scalar") and lv.scalar.HasField("binary"):
             return self.from_binary_idl(lv.scalar.binary, expected_python_type)  # type: ignore
@@ -1561,7 +1558,7 @@ class UnionTransformer(TypeTransformer[T]):
             raise ValueError(f"Type of Generic Union type is not supported, {e}")
 
     async def to_literal(
-        self, python_val: T, python_type: Type[T], expected: types_pb2.LiteralType
+            self, python_val: T, python_type: Type[T], expected: types_pb2.LiteralType
     ) -> literals_pb2.Literal:
         python_type = get_underlying_type(python_type)
         inferred_type = type(python_val)
@@ -1675,7 +1672,8 @@ class UnionTransformer(TypeTransformer[T]):
 
     def guess_python_type(self, literal_type: LiteralType) -> type:
         if literal_type.HasField("union_type"):
-            return typing.Union[tuple(TypeEngine.guess_python_type(v) for v in literal_type.union_type.variants)]  # type: ignore
+            return typing.Union[
+                tuple(TypeEngine.guess_python_type(v) for v in literal_type.union_type.variants)]  # type: ignore
 
         raise ValueError(f"Union transformer cannot reverse {literal_type}")
 
@@ -2150,9 +2148,9 @@ class LiteralsResolver(collections.UserDict):
     """
 
     def __init__(
-        self,
-        literals: typing.Dict[str, Literal],
-        variable_map: Optional[Dict[str, interface_pb2.Variable]] = None,
+            self,
+            literals: typing.Dict[str, Literal],
+            variable_map: Optional[Dict[str, interface_pb2.Variable]] = None,
     ):
         """
         :param literals: A Python map of strings to Flyte Literal models.
