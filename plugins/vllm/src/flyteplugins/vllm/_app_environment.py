@@ -7,7 +7,7 @@ from typing import Any, Literal, Optional, Union
 import flyte.app
 import rich.repr
 from flyte import Environment, Image, Resources, SecretRequest
-from flyte.app import Input, RunOutput
+from flyte.app import Parameter, RunOutput
 from flyte.app._types import Port
 from flyte.models import SerializationContext
 
@@ -101,8 +101,8 @@ class VLLMAppEnvironment(flyte.app.AppEnvironment):
             *extra_args,
         ]
 
-        if self.inputs:
-            raise ValueError("inputs cannot be set for VLLMAppEnvironment")
+        if self.parameters:
+            raise ValueError("parameters cannot be set for VLLMAppEnvironment")
 
         input_kwargs = {}
         if self.stream_model:
@@ -115,7 +115,7 @@ class VLLMAppEnvironment(flyte.app.AppEnvironment):
             input_kwargs["mount"] = self._model_mount_path
 
         if self.model_path:
-            self.inputs = [Input(name="model_path", value=self.model_path, **input_kwargs)]
+            self.parameters = [Parameter(name="model_path", value=self.model_path, **input_kwargs)]
 
         self.env_vars["FLYTE_MODEL_LOADER_LOCAL_MODEL_PATH"] = self._model_mount_path
         self.links = [flyte.app.Link(path="/docs", title="vLLM OpenAPI Docs", is_relative=True)]
@@ -166,7 +166,7 @@ class VLLMAppEnvironment(flyte.app.AppEnvironment):
         kwargs = self._get_kwargs()
         kwargs["name"] = name
         kwargs["args"] = None
-        kwargs["inputs"] = None
+        kwargs["parameters"] = None
         if image is not None:
             kwargs["image"] = image
         if resources is not None:

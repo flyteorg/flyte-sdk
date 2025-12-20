@@ -14,8 +14,8 @@ import aiofiles
 import pytest
 from click.testing import CliRunner
 
-from flyte._bin.serve import download_code_inputs, main, sync_inputs
-from flyte.app._input import Input, SerializableInputCollection
+from flyte._bin.serve import download_code_parameters, main, sync_parameters
+from flyte.app._parameter import Parameter, SerializableParameterCollection
 from flyte.models import CodeBundle
 
 
@@ -23,7 +23,7 @@ class TestSyncInputs:
     """Tests for sync_inputs function."""
 
     @pytest.mark.asyncio
-    async def test_sync_inputs_with_string_values(self):
+    async def test_sync_parameters_with_string_values(self):
         """
         GOAL: Verify sync_inputs correctly handles string-type inputs.
 
@@ -31,15 +31,15 @@ class TestSyncInputs:
         """
         # Create inputs with string values
         inputs = [
-            Input(value="config-value", name="config"),
-            Input(value="api-key-value", name="api_key"),
-            Input(value="test-env-var", name="test_env_var", env_var="TEST_ENV_VAR"),
+            Parameter(value="config-value", name="config"),
+            Parameter(value="api-key-value", name="api_key"),
+            Parameter(value="test-env-var", name="test_env_var", env_var="TEST_ENV_VAR"),
         ]
-        collection = SerializableInputCollection.from_inputs(inputs)
+        collection = SerializableParameterCollection.from_parameters(inputs)
         serialized = collection.to_transport
 
         # Sync inputs
-        result, env_vars = await sync_inputs(serialized, dest="/tmp/test")
+        result, env_vars = await sync_parameters(serialized, dest="/tmp/test")
 
         # Verify string values are returned as-is
         assert result["config"] == "config-value"
@@ -47,17 +47,12 @@ class TestSyncInputs:
         assert env_vars["TEST_ENV_VAR"] == "test-env-var"
 
     @pytest.mark.asyncio
-    async def test_sync_inputs_with_file_download(self):
+    async def test_sync_parameters_with_file_download(self):
         """
-        GOAL: Verify sync_inputs correctly downloads file inputs.
+        GOAL: Verify sync_parameters correctly downloads file inputs.
 
-        Tests that:
-        - File inputs with download=True are downloaded
-        - Downloaded file is accessible at the destination
-        - Downloaded path is returned
-
-        Note: String values with download=True don't actually download in the implementation.
-        Only File/Dir types trigger downloads.
+        Tests that File parameters with download=True are downloaded
+        and the downloaded file is accessible at the destination.
         """
         from flyte.io import File
 
@@ -71,15 +66,15 @@ class TestSyncInputs:
             # Create a File input with download enabled using file:// URL
             file_obj = File(path=f"file://{source_file}")
             inputs = [
-                Input(value=file_obj, name="datafile", download=True),
+                Parameter(value=file_obj, name="datafile", download=True),
             ]
-            collection = SerializableInputCollection.from_inputs(inputs)
+            collection = SerializableParameterCollection.from_parameters(inputs)
             serialized = collection.to_transport
 
             dest_dir = os.path.join(tmpdir, "dest")
             os.makedirs(dest_dir, exist_ok=True)
 
-            result, env_vars = await sync_inputs(serialized, dest=str(dest_dir))
+            result, env_vars = await sync_parameters(serialized, dest=str(dest_dir))
 
             # Verify result contains downloaded path
             assert "datafile" in result
@@ -92,9 +87,9 @@ class TestSyncInputs:
                 assert await f.read() == "test content"
 
     @pytest.mark.asyncio
-    async def test_sync_inputs_with_custom_dest(self):
+    async def test_sync_parameters_with_custom_dest(self):
         """
-        GOAL: Verify sync_inputs respects custom destination paths.
+        GOAL: Verify sync_parameters respects custom destination paths.
 
         Tests that when input.dest (mount) is specified, it overrides the default dest.
         """
@@ -114,15 +109,15 @@ class TestSyncInputs:
             # Create File input with custom destination (mount)
             file_obj = File(path=f"file://{source_file}")
             inputs = [
-                Input(value=file_obj, name="config", mount=custom_dest),  # mount implies download
+                Parameter(value=file_obj, name="config", mount=custom_dest),  # mount implies download
             ]
-            collection = SerializableInputCollection.from_inputs(inputs)
+            collection = SerializableParameterCollection.from_parameters(inputs)
             serialized = collection.to_transport
 
             default_dest = os.path.join(tmpdir, "default")
             os.makedirs(default_dest, exist_ok=True)
 
-            result, env_vars = await sync_inputs(serialized, dest=str(default_dest))
+            result, env_vars = await sync_parameters(serialized, dest=str(default_dest))
 
             # Verify file was downloaded to custom dest, not default dest
             downloaded_path = result["config"]
@@ -132,9 +127,9 @@ class TestSyncInputs:
             assert env_vars == {}
 
     @pytest.mark.asyncio
-    async def test_sync_inputs_with_directory_download(self):
+    async def test_sync_parameters_with_directory_download(self):
         """
-        GOAL: Verify sync_inputs correctly downloads directory inputs.
+        GOAL: Verify sync_parameters correctly downloads directory inputs.
 
         Tests that:
         - Directory inputs trigger recursive downloads
@@ -157,13 +152,13 @@ class TestSyncInputs:
             os.makedirs(mount_dest, exist_ok=True)
 
             inputs = [
-                Input(value=dir_input, name="dataset", mount=mount_dest),  # mount implies download
-                Input(value="test-env-var", name="test_env_var", env_var="TEST_ENV_VAR"),
+                Parameter(value=dir_input, name="dataset", mount=mount_dest),  # mount implies download
+                Parameter(value="test-env-var", name="test_env_var", env_var="TEST_ENV_VAR"),
             ]
-            collection = SerializableInputCollection.from_inputs(inputs)
+            collection = SerializableParameterCollection.from_parameters(inputs)
             serialized = collection.to_transport
 
-            result, env_vars = await sync_inputs(serialized, dest=tmpdir)
+            result, env_vars = await sync_parameters(serialized, dest=tmpdir)
             assert os.path.exists(result["dataset"])
             assert os.path.isdir(result["dataset"])
             assert env_vars["TEST_ENV_VAR"] == "test-env-var"
@@ -174,9 +169,9 @@ class TestSyncInputs:
                 assert await f.read() == "data2"
 
     @pytest.mark.asyncio
-    async def test_sync_inputs_mixed_types(self):
+    async def test_sync_parameters_mixed_types(self):
         """
-        GOAL: Verify sync_inputs handles mixed input types correctly.
+        GOAL: Verify sync_parameters handles mixed input types correctly.
 
         Tests that a combination of string inputs and File inputs
         are all processed correctly.
@@ -195,17 +190,17 @@ class TestSyncInputs:
 
             file_obj = File(path=f"file://{source_file}")
             inputs = [
-                Input(value="string-config", name="config"),
-                Input(value=file_obj, name="model", download=True),
-                Input(value="another-string", name="param"),
+                Parameter(value="string-config", name="config"),
+                Parameter(value=file_obj, name="model", download=True),
+                Parameter(value="another-string", name="param"),
             ]
-            collection = SerializableInputCollection.from_inputs(inputs)
+            collection = SerializableParameterCollection.from_parameters(inputs)
             serialized = collection.to_transport
 
             dest_dir = os.path.join(tmpdir, "dest")
             os.makedirs(dest_dir, exist_ok=True)
 
-            result, env_vars = await sync_inputs(serialized, dest=str(dest_dir))
+            result, env_vars = await sync_parameters(serialized, dest=str(dest_dir))
 
             # Verify string values
             assert result["config"] == "string-config"
@@ -229,23 +224,23 @@ class TestSyncInputs:
         Tests that an empty input list returns an empty dict.
         """
         # Create empty inputs
-        collection = SerializableInputCollection(inputs=[])
+        collection = SerializableParameterCollection(inputs=[])
         serialized = collection.to_transport
 
-        result, env_vars = await sync_inputs(serialized, dest="/tmp")
+        result, env_vars = await sync_parameters(serialized, dest="/tmp")
 
         # Verify empty result
         assert result == {}
         assert env_vars == {}
 
 
-class TestDownloadCodeInputs:
+class TestDownloadCodeParameters:
     """Tests for download_code_inputs function."""
 
     @pytest.mark.asyncio
-    async def test_download_code_inputs_with_tgz(self):
+    async def test_download_code_parameters_with_tgz(self):
         """
-        GOAL: Verify download_code_inputs downloads tgz code bundles.
+        GOAL: Verify download_code_parameters downloads tgz code bundles.
 
         Tests that:
         - CodeBundle is created with correct parameters
@@ -257,8 +252,8 @@ class TestDownloadCodeInputs:
             mock_bundle = CodeBundle(tgz="s3://bucket/code.tgz", destination="/app", computed_version="v1.0.0")
             mock_download.return_value = mock_bundle
 
-            user_inputs, env_vars, code_bundle = await download_code_inputs(
-                serialized_inputs="",
+            user_inputs, env_vars, code_bundle = await download_code_parameters(
+                serialized_parameters="",
                 tgz="s3://bucket/code.tgz",
                 pkl="",
                 dest="/app",
@@ -278,9 +273,9 @@ class TestDownloadCodeInputs:
             assert user_inputs == {}
 
     @pytest.mark.asyncio
-    async def test_download_code_inputs_with_pkl(self):
+    async def test_download_code_parameters_with_pkl(self):
         """
-        GOAL: Verify download_code_inputs downloads pkl code bundles.
+        GOAL: Verify download_code_parameters downloads pkl code bundles.
 
         Tests that pkl bundles are handled as an alternative to tgz.
         """
@@ -289,8 +284,8 @@ class TestDownloadCodeInputs:
             mock_bundle = CodeBundle(pkl="s3://bucket/code.pkl", destination="/app", computed_version="v1.0.0")
             mock_download.return_value = mock_bundle
 
-            user_inputs, env_vars, code_bundle = await download_code_inputs(
-                serialized_inputs="",
+            user_inputs, env_vars, code_bundle = await download_code_parameters(
+                serialized_parameters="",
                 tgz="",
                 pkl="s3://bucket/code.pkl",
                 dest="/app",
@@ -306,15 +301,15 @@ class TestDownloadCodeInputs:
             assert env_vars == {}
 
     @pytest.mark.asyncio
-    async def test_download_code_inputs_with_inputs_and_code(self):
+    async def test_download_code_parameters_with_inputs_and_code(self):
         """
-        GOAL: Verify download_code_inputs handles both inputs and code bundle.
+        GOAL: Verify download_code_parameters handles both inputs and code bundle.
 
         Tests that both user inputs and code bundle are downloaded and returned.
         """
         # Create serialized inputs
-        inputs = [Input(value="config-value", name="config")]
-        collection = SerializableInputCollection.from_inputs(inputs)
+        inputs = [Parameter(value="config-value", name="config")]
+        collection = SerializableParameterCollection.from_parameters(inputs)
         serialized = collection.to_transport
 
         # Mock download_code_bundle
@@ -322,8 +317,8 @@ class TestDownloadCodeInputs:
             mock_bundle = CodeBundle(tgz="s3://bucket/code.tgz", destination="/app", computed_version="v1.0.0")
             mock_download.return_value = mock_bundle
 
-            user_inputs, env_vars, code_bundle = await download_code_inputs(
-                serialized_inputs=serialized,
+            user_inputs, env_vars, code_bundle = await download_code_parameters(
+                serialized_parameters=serialized,
                 tgz="s3://bucket/code.tgz",
                 pkl="",
                 dest="/app",
@@ -336,19 +331,19 @@ class TestDownloadCodeInputs:
             assert env_vars == {}
 
     @pytest.mark.asyncio
-    async def test_download_code_inputs_no_code_bundle(self):
+    async def test_download_code_parameters_no_code_bundle(self):
         """
-        GOAL: Verify download_code_inputs works without a code bundle.
+        GOAL: Verify download_code_parameters works without a code bundle.
 
         Tests that when no tgz or pkl is provided, only inputs are processed.
         """
         # Create serialized inputs
-        inputs = [Input(value="test-value", name="param")]
-        collection = SerializableInputCollection.from_inputs(inputs)
+        inputs = [Parameter(value="test-value", name="param")]
+        collection = SerializableParameterCollection.from_parameters(inputs)
         serialized = collection.to_transport
 
-        user_inputs, env_vars, code_bundle = await download_code_inputs(
-            serialized_inputs=serialized, tgz="", pkl="", dest="/app", version="v1.0.0"
+        user_inputs, env_vars, code_bundle = await download_code_parameters(
+            serialized_parameters=serialized, tgz="", pkl="", dest="/app", version="v1.0.0"
         )
 
         # Verify inputs are processed
@@ -361,9 +356,9 @@ class TestDownloadCodeInputs:
         assert env_vars == {}
 
     @pytest.mark.asyncio
-    async def test_download_code_inputs_empty_inputs_with_code(self):
+    async def test_download_code_parameters_empty_inputs_with_code(self):
         """
-        GOAL: Verify download_code_inputs works with empty inputs but code bundle.
+        GOAL: Verify download_code_parameters works with empty inputs but code bundle.
 
         Tests that code bundle can be downloaded without user inputs.
         """
@@ -372,8 +367,8 @@ class TestDownloadCodeInputs:
             mock_bundle = CodeBundle(tgz="s3://bucket/code.tgz", destination="/app", computed_version="v1.0.0")
             mock_download.return_value = mock_bundle
 
-            user_inputs, env_vars, code_bundle = await download_code_inputs(
-                serialized_inputs="", tgz="s3://bucket/code.tgz", pkl="", dest="/app", version="v1.0.0"
+            user_inputs, env_vars, code_bundle = await download_code_parameters(
+                serialized_parameters="", tgz="s3://bucket/code.tgz", pkl="", dest="/app", version="v1.0.0"
             )
 
             # Verify empty user inputs
@@ -429,8 +424,8 @@ class TestMainCommand:
         runner = CliRunner()
 
         # Create serialized inputs
-        inputs = [Input(value="test-value", name="config")]
-        collection = SerializableInputCollection.from_inputs(inputs)
+        inputs = [Parameter(value="test-value", name="config")]
+        collection = SerializableParameterCollection.from_parameters(inputs)
         serialized = collection.to_transport
 
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -452,14 +447,14 @@ class TestMainCommand:
                     # Run command
                     result = runner.invoke(
                         main,
-                        ["--version", "v1.0.0", "--inputs", serialized, "--dest", tmpdir, "--", "echo", "test"],
+                        ["--version", "v1.0.0", "--parameters", serialized, "--dest", tmpdir, "--", "echo", "test"],
                     )
 
                     # Verify command succeeded
                     assert result.exit_code == 0
 
                     # Verify inputs file was created
-                    inputs_file = os.path.join(tmpdir, "flyte-inputs.json")
+                    inputs_file = os.path.join(tmpdir, "flyte-parameters.json")
                     assert os.path.exists(inputs_file)
 
                     # Verify inputs file content
@@ -474,7 +469,7 @@ class TestMainCommand:
         """
         GOAL: Verify main command downloads tgz code bundles.
 
-        Tests that tgz parameter is passed to download_code_inputs.
+        Tests that tgz parameter is passed to download_code_parameters.
         """
         runner = CliRunner()
 
@@ -515,7 +510,7 @@ class TestMainCommand:
         """
         GOAL: Verify main command downloads pkl code bundles.
 
-        Tests that pkl parameter is passed to download_code_inputs.
+        Tests that pkl parameter is passed to download_code_parameters.
         """
         runner = CliRunner()
 
@@ -736,11 +731,11 @@ class TestMainCommand:
                         ["--version", "v1.0.0", "--dest", tmpdir, "--", "echo", "test"],
                     )
 
-                    # Verify RUNTIME_INPUTS_FILE is in environment
-                    from flyte.app._input import RUNTIME_INPUTS_FILE
+                    # Verify RUNTIME_PARAMETERS_FILE is in environment
+                    from flyte.app._parameter import RUNTIME_PARAMETERS_FILE
 
-                    assert RUNTIME_INPUTS_FILE in captured_env
-                    assert captured_env[RUNTIME_INPUTS_FILE].endswith("flyte-inputs.json")
+                    assert RUNTIME_PARAMETERS_FILE in captured_env
+                    assert captured_env[RUNTIME_PARAMETERS_FILE].endswith("flyte-parameters.json")
 
             finally:
                 os.chdir(original_cwd)
@@ -813,11 +808,11 @@ class TestIntegration:
         """
         # Create test inputs
         inputs = [
-            Input(value="config-data", name="config"),
-            Input(value="api-key-secret", name="api_key"),
-            Input(value="test-env-var", name="test_env_var", env_var="TEST_ENV_VAR"),
+            Parameter(value="config-data", name="config"),
+            Parameter(value="api-key-secret", name="api_key"),
+            Parameter(value="test-env-var", name="test_env_var", env_var="TEST_ENV_VAR"),
         ]
-        collection = SerializableInputCollection.from_inputs(inputs)
+        collection = SerializableParameterCollection.from_parameters(inputs)
         serialized = collection.to_transport
 
         # Mock download_code_bundle
@@ -826,8 +821,8 @@ class TestIntegration:
             mock_download.return_value = mock_bundle
 
             # Run full download
-            user_inputs, env_vars, code_bundle = await download_code_inputs(
-                serialized_inputs=serialized,
+            user_inputs, env_vars, code_bundle = await download_code_parameters(
+                serialized_parameters=serialized,
                 tgz="s3://bucket/code.tgz",
                 pkl="",
                 dest="/app",
