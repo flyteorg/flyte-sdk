@@ -130,6 +130,17 @@ class JSONFormatter(logging.Formatter):
         return json.dumps(log_data)
 
 
+class TraceFormatter(logging.Formatter):
+    def format(self, record):
+        msg = super().format(record)
+        # Add trace context if available (added by LoggingInstrumentor)
+        trace_id = getattr(record, "otelTraceID", None)
+        span_id = getattr(record, "otelSpanID", None)
+        if trace_id and trace_id != "0":
+            msg += f" [trace_id={trace_id} span_id={span_id}]"
+        return msg
+
+
 def initialize_logger(log_level: int | None = None, log_format: LogFormat | None = None, enable_rich: bool = False):
     """
     Initializes the global loggers to the default configuration.
@@ -177,6 +188,10 @@ def initialize_logger(log_level: int | None = None, log_format: LogFormat | None
         flyte_handler.setFormatter(JSONFormatter())
     elif use_rich:
         flyte_handler = get_rich_handler(log_level)
+    else:
+        flyte_handler = logging.StreamHandler()
+        formatter = TraceFormatter()
+        flyte_handler.setFormatter(formatter)
 
     if flyte_handler is None:
         flyte_handler = logging.StreamHandler()

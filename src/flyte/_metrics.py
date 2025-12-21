@@ -120,9 +120,7 @@ def timed(func: F) -> F: ...
 
 
 @overload
-def timed(
-    name: Optional[str] = None, *, extra_fields: Optional[Dict[str, Any]] = None
-) -> Callable[[F], F]: ...
+def timed(name: Optional[str] = None, *, extra_fields: Optional[Dict[str, Any]] = None) -> Callable[[F], F]: ...
 
 
 def timed(
