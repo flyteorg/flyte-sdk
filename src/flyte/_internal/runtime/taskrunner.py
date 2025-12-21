@@ -11,7 +11,7 @@ import flyte.report
 from flyte._context import internal_ctx
 from flyte._internal.imagebuild.image_builder import ImageCache
 from flyte._logging import log, logger
-from flyte._metrics import async_timer
+from flyte._metrics import async_timer, timed
 from flyte._task import TaskTemplate
 from flyte.errors import CustomError, RuntimeSystemError, RuntimeUnknownError, RuntimeUserError
 from flyte.models import ActionID, Checkpoints, CodeBundle, RawDataPath, TaskContext
@@ -174,6 +174,7 @@ async def convert_and_run(
             return await convert_from_native_to_outputs(out, task.native_interface, task.name), None
 
 
+@timed("extract_download_run_upload_total")
 async def extract_download_run_upload(
     task: TaskTemplate,
     *,
@@ -193,32 +194,31 @@ async def extract_download_run_upload(
     This method is invoked from the CLI (urun) and is used to run a task. This assumes that the context tree
     has already been created, and the task has been loaded. It also handles the loading of the task.
     """
-    async with async_timer("extract_download_run_upload_total"):
-        t = time.time()
-        logger.info(f"Task {action.name} started at {t}")
-        outputs, err = await convert_and_run(
-            task=task,
-            input_path=input_path,
-            action=action,
-            controller=controller,
-            raw_data_path=raw_data_path,
-            output_path=output_path,
-            run_base_dir=run_base_dir,
-            version=version,
-            checkpoints=checkpoints,
-            code_bundle=code_bundle,
-            image_cache=image_cache,
-            interactive_mode=interactive_mode,
-        )
-        if err is not None:
-            async with async_timer("upload_error"):
-                path = await upload_error(err.err, output_path)
-            logger.error(f"Task {task.name} failed with error: {err}. Uploaded error to {path}")
-            return
-        if outputs is None:
-            logger.info(f"Task {task.name} completed successfully, no outputs")
-            return
-        if output_path:
-            async with async_timer("upload_outputs"):
-                await upload_outputs(outputs, output_path)
-        logger.info(f"Task {task.name} completed successfully, uploaded outputs to {output_path} in {time.time() - t}s")
+    t = time.time()
+    logger.info(f"Task {action.name} started at {t}")
+    outputs, err = await convert_and_run(
+        task=task,
+        input_path=input_path,
+        action=action,
+        controller=controller,
+        raw_data_path=raw_data_path,
+        output_path=output_path,
+        run_base_dir=run_base_dir,
+        version=version,
+        checkpoints=checkpoints,
+        code_bundle=code_bundle,
+        image_cache=image_cache,
+        interactive_mode=interactive_mode,
+    )
+    if err is not None:
+        async with async_timer("upload_error"):
+            path = await upload_error(err.err, output_path)
+        logger.error(f"Task {task.name} failed with error: {err}. Uploaded error to {path}")
+        return
+    if outputs is None:
+        logger.info(f"Task {task.name} completed successfully, no outputs")
+        return
+    if output_path:
+        async with async_timer("upload_outputs"):
+            await upload_outputs(outputs, output_path)
+    logger.info(f"Task {task.name} completed successfully, uploaded outputs to {output_path} in {time.time() - t}s")

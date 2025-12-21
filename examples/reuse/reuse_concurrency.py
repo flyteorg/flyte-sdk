@@ -10,12 +10,12 @@ env = flyte.TaskEnvironment(
     name="reuse_concurrency",
     resources=flyte.Resources(cpu=1, memory="1Gi"),
     reusable=flyte.ReusePolicy(
-        replicas=2,
+        replicas=1,
         idle_ttl=60,
         concurrency=100,
         scaledown_ttl=60,
     ),
-    image=flyte.Image.from_debian_base().with_pip_packages("unionai-reuse==0.1.7"),
+    image=flyte.Image.from_debian_base().with_pip_packages("unionai-reuse==0.1.10"),
 )
 
 
@@ -26,7 +26,7 @@ async def noop(x: int) -> int:
 
 
 @env.task
-async def reuse_concurrency(n: int = 50) -> int:
+async def reuse_concurrency(n: int = 5) -> int:
     coros = [noop(i) for i in range(n)]
     results = await asyncio.gather(*coros)
     return sum(results)

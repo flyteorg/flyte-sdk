@@ -9,7 +9,7 @@ from flyte._context import contextual_run
 from flyte._internal import Controller
 from flyte._internal.imagebuild.image_builder import ImageCache
 from flyte._logging import log, logger
-from flyte._metrics import async_timer
+from flyte._metrics import timed
 from flyte._task import TaskTemplate
 from flyte.models import ActionID, Checkpoints, CodeBundle, RawDataPath
 
@@ -117,6 +117,7 @@ def load_pkl_task(code_bundle: CodeBundle) -> TaskTemplate:
         raise
 
 
+@timed
 async def download_code_bundle(code_bundle: CodeBundle) -> CodeBundle:
     """
     Downloads the code bundle if it is not already downloaded.
@@ -125,8 +126,7 @@ async def download_code_bundle(code_bundle: CodeBundle) -> CodeBundle:
     """
     adjust_sys_path([str(code_bundle.destination)])
     logger.debug(f"Downloading {code_bundle}")
-    async with async_timer("download_code_bundle"):
-        downloaded_path = await download_bundle(code_bundle)
+    downloaded_path = await download_bundle(code_bundle)
     return code_bundle.with_downloaded_path(downloaded_path)
 
 
@@ -157,6 +157,7 @@ async def _download_and_load_task(
 
 
 @log
+@timed("load_and_run_task_total")
 async def load_and_run_task(
     action: ActionID,
     raw_data_path: RawDataPath,
@@ -190,21 +191,20 @@ async def load_and_run_task(
     :param image_cache: Mappings of Image identifiers to image URIs.
     :param interactive_mode: Whether to run the task in interactive mode.
     """
-    async with async_timer("load_and_run_task_total"):
-        task = await _download_and_load_task(code_bundle, resolver, resolver_args)
+    task = await _download_and_load_task(code_bundle, resolver, resolver_args)
 
-        await contextual_run(
-            extract_download_run_upload,
-            task,
-            action=action,
-            version=version,
-            controller=controller,
-            raw_data_path=raw_data_path,
-            output_path=output_path,
-            run_base_dir=run_base_dir,
-            checkpoints=checkpoints,
-            code_bundle=code_bundle,
-            input_path=input_path,
-            image_cache=image_cache,
-            interactive_mode=interactive_mode,
-        )
+    await contextual_run(
+        extract_download_run_upload,
+        task,
+        action=action,
+        version=version,
+        controller=controller,
+        raw_data_path=raw_data_path,
+        output_path=output_path,
+        run_base_dir=run_base_dir,
+        checkpoints=checkpoints,
+        code_bundle=code_bundle,
+        input_path=input_path,
+        image_cache=image_cache,
+        interactive_mode=interactive_mode,
+    )
