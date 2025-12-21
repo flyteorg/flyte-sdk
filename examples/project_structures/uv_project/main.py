@@ -7,6 +7,7 @@ env = flyte.TaskEnvironment(
     resources=flyte.Resources(memory="250Mi"),
     image=flyte.Image.from_debian_base().with_uv_project(
         pyproject_file=pathlib.Path("pyproject.toml"),
+        extra_args="--extra pandas",
     ),
 )
 
