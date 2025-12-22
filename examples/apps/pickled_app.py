@@ -11,6 +11,7 @@ env = flyte.app.AppEnvironment(
     parameters=[flyte.app.Parameter(name="foo", value="bar")],
     requires_auth=False,
     port=8080,
+    env_vars={"LOG_LEVEL": "10"},
 )
 
 state = {}
@@ -18,7 +19,9 @@ state = {}
 
 @env.on_startup
 async def app_startup(foo: str):
-    state["foo"] = foo
+    # add state: this is where you might load data, models, open connections, etc.
+    print("Starting up app...")
+    state["bar"] = foo
 
 
 @env.server
@@ -31,12 +34,23 @@ async def app_server(foo: str):
     async def root() -> str:
         return f"Hello, World! {foo}, here is the state: {state}"
 
+    print("Starting up uvicorn server...")
     await uvicorn.Server(uvicorn.Config(app, port=8080)).serve()
+
+
+@env.on_shutdown
+async def app_shutdown(**kwargs):
+    # clear the state on shutdown
+    print("Shutting down app...")
+    state.clear()
 
 
 if __name__ == "__main__":
     import logging
 
     flyte.init_from_config(log_level=logging.DEBUG)
-    app = flyte.with_servecontext(interactive_mode=True).serve(env)
+    app = flyte.with_servecontext(
+        interactive_mode=True,
+        log_level=logging.DEBUG,
+    ).serve(env)
     print(app.url)
