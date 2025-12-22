@@ -67,6 +67,7 @@ class AppEnvironment(Environment):
     # private field
     _server: Callable[[], None] | None = field(init=False, default=None)
     _on_startup: Callable[[], None] | None = field(init=False, default=None)
+    _on_shutdown: Callable[[], None] | None = field(init=False, default=None)
 
     def _validate_name(self):
         if not APP_NAME_RE.fullmatch(self.name):
@@ -170,13 +171,42 @@ class AppEnvironment(Environment):
         serialized_parameters = SerializableParameterCollection.from_parameters(parameter_overrides or self.parameters)
         return serialized_parameters.to_transport
 
-    def on_startup(self, fn: Callable[[], None]) -> Callable[[], None]:
+    def on_startup(self, fn: Callable[..., None]) -> Callable[..., None]:
+        """
+        Decorator to define the startup function for the app environment.
+
+        This function is called before the server function is called.
+
+        The decorated function can be a sync or async function, and accepts input
+        parameters based on the Parameters defined in the AppEnvironment
+        definition.
+        """
         self._on_startup = fn
         return self._on_startup
 
-    def server(self, fn: Callable[[], None]) -> Callable[[], None]:
+    def server(self, fn: Callable[..., None]) -> Callable[..., None]:
+        """
+        Decorator to define the server function for the app environment.
+
+        This decorated function can be a sync or async function, and accepts input
+        parameters based on the Parameters defined in the AppEnvironment
+        definition.
+        """
         self._server = fn
         return self._server
+
+    def on_shutdown(self, fn: Callable[..., None]) -> Callable[..., None]:
+        """
+        Decorator to define the shutdown function for the app environment.
+
+        This function is called after the server function is called.
+
+        This decorated function can be a sync or async function, and accepts input
+        parameters based on the Parameters defined in the AppEnvironment
+        definition.
+        """
+        self._on_shutdown = fn
+        return self._on_shutdown
 
     def container_cmd(
         self, serialize_context: SerializationContext, parameter_overrides: list[Parameter] | None = None

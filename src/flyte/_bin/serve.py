@@ -186,6 +186,12 @@ async def _serve(
     else:
         app_env._server(**materialized_parameters)
 
+    if app_env._on_shutdown is not None:
+        if asyncio.iscoroutinefunction(app_env._on_shutdown):
+            await app_env._on_shutdown(**materialized_parameters)
+        else:
+            app_env._on_shutdown(**materialized_parameters)
+
 
 @click.command()
 @click.option("--parameters", "-p", required=False)
