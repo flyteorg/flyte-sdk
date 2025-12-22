@@ -9,6 +9,7 @@ from datetime import timedelta
 from typing import Optional, cast
 
 from flyteidl2.core import identifier_pb2, literals_pb2, security_pb2, tasks_pb2
+from flyteidl2.core.execution_pb2 import TaskLog
 from flyteidl2.task import common_pb2, environment_pb2, task_definition_pb2
 from google.protobuf import duration_pb2, wrappers_pb2
 
@@ -131,19 +132,22 @@ def get_proto_task(task: TaskTemplate, serialize_context: SerializationContext) 
         container = _get_urun_container(serialize_context, task)
         pod = None
 
-    if task.link:
-        ctx = internal_ctx()
-        action = ctx.data.task_context.action
-        extra_config.update(
-            task.link.get_config(
-                run_name=action.run_name,
-                project=action.project,
-                domain=action.domain,
-                context=ctx.data.task_context.custom_context,
-                parent_action_name=action.name,
+    ctx = internal_ctx()
+    task_ctx = ctx.data.task_context
+    log_links = []
+    if task.links and task_ctx:
+        action = task_ctx.action
+        for l in task.links:
+            uri = l.get_link(
+                run_name=action.run_name if action.run_name else "",
+                project=action.project if action.project else "",
+                domain=action.domain if action.domain else "",
+                context=task_ctx.custom_context if task_ctx.custom_context else {},
+                parent_action_name=action.name if action.name else "",
                 action_name="{{.action.name}}",
             )
-        )
+            task_log = TaskLog(name=l.name, uri=uri, icon_uri=l.icon_uri)
+            log_links.append(task_log)
 
     custom = task.custom_config(serialize_context)
 
@@ -188,6 +192,7 @@ def get_proto_task(task: TaskTemplate, serialize_context: SerializationContext) 
             interruptible=task.interruptible,
             generates_deck=wrappers_pb2.BoolValue(value=task.report),
             debuggable=task.debuggable,
+            log_links=log_links,
         ),
         interface=transform_native_to_typed_interface(task.native_interface),
         custom=custom if len(custom) > 0 else None,

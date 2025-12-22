@@ -28,6 +28,7 @@ from ._serve import serve, with_servecontext
 from ._task_environment import TaskEnvironment
 from ._timeout import Timeout, TimeoutType
 from ._trace import trace
+from ._link import Link
 from ._trigger import Cron, FixedRate, Trigger, TriggerTime
 from ._version import __version__
 
@@ -106,6 +107,7 @@ __all__ = [
     "run",
     "serve",
     "trace",
+    "Link",
     "version",
     "with_runcontext",
     "with_servecontext",

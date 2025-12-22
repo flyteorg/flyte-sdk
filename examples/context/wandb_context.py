@@ -2,17 +2,36 @@
 Flyte + Weights & Biases Integration Example
 
 This example demonstrates how to use W&B with Flyte for experiment tracking.
-The Wandb link integration creates clickable links in the Flyte UI to view your experiment results.
 """
 
 import os
 import random
 from dataclasses import dataclass
+from typing import Dict
 
 import wandb
 
 import flyte
-from flyte.link import Wandb
+from flyte import Link
+
+
+@dataclass
+class Wandb(Link):
+    project: str
+    entity: str
+    host: str = "https://wandb.ai"
+
+    def get_link(
+        self,
+        run_name: str,
+        project: str,
+        domain: str,
+        context: Dict[str, str],
+        parent_action_name: str,
+        action_name: str,
+    ) -> str:
+        return "...."
+
 
 # Configure the task environment with wandb
 env = flyte.TaskEnvironment(
