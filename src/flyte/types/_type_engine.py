@@ -2122,7 +2122,10 @@ def _register_default_type_transformers():
     TypeEngine.register(BoolTransformer)
     TypeEngine.register(NoneTransformer, [None])
     TypeEngine.register(ListTransformer())
-    TypeEngine.register(UnionTransformer(), [UnionType])
+    if sys.version_info < (3, 14):
+        TypeEngine.register(UnionTransformer(), [UnionType])
+    else:
+        TypeEngine.register(UnionTransformer())
     TypeEngine.register(DictTransformer())
     TypeEngine.register(EnumTransformer())
     TypeEngine.register(ProtobufTransformer())
