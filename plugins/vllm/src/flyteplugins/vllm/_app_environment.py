@@ -66,6 +66,15 @@ class VLLMAppEnvironment(flyte.app.AppEnvironment):
         if self.env_vars is None:
             self.env_vars = {}
 
+        if self._server is not None:
+            raise ValueError("server function cannot be set for VLLMAppEnvironment")
+
+        if self._on_startup is not None:
+            raise ValueError("on_startup function cannot be set for VLLMAppEnvironment")
+
+        if self._on_shutdown is not None:
+            raise ValueError("on_shutdown function cannot be set for VLLMAppEnvironment")
+
         if self.model_id == "":
             raise ValueError("model_id must be defined")
 
