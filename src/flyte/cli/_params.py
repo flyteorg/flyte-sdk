@@ -116,7 +116,7 @@ class FileParamType(click.ParamType):
 class PickleParamType(click.ParamType):
     name = "pickle"
 
-    def get_metavar(self, param: "Parameter", *args) -> t.Optional[str]:
+    def get_metavar(self, param: "Parameter", ctx) -> t.Optional[str]:
         return "Python Object <Module>:<Object>"
 
     def convert(
@@ -435,10 +435,13 @@ def literal_type_to_click_type(lt: LiteralType, python_type: typing.Type) -> cli
         return DirParamType()
 
     if lt.HasField("union_type"):
+        python_args = typing.get_args(python_type)
+        if len(python_args) == 0:
+            return PickleParamType()
         cts = []
         for i in range(len(lt.union_type.variants)):
             variant = lt.union_type.variants[i]
-            variant_python_type = typing.get_args(python_type)[i]
+            variant_python_type = python_args[i]
             if variant_python_type is type(None):
                 cts.append(None)
             else:
