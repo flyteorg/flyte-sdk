@@ -137,8 +137,8 @@ def initialize_logger(log_level: int | None = None, log_format: LogFormat | None
         log_format = log_format_from_env()
 
     # Clear existing handlers to reconfigure
-    root = logging.getLogger()
-    root.handlers.clear()
+    # root = logging.getLogger()
+    # root.handlers.clear()
 
     flyte_logger = logging.getLogger("flyte")
     flyte_logger.handlers.clear()
@@ -148,20 +148,23 @@ def initialize_logger(log_level: int | None = None, log_format: LogFormat | None
     use_rich = enable_rich and not use_json
 
     # Set up root logger handler
-    root_handler: logging.Handler | None = None
-    if use_json:
-        root_handler = logging.StreamHandler()
-        root_handler.setFormatter(JSONFormatter())
-    elif use_rich:
-        root_handler = get_rich_handler(log_level)
-
-    if root_handler is None:
-        root_handler = logging.StreamHandler()
-
-    # Add context filter to root handler for all logging
-    root_handler.addFilter(ContextFilter())
-    root_handler.setLevel(logging.DEBUG)
-    root.addHandler(root_handler)
+    # root_handler: logging.Handler | None = None
+    # if use_json:
+    #     root_handler = logging.StreamHandler()
+    #     root_handler.setFormatter(JSONFormatter())
+    # elif use_rich:
+    #     root_handler = get_rich_handler(log_level)
+    #
+    # if root_handler is None:
+    #     root_handler = logging.StreamHandler()
+    #
+    # # Add context filter to root handler for all logging
+    # root_handler.addFilter(ContextFilter())
+    # root_handler.setLevel(logging.DEBUG)
+    # root.addHandler(root_handler)
+    root_logger = logging.getLogger()
+    for h in root_logger.handlers:
+        h.addFilter(ContextFilter())
 
     # Set up Flyte logger handler
     flyte_handler: logging.Handler | None = None
@@ -293,8 +296,8 @@ def _create_flyte_logger() -> logging.Logger:
     return flyte_logger
 
 
-# Initialize root logger for global context
-_setup_root_logger()
+# # Initialize root logger for global context
+# _setup_root_logger()
 
 # Create the Flyte internal logger
 logger = _create_flyte_logger()
