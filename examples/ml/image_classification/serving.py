@@ -18,8 +18,10 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional
 
+import aiofiles
 import torch
 from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi.responses import HTMLResponse
 from PIL import Image
 from pydantic import BaseModel
 from transformers import AutoImageProcessor, AutoModelForImageClassification
@@ -72,6 +74,9 @@ env = FastAPIAppEnvironment(
     description="Serving fine-tuned image classification model",
     image=serving_image,
     resources=flyte.Resources(cpu=2, memory="4Gi"),
+    include=[
+        "index.html",
+    ],
     requires_auth=False,
     parameters=[
         Parameter(
@@ -131,6 +136,16 @@ async def health_check():
         "num_classes": len(app.state.id2label),
         "classes": list(app.state.label2id.keys()) if app.state.label2id else [],
     }
+
+
+@app.get("/", response_class=HTMLResponse)
+async def index():
+    """
+    Serve the web interface for image classification.
+    """
+    html_path = Path(__file__).parent / "index.html"
+    with aiofiles.open(html_path, "r") as f:
+        return await f.read()
 
 
 @app.post("/predict", response_model=ClassificationResponse)
