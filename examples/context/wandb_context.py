@@ -170,7 +170,7 @@ async def main() -> TrainingResult:
     wandb_id = os.getenv("_F_PN", f"flyte-run-{random.randint(1000, 9999)}")
 
     with flyte.custom_context(wandb_id=wandb_id):
-        result = train_model.override(link=Wandb(project=WANDB_PROJECT, entity=WANDB_ENTITY, id=wandb_id))(
+        result = train_model.override(links=(Wandb(project=WANDB_PROJECT, entity=WANDB_ENTITY, id=wandb_id),))(
             config=config
         )
 
