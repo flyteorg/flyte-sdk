@@ -22,7 +22,6 @@ if typing.TYPE_CHECKING:
 PROJECT_NAME = "FLYTE_INTERNAL_EXECUTION_PROJECT"
 DOMAIN_NAME = "FLYTE_INTERNAL_EXECUTION_DOMAIN"
 ORG_NAME = "_U_ORG_NAME"
-_UNION_EAGER_API_KEY_ENV_VAR = "_UNION_EAGER_API_KEY"
 _F_PATH_REWRITE = "_F_PATH_REWRITE"
 ENDPOINT_OVERRIDE = "_U_EP_OVERRIDE"
 
@@ -191,18 +190,8 @@ async def _serve(
         # Use loop.stop() to gracefully stop the loop after shutdown
         loop.stop()
 
-    # Register signal handler on the event loop; this schedules the async shutdown
-    def on_sigterm():
-        task = loop.create_task(shutdown())
-        task.add_done_callback(lambda _: loop.stop())
-
-    try:
-        logger.info("Adding signal handler for SIGTERM")
-        loop.add_signal_handler(signal.SIGTERM, on_sigterm)
-    except NotImplementedError:
-        # Windows does not support add_signal_handler for signals
-        logger.info("Adding signal handler for SIGTERM using signal.signal")
-        signal.signal(signal.SIGTERM, lambda signum, frame: asyncio.create_task(shutdown()))
+    logger.info("Adding signal handler for SIGTERM using signal.signal")
+    signal.signal(signal.SIGTERM, lambda signum, frame: asyncio.create_task(shutdown()))
 
     if app_env._on_startup is not None:
         logger.info("Running on_startup function")
@@ -212,6 +201,7 @@ async def _serve(
             app_env._on_startup(**materialized_parameters)
 
     try:
+        logger.info("Running server function")
         if asyncio.iscoroutinefunction(app_env._server):
             await app_env._server(**materialized_parameters)
         else:

@@ -11,7 +11,6 @@ env = flyte.app.AppEnvironment(
     parameters=[flyte.app.Parameter(name="foo", value="bar")],
     requires_auth=False,
     port=8080,
-    env_vars={"LOG_LEVEL": "10"},
 )
 
 state = {}
@@ -41,7 +40,7 @@ async def app_server(foo: str):
 @env.on_shutdown
 async def app_shutdown(**kwargs):
     # clear the state on shutdown
-    print("Shutting down app...")
+    print("Shutting down app, clearing state...")
     state.clear()
 
 
