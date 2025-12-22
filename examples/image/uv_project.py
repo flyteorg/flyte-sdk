@@ -6,7 +6,7 @@ from flyte import Image
 image = (
     Image.from_debian_base(install_flyte=False)
     .with_apt_packages("git")
-    .with_uv_project(uvlock=Path("../../uv.lock"), pyproject_file=Path("../../pyproject.toml"))
+    .with_uv_project(uvlock=Path("../../uv.lock"), pyproject_file=Path("../../pyproject.toml"), pre=True)
 )
 
 env = flyte.TaskEnvironment(name="uv_project", image=image)

@@ -10,7 +10,7 @@ from torch.utils.data import DataLoader, DistributedSampler, TensorDataset
 
 import flyte
 
-image = flyte.Image.from_debian_base(name="torch").with_pip_packages("flyteplugins-pytorch", pre=True)
+image = flyte.Image.from_debian_base(name="torch").with_pip_packages("flyteplugins-pytorch", pre=True).with_local_v2()
 
 torch_env = flyte.TaskEnvironment(
     name="torch_env",
