@@ -137,8 +137,8 @@ def get_proto_task(task: TaskTemplate, serialize_context: SerializationContext) 
     log_links = []
     if task.links and task_ctx:
         action = task_ctx.action
-        for l in task.links:
-            uri = l.get_link(
+        for link in task.links:
+            uri = link.get_link(
                 run_name=action.run_name if action.run_name else "",
                 project=action.project if action.project else "",
                 domain=action.domain if action.domain else "",
@@ -146,7 +146,7 @@ def get_proto_task(task: TaskTemplate, serialize_context: SerializationContext) 
                 parent_action_name=action.name if action.name else "",
                 action_name="{{.action.name}}",
             )
-            task_log = TaskLog(name=l.name, uri=uri, icon_uri=l.icon_uri)
+            task_log = TaskLog(name=link.name, uri=uri, icon_uri=link.icon_uri)
             log_links.append(task_log)
 
     custom = task.custom_config(serialize_context)
