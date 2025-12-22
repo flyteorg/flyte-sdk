@@ -26,6 +26,7 @@ dependencies = [
     "mashumaro",
     "aiolimiter>=1.2.1",
     "flyteidl2==2.0.0a16",
+    "packaging",
 ]
 
 [project.scripts]
