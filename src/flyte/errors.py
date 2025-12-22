@@ -251,3 +251,13 @@ class ParameterMaterializationError(RuntimeUserError):
 
     def __init__(self, message: str):
         super().__init__("ParameterMaterializationError", message, "user")
+
+        
+class RestrictedTypeError(RuntimeUserError):
+    """
+    This error is raised when the user uses a restricted type, for example current a Tuple is not supported for one
+     value.
+    """
+
+    def __init__(self, message: str):
+        super().__init__("RestrictedTypeUsage", message, "user")
