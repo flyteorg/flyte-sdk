@@ -117,8 +117,8 @@ class RunOutput(_DelayedValue):
             raise ValueError("Either run_name or task_name must be provided")
 
     async def _materialize_with_task_name(self) -> ParameterTypes:
-        from flyte.remote import Run, RunDetails, Task, TaskDetails
         import flyte.errors
+        from flyte.remote import Run, RunDetails, Task, TaskDetails
 
         assert self.task_name is not None, "task_name must be provided"
         if self.task_auto_version is not None:
@@ -150,7 +150,8 @@ class RunOutput(_DelayedValue):
             raise flyte.errors.ParameterMaterializationError(f"No runs found for task {self.task_name}")
         except Exception as e:
             raise flyte.errors.ParameterMaterializationError(
-                f"Failed to materialize output for task {self.task_name}") from e
+                f"Failed to materialize output for task {self.task_name}"
+            ) from e
 
     async def _materialize_with_run_name(self) -> ParameterTypes:
         from flyte.remote import Run, RunDetails

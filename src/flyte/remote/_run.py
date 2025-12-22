@@ -55,7 +55,7 @@ class Run(ToJSONMixin):
         :param task_name: Filter runs by task name.
         :param task_version: Filter runs by task version.
         :param created_by_subject: Filter runs by the subject that created them. (this is not username, but the subject)
-        :param sort_by: The sorting criteria for the project list, in the format (field, order).
+        :param sort_by: The sorting criteria for the Run list, in the format (field, order).
         :param limit: The maximum number of runs to return.
         :return: An iterator of runs.
         """

@@ -34,9 +34,8 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Create image from local dependencies (will use pyproject.toml)
-training_image = (
-    flyte.Image.from_debian_base()
-    .with_uv_project(pyproject_file=Path("pyproject.toml"))
+training_image = flyte.Image.from_debian_base().with_uv_project(
+    pyproject_file=Path("pyproject.toml"), extra_args="--extra training"
 )
 
 training_env = flyte.TaskEnvironment(
@@ -84,10 +83,10 @@ async def finetune_image_model(
     else:
         # Fallback: extract unique labels from the data
         label_col = "labels" if "labels" in train_data.column_names else "label"
-        labels = sorted(list(set(train_data[label_col])))
+        labels = sorted(set(train_data[label_col]))
 
     num_labels = len(labels)
-    id2label = {i: label for i, label in enumerate(labels)}
+    id2label = dict(enumerate(labels))
     label2id = {label: i for i, label in enumerate(labels)}
 
     logger.info(f"Dataset loaded: {num_labels} classes - {labels}")
@@ -163,7 +162,7 @@ async def finetune_image_model(
     processor.save_pretrained(final_model_dir)
 
     # Save label mapping
-    with open(final_model_dir / "label_mapping.json", "w") as f:
+    with open(final_model_dir / "label_mapping.json", "w") as f:  # noqa: ASYNC230
         json.dump({"id2label": id2label, "label2id": label2id}, f)
 
     logger.info("Fine-tuning complete!")
@@ -184,5 +183,3 @@ if __name__ == "__main__":
         batch_size=32,
     )
     print(f"Training Run URL: {run.url}")
-    run.wait()
-    print("Training completed!")

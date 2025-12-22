@@ -19,8 +19,8 @@ from pathlib import Path
 from typing import Optional
 
 import torch
-from PIL import Image
 from fastapi import FastAPI, File, HTTPException, UploadFile
+from PIL import Image
 from pydantic import BaseModel
 from transformers import AutoImageProcessor, AutoModelForImageClassification
 
@@ -62,9 +62,8 @@ app = FastAPI(
 )
 
 # Create Flyte FastAPI App Environment
-serving_image = (
-    flyte.Image.from_debian_base()
-    .with_uv_project(pyproject_file=Path("pyproject.toml"))
+serving_image = flyte.Image.from_debian_base().with_uv_project(
+    pyproject_file=Path("pyproject.toml"), extra_args="--extra serving"
 )
 
 env = FastAPIAppEnvironment(
@@ -77,9 +76,7 @@ env = FastAPIAppEnvironment(
     parameters=[
         Parameter(
             name="model",
-            value=flyte.app.RunOutput(
-                task_name="image_finetune_training.finetune_image_model", type="directory"
-            ),
+            value=flyte.app.RunOutput(task_name="image_finetune_training.finetune_image_model", type="directory"),
             mount="/tmp/finetuned_model",
         )
     ],
@@ -110,7 +107,7 @@ async def load_model_artifacts(model_path: Path):
     logger.info(f"Loading model from {model_path}")
 
     # Load label mapping
-    with open(model_path / "label_mapping.json", "r") as f:
+    with open(model_path / "label_mapping.json", "r") as f:  # noqa: ASYNC230
         label_data = json.load(f)
         app.state.id2label = {int(k): v for k, v in label_data["id2label"].items()}
         app.state.label2id = label_data["label2id"]
@@ -151,7 +148,7 @@ async def predict_image(file: UploadFile = File(...)):
         image_bytes = await file.read()
         image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Invalid image file: {str(e)}")
+        raise HTTPException(status_code=400, detail=f"Invalid image file: {e!s}")
 
     logger.info(f"Classifying image: {file.filename}")
 

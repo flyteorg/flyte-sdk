@@ -1,12 +1,22 @@
 """
-Image Classification - Batch Inference Script
+Image Classification - Batch Inference with DataFrames & Reports
 
 Runs batch inference on a large number of images efficiently using:
+- DataFrame-based processing (efficient serialization and analysis)
+- Streaming aggregation (low memory footprint using asyncio.as_completed)
 - Reusable containers (model loaded once, amortized across many images)
 - Chunking (multiple images per task for better GPU utilization)
 - Parallel processing (multiple replicas running concurrently)
+- Interactive HTML reports (charts and visualizations with Flyte reports)
 
 Usage:
+    # Run with interactive report (recommended):
+    flyte run batch_inference.py batch_inference_with_report \\
+        --model_dir=<model_directory> \\
+        --images_dir=<images_directory> \\
+        --chunk_size=100
+
+    # Run inference only (no report):
     flyte run batch_inference.py batch_inference_pipeline \\
         --model_dir=<model_directory> \\
         --images_dir=<images_directory> \\
@@ -16,7 +26,9 @@ The pipeline will:
 1. Discover all images in the directory
 2. Partition them into chunks
 3. Process each chunk in parallel with reusable containers
-4. Generate a comprehensive report with all predictions
+4. Aggregate results as they complete (streaming) to minimize memory usage
+5. Return a DataFrame with all predictions
+6. Generate an interactive HTML report (if using batch_inference_with_report)
 """
 
 import asyncio
@@ -26,8 +38,9 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Dict, List
 
-import pandas as pd
+import pyarrow as pa
 import torch
+from batch_inference_report import batch_image, generate_batch_inference_report, report_env
 from PIL import Image
 from transformers import AutoImageProcessor, AutoModelForImageClassification
 
@@ -36,13 +49,6 @@ import flyte.io
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-
-# Image from local dependencies
-batch_image = (
-    flyte.Image.from_debian_base()
-    .with_uv_project(pyproject_file=Path("pyproject.toml"))
-    .with_pip_packages("unionai-reuse>=0.1.9", "pandas", "pyarrow")
-)
 
 # Worker environment with reusable containers
 # Using higher concurrency and more replicas for better GPU utilization
@@ -98,9 +104,9 @@ def load_model(model_path: str) -> tuple[AutoModelForImageClassification, AutoIm
 @worker_env.task(cache="auto", retries=3)
 async def process_image_batch(
     model_dir: flyte.io.Dir, image_paths: List[str], batch_size: int = 32
-) -> flyte.io.File:
+) -> flyte.io.DataFrame:
     """
-    Process a batch of images and return predictions.
+    Process a batch of images and return predictions as a DataFrame.
 
     This task is designed to be run in reusable containers, so the model
     is loaded once (via lru_cache) and reused across all invocations.
@@ -111,7 +117,8 @@ async def process_image_batch(
         batch_size: Batch size for processing (for GPU efficiency)
 
     Returns:
-        File containing predictions in JSON format
+        DataFrame with columns: image_path, top_label, top_confidence,
+        second_label, second_confidence, third_label, third_confidence, error
     """
     logger.info(f"Processing batch of {len(image_paths)} images")
 
@@ -121,7 +128,15 @@ async def process_image_batch(
     # Load model (cached with lru_cache)
     model, processor, id2label = load_model(str(model_path))
 
-    predictions = []
+    # Lists to build DataFrame columns
+    df_image_paths = []
+    df_top_labels = []
+    df_top_confidences = []
+    df_second_labels = []
+    df_second_confidences = []
+    df_third_labels = []
+    df_third_confidences = []
+    df_errors = []
 
     # Process images in mini-batches for GPU efficiency
     for i in range(0, len(image_paths), batch_size):
@@ -137,13 +152,15 @@ async def process_image_batch(
                 valid_paths.append(img_path)
             except Exception as e:
                 logger.warning(f"Failed to load image {img_path}: {e}")
-                predictions.append(
-                    {
-                        "image_path": img_path,
-                        "error": str(e),
-                        "predictions": [],
-                    }
-                )
+                # Add error row
+                df_image_paths.append(img_path)
+                df_top_labels.append(None)
+                df_top_confidences.append(None)
+                df_second_labels.append(None)
+                df_second_confidences.append(None)
+                df_third_labels.append(None)
+                df_third_confidences.append(None)
+                df_errors.append(str(e))
 
         if not images:
             continue
@@ -161,39 +178,45 @@ async def process_image_batch(
             logits = outputs.logits
             probs = torch.softmax(logits, dim=-1)
 
-        # Convert to predictions
+        # Convert to DataFrame rows
         for idx, (img_path, prob_vector) in enumerate(zip(valid_paths, probs)):
             # Get top 3 predictions
             top_k = min(3, len(id2label))
             top_probs, top_indices = torch.topk(prob_vector, top_k)
 
-            image_predictions = []
-            for prob, label_idx in zip(top_probs.cpu().tolist(), top_indices.cpu().tolist()):
-                image_predictions.append(
-                    {
-                        "label": id2label[label_idx],
-                        "confidence": float(prob),
-                    }
-                )
+            # Convert to lists
+            probs_list = top_probs.cpu().tolist()
+            labels_list = [id2label[idx.item()] for idx in top_indices.cpu()]
 
-            predictions.append(
-                {
-                    "image_path": img_path,
-                    "predictions": image_predictions,
-                    "top_prediction": image_predictions[0] if image_predictions else None,
-                }
-            )
+            # Add to DataFrame columns
+            df_image_paths.append(img_path)
+            df_top_labels.append(labels_list[0] if len(labels_list) > 0 else None)
+            df_top_confidences.append(probs_list[0] if len(probs_list) > 0 else None)
+            df_second_labels.append(labels_list[1] if len(labels_list) > 1 else None)
+            df_second_confidences.append(probs_list[1] if len(probs_list) > 1 else None)
+            df_third_labels.append(labels_list[2] if len(labels_list) > 2 else None)
+            df_third_confidences.append(probs_list[2] if len(probs_list) > 2 else None)
+            df_errors.append(None)
 
         logger.info(f"Processed {len(images)} images in mini-batch")
 
-    # Save predictions to file
-    output_file = Path("/tmp") / f"predictions_{hash(tuple(image_paths))}.json"
-    with open(output_file, "w") as f:
-        json.dump(predictions, f, indent=2)
+    # Create PyArrow table
+    table = pa.table(
+        {
+            "image_path": df_image_paths,
+            "top_label": df_top_labels,
+            "top_confidence": df_top_confidences,
+            "second_label": df_second_labels,
+            "second_confidence": df_second_confidences,
+            "third_label": df_third_labels,
+            "third_confidence": df_third_confidences,
+            "error": df_errors,
+        }
+    )
 
-    logger.info(f"Saved {len(predictions)} predictions to {output_file}")
+    logger.info(f"Created DataFrame with {len(df_image_paths)} predictions")
 
-    return await flyte.io.File.from_local(str(output_file))
+    return flyte.io.DataFrame.from_df(table)
 
 
 @driver_env.task(cache="auto")
@@ -202,24 +225,27 @@ async def batch_inference_pipeline(
     images_dir: flyte.io.Dir,
     chunk_size: int = 100,
     batch_size: int = 32,
-) -> flyte.io.File:
+    aggregation_batch_size: int = 10,
+) -> flyte.io.DataFrame:
     """
-    Run batch inference on all images in a directory.
+    Run batch inference on all images in a directory using streaming aggregation.
 
     This pipeline:
     1. Discovers all images in the directory
     2. Partitions them into chunks
     3. Processes each chunk in parallel using reusable containers
-    4. Aggregates results into a comprehensive report
+    4. Aggregates results as they complete (streaming) to minimize memory usage
+    5. Returns a combined DataFrame with all predictions
 
     Args:
         model_dir: Directory containing the fine-tuned model
         images_dir: Directory containing images to process
         chunk_size: Number of images per chunk (affects parallelism)
         batch_size: Mini-batch size for GPU processing
+        aggregation_batch_size: Number of DataFrames to combine at once
 
     Returns:
-        File containing the complete inference report
+        DataFrame with all inference results
     """
     logger.info("Starting batch inference pipeline")
 
@@ -248,146 +274,319 @@ async def batch_inference_pipeline(
 
     logger.info(f"Partitioned into {len(chunks)} chunks of ~{chunk_size} images each")
 
-    # Process all chunks in parallel
+    # Process all chunks in parallel with streaming aggregation
     tasks = []
     for idx, chunk in enumerate(chunks):
         with flyte.group(f"chunk-{idx}"):
             task = asyncio.create_task(process_image_batch(model_dir, chunk, batch_size))
             tasks.append(task)
 
-    logger.info(f"Processing {len(tasks)} chunks in parallel...")
-    result_files = await asyncio.gather(*tasks)
+    logger.info(f"Processing {len(tasks)} chunks in parallel with streaming aggregation...")
 
-    # Aggregate results
-    logger.info("Aggregating results...")
-    all_predictions = []
+    # Use streaming aggregation to keep memory footprint low
+    accumulated_dfs = []
+    final_batches = []
+    completed_count = 0
 
-    for result_file in result_files:
-        file_path = await result_file.download()
-        with open(file_path, "r") as f:
-            predictions = json.load(f)
-            all_predictions.extend(predictions)
+    # Process results as they complete
+    for task in asyncio.as_completed(tasks):
+        result_df = await task
+        accumulated_dfs.append(result_df)
+        completed_count += 1
 
-    # Generate comprehensive report
-    report = generate_report(all_predictions)
+        logger.info(f"Completed {completed_count}/{len(tasks)} chunks")
 
-    # Save report
-    report_path = Path("/tmp") / "batch_inference_report.json"
-    with open(report_path, "w") as f:
-        json.dump(report, f, indent=2)
+        # When batch is full, combine and clear to reduce memory
+        if len(accumulated_dfs) >= aggregation_batch_size:
+            logger.info(f"Combining {len(accumulated_dfs)} DataFrames...")
+            combined = await combine_dataframes(accumulated_dfs)
+            final_batches.append(combined)
+            accumulated_dfs.clear()
 
-    logger.info(f"Generated report with {len(all_predictions)} predictions")
+    # Handle remaining DataFrames
+    if accumulated_dfs:
+        logger.info(f"Combining final {len(accumulated_dfs)} DataFrames...")
+        combined = await combine_dataframes(accumulated_dfs)
+        final_batches.append(combined)
 
-    return await flyte.io.File.from_local(str(report_path))
+    # Final aggregation of all batches
+    logger.info(f"Final aggregation of {len(final_batches)} batches...")
+    final_df = await combine_dataframes(final_batches)
+
+    logger.info("Batch inference pipeline completed successfully")
+    return final_df
 
 
-def generate_report(predictions: List[Dict]) -> Dict:
+async def combine_dataframes(dfs: List[flyte.io.DataFrame]) -> flyte.io.DataFrame:
     """
-    Generate a comprehensive report from predictions.
+    Efficiently combine multiple Flyte DataFrames into one using PyArrow.
 
     Args:
-        predictions: List of prediction dictionaries
+        dfs: List of Flyte DataFrames to combine
 
     Returns:
-        Report dictionary with statistics and results
+        Combined Flyte DataFrame
     """
-    # Create DataFrame for easier analysis
-    df_data = []
-    for pred in predictions:
-        if pred.get("error"):
-            df_data.append(
-                {
-                    "image_path": pred["image_path"],
-                    "top_label": None,
-                    "top_confidence": None,
-                    "error": pred["error"],
-                }
-            )
-        elif pred.get("top_prediction"):
-            df_data.append(
-                {
-                    "image_path": pred["image_path"],
-                    "top_label": pred["top_prediction"]["label"],
-                    "top_confidence": pred["top_prediction"]["confidence"],
-                    "error": None,
-                }
-            )
+    if not dfs:
+        # Return empty DataFrame with correct schema
+        empty_table = pa.table(
+            {
+                "image_path": pa.array([], type=pa.string()),
+                "top_label": pa.array([], type=pa.string()),
+                "top_confidence": pa.array([], type=pa.float64()),
+                "second_label": pa.array([], type=pa.string()),
+                "second_confidence": pa.array([], type=pa.float64()),
+                "third_label": pa.array([], type=pa.string()),
+                "third_confidence": pa.array([], type=pa.float64()),
+                "error": pa.array([], type=pa.string()),
+            }
+        )
+        return flyte.io.DataFrame.from_df(empty_table)
 
-    df = pd.DataFrame(df_data)
+    if len(dfs) == 1:
+        return dfs[0]
 
-    # Calculate statistics
-    total_images = len(predictions)
-    successful = len(df[df["error"].isna()])
-    failed = len(df[df["error"].notna()])
+    # Load all tables and concatenate using PyArrow
+    tables = [await df.open(pa.Table).all() for df in dfs]
+    combined_table = pa.concat_tables(tables)
 
-    # Label distribution
-    label_counts = df[df["error"].isna()]["top_label"].value_counts().to_dict()
+    logger.info(f"Combined {len(dfs)} DataFrames into table with {combined_table.num_rows} rows")
 
-    # Confidence statistics
-    if successful > 0:
-        avg_confidence = float(df[df["error"].isna()]["top_confidence"].mean())
-        min_confidence = float(df[df["error"].isna()]["top_confidence"].min())
-        max_confidence = float(df[df["error"].isna()]["top_confidence"].max())
-    else:
-        avg_confidence = min_confidence = max_confidence = 0.0
+    return flyte.io.DataFrame.from_df(combined_table)
 
-    # Build report
-    report = {
-        "summary": {
-            "total_images": total_images,
-            "successful": successful,
-            "failed": failed,
-            "success_rate": successful / total_images if total_images > 0 else 0.0,
-        },
-        "confidence_stats": {
-            "average": avg_confidence,
-            "min": min_confidence,
-            "max": max_confidence,
-        },
-        "label_distribution": label_counts,
-        "predictions": predictions,
-    }
 
-    return report
+@driver_env.task(cache="auto")
+async def create_sample_images(num_images: int = 50) -> flyte.io.Dir:
+    """
+    Create sample images for testing the batch inference pipeline.
+
+    Generates random colored images with different patterns to simulate a real dataset.
+
+    Args:
+        num_images: Number of sample images to create
+
+    Returns:
+        Directory containing the generated sample images
+    """
+    import random
+    import tempfile
+
+    from PIL import Image, ImageDraw
+
+    logger.info(f"Creating {num_images} sample images...")
+
+    # Create temporary directory
+    temp_dir = tempfile.mkdtemp()
+    sample_dir = Path(temp_dir) / "sample_images"
+    sample_dir.mkdir(parents=True, exist_ok=True)
+
+    # Generate random images
+    colors = ["red", "blue", "green", "yellow", "purple", "orange"]
+    patterns = ["solid", "gradient", "circles", "stripes"]
+
+    for i in range(num_images):
+        # Create a 224x224 RGB image (standard for image classification)
+        img = Image.new("RGB", (224, 224), color="white")
+        draw = ImageDraw.Draw(img)
+
+        # Choose random color and pattern
+        color = random.choice(colors)
+        pattern = random.choice(patterns)
+
+        # Draw pattern
+        if pattern == "solid":
+            draw.rectangle([(0, 0), (224, 224)], fill=color)
+        elif pattern == "gradient":
+            for y in range(224):
+                intensity = int(255 * (y / 224))
+                draw.line([(0, y), (224, y)], fill=(intensity, 0, 255 - intensity))
+        elif pattern == "circles":
+            for _ in range(10):
+                x, y = random.randint(0, 224), random.randint(0, 224)
+                r = random.randint(10, 50)
+                draw.ellipse([(x - r, y - r), (x + r, y + r)], fill=color)
+        elif pattern == "stripes":
+            for x in range(0, 224, 20):
+                draw.rectangle([(x, 0), (x + 10, 224)], fill=color)
+
+        # Save image
+        img_path = sample_dir / f"sample_{i:04d}.jpg"
+        img.save(img_path)
+
+    logger.info(f"Created {num_images} sample images in {sample_dir}")
+
+    # Upload directory
+    return await flyte.io.Dir.from_local(str(sample_dir))
+
+
+driver_with_report_env = driver_env.clone_with("image-classification-report", depends_on=[driver_env, report_env])
+
+
+@driver_with_report_env.task(cache="auto")
+async def batch_inference_with_report(
+    model_dir: flyte.io.Dir,
+    images_dir: flyte.io.Dir,
+    chunk_size: int = 100,
+    batch_size: int = 32,
+    aggregation_batch_size: int = 10,
+) -> flyte.io.DataFrame:
+    """
+    Main workflow: Run batch inference and generate an interactive report.
+
+    This workflow:
+    1. Runs batch inference on all images (returns DataFrame)
+    2. Generates an interactive HTML report with visualizations
+    3. Returns the full DataFrame for downstream processing
+
+    Args:
+        model_dir: Directory containing the fine-tuned model
+        images_dir: Directory containing images to process
+        chunk_size: Number of images per chunk (affects parallelism)
+        batch_size: Mini-batch size for GPU processing
+        aggregation_batch_size: Number of DataFrames to combine at once
+
+    Returns:
+        DataFrame with all inference results
+    """
+    logger.info("Starting batch inference workflow with report generation")
+
+    # Run batch inference
+    results_df = await batch_inference_pipeline(
+        model_dir=model_dir,
+        images_dir=images_dir,
+        chunk_size=chunk_size,
+        batch_size=batch_size,
+        aggregation_batch_size=aggregation_batch_size,
+    )
+
+    # Generate interactive report
+    await generate_batch_inference_report(results_df)
+
+    logger.info("Batch inference workflow completed successfully")
+    return results_df
+
+
+@driver_with_report_env.task(cache="auto")
+async def batch_inference_demo(
+    model_dir: flyte.io.Dir,
+    num_sample_images: int = 50,
+    chunk_size: int = 20,
+) -> flyte.io.DataFrame:
+    """
+    Demo workflow: Create sample images and run batch inference with report.
+
+    This is a complete end-to-end demonstration that:
+    1. Creates sample images for testing
+    2. Runs batch inference on those images
+    3. Generates an interactive report
+    4. Returns the full DataFrame with results
+
+    Args:
+        model_dir: Directory containing the fine-tuned model
+        num_sample_images: Number of sample images to create
+        chunk_size: Number of images per chunk (affects parallelism)
+
+    Returns:
+        DataFrame with all inference results
+    """
+    logger.info(f"Starting batch inference demo with {num_sample_images} sample images")
+
+    # Create sample images
+    images_dir = await create_sample_images(num_images=num_sample_images)
+
+    # Run batch inference with report
+    results_df = await batch_inference_with_report(
+        model_dir=model_dir,
+        images_dir=images_dir,
+        chunk_size=chunk_size,
+        batch_size=10,
+        aggregation_batch_size=5,
+    )
+
+    logger.info("Batch inference demo completed successfully")
+    return results_df
 
 
 if __name__ == "__main__":
+    import flyte.models
+    import flyte.remote
+
     flyte.init_from_config(
         root_dir=Path(__file__).parent,
     )
 
-    # Example: Run batch inference
-    # You need to provide:
-    # 1. model_dir: Output from training.py (flyte.io.Dir)
-    # 2. images_dir: Directory containing images to classify
+    training_runs = flyte.remote.Run.listall(
+        in_phase=(flyte.models.ActionPhase.SUCCEEDED,),
+        task_name="image_finetune_training.finetune_image_model",
+        sort_by=("created_at", "desc"),
+        limit=1,
+    )
 
-    # For testing, you could run:
-    # model_dir = flyte.io.Dir.from_existing_remote("s3://bucket/path/to/model")
-    # images_dir = flyte.io.Dir.from_existing_remote("s3://bucket/path/to/images")
+    training_run = next(training_runs)
+    outputs = training_run.outputs()
 
-    # run = flyte.run(
-    #     batch_inference_pipeline,
-    #     model_dir=model_dir,
-    #     images_dir=images_dir,
-    #     chunk_size=100,
-    #     batch_size=32,
-    # )
-    # print(f"Batch Inference Run URL: {run.url}")
+    r = flyte.run(batch_inference_demo, outputs[0])
+    print(r.url)
 
     print(
         """
-To run batch inference:
+Image Classification - Batch Inference
 
-1. First, ensure you have a trained model from training.py
+This module provides efficient batch inference with interactive reporting:
 
-2. Prepare a directory with images to classify
+WORKFLOWS:
+----------
 
-3. Run the pipeline:
-   flyte run batch_inference.py batch_inference_pipeline \\
-       --model_dir=<path_or_remote_ref> \\
-       --images_dir=<path_or_remote_ref> \\
-       --chunk_size=100
+1. batch_inference_pipeline - Returns DataFrame only (no report)
+   Returns: flyte.io.DataFrame with predictions
 
-The pipeline will process all images in parallel and generate a comprehensive report.
+2. batch_inference_with_report - Runs inference + generates interactive report
+   Returns: flyte.io.DataFrame with predictions + HTML report
+
+3. batch_inference_demo - End-to-end demo with sample images
+   Creates sample images, runs inference, and generates report
+   Returns: flyte.io.DataFrame with predictions + HTML report
+
+USAGE:
+------
+
+# Run end-to-end demo with sample images (for testing):
+flyte run batch_inference.py batch_inference_demo \\
+    --model_dir=<path_or_remote_ref> \\
+    --num_sample_images=50 \\
+    --chunk_size=20
+
+# Run with automatic report generation (recommended):
+flyte run batch_inference.py batch_inference_with_report \\
+    --model_dir=<path_or_remote_ref> \\
+    --images_dir=<path_or_remote_ref> \\
+    --chunk_size=100
+
+# Run inference only (no report):
+flyte run batch_inference.py batch_inference_pipeline \\
+    --model_dir=<path_or_remote_ref> \\
+    --images_dir=<path_or_remote_ref> \\
+    --chunk_size=100
+
+FEATURES:
+---------
+✓ Efficient DataFrame-based processing
+✓ Streaming aggregation for low memory footprint
+✓ Parallel processing with reusable containers
+✓ Interactive HTML reports with charts
+✓ Label distribution and confidence analysis
+✓ Detailed results table
+✓ End-to-end demo with sample data generation
+
+OUTPUT:
+-------
+- DataFrame with columns: image_path, top_label, top_confidence,
+  second_label, second_confidence, third_label, third_confidence, error
+- Interactive HTML report (when using batch_inference_with_report or demo)
+
+FILES:
+------
+- batch_inference.py: Main inference pipeline
+- batch_inference_report.py: Interactive report generation
 """
     )

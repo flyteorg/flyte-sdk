@@ -8,22 +8,25 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# Core dependencies - common across all workflows
+core = [
+    "transformers",
+    "torch",
+    "pillow",
+]
+
 # Training dependencies - needed for model fine-tuning
 training = [
-    "transformers[torch]",
-    "torch",
+    "image-classification-example[core]",
     "torchvision",
     "datasets",
-    "pillow",
     "numpy",
     "accelerate",  # For efficient training
 ]
 
 # Serving dependencies - needed for model inference API
 serving = [
-    "transformers",
-    "torch",
-    "pillow",
+    "image-classification-example[core]",
     "fastapi",
     "uvicorn",
     "python-multipart",
@@ -31,9 +34,7 @@ serving = [
 
 # Batch inference dependencies - for large-scale inference
 batch = [
-    "transformers",
-    "torch",
-    "pillow",
+    "image-classification-example[core]",
     "pandas",
     "pyarrow",
     "unionai-reuse>=0.1.9",
@@ -41,24 +42,17 @@ batch = [
 
 # All dependencies - for local development and testing
 all = [
-    "transformers[torch]",
-    "torch",
-    "torchvision",
-    "datasets",
-    "pillow",
-    "numpy",
-    "accelerate",
-    "fastapi",
-    "uvicorn",
-    "python-multipart",
-    "pandas",
-    "pyarrow",
-    "unionai-reuse>=0.1.9",
+    "image-classification-example[training]",
+    "image-classification-example[serving]",
+    "image-classification-example[batch]",
 ]
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["."]
 
 [tool.uv]
 dev-dependencies = []
