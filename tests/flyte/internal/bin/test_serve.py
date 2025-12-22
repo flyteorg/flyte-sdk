@@ -295,9 +295,7 @@ class TestSyncParameters:
         collection = SerializableParameterCollection.from_parameters(parameters)
         serialized = collection.to_transport
 
-        serializable_parameters, materialized_parameters, env_vars = await sync_parameters(
-            serialized, dest="/tmp/test"
-        )
+        serializable_parameters, materialized_parameters, env_vars = await sync_parameters(serialized, dest="/tmp/test")
 
         # Verify serializable_parameters contains the remote path as string
         assert serializable_parameters["remote_file"] == "s3://bucket/remote-file.txt"
@@ -328,9 +326,7 @@ class TestSyncParameters:
         collection = SerializableParameterCollection.from_parameters(parameters)
         serialized = collection.to_transport
 
-        serializable_parameters, materialized_parameters, env_vars = await sync_parameters(
-            serialized, dest="/tmp/test"
-        )
+        serializable_parameters, materialized_parameters, env_vars = await sync_parameters(serialized, dest="/tmp/test")
 
         # Verify serializable_parameters contains the remote path as string
         assert serializable_parameters["remote_dir"] == "s3://bucket/remote-dir/"
@@ -664,7 +660,7 @@ class TestMainCommand:
         with tempfile.TemporaryDirectory() as tmpdir:
             parameters_file = os.path.join(tmpdir, "flyte-parameters.json")
             with patch("flyte.app._parameter.RUNTIME_PARAMETERS_FILE", parameters_file):
-            # Mock Popen and asyncio
+                # Mock Popen and asyncio
                 with patch("subprocess.Popen") as mock_popen, patch("flyte._bin.serve.asyncio.run") as mock_run:
                     mock_bundle = CodeBundle(tgz="s3://bucket/code.tgz", destination=tmpdir, computed_version="v1.0.0")
                     mock_run.return_value = ({}, {}, {}, mock_bundle)
@@ -723,6 +719,7 @@ class TestMainCommand:
                 with patch("subprocess.Popen") as mock_popen, patch("flyte._bin.serve.asyncio.run") as mock_run:
                     # Create a temporary pkl file for the mock bundle
                     import gzip
+
                     import cloudpickle
 
                     pkl_file = os.path.join(tmpdir, "code.pkl")

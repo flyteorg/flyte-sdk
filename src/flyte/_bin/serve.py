@@ -27,7 +27,7 @@ _F_PATH_REWRITE = "_F_PATH_REWRITE"
 ENDPOINT_OVERRIDE = "_U_EP_OVERRIDE"
 
 
-async def sync_parameters(serialized_parameters: str, dest: str) -> tuple[dict, dict]:
+async def sync_parameters(serialized_parameters: str, dest: str) -> tuple[dict, dict, dict]:
     """
     Converts parameters into simple dict of name to value, downloading any files/directories as needed.
 
@@ -61,13 +61,12 @@ async def sync_parameters(serialized_parameters: str, dest: str) -> tuple[dict, 
         parameter_type = parameter.type
         ser_value = parameter.value
 
+        materialized_value: str | flyte.io.File | flyte.io.Dir = ser_value
         # for files and directories, default to remote paths for the materialized value
         if parameter_type == "file":
             materialized_value = flyte.io.File(path=ser_value)
         elif parameter_type == "directory":
             materialized_value = flyte.io.Dir(path=ser_value)
-        else:
-            materialized_value = ser_value
 
         # download files or directories
         if parameter.download:
@@ -97,7 +96,7 @@ async def sync_parameters(serialized_parameters: str, dest: str) -> tuple[dict, 
 
 async def download_code_parameters(
     serialized_parameters: str, tgz: str, pkl: str, dest: str, version: str
-) -> tuple[dict, dict, CodeBundle | None]:
+) -> tuple[dict, dict, dict, CodeBundle | None]:
     from flyte._internal.runtime.entrypoints import download_code_bundle
 
     serializable_parameters: dict[str, str] = {}
@@ -115,7 +114,6 @@ async def download_code_parameters(
 
 
 def load_app_env(
-    code_bundle: CodeBundle,
     resolver: str,
     resolver_args: str,
 ) -> AppEnvironment:
@@ -174,6 +172,7 @@ async def _serve(
     materialized_parameters: dict[str, str | flyte.io.File | flyte.io.Dir],
 ):
     logger.info("Running app via server function")
+    assert app_env._server is not None
 
     if app_env._on_startup is not None:
         if asyncio.iscoroutinefunction(app_env._on_startup):
@@ -248,7 +247,7 @@ def main(
         elif code_bundle.tgz:
             if resolver is None or resolver_args is None:
                 raise ValueError("--resolver and --resolver-args are required when using --tgz code bundle")
-            app_env = load_app_env(code_bundle, resolver, resolver_args)
+            app_env = load_app_env(resolver, resolver_args)
         else:
             raise ValueError("Code bundle did not contain a tgz or pkl file")
 
