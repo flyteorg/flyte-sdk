@@ -1,7 +1,6 @@
 import asyncio
 import pathlib
 import typing
-from pathlib import Path
 
 from distributed import Client
 from flyteplugins.dask import Dask, Scheduler, WorkerGroup

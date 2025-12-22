@@ -117,7 +117,9 @@ class RemoteImageBuilder(ImageBuilder):
                 auto_version="latest",
             ).override.aio(secrets=_get_build_secrets_from_image(image))
         except flyte.errors.ReferenceTaskError:
-            raise flyte.errors.ImageBuildError("remote image builder is not enabled. Please contact Union support to enable it.")
+            raise flyte.errors.ImageBuildError(
+                "remote image builder is not enabled. Please contact Union support to enable it."
+            )
 
         logger.warning("[bold blue]🐳 Submitting a new build...[/bold blue]")
         if image.registry and image.registry != _BASE_REGISTRY:
