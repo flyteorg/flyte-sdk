@@ -74,9 +74,9 @@ env = FastAPIAppEnvironment(
     description="Serving fine-tuned image classification model",
     image=serving_image,
     resources=flyte.Resources(cpu=2, memory="4Gi"),
-    include=[
-        "index.html",
-    ],
+    # include=[
+    #     "index.html",
+    # ],
     requires_auth=False,
     parameters=[
         Parameter(
