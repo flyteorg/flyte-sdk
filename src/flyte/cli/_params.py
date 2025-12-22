@@ -14,7 +14,7 @@ from typing import get_args
 
 import rich_click as click
 import yaml
-from click import Parameter
+from click import Context, Parameter
 from flyteidl2.core.interface_pb2 import Variable
 from flyteidl2.core.literals_pb2 import Literal
 from flyteidl2.core.types_pb2 import BlobType, LiteralType, SimpleType
@@ -69,6 +69,9 @@ def labels_callback(_: typing.Any, param: str, values: typing.List[str]) -> typi
 class DirParamType(click.ParamType):
     name = "directory path"
 
+    def get_metavar(self, param: Parameter, ctx: Context) -> str | None:
+        return "Remote Dir Path"
+
     def convert(
         self, value: typing.Any, param: typing.Optional[click.Parameter], ctx: typing.Optional[click.Context]
     ) -> typing.Any:
@@ -88,6 +91,9 @@ class StructuredDatasetParamType(click.ParamType):
 
     name = "structured dataset path (dir/file)"
 
+    def get_metavar(self, param: Parameter, ctx: Context) -> str | None:
+        return "Remote parquet URI"
+
     def convert(
         self, value: typing.Any, param: typing.Optional[click.Parameter], ctx: typing.Optional[click.Context]
     ) -> typing.Any:
@@ -101,6 +107,9 @@ class StructuredDatasetParamType(click.ParamType):
 class FileParamType(click.ParamType):
     name = "file path"
 
+    def get_metavar(self, param: Parameter, ctx: Context) -> str | None:
+        return "Remote File Path"
+
     def convert(
         self, value: typing.Any, param: typing.Optional[click.Parameter], ctx: typing.Optional[click.Context]
     ) -> typing.Any:
@@ -110,6 +119,7 @@ class FileParamType(click.ParamType):
             p = pathlib.Path(value)
             if not p.exists() or not p.is_file():
                 raise click.BadParameter(f"parameter should be a valid file path, {value}")
+            raise click.BadParameter(f"Only remote paths are supported currently, {value}")
         return File.from_existing_remote(value)
 
 
@@ -117,7 +127,7 @@ class PickleParamType(click.ParamType):
     name = "pickle"
 
     def get_metavar(self, param: "Parameter", ctx) -> t.Optional[str]:
-        return "Python Object <Module>:<Object>"
+        return "Python Object Instance <Module>:<Object>"
 
     def convert(
         self, value: typing.Any, param: typing.Optional[click.Parameter], ctx: typing.Optional[click.Context]
@@ -141,6 +151,9 @@ class PickleParamType(click.ParamType):
 
 class JSONIteratorParamType(click.ParamType):
     name = "json iterator"
+
+    def get_metavar(self, param: Parameter, ctx: Context) -> str | None:
+        return "JSON Value"
 
     def convert(
         self, value: typing.Any, param: typing.Optional[click.Parameter], ctx: typing.Optional[click.Context]
@@ -257,6 +270,9 @@ class DateTimeType(click.DateTime):
 class DurationParamType(click.ParamType):
     name = "[1:24 | :22 | 1 minute | 10 days | ...]"
 
+    def get_metavar(self, param: Parameter, ctx: Context) -> str | None:
+        return "ISO8601 duration"
+
     def convert(
         self, value: typing.Any, param: typing.Optional[click.Parameter], ctx: typing.Optional[click.Context]
     ) -> typing.Any:
@@ -291,6 +307,9 @@ class UnionParamType(click.ParamType):
         if None in types:
             self.name = f"Optional[{self.name}]"
             self.optional = True
+
+    def get_metavar(self, param: Parameter, ctx: typing.Optional[click.Context]) -> str | None:
+        return self.name
 
     @staticmethod
     def _sort_precedence(tp: typing.List[click.ParamType | None]) -> typing.List[click.ParamType]:
@@ -485,6 +504,8 @@ class FlyteLiteralConverter(object):
         try:
             # If the expected Python type is datetime.date, adjust the value to date
             if self._python_type is datetime.date:
+                if value is None:
+                    return None
                 # Click produces datetime, so converting to date to avoid type mismatch error
                 value = value.date()
 

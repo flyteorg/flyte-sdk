@@ -183,7 +183,7 @@ class RunTaskCommand(click.RichCommand):
             if isinstance(param, click.Option) and param.required:
                 param_name = param.name
                 if param_name not in ctx.params or ctx.params[param_name] is None:
-                    missing_params.append((param_name, param.type))
+                    missing_params.append((param_name, param.type.get_metavar(param, ctx)))
 
         if missing_params:
             raise click.UsageError(
