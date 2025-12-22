@@ -24,7 +24,6 @@ dependencies = [
     "toml>=0.10.2",
     "async-lru>=2.0.5",
     "mashumaro",
-    "dataclasses_json", # TODO: remove this dependency once we remove dataclasses_json from the code
     "aiolimiter>=1.2.1",
     "flyteidl2==2.0.0a16",
 ]
