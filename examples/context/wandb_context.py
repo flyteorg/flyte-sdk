@@ -19,7 +19,8 @@ from flyte import Link
 class Wandb(Link):
     project: str
     entity: str
-    host: str = "https://wandb.ai"
+    id: str
+    name: str = "Weights & Biases"
 
     def get_link(
         self,
@@ -30,7 +31,7 @@ class Wandb(Link):
         parent_action_name: str,
         action_name: str,
     ) -> str:
-        return "...."
+        return f"https://wandb.ai/{self.entity}/{self.project}/runs/{self.id}"
 
 
 # Configure the task environment with wandb
