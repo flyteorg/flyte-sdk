@@ -98,7 +98,7 @@ The training task will:
 Once training completes, deploy the model as a FastAPI service:
 
 ```bash
-flyte serve serving.py
+flyte serve serving.py env
 ```
 
 This will:
