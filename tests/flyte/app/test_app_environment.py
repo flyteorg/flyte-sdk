@@ -1036,3 +1036,147 @@ def test_app_environment_container_cmd_with_file_dir_parameter_overrides():
     assert deserialized.parameters[1].value == "s3://new-bucket/new-dir"
     assert deserialized.parameters[1].type == "directory"
     assert deserialized.parameters[1].download is True
+
+
+def test_app_environment_server_decorator():
+    """
+    GOAL: Verify that the server decorator method works correctly.
+
+    Tests that:
+    - The server decorator can be used to set a server function
+    - The decorated function is stored in _server
+    - The decorator returns the function
+    """
+    app = AppEnvironment(
+        name="app-with-server",
+        image=Image.from_base("python:3.11"),
+    )
+
+    @app.server
+    def my_server():
+        """Test server function."""
+        pass
+
+    assert app._server is not None
+    assert app._server == my_server
+    assert app._server.__name__ == "my_server"
+
+
+def test_app_environment_on_startup_decorator():
+    """
+    GOAL: Verify that the on_startup decorator method works correctly.
+
+    Tests that:
+    - The on_startup decorator can be used to set a startup function
+    - The decorated function is stored in _on_startup
+    - The decorator returns the function
+    """
+    app = AppEnvironment(
+        name="app-with-startup",
+        image=Image.from_base("python:3.11"),
+    )
+
+    @app.on_startup
+    def my_startup():
+        """Test startup function."""
+        pass
+
+    assert app._on_startup is not None
+    assert app._on_startup == my_startup
+    assert app._on_startup.__name__ == "my_startup"
+
+
+def test_app_environment_on_shutdown_decorator():
+    """
+    GOAL: Verify that the on_shutdown decorator method works correctly.
+
+    Tests that:
+    - The on_shutdown decorator can be used to set a shutdown function
+    - The decorated function is stored in _on_shutdown
+    - The decorator returns the function
+    """
+    app = AppEnvironment(
+        name="app-with-shutdown",
+        image=Image.from_base("python:3.11"),
+    )
+
+    @app.on_shutdown
+    def my_shutdown():
+        """Test shutdown function."""
+        pass
+
+    assert app._on_shutdown is not None
+    assert app._on_shutdown == my_shutdown
+    assert app._on_shutdown.__name__ == "my_shutdown"
+
+
+def test_app_environment_all_lifecycle_decorators():
+    """
+    GOAL: Verify that all lifecycle decorators can be used together.
+
+    Tests that:
+    - server, on_startup, and on_shutdown can all be set on the same AppEnvironment
+    - Each decorator stores the function independently
+    """
+    app = AppEnvironment(
+        name="app-full-lifecycle",
+        image=Image.from_base("python:3.11"),
+    )
+
+    @app.on_startup
+    def startup():
+        """Startup function."""
+        pass
+
+    @app.server
+    def server():
+        """Server function."""
+        pass
+
+    @app.on_shutdown
+    def shutdown():
+        """Shutdown function."""
+        pass
+
+    assert app._on_startup is not None
+    assert app._on_startup == startup
+    assert app._server is not None
+    assert app._server == server
+    assert app._on_shutdown is not None
+    assert app._on_shutdown == shutdown
+
+
+def test_app_environment_decorators_with_async_functions():
+    """
+    GOAL: Verify that decorators work with async functions.
+
+    Tests that:
+    - Async functions can be decorated with server, on_startup, and on_shutdown
+    - The async functions are stored correctly
+    """
+    app = AppEnvironment(
+        name="app-async",
+        image=Image.from_base("python:3.11"),
+    )
+
+    @app.on_startup
+    async def async_startup():
+        """Async startup function."""
+        pass
+
+    @app.server
+    async def async_server():
+        """Async server function."""
+        pass
+
+    @app.on_shutdown
+    async def async_shutdown():
+        """Async shutdown function."""
+        pass
+
+    assert app._on_startup is not None
+    assert app._on_startup == async_startup
+    assert app._server is not None
+    assert app._server == async_server
+    assert app._on_shutdown is not None
+    assert app._on_shutdown == async_shutdown
