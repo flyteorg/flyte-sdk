@@ -58,6 +58,8 @@ def project(cfg: common.CLIConfig, name: str | None = None):
     help="Filter runs by their status.",
 )
 @click.option("--only-mine", is_flag=True, default=False, help="Show only runs created by the current user (you).")
+@click.option("--task-name", type=str, default=None, help="Filter runs by task name.")
+@click.option("--task-version", type=str, default=None, help="Filter runs by task version.")
 @click.pass_obj
 def run(
     cfg: common.CLIConfig,
@@ -67,6 +69,8 @@ def run(
     limit: int = 100,
     in_phase: str | Tuple[str, ...] | None = None,
     only_mine: bool = False,
+    task_name: str | None = None,
+    task_version: str | None = None,
 ):
     """
     Get a list of all runs, or details of a specific run by name.
@@ -74,6 +78,13 @@ def run(
     The run details will include information about the run, its status, but only the root action will be shown.
 
     If you want to see the actions for a run, use `get action <run_name>`.
+
+    You can filter runs by task name and optionally task version:
+
+    ```bash
+    $ flyte get run --task-name my_task
+    $ flyte get run --task-name my_task --task-version v1.0
+    ```
     """
 
     cfg.init(project=project, domain=domain)
@@ -94,7 +105,13 @@ def run(
         console.print(
             common.format(
                 "Runs",
-                remote.Run.listall(limit=limit, in_phase=in_phase, created_by_subject=subject),
+                remote.Run.listall(
+                    limit=limit,
+                    in_phase=in_phase,
+                    created_by_subject=subject,
+                    task_name=task_name,
+                    task_version=task_version,
+                ),
                 cfg.output_format,
             )
         )
