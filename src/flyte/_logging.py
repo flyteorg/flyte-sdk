@@ -49,7 +49,7 @@ def get_env_log_level() -> int:
         return int(value)
 
     # Case 2: named log level ("info", "debug", ...)
-    if value in _LOG_LEVEL_MAP:
+    if value.lower() in _LOG_LEVEL_MAP:
         return _LOG_LEVEL_MAP[value]
 
     return DEFAULT_LOG_LEVEL
