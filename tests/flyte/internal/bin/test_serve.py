@@ -1,7 +1,7 @@
 """
 Unit tests for flyte._bin.serve module.
 
-These tests verify the serve functionality including input synchronization,
+These tests verify the serve functionality including parameter synchronization,
 code bundle downloading, and the main serve command without using mocks.
 """
 
@@ -19,26 +19,26 @@ from flyte.app._parameter import Parameter, SerializableParameterCollection
 from flyte.models import CodeBundle
 
 
-class TestSyncInputs:
-    """Tests for sync_inputs function."""
+class TestSyncParameters:
+    """Tests for sync_parameters function."""
 
     @pytest.mark.asyncio
     async def test_sync_parameters_with_string_values(self):
         """
-        GOAL: Verify sync_inputs correctly handles string-type inputs.
+        GOAL: Verify sync_parameters correctly handles string-type parameters.
 
-        Tests that string inputs are returned as-is without download attempts.
+        Tests that string parameters are returned as-is without download attempts.
         """
-        # Create inputs with string values
-        inputs = [
+        # Create parameters with string values
+        parameters = [
             Parameter(value="config-value", name="config"),
             Parameter(value="api-key-value", name="api_key"),
             Parameter(value="test-env-var", name="test_env_var", env_var="TEST_ENV_VAR"),
         ]
-        collection = SerializableParameterCollection.from_parameters(inputs)
+        collection = SerializableParameterCollection.from_parameters(parameters)
         serialized = collection.to_transport
 
-        # Sync inputs
+        # Sync parameters
         serializable_parameters, materialized_parameters, env_vars = await sync_parameters(serialized, dest="/tmp/test")
 
         # Verify string values are returned as-is
@@ -46,10 +46,16 @@ class TestSyncInputs:
         assert serializable_parameters["api_key"] == "api-key-value"
         assert env_vars["TEST_ENV_VAR"] == "test-env-var"
 
+        # Verify materialized_parameters contains string values (same as serializable_parameters for strings)
+        assert materialized_parameters["config"] == "config-value"
+        assert materialized_parameters["api_key"] == "api-key-value"
+        assert isinstance(materialized_parameters["config"], str)
+        assert isinstance(materialized_parameters["api_key"], str)
+
     @pytest.mark.asyncio
     async def test_sync_parameters_with_file_download(self):
         """
-        GOAL: Verify sync_parameters correctly downloads file inputs.
+        GOAL: Verify sync_parameters correctly downloads file parameters.
 
         Tests that File parameters with download=True are downloaded
         and the downloaded file is accessible at the destination.
@@ -63,18 +69,20 @@ class TestSyncInputs:
             async with aiofiles.open(source_file, "w") as f:
                 await f.write("test content")
 
-            # Create a File input with download enabled using file:// URL
+            # Create a File parameter with download enabled using file:// URL
             file_obj = File(path=f"file://{source_file}")
-            inputs = [
+            parameters = [
                 Parameter(value=file_obj, name="datafile", download=True),
             ]
-            collection = SerializableParameterCollection.from_parameters(inputs)
+            collection = SerializableParameterCollection.from_parameters(parameters)
             serialized = collection.to_transport
 
             dest_dir = os.path.join(tmpdir, "dest")
             os.makedirs(dest_dir, exist_ok=True)
 
-            serializable_parameters, materialized_parameters, env_vars = await sync_parameters(serialized, dest=str(dest_dir))
+            serializable_parameters, materialized_parameters, env_vars = await sync_parameters(
+                serialized, dest=str(dest_dir)
+            )
 
             # Verify result contains downloaded path
             assert "datafile" in serializable_parameters
@@ -86,12 +94,20 @@ class TestSyncInputs:
             async with aiofiles.open(downloaded_path, "r") as f:
                 assert await f.read() == "test content"
 
+            # Verify materialized_parameters contains File object with downloaded path
+            assert "datafile" in materialized_parameters
+            from flyte.io import File
+
+            materialized_file = materialized_parameters["datafile"]
+            assert isinstance(materialized_file, File)
+            assert materialized_file.path == downloaded_path
+
     @pytest.mark.asyncio
     async def test_sync_parameters_with_custom_dest(self):
         """
         GOAL: Verify sync_parameters respects custom destination paths.
 
-        Tests that when input.dest (mount) is specified, it overrides the default dest.
+        Tests that when parameter.mount is specified, it overrides the default dest.
         """
         from flyte.io import File
 
@@ -106,18 +122,20 @@ class TestSyncInputs:
             custom_dest = os.path.join(tmpdir, "app", "config")
             os.makedirs(custom_dest, exist_ok=True)
 
-            # Create File input with custom destination (mount)
+            # Create File parameter with custom destination (mount)
             file_obj = File(path=f"file://{source_file}")
-            inputs = [
+            parameters = [
                 Parameter(value=file_obj, name="config", mount=custom_dest),  # mount implies download
             ]
-            collection = SerializableParameterCollection.from_parameters(inputs)
+            collection = SerializableParameterCollection.from_parameters(parameters)
             serialized = collection.to_transport
 
             default_dest = os.path.join(tmpdir, "default")
             os.makedirs(default_dest, exist_ok=True)
 
-            serializable_parameters, materialized_parameters, env_vars = await sync_parameters(serialized, dest=str(default_dest))
+            serializable_parameters, materialized_parameters, env_vars = await sync_parameters(
+                serialized, dest=str(default_dest)
+            )
 
             # Verify file was downloaded to custom dest, not default dest
             downloaded_path = serializable_parameters["config"]
@@ -126,13 +144,21 @@ class TestSyncInputs:
             assert os.path.exists(downloaded_path)
             assert env_vars == {}
 
+            # Verify materialized_parameters contains File object with custom dest path
+            from flyte.io import File
+
+            materialized_file = materialized_parameters["config"]
+            assert isinstance(materialized_file, File)
+            assert materialized_file.path == downloaded_path
+            assert custom_dest in materialized_file.path
+
     @pytest.mark.asyncio
     async def test_sync_parameters_with_directory_download(self):
         """
-        GOAL: Verify sync_parameters correctly downloads directory inputs.
+        GOAL: Verify sync_parameters correctly downloads directory parameters.
 
         Tests that:
-        - Directory inputs trigger recursive downloads
+        - Directory parameters trigger recursive downloads
         - All files in the directory are downloaded
         """
         from flyte.io import Dir
@@ -146,13 +172,13 @@ class TestSyncInputs:
             async with aiofiles.open(os.path.join(source_dir, "file2.txt"), "w") as f:
                 await f.write("data2")
 
-            # Create directory input
-            dir_input = Dir(path=f"file://{source_dir}")
+            # Create directory parameter
+            dir_parameter = Dir(path=f"file://{source_dir}")
             mount_dest = os.path.join(tmpdir, "data")
             os.makedirs(mount_dest, exist_ok=True)
 
             parameters = [
-                Parameter(value=dir_input, name="dataset", mount=mount_dest),  # mount implies download
+                Parameter(value=dir_parameter, name="dataset", mount=mount_dest),  # mount implies download
                 Parameter(value="test-env-var", name="test_env_var", env_var="TEST_ENV_VAR"),
             ]
             collection = SerializableParameterCollection.from_parameters(parameters)
@@ -163,17 +189,34 @@ class TestSyncInputs:
             assert os.path.isdir(serializable_parameters["dataset"])
             assert env_vars["TEST_ENV_VAR"] == "test-env-var"
 
-            async with aiofiles.open(os.path.join(serializable_parameters["dataset"], "data-dir", "file1.txt"), "r") as f:
+            async with aiofiles.open(
+                os.path.join(serializable_parameters["dataset"], "data-dir", "file1.txt"), "r"
+            ) as f:
                 assert await f.read() == "data1"
-            async with aiofiles.open(os.path.join(serializable_parameters["dataset"], "data-dir", "file2.txt"), "r") as f:
+            async with aiofiles.open(
+                os.path.join(serializable_parameters["dataset"], "data-dir", "file2.txt"), "r"
+            ) as f:
                 assert await f.read() == "data2"
+
+            # Verify materialized_parameters contains Dir object with downloaded path
+            from flyte.io import Dir
+
+            materialized_dir = materialized_parameters["dataset"]
+            assert isinstance(materialized_dir, Dir)
+            assert materialized_dir.path == serializable_parameters["dataset"]
+            assert os.path.exists(materialized_dir.path)
+            assert os.path.isdir(materialized_dir.path)
+
+            # Verify materialized_parameters contains string value for string parameter
+            assert materialized_parameters["test_env_var"] == "test-env-var"
+            assert isinstance(materialized_parameters["test_env_var"], str)
 
     @pytest.mark.asyncio
     async def test_sync_parameters_mixed_types(self):
         """
-        GOAL: Verify sync_parameters handles mixed input types correctly.
+        GOAL: Verify sync_parameters handles mixed parameter types correctly.
 
-        Tests that a combination of string inputs and File inputs
+        Tests that a combination of string parameters and File parameters
         are all processed correctly.
 
         Note: String values don't download even with download=True.
@@ -189,18 +232,20 @@ class TestSyncInputs:
                 await f.write(b"model data")
 
             file_obj = File(path=f"file://{source_file}")
-            inputs = [
+            parameters = [
                 Parameter(value="string-config", name="config"),
                 Parameter(value=file_obj, name="model", download=True),
                 Parameter(value="another-string", name="param"),
             ]
-            collection = SerializableParameterCollection.from_parameters(inputs)
+            collection = SerializableParameterCollection.from_parameters(parameters)
             serialized = collection.to_transport
 
             dest_dir = os.path.join(tmpdir, "dest")
             os.makedirs(dest_dir, exist_ok=True)
 
-            serializable_parameters, materialized_parameters, env_vars = await sync_parameters(serialized, dest=str(dest_dir))
+            serializable_parameters, materialized_parameters, env_vars = await sync_parameters(
+                serialized, dest=str(dest_dir)
+            )
 
             # Verify string values
             assert serializable_parameters["config"] == "string-config"
@@ -216,14 +261,95 @@ class TestSyncInputs:
             # Verify environment variables
             assert env_vars == {}
 
-    @pytest.mark.asyncio
-    async def test_sync_inputs_empty_inputs(self):
-        """
-        GOAL: Verify sync_inputs handles empty inputs gracefully.
+            # Verify materialized_parameters contains correct types
+            from flyte.io import File
 
-        Tests that an empty input list returns an empty dict.
+            # String parameters should be strings in materialized_parameters
+            assert materialized_parameters["config"] == "string-config"
+            assert materialized_parameters["param"] == "another-string"
+            assert isinstance(materialized_parameters["config"], str)
+            assert isinstance(materialized_parameters["param"], str)
+
+            # File parameter should be File object with downloaded path
+            materialized_file = materialized_parameters["model"]
+            assert isinstance(materialized_file, File)
+            assert materialized_file.path == model_path
+            assert os.path.exists(materialized_file.path)
+
+    @pytest.mark.asyncio
+    async def test_sync_parameters_with_file_no_download(self):
         """
-        # Create empty inputs
+        GOAL: Verify materialized_parameters contains File objects even when download=False.
+
+        Tests that:
+        - File parameters without download=True still create File objects in materialized_parameters.
+        - The File object contains the remote path, not a local path
+        """
+        from flyte.io import File
+
+        # Create a File parameter without download
+        file_obj = File(path="s3://bucket/remote-file.txt")
+        parameters = [
+            Parameter(value=file_obj, name="remote_file", download=False),
+        ]
+        collection = SerializableParameterCollection.from_parameters(parameters)
+        serialized = collection.to_transport
+
+        serializable_parameters, materialized_parameters, env_vars = await sync_parameters(
+            serialized, dest="/tmp/test"
+        )
+
+        # Verify serializable_parameters contains the remote path as string
+        assert serializable_parameters["remote_file"] == "s3://bucket/remote-file.txt"
+        assert isinstance(serializable_parameters["remote_file"], str)
+
+        # Verify materialized_parameters contains File object with remote path
+        materialized_file = materialized_parameters["remote_file"]
+        assert isinstance(materialized_file, File)
+        assert materialized_file.path == "s3://bucket/remote-file.txt"
+        assert env_vars == {}
+
+    @pytest.mark.asyncio
+    async def test_sync_parameters_with_directory_no_download(self):
+        """
+        GOAL: Verify materialized_parameters contains Dir objects even when download=False.
+
+        Tests that:
+        - Directory parameters without download=True still create Dir objects in materialized_parameters.
+        - The Dir object contains the remote path, not a local path
+        """
+        from flyte.io import Dir
+
+        # Create a Dir parameter without download
+        dir_obj = Dir(path="s3://bucket/remote-dir/")
+        parameters = [
+            Parameter(value=dir_obj, name="remote_dir", download=False),
+        ]
+        collection = SerializableParameterCollection.from_parameters(parameters)
+        serialized = collection.to_transport
+
+        serializable_parameters, materialized_parameters, env_vars = await sync_parameters(
+            serialized, dest="/tmp/test"
+        )
+
+        # Verify serializable_parameters contains the remote path as string
+        assert serializable_parameters["remote_dir"] == "s3://bucket/remote-dir/"
+        assert isinstance(serializable_parameters["remote_dir"], str)
+
+        # Verify materialized_parameters contains Dir object with remote path
+        materialized_dir = materialized_parameters["remote_dir"]
+        assert isinstance(materialized_dir, Dir)
+        assert materialized_dir.path == "s3://bucket/remote-dir/"
+        assert env_vars == {}
+
+    @pytest.mark.asyncio
+    async def test_sync_parameters_empty_parameters(self):
+        """
+        GOAL: Verify sync_parameters handles empty parameters gracefully.
+
+        Tests that an empty parameters list returns an empty dict.
+        """
+        # Create empty parameters
         collection = SerializableParameterCollection(parameters=[])
         serialized = collection.to_transport
 
@@ -270,7 +396,7 @@ class TestDownloadCodeParameters:
             # Verify environment variables
             assert env_vars == {}
 
-            # Verify user inputs is empty
+            # Verify user parameters is empty
             assert serializable_parameters == {}
             assert materialized_parameters == {}
 
@@ -304,15 +430,15 @@ class TestDownloadCodeParameters:
             assert env_vars == {}
 
     @pytest.mark.asyncio
-    async def test_download_code_parameters_with_inputs_and_code(self):
+    async def test_download_code_parameters_with_parameters_and_code(self):
         """
-        GOAL: Verify download_code_parameters handles both inputs and code bundle.
+        GOAL: Verify download_code_parameters handles both parameters and code bundle.
 
-        Tests that both user inputs and code bundle are downloaded and returned.
+        Tests that both user parameters and code bundle are downloaded and returned.
         """
-        # Create serialized inputs
-        inputs = [Parameter(value="config-value", name="config")]
-        collection = SerializableParameterCollection.from_parameters(inputs)
+        # Create serialized parameters
+        parameters = [Parameter(value="config-value", name="config")]
+        collection = SerializableParameterCollection.from_parameters(parameters)
         serialized = collection.to_transport
 
         # Mock download_code_bundle
@@ -328,9 +454,58 @@ class TestDownloadCodeParameters:
                 version="v1.0.0",
             )
 
-            # Verify both inputs and code bundle
+            # Verify both parameters and code bundle
             assert serializable_parameters["config"] == "config-value"
             assert code_bundle == mock_bundle
+            assert env_vars == {}
+
+            # Verify materialized_parameters contains string value
+            assert materialized_parameters["config"] == "config-value"
+            assert isinstance(materialized_parameters["config"], str)
+
+    @pytest.mark.asyncio
+    async def test_download_code_parameters_with_file_parameters(self):
+        """
+        GOAL: Verify download_code_parameters properly returns materialized_parameters for file parameters.
+
+        Tests that materialized_parameters contains File objects when file parameters are provided.
+        """
+        from flyte.io import File
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Create a source file
+            source_file = os.path.join(tmpdir, "source", "data.txt")
+            os.makedirs(os.path.dirname(source_file), exist_ok=True)
+            async with aiofiles.open(source_file, "w") as f:
+                await f.write("test data")
+
+            # Create File parameter with download
+            file_obj = File(path=f"file://{source_file}")
+            parameters = [Parameter(value=file_obj, name="datafile", download=True)]
+            collection = SerializableParameterCollection.from_parameters(parameters)
+            serialized = collection.to_transport
+
+            dest_dir = os.path.join(tmpdir, "dest")
+            os.makedirs(dest_dir, exist_ok=True)
+
+            serializable_parameters, materialized_parameters, env_vars, code_bundle = await download_code_parameters(
+                serialized_parameters=serialized, tgz="", pkl="", dest=str(dest_dir), version="v1.0.0"
+            )
+
+            # Verify serializable_parameters contains downloaded path as string
+            assert "datafile" in serializable_parameters
+            downloaded_path = serializable_parameters["datafile"]
+            assert isinstance(downloaded_path, str)
+            assert os.path.exists(downloaded_path)
+
+            # Verify materialized_parameters contains File object
+            assert "datafile" in materialized_parameters
+            materialized_file = materialized_parameters["datafile"]
+            assert isinstance(materialized_file, File)
+            assert materialized_file.path == downloaded_path
+
+            # Verify no code bundle
+            assert code_bundle is None
             assert env_vars == {}
 
     @pytest.mark.asyncio
@@ -338,19 +513,23 @@ class TestDownloadCodeParameters:
         """
         GOAL: Verify download_code_parameters works without a code bundle.
 
-        Tests that when no tgz or pkl is provided, only inputs are processed.
+        Tests that when no tgz or pkl is provided, only parameters are processed.
         """
-        # Create serialized inputs
-        inputs = [Parameter(value="test-value", name="param")]
-        collection = SerializableParameterCollection.from_parameters(inputs)
+        # Create serialized parameters
+        parameters = [Parameter(value="test-value", name="param")]
+        collection = SerializableParameterCollection.from_parameters(parameters)
         serialized = collection.to_transport
 
         serializable_parameters, materialized_parameters, env_vars, code_bundle = await download_code_parameters(
             serialized_parameters=serialized, tgz="", pkl="", dest="/app", version="v1.0.0"
         )
 
-        # Verify inputs are processed
+        # Verify parameters are processed
         assert serializable_parameters["param"] == "test-value"
+
+        # Verify materialized_parameters contains string value
+        assert materialized_parameters["param"] == "test-value"
+        assert isinstance(materialized_parameters["param"], str)
 
         # Verify no code bundle
         assert code_bundle is None
@@ -359,11 +538,11 @@ class TestDownloadCodeParameters:
         assert env_vars == {}
 
     @pytest.mark.asyncio
-    async def test_download_code_parameters_empty_inputs_with_code(self):
+    async def test_download_code_parameters_empty_parameters_with_code(self):
         """
-        GOAL: Verify download_code_parameters works with empty inputs but code bundle.
+        GOAL: Verify download_code_parameters works with empty parameters but code bundle.
 
-        Tests that code bundle can be downloaded without user inputs.
+        Tests that code bundle can be downloaded without user parameters.
         """
         # Mock download_code_bundle
         with patch("flyte._internal.runtime.entrypoints.download_code_bundle", new_callable=AsyncMock) as mock_download:
@@ -374,7 +553,7 @@ class TestDownloadCodeParameters:
                 serialized_parameters="", tgz="s3://bucket/code.tgz", pkl="", dest="/app", version="v1.0.0"
             )
 
-            # Verify empty user inputs
+            # Verify empty user parameters
             assert serializable_parameters == {}
             assert materialized_parameters == {}
 
@@ -397,51 +576,13 @@ class TestMainCommand:
         runner = CliRunner()
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            # Mock Popen (imported inside main) and asyncio.run
-            with patch("subprocess.Popen") as mock_popen, patch("flyte._bin.serve.asyncio.run") as mock_run:
-                # Mock asyncio.run to return empty inputs and no code bundle
-                mock_run.return_value = ({}, {}, {}, None)
-
-                # Mock process
-                mock_process = MagicMock()
-                mock_process.wait.return_value = 0
-                mock_popen.return_value = mock_process
-
-                # Run command
-                result = runner.invoke(
-                    main,
-                    ["--version", "v1.0.0", "--dest", tmpdir, "--", "echo", "hello"],
-                )
-
-                # Verify command succeeded
-                assert result.exit_code == 0
-
-    def test_main_with_inputs(self):
-        """
-        GOAL: Verify main command processes inputs correctly.
-
-        Tests that:
-        - Inputs are deserialized and downloaded
-        - Inputs file is created
-        - Environment variable is set
-        """
-        runner = CliRunner()
-
-        # Create serialized inputs
-        inputs = [Parameter(value="test-value", name="config")]
-        collection = SerializableParameterCollection.from_parameters(inputs)
-        serialized = collection.to_transport
-
-        with tempfile.TemporaryDirectory() as tmpdir:
-            # Change to tmpdir so inputs file is created there
-            original_cwd = os.getcwd()
-            try:
-                os.chdir(tmpdir)
-
-                # Mock Popen and asyncio to avoid actual subprocess
+            # Patch RUNTIME_PARAMETERS_FILE to use the temporary file
+            parameters_file = os.path.join(tmpdir, "flyte-parameters.json")
+            with patch("flyte.app._parameter.RUNTIME_PARAMETERS_FILE", parameters_file):
+                # Mock Popen (imported inside main) and asyncio.run
                 with patch("subprocess.Popen") as mock_popen, patch("flyte._bin.serve.asyncio.run") as mock_run:
-                    # Mock asyncio.run to return test inputs
-                    mock_run.return_value = ({"config": "test-value"}, {}, {}, None)
+                    # Mock asyncio.run to return empty parameters and no code bundle
+                    mock_run.return_value = ({}, {}, {}, None)
 
                     # Mock process
                     mock_process = MagicMock()
@@ -451,20 +592,63 @@ class TestMainCommand:
                     # Run command
                     result = runner.invoke(
                         main,
-                        ["--version", "v1.0.0", "--parameters", serialized, "--dest", tmpdir, "--", "echo", "test"],
+                        ["--version", "v1.0.0", "--dest", tmpdir, "--", "echo", "hello"],
                     )
 
                     # Verify command succeeded
                     assert result.exit_code == 0
 
-                    # Verify inputs file was created
-                    inputs_file = os.path.join(tmpdir, "flyte-parameters.json")
-                    assert os.path.exists(inputs_file)
+    def test_main_with_parameters(self):
+        """
+        GOAL: Verify main command processes parameters correctly.
 
-                    # Verify inputs file content
-                    with open(inputs_file, "r") as f:
-                        saved_inputs = json.load(f)
-                    assert saved_inputs["config"] == "test-value"
+        Tests that:
+        - Parameters are deserialized and downloaded
+        - Parameters file is created
+        - Environment variable is set
+        """
+        runner = CliRunner()
+
+        # Create serialized parameters
+        parameters = [Parameter(value="test-value", name="config")]
+        collection = SerializableParameterCollection.from_parameters(parameters)
+        serialized = collection.to_transport
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Change to tmpdir so parameters file is created there
+            original_cwd = os.getcwd()
+            try:
+                os.chdir(tmpdir)
+
+                # Mock Popen and asyncio to avoid actual subprocess
+                parameters_file = os.path.join(tmpdir, "flyte-parameters.json")
+                with patch("flyte.app._parameter.RUNTIME_PARAMETERS_FILE", parameters_file):
+                    with patch("subprocess.Popen") as mock_popen, patch("flyte._bin.serve.asyncio.run") as mock_run:
+                        # Mock asyncio.run to return test parameters
+                        mock_run.return_value = ({"config": "test-value"}, {}, {}, None)
+
+                        # Mock process
+                        mock_process = MagicMock()
+                        mock_process.wait.return_value = 0
+                        mock_popen.return_value = mock_process
+
+                        # Run command
+                        result = runner.invoke(
+                            main,
+                            ["--version", "v1.0.0", "--parameters", serialized, "--dest", tmpdir, "--", "echo", "test"],
+                        )
+
+                        # Verify command succeeded
+                        assert result.exit_code == 0
+
+                        # Verify parameters file was created
+                        parameters_file = os.path.join(tmpdir, "flyte-parameters.json")
+                        assert os.path.exists(parameters_file)
+
+                        # Verify parameters file content
+                        with open(parameters_file, "r") as f:
+                            saved_parameters = json.load(f)
+                        assert saved_parameters["config"] == "test-value"
 
             finally:
                 os.chdir(original_cwd)
@@ -478,49 +662,51 @@ class TestMainCommand:
         runner = CliRunner()
 
         with tempfile.TemporaryDirectory() as tmpdir:
+            parameters_file = os.path.join(tmpdir, "flyte-parameters.json")
+            with patch("flyte.app._parameter.RUNTIME_PARAMETERS_FILE", parameters_file):
             # Mock Popen and asyncio
-            with patch("subprocess.Popen") as mock_popen, patch("flyte._bin.serve.asyncio.run") as mock_run:
-                mock_bundle = CodeBundle(tgz="s3://bucket/code.tgz", destination=tmpdir, computed_version="v1.0.0")
-                mock_run.return_value = ({}, {}, {}, mock_bundle)
+                with patch("subprocess.Popen") as mock_popen, patch("flyte._bin.serve.asyncio.run") as mock_run:
+                    mock_bundle = CodeBundle(tgz="s3://bucket/code.tgz", destination=tmpdir, computed_version="v1.0.0")
+                    mock_run.return_value = ({}, {}, {}, mock_bundle)
 
-                # Mock process
-                mock_process = MagicMock()
-                mock_process.wait.return_value = 0
-                mock_popen.return_value = mock_process
+                    # Mock process
+                    mock_process = MagicMock()
+                    mock_process.wait.return_value = 0
+                    mock_popen.return_value = mock_process
 
-                # Mock load_app_env to avoid actual loading
-                with patch("flyte._bin.serve.load_app_env") as mock_load:
-                    from flyte._image import Image
-                    from flyte.app import AppEnvironment
+                    # Mock load_app_env to avoid actual loading
+                    with patch("flyte._bin.serve.load_app_env") as mock_load:
+                        from flyte._image import Image
+                        from flyte.app import AppEnvironment
 
-                    mock_app_env = AppEnvironment(name="test-app", image=Image.from_base("python:3.11"))
-                    mock_load.return_value = mock_app_env
+                        mock_app_env = AppEnvironment(name="test-app", image=Image.from_base("python:3.11"))
+                        mock_load.return_value = mock_app_env
 
-                    # Run command with tgz
-                    result = runner.invoke(
-                        main,
-                        [
-                            "--version",
-                            "v1.0.0",
-                            "--tgz",
-                            "s3://bucket/code.tgz",
-                            "--dest",
-                            tmpdir,
-                            "--resolver",
-                            "flyte._internal.resolvers.app_env.AppEnvResolver",
-                            "--resolver-args",
-                            "test.module:app_env",
-                            "--",
-                            "python",
-                            "app.py",
-                        ],
-                    )
+                        # Run command with tgz
+                        result = runner.invoke(
+                            main,
+                            [
+                                "--version",
+                                "v1.0.0",
+                                "--tgz",
+                                "s3://bucket/code.tgz",
+                                "--dest",
+                                tmpdir,
+                                "--resolver",
+                                "flyte._internal.resolvers.app_env.AppEnvResolver",
+                                "--resolver-args",
+                                "test.module:app_env",
+                                "--",
+                                "python",
+                                "app.py",
+                            ],
+                        )
 
-                # Verify command succeeded
-                assert result.exit_code == 0
+                    # Verify command succeeded
+                    assert result.exit_code == 0
 
-                # Verify asyncio.run was called
-                assert mock_run.called
+                    # Verify asyncio.run was called
+                    assert mock_run.called
 
     def test_main_with_pkl_code_bundle(self):
         """
@@ -531,53 +717,53 @@ class TestMainCommand:
         runner = CliRunner()
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            # Mock Popen and asyncio
-            with patch("subprocess.Popen") as mock_popen, patch("flyte._bin.serve.asyncio.run") as mock_run:
-                # Create a temporary pkl file for the mock bundle
-                import gzip
-                import os
+            parameters_file = os.path.join(tmpdir, "flyte-parameters.json")
+            with patch("flyte.app._parameter.RUNTIME_PARAMETERS_FILE", parameters_file):
+                # Mock Popen and asyncio
+                with patch("subprocess.Popen") as mock_popen, patch("flyte._bin.serve.asyncio.run") as mock_run:
+                    # Create a temporary pkl file for the mock bundle
+                    import gzip
+                    import cloudpickle
 
-                import cloudpickle
+                    pkl_file = os.path.join(tmpdir, "code.pkl")
+                    # Create a minimal pickled app env
+                    from flyte._image import Image
+                    from flyte.app import AppEnvironment
 
-                pkl_file = os.path.join(tmpdir, "code.pkl")
-                # Create a minimal pickled app env
-                from flyte._image import Image
-                from flyte.app import AppEnvironment
+                    mock_app_env = AppEnvironment(name="test-app", image=Image.from_base("python:3.11"))
+                    with gzip.open(pkl_file, "wb") as f:
+                        cloudpickle.dump(mock_app_env, f)
 
-                mock_app_env = AppEnvironment(name="test-app", image=Image.from_base("python:3.11"))
-                with gzip.open(pkl_file, "wb") as f:
-                    cloudpickle.dump(mock_app_env, f)
+                    # Create bundle with downloaded_path using dataclasses.replace
+                    from dataclasses import replace
 
-                # Create bundle with downloaded_path using dataclasses.replace
-                from dataclasses import replace
+                    mock_bundle = CodeBundle(pkl="s3://bucket/code.pkl", destination=tmpdir, computed_version="v1.0.0")
+                    mock_bundle = replace(mock_bundle, downloaded_path=pkl_file)
+                    mock_run.return_value = ({}, {}, {}, mock_bundle)
 
-                mock_bundle = CodeBundle(pkl="s3://bucket/code.pkl", destination=tmpdir, computed_version="v1.0.0")
-                mock_bundle = replace(mock_bundle, downloaded_path=pkl_file)
-                mock_run.return_value = ({}, {}, {}, mock_bundle)
+                    # Mock process
+                    mock_process = MagicMock()
+                    mock_process.wait.return_value = 0
+                    mock_popen.return_value = mock_process
 
-                # Mock process
-                mock_process = MagicMock()
-                mock_process.wait.return_value = 0
-                mock_popen.return_value = mock_process
+                    # Run command with pkl
+                    result = runner.invoke(
+                        main,
+                        [
+                            "--version",
+                            "v1.0.0",
+                            "--pkl",
+                            "s3://bucket/code.pkl",
+                            "--dest",
+                            tmpdir,
+                            "--",
+                            "python",
+                            "app.py",
+                        ],
+                    )
 
-                # Run command with pkl
-                result = runner.invoke(
-                    main,
-                    [
-                        "--version",
-                        "v1.0.0",
-                        "--pkl",
-                        "s3://bucket/code.pkl",
-                        "--dest",
-                        tmpdir,
-                        "--",
-                        "python",
-                        "app.py",
-                    ],
-                )
-
-                # Verify command succeeded
-                assert result.exit_code == 0
+                    # Verify command succeeded
+                    assert result.exit_code == 0
 
     def test_main_with_project_domain_org(self):
         """
@@ -588,37 +774,39 @@ class TestMainCommand:
         runner = CliRunner()
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            # Mock Popen and asyncio
-            with patch("subprocess.Popen") as mock_popen, patch("flyte._bin.serve.asyncio.run") as mock_run:
-                mock_run.return_value = ({}, {}, {}, None)
+            parameters_file = os.path.join(tmpdir, "flyte-parameters.json")
+            with patch("flyte.app._parameter.RUNTIME_PARAMETERS_FILE", parameters_file):
+                # Mock Popen and asyncio
+                with patch("subprocess.Popen") as mock_popen, patch("flyte._bin.serve.asyncio.run") as mock_run:
+                    mock_run.return_value = ({}, {}, {}, None)
 
-                # Mock process
-                mock_process = MagicMock()
-                mock_process.wait.return_value = 0
-                mock_popen.return_value = mock_process
+                    # Mock process
+                    mock_process = MagicMock()
+                    mock_process.wait.return_value = 0
+                    mock_popen.return_value = mock_process
 
-                # Run command with project, domain, org
-                result = runner.invoke(
-                    main,
-                    [
-                        "--version",
-                        "v1.0.0",
-                        "--project",
-                        "my-project",
-                        "--domain",
-                        "development",
-                        "--org",
-                        "my-org",
-                        "--dest",
-                        tmpdir,
-                        "--",
-                        "echo",
-                        "test",
-                    ],
-                )
+                    # Run command with project, domain, org
+                    result = runner.invoke(
+                        main,
+                        [
+                            "--version",
+                            "v1.0.0",
+                            "--project",
+                            "my-project",
+                            "--domain",
+                            "development",
+                            "--org",
+                            "my-org",
+                            "--dest",
+                            tmpdir,
+                            "--",
+                            "echo",
+                            "test",
+                        ],
+                    )
 
-                # Verify command succeeded
-                assert result.exit_code == 0
+                    # Verify command succeeded
+                    assert result.exit_code == 0
 
     def test_main_command_execution(self):
         """
@@ -631,39 +819,41 @@ class TestMainCommand:
         runner = CliRunner()
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            # Mock Popen and asyncio
-            with patch("subprocess.Popen") as mock_popen, patch("flyte._bin.serve.asyncio.run") as mock_run:
-                mock_run.return_value = ({}, {}, {}, None)
+            parameters_file = os.path.join(tmpdir, "flyte-parameters.json")
+            with patch("flyte.app._parameter.RUNTIME_PARAMETERS_FILE", parameters_file):
+                # Mock Popen and asyncio
+                with patch("subprocess.Popen") as mock_popen, patch("flyte._bin.serve.asyncio.run") as mock_run:
+                    mock_run.return_value = ({}, {}, {}, None)
 
-                # Mock process
-                mock_process = MagicMock()
-                mock_process.wait.return_value = 0
-                mock_popen.return_value = mock_process
+                    # Mock process
+                    mock_process = MagicMock()
+                    mock_process.wait.return_value = 0
+                    mock_popen.return_value = mock_process
 
-                # Run command
-                runner.invoke(
-                    main,
-                    [
-                        "--version",
-                        "v1.0.0",
-                        "--dest",
-                        tmpdir,
-                        "--",
-                        "python",
-                        "-m",
-                        "myapp",
-                        "--host",
-                        "0.0.0.0",
-                    ],
-                )
+                    # Run command
+                    runner.invoke(
+                        main,
+                        [
+                            "--version",
+                            "v1.0.0",
+                            "--dest",
+                            tmpdir,
+                            "--",
+                            "python",
+                            "-m",
+                            "myapp",
+                            "--host",
+                            "0.0.0.0",
+                        ],
+                    )
 
-                # Verify Popen was called with joined command
-                mock_popen.assert_called_once()
-                call_args = mock_popen.call_args[0]
-                assert call_args[0] == "python -m myapp --host 0.0.0.0"
+                    # Verify Popen was called with joined command
+                    mock_popen.assert_called_once()
+                    call_args = mock_popen.call_args[0]
+                    assert call_args[0] == "python -m myapp --host 0.0.0.0"
 
-                # Verify shell=True was used
-                assert mock_popen.call_args[1]["shell"] is True
+                    # Verify shell=True was used
+                    assert mock_popen.call_args[1]["shell"] is True
 
     def test_main_exit_code_propagation(self):
         """
@@ -674,26 +864,28 @@ class TestMainCommand:
         runner = CliRunner()
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            # Mock Popen and asyncio
-            with patch("subprocess.Popen") as mock_popen, patch("flyte._bin.serve.asyncio.run") as mock_run:
-                mock_run.return_value = ({}, {}, {}, None)
+            parameters_file = os.path.join(tmpdir, "flyte-parameters.json")
+            with patch("flyte.app._parameter.RUNTIME_PARAMETERS_FILE", parameters_file):
+                # Mock Popen and asyncio
+                with patch("subprocess.Popen") as mock_popen, patch("flyte._bin.serve.asyncio.run") as mock_run:
+                    mock_run.return_value = ({}, {}, {}, None)
 
-                # Mock process with non-zero exit code
-                mock_process = MagicMock()
-                mock_process.wait.return_value = 42
-                mock_popen.return_value = mock_process
+                    # Mock process with non-zero exit code
+                    mock_process = MagicMock()
+                    mock_process.wait.return_value = 42
+                    mock_popen.return_value = mock_process
 
-                # Run command
-                runner.invoke(
-                    main,
-                    ["--version", "v1.0.0", "--dest", tmpdir, "--", "false"],  # 'false' command exits with 1
-                    catch_exceptions=False,
-                )
+                    # Run command
+                    runner.invoke(
+                        main,
+                        ["--version", "v1.0.0", "--dest", tmpdir, "--", "false"],  # 'false' command exits with 1
+                        catch_exceptions=False,
+                    )
 
-                # Verify exit code is propagated
-                # Note: Click runner may not propagate system exit codes the same way
-                # but the function should call exit(returncode)
-                mock_process.wait.assert_called_once()
+                    # Verify exit code is propagated
+                    # Note: Click runner may not propagate system exit codes the same way
+                    # but the function should call exit(returncode)
+                    mock_process.wait.assert_called_once()
 
     def test_main_signal_handling(self):
         """
@@ -704,61 +896,20 @@ class TestMainCommand:
         runner = CliRunner()
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            # Mock everything - signal is imported inside main()
-            with (
-                patch("subprocess.Popen") as mock_popen,
-                patch("flyte._bin.serve.asyncio.run") as mock_run,
-                patch("signal.signal") as mock_signal,
-            ):
-                mock_run.return_value = ({}, {}, {}, None)
-
-                # Mock process
-                mock_process = MagicMock()
-                mock_process.wait.return_value = 0
-                mock_popen.return_value = mock_process
-
-                # Run command
-                runner.invoke(
-                    main,
-                    ["--version", "v1.0.0", "--dest", tmpdir, "--", "echo", "test"],
-                )
-
-                # Verify signal handler was set
-                mock_signal.assert_called_once()
-                import signal
-
-                assert mock_signal.call_args[0][0] == signal.SIGTERM
-
-    def test_main_inputs_file_environment_variable(self):
-        """
-        GOAL: Verify main command sets RUNTIME_INPUTS_FILE environment variable.
-
-        Tests that the environment variable is set to the inputs file path.
-        """
-        runner = CliRunner()
-
-        with tempfile.TemporaryDirectory() as tmpdir:
-            original_cwd = os.getcwd()
-            try:
-                os.chdir(tmpdir)
-
-                # Mock Popen and asyncio
-                with patch("subprocess.Popen") as mock_popen, patch("flyte._bin.serve.asyncio.run") as mock_run:
-                    mock_run.return_value = ({"test": "value"}, {}, {}, None)
+            parameters_file = os.path.join(tmpdir, "flyte-parameters.json")
+            with patch("flyte.app._parameter.RUNTIME_PARAMETERS_FILE", parameters_file):
+                # Mock everything - signal is imported inside main()
+                with (
+                    patch("subprocess.Popen") as mock_popen,
+                    patch("flyte._bin.serve.asyncio.run") as mock_run,
+                    patch("signal.signal") as mock_signal,
+                ):
+                    mock_run.return_value = ({}, {}, {}, None)
 
                     # Mock process
                     mock_process = MagicMock()
                     mock_process.wait.return_value = 0
                     mock_popen.return_value = mock_process
-
-                    # Capture environment passed to Popen
-                    captured_env = {}
-
-                    def capture_env(*args, **kwargs):
-                        captured_env.update(kwargs["env"])
-                        return mock_process
-
-                    mock_popen.side_effect = capture_env
 
                     # Run command
                     runner.invoke(
@@ -766,14 +917,59 @@ class TestMainCommand:
                         ["--version", "v1.0.0", "--dest", tmpdir, "--", "echo", "test"],
                     )
 
-                    # Verify RUNTIME_PARAMETERS_FILE is in environment
-                    from flyte.app._parameter import RUNTIME_PARAMETERS_FILE
+                    # Verify signal handler was set
+                    mock_signal.assert_called_once()
+                    import signal
 
-                    assert RUNTIME_PARAMETERS_FILE in captured_env
-                    assert captured_env[RUNTIME_PARAMETERS_FILE].endswith("flyte-parameters.json")
+                    assert mock_signal.call_args[0][0] == signal.SIGTERM
 
-            finally:
-                os.chdir(original_cwd)
+    def test_main_parameters_file_environment_variable(self):
+        """
+        GOAL: Verify main command sets RUNTIME_PARAMETERS_FILE environment variable.
+
+        Tests that the environment variable is set to the parameters file path.
+        """
+        runner = CliRunner()
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            parameters_file = os.path.join(tmpdir, "flyte-parameters.json")
+            with patch("flyte.app._parameter.RUNTIME_PARAMETERS_FILE", parameters_file):
+                original_cwd = os.getcwd()
+                try:
+                    os.chdir(tmpdir)
+
+                    # Mock Popen and asyncio
+                    with patch("subprocess.Popen") as mock_popen, patch("flyte._bin.serve.asyncio.run") as mock_run:
+                        mock_run.return_value = ({"test": "value"}, {}, {}, None)
+
+                        # Mock process
+                        mock_process = MagicMock()
+                        mock_process.wait.return_value = 0
+                        mock_popen.return_value = mock_process
+
+                        # Capture environment passed to Popen
+                        captured_env = {}
+
+                        def capture_env(*args, **kwargs):
+                            captured_env.update(kwargs["env"])
+                            return mock_process
+
+                        mock_popen.side_effect = capture_env
+
+                        # Run command
+                        runner.invoke(
+                            main,
+                            ["--version", "v1.0.0", "--dest", tmpdir, "--", "echo", "test"],
+                        )
+
+                        # Verify RUNTIME_PARAMETERS_FILE is in environment
+                        from flyte.app._parameter import RUNTIME_PARAMETERS_FILE
+
+                        assert RUNTIME_PARAMETERS_FILE in captured_env
+                        assert captured_env[RUNTIME_PARAMETERS_FILE].endswith("flyte-parameters.json")
+
+                finally:
+                    os.chdir(original_cwd)
 
     def test_main_without_required_version(self):
         """
@@ -799,55 +995,57 @@ class TestMainCommand:
         runner = CliRunner()
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            # Mock Popen and asyncio
-            with patch("subprocess.Popen") as mock_popen, patch("flyte._bin.serve.asyncio.run") as mock_run:
-                mock_run.return_value = ({}, {}, {}, None)
+            parameters_file = os.path.join(tmpdir, "flyte-parameters.json")
+            with patch("flyte.app._parameter.RUNTIME_PARAMETERS_FILE", parameters_file):
+                # Mock Popen and asyncio
+                with patch("subprocess.Popen") as mock_popen, patch("flyte._bin.serve.asyncio.run") as mock_run:
+                    mock_run.return_value = ({}, {}, {}, None)
 
-                # Mock process
-                mock_process = MagicMock()
-                mock_process.wait.return_value = 0
-                mock_popen.return_value = mock_process
+                    # Mock process
+                    mock_process = MagicMock()
+                    mock_process.wait.return_value = 0
+                    mock_popen.return_value = mock_process
 
-                # Run command with image-cache
-                result = runner.invoke(
-                    main,
-                    [
-                        "--version",
-                        "v1.0.0",
-                        "--image-cache",
-                        "base64encodedcache",
-                        "--dest",
-                        tmpdir,
-                        "--",
-                        "echo",
-                        "test",
-                    ],
-                )
+                    # Run command with image-cache
+                    result = runner.invoke(
+                        main,
+                        [
+                            "--version",
+                            "v1.0.0",
+                            "--image-cache",
+                            "base64encodedcache",
+                            "--dest",
+                            tmpdir,
+                            "--",
+                            "echo",
+                            "test",
+                        ],
+                    )
 
-                # Verify command succeeded
-                assert result.exit_code == 0
+                    # Verify command succeeded
+                    assert result.exit_code == 0
 
 
 class TestIntegration:
     """Integration tests combining multiple components."""
 
     @pytest.mark.asyncio
-    async def test_full_workflow_with_inputs_and_code(self):
+    async def test_full_workflow_with_parameters_and_code(self):
         """
-        GOAL: Integration test for complete workflow with inputs and code bundle.
+        GOAL: Integration test for complete workflow with parameters and code bundle.
 
         Tests the full flow:
-        1. Inputs are deserialized
+        1. Parameters are deserialized
         2. Code bundle is downloaded
         3. Both are returned correctly
         """
-        # Create test inputs
-        inputs = [
+        # Create test parameters
+        parameters = [
             Parameter(value="config-data", name="config"),
             Parameter(value="api-key-secret", name="api_key"),
             Parameter(value="test-env-var", name="test_env_var", env_var="TEST_ENV_VAR"),
         ]
-        collection = SerializableParameterCollection.from_parameters(inputs)
+        collection = SerializableParameterCollection.from_parameters(parameters)
         serialized = collection.to_transport
 
         # Mock download_code_bundle
@@ -864,9 +1062,17 @@ class TestIntegration:
                 version="v1.0.0",
             )
 
-            # Verify both inputs and code bundle
+            # Verify both parameters and code bundle
             assert serializable_parameters["config"] == "config-data"
             assert serializable_parameters["api_key"] == "api-key-secret"
             assert code_bundle == mock_bundle
             assert code_bundle.tgz == "s3://bucket/code.tgz"
             assert env_vars["TEST_ENV_VAR"] == "test-env-var"
+
+            # Verify materialized_parameters contains string values
+            assert materialized_parameters["config"] == "config-data"
+            assert materialized_parameters["api_key"] == "api-key-secret"
+            assert materialized_parameters["test_env_var"] == "test-env-var"
+            assert isinstance(materialized_parameters["config"], str)
+            assert isinstance(materialized_parameters["api_key"], str)
+            assert isinstance(materialized_parameters["test_env_var"], str)

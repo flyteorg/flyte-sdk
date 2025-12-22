@@ -1055,7 +1055,6 @@ def test_app_environment_server_decorator():
     @app.server
     def my_server():
         """Test server function."""
-        pass
 
     assert app._server is not None
     assert app._server == my_server
@@ -1079,7 +1078,6 @@ def test_app_environment_on_startup_decorator():
     @app.on_startup
     def my_startup():
         """Test startup function."""
-        pass
 
     assert app._on_startup is not None
     assert app._on_startup == my_startup
@@ -1103,7 +1101,6 @@ def test_app_environment_on_shutdown_decorator():
     @app.on_shutdown
     def my_shutdown():
         """Test shutdown function."""
-        pass
 
     assert app._on_shutdown is not None
     assert app._on_shutdown == my_shutdown
@@ -1126,17 +1123,14 @@ def test_app_environment_all_lifecycle_decorators():
     @app.on_startup
     def startup():
         """Startup function."""
-        pass
 
     @app.server
     def server():
         """Server function."""
-        pass
 
     @app.on_shutdown
     def shutdown():
         """Shutdown function."""
-        pass
 
     assert app._on_startup is not None
     assert app._on_startup == startup
@@ -1162,17 +1156,14 @@ def test_app_environment_decorators_with_async_functions():
     @app.on_startup
     async def async_startup():
         """Async startup function."""
-        pass
 
     @app.server
     async def async_server():
         """Async server function."""
-        pass
 
     @app.on_shutdown
     async def async_shutdown():
         """Async shutdown function."""
-        pass
 
     assert app._on_startup is not None
     assert app._on_startup == async_startup
