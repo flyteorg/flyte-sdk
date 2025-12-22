@@ -174,6 +174,22 @@ class RunTaskCommand(click.RichCommand):
         kwargs.pop("name", None)
         super().__init__(obj_name, *args, **kwargs)
 
+    def _validate_required_params(self, ctx: click.Context) -> None:
+        """
+        Validate that all required parameters are provided.
+        """
+        missing_params = []
+        for param in self.params:
+            if isinstance(param, click.Option) and param.required:
+                param_name = param.name
+                if param_name not in ctx.params or ctx.params[param_name] is None:
+                    missing_params.append((param_name, param.type.get_metavar(param, ctx)))
+
+        if missing_params:
+            raise click.UsageError(
+                f"Missing required parameter(s): {', '.join(f'--{p[0]} (type: {p[1]})' for p in missing_params)}"
+            )
+
     def invoke(self, ctx: click.Context):
         obj: CLIConfig = initialize_config(
             ctx,
@@ -183,6 +199,9 @@ class RunTaskCommand(click.RichCommand):
             tuple(self.run_args.image) or None,
             not self.run_args.no_sync_local_sys_paths,
         )
+
+        # Validate required parameters
+        self._validate_required_params(ctx)
 
         async def _run():
             import flyte
@@ -298,6 +317,22 @@ class RunReferenceTaskCommand(click.RichCommand):
 
         super().__init__(*args, **kwargs)
 
+    def _validate_required_params(self, ctx: click.Context) -> None:
+        """
+        Validate that all required parameters are provided.
+        """
+        missing_params = []
+        for param in self.params:
+            if isinstance(param, click.Option) and param.required:
+                param_name = param.name
+                if param_name not in ctx.params or ctx.params[param_name] is None:
+                    missing_params.append((param_name, param.type))
+
+        if missing_params:
+            raise click.UsageError(
+                f"Missing required parameter(s): {', '.join(f'--{p[0]} (type: {p[1]})' for p in missing_params)}"
+            )
+
     def invoke(self, ctx: click.Context):
         obj: CLIConfig = common.initialize_config(
             ctx,
@@ -307,6 +342,9 @@ class RunReferenceTaskCommand(click.RichCommand):
             images=tuple(self.run_args.image) or None,
             sync_local_sys_paths=not self.run_args.no_sync_local_sys_paths,
         )
+
+        # Validate required parameters
+        self._validate_required_params(ctx)
 
         async def _run():
             import flyte.remote
