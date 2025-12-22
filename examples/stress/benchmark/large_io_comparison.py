@@ -13,8 +13,8 @@ import flyte.report
 import flyte.storage
 from flyte.extras import ContainerTask
 
-CPU = 5
-MEMORY = "10Gi"
+CPU = 2
+MEMORY = "2Gi"
 
 
 @dataclass
@@ -471,7 +471,7 @@ def generate_benchmark_report(
 @env.task(report=True)
 async def benchmark_all(test_file: bool = True, test_dir: bool = True):
     """Comprehensive benchmark comparing all download methods"""
-    iterations = 10
+    iterations = 1
     print("=" * 80)
     print(f"Starting comprehensive I/O benchmarks ({iterations} runs each)")
     print("=" * 80)
@@ -486,12 +486,16 @@ async def benchmark_all(test_file: bool = True, test_dir: bool = True):
     if test_file:
         # Test 1: Large single file (5GB)
         print("\n--- Test 1: Single 5GB file (10 runs) ---")
-        large_file = await create_file(5120)
+        large_file = await create_file(1024)
 
         print("Running all downloads in parallel (each method runs 10 iterations)...")
         # Run the native tasks (they handle 10 iterations internally)
-        t1 = asyncio.create_task(read_large_file_new(large_file, iterations=iterations))
-        t2 = asyncio.create_task(read_large_file_s3fs(large_file, iterations=iterations))
+        tasks = []
+        for i in range(1000):
+            file_results_new = tasks.append(asyncio.create_task(read_large_file_new(large_file, iterations=iterations)))
+        await asyncio.gather(*tasks)
+        # t1 = asyncio.create_task(read_large_file_new(large_file, iterations=iterations))
+        # t2 = asyncio.create_task(read_large_file_s3fs(large_file, iterations=iterations))
 
         # Run s5cmd 10 times in parallel
         async def run_s5cmd_file_multiple():
@@ -502,19 +506,19 @@ async def benchmark_all(test_file: bool = True, test_dir: bool = True):
             file_size_bytes = 5120 * 1024 * 1024
             return [BenchmarkResult(bytes=file_size_bytes, duration=r[0]) for r in results]
 
-        t3 = asyncio.create_task(run_s5cmd_file_multiple())
+        # t3 = asyncio.create_task(run_s5cmd_file_multiple())
 
-        file_results_new, file_results_s3fs, file_results_s5cmd = await asyncio.gather(t1, t2, t3)
+        # file_results_new, file_results_s3fs, file_results_s5cmd = await asyncio.gather(t1, t2, t3)
 
         # Print summary
         avg_time_new = sum(r.duration for r in file_results_new) / len(file_results_new)
-        avg_time_s3fs = sum(r.duration for r in file_results_s3fs) / len(file_results_s3fs)
-        avg_time_s5cmd = sum(r.duration for r in file_results_s5cmd) / len(file_results_s5cmd)
-
+        # avg_time_s3fs = sum(r.duration for r in file_results_s3fs) / len(file_results_s3fs)
+        # avg_time_s5cmd = sum(r.duration for r in file_results_s5cmd) / len(file_results_s5cmd)
+        #
         print("\n5GB file average results:")
         print(f"  New SDK:  {avg_time_new:.2f}s avg")
-        print(f"  s3fs:     {avg_time_s3fs:.2f}s avg")
-        print(f"  s5cmd:    {avg_time_s5cmd:.2f}s avg")
+        # print(f"  s3fs:     {avg_time_s3fs:.2f}s avg")
+        # print(f"  s5cmd:    {avg_time_s5cmd:.2f}s avg")
 
     if test_dir:
         # Test 2: Directory with 1000 5MB files
@@ -554,18 +558,18 @@ async def benchmark_all(test_file: bool = True, test_dir: bool = True):
     print("=" * 80)
 
     # Generate and publish report
-    html = generate_benchmark_report(
-        file_results_new=file_results_new,
-        file_results_s3fs=file_results_s3fs,
-        file_results_s5cmd=file_results_s5cmd,
-        dir_results_new=dir_results_new,
-        dir_results_s3fs=dir_results_s3fs,
-        dir_results_s5cmd=dir_results_s5cmd,
-        iterations=iterations,
-    )
-
-    await flyte.report.replace.aio(html)
-    await flyte.report.flush.aio()
+    # html = generate_benchmark_report(
+    #     file_results_new=file_results_new,
+    #     file_results_s3fs=file_results_s3fs,
+    #     file_results_s5cmd=file_results_s5cmd,
+    #     dir_results_new=dir_results_new,
+    #     dir_results_s3fs=dir_results_s3fs,
+    #     dir_results_s5cmd=dir_results_s5cmd,
+    #     iterations=iterations,
+    # )
+    #
+    # await flyte.report.replace.aio(html)
+    # await flyte.report.flush.aio()
 
 
 # From command line:
