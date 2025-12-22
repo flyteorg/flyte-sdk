@@ -169,6 +169,18 @@ class TaskDetails(ToJSONMixin):
             name=name, getter=functools.partial(deferred_get, _version=version, _auto_version=auto_version)
         )
 
+    @classmethod
+    async def fetch(
+        cls,
+        name: str,
+        project: str | None = None,
+        domain: str | None = None,
+        version: str | None = None,
+        auto_version: AutoVersioning | None = None,
+    ) -> TaskDetails:
+        lazy = TaskDetails.get(name, project=project, domain=domain, version=version, auto_version=auto_version)
+        return await lazy.fetch.aio()
+
     @property
     def name(self) -> str:
         """
@@ -396,6 +408,15 @@ class Task(ToJSONMixin):
         The version of the task.
         """
         return self.pb2.task_id.version
+
+    @property
+    def url(self) -> str:
+        client = get_client()
+        return client.console.task_url(
+            project=self.pb2.task_id.project,
+            domain=self.pb2.task_id.domain,
+            task_name=self.pb2.task_id.name,
+        )
 
     @classmethod
     def get(

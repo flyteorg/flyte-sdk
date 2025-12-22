@@ -4,6 +4,7 @@ import importlib.util
 import json
 import logging
 import os
+import pathlib
 import sys
 from abc import abstractmethod
 from dataclasses import dataclass, replace
@@ -21,8 +22,9 @@ from rich.pretty import pretty_repr
 from rich.table import Table
 from rich.traceback import Traceback
 
-import flyte.config
+import flyte
 import flyte.errors
+from flyte._logging import LogFormat
 from flyte.config import Config
 
 OutputFormat = Literal["table", "json", "table-simple", "json-raw"]
@@ -102,6 +104,7 @@ class CLIConfig:
     config: Config
     ctx: click.Context
     log_level: int | None = logging.ERROR
+    log_format: LogFormat = "console"
     endpoint: str | None = None
     insecure: bool = False
     org: str | None = None
@@ -120,27 +123,63 @@ class CLIConfig:
         domain: str | None = None,
         root_dir: str | None = None,
         images: tuple[str, ...] | None = None,
+        sync_local_sys_paths: bool = True,
     ):
         from flyte.config._config import TaskConfig
 
-        task_cfg = TaskConfig(
-            org=self.org or self.config.task.org,
-            project=project if project is not None else self.config.task.project,
-            domain=domain if domain is not None else self.config.task.domain,
-        )
+        # Check if FLYTE_API_KEY is set and no config file was found
+        api_key = os.getenv("FLYTE_API_KEY")
+        has_config_file = self.config.source is not None
 
-        kwargs: Dict[str, Any] = {}
-        if self.endpoint:
-            kwargs["endpoint"] = self.endpoint
-        if self.insecure is not None:
-            kwargs["insecure"] = self.insecure
-        if self.auth_type:
-            kwargs["auth_mode"] = sanitize_auth_type(self.auth_type)
-        platform_cfg = self.config.platform.replace(**kwargs)
+        # Use API key initialization only if:
+        # 1. FLYTE_API_KEY is set AND
+        # 2. No config file exists
+        if api_key and not has_config_file:
+            # Require the endpoint arg in the init_from_api_key function for future proofing.
+            # But for the flyte CLI, we can decode since there's already a --endpoint arg.
+            endpoint = self.endpoint
+            if not endpoint:
+                # Decode the API key to get the endpoint
+                from flyte.remote._client.auth._auth_utils import decode_api_key
 
-        updated_config = self.config.with_params(platform_cfg, task_cfg)
+                endpoint, _, _, _ = decode_api_key(api_key)
 
-        flyte.init_from_config(updated_config, log_level=self.log_level, root_dir=root_dir, images=images)
+            flyte.init_from_api_key(
+                endpoint=endpoint,
+                api_key=api_key,
+                project=project if project is not None else self.config.task.project,
+                domain=domain if domain is not None else self.config.task.domain,
+                log_level=self.log_level,
+                log_format=self.log_format,
+                root_dir=pathlib.Path(root_dir) if root_dir else None,
+                sync_local_sys_paths=sync_local_sys_paths,
+            )
+        else:
+            # Use the standard config-based initialization
+            task_cfg = TaskConfig(
+                org=self.org or self.config.task.org,
+                project=project if project is not None else self.config.task.project,
+                domain=domain if domain is not None else self.config.task.domain,
+            )
+
+            kwargs: Dict[str, Any] = {}
+            if self.endpoint:
+                kwargs["endpoint"] = self.endpoint
+            if self.insecure is not None:
+                kwargs["insecure"] = self.insecure
+            if self.auth_type:
+                kwargs["auth_mode"] = sanitize_auth_type(self.auth_type)
+            platform_cfg = self.config.platform.replace(**kwargs)
+
+            updated_config = self.config.with_params(platform_cfg, task_cfg)
+            flyte.init_from_config(
+                updated_config,
+                log_level=self.log_level,
+                log_format=self.log_format,
+                root_dir=pathlib.Path(root_dir) if root_dir else None,
+                images=images,
+                sync_local_sys_paths=sync_local_sys_paths,
+            )
 
 
 class InvokeBaseMixin:
@@ -427,6 +466,8 @@ def parse_images(cfg: Config, values: tuple[str, ...] | None) -> None:
         cfg: The Config object to write images to
         values: List of image strings in format "imagename=imageuri" or just "imageuri"
     """
+    from flyte._image import _DEFAULT_IMAGE_REF_NAME
+
     if values is None:
         return
     for value in values:
@@ -435,12 +476,17 @@ def parse_images(cfg: Config, values: tuple[str, ...] | None) -> None:
             cfg.image.image_refs[image_name] = image_uri
         else:
             # If no name specified, use "default" as the name
-            cfg.image.image_refs["default"] = value
+            cfg.image.image_refs[_DEFAULT_IMAGE_REF_NAME] = value
 
 
 @lru_cache()
 def initialize_config(
-    ctx: click.Context, project: str, domain: str, root_dir: str | None = None, images: tuple[str, ...] | None = None
+    ctx: click.Context,
+    project: str,
+    domain: str,
+    root_dir: str | None = None,
+    images: tuple[str, ...] | None = None,
+    sync_local_sys_paths: bool = True,
 ):
     obj: CLIConfig | None = ctx.obj
     if obj is None:
@@ -448,5 +494,5 @@ def initialize_config(
 
         obj = CLIConfig(flyte.config.auto(), ctx)
 
-    obj.init(project, domain, root_dir, images)
+    obj.init(project, domain, root_dir, images, sync_local_sys_paths)
     return obj

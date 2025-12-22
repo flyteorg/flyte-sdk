@@ -35,12 +35,11 @@ from ._retry import RetryStrategy
 from ._reusable_environment import ReusePolicy
 from ._secret import SecretRequest
 from ._timeout import TimeoutType
+from ._trigger import Trigger
 from .models import MAX_INLINE_IO_BYTES, NativeInterface, SerializationContext
 
 if TYPE_CHECKING:
     from flyteidl2.core.tasks_pb2 import DataLoadingConfig
-
-    from flyte.trigger import Trigger
 
     from ._task_environment import TaskEnvironment
 
@@ -531,6 +530,11 @@ class AsyncFunctionTaskTemplate(TaskTemplate[P, R, F]):
 
             from flyte._internal.resolvers.default import DefaultTaskResolver
 
+            if not serialize_context.root_dir:
+                raise RuntimeSystemError(
+                    "SerializationError",
+                    "Root dir is required for default task resolver when no code bundle is provided.",
+                )
             _task_resolver = DefaultTaskResolver()
             args = [
                 *args,

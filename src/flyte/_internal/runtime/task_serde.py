@@ -47,6 +47,7 @@ def translate_task_to_wire(
     """
     tt = get_proto_task(task, serialization_context)
     env: environment_pb2.Environment | None = None
+
     if task.parent_env and task.parent_env():
         _env = task.parent_env()
         if _env:
@@ -200,6 +201,34 @@ def get_proto_task(task: TaskTemplate, serialize_context: SerializationContext) 
     return task_template
 
 
+def lookup_image_in_cache(serialize_context: SerializationContext, env_name: str, image: flyte.Image) -> str:
+    if not serialize_context.image_cache or len(image._layers) == 0:
+        # This computes the image uri, computing hashes as necessary so can fail if done remotely.
+        return image.uri
+    elif serialize_context.image_cache and env_name not in serialize_context.image_cache.image_lookup:
+        raise flyte.errors.RuntimeUserError(
+            "MissingEnvironment",
+            f"Environment '{env_name}' not found in image cache.\n\n"
+            "💡 To fix this:\n"
+            "  1. If your parent environment calls a task in another environment,"
+            " declare that dependency using 'depends_on=[...]'.\n"
+            "     Example:\n"
+            "         env1 = flyte.TaskEnvironment(\n"
+            "             name='outer',\n"
+            "             image=flyte.Image.from_debian_base().with_pip_packages('requests'),\n"
+            "             depends_on=[env2, env3],\n"
+            "         )\n"
+            "  2. If you're using os.getenv() to set the environment name,"
+            " make sure the runtime environment has the same environment variable defined.\n"
+            "     Example:\n"
+            "         env = flyte.TaskEnvironment(\n"
+            '             name=os.getenv("my-name"),\n'
+            '             env_vars={"my-name": os.getenv("my-name")},\n'
+            "         )\n",
+        )
+    return serialize_context.image_cache.image_lookup[env_name]
+
+
 def _get_urun_container(
     serialize_context: SerializationContext, task_template: TaskTemplate
 ) -> Optional[tasks_pb2.Container]:
@@ -210,24 +239,15 @@ def _get_urun_container(
     )
     resources = get_proto_resources(task_template.resources)
 
-    if isinstance(task_template.image, str):
+    img = task_template.image
+    if isinstance(img, str):
         raise flyte.errors.RuntimeSystemError("BadConfig", "Image is not a valid image")
 
     env_name = task_template.parent_env_name
     if env_name is None:
         raise flyte.errors.RuntimeSystemError("BadConfig", f"Task {task_template.name} has no parent environment name")
 
-    if not serialize_context.image_cache:
-        # This computes the image uri, computing hashes as necessary so can fail if done remotely.
-        img_uri = task_template.image.uri
-    elif serialize_context.image_cache and env_name not in serialize_context.image_cache.image_lookup:
-        img_uri = task_template.image.uri
-
-        logger.warning(
-            f"Image {task_template.image} not found in the image cache: {serialize_context.image_cache.image_lookup}."
-        )
-    else:
-        img_uri = serialize_context.image_cache.image_lookup[env_name]
+    img_uri = lookup_image_in_cache(serialize_context, env_name, img)
 
     return tasks_pb2.Container(
         image=img_uri,
