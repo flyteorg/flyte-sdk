@@ -41,7 +41,9 @@ def is_rich_logging_disabled() -> bool:
 
 
 def get_env_log_level() -> int:
-    value = os.getenv("LOG_LEVEL", DEFAULT_LOG_LEVEL)
+    value = os.getenv("LOG_LEVEL")
+    if value is None:
+        return DEFAULT_LOG_LEVEL
     # Case 1: numeric value ("10", "20", "5", etc.)
     if value.isdigit():
         return int(value)
