@@ -14,23 +14,22 @@ env = FastAPIAppEnvironment(
     port=8080,
 )
 
-@env.server()
-async def fastapi_app_server():
-    import uvicorn
+state = {}
 
-    config = uvicorn.Config(app, port=8080)
-    server = uvicorn.Server(config)
-    await server.serve()
+
+@env.on_startup
+async def app_startup():
+    state["foo"] = "bar"
 
 
 @app.get("/")
 async def root() -> str:
-    return "Hello, World!"
+    return f"Hello, World! Here's the state: {state}"
 
 
 if __name__ == "__main__":
     import logging
 
     flyte.init_from_config(log_level=logging.DEBUG)
-    app = flyte.with_servecontext(interactive_mode=True).serve(env)
+    app = flyte.with_servecontext(interactive_mode=False).serve(env)
     print(app.url)

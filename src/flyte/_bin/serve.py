@@ -113,6 +113,7 @@ async def download_code_parameters(
 
     return serializable_parameters, materialized_parameters, env_vars, code_bundle
 
+
 def load_app_env(
     code_bundle: CodeBundle,
     resolver: str,
@@ -166,6 +167,24 @@ def load_pkl_app_env(code_bundle: CodeBundle) -> AppEnvironment:
     except Exception as e:
         logger.exception(f"Failed to load pickled app env from {code_bundle.downloaded_path}. Reason: {e!s}")
         raise
+
+
+async def _serve(
+    app_env: AppEnvironment,
+    materialized_parameters: dict[str, str | flyte.io.File | flyte.io.Dir],
+):
+    logger.info("Running app via server function")
+
+    if app_env._on_startup is not None:
+        if asyncio.iscoroutinefunction(app_env._on_startup):
+            await app_env._on_startup(**materialized_parameters)
+        else:
+            app_env._on_startup(**materialized_parameters)
+
+    if asyncio.iscoroutinefunction(app_env._server):
+        await app_env._server(**materialized_parameters)
+    else:
+        app_env._server(**materialized_parameters)
 
 
 @click.command()
@@ -239,17 +258,8 @@ def main(
     os.environ[RUNTIME_PARAMETERS_FILE] = parameters_file
 
     if code_bundle is not None and app_env._server is not None:
-        logger.info("Running app via server function")
-        if asyncio.iscoroutinefunction(app_env._server):
-            if materialized_parameters:
-                asyncio.run(app_env._server(**materialized_parameters))
-            else:
-                asyncio.run(app_env._server())
-        else:
-            if materialized_parameters:
-                app_env._server(**materialized_parameters)
-            else:
-                app_env._server()
+        asyncio.run(_serve(app_env, materialized_parameters))
+        exit(0)
 
     if command is None or len(command) == 0:
         raise ValueError("No command provided to execute")

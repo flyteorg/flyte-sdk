@@ -6,7 +6,6 @@ import flyte.app
 import flyte.io
 from flyte.app.extras import FastAPIAppEnvironment
 
-
 image = flyte.Image.from_debian_base().with_pip_packages("scikit-learn", "joblib", "fastapi", "uvicorn")
 
 task_env = flyte.TaskEnvironment(
@@ -23,8 +22,8 @@ env = FastAPIAppEnvironment(
     resources=flyte.Resources(cpu=1, memory="512Mi"),
     requires_auth=False,
     port=8080,
-    inputs=[
-        flyte.app.Input(
+    parameters=[
+        flyte.app.Parameter(
             name="model",
             value=flyte.app.RunOutput(task_name="pickled-model-serving-tasks.train_model", type="file"),
             download=True,
@@ -32,13 +31,14 @@ env = FastAPIAppEnvironment(
     ],
 )
 
+
 @task_env.task
 def train_model() -> flyte.io.File:
     # Train a model
     import joblib
-    import sklearn.linear_model
     import sklearn.datasets
-    
+    import sklearn.linear_model
+
     dummy_data = sklearn.datasets.make_regression(n_features=10, n_samples=100, random_state=42)
     X = dummy_data[0]
     y = dummy_data[1]
@@ -52,15 +52,12 @@ def train_model() -> flyte.io.File:
 
 @env.server
 async def fastapi_app_server(model: flyte.io.File):
-    import uvicorn
     import joblib
 
     model = joblib.load(model.path)
     app.state.model = model
 
-    config = uvicorn.Config(app, port=8080)
-    server = uvicorn.Server(config)
-    await server.serve()
+    await uvicorn.Server(uvicorn.Config(app, port=8080)).serve()
 
 
 @app.post("/predict")

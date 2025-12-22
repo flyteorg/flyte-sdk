@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import importlib.util
 import inspect
 import pathlib
@@ -13,6 +15,7 @@ from flyte.models import SerializationContext
 
 if TYPE_CHECKING:
     import fastapi
+    import uvicorn
 
 
 def _extract_fastapi_app_module_and_var(
@@ -115,8 +118,9 @@ def _extract_fastapi_app_module_and_var(
 @rich.repr.auto
 @dataclass(kw_only=True, repr=True)
 class FastAPIAppEnvironment(flyte.app.AppEnvironment):
-    app: "fastapi.FastAPI"
+    app: fastapi.FastAPI
     type: str = "FastAPI"
+    uvicorn_config: uvicorn.Config | None = None
     _caller_frame: inspect.FrameInfo | None = None
 
     def __post_init__(self):
@@ -151,6 +155,7 @@ class FastAPIAppEnvironment(flyte.app.AppEnvironment):
             raise TypeError(f"app must be of type fastapi.FastAPI, got {type(self.app)}")
 
         self.links = [flyte.app.Link(path="/docs", title="FastAPI OpenAPI Docs", is_relative=True), *self.links]
+        self._server = self._fastapi_app_server
 
         # Capture the frame where this environment was instantiated
         # This helps us find the module where the app variable is defined
@@ -161,6 +166,17 @@ class FastAPIAppEnvironment(flyte.app.AppEnvironment):
             caller_frame = frame.f_back
             if caller_frame and caller_frame.f_back:
                 self._caller_frame = inspect.getframeinfo(caller_frame.f_back)
+
+    async def _fastapi_app_server(self):
+        import uvicorn
+
+        if self.uvicorn_config is None:
+            self.uvicorn_config = uvicorn.Config(self.app, port=self.port.port)
+        elif self.uvicorn_config is not None:
+            if self.uvicorn_config.port is None:
+                self.uvicorn_config.port = self.port.port
+
+        await uvicorn.Server(self.uvicorn_config).serve()
 
     def container_args(self, serialization_context: SerializationContext) -> list[str]:
         """

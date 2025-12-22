@@ -66,6 +66,7 @@ class AppEnvironment(Environment):
 
     # private field
     _server: Callable[[], None] | None = field(init=False, default=None)
+    _on_startup: Callable[[], None] | None = field(init=False, default=None)
 
     def _validate_name(self):
         if not APP_NAME_RE.fullmatch(self.name):
@@ -168,6 +169,10 @@ class AppEnvironment(Environment):
 
         serialized_parameters = SerializableParameterCollection.from_parameters(parameter_overrides or self.parameters)
         return serialized_parameters.to_transport
+
+    def on_startup(self, fn: Callable[[], None]) -> Callable[[], None]:
+        self._on_startup = fn
+        return self._on_startup
 
     def server(self, fn: Callable[[], None]) -> Callable[[], None]:
         self._server = fn
