@@ -179,7 +179,11 @@ impl Informer {
                             match handle_response {
                                 Ok(Some(action)) => match self.shared_queue.send(action).await {
                                     Ok(_) => {
-                                        continue;
+                                        // continue;
+                                        // MOCK: Simulate failure for testing after put
+                                        // terminal actor to channel
+                                        error!("Simulating error!!! This is an error!!!");
+                                        return Err(InformerError::BadContext("Simulated failure for testing".to_string()));
                                     }
                                     Err(e) => {
                                         error!("Informer watch failed sending action back to shared queue: {:?}", e);
