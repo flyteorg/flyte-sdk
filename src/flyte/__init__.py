@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import sys
 
+from . import prefetch
 from ._build import build
 from ._cache import Cache, CachePolicy, CacheRequest
 from ._context import ctx
@@ -104,6 +105,7 @@ __all__ = [
     "init_in_cluster",
     "logger",
     "map",
+    "prefetch",
     "run",
     "serve",
     "trace",

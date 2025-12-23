@@ -9,7 +9,7 @@
 #     "pyarrow",
 #     "joblib",
 #     "pydantic",
-#     "flyte>=2.0.0b34",
+#     "flyte>=2.0.0b35",
 # ]
 # ///
 """
@@ -37,7 +37,7 @@ from xgboost import XGBClassifier
 
 import flyte
 import flyte.io
-from flyte.app import Input, Link, RunOutput
+from flyte.app import Link, Parameter, RunOutput
 from flyte.app.extras import FastAPIAppEnvironment
 
 logging.basicConfig(level=logging.INFO)
@@ -50,7 +50,9 @@ logger = logging.getLogger(__name__)
 MODEL_PATH_ENV = "MODEL_PATH"
 
 # Create image from script dependencies
-image = flyte.Image.from_uv_script(__file__, name="penguin-classifier")
+image = flyte.Image.from_debian_base(python_version=(3, 12)).with_pip_packages(
+    "fastapi", "uvicorn", "xgboost", "scikit-learn", "pandas", "pyarrow", "joblib", "pydantic"
+)
 
 # Training environment
 training_env = flyte.TaskEnvironment(
@@ -243,10 +245,12 @@ serving_env = FastAPIAppEnvironment(
     image=image,
     resources=flyte.Resources(cpu=1, memory="1Gi"),
     requires_auth=False,
-    inputs=[
-        Input(
+    parameters=[
+        Parameter(
             name="model",
-            value=RunOutput(task_name="penguin_training.training_pipeline", type=flyte.io.File),
+            value=RunOutput(task_name="penguin_training.training_pipeline", type="file"),
+            download=True,
+            env_var=MODEL_PATH_ENV,
         ),
     ],
     # NOTE: this is a workaround! apps should have this env var auto-injected by the controller

@@ -24,9 +24,9 @@ dependencies = [
     "toml>=0.10.2",
     "async-lru>=2.0.5",
     "mashumaro",
-    "dataclasses_json", # TODO: remove this dependency once we remove dataclasses_json from the code
     "aiolimiter>=1.2.1",
-    "flyteidl2==2.0.0a15",
+    "flyteidl2==2.0.0",
+    "packaging",
 ]
 
 [project.scripts]
@@ -57,6 +57,7 @@ dev = [
     "build>=1.2.2.post1",
     "mock>=5.2.0",
     "pytest>=8.3.5",
+    "pytest-xdist",
     "pytest-asyncio>=0.26.0",
     "pytest-benchmark>=5.1.0",
     "ruff>=0.11.0",

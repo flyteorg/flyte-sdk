@@ -12,7 +12,7 @@ image = (
     .with_local_v2()
 )
 
-env = flyte.TaskEnvironment(name="t1", image=Image.from_base(image_uri="docker.io/library/debian:latest"))
+env = flyte.TaskEnvironment(name="t1", image=image)
 
 
 @env.task
