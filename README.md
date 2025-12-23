@@ -203,7 +203,7 @@ async def main_task(inputs: list[str]) -> list[str]:
 ```python
 import flyte.remote
 
-# Reference tasks deployed elsewhere
+# Remote tasks deployed elsewhere
 torch_task = flyte.remote.Task.get("torch_env.train_model", auto_version="latest")
 spark_task = flyte.remote.Task.get("spark_env.process_data", auto_version="latest")
 
