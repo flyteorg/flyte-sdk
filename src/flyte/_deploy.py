@@ -7,10 +7,7 @@ from typing import TYPE_CHECKING, Dict, List, Optional, Set, Tuple
 
 import cloudpickle
 import rich.repr
-from flyteidl2.core import interface_pb2
 
-from flyte._utils.description_parser import parse_description
-from flyte.git import GitStatus
 from flyte.models import NativeInterface, SerializationContext
 from flyte.syncify import syncify
 
@@ -22,6 +19,7 @@ from ._task import TaskTemplate
 from ._task_environment import TaskEnvironment
 
 if TYPE_CHECKING:
+    from flyteidl2.core import interface_pb2
     from flyteidl2.task import task_definition_pb2
 
     from ._code_bundle import CopyFiles
@@ -62,11 +60,30 @@ class DeployedTask:
         """
         Returns a table representation of the deployed task.
         """
+        from flyte._initialize import get_client
+
+        client = get_client()
+        task_id = self.deployed_task.task_template.id
+        task_url = client.console.task_url(
+            project=task_id.project,
+            domain=task_id.domain,
+            task_name=task_id.name,
+        )
+        triggers = []
+        for t in self.deployed_triggers:
+            trigger_url = client.console.trigger_url(
+                project=task_id.project,
+                domain=task_id.domain,
+                task_name=task_id.name,
+                trigger_name=t.name,
+            )
+            triggers.append(f"[link={trigger_url}]{t.name}[/link]")
+
         return [
             ("type", "task"),
-            ("name", self.deployed_task.task_template.id.name),
-            ("version", self.deployed_task.task_template.id.version),
-            ("triggers", ",".join([t.name for t in self.deployed_triggers])),
+            ("name", f"[link={task_url}]{task_id.name}[/link]"),
+            ("version", task_id.version),
+            ("triggers", ",".join(triggers)),
         ]
 
 
@@ -235,6 +252,9 @@ def _get_documentation_entity(task_template: TaskTemplate) -> task_definition_pb
     """
     from flyteidl2.task import task_definition_pb2
 
+    from flyte._utils.description_parser import parse_description
+    from flyte.git import GitStatus
+
     docstring = task_template.interface.docstring
     short_desc = None
     long_desc = None
@@ -273,6 +293,8 @@ def _update_interface_inputs_and_outputs_docstring(
     :param native_interface: The NativeInterface containing the docstring.
     :return: New TypedInterface with descriptions from docstring if docstring exists.
     """
+    from flyteidl2.core import interface_pb2
+
     # Create a copy of the typed_interface to avoid mutating the input
     updated_interface = interface_pb2.TypedInterface()
     updated_interface.CopyFrom(typed_interface)

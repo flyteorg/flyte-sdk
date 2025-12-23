@@ -3,7 +3,7 @@
 import flyte
 import flyte.app
 import pytest
-from flyte.app._input import Input
+from flyte.app._parameter import Parameter
 from flyte.models import SerializationContext
 
 from flyteplugins.vllm import VLLMAppEnvironment
@@ -12,15 +12,15 @@ from flyteplugins.vllm._app_environment import DEFAULT_VLLM_IMAGE
 # Tests for VLLMAppEnvironment initialization
 
 
-def test_basic_init():
-    """Test basic initialization with required fields."""
+def test_basic_init_with_model_path():
+    """Test basic initialization with model_path."""
     app = VLLMAppEnvironment(
         name="test-app",
-        model="s3://bucket/model",
+        model_path="s3://bucket/model",
         model_id="test-model",
     )
     assert app.name == "test-app"
-    assert app.model == "s3://bucket/model"
+    assert app.model_path == "s3://bucket/model"
     assert app.model_id == "test-model"
     assert app.port.port == 8000
     assert app.type == "vLLM"
@@ -28,12 +28,31 @@ def test_basic_init():
     assert app.image == DEFAULT_VLLM_IMAGE
 
 
+def test_basic_init_with_model_hf_path():
+    """Test basic initialization with model_hf_path."""
+    app = VLLMAppEnvironment(
+        name="test-app",
+        model_hf_path="Qwen/Qwen3-0.6B",
+        model_id="test-model",
+    )
+    assert app.name == "test-app"
+    assert app.model_hf_path == "Qwen/Qwen3-0.6B"
+    assert app.model_id == "test-model"
+    assert app.port.port == 8000
+    assert app.type == "vLLM"
+    assert app.image == DEFAULT_VLLM_IMAGE
+    # When using model_hf_path, no parameters should be created
+    assert app.inputs == []
+    # The model mount path should be set to the HF path
+    assert app.env_vars["FLYTE_MODEL_LOADER_LOCAL_MODEL_PATH"] == "Qwen/Qwen3-0.6B"
+
+
 def test_custom_image():
     """Test that custom image overrides the default."""
     custom_image = "my-registry/vllm:custom"
     app = VLLMAppEnvironment(
         name="test-app",
-        model="s3://bucket/model",
+        model_path="s3://bucket/model",
         model_id="test-model",
         image=custom_image,
     )
@@ -44,7 +63,7 @@ def test_custom_port():
     """Test custom port configuration."""
     app = VLLMAppEnvironment(
         name="test-app",
-        model="s3://bucket/model",
+        model_path="s3://bucket/model",
         model_id="test-model",
         port=8080,
     )
@@ -61,17 +80,27 @@ def test_missing_model_id_raises_error():
     with pytest.raises(ValueError, match="model_id must be defined"):
         VLLMAppEnvironment(
             name="test-app",
-            model="s3://bucket/model",
+            model_path="s3://bucket/model",
             model_id="",
         )
 
 
-def test_missing_model_raises_error():
-    """Test that missing model raises ValueError."""
-    with pytest.raises(ValueError, match="model must be defined"):
+def test_missing_model_path_and_hf_path_raises_error():
+    """Test that missing both model_path and model_hf_path raises ValueError."""
+    with pytest.raises(ValueError, match="model_path or model_hf_path must be defined"):
         VLLMAppEnvironment(
             name="test-app",
-            model="",
+            model_id="test-model",
+        )
+
+
+def test_both_model_path_and_hf_path_raises_error():
+    """Test that setting both model_path and model_hf_path raises ValueError."""
+    with pytest.raises(ValueError, match="model_path and model_hf_path cannot be set at the same time"):
+        VLLMAppEnvironment(
+            name="test-app",
+            model_path="s3://bucket/model",
+            model_hf_path="Qwen/Qwen3-0.6B",
             model_id="test-model",
         )
 
@@ -81,7 +110,7 @@ def test_args_set_raises_error():
     with pytest.raises(ValueError, match="args cannot be set for VLLMAppEnvironment"):
         VLLMAppEnvironment(
             name="test-app",
-            model="s3://bucket/model",
+            model_path="s3://bucket/model",
             model_id="test-model",
             args=["some", "args"],
         )
@@ -89,23 +118,23 @@ def test_args_set_raises_error():
 
 def test_inputs_set_raises_error():
     """Test that setting inputs raises ValueError."""
-    with pytest.raises(ValueError, match="inputs cannot be set for VLLMAppEnvironment"):
+    with pytest.raises(ValueError, match="parameters cannot be set for VLLMAppEnvironment"):
         VLLMAppEnvironment(
             name="test-app",
-            model="s3://bucket/model",
+            model_path="s3://bucket/model",
             model_id="test-model",
-            inputs=[Input(name="foo", value="bar")],
+            parameters=[Parameter(name="foo", value="bar")],
         )
 
 
 # Tests for stream_model configuration
 
 
-def test_stream_model_true():
-    """Test stream_model=True configuration."""
+def test_stream_model_true_with_model_path():
+    """Test stream_model=True configuration with model_path."""
     app = VLLMAppEnvironment(
         name="test-app",
-        model="s3://bucket/model",
+        model_path="s3://bucket/model",
         model_id="test-model",
         stream_model=True,
     )
@@ -117,7 +146,7 @@ def test_stream_model_true():
     assert app.env_vars["FLYTE_MODEL_LOADER_STREAM_SAFETENSORS"] == "true"
     assert app.env_vars["FLYTE_MODEL_LOADER_LOCAL_MODEL_PATH"] == "/root/flyte"
 
-    # Check inputs
+    # Check parameters
     assert len(app.inputs) == 1
     model_input = app.inputs[0]
     assert model_input.name == "model"
@@ -126,11 +155,11 @@ def test_stream_model_true():
     assert model_input.download is False
 
 
-def test_stream_model_false():
-    """Test stream_model=False configuration."""
+def test_stream_model_false_with_model_path():
+    """Test stream_model=False configuration with model_path."""
     app = VLLMAppEnvironment(
         name="test-app",
-        model="s3://bucket/model",
+        model_path="s3://bucket/model",
         model_id="test-model",
         stream_model=False,
     )
@@ -141,11 +170,26 @@ def test_stream_model_false():
     # Check env vars
     assert app.env_vars["FLYTE_MODEL_LOADER_STREAM_SAFETENSORS"] == "false"
 
-    # Check inputs - should download instead of stream
+    # Check parameters - should download instead of stream
     assert len(app.inputs) == 1
     model_input = app.inputs[0]
     assert model_input.download is True
     assert model_input.mount == "/root/flyte"
+
+
+def test_model_hf_path_no_inputs():
+    """Test that model_hf_path creates no parameters and sets correct mount path."""
+    app = VLLMAppEnvironment(
+        name="test-app",
+        model_hf_path="meta-llama/Llama-2-7b",
+        model_id="test-model",
+    )
+
+    # No parameters should be created for HF path
+    assert app.inputs == []
+
+    # Mount path should be set to the HF path
+    assert app.env_vars["FLYTE_MODEL_LOADER_LOCAL_MODEL_PATH"] == "meta-llama/Llama-2-7b"
 
 
 # Tests for extra_args configuration
@@ -155,7 +199,7 @@ def test_extra_args_as_string():
     """Test extra_args provided as a string."""
     app = VLLMAppEnvironment(
         name="test-app",
-        model="s3://bucket/model",
+        model_path="s3://bucket/model",
         model_id="test-model",
         extra_args="--max-model-len 8192 --enforce-eager",
     )
@@ -168,7 +212,7 @@ def test_extra_args_as_list():
     """Test extra_args provided as a list."""
     app = VLLMAppEnvironment(
         name="test-app",
-        model="s3://bucket/model",
+        model_path="s3://bucket/model",
         model_id="test-model",
         extra_args=["--max-model-len", "4096", "--gpu-memory-utilization", "0.9"],
     )
@@ -182,7 +226,7 @@ def test_extra_args_empty_string():
     """Test extra_args as empty string (default)."""
     app = VLLMAppEnvironment(
         name="test-app",
-        model="s3://bucket/model",
+        model_path="s3://bucket/model",
         model_id="test-model",
         extra_args="",
     )
@@ -198,7 +242,7 @@ def test_container_args_returns_list():
     """Test that container_args returns the args list."""
     app = VLLMAppEnvironment(
         name="test-app",
-        model="s3://bucket/model",
+        model_path="s3://bucket/model",
         model_id="test-model",
     )
     sctx = SerializationContext(version="123")
@@ -215,7 +259,7 @@ def test_container_args_includes_port():
     """Test that container_args includes port."""
     app = VLLMAppEnvironment(
         name="test-app",
-        model="s3://bucket/model",
+        model_path="s3://bucket/model",
         model_id="test-model",
         port=9000,
     )
@@ -233,7 +277,7 @@ def test_default_link_added():
     """Test that vLLM OpenAPI docs link is added by default."""
     app = VLLMAppEnvironment(
         name="test-app",
-        model="s3://bucket/model",
+        model_path="s3://bucket/model",
         model_id="test-model",
     )
     # First link should be the vLLM docs
@@ -249,7 +293,7 @@ def test_custom_links_preserved():
     custom_link = flyte.app.Link(path="/custom", title="Custom Link")
     app = VLLMAppEnvironment(
         name="test-app",
-        model="s3://bucket/model",
+        model_path="s3://bucket/model",
         model_id="test-model",
         links=[custom_link],
     )
@@ -266,7 +310,7 @@ def test_env_vars_initialized_if_none():
     """Test that env_vars is initialized if None."""
     app = VLLMAppEnvironment(
         name="test-app",
-        model="s3://bucket/model",
+        model_path="s3://bucket/model",
         model_id="test-model",
         env_vars=None,
     )
@@ -278,10 +322,50 @@ def test_custom_env_vars_preserved():
     """Test that custom env vars are preserved."""
     app = VLLMAppEnvironment(
         name="test-app",
-        model="s3://bucket/model",
+        model_path="s3://bucket/model",
         model_id="test-model",
         env_vars={"MY_VAR": "my_value"},
     )
     assert app.env_vars["MY_VAR"] == "my_value"
     # Should also have the model loader env vars
     assert "FLYTE_MODEL_LOADER_LOCAL_MODEL_PATH" in app.env_vars
+
+
+# Tests for server, on_startup, and on_shutdown validation
+
+
+def _create_vllm_app_with_lifecycle_field(field_name, field_value):
+    """Helper to create a VLLMAppEnvironment instance with a lifecycle field set before __post_init__."""
+    app = object.__new__(VLLMAppEnvironment)
+    app.name = "test-app"
+    app.model_path = "s3://bucket/model"
+    app.model_id = "test-model"
+    app.port = 8080
+    app.type = "vLLM"
+    app.extra_args = ""
+    app.stream_model = True
+    app.image = DEFAULT_VLLM_IMAGE
+    app._model_mount_path = "/root/flyte"
+    setattr(app, field_name, field_value)
+    return app
+
+
+def test_server_decorator_raises_error():
+    """Test that setting _server raises ValueError in __post_init__."""
+    app = _create_vllm_app_with_lifecycle_field("_server", lambda: None)
+    with pytest.raises(ValueError, match="server function cannot be set for VLLMAppEnvironment"):
+        VLLMAppEnvironment.__post_init__(app)
+
+
+def test_on_startup_decorator_raises_error():
+    """Test that setting _on_startup raises ValueError in __post_init__."""
+    app = _create_vllm_app_with_lifecycle_field("_on_startup", lambda: None)
+    with pytest.raises(ValueError, match="on_startup function cannot be set for VLLMAppEnvironment"):
+        VLLMAppEnvironment.__post_init__(app)
+
+
+def test_on_shutdown_decorator_raises_error():
+    """Test that setting _on_shutdown raises ValueError in __post_init__."""
+    app = _create_vllm_app_with_lifecycle_field("_on_shutdown", lambda: None)
+    with pytest.raises(ValueError, match="on_shutdown function cannot be set for VLLMAppEnvironment"):
+        VLLMAppEnvironment.__post_init__(app)

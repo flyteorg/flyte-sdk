@@ -409,6 +409,15 @@ class Task(ToJSONMixin):
         """
         return self.pb2.task_id.version
 
+    @property
+    def url(self) -> str:
+        client = get_client()
+        return client.console.task_url(
+            project=self.pb2.task_id.project,
+            domain=self.pb2.task_id.domain,
+            task_name=self.pb2.task_id.name,
+        )
+
     @classmethod
     def get(
         cls,
