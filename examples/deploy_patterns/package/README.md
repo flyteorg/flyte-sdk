@@ -1,18 +1,20 @@
-# Package Structure Example
+# Simple Directory Structure
 
-This example demonstrates how to organize Flyte 2.0 workflows in a package structure with shared task environments and utilities.
+This example demonstrates how Flyte 2.0 workflows can still be run in a folder structure, but without an installed package (i.e. no `pyproject.toml` file or if you have one it hasn't been installed into the current Python environment).
 
 ## Structure
+This is an example of how files might be laid out:
 
 ```
-lib
-├── __init__.py
-├── workflows
-│   ├── __init__.py
-│   ├── workflow1.py
-│   ├── workflow2.py
-│   ├── env.py
-│   ├── utils.py
+./
+├───lib
+|   ├── __init__.py
+|   ├── workflows
+|   │   ├── __init__.py
+|   │   ├── workflow1.py
+|   │   ├── workflow2.py
+|   │   ├── env.py
+|   │   ├── utils.py
 ```
 
 The task environment is defined in `env.py` and shared across the two workflows. The workflows import from the shared environment and utilities:
@@ -23,8 +25,7 @@ from lib.workflows import utils
 ```
 
 ## Running Locally or Remote
-
-When running workflows with a package structure, use the `--root-dir` flag to specify the root directory of your package:
+You can either be in the `./lib` folder when running these workflows or be one folder above.with a package structure, use the `--root-dir` flag to specify the root directory of your package:
 
 ```bash
 flyte run --root-dir . lib/workflows/workflow1.py process_workflow
