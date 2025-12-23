@@ -98,7 +98,7 @@ async def run_task(
     try:
         tk = remote.Task.get(project=project, domain=domain, name=name, version=version)
         r = await flyte.run.aio(tk, **inputs)
-    except flyte.errors.ReferenceTaskError:
+    except flyte.errors.RemoteTaskError:
         return HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
     return {"url": r.url, "name": r.name}
 
