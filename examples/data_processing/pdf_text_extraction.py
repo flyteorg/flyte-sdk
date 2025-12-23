@@ -42,21 +42,21 @@ env = flyte.TaskEnvironment(
 async def download_pdf(url: str) -> bytes:
     """
     Download a PDF file from a URL.
-    
+
     Args:
         url: The URL of the PDF file to download.
-        
+
     Returns:
         The raw bytes of the PDF file.
     """
     import httpx
-    
+
     print(f"Downloading PDF from: {url}")
-    
+
     async with httpx.AsyncClient(follow_redirects=True, timeout=60.0) as client:
         response = await client.get(url)
         response.raise_for_status()
-        
+
     print(f"Downloaded {len(response.content)} bytes")
     return response.content
 
@@ -67,15 +67,15 @@ async def extract_all_text(pdf_bytes: bytes) -> dict:
     Extract all text from a PDF, including text from all layers.
     This attempts to extract any potentially redacted text by accessing
     the underlying PDF structure.
-    
+
     Args:
         pdf_bytes: The raw bytes of the PDF file.
-        
+
     Returns:
         A dictionary containing extracted text organized by page and extraction method.
     """
     import pymupdf
-    
+
     result = {
         "pages": [],
         "metadata": {},
@@ -83,15 +83,15 @@ async def extract_all_text(pdf_bytes: bytes) -> dict:
         "annotations": [],
         "hidden_text": [],
     }
-    
+
     # Open PDF from bytes
     with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
         tmp.write(pdf_bytes)
         tmp_path = tmp.name
-    
+
     try:
         doc = pymupdf.open(tmp_path)
-        
+
         # Extract document metadata
         result["metadata"] = {
             "title": doc.metadata.get("title", ""),
@@ -102,9 +102,9 @@ async def extract_all_text(pdf_bytes: bytes) -> dict:
             "producer": doc.metadata.get("producer", ""),
             "page_count": len(doc),
         }
-        
+
         print(f"Processing PDF with {len(doc)} pages")
-        
+
         for page_num, page in enumerate(doc):
             page_data = {
                 "page_number": page_num + 1,
@@ -113,10 +113,10 @@ async def extract_all_text(pdf_bytes: bytes) -> dict:
                 "raw_dict_text": [],
                 "annotations": [],
             }
-            
+
             # Method 1: Standard text extraction
             page_data["visible_text"] = page.get_text("text")
-            
+
             # Method 2: Extract text blocks with positioning info
             # This can sometimes reveal text under redaction boxes
             blocks = page.get_text("blocks")
@@ -125,12 +125,10 @@ async def extract_all_text(pdf_bytes: bytes) -> dict:
                     # block format: (x0, y0, x1, y1, text, block_no, block_type)
                     text = block[4] if isinstance(block[4], str) else ""
                     if text.strip():
-                        page_data["text_blocks"].append({
-                            "bbox": block[:4],
-                            "text": text,
-                            "block_type": block[6] if len(block) > 6 else 0
-                        })
-            
+                        page_data["text_blocks"].append(
+                            {"bbox": block[:4], "text": text, "block_type": block[6] if len(block) > 6 else 0}
+                        )
+
             # Method 3: Extract using dict mode for more granular access
             # This can access text at the character/span level
             text_dict = page.get_text("dict")
@@ -140,15 +138,17 @@ async def extract_all_text(pdf_bytes: bytes) -> dict:
                         for span in line.get("spans", []):
                             text = span.get("text", "").strip()
                             if text:
-                                page_data["raw_dict_text"].append({
-                                    "text": text,
-                                    "font": span.get("font", ""),
-                                    "size": span.get("size", 0),
-                                    "color": span.get("color", 0),
-                                    "bbox": span.get("bbox", []),
-                                    "flags": span.get("flags", 0),
-                                })
-            
+                                page_data["raw_dict_text"].append(
+                                    {
+                                        "text": text,
+                                        "font": span.get("font", ""),
+                                        "size": span.get("size", 0),
+                                        "color": span.get("color", 0),
+                                        "bbox": span.get("bbox", []),
+                                        "flags": span.get("flags", 0),
+                                    }
+                                )
+
             # Method 4: Extract annotations (some redactions are done via annotations)
             annots = page.annots()
             if annots:
@@ -166,7 +166,7 @@ async def extract_all_text(pdf_bytes: bytes) -> dict:
                     except Exception:
                         pass
                     page_data["annotations"].append(annot_info)
-            
+
             # Method 5: Try rawdict for even more detailed extraction
             try:
                 raw_dict = page.get_text("rawdict")
@@ -182,23 +182,26 @@ async def extract_all_text(pdf_bytes: bytes) -> dict:
                                     chars = span.get("chars", [])
                                     for char in chars:
                                         if char.get("c", "").strip():
-                                            result["hidden_text"].append({
-                                                "page": page_num + 1,
-                                                "char": char.get("c", ""),
-                                                "bbox": char.get("bbox", []),
-                                                "color": color,
-                                            })
+                                            result["hidden_text"].append(
+                                                {
+                                                    "page": page_num + 1,
+                                                    "char": char.get("c", ""),
+                                                    "bbox": char.get("bbox", []),
+                                                    "color": color,
+                                                }
+                                            )
             except Exception as e:
                 print(f"Raw dict extraction error on page {page_num + 1}: {e}")
-            
+
             result["pages"].append(page_data)
-        
+
         doc.close()
-        
+
     finally:
         import os
+
         os.unlink(tmp_path)
-    
+
     return result
 
 
@@ -206,20 +209,20 @@ async def extract_all_text(pdf_bytes: bytes) -> dict:
 async def generate_report(extracted_data: dict, source_url: str) -> str:
     """
     Generate a Flyte report displaying the extracted PDF text in markdown format.
-    
+
     Args:
         extracted_data: The dictionary containing all extracted text.
         source_url: The original URL of the PDF.
-        
+
     Returns:
         A summary string of the extraction.
     """
     import html
-    
+
     metadata = extracted_data.get("metadata", {})
     pages = extracted_data.get("pages", [])
     hidden_text = extracted_data.get("hidden_text", [])
-    
+
     # Build the HTML report
     report_html = f"""
     <style>
@@ -374,23 +377,27 @@ async def generate_report(extracted_data: dict, source_url: str) -> str:
             border-radius: 0 6px 6px 0;
         }}
     </style>
-    
+
     <div class="container">
         <div class="header">
             <h1>📄 PDF Text Extraction Report</h1>
-            <p>Source: <a href="{html.escape(source_url)}" class="source-link" target="_blank">{html.escape(source_url[:100])}...</a></p>
+            <p>Source:
+            <a href="{html.escape(source_url)}" class="source-link" target="_blank">
+               {html.escape(source_url[:100])}...
+            </a>
+            </p>
         </div>
     """
-    
+
     # Summary statistics
     total_chars = sum(len(p.get("visible_text", "")) for p in pages)
     total_blocks = sum(len(p.get("text_blocks", [])) for p in pages)
     total_annotations = sum(len(p.get("annotations", [])) for p in pages)
-    
+
     report_html += f"""
         <div class="summary-stats">
             <div class="stat-card">
-                <div class="stat-value">{metadata.get('page_count', 0)}</div>
+                <div class="stat-value">{metadata.get("page_count", 0)}</div>
                 <div class="stat-label">Pages</div>
             </div>
             <div class="stat-card">
@@ -411,14 +418,14 @@ async def generate_report(extracted_data: dict, source_url: str) -> str:
             </div>
         </div>
     """
-    
+
     # Metadata section
     report_html += """
         <div class="metadata">
             <h2>📋 Document Metadata</h2>
             <div class="metadata-grid">
     """
-    
+
     for key, value in metadata.items():
         if value:
             report_html += f"""
@@ -427,12 +434,12 @@ async def generate_report(extracted_data: dict, source_url: str) -> str:
                     <div class="metadata-value">{html.escape(str(value))}</div>
                 </div>
             """
-    
+
     report_html += """
             </div>
         </div>
     """
-    
+
     # Pages section
     for page in pages:
         page_num = page.get("page_number", 0)
@@ -440,7 +447,7 @@ async def generate_report(extracted_data: dict, source_url: str) -> str:
         text_blocks = page.get("text_blocks", [])
         raw_dict_text = page.get("raw_dict_text", [])
         annotations = page.get("annotations", [])
-        
+
         report_html += f"""
         <div class="page-section">
             <div class="page-header">
@@ -449,7 +456,7 @@ async def generate_report(extracted_data: dict, source_url: str) -> str:
             </div>
             <div class="page-content">
         """
-        
+
         # Visible text
         if visible_text.strip():
             report_html += f"""
@@ -465,28 +472,32 @@ async def generate_report(extracted_data: dict, source_url: str) -> str:
                     <p style="color: #888; font-style: italic;">No visible text found on this page.</p>
                 </div>
             """
-        
+
         # Text blocks (potentially revealing hidden text)
         if text_blocks:
             block_text = "\n".join([b.get("text", "") for b in text_blocks[:50]])  # Limit for display
             report_html += f"""
                 <div class="text-section">
                     <h4>🔍 Text Blocks (Layer Analysis)</h4>
-                    <p style="color: #888; font-size: 0.9em;">Text extracted from individual blocks - may reveal underlying content:</p>
+                    <p style="color: #888; font-size: 0.9em;">
+                      Text extracted from individual blocks - may reveal underlying content:
+                    </p>
                     <div class="text-box">{html.escape(block_text)}</div>
                 </div>
             """
-        
+
         # Raw dict text with font info
         if raw_dict_text:
-            unique_fonts = set(t.get("font", "") for t in raw_dict_text)
+            unique_fonts = {t.get("font", "") for t in raw_dict_text}
             report_html += f"""
                 <div class="text-section">
                     <h4>🔤 Font Analysis</h4>
-                    <p style="color: #888; font-size: 0.9em;">Fonts used: {', '.join(html.escape(f) for f in unique_fonts if f)}</p>
+                    <p style="color: #888; font-size: 0.9em;">
+                      Fonts used: {", ".join(html.escape(f) for f in unique_fonts if f)}
+                    </p>
                 </div>
             """
-        
+
         # Annotations
         if annotations:
             report_html += """
@@ -500,17 +511,21 @@ async def generate_report(extracted_data: dict, source_url: str) -> str:
                 report_html += f"""
                     <div class="annotation">
                         <strong>Type:</strong> {html.escape(str(annot_type))}<br>
-                        <strong>Content:</strong> {html.escape(str(annot_content)) if annot_content else '<em>empty</em>'}<br>
-                        <strong>Text Under:</strong> {html.escape(str(text_under)) if text_under else '<em>none</em>'}
+                        <strong>Content:</strong>
+                        {html.escape(str(annot_content)) if annot_content else "<em>empty</em>"}
+                        <br>
+                        <strong>Text Under:</strong>
+                        {html.escape(str(text_under)) if text_under else "<em>none</em>"}
+                        <br>
                     </div>
                 """
             report_html += "</div>"
-        
+
         report_html += """
             </div>
         </div>
         """
-    
+
     # Hidden text section (if any found)
     if hidden_text:
         # Group hidden text by page
@@ -520,13 +535,15 @@ async def generate_report(extracted_data: dict, source_url: str) -> str:
             if pg not in hidden_by_page:
                 hidden_by_page[pg] = []
             hidden_by_page[pg].append(h.get("char", ""))
-        
+
         report_html += """
         <div class="hidden-text-section">
             <h2>🔓 Potentially Hidden/Redacted Text</h2>
-            <p style="color: #ffb6c1;">Characters extracted from all PDF layers that may have been hidden or redacted:</p>
+            <p style="color: #ffb6c1;">
+              Characters extracted from all PDF layers that may have been hidden or redacted:
+            </p>
         """
-        
+
         for pg, chars in sorted(hidden_by_page.items()):
             text = "".join(chars)
             if text.strip():
@@ -536,17 +553,17 @@ async def generate_report(extracted_data: dict, source_url: str) -> str:
                         <div class="text-box" style="margin-top: 10px;">{html.escape(text)}</div>
                     </div>
                 """
-        
+
         report_html += "</div>"
-    
+
     report_html += "</div>"
-    
+
     await flyte.report.log.aio(report_html, do_flush=True)
-    
+
     summary = f"Extracted text from {metadata.get('page_count', 0)} pages. "
     summary += f"Total characters: {total_chars:,}. "
     summary += f"Found {total_annotations} annotations and {len(hidden_text)} potentially hidden characters."
-    
+
     return summary
 
 
@@ -554,24 +571,24 @@ async def generate_report(extracted_data: dict, source_url: str) -> str:
 async def main(pdf_url: str) -> str:
     """
     Main workflow that orchestrates PDF text extraction.
-    
+
     Args:
         pdf_url: URL of the PDF to process.
-        
+
     Returns:
         Summary of the extraction.
     """
     print("Starting PDF text extraction workflow...")
-    
+
     # Step 1: Download the PDF
     pdf_bytes = await download_pdf(pdf_url)
-    
+
     # Step 2: Extract all text from all layers
     extracted_data = await extract_all_text(pdf_bytes)
-    
+
     # Step 3: Generate the report
     summary = await generate_report(extracted_data, pdf_url)
-    
+
     print(f"Workflow complete: {summary}")
     return summary
 
