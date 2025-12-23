@@ -20,7 +20,9 @@ class ConnectorEnvironment(AppEnvironment):
         super().__post_init__()
 
     def container_args(self, serialize_context: SerializationContext) -> List[str]:
-        return ["c0", "--port", str(self.port.port), "--prometheus_port", "9092"]
+        if self.args is None:
+            return ["c0", "--port", str(self.port.port), "--prometheus_port", "9092"]
+        return super().container_args(serialize_context)
 
     def container_cmd(
         self, serialize_context: SerializationContext, parameter_overrides: list[Parameter] | None = None
