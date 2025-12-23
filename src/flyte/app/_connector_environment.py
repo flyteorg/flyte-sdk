@@ -29,4 +29,8 @@ class ConnectorEnvironment(AppEnvironment):
     ) -> List[str]:
         if isinstance(self.command, str):
             return shlex.split(self.command)
-        return self.command
+        elif isinstance(self.command, list):
+            return self.command
+        else:
+            # command is None, use default from parent class
+            return super().container_cmd(serialize_context, parameter_overrides)
