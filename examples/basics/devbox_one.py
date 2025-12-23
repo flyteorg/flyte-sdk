@@ -7,6 +7,7 @@ import flyte
 env = flyte.TaskEnvironment(
     name="hello_world",
     resources=flyte.Resources(cpu=1, memory="1Gi"),
+    image=flyte.Image.from_base("ghcr.io/jeevb/flyte:py3.12-minimal-03"),
 )
 
 
@@ -37,12 +38,12 @@ if __name__ == "__main__":
     flyte.init_from_config()
     run = flyte.with_runcontext(
         log_level=logging.DEBUG,
-        env_vars={"KEY": "V"},
+        env_vars={"KEY": "V", "PYTHONVERBOSE": "1", "PYTHONDEBUG": "1"},
         labels={"Label1": "V1"},
         annotations={"Ann": "ann"},
         overwrite_cache=True,
         interruptible=False,
-    ).run(say_hello_nested, data="hello world", n=10)
+    ).run(say_hello_nested, data="hello world", n=2)
     print(run.name)
     print(run.url)
     run.wait()
