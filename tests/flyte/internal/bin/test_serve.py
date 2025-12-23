@@ -5,6 +5,7 @@ These tests verify the serve functionality including parameter synchronization,
 code bundle downloading, and the main serve command without using mocks.
 """
 
+import asyncio
 import json
 import os
 import tempfile
@@ -14,7 +15,7 @@ import aiofiles
 import pytest
 from click.testing import CliRunner
 
-from flyte._bin.serve import download_code_parameters, main, sync_parameters
+from flyte._bin.serve import _bind_parameters, _serve, download_code_parameters, main, sync_parameters
 from flyte.app._parameter import Parameter, SerializableParameterCollection
 from flyte.models import CodeBundle
 
@@ -1021,6 +1022,380 @@ class TestMainCommand:
 
                     # Verify command succeeded
                     assert result.exit_code == 0
+
+
+class TestBindParameters:
+    """Tests for _bind_parameters function."""
+
+    def test_bind_parameters_filters_by_function_signature(self):
+        """
+        GOAL: Verify _bind_parameters only returns parameters that match the function signature.
+
+        Tests that parameters not in the function signature are filtered out.
+        """
+
+        def my_func(a, b):
+            pass
+
+        materialized_parameters = {"a": "value_a", "b": "value_b", "c": "value_c", "d": "value_d"}
+
+        result = _bind_parameters(my_func, materialized_parameters)
+
+        assert result == {"a": "value_a", "b": "value_b"}
+        assert "c" not in result
+        assert "d" not in result
+
+    def test_bind_parameters_with_no_matching_params(self):
+        """
+        GOAL: Verify _bind_parameters returns empty dict when no parameters match.
+
+        Tests that when function signature has no matching parameters, an empty dict is returned.
+        """
+
+        def my_func(x, y, z):
+            pass
+
+        materialized_parameters = {"a": "value_a", "b": "value_b"}
+
+        result = _bind_parameters(my_func, materialized_parameters)
+
+        assert result == {}
+
+    def test_bind_parameters_with_all_matching_params(self):
+        """
+        GOAL: Verify _bind_parameters returns all parameters when all match.
+
+        Tests that when all materialized parameters match the function signature, all are returned.
+        """
+
+        def my_func(config, model, data):
+            pass
+
+        materialized_parameters = {"config": "cfg.yaml", "model": "model.pkl", "data": "data.csv"}
+
+        result = _bind_parameters(my_func, materialized_parameters)
+
+        assert result == materialized_parameters
+
+    def test_bind_parameters_with_empty_materialized_parameters(self):
+        """
+        GOAL: Verify _bind_parameters handles empty materialized_parameters.
+
+        Tests that when materialized_parameters is empty, an empty dict is returned.
+        """
+
+        def my_func(a, b, c):
+            pass
+
+        result = _bind_parameters(my_func, {})
+
+        assert result == {}
+
+    def test_bind_parameters_with_no_args_function(self):
+        """
+        GOAL: Verify _bind_parameters handles functions with no arguments.
+
+        Tests that when function has no parameters, an empty dict is returned.
+        """
+
+        def my_func():
+            pass
+
+        materialized_parameters = {"a": "value_a", "b": "value_b"}
+
+        result = _bind_parameters(my_func, materialized_parameters)
+
+        assert result == {}
+
+    def test_bind_parameters_with_file_and_dir_types(self):
+        """
+        GOAL: Verify _bind_parameters correctly handles File and Dir types.
+
+        Tests that File and Dir objects are correctly passed through.
+        """
+        from flyte.io import Dir, File
+
+        def my_func(model_file, data_dir, config):
+            pass
+
+        model = File(path="s3://bucket/model.pkl")
+        data = Dir(path="s3://bucket/data/")
+        materialized_parameters = {
+            "model_file": model,
+            "data_dir": data,
+            "config": "config.yaml",
+            "extra_param": "ignored",
+        }
+
+        result = _bind_parameters(my_func, materialized_parameters)
+
+        assert result == {"model_file": model, "data_dir": data, "config": "config.yaml"}
+        assert isinstance(result["model_file"], File)
+        assert isinstance(result["data_dir"], Dir)
+
+    def test_bind_parameters_with_async_function(self):
+        """
+        GOAL: Verify _bind_parameters works with async functions.
+
+        Tests that async function signatures are correctly inspected.
+        """
+
+        async def my_async_func(a, b):
+            pass
+
+        materialized_parameters = {"a": "value_a", "b": "value_b", "c": "value_c"}
+
+        result = _bind_parameters(my_async_func, materialized_parameters)
+
+        assert result == {"a": "value_a", "b": "value_b"}
+
+    def test_bind_parameters_with_default_args(self):
+        """
+        GOAL: Verify _bind_parameters works with functions that have default arguments.
+
+        Tests that parameters with defaults are still matched.
+        """
+
+        def my_func(a, b="default_b", c="default_c"):
+            pass
+
+        materialized_parameters = {"a": "value_a", "b": "value_b"}
+
+        result = _bind_parameters(my_func, materialized_parameters)
+
+        assert result == {"a": "value_a", "b": "value_b"}
+        assert "c" not in result  # c has default but not in materialized_parameters
+
+    def test_bind_parameters_with_kwargs(self):
+        """
+        GOAL: Verify _bind_parameters handles functions with **kwargs.
+
+        Tests that regular positional parameters are correctly bound.
+        """
+
+        def my_func(a, **kwargs):
+            pass
+
+        materialized_parameters = {"a": "value_a", "b": "value_b"}
+
+        result = _bind_parameters(my_func, materialized_parameters)
+
+        # Only 'a' should be bound as 'b' is not a declared parameter
+        assert result == {"a": "value_a"}
+
+    def test_bind_parameters_with_args(self):
+        """
+        GOAL: Verify _bind_parameters handles functions with *args.
+
+        Tests that regular positional parameters are correctly bound.
+        """
+
+        def my_func(a, *args):
+            pass
+
+        materialized_parameters = {"a": "value_a", "b": "value_b"}
+
+        result = _bind_parameters(my_func, materialized_parameters)
+
+        # Only 'a' should be bound as 'b' is not a declared parameter
+        assert result == {"a": "value_a"}
+
+
+class TestServeFunction:
+    """Tests for _serve function with parameter binding."""
+
+    @pytest.mark.asyncio
+    async def test_serve_binds_parameters_to_server(self):
+        """
+        GOAL: Verify _serve binds parameters based on _server function signature.
+
+        Tests that only parameters matching the server function signature are passed.
+        """
+
+        from flyte._image import Image
+        from flyte.app import AppEnvironment
+
+        # Track what parameters were received
+        received_params = {}
+
+        async def mock_server(config, model):
+            received_params.update({"config": config, "model": model})
+
+        app_env = AppEnvironment(name="test-app", image=Image.from_base("python:3.11"))
+        app_env._server = mock_server
+
+        materialized_parameters = {
+            "config": "config.yaml",
+            "model": "model.pkl",
+            "extra_param": "should_be_ignored",
+        }
+
+        # Mock signal to prevent actual signal handling
+        with patch("signal.signal"):
+            # Run _serve but cancel quickly to avoid infinite loop
+            try:
+                # Create a task that will complete immediately after server runs
+                await asyncio.wait_for(_serve(app_env, materialized_parameters), timeout=0.1)
+            except asyncio.TimeoutError:
+                pass  # Expected - server would normally run forever
+
+        # Verify only matching parameters were passed
+        assert received_params == {"config": "config.yaml", "model": "model.pkl"}
+
+    @pytest.mark.asyncio
+    async def test_serve_binds_parameters_to_on_startup(self):
+        """
+        GOAL: Verify _serve binds parameters based on _on_startup function signature.
+
+        Tests that only parameters matching the on_startup function signature are passed.
+        """
+
+        from flyte._image import Image
+        from flyte.app import AppEnvironment
+
+        # Track what parameters were received
+        startup_params = {}
+        server_params = {}
+
+        def mock_on_startup(startup_config):
+            startup_params.update({"startup_config": startup_config})
+
+        async def mock_server(config, model):
+            server_params.update({"config": config, "model": model})
+
+        app_env = AppEnvironment(name="test-app", image=Image.from_base("python:3.11"))
+        app_env._on_startup = mock_on_startup
+        app_env._server = mock_server
+
+        materialized_parameters = {
+            "config": "config.yaml",
+            "model": "model.pkl",
+            "startup_config": "startup.yaml",
+            "extra_param": "should_be_ignored",
+        }
+
+        with patch("signal.signal"):
+            try:
+                await asyncio.wait_for(_serve(app_env, materialized_parameters), timeout=0.1)
+            except asyncio.TimeoutError:
+                pass
+
+        # Verify on_startup received only its matching parameters
+        assert startup_params == {"startup_config": "startup.yaml"}
+        # Verify server received its matching parameters
+        assert server_params == {"config": "config.yaml", "model": "model.pkl"}
+
+    @pytest.mark.asyncio
+    async def test_serve_binds_parameters_to_on_shutdown(self):
+        """
+        GOAL: Verify _serve binds parameters based on _on_shutdown function signature.
+
+        Tests that only parameters matching the on_shutdown function signature are passed.
+        """
+        from flyte._image import Image
+        from flyte.app import AppEnvironment
+
+        # Track what parameters were received
+        shutdown_params = {}
+
+        def mock_on_shutdown(cleanup_path):
+            shutdown_params.update({"cleanup_path": cleanup_path})
+
+        async def mock_server(config):
+            pass  # Server completes immediately, triggering finally block and shutdown
+
+        app_env = AppEnvironment(name="test-app", image=Image.from_base("python:3.11"))
+        app_env._on_shutdown = mock_on_shutdown
+        app_env._server = mock_server
+
+        materialized_parameters = {
+            "config": "config.yaml",
+            "cleanup_path": "/tmp/cleanup",
+            "extra_param": "should_be_ignored",
+        }
+
+        with patch("signal.signal"):
+            try:
+                await asyncio.wait_for(_serve(app_env, materialized_parameters), timeout=0.1)
+            except asyncio.TimeoutError:
+                pass
+
+        # Verify on_shutdown received only its matching parameters
+        assert shutdown_params == {"cleanup_path": "/tmp/cleanup"}
+
+    @pytest.mark.asyncio
+    async def test_serve_with_async_callbacks(self):
+        """
+        GOAL: Verify _serve handles async on_startup and on_shutdown correctly.
+
+        Tests that async callbacks work with parameter binding.
+        """
+        from flyte._image import Image
+        from flyte.app import AppEnvironment
+
+        startup_params = {}
+        shutdown_params = {}
+
+        async def mock_on_startup(init_config):
+            startup_params.update({"init_config": init_config})
+
+        async def mock_on_shutdown(cleanup_config):
+            shutdown_params.update({"cleanup_config": cleanup_config})
+
+        async def mock_server(server_config):
+            pass
+
+        app_env = AppEnvironment(name="test-app", image=Image.from_base("python:3.11"))
+        app_env._on_startup = mock_on_startup
+        app_env._on_shutdown = mock_on_shutdown
+        app_env._server = mock_server
+
+        materialized_parameters = {
+            "init_config": "init.yaml",
+            "cleanup_config": "cleanup.yaml",
+            "server_config": "server.yaml",
+            "extra": "ignored",
+        }
+
+        with patch("signal.signal"):
+            try:
+                await asyncio.wait_for(_serve(app_env, materialized_parameters), timeout=0.1)
+            except asyncio.TimeoutError:
+                pass
+
+        assert startup_params == {"init_config": "init.yaml"}
+        assert shutdown_params == {"cleanup_config": "cleanup.yaml"}
+
+    @pytest.mark.asyncio
+    async def test_serve_with_no_parameters_function(self):
+        """
+        GOAL: Verify _serve handles server functions with no parameters.
+
+        Tests that functions with no parameters work correctly.
+        """
+        from flyte._image import Image
+        from flyte.app import AppEnvironment
+
+        server_called = {"called": False}
+
+        async def mock_server():
+            server_called["called"] = True
+
+        app_env = AppEnvironment(name="test-app", image=Image.from_base("python:3.11"))
+        app_env._server = mock_server
+
+        materialized_parameters = {
+            "config": "config.yaml",
+            "model": "model.pkl",
+        }
+
+        with patch("signal.signal"):
+            try:
+                await asyncio.wait_for(_serve(app_env, materialized_parameters), timeout=0.1)
+            except asyncio.TimeoutError:
+                pass
+
+        assert server_called["called"] is True
 
 
 class TestIntegration:
