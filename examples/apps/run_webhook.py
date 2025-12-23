@@ -1,10 +1,9 @@
 # /// script
-# requires-python = "==3.11"
+# requires-python = ">=3.12"
 # dependencies = [
 #     "fastapi",
 #     "uvicorn",
 #     "flyte==2.0.0b40",
-#     "grpcio==1.76.0",
 # ]
 # ///
 import logging
@@ -48,7 +47,7 @@ async def lifespan(app: FastAPI):
     are processed, preventing race conditions and initialization errors.
     """
     # Startup: Initialize Flyte
-    await flyte.init_in_cluster.aio(org="demo")
+    await flyte.init_in_cluster.aio(org=os.environ.get("ORG", "demo"))
     yield
     # Shutdown: Clean up if needed
 
@@ -128,6 +127,7 @@ env = FastAPIAppEnvironment(
     requires_auth=False,
     env_vars={
         "WEBHOOK_API_KEY": os.getenv("WEBHOOK_API_KEY", "test-api-key"),
+        "ORG": os.environ.get("ORG", "demo"),
     },
 )
 
