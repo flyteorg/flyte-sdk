@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import pathlib
 from dataclasses import replace
 from typing import TYPE_CHECKING, Optional
 
@@ -35,11 +36,12 @@ class _Serve:
         project: str | None = None,
         domain: str | None = None,
         env_vars: dict[str, str] | None = None,
-        input_values: dict[str, dict[str, str | flyte.io.File | flyte.io.Dir]] | None = None,
+        parameter_values: dict[str, dict[str, str | flyte.io.File | flyte.io.Dir]] | None = None,
         cluster_pool: str | None = None,
         log_level: int | None = None,
         log_format: LogFormat = "console",
         interactive_mode: bool | None = None,
+        copy_bundle_to: pathlib.Path | None = None,
     ):
         """
         Initialize serve context.
@@ -51,11 +53,12 @@ class _Serve:
             project: Optional project override
             domain: Optional domain override
             env_vars: Optional environment variables to inject into the app
-            input_values: Optional input values to inject into the app
+            parameter_values: Optional parameter values to inject into the app
             cluster_pool: Optional cluster pool override
             log_level: Optional log level to set for the app (e.g., logging.INFO)
             log_format: Optional log format ("console" or "json", default: "console")
             interactive_mode: If True, raises NotImplementedError (apps don't support interactive/notebook mode)
+            copy_bundle_to: When dry_run is True, the bundle will be copied to this location if specified
         """
         self._version = version
         self._copy_style = copy_style
@@ -63,17 +66,12 @@ class _Serve:
         self._project = project
         self._domain = domain
         self._env_vars = env_vars or {}
-        self._input_values = input_values or {}
+        self._parameter_values = parameter_values or {}
         self._cluster_pool = cluster_pool
         self._log_level = log_level
         self._log_format = log_format
         self._interactive_mode = interactive_mode if interactive_mode is not None else ipython_check()
-
-        if self._interactive_mode:
-            raise NotImplementedError(
-                "Apps do not support running from notebooks or interactive mode yet. "
-                "Please run apps from a Python script file."
-            )
+        self._copy_bundle_to = copy_bundle_to
 
     @syncify
     async def serve(self, app_env: "AppEnvironment") -> "App":
@@ -93,7 +91,7 @@ class _Serve:
 
         from flyte.app import _deploy
 
-        from ._code_bundle import build_code_bundle
+        from ._code_bundle import build_code_bundle, build_pkl_bundle
         from ._deploy import build_images, plan_deploy
 
         cfg = get_init_config()
@@ -122,11 +120,19 @@ class _Serve:
         assert image_cache
 
         # Build code bundle (tgz style)
-        code_bundle = await build_code_bundle(
-            from_dir=cfg.root_dir,
-            dryrun=self._dry_run,
-            copy_style=self._copy_style,
-        )
+        if self._interactive_mode:
+            code_bundle = await build_pkl_bundle(
+                app_env,
+                upload_to_controlplane=not self._dry_run,
+                copy_bundle_to=self._copy_bundle_to,
+            )
+        else:
+            code_bundle = await build_code_bundle(
+                from_dir=cfg.root_dir,
+                dryrun=self._dry_run,
+                copy_style=self._copy_style,
+                copy_bundle_to=self._copy_bundle_to,
+            )
 
         # Compute version
         if self._version:
@@ -151,16 +157,16 @@ class _Serve:
             root_dir=cfg.root_dir,
         )
 
-        # Inject input overrides from the serve
-        input_overrides = None
-        if app_env_input_values := self._input_values.get(app_env.name):
-            input_overrides = []
-            for _input in app_env.inputs:
-                value = app_env_input_values.get(_input.name, _input.value)
-                input_overrides.append(replace(_input, value=value))
+        # Inject parameter overrides from the serve
+        parameter_overrides = None
+        if app_env_parameter_values := self._parameter_values.get(app_env.name):
+            parameter_overrides = []
+            for parameter in app_env.parameters:
+                value = app_env_parameter_values.get(parameter.name, parameter.value)
+                parameter_overrides.append(replace(parameter, value=value))
 
         # Deploy app
-        deployed_app = await _deploy._deploy_app(app_env, sc, input_overrides=input_overrides)
+        deployed_app = await _deploy._deploy_app(app_env, sc, parameter_overrides=parameter_overrides)
         assert deployed_app
 
         # Mutate app_idl if env_vars or cluster_pool are provided
@@ -210,10 +216,12 @@ def with_servecontext(
     project: str | None = None,
     domain: str | None = None,
     env_vars: dict[str, str] | None = None,
-    input_values: dict[str, dict[str, str | flyte.io.File | flyte.io.Dir]] | None = None,
+    parameter_values: dict[str, dict[str, str | flyte.io.File | flyte.io.Dir]] | None = None,
     cluster_pool: str | None = None,
     log_level: int | None = None,
     log_format: LogFormat = "console",
+    interactive_mode: bool | None = None,
+    copy_bundle_to: pathlib.Path | None = None,
 ) -> _Serve:
     """
     Create a serve context with custom configuration.
@@ -249,11 +257,16 @@ def with_servecontext(
         project: Optional project override
         domain: Optional domain override
         env_vars: Optional environment variables to inject/override in the app container
-        input_values: Optional input values to inject/override in the app container. Must be a dictionary that maps
-            app environment names to a dictionary of input names to values.
+        parameter_values: Optional parameter values to inject/override in the app container. Must be a dictionary that
+            maps app environment names to a dictionary of parameter names to values.
         cluster_pool: Optional cluster pool to deploy the app to
         log_level: Optional log level (e.g., logging.DEBUG, logging.INFO). If not provided, uses init config or default
         log_format: Optional log format ("console" or "json", default: "console")
+        interactive_mode: Optional, can be forced to True or False.
+            If not provided, it will be set based on the current environment. For example Jupyter notebooks are
+            considered interactive mode, while scripts are not. This is used to determine how the code bundle is
+            created. This is used to determine if the app should be served in interactive mode or not.
+        copy_bundle_to: When dry_run is True, the bundle will be copied to this location if specified
 
     Returns:
         _Serve: Serve context manager with configured settings
@@ -274,10 +287,12 @@ def with_servecontext(
         project=project,
         domain=domain,
         env_vars=env_vars,
-        input_values=input_values,
+        parameter_values=parameter_values,
         cluster_pool=cluster_pool,
         log_level=log_level,
         log_format=log_format,
+        interactive_mode=interactive_mode,
+        copy_bundle_to=copy_bundle_to,
     )
 
 

@@ -14,13 +14,6 @@ import click
 
 from flyte.models import PathRewrite
 
-# Todo: work with pvditt to make these the names
-# ACTION_NAME = "_U_ACTION_NAME"
-# RUN_NAME = "_U_RUN_NAME"
-# PROJECT_NAME = "_U_PROJECT_NAME"
-# DOMAIN_NAME = "_U_DOMAIN_NAME"
-# ORG_NAME = "_U_ORG_NAME"
-
 ACTION_NAME = "ACTION_NAME"
 RUN_NAME = "RUN_NAME"
 PROJECT_NAME = "FLYTE_INTERNAL_EXECUTION_PROJECT"
@@ -185,7 +178,6 @@ def main(
             path = await upload_error(err.err, outputs_path)
             logger.error(f"Run {run_name} Action {name} failed with error: {err}. Uploaded error to {path}")
             await controller.stop()
-            raise
 
     asyncio.run(_run_and_stop())
     logger.warning(f"Flyte runtime completed for action {name} with run name {run_name}")

@@ -41,6 +41,7 @@ from typing_extensions import Annotated, get_args, get_origin
 import flyte.storage as storage
 from flyte._logging import logger
 from flyte._utils.helpers import load_proto_from_file
+from flyte.errors import RestrictedTypeError
 from flyte.models import NativeInterface
 
 from ._utils import literal_types_match
@@ -329,10 +330,6 @@ class SimpleTransformer(TypeTransformer[T]):
         if literal_type.HasField("simple") and literal_type.simple == self._lt.simple:
             return self.python_type
         raise ValueError(f"Transformer {self} cannot reverse {literal_type}")
-
-
-class RestrictedTypeError(Exception):
-    pass
 
 
 class RestrictedTypeTransformer(TypeTransformer[T], ABC):

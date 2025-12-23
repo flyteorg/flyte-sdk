@@ -584,7 +584,7 @@ class Image:
         python_version: Optional[Tuple[int, int]] = None,
         index_url: Optional[str] = None,
         extra_index_urls: Union[str, List[str], Tuple[str, ...], None] = None,
-        pre: bool = True,
+        pre: bool = False,
         extra_args: Optional[str] = None,
         platform: Optional[Tuple[Architecture, ...]] = None,
         secret_mounts: Optional[SecretRequest] = None,

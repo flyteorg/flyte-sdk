@@ -11,7 +11,14 @@ import flyte
 from ._tools import ipython_check
 
 LogFormat = Literal["console", "json"]
-
+_LOG_LEVEL_MAP = {
+    "critical": logging.CRITICAL,  # 50
+    "error": logging.ERROR,  # 40
+    "warning": logging.WARNING,  # 30
+    "warn": logging.WARNING,  # 30
+    "info": logging.INFO,  # 20
+    "debug": logging.DEBUG,  # 10
+}
 DEFAULT_LOG_LEVEL = logging.WARNING
 
 
@@ -34,7 +41,18 @@ def is_rich_logging_disabled() -> bool:
 
 
 def get_env_log_level() -> int:
-    return int(os.environ.get("LOG_LEVEL", DEFAULT_LOG_LEVEL))
+    value = os.getenv("LOG_LEVEL")
+    if value is None:
+        return DEFAULT_LOG_LEVEL
+    # Case 1: numeric value ("10", "20", "5", etc.)
+    if value.isdigit():
+        return int(value)
+
+    # Case 2: named log level ("info", "debug", ...)
+    if value.lower() in _LOG_LEVEL_MAP:
+        return _LOG_LEVEL_MAP[value.lower()]
+
+    return DEFAULT_LOG_LEVEL
 
 
 def log_format_from_env() -> LogFormat:

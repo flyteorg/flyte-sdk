@@ -264,6 +264,70 @@ task:
         call_kwargs = mock_init.aio.call_args[1]
         assert call_kwargs["root_dir"] is None
 
+    @patch("flyte._initialize.init")
+    @patch("flyte.config.auto")
+    @pytest.mark.asyncio
+    async def test_init_from_config_project_domain_overrides(self, mock_config_auto, mock_init, mock_config):
+        """Test init_from_config with project and domain parameter overrides"""
+        # Config has default values
+        mock_config.task.project = "config-project"
+        mock_config.task.domain = "config-domain"
+        mock_config_auto.return_value = mock_config
+        mock_init.aio = AsyncMock()
+
+        # Override project and domain via parameters
+        override_project = "override-project"
+        override_domain = "override-domain"
+
+        await init_from_config.aio(path_or_config=None, project=override_project, domain=override_domain)
+
+        # Verify init was called with overridden values, not config values
+        mock_init.aio.assert_called_once()
+        call_kwargs = mock_init.aio.call_args[1]
+        assert call_kwargs["project"] == override_project
+        assert call_kwargs["domain"] == override_domain
+        # Verify they are different from config values
+        assert call_kwargs["project"] != mock_config.task.project
+        assert call_kwargs["domain"] != mock_config.task.domain
+
+    @patch("flyte._initialize.init")
+    @patch("flyte.config.auto")
+    @pytest.mark.asyncio
+    async def test_init_from_config_partial_override(self, mock_config_auto, mock_init, mock_config):
+        """Test init_from_config with only project override, domain from config"""
+        mock_config.task.project = "config-project"
+        mock_config.task.domain = "config-domain"
+        mock_config_auto.return_value = mock_config
+        mock_init.aio = AsyncMock()
+
+        # Override only project, domain should come from config
+        override_project = "override-project"
+
+        await init_from_config.aio(path_or_config=None, project=override_project)
+
+        mock_init.aio.assert_called_once()
+        call_kwargs = mock_init.aio.call_args[1]
+        assert call_kwargs["project"] == override_project
+        assert call_kwargs["domain"] == mock_config.task.domain
+
+    @patch("flyte._initialize.init")
+    @patch("flyte.config.auto")
+    @pytest.mark.asyncio
+    async def test_init_from_config_no_overrides_uses_config_values(self, mock_config_auto, mock_init, mock_config):
+        """Test init_from_config without overrides uses config file values"""
+        mock_config.task.project = "config-project"
+        mock_config.task.domain = "config-domain"
+        mock_config_auto.return_value = mock_config
+        mock_init.aio = AsyncMock()
+
+        # No overrides provided
+        await init_from_config.aio(path_or_config=None)
+
+        mock_init.aio.assert_called_once()
+        call_kwargs = mock_init.aio.call_args[1]
+        assert call_kwargs["project"] == mock_config.task.project
+        assert call_kwargs["domain"] == mock_config.task.domain
+
 
 class TestInitialization:
     """Test cases for core initialization functions"""

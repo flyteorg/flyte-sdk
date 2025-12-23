@@ -264,7 +264,11 @@ async def init_from_config(
     root_dir: Path | None = None,
     log_level: int | None = None,
     log_format: LogFormat = "console",
+    project: str | None = None,
+    domain: str | None = None,
     storage: Storage | None = None,
+    batch_size: int = 1000,
+    image_builder: ImageBuildEngine.ImageBuilderType | None = None,
     images: tuple[str, ...] | None = None,
     sync_local_sys_paths: bool = True,
 ) -> None:
@@ -273,6 +277,8 @@ async def init_from_config(
     other Flyte remote API methods are called. Thread-safe implementation.
 
     :param path_or_config: Path to the configuration file or Config object
+    :param project: Project name, this will override any project names in the configuration file
+    :param domain: Domain name, this will override any domain names in the configuration file
     :param root_dir: Optional root directory from which to determine how to load files, and find paths to
         files like config etc. For example if one uses the copy-style=="all", it is essential to determine the
         root directory for the current project. If not provided, it defaults to the editable install directory or
@@ -284,6 +290,9 @@ async def init_from_config(
     :param images: List of image strings in format "imagename=imageuri" or just "imageuri".
     :param sync_local_sys_paths: Whether to include and synchronize local sys.path entries under the root directory
      into the remote container (default: True).
+    :param batch_size: Optional batch size for operations that use listings, defaults to 1000
+    :param image_builder: Optional image builder configuration, if provided,
+        will override any defaults set in the configuration.
     :return: None
     """
     from rich.highlighter import ReprHighlighter
@@ -318,8 +327,8 @@ async def init_from_config(
 
     await init.aio(
         org=cfg.task.org,
-        project=cfg.task.project,
-        domain=cfg.task.domain,
+        project=project or cfg.task.project,
+        domain=domain or cfg.task.domain,
         endpoint=cfg.platform.endpoint,
         insecure=cfg.platform.insecure,
         insecure_skip_verify=cfg.platform.insecure_skip_verify,
@@ -332,7 +341,8 @@ async def init_from_config(
         root_dir=root_dir,
         log_level=log_level,
         log_format=log_format,
-        image_builder=cfg.image.builder,
+        image_builder=image_builder or cfg.image.builder,
+        batch_size=batch_size,
         images=cfg.image.image_refs,
         storage=storage,
         source_config_path=cfg_path,

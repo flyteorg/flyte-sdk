@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import asyncio
 import gzip
 import logging
@@ -5,7 +7,7 @@ import os
 import pathlib
 import tempfile
 from pathlib import Path
-from typing import ClassVar, Type
+from typing import TYPE_CHECKING, ClassVar, Type
 
 from async_lru import alru_cache
 from flyteidl2.core.tasks_pb2 import TaskTemplate
@@ -17,6 +19,9 @@ from flyte.models import CodeBundle
 from ._ignore import GitIgnore, Ignore, StandardIgnore
 from ._packaging import create_bundle, list_files_to_bundle, list_relative_files_to_bundle, print_ls_tree
 from ._utils import CopyFiles, hash_file
+
+if TYPE_CHECKING:
+    from flyte.app import AppEnvironment
 
 _pickled_file_extension = ".pkl.gz"
 _tar_file_extension = ".tar.gz"
@@ -47,7 +52,7 @@ class _PklCache:
 
 
 async def build_pkl_bundle(
-    o: TaskTemplate,
+    o: TaskTemplate | AppEnvironment,
     upload_to_controlplane: bool = True,
     upload_from_dataplane_base_path: str | None = None,
     copy_bundle_to: pathlib.Path | None = None,

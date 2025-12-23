@@ -17,7 +17,6 @@ from urllib.parse import urlencode as _urlencode
 import click
 import httpx
 import pydantic
-from h11 import Response
 
 from flyte._logging import logger
 from flyte.remote._client.auth._authenticators.base import Authenticator
@@ -363,19 +362,17 @@ class AuthorizationClient(object):
 
         data.update(self._refresh_access_token_params)
 
-        async with typing.cast(
-            typing.AsyncContextManager[Response],
-            self._http_session.post(
-                url=self._token_endpoint,
-                data=data,
-                headers=self._headers,
-                follow_redirects=False,
-            ),
-        ) as resp:
-            if resp.status_code != _StatusCodes.OK:
-                raise AccessTokenNotFoundError(f"Non-200 returned from refresh token endpoint {resp.status_code}")
+        resp: httpx.Response = await self._http_session.post(
+            url=self._token_endpoint,
+            data=data,
+            headers=self._headers,
+            follow_redirects=False,
+        )
 
-            return await self._credentials_from_response(resp)
+        if resp.status_code != _StatusCodes.OK:
+            raise AccessTokenNotFoundError(f"Non-200 returned from refresh token endpoint {resp.status_code}")
+
+        return await self._credentials_from_response(resp)
 
 
 class OAuthCallbackHandler:

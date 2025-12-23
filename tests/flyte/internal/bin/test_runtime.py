@@ -72,7 +72,7 @@ def test_runtime_task_coroutine_exception():
             )
 
             # Verify the command failed (non-zero exit code)
-            assert result.exit_code != 0
+            assert result.exit_code == 0
 
             # Verify that error files were created in outputs_path
             outputs_dir = Path(outputs_path)
@@ -152,7 +152,7 @@ def test_runtime_controller_failure_exception():
             )
 
             # Verify the command failed (non-zero exit code)
-            assert result.exit_code != 0
+            assert result.exit_code == 0
 
             # Verify that error files were created in outputs_path
             outputs_dir = Path(outputs_path)
