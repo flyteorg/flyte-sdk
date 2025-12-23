@@ -1,9 +1,10 @@
 # /// script
-# requires-python = ">=3.12"
+# requires-python = "==3.11"
 # dependencies = [
 #     "fastapi",
 #     "uvicorn",
-#     "flyte",
+#     "flyte==2.0.0b40",
+#     "grpcio==1.76.0",
 # ]
 # ///
 import logging
@@ -47,7 +48,7 @@ async def lifespan(app: FastAPI):
     are processed, preventing race conditions and initialization errors.
     """
     # Startup: Initialize Flyte
-    await flyte.init_in_cluster.aio(org="playground")
+    await flyte.init_in_cluster.aio(org="demo")
     yield
     # Shutdown: Clean up if needed
 
@@ -66,6 +67,20 @@ async def health_check():
     return {"status": "healthy"}
 
 
+@app.get("/ulimit")
+async def ulimit() -> dict[str, int | None]:
+    """ULimit endpoint."""
+    import subprocess
+
+    try:
+        result = subprocess.run(["ulimit", "-n"], capture_output=True, text=True, check=True)
+        nofile = int(result.stdout.strip())
+    except Exception as e:
+        nofile = None
+
+    return {"ulimit_nofile": nofile}
+
+
 @app.post("/run-task/{project}/{domain}/{name}/{version}")
 async def run_task(
     project: str,
@@ -73,7 +88,7 @@ async def run_task(
     name: str,
     version: str,
     inputs: dict,
-    credentials: Annotated[HTTPAuthorizationCredentials, Depends(verify_token)],
+    # credentials: Annotated[HTTPAuthorizationCredentials, Depends(verify_token)],
 ):
     """
     Trigger a Flyte task run via webhook.
@@ -107,10 +122,13 @@ env = FastAPIAppEnvironment(
     name="webhook-runner",
     app=app,
     description="A webhook service that triggers Flyte task runs",
-    image=flyte.Image.from_uv_script(__file__, name="webhook-runner", pre=True),
+    # image=flyte.Image.from_uv_script(__file__, name="webhook-runner", pre=True),
+    image=flyte.Image.from_debian_base(python_version=(3, 13)).with_pip_packages("fastapi", "uvicorn"),
     resources=flyte.Resources(cpu=1, memory="512Mi"),
     requires_auth=False,
-    env_vars={"WEBHOOK_API_KEY": os.getenv("WEBHOOK_API_KEY", "test-api-key")},
+    env_vars={
+        "WEBHOOK_API_KEY": os.getenv("WEBHOOK_API_KEY", "test-api-key"),
+    },
 )
 
 if __name__ == "__main__":
