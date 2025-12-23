@@ -2,7 +2,9 @@
 
 import flyte.app
 
-image = flyte.Image.from_debian_base(python_version=(3, 12)).with_pip_packages("flyteplugins-connector[bigquery]")
+image = flyte.Image.from_debian_base(python_version=(3, 12)).with_pip_packages(
+    "flyteplugins-connectors[bigquery]", pre=True
+)
 
 # The `App` declaration.
 # Uses the `ImageSpec` declared above.
