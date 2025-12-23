@@ -3,7 +3,7 @@
 # dependencies = [
 #     "fastapi",
 #     "uvicorn",
-#     "flyte @ file:///Users/ketanumare/src/flyte-sdk",
+#     "flyte",
 # ]
 # ///
 import logging
@@ -17,6 +17,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from starlette import status
 
 import flyte
+import flyte.errors
 import flyte.remote as remote
 from flyte.app.extras import FastAPIAppEnvironment
 
@@ -46,7 +47,7 @@ async def lifespan(app: FastAPI):
     are processed, preventing race conditions and initialization errors.
     """
     # Startup: Initialize Flyte
-    await flyte.init_in_cluster.aio(org="demo")
+    await flyte.init_in_cluster.aio(org="playground")
     yield
     # Shutdown: Clean up if needed
 
@@ -94,8 +95,11 @@ async def run_task(
         - name: Name of the run
     """
     logger.info(f"Running task: {name} {version}, with inputs: {inputs}")
-    tk = remote.TaskDetails.get(project=project, domain=domain, name=name, version=version)
-    r = await flyte.run.aio(tk, **inputs)
+    try:
+        tk = remote.Task.get(project=project, domain=domain, name=name, version=version)
+        r = await flyte.run.aio(tk, **inputs)
+    except flyte.errors.ReferenceTaskError:
+        return HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
     return {"url": r.url, "name": r.name}
 
 
