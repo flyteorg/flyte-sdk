@@ -58,6 +58,10 @@ class DeployedAppEnvironment:
                     "public_url",
                     self.deployed_app.endpoint,
                 ),
+                (
+                    "console_url",
+                    self.deployed_app.url,
+                )
             ],
         ]
 
