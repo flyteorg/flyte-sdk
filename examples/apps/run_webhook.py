@@ -10,9 +10,8 @@ import logging
 import os
 import pathlib
 from contextlib import asynccontextmanager
-from typing import Annotated
 
-from fastapi import Depends, FastAPI, HTTPException, Security
+from fastapi import FastAPI, HTTPException, Security
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from starlette import status
 
@@ -64,20 +63,6 @@ app = FastAPI(
 async def health_check():
     """Health check endpoint."""
     return {"status": "healthy"}
-
-
-@app.get("/ulimit")
-async def ulimit() -> dict[str, int | None]:
-    """ULimit endpoint."""
-    import subprocess
-
-    try:
-        result = subprocess.run(["ulimit", "-n"], capture_output=True, text=True, check=True)
-        nofile = int(result.stdout.strip())
-    except Exception as e:
-        nofile = None
-
-    return {"ulimit_nofile": nofile}
 
 
 @app.post("/run-task/{project}/{domain}/{name}/{version}")
