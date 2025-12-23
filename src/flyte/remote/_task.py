@@ -5,6 +5,7 @@ import functools
 from dataclasses import dataclass
 from typing import Any, AsyncIterator, Callable, Coroutine, Dict, Iterator, Literal, Optional, Tuple, Union, cast
 
+import grpc
 import rich.repr
 from flyteidl2.common import identifier_pb2, list_pb2
 from flyteidl2.core import literals_pb2
@@ -143,7 +144,9 @@ class TaskDetails(ToJSONMixin):
                     ):
                         tasks.append(x)
                     if not tasks:
-                        raise flyte.errors.ReferenceTaskError(f"Task {name} not found.")
+                        raise flyte.errors.ReferenceTaskError(
+                            f"No versions found for Task {name} in project {project}, domain {domain}."
+                        )
                     _version = tasks[0].version
                 elif _auto_version == "current":
                     ctx = flyte.ctx()
@@ -158,12 +161,19 @@ class TaskDetails(ToJSONMixin):
                 name=name,
                 version=_version,
             )
-            resp = await get_client().task_service.GetTaskDetails(
-                task_service_pb2.GetTaskDetailsRequest(
-                    task_id=task_id,
+            try:
+                resp = await get_client().task_service.GetTaskDetails(
+                    task_service_pb2.GetTaskDetailsRequest(
+                        task_id=task_id,
+                    )
                 )
-            )
-            return cls(resp.details)
+                return cls(resp.details)
+            except grpc.aio.AioRpcError as err:
+                if err.code() == grpc.StatusCode.NOT_FOUND:
+                    raise flyte.errors.ReferenceTaskError(
+                        f"Task {name}, version {_version} not found in {project} {domain}."
+                    )
+                raise
 
         return LazyEntity(
             name=name, getter=functools.partial(deferred_get, _version=version, _auto_version=auto_version)

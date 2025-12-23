@@ -13,11 +13,11 @@ from ._tools import ipython_check
 LogFormat = Literal["console", "json"]
 _LOG_LEVEL_MAP = {
     "critical": logging.CRITICAL,  # 50
-    "error": logging.ERROR,        # 40
-    "warning": logging.WARNING,    # 30
-    "warn": logging.WARNING,       # 30
-    "info": logging.INFO,          # 20
-    "debug": logging.DEBUG,        # 10
+    "error": logging.ERROR,  # 40
+    "warning": logging.WARNING,  # 30
+    "warn": logging.WARNING,  # 30
+    "info": logging.INFO,  # 20
+    "debug": logging.DEBUG,  # 10
 }
 DEFAULT_LOG_LEVEL = logging.WARNING
 
