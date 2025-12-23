@@ -170,10 +170,23 @@ def _bind_parameters(
     func: typing.Callable,
     materialized_parameters: dict[str, str | flyte.io.File | flyte.io.Dir],
 ) -> dict[str, str | flyte.io.File | flyte.io.Dir]:
-    """Bind materialized_parameters to func based on the argument names of the function."""
+    """Bind materialized_parameters to func based on the argument names of the function.
+
+    If the function has **kwargs, all materialized parameters are passed through.
+    Otherwise, only parameters matching the function signature are bound.
+    """
     import inspect
 
     sig = inspect.signature(func)
+
+    # Check if function accepts **kwargs
+    has_var_keyword = any(param.kind == inspect.Parameter.VAR_KEYWORD for param in sig.parameters.values())
+
+    if has_var_keyword:
+        # If function has **kwargs, pass all parameters
+        return materialized_parameters
+
+    # Otherwise, only bind parameters that match the function signature
     bound_params = {}
     for param_name in sig.parameters:
         if param_name in materialized_parameters:

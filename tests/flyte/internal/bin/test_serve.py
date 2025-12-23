@@ -1166,22 +1166,66 @@ class TestBindParameters:
         assert result == {"a": "value_a", "b": "value_b"}
         assert "c" not in result  # c has default but not in materialized_parameters
 
-    def test_bind_parameters_with_kwargs(self):
+    def test_bind_parameters_with_kwargs_passes_all_parameters(self):
         """
-        GOAL: Verify _bind_parameters handles functions with **kwargs.
+        GOAL: Verify _bind_parameters passes all parameters when function has **kwargs.
 
-        Tests that regular positional parameters are correctly bound.
+        Tests that when a function has **kwargs, all materialized parameters are passed through.
         """
 
         def my_func(a, **kwargs):
             pass
 
-        materialized_parameters = {"a": "value_a", "b": "value_b"}
+        materialized_parameters = {"a": "value_a", "b": "value_b", "c": "value_c"}
 
         result = _bind_parameters(my_func, materialized_parameters)
 
-        # Only 'a' should be bound as 'b' is not a declared parameter
-        assert result == {"a": "value_a"}
+        # All parameters should be bound since function accepts **kwargs
+        assert result == {"a": "value_a", "b": "value_b", "c": "value_c"}
+
+    def test_bind_parameters_with_only_kwargs(self):
+        """
+        GOAL: Verify _bind_parameters passes all parameters when function only has **kwargs.
+
+        Tests that when a function only has **kwargs (no explicit params), all materialized parameters are passed.
+        """
+
+        def my_func(**kwargs):
+            pass
+
+        materialized_parameters = {"a": "value_a", "b": "value_b", "c": "value_c"}
+
+        result = _bind_parameters(my_func, materialized_parameters)
+
+        # All parameters should be bound since function accepts **kwargs
+        assert result == materialized_parameters
+
+    def test_bind_parameters_with_kwargs_and_file_dir_types(self):
+        """
+        GOAL: Verify _bind_parameters with **kwargs correctly passes File and Dir types.
+
+        Tests that File and Dir objects are correctly passed through when function has **kwargs.
+        """
+        from flyte.io import Dir, File
+
+        def my_func(config, **kwargs):
+            pass
+
+        model = File(path="s3://bucket/model.pkl")
+        data = Dir(path="s3://bucket/data/")
+        materialized_parameters = {
+            "config": "config.yaml",
+            "model_file": model,
+            "data_dir": data,
+            "extra_param": "extra_value",
+        }
+
+        result = _bind_parameters(my_func, materialized_parameters)
+
+        # All parameters should be passed through due to **kwargs
+        assert result == materialized_parameters
+        assert isinstance(result["model_file"], File)
+        assert isinstance(result["data_dir"], Dir)
 
     def test_bind_parameters_with_args(self):
         """
@@ -1396,6 +1440,218 @@ class TestServeFunction:
                 pass
 
         assert server_called["called"] is True
+
+    @pytest.mark.asyncio
+    async def test_serve_server_with_kwargs_receives_all_parameters(self):
+        """
+        GOAL: Verify _serve passes all parameters to server function with **kwargs.
+
+        Tests that when server function has **kwargs, all materialized parameters are passed.
+        """
+        from flyte._image import Image
+        from flyte.app import AppEnvironment
+
+        received_params = {}
+
+        async def mock_server(config, **kwargs):
+            received_params["config"] = config
+            received_params["kwargs"] = kwargs
+
+        app_env = AppEnvironment(name="test-app", image=Image.from_base("python:3.11"))
+        app_env._server = mock_server
+
+        materialized_parameters = {
+            "config": "config.yaml",
+            "model": "model.pkl",
+            "data": "data.csv",
+            "extra_param": "extra_value",
+        }
+
+        with patch("signal.signal"):
+            try:
+                await asyncio.wait_for(_serve(app_env, materialized_parameters), timeout=0.1)
+            except asyncio.TimeoutError:
+                pass
+
+        # Verify config was received as positional arg
+        assert received_params["config"] == "config.yaml"
+        # Verify other params were received via kwargs
+        assert received_params["kwargs"] == {
+            "model": "model.pkl",
+            "data": "data.csv",
+            "extra_param": "extra_value",
+        }
+
+    @pytest.mark.asyncio
+    async def test_serve_on_startup_with_kwargs_receives_all_parameters(self):
+        """
+        GOAL: Verify _serve passes all parameters to on_startup function with **kwargs.
+
+        Tests that when on_startup function has **kwargs, all materialized parameters are passed.
+        """
+        from flyte._image import Image
+        from flyte.app import AppEnvironment
+
+        startup_params = {}
+
+        def mock_on_startup(init_config, **kwargs):
+            startup_params["init_config"] = init_config
+            startup_params["kwargs"] = kwargs
+
+        async def mock_server():
+            pass
+
+        app_env = AppEnvironment(name="test-app", image=Image.from_base("python:3.11"))
+        app_env._on_startup = mock_on_startup
+        app_env._server = mock_server
+
+        materialized_parameters = {
+            "init_config": "init.yaml",
+            "model_path": "model.pkl",
+            "cache_size": "1024",
+            "debug_mode": "true",
+        }
+
+        with patch("signal.signal"):
+            try:
+                await asyncio.wait_for(_serve(app_env, materialized_parameters), timeout=0.1)
+            except asyncio.TimeoutError:
+                pass
+
+        # Verify init_config was received as positional arg
+        assert startup_params["init_config"] == "init.yaml"
+        # Verify other params were received via kwargs
+        assert startup_params["kwargs"] == {
+            "model_path": "model.pkl",
+            "cache_size": "1024",
+            "debug_mode": "true",
+        }
+
+    @pytest.mark.asyncio
+    async def test_serve_on_shutdown_with_kwargs_receives_all_parameters(self):
+        """
+        GOAL: Verify _serve passes all parameters to on_shutdown function with **kwargs.
+
+        Tests that when on_shutdown function has **kwargs, all materialized parameters are passed.
+        """
+        from flyte._image import Image
+        from flyte.app import AppEnvironment
+
+        shutdown_params = {}
+
+        def mock_on_shutdown(cleanup_path, **kwargs):
+            shutdown_params["cleanup_path"] = cleanup_path
+            shutdown_params["kwargs"] = kwargs
+
+        async def mock_server():
+            pass  # Server completes immediately, triggering finally block and shutdown
+
+        app_env = AppEnvironment(name="test-app", image=Image.from_base("python:3.11"))
+        app_env._on_shutdown = mock_on_shutdown
+        app_env._server = mock_server
+
+        materialized_parameters = {
+            "cleanup_path": "/tmp/cleanup",
+            "log_path": "/var/log/app",
+            "notify_url": "https://example.com/notify",
+        }
+
+        with patch("signal.signal"):
+            try:
+                await asyncio.wait_for(_serve(app_env, materialized_parameters), timeout=0.1)
+            except asyncio.TimeoutError:
+                pass
+
+        # Verify cleanup_path was received as positional arg
+        assert shutdown_params["cleanup_path"] == "/tmp/cleanup"
+        # Verify other params were received via kwargs
+        assert shutdown_params["kwargs"] == {
+            "log_path": "/var/log/app",
+            "notify_url": "https://example.com/notify",
+        }
+
+    @pytest.mark.asyncio
+    async def test_serve_all_callbacks_with_kwargs(self):
+        """
+        GOAL: Verify _serve passes all parameters to all callbacks when they have **kwargs.
+
+        Tests the full flow where server, on_startup, and on_shutdown all have **kwargs.
+        """
+        from flyte._image import Image
+        from flyte.app import AppEnvironment
+
+        startup_params = {}
+        server_params = {}
+        shutdown_params = {}
+
+        async def mock_on_startup(**kwargs):
+            startup_params.update(kwargs)
+
+        async def mock_server(**kwargs):
+            server_params.update(kwargs)
+
+        async def mock_on_shutdown(**kwargs):
+            shutdown_params.update(kwargs)
+
+        app_env = AppEnvironment(name="test-app", image=Image.from_base("python:3.11"))
+        app_env._on_startup = mock_on_startup
+        app_env._server = mock_server
+        app_env._on_shutdown = mock_on_shutdown
+
+        materialized_parameters = {
+            "config": "config.yaml",
+            "model": "model.pkl",
+            "data": "data.csv",
+        }
+
+        with patch("signal.signal"):
+            try:
+                await asyncio.wait_for(_serve(app_env, materialized_parameters), timeout=0.1)
+            except asyncio.TimeoutError:
+                pass
+
+        # All callbacks should receive all parameters
+        assert startup_params == materialized_parameters
+        assert server_params == materialized_parameters
+        assert shutdown_params == materialized_parameters
+
+    @pytest.mark.asyncio
+    async def test_serve_with_kwargs_and_file_dir_types(self):
+        """
+        GOAL: Verify _serve correctly passes File and Dir types to functions with **kwargs.
+
+        Tests that File and Dir objects are correctly passed when using **kwargs.
+        """
+        from flyte._image import Image
+        from flyte.app import AppEnvironment
+        from flyte.io import Dir, File
+
+        received_params = {}
+
+        async def mock_server(**kwargs):
+            received_params.update(kwargs)
+
+        app_env = AppEnvironment(name="test-app", image=Image.from_base("python:3.11"))
+        app_env._server = mock_server
+
+        model = File(path="s3://bucket/model.pkl")
+        data = Dir(path="s3://bucket/data/")
+        materialized_parameters = {
+            "config": "config.yaml",
+            "model_file": model,
+            "data_dir": data,
+        }
+
+        with patch("signal.signal"):
+            try:
+                await asyncio.wait_for(_serve(app_env, materialized_parameters), timeout=0.1)
+            except asyncio.TimeoutError:
+                pass
+
+        # Verify all parameters including File and Dir types were passed
+        assert received_params == materialized_parameters
+        assert isinstance(received_params["model_file"], File)
+        assert isinstance(received_params["data_dir"], Dir)
 
 
 class TestIntegration:
