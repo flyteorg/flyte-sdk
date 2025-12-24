@@ -3,16 +3,15 @@
 # dependencies = [
 #     "fastapi",
 #     "uvicorn",
-#     "flyte",
+#     "flyte==2.0.0b40",
 # ]
 # ///
 import logging
 import os
 import pathlib
 from contextlib import asynccontextmanager
-from typing import Annotated
 
-from fastapi import Depends, FastAPI, HTTPException, Security
+from fastapi import FastAPI, HTTPException, Security
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from starlette import status
 
@@ -47,7 +46,7 @@ async def lifespan(app: FastAPI):
     are processed, preventing race conditions and initialization errors.
     """
     # Startup: Initialize Flyte
-    await flyte.init_in_cluster.aio(org="playground")
+    await flyte.init_in_cluster.aio(org=os.environ.get("ORG", "demo"))
     yield
     # Shutdown: Clean up if needed
 
@@ -73,7 +72,7 @@ async def run_task(
     name: str,
     version: str,
     inputs: dict,
-    credentials: Annotated[HTTPAuthorizationCredentials, Depends(verify_token)],
+    # credentials: Annotated[HTTPAuthorizationCredentials, Depends(verify_token)],
 ):
     """
     Trigger a Flyte task run via webhook.
@@ -107,10 +106,14 @@ env = FastAPIAppEnvironment(
     name="webhook-runner",
     app=app,
     description="A webhook service that triggers Flyte task runs",
-    image=flyte.Image.from_uv_script(__file__, name="webhook-runner", pre=True),
+    # image=flyte.Image.from_uv_script(__file__, name="webhook-runner", pre=True),
+    image=flyte.Image.from_debian_base(python_version=(3, 13)).with_pip_packages("fastapi", "uvicorn"),
     resources=flyte.Resources(cpu=1, memory="512Mi"),
     requires_auth=False,
-    env_vars={"WEBHOOK_API_KEY": os.getenv("WEBHOOK_API_KEY", "test-api-key")},
+    env_vars={
+        "WEBHOOK_API_KEY": os.getenv("WEBHOOK_API_KEY", "test-api-key"),
+        "ORG": os.environ.get("ORG", "demo"),
+    },
 )
 
 if __name__ == "__main__":

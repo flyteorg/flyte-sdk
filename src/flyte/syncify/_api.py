@@ -150,6 +150,17 @@ class _BackgroundLoop:
                 yield r
             return
 
+        # Install the gRPC error handler on the caller's event loop as well.
+        # This is needed because gRPC's async polling events may be delivered to
+        # the caller's loop (e.g., FastAPI's event loop) when using .aio().
+        import flyte.errors
+
+        try:
+            caller_loop = asyncio.get_running_loop()
+            caller_loop.set_exception_handler(flyte.errors.silence_grpc_polling_error)
+        except RuntimeError:
+            pass  # No running loop, which is fine
+
         while True:
             try:
                 # same replacement here for the async path
@@ -186,6 +197,17 @@ class _BackgroundLoop:
             # If we are already in the background loop, just run the coroutine
             return await coro
         try:
+            # Install the gRPC error handler on the caller's event loop as well.
+            # This is needed because gRPC's async polling events may be delivered to
+            # the caller's loop (e.g., FastAPI's event loop) when using .aio().
+            import flyte.errors
+
+            try:
+                caller_loop = asyncio.get_running_loop()
+                caller_loop.set_exception_handler(flyte.errors.silence_grpc_polling_error)
+            except RuntimeError:
+                pass  # No running loop, which is fine
+
             # Otherwise, run it in the background loop and wait for the result
             future: concurrent.futures.Future[R_co] = asyncio.run_coroutine_threadsafe(coro, self.loop)
             # Wrap the future in an asyncio Future to await it in an async context
