@@ -1,7 +1,9 @@
-use std::sync::Arc;
-use std::task::{Context, Poll};
-use tonic::body::BoxBody;
-use tonic::transport::Channel;
+use std::{
+    sync::Arc,
+    task::{Context, Poll},
+};
+
+use tonic::{body::BoxBody, transport::Channel};
 use tower::{Layer, Service, ServiceExt};
 use tracing::{error, warn};
 

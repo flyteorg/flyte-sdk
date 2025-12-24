@@ -11,18 +11,18 @@ pub mod proto;
 // Python bindings - thin wrappers around core types
 use std::sync::Arc;
 
-use pyo3::exceptions;
-use pyo3::prelude::*;
-use pyo3::types::PyAny;
+use flyteidl2::flyteidl::common::{ActionIdentifier, RunIdentifier};
+use prost::Message;
+use pyo3::{exceptions, prelude::*, types::PyAny};
 use pyo3_async_runtimes::tokio::future_into_py;
 use tracing::{error, info, warn};
 use tracing_subscriber::FmtSubscriber;
 
-use crate::action::{Action, ActionType};
-use crate::core::CoreBaseController;
-use crate::error::ControllerError;
-use flyteidl2::flyteidl::common::{ActionIdentifier, RunIdentifier};
-use prost::Message;
+use crate::{
+    action::{Action, ActionType},
+    core::CoreBaseController,
+    error::ControllerError,
+};
 
 // Python error conversions
 impl From<ControllerError> for PyErr {

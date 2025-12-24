@@ -1,13 +1,14 @@
-use flyteidl2::google::protobuf::Timestamp;
+use flyteidl2::{
+    flyteidl::{
+        common::{ActionIdentifier, ActionPhase, RunIdentifier},
+        core::{ExecutionError, TypedInterface},
+        task::{OutputReferences, TaskSpec, TraceSpec},
+        workflow::{ActionUpdate, TraceAction},
+    },
+    google::protobuf::Timestamp,
+};
 use prost::Message;
 use pyo3::prelude::*;
-
-use flyteidl2::flyteidl::common::{ActionIdentifier, RunIdentifier};
-use flyteidl2::flyteidl::workflow::{ActionUpdate, TraceAction};
-
-use flyteidl2::flyteidl::common::ActionPhase;
-use flyteidl2::flyteidl::core::{ExecutionError, TypedInterface};
-use flyteidl2::flyteidl::task::{OutputReferences, TaskSpec, TraceSpec};
 use tracing::debug;
 
 #[pyclass(eq, eq_int)]

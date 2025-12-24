@@ -1,3 +1,5 @@
+use std::{env, sync::Arc};
+
 /// Standalone authentication test binary
 ///
 /// Usage:
@@ -6,8 +8,6 @@
 ///   FLYTE_CLIENT_SECRET=your_secret \
 ///   cargo run --bin test_auth
 use flyte_controller_base::auth::{AuthConfig, ClientCredentialsAuthenticator};
-use std::env;
-use std::sync::Arc;
 use tonic::transport::Endpoint;
 use tracing_subscriber;
 
