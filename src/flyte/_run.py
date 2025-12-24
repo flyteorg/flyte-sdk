@@ -97,6 +97,7 @@ class _Runner:
         interruptible: bool | None = None,
         log_level: int | None = None,
         log_format: LogFormat = "console",
+        preserve_root_logger: bool = False,
         disable_run_cache: bool = False,
         queue: Optional[str] = None,
         custom_context: Dict[str, str] | None = None,
@@ -130,6 +131,7 @@ class _Runner:
         self._interruptible = interruptible
         self._log_level = log_level
         self._log_format = log_format
+        self._preserve_root_logger = preserve_root_logger
         self._disable_run_cache = disable_run_cache
         self._queue = queue
         self._custom_context = custom_context or {}
@@ -232,6 +234,8 @@ class _Runner:
             else:
                 env["LOG_LEVEL"] = str(logger.getEffectiveLevel())
         env["LOG_FORMAT"] = self._log_format
+        if self._preserve_root_logger:
+            env["FLYTE_PRESERVE_ROOT_LOGGER"] = "1"
 
         # These paths will be appended to sys.path at runtime.
         if cfg.sync_local_sys_paths:

@@ -105,6 +105,7 @@ class CLIConfig:
     ctx: click.Context
     log_level: int | None = logging.ERROR
     log_format: LogFormat = "console"
+    preserve_root_logger: bool = False
     endpoint: str | None = None
     insecure: bool = False
     org: str | None = None
