@@ -5,7 +5,6 @@ These tests verify the serve functionality including parameter synchronization,
 code bundle downloading, and the main serve command without using mocks.
 """
 
-import asyncio
 import json
 import os
 import tempfile
@@ -15,7 +14,7 @@ import aiofiles
 import pytest
 from click.testing import CliRunner
 
-from flyte._bin.serve import _bind_parameters, _serve, download_code_parameters, main, sync_parameters
+from flyte._bin.serve import _bind_parameters, download_code_parameters, main, sync_parameters
 from flyte.app._parameter import Parameter, SerializableParameterCollection
 from flyte.models import CodeBundle
 
