@@ -44,14 +44,15 @@ struct BaseController(Arc<CoreBaseController>);
 #[pymethods]
 impl BaseController {
     #[new]
-    #[pyo3(signature = (*, endpoint=None))]
-    fn new(endpoint: Option<String>) -> PyResult<Self> {
+    #[pyo3(signature = (*, endpoint=None, workers=None))]
+    fn new(endpoint: Option<String>, workers: Option<usize>) -> PyResult<Self> {
+        let workers = workers.unwrap_or(20);
         let core_base = if let Some(ep) = endpoint {
-            info!("Creating controller wrapper with endpoint {:?}", ep);
-            CoreBaseController::new_without_auth(ep)?
+            info!("Creating controller wrapper with endpoint {:?} and {} workers", ep, workers);
+            CoreBaseController::new_without_auth(ep, workers)?
         } else {
-            info!("Creating controller wrapper from _UNION_EAGER_API_KEY env var");
-            CoreBaseController::new_with_auth()?
+            info!("Creating controller wrapper from _UNION_EAGER_API_KEY env var with {} workers", workers);
+            CoreBaseController::new_with_auth(workers)?
         };
         Ok(BaseController(core_base))
     }
