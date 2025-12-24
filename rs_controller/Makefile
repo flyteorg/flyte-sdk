@@ -56,7 +56,13 @@ build-wheel-local: dist-dirs
 	sed -i.bak 's/^version = .*/version = "$(VERSION)"/' pyproject.toml && rm pyproject.toml.bak
 	python -m build --wheel --outdir dist
 
-.PHONY: fmt
-fmt:
+check-nightly-toolchain:
 	@rustup toolchain list | grep -q "nightly" || (echo "Error: nightly toolchain not found. Run 'rustup toolchain install nightly'" && exit 1)
+
+.PHONY: fmt
+fmt: check-nightly-toolchain
 	cargo +nightly fmt --all
+
+.PHONY: check-fmt
+check-fmt: check-nightly-toolchain
+	cargo +nightly fmt --check
