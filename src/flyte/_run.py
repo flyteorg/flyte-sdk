@@ -635,6 +635,7 @@ def with_runcontext(
     interruptible: bool | None = None,
     log_level: int | None = None,
     log_format: LogFormat = "console",
+    preserve_root_logger: bool = False,
     disable_run_cache: bool = False,
     queue: Optional[str] = None,
     custom_context: Dict[str, str] | None = None,
@@ -682,6 +683,7 @@ def with_runcontext(
     :param log_level: Optional Log level to set for the run. If not provided, it will be set to the default log level
         set using `flyte.init()`
     :param log_format: Optional Log format to set for the run. If not provided, it will be set to the default log format
+    :param preserve_root_logger: If true, the root logger will be preserved and not modified by Flyte.
     :param disable_run_cache: Optional If true, the run cache will be disabled. This is useful for testing purposes.
     :param queue: Optional The queue to use for the run. This is used to specify the cluster to use for the run.
     :param custom_context: Optional global input context to pass to the task. This will be available via
@@ -716,6 +718,7 @@ def with_runcontext(
         domain=domain,
         log_level=log_level,
         log_format=log_format,
+        preserve_root_logger=preserve_root_logger,
         disable_run_cache=disable_run_cache,
         queue=queue,
         custom_context=custom_context,
