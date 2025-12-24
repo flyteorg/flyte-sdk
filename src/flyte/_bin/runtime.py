@@ -169,10 +169,6 @@ def main(
         try:
             await utils.run_coros(controller_failure, task_coroutine)
             await controller.stop()
-            os._exit(0)
-            for h in logger.handlers:
-                h.flush()
-            sys.stdout.flush()
         except flyte.errors.RuntimeSystemError as e:
             logger.error(f"Runtime system error: {e}")
             from flyte._internal.runtime.convert import convert_from_native_to_error
@@ -183,13 +179,15 @@ def main(
             path = await upload_error(err.err, outputs_path)
             logger.error(f"Run {run_name} Action {name} failed with error: {err}. Uploaded error to {path}")
             await controller.stop()
-            os._exit(0)
-            for h in logger.handlers:
-                h.flush()
-            sys.stdout.flush()
 
     asyncio.run(_run_and_stop())
     logger.warning(f"Flyte runtime completed for action {name} with run name {run_name}")
+    for h in logger.handlers:
+        h.flush()
+    sys.stdout.flush()
+    # We os._exit here to ensure that grpc does not block the exiting! grpc currently has a graceful shutdown system
+    # that blocks the process from exiting
+    os._exit(0)
 
 
 if __name__ == "__main__":
