@@ -1,12 +1,17 @@
-use std::sync::Arc;
-use std::time::{Duration, SystemTime};
+use std::{
+    sync::Arc,
+    time::{Duration, SystemTime},
+};
+
 use tokio::sync::RwLock;
 use tonic::transport::Channel;
 use tracing::{debug, info};
 
-use super::config::{AuthConfig, ClientConfigExt};
-use super::errors::TokenError;
-use super::token_client::{self, GrantType, TokenResponse};
+use super::{
+    config::{AuthConfig, ClientConfigExt},
+    errors::TokenError,
+    token_client::{self, GrantType, TokenResponse},
+};
 use crate::proto::{
     AuthMetadataServiceClient, OAuth2MetadataRequest, OAuth2MetadataResponse,
     PublicClientAuthConfigRequest, PublicClientAuthConfigResponse,
