@@ -172,7 +172,10 @@ class LocalController:
         await LocalTaskCache.close()
 
     async def watch_for_errors(self):
-        pass
+        try:
+            await asyncio.Event().wait()  # Wait indefinitely until cancelled
+        except asyncio.CancelledError:
+            return  # Return with no errors when cancelled
 
     async def get_action_outputs(
         self, _interface: NativeInterface, _func: Callable, *args, **kwargs

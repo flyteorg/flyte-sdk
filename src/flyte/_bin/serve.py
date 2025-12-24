@@ -166,6 +166,34 @@ def load_pkl_app_env(code_bundle: CodeBundle) -> AppEnvironment:
         raise
 
 
+def _bind_parameters(
+    func: typing.Callable,
+    materialized_parameters: dict[str, str | flyte.io.File | flyte.io.Dir],
+) -> dict[str, str | flyte.io.File | flyte.io.Dir]:
+    """Bind materialized_parameters to func based on the argument names of the function.
+
+    If the function has **kwargs, all materialized parameters are passed through.
+    Otherwise, only parameters matching the function signature are bound.
+    """
+    import inspect
+
+    sig = inspect.signature(func)
+
+    # Check if function accepts **kwargs
+    has_var_keyword = any(param.kind == inspect.Parameter.VAR_KEYWORD for param in sig.parameters.values())
+
+    if has_var_keyword:
+        # If function has **kwargs, pass all parameters
+        return materialized_parameters
+
+    # Otherwise, only bind parameters that match the function signature
+    bound_params = {}
+    for param_name in sig.parameters:
+        if param_name in materialized_parameters:
+            bound_params[param_name] = materialized_parameters[param_name]
+    return bound_params
+
+
 async def _serve(
     app_env: AppEnvironment,
     materialized_parameters: dict[str, str | flyte.io.File | flyte.io.Dir],
@@ -182,10 +210,11 @@ async def _serve(
     async def shutdown():
         logger.info("Received SIGTERM, shutting down server...")
         if app_env._on_shutdown is not None:
+            bound_params = _bind_parameters(app_env._on_shutdown, materialized_parameters)
             if asyncio.iscoroutinefunction(app_env._on_shutdown):
-                await app_env._on_shutdown(**materialized_parameters)
+                await app_env._on_shutdown(**bound_params)
             else:
-                app_env._on_shutdown(**materialized_parameters)
+                app_env._on_shutdown(**bound_params)
         logger.info("Server shut down")
         # Use loop.stop() to gracefully stop the loop after shutdown
         loop.stop()
@@ -195,17 +224,19 @@ async def _serve(
 
     if app_env._on_startup is not None:
         logger.info("Running on_startup function")
+        bound_params = _bind_parameters(app_env._on_startup, materialized_parameters)
         if asyncio.iscoroutinefunction(app_env._on_startup):
-            await app_env._on_startup(**materialized_parameters)
+            await app_env._on_startup(**bound_params)
         else:
-            app_env._on_startup(**materialized_parameters)
+            app_env._on_startup(**bound_params)
 
     try:
         logger.info("Running server function")
+        bound_params = _bind_parameters(app_env._server, materialized_parameters)
         if asyncio.iscoroutinefunction(app_env._server):
-            await app_env._server(**materialized_parameters)
+            await app_env._server(**bound_params)
         else:
-            app_env._server(**materialized_parameters)
+            app_env._server(**bound_params)
     finally:
         await shutdown()
 
