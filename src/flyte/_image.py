@@ -21,6 +21,7 @@ PYTHON_3_10 = (3, 10)
 PYTHON_3_11 = (3, 11)
 PYTHON_3_12 = (3, 12)
 PYTHON_3_13 = (3, 13)
+PYTHON_3_14 = (3, 14)
 
 # 0 is a file, 1 is a directory
 CopyConfigType = Literal[0, 1]
@@ -423,6 +424,7 @@ class Image:
         PYTHON_3_11: "py3.11-",
         PYTHON_3_12: "py3.12-",
         PYTHON_3_13: "py3.13-",
+        PYTHON_3_14: "py3.14-",
     }
 
     # class-level token not included in __init__
