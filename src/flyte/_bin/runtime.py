@@ -85,14 +85,13 @@ def main(
     sys.path.insert(0, ".")
 
     import faulthandler
-    import pathlib
     import signal
 
     import flyte
     import flyte._utils as utils
     import flyte.errors
     import flyte.storage as storage
-    from flyte._initialize import init, init_in_cluster
+    from flyte._initialize import init_in_cluster
     from flyte._internal.controllers import create_controller
     from flyte._internal.imagebuild.image_builder import ImageCache
     from flyte._internal.runtime.entrypoints import load_and_run_task
@@ -125,13 +124,9 @@ def main(
     if tgz or pkl:
         bundle = CodeBundle(tgz=tgz, pkl=pkl, destination=dest, computed_version=version)
 
-    if name == "a0":
-        controller_kwargs = init_in_cluster(org=org, project=project, domain=domain)
-        # Controller is created with the same kwargs as init, so that it can be used to run tasks
-        controller = create_controller(ct="remote", **controller_kwargs)
-    else:
-        init(org=org, project=project, domain=domain, root_dir=pathlib.Path.cwd())
-        controller = create_controller(ct="local")
+    controller_kwargs = init_in_cluster(org=org, project=project, domain=domain)
+    # Controller is created with the same kwargs as init, so that it can be used to run tasks
+    controller = create_controller(ct="remote", **controller_kwargs)
 
     ic = ImageCache.from_transport(image_cache) if image_cache else None
 
@@ -187,6 +182,12 @@ def main(
 
     asyncio.run(_run_and_stop())
     logger.warning(f"Flyte runtime completed for action {name} with run name {run_name}")
+    for h in logger.handlers:
+        h.flush()
+    sys.stdout.flush()
+    # We os._exit here to ensure that grpc does not block the exiting! grpc currently has a graceful shutdown system
+    # that blocks the process from exiting
+    os._exit(0)
 
 
 if __name__ == "__main__":
