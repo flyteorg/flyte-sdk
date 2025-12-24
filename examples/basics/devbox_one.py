@@ -7,7 +7,7 @@ import flyte
 env = flyte.TaskEnvironment(
     name="hello_world",
     resources=flyte.Resources(cpu=1, memory="1Gi"),
-    image=flyte.Image.from_base("ghcr.io/jeevb/flyte:py3.12-minimal-03"),
+    image=flyte.Image.from_base("ghcr.io/jeevb/flyte:py3.12-minimal-08"),
 )
 
 

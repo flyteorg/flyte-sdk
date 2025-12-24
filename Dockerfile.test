@@ -9,6 +9,10 @@ RUN apt-get update \
 FROM base AS builder
 COPY --from=docker.io/astral/uv:latest /uv /uvx /bin/
 
+RUN apt-get update \
+    && apt-get install -y git \
+    && rm -rf /var/lib/apt/lists/*
+
 ENV UV_COMPILE_BYTECODE=1
 ENV UV_LINK_MODE=copy
 ENV UV_PROJECT_ENVIRONMENT=${VIRTUAL_ENV}
@@ -16,7 +20,7 @@ ENV UV_PYTHON_INSTALL_DIR=/opt/share/python
 
 RUN uv venv ${VIRTUAL_ENV} --python=3.12
 RUN uv run python -m compileall ${UV_PYTHON_INSTALL_DIR}
-RUN uv pip install --pre flyte
+RUN uv pip install "git+https://github.com/flyteorg/flyte-sdk.git@jeev/debug-optimize#egg=flyte"
 
 FROM base AS runner
 COPY --from=builder /opt/share/python /opt/share/python
