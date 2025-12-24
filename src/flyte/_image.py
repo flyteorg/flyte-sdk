@@ -33,17 +33,10 @@ T = TypeVar("T")
 PACKAGE_IMPORTANCE = MappingProxyType(
     {
         # Layer 0: ~1GB+ | Rebuild cost: High | Freq: Very Low
-        "heavy_ml": ("tensorflow", "torch", "torchaudio", "torchvision"),
+        "heavy": ("tensorflow", "torch", "torchaudio", "torchvision", "scikit-learn"),
         # -----------------[ MIDDLE ]----------------- #
         # Layer 1: ~200MB | Rebuild cost: Med  | Freq: Low
-        "core_data": ("numpy", "scipy", "pandas", "polars", "scikit-learn", "pydantic"),
-        # Layer 2: ~50MB  | Rebuild cost: Low  | Freq: Med
-        "utils": ("requests", "httpx", "boto3", "python-dotenv", "tqdm", "fastapi", "uvicorn"),
-        # ------------------[ TOP ]------------------- #
-        # Layer 3: ~50MB  | Rebuild cost: Low  | Freq: Med
-        "viz": ("matplotlib", "seaborn", "plotly", "altair"),
-        # Layer 4: ~20MB  | Rebuild cost: Inst | Freq: High
-        "dev": ("jupyter", "jupyterlab", "ruff", "pytest", "mypy", "ipython"),
+        "core": ("numpy", "pandas", "pydantic", "requests", "httpx", "boto3", "fastapi", "uvicorn"),
     }
 )
 
@@ -683,6 +676,7 @@ class Image:
         base_image: Optional[str] = None,
         python_version: Optional[Tuple[int, int]] = None,
         addl_layer: Optional[Layer] = None,
+        addl_top: bool = False,
     ) -> Image:
         """
         Use this method to clone the current image and change the registry and name
@@ -692,6 +686,7 @@ class Image:
         :param name: Name of the image
         :param python_version: Python version for the image, if not specified, will use the current Python version
         :param addl_layer: Additional layer to add to the image. This will be added to the end of the layers.
+        :param addl_top: A flag for additional layer addl_layer to be added to the top of the layers.
         :return:
         """
         from flyte import Secret
@@ -711,7 +706,10 @@ class Image:
             raise ValueError(
                 f"Cannot add additional layer {addl_layer} to an image without name. Please first clone()."
             )
-        new_layers = (*self._layers, addl_layer) if addl_layer else self._layers
+        if addl_top:
+            new_layers = (addl_layer, *self._layers)
+        else:
+            new_layers = (*self._layers, addl_layer) if addl_layer else self._layers
         img = Image._new(
             base_image=base_image,
             dockerfile=self.dockerfile,
@@ -884,18 +882,17 @@ class Image:
         :return: Image
         """
 
+        import re
+
         # Automatically categorize the packages
         categorized: dict[str, list[str]] = {
-            "heavy_ml": [],
-            "core_data": [],
-            "utils": [],
-            "viz": [],
-            "dev": [],
+            "heavy": [],
+            "core": [],
             "unknown": [],
         }
 
         for pkg in packages:
-            pkg_name = pkg.split(">=")[0].split("==")[0]
+            pkg_name = re.split(r"[<>=~!]", pkg, 1)[0].split("[", 1)[0].strip()
             category = "unknown"
             if optimize_layers:
                 for cat, pkg_list in PACKAGE_IMPORTANCE.items():
@@ -920,7 +917,10 @@ class Image:
         for category, lst in categorized.items():
             if lst:
                 layer = create_pip_layer(lst)
-                new_image = new_image.clone(addl_layer=layer)
+                if category == "heavy":
+                    new_image = new_image.clone(addl_layer=layer, addl_top=True)
+                else:
+                    new_image = new_image.clone(addl_layer=layer)
 
         return new_image
 

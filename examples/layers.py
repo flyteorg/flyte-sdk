@@ -1,10 +1,11 @@
 import flyte
 from flyte import Image
 
-image = Image.from_debian_base().with_env_vars({"CACHE_BUST": "No Layer"}).with_pip_packages("tensorflow", "mypy")
+packages = ("numpy", "pandas", "tensorflow", "mypy")
+image = Image.from_debian_base().with_env_vars({"CACHE_BUST": "Layer"}).with_pip_packages(*packages)
 env = flyte.TaskEnvironment(
     name="test_without",
-    image=Image.from_debian_base().with_env_vars({"CACHE_BUST": "No Layer"}).with_pip_packages("tensorflow", "mypy"),
+    image=Image.from_debian_base().with_env_vars({"CACHE_BUST": "Layer"}).with_pip_packages(*packages),
 )
 
 
@@ -25,6 +26,7 @@ def main():
 
 
 if __name__ == "__main__":
+    main()
     import logging
 
     import flyte
