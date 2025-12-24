@@ -125,8 +125,12 @@ async def _initialize_client(
     )
 
 
-def _initialize_logger(log_level: int | None = None, log_format: LogFormat | None = None) -> None:
-    initialize_logger(log_level=log_level, log_format=log_format, enable_rich=True)
+def _initialize_logger(
+    log_level: int | None = None, log_format: LogFormat | None = None, preserve_root_logger: bool = False
+) -> None:
+    initialize_logger(
+        log_level=log_level, log_format=log_format, enable_rich=True, preserve_root_logger=preserve_root_logger
+    )
 
 
 @syncify
@@ -137,6 +141,7 @@ async def init(
     root_dir: Path | None = None,
     log_level: int | None = None,
     log_format: LogFormat | None = None,
+    preserve_root_logger: bool = False,
     endpoint: str | None = None,
     headless: bool = False,
     insecure: bool = False,
@@ -171,6 +176,7 @@ async def init(
       defaults to the editable install directory if the cwd is in a Python editable install, else just the cwd.
     :param log_level: Optional logging level for the logger, default is set using the default initialization policies
     :param log_format: Optional logging format for the logger, default is "console"
+    :param preserve_root_logger: By default, we clear out root logger handlers and set up our own.
     :param api_key: Optional API key for authentication
     :param endpoint: Optional API endpoint URL
     :param headless: Optional Whether to run in headless mode
@@ -204,7 +210,7 @@ async def init(
     from flyte._utils import get_cwd_editable_install, org_from_endpoint, sanitize_endpoint
     from flyte.types import _load_custom_type_transformers
 
-    _initialize_logger(log_level=log_level, log_format=log_format)
+    _initialize_logger(log_level=log_level, log_format=log_format, preserve_root_logger=preserve_root_logger)
     if load_plugin_type_transformers:
         _load_custom_type_transformers()
 
