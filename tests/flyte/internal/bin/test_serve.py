@@ -5,6 +5,7 @@ These tests verify the serve functionality including parameter synchronization,
 code bundle downloading, and the main serve command without using mocks.
 """
 
+import asyncio
 import json
 import os
 import tempfile
@@ -14,7 +15,7 @@ import aiofiles
 import pytest
 from click.testing import CliRunner
 
-from flyte._bin.serve import download_code_parameters, main, sync_parameters
+from flyte._bin.serve import _bind_parameters, _serve, download_code_parameters, main, sync_parameters
 from flyte.app._parameter import Parameter, SerializableParameterCollection
 from flyte.models import CodeBundle
 
@@ -1021,6 +1022,227 @@ class TestMainCommand:
 
                     # Verify command succeeded
                     assert result.exit_code == 0
+
+
+class TestBindParameters:
+    """Tests for _bind_parameters function."""
+
+    def test_bind_parameters_filters_by_function_signature(self):
+        """
+        GOAL: Verify _bind_parameters only returns parameters that match the function signature.
+
+        Tests that parameters not in the function signature are filtered out.
+        """
+
+        def my_func(a, b):
+            pass
+
+        materialized_parameters = {"a": "value_a", "b": "value_b", "c": "value_c", "d": "value_d"}
+
+        result = _bind_parameters(my_func, materialized_parameters)
+
+        assert result == {"a": "value_a", "b": "value_b"}
+        assert "c" not in result
+        assert "d" not in result
+
+    def test_bind_parameters_with_no_matching_params(self):
+        """
+        GOAL: Verify _bind_parameters returns empty dict when no parameters match.
+
+        Tests that when function signature has no matching parameters, an empty dict is returned.
+        """
+
+        def my_func(x, y, z):
+            pass
+
+        materialized_parameters = {"a": "value_a", "b": "value_b"}
+
+        result = _bind_parameters(my_func, materialized_parameters)
+
+        assert result == {}
+
+    def test_bind_parameters_with_all_matching_params(self):
+        """
+        GOAL: Verify _bind_parameters returns all parameters when all match.
+
+        Tests that when all materialized parameters match the function signature, all are returned.
+        """
+
+        def my_func(config, model, data):
+            pass
+
+        materialized_parameters = {"config": "cfg.yaml", "model": "model.pkl", "data": "data.csv"}
+
+        result = _bind_parameters(my_func, materialized_parameters)
+
+        assert result == materialized_parameters
+
+    def test_bind_parameters_with_empty_materialized_parameters(self):
+        """
+        GOAL: Verify _bind_parameters handles empty materialized_parameters.
+
+        Tests that when materialized_parameters is empty, an empty dict is returned.
+        """
+
+        def my_func(a, b, c):
+            pass
+
+        result = _bind_parameters(my_func, {})
+
+        assert result == {}
+
+    def test_bind_parameters_with_no_args_function(self):
+        """
+        GOAL: Verify _bind_parameters handles functions with no arguments.
+
+        Tests that when function has no parameters, an empty dict is returned.
+        """
+
+        def my_func():
+            pass
+
+        materialized_parameters = {"a": "value_a", "b": "value_b"}
+
+        result = _bind_parameters(my_func, materialized_parameters)
+
+        assert result == {}
+
+    def test_bind_parameters_with_file_and_dir_types(self):
+        """
+        GOAL: Verify _bind_parameters correctly handles File and Dir types.
+
+        Tests that File and Dir objects are correctly passed through.
+        """
+        from flyte.io import Dir, File
+
+        def my_func(model_file, data_dir, config):
+            pass
+
+        model = File(path="s3://bucket/model.pkl")
+        data = Dir(path="s3://bucket/data/")
+        materialized_parameters = {
+            "model_file": model,
+            "data_dir": data,
+            "config": "config.yaml",
+            "extra_param": "ignored",
+        }
+
+        result = _bind_parameters(my_func, materialized_parameters)
+
+        assert result == {"model_file": model, "data_dir": data, "config": "config.yaml"}
+        assert isinstance(result["model_file"], File)
+        assert isinstance(result["data_dir"], Dir)
+
+    def test_bind_parameters_with_async_function(self):
+        """
+        GOAL: Verify _bind_parameters works with async functions.
+
+        Tests that async function signatures are correctly inspected.
+        """
+
+        async def my_async_func(a, b):
+            pass
+
+        materialized_parameters = {"a": "value_a", "b": "value_b", "c": "value_c"}
+
+        result = _bind_parameters(my_async_func, materialized_parameters)
+
+        assert result == {"a": "value_a", "b": "value_b"}
+
+    def test_bind_parameters_with_default_args(self):
+        """
+        GOAL: Verify _bind_parameters works with functions that have default arguments.
+
+        Tests that parameters with defaults are still matched.
+        """
+
+        def my_func(a, b="default_b", c="default_c"):
+            pass
+
+        materialized_parameters = {"a": "value_a", "b": "value_b"}
+
+        result = _bind_parameters(my_func, materialized_parameters)
+
+        assert result == {"a": "value_a", "b": "value_b"}
+        assert "c" not in result  # c has default but not in materialized_parameters
+
+    def test_bind_parameters_with_kwargs_passes_all_parameters(self):
+        """
+        GOAL: Verify _bind_parameters passes all parameters when function has **kwargs.
+
+        Tests that when a function has **kwargs, all materialized parameters are passed through.
+        """
+
+        def my_func(a, **kwargs):
+            pass
+
+        materialized_parameters = {"a": "value_a", "b": "value_b", "c": "value_c"}
+
+        result = _bind_parameters(my_func, materialized_parameters)
+
+        # All parameters should be bound since function accepts **kwargs
+        assert result == {"a": "value_a", "b": "value_b", "c": "value_c"}
+
+    def test_bind_parameters_with_only_kwargs(self):
+        """
+        GOAL: Verify _bind_parameters passes all parameters when function only has **kwargs.
+
+        Tests that when a function only has **kwargs (no explicit params), all materialized parameters are passed.
+        """
+
+        def my_func(**kwargs):
+            pass
+
+        materialized_parameters = {"a": "value_a", "b": "value_b", "c": "value_c"}
+
+        result = _bind_parameters(my_func, materialized_parameters)
+
+        # All parameters should be bound since function accepts **kwargs
+        assert result == materialized_parameters
+
+    def test_bind_parameters_with_kwargs_and_file_dir_types(self):
+        """
+        GOAL: Verify _bind_parameters with **kwargs correctly passes File and Dir types.
+
+        Tests that File and Dir objects are correctly passed through when function has **kwargs.
+        """
+        from flyte.io import Dir, File
+
+        def my_func(config, **kwargs):
+            pass
+
+        model = File(path="s3://bucket/model.pkl")
+        data = Dir(path="s3://bucket/data/")
+        materialized_parameters = {
+            "config": "config.yaml",
+            "model_file": model,
+            "data_dir": data,
+            "extra_param": "extra_value",
+        }
+
+        result = _bind_parameters(my_func, materialized_parameters)
+
+        # All parameters should be passed through due to **kwargs
+        assert result == materialized_parameters
+        assert isinstance(result["model_file"], File)
+        assert isinstance(result["data_dir"], Dir)
+
+    def test_bind_parameters_with_args(self):
+        """
+        GOAL: Verify _bind_parameters handles functions with *args.
+
+        Tests that regular positional parameters are correctly bound.
+        """
+
+        def my_func(a, *args):
+            pass
+
+        materialized_parameters = {"a": "value_a", "b": "value_b"}
+
+        result = _bind_parameters(my_func, materialized_parameters)
+
+        # Only 'a' should be bound as 'b' is not a declared parameter
+        assert result == {"a": "value_a"}
 
 
 class TestIntegration:
