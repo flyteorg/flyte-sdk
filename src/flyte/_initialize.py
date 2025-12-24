@@ -470,7 +470,9 @@ async def init_in_cluster(
         remote_kwargs["insecure_skip_verify"] = True
         logger.info("SSL certificate verification disabled (insecure_skip_verify=True)")
 
-    await init.aio(org=org, project=project, domain=domain, image_builder="remote", **remote_kwargs)
+    await init.aio(
+        org=org, project=project, domain=domain, root_dir=Path.cwd(), image_builder="remote", **remote_kwargs
+    )
     return remote_kwargs
 
 
