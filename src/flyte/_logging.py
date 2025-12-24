@@ -253,12 +253,15 @@ def _setup_root_logger(use_json: bool, use_rich: bool, log_level: int):
     root = logging.getLogger()
     root.handlers.clear()  # Remove any existing handlers to prevent double logging
 
+    root_handler: logging.Handler | None = None
     if use_json:
         root_handler = logging.StreamHandler()
         root_handler.setFormatter(JSONFormatter())
     elif use_rich:
         root_handler = get_rich_handler(log_level)
-    else:
+
+    # get_rich_handler can return None in some environments
+    if not root_handler:
         root_handler = logging.StreamHandler()
 
     # Add context filter to ALL logging

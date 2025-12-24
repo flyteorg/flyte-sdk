@@ -22,10 +22,11 @@ async def square(i: int = 3) -> int:
     return i * i
 
 
-import logging
 import httpx
+
 logging.basicConfig(level=logging.DEBUG)
 logging.getLogger("httpx").setLevel(logging.DEBUG)
+
 
 @env.task
 async def say_hello_nested(data: str = "default string", n: int = 3) -> str:
