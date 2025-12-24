@@ -30,13 +30,13 @@ from ._cache import Cache, CacheRequest
 from ._context import internal_ctx
 from ._doc import Documentation
 from ._image import Image
+from ._link import Link
 from ._resources import Resources
 from ._retry import RetryStrategy
 from ._reusable_environment import ReusePolicy
 from ._secret import SecretRequest
 from ._timeout import TimeoutType
 from ._trigger import Trigger
-from ._link import Link
 from .models import MAX_INLINE_IO_BYTES, NativeInterface, SerializationContext
 
 if TYPE_CHECKING:

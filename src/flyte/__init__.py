@@ -17,6 +17,7 @@ from ._excepthook import custom_excepthook
 from ._group import group
 from ._image import Image
 from ._initialize import current_domain, init, init_from_api_key, init_from_config, init_in_cluster
+from ._link import Link
 from ._logging import logger
 from ._map import map
 from ._pod import PodTemplate
@@ -29,7 +30,6 @@ from ._serve import serve, with_servecontext
 from ._task_environment import TaskEnvironment
 from ._timeout import Timeout, TimeoutType
 from ._trace import trace
-from ._link import Link
 from ._trigger import Cron, FixedRate, Trigger, TriggerTime
 from ._version import __version__
 
@@ -78,6 +78,7 @@ __all__ = [
     "Environment",
     "FixedRate",
     "Image",
+    "Link",
     "Neuron",
     "PodTemplate",
     "Resources",
@@ -109,7 +110,6 @@ __all__ = [
     "run",
     "serve",
     "trace",
-    "Link",
     "version",
     "with_runcontext",
     "with_servecontext",

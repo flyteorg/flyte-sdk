@@ -144,7 +144,8 @@ def get_proto_task(task: TaskTemplate, serialize_context: SerializationContext) 
                 domain=action.domain if action.domain else "",
                 context=task_ctx.custom_context if task_ctx.custom_context else {},
                 parent_action_name=action.name if action.name else "",
-                action_name="{{.action.name}}",
+                action_name="{{.actionName}}",
+                pod_name="{{.podName}}",
             )
             task_log = TaskLog(name=link.name, uri=uri, icon_uri=link.icon_uri)
             log_links.append(task_log)

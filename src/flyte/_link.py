@@ -1,4 +1,4 @@
-from typing import Dict, Protocol, Optional
+from typing import Dict, Optional, Protocol
 
 
 class Link(Protocol):
@@ -13,6 +13,7 @@ class Link(Protocol):
         context: Dict[str, str],
         parent_action_name: str,
         action_name: str,
+        pod_name: str,
     ) -> str:
         """
         Returns a task log link given the action.
@@ -23,6 +24,7 @@ class Link(Protocol):
         :param context: Additional context for generating the link.
         :param parent_action_name: The name of the parent action.
         :param action_name: The name of the action.
+        :param pod_name: The name of the pod.
         :return: The generated link.
         """
         raise NotImplementedError

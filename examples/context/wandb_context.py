@@ -30,6 +30,7 @@ class Wandb(Link):
         context: Dict[str, str],
         parent_action_name: str,
         action_name: str,
+        pod_name: str,
     ) -> str:
         return f"https://wandb.ai/{self.entity}/{self.project}/runs/{self.id}"
 
