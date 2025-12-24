@@ -39,6 +39,18 @@ jobs:
       - name: fmt
         run: |
           make -C rs_controller check-fmt
+  rs-lint:
+    name: rust lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fetch the code
+        uses: actions/checkout@v4
+      - name: Install toolchain
+        run: |
+          rustup toolchain install
+      - name: lint
+        run: |
+          make -C rs_controller lint
   mypy:
     name: make mypy
     runs-on: ubuntu-latest

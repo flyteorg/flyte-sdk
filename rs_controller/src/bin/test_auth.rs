@@ -9,7 +9,6 @@ use std::{env, sync::Arc};
 ///   cargo run --bin test_auth
 use flyte_controller_base::auth::{AuthConfig, ClientCredentialsAuthenticator};
 use tonic::transport::Endpoint;
-use tracing_subscriber;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
