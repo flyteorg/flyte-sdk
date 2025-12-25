@@ -3,6 +3,7 @@ import inspect
 import time
 from typing import Any, AsyncGenerator, AsyncIterator, Awaitable, Callable, TypeGuard, TypeVar, Union, cast
 
+import flyte.errors
 from flyte._logging import logger
 from flyte.models import NativeInterface
 
@@ -42,19 +43,35 @@ def trace(func: Callable[..., T]) -> Callable[..., T]:
             else:
                 logger.debug(f"No existing trace info found for {func}, proceeding to execute.")
             start_time = time.time()
-            try:
+
+            if ctx.data.task_context is None:
+                raise flyte.errors.RuntimeSystemError("BadContext", "Task context not initialized")
+
+            # Create a new context with the trace's action ID
+            trace_task_context = ctx.data.task_context.replace(action=info.action)
+            trace_context = ctx.replace_task_context(trace_task_context)
+
+            # Execute function in trace context, then record outside it
+            error = None
+            results = None
+
+            async with trace_context:
                 # Cast to Awaitable to satisfy mypy
                 coroutine_result = cast(Awaitable[Any], func(*args, **kwargs))
-                results = await coroutine_result
-                info.add_outputs(results, start_time=start_time, end_time=time.time())
-                await controller.record_trace(info)
-                logger.debug(f"Finished trace for {func}, {info}")
-                return results
-            except Exception as e:
-                # If there is an error, we need to record it
-                info.add_error(e, start_time=start_time, end_time=time.time())
-                await controller.record_trace(info)
-                raise e
+                try:
+                    results = await coroutine_result
+                    info.add_outputs(results, start_time=start_time, end_time=time.time())
+                except Exception as e:
+                    error = e
+                    info.add_error(e, start_time=start_time, end_time=time.time())
+
+            # Record trace outside the trace context so it uses parent's context
+            await controller.record_trace(info)
+            logger.debug(f"Finished trace for {func}, {info}")
+
+            if error:
+                raise error
+            return results
         else:
             # If we are not in a task context, we can just call the function normally
             # Cast to Awaitable to satisfy mypy
@@ -85,23 +102,38 @@ def trace(func: Callable[..., T]) -> Callable[..., T]:
                 elif info.error:
                     raise info.error
             start_time = time.time()
-            try:
-                items = []
+
+            if ctx.data.task_context is None:
+                raise flyte.errors.RuntimeSystemError("BadContext", "Task context not initialized")
+
+            # Create a new context with the trace's action ID
+            trace_task_context = ctx.data.task_context.replace(action=info.action)
+            trace_context = ctx.replace_task_context(trace_task_context)
+
+            # Execute function in trace context, then record outside it
+            error = None
+            items = []
+
+            async with trace_context:
                 result = func(*args, **kwargs)
                 # TODO ideally we should use streaming into the type-engine so that it stream uploads large blocks
                 if inspect.isasyncgen(result) or is_async_iterable(result):
-                    # If it's directly an async generator
-                    async_iter = result
-                    async for item in async_iter:
-                        items.append(item)
-                        yield item
-                info.add_outputs(items, start_time=start_time, end_time=time.time())
-                await controller.record_trace(info)
-                return
-            except Exception as e:
-                info.add_error(e, start_time=start_time, end_time=time.time())
-                await controller.record_trace(info)
-                raise e
+                    try:
+                        # If it's directly an async generator
+                        async_iter = result
+                        async for item in async_iter:
+                            items.append(item)
+                            yield item
+                        info.add_outputs(items, start_time=start_time, end_time=time.time())
+                    except Exception as e:
+                        error = e
+                        info.add_error(e, start_time=start_time, end_time=time.time())
+
+            # Record trace outside the trace context so it uses parent's context
+            await controller.record_trace(info)
+
+            if error:
+                raise error
         else:
             result = func(*args, **kwargs)
             if is_async_iterable(result):
