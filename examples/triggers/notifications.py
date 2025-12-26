@@ -1,7 +1,7 @@
 from datetime import datetime
 
-import flyte
 import flyte.notify
+from flyte.models import ActionPhase
 
 env = flyte.TaskEnvironment(
     name="example_task",
@@ -12,7 +12,7 @@ trig1 = flyte.Trigger(
     auto_activate=True,
     automation=flyte.Cron("* * * * *"),
     notifications=flyte.notify.Slack(
-        on_phase="FAILED",
+        on_phase=ActionPhase.FAILED,
         webhook_url="https://webhook.site/",
         message="Hello world! from {task.name}",
         blocks=(
@@ -44,15 +44,12 @@ trig2 = flyte.Trigger(
     automation=flyte.Cron("* * * * *"),
     notifications=(
         flyte.notify.Slack(
-            on_phase=(
-                "FAILED",
-                "TIMED OUT",
-            ),
+            on_phase=(ActionPhase.FAILED, ActionPhase.TIMED_OUT),
             webhook_url="https://webhook.site/",
             message="Hello world! from {task.name}",
         ),
         flyte.notify.Webhook(
-            on_phase="SUCCEEDED",
+            on_phase=ActionPhase.FAILED,
             headers={"Content-Type": "application/json"},
             url="https://webhook.site/",
             body={
@@ -60,7 +57,7 @@ trig2 = flyte.Trigger(
             },
         ),
         flyte.notify.Email(
-            on_phase="SUCCEEDED",
+            on_phase=ActionPhase.SUCCEEDED,
             subject="Hello world! from {task.name}",
             body="Hello world! from {task.name}",
             recipients=("<EMAIL>",),

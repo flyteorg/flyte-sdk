@@ -19,11 +19,10 @@ Template Variables:
 from dataclasses import dataclass
 from typing import Any, Dict, Literal, Optional, Tuple, Union
 
-from typing_extensions import get_args
+from flyte.models import ActionPhase
 
-# Phase type for type safety - matches proto definition
-Phase = Literal["SUCCEEDED", "FAILED", "TIMED_OUT", "ABORTED", "QUEUED", "RUNNING"]
-_allowed_phases = set(get_args(Phase))
+# Alias for convenience
+Phase = ActionPhase
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -33,7 +32,7 @@ class Notification:
     All notification types must specify phases when they should trigger.
     """
 
-    on_phase: Union[Phase, Tuple[str, ...]]
+    on_phase: Union[ActionPhase, Tuple[ActionPhase, ...]]
 
     def __post_init__(self):
         # Normalize on_phase to a tuple
@@ -41,10 +40,6 @@ class Notification:
             object.__setattr__(self, "on_phase", (self.on_phase,))
         elif isinstance(self.on_phase, (list, tuple)):
             # If any phase is incorrect, raise error
-            configured_phases = set(self.on_phase)
-            common_phases = configured_phases.intersection(_allowed_phases)
-            if len(common_phases) != len(self.on_phase):
-                raise ValueError(f"Phase has to be one of {_allowed_phases}")
             object.__setattr__(self, "on_phase", tuple(self.on_phase))
 
         if not self.on_phase:
