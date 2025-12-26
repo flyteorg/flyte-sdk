@@ -5,39 +5,43 @@ import re
 import typing
 from dataclasses import dataclass, field
 from functools import cache, cached_property
-from typing import List, Literal, Optional
+from typing import TYPE_CHECKING, List, Literal, Optional
 
 from pydantic import BaseModel, model_validator
 
 import flyte.io
 from flyte._initialize import requires_initialization
 from flyte._logging import logger
-from flyte.remote._task import AutoVersioning
 
-InputTypes = str | flyte.io.File | flyte.io.Dir
-_SerializedInputType = Literal["string", "file", "directory"]
+if TYPE_CHECKING:
+    from flyte.remote._task import AutoVersioning
+else:
+    AutoVersioning = Literal["latest", "current"]
 
-INPUT_TYPE_MAP = {
+ParameterTypes = str | flyte.io.File | flyte.io.Dir
+_SerializedParameterType = Literal["string", "file", "directory"]
+
+PARAMETER_TYPE_MAP = {
     str: "string",
     flyte.io.File: "file",
     flyte.io.Dir: "directory",
 }
 
-RUNTIME_INPUTS_FILE = "flyte-inputs.json"
+RUNTIME_PARAMETERS_FILE = "flyte-parameters.json"
 
 
 class _DelayedValue(BaseModel):
     """
-    Delayed value for app inputs.
+    Delayed value for app parameters.
     """
 
-    type: _SerializedInputType
+    type: _SerializedParameterType
 
     @model_validator(mode="before")
     @classmethod
     def check_type(cls, data: typing.Any) -> typing.Any:
         if "type" in data:
-            data["type"] = INPUT_TYPE_MAP.get(data["type"], data["type"])
+            data["type"] = PARAMETER_TYPE_MAP.get(data["type"], data["type"])
         return data
 
     async def get(self) -> str | flyte.io.File | flyte.io.Dir:
@@ -49,15 +53,15 @@ class _DelayedValue(BaseModel):
             return value
         return value
 
-    async def materialize(self) -> InputTypes:
+    async def materialize(self) -> ParameterTypes:
         raise NotImplementedError("Subclasses must implement this method")
 
 
 class RunOutput(_DelayedValue):
     """
-    Use a run's output for app inputs.
+    Use a run's output for app parameters.
 
-    This enables the declaration of an app input dependency on the output of
+    This enables the declaration of an app parameter dependency on the output of
     a run, given by a specific run name, or a task name and version. If
     `task_auto_version == 'latest'`, the latest version of the task will be used.
     If `task_auto_version == 'current'`, the version will be derived from the callee
@@ -69,25 +73,25 @@ class RunOutput(_DelayedValue):
     Get the output of a specific run:
 
     ```python
-    run_output = RunOutput(run_name="my-run-123")
+    run_output = RunOutput(type="directory", run_name="my-run-123")
     ```
 
     Get the latest output of an ephemeral task run:
 
     ```python
-    run_output = RunOutput(task_name="env.my_task")
+    run_output = RunOutput(type="file", task_name="env.my_task")
     ```
 
     Get the latest output of a deployed task run:
 
     ```python
-    run_output = RunOutput(task_name="env.my_task", task_auto_version="latest")
+    run_output = RunOutput(type="file", task_name="env.my_task", task_auto_version="latest")
     ```
 
     Get the output of a specific task run:
 
     ```python
-    run_output = RunOutput(task_name="env.my_task", task_version="xyz")
+    run_output = RunOutput(type="file", task_name="env.my_task", task_version="xyz")
     ```
     """
 
@@ -104,7 +108,7 @@ class RunOutput(_DelayedValue):
             raise ValueError("Only one of run_name or task_name must be provided")
 
     @requires_initialization
-    async def materialize(self) -> InputTypes:
+    async def materialize(self) -> ParameterTypes:
         if self.run_name is not None:
             return await self._materialize_with_run_name()
         elif self.task_name is not None:
@@ -112,7 +116,8 @@ class RunOutput(_DelayedValue):
         else:
             raise ValueError("Either run_name or task_name must be provided")
 
-    async def _materialize_with_task_name(self) -> InputTypes:
+    async def _materialize_with_task_name(self) -> ParameterTypes:
+        import flyte.errors
         from flyte.remote import Run, RunDetails, Task, TaskDetails
 
         assert self.task_name is not None, "task_name must be provided"
@@ -133,15 +138,22 @@ class RunOutput(_DelayedValue):
             limit=1,
             sort_by=("created_at", "desc"),
         )
-        run = await anext(runs)
-        run_details: RunDetails = await run.details.aio()
-        output = await run_details.outputs()
-        for getter in self.getter:
-            output = output[getter]
-        logger.debug("Materialized output: %s", output)
-        return typing.cast(InputTypes, output)
+        try:
+            run = await anext(runs)
+            run_details: RunDetails = await run.details.aio()
+            output = await run_details.outputs()
+            for getter in self.getter:
+                output = output[getter]
+            logger.debug("Materialized output: %s", output)
+            return typing.cast(ParameterTypes, output)
+        except StopAsyncIteration:
+            raise flyte.errors.ParameterMaterializationError(f"No runs found for task {self.task_name}")
+        except Exception as e:
+            raise flyte.errors.ParameterMaterializationError(
+                f"Failed to materialize output for task {self.task_name}"
+            ) from e
 
-    async def _materialize_with_run_name(self) -> InputTypes:
+    async def _materialize_with_run_name(self) -> ParameterTypes:
         from flyte.remote import Run, RunDetails
 
         run: Run = await Run.get.aio(self.run_name)
@@ -149,14 +161,14 @@ class RunOutput(_DelayedValue):
         output = await run_details.outputs()
         for getter in self.getter:
             output = output[getter]
-        return typing.cast(InputTypes, output)
+        return typing.cast(ParameterTypes, output)
 
 
 class AppEndpoint(_DelayedValue):
     """
-    Embed an upstream app's endpoint as an app input.
+    Embed an upstream app's endpoint as an app parameter.
 
-    This enables the declaration of an app input dependency on a the endpoint of
+    This enables the declaration of an app parameter dependency on a the endpoint of
     an upstream app, given by a specific app name. This gives the app access to
     the upstream app's endpoint as a public or private url.
     """
@@ -185,14 +197,14 @@ class AppEndpoint(_DelayedValue):
 
 
 @dataclass
-class Input:
+class Parameter:
     """
-    Input for application.
+    Parameter for application.
 
-    :param name: Name of input.
-    :param value: Value for input.
+    :param name: Name of parameter.
+    :param value: Value for parameter.
     :param env_var: Environment name to set the value in the serving environment.
-    :param download: When True, the input will be automatically downloaded. This
+    :param download: When True, the parameter will be automatically downloaded. This
         only works if the value refers to an item in a object store. i.e. `s3://...`
     :param mount: If `value` is a directory, then the directory will be available
         at `mount`. If `value` is a file, then the file will be downloaded into the
@@ -202,7 +214,7 @@ class Input:
     """
 
     name: str
-    value: InputTypes | _DelayedValue
+    value: ParameterTypes | _DelayedValue
     env_var: Optional[str] = None
     download: bool = False
     mount: Optional[str] = None
@@ -225,62 +237,62 @@ class Input:
             self.name = "i0"
 
 
-class SerializableInput(BaseModel):
+class SerializableParameter(BaseModel):
     """
-    Serializable version of Input.
+    Serializable version of Parameter.
     """
 
     name: str
     value: str
     download: bool
-    type: _SerializedInputType = "string"
+    type: _SerializedParameterType = "string"
     env_var: Optional[str] = None
     dest: Optional[str] = None
     ignore_patterns: List[str] = field(default_factory=list)
 
     @classmethod
-    def from_input(cls, inp: Input) -> "SerializableInput":
+    def from_parameter(cls, param: Parameter) -> "SerializableParameter":
         import flyte.io
 
-        # inp.name is guaranteed to be set by Input.__post_init__
-        assert inp.name is not None, "Input name should be set by __post_init__"
+        # param.name is guaranteed to be set by Parameter.__post_init__
+        assert param.name is not None, "Parameter name should be set by __post_init__"
 
-        tpe: _SerializedInputType = "string"
-        if isinstance(inp.value, flyte.io.File):
-            value = inp.value.path
+        tpe: _SerializedParameterType = "string"
+        if isinstance(param.value, flyte.io.File):
+            value = param.value.path
             tpe = "file"
-            download = True if inp.mount is not None else inp.download
-        elif isinstance(inp.value, flyte.io.Dir):
-            value = inp.value.path
+            download = True if param.mount is not None else param.download
+        elif isinstance(param.value, flyte.io.Dir):
+            value = param.value.path
             tpe = "directory"
-            download = True if inp.mount is not None else inp.download
-        elif isinstance(inp.value, (RunOutput, AppEndpoint)):
-            value = inp.value.model_dump_json()
-            tpe = inp.value.type
-            download = True if inp.mount is not None else inp.download
+            download = True if param.mount is not None else param.download
+        elif isinstance(param.value, (RunOutput, AppEndpoint)):
+            value = param.value.model_dump_json()
+            tpe = param.value.type
+            download = True if param.mount is not None else param.download
         else:
-            value = typing.cast(str, inp.value)
+            value = typing.cast(str, param.value)
             download = False
 
         return cls(
-            name=inp.name,
+            name=param.name,
             value=value,
             type=tpe,
             download=download,
-            env_var=inp.env_var,
-            dest=inp.mount,
-            ignore_patterns=inp.ignore_patterns,
+            env_var=param.env_var,
+            dest=param.mount,
+            ignore_patterns=param.ignore_patterns,
         )
 
 
-class SerializableInputCollection(BaseModel):
+class SerializableParameterCollection(BaseModel):
     """
-    Collection of inputs for application.
+    Collection of parameters for application.
 
-    :param inputs: List of inputs.
+    :param parameters: List of parameters.
     """
 
-    inputs: List[SerializableInput] = field(default_factory=list)
+    parameters: List[SerializableParameter] = field(default_factory=list)
 
     @cached_property
     def to_transport(self) -> str:
@@ -295,7 +307,7 @@ class SerializableInputCollection(BaseModel):
         return base64.b64encode(buf.getvalue()).decode("utf-8")
 
     @classmethod
-    def from_transport(cls, s: str) -> SerializableInputCollection:
+    def from_transport(cls, s: str) -> SerializableParameterCollection:
         import base64
         import gzip
 
@@ -304,28 +316,28 @@ class SerializableInputCollection(BaseModel):
         return cls.model_validate_json(json_str)
 
     @classmethod
-    def from_inputs(cls, inputs: List[Input]) -> SerializableInputCollection:
-        return cls(inputs=[SerializableInput.from_input(inp) for inp in inputs])
+    def from_parameters(cls, parameters: List[Parameter]) -> SerializableParameterCollection:
+        return cls(parameters=[SerializableParameter.from_parameter(param) for param in parameters])
 
 
 @cache
-def _load_inputs() -> dict[str, str]:
-    """Load inputs for application or endpoint."""
+def _load_parameters() -> dict[str, str]:
+    """Load parameters for application or endpoint."""
     import json
     import os
 
-    config_file = os.getenv(RUNTIME_INPUTS_FILE)
+    config_file = os.getenv(RUNTIME_PARAMETERS_FILE)
 
     if config_file is None:
-        raise ValueError("Inputs are not mounted")
+        raise ValueError("Parameters are not mounted")
 
     with open(config_file, "r") as f:
-        inputs = json.load(f)
+        parameters = json.load(f)
 
-    return inputs
+    return parameters
 
 
-def get_input(name: str) -> str:
-    """Get inputs for application or endpoint."""
-    inputs = _load_inputs()
-    return inputs[name]
+def get_parameter(name: str) -> str:
+    """Get parameters for application or endpoint."""
+    parameters = _load_parameters()
+    return parameters[name]
