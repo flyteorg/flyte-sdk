@@ -66,3 +66,11 @@ fmt: check-nightly-toolchain
 .PHONY: check-fmt
 check-fmt: check-nightly-toolchain
 	cargo +nightly fmt --check
+
+.PHONY: lint
+lint:
+	cargo clippy --all-targets -- -D warnings
+
+.PHONY: lint-fix
+lint-fix:
+	cargo clippy --all-targets --fix

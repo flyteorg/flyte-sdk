@@ -6,7 +6,6 @@ use std::env;
 /// Or without auth:
 ///   cargo run --bin test_controller -- http://localhost:8089
 use flyte_controller_base::core::CoreBaseController;
-use tracing_subscriber;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt()
@@ -16,7 +15,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== Flyte Core Controller Test ===\n");
 
     // Try to create a controller
-    let controller = if let Ok(api_key) = env::var("_UNION_EAGER_API_KEY") {
+    let _controller = if let Ok(api_key) = env::var("_UNION_EAGER_API_KEY") {
         println!("Using auth from _UNION_EAGER_API_KEY");
         // Set the env var back since CoreBaseController::new_with_auth reads it
         env::set_var("_UNION_EAGER_API_KEY", api_key);

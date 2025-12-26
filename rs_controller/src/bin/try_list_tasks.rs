@@ -75,7 +75,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             Err(status) => {
                 eprintln!("Error calling gRPC: {}", status);
-                break Err(format!("gRPC error: {}", status).into());
+                break Err(format!("gRPC error: {}", status));
             }
         }
     };

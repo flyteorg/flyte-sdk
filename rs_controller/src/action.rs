@@ -199,7 +199,7 @@ impl Action {
             friendly_name: task_spec
                 .task_template
                 .as_ref()
-                .and_then(|tt| tt.id.as_ref().and_then(|id| Some(id.name.clone()))),
+                .and_then(|tt| tt.id.as_ref().map(|id| id.name.clone())),
             group: group_data,
             task: Some(task_spec),
             inputs_uri: Some(inputs_uri),

@@ -11,7 +11,7 @@ pub enum ControllerError {
     #[error("System error: {0}")]
     SystemError(String),
     #[error("gRPC error: {0}")]
-    GrpcError(#[from] tonic::Status),
+    GrpcError(#[from] Box<tonic::Status>),
     #[error("Task error: {0}")]
     TaskError(String),
     #[error("Informer error: {0}")]
