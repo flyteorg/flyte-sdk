@@ -78,7 +78,6 @@ __all__ = [
     "Environment",
     "FixedRate",
     "Image",
-    "Link",
     "Neuron",
     "PodTemplate",
     "Resources",
