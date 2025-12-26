@@ -173,7 +173,10 @@ class LocalController:
         await LocalTaskCache.close()
 
     async def watch_for_errors(self):
-        pass
+        try:
+            await asyncio.Event().wait()  # Wait indefinitely until cancelled
+        except asyncio.CancelledError:
+            return  # Return with no errors when cancelled
 
     async def get_action_outputs(
         self, _interface: NativeInterface, _func: Callable, *args, **kwargs
@@ -235,8 +238,8 @@ class LocalController:
         assert info.end_time
 
     async def submit_task_ref(self, _task: TaskDetails, max_inline_io_bytes: int, *args, **kwargs) -> Any:
-        raise flyte.errors.ReferenceTaskError(
-            f"Reference tasks cannot be executed locally, only remotely. Found remote task {_task.name}"
+        raise flyte.errors.RemoteTaskError(
+            f"Remote tasks cannot be executed locally, only remotely. Found remote task {_task.name}"
         )
 
     async def register_event(self, event: Any):

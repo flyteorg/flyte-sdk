@@ -30,6 +30,7 @@ from ._cache import Cache, CacheRequest
 from ._context import internal_ctx
 from ._doc import Documentation
 from ._image import Image
+from ._link import Link
 from ._resources import Resources
 from ._retry import RetryStrategy
 from ._reusable_environment import ReusePolicy
@@ -116,6 +117,7 @@ class TaskTemplate(Generic[P, R, F]):
     ref: bool = field(default=False, init=False, repr=False, compare=False)
     max_inline_io_bytes: int = MAX_INLINE_IO_BYTES
     triggers: Tuple[Trigger, ...] = field(default_factory=tuple)
+    links: Tuple[Link, ...] = field(default_factory=tuple)
 
     # Only used in python 3.10 and 3.11, where we cannot use markcoroutinefunction
     _call_as_synchronous: bool = False
@@ -356,6 +358,7 @@ class TaskTemplate(Generic[P, R, F]):
         pod_template: Optional[Union[str, PodTemplate]] = None,
         queue: Optional[str] = None,
         interruptible: Optional[bool] = None,
+        links: Tuple[Link, ...] = (),
         **kwargs: Any,
     ) -> TaskTemplate:
         """
@@ -374,6 +377,8 @@ class TaskTemplate(Generic[P, R, F]):
          passed directly to the task.
         :param pod_template: Optional override for the pod template to use for the task.
         :param queue: Optional override for the queue to use for the task.
+        :param interruptible: Optional override for the interruptible policy for the task.
+        :param links: Optional override for the Links associated with the task.
         :param kwargs: Additional keyword arguments for further overrides. Some fields like name, image, docs,
          and interface cannot be overridden.
 
@@ -438,6 +443,7 @@ class TaskTemplate(Generic[P, R, F]):
             pod_template=pod_template,
             interruptible=interruptible,
             queue=queue or self.queue,
+            links=links or self.links,
             **kwargs,
         )
 
@@ -530,6 +536,11 @@ class AsyncFunctionTaskTemplate(TaskTemplate[P, R, F]):
 
             from flyte._internal.resolvers.default import DefaultTaskResolver
 
+            if not serialize_context.root_dir:
+                raise RuntimeSystemError(
+                    "SerializationError",
+                    "Root dir is required for default task resolver when no code bundle is provided.",
+                )
             _task_resolver = DefaultTaskResolver()
             args = [
                 *args,

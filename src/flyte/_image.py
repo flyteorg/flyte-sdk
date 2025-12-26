@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import os.path
 import sys
 import typing
 from abc import abstractmethod
@@ -23,6 +24,8 @@ PYTHON_3_13 = (3, 13)
 
 # 0 is a file, 1 is a directory
 CopyConfigType = Literal[0, 1]
+SOURCE_ROOT = Path(__file__).parent.parent.parent
+DIST_FOLDER = SOURCE_ROOT / "dist"
 
 T = TypeVar("T")
 
@@ -197,6 +200,7 @@ class PoetryProject(Layer):
     pyproject: Path
     poetry_lock: Path
     extra_args: Optional[str] = None
+    project_install_mode: typing.Literal["dependencies_only", "install_project"] = "dependencies_only"
     secret_mounts: Optional[Tuple[str | Secret, ...]] = None
 
     def validate(self):
@@ -219,7 +223,7 @@ class PoetryProject(Layer):
                 hash_input += str(secret_mount)
         hasher.update(hash_input.encode("utf-8"))
 
-        if self.extra_args and "--no-root" in self.extra_args:
+        if self.project_install_mode == "dependencies_only":
             filehash_update(self.poetry_lock, hasher)
             filehash_update(self.pyproject, hasher)
         else:
@@ -252,6 +256,11 @@ class UVScript(PipOption, Layer):
         if h_tuple:
             hasher.update(h_tuple.__str__().encode("utf-8"))
         super().update_hash(hasher)
+        if header.pyprojects:
+            for pyproject in header.pyprojects:
+                UVProject(
+                    Path(pyproject) / "pyproject.toml", Path(pyproject) / "uv.lock", "install_project"
+                ).update_hash(hasher)
 
 
 @rich.repr.auto
@@ -308,7 +317,6 @@ class CopyConfig(Layer):
     path_type: CopyConfigType
     src: Path
     dst: str
-    src_name: str
 
     def __post_init__(self):
         if self.path_type not in (0, 1):
@@ -367,6 +375,7 @@ Architecture = Literal["linux/amd64", "linux/arm64"]
 
 _BASE_REGISTRY = "ghcr.io/flyteorg"
 _DEFAULT_IMAGE_NAME = "flyte"
+_DEFAULT_IMAGE_REF_NAME = "default"
 
 
 def _detect_python_version() -> Tuple[int, int]:
@@ -434,7 +443,8 @@ class Image:
     def _new(cls, **kwargs) -> Image:
         # call the normal __init__, injecting a private keyword that users won't know
         obj = cls.__new__(cls)  # allocate
-        object.__setattr__(obj, "_guard", cls._token)  # set guard to prevent direct construction
+        # set guard to prevent direct construction
+        object.__setattr__(obj, "_guard", cls._token)
         cls.__init__(obj, **kwargs)  # run dataclass generated __init__
         return obj
 
@@ -491,7 +501,8 @@ class Image:
 
         if install_flyte:
             if dev_mode:
-                image = image.with_local_v2()
+                if os.path.exists(DIST_FOLDER):
+                    image = image.with_local_v2()
             else:
                 flyte_version = typing.cast(str, flyte_version)
                 if Version(flyte_version).is_devrelease or Version(flyte_version).is_prerelease:
@@ -519,7 +530,7 @@ class Image:
         Default images are multi-arch amd/arm64
 
         :param python_version: If not specified, will use the current Python version
-        :param flyte_version: Union version to use
+        :param flyte_version: Flyte version to use
         :param install_flyte: If True, will install the flyte library in the image
         :param registry: Registry to use for the image
         :param registry_secret: Secret to use to pull/push the private image.
@@ -556,7 +567,7 @@ class Image:
         return img
 
     @classmethod
-    def from_ref_name(cls, name: str) -> Image:
+    def from_ref_name(cls, name: str = _DEFAULT_IMAGE_REF_NAME) -> Image:
         # NOTE: set image name as _ref_name to enable adding additional layers.
         # See: https://github.com/flyteorg/flyte-sdk/blob/14de802701aab7b8615ffb99c650a36305ef01f7/src/flyte/_image.py#L642
         img = cls._new(name=name, _ref_name=name)
@@ -605,7 +616,7 @@ class Image:
         :param platform: architecture to use for the image, default is linux/amd64, use tuple for multiple values
         :param python_version: Python version for the image, if not specified, will use the current Python version
         :param index_url: index url to use for pip install, default is None
-        :param extra_index_urls: extra index urls to use for pip install, default is None
+        :param extra_index_urls: extra index urls to use for pip install, default is True
         :param pre: whether to allow pre-release versions, default is False
         :param extra_args: extra arguments to pass to pip install, default is None
         :param secret_mounts: Secret mounts to use for the image, default is None.
@@ -627,6 +638,7 @@ class Image:
         img = cls.from_debian_base(
             registry=registry,
             registry_secret=registry_secret,
+            install_flyte=False,
             name=name,
             python_version=python_version,
             platform=platform,
@@ -749,6 +761,9 @@ class Image:
         if self.registry and self.name:
             tag = self._final_tag
             return f"{self.registry}/{self.name}:{tag}"
+        elif self._ref_name and len(self._layers) == 0:
+            assert self.base_image is not None, f"Base image is not set for image ref name {self._ref_name}"
+            return self.base_image
         elif self.name:
             return f"{self.name}:{self._final_tag}"
         elif self.base_image:
@@ -832,7 +847,6 @@ class Image:
         :param extra_index_urls: extra index urls to use for pip install, default is None
         :param pre: whether to allow pre-release versions, default is False
         :param extra_args: extra arguments to pass to pip install, default is None
-        :param extra_args: extra arguments to pass to pip install, default is None
         :param secret_mounts: list of secret to mount for the build process.
         :return: Image
         """
@@ -872,12 +886,9 @@ class Image:
             instead of the folder itself. Default is False.
         :return: Image
         """
-        src_name = src.name
-        if copy_contents_only:
-            src_name = "."
-        else:
-            dst = str("./" + src_name)
-        new_image = self.clone(addl_layer=CopyConfig(path_type=1, src=src, dst=dst, src_name=src_name))
+        if not copy_contents_only:
+            dst = str("./" + src.name) if dst == "." else dst
+        new_image = self.clone(addl_layer=CopyConfig(path_type=1, src=src, dst=dst))
         return new_image
 
     def with_source_file(self, src: Path, dst: str = ".") -> Image:
@@ -889,7 +900,7 @@ class Image:
         :param dst: destination folder in the image
         :return: Image
         """
-        new_image = self.clone(addl_layer=CopyConfig(path_type=0, src=src, dst=dst, src_name=src.name))
+        new_image = self.clone(addl_layer=CopyConfig(path_type=0, src=src, dst=dst))
         return new_image
 
     def with_dockerignore(self, path: Path) -> Image:
@@ -951,6 +962,7 @@ class Image:
         poetry_lock: Path | None = None,
         extra_args: Optional[str] = None,
         secret_mounts: Optional[SecretRequest] = None,
+        project_install_mode: typing.Literal["dependencies_only", "install_project"] = "dependencies_only",
     ):
         """
         Use this method to create a new image with the specified pyproject.toml layered on top of the current image.
@@ -970,6 +982,8 @@ class Image:
             'poetry.lock' in the same directory as `pyproject_file` (pyproject.parent / "poetry.lock").
         :param extra_args: Extra arguments to pass through to the package installer/resolver, default is None.
         :param secret_mounts: Secrets to make available during dependency resolution/build (e.g., private indexes).
+        :param project_install_mode: whether to install the project as a package or
+         only dependencies, default is "dependencies_only"
         :return: Image
         """
         if isinstance(pyproject_file, str):
@@ -980,6 +994,7 @@ class Image:
                 poetry_lock=poetry_lock or (pyproject_file.parent / "poetry.lock"),
                 extra_args=extra_args,
                 secret_mounts=_ensure_tuple(secret_mounts) if secret_mounts else None,
+                project_install_mode=project_install_mode,
             )
         )
         return new_image
@@ -1024,10 +1039,9 @@ class Image:
 
         :return: Image
         """
-        dist_folder = Path(__file__).parent.parent.parent / "dist"
         # Manually declare the PythonWheel so we can set the hashing
         # used to compute the identifier. Can remove if we ever decide to expose the lambda in with_ commands
-        with_dist = self.clone(addl_layer=PythonWheels(wheel_dir=dist_folder, package_name="flyte", pre=True))
+        with_dist = self.clone(addl_layer=PythonWheels(wheel_dir=DIST_FOLDER, package_name="flyte", pre=True))
 
         return with_dist
 

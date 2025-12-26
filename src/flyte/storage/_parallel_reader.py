@@ -96,6 +96,7 @@ class Source:
     id: Hashable
     path: pathlib.Path  # Should be str, represents the fully qualified prefix of a file (no bucket)
     length: int
+    offset: int = 0
     metadata: Any | None = None
 
 
@@ -156,17 +157,20 @@ class ObstoreParallelReader:
         async def _worker():
             try:
                 while not done.is_set():
-                    task = await inq.get()
+                    task: DownloadTask = await inq.get()
                     if task is sentinel:
                         inq.put_nowait(sentinel)
                         break
-                    chunk_source_offset = task.chunk.offset
+                    # chunk.offset is the local offset within the source (e.g., 0, chunk_size, 2*chunk_size)
+                    # source.offset is the offset within the file where the source data starts
+                    # The actual file position is the sum of both
+                    file_offset = task.chunk.offset + task.source.offset
                     buf = active[task.source.id]
                     data_to_write = await obstore.get_range_async(
                         self._store,
                         str(task.source.path),
-                        start=chunk_source_offset,
-                        end=chunk_source_offset + task.chunk.length,
+                        start=file_offset,
+                        end=file_offset + task.chunk.length,
                     )
                     await buf.write(
                         task.chunk.offset,
@@ -176,7 +180,7 @@ class ObstoreParallelReader:
                     if not buf.complete:
                         continue
                     if transformer is not None:
-                        result = await transformer(buf)
+                        result = await transformer(buf, task.source)
                     elif task.target is not None:
                         result = task.target
                     else:
@@ -220,22 +224,33 @@ class ObstoreParallelReader:
             pass
 
     async def download_files(
-        self, src_prefix: pathlib.Path, target_prefix: pathlib.Path, *paths, destination_file_name: str | None = None
+        self,
+        src_prefix: pathlib.Path,
+        target_prefix: pathlib.Path,
+        *paths,
+        destination_file_name: str | None = None,
+        exclude: list[str] | None = None,
     ) -> None:
         """
         src_prefix: Prefix you want to download from in the object store, not including the bucket name, nor file name.
                     Should be replaced with string
         target_prefix: Local directory to download to
         paths: Specific paths (relative to src_prefix) to download. If empty, download everything
+        exclude: List of patterns to exclude from the download.
         """
+
+        def _keep(path):
+            if exclude is not None and any(path.match(e) for e in exclude):
+                return False
+            return True
 
         async def _list_downloadable() -> typing.AsyncGenerator[ObjectMeta, None]:
             if paths:
                 # For specific file paths, use async head
                 for path_ in paths:
                     path = src_prefix / path_
-                    x = await obstore.head_async(self._store, str(path))
-                    yield x
+                    if _keep(path):
+                        yield await obstore.head_async(self._store, str(path))
                 return
 
             # Use obstore.list() for recursive listing (all files in all subdirectories)
@@ -259,7 +274,7 @@ class ObstoreParallelReader:
                     )
 
         def _transform_decorator(tmp_dir: str):
-            async def _transformer(buf: _FileBuffer) -> None:
+            async def _transformer(buf: _FileBuffer, _: Source) -> None:
                 if len(paths) == 1 and destination_file_name is not None:
                     target = target_prefix / destination_file_name
                 else:

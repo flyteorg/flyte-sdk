@@ -30,5 +30,5 @@ def custom_task(start_time: datetime, x: int = 11) -> str:
 
 
 if __name__ == "__main__":
-    flyte.init_from_config("../../config.yaml")
+    flyte.init_from_config()
     flyte.deploy(env)

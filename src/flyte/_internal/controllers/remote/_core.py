@@ -149,7 +149,6 @@ class Controller:
         with self._thread_com_lock:
             return self._thread_exception
 
-    @log
     def _start(self):
         """Start the controller in a separate thread"""
         if self._thread and self._thread.is_alive():
@@ -259,7 +258,6 @@ class Controller:
         if informer:
             await informer.stop()
 
-    @log
     async def _bg_submit_action(self, action: Action) -> Action:
         """Submit a resource and await its completion, returning the final state"""
         logger.debug(f"{threading.current_thread().name} Submitting action {action.name}")
@@ -284,7 +282,7 @@ class Controller:
             raise ValueError(f"Action {action.name} not found")
         logger.debug(f"{threading.current_thread().name} Removed completion event for action {action.name}")
         await informer.remove(action.name)  # TODO we should not remove maybe, we should keep a record of completed?
-        logger.debug(f"{threading.current_thread().name} Removed action {action.name}, final={final_resource}")
+        logger.debug(f"{threading.current_thread().name} Removed action {action.name}")
         return final_resource
 
     async def _bg_cancel_action(self, action: Action):
@@ -391,7 +389,6 @@ class Controller:
                     logger.debug(f"Action details: {action}")
                     raise flyte.errors.SlowDownError(f"Failed to launch action: {e.details()}") from e
 
-    @log
     async def _bg_process(self, action: Action):
         """Process resource updates"""
         logger.debug(f"Processing action: name={action.name}, started={action.is_started()}")
@@ -416,7 +413,6 @@ class Controller:
                 logger.info(f"Resource stats: Started={started}, Pending={pending}, Terminal={terminal}")
             await asyncio.sleep(self._resource_log_interval)
 
-    @log
     async def _bg_run(self, worker_id: str):
         """Run loop with resource status logging"""
         logger.info(f"Worker {worker_id} started")
@@ -425,19 +421,20 @@ class Controller:
             action = await self._shared_queue.get()
             logger.debug(f"{threading.current_thread().name} Got resource {action.name}")
             try:
-                await self._bg_process(action)
-            except flyte.errors.SlowDownError as e:
-                action.retries += 1
-                if action.retries > self._max_retries:
-                    raise
-                backoff = min(self._min_backoff_on_err * (2 ** (action.retries - 1)), self._max_backoff_on_err)
-                logger.warning(
-                    f"[{worker_id}] Backing off for {backoff} [retry {action.retries}/{self._max_retries}] "
-                    f"on action {action.name} due to error: {e}"
-                )
-                await asyncio.sleep(backoff)
-                logger.warning(f"[{worker_id}] Retrying action {action.name} after backoff")
-                await self._shared_queue.put(action)
+                try:
+                    await self._bg_process(action)
+                except flyte.errors.SlowDownError as e:
+                    action.retries += 1
+                    if action.retries > self._max_retries:
+                        raise
+                    backoff = min(self._min_backoff_on_err * (2 ** (action.retries - 1)), self._max_backoff_on_err)
+                    logger.warning(
+                        f"[{worker_id}] Backing off for {backoff} [retry {action.retries}/{self._max_retries}] "
+                        f"on action {action.name} due to error: {e}"
+                    )
+                    await asyncio.sleep(backoff)
+                    logger.warning(f"[{worker_id}] Retrying action {action.name} after backoff")
+                    await self._shared_queue.put(action)
             except Exception as e:
                 logger.error(f"[{worker_id}] Error in controller loop for {action.name}: {e}")
                 err = flyte.errors.RuntimeSystemError(

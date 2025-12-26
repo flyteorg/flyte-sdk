@@ -2,14 +2,12 @@ import re
 from dataclasses import dataclass
 from typing import Any, Dict, Optional, Type
 
-from flyte._task import TaskTemplate
-from flyte.connectors._connector import AsyncConnectorExecutorMixin
+from flyte.connectors import AsyncConnectorExecutorMixin
+from flyte.extend import TaskTemplate
 from flyte.io import DataFrame
 from flyte.models import NativeInterface, SerializationContext
 from flyteidl2.core import tasks_pb2
 from google.cloud import bigquery
-from google.protobuf import json_format
-from google.protobuf.struct_pb2 import Struct
 
 
 @dataclass
@@ -74,9 +72,7 @@ class BigQueryTask(AsyncConnectorExecutorMixin, TaskTemplate):
             config.update(self.plugin_config.QueryJobConfig.to_api_repr()["query"])
         if self.google_application_credentials is not None:
             config["secrets"] = {"google_application_credentials:": self.google_application_credentials}
-        s = Struct()
-        s.update(config)
-        return json_format.MessageToDict(s)
+        return config
 
     def sql(self, sctx: SerializationContext) -> Optional[str]:
         sql = tasks_pb2.Sql(statement=self.query_template, dialect=tasks_pb2.Sql.Dialect.ANSI)

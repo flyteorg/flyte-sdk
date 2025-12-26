@@ -149,13 +149,25 @@ class ActionNotFoundError(RuntimeError):
     """
 
 
+# NOTE: Use RemoteTaskError instead, since "reference tasks" (from v1) are now
+# simply "remote tasks" in v2.
 class ReferenceTaskError(RuntimeUserError):
     """
     This error is raised when the user tries to access a task that does not exist.
     """
 
+    CODE = "ReferenceTaskUsageError"
+
     def __init__(self, message: str):
-        super().__init__("ReferenceTaskUsageError", message, "user")
+        super().__init__(self.CODE, message, "user")
+
+
+class RemoteTaskError(ReferenceTaskError):
+    """
+    This error is raised when the user tries to access a task that does not exist.
+    """
+
+    CODE = "RemoteTaskUsageError"
 
 
 class LogsNotYetAvailableError(BaseRuntimeError):
@@ -241,6 +253,26 @@ class OnlyAsyncIOSupportedError(RuntimeUserError):
 
     def __init__(self, message: str):
         super().__init__("OnlyAsyncIOSupportedError", message, "user")
+
+
+class ParameterMaterializationError(RuntimeUserError):
+    """
+    This error is raised when the user tries to use a Parameter in an App, that has delayed Materialization,
+    but the materialization fails.
+    """
+
+    def __init__(self, message: str):
+        super().__init__("ParameterMaterializationError", message, "user")
+
+
+class RestrictedTypeError(RuntimeUserError):
+    """
+    This error is raised when the user uses a restricted type, for example current a Tuple is not supported for one
+     value.
+    """
+
+    def __init__(self, message: str):
+        super().__init__("RestrictedTypeUsage", message, "user")
 
 
 class EventAlreadyExistsInScopeError(RuntimeUserError):

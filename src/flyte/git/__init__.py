@@ -1,3 +1,3 @@
-from ._config import config_from_root
+from ._config import GitStatus, config_from_root
 
-__all__ = ["config_from_root"]
+__all__ = ["GitStatus", "config_from_root"]

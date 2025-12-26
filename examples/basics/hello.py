@@ -1,7 +1,10 @@
 import flyte
 
 # TaskEnvironments provide a simple way of grouping configuration used by tasks (more later).
-env = flyte.TaskEnvironment(name="hello_world", resources=flyte.Resources(memory="250Mi"))
+env = flyte.TaskEnvironment(
+    name="hello_world",
+    resources=flyte.Resources(memory="250Mi"),
+)
 
 
 # use TaskEnvironments to define tasks, which are regular Python functions.
