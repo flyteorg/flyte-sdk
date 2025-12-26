@@ -48,8 +48,7 @@ orchestrator_env = flyte.TaskEnvironment(
 )
 
 
-# Traced helper functions create checkpoints
-@flyte.trace
+# Helper functions for external service calls
 async def submit_to_service(request_id: int) -> str:
     """
     Submit request to external service.
@@ -65,7 +64,6 @@ async def submit_to_service(request_id: int) -> str:
     return job_id
 
 
-@flyte.trace
 async def poll_job_status(job_id: str, request_id: int) -> int:
     """
     Poll for job completion.
@@ -189,8 +187,7 @@ async def microbatch_workflow(
 
 
 if __name__ == "__main__":
-    flyte_config = Path(__file__).resolve().parent.parent / ".flyte" / "config.yaml"
-    flyte.init_from_config(str(flyte_config))
+    flyte.init_from_config()
 
     print("Starting micro-batching workflow with fault tolerance...")
     print("Progress is checkpointed and can resume from last successful batch.\n")
