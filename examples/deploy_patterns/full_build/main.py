@@ -24,11 +24,9 @@ def main(n: int) -> list[int]:
 
 
 if __name__ == "__main__":
-    import flyte.git
-
     # Another important trick is to set the root_dir correctly. if copy_contents_only is False, then we can set the
     # root_dir to the parent.parent because the folder is copied. If copy_contents_only is True, then we need to set
     # the root_dir to parent because the contents are copied
-    flyte.init_from_config(flyte.git.config_from_root(), root_dir=pathlib.Path(__file__).parent)
+    flyte.init_from_config(root_dir=pathlib.Path(__file__).parent)
     run = flyte.with_runcontext(copy_style="none", version="x").run(main, n=10)
     print(run.url)

@@ -250,7 +250,11 @@ def prepare_launch_json(ctx: click.Context, pid: int):
     with open(os.path.join(vscode_directory, "launch.json"), "w") as file:
         json.dump(launch_json, file, indent=4)
 
-    settings_json = {"python.defaultInterpreterPath": sys.executable}
+    settings_json = {
+        "python.defaultInterpreterPath": sys.executable,
+        "remote.autoForwardPorts": False,
+        "remote.autoForwardPortsFallback": 0,
+    }
     with open(os.path.join(vscode_directory, "settings.json"), "w") as file:
         json.dump(settings_json, file, indent=4)
 
@@ -262,9 +266,13 @@ async def _start_vscode_server(ctx: click.Context):
         await asyncio.gather(
             download_tgz(ctx.params["dest"], ctx.params["version"], ctx.params["tgz"]), download_vscode()
         )
+    code_server_idle_timeout_seconds = os.getenv("CODE_SERVER_IDLE_TIMEOUT_SECONDS", str(MAX_IDLE_SECONDS))
     child_process = multiprocessing.Process(
         target=lambda cmd: asyncio.run(asyncio.run(execute_command(cmd))),
-        kwargs={"cmd": f"code-server --bind-addr 0.0.0.0:6060 --disable-workspace-trust --auth none {os.getcwd()}"},
+        kwargs={
+            "cmd": f"code-server --bind-addr 0.0.0.0:6060 --idle-timeout-seconds {code_server_idle_timeout_seconds}"
+            f" --disable-workspace-trust --auth none {os.getcwd()}"
+        },
     )
     child_process.start()
     if child_process.pid is None:

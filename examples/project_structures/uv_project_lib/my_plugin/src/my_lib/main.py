@@ -1,3 +1,4 @@
+import logging
 import pathlib
 
 import flyte
@@ -35,7 +36,7 @@ def process_list(x_list: list[int]) -> float:
 
 
 if __name__ == "__main__":
-    flyte.init_from_config(root_dir=pathlib.Path(__file__).parent.parent)
+    flyte.init_from_config(root_dir=pathlib.Path(__file__).parent.parent, log_level=logging.DEBUG)
 
     run = flyte.run(process_list, x_list=list(range(10)))
 

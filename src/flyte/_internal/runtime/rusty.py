@@ -1,6 +1,6 @@
 import asyncio
 import time
-from typing import Any, List, Tuple
+from typing import List, Tuple
 
 from flyte._context import contextual_run
 from flyte._internal.controllers import Controller
@@ -78,23 +78,13 @@ async def create_controller(
     """
     logger.info(f"[rusty] Creating controller with endpoint {endpoint}")
     import flyte.errors
-    from flyte._initialize import init
+    from flyte._initialize import init_in_cluster
 
     loop = asyncio.get_event_loop()
     loop.set_exception_handler(flyte.errors.silence_grpc_polling_error)
 
-    # TODO Currently reference tasks are not supported in Rusty.
-    await init.aio()
-    controller_kwargs: dict[str, Any] = {"insecure": insecure}
-    if api_key:
-        logger.info("[rusty] Using api key from environment")
-        controller_kwargs["api_key"] = api_key
-    else:
-        controller_kwargs["endpoint"] = endpoint
-        if "localhost" in endpoint or "docker" in endpoint:
-            controller_kwargs["insecure"] = True
-        logger.debug(f"[rusty] Using controller endpoint: {endpoint} with kwargs: {controller_kwargs}")
-
+    # TODO Currently remote tasks are not supported in Rusty.
+    controller_kwargs = await init_in_cluster.aio(api_key=api_key, endpoint=endpoint, insecure=insecure)
     return _create_controller(ct="remote", **controller_kwargs)
 
 
@@ -174,6 +164,9 @@ async def run_task(
             input_path=input_path,
             image_cache=ImageCache.from_transport(image_cache) if image_cache else None,
         )
+    except asyncio.CancelledError as e:
+        logger.error(f"[rusty] Task cancellation received: {e!s}")
+        raise
     except Exception as e:
         logger.error(f"[rusty] Task failed: {e!s}")
         raise

@@ -4,7 +4,7 @@ dynamic = ["version"]
 description = "Ray plugin for flyte"
 readme = "README.md"
 authors = [{ name = "Kevin Su", email = "pingsutw@users.noreply.github.com" }]
-requires-python = ">=3.10"
+requires-python = ">=3.10,<3.13"
 dependencies = [
     "ray[default]",
     "flyte"
