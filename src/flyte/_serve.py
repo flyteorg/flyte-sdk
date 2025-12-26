@@ -169,6 +169,7 @@ class _Serve:
         deployed_app = await _deploy._deploy_app(app_env, sc, parameter_overrides=parameter_overrides)
         assert deployed_app
 
+        logger.warning(f"Deployed App, you can check the console at {deployed_app.url}")
         # Mutate app_idl if env_vars or cluster_pool are provided
         # This is a temporary solution until the update/create APIs support these attributes
         if self._env_vars or self._cluster_pool:
