@@ -1,4 +1,5 @@
 import asyncio
+import os
 from typing import Tuple, Union
 
 import rich_click as click
@@ -47,6 +48,7 @@ def project(cfg: common.CLIConfig, name: str | None = None):
         console.print(pretty_repr(remote.Project.get(name)))
     else:
         console.print(common.format("Projects", remote.Project.listall(), cfg.output_format))
+    os._exit(0)
 
 
 @get.command(cls=common.CommandBase)

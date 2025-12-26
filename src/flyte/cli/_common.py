@@ -189,10 +189,14 @@ class InvokeBaseMixin:
     """
 
     def invoke(self, ctx):
+        import os
+
         import grpc
 
         try:
-            return super().invoke(ctx)  # type: ignore
+            _ = super().invoke(ctx)  # type: ignore
+            # Exit successfully to properly close grpc channel
+            os._exit(0)
         except grpc.aio.AioRpcError as e:
             if e.code() == grpc.StatusCode.UNAUTHENTICATED:
                 raise click.ClickException(f"Authentication failed. Please check your credentials. {e.details()}")
