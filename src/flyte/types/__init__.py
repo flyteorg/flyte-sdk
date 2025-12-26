@@ -19,6 +19,10 @@ It is always possible to bypass the type system and use the `FlytePickle` type t
  written in python. The Pickled objects cannot be represented in the UI, and may be in-efficient for large datasets.
 """
 
+from importlib.metadata import entry_points
+
+from flyte._logging import logger
+
 from ._interface import guess_interface
 from ._pickle import FlytePickle
 from ._renderer import Renderable
@@ -34,3 +38,15 @@ __all__ = [
     "guess_interface",
     "literal_string_repr",
 ]
+
+
+def _load_custom_type_transformers():
+    plugins = entry_points(group="flyte.plugins.types")
+    for ep in plugins:
+        try:
+            logger.info(f"Loading type transformer: {ep.name}")
+            loaded = ep.load()
+            if callable(loaded):
+                loaded()
+        except Exception as e:
+            logger.warning(f"Failed to load type transformer {ep.name} with error: {e}")

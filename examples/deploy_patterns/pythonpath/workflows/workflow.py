@@ -1,11 +1,12 @@
 import pathlib
 
-from src.my_module import say_hello
+from src.my_module import env, say_hello
 
 import flyte
 
 env = flyte.TaskEnvironment(
     name="workflow_env",
+    depends_on=[env],
 )
 
 

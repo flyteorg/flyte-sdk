@@ -1,4 +1,5 @@
 .flyte
+maint_tools/copy_pb_python_from_cloud.py
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
@@ -8,11 +9,15 @@ __pycache__/
 # C extensions
 *.so
 
+# Temporary
+rs_controller/
+
 # Distribution / packaging
 .Python
 build/
 develop-eggs/
 dist/
+dist-plugins/
 downloads/
 eggs/
 .eggs/
@@ -188,3 +193,4 @@ examples/local_debug.ipynb
 examples/remote_example.py
 config.yaml
 .claude/
+tests/flyte/internal/bin/flyte-parameters.json

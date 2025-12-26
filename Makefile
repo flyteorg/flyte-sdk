@@ -21,7 +21,7 @@ mypy:
 
 .PHONY: lint
 lint-fix:
-	uv run python -m ruff check .
+	uv run python -m ruff check . --fix
 
 .PHONY: dist
 dist: clean

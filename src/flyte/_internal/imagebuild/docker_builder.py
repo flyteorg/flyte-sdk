@@ -4,7 +4,7 @@ import shutil
 import subprocess
 import tempfile
 import typing
-from pathlib import Path
+from pathlib import Path, PurePath
 from string import Template
 from typing import ClassVar, Optional, Protocol, cast
 
@@ -84,7 +84,7 @@ ENV POETRY_CACHE_DIR=/tmp/poetry_cache \
 RUN --mount=type=cache,sharing=locked,mode=0777,target=/tmp/poetry_cache,id=poetry \
    --mount=type=bind,target=/root/.flyte/$PYPROJECT_PATH,src=$PYPROJECT_PATH,rw \
    $SECRET_MOUNT \
-   poetry install $POETRY_INSTALL_ARGS
+   poetry install $POETRY_INSTALL_ARGS -C /root/.flyte/$PYPROJECT_PATH
 """)
 
 UV_PACKAGE_INSTALL_COMMAND_TEMPLATE = Template("""\
@@ -310,14 +310,17 @@ class PoetryProjectHandler:
         layer: PoetryProject, context_path: Path, dockerfile: str, docker_ignore_patterns: list[str] = []
     ) -> str:
         secret_mounts = _get_secret_mounts_layer(layer.secret_mounts)
-        if layer.extra_args and "--no-root" in layer.extra_args:
+        extra_args = layer.extra_args or ""
+        if layer.project_install_mode == "dependencies_only":
             # Only Copy pyproject.yaml and poetry.lock.
             pyproject_dst = copy_files_to_context(layer.pyproject, context_path)
             poetry_lock_dst = copy_files_to_context(layer.poetry_lock, context_path)
+            if "--no-root" not in extra_args:
+                extra_args += " --no-root"
             delta = POETRY_LOCK_WITHOUT_PROJECT_INSTALL_TEMPLATE.substitute(
                 POETRY_LOCK_PATH=poetry_lock_dst.relative_to(context_path),
                 PYPROJECT_PATH=pyproject_dst.relative_to(context_path),
-                POETRY_INSTALL_ARGS=layer.extra_args or "",
+                POETRY_INSTALL_ARGS=extra_args,
                 SECRET_MOUNT=secret_mounts,
             )
         else:
@@ -334,7 +337,7 @@ class PoetryProjectHandler:
 
             delta = POETRY_LOCK_INSTALL_TEMPLATE.substitute(
                 PYPROJECT_PATH=pyproject_dst.relative_to(context_path),
-                POETRY_INSTALL_ARGS=layer.extra_args or "",
+                POETRY_INSTALL_ARGS=extra_args,
                 SECRET_MOUNT=secret_mounts,
             )
         dockerfile += delta
@@ -354,7 +357,8 @@ class CopyConfigHandler:
     ) -> str:
         # Copy the source config file or directory to the context path
         if layer.src.is_absolute() or ".." in str(layer.src):
-            dst_path = context_path / str(layer.src.absolute()).replace("/", "./_flyte_abs_context/", 1)
+            rel_path = PurePath(*layer.src.parts[1:])
+            dst_path = context_path / "_flyte_abs_context" / rel_path
         else:
             dst_path = context_path / layer.src
 
@@ -463,6 +467,22 @@ async def _process_layer(
                     extra_index_urls=layer.extra_index_urls,
                 )
                 dockerfile = await PipAndRequirementsHandler.handle(pip, context_path, dockerfile)
+            if header.pyprojects:
+                # To get the version of the project.
+                dockerfile = await AptPackagesHandler.handle(AptPackages(packages=("git",)), context_path, dockerfile)
+
+                for project_path in header.pyprojects:
+                    uv_project = UVProject(
+                        pyproject=Path(project_path) / "pyproject.toml",
+                        uvlock=Path(project_path) / "uv.lock",
+                        project_install_mode="install_project",
+                        secret_mounts=layer.secret_mounts,
+                        pre=layer.pre,
+                        extra_args=layer.extra_args,
+                    )
+                    dockerfile = await UVProjectHandler.handle(
+                        uv_project, context_path, dockerfile, docker_ignore_patterns
+                    )
 
         case Requirements() | PipPackages():
             # Handle pip packages and requirements

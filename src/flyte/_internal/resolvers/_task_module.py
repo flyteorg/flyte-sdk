@@ -5,7 +5,7 @@ from flyte._module import extract_obj_module
 from flyte._task import AsyncFunctionTaskTemplate, TaskTemplate
 
 
-def extract_task_module(task: TaskTemplate, /, source_dir: pathlib.Path | None = None) -> Tuple[str, str]:
+def extract_task_module(task: TaskTemplate, /, source_dir: pathlib.Path) -> Tuple[str, str]:
     """
     Extract the task module from the task template.
 
@@ -15,7 +15,7 @@ def extract_task_module(task: TaskTemplate, /, source_dir: pathlib.Path | None =
     """
     if isinstance(task, AsyncFunctionTaskTemplate):
         entity_name = task.func.__name__
-        entity_module_name = extract_obj_module(task.func, source_dir)
+        entity_module_name, _ = extract_obj_module(task.func, source_dir)
         return entity_name, entity_module_name
     else:
         raise NotImplementedError(f"Task module {task.name} not implemented.")

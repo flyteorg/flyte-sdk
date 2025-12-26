@@ -68,13 +68,13 @@ class TestLazyEntity:
 
     @pytest.mark.asyncio
     async def test_call_local_execution_raises_error(self, lazy_entity, mock_task_details):
-        """Test that calling LazyEntity locally raises ReferenceTaskError."""
-        # Configure the mock task to raise ReferenceTaskError when called
-        mock_task_details.side_effect = flyte.errors.ReferenceTaskError(
-            "Reference tasks [test_task] cannot be executed locally, only remotely."
+        """Test that calling LazyEntity locally raises RemoteTaskError."""
+        # Configure the mock task to raise RemoteTaskError when called
+        mock_task_details.side_effect = flyte.errors.RemoteTaskError(
+            "Remote tasks [test_task] cannot be executed locally, only remotely."
         )
 
-        with pytest.raises(flyte.errors.ReferenceTaskError, match="cannot be executed locally"):
+        with pytest.raises(flyte.errors.RemoteTaskError, match="cannot be executed locally"):
             await lazy_entity(arg1="test_value")
 
     @pytest.mark.asyncio
@@ -186,7 +186,7 @@ class TestLazyEntityIntegration:
     @pytest.mark.asyncio
     async def test_integration_call_local_execution(self, integration_lazy_entity):
         """Integration test for local execution error."""
-        with pytest.raises(flyte.errors.ReferenceTaskError, match="cannot be executed locally"):
+        with pytest.raises(flyte.errors.RemoteTaskError, match="cannot be executed locally"):
             await integration_lazy_entity()
 
     @pytest.mark.asyncio

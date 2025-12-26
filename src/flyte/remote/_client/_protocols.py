@@ -2,6 +2,7 @@ from typing import AsyncIterator, Protocol
 
 from flyteidl.admin import project_attributes_pb2, project_pb2, version_pb2
 from flyteidl.service import dataproxy_pb2, identity_pb2
+from flyteidl2.app import app_payload_pb2
 from flyteidl2.secret import payload_pb2
 from flyteidl2.task import task_service_pb2
 from flyteidl2.trigger import trigger_service_pb2
@@ -60,6 +61,26 @@ class TaskService(Protocol):
     ) -> task_service_pb2.GetTaskDetailsResponse: ...
 
     async def ListTasks(self, request: task_service_pb2.ListTasksRequest) -> task_service_pb2.ListTasksResponse: ...
+
+
+class AppService(Protocol):
+    async def Create(self, request: app_payload_pb2.CreateRequest) -> app_payload_pb2.CreateResponse: ...
+
+    async def Get(self, request: app_payload_pb2.GetRequest) -> app_payload_pb2.GetResponse: ...
+
+    async def Update(self, request: app_payload_pb2.UpdateRequest) -> app_payload_pb2.UpdateResponse: ...
+
+    async def UpdateStatus(
+        self, request: app_payload_pb2.UpdateStatusRequest
+    ) -> app_payload_pb2.UpdateStatusResponse: ...
+
+    async def Delete(self, request: app_payload_pb2.DeleteRequest) -> app_payload_pb2.DeleteResponse: ...
+
+    async def List(self, request: app_payload_pb2.ListRequest) -> app_payload_pb2.ListResponse: ...
+
+    async def Watch(self, request: app_payload_pb2.WatchRequest) -> app_payload_pb2.WatchResponse: ...
+
+    async def Lease(self, request: app_payload_pb2.LeaseRequest) -> app_payload_pb2.LeaseResponse: ...
 
 
 class RunService(Protocol):

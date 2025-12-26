@@ -1,6 +1,6 @@
 import asyncio
+import pathlib
 import typing
-from pathlib import Path
 
 from distributed import Client
 from flyteplugins.dask import Dask, Scheduler, WorkerGroup
@@ -46,7 +46,7 @@ async def hello_dask_nested(n: int = 3) -> typing.List[int]:
 
 
 if __name__ == "__main__":
-    flyte.init_from_config(root_dir=Path(__file__).parent)
+    flyte.init_from_config(root_dir=pathlib.Path(__file__).parent)
     run = flyte.run(hello_dask_nested, n=3)
     print("run name:", run.name)
     print("run url:", run.url)

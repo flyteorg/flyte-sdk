@@ -1,10 +1,11 @@
 import asyncio
-from typing import Tuple, Union, get_args
+from typing import Tuple, Union
 
 import rich_click as click
 from rich.pretty import pretty_repr
 
 import flyte.remote as remote
+from flyte.models import ActionPhase
 
 from . import _common as common
 
@@ -53,10 +54,12 @@ def project(cfg: common.CLIConfig, name: str | None = None):
 @click.option("--limit", type=int, default=100, help="Limit the number of runs to fetch when listing.")
 @click.option(
     "--in-phase",  # multiple=True, TODO support multiple phases once values in works
-    type=click.Choice(get_args(remote.Phase), case_sensitive=False),
+    type=click.Choice([p.value for p in ActionPhase], case_sensitive=False),
     help="Filter runs by their status.",
 )
 @click.option("--only-mine", is_flag=True, default=False, help="Show only runs created by the current user (you).")
+@click.option("--task-name", type=str, default=None, help="Filter runs by task name.")
+@click.option("--task-version", type=str, default=None, help="Filter runs by task version.")
 @click.pass_obj
 def run(
     cfg: common.CLIConfig,
@@ -66,6 +69,8 @@ def run(
     limit: int = 100,
     in_phase: str | Tuple[str, ...] | None = None,
     only_mine: bool = False,
+    task_name: str | None = None,
+    task_version: str | None = None,
 ):
     """
     Get a list of all runs, or details of a specific run by name.
@@ -73,6 +78,13 @@ def run(
     The run details will include information about the run, its status, but only the root action will be shown.
 
     If you want to see the actions for a run, use `get action <run_name>`.
+
+    You can filter runs by task name and optionally task version:
+
+    ```bash
+    $ flyte get run --task-name my_task
+    $ flyte get run --task-name my_task --task-version v1.0
+    ```
     """
 
     cfg.init(project=project, domain=domain)
@@ -83,7 +95,7 @@ def run(
         console.print(common.format(f"Run {name}", [details], "json"))
     else:
         if in_phase and isinstance(in_phase, str):
-            in_phase = (in_phase,)
+            in_phase = (ActionPhase(in_phase),)
 
         subject = None
         if only_mine:
@@ -93,7 +105,13 @@ def run(
         console.print(
             common.format(
                 "Runs",
-                remote.Run.listall(limit=limit, in_phase=in_phase, created_by_subject=subject),
+                remote.Run.listall(
+                    limit=limit,
+                    in_phase=in_phase,
+                    created_by_subject=subject,
+                    task_name=task_name,
+                    task_version=task_version,
+                ),
                 cfg.output_format,
             )
         )
@@ -138,11 +156,17 @@ def task(
 @get.command(cls=common.CommandBase)
 @click.argument("run_name", type=str, required=True)
 @click.argument("action_name", type=str, required=False)
+@click.option(
+    "--in-phase",
+    type=click.Choice([p.value for p in ActionPhase], case_sensitive=False),
+    help="Filter actions by their phase.",
+)
 @click.pass_obj
 def action(
     cfg: common.CLIConfig,
     run_name: str,
     action_name: str | None = None,
+    in_phase: str | None = None,
     project: str | None = None,
     domain: str | None = None,
 ):
@@ -160,8 +184,17 @@ def action(
         )
     else:
         # List all actions for the run
+        if in_phase:
+            in_phase_tuple = (ActionPhase(in_phase),)
+        else:
+            in_phase_tuple = None
+
         console.print(
-            common.format(f"Actions for {run_name}", remote.Action.listall(for_run_name=run_name), cfg.output_format)
+            common.format(
+                f"Actions for {run_name}",
+                remote.Action.listall(for_run_name=run_name, in_phase=in_phase_tuple),
+                cfg.output_format,
+            )
         )
 
 
@@ -227,10 +260,11 @@ def logs(
         except KeyboardInterrupt:
             task.cancel()
 
+    obj: Union[remote.Action, remote.Run]
     if action_name:
         obj = remote.Action.get(run_name=run_name, name=action_name)
     else:
-        obj = remote.Run.get(run_name)
+        obj = remote.Run.get(name=run_name)
     asyncio.run(_run_log_view(obj))
 
 
@@ -295,10 +329,11 @@ def io(
 
     cfg.init(project=project, domain=domain)
     console = common.get_console()
+    obj: Union[remote.ActionDetails, remote.RunDetails]
     if action_name:
         obj = remote.ActionDetails.get(run_name=run_name, name=action_name)
     else:
-        obj = remote.RunDetails.get(run_name)
+        obj = remote.RunDetails.get(name=run_name)
 
     async def _get_io(
         details: Union[remote.RunDetails, remote.ActionDetails],
@@ -368,3 +403,42 @@ def trigger(
         console.print(pretty_repr(Trigger.get(name=name, task_name=task_name)))
     else:
         console.print(common.format("Triggers", Trigger.listall(task_name=task_name, limit=limit), cfg.output_format))
+
+
+@get.command(cls=common.CommandBase)
+@click.argument("name", type=str, required=False)
+@click.option("--limit", type=int, default=100, help="Limit the number of apps to fetch when listing.")
+@click.option("--only-mine", is_flag=True, default=False, help="Show only apps created by the current user (you).")
+@click.pass_obj
+def app(
+    cfg: common.CLIConfig,
+    name: str | None = None,
+    project: str | None = None,
+    domain: str | None = None,
+    limit: int = 100,
+    only_mine: bool = False,
+):
+    """
+    Get a list of all apps, or details of a specific app by name.
+
+    Apps are long-running services deployed on the Flyte platform.
+    """
+    cfg.init(project=project, domain=domain)
+
+    console = common.get_console()
+    if name:
+        app_details = remote.App.get(name=name)
+        console.print(common.format(f"App {name}", [app_details], "json"))
+    else:
+        subject = None
+        if only_mine:
+            usr = remote.User.get()
+            subject = usr.subject()
+
+        console.print(
+            common.format(
+                "Apps",
+                remote.App.listall(limit=limit, created_by_subject=subject),
+                cfg.output_format,
+            )
+        )

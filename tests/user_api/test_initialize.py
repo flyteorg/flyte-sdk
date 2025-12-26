@@ -14,6 +14,7 @@ from flyte._initialize import (
     get_storage,
     init,
     init_from_config,
+    init_in_cluster,
     is_initialized,
     replace_client,
     requires_initialization,
@@ -262,6 +263,70 @@ task:
         mock_init.aio.assert_called_once()
         call_kwargs = mock_init.aio.call_args[1]
         assert call_kwargs["root_dir"] is None
+
+    @patch("flyte._initialize.init")
+    @patch("flyte.config.auto")
+    @pytest.mark.asyncio
+    async def test_init_from_config_project_domain_overrides(self, mock_config_auto, mock_init, mock_config):
+        """Test init_from_config with project and domain parameter overrides"""
+        # Config has default values
+        mock_config.task.project = "config-project"
+        mock_config.task.domain = "config-domain"
+        mock_config_auto.return_value = mock_config
+        mock_init.aio = AsyncMock()
+
+        # Override project and domain via parameters
+        override_project = "override-project"
+        override_domain = "override-domain"
+
+        await init_from_config.aio(path_or_config=None, project=override_project, domain=override_domain)
+
+        # Verify init was called with overridden values, not config values
+        mock_init.aio.assert_called_once()
+        call_kwargs = mock_init.aio.call_args[1]
+        assert call_kwargs["project"] == override_project
+        assert call_kwargs["domain"] == override_domain
+        # Verify they are different from config values
+        assert call_kwargs["project"] != mock_config.task.project
+        assert call_kwargs["domain"] != mock_config.task.domain
+
+    @patch("flyte._initialize.init")
+    @patch("flyte.config.auto")
+    @pytest.mark.asyncio
+    async def test_init_from_config_partial_override(self, mock_config_auto, mock_init, mock_config):
+        """Test init_from_config with only project override, domain from config"""
+        mock_config.task.project = "config-project"
+        mock_config.task.domain = "config-domain"
+        mock_config_auto.return_value = mock_config
+        mock_init.aio = AsyncMock()
+
+        # Override only project, domain should come from config
+        override_project = "override-project"
+
+        await init_from_config.aio(path_or_config=None, project=override_project)
+
+        mock_init.aio.assert_called_once()
+        call_kwargs = mock_init.aio.call_args[1]
+        assert call_kwargs["project"] == override_project
+        assert call_kwargs["domain"] == mock_config.task.domain
+
+    @patch("flyte._initialize.init")
+    @patch("flyte.config.auto")
+    @pytest.mark.asyncio
+    async def test_init_from_config_no_overrides_uses_config_values(self, mock_config_auto, mock_init, mock_config):
+        """Test init_from_config without overrides uses config file values"""
+        mock_config.task.project = "config-project"
+        mock_config.task.domain = "config-domain"
+        mock_config_auto.return_value = mock_config
+        mock_init.aio = AsyncMock()
+
+        # No overrides provided
+        await init_from_config.aio(path_or_config=None)
+
+        mock_init.aio.assert_called_once()
+        call_kwargs = mock_init.aio.call_args[1]
+        assert call_kwargs["project"] == mock_config.task.project
+        assert call_kwargs["domain"] == mock_config.task.domain
 
 
 class TestInitialization:
@@ -525,3 +590,97 @@ class TestInitFunction:
 
         # Client initialization should not be called
         mock_init_client.assert_not_called()
+
+
+class TestInitInCluster:
+    """Test cases for init_in_cluster function with insecure parameter and environment overrides"""
+
+    @pytest.fixture(autouse=True)
+    def reset_global_state(self):
+        """Reset global state before each test"""
+        init_module._init_config = None
+        yield
+        init_module._init_config = None
+
+    @patch("flyte._initialize.init")
+    @pytest.mark.asyncio
+    async def test_init_in_cluster_default_insecure_with_docker_endpoint(self, mock_init, monkeypatch):
+        """Test that insecure auto-detects True for docker-containing endpoint"""
+        mock_init.aio = AsyncMock()
+
+        monkeypatch.setenv("FLYTE_INTERNAL_EXECUTION_PROJECT", "test-project")
+        monkeypatch.setenv("FLYTE_INTERNAL_EXECUTION_DOMAIN", "test-domain")
+        monkeypatch.setenv("_U_EP_OVERRIDE", "my-docker-host:8080")
+        monkeypatch.delenv("_U_INSECURE", raising=False)
+
+        result = await init_in_cluster.aio()
+
+        # Should auto-detect insecure=True for docker endpoint
+        assert result["insecure"] is True
+        assert result["endpoint"] == "my-docker-host:8080"
+
+    @patch("flyte._initialize.init")
+    @pytest.mark.asyncio
+    async def test_init_in_cluster_default_insecure_with_remote_endpoint(self, mock_init, monkeypatch):
+        """Test that insecure stays False for remote (non-localhost/docker) endpoint"""
+        mock_init.aio = AsyncMock()
+
+        monkeypatch.setenv("FLYTE_INTERNAL_EXECUTION_PROJECT", "test-project")
+        monkeypatch.setenv("FLYTE_INTERNAL_EXECUTION_DOMAIN", "test-domain")
+        monkeypatch.setenv("_U_EP_OVERRIDE", "flyte.example.com:443")
+        monkeypatch.delenv("_U_INSECURE", raising=False)
+
+        result = await init_in_cluster.aio()
+
+        # Should stay False for remote endpoint
+        assert result["insecure"] is False
+        assert result["endpoint"] == "flyte.example.com:443"
+
+    @patch("flyte._initialize.init")
+    @pytest.mark.asyncio
+    async def test_init_in_cluster_explicit_insecure_false(self, mock_init, monkeypatch):
+        """Test explicitly passing insecure=False"""
+        mock_init.aio = AsyncMock()
+
+        monkeypatch.setenv("FLYTE_INTERNAL_EXECUTION_PROJECT", "test-project")
+        monkeypatch.setenv("FLYTE_INTERNAL_EXECUTION_DOMAIN", "test-domain")
+        monkeypatch.delenv("_U_INSECURE", raising=False)
+
+        result = await init_in_cluster.aio(insecure=False)
+
+        # With localhost endpoint and insecure=False, should auto-detect to True
+        assert result["insecure"] is True
+        assert result["endpoint"] == "host.docker.internal:8090"
+
+    @patch("flyte._initialize.init")
+    @pytest.mark.asyncio
+    async def test_init_in_cluster_insecure_override_env_true(self, mock_init, monkeypatch):
+        """Test INSECURE_OVERRIDE env var set to 'true' overrides auto-detection"""
+        mock_init.aio = AsyncMock()
+
+        monkeypatch.setenv("FLYTE_INTERNAL_EXECUTION_PROJECT", "test-project")
+        monkeypatch.setenv("FLYTE_INTERNAL_EXECUTION_DOMAIN", "test-domain")
+        monkeypatch.setenv("_U_EP_OVERRIDE", "flyte.example.com:443")
+        monkeypatch.setenv("_U_INSECURE", "true")
+
+        result = await init_in_cluster.aio()
+
+        # Env var should override to True even for remote endpoint
+        assert result["insecure"] is True
+        assert result["endpoint"] == "flyte.example.com:443"
+
+    @patch("flyte._initialize.init")
+    @pytest.mark.asyncio
+    async def test_init_in_cluster_insecure_override_env_false(self, mock_init, monkeypatch):
+        """Test INSECURE_OVERRIDE env var set to 'false' overrides auto-detection"""
+        mock_init.aio = AsyncMock()
+
+        monkeypatch.setenv("FLYTE_INTERNAL_EXECUTION_PROJECT", "test-project")
+        monkeypatch.setenv("FLYTE_INTERNAL_EXECUTION_DOMAIN", "test-domain")
+        monkeypatch.setenv("_U_INSECURE", "false")
+
+        result = await init_in_cluster.aio()
+
+        # Env var should override to False even for localhost endpoint
+        assert result["insecure"] is True
+        assert result["endpoint"] == "host.docker.internal:8090"

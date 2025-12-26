@@ -14,9 +14,7 @@ import flyte
 env.add_dependency(torch_env, spark_env)
 
 if __name__ == "__main__":
-    import flyte.git
-
-    flyte.init_from_config(flyte.git.config_from_root(), root_dir=Path(__file__).parent)
+    flyte.init_from_config(root_dir=Path(__file__).parent)
     v = flyte.deploy(env)
     print(v[0].summary_repr())
 

@@ -9,8 +9,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Awaitable, DefaultDict, Tuple, TypeVar
 
-from flyteidl2.common import identifier_pb2
-from flyteidl2.workflow import run_definition_pb2
+from flyteidl2.common import identifier_pb2, phase_pb2
 
 import flyte
 import flyte.errors
@@ -72,7 +71,7 @@ async def handle_action_failure(action: Action, task_name: str) -> Exception:
         Exception: The converted native exception or RuntimeSystemError
     """
     err = action.err or action.client_err
-    if not err and action.phase == run_definition_pb2.PHASE_FAILED:
+    if not err and action.phase == phase_pb2.ACTION_PHASE_FAILED:
         logger.error(f"Server reported failure for action {action.name}, checking error file.")
         try:
             error_path = io.error_path(f"{action.run_output_base}/{action.action_id.name}/1")
@@ -256,13 +255,13 @@ class RemoteController(Controller):
             raise
 
         # If the action is aborted, we should abort the controller as well
-        if n.phase == run_definition_pb2.PHASE_ABORTED:
+        if n.phase == phase_pb2.ACTION_PHASE_ABORTED:
             logger.warning(f"Action {n.action_id.name} was aborted, aborting current Action{current_action_id.name}")
             raise flyte.errors.RunAbortedError(
                 f"Action {n.action_id.name} was aborted, aborting current Action {current_action_id.name}"
             )
 
-        if n.phase == run_definition_pb2.PHASE_TIMED_OUT:
+        if n.phase == phase_pb2.ACTION_PHASE_TIMED_OUT:
             logger.warning(
                 f"Action {n.action_id.name} timed out, raising timeout exception Action {current_action_id.name}"
             )
@@ -270,7 +269,7 @@ class RemoteController(Controller):
                 f"Action {n.action_id.name} timed out, raising exception in current Action {current_action_id.name}"
             )
 
-        if n.has_error() or n.phase == run_definition_pb2.PHASE_FAILED:
+        if n.has_error() or n.phase == phase_pb2.ACTION_PHASE_FAILED:
             exc = await handle_action_failure(action, _task.name)
             raise exc
 
@@ -407,7 +406,7 @@ class RemoteController(Controller):
         if prev_action is None:
             return TraceInfo(func_name, sub_action_id, _interface, inputs_uri), False
 
-        if prev_action.phase == run_definition_pb2.PHASE_FAILED:
+        if prev_action.phase == phase_pb2.ACTION_PHASE_FAILED:
             if prev_action.has_error():
                 exc = convert.convert_error_to_native(prev_action.err)
                 return (
@@ -559,7 +558,7 @@ class RemoteController(Controller):
             await self.cancel_action(action)
             raise
 
-        if n.has_error() or n.phase == run_definition_pb2.PHASE_FAILED:
+        if n.has_error() or n.phase == phase_pb2.ACTION_PHASE_FAILED:
             exc = await handle_action_failure(action, task_name)
             raise exc
 

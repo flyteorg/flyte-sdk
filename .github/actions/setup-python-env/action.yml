@@ -28,13 +28,8 @@ runs:
         cache-dependency-glob: |
           pyproject.toml
           uv.lock
-
     - name: Install Python dependencies
-      if: steps.setup-uv.outputs.cache-hit == 'false'
-      run: uv sync --all-groups --frozen
-      shell: bash
-
-    - name: List Python dependencies
-      if: steps.setup-uv.outputs.cache-hit == 'true'
-      run: uv pip list
+      run: |
+        uv sync --all-groups --frozen
+        uv pip list
       shell: bash

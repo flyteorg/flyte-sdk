@@ -6,18 +6,7 @@ from unittest.mock import MagicMock
 import grpc
 import pytest
 from flyteidl.core.tasks_pb2 import TaskTemplate
-from flyteidl2.core import literals_pb2
-from flyteidl2.core.execution_pb2 import TaskExecution, TaskLog
-from flyteidl2.core.identifier_pb2 import (
-    Identifier,
-    NodeExecutionIdentifier,
-    ResourceType,
-    TaskExecutionIdentifier,
-    WorkflowExecutionIdentifier,
-)
-from flyteidl2.core.metrics_pb2 import ExecutionMetricResult
-from flyteidl2.core.security_pb2 import Identity
-from flyteidl2.plugins.connector_pb2 import (
+from flyteidl2.connector.connector_pb2 import (
     CreateTaskRequest,
     DeleteTaskRequest,
     DeleteTaskResponse,
@@ -30,6 +19,17 @@ from flyteidl2.plugins.connector_pb2 import (
     TaskCategory,
     TaskExecutionMetadata,
 )
+from flyteidl2.core import literals_pb2
+from flyteidl2.core.execution_pb2 import TaskExecution, TaskLog
+from flyteidl2.core.identifier_pb2 import (
+    Identifier,
+    NodeExecutionIdentifier,
+    ResourceType,
+    TaskExecutionIdentifier,
+    WorkflowExecutionIdentifier,
+)
+from flyteidl2.core.metrics_pb2 import ExecutionMetricResult
+from flyteidl2.core.security_pb2 import Identity
 from flyteidl2.task import common_pb2
 
 import flyte
@@ -197,9 +197,9 @@ async def test_async_connector_service():
         )
         assert res.body.results == ["foo", "bar"]
 
-    connector_metadata = ConnectorRegistry.get_connector_metadata(connector.name)
+    connector_metadata = ConnectorRegistry._get_connector_metadata(connector.name)
     assert connector_metadata.supported_task_categories[0].version == connector.task_type_version
     assert connector_metadata.supported_task_categories[0].name == connector.task_type_name
 
     with pytest.raises(FlyteConnectorNotFound):
-        ConnectorRegistry.get_connector_metadata("non-exist-namr")
+        ConnectorRegistry._get_connector_metadata("non-exist-namr")

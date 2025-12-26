@@ -1,10 +1,11 @@
 import inspect
+import os
+import sys
 from http import HTTPStatus
-from typing import Callable, Dict, Tuple, Type, Union
+from typing import Callable, Dict, List, Tuple, Type, Union
 
 import grpc
-from flyteidl2.core.security_pb2 import Connection
-from flyteidl2.plugins.connector_pb2 import (
+from flyteidl2.connector.connector_pb2 import (
     CreateTaskRequest,
     CreateTaskResponse,
     DeleteTaskRequest,
@@ -20,16 +21,16 @@ from flyteidl2.plugins.connector_pb2 import (
     ListConnectorsRequest,
     ListConnectorsResponse,
 )
-from flyteidl2.service.connector_pb2_grpc import (
-    AsyncConnectorServiceServicer,
-    ConnectorMetadataServiceServicer,
-)
+from flyteidl2.connector.service_pb2_grpc import AsyncConnectorServiceServicer, ConnectorMetadataServiceServicer
+from flyteidl2.core.security_pb2 import Connection
 from prometheus_client import Counter, Summary
 
 from flyte._internal.runtime.convert import Inputs, convert_from_inputs_to_native
 from flyte._logging import logger
 from flyte.connectors._connector import ConnectorRegistry, FlyteConnectorNotFound, get_resource_proto
+from flyte.connectors.utils import _start_grpc_server
 from flyte.models import NativeInterface, _has_default
+from flyte.syncify import syncify
 from flyte.types import TypeEngine
 
 metric_prefix = "flyte_connector_"
@@ -71,6 +72,16 @@ def _handle_exception(e: Exception, context: grpc.ServicerContext, task_type: st
         request_failure_count.labels(
             task_type=task_type, operation=operation, error_code=HTTPStatus.INTERNAL_SERVER_ERROR
         ).inc()
+
+
+class ConnectorService:
+    @syncify
+    @classmethod
+    async def run(cls, port: int, prometheus_port: int, worker: int, timeout: int | None, modules: List[str] | None):
+        working_dir = os.getcwd()
+        if all(os.path.realpath(path) != working_dir for path in sys.path):
+            sys.path.append(working_dir)
+        await _start_grpc_server(port, prometheus_port, worker, timeout, modules)
 
 
 def record_connector_metrics(func: Callable):
@@ -136,7 +147,7 @@ class AsyncConnectorService(AsyncConnectorServiceServicer):
             inputs=native_inputs,
             output_prefix=request.output_prefix,
             task_execution_metadata=request.task_execution_metadata,
-            connection=_get_connection_kwargs(request.connection),
+            **_get_connection_kwargs(request.connection),
         )
         return CreateTaskResponse(resource_meta=resource_meta.encode())
 
@@ -146,7 +157,7 @@ class AsyncConnectorService(AsyncConnectorServiceServicer):
         logger.info(f"{connector.name} start checking the status of the job")
         res = await connector.get(
             resource_meta=connector.metadata_type.decode(request.resource_meta),
-            connection=_get_connection_kwargs(request.connection),
+            **_get_connection_kwargs(request.connection),
         )
         return GetTaskResponse(resource=await get_resource_proto(res))
 
@@ -156,7 +167,7 @@ class AsyncConnectorService(AsyncConnectorServiceServicer):
         logger.info(f"{connector.name} start deleting the job")
         await connector.delete(
             resource_meta=connector.metadata_type.decode(request.resource_meta),
-            connection=_get_connection_kwargs(request.connection),
+            **_get_connection_kwargs(request.connection),
         )
         return DeleteTaskResponse()
 
@@ -175,9 +186,9 @@ class AsyncConnectorService(AsyncConnectorServiceServicer):
 
 class ConnectorMetadataService(ConnectorMetadataServiceServicer):
     async def GetConnector(self, request: GetConnectorRequest, context: grpc.ServicerContext) -> GetConnectorResponse:
-        return GetConnectorResponse(connector=ConnectorRegistry.get_connector_metadata(request.name))
+        return GetConnectorResponse(connector=ConnectorRegistry._get_connector_metadata(request.name))
 
     async def ListConnectors(
         self, request: ListConnectorsRequest, context: grpc.ServicerContext
     ) -> ListConnectorsResponse:
-        return ListConnectorsResponse(connectors=ConnectorRegistry.list_connectors())
+        return ListConnectorsResponse(connectors=ConnectorRegistry._list_connectors())

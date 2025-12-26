@@ -23,7 +23,7 @@ async def long_running_task(duration: timedelta) -> str:
     while time.time() < end_time:
         elapsed = time.time() - start_time
         await flyte.report.log.aio(f"<p>Elapsed time: {elapsed:.2f} seconds</p>", do_flush=True)
-        await asyncio.sleep(60)
+        await asyncio.sleep(600)
 
 
 @env.task(report=True)
@@ -34,14 +34,12 @@ async def main_task(duration: timedelta) -> str:
     await flyte.report.log.aio("<h1>Starting long-running task</h1>", do_flush=True)
     t = asyncio.create_task(long_running_task(duration=duration))
     while not t.done():
-        await asyncio.sleep(60)
+        await asyncio.sleep(600)
         await flyte.report.log.aio("<h1>Long-running task still in progress</h1>", do_flush=True)
     return await t
 
 
 if __name__ == "__main__":
-    import flyte.git
-
-    flyte.init_from_config(flyte.git.config_from_root())
+    flyte.init_from_config()
     run = flyte.run(main_task, duration=timedelta(days=5))
     print(run.url)

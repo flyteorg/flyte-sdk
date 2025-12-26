@@ -31,8 +31,7 @@ async def main(config: Config):
 if __name__ == "__main__":
     # Generate a CLI and instantiate `Config` with its two arguments: `foo` and `bar`.
     config = tyro.cli(Config)
-    import flyte.git
 
-    flyte.init_from_config(flyte.git.config_from_root())
+    flyte.init_from_config()
     r = flyte.run(main, config)
     print(r.url)

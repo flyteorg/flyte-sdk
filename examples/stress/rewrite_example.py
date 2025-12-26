@@ -51,9 +51,7 @@ async def pathrewrite_read(f: flyte.io.File) -> int:
 
 
 if __name__ == "__main__":
-    import flyte.git
-
-    flyte.init_from_config(flyte.git.config_from_root())
+    flyte.init_from_config()
 
     # Try read the data without acceleration and with acceleration
     r = flyte.run(

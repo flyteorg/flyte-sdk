@@ -231,7 +231,7 @@ class File(BaseModel, Generic[T], SerializableType):
 
     @classmethod
     @requires_initialization
-    def new_remote(cls, hash_method: Optional[HashMethod | str] = None) -> File[T]:
+    def new_remote(cls, file_name: Optional[str] = None, hash_method: Optional[HashMethod | str] = None) -> File[T]:
         """
         Create a new File reference for a remote file that will be written to.
 
@@ -250,6 +250,8 @@ class File(BaseModel, Generic[T], SerializableType):
         ```
 
         Args:
+            file_name: Optional string specifying a remote file name. If not set,
+                      a generated file name will be returned.
             hash_method: Optional HashMethod or string to use for cache key computation. If a string is provided,
                         it will be used as a precomputed cache key. If a HashMethod is provided, it will be used
                         to compute the hash as data is written.
@@ -261,7 +263,9 @@ class File(BaseModel, Generic[T], SerializableType):
         known_cache_key = hash_method if isinstance(hash_method, str) else None
         method = hash_method if isinstance(hash_method, HashMethod) else None
 
-        return cls(path=ctx.raw_data.get_random_remote_path(), hash=known_cache_key, hash_method=method)
+        return cls(
+            path=ctx.raw_data.get_random_remote_path(file_name=file_name), hash=known_cache_key, hash_method=method
+        )
 
     @classmethod
     def from_existing_remote(cls, remote_path: str, file_cache_key: Optional[str] = None) -> File[T]:

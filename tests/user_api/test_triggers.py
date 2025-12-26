@@ -12,7 +12,7 @@ def test_trigger_hourly():
     assert trigger.name == "hourly"
     assert isinstance(trigger.automation, flyte.Cron)
     assert trigger.automation.expression == "0 * * * *"
-    assert trigger.inputs == {"trigger_time": flyte.TriggerTime}
+    assert trigger.inputs == {}
     assert trigger.auto_activate is True
 
 
@@ -51,7 +51,7 @@ def test_trigger_daily():
     assert trigger.name == "daily"
     assert isinstance(trigger.automation, flyte.Cron)
     assert trigger.automation.expression == "0 0 * * *"
-    assert trigger.inputs == {"trigger_time": flyte.TriggerTime}
+    assert trigger.inputs == {}
 
 
 def test_trigger_minutely():
@@ -61,7 +61,7 @@ def test_trigger_minutely():
     assert trigger.name == "minutely"
     assert isinstance(trigger.automation, flyte.Cron)
     assert trigger.automation.expression == "* * * * *"
-    assert trigger.inputs == {"trigger_time": flyte.TriggerTime}
+    assert trigger.inputs == {}
 
 
 def test_trigger_weekly():
@@ -71,7 +71,7 @@ def test_trigger_weekly():
     assert trigger.name == "weekly"
     assert isinstance(trigger.automation, flyte.Cron)
     assert trigger.automation.expression == "0 0 * * 0"
-    assert trigger.inputs == {"trigger_time": flyte.TriggerTime}
+    assert trigger.inputs == {}
 
 
 def test_trigger_monthly():
@@ -81,7 +81,7 @@ def test_trigger_monthly():
     assert trigger.name == "monthly"
     assert isinstance(trigger.automation, flyte.Cron)
     assert trigger.automation.expression == "0 0 1 * *"
-    assert trigger.inputs == {"trigger_time": flyte.TriggerTime}
+    assert trigger.inputs == {}
 
 
 def test_trigger_custom_cron():
@@ -155,7 +155,7 @@ def test_task_with_single_trigger():
     """Test task decorated with a single trigger"""
     env = flyte.TaskEnvironment(name="test_env")
 
-    trigger = flyte.Trigger.hourly()
+    trigger = flyte.Trigger.hourly(trigger_time_input_key="trigger_time")
 
     @env.task(triggers=trigger)
     async def task_with_trigger(trigger_time: datetime, x: int = 1) -> str:
@@ -169,8 +169,8 @@ def test_task_with_multiple_triggers():
     """Test task decorated with multiple triggers"""
     env = flyte.TaskEnvironment(name="test_env")
 
-    trigger1 = flyte.Trigger.hourly()
-    trigger2 = flyte.Trigger.daily()
+    trigger1 = flyte.Trigger.hourly(trigger_time_input_key="trigger_time")
+    trigger2 = flyte.Trigger.daily(trigger_time_input_key="trigger_time")
 
     @env.task(triggers=(trigger1, trigger2))
     async def task_with_triggers(trigger_time: datetime, x: int = 1) -> str:
@@ -299,17 +299,17 @@ def test_task_with_multiple_triggers_different_defaults():
 
 
 def test_task_with_trigger_no_inputs():
-    """Test task with trigger that has no custom inputs, only TriggerTime"""
+    """Test task with trigger that has no custom inputs"""
     env = flyte.TaskEnvironment(name="test_env")
 
     trigger = flyte.Trigger.daily()
 
     @env.task(triggers=trigger)
-    async def task_simple(trigger_time: datetime, x: int = 1, y: str = "hello") -> str:
-        return f"{trigger_time}, {x}, {y}"
+    async def task_simple(x: int = 1, y: str = "hello") -> str:
+        return f"{x}, {y}"
 
-    # Trigger should only have TriggerTime, task defaults remain
-    assert trigger.inputs == {"trigger_time": flyte.TriggerTime}
+    # Trigger should have no inputs, task defaults remain
+    assert trigger.inputs == {}
 
 
 def test_task_with_trigger_env_vars():

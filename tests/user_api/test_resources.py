@@ -1,6 +1,22 @@
+from typing import get_args
+
 import pytest
 
-from flyte._resources import AMD_GPU, GPU, HABANA_GAUDI, TPU, Device, Neuron, Resources
+from flyte._resources import (
+    AMD_GPU,
+    GPU,
+    HABANA_GAUDI,
+    TPU,
+    Accelerators,
+    AMD_GPUType,
+    Device,
+    GPUType,
+    HABANA_GAUDIType,
+    Neuron,
+    NeuronType,
+    Resources,
+    TPUType,
+)
 
 
 def test_resources_gpu_with_int():
@@ -352,3 +368,140 @@ def test_accelerator_strings(accelerator_string, expected_device, expected_quant
     assert device.device == expected_device
     assert device.quantity == expected_quantity
     assert device.device_class == expected_class
+
+
+def test_gpu_type_accelerators_synchronization():
+    """
+    Test that all GPU types in GPUType exist in Accelerators and vice versa.
+
+    This ensures that when new GPU types are added to one definition,
+    they are also added to the other to maintain consistency.
+    """
+    # Extract all GPU types from GPUType literal
+    gpu_types = set(get_args(GPUType))
+
+    # Extract all accelerator strings from Accelerators literal
+    accelerators = get_args(Accelerators)
+
+    # Extract unique GPU device names from Accelerators (before the ":" separator)
+    # Filter only GPU types (exclude Neuron, AMD_GPU, HABANA_GAUDI, TPU)
+    neuron_types = set(get_args(NeuronType))
+    amd_gpu_types = set(get_args(AMD_GPUType))
+    habana_gaudi_types = set(get_args(HABANA_GAUDIType))
+    tpu_types = set(get_args(TPUType))
+
+    # Collect GPU device names from Accelerators
+    gpu_accelerators = set()
+    for acc in accelerators:
+        if ":" in acc:
+            device_name = acc.split(":")[0]
+            # Only include if it's not a Neuron, AMD_GPU, HABANA_GAUDI, or TPU type
+            if (
+                device_name not in neuron_types
+                and device_name not in amd_gpu_types
+                and device_name not in habana_gaudi_types
+                and device_name not in tpu_types
+            ):
+                gpu_accelerators.add(device_name)
+
+    # Check that all GPUType entries exist in Accelerators
+    missing_in_accelerators = gpu_types - gpu_accelerators
+    assert not missing_in_accelerators, (
+        f"GPU types in GPUType but missing in Accelerators: {missing_in_accelerators}. "
+        f"Please add entries like '{next(iter(missing_in_accelerators))}:1' through "
+        f"'{next(iter(missing_in_accelerators))}:8' to Accelerators."
+    )
+
+    # Check that all GPU entries in Accelerators exist in GPUType
+    missing_in_gpu_type = gpu_accelerators - gpu_types
+    assert not missing_in_gpu_type, (
+        f"GPU types in Accelerators but missing in GPUType: {missing_in_gpu_type}. "
+        f"Please add these types to the GPUType Literal definition."
+    )
+
+    # Verify we found expected types (sanity check)
+    assert "H100" in gpu_types, "Expected H100 to be in GPUType"
+    assert "H200" in gpu_types, "Expected H200 to be in GPUType"
+    assert "H100" in gpu_accelerators, "Expected H100 to be in Accelerators"
+    assert "H200" in gpu_accelerators, "Expected H200 to be in Accelerators"
+
+
+def test_neuron_type_accelerators_synchronization():
+    """
+    Test that all Neuron types in NeuronType exist in Accelerators and vice versa.
+    """
+    neuron_types = set(get_args(NeuronType))
+    accelerators = get_args(Accelerators)
+
+    # Extract Neuron device names from Accelerators
+    neuron_accelerators = set()
+    for acc in accelerators:
+        if ":" in acc:
+            device_name = acc.split(":")[0]
+            if device_name in neuron_types:
+                neuron_accelerators.add(device_name)
+
+    # Check synchronization
+    missing_in_accelerators = neuron_types - neuron_accelerators
+    assert not missing_in_accelerators, (
+        f"Neuron types in NeuronType but missing in Accelerators: {missing_in_accelerators}"
+    )
+
+    missing_in_neuron_type = neuron_accelerators - neuron_types
+    assert not missing_in_neuron_type, (
+        f"Neuron types in Accelerators but missing in NeuronType: {missing_in_neuron_type}"
+    )
+
+
+def test_amd_gpu_type_accelerators_synchronization():
+    """
+    Test that all AMD GPU types in AMD_GPUType exist in Accelerators and vice versa.
+    """
+    amd_gpu_types = set(get_args(AMD_GPUType))
+    accelerators = get_args(Accelerators)
+
+    # Extract AMD GPU device names from Accelerators
+    amd_gpu_accelerators = set()
+    for acc in accelerators:
+        if ":" in acc:
+            device_name = acc.split(":")[0]
+            if device_name in amd_gpu_types:
+                amd_gpu_accelerators.add(device_name)
+
+    # Check synchronization
+    missing_in_accelerators = amd_gpu_types - amd_gpu_accelerators
+    assert not missing_in_accelerators, (
+        f"AMD GPU types in AMD_GPUType but missing in Accelerators: {missing_in_accelerators}"
+    )
+
+    missing_in_amd_gpu_type = amd_gpu_accelerators - amd_gpu_types
+    assert not missing_in_amd_gpu_type, (
+        f"AMD GPU types in Accelerators but missing in AMD_GPUType: {missing_in_amd_gpu_type}"
+    )
+
+
+def test_habana_gaudi_type_accelerators_synchronization():
+    """
+    Test that all Habana Gaudi types in HABANA_GAUDIType exist in Accelerators and vice versa.
+    """
+    habana_gaudi_types = set(get_args(HABANA_GAUDIType))
+    accelerators = get_args(Accelerators)
+
+    # Extract Habana Gaudi device names from Accelerators
+    habana_gaudi_accelerators = set()
+    for acc in accelerators:
+        if ":" in acc:
+            device_name = acc.split(":")[0]
+            if device_name in habana_gaudi_types:
+                habana_gaudi_accelerators.add(device_name)
+
+    # Check synchronization
+    missing_in_accelerators = habana_gaudi_types - habana_gaudi_accelerators
+    assert not missing_in_accelerators, (
+        f"Habana Gaudi types in HABANA_GAUDIType but missing in Accelerators: {missing_in_accelerators}"
+    )
+
+    missing_in_habana_gaudi_type = habana_gaudi_accelerators - habana_gaudi_types
+    assert not missing_in_habana_gaudi_type, (
+        f"Habana Gaudi types in Accelerators but missing in HABANA_GAUDIType: {missing_in_habana_gaudi_type}"
+    )
