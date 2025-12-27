@@ -487,7 +487,7 @@ impl InformerCache {
             "Acquiring write lock to save watch handle for: {}",
             informer_name
         );
-        let _ = informer.watch_handle.write().await.insert(_watch_handle);
+        *informer.watch_handle.write().await = Some(_watch_handle);
         info!("Watch handle saved for: {}", informer_name);
 
         // Optimistically wait for ready (sentinel) with timeout
@@ -577,6 +577,10 @@ impl InformerCache {
 
 #[cfg(test)]
 mod tests {
+    use flyteidl2::flyteidl::workflow::state_service_client::StateServiceClient;
+    use tonic::transport::Endpoint;
+    use tracing_subscriber::fmt;
+
     use super::*;
 
     async fn informer_main() {

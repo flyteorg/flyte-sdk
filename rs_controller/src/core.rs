@@ -446,7 +446,7 @@ impl CoreBaseController {
             .get(&action.get_run_identifier(), &action.parent_action_name)
             .await
         {
-            let _ = informer
+            informer
                 .fire_completion_event(&action.action_id.name)
                 .await?;
         } else {
@@ -496,14 +496,12 @@ impl CoreBaseController {
             .as_ref()
             .and_then(|task| task.task_template.as_ref())
             .and_then(|task_template| task_template.id.as_ref())
-            .and_then(|core_task_id| {
-                Some(TaskIdentifier {
-                    version: core_task_id.version.clone(),
-                    org: core_task_id.org.clone(),
-                    project: core_task_id.project.clone(),
-                    domain: core_task_id.domain.clone(),
-                    name: core_task_id.name.clone(),
-                })
+            .map(|core_task_id| TaskIdentifier {
+                version: core_task_id.version.clone(),
+                org: core_task_id.org.clone(),
+                project: core_task_id.project.clone(),
+                domain: core_task_id.domain.clone(),
+                name: core_task_id.name.clone(),
             })
             .ok_or(ControllerError::RuntimeError(format!(
                 "TaskIdentifier missing from Action {:?}",
