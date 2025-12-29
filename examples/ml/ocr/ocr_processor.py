@@ -17,7 +17,7 @@ import pyarrow as pa
 import torch
 from async_lru import alru_cache
 from PIL import Image
-from transformers import AutoModelForCausalLM, AutoProcessor
+from transformers import AutoModelForVision2Seq, AutoProcessor
 
 logger = logging.getLogger(__name__)
 
@@ -57,7 +57,7 @@ class OCRProcessor:
         )
 
         # Load model with optimizations
-        self.model = AutoModelForCausalLM.from_pretrained(
+        self.model = AutoModelForVision2Seq.from_pretrained(
             model_id,
             torch_dtype=torch.bfloat16 if torch.cuda.is_available() else torch.float32,
             device_map="auto" if torch.cuda.is_available() else None,
@@ -137,13 +137,7 @@ class OCRProcessor:
             }
 
         except Exception as e:
-            logger.error(f"OCR inference failed: {e}")
-            return {
-                "text": "",
-                "success": False,
-                "error": str(e),
-                "token_count": 0,
-            }
+            raise e
 
     async def process_single_document(
         self,

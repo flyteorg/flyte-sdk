@@ -190,6 +190,7 @@ worker_env_gpu = flyte.TaskEnvironment(
         scaledown_ttl=600,
     ),
     secrets="HF_HUB_TOKEN",
+    cache=flyte.Cache("auto", "1.0")
 )
 
 # A100 Worker - For medium models (7B-8B variants)
@@ -228,6 +229,7 @@ driver_env = flyte.TaskEnvironment(
     image=ocr_image,
     resources=flyte.Resources(cpu=4, memory="8Gi"),
     depends_on=[worker_env_gpu, worker_env_a100, worker_env_a100_80g, worker_env_a100_80g_multi],
+    cache=flyte.Cache("auto", "1.0")
 )
 
 
@@ -268,7 +270,7 @@ async def _process_document_batch_core(
 # These are thin wrappers that call the core function with the appropriate environment
 
 
-@worker_env_gpu.task(cache="auto", retries=3)
+@worker_env_gpu.task(retries=3)
 async def process_document_batch_gpu(
     model_name: OCRModel,
     image_files: list[flyte.io.File],
@@ -282,7 +284,7 @@ async def process_document_batch_gpu(
     return await _process_document_batch_core(model_name, image_files, batch_size)
 
 
-@worker_env_a100.task(cache="auto", retries=3)
+@worker_env_a100.task(retries=3)
 async def process_document_batch_a100(
     model_name: OCRModel,
     image_files: list[flyte.io.File],
@@ -296,7 +298,7 @@ async def process_document_batch_a100(
     return await _process_document_batch_core(model_name, image_files, batch_size)
 
 
-@worker_env_a100_80g.task(cache="auto", retries=3)
+@worker_env_a100_80g.task(retries=3)
 async def process_document_batch_a100_80g(
     model_name: OCRModel,
     image_files: list[flyte.io.File],
@@ -310,7 +312,7 @@ async def process_document_batch_a100_80g(
     return await _process_document_batch_core(model_name, image_files, batch_size)
 
 
-@worker_env_a100_80g_multi.task(cache="auto", retries=3)
+@worker_env_a100_80g_multi.task(retries=3)
 async def process_document_batch_a100_80g_multi(
     model_name: OCRModel,
     image_files: list[flyte.io.File],
@@ -352,7 +354,7 @@ def get_dispatcher_for_model(model: OCRModel):
         return process_document_batch_gpu
 
 
-@driver_env.task(cache="auto")
+@driver_env.task
 async def load_documentvqa_dataset(
     sample_size: int = 100,
     split: str = "train",
@@ -405,7 +407,7 @@ async def load_documentvqa_dataset(
     return await flyte.io.Dir.from_local(images_dir)
 
 
-@driver_env.task(cache="auto")
+@driver_env.task
 async def batch_ocr_pipeline(
     model: OCRModel,
     images_dir: flyte.io.Dir,
@@ -491,7 +493,7 @@ async def combine_dataframes(dfs: list[flyte.io.DataFrame]) -> flyte.io.DataFram
     return flyte.io.DataFrame.from_df(combined_table)
 
 
-@driver_env.task(cache="auto")
+@driver_env.task
 async def batch_ocr_single_model(
     model: OCRModel = OCRModel.QWEN_VL_3B,
     sample_size: int = 10,
@@ -525,7 +527,7 @@ async def batch_ocr_single_model(
     return results_df
 
 
-@driver_env.task(cache="auto")
+@driver_env.task
 async def batch_ocr_comparison(
     models: list[OCRModel] = [OCRModel.QWEN_VL_3B, OCRModel.INTERN_VL_2B],  # noqa
     sample_size: int = 10,
