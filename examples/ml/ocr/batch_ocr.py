@@ -56,7 +56,7 @@ class OCRModel(str, Enum):
     """Supported OCR models with their HuggingFace model IDs"""
 
     # Qwen2.5-VL variants
-    QWEN_VL_2B = "Qwen/Qwen2.5-VL-2B-Instruct"
+    QWEN_VL_3B = "Qwen/Qwen2.5-VL-3B-Instruct"
     QWEN_VL_7B = "Qwen/Qwen2.5-VL-7B-Instruct"
     QWEN_VL_72B = "Qwen/Qwen2.5-VL-72B-Instruct"
 
@@ -91,8 +91,8 @@ class ModelConfig:
 
 # GPU Requirements Dictionary - easily customizable via dynamic overrides
 MODEL_GPU_CONFIGS: dict[OCRModel, ModelConfig] = {
-    OCRModel.QWEN_VL_2B: ModelConfig(
-        model_id=OCRModel.QWEN_VL_2B.value,
+    OCRModel.QWEN_VL_3B: ModelConfig(
+        model_id=OCRModel.QWEN_VL_3B.value,
         gpu_type="T4",
         gpu_count=1,
         memory="16Gi",
@@ -493,7 +493,7 @@ async def combine_dataframes(dfs: list[flyte.io.DataFrame]) -> flyte.io.DataFram
 
 @driver_env.task(cache="auto")
 async def batch_ocr_single_model(
-    model: OCRModel = OCRModel.QWEN_VL_2B,
+    model: OCRModel = OCRModel.QWEN_VL_3B,
     sample_size: int = 10,
     chunk_size: int = 20,
 ) -> flyte.io.DataFrame:
@@ -527,7 +527,7 @@ async def batch_ocr_single_model(
 
 @driver_env.task(cache="auto")
 async def batch_ocr_comparison(
-    models: list[OCRModel] = [OCRModel.QWEN_VL_2B, OCRModel.INTERN_VL_2B],  # noqa
+    models: list[OCRModel] = [OCRModel.QWEN_VL_3B, OCRModel.INTERN_VL_2B],  # noqa
     sample_size: int = 10,
     chunk_size: int = 20,
 ) -> list[flyte.io.DataFrame]:
@@ -586,7 +586,7 @@ WORKFLOWS:
 
 1. batch_ocr_single_model - Run OCR with a single model
    Args:
-     --model: OCR model (QWEN_VL_2B, QWEN_VL_7B, GOT_OCR_2, INTERN_VL_2B, etc.)
+     --model: OCR model (QWEN_VL_3B, QWEN_VL_7B, GOT_OCR_2, INTERN_VL_2B, etc.)
      --sample_size: Number of documents (0 for all)
      --chunk_size: Chunk size for parallelism
 
@@ -604,7 +604,7 @@ WORKFLOWS:
 
 SUPPORTED MODELS:
 -----------------
-- QWEN_VL_2B: Qwen2.5-VL 2B (T4, 16Gi)
+- QWEN_VL_3B: Qwen2.5-VL 3B (T4, 16Gi)
 - QWEN_VL_7B: Qwen2.5-VL 7B (A100, 40Gi)
 - QWEN_VL_72B: Qwen2.5-VL 72B (4x A100 80G, 160Gi)
 - GOT_OCR_2: GOT-OCR 2.0 (A100, 40Gi)
@@ -618,12 +618,12 @@ USAGE EXAMPLES:
 
 # Run single model on 10 samples:
 flyte run batch_ocr.py batch_ocr_single_model \\
-    --model=QWEN_VL_2B \\
+    --model=QWEN_VL_3B \\
     --sample_size=10
 
 # Compare two models:
 flyte run batch_ocr.py batch_ocr_comparison \\
-    --models='["QWEN_VL_2B", "INTERN_VL_2B"]' \\
+    --models='["QWEN_VL_3B", "INTERN_VL_2B"]' \\
     --sample_size=50
 
 # Run on full dataset:

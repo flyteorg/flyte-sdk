@@ -25,7 +25,7 @@ uv sync --prerelease=allow
 
 ```bash
 flyte run batch_ocr.py batch_ocr_single_model \
-    --model=QWEN_VL_2B \
+    --model=QWEN_VL_3B \
     --sample_size=10
 ```
 
@@ -33,7 +33,7 @@ flyte run batch_ocr.py batch_ocr_single_model \
 
 ```bash
 flyte run batch_ocr_report.py batch_ocr_comparison_with_report \
-    --models='["Qwen/Qwen2.5-VL-2B-Instruct", "OpenGVLab/InternVL2_5-2B"]' \
+    --models='["Qwen/Qwen2.5-VL-3B-Instruct", "OpenGVLab/InternVL2_5-2B"]' \
     --sample_size=20
 ```
 
@@ -41,7 +41,7 @@ flyte run batch_ocr_report.py batch_ocr_comparison_with_report \
 
 | Model | GPU | Memory | Best For |
 |-------|-----|--------|----------|
-| **Qwen2.5-VL 2B** | T4:1 | 16Gi | Lightweight, general docs |
+| **Qwen2.5-VL 3B** | T4:1 | 16Gi | Lightweight, general docs |
 | **Qwen2.5-VL 7B** | A100:1 | 40Gi | Complex layouts, high accuracy |
 | **Qwen2.5-VL 72B** | A100 80G:4 | 160Gi | Enterprise-grade, maximum accuracy |
 | **GOT-OCR 2.0** | A100:1 | 40Gi | Vision-language grounding |
@@ -101,7 +101,7 @@ flyte run batch_ocr.py batch_ocr_single_model \
 
 ```bash
 flyte run batch_ocr.py batch_ocr_pipeline \
-    --model=QWEN_VL_2B \
+    --model=QWEN_VL_3B \
     --images_dir=<path_to_images> \
     --chunk_size=50
 ```
@@ -110,7 +110,7 @@ flyte run batch_ocr.py batch_ocr_pipeline \
 
 | Use Case | Model | Reason |
 |----------|-------|--------|
-| Quick testing | QWEN_VL_2B | Fast, T4 GPU |
+| Quick testing | QWEN_VL_3B | Fast, T4 GPU |
 | Production balanced | QWEN_VL_7B | Good accuracy, A100 |
 | Maximum accuracy | QWEN_VL_72B | Best quality, expensive |
 | Low VRAM | ROLM_OCR | Optimized for T4 |
@@ -122,7 +122,7 @@ Each run produces a DataFrame with:
 ```python
 {
     "document_id": "s3://bucket/doc_001.png",
-    "model": "Qwen/Qwen2.5-VL-2B-Instruct",
+    "model": "Qwen/Qwen2.5-VL-3B-Instruct",
     "extracted_text": "Full OCR text...",
     "success": True,
     "error": None,
@@ -175,7 +175,7 @@ worker_env_t4 = flyte.TaskEnvironment(
 
 **Solution 2:** Use smaller model
 ```bash
---model=QWEN_VL_2B  # Instead of QWEN_VL_7B
+--model=QWEN_VL_3B  # Instead of QWEN_VL_7B
 ```
 
 ### Slow Processing
@@ -194,7 +194,7 @@ worker_env_t4 = flyte.TaskEnvironment(
 
 Some models require accepting license:
 
-1. Visit model page: https://huggingface.co/Qwen/Qwen2.5-VL-2B-Instruct
+1. Visit model page: https://huggingface.co/Qwen/Qwen2.5-VL-3B-Instruct
 2. Accept license agreement
 3. Login: `huggingface-cli login`
 4. Or set `HF_TOKEN` environment variable

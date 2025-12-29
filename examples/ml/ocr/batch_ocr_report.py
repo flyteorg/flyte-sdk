@@ -499,7 +499,7 @@ async def generate_ocr_comparison_report(results_dfs: list[flyte.io.DataFrame]):
 
 @report_env.task(cache="auto")
 async def batch_ocr_comparison_with_report(
-    models: list[str] = ["Qwen/Qwen2.5-VL-2B-Instruct", "OpenGVLab/InternVL2_5-2B"],  # noqa
+    models: list[str] = ["Qwen/Qwen2.5-VL-3B-Instruct", "OpenGVLab/InternVL2_5-2B"],  # noqa
     sample_size: int = 10,
     chunk_size: int = 20,
 ) -> list[flyte.io.DataFrame]:
@@ -555,7 +555,7 @@ if __name__ == "__main__":
     import flyte
 
     flyte.init_from_config(root_dir=Path(__file__).parent)
-    r = flyte.run(batch_ocr_comparison_with_report)
+    r = flyte.run(batch_ocr_comparison_with_report, sample_size=100)
     print(r.url)
 
     print("""
@@ -575,7 +575,7 @@ await generate_ocr_comparison_report(results)
 
 # Or use the combined workflow:
 flyte run batch_ocr_report.py batch_ocr_comparison_with_report \\
-    --models='["Qwen/Qwen2.5-VL-2B-Instruct", "OpenGVLab/InternVL2_5-2B"]' \\
+    --models='["Qwen/Qwen2.5-VL-3B-Instruct", "OpenGVLab/InternVL2_5-2B"]' \\
     --sample_size=50
 
 REPORT FEATURES:

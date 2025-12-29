@@ -25,7 +25,7 @@ async def example_single_model():
 
     # Run with Qwen 2B on 10 documents
     result = await batch_ocr_single_model(
-        model=OCRModel.QWEN_VL_2B,
+        model=OCRModel.QWEN_VL_3B,
         sample_size=10,
         chunk_size=5,
     )
@@ -40,7 +40,7 @@ async def example_multi_model_comparison():
     print("=" * 50)
 
     # Compare two lightweight models
-    models = [OCRModel.QWEN_VL_2B, OCRModel.INTERN_VL_2B]
+    models = [OCRModel.QWEN_VL_3B, OCRModel.INTERN_VL_2B]
 
     results = await batch_ocr_comparison(
         models=models,
@@ -59,7 +59,7 @@ async def example_with_report():
 
     # This will generate a beautiful HTML report
     results = await batch_ocr_comparison_with_report(
-        models=["Qwen/Qwen2.5-VL-2B-Instruct", "OpenGVLab/InternVL2_5-2B"],
+        models=["Qwen/Qwen2.5-VL-3B-Instruct", "OpenGVLab/InternVL2_5-2B"],
         sample_size=15,
         chunk_size=5,
     )
@@ -92,7 +92,7 @@ def example_via_flyte_run():
     # Run single model workflow
     run = flyte.run(
         batch_ocr_single_model,
-        model=OCRModel.QWEN_VL_2B,
+        model=OCRModel.QWEN_VL_3B,
         sample_size=5,
         chunk_size=5,
     )
@@ -138,7 +138,7 @@ if __name__ == "__main__":
     print("=" * 50)
     print()
     print("1. Via Flyte CLI (recommended):")
-    print("   flyte run batch_ocr.py batch_ocr_single_model --model=QWEN_VL_2B --sample_size=10")
+    print("   flyte run batch_ocr.py batch_ocr_single_model --model=QWEN_VL_3B --sample_size=10")
     print()
     print("2. Via flyte.run() API:")
     print("   python example_usage.py  # (uncomment example_via_flyte_run() in main)")

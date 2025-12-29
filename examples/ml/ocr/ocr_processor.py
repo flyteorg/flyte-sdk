@@ -41,7 +41,7 @@ class OCRProcessor:
         for all subsequent processing calls.
 
         Args:
-            model_id: HuggingFace model ID (e.g., "Qwen/Qwen2.5-VL-2B-Instruct")
+            model_id: HuggingFace model ID (e.g., "Qwen/Qwen2.5-VL-3B-Instruct")
         """
         self.model_id = model_id
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
