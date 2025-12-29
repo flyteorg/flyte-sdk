@@ -9,6 +9,7 @@ This module provides a clean interface for OCR processing:
 
 import asyncio
 import logging
+import os
 from typing import Any
 
 import flyte.io
@@ -52,6 +53,7 @@ class OCRProcessor:
         self.processor = AutoProcessor.from_pretrained(
             model_id,
             trust_remote_code=True,
+            token=os.getenv("HF_HUB_TOKEN", None),
         )
 
         # Load model with optimizations

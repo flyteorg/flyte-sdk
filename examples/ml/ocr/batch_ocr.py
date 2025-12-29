@@ -189,56 +189,36 @@ worker_env_gpu = flyte.TaskEnvironment(
         idle_ttl=600,
         scaledown_ttl=600,
     ),
+    secrets="HF_HUB_TOKEN",
 )
 
 # A100 Worker - For medium models (7B-8B variants)
-worker_env_a100 = flyte.TaskEnvironment(
+worker_env_a100 = worker_env_gpu.clone_with(
     name="ocr_worker_a100",
-    image=ocr_image,
     resources=flyte.Resources(
         cpu=8,
         memory="40Gi",
         gpu="A100:1",
     ),
-    reusable=flyte.ReusePolicy(
-        replicas=4,
-        concurrency=2,
-        idle_ttl=600,
-        scaledown_ttl=600,
-    ),
 )
 
 # A100 80G Worker - For large models (26B variants, single GPU)
-worker_env_a100_80g = flyte.TaskEnvironment(
+worker_env_a100_80g = worker_env_gpu.clone_with(
     name="ocr_worker_a100_80g",
-    image=ocr_image,
     resources=flyte.Resources(
         cpu=12,
         memory="80Gi",
         gpu="A100 80G:2",
     ),
-    reusable=flyte.ReusePolicy(
-        replicas=2,
-        concurrency=1,
-        idle_ttl=600,
-        scaledown_ttl=600,
-    ),
 )
 
 # A100 80G Multi-GPU Worker - For very large models (72B variants)
-worker_env_a100_80g_multi = flyte.TaskEnvironment(
+worker_env_a100_80g_multi = worker_env_gpu.clone_with(
     name="ocr_worker_a100_80g_multi",
-    image=ocr_image,
     resources=flyte.Resources(
         cpu=16,
         memory="160Gi",
         gpu="A100 80G:4",
-    ),
-    reusable=flyte.ReusePolicy(
-        replicas=1,
-        concurrency=1,
-        idle_ttl=600,
-        scaledown_ttl=600,
     ),
 )
 
