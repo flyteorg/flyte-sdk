@@ -174,6 +174,14 @@ class Console:
         return self._insecure
 
 
+class DummySettingService():
+    async def GetSettings(self, request):
+        return None
+
+    async def UpdateSettings(self, request):
+        return None
+
+
 class ClientSet:
     def __init__(
         self,
@@ -195,6 +203,8 @@ class ClientSet:
         self._secrets_service = secret_pb2_grpc.SecretServiceStub(channel=channel)
         self._identity_service = identity_pb2_grpc.IdentityServiceStub(channel=channel)
         self._trigger_service = trigger_service_pb2_grpc.TriggerServiceStub(channel=channel)
+        # Note: Settings service stub will be initialized once settings_pb2_grpc is available
+        self._settings_service = DummySettingService()
 
     @classmethod
     async def for_endpoint(cls, endpoint: str, *, insecure: bool = False, **kwargs) -> ClientSet:
@@ -261,6 +271,10 @@ class ClientSet:
     @property
     def trigger_service(self) -> TriggerService:
         return self._trigger_service
+
+    @property
+    def settings_service(self) -> SettingsService:
+        return self._settings_service
 
     @property
     def console(self) -> Console:
