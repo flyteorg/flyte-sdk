@@ -15,7 +15,7 @@ import flyte.report
 import pandas as pd
 import pyarrow as pa
 
-from batch_ocr import ocr_image
+from batch_ocr import driver_env, ocr_image
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -25,6 +25,7 @@ report_env = flyte.TaskEnvironment(
     name="ocr_comparison_report",
     image=ocr_image,
     resources=flyte.Resources(cpu=4, memory="8Gi"),
+    depends_on=[driver_env],
 )
 
 
@@ -141,6 +142,7 @@ async def generate_ocr_comparison_report(results_dfs: list[flyte.io.DataFrame]):
 
         comparison_rows.append(row)
 
+    doc_models = "".join([f"<th>{m.split('/')[-1]}</th>" for m in models])
     # Generate HTML report
     html_content = f"""
     <!DOCTYPE html>
@@ -359,7 +361,7 @@ async def generate_ocr_comparison_report(results_dfs: list[flyte.io.DataFrame]):
                         <thead>
                             <tr>
                                 <th>Document</th>
-                                {"".join([f"<th>{m.split("/")[-1]}</th>" for m in models])}
+                                {doc_models}
                             </tr>
                         </thead>
                         <tbody>
@@ -497,7 +499,7 @@ async def generate_ocr_comparison_report(results_dfs: list[flyte.io.DataFrame]):
 
 @report_env.task(cache="auto")
 async def batch_ocr_comparison_with_report(
-    models: list[str] = ["Qwen/Qwen2.5-VL-2B-Instruct", "OpenGVLab/InternVL2_5-2B"],
+    models: list[str] = ["Qwen/Qwen2.5-VL-2B-Instruct", "OpenGVLab/InternVL2_5-2B"],  # noqa
     sample_size: int = 10,
     chunk_size: int = 20,
 ) -> list[flyte.io.DataFrame]:

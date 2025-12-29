@@ -3,12 +3,12 @@ Batch Document OCR Workflow - Multi-Model Comparison
 
 This workflow demonstrates efficient batch OCR processing using Flyte 2.0 features:
 - Multiple OCR models from HuggingFace (Qwen2.5-VL, GOT-OCR, InternVL, etc.)
-- Reusable containers with GPU acceleration
+- Pre-created reusable worker environments for T4, A100, and A100 80G GPUs
+- Dispatcher tasks that route models to appropriate GPU workers
 - Content-based caching for efficiency
 - DocumentVQA dataset from HuggingFace
 - Sample mode vs full dataset processing
 - Model comparison matrix with interactive reports
-- Dynamic GPU resource configuration per model
 
 Usage:
     # Run single model OCR on sample data:
@@ -39,16 +39,13 @@ import logging
 import tempfile
 from dataclasses import dataclass
 from enum import Enum
-from functools import lru_cache
 from pathlib import Path
-from typing import Any
 
 import flyte
 import flyte.io
 import pyarrow as pa
-import torch
-from PIL import Image
-from transformers import AutoModelForCausalLM, AutoProcessor
+
+from ocr_processor import get_ocr_processor
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -174,172 +171,97 @@ ocr_image = flyte.Image.from_debian_base().with_uv_project(
     pyproject_file=Path("pyproject.toml"), extra_args="--extra ocr"
 )
 
+# Pre-created worker environments for different GPU types
+# Each environment is optimized for specific model sizes and GPU requirements
 
-def create_worker_env(model: OCRModel) -> flyte.TaskEnvironment:
-    """
-    Create a worker environment with model-specific GPU configuration.
+# The default gpu worker environment
+worker_env_gpu = flyte.TaskEnvironment(
+    name="ocr_worker_gpu",
+    image=ocr_image,
+    resources=flyte.Resources(
+        cpu=4,
+        memory="16Gi",
+        gpu=1,
+    ),
+    reusable=flyte.ReusePolicy(
+        replicas=4,
+        concurrency=2,
+        idle_ttl=600,
+        scaledown_ttl=600,
+    ),
+)
 
-    This function can be used to dynamically create environments for different models,
-    or you can override resources at runtime using task.override().
-    """
-    config = MODEL_GPU_CONFIGS[model]
+# A100 Worker - For medium models (7B-8B variants)
+worker_env_a100 = flyte.TaskEnvironment(
+    name="ocr_worker_a100",
+    image=ocr_image,
+    resources=flyte.Resources(
+        cpu=8,
+        memory="40Gi",
+        gpu="A100:1",
+    ),
+    reusable=flyte.ReusePolicy(
+        replicas=4,
+        concurrency=2,
+        idle_ttl=600,
+        scaledown_ttl=600,
+    ),
+)
 
-    return flyte.TaskEnvironment(
-        name=f"ocr_worker_{model.name.lower()}",
-        image=ocr_image,
-        resources=flyte.Resources(
-            cpu=config.cpu,
-            memory=config.memory,
-            gpu=f"{config.gpu_type}:{config.gpu_count}",
-        ),
-        reusable=flyte.ReusePolicy(
-            replicas=4,  # 4 replicas for parallel processing
-            concurrency=2,  # Each replica handles 2 tasks concurrently
-            idle_ttl=600,  # Keep alive for 10 minutes (models are large)
-            scaledown_ttl=600,
-        ),
-    )
+# A100 80G Worker - For large models (26B variants, single GPU)
+worker_env_a100_80g = flyte.TaskEnvironment(
+    name="ocr_worker_a100_80g",
+    image=ocr_image,
+    resources=flyte.Resources(
+        cpu=12,
+        memory="80Gi",
+        gpu="A100 80G:2",
+    ),
+    reusable=flyte.ReusePolicy(
+        replicas=2,
+        concurrency=1,
+        idle_ttl=600,
+        scaledown_ttl=600,
+    ),
+)
 
-
-# Default worker environment (for Qwen 2B - good default)
-default_worker_env = create_worker_env(OCRModel.QWEN_VL_2B)
+# A100 80G Multi-GPU Worker - For very large models (72B variants)
+worker_env_a100_80g_multi = flyte.TaskEnvironment(
+    name="ocr_worker_a100_80g_multi",
+    image=ocr_image,
+    resources=flyte.Resources(
+        cpu=16,
+        memory="160Gi",
+        gpu="A100 80G:4",
+    ),
+    reusable=flyte.ReusePolicy(
+        replicas=1,
+        concurrency=1,
+        idle_ttl=600,
+        scaledown_ttl=600,
+    ),
+)
 
 # Driver environment for orchestration
 driver_env = flyte.TaskEnvironment(
     name="ocr_driver",
     image=ocr_image,
     resources=flyte.Resources(cpu=4, memory="8Gi"),
-    depends_on=[default_worker_env],
+    depends_on=[worker_env_gpu, worker_env_a100, worker_env_a100_80g, worker_env_a100_80g_multi],
 )
 
 
-@lru_cache(maxsize=1)
-def load_ocr_model(model_id: str, device: str = "cuda") -> tuple[Any, Any]:
-    """
-    Lazily load and cache the OCR model and processor.
-    This ensures the model is loaded only once per worker container.
-
-    Args:
-        model_id: HuggingFace model ID
-        device: Device to load model on ("cuda" or "cpu")
-
-    Returns:
-        Tuple of (model, processor)
-    """
-    logger.info(f"Loading OCR model: {model_id}")
-
-    try:
-        # Load processor/tokenizer
-        processor = AutoProcessor.from_pretrained(
-            model_id,
-            trust_remote_code=True,
-        )
-
-        # Load model with optimizations
-        model = AutoModelForCausalLM.from_pretrained(
-            model_id,
-            torch_dtype=torch.bfloat16 if torch.cuda.is_available() else torch.float32,
-            device_map="auto" if torch.cuda.is_available() else None,
-            trust_remote_code=True,
-        )
-
-        model.eval()
-
-        logger.info(f"Model loaded successfully on {device}")
-        return model, processor
-
-    except Exception as e:
-        logger.error(f"Failed to load model {model_id}: {e}")
-        raise
-
-
-def run_ocr_inference(
-    model: Any,
-    processor: Any,
-    image: Image.Image,
-    prompt: str = "Extract all text from this document image.",
-) -> dict[str, Any]:
-    """
-    Run OCR inference on a single image.
-
-    Args:
-        model: Loaded OCR model
-        processor: Model processor
-        image: PIL Image
-        prompt: OCR prompt/instruction
-
-    Returns:
-        Dictionary with extracted text and metadata
-    """
-    try:
-        # Prepare inputs
-        messages = [
-            {
-                "role": "user",
-                "content": [
-                    {"type": "image", "image": image},
-                    {"type": "text", "text": prompt},
-                ],
-            }
-        ]
-
-        # Apply chat template and prepare inputs
-        text = processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-        inputs = processor(
-            text=[text],
-            images=[image],
-            return_tensors="pt",
-            padding=True,
-        )
-
-        # Move to GPU if available
-        if torch.cuda.is_available():
-            inputs = {k: v.to("cuda") for k, v in inputs.items()}
-
-        # Generate
-        with torch.no_grad():
-            output_ids = model.generate(
-                **inputs,
-                max_new_tokens=2048,
-                do_sample=False,
-            )
-
-        # Decode output
-        generated_ids = [output_ids[len(input_ids) :] for input_ids, output_ids in zip(inputs.input_ids, output_ids)]
-        output_text = processor.batch_decode(
-            generated_ids,
-            skip_special_tokens=True,
-            clean_up_tokenization_spaces=False,
-        )[0]
-
-        return {
-            "text": output_text,
-            "success": True,
-            "error": None,
-            "token_count": len(generated_ids[0]),
-        }
-
-    except Exception as e:
-        logger.error(f"OCR inference failed: {e}")
-        return {
-            "text": "",
-            "success": False,
-            "error": str(e),
-            "token_count": 0,
-        }
-
-
-@default_worker_env.task(cache="auto", retries=3)
-async def process_document_batch(
+async def _process_document_batch_core(
     model_name: OCRModel,
     image_files: list[flyte.io.File],
     batch_size: int = 4,
 ) -> flyte.io.DataFrame:
     """
-    Process a batch of document images with OCR.
+    Core OCR processing logic shared by all dispatcher tasks.
 
-    This task runs in reusable containers with the model loaded once via lru_cache.
-    Images are downloaded on-demand and processed in mini-batches.
+    This function uses the OCRProcessor class to handle all OCR operations.
+    The processor is cached via async LRU cache, ensuring models are loaded
+    only once per worker container.
 
     Args:
         model_name: OCR model to use
@@ -354,76 +276,100 @@ async def process_document_batch(
     # Get model config
     config = MODEL_GPU_CONFIGS[model_name]
 
-    # Load model (cached with lru_cache)
-    model, processor = load_ocr_model(config.model_id)
+    # Get cached OCR processor instance
+    # This ensures the model is loaded only once per worker
+    processor = await get_ocr_processor(config.model_id)
 
-    # Result lists for DataFrame
-    document_ids = []
-    extracted_texts = []
-    successes = []
-    errors = []
-    token_counts = []
+    # Use the processor's batch method to handle all the processing
+    return await processor.process_batch(model_name.value, image_files, batch_size)
 
-    # Process images in mini-batches
-    for i in range(0, len(image_files), batch_size):
-        mini_batch_files = image_files[i : i + batch_size]
 
-        # Download mini-batch files in parallel
-        download_tasks = [file.download() for file in mini_batch_files]
-        downloaded_paths = await asyncio.gather(*download_tasks, return_exceptions=True)
+# Dispatcher tasks for each worker environment
+# These are thin wrappers that call the core function with the appropriate environment
 
-        # Process each image
-        for file, downloaded_path in zip(mini_batch_files, downloaded_paths):
-            # Get document ID from file path
-            doc_id = file.path if hasattr(file, "path") else str(file)
 
-            # Handle download errors
-            if isinstance(downloaded_path, Exception):
-                logger.warning(f"Failed to download {doc_id}: {downloaded_path}")
-                document_ids.append(doc_id)
-                extracted_texts.append("")
-                successes.append(False)
-                errors.append(str(downloaded_path))
-                token_counts.append(0)
-                continue
+@worker_env_gpu.task(cache="auto", retries=3)
+async def process_document_batch_gpu(
+    model_name: OCRModel,
+    image_files: list[flyte.io.File],
+    batch_size: int = 4,
+) -> flyte.io.DataFrame:
+    """
+    Process documents using T4 GPU worker (for lightweight 2B models).
 
-            # Load and process image
-            try:
-                image = Image.open(downloaded_path).convert("RGB")
+    Dispatcher task that runs in the T4 worker environment.
+    """
+    return await _process_document_batch_core(model_name, image_files, batch_size)
 
-                # Run OCR
-                result = run_ocr_inference(model, processor, image)
 
-                document_ids.append(doc_id)
-                extracted_texts.append(result["text"])
-                successes.append(result["success"])
-                errors.append(result["error"])
-                token_counts.append(result["token_count"])
+@worker_env_a100.task(cache="auto", retries=3)
+async def process_document_batch_a100(
+    model_name: OCRModel,
+    image_files: list[flyte.io.File],
+    batch_size: int = 4,
+) -> flyte.io.DataFrame:
+    """
+    Process documents using A100 GPU worker (for medium 7B-8B models).
 
-                logger.info(f"Processed {doc_id}: {result['token_count']} tokens extracted")
+    Dispatcher task that runs in the A100 worker environment.
+    """
+    return await _process_document_batch_core(model_name, image_files, batch_size)
 
-            except Exception as e:
-                logger.error(f"Failed to process {doc_id}: {e}")
-                document_ids.append(doc_id)
-                extracted_texts.append("")
-                successes.append(False)
-                errors.append(str(e))
-                token_counts.append(0)
 
-    # Create PyArrow table
-    table = pa.table(
-        {
-            "document_id": document_ids,
-            "model": [model_name.value] * len(document_ids),
-            "extracted_text": extracted_texts,
-            "success": successes,
-            "error": errors,
-            "token_count": token_counts,
-        }
-    )
+@worker_env_a100_80g.task(cache="auto", retries=3)
+async def process_document_batch_a100_80g(
+    model_name: OCRModel,
+    image_files: list[flyte.io.File],
+    batch_size: int = 4,
+) -> flyte.io.DataFrame:
+    """
+    Process documents using A100 80G GPU worker (for large 26B models).
 
-    logger.info(f"Completed batch: {len(document_ids)} documents processed")
-    return flyte.io.DataFrame.from_df(table)
+    Dispatcher task that runs in the A100 80G worker environment.
+    """
+    return await _process_document_batch_core(model_name, image_files, batch_size)
+
+
+@worker_env_a100_80g_multi.task(cache="auto", retries=3)
+async def process_document_batch_a100_80g_multi(
+    model_name: OCRModel,
+    image_files: list[flyte.io.File],
+    batch_size: int = 4,
+) -> flyte.io.DataFrame:
+    """
+    Process documents using multi-GPU A100 80G worker (for very large 72B models).
+
+    Dispatcher task that runs in the multi-GPU A100 80G worker environment.
+    """
+    return await _process_document_batch_core(model_name, image_files, batch_size)
+
+
+def get_dispatcher_for_model(model: OCRModel):
+    """
+    Select the appropriate dispatcher task based on model's GPU requirements.
+
+    Args:
+        model: OCR model enum
+
+    Returns:
+        The dispatcher task function appropriate for this model's GPU requirements
+    """
+    config = MODEL_GPU_CONFIGS[model]
+
+    # Map GPU type and count to appropriate dispatcher
+    if config.gpu_type == "T4":
+        return process_document_batch_gpu
+    elif config.gpu_type == "A100 80G":
+        if config.gpu_count >= 4:
+            return process_document_batch_a100_80g_multi
+        else:
+            return process_document_batch_a100_80g
+    elif config.gpu_type == "A100":
+        return process_document_batch_a100
+    else:
+        # Default to T4 for unknown types
+        logger.warning(f"Unknown GPU type {config.gpu_type}, defaulting to T4 worker")
+        return process_document_batch_gpu
 
 
 @driver_env.task(cache="auto")
@@ -514,23 +460,18 @@ async def batch_ocr_pipeline(
     chunks = [image_files[i : i + chunk_size] for i in range(0, len(image_files), chunk_size)]
     logger.info(f"Partitioned into {len(chunks)} chunks")
 
-    # Get model config and potentially override resources
+    # Select appropriate dispatcher based on model's GPU requirements
+    dispatcher = get_dispatcher_for_model(model)
     config = MODEL_GPU_CONFIGS[model]
 
-    # Create task with appropriate resources for this model
-    ocr_task = process_document_batch.override(
-        resources=flyte.Resources(
-            cpu=config.cpu,
-            memory=config.memory,
-            gpu=f"{config.gpu_type}:{config.gpu_count}",
-        )
-    )
+    logger.info(f"Using dispatcher: {dispatcher.short_name} for {model.value}")
+    logger.info(f"GPU config: {config.gpu_type}:{config.gpu_count}, Memory: {config.memory}")
 
-    # Process chunks in parallel
+    # Process chunks in parallel using the selected dispatcher
     tasks = []
     for idx, chunk in enumerate(chunks):
         with flyte.group(f"chunk-{idx}"):
-            task = asyncio.create_task(ocr_task(model, chunk, batch_size))
+            task = asyncio.create_task(dispatcher(model, chunk, batch_size))
             tasks.append(task)
 
     # Gather results
@@ -606,7 +547,7 @@ async def batch_ocr_single_model(
 
 @driver_env.task(cache="auto")
 async def batch_ocr_comparison(
-    models: list[OCRModel] = [OCRModel.QWEN_VL_2B, OCRModel.INTERN_VL_2B],
+    models: list[OCRModel] = [OCRModel.QWEN_VL_2B, OCRModel.INTERN_VL_2B],  # noqa
     sample_size: int = 10,
     chunk_size: int = 20,
 ) -> list[flyte.io.DataFrame]:

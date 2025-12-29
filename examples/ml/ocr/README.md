@@ -1,62 +1,27 @@
 # Batch Document OCR with Multi-Model Comparison
 
-This example demonstrates a production-ready batch document OCR workflow using Flyte 2.0, featuring:
+Production-ready batch OCR workflow using Flyte 2.0 with multiple vision-language models, pre-created GPU worker environments, and interactive comparison reports.
 
-- **Multiple OCR Models**: Qwen2.5-VL, GOT-OCR 2.0, InternVL 2.5, RolmOCR, and more
-- **Reusable Containers**: GPU models loaded once and reused across batches
-- **Intelligent Caching**: Content-based caching for efficiency
-- **DocumentVQA Dataset**: Real-world document images from HuggingFace
-- **Flexible Scaling**: Sample mode for testing, full dataset for production
-- **GPU Optimization**: Per-model GPU configurations with dynamic overrides
-- **Comparison Reports**: Interactive HTML dashboards comparing model performance
+## Features
 
-## Architecture
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│ Driver (Orchestration)                                      │
-│  ├─ Load DocumentVQA Dataset (streaming)                   │
-│  ├─ Partition into chunks                                  │
-│  └─ Coordinate parallel processing                         │
-└─────────────────────────────────────────────────────────────┘
-                          │
-        ┌─────────────────┼─────────────────┬────────────────┐
-        ▼                 ▼                 ▼                ▼
-┌──────────────┐  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐
-│ Worker 1     │  │ Worker 2     │  │ Worker 3     │  │ Worker 4     │
-│ GPU: A100    │  │ GPU: A100    │  │ GPU: T4      │  │ GPU: T4      │
-│ Model: Qwen  │  │ Model: Qwen  │  │ Model: Intern│  │ Model: ROLM  │
-│ Cache: ✓     │  │ Cache: ✓     │  │ Cache: ✓     │  │ Cache: ✓     │
-└──────────────┘  └──────────────┘  └──────────────┘  └──────────────┘
-        │                 │                 │                │
-        └─────────────────┴─────────────────┴────────────────┘
-                          ▼
-        ┌─────────────────────────────────────────┐
-        │ Aggregation & Report Generation         │
-        │  ├─ Combine results from all workers    │
-        │  ├─ Calculate comparison metrics        │
-        │  └─ Generate interactive HTML report    │
-        └─────────────────────────────────────────┘
-```
-
-## Supported Models
-
-| Model | License | GPU Requirement | Memory | Best For |
-|-------|---------|----------------|---------|----------|
-| **Qwen2.5-VL 2B** | Apache-2.0/Qwen | T4 x1 | 16Gi | Lightweight OCR, general docs |
-| **Qwen2.5-VL 7B** | Apache-2.0/Qwen | A100 x1 | 40Gi | Complex layouts, high accuracy |
-| **Qwen2.5-VL 72B** | Apache-2.0/Qwen | A100 80G x4 | 160Gi | Enterprise-grade, max accuracy |
-| **GOT-OCR 2.0** | MIT | A100 x1 | 40Gi | Vision-language grounding |
-| **InternVL 2.5 2B** | MIT | T4 x1 | 16Gi | Fast inference, good quality |
-| **InternVL 2.5 8B** | MIT | A100 x1 | 40Gi | Balanced performance |
-| **InternVL 2.5 26B** | MIT | A100 80G x2 | 80Gi | High-end document understanding |
-| **RolmOCR** | Apache-2.0 | T4 x1 | 16Gi | Low-VRAM deployments |
+- **8 OCR Models**: Qwen2.5-VL, GOT-OCR 2.0, InternVL 2.5, RolmOCR
+- **Pre-Created GPU Workers**: T4, A100, A100 80G (single & multi-GPU)
+- **Class-Based Architecture**: Clean separation of OCR logic and workflow orchestration
+- **Async Model Caching**: Models loaded once per worker, cached with async LRU
+- **DocumentVQA Dataset**: Real document images from HuggingFace (streaming mode)
+- **Flexible Scaling**: Sample mode (testing) or full dataset (production)
+- **Comparison Reports**: Interactive HTML dashboards with Chart.js
 
 ## Quick Start
 
-### 1. Single Model OCR on Sample Data
+### 1. Setup
 
-Process 10 documents with Qwen2.5-VL 2B:
+```bash
+cd examples/ml/ocr
+uv sync --prerelease=allow
+```
+
+### 2. Run Single Model (10 documents, ~2 min)
 
 ```bash
 flyte run batch_ocr.py batch_ocr_single_model \
@@ -64,83 +29,208 @@ flyte run batch_ocr.py batch_ocr_single_model \
     --sample_size=10
 ```
 
-### 2. Multi-Model Comparison
-
-Compare two models on 50 documents:
-
-```bash
-flyte run batch_ocr.py batch_ocr_comparison \
-    --models='["QWEN_VL_2B", "INTERN_VL_2B"]' \
-    --sample_size=50
-```
-
-This generates an interactive comparison report showing:
-- Success rate per model
-- Average tokens extracted
-- Side-by-side text comparisons
-- Error analysis
-
-### 3. Full Dataset Processing
-
-Process entire DocumentVQA dataset:
-
-```bash
-flyte run batch_ocr.py batch_ocr_single_model \
-    --model=QWEN_VL_7B \
-    --sample_size=0  # 0 means process all
-```
-
-### 4. Custom Image Directory
-
-Run OCR on your own images:
-
-```bash
-flyte run batch_ocr.py batch_ocr_pipeline \
-    --model=QWEN_VL_2B \
-    --images_dir=<flyte_dir_or_local_path> \
-    --chunk_size=50
-```
-
-### 5. Generate Comparison Report
+### 3. Compare Multiple Models (with report)
 
 ```bash
 flyte run batch_ocr_report.py batch_ocr_comparison_with_report \
     --models='["Qwen/Qwen2.5-VL-2B-Instruct", "OpenGVLab/InternVL2_5-2B"]' \
-    --sample_size=50
+    --sample_size=20
 ```
 
-## Advanced Usage
+## Supported Models
 
-### Dynamic GPU Override
+| Model | GPU | Memory | Best For |
+|-------|-----|--------|----------|
+| **Qwen2.5-VL 2B** | T4:1 | 16Gi | Lightweight, general docs |
+| **Qwen2.5-VL 7B** | A100:1 | 40Gi | Complex layouts, high accuracy |
+| **Qwen2.5-VL 72B** | A100 80G:4 | 160Gi | Enterprise-grade, maximum accuracy |
+| **GOT-OCR 2.0** | A100:1 | 40Gi | Vision-language grounding |
+| **InternVL 2.5 2B** | T4:1 | 16Gi | Fast inference, good quality |
+| **InternVL 2.5 8B** | A100:1 | 40Gi | Balanced performance |
+| **InternVL 2.5 26B** | A100 80G:2 | 80Gi | High-end document understanding |
+| **RolmOCR** | T4:1 | 16Gi | Low-VRAM deployments |
 
-Override GPU resources at runtime for specific workloads:
+## Architecture
+
+### Two-Layer Design
+
+```
+batch_ocr.py                    ocr_processor.py
+(Workflow Orchestration)        (OCR Logic)
+┌─────────────────────┐         ┌──────────────────────┐
+│ Worker Environments │         │  OCRProcessor Class  │
+│  • T4              │         │   • __init__()       │
+│  • A100            │         │   • run_inference()  │
+│  • A100 80G        │◄────────┤   • process_batch()  │
+│  • A100 80G Multi  │         │                      │
+│                     │         │  @alru_cache         │
+│ Dispatcher Tasks    │         │  get_ocr_processor() │
+│  • ..._t4()        │         └──────────────────────┘
+│  • ..._a100()      │
+│  • ..._a100_80g()  │
+└─────────────────────┘
+```
+
+**Key Design:**
+- **Pre-created worker environments**: 4 GPU types, explicit resources
+- **Dispatcher tasks**: Route models to appropriate GPU workers
+- **OCRProcessor class**: Encapsulates model loading + inference + batch processing
+- **Async LRU cache**: Models loaded once, cached by model_id (up to 4 models)
+
+### How It Works
+
+1. **Workflow calls** → `batch_ocr_pipeline(model, images_dir)`
+2. **Dispatcher selection** → `get_dispatcher_for_model(model)` → Returns appropriate dispatcher (T4/A100/etc.)
+3. **Dispatcher invokes** → `process_document_batch_t4/a100/etc.(model, files)`
+4. **Core function gets** → `processor = await get_ocr_processor(model_id)` (cached)
+5. **Processor runs** → `processor.process_batch(files, batch_size)` → DataFrame
+
+**Result:** Clean, testable, explicit GPU requirements visible in workflow graph.
+
+## Usage Examples
+
+### Process Full Dataset
 
 ```bash
 flyte run batch_ocr.py batch_ocr_single_model \
     --model=QWEN_VL_7B \
-    --sample_size=100 \
-    --overrides='{"process_document_batch": {"resources": {"gpu": "A100 80G:2", "memory": "80Gi"}}}'
+    --sample_size=0  # 0 = all documents
 ```
 
-### Sample vs Full Dataset Toggle
+### Process Your Own Images
 
-The `sample_size` parameter controls dataset size:
+```bash
+flyte run batch_ocr.py batch_ocr_pipeline \
+    --model=QWEN_VL_2B \
+    --images_dir=<path_to_images> \
+    --chunk_size=50
+```
 
-- `sample_size=10`: Process 10 documents (testing)
-- `sample_size=100`: Process 100 documents (benchmarking)
-- `sample_size=0`: Process entire dataset (production)
+### Model Selection Guide
 
-### Switching Models
+| Use Case | Model | Reason |
+|----------|-------|--------|
+| Quick testing | QWEN_VL_2B | Fast, T4 GPU |
+| Production balanced | QWEN_VL_7B | Good accuracy, A100 |
+| Maximum accuracy | QWEN_VL_72B | Best quality, expensive |
+| Low VRAM | ROLM_OCR | Optimized for T4 |
 
-Models are defined as an Enum in `batch_ocr.py`. To add a new model:
+## Output
+
+Each run produces a DataFrame with:
 
 ```python
-class OCRModel(str, Enum):
-    MY_NEW_MODEL = "huggingface/model-id"
+{
+    "document_id": "s3://bucket/doc_001.png",
+    "model": "Qwen/Qwen2.5-VL-2B-Instruct",
+    "extracted_text": "Full OCR text...",
+    "success": True,
+    "error": None,
+    "token_count": 245
+}
+```
 
-# Add GPU config
-MODEL_GPU_CONFIGS[OCRModel.MY_NEW_MODEL] = ModelConfig(
-    model_id=OCRModel.MY_NEW_MODEL.value,
+## Performance Tips
+
+### Optimal Chunk Size
+```bash
+--chunk_size=50   # Good for most cases
+--chunk_size=20   # More parallelism, higher overhead
+--chunk_size=100  # Less parallelism, lower overhead
+```
+
+### GPU Utilization
+
+Each worker environment has configurable replicas and concurrency:
+
+```python
+worker_env_t4 = flyte.TaskEnvironment(
+    reusable=flyte.ReusePolicy(
+        replicas=4,      # 4 parallel workers
+        concurrency=2,   # 2 tasks per worker
+        idle_ttl=600,    # Keep warm for 10 minutes
+    )
+)
+```
+
+**To increase throughput:** Edit replicas (4 → 8) in `batch_ocr.py`
+
+### Batch Size
+
+```bash
+# Adjust based on GPU memory
+--batch_size=8   # Default for 2B models (T4)
+--batch_size=4   # Default for 7B models (A100)
+--batch_size=2   # Default for 72B models (A100 80G)
+```
+
+## Troubleshooting
+
+### CUDA Out of Memory
+
+**Solution 1:** Reduce batch size
+```bash
+--batch_size=2  # Instead of default 4
+```
+
+**Solution 2:** Use smaller model
+```bash
+--model=QWEN_VL_2B  # Instead of QWEN_VL_7B
+```
+
+### Slow Processing
+
+**Check:** Are GPUs being used?
+
+```bash
+# Look for this in logs:
+"Model loaded successfully on cuda"  # Good
+"Model loaded successfully on cpu"   # Bad - very slow
+```
+
+**Fix:** Ensure Flyte cluster has GPU nodes with proper labels
+
+### HuggingFace Authentication
+
+Some models require accepting license:
+
+1. Visit model page: https://huggingface.co/Qwen/Qwen2.5-VL-2B-Instruct
+2. Accept license agreement
+3. Login: `huggingface-cli login`
+4. Or set `HF_TOKEN` environment variable
+
+## Project Structure
+
+```
+ocr/
+├── ocr_processor.py          # OCR logic (class-based)
+│   ├── OCRProcessor          # Main class: model loading, inference, batch processing
+│   └── get_ocr_processor()   # Async LRU cache for processor instances
+│
+├── batch_ocr.py              # Workflow orchestration
+│   ├── Worker environments   # 4 pre-created (T4, A100, A100 80G, multi-GPU)
+│   ├── Dispatcher tasks      # 4 dispatchers (one per environment)
+│   ├── Core function         # 10 lines (was 200+), uses OCRProcessor
+│   └── Workflows             # Single model, comparison, pipeline
+│
+├── batch_ocr_report.py       # Interactive HTML report generation
+├── pyproject.toml            # Dependencies (transformers, torch, datasets, etc.)
+├── example_usage.py          # Programmatic usage examples
+└── README.md                 # This file
+```
+
+## Adding New Models
+
+1. **Add to enum:**
+```python
+class OCRModel(str, Enum):
+    MY_MODEL = "my-org/my-model-id"
+```
+
+2. **Add GPU config:**
+```python
+MODEL_GPU_CONFIGS[OCRModel.MY_MODEL] = ModelConfig(
+    model_id=OCRModel.MY_MODEL.value,
     gpu_type="A100",
     gpu_count=1,
     memory="40Gi",
@@ -149,249 +239,61 @@ MODEL_GPU_CONFIGS[OCRModel.MY_NEW_MODEL] = ModelConfig(
 )
 ```
 
-### Adjusting Parallelism
+3. **Done!** Dispatcher auto-selects based on GPU type.
 
-Control chunk size and batch size for different workloads:
+## Adding New GPU Types
 
-```bash
-# High parallelism (many small chunks)
-flyte run batch_ocr.py batch_ocr_single_model \
-    --model=QWEN_VL_2B \
-    --sample_size=1000 \
-    --chunk_size=50  # 20 parallel chunks
-
-# Lower parallelism (fewer large chunks)
-flyte run batch_ocr.py batch_ocr_single_model \
-    --model=QWEN_VL_2B \
-    --sample_size=1000 \
-    --chunk_size=200  # 5 parallel chunks
-```
-
-## Key Features
-
-### 1. Reusable Containers
-
-Models are loaded once per worker replica and cached with `@lru_cache`:
-
+1. **Create worker environment:**
 ```python
-@lru_cache(maxsize=1)
-def load_ocr_model(model_id: str):
-    # Model loaded once, reused across all tasks in this replica
-    model = AutoModelForCausalLM.from_pretrained(model_id)
-    return model
-```
-
-Worker configuration:
-
-```python
-reusable=flyte.ReusePolicy(
-    replicas=4,       # 4 parallel workers
-    concurrency=2,    # Each handles 2 tasks concurrently
-    idle_ttl=600,     # Keep alive 10 minutes after idle
+worker_env_h100 = flyte.TaskEnvironment(
+    name="ocr_worker_h100",
+    resources=flyte.Resources(gpu="H100:1", memory="80Gi", cpu=16),
+    reusable=flyte.ReusePolicy(replicas=2, concurrency=2),
 )
 ```
 
-### 2. Content-Based Caching
-
-Tasks are cached based on inputs:
-
+2. **Create dispatcher:**
 ```python
-@default_worker_env.task(cache="auto", retries=3)
-async def process_document_batch(...):
-    # Results cached - rerun with same inputs = instant results
+@worker_env_h100.task(cache="auto", retries=3)
+async def process_document_batch_h100(...):
+    return await _process_document_batch_core(...)
 ```
 
-### 3. Streaming Dataset Loading
-
-DocumentVQA dataset loaded in streaming mode for memory efficiency:
-
+3. **Update dispatcher selection:**
 ```python
-dataset = load_dataset("HuggingFaceM4/DocumentVQA", split="train", streaming=True)
+def get_dispatcher_for_model(model):
+    if config.gpu_type == "H100":
+        return process_document_batch_h100
+    # ... existing logic ...
 ```
 
-### 4. Error Handling
-
-Individual document failures don't stop the pipeline:
-
+4. **Update driver dependencies:**
 ```python
-# Track success/failure per document
-{
-    "document_id": "doc_001.png",
-    "success": False,
-    "error": "CUDA out of memory",
-    "extracted_text": ""
-}
-```
-
-### 5. Interactive Reports
-
-Generate beautiful HTML reports with Chart.js:
-
-- **Comparison Matrix**: Success rates, token counts, totals
-- **Charts**: Success rates, token distributions
-- **Side-by-Side**: Text comparisons across models
-- **Error Analysis**: Breakdown of failures by type
-
-## Output Format
-
-### DataFrame Schema
-
-Each OCR run produces a DataFrame with:
-
-| Column | Type | Description |
-|--------|------|-------------|
-| `document_id` | string | Document identifier/path |
-| `model` | string | Model used for OCR |
-| `extracted_text` | string | OCR output text |
-| `success` | bool | Whether OCR succeeded |
-| `error` | string | Error message (if failed) |
-| `token_count` | int | Number of tokens generated |
-
-### Example Output
-
-```python
-{
-    "document_id": "s3://my-bucket/docs/invoice_001.png",
-    "model": "Qwen/Qwen2.5-VL-7B-Instruct",
-    "extracted_text": "INVOICE\nDate: 2024-01-15\nAmount: $1,234.56...",
-    "success": True,
-    "error": None,
-    "token_count": 245
-}
-```
-
-## Performance Optimization Tips
-
-### 1. Choose the Right Model
-
-- **T4 models** (2B variants): Best for high throughput, simple documents
-- **A100 models** (7B-8B variants): Balanced performance and accuracy
-- **Multi-GPU models** (26B-72B variants): Maximum accuracy, complex layouts
-
-### 2. Tune Chunk Size
-
-- **Small chunks (20-50)**: Better parallelism, higher overhead
-- **Large chunks (100-200)**: Lower overhead, less parallelism
-- **Sweet spot**: Usually 50-100 documents per chunk
-
-### 3. Adjust Reusable Container Replicas
-
-```python
-reusable=flyte.ReusePolicy(
-    replicas=8,  # Increase for more parallelism (if you have GPUs)
-    concurrency=2,
+driver_env = flyte.TaskEnvironment(
+    depends_on=[..., worker_env_h100]
 )
 ```
 
-### 4. Enable Flash Attention
+## Code Metrics
 
-For supported models (Qwen, InternVL large variants):
+| Metric | Value |
+|--------|-------|
+| Core function | 10 lines (was 200+) |
+| Worker environments | 4 pre-created |
+| Dispatcher tasks | 4 (one per GPU type) |
+| Model caching | Async LRU (up to 4 models) |
+| Separation of concerns | 2 files: workflow + OCR logic |
 
-```bash
-pip install flash-attn --no-build-isolation
-```
+## Citations
 
-Set `requires_flash_attention=True` in `ModelConfig`.
-
-## Troubleshooting
-
-### Out of Memory (OOM)
-
-**Problem**: Task fails with CUDA OOM error
-
-**Solution**:
-1. Reduce `batch_size` in the task call
-2. Use a smaller model (e.g., 2B instead of 7B)
-3. Override with more GPU memory:
-   ```bash
-   --overrides='{"process_document_batch": {"resources": {"gpu": "A100 80G:1"}}}'
-   ```
-
-### Slow Processing
-
-**Problem**: OCR is too slow
-
-**Solution**:
-1. Increase `chunk_size` to reduce overhead
-2. Increase `replicas` in `ReusePolicy`
-3. Use a lighter model (2B variants)
-4. Ensure GPU acceleration is working (check logs for "Model loaded on GPU")
-
-### Model Download Errors
-
-**Problem**: HuggingFace model download fails
-
-**Solution**:
-1. Check HuggingFace authentication: `huggingface-cli login`
-2. For gated models (Qwen), accept license on HuggingFace website
-3. Add `HF_TOKEN` environment variable to Flyte task
-
-### No GPUs Available
-
-**Problem**: Running on CPU (very slow)
-
-**Solution**:
-1. Ensure Flyte cluster has GPU nodes
-2. Check `resources.gpu` specification in task
-3. Verify GPU drivers on cluster nodes
-
-## Project Structure
-
-```
-ocr/
-├── batch_ocr.py              # Main workflow (models, tasks, pipelines)
-├── batch_ocr_report.py       # Report generation
-├── pyproject.toml            # Dependencies
-├── README.md                 # This file
-└── examples/                 # Example outputs (if any)
-```
-
-## Citation
-
-If you use this workflow, please cite the relevant model papers:
-
-**Qwen2.5-VL**:
-```
-@article{qwen2vl,
-  title={Qwen2-VL: Enhancing Vision-Language Model's Perception of the World at Any Resolution},
-  author={Qwen Team},
-  year={2024}
-}
-```
-
-**GOT-OCR 2.0**:
-```
-@article{got-ocr2,
-  title={General OCR Theory: Towards OCR-2.0 via a Unified End-to-end Model},
-  author={Wang, Haoran and others},
-  year={2024}
-}
-```
-
-**InternVL 2.5**:
-```
-@article{internvl2_5,
-  title={InternVL 2.5: Empowering Multimodal Large Language Models},
-  author={Chen, Zhe and others},
-  year={2024}
-}
-```
+If you use this workflow, please cite the relevant model papers. See each model's HuggingFace page for citation information.
 
 ## License
 
-This example code is provided under the Apache 2.0 license. Individual models have their own licenses - please check each model's HuggingFace page for details.
-
-## Contributing
-
-Contributions are welcome! To add a new OCR model:
-
-1. Add the model to the `OCRModel` enum
-2. Add GPU configuration to `MODEL_GPU_CONFIGS`
-3. Test with sample data
-4. Update this README with model details
+This example code: Apache 2.0
+Individual models: Check each model's HuggingFace page
 
 ## Support
 
-For issues or questions:
-- Flyte SDK: https://github.com/flyteorg/flyte
-- This example: [Create an issue](https://github.com/flyteorg/flyte/issues)
+- **Issues**: https://github.com/flyteorg/flyte/issues
+- **Flyte Docs**: https://docs.flyte.org/
