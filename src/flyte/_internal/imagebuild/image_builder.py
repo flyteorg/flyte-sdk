@@ -149,32 +149,10 @@ class ImageBuildEngine:
     @staticmethod
     def _optimize_image_layers(image: Image) -> Image:
         """
-        Consolidate pip package layers by separating heavy and lightweight dependencies.
-
-        This optimization addresses Docker cache invalidation issues when users chain multiple
-        . with_pip_packages() calls. By consolidating packages at build time:
-
-        1. Heavy packages (TensorFlow, PyTorch, etc.) are placed in a bottom layer
-        → Cached longer, rebuilt less frequently
-
-        2. Lightweight packages are placed in a top layer
-        → Can change more frequently without invalidating heavy layer cache
-
-        Example:
-            Before:
-                Layer 1: PipPackages(["tensorflow", "numpy"])     # Mixed
-                Layer 2: PipPackages(["torch", "pandas"])         # Mixed
-                Layer 3: PipPackages(["pytest"])                  # Light
-
-            After:
-                Layer 1: PipPackages(["tensorflow", "torch"])     # All heavy
-                Layer 2: PipPackages(["numpy", "pandas", "pytest"]) # All light
-
-        Args:
-            image: The image to optimize
+        Optimize pip layers for better Docker cache reuse.
 
         Returns:
-            A new Image with optimized layers
+            A new Image with reorganized pip layers.
         """
         # Separate pip layers from other layer types
         pip_layers = []

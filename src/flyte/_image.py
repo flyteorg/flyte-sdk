@@ -835,14 +835,14 @@ class Image:
 
         To mount secrets during the build process to download private packages, you can use the `secret_mounts`.
         In the below example, "GITHUB_PAT" will be mounted as env var "GITHUB_PAT",
-        and "apt-secret" will be mounted at /etc/apt/apt-secret.
+         and "apt-secret" will be mounted at /etc/apt/apt-secret.
         Example:
         ```python
         private_package = "git+https://$GITHUB_PAT@github.com/flyteorg/flytex.git@2e20a2acebfc3877d84af643fdd768edea41d533"
         @flyte.task(
             image=(
                 flyte.Image.from_debian_base()
-                .with_pip_packagesjj("private_package", secret_mounts=[Secret(key="GITHUB_PAT")])
+                .with_pip_packages("private_package", secret_mounts=[Secret(key="GITHUB_PAT")])
                 .with_apt_packages("git", secret_mounts=[Secret(key="apt-secret", mount="/etc/apt/apt-secret")])
         )
         def my_task(x: int) -> int:
