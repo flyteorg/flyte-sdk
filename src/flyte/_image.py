@@ -8,7 +8,6 @@ from abc import abstractmethod
 from dataclasses import dataclass, field
 from functools import cached_property
 from pathlib import Path
-from types import MappingProxyType
 from typing import TYPE_CHECKING, ClassVar, Dict, List, Literal, Optional, Tuple, TypeVar, Union
 
 import rich.repr
@@ -29,16 +28,6 @@ SOURCE_ROOT = Path(__file__).parent.parent.parent
 DIST_FOLDER = SOURCE_ROOT / "dist"
 
 T = TypeVar("T")
-
-PACKAGE_IMPORTANCE = MappingProxyType(
-    {
-        # Layer 0: ~1GB+ | Rebuild cost: High | Freq: Very Low
-        "heavy": ("tensorflow", "torch", "torchaudio", "torchvision", "scikit-learn"),
-        # -----------------[ MIDDLE ]----------------- #
-        # Layer 1: ~200MB | Rebuild cost: Med  | Freq: Low
-        "core": ("numpy", "pandas", "pydantic", "requests", "httpx", "boto3", "fastapi", "uvicorn"),
-    }
-)
 
 
 def _ensure_tuple(val: Union[T, List[T], Tuple[T, ...]]) -> Tuple[T] | Tuple[T, ...]:
@@ -599,7 +588,6 @@ class Image:
         extra_args: Optional[str] = None,
         platform: Optional[Tuple[Architecture, ...]] = None,
         secret_mounts: Optional[SecretRequest] = None,
-        optimize_layers: bool = True,
     ) -> Image:
         """
         Use this method to create a new image with the specified uv script.
@@ -632,18 +620,16 @@ class Image:
         :param pre: whether to allow pre-release versions, default is False
         :param extra_args: extra arguments to pass to pip install, default is None
         :param secret_mounts: Secret mounts to use for the image, default is None.
-        :param optimize_layers: Caching dependencies for future performance, default is True
 
         :return: Image
 
         Args:
             secret_mounts:
         """
-        if optimize_layers:
-            from ._utils import parse_uv_script_file
+        from ._utils import parse_uv_script_file
 
-            metadata = parse_uv_script_file(Path(script))
-            dependencies = metadata.dependencies
+        metadata = parse_uv_script_file(Path(script))
+        dependencies = metadata.dependencies
 
         ll = UVScript(
             script=Path(script),
@@ -663,7 +649,7 @@ class Image:
             platform=platform,
         )
 
-        if optimize_layers and dependencies:
+        if dependencies:
             img = img.with_pip_packages(*dependencies)
 
         return img.clone(addl_layer=ll)
@@ -676,7 +662,6 @@ class Image:
         base_image: Optional[str] = None,
         python_version: Optional[Tuple[int, int]] = None,
         addl_layer: Optional[Layer] = None,
-        addl_top: bool = False,
     ) -> Image:
         """
         Use this method to clone the current image and change the registry and name
@@ -686,7 +671,6 @@ class Image:
         :param name: Name of the image
         :param python_version: Python version for the image, if not specified, will use the current Python version
         :param addl_layer: Additional layer to add to the image. This will be added to the end of the layers.
-        :param addl_top: A flag for additional layer addl_layer to be added to the top of the layers.
         :return:
         """
         from flyte import Secret
@@ -706,10 +690,7 @@ class Image:
             raise ValueError(
                 f"Cannot add additional layer {addl_layer} to an image without name. Please first clone()."
             )
-        if addl_top:
-            new_layers = (addl_layer, *self._layers)
-        else:
-            new_layers = (*self._layers, addl_layer) if addl_layer else self._layers
+        new_layers = (*self._layers, addl_layer) if addl_layer else self._layers
         img = Image._new(
             base_image=base_image,
             dockerfile=self.dockerfile,
@@ -839,7 +820,6 @@ class Image:
         pre: bool = False,
         extra_args: Optional[str] = None,
         secret_mounts: Optional[SecretRequest] = None,
-        optimize_layers: bool = True,
     ) -> Image:
         """
         Use this method to create a new image with the specified pip packages layered on top of the current image
@@ -855,14 +835,14 @@ class Image:
 
         To mount secrets during the build process to download private packages, you can use the `secret_mounts`.
         In the below example, "GITHUB_PAT" will be mounted as env var "GITHUB_PAT",
-         and "apt-secret" will be mounted at /etc/apt/apt-secret.
+        and "apt-secret" will be mounted at /etc/apt/apt-secret.
         Example:
         ```python
         private_package = "git+https://$GITHUB_PAT@github.com/flyteorg/flytex.git@2e20a2acebfc3877d84af643fdd768edea41d533"
         @flyte.task(
             image=(
                 flyte.Image.from_debian_base()
-                .with_pip_packages("private_package", secret_mounts=[Secret(key="GITHUB_PAT")])
+                .with_pip_packagesjj("private_package", secret_mounts=[Secret(key="GITHUB_PAT")])
                 .with_apt_packages("git", secret_mounts=[Secret(key="apt-secret", mount="/etc/apt/apt-secret")])
         )
         def my_task(x: int) -> int:
@@ -875,53 +855,21 @@ class Image:
         :param extra_index_urls: extra index urls to use for pip install, default is None
         :param pre: whether to allow pre-release versions, default is False
         :param extra_args: extra arguments to pass to pip install, default is None
-        :param extra_args: extra arguments to pass to pip install, default is None
         :param secret_mounts: list of secret to mount for the build process.
-        :param optimize_layers: Caching dependencies for future performance, default is True
-
         :return: Image
         """
+        new_packages: Optional[Tuple] = packages or None
+        new_extra_index_urls: Optional[Tuple] = _ensure_tuple(extra_index_urls) if extra_index_urls else None
 
-        import re
-
-        # Automatically categorize the packages
-        categorized: dict[str, list[str]] = {
-            "heavy": [],
-            "core": [],
-            "unknown": [],
-        }
-
-        for pkg in packages:
-            pkg_name = re.split(r"[<>=~!]", pkg, 1)[0].split("[", 1)[0].strip()
-            category = "unknown"
-            if optimize_layers:
-                for cat, pkg_list in PACKAGE_IMPORTANCE.items():
-                    if pkg_name in pkg_list:
-                        category = cat
-                        break
-            categorized[category].append(pkg)
-
-        # Helper function to create a layer
-        def create_pip_layer(pkgs):
-            return PipPackages(
-                packages=tuple(pkgs),
-                index_url=index_url,
-                extra_index_urls=_ensure_tuple(extra_index_urls) if extra_index_urls else None,
-                pre=pre,
-                extra_args=extra_args,
-                secret_mounts=_ensure_tuple(secret_mounts) if secret_mounts else None,
-            )
-
-        # Create layers in priority order (core first, dev last)
-        new_image = self
-        for category, lst in categorized.items():
-            if lst:
-                layer = create_pip_layer(lst)
-                if category == "heavy":
-                    new_image = new_image.clone(addl_layer=layer, addl_top=True)
-                else:
-                    new_image = new_image.clone(addl_layer=layer)
-
+        ll = PipPackages(
+            packages=new_packages,
+            index_url=index_url,
+            extra_index_urls=new_extra_index_urls,
+            pre=pre,
+            extra_args=extra_args,
+            secret_mounts=_ensure_tuple(secret_mounts) if secret_mounts else None,
+        )
+        new_image = self.clone(addl_layer=ll)
         return new_image
 
     def with_env_vars(self, env_vars: Dict[str, str]) -> Image:

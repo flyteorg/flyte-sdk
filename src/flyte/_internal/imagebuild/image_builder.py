@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import typing
 from typing import ClassVar, Dict, Optional, Tuple
 
@@ -9,9 +10,19 @@ from async_lru import alru_cache
 from pydantic import BaseModel
 from typing_extensions import Protocol
 
-from flyte._image import Architecture, Image
+from flyte._image import Architecture, Image, Layer, PipPackages, PythonWheels
 from flyte._initialize import _get_init_config
 from flyte._logging import logger
+
+HEAVY_DEPENDENCIES = frozenset(
+    {
+        "tensorflow",
+        "torch",
+        "torchaudio",
+        "torchvision",
+        "scikit-learn",
+    }
+)
 
 
 class ImageBuilder(Protocol):
@@ -136,6 +147,122 @@ class ImageBuildEngine:
     ImageBuilderType = typing.Literal["local", "remote"]
 
     @staticmethod
+    def _optimize_image_layers(image: Image) -> Image:
+        """
+        Consolidate pip package layers by separating heavy and lightweight dependencies.
+
+        This optimization addresses Docker cache invalidation issues when users chain multiple
+        . with_pip_packages() calls. By consolidating packages at build time:
+
+        1. Heavy packages (TensorFlow, PyTorch, etc.) are placed in a bottom layer
+        → Cached longer, rebuilt less frequently
+
+        2. Lightweight packages are placed in a top layer
+        → Can change more frequently without invalidating heavy layer cache
+
+        Example:
+            Before:
+                Layer 1: PipPackages(["tensorflow", "numpy"])     # Mixed
+                Layer 2: PipPackages(["torch", "pandas"])         # Mixed
+                Layer 3: PipPackages(["pytest"])                  # Light
+
+            After:
+                Layer 1: PipPackages(["tensorflow", "torch"])     # All heavy
+                Layer 2: PipPackages(["numpy", "pandas", "pytest"]) # All light
+
+        Args:
+            image: The image to optimize
+
+        Returns:
+            A new Image with optimized layers
+        """
+        # Separate pip layers from other layer types
+        pip_layers = []
+        other_layers = []
+        python_wheels_layers = []
+
+        for layer in image._layers:
+            if isinstance(layer, PipPackages):
+                pip_layers.append(layer)
+            elif isinstance(layer, PythonWheels):
+                python_wheels_layers.append(layer)
+            else:
+                other_layers.append(layer)
+
+        # Nothing to optimize if there are no pip layers
+        if not pip_layers:
+            logger.debug("No PipPackages layers found, skipping optimization")
+            return image
+
+        # Consolidate packages from all pip layers into two categories
+        heavy_packages = []
+        other_packages = []
+
+        for layer in pip_layers:
+            assert layer.packages is not None
+            for pkg in layer.packages:
+                pkg_name = re.split(r"[<>=~!\[]", pkg, 1)[0].strip()
+                if pkg_name in HEAVY_DEPENDENCIES:
+                    heavy_packages.append(pkg)
+                else:
+                    other_packages.append(pkg)
+
+        logger.info(
+            f"Optimizing {len(pip_layers)} pip layer(s): {len(heavy_packages)} heavy, \
+                  {len(other_packages)} other packages"
+        )
+
+        # Build optimized layer list
+        optimized_layers: list[Layer] = []
+
+        # Use settings from first pip layer as template for consolidated layers
+        template_layer = pip_layers[0]
+
+        # 1. Add heavy packages first (bottom of Dockerfile → better caching)
+        if heavy_packages:
+            heavy_layer = PipPackages(
+                packages=tuple(heavy_packages),
+                index_url=template_layer.index_url,
+                extra_index_urls=template_layer.extra_index_urls,
+                pre=template_layer.pre,
+                extra_args=template_layer.extra_args,
+                secret_mounts=template_layer.secret_mounts,
+            )
+            optimized_layers.append(heavy_layer)
+            logger.debug(f"  Heavy layer:  {', '.join(heavy_packages)}")
+
+        # 2. Preserve all non-pip layers in their original positions
+        optimized_layers.extend(other_layers)
+
+        # 3. Add other packages last (top of Dockerfile → can change frequently)
+        if other_packages:
+            other_layer = PipPackages(
+                packages=tuple(other_packages),
+                index_url=template_layer.index_url,
+                extra_index_urls=template_layer.extra_index_urls,
+                pre=template_layer.pre,
+                extra_args=template_layer.extra_args,
+                secret_mounts=template_layer.secret_mounts,
+            )
+            optimized_layers.append(other_layer)
+            logger.debug(f"  Other layer:  {len(other_packages)} packages")
+
+        optimized_layers.extend(python_wheels_layers)
+        logger.debug(f"  Moved PythonWheels:  {len(python_wheels_layers)} to bottom")
+        # Create new image with optimized layers
+        return Image._new(
+            base_image=image.base_image,
+            dockerfile=image.dockerfile,
+            registry=image.registry,
+            name=image.name,
+            platform=image.platform,
+            python_version=image.python_version,
+            _layers=tuple(optimized_layers),
+            _image_registry_secret=image._image_registry_secret,
+            _ref_name=image._ref_name,
+        )
+
+    @staticmethod
     @alru_cache
     async def image_exists(image: Image) -> Optional[str]:
         if image.base_image is not None and not image._layers:
@@ -181,6 +308,7 @@ class ImageBuildEngine:
         builder: ImageBuildEngine.ImageBuilderType | None = None,
         dry_run: bool = False,
         force: bool = False,
+        optimize_layers: bool = True,
     ) -> str:
         """
         Build the image. Images to be tagged with latest will always be built. Otherwise, this engine will check the
@@ -190,8 +318,10 @@ class ImageBuildEngine:
         :param builder:
         :param dry_run: Tell the builder to not actually build. Different builders will have different behaviors.
         :param force: Skip the existence check. Normally if the image already exists we won't build it.
+        :param optimize_layers: If True, consolidate pip packages by category (default: True)
         :return:
         """
+
         # Always trigger a build if this is a dry run since builder shouldn't really do anything, or a force.
         image_uri = (await cls.image_exists(image)) or image.uri
         if force or dry_run or not await cls.image_exists(image):
@@ -199,6 +329,10 @@ class ImageBuildEngine:
 
             # Validate the image before building
             image.validate()
+
+            if optimize_layers:
+                logger.debug("Optimizing image layers by consolidating pip packages...")
+                image = ImageBuildEngine._optimize_image_layers(image)  # Call the optimizer
 
             # If a builder is not specified, use the first registered builder
             cfg = _get_init_config()
