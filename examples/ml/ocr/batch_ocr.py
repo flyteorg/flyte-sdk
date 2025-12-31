@@ -190,7 +190,7 @@ worker_env_gpu = flyte.TaskEnvironment(
         scaledown_ttl=600,
     ),
     secrets="HF_HUB_TOKEN",
-    cache=flyte.Cache("auto", "1.0")
+    cache=flyte.Cache("auto", "1.0"),
 )
 
 # A100 Worker - For medium models (7B-8B variants)
@@ -229,7 +229,7 @@ driver_env = flyte.TaskEnvironment(
     image=ocr_image,
     resources=flyte.Resources(cpu=4, memory="8Gi"),
     depends_on=[worker_env_gpu, worker_env_a100, worker_env_a100_80g, worker_env_a100_80g_multi],
-    cache=flyte.Cache("auto", "1.0")
+    cache=flyte.Cache("auto", "1.0"),
 )
 
 
