@@ -229,8 +229,9 @@ class _Runner:
                 env["LOG_LEVEL"] = str(logger.getEffectiveLevel())
         env["LOG_FORMAT"] = self._log_format
 
-        if os.getenv("_F_USE_RUST_CONTROLLER"):
-            env["_F_USE_RUST_CONTROLLER"] = os.getenv("_F_USE_RUST_CONTROLLER")
+        use_rust_controller_env_var = os.getenv("_F_USE_RUST_CONTROLLER")
+        if use_rust_controller_env_var:
+            env["_F_USE_RUST_CONTROLLER"] = use_rust_controller_env_var
 
         # These paths will be appended to sys.path at runtime.
         if cfg.sync_local_sys_paths:

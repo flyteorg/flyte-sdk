@@ -137,7 +137,7 @@ def main(
     use_rust = os.getenv(_F_USE_RUST_CONTROLLER, "").lower() in ("1", "true", "yes")
     controller_type = "rust" if use_rust else "remote"
     print(f"In runtime: controller kwargs are: {controller_kwargs}")
-    controller = create_controller(ct=controller_type, **controller_kwargs)
+    controller = create_controller(ct=controller_type, **controller_kwargs)  # type: ignore[arg-type]
 
     ic = ImageCache.from_transport(image_cache) if image_cache else None
 
