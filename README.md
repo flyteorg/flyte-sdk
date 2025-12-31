@@ -313,3 +313,65 @@ python maint_tools/build_default_image.py --registry ghcr.io/my-org --name my-fl
 ## 📄 License
 
 Flyte 2 is licensed under the [Apache 2.0 License](LICENSE).
+
+## Developing the Core Controller
+
+Create a separate virtual environment for the Rust contoller inside the rs_controller folder. The reason for this is
+because the rust controller should be a separate pypi package. The reason it should be a separate pypi package is that
+including it into the main SDK as a core component means the entire build toolchain for the SDK will need to become
+rust/maturin based. We should probably move to this model in the future though.
+
+Keep important dependencies the same though, namely flyteidl2.
+
+The following instructions are for helping to build the default multi-arch image. Each architecture needs a different wheel. Each wheel needs to be built by a different docker image.
+
+### Setup Builders
+`cd` into `rs_controller` and run `make build-builders`. This will build the builder images once, so you can keep using them as the rust code changes.
+
+### Iteration Cycle
+Run `make build-wheels` to actually build the multi-arch wheels. This command should probably be updated to build all three,
+currently it only builds for linux/amd64 and linux/arm64... the `make build-wheel-local` command builds a macosx wheel,
+unclear what the difference is between that and the arm64 one, and unclear if both are present, which one pip chooses.
+
+`cd` back up to the root folder of this project and proceed with
+```bash
+make dist
+python maint_tools/build_default_image.py
+```
+
+To install the wheel locally for testing, use the following command with your venv active.
+```bash
+uv pip install --find-links ./rs_controller/dist --no-index --force-reinstall --no-deps flyte_controller_base
+```
+Repeat this process to iterate - build new wheels, force reinstall the controller package.
+
+### Build Configuration Summary
+
+In order to support both Rust crate publication and Python wheel distribution, we have
+to sometimes use and sometimes not use the 'pyo3/extension-module' feature. To do this, this
+project's Cargo.toml itself can toggle this on and off.
+
+  [features]
+  default = ["pyo3/auto-initialize"]     # For Rust crate users (links to libpython)
+  extension-module = ["pyo3/extension-module"]  # For Python wheels (no libpython linking)
+
+The cargo file contains
+
+  # Cargo.toml
+  [lib]
+  crate-type = ["rlib", "cdylib"]  # Support both Rust and Python usage
+
+When using 'default', 'auto-initialize' is turned on, which requires linking to libpython, which exists on local Mac so
+this works nicely. It is not available in manylinux however, so trying to build with this feature in a manylinux docker
+image will fail. But that's okay, because the purpose of the manylinux container is to build wheels,
+and for wheels, we need the 'extension-module' feature, which disables linking to libpython.
+
+The key insight: auto-initialize is for embedding Python in Rust (needs libpython), while
+extension-module is for extending Python with Rust (must NOT link libpython for portability).
+
+This setup makes it possible to build wheels and also run Rust binaries with `cargo run --bin`. 
+
+(not sure if this is needed)
+  # pyproject.toml
+  [tool.maturin]
+  features = ["extension-module"]  # Tells maturin to use extension-module feature
