@@ -481,7 +481,7 @@ def generate_sub_action_id_and_output_path(
     sub_action_id = current_action_id.new_sub_action_from(
         task_hash=task_hash,
         input_hash=inputs_hash,
-        group=tctx.group_data if tctx.group_data else None,
+        group=tctx.group_data.name if tctx.group_data else None,
         task_call_seq=invoke_seq,
     )
     sub_run_output_path = storage.join(current_output_path, sub_action_id.name)

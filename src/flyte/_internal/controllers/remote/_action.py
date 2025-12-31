@@ -12,6 +12,8 @@ from flyteidl2.workflow import (
 )
 from google.protobuf import timestamp_pb2
 
+from flyte.models import GroupData
+
 ActionType = Literal["task", "trace"]
 
 
@@ -27,7 +29,7 @@ class Action:
     parent_action_name: str
     type: ActionType = "task"  # type of action, task or trace
     friendly_name: str | None = None
-    group: str | None = None
+    group: GroupData | None = None
     task: task_definition_pb2.TaskSpec | None = None
     trace: run_definition_pb2.TraceAction | None = None
     inputs_uri: str | None = None
@@ -116,7 +118,7 @@ class Action:
         cls,
         parent_action_name: str,
         sub_action_id: identifier_pb2.ActionIdentifier,
-        group_data: str | None,
+        group_data: GroupData | None,
         task_spec: task_definition_pb2.TaskSpec,
         inputs_uri: str,
         run_output_base: str,
@@ -164,7 +166,7 @@ class Action:
         parent_action_name: str,
         action_id: identifier_pb2.ActionIdentifier,
         friendly_name: str,
-        group_data: str | None,
+        group_data: GroupData | None,
         inputs_uri: str,
         outputs_uri: str,
         start_time: float,  # Unix timestamp in seconds with fractional seconds
