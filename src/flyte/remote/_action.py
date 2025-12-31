@@ -4,6 +4,7 @@ import asyncio
 from collections import UserDict
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from functools import cached_property
 from typing import (
     Any,
     AsyncGenerator,
@@ -29,6 +30,7 @@ from rich.progress import Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
 
 from flyte import types
 from flyte._initialize import ensure_client, get_client, get_init_config
+from flyte._interface import default_output_name
 from flyte.models import ActionPhase
 from flyte.remote._common import ToJSONMixin
 from flyte.remote._logs import Logs
@@ -791,3 +793,7 @@ class ActionOutputs(tuple, ToJSONMixin):
         # Normally you'd set instance attributes here,
         # but we've already set `pb2` in `__new__`
         self.pb2 = pb2
+
+    @cached_property
+    def named_outputs(self) -> Dict[str, Any]:
+        return {default_output_name(i): x for i, x in enumerate(self)}
