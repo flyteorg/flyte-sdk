@@ -1,11 +1,11 @@
+use std::env;
+
 /// Usage:
 ///   _UNION_EAGER_API_KEY=your_api_key cargo run --bin test_controller
 ///
 /// Or without auth:
 ///   cargo run --bin test_controller -- http://localhost:8089
 use flyte_controller_base::core::CoreBaseController;
-use std::env;
-use tracing_subscriber;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt()

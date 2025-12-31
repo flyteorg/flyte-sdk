@@ -1,32 +1,39 @@
 //! Core controller implementation - Pure Rust, no PyO3 dependencies
 //! This module can be used by both Python bindings and standalone Rust binaries
 
-use std::sync::Arc;
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
 
+use flyteidl2::{
+    flyteidl::{
+        common::{ActionIdentifier, RunIdentifier},
+        task::TaskIdentifier,
+        workflow::{
+            enqueue_action_request, queue_service_client::QueueServiceClient,
+            state_service_client::StateServiceClient, EnqueueActionRequest, EnqueueActionResponse,
+            TaskAction, WatchRequest, WatchResponse,
+        },
+    },
+    google,
+};
+use google::protobuf::StringValue;
 use pyo3_async_runtimes::tokio::get_runtime;
-use tokio::sync::mpsc;
-use tokio::sync::oneshot;
-use tokio::time::sleep;
-use tonic::transport::{Certificate, ClientTlsConfig, Endpoint};
-use tonic::Status;
+use tokio::{
+    sync::{mpsc, oneshot},
+    time::sleep,
+};
+use tonic::{
+    transport::{Certificate, ClientTlsConfig, Endpoint},
+    Status,
+};
 use tower::ServiceBuilder;
 use tracing::{debug, error, info, warn};
 
-use crate::action::Action;
-use crate::auth::{AuthConfig, AuthLayer, ClientCredentialsAuthenticator};
-use crate::error::{ControllerError, InformerError};
-use crate::informer::{Informer, InformerCache};
-use flyteidl2::flyteidl::common::{ActionIdentifier, RunIdentifier};
-use flyteidl2::flyteidl::task::TaskIdentifier;
-use flyteidl2::flyteidl::workflow::enqueue_action_request;
-use flyteidl2::flyteidl::workflow::queue_service_client::QueueServiceClient;
-use flyteidl2::flyteidl::workflow::state_service_client::StateServiceClient;
-use flyteidl2::flyteidl::workflow::{
-    EnqueueActionRequest, EnqueueActionResponse, TaskAction, WatchRequest, WatchResponse,
+use crate::{
+    action::Action,
+    auth::{AuthConfig, AuthLayer, ClientCredentialsAuthenticator},
+    error::{ControllerError, InformerError},
+    informer::{Informer, InformerCache},
 };
-use flyteidl2::google;
-use google::protobuf::StringValue;
 
 // Fetches Amazon root CA certificate from Amazon Trust Services
 pub async fn fetch_amazon_root_ca() -> Result<Certificate, ControllerError> {
@@ -468,7 +475,7 @@ impl CoreBaseController {
             .get(&action.get_run_identifier(), &action.parent_action_name)
             .await
         {
-            let _ = informer
+            informer
                 .fire_completion_event(&action.action_id.name)
                 .await?;
         } else {
@@ -518,14 +525,12 @@ impl CoreBaseController {
             .as_ref()
             .and_then(|task| task.task_template.as_ref())
             .and_then(|task_template| task_template.id.as_ref())
-            .and_then(|core_task_id| {
-                Some(TaskIdentifier {
-                    version: core_task_id.version.clone(),
-                    org: core_task_id.org.clone(),
-                    project: core_task_id.project.clone(),
-                    domain: core_task_id.domain.clone(),
-                    name: core_task_id.name.clone(),
-                })
+            .map(|core_task_id| TaskIdentifier {
+                version: core_task_id.version.clone(),
+                org: core_task_id.org.clone(),
+                project: core_task_id.project.clone(),
+                domain: core_task_id.domain.clone(),
+                name: core_task_id.name.clone(),
             })
             .ok_or(ControllerError::RuntimeError(format!(
                 "TaskIdentifier missing from Action {:?}",

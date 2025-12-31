@@ -1,5 +1,6 @@
-use crate::auth::errors::AuthConfigError;
 use base64::{engine, Engine};
+
+use crate::auth::errors::AuthConfigError;
 
 /// Configuration for authentication
 #[derive(Debug, Clone)]
