@@ -11,18 +11,18 @@ pub mod proto;
 // Python bindings - thin wrappers around core types
 use std::sync::Arc;
 
-use pyo3::exceptions;
-use pyo3::prelude::*;
-use pyo3::types::PyAny;
+use flyteidl2::flyteidl::common::{ActionIdentifier, RunIdentifier};
+use prost::Message;
+use pyo3::{exceptions, prelude::*, types::PyAny};
 use pyo3_async_runtimes::tokio::future_into_py;
 use tracing::{error, info, warn};
 use tracing_subscriber::FmtSubscriber;
 
-use crate::action::{Action, ActionType};
-use crate::core::CoreBaseController;
-use crate::error::ControllerError;
-use flyteidl2::flyteidl::common::{ActionIdentifier, RunIdentifier};
-use prost::Message;
+use crate::{
+    action::{Action, ActionType},
+    core::CoreBaseController,
+    error::ControllerError,
+};
 
 // Python error conversions
 impl From<ControllerError> for PyErr {
@@ -44,14 +44,15 @@ struct BaseController(Arc<CoreBaseController>);
 #[pymethods]
 impl BaseController {
     #[new]
-    #[pyo3(signature = (*, endpoint=None))]
-    fn new(endpoint: Option<String>) -> PyResult<Self> {
+    #[pyo3(signature = (*, endpoint=None, workers=None))]
+    fn new(endpoint: Option<String>, workers: Option<usize>) -> PyResult<Self> {
+        let workers = workers.unwrap_or(20);
         let core_base = if let Some(ep) = endpoint {
-            info!("Creating controller wrapper with endpoint {:?}", ep);
-            CoreBaseController::new_without_auth(ep)?
+            info!("Creating controller wrapper with endpoint {:?} and {} workers", ep, workers);
+            CoreBaseController::new_without_auth(ep, workers)?
         } else {
-            info!("Creating controller wrapper from _UNION_EAGER_API_KEY env var");
-            CoreBaseController::new_with_auth()?
+            info!("Creating controller wrapper from _UNION_EAGER_API_KEY env var with {} workers", workers);
+            CoreBaseController::new_with_auth(workers)?
         };
         Ok(BaseController(core_base))
     }
@@ -152,8 +153,14 @@ impl BaseController {
 fn flyte_controller_base(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     static INIT: std::sync::Once = std::sync::Once::new();
     INIT.call_once(|| {
+        // Check if running remotely by checking if FLYTE_INTERNAL_EXECUTION_PROJECT is set
+        let is_remote = std::env::var("FLYTE_INTERNAL_EXECUTION_PROJECT").is_ok();
+        let is_rich_logging_disabled = std::env::var("DISABLE_RICH_LOGGING").is_ok();
+        let disable_ansi = is_remote || is_rich_logging_disabled;
+
         let subscriber = FmtSubscriber::builder()
             .with_max_level(tracing::Level::DEBUG)
+            .with_ansi(!disable_ansi)
             .finish();
         tracing::subscriber::set_global_default(subscriber)
             .expect("Failed to set global tracing subscriber");

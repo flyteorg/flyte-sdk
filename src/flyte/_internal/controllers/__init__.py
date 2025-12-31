@@ -142,6 +142,7 @@ def create_controller(
                 # Default to http:// for local endpoints
                 endpoint = f"http://{endpoint}"
             controller = RemoteController(endpoint=endpoint, workers=10, max_system_retries=5)
+            # controller = RemoteController(endpoint="http://host.docker.internal:8090", workers=10, max_system_retries=5)  # noqa: E501
         case _:
             raise ValueError(f"{ct} is not a valid controller type.")
 

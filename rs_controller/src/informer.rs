@@ -1,8 +1,30 @@
-use crate::action::Action;
-use crate::core::StateClient;
-use crate::error::{ControllerError, InformerError};
-use tokio::time;
+use std::{
+    collections::HashMap,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
+    time::Duration,
+};
+
+use flyteidl2::flyteidl::{
+    common::{ActionIdentifier, RunIdentifier},
+    workflow::{watch_request, watch_response::Message, WatchRequest, WatchResponse},
+};
+use tokio::{
+    select,
+    sync::{mpsc, oneshot, Notify, RwLock},
+    time,
+};
 use tokio_util::sync::CancellationToken;
+use tracing::{debug, error, info, warn};
+
+use crate::{
+    action::Action,
+    core::StateClient,
+    error::{ControllerError, InformerError},
+};
+
 /// Determine if an InformerError is retryable
 fn is_retryable_error(err: &InformerError) -> bool {
     match err {
@@ -17,21 +39,6 @@ fn is_retryable_error(err: &InformerError) -> bool {
         InformerError::WatchFailed { .. } => false,
     }
 }
-
-use flyteidl2::flyteidl::common::ActionIdentifier;
-use flyteidl2::flyteidl::common::RunIdentifier;
-use flyteidl2::flyteidl::workflow::{
-    watch_request, watch_response::Message, WatchRequest, WatchResponse,
-};
-
-use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
-use std::time::Duration;
-use tokio::select;
-use tokio::sync::RwLock;
-use tokio::sync::{mpsc, oneshot, Notify};
-use tracing::{debug, error, info, warn};
 
 #[derive(Clone, Debug)]
 pub struct Informer {
@@ -480,7 +487,7 @@ impl InformerCache {
             "Acquiring write lock to save watch handle for: {}",
             informer_name
         );
-        let _ = informer.watch_handle.write().await.insert(_watch_handle);
+        *informer.watch_handle.write().await = Some(_watch_handle);
         info!("Watch handle saved for: {}", informer_name);
 
         // Optimistically wait for ready (sentinel) with timeout
@@ -570,6 +577,10 @@ impl InformerCache {
 
 #[cfg(test)]
 mod tests {
+    use flyteidl2::flyteidl::workflow::state_service_client::StateServiceClient;
+    use tonic::transport::Endpoint;
+    use tracing_subscriber::fmt;
+
     use super::*;
 
     async fn informer_main() {

@@ -4,17 +4,18 @@
 ///   _UNION_EAGER_API_KEY=your_api_key cargo run --bin try_watch
 use std::sync::Arc;
 use std::time::Duration;
+
+use flyte_controller_base::{
+    auth::{AuthConfig, AuthLayer, ClientCredentialsAuthenticator},
+    error::ControllerError,
+};
+use flyteidl2::flyteidl::{
+    common::{ActionIdentifier, RunIdentifier},
+    workflow::{state_service_client::StateServiceClient, watch_request::Filter, WatchRequest},
+};
 use tokio::time::sleep;
 use tower::ServiceBuilder;
 use tracing::{error, info, warn};
-
-use flyte_controller_base::auth::{AuthConfig, AuthLayer, ClientCredentialsAuthenticator};
-use flyte_controller_base::error::ControllerError;
-
-use flyteidl2::flyteidl::common::{ActionIdentifier, RunIdentifier};
-use flyteidl2::flyteidl::workflow::state_service_client::StateServiceClient;
-use flyteidl2::flyteidl::workflow::watch_request::Filter;
-use flyteidl2::flyteidl::workflow::WatchRequest;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {

@@ -1,32 +1,39 @@
 //! Core controller implementation - Pure Rust, no PyO3 dependencies
 //! This module can be used by both Python bindings and standalone Rust binaries
 
-use std::sync::Arc;
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
 
+use flyteidl2::{
+    flyteidl::{
+        common::{ActionIdentifier, RunIdentifier},
+        task::TaskIdentifier,
+        workflow::{
+            enqueue_action_request, queue_service_client::QueueServiceClient,
+            state_service_client::StateServiceClient, EnqueueActionRequest, EnqueueActionResponse,
+            TaskAction, WatchRequest, WatchResponse,
+        },
+    },
+    google,
+};
+use google::protobuf::StringValue;
 use pyo3_async_runtimes::tokio::get_runtime;
-use tokio::sync::mpsc;
-use tokio::sync::oneshot;
-use tokio::time::sleep;
-use tonic::transport::{Certificate, ClientTlsConfig, Endpoint};
-use tonic::Status;
+use tokio::{
+    sync::{mpsc, oneshot},
+    time::sleep,
+};
+use tonic::{
+    transport::{Certificate, ClientTlsConfig, Endpoint},
+    Status,
+};
 use tower::ServiceBuilder;
 use tracing::{debug, error, info, warn};
 
-use crate::action::Action;
-use crate::auth::{AuthConfig, AuthLayer, ClientCredentialsAuthenticator};
-use crate::error::{ControllerError, InformerError};
-use crate::informer::{Informer, InformerCache};
-use flyteidl2::flyteidl::common::{ActionIdentifier, RunIdentifier};
-use flyteidl2::flyteidl::task::TaskIdentifier;
-use flyteidl2::flyteidl::workflow::enqueue_action_request;
-use flyteidl2::flyteidl::workflow::queue_service_client::QueueServiceClient;
-use flyteidl2::flyteidl::workflow::state_service_client::StateServiceClient;
-use flyteidl2::flyteidl::workflow::{
-    EnqueueActionRequest, EnqueueActionResponse, TaskAction, WatchRequest, WatchResponse,
+use crate::{
+    action::Action,
+    auth::{AuthConfig, AuthLayer, ClientCredentialsAuthenticator},
+    error::{ControllerError, InformerError},
+    informer::{Informer, InformerCache},
 };
-use flyteidl2::google;
-use google::protobuf::StringValue;
 
 // Fetches Amazon root CA certificate from Amazon Trust Services
 pub async fn fetch_amazon_root_ca() -> Result<Certificate, ControllerError> {
@@ -114,11 +121,12 @@ pub struct CoreBaseController {
     shared_queue_rx: Arc<tokio::sync::Mutex<mpsc::Receiver<Action>>>,
     failure_rx: Arc<std::sync::Mutex<Option<mpsc::Receiver<InformerError>>>>,
     bg_worker_handle: Arc<std::sync::Mutex<Option<tokio::task::JoinHandle<()>>>>,
+    workers: usize,
 }
 
 impl CoreBaseController {
-    pub fn new_with_auth() -> Result<Arc<Self>, ControllerError> {
-        info!("Creating CoreBaseController from _UNION_EAGER_API_KEY env var (with auth)");
+    pub fn new_with_auth(workers: usize) -> Result<Arc<Self>, ControllerError> {
+        info!("Creating CoreBaseController from _UNION_EAGER_API_KEY env var (with auth) with {} workers", workers);
         // Read from env var and use auth
         let api_key = std::env::var("_UNION_EAGER_API_KEY").map_err(|_| {
             ControllerError::SystemError(
@@ -181,13 +189,14 @@ impl CoreBaseController {
             shared_queue_rx: Arc::new(tokio::sync::Mutex::new(shared_queue_rx)),
             failure_rx: Arc::new(std::sync::Mutex::new(Some(failure_rx))),
             bg_worker_handle: Arc::new(std::sync::Mutex::new(None)),
+            workers,
         };
 
         let real_base_controller = Arc::new(real_base_controller);
-        // Start the background worker
+        // Start the background worker pool
         let controller_clone = real_base_controller.clone();
         let handle = rt.spawn(async move {
-            controller_clone.bg_worker().await;
+            controller_clone.bg_worker_pool().await;
         });
 
         // Store the handle
@@ -196,7 +205,7 @@ impl CoreBaseController {
         Ok(real_base_controller)
     }
 
-    pub fn new_without_auth(endpoint: String) -> Result<Arc<Self>, ControllerError> {
+    pub fn new_without_auth(endpoint: String, workers: usize) -> Result<Arc<Self>, ControllerError> {
         let endpoint_static: &'static str = Box::leak(Box::new(endpoint.clone().into_boxed_str()));
         // shared queue
         let (shared_tx, shared_queue_rx) = mpsc::channel::<Action>(64);
@@ -250,13 +259,14 @@ impl CoreBaseController {
             shared_queue_rx: Arc::new(tokio::sync::Mutex::new(shared_queue_rx)),
             failure_rx: Arc::new(std::sync::Mutex::new(Some(failure_rx))),
             bg_worker_handle: Arc::new(std::sync::Mutex::new(None)),
+            workers,
         };
 
         let real_base_controller = Arc::new(real_base_controller);
-        // Start the background worker
+        // Start the background worker pool
         let controller_clone = real_base_controller.clone();
         let handle = rt.spawn(async move {
-            controller_clone.bg_worker().await;
+            controller_clone.bg_worker_pool().await;
         });
 
         // Store the handle
@@ -265,12 +275,38 @@ impl CoreBaseController {
         Ok(real_base_controller)
     }
 
-    async fn bg_worker(&self) {
+    async fn bg_worker_pool(self: Arc<Self>) {
+        debug!(
+            "Starting controller worker pool with {} workers on thread {:?}",
+            self.workers,
+            std::thread::current().name()
+        );
+
+        let mut handles = Vec::new();
+        for i in 0..self.workers {
+            let controller = Arc::clone(&self);
+            let worker_id = format!("worker-{}", i);
+            let handle = tokio::spawn(async move {
+                controller.bg_worker(worker_id).await;
+            });
+            handles.push(handle);
+        }
+
+        // Wait for all workers to complete
+        for handle in handles {
+            if let Err(e) = handle.await {
+                error!("Worker task failed: {:?}", e);
+            }
+        }
+    }
+
+    async fn bg_worker(&self, worker_id: String) {
         const MIN_BACKOFF_ON_ERR: Duration = Duration::from_millis(100);
         const MAX_RETRIES: u32 = 5;
 
-        debug!(
-            "Launching core controller background task on thread {:?}",
+        info!(
+            "Worker {} started on thread {:?}",
+            worker_id,
             std::thread::current().name()
         );
         loop {
@@ -284,8 +320,8 @@ impl CoreBaseController {
                         .as_ref()
                         .map_or(String::from("<missing>"), |i| i.name.clone());
                     debug!(
-                        "Controller worker processing action {}::{}",
-                        run_name, action.action_id.name
+                        "[{}] Controller worker processing action {}::{}",
+                        worker_id, run_name, action.action_id.name
                     );
 
                     // Drop the mutex guard before processing
@@ -302,12 +338,12 @@ impl CoreBaseController {
 
                             if action.retries > MAX_RETRIES {
                                 error!(
-                                    "Controller failed processing {}::{}, system retries {} crossed threshold {}",
-                                    run_name, action.action_id.name, action.retries, MAX_RETRIES
+                                    "[{}] Controller failed processing {}::{}, system retries {} crossed threshold {}",
+                                    worker_id, run_name, action.action_id.name, action.retries, MAX_RETRIES
                                 );
                                 action.client_err = Some(format!(
-                                    "Controller failed {}::{}, system retries {} crossed threshold {}",
-                                    run_name, action.action_id.name, action.retries, MAX_RETRIES
+                                    "[{}] Controller failed {}::{}, system retries {} crossed threshold {}",
+                                    worker_id, run_name, action.action_id.name, action.retries, MAX_RETRIES
                                 ));
 
                                 // Fire completion event for failed action
@@ -348,11 +384,11 @@ impl CoreBaseController {
                             } else {
                                 // Re-queue the action for retry
                                 info!(
-                                    "Re-queuing action {}::{} for retry, attempt {}/{}",
-                                    run_name, action.action_id.name, action.retries, MAX_RETRIES
+                                    "[{}] Re-queuing action {}::{} for retry, attempt {}/{}",
+                                    worker_id, run_name, action.action_id.name, action.retries, MAX_RETRIES
                                 );
                                 if let Err(send_err) = self.shared_queue.send(action).await {
-                                    error!("Failed to re-queue action for retry: {}", send_err);
+                                    error!("[{}] Failed to re-queue action for retry: {}", worker_id, send_err);
                                 }
                             }
                         }
@@ -439,7 +475,7 @@ impl CoreBaseController {
             .get(&action.get_run_identifier(), &action.parent_action_name)
             .await
         {
-            let _ = informer
+            informer
                 .fire_completion_event(&action.action_id.name)
                 .await?;
         } else {
@@ -489,14 +525,12 @@ impl CoreBaseController {
             .as_ref()
             .and_then(|task| task.task_template.as_ref())
             .and_then(|task_template| task_template.id.as_ref())
-            .and_then(|core_task_id| {
-                Some(TaskIdentifier {
-                    version: core_task_id.version.clone(),
-                    org: core_task_id.org.clone(),
-                    project: core_task_id.project.clone(),
-                    domain: core_task_id.domain.clone(),
-                    name: core_task_id.name.clone(),
-                })
+            .map(|core_task_id| TaskIdentifier {
+                version: core_task_id.version.clone(),
+                org: core_task_id.org.clone(),
+                project: core_task_id.project.clone(),
+                domain: core_task_id.domain.clone(),
+                name: core_task_id.name.clone(),
             })
             .ok_or(ControllerError::RuntimeError(format!(
                 "TaskIdentifier missing from Action {:?}",

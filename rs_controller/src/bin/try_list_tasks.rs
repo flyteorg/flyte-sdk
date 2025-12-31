@@ -3,16 +3,18 @@
 /// Usage:
 ///   _UNION_EAGER_API_KEY=your_api_key cargo run --bin try_list_tasks
 use std::sync::Arc;
+
+use flyte_controller_base::{
+    auth::{AuthConfig, AuthLayer, ClientCredentialsAuthenticator},
+    error::ControllerError,
+};
+use flyteidl2::flyteidl::{
+    common::{ListRequest, ProjectIdentifier},
+    task::{list_tasks_request, task_service_client::TaskServiceClient, ListTasksRequest},
+};
+use tonic::Code;
 use tower::ServiceBuilder;
 use tracing::warn;
-
-use flyte_controller_base::auth::{AuthConfig, AuthLayer, ClientCredentialsAuthenticator};
-use flyte_controller_base::error::ControllerError;
-
-use flyteidl2::flyteidl::common::{ListRequest, ProjectIdentifier};
-use flyteidl2::flyteidl::task::task_service_client::TaskServiceClient;
-use flyteidl2::flyteidl::task::{list_tasks_request, ListTasksRequest};
-use tonic::Code;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -73,7 +75,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             Err(status) => {
                 eprintln!("Error calling gRPC: {}", status);
-                break Err(format!("gRPC error: {}", status).into());
+                break Err(format!("gRPC error: {}", status));
             }
         }
     };
