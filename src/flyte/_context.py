@@ -5,7 +5,7 @@ from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Awaitable, Callable, Optional, ParamSpec, TypeVar
 
 from flyte._logging import logger
-from flyte.models import RawDataPath, TaskContext
+from flyte.models import GroupData, RawDataPath, TaskContext
 
 if TYPE_CHECKING:
     from flyte.report import Report
@@ -26,7 +26,7 @@ class ContextData:
         will be None.
     """
 
-    group_data: Optional[str] = None
+    group_data: Optional[GroupData] = None
     task_context: Optional[TaskContext] = None
     raw_data_path: Optional[RawDataPath] = None
 

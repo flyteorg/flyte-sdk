@@ -252,7 +252,7 @@ class RemoteController(BaseController):
         action = Action.from_task(
             sub_action_id_bytes=sub_action_id_pb.SerializeToString(),
             parent_action_name=current_action_id.name,
-            group_data=str(tctx.group_data) if tctx.group_data else None,
+            group_data=tctx.group_data.name if tctx.group_data else None,
             task_spec_bytes=task_spec.SerializeToString(),
             inputs_uri=inputs_uri,
             run_output_base=tctx.run_base_dir,
@@ -521,7 +521,7 @@ class RemoteController(BaseController):
             inputs_uri=info.inputs_path,
             outputs_uri=outputs_file_path,
             friendly_name=info.name,
-            group_data=tctx.group_data,
+            group_data=tctx.group_data.name if tctx.group_data else None,
             run_output_base=tctx.run_base_dir,
             start_time=info.start_time,
             end_time=info.end_time,
@@ -597,7 +597,7 @@ class RemoteController(BaseController):
         action = Action.from_task(
             sub_action_id_bytes=sub_action_id_pb.SerializeToString(),
             parent_action_name=current_action_id.name,
-            group_data=tctx.group_data,
+            group_data=tctx.group_data.name if tctx.group_data else None,
             task_spec_bytes=_task.pb2.spec.SerializeToString(),
             inputs_uri=inputs_uri,
             run_output_base=tctx.run_base_dir,
