@@ -48,7 +48,7 @@ build-wheels-amd64: dist-dirs
 clean_dist:
 	rm -rf $(DIST_DIRS)/*whl
 
-build-wheels: build-wheels-arm64 build-wheels-amd64 build-wheel-local
+build-wheels: clean_dist build-wheels-arm64 build-wheels-amd64 build-wheel-local
 
 # This is for Mac users, since the other targets won't build macos wheels (only local arch so probably arm64)
 build-wheel-local: dist-dirs

@@ -4,7 +4,6 @@ import asyncio
 import concurrent.futures
 import os
 import threading
-from asyncio import Event
 from collections import defaultdict
 from collections.abc import Callable
 from pathlib import Path
@@ -12,7 +11,6 @@ from typing import Any, DefaultDict, Tuple, TypeVar
 
 from flyte_controller_base import Action, BaseController
 from flyteidl2.common import identifier_pb2, phase_pb2
-from flyteidl2.workflow import run_definition_pb2
 
 import flyte
 import flyte.errors
@@ -374,7 +372,7 @@ class RemoteController(BaseController):
         return fut
 
     async def watch_for_errors(self):
-        """ This pattern works better with utils.run_coros """
+        """This pattern works better with utils.run_coros"""
         await super().watch_for_errors()
 
     async def stop(self):

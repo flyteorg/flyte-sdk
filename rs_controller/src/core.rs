@@ -205,7 +205,10 @@ impl CoreBaseController {
         Ok(real_base_controller)
     }
 
-    pub fn new_without_auth(endpoint: String, workers: usize) -> Result<Arc<Self>, ControllerError> {
+    pub fn new_without_auth(
+        endpoint: String,
+        workers: usize,
+    ) -> Result<Arc<Self>, ControllerError> {
         let endpoint_static: &'static str = Box::leak(Box::new(endpoint.clone().into_boxed_str()));
         // shared queue
         let (shared_tx, shared_queue_rx) = mpsc::channel::<Action>(64);
@@ -385,10 +388,17 @@ impl CoreBaseController {
                                 // Re-queue the action for retry
                                 info!(
                                     "[{}] Re-queuing action {}::{} for retry, attempt {}/{}",
-                                    worker_id, run_name, action.action_id.name, action.retries, MAX_RETRIES
+                                    worker_id,
+                                    run_name,
+                                    action.action_id.name,
+                                    action.retries,
+                                    MAX_RETRIES
                                 );
                                 if let Err(send_err) = self.shared_queue.send(action).await {
-                                    error!("[{}] Failed to re-queue action for retry: {}", worker_id, send_err);
+                                    error!(
+                                        "[{}] Failed to re-queue action for retry: {}",
+                                        worker_id, send_err
+                                    );
                                 }
                             }
                         }
