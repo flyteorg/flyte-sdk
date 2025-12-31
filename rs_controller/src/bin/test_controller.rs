@@ -15,17 +15,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== Flyte Core Controller Test ===\n");
 
     // Try to create a controller
+    let workers = 20; // Default number of workers
     let _controller = if let Ok(api_key) = env::var("_UNION_EAGER_API_KEY") {
-        println!("Using auth from _UNION_EAGER_API_KEY");
+        println!("Using auth from _UNION_EAGER_API_KEY with {} workers", workers);
         // Set the env var back since CoreBaseController::new_with_auth reads it
         env::set_var("_UNION_EAGER_API_KEY", api_key);
-        CoreBaseController::new_with_auth()?
+        CoreBaseController::new_with_auth(workers)?
     } else {
         let endpoint = env::args()
             .nth(1)
             .unwrap_or_else(|| "http://localhost:8090".to_string());
-        println!("Using endpoint: {}", endpoint);
-        CoreBaseController::new_without_auth(endpoint)?
+        println!("Using endpoint: {} with {} workers", endpoint, workers);
+        CoreBaseController::new_without_auth(endpoint, workers)?
     };
 
     println!("✓ Successfully created CoreBaseController!");
