@@ -24,6 +24,7 @@ from ._cache import Cache, CacheRequest
 from ._doc import Documentation
 from ._environment import Environment
 from ._image import Image
+from ._link import Link
 from ._pod import PodTemplate
 from ._resources import Resources
 from ._retry import RetryStrategy
@@ -166,6 +167,7 @@ class TaskEnvironment(Environment):
         max_inline_io_bytes: int = MAX_INLINE_IO_BYTES,
         queue: Optional[str] = None,
         triggers: Tuple[Trigger, ...] | Trigger = (),
+        links: Tuple[Link, ...] | Link = (),
     ) -> Callable[[Callable[P, R]], AsyncFunctionTaskTemplate[P, R, Callable[P, R]]]: ...
 
     @overload
@@ -190,6 +192,7 @@ class TaskEnvironment(Environment):
         max_inline_io_bytes: int = MAX_INLINE_IO_BYTES,
         queue: Optional[str] = None,
         triggers: Tuple[Trigger, ...] | Trigger = (),
+        links: Tuple[Link, ...] | Link = (),
     ) -> Callable[[F], AsyncFunctionTaskTemplate[P, R, F]] | AsyncFunctionTaskTemplate[P, R, F]:
         """
         Decorate a function to be a task.
@@ -209,6 +212,8 @@ class TaskEnvironment(Environment):
          task (e.g., primitives, strings, dicts). Does not apply to files, directories, or dataframes.
         :param triggers: Optional A tuple of triggers to associate with the task. This allows the task to be run on a
          schedule or in response to events. Triggers can be defined using the `flyte.trigger` module.
+        :param links: Optional A tuple of links to associate with the task. Links can be used to provide
+         additional context or information about the task. Links should implement the `flyte.Link` protocol
         :param interruptible: Optional Whether the task is interruptible, defaults to environment setting.
         :param queue: Optional queue name to use for this task. If not set, the environment's queue will be used.
 
@@ -269,6 +274,7 @@ class TaskEnvironment(Environment):
                 queue=queue or self.queue,
                 interruptible=interruptible if interruptible is not None else self.interruptible,
                 triggers=triggers if isinstance(triggers, tuple) else (triggers,),
+                links=links if isinstance(links, tuple) else (links,),
             )
             self._tasks[task_name] = tmpl
             return tmpl

@@ -270,6 +270,16 @@ class Trigger(ToJSONMixin):
     def automation_spec(self) -> common_pb2.TriggerAutomationSpec:
         return self.pb2.automation_spec
 
+    @property
+    def url(self) -> str:
+        client = get_client()
+        return client.console.trigger_url(
+            project=self.pb2.id.name.project,
+            domain=self.pb2.id.name.domain,
+            task_name=self.pb2.id.name.task_name,
+            trigger_name=self.name,
+        )
+
     async def get_details(self) -> TriggerDetails:
         """
         Get detailed information about this trigger.

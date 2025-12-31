@@ -122,12 +122,12 @@ env = flyte.TaskEnvironment(
 )
 
 @env.task
-def train_model(data: flyte.File) -> flyte.File:
+def train_model(data: flyte.io.File) -> flyte.io.File:
     # Runs in configured container with GPU access
     pass
 
 @env.task
-def evaluate_model(model: flyte.File, test_data: flyte.File) -> dict:
+def evaluate_model(model: flyte.io.File, test_data: flyte.io.File) -> dict:
     # Same container configuration, different instance
     pass
 ```
@@ -203,12 +203,12 @@ async def main_task(inputs: list[str]) -> list[str]:
 ```python
 import flyte.remote
 
-# Reference tasks deployed elsewhere
+# Remote tasks deployed elsewhere
 torch_task = flyte.remote.Task.get("torch_env.train_model", auto_version="latest")
 spark_task = flyte.remote.Task.get("spark_env.process_data", auto_version="latest")
 
 @env.task
-async def orchestrator(raw_data: flyte.File) -> flyte.File:
+async def orchestrator(raw_data: flyte.io.File) -> flyte.io.File:
     # Execute Spark job on big data cluster
     processed = await spark_task(raw_data)
 

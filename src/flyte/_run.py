@@ -158,15 +158,18 @@ class _Runner:
         domain = self._domain or cfg.domain
 
         task: TaskTemplate[P, R, F] | TaskDetails
-        if isinstance(obj, LazyEntity):
-            task = await obj.fetch.aio()
+        if isinstance(obj, (LazyEntity, TaskDetails)):
+            if isinstance(obj, LazyEntity):
+                task = await obj.fetch.aio()
+            else:
+                task = obj
             task_spec = task.pb2.spec
             inputs = await convert_from_native_to_inputs(
                 task.interface, *args, custom_context=self._custom_context, **kwargs
             )
             version = task.pb2.task_id.version
             code_bundle = None
-        else:
+        elif isinstance(obj, TaskTemplate):
             task = cast(TaskTemplate[P, R, F], obj)
             if obj.parent_env is None:
                 raise ValueError("Task is not attached to an environment. Please attach the task to an environment")
@@ -220,6 +223,8 @@ class _Runner:
             inputs = await convert_from_native_to_inputs(
                 obj.native_interface, *args, custom_context=self._custom_context, **kwargs
             )
+        else:
+            raise ValueError(f"Not supported Task Type: {type(task)}")
 
         env = self._env_vars or {}
         if env.get("LOG_LEVEL") is None:
@@ -590,12 +595,12 @@ class _Runner:
         :param kwargs: Keyword arguments to pass to the Task
         :return: Run instance or the result of the task
         """
-        from flyte.remote._task import LazyEntity
+        from flyte.remote._task import LazyEntity, TaskDetails
 
-        if isinstance(task, LazyEntity) and self._mode != "remote":
+        if isinstance(task, (LazyEntity, TaskDetails)) and self._mode != "remote":
             raise ValueError("Remote task can only be run in remote mode.")
 
-        if not isinstance(task, TaskTemplate) and not isinstance(task, LazyEntity):
+        if not isinstance(task, TaskTemplate) and not isinstance(task, (LazyEntity, TaskDetails)):
             raise TypeError(f"On Flyte tasks can be run, not generic functions or methods '{type(task)}'.")
 
         if self._mode == "remote":

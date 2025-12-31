@@ -201,6 +201,7 @@ async def extract_download_run_upload(
         image_cache=image_cache,
         interactive_mode=interactive_mode,
     )
+    logger.debug(f"Task {action.name} completed at {t}, with outputs: {outputs}")
     if err is not None:
         path = await upload_error(err.err, output_path)
         logger.error(f"Task {task.name} failed with error: {err}. Uploaded error to {path}")

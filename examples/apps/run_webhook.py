@@ -3,7 +3,7 @@
 # dependencies = [
 #     "fastapi",
 #     "uvicorn",
-#     "flyte>=2.0.0b35"
+#     "flyte",
 # ]
 # ///
 import logging
@@ -17,11 +17,13 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from starlette import status
 
 import flyte
+import flyte.errors
 import flyte.remote as remote
 from flyte.app.extras import FastAPIAppEnvironment
 
 WEBHOOK_API_KEY = os.getenv("WEBHOOK_API_KEY", "test-api-key")
 security = HTTPBearer()
+logger = logging.getLogger(__name__)
 
 
 async def verify_token(
@@ -45,7 +47,7 @@ async def lifespan(app: FastAPI):
     are processed, preventing race conditions and initialization errors.
     """
     # Startup: Initialize Flyte
-    await flyte.init_in_cluster.aio()
+    await flyte.init_in_cluster.aio(org="playground")
     yield
     # Shutdown: Clean up if needed
 
@@ -90,11 +92,15 @@ async def run_task(
     Returns:
         Dictionary containing the launched run information:
         - url: URL to view the run in the Flyte UI
-        - id: Unique identifier for the launched run
+        - name: Name of the run
     """
-    tk = await remote.TaskDetails.fetch(project=project, domain=domain, name=name, version=version)
-    r = await flyte.run.aio(tk, **inputs)
-    return {"url": r.url, "id": r.id}
+    logger.info(f"Running task: {name} {version}, with inputs: {inputs}")
+    try:
+        tk = remote.Task.get(project=project, domain=domain, name=name, version=version)
+        r = await flyte.run.aio(tk, **inputs)
+    except flyte.errors.RemoteTaskError:
+        return HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
+    return {"url": r.url, "name": r.name}
 
 
 env = FastAPIAppEnvironment(
@@ -116,7 +122,19 @@ if __name__ == "__main__":
 
 
 # TO Test
-# curl -X POST "https://nameless-morning-8ff1a.apps.demo.hosted.unionai.cloud/run-task/flytesnacks/development/t1/v1" \
+# curl -X POST "https://<url>/run-task/<project>/development/py-io.dynamic_wf/cacbbbd8447421fc8ff0c32cf5dc177c" \
 #   -H "Authorization: Bearer test-api-key" \
 #   -H "Content-Type: application/json" \
-#   -d '{"input_key": "input_value"}'
+#   -d '{
+#         "workflow_config": {
+#           "x": 1,
+#           "y": 2,
+#           "m": {"x": 1},
+#           "m2": {"y": 1, "m": {"j": 1}}
+#         },
+#         "user_params": {
+#           "y": ""
+#         },
+#         "x": 1,
+#         "y": "Hello"
+#       }'

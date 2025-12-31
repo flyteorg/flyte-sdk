@@ -48,6 +48,6 @@ def alphafold_workflow(sequence_data):
     return visualize_results(prediction)
 ```
 
-**Alternative Approach:** If including all dependencies in the parent task becomes problematic, consider using `reference_tasks`. This approach allows you to reference tasks without requiring their dependencies in the parent environment. See the `reference_tasks` example for more details.
+**Alternative Approach:** If including all dependencies in the parent task becomes problematic, consider using `flyte.remote.Task`. This approach allows you to use remote tasks without requiring their dependencies in the parent environment. See the `  reference_tasks` example for more details.
 
 By properly structuring your environments in the AlphaFold example, you can seamlessly integrate different computational components with varying requirements into a unified workflow.

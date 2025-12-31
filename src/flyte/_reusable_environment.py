@@ -19,7 +19,6 @@ class ReusePolicy:
      the min and max.
     :param idle_ttl: The maximum idle duration for an environment, specified as either seconds (int) or a
         timedelta, after which all replicas in the environment are shutdown.
-        If not set, the default is configured in the backend (can be as low as 90s).
         When a replica remains idle — meaning no tasks are running — for this duration, it will be automatically
         terminated, also referred to as environment idle timeout.
     :param concurrency: The maximum number of tasks that can run concurrently in one instance of the environment.
@@ -65,17 +64,6 @@ class ReusePolicy:
             raise ValueError("scaledown_ttl must be an int (seconds) or a timedelta")
         if self.scaledown_ttl.total_seconds() < 30:
             raise ValueError("scaledown_ttl must be at least 30 seconds")
-
-    @property
-    def ttl(self) -> timedelta | None:
-        """
-        Returns the idle TTL as a timedelta. If idle_ttl is not set, returns the global default.
-        """
-        if self.idle_ttl is None:
-            return None
-        if isinstance(self.idle_ttl, timedelta):
-            return self.idle_ttl
-        return timedelta(seconds=self.idle_ttl)
 
     @property
     def min_replicas(self) -> int:

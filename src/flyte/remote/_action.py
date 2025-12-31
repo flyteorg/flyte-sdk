@@ -4,6 +4,7 @@ import asyncio
 from collections import UserDict
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from functools import cached_property
 from typing import (
     Any,
     AsyncGenerator,
@@ -29,6 +30,8 @@ from rich.progress import Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
 
 from flyte import types
 from flyte._initialize import ensure_client, get_client, get_init_config
+from flyte._interface import default_output_name
+from flyte.models import ActionPhase
 from flyte.remote._common import ToJSONMixin
 from flyte.remote._logs import Logs
 from flyte.syncify import syncify
@@ -136,6 +139,7 @@ class Action(ToJSONMixin):
     async def listall(
         cls,
         for_run_name: str,
+        in_phase: Tuple[ActionPhase | str, ...] | None = None,
         filters: str | None = None,
         sort_by: Tuple[str, Literal["asc", "desc"]] | None = None,
     ) -> Union[Iterator[Action], AsyncIterator[Action]]:
@@ -143,9 +147,10 @@ class Action(ToJSONMixin):
         Get all actions for a given run.
 
         :param for_run_name: The name of the run.
+        :param in_phase: Filter actions by one or more phases.
         :param filters: The filters to apply to the project list.
         :param sort_by: The sorting criteria for the project list, in the format (field, order).
-        :return: An iterator of projects.
+        :return: An iterator of actions.
         """
         ensure_client()
         token = None
@@ -154,12 +159,45 @@ class Action(ToJSONMixin):
             key=sort_by[0],
             direction=(list_pb2.Sort.ASCENDING if sort_by[1] == "asc" else list_pb2.Sort.DESCENDING),
         )
+
+        # Build filters for phase
+        filter_list = []
+        if in_phase:
+            from flyteidl2.common import phase_pb2
+
+            from flyte._logging import logger
+
+            phases = [
+                str(p.to_protobuf_value())
+                if isinstance(p, ActionPhase)
+                else str(phase_pb2.ActionPhase.Value(f"ACTION_PHASE_{p.upper()}"))
+                for p in in_phase
+            ]
+            logger.debug(f"Fetching action phases: {phases}")
+            if len(phases) > 1:
+                filter_list.append(
+                    list_pb2.Filter(
+                        function=list_pb2.Filter.Function.VALUE_IN,
+                        field="phase",
+                        values=phases,
+                    ),
+                )
+            else:
+                filter_list.append(
+                    list_pb2.Filter(
+                        function=list_pb2.Filter.Function.EQUAL,
+                        field="phase",
+                        values=phases[0],
+                    ),
+                )
+
         cfg = get_init_config()
         while True:
             req = list_pb2.ListRequest(
                 limit=100,
                 token=token,
                 sort_by=sort_pb2,
+                filters=filter_list if filter_list else None,
             )
             resp = await get_client().run_service.ListActions(
                 run_service_pb2.ListActionsRequest(
@@ -217,11 +255,14 @@ class Action(ToJSONMixin):
         )
 
     @property
-    def phase(self) -> str:
+    def phase(self) -> ActionPhase:
         """
         Get the phase of the action.
+
+        Returns:
+            The current execution phase as an ActionPhase enum
         """
-        return phase_pb2.ActionPhase.Name(self.pb2.status.phase)
+        return ActionPhase.from_protobuf(self.pb2.status.phase)
 
     @property
     def raw_phase(self) -> phase_pb2.ActionPhase:
@@ -304,13 +345,19 @@ class Action(ToJSONMixin):
         self, cache_data_on_done: bool = False, wait_for: WaitFor = "terminal"
     ) -> AsyncGenerator[ActionDetails, None]:
         """
-        Watch the action for updates. This is a placeholder for watching the action.
+        Watch the action for updates, updating the internal Action state with latest details.
+
+        This method updates both the cached details and the protobuf representation,
+        ensuring that properties like `phase` reflect the current state.
         """
         ad = None
         async for ad in ActionDetails.watch.aio(self.action_id):
             if ad is None:
                 return
             self._details = ad
+            # Update the protobuf with the latest status and metadata
+            self.pb2.status.CopyFrom(ad.pb2.status)
+            self.pb2.metadata.CopyFrom(ad.pb2.metadata)
             yield ad
             if wait_for == "running" and ad.is_running:
                 break
@@ -521,11 +568,14 @@ class ActionDetails(ToJSONMixin):
             await self._cache_data.aio()
 
     @property
-    def phase(self) -> str:
+    def phase(self) -> ActionPhase:
         """
         Get the phase of the action.
+
+        Returns:
+            The current execution phase as an ActionPhase enum
         """
-        return phase_pb2.ActionPhase.Name(self.status.phase)
+        return ActionPhase.from_protobuf(self.status.phase)
 
     @property
     def raw_phase(self) -> phase_pb2.ActionPhase:
@@ -743,3 +793,7 @@ class ActionOutputs(tuple, ToJSONMixin):
         # Normally you'd set instance attributes here,
         # but we've already set `pb2` in `__new__`
         self.pb2 = pb2
+
+    @cached_property
+    def named_outputs(self) -> Dict[str, Any]:
+        return {default_output_name(i): x for i, x in enumerate(self)}
