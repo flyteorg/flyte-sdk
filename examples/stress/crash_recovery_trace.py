@@ -45,6 +45,7 @@ async def main() -> list[int]:
             attempt_number = get_attempt_number()
             # Fail at attempts 0, 1, and 2 at for i = 100, 200, 300 respectively, then succeed
             if i == (attempt_number + 1) * 100 and attempt_number < 3:
+                print(f"Simulating crash for element {i=} and {attempt_number=}", flush=True)
                 raise flyte.errors.RuntimeSystemError(
                     "simulated", f"Simulated failure on attempt {get_attempt_number()} at iteration {i}"
                 )
