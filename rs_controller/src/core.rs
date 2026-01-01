@@ -509,15 +509,15 @@ impl CoreBaseController {
                 "Action {:?} doesn't have a run, can't get action",
                 action_id
             )))?;
-        let informer = self.informer_cache.get_or_create_informer(run, parent_action_name).await;
+        let informer = self
+            .informer_cache
+            .get_or_create_informer(run, parent_action_name)
+            .await;
         let action_name = action_id.name.clone();
         match informer.get_action(action_name).await {
             Some(action) => Ok(Some(action)),
             None => {
-                debug!(
-                    "Action not found getting from action_id: {:?}",
-                    action_id
-                );
+                debug!("Action not found getting from action_id: {:?}", action_id);
                 Ok(None)
             }
         }
