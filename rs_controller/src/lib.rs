@@ -90,6 +90,7 @@ impl BaseController {
         py_fut
     }
 
+    // todo: what happens if we change this to async?
     fn get_action<'py>(
         &self,
         py: Python<'py>,

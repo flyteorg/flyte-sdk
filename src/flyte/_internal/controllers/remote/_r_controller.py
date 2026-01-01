@@ -446,6 +446,7 @@ class RemoteController(BaseController):
                 org=current_action_id.org,
             ),
         )
+
         prev_action = await self.get_action(
             sub_action_id_pb.SerializeToString(),
             current_action_id.name,
@@ -525,6 +526,7 @@ class RemoteController(BaseController):
             run_output_base=tctx.run_base_dir,
             start_time=info.start_time,
             end_time=info.end_time,
+            report_uri=None,
             typed_interface_bytes=typed_interface.SerializeToString() if typed_interface else None,
         )
 

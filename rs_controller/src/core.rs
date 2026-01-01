@@ -501,7 +501,7 @@ impl CoreBaseController {
         &self,
         action_id: ActionIdentifier,
         parent_action_name: &str,
-    ) -> Result<Action, ControllerError> {
+    ) -> Result<Option<Action>, ControllerError> {
         let run = action_id
             .run
             .as_ref()
@@ -509,19 +509,17 @@ impl CoreBaseController {
                 "Action {:?} doesn't have a run, can't get action",
                 action_id
             )))?;
-        if let Some(informer) = self.informer_cache.get(run, parent_action_name).await {
-            let action_name = action_id.name.clone();
-            match informer.get_action(action_name).await {
-                Some(action) => Ok(action),
-                None => Err(ControllerError::RuntimeError(format!(
+        let informer = self.informer_cache.get_or_create_informer(run, parent_action_name).await;
+        let action_name = action_id.name.clone();
+        match informer.get_action(action_name).await {
+            Some(action) => Ok(Some(action)),
+            None => {
+                debug!(
                     "Action not found getting from action_id: {:?}",
                     action_id
-                ))),
+                );
+                Ok(None)
             }
-        } else {
-            Err(ControllerError::BadContext(
-                "Informer not initialized".to_string(),
-            ))
         }
     }
 
