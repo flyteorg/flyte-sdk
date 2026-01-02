@@ -135,6 +135,12 @@ class JSONFormatter(logging.Formatter):
         if getattr(record, "is_flyte_internal", False):
             log_data["is_flyte_internal"] = True
 
+        # Add metric fields if present
+        if getattr(record, "metric_type", None):
+            log_data["metric_type"] = record.metric_type  # type: ignore[attr-defined]
+            log_data["metric_name"] = record.metric_name  # type: ignore[attr-defined]
+            log_data["duration_seconds"] = record.duration_seconds  # type: ignore[attr-defined]
+
         # Add exception info if present
         if record.exc_info:
             log_data["exc_info"] = self.formatException(record.exc_info)
