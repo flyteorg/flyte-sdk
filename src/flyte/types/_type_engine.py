@@ -2125,7 +2125,13 @@ def _register_default_type_transformers():
     TypeEngine.register(BoolTransformer)
     TypeEngine.register(NoneTransformer, [None])
     TypeEngine.register(ListTransformer())
-    TypeEngine.register(UnionTransformer(), [UnionType])
+
+    # In Python 3.14+, types.UnionType and typing.Union are the same object.
+    # UnionTransformer's python_type is already typing.Union, so only add UnionType
+    # as an additional type if it's different from typing.Union.
+    union_transformer = UnionTransformer()
+    additional_union_types = [] if UnionType is union_transformer.python_type else [UnionType]
+    TypeEngine.register(union_transformer, additional_union_types)
     TypeEngine.register(DictTransformer())
     TypeEngine.register(EnumTransformer())
     TypeEngine.register(ProtobufTransformer())
