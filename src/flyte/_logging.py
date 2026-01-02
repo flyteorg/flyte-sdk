@@ -146,7 +146,7 @@ def initialize_logger(
     log_level: int | None = None,
     log_format: LogFormat | None = None,
     enable_rich: bool = False,
-    preserve_root_logger: bool = False,
+    reset_root_logger: bool = False,
 ):
     """
     Initializes the global loggers to the default configuration.
@@ -166,8 +166,8 @@ def initialize_logger(
     use_json = log_format == "json"
     use_rich = enable_rich and not use_json
 
-    preserve_root_logger = preserve_root_logger or os.environ.get("FLYTE_PRESERVE_ROOT_LOGGER") == "1"
-    if not preserve_root_logger:
+    reset_root_logger = reset_root_logger or os.environ.get("FLYTE_reset_root_logger") == "1"
+    if not reset_root_logger:
         _setup_root_logger(use_json=use_json, use_rich=use_rich, log_level=log_level)
     else:
         root_logger = logging.getLogger()

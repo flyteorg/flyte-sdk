@@ -242,7 +242,7 @@ class RunTaskCommand(click.RichCommand):
                 raw_data_path=self.run_args.raw_data_path,
                 service_account=self.run_args.service_account,
                 log_format=obj.log_format,
-                preserve_root_logger=obj.preserve_root_logger,
+                reset_root_logger=obj.reset_root_logger,
             ).run.aio(self.obj, **ctx.params)
             if self.run_args.local:
                 console.print(

@@ -164,7 +164,7 @@ def main(
     insecure: bool,
     verbose: int,
     log_format: LogFormat,
-    preserve_root_logger: bool,
+    reset_root_logger: bool,
     org: str | None,
     config_file: str | None,
     auth_type: str | None = None,
@@ -208,8 +208,8 @@ def main(
     import flyte.config as config
 
     log_level = _verbosity_to_loglevel(verbose)
-    if log_level is not None or log_format != "console" or preserve_root_logger:
-        initialize_logger(log_level=log_level, log_format=log_format, preserve_root_logger=preserve_root_logger)
+    if log_level is not None or log_format != "console" or reset_root_logger:
+        initialize_logger(log_level=log_level, log_format=log_format, reset_root_logger=reset_root_logger)
 
     cfg = config.auto(config_file=config_file)
     if cfg.source:
@@ -218,7 +218,7 @@ def main(
     ctx.obj = CLIConfig(
         log_level=log_level,
         log_format=log_format,
-        preserve_root_logger=preserve_root_logger,
+        reset_root_logger=reset_root_logger,
         endpoint=endpoint,
         insecure=insecure,
         org=org,
