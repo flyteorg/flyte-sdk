@@ -287,6 +287,7 @@ def _setup_root_logger(use_json: bool, use_rich: bool, log_level: int):
     root_handler.setLevel(log_level)
 
     root.addHandler(root_handler)
+    root.setLevel(log_level)
 
 
 def _create_flyte_logger() -> logging.Logger:
