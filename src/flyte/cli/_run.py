@@ -153,6 +153,34 @@ class RunArguments:
         },
     )
 
+    run_project: str | None = field(
+        default=None,
+        metadata={
+            "click.option": click.Option(
+                param_decls=["--run-project"],
+                required=False,
+                type=str,
+                default=None,
+                help="Run the remote task in this project, only applicable when using `deployed-task` subcommand.",
+                show_default=True,
+            )
+        },
+    )
+
+    run_domain: str | None = field(
+        default=None,
+        metadata={
+            "click.option": click.Option(
+                ["--run-domain"],
+                required=False,
+                type=str,
+                default=None,
+                help="Run the remote task in this domain, only applicable when using `deployed-task` subcommand.",
+                show_default=True,
+            )
+        },
+    )
+
     @classmethod
     def from_dict(cls, d: Dict[str, Any]) -> RunArguments:
         modified = {k: v for k, v in d.items() if k in {f.name for f in fields(cls)}}
@@ -174,6 +202,22 @@ class RunTaskCommand(click.RichCommand):
         kwargs.pop("name", None)
         super().__init__(obj_name, *args, **kwargs)
 
+    def _validate_required_params(self, ctx: click.Context) -> None:
+        """
+        Validate that all required parameters are provided.
+        """
+        missing_params = []
+        for param in self.params:
+            if isinstance(param, click.Option) and param.required:
+                param_name = param.name
+                if param_name not in ctx.params or ctx.params[param_name] is None:
+                    missing_params.append((param_name, param.type.get_metavar(param, ctx)))
+
+        if missing_params:
+            raise click.UsageError(
+                f"Missing required parameter(s): {', '.join(f'--{p[0]} (type: {p[1]})' for p in missing_params)}"
+            )
+
     def invoke(self, ctx: click.Context):
         obj: CLIConfig = initialize_config(
             ctx,
@@ -183,6 +227,9 @@ class RunTaskCommand(click.RichCommand):
             tuple(self.run_args.image) or None,
             not self.run_args.no_sync_local_sys_paths,
         )
+
+        # Validate required parameters
+        self._validate_required_params(ctx)
 
         async def _run():
             import flyte
@@ -291,13 +338,29 @@ class TaskPerFileGroup(common.ObjectsPerFileGroup):
         )
 
 
-class RunReferenceTaskCommand(click.RichCommand):
+class RunRemoteTaskCommand(click.RichCommand):
     def __init__(self, task_name: str, run_args: RunArguments, version: str | None, *args, **kwargs):
         self.task_name = task_name
         self.run_args = run_args
         self.version = version
 
         super().__init__(*args, **kwargs)
+
+    def _validate_required_params(self, ctx: click.Context) -> None:
+        """
+        Validate that all required parameters are provided.
+        """
+        missing_params = []
+        for param in self.params:
+            if isinstance(param, click.Option) and param.required:
+                param_name = param.name
+                if param_name not in ctx.params or ctx.params[param_name] is None:
+                    missing_params.append((param_name, param.type))
+
+        if missing_params:
+            raise click.UsageError(
+                f"Missing required parameter(s): {', '.join(f'--{p[0]} (type: {p[1]})' for p in missing_params)}"
+            )
 
     def invoke(self, ctx: click.Context):
         obj: CLIConfig = common.initialize_config(
@@ -309,16 +372,26 @@ class RunReferenceTaskCommand(click.RichCommand):
             sync_local_sys_paths=not self.run_args.no_sync_local_sys_paths,
         )
 
+        # Validate required parameters
+        self._validate_required_params(ctx)
+
         async def _run():
             import flyte.remote
 
             task = flyte.remote.Task.get(self.task_name, version=self.version, auto_version="latest")
             console = common.get_console()
 
+            if self.run_args.run_project or self.run_args.run_domain:
+                console.print(
+                    f"Separate Run project/domain set, using {self.run_args.run_project} and {self.run_args.run_domain}"
+                )
+
             r = await flyte.with_runcontext(
                 copy_style=self.run_args.copy_style,
                 mode="local" if self.run_args.local else "remote",
                 name=self.run_args.name,
+                project=self.run_args.run_project,
+                domain=self.run_args.run_domain,
             ).run.aio(task, **ctx.params)
             if isinstance(r, Run) and r.action is not None:
                 console.print(
@@ -370,7 +443,7 @@ class RunReferenceTaskCommand(click.RichCommand):
         return super().get_params(ctx)
 
 
-class ReferenceEnvGroup(common.GroupBase):
+class RemoteEnvGroup(common.GroupBase):
     def __init__(self, name: str, *args, run_args, env: str, **kwargs):
         super().__init__(*args, **kwargs)
         self.name = name
@@ -381,7 +454,7 @@ class ReferenceEnvGroup(common.GroupBase):
         return _list_tasks(ctx, self.run_args.project, self.run_args.domain, by_task_env=self.env)
 
     def get_command(self, ctx, name):
-        return RunReferenceTaskCommand(
+        return RunRemoteTaskCommand(
             task_name=name,
             run_args=self.run_args,
             name=name,
@@ -390,9 +463,9 @@ class ReferenceEnvGroup(common.GroupBase):
         )
 
 
-class ReferenceTaskGroup(common.GroupBase):
+class RemoteTaskGroup(common.GroupBase):
     """
-    Group that creates a command for each reference task in the current directory that is not __init__.py.
+    Group that creates a command for each remote task in the current directory that is not __init__.py.
     """
 
     def __init__(self, name: str, *args, run_args, tasks: list[str] | None = None, **kwargs):
@@ -401,7 +474,7 @@ class ReferenceTaskGroup(common.GroupBase):
         self.run_args = run_args
 
     def list_commands(self, ctx):
-        # list envs of all reference tasks
+        # list envs of all remote tasks
         envs = []
         for task in _list_tasks(ctx, self.run_args.project, self.run_args.domain):
             env = task.split(".")[0]
@@ -432,37 +505,37 @@ class ReferenceTaskGroup(common.GroupBase):
                 if self._env_is_task(ctx, env):
                     # this handles cases where task names do not have a environment prefix
                     task_name = env
-                    return RunReferenceTaskCommand(
+                    return RunRemoteTaskCommand(
                         task_name=task_name,
                         run_args=self.run_args,
                         name=task_name,
                         version=None,
-                        help=f"Run reference task `{task_name}` from the Flyte backend",
+                        help=f"Run remote task `{task_name}` from the Flyte backend",
                     )
                 else:
-                    return ReferenceEnvGroup(
+                    return RemoteEnvGroup(
                         name=name,
                         run_args=self.run_args,
                         env=env,
-                        help=f"Run reference tasks in the `{env}` environment from the Flyte backend",
+                        help=f"Run remote tasks in the `{env}` environment from the Flyte backend",
                     )
             case env, task, None:
                 task_name = f"{env}.{task}"
-                return RunReferenceTaskCommand(
+                return RunRemoteTaskCommand(
                     task_name=task_name,
                     run_args=self.run_args,
                     name=task_name,
                     version=None,
-                    help=f"Run reference task '{task_name}' from the Flyte backend",
+                    help=f"Run remote task '{task_name}' from the Flyte backend",
                 )
             case env, task, version:
                 task_name = f"{env}.{task}"
-                return RunReferenceTaskCommand(
+                return RunRemoteTaskCommand(
                     task_name=task_name,
                     run_args=self.run_args,
                     version=version,
                     name=f"{task_name}:{version}",
-                    help=f"Run reference task '{task_name}' from the Flyte backend",
+                    help=f"Run remote task '{task_name}' from the Flyte backend",
                 )
             case _:
                 raise click.BadParameter(f"Invalid task name format: {task_name}")
@@ -496,10 +569,10 @@ class TaskFiles(common.FileGroup):
     def get_command(self, ctx, cmd_name):
         run_args = RunArguments.from_dict(ctx.params)
         if cmd_name == RUN_REMOTE_CMD:
-            return ReferenceTaskGroup(
+            return RemoteTaskGroup(
                 name=cmd_name,
                 run_args=run_args,
-                help="Run reference task from the Flyte backend",
+                help="Run remote task from the Flyte backend",
             )
 
         fp = Path(cmd_name)

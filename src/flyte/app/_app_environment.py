@@ -5,7 +5,7 @@ import os
 import re
 import shlex
 from dataclasses import dataclass, field, replace
-from typing import TYPE_CHECKING, Any, List, Literal, Optional, Union
+from typing import TYPE_CHECKING, Any, Callable, List, Literal, Optional, Union
 
 import rich.repr
 
@@ -64,7 +64,10 @@ class AppEnvironment(Environment):
     # queue / cluster_pool
     cluster_pool: str = "default"
 
-    # config: Optional[AppConfigProtocol] = None
+    # private field
+    _server: Callable[[], None] | None = field(init=False, default=None)
+    _on_startup: Callable[[], None] | None = field(init=False, default=None)
+    _on_shutdown: Callable[[], None] | None = field(init=False, default=None)
 
     def _validate_name(self):
         if not APP_NAME_RE.fullmatch(self.name):
@@ -141,6 +144,16 @@ class AppEnvironment(Environment):
         # get instantiated file to keep track of app root directory
         self._app_filename = self._get_app_filename()
 
+        # Capture the frame where this environment was instantiated
+        # This helps us find the module where the app variable is defined
+        frame = inspect.currentframe()
+        if frame and frame.f_back:
+            # Go up the call stack to find the user's module
+            # Skip the dataclass __init__ frame
+            caller_frame = frame.f_back
+            if caller_frame and caller_frame.f_back:
+                self._caller_frame = inspect.getframeinfo(caller_frame.f_back)
+
     def container_args(self, serialize_context: SerializationContext) -> List[str]:
         if self.args is None:
             return []
@@ -158,9 +171,48 @@ class AppEnvironment(Environment):
         serialized_parameters = SerializableParameterCollection.from_parameters(parameter_overrides or self.parameters)
         return serialized_parameters.to_transport
 
+    def on_startup(self, fn: Callable[..., None]) -> Callable[..., None]:
+        """
+        Decorator to define the startup function for the app environment.
+
+        This function is called before the server function is called.
+
+        The decorated function can be a sync or async function, and accepts input
+        parameters based on the Parameters defined in the AppEnvironment
+        definition.
+        """
+        self._on_startup = fn
+        return self._on_startup
+
+    def server(self, fn: Callable[..., None]) -> Callable[..., None]:
+        """
+        Decorator to define the server function for the app environment.
+
+        This decorated function can be a sync or async function, and accepts input
+        parameters based on the Parameters defined in the AppEnvironment
+        definition.
+        """
+        self._server = fn
+        return self._server
+
+    def on_shutdown(self, fn: Callable[..., None]) -> Callable[..., None]:
+        """
+        Decorator to define the shutdown function for the app environment.
+
+        This function is called after the server function is called.
+
+        This decorated function can be a sync or async function, and accepts input
+        parameters based on the Parameters defined in the AppEnvironment
+        definition.
+        """
+        self._on_shutdown = fn
+        return self._on_shutdown
+
     def container_cmd(
         self, serialize_context: SerializationContext, parameter_overrides: list[Parameter] | None = None
     ) -> List[str]:
+        from flyte._internal.resolvers.app_env import AppEnvResolver
+
         if self.command is None:
             # Default command
             version = serialize_context.version
@@ -196,6 +248,25 @@ class AppEnvironment(Environment):
                 cmd.append("--parameters")
                 cmd.append(self._serialize_parameters(parameter_overrides))
 
+            # Only add resolver args if _caller_frame is set and we can extract the module
+            # (i.e., app was created in a module and can be found)
+            if self._caller_frame is not None:
+                assert serialize_context.root_dir is not None
+                try:
+                    _app_env_resolver = AppEnvResolver()
+                    loader_args = _app_env_resolver.loader_args(self, serialize_context.root_dir)
+                    cmd = [
+                        *cmd,
+                        *[
+                            "--resolver",
+                            _app_env_resolver.import_path,
+                            "--resolver-args",
+                            loader_args,
+                        ],
+                    ]
+                except RuntimeError:
+                    # If we can't find the app in the module (e.g., in tests), skip resolver args
+                    pass
             return [*cmd, "--"]
         elif isinstance(self.command, str):
             return shlex.split(self.command)

@@ -323,3 +323,43 @@ def test_custom_env_vars_preserved():
     assert app.env_vars["MY_VAR"] == "my_value"
     # Should also have the model loader env vars
     assert "FLYTE_MODEL_LOADER_LOCAL_MODEL_PATH" in app.env_vars
+
+
+# Tests for server, on_startup, and on_shutdown validation
+
+
+def _create_sglang_app_with_lifecycle_field(field_name, field_value):
+    """Helper to create a SGLangAppEnvironment instance with a lifecycle field set before __post_init__."""
+    app = object.__new__(SGLangAppEnvironment)
+    app.name = "test-app"
+    app.model_path = "s3://bucket/model"
+    app.model_id = "test-model"
+    app.port = 8080
+    app.type = "SGLang"
+    app.extra_args = ""
+    app.stream_model = True
+    app.image = DEFAULT_SGLANG_IMAGE
+    app._model_mount_path = "/root/flyte"
+    setattr(app, field_name, field_value)
+    return app
+
+
+def test_server_decorator_raises_error():
+    """Test that setting _server raises ValueError in __post_init__."""
+    app = _create_sglang_app_with_lifecycle_field("_server", lambda: None)
+    with pytest.raises(ValueError, match="server function cannot be set for SGLangAppEnvironment"):
+        SGLangAppEnvironment.__post_init__(app)
+
+
+def test_on_startup_decorator_raises_error():
+    """Test that setting _on_startup raises ValueError in __post_init__."""
+    app = _create_sglang_app_with_lifecycle_field("_on_startup", lambda: None)
+    with pytest.raises(ValueError, match="on_startup function cannot be set for SGLangAppEnvironment"):
+        SGLangAppEnvironment.__post_init__(app)
+
+
+def test_on_shutdown_decorator_raises_error():
+    """Test that setting _on_shutdown raises ValueError in __post_init__."""
+    app = _create_sglang_app_with_lifecycle_field("_on_shutdown", lambda: None)
+    with pytest.raises(ValueError, match="on_shutdown function cannot be set for SGLangAppEnvironment"):
+        SGLangAppEnvironment.__post_init__(app)

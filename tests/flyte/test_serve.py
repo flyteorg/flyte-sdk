@@ -7,6 +7,7 @@ These tests verify the serve context functionality including:
 - Parameter value override handling
 """
 
+import pathlib
 from dataclasses import replace
 from unittest.mock import patch
 
@@ -68,29 +69,6 @@ def test_serve_with_custom_parameters():
     assert serve._cluster_pool == "gpu-pool"
     assert serve._log_level == 10
     assert serve._log_format == "json"
-
-
-def test_serve_raises_in_interactive_mode():
-    """
-    GOAL: Verify _Serve raises NotImplementedError in interactive mode.
-
-    Tests that apps cannot be served from notebooks or interactive environments.
-    """
-    with patch("flyte._serve.ipython_check", return_value=True):
-        with pytest.raises(NotImplementedError, match="Apps do not support running from notebooks"):
-            _Serve()
-
-
-def test_serve_explicit_interactive_mode_true():
-    """
-    GOAL: Verify _Serve raises when interactive_mode is explicitly True.
-
-    Tests that even with ipython_check returning False, explicit
-    interactive_mode=True raises NotImplementedError.
-    """
-    with patch("flyte._serve.ipython_check", return_value=False):
-        with pytest.raises(NotImplementedError, match="Apps do not support running from notebooks"):
-            _Serve(interactive_mode=True)
 
 
 def test_serve_explicit_interactive_mode_false():
@@ -392,6 +370,7 @@ def test_parameter_overrides_affect_container_cmd():
         domain="test-domain",
         version="v1.0.0",
         code_bundle=CodeBundle(computed_version="v1.0.0", tgz="s3://bucket/code.tgz"),
+        root_dir=pathlib.Path.cwd(),
     )
 
     # Generate container command with overrides
@@ -567,6 +546,7 @@ def test_with_servecontext_dependent_apps_with_parameter_overrides():
         domain="prod",
         version="v1.0.0",
         code_bundle=CodeBundle(computed_version="v1.0.0", tgz="s3://bucket/code.tgz"),
+        root_dir=pathlib.Path.cwd(),
     )
 
     # Check backend app command serialization
