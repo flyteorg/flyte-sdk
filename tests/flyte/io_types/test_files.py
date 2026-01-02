@@ -1,8 +1,9 @@
-# from flytekit import dynamic, kwtypes, task, workflow
+from __future__ import annotations
 
 import filecmp
 import os
 import tempfile
+from typing import Optional
 
 import pandas as pd
 import pytest
@@ -95,19 +96,29 @@ async def test_task_write_file_streaming(ctx_with_test_raw_data_path):
     flyte.init()
 
     # Simulate writing a file by streaming it directly to blob storage
-    async def my_task() -> File[pd.DataFrame]:
+    async def my_task(
+        file_name: Optional[str] = None,
+    ) -> File[pd.DataFrame]:
         df = pd.DataFrame({"col1": [1, 2], "col2": [3, 4]})
-        file = File.new_remote()
+        file = File.new_remote(file_name=file_name)
         with file.open_sync("wb") as fh:
             df.to_csv(fh, index=False)
         return file
 
-    file = await my_task()
-    assert file.hash is None
-    async with file.open() as f:
-        content = await f.read()
-    content = content.decode("utf-8")
-    assert "col1,col2" in content
+    file_names = [None, "data.csv"]
+    for file_name in file_names:
+        file = await my_task(file_name=file_name)
+        _, ext = os.path.splitext(os.path.basename(file.path))
+        if file_name is None:
+            assert len(ext) == 0
+        else:
+            assert len(ext) > 0
+
+        assert file.hash is None
+        async with file.open() as f:
+            content = await f.read()
+        content = content.decode("utf-8")
+        assert "col1,col2" in content
 
 
 @pytest.mark.sandbox

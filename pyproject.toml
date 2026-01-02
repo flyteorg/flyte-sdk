@@ -10,6 +10,7 @@ dependencies = [
     "click>=8.2.1",
     "flyteidl>=1.15.4b0,<2.0.0",
     "cloudpickle>=3.1.1",
+    "docstring_parser>=0.16",
     "fsspec>=2025.3.0",
     "grpcio>=1.71.0",
     "obstore>=0.7.3",
@@ -23,14 +24,16 @@ dependencies = [
     "toml>=0.10.2",
     "async-lru>=2.0.5",
     "mashumaro",
-    "dataclasses_json", # TODO: remove this dependency once we remove dataclasses_json from the code
     "aiolimiter>=1.2.1",
-    "flyteidl2==2.0.0a10",
+    "flyteidl2==2.0.0",
+    "packaging",
 ]
 
 [project.scripts]
 flyte = "flyte.cli.main:main"
 a0 = "flyte._bin.runtime:main"
+fserve = "flyte._bin.serve:main"
+c0 = "flyte._bin.connect:main"
 
 [project.entry-points."keyring.backends"]
 flyte_keyring_file = "flyte._keyring.file"
@@ -43,12 +46,18 @@ build-backend = "setuptools.build_meta"
 aiosqlite = [
     "aiosqlite>=0.21.0",
 ]
+connector = [
+    "grpcio-health-checking",
+    "httpx",
+    "prometheus-client",
+]
 
 [dependency-groups]
 dev = [
     "build>=1.2.2.post1",
     "mock>=5.2.0",
     "pytest>=8.3.5",
+    "pytest-xdist",
     "pytest-asyncio>=0.26.0",
     "pytest-benchmark>=5.1.0",
     "ruff>=0.11.0",
@@ -131,13 +140,6 @@ ignore = ["PGH003", "PLC0415", "ASYNC210", "FURB122"]
 [tool.ruff.lint.per-file-ignores]
 "examples/*" = ["E402"]
 
-[tool.uv]
-dev-dependencies = [
-    "pytest>=8.3.5",
-]
-
-[tool.uv.sources]
-flyteidl2 = { git = "https://github.com/flyteorg/flyte.git", subdirectory = "gen/python", rev = "v2" }
 
 [tool.mypy]
 disable_error_code = ["import-untyped"]

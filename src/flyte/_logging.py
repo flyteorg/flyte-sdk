@@ -1,13 +1,24 @@
 from __future__ import annotations
 
+import json
 import logging
 import os
-from typing import Optional
+from datetime import datetime
+from typing import Literal, Optional
 
 import flyte
 
 from ._tools import ipython_check
 
+LogFormat = Literal["console", "json"]
+_LOG_LEVEL_MAP = {
+    "critical": logging.CRITICAL,  # 50
+    "error": logging.ERROR,  # 40
+    "warning": logging.WARNING,  # 30
+    "warn": logging.WARNING,  # 30
+    "info": logging.INFO,  # 20
+    "debug": logging.DEBUG,  # 10
+}
 DEFAULT_LOG_LEVEL = logging.WARNING
 
 
@@ -30,14 +41,28 @@ def is_rich_logging_disabled() -> bool:
 
 
 def get_env_log_level() -> int:
-    return int(os.environ.get("LOG_LEVEL", DEFAULT_LOG_LEVEL))
+    value = os.getenv("LOG_LEVEL")
+    if value is None:
+        return DEFAULT_LOG_LEVEL
+    # Case 1: numeric value ("10", "20", "5", etc.)
+    if value.isdigit():
+        return int(value)
+
+    # Case 2: named log level ("info", "debug", ...)
+    if value.lower() in _LOG_LEVEL_MAP:
+        return _LOG_LEVEL_MAP[value.lower()]
+
+    return DEFAULT_LOG_LEVEL
 
 
-def log_format_from_env() -> str:
+def log_format_from_env() -> LogFormat:
     """
     Get the log format from the environment variable.
     """
-    return os.environ.get("LOG_FORMAT", "json")
+    format_str = os.environ.get("LOG_FORMAT", "console")
+    if format_str not in ("console", "json"):
+        return "console"
+    return format_str  # type: ignore[return-value]
 
 
 def _get_console():
@@ -86,12 +111,48 @@ def get_rich_handler(log_level: int) -> Optional[logging.Handler]:
     return handler
 
 
-def initialize_logger(log_level: int = get_env_log_level(), enable_rich: bool = False):
+class JSONFormatter(logging.Formatter):
+    """
+    Formatter that outputs JSON strings for each log record.
+    """
+
+    def format(self, record: logging.LogRecord) -> str:
+        log_data = {
+            "timestamp": datetime.fromtimestamp(record.created).isoformat(),
+            "level": record.levelname,
+            "logger": record.name,
+            "message": record.getMessage(),
+            "filename": record.filename,
+            "lineno": record.lineno,
+            "funcName": record.funcName,
+        }
+
+        # Add context fields if present
+        if getattr(record, "run_name", None):
+            log_data["run_name"] = record.run_name  # type: ignore[attr-defined]
+        if getattr(record, "action_name", None):
+            log_data["action_name"] = record.action_name  # type: ignore[attr-defined]
+        if getattr(record, "is_flyte_internal", False):
+            log_data["is_flyte_internal"] = True
+
+        # Add exception info if present
+        if record.exc_info:
+            log_data["exc_info"] = self.formatException(record.exc_info)
+
+        return json.dumps(log_data)
+
+
+def initialize_logger(log_level: int | None = None, log_format: LogFormat | None = None, enable_rich: bool = False):
     """
     Initializes the global loggers to the default configuration.
     When enable_rich=True, upgrades to Rich handler for local CLI usage.
     """
     global logger  # noqa: PLW0603
+
+    if log_level is None:
+        log_level = get_env_log_level()
+    if log_format is None:
+        log_format = log_format_from_env()
 
     # Clear existing handlers to reconfigure
     root = logging.getLogger()
@@ -100,9 +161,16 @@ def initialize_logger(log_level: int = get_env_log_level(), enable_rich: bool = 
     flyte_logger = logging.getLogger("flyte")
     flyte_logger.handlers.clear()
 
+    # Determine log format (JSON takes precedence over Rich)
+    use_json = log_format == "json"
+    use_rich = enable_rich and not use_json
+
     # Set up root logger handler
-    root_handler = None
-    if enable_rich:
+    root_handler: logging.Handler | None = None
+    if use_json:
+        root_handler = logging.StreamHandler()
+        root_handler.setFormatter(JSONFormatter())
+    elif use_rich:
         root_handler = get_rich_handler(log_level)
 
     if root_handler is None:
@@ -110,11 +178,16 @@ def initialize_logger(log_level: int = get_env_log_level(), enable_rich: bool = 
 
     # Add context filter to root handler for all logging
     root_handler.addFilter(ContextFilter())
+    root_handler.setLevel(logging.DEBUG)
     root.addHandler(root_handler)
 
     # Set up Flyte logger handler
-    flyte_handler = None
-    if enable_rich:
+    flyte_handler: logging.Handler | None = None
+    if use_json:
+        flyte_handler = logging.StreamHandler()
+        flyte_handler.setLevel(log_level)
+        flyte_handler.setFormatter(JSONFormatter())
+    elif use_rich:
         flyte_handler = get_rich_handler(log_level)
 
     if flyte_handler is None:
@@ -165,13 +238,20 @@ class ContextFilter(logging.Filter):
     Applied globally to capture context for both user and Flyte internal logging.
     """
 
-    def filter(self, record):
+    def filter(self, record: logging.LogRecord) -> bool:
         from flyte._context import ctx
 
         c = ctx()
         if c:
             action = c.action
+            # Add as attributes for structured logging (JSON)
+            record.run_name = action.run_name
+            record.action_name = action.name
+            # Also modify message for console/Rich output
             record.msg = f"[{action.run_name}][{action.name}] {record.msg}"
+        else:
+            record.run_name = None
+            record.action_name = None
         return True
 
 
@@ -180,8 +260,12 @@ class FlyteInternalFilter(logging.Filter):
     A logging filter that adds [flyte] prefix to internal Flyte logging only.
     """
 
-    def filter(self, record):
-        if record.name.startswith("flyte"):
+    def filter(self, record: logging.LogRecord) -> bool:
+        is_internal = record.name.startswith("flyte")
+        # Add as attribute for structured logging (JSON)
+        record.is_flyte_internal = is_internal
+        # Also modify message for console/Rich output
+        if is_internal:
             record.msg = f"[flyte] {record.msg}"
         return True
 
@@ -198,6 +282,7 @@ def _setup_root_logger():
     handler = logging.StreamHandler()
     # Add context filter to ALL logging
     handler.addFilter(ContextFilter())
+    handler.setLevel(logging.DEBUG)
 
     # Simple formatter since filters handle prefixes
     root.addHandler(handler)

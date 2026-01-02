@@ -19,7 +19,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v1
         with:
-          python-version: "3.x"
+          python-version: "3.13"
       - name: Install uv
         uses: astral-sh/setup-uv@v6
         id: setup-uv
@@ -48,7 +48,7 @@ jobs:
             echo "No tagged version found, exiting"
             exit 1
           fi
-          sleep 120
+          sleep 300
           LINK="https://pypi.org/project/flyte/${VERSION}/"
           for i in {1..60}; do
             result=$(curl -L -I -s -f ${LINK})
@@ -73,6 +73,9 @@ jobs:
           - "plugins/openai"
           - "plugins/dask"
           - "plugins/pytorch"
+          - "plugins/connectors"
+          - "plugins/sglang"
+          - "plugins/vllm"
     steps:
       - uses: actions/checkout@v4
         with:
@@ -80,7 +83,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v1
         with:
-          python-version: "3.x"
+          python-version: "3.13"
       - name: Install uv
         uses: astral-sh/setup-uv@v6
         id: setup-uv
@@ -100,9 +103,9 @@ jobs:
           TWINE_USERNAME: ${{ secrets.PYPI_USERNAME }}
           TWINE_PASSWORD: ${{ secrets.PYPI_PASSWORD }}
         run: |
-          uv run python -m twine upload --verbose dist/*
+          uv run --prerelease allow python -m twine upload --verbose dist/*
 
-  build-and-push-docker-images:
+  build-and-push-flyte-docker-images:
     needs: flyte-pypi
     name: Flyte image for Python ${{ matrix.python-version }}
     runs-on: ubuntu-latest
@@ -142,9 +145,15 @@ jobs:
       - name: Build wheel
         run: |
           make dist
-      - name: Build and push the images
+      - name: Build and push the flyte image
         env:
           FLYTE_DOCKER_BUILDER_CACHE_FROM: "type=gha"
           FLYTE_DOCKER_BUILDER_CACHE_TO: "type=gha,mode=max"
         run: |
-          uv run python maint_tools/build_default_image.py
+          uv run python maint_tools/build_default_image.py --type flyte
+      - name: Build and push the connector image
+        env:
+          FLYTE_DOCKER_BUILDER_CACHE_FROM: "type=gha"
+          FLYTE_DOCKER_BUILDER_CACHE_TO: "type=gha,mode=max"
+        run: |
+          uv run python maint_tools/build_default_image.py --type connector

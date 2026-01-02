@@ -10,6 +10,7 @@ from flyteidl2.core import execution_pb2
 from flyteidl2.task import common_pb2
 
 import flyte.storage as storage
+from flyte._logging import logger
 from flyte.models import PathRewrite
 
 from .convert import Inputs, Outputs, _clean_error_code
@@ -69,6 +70,7 @@ async def upload_outputs(outputs: Outputs, output_path: str, max_bytes: int = -1
         )
     output_uri = outputs_path(output_path)
     await storage.put_stream(data_iterable=outputs.proto_outputs.SerializeToString(), to_path=output_uri)
+    logger.debug(f"Uploaded {output_uri} to {output_path}")
 
 
 async def upload_error(err: execution_pb2.ExecutionError, output_prefix: str) -> str:
@@ -100,7 +102,6 @@ async def load_inputs(path: str, max_bytes: int = -1, path_rewrite_config: PathR
     :return: Inputs object
     """
     lm = common_pb2.Inputs()
-
     if max_bytes == -1:
         proto_str = b"".join([c async for c in storage.get_stream(path=path)])
     else:

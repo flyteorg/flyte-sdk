@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import inspect
 import time
 from dataclasses import dataclass
@@ -127,7 +129,7 @@ async def test_generate_cache_key_hash():
 
     task_name = "test_task"
     cache_key = convert.generate_cache_key_hash(task_name, inputs_hash, typed_interface, "v1", [], inputs.proto_inputs)
-    assert cache_key == "5rqRLYOr9qd84OWUkfS0lT94IZ/Q0kH00c5LMKgsLNk="
+    assert cache_key == "3QOOTUfLNFxjNa8EXclvzJBto16syFFChVulyOJ2Ops="
 
 
 # Run 10 times to make sure ordering is consistent
@@ -155,7 +157,7 @@ async def test_generate_cache_key_hash_consistency(_):
 
     task_name = "test_task"
     cache_key = convert.generate_cache_key_hash(task_name, inputs_hash, typed_interface, "v1", [], inputs.proto_inputs)
-    assert cache_key == "gKUZZV2XwUZbIUl9tfLC7+n8tREvPR9jq9vzPEHqOKg="
+    assert cache_key == "nlphRTBV/ONbns4FPKlk7yOSqXGwl9qARlb5ommqKJs="
 
 
 @pytest.mark.asyncio

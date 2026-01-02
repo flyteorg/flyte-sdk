@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import glob
 import gzip
 import hashlib
 import importlib.util
@@ -74,9 +75,9 @@ def compress_scripts(source_path: str, destination: str, modules: List[ModuleTyp
 # intended to be passed as a filter to tarfile.add
 # https://docs.python.org/3/library/tarfile.html#tarfile.TarFile.add
 def tar_strip_file_attributes(tar_info: tarfile.TarInfo) -> tarfile.TarInfo:
-    # set time to epoch timestamp 0, aka 00:00:00 UTC on 1 January 1980
+    # set time to epoch timestamp 0, aka 00:00:00 UTC on 1 January 1981
     # note that when extracting this tarfile, this time will be shown as the modified date
-    tar_info.mtime = datetime(1980, 1, 1, tzinfo=timezone.utc).timestamp()
+    tar_info.mtime = datetime(1981, 1, 1, tzinfo=timezone.utc).timestamp()
 
     # user/group info
     tar_info.uid = 0
@@ -134,13 +135,42 @@ def ls_files(
     return all_files, digest
 
 
+def ls_relative_files(relative_paths: list[str], source_path: pathlib.Path) -> tuple[list[str], str]:
+    relative_paths = list(relative_paths)
+    relative_paths.sort()
+    hasher = hashlib.md5()
+
+    all_files: list[str] = []
+    for file in relative_paths:
+        path = source_path / file
+        if path.is_dir():
+            # Filter out directories, only include files
+            all_files.extend([str(p) for p in path.glob("**/*") if p.is_file()])
+        elif path.is_file():
+            all_files.append(str(path))
+        else:
+            glob_files = glob.glob(str(path))
+            if glob_files:
+                # Filter out directories from glob results
+                all_files.extend([str(f) for f in glob_files if pathlib.Path(f).is_file()])
+            else:
+                raise ValueError(f"File {path} is not a valid file, directory, or glob pattern")
+
+    for p in all_files:
+        _filehash_update(p, hasher)
+        _pathhash_update(p, hasher)
+
+    digest = hasher.hexdigest()
+    return all_files, digest
+
+
 def _filehash_update(path: Union[os.PathLike, str], hasher: hashlib._Hash) -> None:
     blocksize = 65536
     with open(path, "rb") as f:
-        bytes = f.read(blocksize)
-        while bytes:
-            hasher.update(bytes)
-            bytes = f.read(blocksize)
+        chunk = f.read(blocksize)
+        while chunk:
+            hasher.update(chunk)
+            chunk = f.read(blocksize)
 
 
 def _pathhash_update(path: Union[os.PathLike, str], hasher: hashlib._Hash) -> None:
@@ -193,15 +223,15 @@ def list_all_files(source_path: pathlib.Path, deref_symlinks, ignore_group: Opti
 def _file_is_in_directory(file: str, directory: str) -> bool:
     """Return True if file is in directory and in its children."""
     try:
-        return os.path.commonpath([file, directory]) == directory
-    except ValueError as e:
-        # ValueError is raised by windows if the paths are not from the same drive
-        logger.debug(f"{file} and {directory} are not in the same drive: {e!s}")
+        return pathlib.Path(file).resolve().is_relative_to(pathlib.Path(directory).resolve())
+    except OSError as e:
+        # OSError can be raised if paths cannot be resolved (permissions, broken symlinks, etc.)
+        logger.debug(f"Failed to resolve paths for {file} and {directory}: {e!s}")
         return False
 
 
 def list_imported_modules_as_files(source_path: str, modules: List[ModuleType]) -> List[str]:
-    """Copies modules into destination that are in modules. The module files are copied only if:
+    """Lists the files of modules that have been loaded.  The files are only included if:
 
     1. Not a site-packages. These are installed packages and not user files.
     2. Not in the sys.base_prefix or sys.prefix. These are also installed and not user files.
@@ -242,6 +272,12 @@ def list_imported_modules_as_files(source_path: str, modules: List[ModuleType]) 
             # Only upload files where the module file in the source directory
             # print log line for files that have common ancestor with source_path, but not in it.
             logger.debug(f"{mod_file} is not in {source_path}")
+            continue
+
+        if not pathlib.Path(mod_file).is_file():
+            # Some modules have a __file__ attribute that are relative to the base package. Let's skip these,
+            # can add more rigorous logic to really pull out the correct file location if we need to.
+            logger.debug(f"Skipping {mod_file} from {mod.__name__} because it is not a file")
             continue
 
         files.add(mod_file)

@@ -25,6 +25,33 @@ from typing import (
 from flyte._logging import logger
 
 P = ParamSpec("P")
+
+# Track loops that have already had the gRPC error handler installed
+_configured_loops: set[int] = set()
+_configured_loops_lock = threading.Lock()
+
+
+def _ensure_grpc_error_handler_installed() -> None:
+    """
+    Install the gRPC error handler on the current event loop if not already done.
+    Uses a thread-safe set to track which loops have been configured.
+    """
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return  # No running loop, nothing to do
+
+    loop_id = id(loop)
+    with _configured_loops_lock:
+        if loop_id in _configured_loops:
+            return  # Already configured
+        _configured_loops.add(loop_id)
+
+    import flyte.errors
+
+    loop.set_exception_handler(flyte.errors.silence_grpc_polling_error)
+
+
 R_co = TypeVar("R_co", covariant=True)
 T = TypeVar("T")
 
@@ -64,10 +91,13 @@ class _BackgroundLoop:
         atexit.register(self.stop)
 
     def _run(self):
-        import flyte.errors
+        # Delay import to avoid deadlock during module initialization
+        def exception_handler(loop, context):
+            import flyte.errors
+            flyte.errors.silence_grpc_polling_error(loop, context)
 
         # Set the exception handler to silence specific gRPC polling errors
-        self.loop.set_exception_handler(flyte.errors.silence_grpc_polling_error)
+        self.loop.set_exception_handler(exception_handler)
         asyncio.set_event_loop(self.loop)
         self.loop.run_forever()
 
@@ -150,6 +180,11 @@ class _BackgroundLoop:
                 yield r
             return
 
+        # Install the gRPC error handler on the caller's event loop as well.
+        # This is needed because gRPC's async polling events may be delivered to
+        # the caller's loop (e.g., FastAPI's event loop) when using .aio().
+        _ensure_grpc_error_handler_installed()
+
         while True:
             try:
                 # same replacement here for the async path
@@ -186,6 +221,11 @@ class _BackgroundLoop:
             # If we are already in the background loop, just run the coroutine
             return await coro
         try:
+            # Install the gRPC error handler on the caller's event loop as well.
+            # This is needed because gRPC's async polling events may be delivered to
+            # the caller's loop (e.g., FastAPI's event loop) when using .aio().
+            _ensure_grpc_error_handler_installed()
+
             # Otherwise, run it in the background loop and wait for the result
             future: concurrent.futures.Future[R_co] = asyncio.run_coroutine_threadsafe(coro, self.loop)
             # Wrap the future in an asyncio Future to await it in an async context
@@ -333,9 +373,7 @@ class Syncify:
         self._bg_loop = _BackgroundLoop(name=name)
 
     @overload
-    def __call__(self, func: Callable[P, Awaitable[R_co]]) -> Any: ...
-
-    # def __call__(self, func: Callable[P, Awaitable[R_co]]) -> SyncFunction[P, R_co]: ...
+    def __call__(self, func: Callable[P, Awaitable[R_co]]) -> SyncFunction[P, R_co]: ...
 
     @overload
     def __call__(self, func: Callable[P, Iterator[R_co] | AsyncIterator[R_co]]) -> SyncGenFunction[P, R_co]: ...

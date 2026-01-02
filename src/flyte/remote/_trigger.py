@@ -270,6 +270,16 @@ class Trigger(ToJSONMixin):
     def automation_spec(self) -> common_pb2.TriggerAutomationSpec:
         return self.pb2.automation_spec
 
+    @property
+    def url(self) -> str:
+        client = get_client()
+        return client.console.trigger_url(
+            project=self.pb2.id.name.project,
+            domain=self.pb2.id.name.domain,
+            task_name=self.pb2.id.name.task_name,
+            trigger_name=self.name,
+        )
+
     async def get_details(self) -> TriggerDetails:
         """
         Get detailed information about this trigger.
@@ -284,11 +294,11 @@ class Trigger(ToJSONMixin):
         return self.pb2.active
 
     def _rich_automation(self, automation: common_pb2.TriggerAutomationSpec):
-        if automation.type == common_pb2.TriggerAutomationSpec.TYPE_NONE:
+        if automation.type == common_pb2.TriggerAutomationSpec.type.TYPE_NONE:
             yield "none", None
-        elif automation.type == common_pb2.TriggerAutomationSpec.TYPE_SCHEDULE:
-            if automation.schedule.cron_expression is not None:
-                yield "cron", automation.schedule.cron_expression
+        elif automation.type == common_pb2.TriggerAutomationSpec.type.TYPE_SCHEDULE:
+            if automation.schedule.cron is not None:
+                yield "cron", automation.schedule.cron
             elif automation.schedule.rate is not None:
                 r = automation.schedule.rate
                 yield (
