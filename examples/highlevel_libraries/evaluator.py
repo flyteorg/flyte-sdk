@@ -104,7 +104,7 @@ class AggregationMetric(Protocol):
         ...
 
 
-@env.task
+@env.task(short_name="single-evaluation")
 async def _run_single_eval(
     eval_func: EvaluationMetric, dataset: Dataset, reference_dataset: Optional[ReferenceDataset] = None
 ) -> Dict[str, str]:
@@ -115,7 +115,7 @@ async def _run_single_eval(
         return await eval_func(dataset)
 
 
-@env.task(report=True)
+@env.task(report=True, short_name="batch-evaluator")
 async def _run_batch_eval(
     dataset: List[Dataset],
     eval_func: EvaluationMetric,
