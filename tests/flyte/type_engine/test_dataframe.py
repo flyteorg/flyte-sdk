@@ -1,4 +1,5 @@
 import os
+import sys
 import tempfile
 import typing
 from collections import OrderedDict
@@ -203,8 +204,12 @@ async def test_sd():
     )
     assert isinstance(await sd.open(pd.DataFrame).iter(), typing.AsyncGenerator)
 
-    with pytest.raises(TypeError, match="object async_generator can't be used"):
-        await sd.open(pd.DataFrame).all()
+    if sys.version_info < (3, 14):
+        with pytest.raises(TypeError, match="object async_generator can't be used"):
+            await sd.open(pd.DataFrame).all()
+    else:
+        with pytest.raises(TypeError, match="'async_generator' object can't be awaited"):
+            await sd.open(pd.DataFrame).all()
 
     class MockPandasDecodingHandlers(DataFrameDecoder):
         async def decode(
