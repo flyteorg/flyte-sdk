@@ -5,7 +5,7 @@ import flyte
 library_environment = flyte.TaskEnvironment(
     name="my-task-library-env",
     resources=flyte.Resources(cpu=1, memory="1Gi"),
-    image=flyte.Image.from_debian_base().with_pip_packages("my-task-library>=0.4.0", pre=True),
+    image=flyte.Image.from_debian_base().with_pip_packages("my-task-library"),
 )
 
 
@@ -19,5 +19,3 @@ async def library_child_task(data: str, lt: List[int]) -> str:
 async def library_parent_task(data: str = "default string", n: int = 3) -> str:
     print(f"Hello from library_parent_task! - {flyte.ctx().action}")
     return await library_child_task(data=data, lt=list(range(n)))
-
-

@@ -38,6 +38,8 @@ def extract_obj_module(obj: object, /, source_dir: pathlib.Path | None = None) -
 
         if relative_path == pathlib.Path("_internal/resolvers"):
             entity_module_name = entity_module.__name__
+        elif "site-packages" in str(relative_path):
+            raise ValueError("Object from a library")
         else:
             # Replace file separators with dots and remove the '.py' extension
             dotted_path = os.path.splitext(str(relative_path))[0].replace(os.sep, ".")

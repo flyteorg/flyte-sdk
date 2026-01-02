@@ -94,6 +94,7 @@ class _BackgroundLoop:
         # Delay import to avoid deadlock during module initialization
         def exception_handler(loop, context):
             import flyte.errors
+
             flyte.errors.silence_grpc_polling_error(loop, context)
 
         # Set the exception handler to silence specific gRPC polling errors
