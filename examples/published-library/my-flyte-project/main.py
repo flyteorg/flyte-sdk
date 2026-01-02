@@ -1,4 +1,3 @@
-import logging
 import pathlib
 
 from my_task_library import flyte_entities
@@ -25,13 +24,14 @@ if __name__ == "__main__":
     flyte.init_from_config(
         root_dir=pathlib.Path(__file__).parent,
     )
-    run = flyte.with_runcontext(
-        log_level=logging.DEBUG,
-        copy_style="none",
-        version=flyte.__version__,
-        # ).run(use_library, data="hello world", n=10)
-    ).run(flyte_entities.library_parent_task, data="hello world", n=5)
-    print(run.name)
+    # You can run a task that uses library tasks normally. Note we still copy code bundle
+    run = flyte.run(use_library, data="hello world", n=10)
     print(run.url)
-    run.wait()
-    # print(run.outputs())
+
+    # You can also run tasks from the library directly, for efficiency do not copy the local code, just install the
+    # package. Version is needed when code is not copied over.
+    # Ideally pass the version = my_task_library.__version__
+    run = flyte.with_runcontext(copy_style="none", version="0.4.0").run(
+        flyte_entities.library_parent_task, data="hello world", n=5
+    )
+    print(run.url)
