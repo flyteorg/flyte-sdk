@@ -11,6 +11,7 @@ import flyte.report
 from flyte._context import internal_ctx
 from flyte._internal.imagebuild.image_builder import ImageCache
 from flyte._logging import log, logger
+from flyte._metrics import Stopwatch
 from flyte._task import TaskTemplate
 from flyte.errors import CustomError, RuntimeSystemError, RuntimeUnknownError, RuntimeUserError
 from flyte.models import ActionID, Checkpoints, CodeBundle, RawDataPath, TaskContext
@@ -132,7 +133,10 @@ async def convert_and_run(
 
     # Load inputs first to get context
     if input_path:
+        sw = Stopwatch("load_inputs")
+        sw.start()
         inputs = await load_inputs(input_path, path_rewrite_config=raw_data_path.path_rewrite)
+        sw.stop()
 
     # Extract context from inputs
     custom_context = inputs.context if inputs else {}
@@ -154,8 +158,16 @@ async def convert_and_run(
     )
 
     with ctx.replace_task_context(tctx):
+        sw = Stopwatch("convert_inputs_to_native")
+        sw.start()
         inputs_kwargs = await convert_inputs_to_native(inputs, task.native_interface)
+        sw.stop()
+
+        sw = Stopwatch("run_task")
+        sw.start()
         out, err = await run_task(tctx=tctx, controller=controller, task=task, inputs=inputs_kwargs)
+        sw.stop()
+
         if err is not None:
             return None, convert_from_native_to_error(err)
         if task.report:
@@ -163,7 +175,12 @@ async def convert_and_run(
             # worker reports (from Elastic/distributed tasks) with empty main process report
             if ctx.get_report():
                 await flyte.report.flush.aio()
-        return await convert_from_native_to_outputs(out, task.native_interface, task.name), None
+
+        sw = Stopwatch("convert_outputs_from_native")
+        sw.start()
+        result = await convert_from_native_to_outputs(out, task.native_interface, task.name), None
+        sw.stop()
+        return result
 
 
 async def extract_download_run_upload(
