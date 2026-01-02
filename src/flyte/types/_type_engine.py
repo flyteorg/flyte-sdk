@@ -41,6 +41,7 @@ from typing_extensions import Annotated, get_args, get_origin
 import flyte.storage as storage
 from flyte._logging import logger
 from flyte._utils.helpers import load_proto_from_file
+from flyte.errors import RestrictedTypeError
 from flyte.models import NativeInterface
 
 from ._utils import literal_types_match
@@ -329,10 +330,6 @@ class SimpleTransformer(TypeTransformer[T]):
         if literal_type.HasField("simple") and literal_type.simple == self._lt.simple:
             return self.python_type
         raise ValueError(f"Transformer {self} cannot reverse {literal_type}")
-
-
-class RestrictedTypeError(Exception):
-    pass
 
 
 class RestrictedTypeTransformer(TypeTransformer[T], ABC):
@@ -1252,8 +1249,11 @@ class TypeEngine(typing.Generic[T]):
                 e: BaseException = literal_map[k].exception()  # type: ignore
                 if isinstance(e, TypeError):
                     raise TypeError(
-                        f"Error converting: Var:{k}, type:{type(d[k])}, into:{python_type}, received_value {d[k]}"
-                    )
+                        f"Type conversion failed for variable '{k}'.\n"
+                        f"Expected type: {python_type}\n"
+                        f"Actual type: {type(d[k])}\n"
+                        f"Value received: {d[k]!r}"
+                    ) from e
                 else:
                     raise e
             literal_map[k] = v.result()
@@ -2125,7 +2125,16 @@ def _register_default_type_transformers():
     TypeEngine.register(BoolTransformer)
     TypeEngine.register(NoneTransformer, [None])
     TypeEngine.register(ListTransformer())
-    TypeEngine.register(UnionTransformer(), [UnionType])
+
+    if sys.version_info < (3, 14):
+        TypeEngine.register(UnionTransformer(), [UnionType])
+    else:
+        # In Python 3.14+, types.UnionType and typing.Union are the same object.
+        # UnionTransformer's python_type is already typing.Union, so only add UnionType
+        # as an additional type if it's different from typing.Union.
+        union_transformer = UnionTransformer()
+        additional_union_types = [] if UnionType is union_transformer.python_type else [UnionType]
+        TypeEngine.register(union_transformer, additional_union_types)
     TypeEngine.register(DictTransformer())
     TypeEngine.register(EnumTransformer())
     TypeEngine.register(ProtobufTransformer())

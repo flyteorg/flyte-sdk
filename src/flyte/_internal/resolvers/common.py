@@ -3,6 +3,7 @@ from pathlib import Path
 from typing import List, Optional
 
 from flyte._task import TaskTemplate
+from flyte.app._app_environment import AppEnvironment
 
 
 class Resolver(Protocol):
@@ -23,7 +24,13 @@ class Resolver(Protocol):
         """
         raise NotImplementedError
 
-    def loader_args(self, t: TaskTemplate, root_dir: Optional[Path]) -> List[str]:
+    def load_app_env(self, loader_args: str) -> AppEnvironment:
+        """
+        Given the set of identifier keys, should return one AppEnvironment or raise an error if not found
+        """
+        raise NotImplementedError
+
+    def loader_args(self, t: TaskTemplate, root_dir: Optional[Path]) -> List[str] | str:
         """
         Return a list of strings that can help identify the parameter TaskTemplate. Each string should not have
         spaces or special characters. This is used to identify the task in the resolver.

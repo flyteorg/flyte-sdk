@@ -7,7 +7,7 @@ from typing import Any, Literal, Optional, Union
 import flyte.app
 import rich.repr
 from flyte import Environment, Image, Resources, SecretRequest
-from flyte.app import Input, RunOutput
+from flyte.app import Parameter, RunOutput
 from flyte.app._types import Port
 from flyte.models import SerializationContext
 
@@ -75,6 +75,15 @@ class SGLangAppEnvironment(flyte.app.AppEnvironment):
         if self.env_vars is None:
             self.env_vars = {}
 
+        if self._server is not None:
+            raise ValueError("server function cannot be set for SGLangAppEnvironment")
+
+        if self._on_startup is not None:
+            raise ValueError("on_startup function cannot be set for SGLangAppEnvironment")
+
+        if self._on_shutdown is not None:
+            raise ValueError("on_shutdown function cannot be set for SGLangAppEnvironment")
+
         if self.model_id == "":
             raise ValueError("model_id must be defined")
 
@@ -105,8 +114,8 @@ class SGLangAppEnvironment(flyte.app.AppEnvironment):
             *extra_args,
         ]
 
-        if self.inputs:
-            raise ValueError("inputs cannot be set for SGLangAppEnvironment")
+        if self.parameters:
+            raise ValueError("parameters cannot be set for SGLangAppEnvironment")
 
         input_kwargs = {}
         if self.stream_model:
@@ -119,7 +128,7 @@ class SGLangAppEnvironment(flyte.app.AppEnvironment):
             input_kwargs["mount"] = self._model_mount_path
 
         if self.model_path:
-            self.inputs = [Input(name="model_path", value=self.model_path, **input_kwargs)]
+            self.parameters = [Parameter(name="model_path", value=self.model_path, **input_kwargs)]
 
         self.env_vars["FLYTE_MODEL_LOADER_LOCAL_MODEL_PATH"] = self._model_mount_path
         self.links = [flyte.app.Link(path="/docs", title="SGLang OpenAPI Docs", is_relative=True)]
@@ -170,7 +179,7 @@ class SGLangAppEnvironment(flyte.app.AppEnvironment):
         kwargs = self._get_kwargs()
         kwargs["name"] = name
         kwargs["args"] = None
-        kwargs["inputs"] = None
+        kwargs["parameters"] = None
         if image is not None:
             kwargs["image"] = image
         if resources is not None:

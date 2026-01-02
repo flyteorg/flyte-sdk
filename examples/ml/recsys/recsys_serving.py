@@ -41,7 +41,7 @@ from sentence_transformers import SentenceTransformer
 
 import flyte
 import flyte.io
-from flyte.app import Input
+from flyte.app import Parameter
 from flyte.app.extras import FastAPIAppEnvironment
 
 logging.basicConfig(level=logging.INFO)
@@ -58,8 +58,8 @@ async def lifespan(app: FastAPI):
     # Startup: Load model and data
     logger.info("Starting up: Loading artifacts...")
 
-    # Get artifacts from environment inputs
-    # In production, this would come from the deployed app's inputs
+    # Get artifacts from environment parameters
+    # In production, this would come from the deployed app's parameters
     # For local testing, you can set a path here
     artifacts_path = Path("/tmp/recsys_artifacts")  # Default for local testing
 
@@ -93,8 +93,8 @@ env = FastAPIAppEnvironment(
     image=image,
     resources=flyte.Resources(cpu=2, memory="4Gi"),
     requires_auth=False,
-    inputs=[
-        Input(
+    parameters=[
+        Parameter(
             name="artifacts",
             value=flyte.app.RunOutput(task_name="recsys_training.training_pipeline", type="directory"),
             mount="/tmp/recsys_artifacts",

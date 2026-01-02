@@ -74,3 +74,11 @@ def local_dummy_directory():
         yield temp_dir.name
     finally:
         temp_dir.cleanup()
+
+
+@pytest.fixture(autouse=True)
+def patch_os_exit(monkeypatch):
+    def mock_exit(code):
+        raise SystemExit(code)
+
+    monkeypatch.setattr(os, "_exit", mock_exit)
