@@ -97,6 +97,7 @@ class _Runner:
         interruptible: bool | None = None,
         log_level: int | None = None,
         log_format: LogFormat = "console",
+        reset_root_logger: bool = False,
         disable_run_cache: bool = False,
         queue: Optional[str] = None,
         custom_context: Dict[str, str] | None = None,
@@ -130,6 +131,7 @@ class _Runner:
         self._interruptible = interruptible
         self._log_level = log_level
         self._log_format = log_format
+        self._reset_root_logger = reset_root_logger
         self._disable_run_cache = disable_run_cache
         self._queue = queue
         self._custom_context = custom_context or {}
@@ -232,6 +234,8 @@ class _Runner:
             else:
                 env["LOG_LEVEL"] = str(logger.getEffectiveLevel())
         env["LOG_FORMAT"] = self._log_format
+        if self._reset_root_logger:
+            env["FLYTE_RESET_ROOT_LOGGER"] = "1"
 
         # These paths will be appended to sys.path at runtime.
         if cfg.sync_local_sys_paths:
@@ -631,6 +635,7 @@ def with_runcontext(
     interruptible: bool | None = None,
     log_level: int | None = None,
     log_format: LogFormat = "console",
+    reset_root_logger: bool = False,
     disable_run_cache: bool = False,
     queue: Optional[str] = None,
     custom_context: Dict[str, str] | None = None,
@@ -678,6 +683,7 @@ def with_runcontext(
     :param log_level: Optional Log level to set for the run. If not provided, it will be set to the default log level
         set using `flyte.init()`
     :param log_format: Optional Log format to set for the run. If not provided, it will be set to the default log format
+    :param reset_root_logger: If true, the root logger will be preserved and not modified by Flyte.
     :param disable_run_cache: Optional If true, the run cache will be disabled. This is useful for testing purposes.
     :param queue: Optional The queue to use for the run. This is used to specify the cluster to use for the run.
     :param custom_context: Optional global input context to pass to the task. This will be available via
@@ -712,6 +718,7 @@ def with_runcontext(
         domain=domain,
         log_level=log_level,
         log_format=log_format,
+        reset_root_logger=reset_root_logger,
         disable_run_cache=disable_run_cache,
         queue=queue,
         custom_context=custom_context,

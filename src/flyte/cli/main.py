@@ -147,6 +147,15 @@ def _verbosity_to_loglevel(verbosity: int) -> int | None:
     show_default=True,
     required=False,
 )
+@click.option(
+    "--reset-root-logger",
+    is_flag=True,
+    required=False,
+    help="If set, the root logger will be reset to use Flyte logging style",
+    type=bool,
+    default=False,
+    show_default=True,
+)
 @click.rich_config(help_config=help_config)
 @click.pass_context
 def main(
@@ -155,6 +164,7 @@ def main(
     insecure: bool,
     verbose: int,
     log_format: LogFormat,
+    reset_root_logger: bool,
     org: str | None,
     config_file: str | None,
     auth_type: str | None = None,
@@ -198,8 +208,8 @@ def main(
     import flyte.config as config
 
     log_level = _verbosity_to_loglevel(verbose)
-    if log_level is not None or log_format != "console":
-        initialize_logger(log_level=log_level, log_format=log_format)
+    if log_level is not None or log_format != "console" or reset_root_logger:
+        initialize_logger(log_level=log_level, log_format=log_format, reset_root_logger=reset_root_logger)
 
     cfg = config.auto(config_file=config_file)
     if cfg.source:
@@ -208,6 +218,7 @@ def main(
     ctx.obj = CLIConfig(
         log_level=log_level,
         log_format=log_format,
+        reset_root_logger=reset_root_logger,
         endpoint=endpoint,
         insecure=insecure,
         org=org,
