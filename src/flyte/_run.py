@@ -235,7 +235,7 @@ class _Runner:
                 env["LOG_LEVEL"] = str(logger.getEffectiveLevel())
         env["LOG_FORMAT"] = self._log_format
         if self._reset_root_logger:
-            env["FLYTE_reset_root_logger"] = "1"
+            env["FLYTE_RESET_ROOT_LOGGER"] = "1"
 
         # These paths will be appended to sys.path at runtime.
         if cfg.sync_local_sys_paths:

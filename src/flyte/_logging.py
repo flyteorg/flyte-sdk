@@ -166,8 +166,8 @@ def initialize_logger(
     use_json = log_format == "json"
     use_rich = enable_rich and not use_json
 
-    reset_root_logger = reset_root_logger or os.environ.get("FLYTE_reset_root_logger") == "1"
-    if not reset_root_logger:
+    reset_root_logger = reset_root_logger or os.environ.get("FLYTE_RESET_ROOT_LOGGER") == "1"
+    if reset_root_logger:
         _setup_root_logger(use_json=use_json, use_rich=use_rich, log_level=log_level)
     else:
         root_logger = logging.getLogger()
