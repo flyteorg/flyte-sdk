@@ -418,6 +418,19 @@ class NativeInterface:
         """
         Returns a string representation of the task interface.
         """
+        def format_type(tpe):
+            """Format a type for display in the interface repr."""
+            if isinstance(tpe, str):
+                return tpe
+            # For simple types (int, str, etc.) use __name__
+            # For generic types (list[str], dict[str, int]) use repr()
+            # For union types (int | str) use repr()
+            if isinstance(tpe, type) and not hasattr(tpe, "__origin__"):
+                # Simple type like int, str
+                return tpe.__name__
+            # Generic types, unions, or other complex types - use repr
+            return repr(tpe)
+
         i = "("
         if self.inputs:
             initial = True
@@ -425,7 +438,7 @@ class NativeInterface:
                 if not initial:
                     i += ", "
                 initial = False
-                tp = tpe[0] if isinstance(tpe[0], str) else getattr(tpe[0], "__name__", str(tpe[0]))
+                tp = format_type(tpe[0])
                 i += f"{key}: {tp}"
                 if tpe[1] is not inspect.Parameter.empty:
                     if tpe[1] is self.has_default:
@@ -443,7 +456,7 @@ class NativeInterface:
                 if not initial:
                     i += ", "
                 initial = False
-                tp = tpe.__name__ if isinstance(tpe, type) else tpe
+                tp = format_type(tpe)
                 i += f"{key}: {tp}"
             if multi:
                 i += ")"
