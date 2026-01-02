@@ -25,6 +25,33 @@ from typing import (
 from flyte._logging import logger
 
 P = ParamSpec("P")
+
+# Track loops that have already had the gRPC error handler installed
+_configured_loops: set[int] = set()
+_configured_loops_lock = threading.Lock()
+
+
+def _ensure_grpc_error_handler_installed() -> None:
+    """
+    Install the gRPC error handler on the current event loop if not already done.
+    Uses a thread-safe set to track which loops have been configured.
+    """
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return  # No running loop, nothing to do
+
+    loop_id = id(loop)
+    with _configured_loops_lock:
+        if loop_id in _configured_loops:
+            return  # Already configured
+        _configured_loops.add(loop_id)
+
+    import flyte.errors
+
+    loop.set_exception_handler(flyte.errors.silence_grpc_polling_error)
+
+
 R_co = TypeVar("R_co", covariant=True)
 T = TypeVar("T")
 
@@ -153,13 +180,7 @@ class _BackgroundLoop:
         # Install the gRPC error handler on the caller's event loop as well.
         # This is needed because gRPC's async polling events may be delivered to
         # the caller's loop (e.g., FastAPI's event loop) when using .aio().
-        import flyte.errors
-
-        try:
-            caller_loop = asyncio.get_running_loop()
-            caller_loop.set_exception_handler(flyte.errors.silence_grpc_polling_error)
-        except RuntimeError:
-            pass  # No running loop, which is fine
+        _ensure_grpc_error_handler_installed()
 
         while True:
             try:
@@ -200,13 +221,7 @@ class _BackgroundLoop:
             # Install the gRPC error handler on the caller's event loop as well.
             # This is needed because gRPC's async polling events may be delivered to
             # the caller's loop (e.g., FastAPI's event loop) when using .aio().
-            import flyte.errors
-
-            try:
-                caller_loop = asyncio.get_running_loop()
-                caller_loop.set_exception_handler(flyte.errors.silence_grpc_polling_error)
-            except RuntimeError:
-                pass  # No running loop, which is fine
+            _ensure_grpc_error_handler_installed()
 
             # Otherwise, run it in the background loop and wait for the result
             future: concurrent.futures.Future[R_co] = asyncio.run_coroutine_threadsafe(coro, self.loop)
