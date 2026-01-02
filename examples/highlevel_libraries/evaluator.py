@@ -196,5 +196,8 @@ class Evaluator:
             _run_batch_eval, dataset, self.eval_func, self.aggregate_func, reference_dataset
         )
         print(f"Evaluation results: {r.url}")
-        await r.wait()
-        return r.outputs()
+        await r.wait.aio()
+        outputs = await r.outputs.aio()
+        if outputs is None:
+            raise RuntimeError(f"Failed to get outputs from evaluation")
+        return outputs[0]
