@@ -11,7 +11,7 @@ import flyte.report
 from flyte._context import internal_ctx
 from flyte._internal.imagebuild.image_builder import ImageCache
 from flyte._logging import log, logger
-from flyte._metrics import async_timer
+from flyte._metrics import Stopwatch
 from flyte._task import TaskTemplate
 from flyte.errors import CustomError, RuntimeSystemError, RuntimeUnknownError, RuntimeUserError
 from flyte.models import ActionID, Checkpoints, CodeBundle, RawDataPath, TaskContext
@@ -133,8 +133,10 @@ async def convert_and_run(
 
     # Load inputs first to get context
     if input_path:
-        async with async_timer("load_inputs"):
-            inputs = await load_inputs(input_path, path_rewrite_config=raw_data_path.path_rewrite)
+        sw = Stopwatch("load_inputs")
+        sw.start()
+        inputs = await load_inputs(input_path, path_rewrite_config=raw_data_path.path_rewrite)
+        sw.stop()
 
     # Extract context from inputs
     custom_context = inputs.context if inputs else {}
@@ -156,11 +158,15 @@ async def convert_and_run(
     )
 
     with ctx.replace_task_context(tctx):
-        async with async_timer("convert_inputs_to_native"):
-            inputs_kwargs = await convert_inputs_to_native(inputs, task.native_interface)
+        sw = Stopwatch("convert_inputs_to_native")
+        sw.start()
+        inputs_kwargs = await convert_inputs_to_native(inputs, task.native_interface)
+        sw.stop()
 
-        async with async_timer("run_task"):
-            out, err = await run_task(tctx=tctx, controller=controller, task=task, inputs=inputs_kwargs)
+        sw = Stopwatch("run_task")
+        sw.start()
+        out, err = await run_task(tctx=tctx, controller=controller, task=task, inputs=inputs_kwargs)
+        sw.stop()
 
         if err is not None:
             return None, convert_from_native_to_error(err)
@@ -170,8 +176,11 @@ async def convert_and_run(
             if ctx.get_report():
                 await flyte.report.flush.aio()
 
-        async with async_timer("convert_outputs_from_native"):
-            return await convert_from_native_to_outputs(out, task.native_interface, task.name), None
+        sw = Stopwatch("convert_outputs_from_native")
+        sw.start()
+        result = await convert_from_native_to_outputs(out, task.native_interface, task.name), None
+        sw.stop()
+        return result
 
 
 async def extract_download_run_upload(
@@ -193,7 +202,6 @@ async def extract_download_run_upload(
     This method is invoked from the CLI (urun) and is used to run a task. This assumes that the context tree
     has already been created, and the task has been loaded. It also handles the loading of the task.
     """
-    # async with async_timer("extract_download_run_upload_total"):
     t = time.time()
     logger.info(f"Task {action.name} started at {t}")
     outputs, err = await convert_and_run(

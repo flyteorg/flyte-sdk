@@ -3,53 +3,41 @@ Timer utilities for emitting timing metrics via structured logging.
 """
 
 import time
-from contextlib import asynccontextmanager, contextmanager
-from contextvars import ContextVar
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 from flyte._logging import logger
 
-# Context variable to track the stack of timer names for nested timers
-_timer_stack: ContextVar[List[str]] = ContextVar("timer_stack", default=[])
 
-
-@asynccontextmanager
-async def async_timer(metric_name: str, extra_fields: Optional[Dict[str, Any]] = None):
+class Stopwatch:
     """
-    Async context manager for timing asynchronous code blocks.
-    Emits timing metrics via structured logging.
-
-    When timers are nested, metric names are automatically concatenated with dots.
-    For example, if "outer" contains "inner", the inner metric will be named "outer.inner".
+    Simple stopwatch for timing code blocks.
+    Emits timing metrics via structured logging when stopped.
 
     Example:
-        async with async_timer("download_inputs"):
-            # async code to time
-            await something()
-
-    Nested example:
-        async with async_timer("load_and_run"):
-            async with async_timer("download_bundle"):
-                # This will emit metric "load_and_run.download_bundle"
-                await download()
+        sw = Stopwatch("download_inputs")
+        sw.start()
+        # code to time
+        sw.stop()
 
     :param metric_name: Name of the metric to emit
     :param extra_fields: Additional fields to include in the log record
     """
-    # Get current timer stack and add this timer to it
-    stack = _timer_stack.get().copy()
-    stack.append(metric_name)
-    token = _timer_stack.set(stack)
 
-    start = time.perf_counter()
-    try:
-        yield
-    finally:
-        duration = time.perf_counter() - start
-        full_metric_name = ".".join(stack)
-        _emit_metric(full_metric_name, duration, extra_fields)
-        # Restore previous stack
-        _timer_stack.reset(token)
+    def __init__(self, metric_name: str, extra_fields: Optional[Dict[str, Any]] = None):
+        self.metric_name = metric_name
+        self.extra_fields = extra_fields
+        self._start_time: Optional[float] = None
+
+    def start(self):
+        """Start the stopwatch."""
+        self._start_time = time.perf_counter()
+
+    def stop(self):
+        """Stop the stopwatch and emit the timing metric."""
+        if self._start_time is None:
+            raise RuntimeError(f"Stopwatch '{self.metric_name}' was never started")
+        duration = time.perf_counter() - self._start_time
+        _emit_metric(self.metric_name, duration, self.extra_fields)
 
 
 def _emit_metric(metric_name: str, duration: float, extra_fields: Optional[Dict[str, Any]] = None):

@@ -1,27 +1,38 @@
 import asyncio
+import time
 
 import pytest
 
-from flyte._metrics import async_timer, _timer_stack
+from flyte._metrics import Stopwatch
+
+
+def test_stopwatch_basic():
+    """Test basic stopwatch functionality."""
+    sw = Stopwatch("test_metric")
+    sw.start()
+    time.sleep(0.1)
+    sw.stop()
+
+
+def test_stopwatch_not_started():
+    """Test that stopping a stopwatch that was never started raises an error."""
+    sw = Stopwatch("test_metric")
+    with pytest.raises(RuntimeError, match="was never started"):
+        sw.stop()
+
+
+def test_stopwatch_with_extra_fields():
+    """Test stopwatch with extra fields."""
+    sw = Stopwatch("test_metric", extra_fields={"foo": "bar"})
+    sw.start()
+    time.sleep(0.1)
+    sw.stop()
 
 
 @pytest.mark.asyncio
-async def test_sibling_timers():
-    async def task1():
-        async with async_timer("task1"):
-            # Stack for this task: ["task1"]
-            assert _timer_stack.get() == ["task1"]
-            await asyncio.sleep(0.2)
-            async with async_timer("inner"):
-                # Stack for this task: ["task1", "inner"]
-                assert _timer_stack.get() == ["task1", "inner"]
-                await asyncio.sleep(0.2)
-        assert _timer_stack.get() == []
-
-    async def task2():
-        async with async_timer("task2"):
-            assert _timer_stack.get() == ["task2"]
-            await asyncio.sleep(0.1)
-        assert _timer_stack.get() == []
-
-    await asyncio.gather(task1(), task2())
+async def test_stopwatch_with_async_code():
+    """Test that stopwatch works with async code."""
+    sw = Stopwatch("async_metric")
+    sw.start()
+    await asyncio.sleep(0.1)
+    sw.stop()
