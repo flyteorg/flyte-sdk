@@ -56,4 +56,4 @@ def _emit_metric(metric_name: str, duration: float, extra_fields: Optional[Dict[
     if extra_fields:
         extra.update(extra_fields)
 
-    logger.info(f"{metric_name} completed in {duration:.4f}s", extra=extra)
+    logger.info(f"Stopwatch: {metric_name} completed in {duration:.4f}s", extra=extra)
