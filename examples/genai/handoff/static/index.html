@@ -1,0 +1,543 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Agent Handoff - Intelligent Routing</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        header {
+            text-align: center;
+            color: white;
+            margin-bottom: 40px;
+        }
+
+        header h1 {
+            font-size: 2.5rem;
+            margin-bottom: 10px;
+            font-weight: 700;
+        }
+
+        header p {
+            font-size: 1.1rem;
+            opacity: 0.9;
+        }
+
+        .main-content {
+            display: grid;
+            grid-template-columns: 300px 1fr;
+            gap: 20px;
+            align-items: start;
+        }
+
+        /* Agents Sidebar */
+        .agents-sidebar {
+            background: white;
+            border-radius: 16px;
+            padding: 20px;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
+            max-height: 80vh;
+            overflow-y: auto;
+        }
+
+        .agents-sidebar h2 {
+            font-size: 1.2rem;
+            margin-bottom: 15px;
+            color: #333;
+            font-weight: 600;
+        }
+
+        .agent-item {
+            padding: 12px;
+            margin-bottom: 10px;
+            border-radius: 8px;
+            background: #f8f9fa;
+            border-left: 3px solid #667eea;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .agent-item:hover {
+            background: #e9ecef;
+            transform: translateX(5px);
+        }
+
+        .agent-item.selected {
+            background: #e7f3ff;
+            border-left-color: #2196f3;
+        }
+
+        .agent-item h3 {
+            font-size: 0.9rem;
+            color: #333;
+            margin-bottom: 4px;
+        }
+
+        .agent-tags {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 4px;
+            margin-top: 6px;
+        }
+
+        .agent-tag {
+            background: #667eea;
+            color: white;
+            padding: 2px 8px;
+            border-radius: 12px;
+            font-size: 0.7rem;
+        }
+
+        /* Query Section */
+        .query-section {
+            background: white;
+            border-radius: 16px;
+            padding: 30px;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
+        }
+
+        .examples-section {
+            margin-bottom: 20px;
+        }
+
+        .examples-section h3 {
+            font-size: 0.9rem;
+            color: #666;
+            margin-bottom: 10px;
+            font-weight: 500;
+        }
+
+        .example-chips {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+
+        .example-chip {
+            background: #f0f0f0;
+            border: 1px solid #ddd;
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-size: 0.85rem;
+            cursor: pointer;
+            transition: all 0.2s;
+            max-width: 100%;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .example-chip:hover {
+            background: #667eea;
+            color: white;
+            border-color: #667eea;
+        }
+
+        .query-input-section {
+            margin-bottom: 20px;
+        }
+
+        .query-input {
+            width: 100%;
+            padding: 16px;
+            border: 2px solid #e0e0e0;
+            border-radius: 12px;
+            font-size: 1rem;
+            font-family: inherit;
+            resize: vertical;
+            min-height: 100px;
+            transition: border-color 0.3s;
+        }
+
+        .query-input:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        .controls {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+
+        .threshold-control {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            flex: 1;
+        }
+
+        .threshold-control label {
+            font-size: 0.9rem;
+            color: #666;
+        }
+
+        .threshold-control input[type="range"] {
+            flex: 1;
+        }
+
+        .threshold-value {
+            font-weight: 600;
+            color: #667eea;
+            min-width: 40px;
+        }
+
+        .run-button {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 14px 32px;
+            border-radius: 8px;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+
+        .run-button:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 20px rgba(102, 126, 234, 0.4);
+        }
+
+        .run-button:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+
+        /* Results Section */
+        .results-section {
+            margin-top: 30px;
+            display: none;
+        }
+
+        .results-section.show {
+            display: block;
+        }
+
+        .status-badge {
+            display: inline-block;
+            padding: 6px 16px;
+            border-radius: 16px;
+            font-size: 0.85rem;
+            font-weight: 600;
+            margin-bottom: 20px;
+        }
+
+        .status-badge.running {
+            background: #fff3e0;
+            color: #f57c00;
+        }
+
+        .status-badge.succeeded {
+            background: #e8f5e9;
+            color: #2e7d32;
+        }
+
+        .status-badge.failed {
+            background: #ffebee;
+            color: #c62828;
+        }
+
+        .result-card {
+            background: #f8f9fa;
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 15px;
+        }
+
+        .result-card h3 {
+            font-size: 1.1rem;
+            margin-bottom: 12px;
+            color: #333;
+        }
+
+        .selected-agent {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px;
+            border-radius: 12px;
+            margin-bottom: 15px;
+        }
+
+        .selected-agent h3 {
+            font-size: 1.3rem;
+            margin-bottom: 8px;
+        }
+
+        .selected-agent p {
+            opacity: 0.9;
+            margin-bottom: 10px;
+        }
+
+        .score-list {
+            list-style: none;
+        }
+
+        .score-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px;
+            background: white;
+            border-radius: 8px;
+            margin-bottom: 8px;
+        }
+
+        .score-bar {
+            flex: 1;
+            height: 8px;
+            background: #e0e0e0;
+            border-radius: 4px;
+            margin: 0 15px;
+            overflow: hidden;
+        }
+
+        .score-bar-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
+            transition: width 0.3s;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 40px;
+        }
+
+        .spinner {
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #667eea;
+            border-radius: 50%;
+            width: 50px;
+            height: 50px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 20px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .error-message {
+            background: #ffebee;
+            color: #c62828;
+            padding: 16px;
+            border-radius: 8px;
+            border-left: 4px solid #c62828;
+        }
+
+        .run-link {
+            display: inline-block;
+            margin-top: 10px;
+            color: #667eea;
+            text-decoration: none;
+            font-weight: 500;
+        }
+
+        .run-link:hover {
+            text-decoration: underline;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🤖 Agent Handoff</h1>
+            <p>Intelligent routing to specialized agents using semantic matching</p>
+        </header>
+
+        <div class="main-content">
+            <!-- Agents Sidebar -->
+            <div class="agents-sidebar">
+                <h2>Available Agents</h2>
+                <div id="agentsList"></div>
+            </div>
+
+            <!-- Query Section -->
+            <div class="query-section">
+                <div class="examples-section">
+                    <h3>Try these example queries:</h3>
+                    <div class="example-chips" id="exampleChips"></div>
+                </div>
+
+                <div class="query-input-section">
+                    <textarea
+                        id="queryInput"
+                        class="query-input"
+                        placeholder="Enter your query here... (e.g., 'I need help analyzing sales data and creating a dashboard')"
+                    ></textarea>
+                </div>
+
+                <div class="controls">
+                    <div class="threshold-control">
+                        <label for="thresholdSlider">Confidence Threshold:</label>
+                        <input type="range" id="thresholdSlider" min="0.3" max="0.9" step="0.05" value="0.6">
+                        <span class="threshold-value" id="thresholdValue">0.6</span>
+                    </div>
+                    <button class="run-button" id="runButton" onclick="runHandoff()">
+                        Run Handoff
+                    </button>
+                </div>
+
+                <div class="results-section" id="resultsSection">
+                    <div id="resultsContent"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let agents = [];
+        let examples = [];
+
+        // Load agents and examples on page load
+        async function loadData() {
+            try {
+                // Load agents
+                const agentsResponse = await fetch('/api/agents');
+                agents = await agentsResponse.json();
+                displayAgents(agents);
+
+                // Load examples
+                const examplesResponse = await fetch('/api/examples');
+                examples = await examplesResponse.json();
+                displayExamples(examples);
+            } catch (error) {
+                console.error('Failed to load data:', error);
+            }
+        }
+
+        function displayAgents(agents) {
+            const container = document.getElementById('agentsList');
+            container.innerHTML = agents.map(agent => `
+                <div class="agent-item" data-agent-id="${agent.id}">
+                    <h3>${agent.name}</h3>
+                    <div class="agent-tags">
+                        ${agent.tags.slice(0, 3).map(tag => `<span class="agent-tag">${tag}</span>`).join('')}
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        function displayExamples(examples) {
+            const container = document.getElementById('exampleChips');
+            container.innerHTML = examples.map((example, idx) => `
+                <div class="example-chip" onclick="selectExample('${example.replace(/'/g, "\\'")}')">
+                    ${example.substring(0, 60)}${example.length > 60 ? '...' : ''}
+                </div>
+            `).join('');
+        }
+
+        function selectExample(query) {
+            document.getElementById('queryInput').value = query;
+        }
+
+        // Update threshold display
+        document.getElementById('thresholdSlider').addEventListener('input', (e) => {
+            document.getElementById('thresholdValue').textContent = e.target.value;
+        });
+
+        async function runHandoff() {
+            const query = document.getElementById('queryInput').value.trim();
+            if (!query) {
+                alert('Please enter a query');
+                return;
+            }
+
+            const threshold = parseFloat(document.getElementById('thresholdSlider').value);
+            const runButton = document.getElementById('runButton');
+            const resultsSection = document.getElementById('resultsSection');
+            const resultsContent = document.getElementById('resultsContent');
+
+            // Disable button and show loading
+            runButton.disabled = true;
+            runButton.textContent = 'Running...';
+            resultsSection.classList.add('show');
+            resultsContent.innerHTML = `
+                <div class="loading">
+                    <div class="spinner"></div>
+                    <p>Analyzing query and selecting agent...</p>
+                </div>
+            `;
+
+            try {
+                // Trigger the run
+                const runResponse = await fetch('/api/run', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ query, threshold })
+                });
+
+                if (!runResponse.ok) {
+                    throw new Error('Failed to start run');
+                }
+
+                const runData = await runResponse.json();
+
+                // Show run started with link to Flyte UI
+                resultsContent.innerHTML = `
+                    <span class="status-badge running">✓ Workflow Started</span>
+
+                    <div class="result-card">
+                        <h3>🚀 Agent Handoff Running</h3>
+                        <p style="margin-bottom: 15px;">
+                            Your query is being processed. The workflow will:
+                        </p>
+                        <ul style="margin-left: 20px; margin-bottom: 15px; color: #666;">
+                            <li>Extract relevant tags from your query</li>
+                            <li>Filter agents by matching tags</li>
+                            <li>Score candidate agents using semantic similarity</li>
+                            <li>Select the best agent if it meets the threshold</li>
+                        </ul>
+                        <p style="color: #666;">
+                            <strong>Query:</strong> "${query}"<br>
+                            <strong>Threshold:</strong> ${threshold}
+                        </p>
+                    </div>
+
+                    <div class="result-card" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white;">
+                        <h3 style="color: white;">📊 View Results in Flyte UI</h3>
+                        <p style="opacity: 0.9; margin-bottom: 15px;">
+                            Click the link below to watch the workflow execution in real-time and see the results.
+                        </p>
+                        <a href="${runData.url}" target="_blank"
+                           style="display: inline-block; background: white; color: #667eea; padding: 12px 24px; border-radius: 8px; text-decoration: none; font-weight: 600;">
+                            Open Flyte UI →
+                        </a>
+                    </div>
+                `;
+
+            } catch (error) {
+                resultsContent.innerHTML = `
+                    <div class="error-message">
+                        <strong>Error:</strong> ${error.message}
+                    </div>
+                `;
+            } finally {
+                runButton.disabled = false;
+                runButton.textContent = 'Run Handoff';
+            }
+        }
+
+        // Load data on page load
+        loadData();
+    </script>
+</body>
+</html>

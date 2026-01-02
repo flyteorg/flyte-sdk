@@ -172,7 +172,10 @@ class LocalController:
         await LocalTaskCache.close()
 
     async def watch_for_errors(self):
-        pass
+        try:
+            await asyncio.Event().wait()  # Wait indefinitely until cancelled
+        except asyncio.CancelledError:
+            return  # Return with no errors when cancelled
 
     async def get_action_outputs(
         self, _interface: NativeInterface, _func: Callable, *args, **kwargs
@@ -186,6 +189,7 @@ class LocalController:
         tctx = ctx.data.task_context
         if not tctx:
             raise flyte.errors.NotInTaskContextError("BadContext", "Task context not initialized")
+
         converted_inputs = convert.Inputs.empty()
         if _interface.inputs:
             converted_inputs = await convert.convert_from_native_to_inputs(_interface, *args, **kwargs)
@@ -233,6 +237,6 @@ class LocalController:
         assert info.end_time
 
     async def submit_task_ref(self, _task: TaskDetails, max_inline_io_bytes: int, *args, **kwargs) -> Any:
-        raise flyte.errors.ReferenceTaskError(
-            f"Reference tasks cannot be executed locally, only remotely. Found remote task {_task.name}"
+        raise flyte.errors.RemoteTaskError(
+            f"Remote tasks cannot be executed locally, only remotely. Found remote task {_task.name}"
         )

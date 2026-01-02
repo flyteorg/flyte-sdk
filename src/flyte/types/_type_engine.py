@@ -41,6 +41,7 @@ from typing_extensions import Annotated, get_args, get_origin
 import flyte.storage as storage
 from flyte._logging import logger
 from flyte._utils.helpers import load_proto_from_file
+from flyte.errors import RestrictedTypeError
 from flyte.models import NativeInterface
 
 from ._utils import literal_types_match
@@ -329,10 +330,6 @@ class SimpleTransformer(TypeTransformer[T]):
         if literal_type.HasField("simple") and literal_type.simple == self._lt.simple:
             return self.python_type
         raise ValueError(f"Transformer {self} cannot reverse {literal_type}")
-
-
-class RestrictedTypeError(Exception):
-    pass
 
 
 class RestrictedTypeTransformer(TypeTransformer[T], ABC):
@@ -827,7 +824,37 @@ def generate_attribute_list_from_dataclass_json_mixin(schema: dict, schema_name:
     from flyte.io._file import File
 
     attribute_list: typing.List[typing.Tuple[Any, Any]] = []
-    for property_key, property_val in schema["properties"].items():
+    nested_types: typing.Dict[str, type] = {}  # Track nested model types for conversion
+
+    # Use 'required' field to preserve property order, as protobuf Struct doesn't preserve dict order
+    properties = schema["properties"]
+    property_order = schema.get("required", list(properties.keys()))
+
+    for property_key in property_order:
+        property_val = properties[property_key]
+        # Handle $ref for nested Pydantic models
+        if property_val.get("$ref"):
+            ref_path = property_val["$ref"]
+            # Extract the definition name from the $ref path (e.g., "#/$defs/MyNestedModel" -> "MyNestedModel")
+            ref_name = ref_path.split("/")[-1]
+            # Get the referenced schema from $defs (or definitions for older schemas)
+            defs = schema.get("$defs", schema.get("definitions", {}))
+            if ref_name in defs:
+                ref_schema = defs[ref_name].copy()
+                # Include $defs so nested models can resolve their own $refs
+                if "$defs" not in ref_schema and defs:
+                    ref_schema["$defs"] = defs
+                nested_class: type = convert_mashumaro_json_schema_to_python_class(ref_schema, ref_name)
+                attribute_list.append(
+                    (
+                        property_key,
+                        typing.cast(GenericAlias, nested_class),
+                    )
+                )
+                # Track this as a nested type that needs dict-to-object conversion
+                nested_types[property_key] = nested_class
+            continue
+
         if property_val.get("anyOf"):
             property_type = property_val["anyOf"][0]["type"]
         elif property_val.get("enum"):
@@ -865,14 +892,14 @@ def generate_attribute_list_from_dataclass_json_mixin(schema: dict, schema_name:
                         )
                     )
                     continue
+                nested_class = convert_mashumaro_json_schema_to_python_class(sub_schemea, sub_schemea_name)
                 attribute_list.append(
                     (
                         property_key,
-                        typing.cast(
-                            GenericAlias, convert_mashumaro_json_schema_to_python_class(sub_schemea, sub_schemea_name)
-                        ),
+                        typing.cast(GenericAlias, nested_class),
                     )
                 )
+                nested_types[property_key] = nested_class
             elif property_val.get("additionalProperties"):
                 # For typing.Dict type
                 elem_type = _get_element_type(property_val["additionalProperties"])
@@ -903,14 +930,14 @@ def generate_attribute_list_from_dataclass_json_mixin(schema: dict, schema_name:
                         )
                     )
                     continue
+                nested_class = convert_mashumaro_json_schema_to_python_class(property_val, sub_schemea_name)
                 attribute_list.append(
                     (
                         property_key,
-                        typing.cast(
-                            GenericAlias, convert_mashumaro_json_schema_to_python_class(property_val, sub_schemea_name)
-                        ),
+                        typing.cast(GenericAlias, nested_class),
                     )
                 )
+                nested_types[property_key] = nested_class
             else:
                 # For untyped dict
                 attribute_list.append((property_key, dict))  # type: ignore
@@ -919,7 +946,7 @@ def generate_attribute_list_from_dataclass_json_mixin(schema: dict, schema_name:
         # Handle int, float, bool or str
         else:
             attribute_list.append([property_key, _get_element_type(property_val)])  # type: ignore
-    return attribute_list
+    return attribute_list, nested_types
 
 
 class TypeEngine(typing.Generic[T]):
@@ -1168,20 +1195,26 @@ class TypeEngine(typing.Generic[T]):
                 f"Received more input values {len(lm.literals)}"
                 f" than allowed by the input spec {len(python_interface_inputs)}"
             )
-        kwargs = {}
-        try:
-            for i, k in enumerate(lm.literals):
-                kwargs[k] = asyncio.create_task(TypeEngine.to_python_value(lm.literals[k], python_interface_inputs[k]))
-            await asyncio.gather(*kwargs.values())
-        except Exception as e:
-            raise TypeTransformerFailedError(
-                f"Error converting input:\n"
-                f"Literal value: {lm.literals[k]}\n"
-                f"Expected Python type: {python_interface_inputs[k]}\n"
-                f"Exception: {e}"
-            )
+        # Create tasks for converting each kwarg
+        tasks = {}
+        for k in lm.literals:
+            tasks[k] = asyncio.create_task(TypeEngine.to_python_value(lm.literals[k], python_interface_inputs[k]))
 
-        kwargs = {k: v.result() for k, v in kwargs.items() if v is not None}
+        # Gather all tasks, returning exceptions instead of raising them
+        results = await asyncio.gather(*tasks.values(), return_exceptions=True)
+
+        # Check for exceptions and raise with specific kwarg name
+        kwargs = {}
+        for (key, task), result in zip(tasks.items(), results):
+            if isinstance(result, Exception):
+                raise TypeTransformerFailedError(
+                    f"Error converting input '{key}':\n"
+                    f"Literal value: {lm.literals[key]}\n"
+                    f"Expected Python type: {python_interface_inputs[key]}\n"
+                    f"Exception: {result}"
+                ) from result
+            kwargs[key] = result
+
         return kwargs
 
     @classmethod
@@ -1216,8 +1249,11 @@ class TypeEngine(typing.Generic[T]):
                 e: BaseException = literal_map[k].exception()  # type: ignore
                 if isinstance(e, TypeError):
                     raise TypeError(
-                        f"Error converting: Var:{k}, type:{type(d[k])}, into:{python_type}, received_value {d[k]}"
-                    )
+                        f"Type conversion failed for variable '{k}'.\n"
+                        f"Expected type: {python_type}\n"
+                        f"Actual type: {type(d[k])}\n"
+                        f"Value received: {d[k]!r}"
+                    ) from e
                 else:
                     raise e
             literal_map[k] = v.result()
@@ -1868,8 +1904,26 @@ def convert_mashumaro_json_schema_to_python_class(schema: dict, schema_name: typ
     :param schema_name: dataclass name of return type
     """
 
-    attribute_list = generate_attribute_list_from_dataclass_json_mixin(schema, schema_name)
-    return dataclasses.make_dataclass(schema_name, attribute_list)
+    attribute_list, nested_types = generate_attribute_list_from_dataclass_json_mixin(schema, schema_name)
+    cls = dataclasses.make_dataclass(schema_name, attribute_list)
+
+    # Wrap __init__ to convert dict inputs to nested types
+    if nested_types:
+        # Store the original __init__ from the class's __dict__ to avoid mypy error
+        original_init = cls.__dict__["__init__"]
+
+        def __init__(self, *args, **kwargs):  # type: ignore[misc]
+            # Convert dict values to nested types before calling original __init__
+            for field_name, field_type in nested_types.items():
+                if field_name in kwargs:
+                    value = kwargs[field_name]
+                    if isinstance(value, dict):
+                        kwargs[field_name] = field_type(**value)
+            original_init(self, *args, **kwargs)
+
+        cls.__init__ = __init__  # type: ignore[method-assign, misc]
+
+    return cls
 
 
 def _get_element_type(element_property: typing.Dict[str, str]) -> Type:
@@ -1905,7 +1959,6 @@ def _get_element_type(element_property: typing.Dict[str, str]) -> Type:
     return str
 
 
-# pr: han-ru is this still needed?
 def dataclass_from_dict(cls: type, src: typing.Dict[str, typing.Any]) -> typing.Any:
     """
     Utility function to construct a dataclass object from dict
@@ -1985,7 +2038,7 @@ def _handle_flyte_console_float_input_to_int(lv: Literal) -> int:
 
 def _check_and_convert_void(lv: Literal) -> None:
     if not lv.scalar.HasField("none_type"):
-        raise TypeTransformerFailedError(f"Cannot convert literal {lv} to None")
+        raise TypeTransformerFailedError(f"Cannot convert literal '{lv}' to None")
     return None
 
 
@@ -2046,7 +2099,9 @@ DateTransformer = SimpleTransformer(
     lambda x: Literal(
         scalar=Scalar(primitive=Primitive(datetime=datetime.datetime.combine(x, datetime.time.min)))
     ),  # convert datetime to date
-    lambda x: x.scalar.primitive.datetime.date() if x.scalar.primitive.HasField("datetime") else None,
+    lambda x: x.scalar.primitive.datetime.ToDatetime().replace(tzinfo=datetime.timezone.utc).date()
+    if x.scalar.primitive.HasField("datetime")
+    else None,
 )
 
 NoneTransformer = SimpleTransformer(
@@ -2070,7 +2125,16 @@ def _register_default_type_transformers():
     TypeEngine.register(BoolTransformer)
     TypeEngine.register(NoneTransformer, [None])
     TypeEngine.register(ListTransformer())
-    TypeEngine.register(UnionTransformer(), [UnionType])
+
+    if sys.version_info < (3, 14):
+        TypeEngine.register(UnionTransformer(), [UnionType])
+    else:
+        # In Python 3.14+, types.UnionType and typing.Union are the same object.
+        # UnionTransformer's python_type is already typing.Union, so only add UnionType
+        # as an additional type if it's different from typing.Union.
+        union_transformer = UnionTransformer()
+        additional_union_types = [] if UnionType is union_transformer.python_type else [UnionType]
+        TypeEngine.register(union_transformer, additional_union_types)
     TypeEngine.register(DictTransformer())
     TypeEngine.register(EnumTransformer())
     TypeEngine.register(ProtobufTransformer())

@@ -52,6 +52,7 @@ class PysparkFunctionTask(AsyncFunctionTaskTemplate):
 
     plugin_config: Spark
     task_type: str = "spark"
+    debuggable: bool = True
 
     async def pre(self, *args, **kwargs) -> Dict[str, Any]:
         import pyspark as _pyspark
@@ -60,10 +61,13 @@ class PysparkFunctionTask(AsyncFunctionTaskTemplate):
 
         if flyte.ctx().is_in_cluster():
             base_dir = tempfile.mkdtemp()
-            file_name = "flyte_wf"
+            code_bundle_dir = flyte.ctx().code_bundle.destination
+            file_name = "flyte_code_bundle"
             file_format = "zip"
-            shutil.make_archive(f"{base_dir}/{file_name}", file_format, os.getcwd())
-            sess.sparkContext.addPyFile(f"{base_dir}/{file_name}.{file_format}")
+            file_path = f"{base_dir}/{file_name}.{file_format}"
+            if not os.path.exists(file_path):
+                shutil.make_archive(f"{base_dir}/{file_name}", file_format, code_bundle_dir)
+                sess.sparkContext.addPyFile(file_path)
 
         return {"spark_session": sess}
 
@@ -85,10 +89,16 @@ class PysparkFunctionTask(AsyncFunctionTaskTemplate):
         return MessageToDict(job)
 
     async def post(self, return_vals: Any) -> Any:
-        import pyspark as _pyspark
+        ctx = flyte.ctx()
+        if ctx and ctx.action.name == "a0":
+            # Only stop the SparkSession if it was created by the parent task in the debug mode.
+            # This is to make sure that the SparkSession is stopped by
+            # parent action only when debugging in the interactive mode.
+            # Note: The action name is always "a0" in the debug mode.
+            import pyspark as _pyspark
 
-        sess = _pyspark.sql.SparkSession.builder.appName(DEFAULT_SPARK_CONTEXT_NAME).getOrCreate()
-        sess.stop()
+            sess = _pyspark.sql.SparkSession.builder.appName(DEFAULT_SPARK_CONTEXT_NAME).getOrCreate()
+            sess.stop()
 
 
 TaskPluginRegistry.register(Spark, PysparkFunctionTask)

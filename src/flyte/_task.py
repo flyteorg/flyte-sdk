@@ -30,17 +30,17 @@ from ._cache import Cache, CacheRequest
 from ._context import internal_ctx
 from ._doc import Documentation
 from ._image import Image
+from ._link import Link
 from ._resources import Resources
 from ._retry import RetryStrategy
 from ._reusable_environment import ReusePolicy
 from ._secret import SecretRequest
 from ._timeout import TimeoutType
+from ._trigger import Trigger
 from .models import MAX_INLINE_IO_BYTES, NativeInterface, SerializationContext
 
 if TYPE_CHECKING:
     from flyteidl2.core.tasks_pb2 import DataLoadingConfig
-
-    from flyte.trigger import Trigger
 
     from ._task_environment import TaskEnvironment
 
@@ -89,6 +89,7 @@ class TaskTemplate(Generic[P, R, F]):
     :param pod_template: Optional The pod template to use for the task.
     :param report: Optional Whether to report the task execution to the Flyte console, defaults to False.
     :param queue: Optional The queue to use for the task. If not provided, the default queue will be used.
+    :param debuggable: Optional Whether the task supports debugging capabilities, defaults to False.
     """
 
     name: str
@@ -109,12 +110,14 @@ class TaskTemplate(Generic[P, R, F]):
     pod_template: Optional[Union[str, PodTemplate]] = None
     report: bool = False
     queue: Optional[str] = None
+    debuggable: bool = False
 
     parent_env: Optional[weakref.ReferenceType[TaskEnvironment]] = None
     parent_env_name: Optional[str] = None
     ref: bool = field(default=False, init=False, repr=False, compare=False)
     max_inline_io_bytes: int = MAX_INLINE_IO_BYTES
     triggers: Tuple[Trigger, ...] = field(default_factory=tuple)
+    links: Tuple[Link, ...] = field(default_factory=tuple)
 
     # Only used in python 3.10 and 3.11, where we cannot use markcoroutinefunction
     _call_as_synchronous: bool = False
@@ -355,6 +358,7 @@ class TaskTemplate(Generic[P, R, F]):
         pod_template: Optional[Union[str, PodTemplate]] = None,
         queue: Optional[str] = None,
         interruptible: Optional[bool] = None,
+        links: Tuple[Link, ...] = (),
         **kwargs: Any,
     ) -> TaskTemplate:
         """
@@ -373,6 +377,8 @@ class TaskTemplate(Generic[P, R, F]):
          passed directly to the task.
         :param pod_template: Optional override for the pod template to use for the task.
         :param queue: Optional override for the queue to use for the task.
+        :param interruptible: Optional override for the interruptible policy for the task.
+        :param links: Optional override for the Links associated with the task.
         :param kwargs: Additional keyword arguments for further overrides. Some fields like name, image, docs,
          and interface cannot be overridden.
 
@@ -437,6 +443,7 @@ class TaskTemplate(Generic[P, R, F]):
             pod_template=pod_template,
             interruptible=interruptible,
             queue=queue or self.queue,
+            links=links or self.links,
             **kwargs,
         )
 
@@ -450,6 +457,7 @@ class AsyncFunctionTaskTemplate(TaskTemplate[P, R, F]):
 
     func: F
     plugin_config: Optional[Any] = None  # This is used to pass plugin specific configuration
+    debuggable: bool = True
 
     def __post_init__(self):
         super().__post_init__()
@@ -528,6 +536,11 @@ class AsyncFunctionTaskTemplate(TaskTemplate[P, R, F]):
 
             from flyte._internal.resolvers.default import DefaultTaskResolver
 
+            if not serialize_context.root_dir:
+                raise RuntimeSystemError(
+                    "SerializationError",
+                    "Root dir is required for default task resolver when no code bundle is provided.",
+                )
             _task_resolver = DefaultTaskResolver()
             args = [
                 *args,

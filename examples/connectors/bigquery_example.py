@@ -1,4 +1,4 @@
-from flyteplugins.connectors.bigquery.task import BigQueryConfig, BigQueryTask
+from flyteplugins.connectors.bigquery import BigQueryConfig, BigQueryTask
 
 import flyte
 from flyte.io import DataFrame
@@ -16,5 +16,5 @@ flyte.TaskEnvironment.from_task("bigquery_env", bigquery_task)
 
 if __name__ == "__main__":
     flyte.init_from_config()
-    run = flyte.with_runcontext(mode="remote").run(bigquery_task, 123)
+    run = flyte.with_runcontext(mode="local").run(bigquery_task, 123)
     print(run.url)

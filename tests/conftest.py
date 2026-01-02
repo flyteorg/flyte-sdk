@@ -1,3 +1,5 @@
+import os
+import tempfile
 from pathlib import Path
 from unittest.mock import patch
 
@@ -50,3 +52,33 @@ async def isolate_local_cache(tmp_path):
         LocalTaskCache._initialized = False
         yield
         await LocalTaskCache.close()
+
+
+@pytest.fixture
+def local_dummy_file():
+    fd, path = tempfile.mkstemp()
+    try:
+        with os.fdopen(fd, "w") as tmp:
+            tmp.write("Hello File")
+        yield path
+    finally:
+        os.remove(path)
+
+
+@pytest.fixture
+def local_dummy_directory():
+    temp_dir = tempfile.TemporaryDirectory()
+    try:
+        with open(os.path.join(temp_dir.name, "file"), "w") as tmp:
+            tmp.write("Hello Dir")
+        yield temp_dir.name
+    finally:
+        temp_dir.cleanup()
+
+
+@pytest.fixture(autouse=True)
+def patch_os_exit(monkeypatch):
+    def mock_exit(code):
+        raise SystemExit(code)
+
+    monkeypatch.setattr(os, "_exit", mock_exit)

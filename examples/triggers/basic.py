@@ -19,7 +19,7 @@ def example_task(trigger_time: datetime, x: int = 1) -> str:
 
 custom_trigger = flyte.Trigger(
     "custom_cron",
-    flyte.Cron("0 0 * * *"),  # Runs every day
+    flyte.Cron("0 0 * * *", timezone="Europe/London"),  # Runs once every day at midnight London time
     inputs={"start_time": flyte.TriggerTime, "x": 1},
 )
 
@@ -30,5 +30,5 @@ def custom_task(start_time: datetime, x: int = 11) -> str:
 
 
 if __name__ == "__main__":
-    flyte.init_from_config("../../config.yaml")
+    flyte.init_from_config()
     flyte.deploy(env)

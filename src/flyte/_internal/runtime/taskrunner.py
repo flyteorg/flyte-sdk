@@ -129,6 +129,14 @@ async def convert_and_run(
     in a context tree.
     """
     ctx = internal_ctx()
+
+    # Load inputs first to get context
+    if input_path:
+        inputs = await load_inputs(input_path, path_rewrite_config=raw_data_path.path_rewrite)
+
+    # Extract context from inputs
+    custom_context = inputs.context if inputs else {}
+
     tctx = TaskContext(
         action=action,
         checkpoints=checkpoints,
@@ -142,15 +150,19 @@ async def convert_and_run(
         report=flyte.report.Report(name=action.name),
         mode="remote" if not ctx.data.task_context else ctx.data.task_context.mode,
         interactive_mode=interactive_mode,
+        custom_context=custom_context,
     )
+
     with ctx.replace_task_context(tctx):
-        inputs = await load_inputs(input_path, path_rewrite_config=raw_data_path.path_rewrite) if input_path else inputs
         inputs_kwargs = await convert_inputs_to_native(inputs, task.native_interface)
         out, err = await run_task(tctx=tctx, controller=controller, task=task, inputs=inputs_kwargs)
         if err is not None:
             return None, convert_from_native_to_error(err)
         if task.report:
-            await flyte.report.flush.aio()
+            # Check if report has content before flushing to avoid overwriting
+            # worker reports (from Elastic/distributed tasks) with empty main process report
+            if ctx.get_report():
+                await flyte.report.flush.aio()
         return await convert_from_native_to_outputs(out, task.native_interface, task.name), None
 
 
@@ -174,7 +186,7 @@ async def extract_download_run_upload(
     has already been created, and the task has been loaded. It also handles the loading of the task.
     """
     t = time.time()
-    logger.warning(f"Task {action.name} started at {t}")
+    logger.info(f"Task {action.name} started at {t}")
     outputs, err = await convert_and_run(
         task=task,
         input_path=input_path,
@@ -189,6 +201,7 @@ async def extract_download_run_upload(
         image_cache=image_cache,
         interactive_mode=interactive_mode,
     )
+    logger.debug(f"Task {action.name} completed at {t}, with outputs: {outputs}")
     if err is not None:
         path = await upload_error(err.err, output_path)
         logger.error(f"Task {task.name} failed with error: {err}. Uploaded error to {path}")
@@ -197,4 +210,4 @@ async def extract_download_run_upload(
         logger.info(f"Task {task.name} completed successfully, no outputs")
         return
     await upload_outputs(outputs, output_path) if output_path else None
-    logger.warning(f"Task {task.name} completed successfully, uploaded outputs to {output_path} in {time.time() - t}s")
+    logger.info(f"Task {task.name} completed successfully, uploaded outputs to {output_path} in {time.time() - t}s")
