@@ -148,10 +148,10 @@ def _verbosity_to_loglevel(verbosity: int) -> int | None:
     required=False,
 )
 @click.option(
-    "--preserve-root-logger",
+    "--reset-root-logger",
     is_flag=True,
     required=False,
-    help="If set, the root logger will not be reset to use Flyte logging style",
+    help="If set, the root logger will be reset to use Flyte logging style",
     type=bool,
     default=False,
     show_default=True,
