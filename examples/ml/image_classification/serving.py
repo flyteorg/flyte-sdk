@@ -74,9 +74,9 @@ env = FastAPIAppEnvironment(
     description="Serving fine-tuned image classification model",
     image=serving_image,
     resources=flyte.Resources(cpu=2, memory="4Gi"),
-    # include=[
-    #     "index.html",
-    # ],
+    include=[
+        "index.html",
+    ],
     requires_auth=False,
     parameters=[
         Parameter(
@@ -144,7 +144,7 @@ async def index():
     Serve the web interface for image classification.
     """
     html_path = Path(__file__).parent / "index.html"
-    with aiofiles.open(html_path, "r") as f:
+    async with aiofiles.open(html_path, "r") as f:
         return await f.read()
 
 

@@ -5,6 +5,7 @@ These tests verify that app_serde.py correctly converts AppEnvironment objects
 into protobuf IDL format without using mocks.
 """
 
+import pathlib
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -102,6 +103,7 @@ def test_get_proto_container_basic():
         project="test-project",
         domain="test-domain",
         version="v1",
+        root_dir=pathlib.Path.cwd(),
     )
 
     container = get_proto_container(app_env, ctx)
@@ -129,6 +131,7 @@ def test_get_proto_container_with_resources():
         project="test-project",
         domain="test-domain",
         version="v1",
+        root_dir=pathlib.Path.cwd(),
     )
 
     container = get_proto_container(app_env, ctx)
@@ -164,6 +167,7 @@ def test_get_proto_container_with_env_vars():
         project="test-project",
         domain="test-domain",
         version="v1",
+        root_dir=pathlib.Path.cwd(),
     )
 
     container = get_proto_container(app_env, ctx)
@@ -192,6 +196,7 @@ def test_get_proto_container_with_custom_port():
         project="test-project",
         domain="test-domain",
         version="v1",
+        root_dir=pathlib.Path.cwd(),
     )
 
     container = get_proto_container(app_env, ctx)
@@ -219,6 +224,7 @@ def test_get_proto_container_with_command_and_args():
         project="test-project",
         domain="test-domain",
         version="v1",
+        root_dir=pathlib.Path.cwd(),
     )
 
     container = get_proto_container(app_env, ctx)
@@ -252,6 +258,7 @@ def test_get_proto_container_with_args_and_inputs():
         domain="test-domain",
         version="v1.0.0",
         code_bundle=CodeBundle(computed_version="v1.0.0", tgz="s3://bucket/code.tgz"),
+        root_dir=pathlib.Path.cwd(),
     )
 
     container = get_proto_container(app_env, ctx)
@@ -290,6 +297,7 @@ def test_get_proto_container_with_string_args_and_parameters():
         domain="test-domain",
         version="v1.0.0",
         code_bundle=CodeBundle(computed_version="v1.0.0", tgz="s3://bucket/code.tgz"),
+        root_dir=pathlib.Path.cwd(),
     )
 
     container = get_proto_container(app_env, ctx)
@@ -324,6 +332,7 @@ def test_get_proto_container_with_only_inputs_no_args():
         domain="test-domain",
         version="v1.0.0",
         code_bundle=CodeBundle(computed_version="v1.0.0", tgz="s3://bucket/code.tgz"),
+        root_dir=pathlib.Path.cwd(),
     )
 
     container = get_proto_container(app_env, ctx)
@@ -357,6 +366,7 @@ def test_get_proto_container_with_custom_command_and_inputs():
         project="test-project",
         domain="test-domain",
         version="v1.0.0",
+        root_dir=pathlib.Path.cwd(),
     )
 
     container = get_proto_container(app_env, ctx)
@@ -387,6 +397,7 @@ def test_get_proto_container_with_string_image():
         project="test-project",
         domain="test-domain",
         version="v1",
+        root_dir=pathlib.Path.cwd(),
     )
 
     # AppEnvironment converts string images to Image objects in __post_init__
@@ -414,6 +425,7 @@ def test_get_proto_container_with_tuple_resources():
         project="test-project",
         domain="test-domain",
         version="v1",
+        root_dir=pathlib.Path.cwd(),
     )
 
     container = get_proto_container(app_env, ctx)
@@ -449,6 +461,7 @@ def test_get_proto_container_with_gpu():
         project="test-project",
         domain="test-domain",
         version="v1",
+        root_dir=pathlib.Path.cwd(),
     )
 
     container = get_proto_container(app_env, ctx)
@@ -477,6 +490,7 @@ def test_get_proto_container_empty_env_vars():
         project="test-project",
         domain="test-domain",
         version="v1",
+        root_dir=pathlib.Path.cwd(),
     )
 
     container = get_proto_container(app_env, ctx)
@@ -501,6 +515,7 @@ def test_get_proto_container_string_command():
         project="test-project",
         domain="test-domain",
         version="v1",
+        root_dir=pathlib.Path.cwd(),
     )
 
     container = get_proto_container(app_env, ctx)
@@ -526,6 +541,7 @@ def test_get_proto_container_string_args():
         project="test-project",
         domain="test-domain",
         version="v1",
+        root_dir=pathlib.Path.cwd(),
     )
 
     container = get_proto_container(app_env, ctx)
@@ -551,6 +567,7 @@ def test_get_proto_container_with_quoted_string_args():
         project="test-project",
         domain="test-domain",
         version="v1",
+        root_dir=pathlib.Path.cwd(),
     )
 
     container = get_proto_container(app_env, ctx)
@@ -588,6 +605,7 @@ def test_get_proto_container_comprehensive():
         domain="production",
         version="v2.0.0",
         code_bundle=CodeBundle(computed_version="v2.0.0", tgz="s3://bucket/code.tgz"),
+        root_dir=pathlib.Path.cwd(),
     )
 
     container = get_proto_container(app_env, ctx)
@@ -638,6 +656,7 @@ def test_app_with_secrets():
         project="test-project",
         domain="test-domain",
         version="v1",
+        root_dir=pathlib.Path.cwd(),
     )
 
     app_idl = translate_app_env_to_idl(app_env, ctx)
@@ -665,6 +684,7 @@ def test_get_proto_container_with_image_cache():
         image_cache=ImageCache(
             image_lookup={"test-app": "gcr.io/my-project/python:3.11-cached"}, serialized_form="cached"
         ),
+        root_dir=pathlib.Path.cwd(),
     )
 
     container = get_proto_container(app_env, ctx)
@@ -700,6 +720,7 @@ def test_get_proto_container_with_multiple_inputs():
         domain="test-domain",
         version="v1.0.0",
         code_bundle=CodeBundle(computed_version="v1.0.0", tgz="s3://bucket/code.tgz"),
+        root_dir=pathlib.Path.cwd(),
     )
 
     container = get_proto_container(app_env, ctx)
@@ -750,6 +771,7 @@ def test_app_with_domain(domain: Domain | None):
         project="test-project",
         domain="test-domain",
         version="v1",
+        root_dir=pathlib.Path.cwd(),
     )
 
     app_idl = translate_app_env_to_idl(app_env, ctx)

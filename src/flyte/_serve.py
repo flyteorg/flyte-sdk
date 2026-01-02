@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import pathlib
 from dataclasses import replace
 from typing import TYPE_CHECKING, Optional
 
@@ -40,6 +41,7 @@ class _Serve:
         log_level: int | None = None,
         log_format: LogFormat = "console",
         interactive_mode: bool | None = None,
+        copy_bundle_to: pathlib.Path | None = None,
     ):
         """
         Initialize serve context.
@@ -56,6 +58,7 @@ class _Serve:
             log_level: Optional log level to set for the app (e.g., logging.INFO)
             log_format: Optional log format ("console" or "json", default: "console")
             interactive_mode: If True, raises NotImplementedError (apps don't support interactive/notebook mode)
+            copy_bundle_to: When dry_run is True, the bundle will be copied to this location if specified
         """
         self._version = version
         self._copy_style = copy_style
@@ -68,12 +71,7 @@ class _Serve:
         self._log_level = log_level
         self._log_format = log_format
         self._interactive_mode = interactive_mode if interactive_mode is not None else ipython_check()
-
-        if self._interactive_mode:
-            raise NotImplementedError(
-                "Apps do not support running from notebooks or interactive mode yet. "
-                "Please run apps from a Python script file."
-            )
+        self._copy_bundle_to = copy_bundle_to
 
     @syncify
     async def serve(self, app_env: "AppEnvironment") -> "App":
@@ -93,7 +91,7 @@ class _Serve:
 
         from flyte.app import _deploy
 
-        from ._code_bundle import build_code_bundle
+        from ._code_bundle import build_code_bundle, build_pkl_bundle
         from ._deploy import build_images, plan_deploy
 
         cfg = get_init_config()
@@ -122,11 +120,19 @@ class _Serve:
         assert image_cache
 
         # Build code bundle (tgz style)
-        code_bundle = await build_code_bundle(
-            from_dir=cfg.root_dir,
-            dryrun=self._dry_run,
-            copy_style=self._copy_style,
-        )
+        if self._interactive_mode:
+            code_bundle = await build_pkl_bundle(
+                app_env,
+                upload_to_controlplane=not self._dry_run,
+                copy_bundle_to=self._copy_bundle_to,
+            )
+        else:
+            code_bundle = await build_code_bundle(
+                from_dir=cfg.root_dir,
+                dryrun=self._dry_run,
+                copy_style=self._copy_style,
+                copy_bundle_to=self._copy_bundle_to,
+            )
 
         # Compute version
         if self._version:
@@ -163,6 +169,7 @@ class _Serve:
         deployed_app = await _deploy._deploy_app(app_env, sc, parameter_overrides=parameter_overrides)
         assert deployed_app
 
+        logger.warning(f"Deployed App, you can check the console at {deployed_app.url}")
         # Mutate app_idl if env_vars or cluster_pool are provided
         # This is a temporary solution until the update/create APIs support these attributes
         if self._env_vars or self._cluster_pool:
@@ -214,6 +221,8 @@ def with_servecontext(
     cluster_pool: str | None = None,
     log_level: int | None = None,
     log_format: LogFormat = "console",
+    interactive_mode: bool | None = None,
+    copy_bundle_to: pathlib.Path | None = None,
 ) -> _Serve:
     """
     Create a serve context with custom configuration.
@@ -254,6 +263,11 @@ def with_servecontext(
         cluster_pool: Optional cluster pool to deploy the app to
         log_level: Optional log level (e.g., logging.DEBUG, logging.INFO). If not provided, uses init config or default
         log_format: Optional log format ("console" or "json", default: "console")
+        interactive_mode: Optional, can be forced to True or False.
+            If not provided, it will be set based on the current environment. For example Jupyter notebooks are
+            considered interactive mode, while scripts are not. This is used to determine how the code bundle is
+            created. This is used to determine if the app should be served in interactive mode or not.
+        copy_bundle_to: When dry_run is True, the bundle will be copied to this location if specified
 
     Returns:
         _Serve: Serve context manager with configured settings
@@ -278,6 +292,8 @@ def with_servecontext(
         cluster_pool=cluster_pool,
         log_level=log_level,
         log_format=log_format,
+        interactive_mode=interactive_mode,
+        copy_bundle_to=copy_bundle_to,
     )
 
 

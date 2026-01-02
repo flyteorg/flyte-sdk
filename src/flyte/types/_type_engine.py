@@ -1249,8 +1249,11 @@ class TypeEngine(typing.Generic[T]):
                 e: BaseException = literal_map[k].exception()  # type: ignore
                 if isinstance(e, TypeError):
                     raise TypeError(
-                        f"Error converting: Var:{k}, type:{type(d[k])}, into:{python_type}, received_value {d[k]}"
-                    )
+                        f"Type conversion failed for variable '{k}'.\n"
+                        f"Expected type: {python_type}\n"
+                        f"Actual type: {type(d[k])}\n"
+                        f"Value received: {d[k]!r}"
+                    ) from e
                 else:
                     raise e
             literal_map[k] = v.result()
@@ -2122,10 +2125,16 @@ def _register_default_type_transformers():
     TypeEngine.register(BoolTransformer)
     TypeEngine.register(NoneTransformer, [None])
     TypeEngine.register(ListTransformer())
+
     if sys.version_info < (3, 14):
         TypeEngine.register(UnionTransformer(), [UnionType])
     else:
-        TypeEngine.register(UnionTransformer())
+        # In Python 3.14+, types.UnionType and typing.Union are the same object.
+        # UnionTransformer's python_type is already typing.Union, so only add UnionType
+        # as an additional type if it's different from typing.Union.
+        union_transformer = UnionTransformer()
+        additional_union_types = [] if UnionType is union_transformer.python_type else [UnionType]
+        TypeEngine.register(union_transformer, additional_union_types)
     TypeEngine.register(DictTransformer())
     TypeEngine.register(EnumTransformer())
     TypeEngine.register(ProtobufTransformer())
