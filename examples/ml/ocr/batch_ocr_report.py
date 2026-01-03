@@ -497,7 +497,7 @@ async def generate_ocr_comparison_report(results_dfs: list[flyte.io.DataFrame]):
     logger.info("OCR comparison report generated successfully")
 
 
-@report_env.task(cache="auto")
+@report_env.task
 async def batch_ocr_comparison_with_report(
     models: list[str] = ["Qwen/Qwen2.5-VL-3B-Instruct", "OpenGVLab/InternVL2_5-2B"],  # noqa
     sample_size: int = 10,

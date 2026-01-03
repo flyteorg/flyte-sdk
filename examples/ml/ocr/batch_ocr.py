@@ -185,12 +185,12 @@ worker_env_gpu = flyte.TaskEnvironment(
     ),
     reusable=flyte.ReusePolicy(
         replicas=4,
-        concurrency=2,
+        concurrency=1,
         idle_ttl=600,
         scaledown_ttl=600,
     ),
     secrets="HF_HUB_TOKEN",
-    cache=flyte.Cache("auto", "1.0"),
+    cache=flyte.Cache("auto", "2.0"),
 )
 
 # A100 Worker - For medium models (7B-8B variants)
