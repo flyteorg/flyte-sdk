@@ -199,5 +199,5 @@ class Evaluator:
         await r.wait.aio()
         outputs = await r.outputs.aio()
         if outputs is None:
-            raise RuntimeError(f"Failed to get outputs from evaluation")
+            raise RuntimeError("Failed to get outputs from evaluation")
         return outputs[0]

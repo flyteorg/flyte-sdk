@@ -418,6 +418,7 @@ class NativeInterface:
         """
         Returns a string representation of the task interface.
         """
+
         def format_type(tpe):
             """Format a type for display in the interface repr."""
             if isinstance(tpe, str):
