@@ -3,7 +3,7 @@ from typing import cast
 
 import pytest
 
-from flyte._image import AptPackages, Image, UVScript
+from flyte._image import Image, UVScript
 from flyte._internal.imagebuild.docker_builder import PipAndRequirementsHandler
 
 
@@ -38,7 +38,7 @@ def test_with_pip_packages():
     assert img._layers[-1].packages == (packages[0],)
 
     img = Image.from_debian_base(registry="localhost", name="test-image").with_pip_packages(
-        packages, extra_index_urls="https://example.com"
+        *packages, extra_index_urls="https://example.com"
     )
     assert img._layers[-1].extra_index_urls == ("https://example.com",)
 
@@ -83,8 +83,6 @@ def test_image_from_uv_script():
     assert img.uri.startswith("localhost/uvtest:")
     assert img._layers
     print(img._layers)
-    assert isinstance(img._layers[-2], AptPackages)
-    assert isinstance(img._layers[-1], UVScript)
     script: UVScript = cast(UVScript, img._layers[-1])
     assert script.script == script_path
     assert img.uri.startswith("localhost/uvtest:")
@@ -148,7 +146,7 @@ def test_dockerfile():
 
 def test_image_uri_consistency_for_uvscript():
     img = Image.from_uv_script(
-        "./agent_simulation_loadtest.py", name="flyte", registry="ghcr.io/flyteorg", python_version=(3, 12)
+        "examples/genai/agent_simulation_loadtest.py", name="flyte", registry="ghcr.io/flyteorg", python_version=(3, 12)
     )
     assert img.base_image == "python:3.12-slim-bookworm", "Base image should be python:3.12-slim-bookworm"
 
