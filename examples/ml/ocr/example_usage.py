@@ -1,157 +1,65 @@
 """
-Example Usage Script for Batch OCR Workflows
+Example Usage for Batch OCR
 
-This script demonstrates how to run the OCR workflows programmatically.
+Simple examples showing how to run the OCR pipeline.
 """
 
+import asyncio
 from pathlib import Path
 
 import flyte
-import flyte.remote
 
-from batch_ocr import (
-    OCRModel,
-    batch_ocr_comparison,
-    batch_ocr_single_model,
-    load_documentvqa_dataset,
-)
-from batch_ocr_report import batch_ocr_comparison_with_report
+from batch_ocr import run_ocr_pipeline, batch_ocr, load_dataset
 
 
-async def example_single_model():
-    """Run OCR with a single model on sample data."""
-    print("Example 1: Single Model OCR")
-    print("=" * 50)
+async def example_small_batch():
+    """Process a small batch of 10 documents."""
+    print("Processing 10 documents from DocumentVQA")
 
-    # Run with Qwen 2B on 10 documents
-    result = await batch_ocr_single_model(
-        model=OCRModel.QWEN_VL_3B,
+    flyte.init_from_config(root_dir=Path(__file__).parent)
+
+    run = await flyte.run.aio(
+        run_ocr_pipeline,
         sample_size=10,
         chunk_size=5,
     )
 
-    print(f"Completed! Result type: {type(result)}")
-    print("Check the Flyte UI for the DataFrame output")
+    print(f"Run URL: {run.url}")
+    await run.wait.aio()
+
+    results = await run.outputs.aio()
+    print(f"Complete! Results: {results}")
 
 
-async def example_multi_model_comparison():
-    """Compare multiple models on the same dataset."""
-    print("\nExample 2: Multi-Model Comparison")
-    print("=" * 50)
+async def example_custom_images():
+    """Process custom images from a local directory."""
+    print("Processing custom images")
 
-    # Compare two lightweight models
-    models = [OCRModel.QWEN_VL_3B, OCRModel.INTERN_VL_2B]
-
-    results = await batch_ocr_comparison(
-        models=models,
-        sample_size=20,
-        chunk_size=10,
-    )
-
-    print(f"Completed! Got {len(results)} result DataFrames (one per model)")
-    print("Check the Flyte UI for detailed results")
-
-
-async def example_with_report():
-    """Run comparison with interactive report."""
-    print("\nExample 3: Comparison with Interactive Report")
-    print("=" * 50)
-
-    # This will generate a beautiful HTML report
-    results = await batch_ocr_comparison_with_report(
-        models=["Qwen/Qwen2.5-VL-3B-Instruct", "OpenGVLab/InternVL2_5-2B"],
-        sample_size=15,
-        chunk_size=5,
-    )
-
-    print(f"Completed with report! Got {len(results)} result DataFrames")
-    print("Check the Flyte UI for the interactive HTML report")
-
-
-async def example_custom_dataset():
-    """Load dataset separately and then run OCR."""
-    print("\nExample 4: Custom Dataset Loading")
-    print("=" * 50)
-
-    # Load dataset
-    print("Loading DocumentVQA dataset...")
-    images_dir = await load_documentvqa_dataset(sample_size=5, split="train")
-
-    print(f"Dataset loaded to: {images_dir}")
-    print("You can now run batch_ocr_pipeline with this directory")
-
-
-def example_via_flyte_run():
-    """Show how to trigger workflows via flyte.run()"""
-    print("\nExample 5: Using flyte.run() API")
-    print("=" * 50)
-
-    # Initialize Flyte
     flyte.init_from_config(root_dir=Path(__file__).parent)
 
-    # Run single model workflow
-    run = flyte.run(
-        batch_ocr_single_model,
-        model=OCRModel.QWEN_VL_3B,
-        sample_size=5,
-        chunk_size=5,
-    )
+    # Upload your local images
+    images_dir = await flyte.io.Dir.from_local(Path("./my_images"))
 
-    print(f"Workflow submitted: {run.url}")
-    print("Monitor progress in the Flyte UI")
+    # Run OCR
+    run = await flyte.run.aio(batch_ocr, images_dir=images_dir, chunk_size=10)
 
-    # You can also wait for results
-    # outputs = run.outputs()
-    # print(f"Results: {outputs}")
+    print(f"Run URL: {run.url}")
+    await run.wait.aio()
 
-
-def example_model_configs():
-    """Show how to inspect model configurations."""
-    print("\nExample 6: Inspecting Model Configurations")
-    print("=" * 50)
-
-    from batch_ocr import MODEL_GPU_CONFIGS
-
-    print("Available Models and Their GPU Requirements:\n")
-
-    for model, config in MODEL_GPU_CONFIGS.items():
-        print(f"{model.name}:")
-        print(f"  Model ID: {config.model_id}")
-        print(f"  GPU: {config.gpu_type} x{config.gpu_count}")
-        print(f"  Memory: {config.memory}")
-        print(f"  CPU: {config.cpu}")
-        print(f"  Max Batch Size: {config.max_batch_size}")
-        print(f"  Flash Attention: {config.requires_flash_attention}")
-        print()
+    results = await run.outputs.aio()
+    print(f"Complete! Results: {results}")
 
 
 if __name__ == "__main__":
-    print("Batch OCR Workflow Examples")
-    print("=" * 50)
-    print()
+    print("""
+Batch OCR Examples
+==================
 
-    # Example 6 is synchronous - show model configs
-    example_model_configs()
+Run these examples to see the OCR pipeline in action.
+""")
 
-    print("\n" + "=" * 50)
-    print("To run the async examples, use one of these methods:")
-    print("=" * 50)
-    print()
-    print("1. Via Flyte CLI (recommended):")
-    print("   flyte run batch_ocr.py batch_ocr_single_model --model=QWEN_VL_3B --sample_size=10")
-    print()
-    print("2. Via flyte.run() API:")
-    print("   python example_usage.py  # (uncomment example_via_flyte_run() in main)")
-    print()
-    print("3. Direct async execution (requires Flyte environment):")
-    print("   asyncio.run(example_single_model())")
-    print()
-    print("=" * 50)
+    # Run the small batch example
+    asyncio.run(example_small_batch())
 
-    # Uncomment to run via flyte.run():
-    # example_via_flyte_run()
-
-    # Uncomment to run directly (requires proper Flyte setup):
-    # asyncio.run(example_single_model())
-    # asyncio.run(example_multi_model_comparison())
-    # asyncio.run(example_with_report())
+    # To process custom images:
+    # asyncio.run(example_custom_images())
