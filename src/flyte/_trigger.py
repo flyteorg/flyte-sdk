@@ -2,9 +2,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Dict, Literal, Mapping, Union
+from typing import TYPE_CHECKING, Any, Dict, Literal, Mapping, Tuple, Union
 
 import rich.repr
+
+if TYPE_CHECKING:
+    from flyte.notify import Notification
 
 Timezone = Literal[
     "Etc/GMT-5",
@@ -716,6 +719,7 @@ class Trigger:
     queue: str | None = None
     labels: Mapping[str, str] | None = None
     annotations: Mapping[str, str] | None = None
+    notifications: Notification | Tuple[Notification, ...] | None = None
 
     def __post_init__(self):
         if not self.name:
