@@ -196,7 +196,7 @@ wheels = [
 
 [[package]]
 name = "flyte"
-version = "2.0.0b42"
+version = "2.0.0b43"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiofiles" },
@@ -222,7 +222,7 @@ dependencies = [
     { name = "toml" },
 ]
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/6b/c3/56f22dcf40af04d61da836c49713ffe9118150cdcc109b8c1bfce3ccdb00/flyte-2.0.0b42-py3-none-any.whl", hash = "sha256:d90dfcf6fd4a39f662f7cea571da1e179055a9fd2a89b26e041966703088e856", size = 455468 },
+    { url = "https://files.pythonhosted.org/packages/89/d5/3d3c79ac016669d8afbf8a69145bbad6498185900bc9bb0fcceccb9cbf76/flyte-2.0.0b43-py3-none-any.whl", hash = "sha256:c4d070e6bef736ae9e450915b4b65ce49b0cf91cd4da5b9d56917abfc34ebcd9", size = 457797 },
 ]
 
 [[package]]
@@ -535,7 +535,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "flyte", specifier = ">=2.0.0b40" },
+    { name = "flyte", specifier = ">=2.0.0b43" },
     { name = "my-task-library", specifier = ">=0.4.0" },
 ]
 
