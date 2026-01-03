@@ -8,7 +8,7 @@ import flyte.io
 import torch
 from async_lru import alru_cache
 from PIL import Image
-from transformers import AutoModelForVision2Seq, AutoProcessor
+from transformers import AutoModelForImageTextToText, AutoProcessor
 
 logger = logging.getLogger(__name__)
 
@@ -33,16 +33,17 @@ class QwenOCRProcessor:
 
         logger.info(f"Loading {model_id} on {self.device}")
 
-        # Load processor and model
+        # Load processor (fast by default)
         self.processor = AutoProcessor.from_pretrained(
             model_id,
             trust_remote_code=True,
             token=os.getenv("HF_HUB_TOKEN"),
         )
 
-        self.model = AutoModelForVision2Seq.from_pretrained(
+        # Load model
+        self.model = AutoModelForImageTextToText.from_pretrained(
             model_id,
-            torch_dtype=torch.bfloat16 if torch.cuda.is_available() else torch.float32,
+            dtype=torch.bfloat16 if torch.cuda.is_available() else torch.float32,
             device_map="auto" if torch.cuda.is_available() else None,
             trust_remote_code=True,
         )
@@ -73,37 +74,46 @@ class QwenOCRProcessor:
                 }
             ]
 
+            # Apply chat template and tokenize
             text = self.processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-            inputs = self.processor(text=[text], images=[image], return_tensors="pt", padding=True)
 
+            # Process image and text
+            inputs = self.processor(
+                text=text,
+                images=image,
+                return_tensors="pt",
+            )
+
+            # Move to GPU if available
             if torch.cuda.is_available():
-                inputs = {k: v.to("cuda") for k, v in inputs.items()}
+                inputs = inputs.to("cuda")
 
             # Generate text
             with torch.no_grad():
-                output_ids = self.model.generate(**inputs, max_new_tokens=2048, do_sample=False)
+                output_ids = self.model.generate(**inputs, max_new_tokens=2048)
 
-            # Decode output
-            generated_ids = [
-                output_ids[len(input_ids) :] for input_ids, output_ids in zip(inputs.input_ids, output_ids, strict=True)
-            ]
+            # Decode output (skip prompt tokens)
+            input_len = inputs["input_ids"].shape[1]
+            generated_ids = output_ids[:, input_len:]
             output_text = self.processor.batch_decode(generated_ids, skip_special_tokens=True)[0]
 
             return {
                 "text": output_text,
                 "success": True,
-                "token_count": len(generated_ids[0]),
+                "token_count": generated_ids.shape[1],
             }
 
         except Exception as e:
-            logger.error(f"OCR failed: {e}")
+            logger.error(f"OCR failed: {e}", exc_info=True)
             return {
                 "text": "",
                 "success": False,
                 "token_count": 0,
             }
 
-    async def process_document(self, image_file: flyte.io.File, prompt: str = "Extract all text from this image.") -> dict[str, Any]:
+    async def process_document(
+        self, image_file: flyte.io.File, prompt: str = "Extract all text from this image."
+    ) -> dict[str, Any]:
         """
         Process a single document file.
 

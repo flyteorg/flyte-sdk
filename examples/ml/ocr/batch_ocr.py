@@ -24,8 +24,7 @@ MODEL_ID = "Qwen/Qwen2.5-VL-3B-Instruct"
 
 # Base image with OCR dependencies
 ocr_image = flyte.Image.from_debian_base().with_uv_project(
-    pyproject_file=Path("pyproject.toml"),
-    extra_args="--extra ocr"
+    pyproject_file=Path("pyproject.toml"), extra_args="--extra ocr"
 )
 
 # GPU worker environment - runs OCR tasks with model caching
@@ -44,7 +43,7 @@ gpu_worker = flyte.TaskEnvironment(
         idle_ttl=600,
     ),
     secrets="HF_HUB_TOKEN",
-    cache=flyte.Cache("auto", "1.0"),
+    cache=flyte.Cache("auto", "2.0"),
 )
 
 # Driver environment - orchestrates the workflow
@@ -54,7 +53,7 @@ driver = flyte.TaskEnvironment(
     image=ocr_image,
     resources=flyte.Resources(cpu=4, memory="8Gi"),
     depends_on=[gpu_worker],
-    cache=flyte.Cache("auto", "1.0"),
+    cache=flyte.Cache("auto", "2.0"),
 )
 
 
@@ -150,7 +149,7 @@ async def batch_ocr(images_dir: flyte.io.Dir, chunk_size: int = 20) -> flyte.io.
         raise ValueError(f"No images found in {images_dir.path}")
 
     # Split into chunks
-    chunks = [image_files[i:i + chunk_size] for i in range(0, len(image_files), chunk_size)]
+    chunks = [image_files[i : i + chunk_size] for i in range(0, len(image_files), chunk_size)]
     logger.info(f"Split into {len(chunks)} chunks")
 
     # Process chunks in parallel
@@ -161,12 +160,14 @@ async def batch_ocr(images_dir: flyte.io.Dir, chunk_size: int = 20) -> flyte.io.
     results = [item for sublist in all_results for item in sublist]
 
     # Create DataFrame
-    table = pa.table({
-        "document_id": [r["document_id"] for r in results],
-        "extracted_text": [r["extracted_text"] for r in results],
-        "success": [r["success"] for r in results],
-        "token_count": [r["token_count"] for r in results],
-    })
+    table = pa.table(
+        {
+            "document_id": [r["document_id"] for r in results],
+            "extracted_text": [r["extracted_text"] for r in results],
+            "success": [r["success"] for r in results],
+            "token_count": [r["token_count"] for r in results],
+        }
+    )
 
     logger.info(f"OCR complete: {table.num_rows} documents processed")
     return flyte.io.DataFrame.from_df(table)

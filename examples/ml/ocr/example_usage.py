@@ -9,7 +9,7 @@ from pathlib import Path
 
 import flyte
 
-from batch_ocr import run_ocr_pipeline, batch_ocr, load_dataset
+from batch_ocr import batch_ocr, run_ocr_pipeline
 
 
 async def example_small_batch():
