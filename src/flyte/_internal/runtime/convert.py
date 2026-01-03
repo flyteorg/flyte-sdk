@@ -82,9 +82,11 @@ async def convert_upload_default_inputs(interface: NativeInterface) -> List[comm
             literal_coros.append(TypeEngine.to_literal(default_value, input_type, lt))
             vars.append((input_name, lt))
 
-    literals: List[literals_pb2.Literal] = await asyncio.gather(*literal_coros)
+    literals: List[literals_pb2.Literal] = await asyncio.gather(*literal_coros, return_exceptions=True)
     named_params = []
     for (name, lt), literal in zip(vars, literals):
+        if isinstance(literal, Exception):
+            raise RuntimeError(f"Failed to convert default value for parameter '{name}'") from literal
         param = interface_pb2.Parameter(
             var=interface_pb2.Variable(
                 type=lt,

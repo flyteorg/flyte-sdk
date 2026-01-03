@@ -64,7 +64,12 @@ async def process_default_inputs(
             literal_coros.append(flyte.types.TypeEngine.to_literal(v, type(v), task_inputs.variables[k].type))
             keys.append(k)
 
-    final_literals: list[literals_pb2.Literal] = await asyncio.gather(*literal_coros)
+    final_literals: list[literals_pb2.Literal] = await asyncio.gather(*literal_coros, return_exceptions=True)
+
+    # Check for exceptions in the gathered results
+    for k, lit in zip(keys, final_literals):
+        if isinstance(lit, Exception):
+            raise RuntimeError(f"Failed to convert trigger default input '{k}'") from lit
 
     for p in task_default_inputs or []:
         if p.name not in keys:
