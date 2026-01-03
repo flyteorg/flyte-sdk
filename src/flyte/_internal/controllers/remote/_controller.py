@@ -24,6 +24,7 @@ from flyte._internal.runtime import convert, io
 from flyte._internal.runtime.task_serde import translate_task_to_wire
 from flyte._internal.runtime.types_serde import transform_native_to_typed_interface
 from flyte._logging import logger
+from flyte._metrics import Stopwatch
 from flyte._task import TaskTemplate
 from flyte._utils.helpers import _selector_policy
 from flyte.models import MAX_INLINE_IO_BYTES, ActionID, NativeInterface, SerializationContext
@@ -295,7 +296,11 @@ class RemoteController(Controller):
         current_action_id = tctx.action
         task_call_seq = self.generate_task_call_sequence(_task, current_action_id)
         async with self._parent_action_semaphore[unique_action_name(current_action_id)]:
-            return await self._submit(task_call_seq, _task, *args, **kwargs)
+            sw = Stopwatch(f"controller-submit-{unique_action_name(current_action_id)}")
+            sw.start()
+            result = await self._submit(task_call_seq, _task, *args, **kwargs)
+            sw.stop()
+            return result
 
     def _sync_thread_loop_runner(self) -> None:
         """This method runs the event loop and should be invoked in a separate thread."""
