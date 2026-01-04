@@ -1,6 +1,7 @@
 import flyte
 import pyspark
-from flyte.io import PARQUET, DataFrame, DataFrameDecoder, DataFrameEncoder, DataFrameTransformerEngine
+from flyte.io import PARQUET, DataFrame
+from flyte.io.extend import DataFrameDecoder, DataFrameEncoder, DataFrameTransformerEngine
 from flyteidl2.core import literals_pb2, types_pb2
 from typing_extensions import cast
 

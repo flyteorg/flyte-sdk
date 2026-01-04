@@ -13,9 +13,11 @@ from fsspec.utils import get_protocol
 import flyte
 from flyte._context import Context, RawDataPath, internal_ctx
 from flyte._utils.lazy_module import is_imported
-from flyte.io._dataframe.dataframe import (
+from flyte.io import (
     PARQUET,
     DataFrame,
+)
+from flyte.io.extend import (
     DataFrameDecoder,
     DataFrameEncoder,
     DataFrameTransformerEngine,
