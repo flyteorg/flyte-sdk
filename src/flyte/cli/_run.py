@@ -367,7 +367,7 @@ class RunRemoteTaskCommand(click.RichCommand):
         
         # 2. Execute with a UX Status Spinner
         try:
-            with console.status(f"[bold blue]Launching {mode} execution...", spinner="dots"):
+            with console.status(f"[bold blue]Launching {"local" if self.run_args.local else "remote"} execution...", spinner="dots"):
                 execution_context = flyte.with_runcontext(
                     copy_style=self.run_args.copy_style,
                     mode="local" if self.run_args.local else "remote",
