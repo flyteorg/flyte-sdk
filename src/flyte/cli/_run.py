@@ -236,15 +236,12 @@ class RunTaskCommand(click.RichCommand):
         import flyte
         console = common.get_console()
         
-        # 1. Prepare Execution Parameters
-        mode = "local" if self.run_args.local else "remote"
-        
         # 2. Execute with a UX Status Spinner
         try:
-            with console.status(f"[bold blue]Launching {mode} execution...", spinner="dots"):
+            with console.status(f"[bold blue]Launching {'local' if self.run_args.local else 'remote'} execution...", spinner="dots"):
                 execution_context = flyte.with_runcontext(
                     copy_style=self.run_args.copy_style,
-                    mode=mode,
+                    mode="local" if self.run_args.local else "remote",
                     name=self.run_args.name,
                     raw_data_path=self.run_args.raw_data_path,
                     service_account=self.run_args.service_account,
