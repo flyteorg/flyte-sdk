@@ -14,7 +14,7 @@ from typing_extensions import get_args
 from .._code_bundle._utils import CopyFiles
 from .._task import TaskTemplate
 from ..remote import Run
-from ._common import CLIConfig, initialize_config, PROJECT_OPTION, DOMAIN_OPTION, get_option_from_metadata,get_console,get_panel, ObjectsPerFileGroup,GroupBase,FileGroup
+from . import _common as common
 from ._params import to_click_option
 
 RUN_REMOTE_CMD = "deployed-task"
@@ -30,17 +30,17 @@ def _list_tasks(
 ) -> list[str]:
     import flyte.remote
 
-    initialize_config(ctx, project, domain)
+    common.initialize_config(ctx, project, domain)
     return [task.name for task in flyte.remote.Task.listall(by_task_name=by_task_name, by_task_env=by_task_env)]
 
 
 @dataclass
 class RunArguments:
     project: str = field(
-        default=cast(str, PROJECT_OPTION.default), metadata={"click.option": PROJECT_OPTION}
+        default=cast(str, common.PROJECT_OPTION.default), metadata={"click.option": common.PROJECT_OPTION}
     )
     domain: str = field(
-        default=cast(str, DOMAIN_OPTION.default), metadata={"click.option": DOMAIN_OPTION}
+        default=cast(str, common.DOMAIN_OPTION.default), metadata={"click.option": common.DOMAIN_OPTION}
     )
     local: bool = field(
         default=False,
@@ -178,7 +178,7 @@ class RunArguments:
         """
         Return the set of base parameters added to run subcommand.
         """
-        return [get_option_from_metadata(f.metadata) for f in fields(cls) if f.metadata]
+        return [common.get_option_from_metadata(f.metadata) for f in fields(cls) if f.metadata]
 
 
 class RunTaskCommand(click.RichCommand):
@@ -206,7 +206,7 @@ class RunTaskCommand(click.RichCommand):
             )
 
     def invoke(self, ctx: click.Context):
-        obj: CLIConfig = initialize_config(
+        obj: common.CLIConfig = common.initialize_config(
             ctx,
             self.run_args.project,
             self.run_args.domain,
@@ -221,7 +221,7 @@ class RunTaskCommand(click.RichCommand):
         async def _run():
             import flyte
 
-            console = get_console()
+            console = common.get_console()
             r = await flyte.with_runcontext(
                 copy_style=self.run_args.copy_style,
                 mode="local" if self.run_args.local else "remote",
@@ -233,7 +233,7 @@ class RunTaskCommand(click.RichCommand):
             ).run.aio(self.obj, **ctx.params)
             if self.run_args.local:
                 console.print(
-                    get_panel(
+                    common.get_panel(
                         "Local Run",
                         f"[green]Completed Local Run, data stored in path: {r.url} [/green] \n"
                         f"➡️  Outputs: {r.outputs()}",
@@ -243,7 +243,7 @@ class RunTaskCommand(click.RichCommand):
                 return
             if isinstance(r, Run) and r.action is not None:
                 console.print(
-                    get_panel(
+                    common.get_panel(
                         "Run",
                         f"[green bold]Created Run: {r.name} [/green bold] "
                         f"(Project: {r.action.action_id.run.project}, Domain: {r.action.action_id.run.domain})\n"
@@ -281,7 +281,7 @@ class RunTaskCommand(click.RichCommand):
         return super().get_params(ctx)
 
 
-class TaskPerFileGroup(ObjectsPerFileGroup):
+class TaskPerFileGroup(common.ObjectsPerFileGroup):
     """
     Group that creates a command for each task in the current directory that is not __init__.py.
     """
@@ -296,7 +296,7 @@ class TaskPerFileGroup(ObjectsPerFileGroup):
         return {k: v for k, v in module.__dict__.items() if isinstance(v, TaskTemplate)}
 
     def list_commands(self, ctx):
-        initialize_config(
+        common.initialize_config(
             ctx,
             self.run_args.project,
             self.run_args.domain,
@@ -306,7 +306,7 @@ class TaskPerFileGroup(ObjectsPerFileGroup):
         return super().list_commands(ctx)
 
     def get_command(self, ctx, obj_name):
-        initialize_config(
+        common.initialize_config(
             ctx,
             self.run_args.project,
             self.run_args.domain,
@@ -350,7 +350,7 @@ class RunRemoteTaskCommand(click.RichCommand):
             )
 
     def invoke(self, ctx: click.Context):
-        obj: CLIConfig = initialize_config(
+        obj: common.CLIConfig = common.initialize_config(
             ctx,
             project=self.run_args.project,
             domain=self.run_args.domain,
@@ -366,7 +366,7 @@ class RunRemoteTaskCommand(click.RichCommand):
             import flyte.remote
 
             task = flyte.remote.Task.get(self.task_name, version=self.version, auto_version="latest")
-            console = get_console()
+            console = common.get_console()
 
             if self.run_args.run_project or self.run_args.run_domain:
                 console.print(
@@ -382,7 +382,7 @@ class RunRemoteTaskCommand(click.RichCommand):
             ).run.aio(task, **ctx.params)
             if isinstance(r, Run) and r.action is not None:
                 console.print(
-                    get_panel(
+                    common.get_panel(
                         "Run",
                         f"[green bold]Created Run: {r.name} [/green bold] "
                         f"(Project: {r.action.action_id.run.project}, Domain: {r.action.action_id.run.domain})\n"
@@ -404,7 +404,7 @@ class RunRemoteTaskCommand(click.RichCommand):
         import flyte.remote
         from flyte._internal.runtime.types_serde import transform_native_to_typed_interface
 
-        initialize_config(
+        common.initialize_config(
             ctx,
             self.run_args.project,
             self.run_args.domain,
@@ -430,7 +430,7 @@ class RunRemoteTaskCommand(click.RichCommand):
         return super().get_params(ctx)
 
 
-class RemoteEnvGroup(GroupBase):
+class RemoteEnvGroup(common.GroupBase):
     def __init__(self, name: str, *args, run_args, env: str, **kwargs):
         super().__init__(*args, **kwargs)
         self.name = name
@@ -450,7 +450,7 @@ class RemoteEnvGroup(GroupBase):
         )
 
 
-class RemoteTaskGroup(GroupBase):
+class RemoteTaskGroup(common.GroupBase):
     """
     Group that creates a command for each remote task in the current directory that is not __init__.py.
     """
@@ -528,7 +528,7 @@ class RemoteTaskGroup(GroupBase):
                 raise click.BadParameter(f"Invalid task name format: {task_name}")
 
 
-class TaskFiles(FileGroup):
+class TaskFiles(common.FileGroup):
     """
     Group that creates a command for each file in the current directory that is not __init__.py.
     """
