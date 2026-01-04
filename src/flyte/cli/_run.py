@@ -166,6 +166,33 @@ class RunArguments:
             )
         },
     )
+    run_project: str | None = field(
+        default=None,
+        metadata={
+            "click.option": click.Option(
+                param_decls=["--run-project"],
+                required=False,
+                type=str,
+                default=None,
+                help="Run the remote task in this project, only applicable when using `deployed-task` subcommand.",
+                show_default=True,
+            )
+        },
+    )
+
+    run_domain: str | None = field(
+        default=None,
+        metadata={
+            "click.option": click.Option(
+                ["--run-domain"],
+                required=False,
+                type=str,
+                default=None,
+                help="Run the remote task in this domain, only applicable when using `deployed-task` subcommand.",
+                show_default=True,
+            )
+        },
+    )
 
     @classmethod
     def from_dict(cls, d: Dict[str, Any]) -> RunArguments:
