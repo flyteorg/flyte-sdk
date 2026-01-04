@@ -209,12 +209,15 @@ class RunTaskCommand(click.RichCommand):
         import flyte
         console = common.get_console()
         
+        # 1. Prepare Execution Parameters
+        mode = "local" if self.run_args.local else "remote"
+        
         # 2. Execute with a UX Status Spinner
         try:
-            with console.status(f"[bold blue]Launching {'local' if self.run_args.local else 'remote'} execution...", spinner="dots"):
+            with console.status(f"[bold blue]Launching {mode} execution...", spinner="dots"):
                 execution_context = flyte.with_runcontext(
                     copy_style=self.run_args.copy_style,
-                    mode="local" if self.run_args.local else "remote",
+                    mode=mode,
                     name=self.run_args.name,
                     raw_data_path=self.run_args.raw_data_path,
                     service_account=self.run_args.service_account,
@@ -362,12 +365,15 @@ class RunRemoteTaskCommand(click.RichCommand):
                     f"Separate Run project/domain set, using {self.run_args.run_project} and {self.run_args.run_domain}"
                 )
         
+        # 1. Prepare Execution Parameters
+        mode = "local" if self.run_args.local else "remote"
+        
         # 2. Execute with a UX Status Spinner
         try:
-            with console.status(f"[bold blue]Launching {'local' if self.run_args.local else 'remote'} execution...", spinner="dots"):
+            with console.status(f"[bold blue]Launching {mode} execution...", spinner="dots"):
                 execution_context = flyte.with_runcontext(
                     copy_style=self.run_args.copy_style,
-                    mode="local" if self.run_args.local else "remote",
+                    mode=mode,
                     name=self.run_args.name,
                     project=self.run_args.run_project,
                     domain=self.run_args.run_domain,
@@ -404,7 +410,7 @@ class RunRemoteTaskCommand(click.RichCommand):
             await result.show_logs.aio(max_lines=30, show_ts=True, raw=False)
 
     def invoke(self, ctx: click.Context):
-        config: common.CLIConfig = common.initialize_config(
+        config:common.CLIConfig = common.initialize_config(
             ctx,
             project=self.run_args.project,
             domain=self.run_args.domain,
