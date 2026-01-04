@@ -18,7 +18,7 @@ from . import _common as common
 from ._params import to_click_option
 
 RUN_REMOTE_CMD = "deployed-task"
-
+initialize_config = common.initialize_config
 
 @lru_cache()
 def _list_tasks(
