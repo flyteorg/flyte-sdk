@@ -339,15 +339,12 @@ class RunRemoteTaskCommand(click.RichCommand):
                     f"Separate Run project/domain set, using {self.run_args.run_project} and {self.run_args.run_domain}"
                 )
         
-        # 1. Prepare Execution Parameters
-        mode = "local" if self.run_args.local else "remote"
-        
         # 2. Execute with a UX Status Spinner
         try:
             with console.status(f"[bold blue]Launching {mode} execution...", spinner="dots"):
                 execution_context = flyte.with_runcontext(
                     copy_style=self.run_args.copy_style,
-                    mode=mode,
+                    mode="local" if self.run_args.local else "remote",
                     name=self.run_args.name,
                     project=self.run_args.run_project,
                     domain=self.run_args.run_domain,
