@@ -15,23 +15,10 @@ from .._code_bundle._utils import CopyFiles
 from .._task import TaskTemplate
 from ..remote import Run
 from . import _common as common
-from ._common import CLIConfig, initialize_config
 from ._params import to_click_option
 
 RUN_REMOTE_CMD = "deployed-task"
-
-
-@lru_cache()
-def _initialize_config(ctx: click.Context, project: str, domain: str, root_dir: str | None = None):
-    obj: CLIConfig | None = ctx.obj
-    if obj is None:
-        import flyte.config
-
-        obj = CLIConfig(flyte.config.auto(), ctx)
-
-    obj.init(project, domain, root_dir)
-    return obj
-
+initialize_config = common.initialize_config
 
 @lru_cache()
 def _list_tasks(
@@ -219,7 +206,7 @@ class RunTaskCommand(click.RichCommand):
             )
 
     def invoke(self, ctx: click.Context):
-        obj: CLIConfig = initialize_config(
+        obj: common.CLIConfig = common.initialize_config(
             ctx,
             self.run_args.project,
             self.run_args.domain,
@@ -363,7 +350,7 @@ class RunRemoteTaskCommand(click.RichCommand):
             )
 
     def invoke(self, ctx: click.Context):
-        obj: CLIConfig = common.initialize_config(
+        obj: common.CLIConfig = common.initialize_config(
             ctx,
             project=self.run_args.project,
             domain=self.run_args.domain,
