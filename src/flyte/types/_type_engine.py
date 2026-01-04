@@ -1075,7 +1075,7 @@ class TypeEngine(typing.Generic[T]):
             # Avoid a race condition where concurrent threads may exit lazy_import_transformers before the transformers
             # have been imported. This could be implemented without a lock if you assume python assignments are atomic
             # and re-registering transformers is acceptable, but I decided to play it safe.
-            from flyte.io import lazy_import_dataframe_handler
+            from flyte.io._dataframe import lazy_import_dataframe_handler
 
             # todo: bring in extras transformers (pytorch, etc.)
             lazy_import_dataframe_handler()
