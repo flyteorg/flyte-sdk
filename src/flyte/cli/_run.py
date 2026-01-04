@@ -20,7 +20,6 @@ from ._params import to_click_option
 RUN_REMOTE_CMD = "deployed-task"
 initialize_config = common.initialize_config
 
-
 @lru_cache()
 def _list_tasks(
     ctx: click.Context,
@@ -405,7 +404,7 @@ class RunRemoteTaskCommand(click.RichCommand):
             await result.show_logs.aio(max_lines=30, show_ts=True, raw=False)
 
     def invoke(self, ctx: click.Context):
-        config:common.CLIConfig = common.initialize_config(
+        config: common.CLIConfig = common.initialize_config(
             ctx,
             project=self.run_args.project,
             domain=self.run_args.domain,
