@@ -156,6 +156,7 @@ def ls_relative_files(relative_paths: list[str], source_path: pathlib.Path) -> t
             else:
                 raise ValueError(f"File {path} is not a valid file, directory, or glob pattern")
 
+    all_files.sort()
     for p in all_files:
         _filehash_update(p, hasher)
         _pathhash_update(p, hasher)
