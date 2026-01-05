@@ -45,14 +45,23 @@ class TriggerDetails(ToJSONMixin):
 
     @property
     def name(self) -> str:
+        """
+        Name of the trigger.
+        """
         return self.id.name.name
 
     @property
     def id(self) -> identifier_pb2.TriggerIdentifier:
+        """
+        Identifier for the trigger.
+        """
         return self.pb2.id
 
     @property
     def task_name(self) -> str:
+        """
+        Name of the associated task
+        """
         return self.pb2.id.name.task_name
 
     @property

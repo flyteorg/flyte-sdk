@@ -128,7 +128,21 @@ def _action_done_check(phase: phase_pb2.ActionPhase) -> bool:
 @dataclass
 class Action(ToJSONMixin):
     """
-    A class representing an action. It is used to manage the run of a task and its state on the remote Union API.
+    A class representing an action. It is used to manage the "execution" of a task and its state on the remote API.
+
+    From a datamodel perspective, a Run consists of actions. All actions are linearly nested under a parent action.
+     Actions have unique auto-generated identifiers, that are unique within a parent action.
+
+     <pre>
+     run
+      - a0
+        - action1 under a0
+        - action2 under a0
+            - action1 under action2 under a0
+            - action2 under action1 under action2 under a0
+            - ...
+        - ...
+    </pre>
     """
 
     pb2: run_definition_pb2.Action
@@ -718,7 +732,8 @@ class ActionDetails(ToJSONMixin):
 
     async def inputs(self) -> ActionInputs:
         """
-        Placeholder for inputs. This can be extended to handle inputs from the run context.
+        Return the inputs of the action.
+        Will return instantly if inputs are available else will fetch and return.
         """
         if not self._inputs:
             await self._cache_data.aio()
@@ -726,7 +741,10 @@ class ActionDetails(ToJSONMixin):
 
     async def outputs(self) -> ActionOutputs:
         """
-        Placeholder for outputs. This can be extended to handle outputs from the run context.
+        Returns the outputs of the action, returns instantly if outputs are already cached, else fetches them and
+        returns. If Action is not in a terminal state, raise a RuntimeError.
+
+        :return: ActionOutputs
         """
         if not self._outputs:
             if not await self._cache_data.aio():
@@ -763,6 +781,21 @@ class ActionInputs(UserDict, ToJSONMixin):
     """
     A class representing the inputs of an action. It is used to manage the inputs of a task and its state on the
     remote Union API.
+
+    ActionInputs extends from a `UserDict` and hence is accessible like a dictionary
+
+    Example Usage:
+    ```python
+    action = Action.get(...)
+    print(action.inputs())
+    ```
+    Output:
+    ```bash
+    {
+      "x": ...,
+      "y": ...,
+    }
+    ```
     """
 
     pb2: common_pb2.Inputs
@@ -778,8 +811,29 @@ class ActionInputs(UserDict, ToJSONMixin):
 
 class ActionOutputs(tuple, ToJSONMixin):
     """
-    A class representing the outputs of an action. It is used to manage the outputs of a task and its state on the
-    remote Union API.
+    A class representing the outputs of an action. The outputs are by default represented as a Tuple. To access them,
+    you can simply read them as a tuple (assign to individual variables, use index to access) or you can use the
+    property `named_outputs` to retrieve a dictionary of outputs with keys that represent output names
+    which are usually auto-generated `o0, o1, o2, o3, ...`.
+
+    Example Usage:
+    ```python
+    action = Action.get(...)
+    print(action.outputs())
+    ```
+    Output:
+    ```python
+    ("val1", "val2", ...)
+    ```
+    OR
+    ```python
+    action = Action.get(...)
+    print(action.outputs().named_outputs)
+    ```
+    Output:
+    ```bash
+    {"o0": "val1", "o1": "val2", ...}
+    ```
     """
 
     def __new__(cls, pb2: common_pb2.Outputs, data: Tuple[Any, ...]):
@@ -795,5 +849,5 @@ class ActionOutputs(tuple, ToJSONMixin):
         self.pb2 = pb2
 
     @cached_property
-    def named_outputs(self) -> Dict[str, Any]:
+    def named_outputs(self) -> dict[str, Any]:
         return {default_output_name(i): x for i, x in enumerate(self)}
