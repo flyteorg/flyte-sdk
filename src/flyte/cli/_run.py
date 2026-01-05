@@ -152,7 +152,6 @@ class RunArguments:
             )
         },
     )
-
     run_domain: str | None = field(
         default=None,
         metadata={
