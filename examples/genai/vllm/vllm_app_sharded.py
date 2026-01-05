@@ -43,7 +43,6 @@ from flyteplugins.vllm import VLLMAppEnvironment
 
 import flyte
 import flyte.app
-import flyte.io
 from flyte._image import DIST_FOLDER, PythonWheels
 
 # Define the vLLM app environment for the smallest Qwen3 model
@@ -53,10 +52,9 @@ vllm_app = VLLMAppEnvironment(
     model_id="qwen3-14b",
     resources=flyte.Resources(cpu="36", memory="300Gi", gpu="L40s:4", disk="300Gi", shm="auto"),
     image=(
-        flyte.Image.from_debian_base(name="vllm-app-image", python_version=(3, 12), install_flyte=False)
+        flyte.Image.from_debian_base(name="vllm-app-image", install_flyte=False)
         .with_pip_packages("flashinfer-python", "flashinfer-cubin")
         .with_pip_packages("flashinfer-jit-cache", index_url="https://flashinfer.ai/whl/cu129")
-        .with_pip_packages("vllm==0.11.0")
         # .with_local_v2()
         .clone(addl_layer=PythonWheels(wheel_dir=DIST_FOLDER, package_name="flyte", pre=True))
         # NOTE: due to a dependency conflict, the vllm flyte plugin needs to be installed as a separate layer:
@@ -68,6 +66,7 @@ vllm_app = VLLMAppEnvironment(
                 wheel_dir=DIST_FOLDER.parent / "dist-plugins", package_name="flyteplugins-vllm", pre=True
             )
         )
+        .with_pip_packages("vllm==0.11.0")
     ),
     stream_model=True,  # Stream model directly from blob store to GPU
     scaling=flyte.app.Scaling(
@@ -87,6 +86,7 @@ vllm_app = VLLMAppEnvironment(
 
 
 if __name__ == "__main__":
+    import flyte.prefetch
     from flyte.prefetch import ShardConfig, VLLMShardArgs
 
     flyte.init_from_config()

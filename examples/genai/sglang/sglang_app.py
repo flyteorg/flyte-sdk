@@ -47,7 +47,7 @@ import flyte.io
 from flyte._image import DIST_FOLDER, PythonWheels
 
 image = (
-    flyte.Image.from_debian_base(name="sglang-app-image", python_version=(3, 12), install_flyte=False)
+    flyte.Image.from_debian_base(name="sglang-app-image", install_flyte=False)
     .with_apt_packages("libnuma-dev", "wget")
     .with_commands(
         [
@@ -59,7 +59,6 @@ image = (
     )
     .with_pip_packages("flashinfer-python", "flashinfer-cubin")
     .with_pip_packages("flashinfer-jit-cache", index_url="https://flashinfer.ai/whl/cu128")
-    .with_pip_packages("sglang")
     # .with_local_v2()
     # NOTE: call `make dist` to build the flyte wheel
     .clone(addl_layer=PythonWheels(wheel_dir=DIST_FOLDER, package_name="flyte", pre=True))
@@ -70,6 +69,7 @@ image = (
             wheel_dir=DIST_FOLDER.parent / "dist-plugins", package_name="flyteplugins-sglang", pre=True
         )
     )
+    .with_pip_packages("sglang")
     .with_env_vars({"CUDA_HOME": "/usr/local/cuda-12.8"})
 )
 
@@ -91,6 +91,7 @@ sglang_app = SGLangAppEnvironment(
 
 
 if __name__ == "__main__":
+    import flyte.prefetch
     from flyte.remote import Run
 
     flyte.init_from_config()
