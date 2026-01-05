@@ -331,6 +331,15 @@ class Action(ToJSONMixin):
         raw: bool = False,
         filter_system: bool = False,
     ):
+        """
+        Display logs for the action.
+
+        :param attempt: The attempt number to show logs for (defaults to latest attempt).
+        :param max_lines: Maximum number of log lines to display in the viewer.
+        :param show_ts: Whether to show timestamps with each log line.
+        :param raw: If True, print logs directly without the interactive viewer.
+        :param filter_system: If True, filter out system-generated log lines.
+        """
         details = await self.details()
         if not details.is_running and not details.done():
             # TODO we can short circuit here if the attempt is not the last one and it is done!
@@ -572,6 +581,11 @@ class ActionDetails(ToJSONMixin):
                 raise e
 
     async def watch_updates(self, cache_data_on_done: bool = False) -> AsyncGenerator[ActionDetails, None]:
+        """
+        Watch for updates to the action details, yielding each update until the action is done.
+
+        :param cache_data_on_done: If True, cache inputs and outputs when the action completes.
+        """
         async for d in self.watch.aio(action_id=self.pb2.id):
             yield d
             if d.done():
@@ -637,20 +651,32 @@ class ActionDetails(ToJSONMixin):
 
     @property
     def metadata(self) -> run_definition_pb2.ActionMetadata:
+        """
+        Get the metadata of the action.
+        """
         return self.pb2.metadata
 
     @property
     def status(self) -> run_definition_pb2.ActionStatus:
+        """
+        Get the status of the action.
+        """
         return self.pb2.status
 
     @property
     def error_info(self) -> run_definition_pb2.ErrorInfo | None:
+        """
+        Get the error information if the action failed, otherwise returns None.
+        """
         if self.pb2.HasField("error_info"):
             return self.pb2.error_info
         return None
 
     @property
     def abort_info(self) -> run_definition_pb2.AbortInfo | None:
+        """
+        Get the abort information if the action was aborted, otherwise returns None.
+        """
         if self.pb2.HasField("abort_info"):
             return self.pb2.abort_info
         return None

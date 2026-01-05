@@ -38,14 +38,23 @@ class App(ToJSONMixin):
 
     @property
     def name(self) -> str:
+        """
+        Get the name of the app.
+        """
         return self.pb2.metadata.id.name
 
     @property
     def revision(self) -> int:
+        """
+        Get the revision number of the app.
+        """
         return self.pb2.metadata.revision
 
     @property
     def endpoint(self) -> str:
+        """
+        Get the public endpoint URL of the app.
+        """
         return self.pb2.status.ingress.public_url
 
     @property
@@ -62,16 +71,28 @@ class App(ToJSONMixin):
 
     @property
     def desired_state(self) -> app_definition_pb2.Spec.DesiredState:
+        """
+        Get the desired state of the app.
+        """
         return self.pb2.spec.desired_state
 
     def is_active(self) -> bool:
+        """
+        Check if the app is currently active or started.
+        """
         return _is_active(self.deployment_status)
 
     def is_deactivated(self) -> bool:
+        """
+        Check if the app is currently deactivated or stopped.
+        """
         return _is_deactivated(self.deployment_status)
 
     @property
     def url(self) -> str:
+        """
+        Get the console URL for viewing the app.
+        """
         client = get_client()
         return client.console.app_url(
             project=self.pb2.metadata.id.project,
@@ -121,6 +142,14 @@ class App(ToJSONMixin):
     async def _update(
         self, desired_state: app_definition_pb2.Spec.DesiredState, reason: str, wait_for: WaitFor | None = None
     ) -> App:
+        """
+        Internal method to update the app's desired state.
+
+        :param desired_state: The new desired state for the app.
+        :param reason: Reason for the update.
+        :param wait_for: Optional state to wait for after update.
+        :return: The updated app.
+        """
         new_pb2 = app_definition_pb2.App()
         new_pb2.CopyFrom(self.pb2)
         new_pb2.spec.desired_state = desired_state
@@ -159,6 +188,9 @@ class App(ToJSONMixin):
         )
 
     def __rich_repr__(self) -> rich.repr.Result:
+        """
+        Rich representation of the App object for pretty printing.
+        """
         yield "name", self.name
         yield "revision", self.revision
         yield "endpoint", self.endpoint

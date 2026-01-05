@@ -20,6 +20,13 @@ class Secret(ToJSONMixin):
     @syncify
     @classmethod
     async def create(cls, name: str, value: Union[str, bytes], type: SecretTypes = "regular"):
+        """
+        Create a new secret.
+
+        :param name: The name of the secret.
+        :param value: The secret value as a string or bytes.
+        :param type: Type of secret - either "regular" or "image_pull".
+        """
         ensure_client()
         cfg = get_init_config()
         project = cfg.project
@@ -60,6 +67,12 @@ class Secret(ToJSONMixin):
     @syncify
     @classmethod
     async def get(cls, name: str) -> Secret:
+        """
+        Retrieve a secret by name.
+
+        :param name: The name of the secret to retrieve.
+        :return: A Secret object.
+        """
         ensure_client()
         cfg = get_init_config()
         resp = await get_client().secrets_service.GetSecret(
@@ -77,6 +90,12 @@ class Secret(ToJSONMixin):
     @syncify
     @classmethod
     async def listall(cls, limit: int = 10) -> AsyncIterator[Secret]:
+        """
+        List all secrets in the current project and domain.
+
+        :param limit: Maximum number of secrets to return per page.
+        :return: An async iterator of Secret objects.
+        """
         ensure_client()
         cfg = get_init_config()
         per_cluster_tokens = None
@@ -101,6 +120,11 @@ class Secret(ToJSONMixin):
     @syncify
     @classmethod
     async def delete(cls, name):
+        """
+        Delete a secret by name.
+
+        :param name: The name of the secret to delete.
+        """
         ensure_client()
         cfg = get_init_config()
         await get_client().secrets_service.DeleteSecret(  # type: ignore
@@ -116,10 +140,16 @@ class Secret(ToJSONMixin):
 
     @property
     def name(self) -> str:
+        """
+        Get the name of the secret.
+        """
         return self.pb2.id.name
 
     @property
     def type(self) -> str:
+        """
+        Get the type of the secret as a string ("regular" or "image_pull").
+        """
         if self.pb2.secret_metadata.type == definition_pb2.SecretType.SECRET_TYPE_GENERIC:
             return "regular"
         elif self.pb2.secret_metadata.type == definition_pb2.SecretType.SECRET_TYPE_IMAGE_PULL_SECRET:
@@ -127,6 +157,9 @@ class Secret(ToJSONMixin):
         raise ValueError("unknown type")
 
     def __rich_repr__(self) -> rich.repr.Result:
+        """
+        Rich representation of the Secret object for pretty printing.
+        """
         yield "project", self.pb2.id.project or "-"
         yield "domain", self.pb2.id.domain or "-"
         yield "name", self.name

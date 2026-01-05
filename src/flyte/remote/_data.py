@@ -128,6 +128,15 @@ async def _upload_with_retry(
 async def _upload_single_file(
     cfg: CommonInit, fp: Path, verify: bool = True, basedir: str | None = None
 ) -> Tuple[str, str]:
+    """
+    Upload a single file to remote storage using a signed URL.
+
+    :param cfg: Configuration containing project and domain information.
+    :param fp: Path to the file to upload.
+    :param verify: Whether to verify SSL certificates.
+    :param basedir: Optional base directory prefix for the remote path.
+    :return: Tuple of (MD5 digest hex string, remote native URL).
+    """
     md5_bytes, str_digest, _ = hash_file(fp)
     from flyte._logging import logger
 
