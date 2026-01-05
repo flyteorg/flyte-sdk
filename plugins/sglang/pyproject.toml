@@ -6,7 +6,7 @@ readme = "README.md"
 authors = [{ name = "Niels Bantilan", email = "cosmicbboy@users.noreply.github.com" }]
 requires-python = ">=3.10"
 dependencies = [
-    "sglang>=0.5.2",
+    "flyte>=2.0.0b43",
 ]
 
 [build-system]

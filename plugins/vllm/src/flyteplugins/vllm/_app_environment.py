@@ -10,6 +10,7 @@ from flyte import Environment, Image, Resources, SecretRequest
 from flyte.app import Parameter, RunOutput
 from flyte.app._types import Port
 from flyte.models import SerializationContext
+from flyteplugins.vllm._constants import VLLM_MIN_VERSION_STR
 
 DEFAULT_VLLM_IMAGE = (
     flyte.Image.from_debian_base(name="vllm-app-image", python_version=(3, 12))
@@ -18,6 +19,8 @@ DEFAULT_VLLM_IMAGE = (
     .with_pip_packages("flashinfer-jit-cache", index_url="https://flashinfer.ai/whl/cu129")
     # install the vllm flyte plugin
     .with_pip_packages("flyteplugins-vllm", pre=True)
+    # install vllm in a separate layer due to dependency conflict with flyte (protovalidate)
+    .with_pip_packages(f"vllm>={VLLM_MIN_VERSION_STR}")
 )
 
 

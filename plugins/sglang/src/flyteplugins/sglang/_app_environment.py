@@ -10,10 +10,11 @@ from flyte import Environment, Image, Resources, SecretRequest
 from flyte.app import Parameter, RunOutput
 from flyte.app._types import Port
 from flyte.models import SerializationContext
+from flyteplugins.sglang._constants import SGLANG_MIN_VERSION_STR
 
 DEFAULT_SGLANG_IMAGE = (
     flyte.Image.from_debian_base(name="sglang-app-image", python_version=(3, 12))
-    # install system dependencies, including CUDA toolkit
+    # install system dependencies, including CUDA toolkit, which is needed by sglang for compiling the model
     .with_apt_packages("libnuma-dev", "wget")
     .with_commands(
         [
@@ -27,6 +28,7 @@ DEFAULT_SGLANG_IMAGE = (
     .with_pip_packages("flashinfer-python", "flashinfer-cubin")
     .with_pip_packages("flashinfer-jit-cache", index_url="https://flashinfer.ai/whl/cu128")
     .with_pip_packages("flyteplugins-sglang", pre=True)
+    .with_pip_packages(f"sglang>={SGLANG_MIN_VERSION_STR}")
     .with_env_vars({"CUDA_HOME": "/usr/local/cuda-12.8"})
 )
 
