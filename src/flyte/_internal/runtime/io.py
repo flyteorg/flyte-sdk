@@ -177,8 +177,8 @@ async def load_error(path: str) -> execution_pb2.ExecutionError:
             message=err.error.message,
             kind=err.error.origin,
             error_uri=path,
-            timestamp=err.error.timestamp,
-            worker=err.error.worker,
+            # timestamp=err.error.timestamp,
+            # worker=err.error.worker,
         )
 
     return execution_pb2.ExecutionError(
