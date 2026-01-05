@@ -3,7 +3,7 @@
 # dependencies = [
 #     "fastapi",
 #     "uvicorn",
-#     "flyte>=2.0.0b29"
+#     "flyte==2.0.0b43"
 # ]
 # ///
 
@@ -22,11 +22,10 @@ app = FastAPI(
 )
 
 env = FastAPIAppEnvironment(
-    name="fastapi-script",
+    name="fastapi-single-script",
     app=app,
     description="A FastAPI app demonstrating UV inline script capabilities.",
-    # image=flyte.Image.from_uv_script(__file__, name="fastapi-script"),
-    image=flyte.Image.from_debian_base(python_version=(3, 12)).with_pip_packages("fastapi", "uvicorn"),
+    image=flyte.Image.from_uv_script(__file__, name="fastapi-script"),
     resources=flyte.Resources(cpu=1, memory="512Mi"),
     requires_auth=False,
 )
