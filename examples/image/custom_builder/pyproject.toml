@@ -13,5 +13,5 @@ package = true
 where = ["src"]
 include = ["*"]
 
-[project.entry-points."flyte.plugins.types"]
-my_builder = "my_builder:MyImageBuilder"
+[project.entry-points."flyte.plugins.image_builders"]
+my_builder = "my_builder.my_builder:MyImageBuilder"

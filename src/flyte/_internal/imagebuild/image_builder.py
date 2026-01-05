@@ -233,6 +233,7 @@ class ImageBuildEngine:
     def _load_custom_type_transformers(cls, name: str) -> ImageBuilder:
         plugins = entry_points(group="flyte.plugins.image_builders")
         for ep in plugins:
+            breakpoint()
             if ep.name != name:
                 continue
             try:

@@ -1,12 +1,8 @@
-from typing import Tuple
+import typing
+from typing import Tuple, Optional
 
-from flyte._image import Architecture
-from flyte.extend import ImageBuilder, ImageChecker
-
-
-IMAGE_TASK_NAME = "build-image"
-IMAGE_TASK_PROJECT = "system"
-IMAGE_TASK_DOMAIN = "production"
+from flyte import Image
+from flyte.extend import ImageBuilder, ImageChecker, Architecture
 
 
 class MyImageChecker(ImageChecker):
@@ -14,9 +10,9 @@ class MyImageChecker(ImageChecker):
 
     @classmethod
     async def image_exists(
-        cls, repository: str, tag: str, arch: Tuple[Architecture, ...] = ("linux/amd64",)
+            cls, repository: str, tag: str, arch: Tuple[Architecture, ...] = ("linux/amd64",)
     ) -> Optional[str]:
-       return True
+        return f"{repository}:{tag}"
 
 
 class MyImageBuilder(ImageBuilder):
