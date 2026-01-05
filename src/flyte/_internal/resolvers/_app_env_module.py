@@ -1,8 +1,8 @@
-import importlib.util
 import pathlib
 import sys
 
 from flyte._logging import logger
+from flyte._module import extract_obj_module
 from flyte.app._app_environment import AppEnvironment
 
 
@@ -60,18 +60,14 @@ def extract_app_env_module(app_env: AppEnvironment, /, source_dir: pathlib.Path)
 
     if caller_globals is None:
         # Load the module to inspect it
-        spec = importlib.util.spec_from_file_location(file_path.stem, file_path)
-        if spec is None or spec.loader is None:
-            raise RuntimeError(f"Could not load module from {file_path}")
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-        caller_globals = module.__dict__
+        _, entity_module = extract_obj_module(app_env, source_dir)
+        caller_globals = entity_module.__dict__
 
-    # Extract variable name from module - look for FastAPI instances
+    # Extract variable name from module - look for AppEnvironment instances
     app_var_name = None
     for var_name, obj in caller_globals.items():
         if isinstance(obj, AppEnvironment):
-            # Found a FastAPI app - this is likely the one we want
+            # Found a AppEnvironment - this is likely the one we want
             # Store the first one we find
             if app_var_name is None:
                 app_var_name = var_name
