@@ -58,6 +58,7 @@ image = (
     )
     .with_pip_packages("flashinfer-python", "flashinfer-cubin")
     .with_pip_packages("flashinfer-jit-cache", index_url="https://flashinfer.ai/whl/cu128")
+    .with_pip_packages("sglang")
     # .with_local_v2()
     # NOTE: call `make dist` to build the flyte wheel
     .clone(addl_layer=PythonWheels(wheel_dir=DIST_FOLDER, package_name="flyte", pre=True))
@@ -68,7 +69,6 @@ image = (
             wheel_dir=DIST_FOLDER.parent / "dist-plugins", package_name="flyteplugins-sglang", pre=True
         )
     )
-    .with_pip_packages("sglang")
     .with_env_vars({"CUDA_HOME": "/usr/local/cuda-12.8"})
 )
 

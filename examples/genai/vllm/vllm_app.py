@@ -55,6 +55,7 @@ vllm_app = VLLMAppEnvironment(
         flyte.Image.from_debian_base(name="vllm-app-image", install_flyte=False)
         .with_pip_packages("flashinfer-python", "flashinfer-cubin")
         .with_pip_packages("flashinfer-jit-cache", index_url="https://flashinfer.ai/whl/cu129")
+        .with_pip_packages("vllm==0.11.0")
         # .with_local_v2()
         .clone(addl_layer=PythonWheels(wheel_dir=DIST_FOLDER, package_name="flyte", pre=True))
         # NOTE: due to a dependency conflict, the vllm flyte plugin needs to be installed as a separate layer:
@@ -66,7 +67,6 @@ vllm_app = VLLMAppEnvironment(
                 wheel_dir=DIST_FOLDER.parent / "dist-plugins", package_name="flyteplugins-vllm", pre=True
             )
         )
-        .with_pip_packages("vllm==0.11.0")
     ),
     stream_model=True,  # Stream model directly from blob store to GPU
     scaling=flyte.app.Scaling(
