@@ -78,7 +78,8 @@ async def _deploy_app(
     from flyte.app._runtime import translate_app_env_to_idl
     from flyte.remote import App
 
-    if app.include and serialization_context.code_bundle.pkl is None:
+    is_pkl = serialization_context.code_bundle and serialization_context.code_bundle.pkl
+    if app.include and is_pkl:
         # Only bundle when not pickling. If this is a pkl bundle, assume that
         # the AppEnvironment has a server function that will be used to serve
         # the app. This function should contain all of the code needed to serve the app.
