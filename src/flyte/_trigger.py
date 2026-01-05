@@ -624,13 +624,15 @@ class Cron:
     This class defines a Cron automation that can be associated with a Trigger in Flyte.
     Example usage:
     ```python
-    from flyte.trigger import Trigger, Cron
-    my_trigger = Trigger(
+    my_trigger = flyte.Trigger(
         name="my_cron_trigger",
-        automation=Cron("0 * * * *"),  # Runs every hour
+        automation=flyte.Cron("0 * * * *"),  # Runs every hour
         description="A trigger that runs every hour",
     )
     ```
+
+    :param expression: (str) String cron expression to trigger - Example: "* * * * *"
+    :param timezone: (str literal) One of Timezone values.
     """
 
     expression: str
@@ -649,15 +651,19 @@ class Cron:
 class FixedRate:
     """
     This class defines a FixedRate automation that can be associated with a Trigger in Flyte.
+
     Example usage:
     ```python
-    from flyte.trigger import Trigger, FixedRate
-    my_trigger = Trigger(
+    my_trigger = flyte.Trigger(
         name="my_fixed_rate_trigger",
-        automation=FixedRate(60),  # Runs every hour
+        automation=flyte.FixedRate(60),  # Runs every hour
         description="A trigger that runs every hour",
     )
     ```
+
+    :param interval_minutes: (int) Interval to schedule the trigger in minutes.
+    :param start_time: (datetime) Start time of the trigger. This will enable starting a trigger with fixed rate as
+            of this time.
     """
 
     interval_minutes: int
@@ -681,10 +687,12 @@ class Trigger:
 
     Example usage:
     ```python
-    from flyte.trigger import Trigger
-    my_trigger = Trigger(
+    my_trigger = flyte.Trigger(
         name="my_trigger",
         description="A trigger that runs every hour",
+        inputs={"start_time": flyte.TriggerTime, "x": 1},  # Note how you can bind the `trigger time` to an input called
+                                                           # start_time
+        automation=flyte.FixedRate(60),  # Runs every hour
     )
     ```
 

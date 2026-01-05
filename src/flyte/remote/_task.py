@@ -53,6 +53,9 @@ class LazyEntity:
 
     @property
     def name(self) -> str:
+        """
+        Get the name of the task.
+        """
         return self._name
 
     @syncify
@@ -259,14 +262,14 @@ class TaskDetails(ToJSONMixin):
     @property
     def secrets(self):
         """
-        The secrets of the task.
+        Get the list of secret keys required by the task.
         """
         return [s.key for s in self.pb2.spec.task_template.security_context.secrets]
 
     @property
     def resources(self):
         """
-        The resources of the task.
+        Get the resource requests and limits for the task as a tuple (requests, limits).
         """
         if self.pb2.spec.task_template.container is None:
             return ()
@@ -306,7 +309,7 @@ class TaskDetails(ToJSONMixin):
     @property
     def queue(self) -> Optional[str]:
         """
-        The queue to use for the task.
+        Get the queue name to use for task execution, if overridden.
         """
         return self.overriden_queue
 
@@ -324,6 +327,20 @@ class TaskDetails(ToJSONMixin):
         queue: Optional[str] = None,
         **kwargs: Any,
     ) -> TaskDetails:
+        """
+        Create a new TaskDetails with overridden properties.
+
+        :param short_name: Optional short name for the task.
+        :param resources: Optional resource requirements.
+        :param retries: Number of retries or retry strategy.
+        :param timeout: Execution timeout.
+        :param env_vars: Environment variables to set.
+        :param secrets: Secret requests for the task.
+        :param max_inline_io_bytes: Maximum inline I/O size in bytes.
+        :param cache: Cache configuration.
+        :param queue: Queue name for task execution.
+        :return: A new TaskDetails instance with the overrides applied.
+        """
         if len(kwargs) > 0:
             raise ValueError(
                 f"RemoteTasks [{self.name}] do not support overriding with kwargs: {kwargs}, "
@@ -400,6 +417,11 @@ class Task(ToJSONMixin):
     pb2: task_definition_pb2.Task
 
     def __init__(self, pb2: task_definition_pb2.Task):
+        """
+        Initialize a Task object.
+
+        :param pb2: The task protobuf definition.
+        """
         self.pb2 = pb2
 
     @property
@@ -418,6 +440,9 @@ class Task(ToJSONMixin):
 
     @property
     def url(self) -> str:
+        """
+        Get the console URL for viewing the task.
+        """
         client = get_client()
         return client.console.task_url(
             project=self.pb2.task_id.project,
