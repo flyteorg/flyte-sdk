@@ -13,7 +13,7 @@ from flyte.models import SerializationContext
 from flyteplugins.sglang._constants import SGLANG_MIN_VERSION_STR
 
 DEFAULT_SGLANG_IMAGE = (
-    flyte.Image.from_debian_base(name="sglang-app-image", python_version=(3, 12))
+    flyte.Image.from_debian_base(name="sglang-app-image")
     # install system dependencies, including CUDA toolkit, which is needed by sglang for compiling the model
     .with_apt_packages("libnuma-dev", "wget")
     .with_commands(
