@@ -1,13 +1,9 @@
 [project]
 name = "my_builder"
 version = "0.1.0"
-description = "Custom image transformer"
+description = "Custom image builder"
 requires-python = ">=3.10"
 dependencies = []
-
-# This section needs to be added to get uv sync to install this package (this package being seeds).
-[tool.uv]
-package = true
 
 [tool.setuptools.packages.find]
 where = ["src"]
