@@ -5,7 +5,6 @@ from pathlib import Path
 import flyte
 import flyte.app
 
-
 streamlit_script = """
 import streamlit as st
 

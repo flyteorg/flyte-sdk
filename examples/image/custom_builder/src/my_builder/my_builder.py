@@ -1,8 +1,8 @@
 import typing
-from typing import Tuple, Optional
+from typing import Optional, Tuple
 
 from flyte import Image
-from flyte.extend import ImageBuilder, ImageChecker, Architecture
+from flyte.extend import Architecture, ImageBuilder, ImageChecker
 
 
 class MyImageChecker(ImageChecker):
@@ -10,7 +10,7 @@ class MyImageChecker(ImageChecker):
 
     @classmethod
     async def image_exists(
-            cls, repository: str, tag: str, arch: Tuple[Architecture, ...] = ("linux/amd64",)
+        cls, repository: str, tag: str, arch: Tuple[Architecture, ...] = ("linux/amd64",)
     ) -> Optional[str]:
         return f"{repository}:{tag}"
 

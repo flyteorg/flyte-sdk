@@ -243,7 +243,10 @@ class ImageBuildEngine:
                 return builder
             except Exception as e:
                 raise RuntimeError(f"Failed to load image builder {ep.name} with error: {e}")
-        raise ValueError(f"Unknown image builder type: {name}. Available builders: {[ep.name for ep in plugins] + ['local', 'remote']}")
+        raise ValueError(
+            f"Unknown image builder type: {name}. Available builders:"
+            f" {[ep.name for ep in plugins] + ['local', 'remote']}"
+        )
 
 
 class ImageCache(BaseModel):

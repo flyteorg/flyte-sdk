@@ -20,6 +20,7 @@ from ._params import to_click_option
 RUN_REMOTE_CMD = "deployed-task"
 initialize_config = common.initialize_config
 
+
 @lru_cache()
 def _list_tasks(
     ctx: click.Context,
@@ -196,21 +197,26 @@ class RunTaskCommand(click.RichCommand):
             if isinstance(param, click.Option) and param.required:
                 param_name = param.name
                 if param_name not in ctx.params or ctx.params[param_name] is None:
-                    missing_params.append((param_name, param.type.get_metavar(param, ctx) or param.type.name.upper() or param.type))
+                    missing_params.append(
+                        (param_name, param.type.get_metavar(param, ctx) or param.type.name.upper() or param.type)
+                    )
 
         if missing_params:
             raise click.UsageError(
                 f"Missing required parameter(s): {', '.join(f'--{p[0]} (type: {p[1]})' for p in missing_params)}"
             )
-    
+
     async def _execute_and_render(self, ctx: click.Context, config: common.CLIConfig):
         """Separate execution logic from the Click entry point for better testability."""
         import flyte
+
         console = common.get_console()
-        
+
         # 2. Execute with a UX Status Spinner
         try:
-            with console.status(f"[bold blue]Launching {'local' if self.run_args.local else 'remote'} execution...", spinner="dots"):
+            with console.status(
+                f"[bold blue]Launching {'local' if self.run_args.local else 'remote'} execution...", spinner="dots"
+            ):
                 execution_context = flyte.with_runcontext(
                     copy_style=self.run_args.copy_style,
                     mode="local" if self.run_args.local else "remote",
@@ -222,7 +228,7 @@ class RunTaskCommand(click.RichCommand):
                 )
                 result = await execution_context.run.aio(self.obj, **ctx.params)
         except Exception as e:
-            console.print(common.get_panel("Exception",f"[red]✕ Execution failed:[/red] {e}",config.output_format))
+            console.print(common.get_panel("Exception", f"[red]✕ Execution failed:[/red] {e}", config.output_format))
             return
 
         # 3. UI Branching
@@ -238,7 +244,7 @@ class RunTaskCommand(click.RichCommand):
     async def _render_remote_success(self, console, result, config):
         if not (isinstance(result, Run) and result.action):
             return
-            
+
         run_info = (
             f"[green bold]Created Run: {result.name}[/green bold]\n"
             f"URL: [blue bold][link={result.url}]{result.url}[/link][/blue bold]"
@@ -344,26 +350,31 @@ class RunRemoteTaskCommand(click.RichCommand):
             if isinstance(param, click.Option) and param.required:
                 param_name = param.name
                 if param_name not in ctx.params or ctx.params[param_name] is None:
-                    missing_params.append((param_name, param.type.get_metavar(param, ctx) or param.type.name.upper() or param.type))
+                    missing_params.append(
+                        (param_name, param.type.get_metavar(param, ctx) or param.type.name.upper() or param.type)
+                    )
 
         if missing_params:
             raise click.UsageError(
                 f"Missing required parameter(s): {', '.join(f'--{p[0]} (type: {p[1]})' for p in missing_params)}"
             )
-    
+
     async def _execute_and_render(self, ctx: click.Context, config: common.CLIConfig):
         """Separate execution logic from the Click entry point for better testability."""
         import flyte.remote
+
         task = flyte.remote.Task.get(self.task_name, version=self.version, auto_version="latest")
         console = common.get_console()
         if self.run_args.run_project or self.run_args.run_domain:
-                console.print(
-                    f"Separate Run project/domain set, using {self.run_args.run_project} and {self.run_args.run_domain}"
-                )
-        
+            console.print(
+                f"Separate Run project/domain set, using {self.run_args.run_project} and {self.run_args.run_domain}"
+            )
+
         # 2. Execute with a UX Status Spinner
         try:
-            with console.status(f"[bold blue]Launching {'local' if self.run_args.local else 'remote'} execution...", spinner="dots"):
+            with console.status(
+                f"[bold blue]Launching {'local' if self.run_args.local else 'remote'} execution...", spinner="dots"
+            ):
                 execution_context = flyte.with_runcontext(
                     copy_style=self.run_args.copy_style,
                     mode="local" if self.run_args.local else "remote",
@@ -389,7 +400,7 @@ class RunRemoteTaskCommand(click.RichCommand):
     async def _render_remote_success(self, console, result, config):
         if not (isinstance(result, Run) and result.action):
             return
-            
+
         run_info = (
             f"[green bold]Created Run: {result.name}[/green bold]\n"
             f"(Project: {result.action.action_id.run.project}, Domain: {result.action.action_id.run.domain})\n"
@@ -398,12 +409,13 @@ class RunRemoteTaskCommand(click.RichCommand):
         console.print(common.get_panel("Remote Run", run_info, config.output_format))
 
         if self.run_args.follow:
-            console.print("[dim]Log streaming enabled, will wait for task to start running "
-                        "and log stream to be available[/dim]")
+            console.print(
+                "[dim]Log streaming enabled, will wait for task to start running and log stream to be available[/dim]"
+            )
             await result.show_logs.aio(max_lines=30, show_ts=True, raw=False)
 
     def invoke(self, ctx: click.Context):
-        config:common.CLIConfig = common.initialize_config(
+        config: common.CLIConfig = common.initialize_config(
             ctx,
             project=self.run_args.project,
             domain=self.run_args.domain,
