@@ -139,7 +139,6 @@ class RunArguments:
             )
         },
     )
-
     run_project: str | None = field(
         default=None,
         metadata={
@@ -153,7 +152,6 @@ class RunArguments:
             )
         },
     )
-
     run_domain: str | None = field(
         default=None,
         metadata={
@@ -204,9 +202,55 @@ class RunTaskCommand(click.RichCommand):
             raise click.UsageError(
                 f"Missing required parameter(s): {', '.join(f'--{p[0]} (type: {p[1]})' for p in missing_params)}"
             )
+    
+    async def _execute_and_render(self, ctx: click.Context, config: common.CLIConfig):
+        """Separate execution logic from the Click entry point for better testability."""
+        import flyte
+        console = common.get_console()
+        
+        # 2. Execute with a UX Status Spinner
+        try:
+            with console.status(f"[bold blue]Launching {'local' if self.run_args.local else 'remote'} execution...", spinner="dots"):
+                execution_context = flyte.with_runcontext(
+                    copy_style=self.run_args.copy_style,
+                    mode="local" if self.run_args.local else "remote",
+                    name=self.run_args.name,
+                    raw_data_path=self.run_args.raw_data_path,
+                    service_account=self.run_args.service_account,
+                    log_format=config.log_format,
+                    reset_root_logger=config.reset_root_logger,
+                )
+                result = await execution_context.run.aio(self.obj, **ctx.params)
+        except Exception as e:
+            console.print(common.get_panel("Exception",f"[red]✕ Execution failed:[/red] {e}",config.output_format))
+            return
+
+        # 3. UI Branching
+        if self.run_args.local:
+            self._render_local_success(console, result, config)
+        else:
+            await self._render_remote_success(console, result, config)
+
+    def _render_local_success(self, console, result, config):
+        content = f"[green]Completed Local Run[/green]\nPath: {result.url}\n➡️ Outputs: {result.outputs()}"
+        console.print(common.get_panel("Local Success", content, config.output_format))
+
+    async def _render_remote_success(self, console, result, config):
+        if not (isinstance(result, Run) and result.action):
+            return
+            
+        run_info = (
+            f"[green bold]Created Run: {result.name}[/green bold]\n"
+            f"URL: [blue bold][link={result.url}]{result.url}[/link][/blue bold]"
+        )
+        console.print(common.get_panel("Remote Run", run_info, config.output_format))
+
+        if self.run_args.follow:
+            console.print("[dim]Waiting for log stream...[/dim]")
+            await result.show_logs.aio(max_lines=30, show_ts=True, raw=False)
 
     def invoke(self, ctx: click.Context):
-        obj: common.CLIConfig = common.initialize_config(
+        config: common.CLIConfig = common.initialize_config(
             ctx,
             self.run_args.project,
             self.run_args.domain,
@@ -214,51 +258,9 @@ class RunTaskCommand(click.RichCommand):
             tuple(self.run_args.image) or None,
             not self.run_args.no_sync_local_sys_paths,
         )
-
-        # Validate required parameters
         self._validate_required_params(ctx)
-
-        async def _run():
-            import flyte
-
-            console = common.get_console()
-            r = await flyte.with_runcontext(
-                copy_style=self.run_args.copy_style,
-                mode="local" if self.run_args.local else "remote",
-                name=self.run_args.name,
-                raw_data_path=self.run_args.raw_data_path,
-                service_account=self.run_args.service_account,
-                log_format=obj.log_format,
-                reset_root_logger=obj.reset_root_logger,
-            ).run.aio(self.obj, **ctx.params)
-            if self.run_args.local:
-                console.print(
-                    common.get_panel(
-                        "Local Run",
-                        f"[green]Completed Local Run, data stored in path: {r.url} [/green] \n"
-                        f"➡️  Outputs: {r.outputs()}",
-                        obj.output_format,
-                    )
-                )
-                return
-            if isinstance(r, Run) and r.action is not None:
-                console.print(
-                    common.get_panel(
-                        "Run",
-                        f"[green bold]Created Run: {r.name} [/green bold] "
-                        f"(Project: {r.action.action_id.run.project}, Domain: {r.action.action_id.run.domain})\n"
-                        f"➡️  [blue bold][link={r.url}]{r.url}[/link][/blue bold]",
-                        obj.output_format,
-                    )
-                )
-                if self.run_args.follow:
-                    console.print(
-                        "[dim]Log streaming enabled, will wait for task to start running "
-                        "and log stream to be available[/dim]"
-                    )
-                    await r.show_logs.aio(max_lines=30, show_ts=True, raw=False)
-
-        asyncio.run(_run())
+        # Main entry point remains very thin
+        asyncio.run(self._execute_and_render(ctx, config))
 
     def get_params(self, ctx: click.Context) -> List[click.Parameter]:
         # Note this function may be called multiple times by click.
@@ -348,9 +350,60 @@ class RunRemoteTaskCommand(click.RichCommand):
             raise click.UsageError(
                 f"Missing required parameter(s): {', '.join(f'--{p[0]} (type: {p[1]})' for p in missing_params)}"
             )
+    
+    async def _execute_and_render(self, ctx: click.Context, config: common.CLIConfig):
+        """Separate execution logic from the Click entry point for better testability."""
+        import flyte.remote
+        task = flyte.remote.Task.get(self.task_name, version=self.version, auto_version="latest")
+        console = common.get_console()
+        if self.run_args.run_project or self.run_args.run_domain:
+                console.print(
+                    f"Separate Run project/domain set, using {self.run_args.run_project} and {self.run_args.run_domain}"
+                )
+        
+        # 2. Execute with a UX Status Spinner
+        try:
+            with console.status(f"[bold blue]Launching {'local' if self.run_args.local else 'remote'} execution...", spinner="dots"):
+                execution_context = flyte.with_runcontext(
+                    copy_style=self.run_args.copy_style,
+                    mode="local" if self.run_args.local else "remote",
+                    name=self.run_args.name,
+                    project=self.run_args.run_project,
+                    domain=self.run_args.run_domain,
+                )
+                result = await execution_context.run.aio(task, **ctx.params)
+        except Exception as e:
+            console.print(f"[red]✕ Execution failed:[/red] {e}")
+            return
+
+        # 3. UI Branching
+        if self.run_args.local:
+            self._render_local_success(console, result, config)
+        else:
+            await self._render_remote_success(console, result, config)
+
+    def _render_local_success(self, console, result, config):
+        content = f"[green]Completed Local Run[/green]\nPath: {result.url}\n➡️ Outputs: {result.outputs()}"
+        console.print(common.get_panel("Local Success", content, config.output_format))
+
+    async def _render_remote_success(self, console, result, config):
+        if not (isinstance(result, Run) and result.action):
+            return
+            
+        run_info = (
+            f"[green bold]Created Run: {result.name}[/green bold]\n"
+            f"(Project: {result.action.action_id.run.project}, Domain: {result.action.action_id.run.domain})\n"
+            f"➡️  [blue bold][link={result.url}]{result.url}[/link][/blue bold]",
+        )
+        console.print(common.get_panel("Remote Run", run_info, config.output_format))
+
+        if self.run_args.follow:
+            console.print("[dim]Log streaming enabled, will wait for task to start running "
+                        "and log stream to be available[/dim]")
+            await result.show_logs.aio(max_lines=30, show_ts=True, raw=False)
 
     def invoke(self, ctx: click.Context):
-        obj: common.CLIConfig = common.initialize_config(
+        config:common.CLIConfig = common.initialize_config(
             ctx,
             project=self.run_args.project,
             domain=self.run_args.domain,
@@ -358,46 +411,9 @@ class RunRemoteTaskCommand(click.RichCommand):
             images=tuple(self.run_args.image) or None,
             sync_local_sys_paths=not self.run_args.no_sync_local_sys_paths,
         )
-
-        # Validate required parameters
         self._validate_required_params(ctx)
-
-        async def _run():
-            import flyte.remote
-
-            task = flyte.remote.Task.get(self.task_name, version=self.version, auto_version="latest")
-            console = common.get_console()
-
-            if self.run_args.run_project or self.run_args.run_domain:
-                console.print(
-                    f"Separate Run project/domain set, using {self.run_args.run_project} and {self.run_args.run_domain}"
-                )
-
-            r = await flyte.with_runcontext(
-                copy_style=self.run_args.copy_style,
-                mode="local" if self.run_args.local else "remote",
-                name=self.run_args.name,
-                project=self.run_args.run_project,
-                domain=self.run_args.run_domain,
-            ).run.aio(task, **ctx.params)
-            if isinstance(r, Run) and r.action is not None:
-                console.print(
-                    common.get_panel(
-                        "Run",
-                        f"[green bold]Created Run: {r.name} [/green bold] "
-                        f"(Project: {r.action.action_id.run.project}, Domain: {r.action.action_id.run.domain})\n"
-                        f"➡️  [blue bold][link={r.url}]{r.url}[/link][/blue bold]",
-                        obj.output_format,
-                    )
-                )
-                if self.run_args.follow:
-                    console.print(
-                        "[dim]Log streaming enabled, will wait for task to start running "
-                        "and log stream to be available[/dim]"
-                    )
-                    await r.show_logs.aio(max_lines=30, show_ts=True, raw=False)
-
-        asyncio.run(_run())
+        # Main entry point remains very thin
+        asyncio.run(self._execute_and_render(ctx, config))
 
     def get_params(self, ctx: click.Context) -> List[click.Parameter]:
         # Note this function may be called multiple times by click.
