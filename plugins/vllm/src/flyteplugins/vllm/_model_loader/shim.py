@@ -2,14 +2,26 @@ import logging
 from typing import Generator
 
 import torch
-import vllm
-import vllm.entrypoints.cli.main
 from flyte.app.extras._model_loader.config import (
     LOCAL_MODEL_PATH,
     REMOTE_MODEL_PATH,
     STREAM_SAFETENSORS,
 )
 from flyte.app.extras._model_loader.loader import SafeTensorsStreamer, prefetch
+
+from flyteplugins.vllm._constants import VLLM_MIN_VERSION, VLLM_MIN_VERSION_STR
+
+try:
+    import vllm
+except ImportError:
+    raise ImportError(f"vllm is not installed. Please install 'vllm>={VLLM_MIN_VERSION_STR}', to use the model loader.")
+
+if tuple([int(part) for part in vllm.__version__.split(".") if part.isdigit()]) < VLLM_MIN_VERSION:
+    raise ImportError(
+        f"vllm version >={VLLM_MIN_VERSION_STR} required, but found {vllm.__version__}. Please upgrade vllm."
+    )
+
+import vllm.entrypoints.cli.main
 from vllm.config import ModelConfig, VllmConfig
 from vllm.distributed import get_tensor_model_parallel_rank
 from vllm.model_executor.model_loader import register_model_loader

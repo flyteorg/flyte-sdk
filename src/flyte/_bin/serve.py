@@ -290,13 +290,16 @@ def main(
         ),
     )
 
+    app_env: AppEnvironment | None = None
     if code_bundle is not None:
         if code_bundle.pkl:
             app_env = load_pkl_app_env(code_bundle)
         elif code_bundle.tgz:
-            if resolver is None or resolver_args is None:
-                raise ValueError("--resolver and --resolver-args are required when using --tgz code bundle")
-            app_env = load_app_env(resolver, resolver_args)
+            if resolver is not None and resolver_args is not None:
+                logger.info(f"Loading app env from resolver: {resolver}, args: {resolver_args}")
+                app_env = load_app_env(resolver, resolver_args)
+            else:
+                logger.info("Resolver arguments not provided, started server from command.")
         else:
             raise ValueError("Code bundle did not contain a tgz or pkl file")
 
@@ -311,13 +314,14 @@ def main(
 
     os.environ[RUNTIME_PARAMETERS_FILE] = parameters_file
 
-    if code_bundle is not None and app_env._server is not None:
+    if app_env and app_env._server is not None:
         asyncio.run(_serve(app_env, materialized_parameters))
         exit(0)
 
     if command is None or len(command) == 0:
         raise ValueError("No command provided to execute")
 
+    logger.info(f"Serving app with command: {command}")
     command_list = []
     for arg in command:
         logger.info(f"Processing arg: {arg}")

@@ -1,0 +1,2 @@
+VLLM_MIN_VERSION = (0, 11, 0)
+VLLM_MIN_VERSION_STR = ".".join(map(str, VLLM_MIN_VERSION))
