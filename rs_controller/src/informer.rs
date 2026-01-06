@@ -241,7 +241,7 @@ impl Informer {
                 some_action.merge_from_submit(&action);
                 some_action.clone()
             } else {
-                // don't need to write anything. return the original
+                cache.insert(action_name.clone(), action.clone());
                 action
             }
         };
