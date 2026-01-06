@@ -626,10 +626,6 @@ class Image:
         Args:
             secret_mounts:
         """
-        from ._utils import parse_uv_script_file
-
-        metadata = parse_uv_script_file(Path(script))
-        dependencies = metadata.dependencies
 
         ll = UVScript(
             script=Path(script),
@@ -648,9 +644,6 @@ class Image:
             python_version=python_version,
             platform=platform,
         )
-
-        if dependencies:
-            img = img.with_pip_packages(*dependencies)
 
         return img.clone(addl_layer=ll)
 
