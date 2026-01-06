@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import typing
+from importlib.metadata import entry_points
 from typing import ClassVar, Dict, Optional, Tuple
 
 from async_lru import alru_cache
@@ -226,7 +227,26 @@ class ImageBuildEngine:
 
             return DockerImageBuilder()
         else:
-            raise ValueError(f"Unknown image builder type: {builder}. Supported types are 'local' and 'remote'.")
+            return cls._load_custom_type_transformers(builder)
+
+    @classmethod
+    def _load_custom_type_transformers(cls, name: str) -> ImageBuilder:
+        plugins = entry_points(group="flyte.plugins.image_builders")
+        for ep in plugins:
+            if ep.name != name:
+                continue
+            try:
+                logger.info(f"Loading image builder: {ep.name}")
+                builder = ep.load()
+                if callable(builder):
+                    return builder()
+                return builder
+            except Exception as e:
+                raise RuntimeError(f"Failed to load image builder {ep.name} with error: {e}")
+        raise ValueError(
+            f"Unknown image builder type: {name}. Available builders:"
+            f" {[ep.name for ep in plugins] + ['local', 'remote']}"
+        )
 
 
 class ImageCache(BaseModel):
