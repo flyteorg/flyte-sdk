@@ -29,7 +29,7 @@ DEFAULT_SGLANG_IMAGE = (
     .with_pip_packages("flashinfer-python", "flashinfer-cubin")
     .with_pip_packages("flashinfer-jit-cache", index_url="https://flashinfer.ai/whl/cu128")
     .with_pip_packages("flyteplugins-sglang", pre=True)
-    .with_pip_packages(f"sglang>={SGLANG_MIN_VERSION_STR}")
+    .with_pip_packages(f"sglang=={SGLANG_MIN_VERSION_STR}")
     .with_env_vars({"CUDA_HOME": "/usr/local/cuda-12.8"})
 )
 
