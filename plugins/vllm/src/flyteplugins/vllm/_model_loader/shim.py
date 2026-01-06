@@ -28,7 +28,12 @@ from vllm.model_executor.model_loader import register_model_loader
 from vllm.model_executor.model_loader.default_loader import DefaultModelLoader
 from vllm.model_executor.model_loader.dummy_loader import DummyModelLoader
 from vllm.model_executor.model_loader.sharded_state_loader import ShardedStateLoader
-from vllm.model_executor.model_loader.utils import set_default_torch_dtype
+
+try:
+    from vllm.model_executor.model_loader.utils import set_default_torch_dtype
+except ImportError:
+    # vllm 0.13.0 moved the set_default_torch_dtype to vllm.utils.torch_utils
+    from vllm.utils.torch_utils import set_default_torch_dtype
 
 logger = logging.getLogger(__name__)
 
