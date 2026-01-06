@@ -264,8 +264,10 @@ class AppEnvironment(Environment):
                             loader_args,
                         ],
                     ]
-                except RuntimeError:
+                except RuntimeError as e:
                     # If we can't find the app in the module (e.g., in tests), skip resolver args
+                    from flyte._logging import logger
+                    logger.warning(f"Failed to extract app resolver args: {e}. Skipping resolver args.")
                     pass
             return [*cmd, "--"]
         elif isinstance(self.command, str):
