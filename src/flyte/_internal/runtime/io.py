@@ -5,7 +5,7 @@ It uses the storage module to handle the actual uploading and downloading of fil
 TODO: Convert to use streaming apis
 """
 
-from flyteidl.core import errors_pb2
+from flyteidl2.core import errors_pb2
 from flyteidl2.core import execution_pb2
 from flyteidl2.task import common_pb2
 
@@ -85,8 +85,6 @@ async def upload_error(err: execution_pb2.ExecutionError, output_prefix: str) ->
             message=err.message,
             kind=errors_pb2.ContainerError.RECOVERABLE,
             origin=err.kind,
-            timestamp=err.timestamp,
-            worker=err.worker,
         )
     )
     error_uri = error_path(output_prefix)
@@ -177,8 +175,6 @@ async def load_error(path: str) -> execution_pb2.ExecutionError:
             message=err.error.message,
             kind=err.error.origin,
             error_uri=path,
-            timestamp=err.error.timestamp,
-            worker=err.error.worker,
         )
 
     return execution_pb2.ExecutionError(
