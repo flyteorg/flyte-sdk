@@ -480,6 +480,40 @@ async def init_in_cluster(
     return remote_kwargs
 
 
+@syncify
+async def init_passthrough(
+    endpoint: str | None = None,
+    org: str | None = None,
+    project: str | None = None,
+    domain: str | None = None,
+    insecure: bool = False,
+) -> dict[str, typing.Any]:
+    """
+    Initialize the Flyte system with passthrough authentication.
+
+    This authentication mode allows you to pass custom authentication metadata
+    using the `flyte.remote.auth_metadata()` context manager.
+
+    :param org: Optional organization name
+    :param project: Optional project name
+    :param domain: Optional domain name
+    :param endpoint: Optional API endpoint URL
+    :param insecure: Whether to use an insecure channel
+    :return: Dictionary of remote kwargs used for initialization
+    """
+    await init.aio(
+        org=org,
+        project=project,
+        domain=domain,
+        root_dir=Path.cwd(),
+        image_builder="remote",
+        endpoint=endpoint,
+        insecure=insecure,
+        auth_type="Passthrough",
+    )
+    return {"endpoint": endpoint, "insecure": insecure}
+
+
 def _get_init_config() -> Optional[_InitConfig]:
     """
     Get the current initialization configuration. Thread-safe implementation.

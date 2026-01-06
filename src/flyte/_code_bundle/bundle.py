@@ -186,12 +186,10 @@ async def build_code_bundle_from_relative_paths(
     Build a code bundle from a list of relative paths.
     :param relative_paths: The list of relative paths to bundle.
     :param from_dir: The directory of the code to bundle. This is the root directory for the source.
-    :param ignore: The list of ignores to apply. This is a list of Ignore classes.
     :param extract_dir: The directory to extract the code bundle to, when in the container. It defaults to the current
         working directory.
     :param dryrun: If dryrun is enabled, files will not be uploaded to the control plane.
     :param copy_bundle_to: If set, the bundle will be copied to this path. This is used for testing purposes.
-    :param copy_style: What to put into the tarball. (either all, or loaded_modules. if none, skip this function)
     :return: The code bundle, which contains the path where the code was zipped to.
     """
     logger.debug("Building code bundle from relative paths.")
