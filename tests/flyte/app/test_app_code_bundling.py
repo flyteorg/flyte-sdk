@@ -7,12 +7,15 @@ when AppEnvironment has include files specified.
 
 import pathlib
 import tempfile
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from flyte._code_bundle.bundle import build_code_bundle_from_relative_paths
 from flyte._image import Image
 from flyte.app import AppEnvironment
+from flyte.app._deploy import _deploy_app
+from flyte.models import CodeBundle, SerializationContext
 
 
 @pytest.fixture
@@ -240,3 +243,317 @@ def test_app_environment_default_include_is_empty():
     )
 
     assert app_env.include == []
+
+
+# =============================================================================
+# Tests for _deploy_app code bundling logic
+# =============================================================================
+
+
+@pytest.fixture
+def mock_app_env_with_include(temp_app_directory):
+    """
+    Create an AppEnvironment with include files specified.
+    """
+    app_env = AppEnvironment(
+        name="test-app-include",
+        image=Image.from_base("python:3.11"),
+        include=["app.py", "utils.py"],
+    )
+    # Set the _app_filename to simulate the app being defined in a file
+    app_env._app_filename = str(temp_app_directory / "app.py")
+    return app_env
+
+
+@pytest.fixture
+def mock_serialization_context(temp_app_directory):
+    """
+    Create a SerializationContext without a code bundle.
+    """
+    return SerializationContext(
+        org="test-org",
+        project="test-project",
+        domain="test-domain",
+        version="v1.0.0",
+        code_bundle=None,
+        root_dir=temp_app_directory,
+    )
+
+
+@pytest.mark.asyncio
+async def test_deploy_app_include_only_builds_code_bundle(temp_app_directory):
+    """
+    GOAL: Verify that when AppEnvironment has only `include` specified (no pre-existing
+    code bundle), build_code_bundle_from_relative_paths is called to create the code bundle.
+
+    Tests that:
+    - When app.include is specified and serialization_context.code_bundle is None
+    - build_code_bundle_from_relative_paths is called with the include files
+    - The resulting code_bundle is set on the serialization_context
+    """
+    app_env = AppEnvironment(
+        name="test-app-include-only",
+        image=Image.from_base("python:3.11"),
+        include=["app.py", "utils.py"],
+    )
+    app_env._app_filename = str(temp_app_directory / "app.py")
+
+    ctx = SerializationContext(
+        org="test-org",
+        project="test-project",
+        domain="test-domain",
+        version="v1.0.0",
+        code_bundle=None,
+        root_dir=temp_app_directory,
+    )
+
+    mock_bundle = CodeBundle(
+        computed_version="abc123",
+        tgz="s3://bucket/code.tgz",
+        files=["app.py", "utils.py"],
+    )
+
+    with (
+        patch("flyte.app._deploy.build_code_bundle_from_relative_paths", new_callable=AsyncMock) as mock_build_bundle,
+        patch("flyte.app._runtime.translate_app_env_to_idl") as mock_translate,
+        patch("flyte.app._deploy.ensure_client"),
+    ):
+        mock_build_bundle.return_value = mock_bundle
+        mock_translate.aio = AsyncMock(return_value=MagicMock())
+
+        # Call _deploy_app with dryrun=True to avoid actual deployment
+        await _deploy_app(app_env, ctx, dryrun=True)
+
+        # Verify build_code_bundle_from_relative_paths was called
+        mock_build_bundle.assert_called_once()
+        call_args = mock_build_bundle.call_args
+
+        # Verify the files passed are the include files
+        assert call_args[0][0] == ("app.py", "utils.py")
+        # Verify the from_dir is the app's parent directory
+        assert call_args[1]["from_dir"] == temp_app_directory
+
+        # Verify the code_bundle was set on the serialization_context
+        assert ctx.code_bundle == mock_bundle
+
+
+@pytest.mark.asyncio
+async def test_deploy_app_include_with_preexisting_tgz_bundle_merges_files(temp_app_directory):
+    """
+    GOAL: Verify that when both `include` and a pre-existing tgz code bundle with files
+    are specified, the files are merged without duplication.
+
+    Tests that:
+    - Pre-existing code bundle files and include files are merged
+    - Duplicate files are not included twice
+    - build_code_bundle_from_relative_paths is called with merged file list
+    """
+    app_env = AppEnvironment(
+        name="test-app-merge",
+        image=Image.from_base("python:3.11"),
+        include=["app.py", "config.yaml", "utils.py"],  # utils.py overlaps with preexisting
+    )
+    app_env._app_filename = str(temp_app_directory / "app.py")
+
+    # Pre-existing code bundle with some files already included
+    preexisting_bundle = CodeBundle(
+        computed_version="preexisting123",
+        tgz="s3://bucket/preexisting.tgz",
+        files=["utils.py", "shared.py"],  # utils.py also in include list
+    )
+
+    ctx = SerializationContext(
+        org="test-org",
+        project="test-project",
+        domain="test-domain",
+        version="v1.0.0",
+        code_bundle=preexisting_bundle,
+        root_dir=temp_app_directory,
+    )
+
+    mock_new_bundle = CodeBundle(
+        computed_version="merged123",
+        tgz="s3://bucket/merged.tgz",
+        files=["utils.py", "shared.py", "app.py", "config.yaml"],
+    )
+
+    with (
+        patch("flyte.app._deploy.build_code_bundle_from_relative_paths", new_callable=AsyncMock) as mock_build_bundle,
+        patch("flyte.app._runtime.translate_app_env_to_idl") as mock_translate,
+        patch("flyte.app._deploy.ensure_client"),
+    ):
+        mock_build_bundle.return_value = mock_new_bundle
+        mock_translate.aio = AsyncMock(return_value=MagicMock())
+
+        await _deploy_app(app_env, ctx, dryrun=True)
+
+        # Verify build_code_bundle_from_relative_paths was called
+        mock_build_bundle.assert_called_once()
+        call_args = mock_build_bundle.call_args
+
+        # The merged files should be: preexisting files + include files (excluding duplicates)
+        # utils.py from preexisting, shared.py from preexisting, app.py from include, config.yaml from include
+        # utils.py should NOT appear twice
+        merged_files = call_args[0][0]
+        assert "utils.py" in merged_files
+        assert "shared.py" in merged_files
+        assert "app.py" in merged_files
+        assert "config.yaml" in merged_files
+        # Verify no duplicates
+        assert merged_files.count("utils.py") == 1
+
+
+@pytest.mark.asyncio
+async def test_deploy_app_pkl_bundle_does_not_build_code_bundle(temp_app_directory):
+    """
+    GOAL: Verify that when a pickle (pkl) code bundle is specified, 
+    build_code_bundle_from_relative_paths is NOT called, even if include is specified.
+
+    Tests that:
+    - When serialization_context.code_bundle.pkl is set (pickle bundle)
+    - build_code_bundle_from_relative_paths is NOT called
+    - The pickle bundle flow assumes the server function contains all needed code
+    """
+
+    def mock_server():
+        """Mock server function for pkl bundle."""
+        pass
+
+    app_env = AppEnvironment(
+        name="test-app-pkl",
+        image=Image.from_base("python:3.11"),
+        include=["app.py", "utils.py"],  # Include is specified but should be ignored for pkl
+    )
+    app_env._app_filename = str(temp_app_directory / "app.py")
+    app_env._server = mock_server  # pkl bundles require a server function
+
+    # Create a pickle code bundle
+    pkl_bundle = CodeBundle(
+        computed_version="pkl123",
+        pkl="s3://bucket/code.pkl",  # pkl is set, not tgz
+    )
+
+    ctx = SerializationContext(
+        org="test-org",
+        project="test-project",
+        domain="test-domain",
+        version="v1.0.0",
+        code_bundle=pkl_bundle,
+        root_dir=temp_app_directory,
+    )
+
+    with (
+        patch("flyte.app._deploy.build_code_bundle_from_relative_paths", new_callable=AsyncMock) as mock_build_bundle,
+        patch("flyte.app._runtime.translate_app_env_to_idl") as mock_translate,
+        patch("flyte.app._deploy.ensure_client"),
+    ):
+        mock_translate.aio = AsyncMock(return_value=MagicMock())
+
+        await _deploy_app(app_env, ctx, dryrun=True)
+
+        # Verify build_code_bundle_from_relative_paths was NOT called for pkl bundle
+        mock_build_bundle.assert_not_called()
+
+        # Verify the original pkl bundle is still intact
+        assert ctx.code_bundle == pkl_bundle
+        assert ctx.code_bundle.pkl == "s3://bucket/code.pkl"
+
+
+@pytest.mark.asyncio
+async def test_deploy_app_no_include_does_not_build_code_bundle(temp_app_directory):
+    """
+    GOAL: Verify that when AppEnvironment has no `include` specified,
+    build_code_bundle_from_relative_paths is NOT called.
+
+    Tests that:
+    - When app.include is empty/None
+    - build_code_bundle_from_relative_paths is NOT called
+    - The serialization_context.code_bundle remains as-is
+    """
+    app_env = AppEnvironment(
+        name="test-app-no-include",
+        image=Image.from_base("python:3.11"),
+        include=[],  # Empty include list
+    )
+    app_env._app_filename = str(temp_app_directory / "app.py")
+
+    ctx = SerializationContext(
+        org="test-org",
+        project="test-project",
+        domain="test-domain",
+        version="v1.0.0",
+        code_bundle=None,
+        root_dir=temp_app_directory,
+    )
+
+    with (
+        patch("flyte.app._deploy.build_code_bundle_from_relative_paths", new_callable=AsyncMock) as mock_build_bundle,
+        patch("flyte.app._runtime.translate_app_env_to_idl") as mock_translate,
+        patch("flyte.app._deploy.ensure_client"),
+    ):
+        mock_translate.aio = AsyncMock(return_value=MagicMock())
+
+        await _deploy_app(app_env, ctx, dryrun=True)
+
+        # Verify build_code_bundle_from_relative_paths was NOT called
+        mock_build_bundle.assert_not_called()
+
+        # Verify code_bundle remains None
+        assert ctx.code_bundle is None
+
+
+@pytest.mark.asyncio
+async def test_deploy_app_include_with_preexisting_bundle_no_files(temp_app_directory):
+    """
+    GOAL: Verify that when include is specified and pre-existing code bundle has no files,
+    only the include files are used.
+
+    Tests that:
+    - When pre-existing code bundle has files=None or files=[]
+    - Only the include files are passed to build_code_bundle_from_relative_paths
+    """
+    app_env = AppEnvironment(
+        name="test-app-include-no-preexisting-files",
+        image=Image.from_base("python:3.11"),
+        include=["app.py", "utils.py"],
+    )
+    app_env._app_filename = str(temp_app_directory / "app.py")
+
+    # Pre-existing bundle with no files (files=None)
+    preexisting_bundle = CodeBundle(
+        computed_version="preexisting123",
+        tgz="s3://bucket/preexisting.tgz",
+        files=None,  # No files in pre-existing bundle
+    )
+
+    ctx = SerializationContext(
+        org="test-org",
+        project="test-project",
+        domain="test-domain",
+        version="v1.0.0",
+        code_bundle=preexisting_bundle,
+        root_dir=temp_app_directory,
+    )
+
+    mock_new_bundle = CodeBundle(
+        computed_version="new123",
+        tgz="s3://bucket/new.tgz",
+        files=["app.py", "utils.py"],
+    )
+
+    with (
+        patch("flyte.app._deploy.build_code_bundle_from_relative_paths", new_callable=AsyncMock) as mock_build_bundle,
+        patch("flyte.app._runtime.translate_app_env_to_idl") as mock_translate,
+        patch("flyte.app._deploy.ensure_client"),
+    ):
+        mock_build_bundle.return_value = mock_new_bundle
+        mock_translate.aio = AsyncMock(return_value=MagicMock())
+
+        await _deploy_app(app_env, ctx, dryrun=True)
+
+        # Verify build_code_bundle_from_relative_paths was called
+        mock_build_bundle.assert_called_once()
+        call_args = mock_build_bundle.call_args
+
+        # Only include files should be passed (no preexisting files to merge)
+        assert call_args[0][0] == ("app.py", "utils.py")
