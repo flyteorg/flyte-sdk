@@ -59,9 +59,18 @@ def extract_app_env_module(app_env: AppEnvironment, /, source_dir: pathlib.Path)
             caller_globals = sys.modules["__main__"].__dict__
 
     if caller_globals is None:
-        # Load the module to inspect it
-        _, entity_module = extract_obj_module(app_env, source_dir)
-        caller_globals = entity_module.__dict__
+        # Load the module to inspect it by importing it by name
+        # Note: we can't use extract_obj_module here because it uses inspect.getmodule()
+        # which returns the module where the CLASS is defined, not where the INSTANCE is created
+        import importlib
+        try:
+            entity_module = importlib.import_module(module_name)
+            caller_globals = entity_module.__dict__
+        except (ModuleNotFoundError, ImportError):
+            # Fallback for test scenarios where module might be <string> or not importable
+            # In this case, use extract_obj_module as a last resort
+            _, entity_module = extract_obj_module(app_env, source_dir)
+            caller_globals = entity_module.__dict__
 
     # Extract variable name from module - look for AppEnvironment instances
     app_var_name = None

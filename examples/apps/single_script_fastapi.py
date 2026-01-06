@@ -55,7 +55,7 @@ async def read_item(item_id: int, q: str | None = None) -> dict:
 @env.app.get("/self")
 async def self() -> dict:
     """Self endpoint returning the app itself."""
-    return {"endpointin": env.endpoint}
+    return {"endpoint": env.endpoint}
 
 
 if __name__ == "__main__":
