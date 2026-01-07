@@ -356,7 +356,6 @@ async def init_from_config(
 
 @syncify
 async def init_from_api_key(
-    endpoint: str,
     api_key: str | None = None,
     project: str | None = None,
     domain: str | None = None,
@@ -373,8 +372,13 @@ async def init_from_api_key(
     Initialize the Flyte system using an API key for authentication. This is a convenience
     method for API key-based authentication. Thread-safe implementation.
 
-    :param endpoint: The Flyte API endpoint URL
-    :param api_key: Optional API key for authentication. If None, reads from FLYTE_API_KEY environment variable.
+    The API key should be an encoded API key that contains the endpoint, client ID, client secret,
+    and organization information. You can obtain this encoded API key from your Flyte administrator
+    or cloud provider.
+
+    :param api_key: Optional encoded API key for authentication. If None, reads from FLYTE_API_KEY
+        environment variable. The API key is a base64-encoded string containing endpoint, client_id,
+        client_secret, and org information.
     :param project: Optional project name
     :param domain: Optional domain name
     :param root_dir: Optional root directory from which to determine how to load files, and find paths to files.
@@ -391,7 +395,8 @@ async def init_from_api_key(
     """
     import os
 
-    from flyte._utils import org_from_endpoint, sanitize_endpoint
+    from flyte._utils import sanitize_endpoint
+    from flyte.remote._client.auth._auth_utils import decode_api_key
 
     # If api_key is not provided, read from environment variable
     if api_key is None:
@@ -403,16 +408,20 @@ async def init_from_api_key(
                 "API key must be provided either as a parameter or via the FLYTE_API_KEY environment variable.",
             )
 
-    # Sanitize the endpoint and extract org from it - sanitize should never return None if input is not None
+    # Decode the API key to extract endpoint, client_id, client_secret, and org
+    endpoint, client_id, client_secret, org = decode_api_key(api_key)
+
+    # Sanitize the endpoint
     endpoint = sanitize_endpoint(endpoint)  # type: ignore[assignment]
-    org = org_from_endpoint(endpoint)
 
     await init.aio(
-        org=org,
+        org=None if org == "None" else org,
         project=project,
         domain=domain,
         endpoint=endpoint,
         api_key=api_key,
+        client_id=client_id,
+        client_credentials_secret=client_secret,
         auth_type="ClientSecret",  # API keys use client credentials flow
         root_dir=root_dir,
         log_level=log_level,

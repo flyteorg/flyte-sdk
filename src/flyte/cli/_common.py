@@ -136,17 +136,9 @@ class CLIConfig:
         # 1. FLYTE_API_KEY is set AND
         # 2. No config file exists
         if api_key and not has_config_file:
-            # Require the endpoint arg in the init_from_api_key function for future proofing.
-            # But for the flyte CLI, we can decode since there's already a --endpoint arg.
-            endpoint = self.endpoint
-            if not endpoint:
-                # Decode the API key to get the endpoint
-                from flyte.remote._client.auth._auth_utils import decode_api_key
-
-                endpoint, _, _, _ = decode_api_key(api_key)
-
+            # The API key is encoded and contains endpoint, client_id, client_secret, and org
+            # init_from_api_key will decode it automatically
             flyte.init_from_api_key(
-                endpoint=endpoint,
                 api_key=api_key,
                 project=project if project is not None else self.config.task.project,
                 domain=domain if domain is not None else self.config.task.domain,
