@@ -12,7 +12,6 @@ from typing import Tuple
 import aiofiles
 import grpc
 import httpx
-# from flyteidl.service import dataproxy_pb2
 from flyteidl2.dataproxy import dataproxy_service_pb2
 from google.protobuf import duration_pb2
 
