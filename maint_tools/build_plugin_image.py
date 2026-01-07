@@ -45,8 +45,6 @@ if __name__ == "__main__":
     parser.add_argument("--builder", choices=["local", "remote"], default="local", help="Image builder to use")
 
     args = parser.parse_args()
-    # can remove this and only specify one in the future
-    assert args.registry
 
     flyte.init_from_config()
     if args.type == "vllm":
