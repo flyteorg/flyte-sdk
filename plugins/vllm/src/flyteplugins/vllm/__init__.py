@@ -1,3 +1,3 @@
-__all__ = ["VLLMAppEnvironment", "DEFAULT_VLLM_IMAGE"]
+__all__ = ["DEFAULT_VLLM_IMAGE", "VLLMAppEnvironment"]
 
-from flyteplugins.vllm._app_environment import VLLMAppEnvironment, DEFAULT_VLLM_IMAGE
+from flyteplugins.vllm._app_environment import DEFAULT_VLLM_IMAGE, VLLMAppEnvironment

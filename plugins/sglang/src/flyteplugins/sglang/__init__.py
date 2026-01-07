@@ -1,3 +1,3 @@
-__all__ = ["SGLangAppEnvironment", "DEFAULT_SGLANG_IMAGE"]
+__all__ = ["DEFAULT_SGLANG_IMAGE", "SGLangAppEnvironment"]
 
-from flyteplugins.sglang._app_environment import SGLangAppEnvironment, DEFAULT_SGLANG_IMAGE
+from flyteplugins.sglang._app_environment import DEFAULT_SGLANG_IMAGE, SGLangAppEnvironment
