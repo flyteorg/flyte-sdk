@@ -44,9 +44,7 @@ async def test_get_grpc_call_auth_metadata_with_context(authenticator):
     with mock.patch("flyte.remote._auth_metadata.get_auth_metadata") as mock_get_metadata:
         mock_get_metadata.return_value = (("key1", "value1"), ("key2", "value2"))
 
-        # Capture print output
-        with mock.patch("builtins.print") as mock_print:
-            result = await authenticator.get_grpc_call_auth_metadata()
+        result = await authenticator.get_grpc_call_auth_metadata()
 
         # Verify the result
         assert result is not None
@@ -56,9 +54,6 @@ async def test_get_grpc_call_auth_metadata_with_context(authenticator):
         # Convert metadata to list for comparison
         metadata_list = list(result.pairs)
         assert metadata_list == [("key1", "value1"), ("key2", "value2")]
-
-        # Verify print was called to log the metadata
-        assert mock_print.call_count == 3  # Header + 2 key-value pairs
 
 
 @pytest.mark.asyncio
@@ -100,9 +95,7 @@ async def test_auth_metadata_context_integration(endpoint):
         assert ctx.data.metadata is not None
         assert len(ctx.data.metadata) == 2
 
-        # Capture print output
-        with mock.patch("builtins.print"):
-            result = await authenticator.get_grpc_call_auth_metadata()
+        result = await authenticator.get_grpc_call_auth_metadata()
 
         # Verify the authenticator extracted the metadata correctly
         assert result is not None
@@ -140,9 +133,7 @@ async def test_concurrent_auth_metadata_contexts_isolated(endpoint):
             # Small delay to ensure coroutines overlap in execution
             await asyncio.sleep(0.01)
 
-            # Capture print output to avoid cluttering test output
-            with mock.patch("builtins.print"):
-                result = await authenticator.get_grpc_call_auth_metadata()
+            result = await authenticator.get_grpc_call_auth_metadata()
 
             # Store result for verification
             results[coroutine_id] = result
@@ -202,9 +193,7 @@ def test_concurrent_auth_metadata_contexts_isolated_with_syncify(endpoint):
             # Small delay to ensure operations overlap
             await asyncio.sleep(0.01)
 
-            # Capture print output to avoid cluttering test output
-            with mock.patch("builtins.print"):
-                result = await authenticator.get_grpc_call_auth_metadata()
+            result = await authenticator.get_grpc_call_auth_metadata()
 
             # Store result for verification (thread-safe)
             with results_lock:
