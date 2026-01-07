@@ -82,7 +82,9 @@ def sanitize_auth_type(auth_type: str | None) -> str:
     """
     Convert the auth type to the mode that is used by the Flyte backend.
     """
-    if auth_type is None or auth_type.lower() in _pkce_options:
+    if auth_type is None:
+        return "pkce"
+    if auth_type.lower() in _pkce_options:
         return "Pkce"
     if auth_type.lower() in _device_flow_options:
         return "DeviceFlow"
