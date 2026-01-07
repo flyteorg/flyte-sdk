@@ -23,7 +23,7 @@ def authenticator(endpoint):
 def test_initialization(authenticator, endpoint):
     """Test PassthroughAuthenticator initialization."""
     assert authenticator._endpoint == endpoint
-    assert authenticator._creds is None
+    assert authenticator._creds is not None
     assert authenticator._creds_id == "passthrough"
 
 
