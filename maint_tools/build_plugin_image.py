@@ -32,6 +32,8 @@ async def build_flyte_sglang_image(registry: str | None = None, name: str | None
 
 
 if __name__ == "__main__":
+    import os
+
     parser = argparse.ArgumentParser(description="Build the default Flyte image.")
     parser.add_argument("--registry", help="Docker registry to push to")
     parser.add_argument("--type", choices=["vllm", "sglang"], help="Type of image to build")
@@ -39,12 +41,27 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    flyte.init_from_config()
+    if os.getenv("GITHUB_ACTIONS", "") == "true":
+        flyte.init(
+            endpoint=os.getenv("FLYTE_ENDPOINT", "dns:///playground.canary.unionai.cloud"),
+            auth_type="ClientSecret",
+            client_id="flyte-sdk-ci",
+            client_credentials_secret=os.getenv("FLYTE_SDK_CI_TOKEN"),
+            insecure=False,
+            image_builder="remote",
+            project=os.getenv("FLYTE_PROJECT", "flyte-sdk"),
+            domain=os.getenv("FLYTE_DOMAIN", "development"),
+        )
+        builder = "remote"
+    else:
+        flyte.init_from_config()
+        builder = args.builder
+
     if args.type == "vllm":
         print("Building vllm image...")
-        asyncio.run(build_flyte_vllm_image(registry=args.registry, builder=args.builder))
+        asyncio.run(build_flyte_vllm_image(registry=args.registry, builder=builder))
     elif args.type == "sglang":
         print("Building sglang image...")
-        asyncio.run(build_flyte_sglang_image(registry=args.registry, builder=args.builder))
+        asyncio.run(build_flyte_sglang_image(registry=args.registry, builder=builder))
     else:
         raise ValueError(f"Invalid type: {args.type}. Valid types are: [vllm, sglang].")
