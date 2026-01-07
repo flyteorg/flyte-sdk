@@ -124,6 +124,7 @@ jobs:
       - name: Build and push the plugin image
         if: ${{ matrix.image-type }}
         env:
+          FLYTE_SDK_CI_TOKEN: "${{ secrets.FLYTE_SDK_CI_TOKEN }}"
           FLYTE_DOCKER_BUILDER_CACHE_FROM: "type=gha"
           FLYTE_DOCKER_BUILDER_CACHE_TO: "type=gha,mode=max"
         run: |
