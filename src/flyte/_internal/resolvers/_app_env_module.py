@@ -63,6 +63,7 @@ def extract_app_env_module(app_env: AppEnvironment, /, source_dir: pathlib.Path)
         # Note: we can't use extract_obj_module here because it uses inspect.getmodule()
         # which returns the module where the CLASS is defined, not where the INSTANCE is created
         import importlib
+
         try:
             entity_module = importlib.import_module(module_name)
             caller_globals = entity_module.__dict__

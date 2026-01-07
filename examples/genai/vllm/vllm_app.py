@@ -55,7 +55,7 @@ vllm_app = VLLMAppEnvironment(
         flyte.Image.from_debian_base(name="vllm-app-image", install_flyte=False)
         .with_pip_packages("flashinfer-python", "flashinfer-cubin")
         .with_pip_packages("flashinfer-jit-cache", index_url="https://flashinfer.ai/whl/cu129")
-        .with_pip_packages("vllm==0.11.0")
+        .with_pip_packages("vllm==0.13.0")
         # .with_local_v2()
         # NOTE: due to a dependency conflict, the vllm flyte plugin needs to be installed as a separate layer:
         # Run the following command to build the wheel:

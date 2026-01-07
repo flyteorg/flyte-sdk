@@ -21,7 +21,7 @@ DEFAULT_VLLM_IMAGE = (
     # install the vllm flyte plugin
     .with_pip_packages("flyteplugins-vllm", pre=True)
     # install vllm in a separate layer due to dependency conflict with flyte (protovalidate)
-    .with_pip_packages(f"vllm>={VLLM_MIN_VERSION_STR}")
+    .with_pip_packages(f"vllm=={VLLM_MIN_VERSION_STR}")
 )
 
 

@@ -54,17 +54,9 @@ class PassthroughAuthenticator(Authenticator):
         if not metadata_tuples:
             return None
 
-        # Print the metadata for debugging (as requested)
-        print(f"[PassthroughAuthenticator] Passing metadata: {metadata_tuples}")
-        for key, value in metadata_tuples:
-            print(f"  {key}: {value}")
-
-        # Convert tuples to gRPC Metadata
-        metadata = Metadata(*metadata_tuples)
-
         return GrpcAuthMetadata(
             creds_id=self._creds_id,
-            pairs=metadata,
+            pairs=Metadata(*metadata_tuples),
         )
 
     async def _do_refresh_credentials(self) -> Credentials:

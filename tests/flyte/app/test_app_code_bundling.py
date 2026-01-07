@@ -406,7 +406,7 @@ async def test_deploy_app_include_with_preexisting_tgz_bundle_merges_files(temp_
 @pytest.mark.asyncio
 async def test_deploy_app_pkl_bundle_does_not_build_code_bundle(temp_app_directory):
     """
-    GOAL: Verify that when a pickle (pkl) code bundle is specified, 
+    GOAL: Verify that when a pickle (pkl) code bundle is specified,
     build_code_bundle_from_relative_paths is NOT called, even if include is specified.
 
     Tests that:
@@ -417,7 +417,6 @@ async def test_deploy_app_pkl_bundle_does_not_build_code_bundle(temp_app_directo
 
     def mock_server():
         """Mock server function for pkl bundle."""
-        pass
 
     app_env = AppEnvironment(
         name="test-app-pkl",
