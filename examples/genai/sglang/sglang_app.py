@@ -3,19 +3,6 @@ A simple SGLang app example deploying the smallest Qwen3 model.
 
 This example shows how to use the SGLangAppEnvironment to serve a model using SGLang.
 
-Prerequisites
--------------
-
-1. Cache the model to a blob store location that your Flyte deployment can access.
-   Run the cache_model.py task to download the model from Hugging Face:
-
-   ```
-   flyte run examples/genai/sglang/cache_model.py main \
-       --model_id Qwen/Qwen3-0.6B
-   ```
-
-   The output will provide the model path (e.g., s3://your-bucket/path/to/model).
-
 Deploy
 ------
 
@@ -60,7 +47,7 @@ import flyte.io
 from flyte._image import DIST_FOLDER, PythonWheels
 
 image = (
-    flyte.Image.from_debian_base(name="sglang-app-image", python_version=(3, 12), install_flyte=False)
+    flyte.Image.from_debian_base(name="sglang-app-image", install_flyte=False)
     .with_apt_packages("libnuma-dev", "wget")
     .with_commands(
         [
@@ -70,25 +57,26 @@ image = (
             "apt-get install -y cuda-toolkit-12-8",
         ]
     )
-    .with_pip_packages("flashinfer-python", "sglang", "torch>=2.5.1")
+    .with_pip_packages("flashinfer-python", "flashinfer-cubin")
+    .with_pip_packages("flashinfer-jit-cache", index_url="https://flashinfer.ai/whl/cu128")
+    .with_pip_packages("sglang")
     # .with_local_v2()
-    .clone(addl_layer=PythonWheels(wheel_dir=DIST_FOLDER, package_name="flyte", pre=True))
-    # NOTE: due to a dependency conflict, the sglang flyte plugin needs to be installed as a separate layer:
-    # Run the following command to build the wheel:
-    # `uv run python -m build --wheel --installer uv --outdir ./dist-plugins plugins/sglang`
-    # Once a release of the plugin is out, you can install it via `with_pip_packages("flyteplugins-sglang")`
+    # NOTE: build the sglang wheel with:
+    # `rm -rf ./dist-plugins && uv run python -m build --wheel --installer uv --outdir ./dist-plugins plugins/sglang`
     .clone(
         addl_layer=PythonWheels(
             wheel_dir=DIST_FOLDER.parent / "dist-plugins", package_name="flyteplugins-sglang", pre=True
         )
     )
+    # NOTE: call `make dist` to build the flyte wheel
+    .clone(addl_layer=PythonWheels(wheel_dir=DIST_FOLDER, package_name="flyte", pre=True))
     .with_env_vars({"CUDA_HOME": "/usr/local/cuda-12.8"})
 )
 
 # Define the SGLang app environment for the smallest Qwen3 model
 sglang_app = SGLangAppEnvironment(
     name="qwen3-0-6b-sglang",
-    model=flyte.app.RunOutput(type=flyte.io.Dir, task_name="cache_model_env.main"),
+    model_hf_path="Qwen/Qwen3-0.6B",
     model_id="qwen3-0.6b",
     resources=flyte.Resources(cpu="4", memory="16Gi", gpu="L40s:4", disk="10Gi"),
     image=image,
@@ -98,11 +86,25 @@ sglang_app = SGLangAppEnvironment(
         scaledown_after=300,  # Scale down after 5 minutes of inactivity
     ),
     requires_auth=False,
-    extra_args=["--context-length", "8192", "--disable-cuda-graph"],  # Limit context length for smaller GPU memory
+    extra_args=["--context-length", "8192"],  # Limit context length for smaller GPU memory
 )
 
 
 if __name__ == "__main__":
+    import flyte.prefetch
+    from flyte.remote import Run
+
     flyte.init_from_config()
-    app = flyte.serve(sglang_app)
+
+    # prefetch the Qwen3-0.6B model into flyte object store
+    run: Run = flyte.prefetch.hf_model(repo="Qwen/Qwen3-0.6B")
+    run.wait()
+
+    app = flyte.serve(
+        sglang_app.clone_with(
+            name=sglang_app.name,
+            model_path=flyte.app.RunOutput(type="directory", run_name=run.name),
+            model_hf_path=None,
+        )
+    )
     print(f"Deployed SGLang app: {app.url}")

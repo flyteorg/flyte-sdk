@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import functools
+import sys
 import threading
 import typing
 from dataclasses import dataclass, field, replace
@@ -124,8 +125,10 @@ async def _initialize_client(
     )
 
 
-def _initialize_logger(log_level: int | None = None, log_format: LogFormat | None = None) -> None:
-    initialize_logger(log_level=log_level, log_format=log_format, enable_rich=True)
+def _initialize_logger(
+    log_level: int | None = None, log_format: LogFormat | None = None, reset_root_logger: bool = False
+) -> None:
+    initialize_logger(log_level=log_level, log_format=log_format, enable_rich=True, reset_root_logger=reset_root_logger)
 
 
 @syncify
@@ -136,6 +139,7 @@ async def init(
     root_dir: Path | None = None,
     log_level: int | None = None,
     log_format: LogFormat | None = None,
+    reset_root_logger: bool = False,
     endpoint: str | None = None,
     headless: bool = False,
     insecure: bool = False,
@@ -170,6 +174,7 @@ async def init(
       defaults to the editable install directory if the cwd is in a Python editable install, else just the cwd.
     :param log_level: Optional logging level for the logger, default is set using the default initialization policies
     :param log_format: Optional logging format for the logger, default is "console"
+    :param reset_root_logger: By default, we clear out root logger handlers and set up our own.
     :param api_key: Optional API key for authentication
     :param endpoint: Optional API endpoint URL
     :param headless: Optional Whether to run in headless mode
@@ -203,7 +208,7 @@ async def init(
     from flyte._utils import get_cwd_editable_install, org_from_endpoint, sanitize_endpoint
     from flyte.types import _load_custom_type_transformers
 
-    _initialize_logger(log_level=log_level, log_format=log_format)
+    _initialize_logger(log_level=log_level, log_format=log_format, reset_root_logger=reset_root_logger)
     if load_plugin_type_transformers:
         _load_custom_type_transformers()
 
@@ -239,6 +244,8 @@ async def init(
             else:
                 logger.info("No editable install found, using current working directory as root directory.")
                 root_dir = Path.cwd()
+        # We will inject the root_dir into the sys,path for module resolution
+        sys.path.append(str(root_dir))
 
         _init_config = _InitConfig(
             root_dir=root_dir,
@@ -261,7 +268,11 @@ async def init_from_config(
     root_dir: Path | None = None,
     log_level: int | None = None,
     log_format: LogFormat = "console",
+    project: str | None = None,
+    domain: str | None = None,
     storage: Storage | None = None,
+    batch_size: int = 1000,
+    image_builder: ImageBuildEngine.ImageBuilderType | None = None,
     images: tuple[str, ...] | None = None,
     sync_local_sys_paths: bool = True,
 ) -> None:
@@ -270,6 +281,8 @@ async def init_from_config(
     other Flyte remote API methods are called. Thread-safe implementation.
 
     :param path_or_config: Path to the configuration file or Config object
+    :param project: Project name, this will override any project names in the configuration file
+    :param domain: Domain name, this will override any domain names in the configuration file
     :param root_dir: Optional root directory from which to determine how to load files, and find paths to
         files like config etc. For example if one uses the copy-style=="all", it is essential to determine the
         root directory for the current project. If not provided, it defaults to the editable install directory or
@@ -281,6 +294,9 @@ async def init_from_config(
     :param images: List of image strings in format "imagename=imageuri" or just "imageuri".
     :param sync_local_sys_paths: Whether to include and synchronize local sys.path entries under the root directory
      into the remote container (default: True).
+    :param batch_size: Optional batch size for operations that use listings, defaults to 1000
+    :param image_builder: Optional image builder configuration, if provided,
+        will override any defaults set in the configuration.
     :return: None
     """
     from rich.highlighter import ReprHighlighter
@@ -315,8 +331,8 @@ async def init_from_config(
 
     await init.aio(
         org=cfg.task.org,
-        project=cfg.task.project,
-        domain=cfg.task.domain,
+        project=project or cfg.task.project,
+        domain=domain or cfg.task.domain,
         endpoint=cfg.platform.endpoint,
         insecure=cfg.platform.insecure,
         insecure_skip_verify=cfg.platform.insecure_skip_verify,
@@ -329,7 +345,8 @@ async def init_from_config(
         root_dir=root_dir,
         log_level=log_level,
         log_format=log_format,
-        image_builder=cfg.image.builder,
+        image_builder=image_builder or cfg.image.builder,
+        batch_size=batch_size,
         images=cfg.image.image_refs,
         storage=storage,
         source_config_path=cfg_path,
@@ -339,7 +356,6 @@ async def init_from_config(
 
 @syncify
 async def init_from_api_key(
-    endpoint: str,
     api_key: str | None = None,
     project: str | None = None,
     domain: str | None = None,
@@ -356,8 +372,13 @@ async def init_from_api_key(
     Initialize the Flyte system using an API key for authentication. This is a convenience
     method for API key-based authentication. Thread-safe implementation.
 
-    :param endpoint: The Flyte API endpoint URL
-    :param api_key: Optional API key for authentication. If None, reads from FLYTE_API_KEY environment variable.
+    The API key should be an encoded API key that contains the endpoint, client ID, client secret,
+    and organization information. You can obtain this encoded API key from your Flyte administrator
+    or cloud provider.
+
+    :param api_key: Optional encoded API key for authentication. If None, reads from FLYTE_API_KEY
+        environment variable. The API key is a base64-encoded string containing endpoint, client_id,
+        client_secret, and org information.
     :param project: Optional project name
     :param domain: Optional domain name
     :param root_dir: Optional root directory from which to determine how to load files, and find paths to files.
@@ -374,7 +395,8 @@ async def init_from_api_key(
     """
     import os
 
-    from flyte._utils import org_from_endpoint, sanitize_endpoint
+    from flyte._utils import sanitize_endpoint
+    from flyte.remote._client.auth._auth_utils import decode_api_key
 
     # If api_key is not provided, read from environment variable
     if api_key is None:
@@ -386,16 +408,20 @@ async def init_from_api_key(
                 "API key must be provided either as a parameter or via the FLYTE_API_KEY environment variable.",
             )
 
-    # Sanitize the endpoint and extract org from it - sanitize should never return None if input is not None
+    # Decode the API key to extract endpoint, client_id, client_secret, and org
+    endpoint, client_id, client_secret, org = decode_api_key(api_key)
+
+    # Sanitize the endpoint
     endpoint = sanitize_endpoint(endpoint)  # type: ignore[assignment]
-    org = org_from_endpoint(endpoint)
 
     await init.aio(
-        org=org,
+        org=None if org == "None" else org,
         project=project,
         domain=domain,
         endpoint=endpoint,
         api_key=api_key,
+        client_id=client_id,
+        client_credentials_secret=client_secret,
         auth_type="ClientSecret",  # API keys use client credentials flow
         root_dir=root_dir,
         log_level=log_level,
@@ -457,8 +483,44 @@ async def init_in_cluster(
         remote_kwargs["insecure_skip_verify"] = True
         logger.info("SSL certificate verification disabled (insecure_skip_verify=True)")
 
-    await init.aio(org=org, project=project, domain=domain, image_builder="remote", **remote_kwargs)
+    await init.aio(
+        org=org, project=project, domain=domain, root_dir=Path.cwd(), image_builder="remote", **remote_kwargs
+    )
     return remote_kwargs
+
+
+@syncify
+async def init_passthrough(
+    endpoint: str | None = None,
+    org: str | None = None,
+    project: str | None = None,
+    domain: str | None = None,
+    insecure: bool = False,
+) -> dict[str, typing.Any]:
+    """
+    Initialize the Flyte system with passthrough authentication.
+
+    This authentication mode allows you to pass custom authentication metadata
+    using the `flyte.remote.auth_metadata()` context manager.
+
+    :param org: Optional organization name
+    :param project: Optional project name
+    :param domain: Optional domain name
+    :param endpoint: Optional API endpoint URL
+    :param insecure: Whether to use an insecure channel
+    :return: Dictionary of remote kwargs used for initialization
+    """
+    await init.aio(
+        org=org,
+        project=project,
+        domain=domain,
+        root_dir=Path.cwd(),
+        image_builder="remote",
+        endpoint=endpoint,
+        insecure=insecure,
+        auth_type="Passthrough",
+    )
+    return {"endpoint": endpoint, "insecure": insecure}
 
 
 def _get_init_config() -> Optional[_InitConfig]:

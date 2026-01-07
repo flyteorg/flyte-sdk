@@ -9,6 +9,7 @@ from datetime import timedelta
 from typing import Optional, cast
 
 from flyteidl2.core import identifier_pb2, literals_pb2, security_pb2, tasks_pb2
+from flyteidl2.core.execution_pb2 import TaskLog
 from flyteidl2.task import common_pb2, environment_pb2, task_definition_pb2
 from google.protobuf import duration_pb2, wrappers_pb2
 
@@ -21,6 +22,7 @@ from flyte._task import AsyncFunctionTaskTemplate, TaskTemplate
 from flyte.models import CodeBundle, SerializationContext
 
 from ... import ReusePolicy
+from ..._context import internal_ctx
 from ..._retry import RetryStrategy
 from ..._timeout import TimeoutType, timeout_from_request
 from .resources_serde import get_proto_extended_resources, get_proto_resources
@@ -120,7 +122,6 @@ def get_proto_task(task: TaskTemplate, serialize_context: SerializationContext) 
         version=serialize_context.version,
     )
 
-    # TODO Add support for extra_config, custom
     extra_config: typing.Dict[str, str] = {}
 
     if task.pod_template and not isinstance(task.pod_template, str):
@@ -130,6 +131,24 @@ def get_proto_task(task: TaskTemplate, serialize_context: SerializationContext) 
     else:
         container = _get_urun_container(serialize_context, task)
         pod = None
+
+    ctx = internal_ctx()
+    task_ctx = ctx.data.task_context
+    log_links = []
+    if task.links and task_ctx:
+        action = task_ctx.action
+        for link in task.links:
+            uri = link.get_link(
+                run_name=action.run_name if action.run_name else "",
+                project=action.project if action.project else "",
+                domain=action.domain if action.domain else "",
+                context=task_ctx.custom_context if task_ctx.custom_context else {},
+                parent_action_name=action.name if action.name else "",
+                action_name="{{.actionName}}",
+                pod_name="{{.podName}}",
+            )
+            task_log = TaskLog(name=link.name, uri=uri, icon_uri=link.icon_uri)
+            log_links.append(task_log)
 
     custom = task.custom_config(serialize_context)
 
@@ -174,6 +193,7 @@ def get_proto_task(task: TaskTemplate, serialize_context: SerializationContext) 
             interruptible=task.interruptible,
             generates_deck=wrappers_pb2.BoolValue(value=task.report),
             debuggable=task.debuggable,
+            log_links=log_links,
         ),
         interface=transform_native_to_typed_interface(task.native_interface),
         custom=custom if len(custom) > 0 else None,

@@ -54,7 +54,7 @@ env = FastAPIAppEnvironment(
     description="A FastAPI app with WebSocket and frontend serving capabilities",
     image=flyte.Image.from_debian_base(python_version=(3, 12)).with_pip_packages("fastapi", "uvicorn", "websockets"),
     resources=flyte.Resources(cpu=1, memory="1Gi"),
-    requires_auth=False,
+    links=[flyte.app.Link(path="/", is_relative=True, title="Home")],
 )
 
 

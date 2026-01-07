@@ -12,6 +12,10 @@ from ._common import ToJSONMixin
 
 @dataclass
 class User(ToJSONMixin):
+    """
+    Represents a user in the Flyte platform.
+    """
+
     pb2: UserInfoResponse
 
     @syncify
@@ -27,7 +31,13 @@ class User(ToJSONMixin):
         return cls(resp)
 
     def subject(self) -> str:
+        """
+        Get the subject identifier of the user.
+        """
         return self.pb2.subject
 
     def name(self) -> str:
+        """
+        Get the name of the user.
+        """
         return self.pb2.name

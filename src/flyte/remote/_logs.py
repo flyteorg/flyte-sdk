@@ -26,6 +26,14 @@ style_map = {
 
 
 def _format_line(logline: payload_pb2.LogLine, show_ts: bool, filter_system: bool) -> Text | None:
+    """
+    Format a log line for display with optional timestamp and system filtering.
+
+    :param logline: The log line protobuf to format.
+    :param show_ts: Whether to include timestamps.
+    :param filter_system: Whether to filter out system log lines.
+    :return: A formatted Text object or None if the line should be filtered out.
+    """
     if filter_system:
         if logline.originator == payload_pb2.LogLineOriginator.SYSTEM:
             return None
@@ -65,6 +73,9 @@ class AsyncLogViewer:
         self.panel = panel
 
     def _render(self) -> Panel | Text:
+        """
+        Render the current log lines as a Panel or Text object for display.
+        """
         log_text = Text()
         for line in self.lines:
             log_text.append(line)
@@ -73,6 +84,9 @@ class AsyncLogViewer:
         return log_text
 
     async def run(self):
+        """
+        Run the log viewer, streaming and displaying log lines until completion.
+        """
         with Live(self._render(), refresh_per_second=20, console=self.console) as live:
             try:
                 async for logline in self.log_source:

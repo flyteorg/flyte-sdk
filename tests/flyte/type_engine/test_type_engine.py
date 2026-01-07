@@ -29,9 +29,8 @@ from pydantic import BaseModel
 from typing_extensions import Annotated
 
 from flyte._context import internal_ctx
-from flyte.io._dataframe import DataFrame, DataFrameTransformerEngine
-from flyte.io._dir import Dir
-from flyte.io._file import File
+from flyte.io import DataFrame, Dir, File
+from flyte.io.extend import DataFrameTransformerEngine
 from flyte.types._pickle import FlytePickle, FlytePickleTransformer
 from flyte.types._type_engine import (
     BoolTransformer,

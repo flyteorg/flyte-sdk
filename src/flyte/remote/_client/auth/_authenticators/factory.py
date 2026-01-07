@@ -169,6 +169,10 @@ def get_async_authenticator(
             from flyte.remote._client.auth._authenticators.device_code import DeviceCodeAuthenticator
 
             return DeviceCodeAuthenticator(endpoint=endpoint, cfg_store=cfg_store, verify=verify, **kwargs)
+        case "Passthrough":
+            from flyte.remote._client.auth._authenticators.passthrough import PassthroughAuthenticator
+
+            return PassthroughAuthenticator(endpoint=endpoint, **kwargs)
         case _:
             raise ValueError(
                 f"Invalid auth mode [{auth_type}] specified. Please update the creds config to use a valid value"

@@ -1,4 +1,5 @@
 import os
+import sys
 import tempfile
 import typing
 from collections import OrderedDict
@@ -12,9 +13,11 @@ from fsspec.utils import get_protocol
 import flyte
 from flyte._context import Context, RawDataPath, internal_ctx
 from flyte._utils.lazy_module import is_imported
-from flyte.io._dataframe.dataframe import (
+from flyte.io import (
     PARQUET,
     DataFrame,
+)
+from flyte.io.extend import (
     DataFrameDecoder,
     DataFrameEncoder,
     DataFrameTransformerEngine,
@@ -203,8 +206,12 @@ async def test_sd():
     )
     assert isinstance(await sd.open(pd.DataFrame).iter(), typing.AsyncGenerator)
 
-    with pytest.raises(TypeError, match="object async_generator can't be used"):
-        await sd.open(pd.DataFrame).all()
+    if sys.version_info < (3, 14):
+        with pytest.raises(TypeError, match="object async_generator can't be used"):
+            await sd.open(pd.DataFrame).all()
+    else:
+        with pytest.raises(TypeError, match="'async_generator' object can't be awaited"):
+            await sd.open(pd.DataFrame).all()
 
     class MockPandasDecodingHandlers(DataFrameDecoder):
         async def decode(
@@ -507,7 +514,7 @@ async def test_read_sd_from_local_uri(local_tmp_pqt_file, ctx_with_test_raw_data
 
 @pytest.mark.asyncio
 @mock.patch("flyte.storage._remote_fs.RemoteFSPathResolver")
-@mock.patch("flyte.io.DataFrameTransformerEngine.get_encoder")
+@mock.patch("flyte.io.extend.DataFrameTransformerEngine.get_encoder")
 async def test_modify_literal_uris_call(mock_get_encoder, mock_resolver, ctx_with_test_raw_data_path):
     sd = DataFrame.from_df(val=pd.DataFrame({"a": [1, 2], "b": [3, 4]}), uri="bq://blah")
 

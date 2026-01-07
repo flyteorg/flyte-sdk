@@ -80,8 +80,8 @@ def walk_commands(ctx: click.Context) -> Generator[Tuple[str, click.Command, cli
                 yield full_name, subcommand, sub_ctx
 
                 # Recurse if subcommand is a MultiCommand (i.e., has its own subcommands)
-                # But skip ReferenceTaskGroup as it requires a live Flyte backend to enumerate subcommands
-                if isinstance(subcommand, click.Group) and type(subcommand).__name__ != "ReferenceTaskGroup":
+                # But skip RemoteTaskGroup as it requires a live Flyte backend to enumerate subcommands
+                if isinstance(subcommand, click.Group) and type(subcommand).__name__ != "RemoteTaskGroup":
                     yield from walk_commands(sub_ctx)
             except click.ClickException:
                 # Skip files/commands that can't be loaded

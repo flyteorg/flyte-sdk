@@ -4,6 +4,7 @@ import asyncio
 from collections import UserDict
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from functools import cached_property
 from typing import (
     Any,
     AsyncGenerator,
@@ -29,6 +30,8 @@ from rich.progress import Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
 
 from flyte import types
 from flyte._initialize import ensure_client, get_client, get_init_config
+from flyte._interface import default_output_name
+from flyte.models import ActionPhase
 from flyte.remote._common import ToJSONMixin
 from flyte.remote._logs import Logs
 from flyte.syncify import syncify
@@ -125,7 +128,21 @@ def _action_done_check(phase: phase_pb2.ActionPhase) -> bool:
 @dataclass
 class Action(ToJSONMixin):
     """
-    A class representing an action. It is used to manage the run of a task and its state on the remote Union API.
+    A class representing an action. It is used to manage the "execution" of a task and its state on the remote API.
+
+    From a datamodel perspective, a Run consists of actions. All actions are linearly nested under a parent action.
+     Actions have unique auto-generated identifiers, that are unique within a parent action.
+
+     <pre>
+     run
+      - a0
+        - action1 under a0
+        - action2 under a0
+            - action1 under action2 under a0
+            - action2 under action1 under action2 under a0
+            - ...
+        - ...
+    </pre>
     """
 
     pb2: run_definition_pb2.Action
@@ -136,6 +153,7 @@ class Action(ToJSONMixin):
     async def listall(
         cls,
         for_run_name: str,
+        in_phase: Tuple[ActionPhase | str, ...] | None = None,
         filters: str | None = None,
         sort_by: Tuple[str, Literal["asc", "desc"]] | None = None,
     ) -> Union[Iterator[Action], AsyncIterator[Action]]:
@@ -143,9 +161,10 @@ class Action(ToJSONMixin):
         Get all actions for a given run.
 
         :param for_run_name: The name of the run.
+        :param in_phase: Filter actions by one or more phases.
         :param filters: The filters to apply to the project list.
         :param sort_by: The sorting criteria for the project list, in the format (field, order).
-        :return: An iterator of projects.
+        :return: An iterator of actions.
         """
         ensure_client()
         token = None
@@ -154,12 +173,45 @@ class Action(ToJSONMixin):
             key=sort_by[0],
             direction=(list_pb2.Sort.ASCENDING if sort_by[1] == "asc" else list_pb2.Sort.DESCENDING),
         )
+
+        # Build filters for phase
+        filter_list = []
+        if in_phase:
+            from flyteidl2.common import phase_pb2
+
+            from flyte._logging import logger
+
+            phases = [
+                str(p.to_protobuf_value())
+                if isinstance(p, ActionPhase)
+                else str(phase_pb2.ActionPhase.Value(f"ACTION_PHASE_{p.upper()}"))
+                for p in in_phase
+            ]
+            logger.debug(f"Fetching action phases: {phases}")
+            if len(phases) > 1:
+                filter_list.append(
+                    list_pb2.Filter(
+                        function=list_pb2.Filter.Function.VALUE_IN,
+                        field="phase",
+                        values=phases,
+                    ),
+                )
+            else:
+                filter_list.append(
+                    list_pb2.Filter(
+                        function=list_pb2.Filter.Function.EQUAL,
+                        field="phase",
+                        values=phases[0],
+                    ),
+                )
+
         cfg = get_init_config()
         while True:
             req = list_pb2.ListRequest(
                 limit=100,
                 token=token,
                 sort_by=sort_pb2,
+                filters=filter_list if filter_list else None,
             )
             resp = await get_client().run_service.ListActions(
                 run_service_pb2.ListActionsRequest(
@@ -217,11 +269,14 @@ class Action(ToJSONMixin):
         )
 
     @property
-    def phase(self) -> str:
+    def phase(self) -> ActionPhase:
         """
         Get the phase of the action.
+
+        Returns:
+            The current execution phase as an ActionPhase enum
         """
-        return phase_pb2.ActionPhase.Name(self.pb2.status.phase)
+        return ActionPhase.from_protobuf(self.pb2.status.phase)
 
     @property
     def raw_phase(self) -> phase_pb2.ActionPhase:
@@ -276,6 +331,15 @@ class Action(ToJSONMixin):
         raw: bool = False,
         filter_system: bool = False,
     ):
+        """
+        Display logs for the action.
+
+        :param attempt: The attempt number to show logs for (defaults to latest attempt).
+        :param max_lines: Maximum number of log lines to display in the viewer.
+        :param show_ts: Whether to show timestamps with each log line.
+        :param raw: If True, print logs directly without the interactive viewer.
+        :param filter_system: If True, filter out system-generated log lines.
+        """
         details = await self.details()
         if not details.is_running and not details.done():
             # TODO we can short circuit here if the attempt is not the last one and it is done!
@@ -304,13 +368,19 @@ class Action(ToJSONMixin):
         self, cache_data_on_done: bool = False, wait_for: WaitFor = "terminal"
     ) -> AsyncGenerator[ActionDetails, None]:
         """
-        Watch the action for updates. This is a placeholder for watching the action.
+        Watch the action for updates, updating the internal Action state with latest details.
+
+        This method updates both the cached details and the protobuf representation,
+        ensuring that properties like `phase` reflect the current state.
         """
         ad = None
         async for ad in ActionDetails.watch.aio(self.action_id):
             if ad is None:
                 return
             self._details = ad
+            # Update the protobuf with the latest status and metadata
+            self.pb2.status.CopyFrom(ad.pb2.status)
+            self.pb2.metadata.CopyFrom(ad.pb2.metadata)
             yield ad
             if wait_for == "running" and ad.is_running:
                 break
@@ -511,6 +581,11 @@ class ActionDetails(ToJSONMixin):
                 raise e
 
     async def watch_updates(self, cache_data_on_done: bool = False) -> AsyncGenerator[ActionDetails, None]:
+        """
+        Watch for updates to the action details, yielding each update until the action is done.
+
+        :param cache_data_on_done: If True, cache inputs and outputs when the action completes.
+        """
         async for d in self.watch.aio(action_id=self.pb2.id):
             yield d
             if d.done():
@@ -521,11 +596,14 @@ class ActionDetails(ToJSONMixin):
             await self._cache_data.aio()
 
     @property
-    def phase(self) -> str:
+    def phase(self) -> ActionPhase:
         """
         Get the phase of the action.
+
+        Returns:
+            The current execution phase as an ActionPhase enum
         """
-        return phase_pb2.ActionPhase.Name(self.status.phase)
+        return ActionPhase.from_protobuf(self.status.phase)
 
     @property
     def raw_phase(self) -> phase_pb2.ActionPhase:
@@ -573,20 +651,32 @@ class ActionDetails(ToJSONMixin):
 
     @property
     def metadata(self) -> run_definition_pb2.ActionMetadata:
+        """
+        Get the metadata of the action.
+        """
         return self.pb2.metadata
 
     @property
     def status(self) -> run_definition_pb2.ActionStatus:
+        """
+        Get the status of the action.
+        """
         return self.pb2.status
 
     @property
     def error_info(self) -> run_definition_pb2.ErrorInfo | None:
+        """
+        Get the error information if the action failed, otherwise returns None.
+        """
         if self.pb2.HasField("error_info"):
             return self.pb2.error_info
         return None
 
     @property
     def abort_info(self) -> run_definition_pb2.AbortInfo | None:
+        """
+        Get the abort information if the action was aborted, otherwise returns None.
+        """
         if self.pb2.HasField("abort_info"):
             return self.pb2.abort_info
         return None
@@ -668,7 +758,8 @@ class ActionDetails(ToJSONMixin):
 
     async def inputs(self) -> ActionInputs:
         """
-        Placeholder for inputs. This can be extended to handle inputs from the run context.
+        Return the inputs of the action.
+        Will return instantly if inputs are available else will fetch and return.
         """
         if not self._inputs:
             await self._cache_data.aio()
@@ -676,7 +767,10 @@ class ActionDetails(ToJSONMixin):
 
     async def outputs(self) -> ActionOutputs:
         """
-        Placeholder for outputs. This can be extended to handle outputs from the run context.
+        Returns the outputs of the action, returns instantly if outputs are already cached, else fetches them and
+        returns. If Action is not in a terminal state, raise a RuntimeError.
+
+        :return: ActionOutputs
         """
         if not self._outputs:
             if not await self._cache_data.aio():
@@ -713,6 +807,21 @@ class ActionInputs(UserDict, ToJSONMixin):
     """
     A class representing the inputs of an action. It is used to manage the inputs of a task and its state on the
     remote Union API.
+
+    ActionInputs extends from a `UserDict` and hence is accessible like a dictionary
+
+    Example Usage:
+    ```python
+    action = Action.get(...)
+    print(action.inputs())
+    ```
+    Output:
+    ```bash
+    {
+      "x": ...,
+      "y": ...,
+    }
+    ```
     """
 
     pb2: common_pb2.Inputs
@@ -728,8 +837,29 @@ class ActionInputs(UserDict, ToJSONMixin):
 
 class ActionOutputs(tuple, ToJSONMixin):
     """
-    A class representing the outputs of an action. It is used to manage the outputs of a task and its state on the
-    remote Union API.
+    A class representing the outputs of an action. The outputs are by default represented as a Tuple. To access them,
+    you can simply read them as a tuple (assign to individual variables, use index to access) or you can use the
+    property `named_outputs` to retrieve a dictionary of outputs with keys that represent output names
+    which are usually auto-generated `o0, o1, o2, o3, ...`.
+
+    Example Usage:
+    ```python
+    action = Action.get(...)
+    print(action.outputs())
+    ```
+    Output:
+    ```python
+    ("val1", "val2", ...)
+    ```
+    OR
+    ```python
+    action = Action.get(...)
+    print(action.outputs().named_outputs)
+    ```
+    Output:
+    ```bash
+    {"o0": "val1", "o1": "val2", ...}
+    ```
     """
 
     def __new__(cls, pb2: common_pb2.Outputs, data: Tuple[Any, ...]):
@@ -743,3 +873,7 @@ class ActionOutputs(tuple, ToJSONMixin):
         # Normally you'd set instance attributes here,
         # but we've already set `pb2` in `__new__`
         self.pb2 = pb2
+
+    @cached_property
+    def named_outputs(self) -> dict[str, Any]:
+        return {default_output_name(i): x for i, x in enumerate(self)}

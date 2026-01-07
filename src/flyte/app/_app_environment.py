@@ -1,16 +1,22 @@
+from __future__ import annotations
+
 import inspect
 import os
 import re
 import shlex
-from dataclasses import dataclass, field
-from typing import List, Optional, Union
+from dataclasses import dataclass, field, replace
+from typing import TYPE_CHECKING, Any, Callable, List, Literal, Optional, Union
 
 import rich.repr
 
-from flyte import Environment
-from flyte.app._input import Input
+from flyte import Environment, Image, Resources, SecretRequest
+from flyte.app._parameter import Parameter
 from flyte.app._types import Domain, Link, Port, Scaling
 from flyte.models import SerializationContext
+
+if TYPE_CHECKING:
+    pass
+
 
 APP_NAME_RE = re.compile(r"[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*")
 INVALID_APP_PORTS = [8012, 8022, 8112, 9090, 9091]
@@ -30,7 +36,7 @@ class AppEnvironment(Environment):
     :param domain: Domain to use for the app.
     :param links: Links to other environments.
     :param include: Files to include in the environment to run the app.
-    :param inputs: Inputs to pass to the app environment.
+    :param parameters: Parameters to pass to the app environment.
     :param cluster_pool: Cluster pool to use for the app environment.
     :param name: Name of the app environment
     :param image: Docker image to use for the environment. If set to "auto", will use the default image.
@@ -53,12 +59,15 @@ class AppEnvironment(Environment):
 
     # Code
     include: List[str] = field(default_factory=list)
-    inputs: List[Input] = field(default_factory=list)
+    parameters: List[Parameter] = field(default_factory=list)
 
     # queue / cluster_pool
     cluster_pool: str = "default"
 
-    # config: Optional[AppConfigProtocol] = None
+    # private field
+    _server: Callable[[], None] | None = field(init=False, default=None)
+    _on_startup: Callable[[], None] | None = field(init=False, default=None)
+    _on_shutdown: Callable[[], None] | None = field(init=False, default=None)
 
     def _validate_name(self):
         if not APP_NAME_RE.fullmatch(self.name):
@@ -135,6 +144,16 @@ class AppEnvironment(Environment):
         # get instantiated file to keep track of app root directory
         self._app_filename = self._get_app_filename()
 
+        # Capture the frame where this environment was instantiated
+        # This helps us find the module where the app variable is defined
+        frame = inspect.currentframe()
+        if frame and frame.f_back:
+            # Go up the call stack to find the user's module
+            # Skip the dataclass __init__ frame
+            caller_frame = frame.f_back
+            if caller_frame and caller_frame.f_back:
+                self._caller_frame = inspect.getframeinfo(caller_frame.f_back)
+
     def container_args(self, serialize_context: SerializationContext) -> List[str]:
         if self.args is None:
             return []
@@ -144,17 +163,56 @@ class AppEnvironment(Environment):
             # args is a list
             return self.args
 
-    def _serialize_inputs(self, input_overrides: list[Input] | None) -> str:
-        if not self.inputs:
+    def _serialize_parameters(self, parameter_overrides: list[Parameter] | None) -> str:
+        if not self.parameters:
             return ""
-        from ._input import SerializableInputCollection
+        from ._parameter import SerializableParameterCollection
 
-        serialized_inputs = SerializableInputCollection.from_inputs(input_overrides or self.inputs)
-        return serialized_inputs.to_transport
+        serialized_parameters = SerializableParameterCollection.from_parameters(parameter_overrides or self.parameters)
+        return serialized_parameters.to_transport
+
+    def on_startup(self, fn: Callable[..., None]) -> Callable[..., None]:
+        """
+        Decorator to define the startup function for the app environment.
+
+        This function is called before the server function is called.
+
+        The decorated function can be a sync or async function, and accepts input
+        parameters based on the Parameters defined in the AppEnvironment
+        definition.
+        """
+        self._on_startup = fn
+        return self._on_startup
+
+    def server(self, fn: Callable[..., None]) -> Callable[..., None]:
+        """
+        Decorator to define the server function for the app environment.
+
+        This decorated function can be a sync or async function, and accepts input
+        parameters based on the Parameters defined in the AppEnvironment
+        definition.
+        """
+        self._server = fn
+        return self._server
+
+    def on_shutdown(self, fn: Callable[..., None]) -> Callable[..., None]:
+        """
+        Decorator to define the shutdown function for the app environment.
+
+        This function is called after the server function is called.
+
+        This decorated function can be a sync or async function, and accepts input
+        parameters based on the Parameters defined in the AppEnvironment
+        definition.
+        """
+        self._on_shutdown = fn
+        return self._on_shutdown
 
     def container_cmd(
-        self, serialize_context: SerializationContext, input_overrides: list[Input] | None = None
+        self, serialize_context: SerializationContext, parameter_overrides: list[Parameter] | None = None
     ) -> List[str]:
+        from flyte._internal.resolvers.app_env import AppEnvResolver
+
         if self.command is None:
             # Default command
             version = serialize_context.version
@@ -186,10 +244,31 @@ class AppEnvironment(Environment):
                     cmd = [*cmd, *["--pkl", f"{serialize_context.code_bundle.pkl}"]]
                 cmd = [*cmd, *["--dest", f"{serialize_context.code_bundle.destination or '.'}"]]
 
-            if self.inputs:
-                cmd.append("--inputs")
-                cmd.append(self._serialize_inputs(input_overrides))
+            if self.parameters:
+                cmd.append("--parameters")
+                cmd.append(self._serialize_parameters(parameter_overrides))
 
+            # Only add resolver args if _caller_frame is set and we can extract the module
+            # (i.e., app was created in a module and can be found)
+            if self._caller_frame is not None:
+                assert serialize_context.root_dir is not None
+                try:
+                    _app_env_resolver = AppEnvResolver()
+                    loader_args = _app_env_resolver.loader_args(self, serialize_context.root_dir)
+                    cmd = [
+                        *cmd,
+                        *[
+                            "--resolver",
+                            _app_env_resolver.import_path,
+                            "--resolver-args",
+                            loader_args,
+                        ],
+                    ]
+                except RuntimeError as e:
+                    # If we can't find the app in the module (e.g., in tests), skip resolver args
+                    from flyte._logging import logger
+
+                    logger.warning(f"Failed to extract app resolver args: {e}. Skipping resolver args.")
             return [*cmd, "--"]
         elif isinstance(self.command, str):
             return shlex.split(self.command)
@@ -214,3 +293,70 @@ class AppEnvironment(Environment):
         ensure_client()
         app = flyte.remote.App.get(name=self.name)
         return app.endpoint
+
+    def clone_with(
+        self,
+        name: str,
+        image: Optional[Union[str, Image, Literal["auto"]]] = None,
+        resources: Optional[Resources] = None,
+        env_vars: Optional[dict[str, str]] = None,
+        secrets: Optional[SecretRequest] = None,
+        depends_on: Optional[List[Environment]] = None,
+        description: Optional[str] = None,
+        interruptible: Optional[bool] = None,
+        **kwargs: Any,
+    ) -> AppEnvironment:
+        # validate unknown kwargs if needed
+
+        type = kwargs.pop("type", None)
+        port = kwargs.pop("port", None)
+        args = kwargs.pop("args", None)
+        command = kwargs.pop("command", None)
+        requires_auth = kwargs.pop("requires_auth", None)
+        scaling = kwargs.pop("scaling", None)
+        domain = kwargs.pop("domain", None)
+        links = kwargs.pop("links", None)
+        include = kwargs.pop("include", None)
+        parameters = kwargs.pop("parameters", None)
+        cluster_pool = kwargs.pop("cluster_pool", None)
+
+        if kwargs:
+            raise TypeError(f"Unexpected keyword arguments: {list(kwargs.keys())}")
+
+        kwargs = self._get_kwargs()
+        kwargs["name"] = name
+        if image is not None:
+            kwargs["image"] = image
+        if resources is not None:
+            kwargs["resources"] = resources
+        if env_vars is not None:
+            kwargs["env_vars"] = env_vars
+        if secrets is not None:
+            kwargs["secrets"] = secrets
+        if depends_on is not None:
+            kwargs["depends_on"] = depends_on
+        if description is not None:
+            kwargs["description"] = description
+        if type is not None:
+            kwargs["type"] = type
+        if port is not None:
+            kwargs["port"] = port
+        if args is not None:
+            kwargs["args"] = args
+        if command is not None:
+            kwargs["command"] = command
+        if requires_auth is not None:
+            kwargs["requires_auth"] = requires_auth
+        if scaling is not None:
+            kwargs["scaling"] = scaling
+        if domain is not None:
+            kwargs["domain"] = domain
+        if links is not None:
+            kwargs["links"] = links
+        if include is not None:
+            kwargs["include"] = include
+        if parameters is not None:
+            kwargs["parameters"] = parameters
+        if cluster_pool is not None:
+            kwargs["cluster_pool"] = cluster_pool
+        return replace(self, **kwargs)

@@ -45,34 +45,58 @@ class TriggerDetails(ToJSONMixin):
 
     @property
     def name(self) -> str:
+        """
+        Name of the trigger.
+        """
         return self.id.name.name
 
     @property
     def id(self) -> identifier_pb2.TriggerIdentifier:
+        """
+        Identifier for the trigger.
+        """
         return self.pb2.id
 
     @property
     def task_name(self) -> str:
+        """
+        Name of the associated task
+        """
         return self.pb2.id.name.task_name
 
     @property
     def automation_spec(self) -> common_pb2.TriggerAutomationSpec:
+        """
+        Get the automation specification for the trigger (e.g., schedule, event).
+        """
         return self.pb2.automation_spec
 
     @property
     def metadata(self) -> trigger_definition_pb2.TriggerMetadata:
+        """
+        Get the metadata for the trigger.
+        """
         return self.pb2.metadata
 
     @property
     def status(self) -> trigger_definition_pb2.TriggerStatus:
+        """
+        Get the current status of the trigger.
+        """
         return self.pb2.status
 
     @property
     def is_active(self) -> bool:
+        """
+        Check if the trigger is currently active.
+        """
         return self.pb2.spec.active
 
     @cached_property
     def trigger(self) -> trigger_definition_pb2.Trigger:
+        """
+        Get the trigger protobuf object constructed from the details.
+        """
         return trigger_definition_pb2.Trigger(
             id=self.pb2.id,
             automation_spec=self.automation_spec,
@@ -84,6 +108,10 @@ class TriggerDetails(ToJSONMixin):
 
 @dataclass
 class Trigger(ToJSONMixin):
+    """
+    Represents a trigger in the Flyte platform.
+    """
+
     pb2: trigger_definition_pb2.Trigger
     details: TriggerDetails | None = None
 
@@ -256,19 +284,44 @@ class Trigger(ToJSONMixin):
 
     @property
     def id(self) -> identifier_pb2.TriggerIdentifier:
+        """
+        Get the unique identifier for the trigger.
+        """
         return self.pb2.id
 
     @property
     def name(self) -> str:
+        """
+        Get the name of the trigger.
+        """
         return self.id.name.name
 
     @property
     def task_name(self) -> str:
+        """
+        Get the name of the task associated with this trigger.
+        """
         return self.id.name.task_name
 
     @property
     def automation_spec(self) -> common_pb2.TriggerAutomationSpec:
+        """
+        Get the automation specification for the trigger.
+        """
         return self.pb2.automation_spec
+
+    @property
+    def url(self) -> str:
+        """
+        Get the console URL for viewing the trigger.
+        """
+        client = get_client()
+        return client.console.trigger_url(
+            project=self.pb2.id.name.project,
+            domain=self.pb2.id.name.domain,
+            task_name=self.pb2.id.name.task_name,
+            trigger_name=self.name,
+        )
 
     async def get_details(self) -> TriggerDetails:
         """
@@ -281,9 +334,15 @@ class Trigger(ToJSONMixin):
 
     @property
     def is_active(self) -> bool:
+        """
+        Check if the trigger is currently active.
+        """
         return self.pb2.active
 
     def _rich_automation(self, automation: common_pb2.TriggerAutomationSpec):
+        """
+        Generate rich representation fields for the automation specification.
+        """
         if automation.type == common_pb2.TriggerAutomationSpec.type.TYPE_NONE:
             yield "none", None
         elif automation.type == common_pb2.TriggerAutomationSpec.type.TYPE_SCHEDULE:
@@ -300,6 +359,9 @@ class Trigger(ToJSONMixin):
                 )
 
     def __rich_repr__(self):
+        """
+        Rich representation of the Trigger object for pretty printing.
+        """
         yield "task_name", self.task_name
         yield "name", self.name
         yield from self._rich_automation(self.pb2.automation_spec)

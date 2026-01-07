@@ -3,7 +3,7 @@
 import flyte
 import flyte.app
 import pytest
-from flyte.app._input import Input
+from flyte.app._parameter import Parameter
 from flyte.models import SerializationContext
 
 from flyteplugins.sglang import SGLangAppEnvironment
@@ -41,7 +41,7 @@ def test_basic_init_with_model_hf_path():
     assert app.port.port == 8000
     assert app.type == "SGLang"
     assert app.image == DEFAULT_SGLANG_IMAGE
-    # When using model_hf_path, no inputs should be created
+    # When using model_hf_path, no parameters should be created
     assert app.inputs == []
     # The model mount path should be set to the HF path
     assert app.env_vars["FLYTE_MODEL_LOADER_LOCAL_MODEL_PATH"] == "Qwen/Qwen3-0.6B"
@@ -118,12 +118,12 @@ def test_args_set_raises_error():
 
 def test_inputs_set_raises_error():
     """Test that setting inputs raises ValueError."""
-    with pytest.raises(ValueError, match="inputs cannot be set for SGLangAppEnvironment"):
+    with pytest.raises(ValueError, match="parameters cannot be set for SGLangAppEnvironment"):
         SGLangAppEnvironment(
             name="test-app",
             model_path="s3://bucket/model",
             model_id="test-model",
-            inputs=[Input(name="foo", value="bar")],
+            parameters=[Parameter(name="foo", value="bar")],
         )
 
 
@@ -143,7 +143,7 @@ def test_stream_model_true_with_model_path():
     assert app.env_vars["FLYTE_MODEL_LOADER_STREAM_SAFETENSORS"] == "true"
     assert app.env_vars["FLYTE_MODEL_LOADER_LOCAL_MODEL_PATH"] == "/root/flyte"
 
-    # Check inputs
+    # Check parameters
     assert len(app.inputs) == 1
     model_input = app.inputs[0]
     assert model_input.name == "model"
@@ -164,7 +164,7 @@ def test_stream_model_false_with_model_path():
     # Check env vars
     assert app.env_vars["FLYTE_MODEL_LOADER_STREAM_SAFETENSORS"] == "false"
 
-    # Check inputs - should download instead of stream
+    # Check parameters - should download instead of stream
     assert len(app.inputs) == 1
     model_input = app.inputs[0]
     assert model_input.download is True
@@ -172,14 +172,14 @@ def test_stream_model_false_with_model_path():
 
 
 def test_model_hf_path_no_inputs():
-    """Test that model_hf_path creates no inputs and sets correct mount path."""
+    """Test that model_hf_path creates no parameters and sets correct mount path."""
     app = SGLangAppEnvironment(
         name="test-app",
         model_hf_path="meta-llama/Llama-2-7b",
         model_id="test-model",
     )
 
-    # No inputs should be created for HF path
+    # No parameters should be created for HF path
     assert app.inputs == []
 
     # Mount path should be set to the HF path
@@ -323,3 +323,43 @@ def test_custom_env_vars_preserved():
     assert app.env_vars["MY_VAR"] == "my_value"
     # Should also have the model loader env vars
     assert "FLYTE_MODEL_LOADER_LOCAL_MODEL_PATH" in app.env_vars
+
+
+# Tests for server, on_startup, and on_shutdown validation
+
+
+def _create_sglang_app_with_lifecycle_field(field_name, field_value):
+    """Helper to create a SGLangAppEnvironment instance with a lifecycle field set before __post_init__."""
+    app = object.__new__(SGLangAppEnvironment)
+    app.name = "test-app"
+    app.model_path = "s3://bucket/model"
+    app.model_id = "test-model"
+    app.port = 8080
+    app.type = "SGLang"
+    app.extra_args = ""
+    app.stream_model = True
+    app.image = DEFAULT_SGLANG_IMAGE
+    app._model_mount_path = "/root/flyte"
+    setattr(app, field_name, field_value)
+    return app
+
+
+def test_server_decorator_raises_error():
+    """Test that setting _server raises ValueError in __post_init__."""
+    app = _create_sglang_app_with_lifecycle_field("_server", lambda: None)
+    with pytest.raises(ValueError, match="server function cannot be set for SGLangAppEnvironment"):
+        SGLangAppEnvironment.__post_init__(app)
+
+
+def test_on_startup_decorator_raises_error():
+    """Test that setting _on_startup raises ValueError in __post_init__."""
+    app = _create_sglang_app_with_lifecycle_field("_on_startup", lambda: None)
+    with pytest.raises(ValueError, match="on_startup function cannot be set for SGLangAppEnvironment"):
+        SGLangAppEnvironment.__post_init__(app)
+
+
+def test_on_shutdown_decorator_raises_error():
+    """Test that setting _on_shutdown raises ValueError in __post_init__."""
+    app = _create_sglang_app_with_lifecycle_field("_on_shutdown", lambda: None)
+    with pytest.raises(ValueError, match="on_shutdown function cannot be set for SGLangAppEnvironment"):
+        SGLangAppEnvironment.__post_init__(app)

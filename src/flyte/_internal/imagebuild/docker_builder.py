@@ -138,7 +138,7 @@ ENV UV_COMPILE_BYTECODE=1 \
 
 
 # Create a virtualenv with the user specified python version
-RUN uv venv $$VIRTUALENV --python=$PYTHON_VERSION
+RUN uv venv $$VIRTUALENV --python=$PYTHON_VERSION && uv run --python=$$UV_PYTHON python -m compileall $$VIRTUALENV
 
 
 # Adds nvidia just in case it exists

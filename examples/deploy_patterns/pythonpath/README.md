@@ -62,6 +62,38 @@ if __name__ == "__main__":
 3. **Import Context**: The runtime environment recreates the same directory structure, allowing imports to work
    correctly
 
+## CLI vs Direct Python Execution
+
+There are two ways to run workflows, and they handle PYTHONPATH differently:
+
+### Using Flyte CLI with `--root-dir` (Recommended)
+
+When using the `flyte run` command with the `--root-dir` flag, **you don't need to export PYTHONPATH**:
+
+```bash
+flyte run --root-dir . workflows/workflow.py greet --name "World"
+```
+
+The CLI automatically:
+- Adds the `--root-dir` location to `sys.path`
+- Resolves all imports correctly
+- Packages files from the root directory for remote execution
+
+This is the recommended approach because it provides consistent behavior between local and remote execution.
+
+### Using Python Directly
+
+When running Python scripts directly (e.g., `python workflows/workflow.py`), **you must set PYTHONPATH manually**:
+
+```bash
+PYTHONPATH=.:$PYTHONPATH python workflows/workflow.py
+```
+
+This is because:
+- Python doesn't automatically know about your project structure
+- You need to explicitly tell Python where to find your modules
+- The `root_dir` parameter in `flyte.init_from_config()` handles remote packaging, but doesn't affect local Python path resolution
+
 ## Testing This Example
 
 This example includes two test scripts to verify that both execution methods work correctly:
@@ -75,7 +107,7 @@ This example includes two test scripts to verify that both execution methods wor
 This script:
 
 - Sets `PYTHONPATH` to the current directory (project root)
-- Runs the workflow from the project root
+- Runs the workflow using Python directly
 - Verifies that files from both `workflows/` and `src/` are packaged
 
 ### 2. Execute from Workflows Directory
@@ -88,7 +120,7 @@ This script:
 
 - Changes to the `workflows/` directory
 - Sets `PYTHONPATH` to the project root
-- Runs the workflow from within the workflows directory
+- Runs the workflow from within the workflows directory using Python directly
 - Demonstrates that `root_dir` works regardless of execution location
 
 ### Expected Behavior
@@ -114,7 +146,8 @@ being copied to the remote execution environment.
 
 - **Forgetting `root_dir`**: Results in import errors during remote execution
 - **Wrong `root_dir` path**: May package too many or too few files
-- **Relative import issues**: Not setting PYTHONPATH correctly for local testing
+- **Not setting PYTHONPATH when using Python directly**: If you run `python workflows/workflow.py` without setting PYTHONPATH, you'll get import errors. Use `flyte run --root-dir .` instead to avoid this
+- **Mixing execution methods**: If you use `flyte run --root-dir .`, you don't need PYTHONPATH. If you use `python`, you do
 
 This pattern is an escape hatch for larger Flyte projects where code organization requires separating workflows from
 business logic modules. Ideally, you should structure the project with pyproject.toml or setup.py to manage dependencies

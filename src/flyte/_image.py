@@ -21,6 +21,7 @@ PYTHON_3_10 = (3, 10)
 PYTHON_3_11 = (3, 11)
 PYTHON_3_12 = (3, 12)
 PYTHON_3_13 = (3, 13)
+PYTHON_3_14 = (3, 14)
 
 # 0 is a file, 1 is a directory
 CopyConfigType = Literal[0, 1]
@@ -423,6 +424,7 @@ class Image:
         PYTHON_3_11: "py3.11-",
         PYTHON_3_12: "py3.12-",
         PYTHON_3_13: "py3.13-",
+        PYTHON_3_14: "py3.14-",
     }
 
     # class-level token not included in __init__
@@ -584,7 +586,7 @@ class Image:
         python_version: Optional[Tuple[int, int]] = None,
         index_url: Optional[str] = None,
         extra_index_urls: Union[str, List[str], Tuple[str, ...], None] = None,
-        pre: bool = True,
+        pre: bool = False,
         extra_args: Optional[str] = None,
         platform: Optional[Tuple[Architecture, ...]] = None,
         secret_mounts: Optional[SecretRequest] = None,
@@ -846,7 +848,6 @@ class Image:
         :param index_url: index url to use for pip install, default is None
         :param extra_index_urls: extra index urls to use for pip install, default is None
         :param pre: whether to allow pre-release versions, default is False
-        :param extra_args: extra arguments to pass to pip install, default is None
         :param extra_args: extra arguments to pass to pip install, default is None
         :param secret_mounts: list of secret to mount for the build process.
         :return: Image

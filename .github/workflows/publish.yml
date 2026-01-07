@@ -74,6 +74,8 @@ jobs:
           - "plugins/dask"
           - "plugins/pytorch"
           - "plugins/connectors"
+          - "plugins/sglang"
+          - "plugins/vllm"
     steps:
       - uses: actions/checkout@v4
         with:
@@ -114,6 +116,7 @@ jobs:
           - "3.11"
           - "3.12"
           - "3.13"
+          - "3.14"
     steps:
       - uses: actions/checkout@v4
         with:

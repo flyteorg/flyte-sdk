@@ -2,20 +2,38 @@ import logging
 from typing import Generator
 
 import torch
-import vllm
-import vllm.entrypoints.cli.main
 from flyte.app.extras._model_loader.config import (
     LOCAL_MODEL_PATH,
     REMOTE_MODEL_PATH,
     STREAM_SAFETENSORS,
 )
 from flyte.app.extras._model_loader.loader import SafeTensorsStreamer, prefetch
+
+from flyteplugins.vllm._constants import VLLM_MIN_VERSION, VLLM_MIN_VERSION_STR
+
+try:
+    import vllm
+except ImportError:
+    raise ImportError(f"vllm is not installed. Please install 'vllm>={VLLM_MIN_VERSION_STR}', to use the model loader.")
+
+if tuple([int(part) for part in vllm.__version__.split(".") if part.isdigit()]) < VLLM_MIN_VERSION:
+    raise ImportError(
+        f"vllm version >={VLLM_MIN_VERSION_STR} required, but found {vllm.__version__}. Please upgrade vllm."
+    )
+
+import vllm.entrypoints.cli.main
 from vllm.config import ModelConfig, VllmConfig
 from vllm.distributed import get_tensor_model_parallel_rank
-from vllm.model_executor.model_loader import get_model, register_model_loader
+from vllm.model_executor.model_loader import register_model_loader
 from vllm.model_executor.model_loader.default_loader import DefaultModelLoader
+from vllm.model_executor.model_loader.dummy_loader import DummyModelLoader
 from vllm.model_executor.model_loader.sharded_state_loader import ShardedStateLoader
-from vllm.model_executor.model_loader.utils import set_default_torch_dtype
+
+try:
+    from vllm.model_executor.model_loader.utils import set_default_torch_dtype
+except ImportError:
+    # vllm 0.13.0 moved the set_default_torch_dtype to vllm.utils.torch_utils
+    from vllm.utils.torch_utils import set_default_torch_dtype
 
 logger = logging.getLogger(__name__)
 
@@ -49,8 +67,10 @@ class FlyteModelLoader(DefaultModelLoader):
             raise ValueError(f"Invalid rank {rank} for tensor parallel size {tensor_parallel_size}")
         with set_default_torch_dtype(vllm_config.model_config.dtype):  # type: ignore[arg-type]
             with torch.device(vllm_config.device_config.device):  # type: ignore[arg-type]
-                model = get_model(vllm_config=vllm_config, model_config=model_config)
-                for _, module in model.named_modules():
+                model_loader = DummyModelLoader(load_config=vllm_config.load_config)
+                model = model_loader.load_model(vllm_config=vllm_config, model_config=model_config)
+                for i, (name, module) in enumerate(model.named_modules()):
+                    print(i, name, module)
                     quant_method = getattr(module, "quant_method", None)
                     if quant_method is not None:
                         quant_method.process_weights_after_loading(module)
@@ -111,7 +131,7 @@ async def _get_model_files():
 def main():
     import asyncio
 
-    # TODO: add CLI here to be able to pass in serialized inputs from AppEnvironment
+    # TODO: add CLI here to be able to pass in serialized parameters from AppEnvironment
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",

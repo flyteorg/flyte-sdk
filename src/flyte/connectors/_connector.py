@@ -6,16 +6,16 @@ from abc import ABC, abstractmethod
 from dataclasses import asdict, dataclass
 from typing import Any, Dict, List, Optional
 
-from flyteidl2.core import tasks_pb2
-from flyteidl2.core.execution_pb2 import TaskExecution, TaskLog
-from flyteidl2.plugins import connector_pb2
-from flyteidl2.plugins.connector_pb2 import Connector as ConnectorProto
-from flyteidl2.plugins.connector_pb2 import (
+from flyteidl2.connector import connector_pb2
+from flyteidl2.connector.connector_pb2 import Connector as ConnectorProto
+from flyteidl2.connector.connector_pb2 import (
     GetTaskLogsResponse,
     GetTaskMetricsResponse,
     TaskCategory,
     TaskExecutionMetadata,
 )
+from flyteidl2.core import tasks_pb2
+from flyteidl2.core.execution_pb2 import TaskExecution, TaskLog
 from google.protobuf import json_format
 from google.protobuf.struct_pb2 import Struct
 
