@@ -7,6 +7,7 @@ from .context import (
     wandb_sweep_config,
 )
 from .decorator import wandb, wandb_init, wandb_sweep
+from .link import Wandb, WandbSweep
 
 __all__ = [
     "wandb_config",
@@ -16,6 +17,7 @@ __all__ = [
     "get_wandb_sweep_context",
     "wandb_sweep",
     "Wandb",
+    "WandbSweep",
 ]
 
 __version__ = "0.1.0"

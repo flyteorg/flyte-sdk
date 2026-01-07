@@ -10,6 +10,7 @@ import flyte
 from flyte._task import AsyncFunctionTaskTemplate
 
 from .context import get_wandb_context, get_wandb_sweep_context
+from .link import Wandb, WandbSweep
 
 F = TypeVar("F", bound=Callable[..., Any])
 
@@ -158,6 +159,31 @@ def wandb_init(
 
         # Check if it's a Flyte task (AsyncFunctionTaskTemplate)
         if isinstance(func, AsyncFunctionTaskTemplate):
+            # Get project and entity for the link
+            # Priority: decorator params > context config > None (will use defaults)
+            link_project = project
+            link_entity = entity
+
+            # Try to get from context if not provided in decorator
+            if link_project is None or link_entity is None:
+                context_config = get_wandb_context()
+                if context_config:
+                    if link_project is None:
+                        link_project = context_config.project
+                    if link_entity is None:
+                        link_entity = context_config.entity
+
+            # Only add link if we have both project and entity
+            if link_project and link_entity:
+                # Create a Wandb link (run ID will be retrieved from context at runtime)
+                wandb_link = Wandb(project=link_project, entity=link_entity)
+
+                # Get existing links from the task
+                existing_links = getattr(func, "_links", ())
+
+                # Add the wandb link to the task using override
+                func = func.override(links=existing_links + (wandb_link,))
+
             # Wrap the task's execute method with wandb_run
             original_execute = func.execute
 
@@ -245,7 +271,7 @@ def wandb_sweep(_func: Optional[F] = None) -> F:
     This decorator:
     1. Creates a wandb sweep using config from context
     2. Makes sweep_id available via flyte.ctx().wandb_sweep_id
-    3. Use with wandb.controller() (recommended) or wandb.agent()
+    3. Automatically adds a W&B sweep link to the task
 
     The local controller pattern is recommended for production workloads with Flyte,
     as it allows Flyte to handle orchestration while W&B provides the sweep algorithm.
@@ -254,6 +280,36 @@ def wandb_sweep(_func: Optional[F] = None) -> F:
     def decorator(func: F) -> F:
         # Check if it's a Flyte task (AsyncFunctionTaskTemplate)
         if isinstance(func, AsyncFunctionTaskTemplate):
+            # Get project and entity for the link
+            link_project = None
+            link_entity = None
+
+            # Try to get from sweep context first
+            sweep_config = get_wandb_sweep_context()
+            if sweep_config:
+                link_project = sweep_config.project
+                link_entity = sweep_config.entity
+
+            # Fallback to wandb context if not in sweep config
+            if link_project is None or link_entity is None:
+                wandb_config = get_wandb_context()
+                if wandb_config:
+                    if link_project is None:
+                        link_project = wandb_config.project
+                    if link_entity is None:
+                        link_entity = wandb_config.entity
+
+            # Only add link if we have both project and entity
+            if link_project and link_entity:
+                # Create a WandbSweep link (sweep_id will be retrieved from context at runtime)
+                wandb_sweep_link = WandbSweep(project=link_project, entity=link_entity)
+
+                # Get existing links from the task
+                existing_links = getattr(func, "_links", ())
+
+                # Add the wandb sweep link to the task using override
+                func = func.override(links=existing_links + (wandb_sweep_link,))
+
             original_execute = func.execute
 
             if iscoroutinefunction(original_execute):

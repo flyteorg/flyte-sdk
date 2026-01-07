@@ -1,20 +1,3 @@
-# Weights & Biases Plugin
-
-## Features
-
-- Tasks decorated with `@wandb_init` or `@wandb_sweep` automatically get W&B links in the Flyte UI that point directly to the corresponding W&B runs or sweeps.
-- Parent and child tasks can log metrics to the same run by setting `new_run=False` in the `wandb_init` decorator.
-- Traces can be used to initialize a W&B run independently of the parent task.
-- `wandb_run` is added to the Flyte task context and can be accessed via `flyte.ctx().wandb_run`.
-- `wandb_run` is set to `None` for tasks that are not initialized with `wandb_init`.
-- If a child task needs to use the same run as its parent, `wandb_config` should not be set, as it will overwrite the run name and tags (this must be ensured by the user).
-- `wandb_config` can be used to pass configuration to tasks enclosed within the context manager and can also be provided via `with_runcontext`.
-- When the context manager exits, the configuration falls back to the parent task's config.
-- Arguments passed to `wandb_init` decorator are available only within the current task and are not propagated to child tasks (use `wandb_config` for child tasks).
-- At most 20 runs can be active at a time when sharing the same run ID: https://docs.wandb.ai/models/sweeps/existing-project#3-launch-agents i.e. when `new_run=False`
-- `wandb_sweep` can be used to initialize a sweep run, and the objective function can be a vanilla Python function decorated with `wandb_init`.
-
-```python
 import asyncio
 import time
 
@@ -28,17 +11,30 @@ from flyteplugins.wandb import (
     wandb_sweep_config,
 )
 from datetime import timedelta
+from flyte._image import PythonWheels
+from pathlib import Path
 
 env = flyte.TaskEnvironment(
     name="wandb-test",
     image=flyte.Image.from_debian_base()
-    .with_apt_packages("git")
-    .with_pip_packages(
-        "git+https://github.com/flyteorg/flyte-sdk.git@509e26384867a347665d920ca7d0ff480d28822b",
-        "git+https://github.com/flyteorg/flyte-sdk.git@509e26384867a347665d920ca7d0ff480d28822b#subdirectory=plugins/wandb",
+    .clone(
+        addl_layer=PythonWheels(
+            wheel_dir=Path(__file__).parent.parent.parent / "dist",
+            package_name="flyte",
+            pre=True,
+        )
+    )
+    .clone(
+        addl_layer=PythonWheels(
+            wheel_dir=Path(__file__).parent / "dist",
+            package_name="flyteplugins-wandb",
+            pre=True,
+        ),
+        name="wandb-test",
     ),
-    secrets=[flyte.Secret(key="wandb-api-key", as_env_var="WANDB_API_KEY")],
+    secrets=[flyte.Secret(key="samhita_wandb_api_key", as_env_var="WANDB_API_KEY")],
 )
+
 
 # Order of decorators does not matter
 @wandb_init
@@ -231,7 +227,6 @@ async def run_parallel_sweep(
     results = await asyncio.gather(*agent_tasks)
 
     print(f"Sweep complete! All {len(results)} agents finished successfully")
-    print(f"View results: https://wandb.ai/sweep/{sweep_id}")
 
     return sweep_id
 
@@ -267,4 +262,3 @@ if __name__ == "__main__":
     ).run(run_parallel_sweep, total_trials=15, trials_per_agent=5, max_agents=10)
 
     print(run_2.url)
-```
