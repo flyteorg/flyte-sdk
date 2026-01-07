@@ -250,7 +250,8 @@ class _Runner:
                     "ClientNotInitializedError",
                     "user",
                     "flyte.run requires client to be initialized. "
-                    "Call flyte.init() with a valid endpoint or api-key before using this function.",
+                    "Call flyte.init() with a valid endpoint/api-key before using this function"
+                    "or Call flyte.init_from_config() with a valid path to the config file",
                 )
             run_id = None
             project_id = None
