@@ -111,7 +111,6 @@ jobs:
         run: |
           uv venv
           uv pip install build twine setuptools wheel
-          uv pip install .
       - name: Build and publish
         working-directory: ${{ matrix.workdir }}
         run: |
@@ -130,7 +129,7 @@ jobs:
           FLYTE_DOCKER_BUILDER_CACHE_FROM: "type=gha"
           FLYTE_DOCKER_BUILDER_CACHE_TO: "type=gha,mode=max"
         run: |
-          uv run python maint_tools/build_plugin_image.py --type ${{ matrix.image-type }}
+          uv run python maint_tools/build_plugin_image.py --with ${{ matrix.workdir }} --type ${{ matrix.image-type }}
 
   # build-and-push-flyte-docker-images:
   #   needs: flyte-pypi
