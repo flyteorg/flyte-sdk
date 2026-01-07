@@ -16,7 +16,8 @@ if "GRPC_VERBOSITY" not in os.environ:
 #### Has to be before grpc
 
 import grpc
-from flyteidl.service import admin_pb2_grpc, dataproxy_pb2_grpc, identity_pb2_grpc
+from flyteidl.service import admin_pb2_grpc, dataproxy_pb2_grpc
+from flyteidl2.auth import identity_pb2_grpc
 from flyteidl2.app import app_service_pb2_grpc
 from flyteidl2.secret import secret_pb2_grpc
 from flyteidl2.task import task_service_pb2_grpc
