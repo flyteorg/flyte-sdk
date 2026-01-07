@@ -273,3 +273,30 @@ class RestrictedTypeError(RuntimeUserError):
 
     def __init__(self, message: str):
         super().__init__("RestrictedTypeUsage", message, "user")
+
+
+class EventAlreadyExistsInScopeError(RuntimeUserError):
+    """
+    This error is raised when the user tries to create an event that already exists in the given scope.
+    """
+
+    def __init__(self, message: str):
+        super().__init__("EventAlreadyExistsInScopeError", message, "user")
+
+
+class EventNotFoundError(RuntimeUserError):
+    """
+    This error is raised when the user tries to access an event that does not exist.
+    """
+
+    def __init__(self, message: str):
+        super().__init__("EventNotFoundError", message, "user")
+
+
+class EventScopeRequiredError(RuntimeUserError):
+    """
+    This error is raised when the user tries to access an event without specifying the scope.
+    """
+
+    def __init__(self, message: str):
+        super().__init__("EventScopeRequiredError", message, "user")
