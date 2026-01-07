@@ -70,4 +70,10 @@ class PassthroughAuthenticator(Authenticator):
         Passthrough authenticator doesn't need to refresh credentials.
         This method should never be called in practice.
         """
+        if self._creds is None:
+            # Just to satisfy mypy
+            return Credentials(
+                access_token="passthrough",
+                for_endpoint=self._endpoint,
+            )
         return self._creds

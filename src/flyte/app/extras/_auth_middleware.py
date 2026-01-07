@@ -22,17 +22,13 @@ Example:
 
     Advanced usage with custom extractors and path exclusions::
 
-        from flyte.app.extras import (
-            FastAPIAuthMiddleware,
-            extract_authorization_header,
-            extract_custom_header,
-        )
+        from flyte.app.extras import FastAPIAuthMiddleware
 
         app.add_middleware(
             FastAPIAuthMiddleware,
             header_extractors=[
-                extract_authorization_header,
-                extract_custom_header("x-api-key"),
+                FastAPIAuthMiddleware.extract_authorization_header,
+                FastAPIAuthMiddleware.extract_custom_header("x-api-key"),
             ],
             excluded_paths={"/health", "/metrics"},
         )
@@ -43,12 +39,18 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Callable
 
-from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.responses import JSONResponse
-
 if TYPE_CHECKING:
     from fastapi import Request
+    from starlette.middleware.base import BaseHTTPMiddleware
     from starlette.responses import Response
+else:
+    try:
+        from starlette.middleware.base import BaseHTTPMiddleware
+    except ImportError:
+
+        class BaseHTTPMiddleware:
+            pass
+
 
 logger = logging.getLogger(__name__)
 
@@ -56,70 +58,7 @@ logger = logging.getLogger(__name__)
 HeaderExtractor = Callable[["Request"], tuple[str, str] | None]
 
 
-def extract_authorization_header(request: "Request") -> tuple[str, str] | None:
-    """
-    Extract the Authorization header from the request.
-
-    Args:
-        request: The FastAPI/Starlette request object
-
-    Returns:
-        Tuple of ("authorization", header_value) if present, None otherwise
-    """
-    auth_header = request.headers.get("authorization")
-    if auth_header:
-        return ("authorization", auth_header)
-    return None
-
-
-def extract_cookie_header(request: "Request") -> tuple[str, str] | None:
-    """
-    Extract the Cookie header from the request.
-
-    Args:
-        request: The FastAPI/Starlette request object
-
-    Returns:
-        Tuple of ("cookie", header_value) if present, None otherwise
-    """
-    cookie_header = request.headers.get("cookie")
-    if cookie_header:
-        return ("cookie", cookie_header)
-    return None
-
-
-def extract_custom_header(header_name: str) -> HeaderExtractor:
-    """
-    Create a header extractor for a custom header name.
-
-    Args:
-        header_name: The name of the header to extract (case-insensitive)
-
-    Returns:
-        A header extractor function that extracts the specified header
-
-    Example::
-
-        # Create extractor for X-API-Key header
-        api_key_extractor = extract_custom_header("x-api-key")
-
-        app.add_middleware(
-            FastAPIAuthMiddleware,
-            header_extractors=[api_key_extractor],
-        )
-    """
-
-    def extractor(request: "Request") -> tuple[str, str] | None:
-        header_value = request.headers.get(header_name.lower())
-        if header_value:
-            return (header_name.lower(), header_value)
-        return None
-
-    extractor.__name__ = f"extract_{header_name.replace('-', '_')}_header"
-    return extractor
-
-
-class FastAPIAuthMiddleware(BaseHTTPMiddleware):
+class FastAPIPassthroughAuthMiddleware(BaseHTTPMiddleware):
     """
     FastAPI middleware that automatically sets Flyte auth metadata from request headers.
 
@@ -133,9 +72,9 @@ class FastAPIAuthMiddleware(BaseHTTPMiddleware):
     - Auth can be optional or required
 
     Attributes:
+        app: The FastAPI application (this is a mandatory framework parameter)
         header_extractors: List of functions to extract headers from requests
         excluded_paths: Set of URL paths that bypass auth extraction
-        require_auth: If True, return 401 when no auth headers found
 
     Thread Safety:
         This middleware is async-safe and properly isolates auth metadata per request
@@ -163,9 +102,9 @@ class FastAPIAuthMiddleware(BaseHTTPMiddleware):
         super().__init__(app)
 
         if header_extractors is None:
-            self.header_extractors = [
-                extract_authorization_header,
-                extract_cookie_header,
+            self.header_extractors: list[HeaderExtractor] = [
+                self.extract_authorization_header,
+                self.extract_cookie_header,
             ]
         else:
             self.header_extractors = header_extractors
@@ -183,6 +122,7 @@ class FastAPIAuthMiddleware(BaseHTTPMiddleware):
         Returns:
             The HTTP response from the handler
         """
+        from starlette.responses import JSONResponse
 
         # Skip auth extraction for excluded paths
         if request.url.path in self.excluded_paths:
@@ -208,9 +148,70 @@ class FastAPIAuthMiddleware(BaseHTTPMiddleware):
             )
 
         # Set auth metadata in Flyte context for the duration of this request
-        from flyte.remote._auth_metadata import auth_metadata
+        from flyte.remote import auth_metadata
 
         with auth_metadata(*auth_tuples):
-            response = await call_next(request)
+            return await call_next(request)
 
-        return response
+    @staticmethod
+    def extract_authorization_header(request: "Request") -> tuple[str, str] | None:
+        """
+        Extract the Authorization header from the request.
+
+        Args:
+            request: The FastAPI/Starlette request object
+
+        Returns:
+            Tuple of ("authorization", header_value) if present, None otherwise
+        """
+        auth_header = request.headers.get("authorization")
+        if auth_header:
+            return "authorization", auth_header
+        return None
+
+    @staticmethod
+    def extract_cookie_header(request: "Request") -> tuple[str, str] | None:
+        """
+        Extract the Cookie header from the request.
+
+        Args:
+            request: The FastAPI/Starlette request object
+
+        Returns:
+            Tuple of ("cookie", header_value) if present, None otherwise
+        """
+        cookie_header = request.headers.get("cookie")
+        if cookie_header:
+            return "cookie", cookie_header
+        return None
+
+    @staticmethod
+    def extract_custom_header(header_name: str) -> HeaderExtractor:
+        """
+        Create a header extractor for a custom header name.
+
+        Args:
+            header_name: The name of the header to extract (case-insensitive)
+
+        Returns:
+            A header extractor function that extracts the specified header
+
+        Example::
+
+            # Create extractor for X-API-Key header
+            api_key_extractor = extract_custom_header("x-api-key")
+
+            app.add_middleware(
+                FastAPIAuthMiddleware,
+                header_extractors=[api_key_extractor],
+            )
+        """
+
+        def extractor(request: "Request") -> tuple[str, str] | None:
+            header_value = request.headers.get(header_name.lower())
+            if header_value:
+                return header_name.lower(), header_value
+            return None
+
+        extractor.__name__ = f"extract_{header_name.replace('-', '_')}_header"
+        return extractor

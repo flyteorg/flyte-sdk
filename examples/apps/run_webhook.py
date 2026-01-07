@@ -13,7 +13,6 @@ import logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 
 import os
-import pathlib
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException
@@ -22,7 +21,7 @@ from starlette import status
 import flyte
 import flyte.errors
 import flyte.remote as remote
-from flyte.app.extras import FastAPIAppEnvironment, FastAPIAuthMiddleware
+from flyte.app.extras import FastAPIAppEnvironment, FastAPIPassthroughAuthMiddleware
 
 logger = logging.getLogger(__name__)
 
@@ -36,15 +35,13 @@ async def lifespan(app: FastAPI):
     pass user credentials from incoming requests to the Flyte control plane.
     """
     # Startup: Initialize Flyte with passthrough authentication
-    # _U_EP_OVERRIDE is auto-injected by the platform when the app is deployed
-    endpoint = os.environ.get("_U_EP_OVERRIDE")
-    org = os.environ.get("ORG", "demo")
-    insecure = os.environ.get("FLYTE_INSECURE", "false").lower() in ("true", "1")
-
+    endpoint = os.getenv("FLYTE_ENDPOINT", None)
+    if not endpoint:
+        raise RuntimeError("FLYTE_ENDPOINT environment variable not set")
     await flyte.init_passthrough.aio(
         endpoint=endpoint,
-        org=org,
-        insecure=insecure,
+        project=os.getenv("FLYTE_INTERNAL_EXECUTION_PROJECT", None),
+        domain=os.getenv("FLYTE_INTERNAL_EXECUTION_DOMAIN", None),
     )
     logger.info(f"Initialized Flyte passthrough auth to {endpoint}")
     yield
@@ -59,7 +56,7 @@ app = FastAPI(
 )
 
 # Add auth middleware - automatically extracts auth headers and sets Flyte context
-app.add_middleware(FastAPIAuthMiddleware, excluded_paths={"/health"})
+app.add_middleware(FastAPIPassthroughAuthMiddleware, excluded_paths={"/health"})
 
 
 @app.get("/health")
@@ -160,11 +157,7 @@ app_env = FastAPIAppEnvironment(
     resources=flyte.Resources(cpu=1, memory="512Mi"),
     requires_auth=True,  # Platform handles auth at gateway
     env_vars={
-        "_U_EP_OVERRIDE": os.environ.get("_U_EP_OVERRIDE", "dogfood-gcp.cloud-staging.union.ai"),
-        "FLYTE_INSECURE": os.environ.get("FLYTE_INSECURE", "false"),
-        "ORG": os.environ.get("ORG", "dogfood-gcp"),
-        "PYTHONUNBUFFERED": "1",
-        "LOG_LEVEL": "info",
+        "FLYTE_ENDPOINT": os.environ.get("_U_EP_OVERRIDE", "dogfood-gcp.cloud-staging.union.ai"),
     },
     depends_on=[task_env],
     scaling=flyte.app.Scaling(replicas=1),
@@ -179,33 +172,23 @@ async def webhook_task(x: int, y: str) -> str:
 
 if __name__ == "__main__":
     import json
-    import time
     import urllib.error
     import urllib.request
 
     import flyte.remote
 
-    flyte.init_from_config(root_dir=pathlib.Path(__file__).parent, log_level=logging.DEBUG)
+    flyte.init_from_config(log_level=logging.DEBUG)
 
     # deploy the environments
-    deployment_list = flyte.deploy(app_env)
-    d = deployment_list[0]
-    app_deployment = deployment_list[0].envs["webhook-runner"]
-    print(f"Deployed Webhook Runner app: {app_deployment.table_repr()}")
-    url = app_deployment.deployed_app.endpoint
-
-    # wait for the app to be active
-    while True:
-        app = flyte.remote.App.get(project="flytesnacks", domain="development", name="webhook-runner")
-        if app.is_active():
-            print("App is active")
-            break
-        time.sleep(1)
+    served_app = flyte.serve(app_env)
+    url = served_app.url
+    endpoint = served_app.endpoint
+    print(f"Webhook is served on {endpoint}. you can check logs, status etc {endpoint}")
 
     # Use a Flyte user token for passthrough auth (instead of static API key)
-    token = os.getenv("FLYTE_TOKEN")
+    token = os.getenv("FLYTE_API_KEY")
     if not token:
-        raise ValueError("FLYTE_TOKEN not set. Obtain with: flyte auth token")
+        raise ValueError("FLYTE_API_KEY not set. Obtain with: flyte get api-key")
 
     # Test /me endpoint to verify passthrough auth works
     me_req = urllib.request.Request(
