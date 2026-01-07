@@ -1,6 +1,9 @@
 name: Publish
 
 on:
+  push:
+    branches:
+      - nielsb/plugin-images
   release:
     types: [published]
   pull_request:
@@ -9,71 +12,71 @@ on:
       - 'maint_tools/build_default_image.py'
 
 jobs:
-  flyte-pypi:
-    name: PyPI package
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: "0"
-      - name: Set up Python
-        uses: actions/setup-python@v1
-        with:
-          python-version: "3.13"
-      - name: Install uv
-        uses: astral-sh/setup-uv@v6
-        id: setup-uv
-      - name: Install dependencies
-        run: |
-          uv venv
-          uv pip install build twine setuptools wheel
-      - name: Build and publish
-        run: |
-          uv run python -m build --wheel --installer uv
-      - name: Publish
-        if: ${{ github.event_name == 'release' }}
-        working-directory: ${{ matrix.workdir }}
-        env:
-          TWINE_USERNAME: ${{ secrets.PYPI_USERNAME }}
-          TWINE_PASSWORD: ${{ secrets.PYPI_PASSWORD }}
-        run: |
-          uv run python -m twine upload --verbose dist/*
-      - name: Sleep until pypi is available
-        id: pypiwait
-        run: |
-          # from 'refs/tags/v1.2.3 get 1.2.3' and make sure it's not an empty string
-          VERSION=$(echo $GITHUB_REF | sed 's|refs/tags/v||')
-          if [ -z "$VERSION" ]
-          then
-            echo "No tagged version found, exiting"
-            exit 1
-          fi
-          sleep 300
-          LINK="https://pypi.org/project/flyte/${VERSION}/"
-          for i in {1..60}; do
-            result=$(curl -L -I -s -f ${LINK})
-            if [ $? -eq 0 ]; then
-              echo "Found pypi for $LINK"
-              exit 0
-            else
-              echo "Did not find - Retrying in 10 seconds..."
-              sleep 10
-            fi
-          done
-          exit 1
-        shell: bash
+  # flyte-pypi:
+  #   name: PyPI package
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #       with:
+  #         fetch-depth: "0"
+  #     - name: Set up Python
+  #       uses: actions/setup-python@v1
+  #       with:
+  #         python-version: "3.13"
+  #     - name: Install uv
+  #       uses: astral-sh/setup-uv@v6
+  #       id: setup-uv
+  #     - name: Install dependencies
+  #       run: |
+  #         uv venv
+  #         uv pip install build twine setuptools wheel
+  #     - name: Build and publish
+  #       run: |
+  #         uv run python -m build --wheel --installer uv
+  #     - name: Publish
+  #       if: ${{ github.event_name == 'release' }}
+  #       working-directory: ${{ matrix.workdir }}
+  #       env:
+  #         TWINE_USERNAME: ${{ secrets.PYPI_USERNAME }}
+  #         TWINE_PASSWORD: ${{ secrets.PYPI_PASSWORD }}
+  #       run: |
+  #         uv run python -m twine upload --verbose dist/*
+  #     - name: Sleep until pypi is available
+  #       id: pypiwait
+  #       run: |
+  #         # from 'refs/tags/v1.2.3 get 1.2.3' and make sure it's not an empty string
+  #         VERSION=$(echo $GITHUB_REF | sed 's|refs/tags/v||')
+  #         if [ -z "$VERSION" ]
+  #         then
+  #           echo "No tagged version found, exiting"
+  #           exit 1
+  #         fi
+  #         sleep 300
+  #         LINK="https://pypi.org/project/flyte/${VERSION}/"
+  #         for i in {1..60}; do
+  #           result=$(curl -L -I -s -f ${LINK})
+  #           if [ $? -eq 0 ]; then
+  #             echo "Found pypi for $LINK"
+  #             exit 0
+  #           else
+  #             echo "Did not find - Retrying in 10 seconds..."
+  #             sleep 10
+  #           fi
+  #         done
+  #         exit 1
+  #       shell: bash
   plugin-pypi:
     name: PyPI package
     runs-on: ubuntu-latest
     strategy:
       matrix:
         workdir:
-          - "plugins/ray"
-          - "plugins/spark"
-          - "plugins/openai"
-          - "plugins/dask"
-          - "plugins/pytorch"
-          - "plugins/connectors"
+          # - "plugins/ray"
+          # - "plugins/spark"
+          # - "plugins/openai"
+          # - "plugins/dask"
+          # - "plugins/pytorch"
+          # - "plugins/connectors"
           - "plugins/sglang"
           - "plugins/vllm"
         include:
@@ -101,14 +104,14 @@ jobs:
         working-directory: ${{ matrix.workdir }}
         run: |
           uv run --prerelease allow python -m build --wheel --installer uv
-      - name: Publish
-        if: ${{ github.event_name == 'release' }}
-        working-directory: ${{ matrix.workdir }}
-        env:
-          TWINE_USERNAME: ${{ secrets.PYPI_USERNAME }}
-          TWINE_PASSWORD: ${{ secrets.PYPI_PASSWORD }}
-        run: |
-          uv run --prerelease allow python -m twine upload --verbose dist/*
+      # - name: Publish
+      #   if: ${{ github.event_name == 'release' }}
+      #   working-directory: ${{ matrix.workdir }}
+      #   env:
+      #     TWINE_USERNAME: ${{ secrets.PYPI_USERNAME }}
+      #     TWINE_PASSWORD: ${{ secrets.PYPI_PASSWORD }}
+      #   run: |
+      #     uv run --prerelease allow python -m twine upload --verbose dist/*
       - name: Build and push the plugin image
         if: ${{ contains(matrix, 'image-type') }}
         env:
@@ -117,56 +120,56 @@ jobs:
         run: |
           uv run python maint_tools/build_plugin_image.py --type ${{ matrix.image-type }}
 
-  build-and-push-flyte-docker-images:
-    needs: flyte-pypi
-    name: Flyte image for Python ${{ matrix.python-version }}
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        python-version:
-          - "3.10"
-          - "3.11"
-          - "3.12"
-          - "3.13"
-          - "3.14"
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: "0"
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
-      - name: Set up Docker Buildx
-        id: buildx
-        uses: docker/setup-buildx-action@v3
-      - name: Login to GitHub Container Registry
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io/flyteorg
-          username: "${{ secrets.FLYTE_BOT_USERNAME }}"
-          password: "${{ secrets.FLYTE_BOT_PAT }}"
-      - name: Fetch the code
-        uses: actions/checkout@v4
-      - name: Set up Python ${{ matrix.python-version }}
-        uses: ./.github/actions/setup-python-env
-        with:
-          python-version: "${{ matrix.python-version }}"
-      - name: Install dependencies
-        run: |
-          uv venv
-          uv pip install build twine setuptools wheel
-          uv pip freeze
-      - name: Build wheel
-        run: |
-          make dist
-      - name: Build and push the flyte image
-        env:
-          FLYTE_DOCKER_BUILDER_CACHE_FROM: "type=gha"
-          FLYTE_DOCKER_BUILDER_CACHE_TO: "type=gha,mode=max"
-        run: |
-          uv run python maint_tools/build_default_image.py --type flyte
-      - name: Build and push the connector image
-        env:
-          FLYTE_DOCKER_BUILDER_CACHE_FROM: "type=gha"
-          FLYTE_DOCKER_BUILDER_CACHE_TO: "type=gha,mode=max"
-        run: |
-          uv run python maint_tools/build_default_image.py --type connector
+  # build-and-push-flyte-docker-images:
+  #   needs: flyte-pypi
+  #   name: Flyte image for Python ${{ matrix.python-version }}
+  #   runs-on: ubuntu-latest
+  #   strategy:
+  #     matrix:
+  #       python-version:
+  #         - "3.10"
+  #         - "3.11"
+  #         - "3.12"
+  #         - "3.13"
+  #         - "3.14"
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #       with:
+  #         fetch-depth: "0"
+  #     - name: Set up QEMU
+  #       uses: docker/setup-qemu-action@v3
+  #     - name: Set up Docker Buildx
+  #       id: buildx
+  #       uses: docker/setup-buildx-action@v3
+  #     - name: Login to GitHub Container Registry
+  #       uses: docker/login-action@v3
+  #       with:
+  #         registry: ghcr.io/flyteorg
+  #         username: "${{ secrets.FLYTE_BOT_USERNAME }}"
+  #         password: "${{ secrets.FLYTE_BOT_PAT }}"
+  #     - name: Fetch the code
+  #       uses: actions/checkout@v4
+  #     - name: Set up Python ${{ matrix.python-version }}
+  #       uses: ./.github/actions/setup-python-env
+  #       with:
+  #         python-version: "${{ matrix.python-version }}"
+  #     - name: Install dependencies
+  #       run: |
+  #         uv venv
+  #         uv pip install build twine setuptools wheel
+  #         uv pip freeze
+  #     - name: Build wheel
+  #       run: |
+  #         make dist
+  #     - name: Build and push the flyte image
+  #       env:
+  #         FLYTE_DOCKER_BUILDER_CACHE_FROM: "type=gha"
+  #         FLYTE_DOCKER_BUILDER_CACHE_TO: "type=gha,mode=max"
+  #       run: |
+  #         uv run python maint_tools/build_default_image.py --type flyte
+  #     - name: Build and push the connector image
+  #       env:
+  #         FLYTE_DOCKER_BUILDER_CACHE_FROM: "type=gha"
+  #         FLYTE_DOCKER_BUILDER_CACHE_TO: "type=gha,mode=max"
+  #       run: |
+  #         uv run python maint_tools/build_default_image.py --type connector
