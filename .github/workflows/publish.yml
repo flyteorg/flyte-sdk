@@ -113,7 +113,7 @@ jobs:
       #   run: |
       #     uv run --prerelease allow python -m twine upload --verbose dist/*
       - name: Build and push the plugin image
-        if: ${{ contains(matrix, 'image-type') }}
+        if: ${{ matrix.image-type }}
         env:
           FLYTE_DOCKER_BUILDER_CACHE_FROM: "type=gha"
           FLYTE_DOCKER_BUILDER_CACHE_TO: "type=gha,mode=max"
