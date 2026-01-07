@@ -19,14 +19,23 @@ class PassthroughAuthenticator(Authenticator):
         """
         Initialize the passthrough authenticator.
 
+        We knowingly skip calling super, as that initializes a bunch of things that are not needed.!
+
         :param endpoint: The endpoint URL
         :param kwargs: Additional arguments (ignored for passthrough auth)
         """
         # Don't call parent __init__ to avoid unnecessary setup for passthrough auth
         self._endpoint = endpoint
         # We don't need credentials, config store, or HTTP session for passthrough
-        self._creds = None
+        # We will create dummy creds
+        self._creds = Credentials(
+            access_token="passthrough",
+            for_endpoint=self._endpoint,
+        )
         self._creds_id: str = "passthrough"
+
+    def refresh_credentials(self, creds_id: str | None = None):
+        return
 
     def get_credentials(self) -> typing.Optional[Credentials]:
         """
@@ -34,10 +43,7 @@ class PassthroughAuthenticator(Authenticator):
         Returns a dummy credential to signal that metadata is available.
         """
         # Return a dummy credential so the interceptor knows to call get_grpc_call_auth_metadata
-        return Credentials(
-            access_token="passthrough",
-            for_endpoint=self._endpoint,
-        )
+        return self._creds
 
     async def get_grpc_call_auth_metadata(self) -> typing.Optional[GrpcAuthMetadata]:
         """
@@ -64,8 +70,4 @@ class PassthroughAuthenticator(Authenticator):
         Passthrough authenticator doesn't need to refresh credentials.
         This method should never be called in practice.
         """
-        # Return a dummy credential
-        return Credentials(
-            access_token="passthrough",
-            for_endpoint=self._endpoint,
-        )
+        return self._creds
