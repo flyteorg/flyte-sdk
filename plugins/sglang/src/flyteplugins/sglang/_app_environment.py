@@ -16,7 +16,8 @@ from flyteplugins.sglang._constants import SGLANG_MIN_VERSION_STR
 DEFAULT_SGLANG_IMAGE = (
     flyte.Image.from_debian_base(name="sglang-app-image")
     # install system dependencies, including CUDA toolkit, which is needed by sglang for compiling the model
-    .with_apt_packages("libnuma-dev", "wget")
+    # and rust and cargo for installing sglang
+    .with_apt_packages("libnuma-dev", "wget", "curl", "openssl", "pkg-config", "libssl-dev", "build-essential")
     .with_commands(
         [
             "wget https://developer.download.nvidia.com/compute/cuda/repos/debian12/x86_64/cuda-keyring_1.1-1_all.deb",
@@ -25,6 +26,8 @@ DEFAULT_SGLANG_IMAGE = (
             "apt-get install -y cuda-toolkit-12-8",
         ]
     )
+    .with_commands(["curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y && . $HOME/.cargo/env"])
+    .with_env_vars({"CUDA_HOME": "/usr/local/cuda-12.8", "PATH": "/root/.cargo/bin:/usr/local/cuda-12.8/bin:$PATH"})
     # install flash-infer
     .with_pip_packages("flashinfer-python", "flashinfer-cubin")
     .with_pip_packages("flashinfer-jit-cache", index_url="https://flashinfer.ai/whl/cu128")
