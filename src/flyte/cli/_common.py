@@ -16,7 +16,6 @@ from typing import Any, Dict, Iterable, List, Literal, Optional
 import rich.box
 import rich.repr
 import rich_click as click
-import click.exceptions
 from rich.console import Console
 from rich.panel import Panel
 from rich.pretty import pretty_repr
