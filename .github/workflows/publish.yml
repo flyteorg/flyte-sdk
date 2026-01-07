@@ -7,6 +7,7 @@ on:
     paths:
       - '.github/workflows/publish.yml'
       - 'maint_tools/build_default_image.py'
+      - 'maint_tools/build_plugin_image.py'
 
 jobs:
   flyte-pypi:
@@ -108,7 +109,7 @@ jobs:
         run: |
           uv venv
           uv pip install build twine setuptools wheel
-      - name: Build and publish
+      - name: Build
         working-directory: ${{ matrix.workdir }}
         run: |
           uv run --prerelease allow python -m build --wheel --installer uv
