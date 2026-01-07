@@ -214,6 +214,8 @@ def main(
     cfg = config.auto(config_file=config_file)
     if cfg.source:
         logger.debug(f"Using config file discovered at location `{cfg.source.absolute()}`")
+    else:
+        raise click.ClickException(f"Config file not found.Please provide the path to the config file or create one in the default path ~/.flyte/config.yaml")
 
     ctx.obj = CLIConfig(
         log_level=log_level,
