@@ -153,6 +153,7 @@ def get_proto_task(task: TaskTemplate, serialize_context: SerializationContext) 
                 task_log = TaskLog(name=link.name, uri=uri, icon_uri=link.icon_uri)
                 log_links.append(task_log)
         else:
+            # For root actions, we don't have action context available during serialization.
             for link in task.links:
                 uri = link.get_link(
                     run_name="{{.runName}}",
