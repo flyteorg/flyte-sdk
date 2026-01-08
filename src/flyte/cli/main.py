@@ -125,7 +125,7 @@ def _verbosity_to_loglevel(verbosity: int) -> int | None:
     "--config",
     "config_file",
     required=False,
-    type=click.Path(exists=True),
+    type=click.Path(exists=True,file_okay=True),
     help="Path to the configuration file to use. If not specified, the default configuration file is used.",
 )
 @click.option(
