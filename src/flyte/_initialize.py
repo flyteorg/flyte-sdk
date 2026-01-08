@@ -562,7 +562,7 @@ def get_storage() -> Storage | None:
             "StorageNotInitializedError",
             "user",
             "Configuration has not been initialized. Call flyte.init() with a valid"
-            " storage configuration before using this function or Call flyte.init_from_config()" 
+            " storage configuration before using this function or Call flyte.init_from_config()"
             " with a valid path to the config file",
         )
     return cfg.storage
@@ -665,7 +665,7 @@ def requires_upload_location(func: T) -> T:
                 "user",
                 f"Function '{func.__name__}' requires client to be initialized. "
                 "Call flyte.init() with storage configuration before using this function."
-                "or Call flyte.init_from_config() with a valid path to the config file."
+                "or Call flyte.init_from_config() with a valid path to the config file.",
             )
         return func(*args, **kwargs)
 
@@ -688,7 +688,7 @@ def requires_initialization(func: T) -> T:
                 "NotInitConfiguredError",
                 "user",
                 f"Function '{func.__name__}' requires initialization. Call flyte.init() before using this function"
-                " or Call flyte.init_from_config() with a valid path to the config file."
+                " or Call flyte.init_from_config() with a valid path to the config file.",
             )
         return func(*args, **kwargs)
 
@@ -778,6 +778,6 @@ def current_domain() -> str:
             "DomainNotInitializedError",
             "user",
             "Domain has not been initialized. Call flyte.init() with a valid domain before using this function"
-            " or Call flyte.init_from_config() with a valid path to the config file"
+            " or Call flyte.init_from_config() with a valid path to the config file",
         )
     return cfg.domain

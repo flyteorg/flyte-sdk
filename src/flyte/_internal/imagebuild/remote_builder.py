@@ -116,7 +116,7 @@ class RemoteImageBuilder(ImageBuilder):
                 domain=IMAGE_TASK_DOMAIN,
                 auto_version="latest",
             ).override.aio(secrets=_get_build_secrets_from_image(image))
-        except flyte.errors.ReferenceTaskError:
+        except flyte.errors.RemoteTaskNotFoundError:
             raise flyte.errors.ImageBuildError(
                 "remote image builder is not enabled. Please contact Union support to enable it."
             )

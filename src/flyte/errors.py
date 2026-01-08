@@ -149,25 +149,26 @@ class ActionNotFoundError(RuntimeError):
     """
 
 
-# NOTE: Use RemoteTaskError instead, since "reference tasks" (from v1) are now
-# simply "remote tasks" in v2.
-class ReferenceTaskError(RuntimeUserError):
+class RemoteTaskNotFoundError(RuntimeUserError):
     """
     This error is raised when the user tries to access a task that does not exist.
     """
 
-    CODE = "ReferenceTaskUsageError"
+    CODE = "RemoteTaskNotFoundError"
 
     def __init__(self, message: str):
         super().__init__(self.CODE, message, "user")
 
 
-class RemoteTaskError(ReferenceTaskError):
+class RemoteTaskUsageError(RuntimeUserError):
     """
     This error is raised when the user tries to access a task that does not exist.
     """
 
     CODE = "RemoteTaskUsageError"
+
+    def __init__(self, message: str):
+        super().__init__(self.CODE, message, "user")
 
 
 class LogsNotYetAvailableError(BaseRuntimeError):
