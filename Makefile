@@ -1,3 +1,8 @@
+# Default registry for image builds
+REGISTRY ?= ghcr.io/flyteorg
+# Default name for connector image
+CONNECTOR_IMAGE_NAME ?= flyte-connector
+
 # Default target: show all available targets
 .PHONY: help
 help:
@@ -78,6 +83,12 @@ unit_test_plugins:
 		fi \
 	done
 
+.PHONY: dev-rs-dist
+dev-rs-dist:
+	cd rs_controller && $(MAKE) build-wheels
+	$(MAKE) dist
+	uv run python maint_tools/build_default_image.py --registry $(REGISTRY) --name $(CONNECTOR_IMAGE_NAME)
+	uv pip install --find-links ./rs_controller/dist --no-index --force-reinstall --no-deps flyte_controller_base
 
 .PHONY: cli-docs-gen
 cli-docs-gen: ## Generate CLI documentation

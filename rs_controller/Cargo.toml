@@ -1,0 +1,46 @@
+[package]
+name = "flyte_core"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "flyte_controller_base"
+path = "src/lib.rs"
+# Default to rlib for Rust users and binaries
+# Maturin will override to ["cdylib"] when building wheels
+crate-type = ["rlib", "cdylib"]
+
+[features]
+# Default features for Rust crate users (includes auto-initialize for binaries)
+default = ["pyo3/auto-initialize"]
+# Extension module feature for Python wheels (no auto-initialize, no linking)
+extension-module = ["pyo3/extension-module"]
+
+[dependencies]
+# Use abi3 for stable API, auto-initialize only when not building extension-module
+pyo3 = { version = "0.24", features = ["abi3-py310"] }
+pyo3-async-runtimes = { version = "0.24", features = ["tokio-runtime"] }
+tokio = { version = "1.0", features = ["full"] }
+tokio-util = "0.7"
+tonic = { version = "0.12", features = ["tls", "tls-native-roots"] }
+prost = { version = "0.13", features = ["std"] }
+prost-types = { version = "0.13", features = ["std"] }
+futures = "0.3"
+tower = "0.4"
+tower-http = { version = "0.5", features = ["trace"] }
+tracing = "0.1"
+tracing-subscriber = "0.3"
+async-trait = "0.1"
+thiserror = "1.0"
+# Uncomment this if you need to use local flyteidl2
+#flyteidl2 = { path = "/Users/ytong/go/src/github.com/flyteorg/flyte/gen/rust" }
+flyteidl2 = "=2.0.0"
+reqwest = { version = "0.12", features = ["json", "rustls-tls"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+base64 = "0.22"
+url = "2.5"
+http = "1.0"
+urlencoding = "2.1"
+bytes = "1.0"
+http-body-util = "0.1"

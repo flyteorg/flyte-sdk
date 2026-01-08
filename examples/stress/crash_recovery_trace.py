@@ -1,11 +1,18 @@
 import os
+from pathlib import Path
 
 import flyte
 import flyte.errors
+from flyte._image import PythonWheels
+
+controller_dist_folder = Path("/Users/ytong/go/src/github.com/flyteorg/sdk-rust/rs_controller/dist")
+wheel_layer = PythonWheels(wheel_dir=controller_dist_folder, package_name="flyte_controller_base")
+base = flyte.Image.from_debian_base()
+rs_controller_image = base.clone(addl_layer=wheel_layer)
+
 
 env = flyte.TaskEnvironment(
-    name="crash_recovery_trace",
-    resources=flyte.Resources(memory="250Mi", cpu=1),
+    name="crash_recovery_trace", resources=flyte.Resources(memory="250Mi", cpu=1), image=rs_controller_image
 )
 
 
@@ -38,6 +45,7 @@ async def main() -> list[int]:
             attempt_number = get_attempt_number()
             # Fail at attempts 0, 1, and 2 at for i = 100, 200, 300 respectively, then succeed
             if i == (attempt_number + 1) * 100 and attempt_number < 3:
+                print(f"Simulating crash for element {i=} and {attempt_number=}", flush=True)
                 raise flyte.errors.RuntimeSystemError(
                     "simulated", f"Simulated failure on attempt {get_attempt_number()} at iteration {i}"
                 )
