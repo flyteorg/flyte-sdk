@@ -182,12 +182,14 @@ async def _deploy_task(
             return DeployedTask(translate_task_to_wire(task, serialization_context), [])
 
         default_inputs = await convert_upload_default_inputs(task.interface)
+        # Create a TaskContext for the task translation to serialize log links properly.
+        # Callee should not use raw_data_path or run_base_dir, so we set them to empty strings.
         action = ActionID(
             name="{{.actionName}}",
             run_name="{{.runName}}",
-            project=serialization_context.project,
-            domain=serialization_context.domain,
-            org=serialization_context.org,
+            project="{{.project}}",
+            domain="{{.domain}}",
+            org="{{.org}}",
         )
         tctx = TaskContext(
             action=action,
