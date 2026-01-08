@@ -19,10 +19,9 @@ from flyte._logging import logger
 from flyte._pod import _PRIMARY_CONTAINER_NAME_FIELD, PodTemplate
 from flyte._secret import SecretRequest, secrets_from_request
 from flyte._task import AsyncFunctionTaskTemplate, TaskTemplate
-from flyte.models import CodeBundle, SerializationContext
+from flyte.models import CodeBundle, SerializationContext, TaskContext
 
 from ... import ReusePolicy
-from ..._context import internal_ctx
 from ..._retry import RetryStrategy
 from ..._timeout import TimeoutType, timeout_from_request
 from .resources_serde import get_proto_extended_resources, get_proto_resources
@@ -37,6 +36,7 @@ def translate_task_to_wire(
     task: TaskTemplate,
     serialization_context: SerializationContext,
     default_inputs: Optional[typing.List[common_pb2.NamedParameter]] = None,
+    task_context: Optional[TaskContext] = None,
 ) -> task_definition_pb2.TaskSpec:
     """
     Translate a task to a wire format. This is a placeholder function.
@@ -44,10 +44,11 @@ def translate_task_to_wire(
     :param task: The task to translate.
     :param serialization_context: The serialization context to use for the translation.
     :param default_inputs: Optional list of default inputs for the task.
+    :param task_context: Optional task context.
 
     :return: The translated task.
     """
-    tt = get_proto_task(task, serialization_context)
+    tt = get_proto_task(task, serialization_context, task_context)
     env: environment_pb2.Environment | None = None
 
     if task.parent_env and task.parent_env():
@@ -112,7 +113,9 @@ def get_proto_timeout(timeout: TimeoutType | None) -> Optional[duration_pb2.Dura
     return duration_pb2.Duration(seconds=max_runtime_timeout.seconds)
 
 
-def get_proto_task(task: TaskTemplate, serialize_context: SerializationContext) -> tasks_pb2.TaskTemplate:
+def get_proto_task(
+    task: TaskTemplate, serialize_context: SerializationContext, task_context: Optional[TaskContext] = None
+) -> tasks_pb2.TaskTemplate:
     task_id = identifier_pb2.Identifier(
         resource_type=identifier_pb2.ResourceType.TASK,
         project=serialize_context.project,
@@ -132,17 +135,15 @@ def get_proto_task(task: TaskTemplate, serialize_context: SerializationContext) 
         container = _get_urun_container(serialize_context, task)
         pod = None
 
-    ctx = internal_ctx()
-    task_ctx = ctx.data.task_context
     log_links = []
-    if task.links and task_ctx:
-        action = task_ctx.action
+    if task.links and task_context:
+        action = task_context.action
         for link in task.links:
             uri = link.get_link(
                 run_name=action.run_name if action.run_name else "",
                 project=action.project if action.project else "",
                 domain=action.domain if action.domain else "",
-                context=task_ctx.custom_context if task_ctx.custom_context else {},
+                context=task_context.custom_context if task_context.custom_context else {},
                 parent_action_name=action.name if action.name else "",
                 action_name="{{.actionName}}",
                 pod_name="{{.podName}}",
