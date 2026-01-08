@@ -4,8 +4,8 @@ from abc import abstractmethod
 
 import grpc.aio
 import pydantic
-from flyteidl.service.auth_pb2 import OAuth2MetadataRequest, PublicClientAuthConfigRequest
-from flyteidl.service.auth_pb2_grpc import AuthMetadataServiceStub
+from flyteidl2.auth.auth_service_pb2 import GetOAuth2MetadataRequest, GetPublicClientConfigRequest
+from flyteidl2.auth.auth_service_pb2_grpc import AuthMetadataServiceStub
 
 AuthType = typing.Literal["ClientSecret", "Pkce", "ExternalCommand", "DeviceFlow"]
 
@@ -70,8 +70,8 @@ class RemoteClientConfigStore(ClientConfigStore):
         Retrieves the ClientConfig from the given grpc.Channel assuming  AuthMetadataService is available
         """
         metadata_service = AuthMetadataServiceStub(self._unauthenticated_channel)
-        oauth2_metadata_task = metadata_service.GetOAuth2Metadata(OAuth2MetadataRequest())
-        public_client_config_task = metadata_service.GetPublicClientConfig(PublicClientAuthConfigRequest())
+        oauth2_metadata_task = metadata_service.GetOAuth2Metadata(GetOAuth2MetadataRequest())
+        public_client_config_task = metadata_service.GetPublicClientConfig(GetPublicClientConfigRequest())
         oauth2_metadata, public_client_config = await asyncio.gather(oauth2_metadata_task, public_client_config_task)
         return ClientConfig(
             token_endpoint=oauth2_metadata.token_endpoint,
