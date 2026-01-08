@@ -136,17 +136,15 @@ def get_proto_task(
         container = _get_urun_container(serialize_context, task)
         pod = None
 
-    ctx = internal_ctx()
-    task_ctx = ctx.data.task_context or task_context
     log_links = []
-    if task.links and task_ctx:
-        action = task_ctx.action
+    if task.links and task_context:
+        action = task_context.action
         for link in task.links:
             uri = link.get_link(
                 run_name=action.run_name if action.run_name else "",
                 project=action.project if action.project else "",
                 domain=action.domain if action.domain else "",
-                context=task_ctx.custom_context if task_ctx.custom_context else {},
+                context=task_context.custom_context if task_context.custom_context else {},
                 parent_action_name=action.name if action.name else "",
                 action_name="{{.actionName}}",
                 pod_name="{{.podName}}",
