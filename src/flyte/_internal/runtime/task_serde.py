@@ -22,7 +22,6 @@ from flyte._task import AsyncFunctionTaskTemplate, TaskTemplate
 from flyte.models import CodeBundle, SerializationContext, TaskContext
 
 from ... import ReusePolicy
-from ..._context import internal_ctx
 from ..._retry import RetryStrategy
 from ..._timeout import TimeoutType, timeout_from_request
 from .resources_serde import get_proto_extended_resources, get_proto_resources
