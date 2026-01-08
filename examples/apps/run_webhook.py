@@ -10,8 +10,6 @@
 
 import logging
 
-from flyte.errors import RemoteTaskUsageError
-
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 
 import os
@@ -138,9 +136,9 @@ async def run_task(
     except flyte.errors.RemoteTaskNotFoundError:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Task not found",
+            detail=f"Task {name} with {version} in {project} and {domain} not found",
         )
-    except RemoteTaskUsageError as e:
+    except flyte.errors.RemoteTaskUsageError as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e),
