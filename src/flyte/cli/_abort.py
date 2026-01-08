@@ -44,6 +44,6 @@ def action(
     a = remote.Action.get(run_name=run_name, name=action_name)
     if a:
         console = common.get_console()
-        with console.status(f"Aborting action '{action_name}' for a '{run_name}'...", spinner="dots"):
+        with console.status(f"Aborting action '{action_name}' for run '{run_name}'...", spinner="dots"):
             a.abort()
-        console.print(f"Action '{action_name}' for a '{run_name}' has been aborted.")
+        console.print(f"Action '{action_name}' for run '{run_name}' has been aborted.")
