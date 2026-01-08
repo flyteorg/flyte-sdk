@@ -237,6 +237,6 @@ class LocalController:
         assert info.end_time
 
     async def submit_task_ref(self, _task: TaskDetails, max_inline_io_bytes: int, *args, **kwargs) -> Any:
-        raise flyte.errors.RemoteTaskError(
+        raise flyte.errors.RemoteTaskUsageError(
             f"Remote tasks cannot be executed locally, only remotely. Found remote task {_task.name}"
         )

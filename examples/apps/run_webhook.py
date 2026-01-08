@@ -133,10 +133,20 @@ async def run_task(
 
         return {"url": r.url, "name": r.name}
 
-    except flyte.errors.RemoteTaskError:
+    except flyte.errors.RemoteTaskNotFoundError:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Task not found",
+            detail=f"Task {name} with {version} in {project} and {domain} not found",
+        )
+    except flyte.errors.RemoteTaskUsageError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(e),
         )
 
 
