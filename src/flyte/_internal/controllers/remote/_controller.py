@@ -258,7 +258,7 @@ class RemoteController(Controller):
         # If the action is aborted, we should abort the controller as well
         if n.phase == phase_pb2.ACTION_PHASE_ABORTED:
             logger.warning(f"Action {n.action_id.name} was aborted, aborting current Action{current_action_id.name}")
-            raise flyte.errors.RunAbortedError(
+            raise flyte.errors.ActionAbortedError(
                 f"Action {n.action_id.name} was aborted, aborting current Action {current_action_id.name}"
             )
 
