@@ -229,13 +229,13 @@ class InlineIOMaxBytesBreached(RuntimeUserError):
         super().__init__("InlineIOMaxBytesBreached", message, "user")
 
 
-class RunAbortedError(RuntimeUserError):
+class ActionAbortedError(RuntimeUserError):
     """
-    This error is raised when the run is aborted by the user.
+    This error is raised when an action was aborted, externally. The parent action will raise this error.
     """
 
     def __init__(self, message: str):
-        super().__init__("RunAbortedError", message, "user")
+        super().__init__("ActionAbortedError", message, "user")
 
 
 class SlowDownError(RuntimeUserError):
