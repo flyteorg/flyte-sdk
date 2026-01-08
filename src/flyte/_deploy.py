@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Dict, List, Optional, Set, Tuple
 import cloudpickle
 import rich.repr
 
-from flyte.models import NativeInterface, SerializationContext
+from flyte.models import ActionID, NativeInterface, RawDataPath, SerializationContext, TaskContext
 from flyte.syncify import syncify
 
 from ._environment import Environment
@@ -169,6 +169,7 @@ async def _deploy_task(
     from flyteidl2.task import task_definition_pb2, task_service_pb2
 
     import flyte.errors
+    import flyte.report
 
     from ._internal.runtime.convert import convert_upload_default_inputs
     from ._internal.runtime.task_serde import translate_task_to_wire
@@ -181,7 +182,24 @@ async def _deploy_task(
             return DeployedTask(translate_task_to_wire(task, serialization_context), [])
 
         default_inputs = await convert_upload_default_inputs(task.interface)
-        spec = translate_task_to_wire(task, serialization_context, default_inputs=default_inputs)
+        action = ActionID(
+            name="{{.actionName}}",
+            run_name="{{.runName}}",
+            project=serialization_context.project,
+            domain=serialization_context.domain,
+            org=serialization_context.org,
+        )
+        tctx = TaskContext(
+            action=action,
+            output_path=serialization_context.output_path,
+            version=serialization_context.version,
+            raw_data_path=RawDataPath(path=""),
+            compiled_image_cache=serialization_context.image_cache,
+            run_base_dir="",
+            report=flyte.report.Report(name=action.name),
+            custom_context={},
+        )
+        spec = translate_task_to_wire(task, serialization_context, default_inputs=default_inputs, task_context=tctx)
         # Insert ENV description into spec
         env = task.parent_env() if task.parent_env else None
         if env and env.description:

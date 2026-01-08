@@ -37,7 +37,7 @@ def translate_task_to_wire(
     task: TaskTemplate,
     serialization_context: SerializationContext,
     default_inputs: Optional[typing.List[common_pb2.NamedParameter]] = None,
-    tctx: Optional[TaskContext] = None,
+    task_context: Optional[TaskContext] = None,
 ) -> task_definition_pb2.TaskSpec:
     """
     Translate a task to a wire format. This is a placeholder function.
@@ -45,11 +45,11 @@ def translate_task_to_wire(
     :param task: The task to translate.
     :param serialization_context: The serialization context to use for the translation.
     :param default_inputs: Optional list of default inputs for the task.
-    :param tctx: Optional task context.
+    :param task_context: Optional task context.
 
     :return: The translated task.
     """
-    tt = get_proto_task(task, serialization_context, tctx)
+    tt = get_proto_task(task, serialization_context, task_context)
     env: environment_pb2.Environment | None = None
 
     if task.parent_env and task.parent_env():
@@ -115,7 +115,7 @@ def get_proto_timeout(timeout: TimeoutType | None) -> Optional[duration_pb2.Dura
 
 
 def get_proto_task(
-    task: TaskTemplate, serialize_context: SerializationContext, tctx: Optional[TaskContext] = None
+    task: TaskTemplate, serialize_context: SerializationContext, task_context: Optional[TaskContext] = None
 ) -> tasks_pb2.TaskTemplate:
     task_id = identifier_pb2.Identifier(
         resource_type=identifier_pb2.ResourceType.TASK,
@@ -137,7 +137,7 @@ def get_proto_task(
         pod = None
 
     ctx = internal_ctx()
-    task_ctx = ctx.data.task_context or tctx
+    task_ctx = ctx.data.task_context or task_context
     log_links = []
     if task.links and task_ctx:
         action = task_ctx.action

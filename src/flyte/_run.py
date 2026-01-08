@@ -220,7 +220,9 @@ class _Runner:
                 image_cache=image_cache,
                 root_dir=cfg.root_dir,
             )
-            action = ActionID(name="{{.actionName}}", run_name="{{.runName}}", project=project, domain=domain, org=cfg.org)
+            action = ActionID(
+                name="{{.actionName}}", run_name="{{.runName}}", project=project, domain=domain, org=cfg.org
+            )
             tctx = TaskContext(
                 action=action,
                 code_bundle=code_bundle,
@@ -232,7 +234,7 @@ class _Runner:
                 report=flyte.report.Report(name=action.name),
                 custom_context=self._custom_context,
             )
-            task_spec = translate_task_to_wire(obj, s_ctx, default_inputs=None, tctx=tctx)
+            task_spec = translate_task_to_wire(obj, s_ctx, default_inputs=None, task_context=tctx)
             inputs = await convert_from_native_to_inputs(
                 obj.native_interface, *args, custom_context=self._custom_context, **kwargs
             )
