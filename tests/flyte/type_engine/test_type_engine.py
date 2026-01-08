@@ -10,7 +10,7 @@ from enum import Enum, auto
 from typing import Dict, List
 
 import pytest
-from flyteidl.core import errors_pb2
+from flyteidl2.core import errors_pb2
 from flyteidl2.core import literals_pb2, types_pb2
 from flyteidl2.core.literals_pb2 import (
     Literal,
@@ -487,7 +487,7 @@ async def test_protos():
     pb = errors_pb2.ContainerError(code="code", message="message")
     lt = TypeEngine.to_literal_type(errors_pb2.ContainerError)
     assert lt.simple == SimpleType.STRUCT
-    assert lt.metadata["pb_type"] == "flyteidl.core.errors_pb2.ContainerError"
+    assert lt.metadata["pb_type"] == "flyteidl2.core.errors_pb2.ContainerError"
 
     lit = await TypeEngine.to_literal(pb, errors_pb2.ContainerError, lt)
     new_python_val = await TypeEngine.to_python_value(lit, errors_pb2.ContainerError)

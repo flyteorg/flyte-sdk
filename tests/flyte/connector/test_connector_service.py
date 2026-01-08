@@ -5,7 +5,7 @@ from unittest.mock import MagicMock
 
 import grpc
 import pytest
-from flyteidl.core.tasks_pb2 import TaskTemplate
+from flyteidl2.core.tasks_pb2 import TaskTemplate
 from flyteidl2.connector.connector_pb2 import (
     CreateTaskRequest,
     DeleteTaskRequest,
