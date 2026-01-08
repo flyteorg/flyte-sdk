@@ -7,7 +7,6 @@ import uuid
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Tuple, Union, cast
 
-import flyte.errors
 from flyte._context import contextual_run, internal_ctx
 from flyte._environment import Environment
 from flyte._initialize import (
@@ -146,6 +145,7 @@ class _Runner:
         from flyteidl2.workflow import run_definition_pb2, run_service_pb2
         from google.protobuf import wrappers_pb2
 
+        import flyte.report
         from flyte.remote import Run
         from flyte.remote._task import LazyEntity, TaskDetails
 
@@ -220,7 +220,19 @@ class _Runner:
                 image_cache=image_cache,
                 root_dir=cfg.root_dir,
             )
-            task_spec = translate_task_to_wire(obj, s_ctx)
+            action = ActionID(name="{{.actionName}}", run_name="{{.runName}}", project=project, domain=domain, org=cfg.org)
+            tctx = TaskContext(
+                action=action,
+                code_bundle=code_bundle,
+                output_path="",
+                version=version if version else "na",
+                raw_data_path=RawDataPath(path=""),
+                compiled_image_cache=image_cache,
+                run_base_dir="",
+                report=flyte.report.Report(name=action.name),
+                custom_context=self._custom_context,
+            )
+            task_spec = translate_task_to_wire(obj, s_ctx, default_inputs=None, tctx=tctx)
             inputs = await convert_from_native_to_inputs(
                 obj.native_interface, *args, custom_context=self._custom_context, **kwargs
             )
