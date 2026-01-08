@@ -330,8 +330,7 @@ class Action(ToJSONMixin):
         try:
             await get_client().run_service.AbortAction(
                 run_service_pb2.AbortActionRequest(
-                    action_id=self.pb2.id
-                    ,
+                    action_id=self.pb2.id,
                 )
             )
         except grpc.aio.AioRpcError as e:
