@@ -142,16 +142,16 @@ class ImageBuildEngine:
     def _optimize_image_layers(image: Image) -> Image:
         """
         Optimize pip layers by extracting heavy dependencies to the top for better caching.
-        Original layers remain in their original positions but with heavy packages removed.
+        Heavy packages from each layer are extracted to separate layers (preserving per-layer arguments),
+        and all heavy layers are placed at the top.  Original layers with light packages follow.
         PythonWheels layers with package_name 'flyte' are moved to the very end.
         """
         from flyte._utils import parse_uv_script_file
 
-        # Step 1: Collect heavy packages and build new layer list
-        all_heavy_packages: list[str] = []
-        template_layer: PipPackages | None = None
-        optimized_layers: list[Layer] = []
-        flyte_wheel_layers: list[PythonWheels] = []  # Collect flyte wheels to move to end
+        # Step 1: Collect heavy and original layers separately
+        heavy_layers: list[PipPackages] = []
+        original_layers: list[Layer] = []
+        flyte_wheel_layers: list[PythonWheels] = []
 
         for layer in image._layers:
             if isinstance(layer, PipPackages):
@@ -168,13 +168,20 @@ class ImageBuildEngine:
                     else:
                         light_pkgs.append(pkg)
 
-                # Collect heavy packages for the top layer
+                # Create heavy layer with original arguments (if any heavy packages)
                 if heavy_pkgs:
-                    all_heavy_packages.extend(heavy_pkgs)
-                    if template_layer is None:
-                        template_layer = layer
+                    heavy_layer = PipPackages(
+                        packages=tuple(heavy_pkgs),
+                        index_url=layer.index_url,
+                        extra_index_urls=layer.extra_index_urls,
+                        pre=layer.pre,
+                        extra_args=layer.extra_args,
+                        secret_mounts=layer.secret_mounts,
+                    )
+                    heavy_layers.append(heavy_layer)
+                    logger.debug(f"Extracted {len(heavy_pkgs)} heavy package(s): {', '.join(heavy_pkgs)}")
 
-                # Keep layer in original position with only light packages
+                # Create light layer with original arguments (if any light packages)
                 if light_pkgs:
                     light_layer = PipPackages(
                         packages=tuple(light_pkgs),
@@ -184,8 +191,7 @@ class ImageBuildEngine:
                         extra_args=layer.extra_args,
                         secret_mounts=layer.secret_mounts,
                     )
-                    optimized_layers.append(light_layer)
-                # If layer had ONLY heavy packages, don't add it (it becomes empty)
+                    original_layers.append(light_layer)
 
             elif isinstance(layer, UVScript):
                 # Parse UV scripts and extract dependencies
@@ -198,25 +204,26 @@ class ImageBuildEngine:
                     for pkg in metadata.dependencies:
                         pkg_name = re.split(r"[<>=~!\[]", pkg, 1)[0].strip()
                         if pkg_name in HEAVY_DEPENDENCIES:
-                            heavy_pkgs.append(pkg)
+                            uv_heavy_pkgs.append(pkg)
                         else:
-                            light_pkgs.append(pkg)
+                            uv_light_pkgs.append(pkg)
 
-                    # Collect heavy packages
+                    # Create heavy pip layer from UV (if any heavy packages)
                     if uv_heavy_pkgs:
-                        all_heavy_packages.extend(uv_heavy_pkgs)
-                        if template_layer is None:
-                            # Create template from UV layer config
-                            template_layer = PipPackages(
-                                packages=(),
-                                index_url=layer.index_url,
-                                extra_index_urls=layer.extra_index_urls,
-                                pre=layer.pre,
-                                extra_args=layer.extra_args,
-                                secret_mounts=layer.secret_mounts,
-                            )
+                        heavy_pip_layer = PipPackages(
+                            packages=tuple(uv_heavy_pkgs),
+                            index_url=layer.index_url,
+                            extra_index_urls=layer.extra_index_urls,
+                            pre=layer.pre,
+                            extra_args=layer.extra_args,
+                            secret_mounts=layer.secret_mounts,
+                        )
+                        heavy_layers.append(heavy_pip_layer)
+                        logger.debug(
+                            f"Extracted {len(uv_heavy_pkgs)} heavy package(s) from UV:  {', '.join(uv_heavy_pkgs)}"
+                        )
 
-                    # Add light packages as pip layer in original position
+                    # Create light pip layer from UV (if any light packages)
                     if uv_light_pkgs:
                         light_pip_layer = PipPackages(
                             packages=tuple(uv_light_pkgs),
@@ -226,10 +233,10 @@ class ImageBuildEngine:
                             extra_args=layer.extra_args,
                             secret_mounts=layer.secret_mounts,
                         )
-                        optimized_layers.append(light_pip_layer)
+                        original_layers.append(light_pip_layer)
 
-                # Keep the UVScript layer in its position
-                optimized_layers.append(layer)
+                # Keep the UVScript layer in original_layers section
+                original_layers.append(layer)
 
             elif isinstance(layer, PythonWheels):
                 # Check if this is a flyte wheel - if so, move to end
@@ -237,34 +244,22 @@ class ImageBuildEngine:
                     flyte_wheel_layers.append(layer)
                     logger.debug(f"Moving flyte wheel layer to end: {layer}")
                 else:
-                    # Keep other wheels in original position
-                    optimized_layers.append(layer)
+                    # Keep other wheels with original_layers
+                    original_layers.append(layer)
 
             else:
-                # All other layers (apt, env, etc.) stay in position
-                optimized_layers.append(layer)
+                # All other layers (apt, env, etc.) go with light layers
+                original_layers.append(layer)
 
         # If no heavy packages found, return original image
-        if not all_heavy_packages:
+        if not heavy_layers:
             logger.debug("No heavy packages found, skipping optimization")
             return image
 
-        logger.info(f"Extracted {len(all_heavy_packages)} heavy package(s) to top layer")
-        logger.debug(f"  Heavy packages: {', '.join(all_heavy_packages)}")
+        logger.info(f"Created {len(heavy_layers)} heavy layer(s) at top")
 
-        # Step 2: Build final layer order
-        assert template_layer is not None
-        heavy_layer = PipPackages(
-            packages=tuple(all_heavy_packages),
-            index_url=template_layer.index_url,
-            extra_index_urls=template_layer.extra_index_urls,
-            pre=template_layer.pre,
-            extra_args=template_layer.extra_args,
-            secret_mounts=template_layer.secret_mounts,
-        )
-
-        # Final layer order: heavy at top, everything else in middle, flyte wheels at end
-        final_layers = [heavy_layer, *optimized_layers, *flyte_wheel_layers]
+        # Final layer order: all heavy layers at top, then original layers, then flyte wheels at end
+        final_layers = [*heavy_layers, *original_layers, *flyte_wheel_layers]
 
         if flyte_wheel_layers:
             logger.debug(f"Moved {len(flyte_wheel_layers)} flyte wheel layer(s) to end")
