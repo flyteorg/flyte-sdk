@@ -23,6 +23,7 @@ from flyte.models import CodeBundle, SerializationContext
 
 from ... import ReusePolicy
 from ..._context import internal_ctx
+from ..._initialize import get_init_config
 from ..._retry import RetryStrategy
 from ..._timeout import TimeoutType, timeout_from_request
 from .resources_serde import get_proto_extended_resources, get_proto_resources
@@ -135,20 +136,35 @@ def get_proto_task(task: TaskTemplate, serialize_context: SerializationContext) 
     ctx = internal_ctx()
     task_ctx = ctx.data.task_context
     log_links = []
-    if task.links and task_ctx:
-        action = task_ctx.action
-        for link in task.links:
-            uri = link.get_link(
-                run_name=action.run_name if action.run_name else "",
-                project=action.project if action.project else "",
-                domain=action.domain if action.domain else "",
-                context=task_ctx.custom_context if task_ctx.custom_context else {},
-                parent_action_name=action.name if action.name else "",
-                action_name="{{.actionName}}",
-                pod_name="{{.podName}}",
-            )
-            task_log = TaskLog(name=link.name, uri=uri, icon_uri=link.icon_uri)
-            log_links.append(task_log)
+    cfg = get_init_config()
+    if task.links:
+        if task_ctx:
+            action = task_ctx.action
+            for link in task.links:
+                uri = link.get_link(
+                    run_name=action.run_name if action.run_name else "",
+                    project=action.project if action.project else "",
+                    domain=action.domain if action.domain else "",
+                    context=task_ctx.custom_context if task_ctx.custom_context else {},
+                    parent_action_name=action.name if action.name else "",
+                    action_name="{{.actionName}}",
+                    pod_name="{{.podName}}",
+                )
+                task_log = TaskLog(name=link.name, uri=uri, icon_uri=link.icon_uri)
+                log_links.append(task_log)
+        else:
+            for link in task.links:
+                uri = link.get_link(
+                    run_name="{{.runName}}",
+                    project=cfg.project,
+                    domain=cfg.domain,
+                    context={},
+                    parent_action_name="",
+                    action_name="{{.actionName}}",
+                    pod_name="{{.podName}}",
+                )
+                task_log = TaskLog(name=link.name, uri=uri, icon_uri=link.icon_uri)
+                log_links.append(task_log)
 
     custom = task.custom_config(serialize_context)
 
