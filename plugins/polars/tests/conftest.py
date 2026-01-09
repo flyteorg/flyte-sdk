@@ -5,7 +5,6 @@ from unittest.mock import patch
 
 import pytest
 import pytest_asyncio
-
 from flyte._cache.local_cache import LocalTaskCache
 from flyte._context import RawDataPath, internal_ctx
 from flyte.models import SerializationContext
@@ -82,4 +81,3 @@ def patch_os_exit(monkeypatch):
         raise SystemExit(code)
 
     monkeypatch.setattr(os, "_exit", mock_exit)
-

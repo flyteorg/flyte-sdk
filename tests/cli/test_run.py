@@ -195,11 +195,7 @@ def temp_parquet_file():
     if pd is None:
         pytest.skip("pandas is not installed")
 
-    df = pd.DataFrame({
-        "name": ["Alice", "Bob", "Charlie"],
-        "age": [25, 30, 35],
-        "city": ["NYC", "SF", "LA"]
-    })
+    df = pd.DataFrame({"name": ["Alice", "Bob", "Charlie"], "age": [25, 30, 35], "city": ["NYC", "SF", "LA"]})
     with tempfile.NamedTemporaryFile(delete=False, suffix=".parquet") as f:
         df.to_parquet(f.name)
         yield f.name
@@ -214,11 +210,7 @@ def temp_parquet_dir():
         pytest.skip("pandas is not installed")
 
     with tempfile.TemporaryDirectory() as temp_dir:
-        df = pd.DataFrame({
-            "name": ["Alice", "Bob", "Charlie"],
-            "age": [25, 30, 35],
-            "city": ["NYC", "SF", "LA"]
-        })
+        df = pd.DataFrame({"name": ["Alice", "Bob", "Charlie"], "age": [25, 30, 35], "city": ["NYC", "SF", "LA"]})
         # Write as a single parquet file in the directory
         df.to_parquet(Path(temp_dir) / "data.parquet")
         yield temp_dir
@@ -231,12 +223,14 @@ def temp_partitioned_parquet_dir():
         pytest.skip("pandas is not installed")
 
     with tempfile.TemporaryDirectory() as temp_dir:
-        df = pd.DataFrame({
-            "name": ["Alice", "Bob", "Charlie", "David"],
-            "age": [25, 30, 35, 40],
-            "category": ["A", "B", "A", "C"],
-            "active": [True, False, True, True],
-        })
+        df = pd.DataFrame(
+            {
+                "name": ["Alice", "Bob", "Charlie", "David"],
+                "age": [25, 30, 35, 40],
+                "category": ["A", "B", "A", "C"],
+                "active": [True, False, True, True],
+            }
+        )
         # Write as partitioned parquet files (creates subdirectories like category=A/, category=B/, etc.)
         df.to_parquet(temp_dir, partition_cols=["category"])
         yield temp_dir

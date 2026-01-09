@@ -37,4 +37,3 @@ async def process_pd_df_return_df(df: "pd.DataFrame") -> "pd.DataFrame":
 async def process_fdf_return_fdf(df: flyte.io.DataFrame) -> flyte.io.DataFrame:
     """Task that takes a flyte.io.DataFrame input and returns flyte.io.DataFrame."""
     return df
-
