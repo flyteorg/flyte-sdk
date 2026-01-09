@@ -1,3 +1,4 @@
+*.parquet
 .flyte
 maint_tools/copy_pb_python_from_cloud.py
 
