@@ -509,6 +509,21 @@ class Action(ToJSONMixin):
 
         return rich.pretty.pretty_repr(self)
 
+    @syncify
+    async def abort(self):
+        """
+        Aborts / Terminates the action.
+        """
+        try:
+            await get_client().run_service.AbortAction(
+                run_service_pb2.AbortActionRequest(
+                    action_id=self.pb2.id,
+                )
+            )
+        except grpc.aio.AioRpcError as e:
+            if e.code() == grpc.StatusCode.NOT_FOUND:
+                return
+            raise
 
 @dataclass
 class ActionDetails(ToJSONMixin):
