@@ -1,8 +1,9 @@
 __all__ = [
-    "PolarsToParquetEncodingHandler",
     "ParquetToPolarsDecodingHandler",
-    "PolarsLazyFrameToParquetEncodingHandler",
     "ParquetToPolarsLazyFrameDecodingHandler",
+    "PolarsLazyFrameToParquetEncodingHandler",
+    "PolarsToParquetEncodingHandler",
+    "register_polars_df_transformers",
 ]
 
 from flyteplugins.polars.df_transformer import (
@@ -10,4 +11,5 @@ from flyteplugins.polars.df_transformer import (
     ParquetToPolarsLazyFrameDecodingHandler,
     PolarsLazyFrameToParquetEncodingHandler,
     PolarsToParquetEncodingHandler,
+    register_polars_df_transformers,
 )
