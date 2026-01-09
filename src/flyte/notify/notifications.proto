@@ -1,0 +1,168 @@
+syntax = "proto3";
+
+import "google/protobuf/struct.proto";
+
+// ============================================================================
+// STANDARD NOTIFICATIONS (recommended for most use cases)
+// ============================================================================
+
+// Standard webhook notification - invoke any HTTP endpoint.
+// This is the most flexible notification type for custom integrations.
+message WebhookNotification {
+  enum Method {
+    METHOD_UNSPECIFIED = 0;
+    GET = 1;
+    POST = 2;
+    PUT = 3;
+    PATCH = 4;
+    DELETE = 5;
+  }
+
+  // Webhook URL (required).
+  // Supports template variables: {workflow.name}, {workflow.execution_id}, etc.
+  string url = 1;
+
+  // HTTP method (default: POST).
+  Method method = 2;
+
+  // Optional HTTP headers. Values support template variables.
+  map<string, string> headers = 3;
+
+  // Optional request body as JSON (for POST/PUT/PATCH).
+  // All string values support template variables recursively.
+  google.protobuf.Struct body = 4;
+}
+
+// Standard email notification.
+message EmailNotification {
+  // List of email addresses to notify (required).
+  repeated string recipients = 1;
+
+  // Optional subject line template. Supports template variables.
+  // If not provided, a default subject will be used.
+  string subject = 2;
+
+  // Optional body template (plain text). Supports template variables.
+  // If not provided, a default body will be used.
+  string body = 3;
+}
+
+// ============================================================================
+// ADVANCED SERVICE-SPECIFIC NOTIFICATIONS (optional, for enhanced features)
+// ============================================================================
+
+// Slack-specific notification with rich formatting support.
+// For basic Slack notifications, use WebhookNotification instead.
+message SlackNotification {
+  // Slack webhook URL (required).
+  string webhook_url = 1;
+
+  // Optional simple text message. Supports template variables.
+  // Used if blocks is not provided.
+  string message = 2;
+
+  // Optional Slack Block Kit blocks for rich formatting.
+  // See: https://api.slack.com/block-kit
+  // If provided, message field is ignored.
+  google.protobuf.Struct blocks = 4;
+}
+
+// Microsoft Teams-specific notification with Adaptive Card support.
+// For basic Teams notifications, use WebhookNotification instead.
+message TeamsNotification {
+  // Teams webhook URL (required).
+  string webhook_url = 1;
+
+  // Optional title for the Teams message card. Supports template variables.
+  string title = 2;
+
+  // Optional simple text message. Supports template variables.
+  // Used if card is not provided.
+  string message = 3;
+
+  // Optional Adaptive Card for rich formatting.
+  // See: https://adaptivecards.io/designer/
+  // If provided, title and message fields are ignored.
+  google.protobuf.Struct card = 4;
+}
+
+// FUTURE LOOKING!
+// PagerDuty-specific notification.
+// For basic PagerDuty notifications, use WebhookNotification with Events API v2 format.
+message PagerDutyNotification {
+  enum Severity {
+    SEVERITY_UNSPECIFIED = 0;
+    INFO = 1;
+    WARNING = 2;
+    ERROR = 3;
+    CRITICAL = 4;
+  }
+
+  // PagerDuty integration key (required).
+  // string integration_key = 1; We need an integration system
+
+  // Event severity (required).
+  Severity severity = 2;
+
+  // Optional summary of the event. Supports template variables.
+  // If not provided, a default summary will be used.
+  string summary = 3;
+
+  // Optional additional details. Supports template variables in values.
+  google.protobuf.Struct custom_details = 4;
+}
+
+// ============================================================================
+// CORE NOTIFICATION MESSAGE
+// ============================================================================
+
+// A notification that can be sent on workflow/task/trigger events.
+message Notification {
+  // Phases during which this notification should be triggered (required).
+  // Valid values: "SUCCEEDED", "FAILED", "TIMED_OUT", "ABORTED", "QUEUED", "RUNNING"
+  // Multiple phases can be specified for a single notification.
+  repeated string phases = 1;
+
+  // Notification type and configuration.
+  // Start with webhook (most flexible) or email (most common).
+  // Use service-specific types (slack, teams, pagerduty) only when you need
+  // their advanced features.
+  oneof type {
+    // Standard webhook - works with any HTTP endpoint.
+    WebhookNotification webhook = 10;
+
+    // Standard email notification.
+    EmailNotification email = 11;
+
+    // Advanced: Slack with Block Kit support.
+    SlackNotification slack = 20;
+
+    // Advanced: Microsoft Teams with Adaptive Cards.
+    TeamsNotification teams = 21;
+
+    // Advanced: PagerDuty with severity and custom details.
+    PagerDutyNotification pagerduty = 22;
+  }
+}
+
+// List of notifications
+message Notifications {
+  repeated Notification notifications = 1;
+}
+
+// ============================================================================
+// TEMPLATE VARIABLES REFERENCE
+// ============================================================================
+//
+// All string fields in notifications support template variable substitution.
+// Variables use the format: {category.field}
+//
+// Task/Run context:
+//   {task.name}         - Name of the task
+//   {run.name}          - Unique run ID/name
+//   {run.phase}         - Current run phase (SUCCEEDED, FAILED, etc.)
+//   {run.error}         - Error message (empty if not failed)
+//   {run.duration}      - Human-readable duration (e.g., "2h 15m 30s")
+//   {run.url}           - URL to the run details page
+//   {project}           - Flyte project name
+//   {domain}            - Flyte domain name
