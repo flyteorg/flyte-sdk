@@ -143,7 +143,7 @@ async def test_passthrough_df_no_io(sample_dataframe):
     input_df = DataFrame.from_existing_remote("s3://test-bucket/doesnotexist.parquet", format="parquet")
 
     run = flyte.with_runcontext("local").run(passthrough_task, input_df)
-    result = run._outputs
+    result = run._outputs[0]
     lit = await TypeEngine.to_literal(result, DataFrame, TypeEngine.to_literal_type(DataFrame))
     assert lit.scalar.structured_dataset.uri == input_df.uri
     assert result.format == input_df.format
@@ -243,5 +243,5 @@ async def test_raw_df_io_triggers_engine(sample_dataframe, ctx_with_test_raw_dat
         return df
 
     run = flyte.with_runcontext("local").run(process_raw_df, sample_dataframe)
-    result = run.outputs()
+    result = run.outputs()[0]
     assert result.equals(sample_dataframe)
