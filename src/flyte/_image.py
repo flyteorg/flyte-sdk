@@ -628,6 +628,7 @@ class Image:
         Args:
             secret_mounts:
         """
+
         ll = UVScript(
             script=Path(script),
             index_url=index_url,

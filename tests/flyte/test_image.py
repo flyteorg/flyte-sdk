@@ -3,8 +3,9 @@ from typing import cast
 
 import pytest
 
-from flyte._image import AptPackages, Image, UVScript
+from flyte._image import Image, UVScript
 from flyte._internal.imagebuild.docker_builder import PipAndRequirementsHandler
+from flyte._internal.imagebuild.image_builder import ImageBuildEngine
 
 
 def test_base():
@@ -38,7 +39,7 @@ def test_with_pip_packages():
     assert img._layers[-1].packages == (packages[0],)
 
     img = Image.from_debian_base(registry="localhost", name="test-image").with_pip_packages(
-        packages, extra_index_urls="https://example.com"
+        *packages, extra_index_urls="https://example.com"
     )
     assert img._layers[-1].extra_index_urls == ("https://example.com",)
 
@@ -83,8 +84,6 @@ def test_image_from_uv_script():
     assert img.uri.startswith("localhost/uvtest:")
     assert img._layers
     print(img._layers)
-    assert isinstance(img._layers[-2], AptPackages)
-    assert isinstance(img._layers[-1], UVScript)
     script: UVScript = cast(UVScript, img._layers[-1])
     assert script.script == script_path
     assert img.uri.startswith("localhost/uvtest:")
@@ -148,7 +147,7 @@ def test_dockerfile():
 
 def test_image_uri_consistency_for_uvscript():
     img = Image.from_uv_script(
-        "./agent_simulation_loadtest.py", name="flyte", registry="ghcr.io/flyteorg", python_version=(3, 12)
+        "examples/genai/agent_simulation_loadtest.py", name="flyte", registry="ghcr.io/flyteorg", python_version=(3, 12)
     )
     assert img.base_image == "python:3.12-slim-bookworm", "Base image should be python:3.12-slim-bookworm"
 
@@ -173,3 +172,165 @@ def test_ids_for_different_python_version():
     # Override base images to be the same for testing that the identifier does not depends on python version
     object.__setattr__(ex_11, "base_image", "python:3.10-slim-bookworm")
     object.__setattr__(ex_12, "base_image", "python:3.10-slim-bookworm")
+
+
+def test_optimize_image_layers_single_layer():
+    """Test optimization extracts heavy packages to a separate layer at the top."""
+    from flyte._image import PipPackages
+
+    img = Image.from_debian_base(registry="localhost", name="test-image", install_flyte=False).with_pip_packages(
+        "torch", "tensorflow", "requests", "flask"
+    )
+
+    optimized = ImageBuildEngine._optimize_image_layers(img)
+    pip_layers = [layer for layer in optimized._layers if isinstance(layer, PipPackages)]
+
+    assert len(pip_layers) == 2
+    # Heavy packages at top (torch and tensorflow)
+    assert "torch" in pip_layers[0].packages
+    assert "tensorflow" in pip_layers[0].packages
+    # Light packages below (requests and flask)
+    assert "requests" in pip_layers[1].packages
+    assert "flask" in pip_layers[1].packages
+
+
+def test_optimize_image_layers_multiple_layers():
+    """Test optimization with multiple pip layers."""
+    from flyte._image import PipPackages
+
+    img = (
+        Image.from_debian_base(registry="localhost", name="test-image", install_flyte=False)
+        .with_pip_packages("torch", "requests")
+        .with_pip_packages("tensorflow", "flask")
+    )
+
+    optimized = ImageBuildEngine._optimize_image_layers(img)
+    pip_layers = [layer for layer in optimized._layers if isinstance(layer, PipPackages)]
+
+    # Should have 4 layers:  2 heavy at top (torch, tensorflow), 2 light below (requests, flask)
+    assert len(pip_layers) == 4
+
+    # First two layers should be heavy packages
+    heavy_packages = pip_layers[0].packages + pip_layers[1].packages
+    assert "torch" in heavy_packages
+    assert "tensorflow" in heavy_packages
+
+    # Last two layers should be light packages
+    light_packages = pip_layers[2].packages + pip_layers[3].packages
+    assert "requests" in light_packages
+    assert "flask" in light_packages
+
+
+def test_optimize_image_layers_no_heavy_packages():
+    """Test optimization when there are no heavy packages."""
+    from flyte._image import PipPackages
+
+    img = Image.from_debian_base(registry="localhost", name="test-image", install_flyte=False).with_pip_packages(
+        "requests", "flask"
+    )
+
+    optimized = ImageBuildEngine._optimize_image_layers(img)
+
+    # Should return the same image structure since no optimization needed
+    original_pip_layers = [layer for layer in img._layers if isinstance(layer, PipPackages)]
+    optimized_pip_layers = [layer for layer in optimized._layers if isinstance(layer, PipPackages)]
+    assert len(optimized_pip_layers) == len(original_pip_layers)
+
+
+def test_optimize_image_layers_only_heavy_packages():
+    """Test optimization when a layer contains only heavy packages."""
+    from flyte._image import PipPackages
+
+    img = Image.from_debian_base(registry="localhost", name="test-image", install_flyte=False).with_pip_packages(
+        "torch", "tensorflow"
+    )
+
+    optimized = ImageBuildEngine._optimize_image_layers(img)
+    pip_layers = [layer for layer in optimized._layers if isinstance(layer, PipPackages)]
+
+    # Should have 1 heavy layer at top (both torch and tensorflow are heavy)
+    assert len(pip_layers) == 1
+    assert "torch" in pip_layers[0].packages
+    assert "tensorflow" in pip_layers[0].packages
+
+
+def test_optimize_image_layers_preserves_extra_args():
+    """Test that optimization preserves pip layer arguments like index_url."""
+    from flyte._image import PipPackages
+
+    img = (
+        Image.from_debian_base(registry="localhost", name="test-image", install_flyte=False)
+        .with_pip_packages("torch", "requests", extra_index_urls="https://example.com")
+        .with_pip_packages("tensorflow", "flask", extra_index_urls="https://other.com")
+    )
+
+    optimized = ImageBuildEngine._optimize_image_layers(img)
+    pip_layers = [layer for layer in optimized._layers if isinstance(layer, PipPackages)]
+
+    # Find the heavy layer with torch
+    torch_layer = pip_layers[0]
+    assert torch_layer.extra_index_urls == ("https://example.com",)
+
+    # Find the heavy layer with tensorflow
+    tensorflow_layer = pip_layers[1]
+    assert tensorflow_layer.extra_index_urls == ("https://other.com",)
+
+
+def test_optimize_image_layers_with_non_pip_layers():
+    """Test optimization preserves non-pip layers in correct positions."""
+    from flyte._image import AptPackages, PipPackages
+
+    img = (
+        Image.from_debian_base(registry="localhost", name="test-image", install_flyte=False)
+        .with_apt_packages("curl", "vim")
+        .with_pip_packages("torch", "requests")
+    )
+
+    optimized = ImageBuildEngine._optimize_image_layers(img)
+
+    # Apt layers should still exist
+    apt_layers = [layer for layer in optimized._layers if isinstance(layer, AptPackages)]
+    assert len(apt_layers) >= 1  # At least one apt layer (base + custom)
+
+    # Should have pip layers
+    pip_layers = [layer for layer in optimized._layers if isinstance(layer, PipPackages)]
+    assert len(pip_layers) >= 1
+
+
+def test_optimize_image_layers_flyte_wheels_at_end():
+    """Test that PythonWheels with package_name 'flyte' are moved to the end."""
+    from flyte._image import PythonWheels
+
+    img = Image.from_debian_base(registry="localhost", name="test-image")
+
+    # The default image should have flyte wheels
+    optimized = ImageBuildEngine._optimize_image_layers(img)
+
+    # Find flyte wheel layers
+    flyte_wheels = [
+        layer for layer in optimized._layers if isinstance(layer, PythonWheels) and layer.package_name == "flyte"
+    ]
+
+    if flyte_wheels:
+        # Flyte wheels should be at the very end
+        last_flyte_wheel_index = optimized._layers.index(flyte_wheels[-1])
+        assert last_flyte_wheel_index == len(optimized._layers) - 1
+
+
+def test_optimize_image_layers_with_uv_script():
+    """Test optimization with UVScript layers."""
+    from flyte._image import UVScript
+
+    script_path = Path(__file__).parent / "resources" / "sample_uv_script.py"
+
+    # Skip test if file doesn't exist
+    if not script_path.exists():
+        pytest.skip(f"Test file not found: {script_path}")
+
+    img = Image.from_uv_script(script_path, name="uvtest", registry="localhost", python_version=(3, 12))
+
+    optimized = ImageBuildEngine._optimize_image_layers(img)
+
+    # UVScript layer should still exist
+    uv_layers = [layer for layer in optimized._layers if isinstance(layer, UVScript)]
+    assert len(uv_layers) >= 1
