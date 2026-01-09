@@ -7,6 +7,7 @@ on:
     paths:
       - '.github/workflows/publish.yml'
       - 'maint_tools/build_default_image.py'
+      - 'maint_tools/build_plugin_image.py'
 
 jobs:
   flyte-pypi:
@@ -89,6 +90,17 @@ jobs:
         uses: actions/setup-python@v1
         with:
           python-version: "3.13"
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+      - name: Set up Docker Buildx
+        id: buildx
+        uses: docker/setup-buildx-action@v3
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io/flyteorg
+          username: "${{ secrets.FLYTE_BOT_USERNAME }}"
+          password: "${{ secrets.FLYTE_BOT_PAT }}"
       - name: Install uv
         uses: astral-sh/setup-uv@v6
         id: setup-uv
@@ -97,7 +109,7 @@ jobs:
         run: |
           uv venv
           uv pip install build twine setuptools wheel
-      - name: Build and publish
+      - name: Build
         working-directory: ${{ matrix.workdir }}
         run: |
           uv run --prerelease allow python -m build --wheel --installer uv

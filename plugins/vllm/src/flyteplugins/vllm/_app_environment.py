@@ -14,7 +14,7 @@ from flyte.models import SerializationContext
 from flyteplugins.vllm._constants import VLLM_MIN_VERSION_STR
 
 DEFAULT_VLLM_IMAGE = (
-    flyte.Image.from_debian_base(name="vllm-app-image")
+    flyte.Image.from_debian_base(name="vllm-app-image", python_version=(3, 13))
     # install flashinfer and vllm
     .with_pip_packages("flashinfer-python", "flashinfer-cubin")
     .with_pip_packages("flashinfer-jit-cache", index_url="https://flashinfer.ai/whl/cu129")
