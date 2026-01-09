@@ -10,6 +10,9 @@ dependencies = [
     "flyte"
 ]
 
+[project.entry-points."flyte.plugins.types"]
+polars = "flyteplugins.polars.df_transformer:register_polars_df_transformers"
+
 [build-system]
 requires = ["setuptools", "setuptools_scm"]
 build-backend = "setuptools.build_meta"

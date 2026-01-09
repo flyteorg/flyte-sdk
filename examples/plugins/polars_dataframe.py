@@ -7,12 +7,24 @@ This example shows:
 3. Performing data transformations with both eager and lazy evaluation
 """
 
-import flyte
 import polars as pl
 
+import flyte
+from flyte._image import DIST_FOLDER, PythonWheels
+
 # Create task environment with required dependencies
-img = flyte.Image.from_debian_base()
-img = img.with_pip_packages("polars", "flyteplugins-polars")
+img = (
+    flyte.Image.from_debian_base(name="flyteplugins-polars-image")
+    # NOTE: due to a dependency conflict, the polars flyte plugin needs to be installed as a separate layer:
+    # Run the following command to build the wheel:
+    # `rm -rf ./dist-plugins && uv run python -m build --wheel --installer uv --outdir ./dist-plugins plugins/polars`
+    # Once a release of the plugin is out, you can installed it via `with_pip_packages("flyteplugins-polars")`
+    .clone(
+        addl_layer=PythonWheels(
+            wheel_dir=DIST_FOLDER.parent / "dist-plugins", package_name="flyteplugins-polars", pre=True
+        )
+    )
+)
 
 env = flyte.TaskEnvironment(
     "polars_dataframe",
@@ -49,9 +61,7 @@ async def process_dataframe_eager(df: pl.DataFrame) -> pl.DataFrame:
     filtered = df.filter(pl.col("salary") > 60000)
 
     # Add a computed column
-    result = filtered.with_columns(
-        (pl.col("salary") / pl.col("years_experience")).alias("salary_per_year")
-    )
+    result = filtered.with_columns((pl.col("salary") / pl.col("years_experience")).alias("salary_per_year"))
 
     # Sort by salary descending
     result = result.sort("salary", descending=True)
@@ -76,6 +86,7 @@ async def process_lazyframe(lf: pl.LazyFrame) -> pl.LazyFrame:
     The operations are not executed until the LazyFrame is collected.
     This allows Polars to optimize the query plan.
     """
+    print(lf.collect())
     # Build a query plan (not executed yet)
     result = (
         lf.filter(pl.col("salary") > 60000)
@@ -119,7 +130,7 @@ async def aggregate_with_lazyframe(lf: pl.LazyFrame) -> pl.DataFrame:
                 pl.col("salary").mean().alias("avg_salary"),
                 pl.col("salary").max().alias("max_salary"),
                 pl.col("salary").min().alias("min_salary"),
-                pl.count().alias("employee_count"),
+                pl.len().alias("employee_count"),
             ]
         )
         .sort("avg_salary", descending=True)
@@ -130,46 +141,66 @@ async def aggregate_with_lazyframe(lf: pl.LazyFrame) -> pl.DataFrame:
 
 
 if __name__ == "__main__":
-    flyte.init_from_config()
+    import logging
+
+    import flyte.storage
+
+    # make sure to set the following environment variables:
+    # - AWS_ACCESS_KEY_ID
+    # - AWS_SECRET_ACCESS_KEY
+    # - AWS_SESSION_TOKEN (if applicable)
+    #
+    # You may also set this with `aws sso login`:
+    # $ aws sso login --profile $profile
+    # $ eval "$(aws configure export-credentials --profile $profile --format env)"
+
+    flyte.init_from_config(
+        log_level=logging.DEBUG,
+        storage=flyte.storage.S3.auto(region="us-east-2"),
+    )
 
     # Example 1: Using polars DataFrame (eager evaluation)
     print("Example 1: Polars DataFrame (eager evaluation)")
-    df_task = flyte.with_runcontext(mode="local").run(create_polars_dataframe)
-    df_result = df_task.outputs()
-    print(f"Created DataFrame with shape: {df_result.shape}")
-    print(df_result.head())
+    df_run  = flyte.run(create_polars_dataframe)
+    print(df_run.url)
+    print(df_run.wait())
+    df_result: pl.DataFrame = df_run.outputs()[0]
+    print(f"Created DataFrame: {df_result}")
 
-    processed_df = flyte.with_runcontext(mode="local").run(process_dataframe_eager, df=df_result)
-    processed_result = processed_df.outputs()
-    print(f"\nProcessed DataFrame with shape: {processed_result.shape}")
-    print(processed_result)
+    processed_df_run = flyte.run(process_dataframe_eager, df=df_result)
+    print(processed_df_run.url)
+    print(processed_df_run.wait())
+    processed_result = processed_df_run.outputs()[0]
+    print(f"\nProcessed DataFrame: {processed_result}")
 
     # Example 2: Using polars LazyFrame (lazy evaluation)
     print("\n\nExample 2: Polars LazyFrame (lazy evaluation)")
-    lf_task = flyte.with_runcontext(mode="local").run(create_polars_lazyframe)
-    lf_result = lf_task.outputs()
-    print(f"Created LazyFrame (not yet evaluated)")
+    lf_run = flyte.run(create_polars_lazyframe)
+    print(lf_run.url)
+    print(lf_run.wait())
+    lf_result = lf_run.outputs()[0]
+    print(f"Created LazyFrame: {lf_result}")
 
-    processed_lf = flyte.with_runcontext(mode="local").run(process_lazyframe, lf=lf_result)
-    processed_lf_result = processed_lf.outputs()
-    print(f"Processed LazyFrame (still not evaluated)")
-    # Collect to see the results
-    collected = processed_lf_result.collect()
-    print(f"After collection, shape: {collected.shape}")
-    print(collected)
+    processed_lf_run = flyte.run(process_lazyframe, lf=lf_result)
+    print(processed_lf_run.url)
+    print(processed_lf_run.wait())
+    processed_lf_result = processed_lf_run.outputs()[0]
+    print(f"Processed LazyFrame: {processed_lf_result}")
 
     # Example 3: Aggregation with LazyFrame
     print("\n\nExample 3: Aggregation with LazyFrame")
-    agg_result = flyte.with_runcontext(mode="local").run(aggregate_with_lazyframe, lf=lf_result)
-    agg_output = agg_result.outputs()
-    print("Aggregated results by department:")
-    print(agg_output)
+    agg_run = flyte.run(aggregate_with_lazyframe, lf=lf_result)
+    print(agg_run.url)
+    print(agg_run.wait())
+    agg_output = agg_run.outputs()[0]
+    print(f"Aggregated results by department: {agg_output}")
 
     # Example 4: Combining DataFrame and LazyFrame
     print("\n\nExample 4: Combining DataFrame and LazyFrame")
-    combined_result = flyte.with_runcontext(mode="local").run(
+    combined_run = flyte.run(
         combine_dataframes, df1=df_result, df2=lf_result
     )
-    combined_output = combined_result.outputs()
-    print(f"Combined DataFrame shape: {combined_output.shape}")
-    print(combined_output.head())
+    print(combined_run.url)
+    print(combined_run.wait())
+    combined_output = combined_run.outputs()[0]
+    print(f"Combined DataFrame: {combined_output}")

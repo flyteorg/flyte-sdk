@@ -1,10 +1,7 @@
 import typing
-from pathlib import Path
-
-import pytest
-from flyteidl2.core import literals_pb2, types_pb2
 
 import flyte
+import pytest
 from flyte.io._dataframe import DataFrame
 from flyte.io._dataframe.dataframe import PARQUET, DataFrameTransformerEngine
 from flyte.types import TypeEngine
