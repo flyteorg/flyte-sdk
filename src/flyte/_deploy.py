@@ -187,9 +187,9 @@ async def _deploy_task(
         action = ActionID(
             name="{{.actionName}}",
             run_name="{{.runName}}",
-            project="{{.project}}",
-            domain="{{.domain}}",
-            org="{{.org}}",
+            project="{{.executionProject}}",
+            domain="{{.executionDomain}}",
+            org="{{.executionOrg}}",
         )
         tctx = TaskContext(
             action=action,
