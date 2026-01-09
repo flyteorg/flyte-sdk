@@ -6,12 +6,12 @@ from pathlib import Path
 import flyte.storage as storage
 from flyte._logging import logger
 from flyte._utils import lazy_module
+from flyte.io._dataframe.dataframe import PARQUET, DataFrame
 from flyte.io.extend import (
     DataFrameDecoder,
     DataFrameEncoder,
     DataFrameTransformerEngine,
 )
-from flyte.io._dataframe.dataframe import PARQUET, DataFrame
 from flyteidl2.core import literals_pb2, types_pb2
 
 if typing.TYPE_CHECKING:
