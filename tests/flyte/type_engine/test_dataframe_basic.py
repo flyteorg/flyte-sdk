@@ -355,3 +355,82 @@ def test_guess_python_type_raises_for_non_structured_dataset():
     lt = types_pb2.LiteralType(simple=types_pb2.SimpleType.INTEGER)
     with pytest.raises(ValueError, match="DataFrameTransformerEngine cannot reverse"):
         fdt.guess_python_type(lt)
+
+
+# ============================================================================
+# Tests for DataFrame inputs via flyte.run()
+# ============================================================================
+
+
+def test_flyte_run_with_raw_pd_dataframe_input(sample_dataframe):
+    """Test passing a raw pd.DataFrame as input to a task via flyte.run()."""
+    flyte.init()
+    env = flyte.TaskEnvironment(name="test-pd-df-input")
+
+    @env.task
+    async def process_df(df: pd.DataFrame) -> pd.DataFrame:
+        return df
+
+    run = flyte.run(process_df, df=sample_dataframe)
+    result = run.outputs()
+    assert isinstance(result, pd.DataFrame)
+    assert result.equals(sample_dataframe)
+
+
+def test_flyte_run_with_raw_pd_dataframe_input_returning_int(sample_dataframe):
+    """Test passing a raw pd.DataFrame as input to a task that returns an int."""
+    flyte.init()
+    env = flyte.TaskEnvironment(name="test-pd-df-input-int")
+
+    @env.task
+    async def count_rows(df: pd.DataFrame) -> int:
+        return len(df)
+
+    run = flyte.run(count_rows, df=sample_dataframe)
+    result = run.outputs()
+    assert result == 3  # TEST_DATA has 3 rows
+
+
+def test_flyte_run_with_flyte_dataframe_input(sample_dataframe):
+    """Test passing a flyte.io.DataFrame as input to a task via flyte.run()."""
+    flyte.init()
+    env = flyte.TaskEnvironment(name="test-fdf-input")
+
+    @env.task
+    async def process_fdf(df: DataFrame) -> DataFrame:
+        return df
+
+    flyte_dataframe = DataFrame.from_df(sample_dataframe)
+    run = flyte.run(process_fdf, df=flyte_dataframe)
+    result = run.outputs()
+    assert isinstance(result, DataFrame)
+
+
+def test_flyte_run_with_flyte_dataframe_to_pd_dataframe(sample_dataframe):
+    """Test passing a flyte.io.DataFrame input and returning pd.DataFrame."""
+    flyte.init()
+    env = flyte.TaskEnvironment(name="test-fdf-to-pd")
+
+    @env.task
+    async def fdf_to_df(df: DataFrame) -> pd.DataFrame:
+        return await df.open(pd.DataFrame).all()
+
+    flyte_dataframe = DataFrame.from_df(sample_dataframe)
+    run = flyte.run(fdf_to_df, df=flyte_dataframe)
+    result = run.outputs()
+    assert isinstance(result, pd.DataFrame)
+    assert result.equals(sample_dataframe)
+
+
+def test_flyte_run_with_pd_dataframe_to_flyte_dataframe(sample_dataframe):
+    """Test passing a pd.DataFrame input and returning flyte.io.DataFrame."""
+    flyte.init()
+    env = flyte.TaskEnvironment(name="test-pd-to-fdf")
+
+    @env.task
+    async def df_to_fdf(df: pd.DataFrame) -> DataFrame:
+        return DataFrame.from_df(df)
+
+    run = flyte.run(df_to_fdf, df=sample_dataframe)
+    result = run.outputs()
+    assert isinstance(result, DataFrame)
