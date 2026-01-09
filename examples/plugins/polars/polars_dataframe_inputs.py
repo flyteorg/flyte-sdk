@@ -50,9 +50,7 @@ from flyte._image import DIST_FOLDER, PythonWheels
 # `rm -rf ./dist-plugins && uv run python -m build --wheel --installer uv --outdir ./dist-plugins plugins/polars`
 # Once a release of the plugin is out, you can install it via `with_pip_packages("flyteplugins-polars")`
 img = flyte.Image.from_debian_base(name="flyteplugins-polars-image").clone(
-    addl_layer=PythonWheels(
-        wheel_dir=DIST_FOLDER.parent / "dist-plugins", package_name="flyteplugins-polars", pre=True
-    )
+    addl_layer=PythonWheels(wheel_dir=DIST_FOLDER.parent / "dist-plugins", package_name="flyteplugins-polars", pre=True)
 )
 
 env = flyte.TaskEnvironment(
@@ -135,7 +133,7 @@ def transform_lf_to_df(lf: pl.LazyFrame) -> pl.DataFrame:
 def filter_and_aggregate(df: pl.DataFrame) -> pl.DataFrame:
     """Demonstrate filtering and aggregation with Polars DataFrame."""
     return (
-        df.filter(pl.col("active") == True)
+        df.filter(pl.col("active"))
         .group_by("category")
         .agg(
             [
@@ -152,7 +150,7 @@ def filter_and_aggregate(df: pl.DataFrame) -> pl.DataFrame:
 def lazy_filter_and_aggregate(lf: pl.LazyFrame) -> pl.LazyFrame:
     """Demonstrate filtering and aggregation with Polars LazyFrame."""
     return (
-        lf.filter(pl.col("active") == True)
+        lf.filter(pl.col("active"))
         .group_by("category")
         .agg(
             [
