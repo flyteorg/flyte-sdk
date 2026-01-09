@@ -808,11 +808,11 @@ async def test_union_in_basemodel_wf():
     async def main(bm: BM) -> Union[int, bool, str, float]:
         return await add(bm.a, bm.b)
 
-    assert flyte.run(main, bm=BM(a=1, b=2)).outputs() == 3
-    assert flyte.run(main, bm=BM(a=True, b=False)).outputs() == 1
-    assert flyte.run(main, bm=BM(a=False, b=False)).outputs() == 0
-    assert flyte.run(main, bm=BM(a="hello", b="world")).outputs() == "helloworld"
-    assert flyte.run(main, bm=BM(a=1.0, b=2.0)).outputs() == 3.0
+    assert flyte.run(main, bm=BM(a=1, b=2)).outputs()[0] == 3
+    assert flyte.run(main, bm=BM(a=True, b=False)).outputs()[0] == 1
+    assert flyte.run(main, bm=BM(a=False, b=False)).outputs()[0] == 0
+    assert flyte.run(main, bm=BM(a="hello", b="world")).outputs()[0] == "helloworld"
+    assert flyte.run(main, bm=BM(a=1.0, b=2.0)).outputs()[0] == 3.0
 
     @env.task
     async def add_bm(bm1: BM, bm2: BM) -> Union[int, bool, str, float]:
