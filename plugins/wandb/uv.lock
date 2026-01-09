@@ -347,7 +347,7 @@ wheels = [
 
 [[package]]
 name = "flyte"
-version = "2.0.0b45"
+version = "2.0.0b47"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiofiles" },
@@ -373,7 +373,7 @@ dependencies = [
     { name = "toml" },
 ]
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/d3/5b/2774d0630abcbc62dd85bda47b15fef9ff761a8362d602e728e27e966bc4/flyte-2.0.0b45-py3-none-any.whl", hash = "sha256:550d569e8573b2e97efcc53f240a8f0bfccf7ac98ccffa92d2d82e8f547b09d7", size = 461164, upload-time = "2026-01-06T19:06:03.851Z" },
+    { url = "https://files.pythonhosted.org/packages/17/c3/1400fa6dd6f68d5992376553b46a234c95814ef609b72a1046b6bcf7ed99/flyte-2.0.0b47-py3-none-any.whl", hash = "sha256:146f0259c1f22331329075d5e14af71b2e2a07dfde708dafef6bf8a8308555c6", size = 465952, upload-time = "2026-01-08T19:19:02.022Z" },
 ]
 
 [[package]]
@@ -420,11 +420,11 @@ requires-dist = [
 
 [[package]]
 name = "fsspec"
-version = "2025.12.0"
+version = "2026.1.0"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/b6/27/954057b0d1f53f086f681755207dda6de6c660ce133c829158e8e8fe7895/fsspec-2025.12.0.tar.gz", hash = "sha256:c505de011584597b1060ff778bb664c1bc022e87921b0e4f10cc9c44f9635973", size = 309748, upload-time = "2025-12-03T15:23:42.687Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/d5/7d/5df2650c57d47c57232af5ef4b4fdbff182070421e405e0d62c6cdbfaa87/fsspec-2026.1.0.tar.gz", hash = "sha256:e987cb0496a0d81bba3a9d1cee62922fb395e7d4c3b575e57f547953334fe07b", size = 310496, upload-time = "2026-01-09T15:21:35.562Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/51/c7/b64cae5dba3a1b138d7123ec36bb5ccd39d39939f18454407e5468f4763f/fsspec-2025.12.0-py3-none-any.whl", hash = "sha256:8bf1fe301b7d8acfa6e8571e3b1c3d158f909666642431cc78a1b7b4dbc5ec5b", size = 201422, upload-time = "2025-12-03T15:23:41.434Z" },
+    { url = "https://files.pythonhosted.org/packages/01/c9/97cc5aae1648dcb851958a3ddf73ccd7dbe5650d95203ecb4d7720b4cdbf/fsspec-2026.1.0-py3-none-any.whl", hash = "sha256:cb76aa913c2285a3b49bdd5fc55b1d7c708d7208126b60f2eb8194fe1b4cbdcc", size = 201838, upload-time = "2026-01-09T15:21:34.041Z" },
 ]
 
 [[package]]
@@ -957,11 +957,11 @@ wheels = [
 
 [[package]]
 name = "packaging"
-version = "25.0"
+version = "26.0rc1"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/a1/d4/1fc4078c65507b51b96ca8f8c3ba19e6a61c8253c72794544580a7b6c24d/packaging-25.0.tar.gz", hash = "sha256:d443872c98d677bf60f6a1f2f8c1cb748e8fe762d2bf9d3148b5599295b0fc4f", size = 165727, upload-time = "2025-04-19T11:48:59.673Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/55/d0/88784ecdb0e481b39af721f637a60046e6f09ca03553aa71d788062e2012/packaging-26.0rc1.tar.gz", hash = "sha256:2104df24f61f17179ac8459cda8138cd344967d3b4f0934afa582a6826963fc5", size = 142273, upload-time = "2026-01-09T17:41:18.505Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/20/12/38679034af332785aac8774540895e234f4d07f7545804097de4b666afd8/packaging-25.0-py3-none-any.whl", hash = "sha256:29572ef2b1f17581046b3a2227d5c611fb25ec70ca1ba8554b24b0e69331a484", size = 66469, upload-time = "2025-04-19T11:48:57.875Z" },
+    { url = "https://files.pythonhosted.org/packages/40/35/ddf3a6e8fc754fb939e2ea36fde96c28189184d6115afcf60011bb438ae5/packaging-26.0rc1-py3-none-any.whl", hash = "sha256:ecf921b33c620e357b1eed2ac3bc6313b1582874b0282d0773b6797b79cb0786", size = 74021, upload-time = "2026-01-09T17:41:17.134Z" },
 ]
 
 [[package]]
