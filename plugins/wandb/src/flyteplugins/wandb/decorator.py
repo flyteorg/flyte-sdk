@@ -1,0 +1,301 @@
+import functools
+import logging
+from contextlib import contextmanager
+from dataclasses import asdict
+from inspect import iscoroutinefunction
+from typing import Any, Callable, Optional, TypeVar, cast
+
+import wandb
+
+import flyte
+from flyte._task import AsyncFunctionTaskTemplate
+
+from .context import get_wandb_context, get_wandb_sweep_context
+from .link import Wandb, WandbSweep
+
+logger = logging.getLogger(__name__)
+
+F = TypeVar("F", bound=Callable[..., Any])
+
+
+def _build_init_kwargs() -> dict[str, Any]:
+    """Build wandb.init() kwargs from current context config."""
+    context_config = get_wandb_context()
+    if context_config:
+        config_dict = asdict(context_config)
+        extra_kwargs = config_dict.pop("kwargs", None) or {}
+        return {
+            **extra_kwargs,
+            **{k: v for k, v in config_dict.items() if v is not None},
+        }
+    return {}
+
+
+@contextmanager
+def _wandb_run(new_run: bool = "auto", func: bool = False, **decorator_kwargs):
+    """Context manager for wandb run lifecycle."""
+    # Try to get Flyte context
+    ctx = flyte.ctx()
+
+    # This enables @wandb_init to work in wandb.agent() callbacks (sweep objectives)
+    if func and ctx is None:
+        # Use config from decorator params (no lazy init for fallback mode)
+        run = wandb.init(**decorator_kwargs)
+        try:
+            yield run
+        finally:
+            run.finish()
+        return
+    elif func and ctx:
+        raise RuntimeError(
+            "@wandb_init cannot be applied to traces. "
+            "Traces can access the parent's wandb run via flyte.ctx().wandb_run."
+        )
+
+    # Full Flyte-aware mode with lazy initialization
+    # Save existing state to restore later
+    saved_run = ctx.data.get("_wandb_run")
+    saved_run_id = ctx.custom_context.get("_wandb_run_id")
+    saved_init_kwargs = ctx.data.get("_wandb_init_kwargs")
+
+    # Build init kwargs from context
+    context_init_kwargs = _build_init_kwargs()
+    init_kwargs = {**context_init_kwargs, **decorator_kwargs}
+
+    # Store initialization parameters for lazy init
+    # The wandb_run property will call wandb.init() on first access
+    ctx.data["_wandb_init_kwargs"] = {
+        "new_run": new_run,
+        "init_kwargs": init_kwargs,
+        "saved_run_id": saved_run_id,
+    }
+
+    try:
+        yield None
+    finally:
+        # Clean up the run if it was initialized
+        run = ctx.data.get("_wandb_run")
+        if run and run != saved_run:  # Only finish if we created it
+            try:
+                # Check if there was an exception (handled by caller)
+                run.finish(exit_code=0)
+            except Exception:
+                try:
+                    run.finish(exit_code=1)
+                except Exception:
+                    pass  # Ignore errors during cleanup
+                raise
+
+        # Restore task-local state
+        if saved_run is not None:
+            ctx.data["_wandb_run"] = saved_run
+        else:
+            ctx.data.pop("_wandb_run", None)
+
+        # Restore run ID
+        if saved_run_id is not None:
+            ctx.custom_context["_wandb_run_id"] = saved_run_id
+        else:
+            ctx.custom_context.pop("_wandb_run_id", None)
+
+        # Restore init kwargs
+        if saved_init_kwargs is not None:
+            ctx.data["_wandb_init_kwargs"] = saved_init_kwargs
+        else:
+            ctx.data.pop("_wandb_init_kwargs", None)
+
+
+def wandb_init(
+    _func: Optional[F] = None,
+    *,
+    new_run: bool | str = "auto",
+    project: Optional[str] = None,
+    entity: Optional[str] = None,
+    **kwargs,
+) -> F:
+    """
+    Decorator to automatically initialize wandb for Flyte tasks and traces.
+
+    Uses lazy initialization: wandb.init() is called when flyte.ctx().wandb_run is first
+    accessed, ensuring all decorators (including @flyte.trace) have set up their contexts.
+
+    Works with or without Flyte context - decorator params provide config when context unavailable.
+
+    Args:
+        new_run: Controls whether to create a new W&B run or reuse an existing one:
+                 - "auto" (default): Creates new run if no parent run exists, otherwise reuses parent's run
+                 - True: Always creates a new wandb run with a unique ID
+                 - False: Always reuses the parent's run ID (useful for child tasks)
+        project: W&B project name (overrides context config if provided)
+        entity: W&B entity/team name (overrides context config if provided)
+        **kwargs: Additional wandb.init() parameters (tags, config, mode, etc.)
+
+    Decorator Order:
+        For tasks, @wandb_init must be the outermost decorator:
+        @wandb_init
+        @env.task
+        async def my_task():
+            ...
+
+    This decorator:
+    1. Lazily initializes wandb on first access to flyte.ctx().wandb_run
+    2. Auto-generates unique run ID from Flyte action context (reads action name at init time)
+    3. Makes the run available via flyte.ctx().wandb_run
+    4. Automatically adds a W&B link to the task in the Flyte UI
+    5. Automatically finishes the run after completion
+    """
+
+    def decorator(func: F) -> F:
+        # Build decorator kwargs dict to pass to _wandb_run
+        decorator_kwargs = {}
+        if project is not None:
+            decorator_kwargs["project"] = project
+        if entity is not None:
+            decorator_kwargs["entity"] = entity
+        decorator_kwargs.update(kwargs)
+
+        # Check if it's a Flyte task (AsyncFunctionTaskTemplate)
+        if isinstance(func, AsyncFunctionTaskTemplate):
+            # Create a Wandb link
+            # Even if new_run=False, we still add a link - it will point to the parent's run
+            wandb_link = Wandb(project=project, entity=entity, new_run=new_run)
+
+            # Get existing links from the task and add wandb link
+            existing_links = getattr(func, "_links", ())
+
+            # Use override to properly add the link to the task
+            func = func.override(links=existing_links + (wandb_link,))
+
+            # Wrap the task's execute method with wandb_run
+            original_execute = func.execute
+
+            if iscoroutinefunction(original_execute):
+
+                async def wrapped_execute(*args, **exec_kwargs):
+                    with _wandb_run(new_run=new_run, **decorator_kwargs):
+                        return await original_execute(*args, **exec_kwargs)
+
+                func.execute = wrapped_execute
+            else:
+
+                def wrapped_execute(*args, **exec_kwargs):
+                    with _wandb_run(new_run=new_run, **decorator_kwargs):
+                        return original_execute(*args, **exec_kwargs)
+
+                func.execute = wrapped_execute
+
+            return cast(F, func)
+        # Regular function
+        else:
+            if iscoroutinefunction(func):
+
+                @functools.wraps(func)
+                async def async_wrapper(*args, **wrapper_kwargs):
+                    with _wandb_run(new_run=new_run, func=True, **decorator_kwargs):
+                        return await func(*args, **wrapper_kwargs)
+
+                return cast(F, async_wrapper)
+            else:
+
+                @functools.wraps(func)
+                def sync_wrapper(*args, **wrapper_kwargs):
+                    with _wandb_run(new_run=new_run, func=True, **decorator_kwargs):
+                        return func(*args, **wrapper_kwargs)
+
+                return cast(F, sync_wrapper)
+
+    if _func is None:
+        return decorator
+    return decorator(_func)
+
+
+@contextmanager
+def _create_sweep():
+    """Context manager for wandb sweep creation."""
+    ctx = flyte.ctx()
+
+    # Get sweep config from context
+    sweep_config = get_wandb_sweep_context()
+    if not sweep_config:
+        raise RuntimeError(
+            "No wandb sweep config found. Use wandb_sweep_config() "
+            "with flyte.with_runcontext() or as a context manager."
+        )
+
+    # Get wandb config for project/entity (fallback)
+    wandb_config = get_wandb_context()
+    project = sweep_config.project or (wandb_config.project if wandb_config else None)
+    entity = sweep_config.entity or (wandb_config.entity if wandb_config else None)
+    prior_runs = sweep_config.prior_runs or []
+
+    # Create the sweep
+    sweep_id = wandb.sweep(
+        sweep=sweep_config.to_sweep_config(),
+        project=project,
+        entity=entity,
+        prior_runs=prior_runs,
+    )
+
+    # Store sweep_id, project, and entity in context (accessible to links)
+    ctx.custom_context["_wandb_sweep_id"] = sweep_id
+    if project:
+        ctx.custom_context["_wandb_project"] = project
+    if entity:
+        ctx.custom_context["_wandb_entity"] = entity
+
+    try:
+        yield sweep_id
+    finally:
+        # Clean up
+        ctx.custom_context.pop("_wandb_sweep_id", None)
+
+
+def wandb_sweep(_func: Optional[F] = None) -> F:
+    """
+    Decorator to create a wandb sweep and make sweep_id available.
+
+    This decorator:
+    1. Creates a wandb sweep using config from context
+    2. Makes sweep_id available via flyte.ctx().wandb_sweep_id
+    3. Automatically adds a W&B sweep link to the task
+
+    The local controller pattern is recommended for production workloads with Flyte,
+    as it allows Flyte to handle orchestration while W&B provides the sweep algorithm.
+    """
+
+    def decorator(func: F) -> F:
+        # Check if it's a Flyte task (AsyncFunctionTaskTemplate)
+        if isinstance(func, AsyncFunctionTaskTemplate):
+            # Create a WandbSweep link
+            wandb_sweep_link = WandbSweep()
+
+            # Get existing links from the task and add wandb sweep link
+            existing_links = getattr(func, "_links", ())
+
+            # Use override to properly add the link to the task
+            func = func.override(links=existing_links + (wandb_sweep_link,))
+
+            original_execute = func.execute
+
+            if iscoroutinefunction(original_execute):
+
+                async def wrapped_execute(*args, **kwargs):
+                    with _create_sweep():
+                        return await original_execute(*args, **kwargs)
+
+                func.execute = wrapped_execute
+            else:
+
+                def wrapped_execute(*args, **kwargs):
+                    with _create_sweep():
+                        return original_execute(*args, **kwargs)
+
+                func.execute = wrapped_execute
+
+            return cast(F, func)
+        else:
+            raise RuntimeError("@wandb_sweep can only be used with Flyte tasks.")
+
+    if _func is None:
+        return decorator
+    return decorator(_func)
