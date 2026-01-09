@@ -60,13 +60,13 @@ async def test_not_supported_types():
 @pytest.mark.asyncio
 async def test_add_run():
     v = flyte.run(add, 3, 5)
-    assert v.outputs() == 8
+    assert v.outputs()[0] == 8
 
 
 @pytest.mark.asyncio
 async def test_nested_run():
     v = flyte.run(nested, 3, 5)
-    assert v.outputs() == 8
+    assert v.outputs()[0] == 8
 
 
 @pytest.mark.asyncio

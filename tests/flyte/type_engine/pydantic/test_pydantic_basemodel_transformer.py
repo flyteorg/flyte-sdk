@@ -819,13 +819,13 @@ async def test_union_in_basemodel_wf():
         return bm1.a + bm2.b  # type: ignore
 
     bm = BM(a=1, b=2)
-    assert flyte.run(add_bm, bm1=bm, bm2=bm).outputs() == 3
+    assert flyte.run(add_bm, bm1=bm, bm2=bm).outputs()[0] == 3
 
     @env.task
     async def return_bm(bm: BM) -> BM:
         return bm
 
-    assert flyte.run(return_bm, bm=BM(a=1, b=2)).outputs() == BM(a=1, b=2)
+    assert flyte.run(return_bm, bm=BM(a=1, b=2)).outputs()[0] == BM(a=1, b=2)
 
 
 @pytest.mark.asyncio
