@@ -245,3 +245,113 @@ async def test_raw_df_io_triggers_engine(sample_dataframe, ctx_with_test_raw_dat
     run = flyte.with_runcontext("local").run(process_raw_df, sample_dataframe)
     result = run.outputs()[0]
     assert result.equals(sample_dataframe)
+
+
+def test_get_type_tag_for_dataframe():
+    """Test _get_type_tag returns None for DataFrame class itself."""
+    fdt = DataFrameTransformerEngine()
+    assert fdt._get_type_tag(DataFrame) is None
+
+
+def test_get_type_tag_for_annotated_dataframe():
+    """Test _get_type_tag returns None for annotated DataFrame."""
+    fdt = DataFrameTransformerEngine()
+    my_cols = OrderedDict(name=str, age=int)
+    annotated_df = typing.Annotated[DataFrame, my_cols]
+    assert fdt._get_type_tag(annotated_df) is None
+
+
+def test_get_type_tag_for_pandas_dataframe():
+    """Test _get_type_tag returns the fully qualified name for pd.DataFrame."""
+    fdt = DataFrameTransformerEngine()
+    tag = fdt._get_type_tag(pd.DataFrame)
+    assert tag == "pandas.core.frame.DataFrame"
+
+
+def test_get_type_tag_for_annotated_pandas():
+    """Test _get_type_tag extracts base type from Annotated and returns tag."""
+    fdt = DataFrameTransformerEngine()
+    my_cols = OrderedDict(name=str, age=int)
+    annotated_pd = typing.Annotated[pd.DataFrame, my_cols]
+    tag = fdt._get_type_tag(annotated_pd)
+    assert tag == "pandas.core.frame.DataFrame"
+
+
+def test_get_literal_type_includes_tag_for_pandas():
+    """Test get_literal_type includes TypeStructure tag for pd.DataFrame."""
+    lt = TypeEngine.to_literal_type(pd.DataFrame)
+    assert lt.structured_dataset_type is not None
+    assert lt.HasField("structure")
+    assert lt.structure.tag == "pandas.core.frame.DataFrame"
+
+
+def test_get_literal_type_no_tag_for_dataframe():
+    """Test get_literal_type does NOT include tag for DataFrame class."""
+    lt = TypeEngine.to_literal_type(DataFrame)
+    assert lt.structured_dataset_type is not None
+    # DataFrame itself should not have a tag
+    assert not lt.structure.tag
+
+
+def test_get_literal_type_includes_tag_for_annotated_pandas():
+    """Test get_literal_type includes tag for annotated pd.DataFrame."""
+    my_cols = OrderedDict(name=str, age=int)
+    annotated_pd = typing.Annotated[pd.DataFrame, my_cols]
+    lt = TypeEngine.to_literal_type(annotated_pd)
+    assert lt.structured_dataset_type is not None
+    assert len(lt.structured_dataset_type.columns) == 2
+    assert lt.HasField("structure")
+    assert lt.structure.tag == "pandas.core.frame.DataFrame"
+
+
+def test_guess_python_type_returns_dataframe_for_no_tag():
+    """Test guess_python_type returns DataFrame when no tag is present."""
+    fdt = DataFrameTransformerEngine()
+    lt = types_pb2.LiteralType(structured_dataset_type=types_pb2.StructuredDatasetType())
+    pt = fdt.guess_python_type(lt)
+    assert pt is DataFrame
+
+
+def test_guess_python_type_returns_pandas_for_pandas_tag():
+    """Test guess_python_type returns pd.DataFrame when pandas tag is present."""
+    fdt = DataFrameTransformerEngine()
+    lt = types_pb2.LiteralType(
+        structured_dataset_type=types_pb2.StructuredDatasetType(),
+        structure=types_pb2.TypeStructure(tag="pandas.core.frame.DataFrame"),
+    )
+    pt = fdt.guess_python_type(lt)
+    assert pt is pd.DataFrame
+
+
+def test_guess_python_type_roundtrip_pandas():
+    """Test roundtrip: to_literal_type -> guess_python_type for pd.DataFrame."""
+    lt = TypeEngine.to_literal_type(pd.DataFrame)
+    pt = TypeEngine.guess_python_type(lt)
+    assert pt is pd.DataFrame
+
+
+def test_guess_python_type_roundtrip_dataframe():
+    """Test roundtrip: to_literal_type -> guess_python_type for DataFrame."""
+    lt = TypeEngine.to_literal_type(DataFrame)
+    pt = TypeEngine.guess_python_type(lt)
+    assert pt is DataFrame
+
+
+def test_guess_python_type_fallback_for_unknown_tag():
+    """Test guess_python_type falls back to DataFrame for unknown tags."""
+    fdt = DataFrameTransformerEngine()
+    lt = types_pb2.LiteralType(
+        structured_dataset_type=types_pb2.StructuredDatasetType(),
+        structure=types_pb2.TypeStructure(tag="unknown.module.UnknownDataFrame"),
+    )
+    pt = fdt.guess_python_type(lt)
+    # Should fall back to DataFrame for unknown types
+    assert pt is DataFrame
+
+
+def test_guess_python_type_raises_for_non_structured_dataset():
+    """Test guess_python_type raises ValueError for non-structured dataset types."""
+    fdt = DataFrameTransformerEngine()
+    lt = types_pb2.LiteralType(simple=types_pb2.SimpleType.INTEGER)
+    with pytest.raises(ValueError, match="DataFrameTransformerEngine cannot reverse"):
+        fdt.guess_python_type(lt)
