@@ -161,7 +161,7 @@ if __name__ == "__main__":
 
     # Example 1: Using polars DataFrame (eager evaluation)
     print("Example 1: Polars DataFrame (eager evaluation)")
-    df_run  = flyte.run(create_polars_dataframe)
+    df_run = flyte.run(create_polars_dataframe)
     print(df_run.url)
     print(df_run.wait())
     df_result: pl.DataFrame = df_run.outputs()[0]
@@ -197,9 +197,7 @@ if __name__ == "__main__":
 
     # Example 4: Combining DataFrame and LazyFrame
     print("\n\nExample 4: Combining DataFrame and LazyFrame")
-    combined_run = flyte.run(
-        combine_dataframes, df1=df_result, df2=lf_result
-    )
+    combined_run = flyte.run(combine_dataframes, df1=df_result, df2=lf_result)
     print(combined_run.url)
     print(combined_run.wait())
     combined_output = combined_run.outputs()[0]

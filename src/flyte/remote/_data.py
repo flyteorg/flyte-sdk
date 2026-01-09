@@ -235,6 +235,9 @@ async def upload_dir(dir_path: Path, verify: bool = True) -> str:
     urls = await asyncio.gather(*uploaded_files)
     native_url = urls[0][1]  # Assuming all files are uploaded to the same prefix
     # native_url is of the form s3://my-s3-bucket/flytesnacks/development/{prefix}/source/empty.md
-    uri = native_url.split(prefix)[0] + "/" + prefix
+    uri = native_url.split(prefix)[0]
+    if not uri.endswith("/"):
+        uri += "/"
+    uri += prefix
 
     return uri
