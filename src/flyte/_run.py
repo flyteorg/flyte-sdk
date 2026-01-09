@@ -494,6 +494,7 @@ class _Runner:
 
     async def _run_local(self, obj: TaskTemplate[P, R, F], *args: P.args, **kwargs: P.kwargs) -> Run:
         from flyteidl2.common import identifier_pb2
+        from flyteidl2.task import common_pb2
 
         from flyte._internal.controllers import create_controller
         from flyte._internal.controllers._local_controller import LocalController
@@ -550,7 +551,9 @@ class _Runner:
             def __init__(self, outputs: Tuple[Any, ...] | Any):
                 from flyteidl2.workflow import run_definition_pb2
 
-                self._outputs = outputs
+                self._outputs = ActionOutputs(
+                    common_pb2.Outputs(), outputs if isinstance(outputs, tuple) else (outputs,)
+                )
                 super().__init__(
                     pb2=run_definition_pb2.Run(
                         action=run_definition_pb2.Action(
@@ -576,7 +579,7 @@ class _Runner:
 
             @syncify
             async def outputs(self) -> ActionOutputs:  # type: ignore[override]
-                return cast(ActionOutputs, self._outputs)
+                return self._outputs
 
         return _LocalRun(outputs)
 
