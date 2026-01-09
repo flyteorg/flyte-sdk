@@ -16,9 +16,10 @@ if "GRPC_VERBOSITY" not in os.environ:
 #### Has to be before grpc
 
 import grpc
-from flyteidl.service import admin_pb2_grpc, dataproxy_pb2_grpc
-from flyteidl2.auth import identity_pb2_grpc
+from flyteidl.service import dataproxy_pb2_grpc
 from flyteidl2.app import app_service_pb2_grpc
+from flyteidl2.auth import identity_pb2_grpc
+from flyteidl2.project import project_service_pb2_grpc
 from flyteidl2.secret import secret_pb2_grpc
 from flyteidl2.task import task_service_pb2_grpc
 from flyteidl2.trigger import trigger_service_pb2_grpc
@@ -28,7 +29,6 @@ from ._protocols import (
     AppService,
     DataProxyService,
     IdentityService,
-    MetadataServiceProtocol,
     ProjectDomainService,
     RunLogsService,
     RunService,
@@ -187,7 +187,7 @@ class ClientSet:
         self.insecure = insecure
         self._channel = channel
         self._console = Console(self.endpoint, self.insecure)
-        self._admin_client = admin_pb2_grpc.AdminServiceStub(channel=channel)
+        self._admin_client = project_service_pb2_grpc.ProjectServiceStub(channel=channel)
         self._task_service = task_service_pb2_grpc.TaskServiceStub(channel=channel)
         self._app_service = app_service_pb2_grpc.AppServiceStub(channel=channel)
         self._run_service = run_service_pb2_grpc.RunServiceStub(channel=channel)
@@ -222,10 +222,6 @@ class ClientSet:
     @classmethod
     async def from_env(cls) -> ClientSet:
         raise NotImplementedError
-
-    @property
-    def metadata_service(self) -> MetadataServiceProtocol:
-        return self._admin_client
 
     @property
     def project_domain_service(self) -> ProjectDomainService:

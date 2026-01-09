@@ -10,8 +10,7 @@ from enum import Enum, auto
 from typing import Dict, List
 
 import pytest
-from flyteidl2.core import errors_pb2
-from flyteidl2.core import literals_pb2, types_pb2
+from flyteidl2.core import errors_pb2, literals_pb2, types_pb2
 from flyteidl2.core.literals_pb2 import (
     Literal,
     LiteralCollection,
