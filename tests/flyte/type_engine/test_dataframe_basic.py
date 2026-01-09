@@ -372,7 +372,7 @@ def test_flyte_run_with_raw_pd_dataframe_input(sample_dataframe):
         return df
 
     run = flyte.run(process_df, df=sample_dataframe)
-    result = run.outputs()
+    result = run.outputs()[0]
     assert isinstance(result, pd.DataFrame)
     assert result.equals(sample_dataframe)
 
@@ -387,7 +387,7 @@ def test_flyte_run_with_raw_pd_dataframe_input_returning_int(sample_dataframe):
         return len(df)
 
     run = flyte.run(count_rows, df=sample_dataframe)
-    result = run.outputs()
+    result = run.outputs()[0]
     assert result == 3  # TEST_DATA has 3 rows
 
 
@@ -402,7 +402,7 @@ def test_flyte_run_with_flyte_dataframe_input(sample_dataframe):
 
     flyte_dataframe = DataFrame.from_df(sample_dataframe)
     run = flyte.run(process_fdf, df=flyte_dataframe)
-    result = run.outputs()
+    result = run.outputs()[0]
     assert isinstance(result, DataFrame)
 
 
@@ -417,7 +417,7 @@ def test_flyte_run_with_flyte_dataframe_to_pd_dataframe(sample_dataframe):
 
     flyte_dataframe = DataFrame.from_df(sample_dataframe)
     run = flyte.run(fdf_to_df, df=flyte_dataframe)
-    result = run.outputs()
+    result = run.outputs()[0]
     assert isinstance(result, pd.DataFrame)
     assert result.equals(sample_dataframe)
 
@@ -432,5 +432,5 @@ def test_flyte_run_with_pd_dataframe_to_flyte_dataframe(sample_dataframe):
         return DataFrame.from_df(df)
 
     run = flyte.run(df_to_fdf, df=sample_dataframe)
-    result = run.outputs()
+    result = run.outputs()[0]
     assert isinstance(result, DataFrame)
