@@ -121,14 +121,6 @@ jobs:
           TWINE_PASSWORD: ${{ secrets.PYPI_PASSWORD }}
         run: |
           uv run --prerelease allow python -m twine upload --verbose dist/*
-      - name: Build and push the plugin image
-        if: ${{ matrix.image-type }}
-        env:
-          FLYTE_SDK_CI_TOKEN: "${{ secrets.FLYTE_SDK_CI_TOKEN }}"
-          FLYTE_DOCKER_BUILDER_CACHE_FROM: "type=gha"
-          FLYTE_DOCKER_BUILDER_CACHE_TO: "type=gha,mode=max"
-        run: |
-          uv run --with ${{ matrix.workdir }} python maint_tools/build_plugin_image.py --type ${{ matrix.image-type }}
 
   build-and-push-flyte-docker-images:
     needs: flyte-pypi

@@ -542,10 +542,10 @@ def get_init_config() -> _InitConfig:
     cfg = _get_init_config()
     if cfg is None:
         raise InitializationError(
-            "StorageNotInitializedError",
+            "ClientNotInitializedError",
             "user",
-            "Configuration has not been initialized. Call flyte.init() with a valid endpoint or",
-            " api-key before using this function.",
+            "Configuration has not been initialized. Call flyte.init() with a valid endpoint/api-key before",
+            " using this function or Call flyte.init_from_config() with a valid path to the config file",
         )
     return cfg
 
@@ -561,8 +561,9 @@ def get_storage() -> Storage | None:
         raise InitializationError(
             "StorageNotInitializedError",
             "user",
-            "Configuration has not been initialized. Call flyte.init() with a valid endpoint or",
-            " api-key before using this function.",
+            "Configuration has not been initialized. Call flyte.init() with a valid"
+            " storage configuration before using this function or Call flyte.init_from_config()"
+            " with a valid path to the config file",
         )
     return cfg.storage
 
@@ -578,8 +579,8 @@ def get_client() -> ClientSet:
         raise InitializationError(
             "ClientNotInitializedError",
             "user",
-            "Client has not been initialized. Call flyte.init() with a valid endpoint or"
-            " api-key before using this function.",
+            "Client has not been initialized. Call flyte.init() with a valid endpoint/api-key "
+            "before using this function or Call flyte.init_from_config() with a valid path to the config file",
         )
     return cfg.client
 
@@ -615,8 +616,8 @@ def ensure_client():
         raise InitializationError(
             "ClientNotInitializedError",
             "user",
-            "Client has not been initialized. Call flyte.init() with a valid endpoint"
-            " or api-key before using this function.",
+            "Client has not been initialized. Call flyte.init() with a valid endpoint/api-key before using"
+            " this function or Call flyte.init_from_config() with a valid path to the config file",
         )
 
 
@@ -636,7 +637,8 @@ def requires_storage(func: T) -> T:
                 "StorageNotInitializedError",
                 "user",
                 f"Function '{func.__name__}' requires storage to be initialized. "
-                f"Call flyte.init() with a valid storage configuration before using this function.",
+                "Call flyte.init() with a valid storage configuration before using this function."
+                "or Call flyte.init_from_config() with a valid path to the config file",
             )
         return func(*args, **kwargs)
 
@@ -662,7 +664,8 @@ def requires_upload_location(func: T) -> T:
                 "No upload path configured",
                 "user",
                 f"Function '{func.__name__}' requires client to be initialized. "
-                f"Call flyte.init() with storage configuration before using this function.",
+                "Call flyte.init() with storage configuration before using this function."
+                "or Call flyte.init_from_config() with a valid path to the config file.",
             )
         return func(*args, **kwargs)
 
@@ -684,7 +687,8 @@ def requires_initialization(func: T) -> T:
             raise InitializationError(
                 "NotInitConfiguredError",
                 "user",
-                f"Function '{func.__name__}' requires initialization. Call flyte.init() before using this function.",
+                f"Function '{func.__name__}' requires initialization. Call flyte.init() before using this function"
+                " or Call flyte.init_from_config() with a valid path to the config file.",
             )
         return func(*args, **kwargs)
 
@@ -773,6 +777,7 @@ def current_domain() -> str:
         raise InitializationError(
             "DomainNotInitializedError",
             "user",
-            "Domain has not been initialized. Call flyte.init() with a valid domain before using this function.",
+            "Domain has not been initialized. Call flyte.init() with a valid domain before using this function"
+            " or Call flyte.init_from_config() with a valid path to the config file",
         )
     return cfg.domain
