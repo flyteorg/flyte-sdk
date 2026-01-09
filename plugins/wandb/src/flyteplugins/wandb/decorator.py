@@ -1,4 +1,5 @@
 import functools
+import warnings
 from contextlib import contextmanager
 from dataclasses import asdict
 from inspect import iscoroutinefunction
@@ -92,6 +93,7 @@ def _wandb_run(new_run: bool = True, **decorator_kwargs):
         else:
             ctx.custom_context.pop("_wandb_run_id", None)
 
+        # Restore action
         if saved_action is not None:
             ctx.custom_context["_wandb_init_action"] = saved_action
         else:
@@ -107,7 +109,7 @@ def _wandb_run(new_run: bool = True, **decorator_kwargs):
 def wandb_init(
     _func: Optional[F] = None,
     *,
-    new_run: bool = True,
+    new_run: bool | str = "auto",
     project: Optional[str] = None,
     entity: Optional[str] = None,
     **kwargs,
@@ -117,35 +119,31 @@ def wandb_init(
 
     Uses lazy initialization: wandb.init() is called when flyte.ctx().wandb_run is first
     accessed, ensuring all decorators (including @flyte.trace) have set up their contexts.
-    This means @wandb_init works with ANY decorator ordering.
 
     Works with or without Flyte context - decorator params provide config when context unavailable.
 
     Args:
-        new_run: If True (default), creates a new wandb run with a unique ID.
-                 If False, reuses the parent's run ID (useful for child tasks
-                 that should log to the same run as their parent).
+        new_run: Controls whether to create a new W&B run or reuse an existing one:
+                 - "auto" (default): Creates new run if no parent run exists, otherwise reuses parent's run
+                 - True: Always creates a new wandb run with a unique ID
+                 - False: Always reuses the parent's run ID (useful for child tasks)
         project: W&B project name (overrides context config if provided)
         entity: W&B entity/team name (overrides context config if provided)
         **kwargs: Additional wandb.init() parameters (tags, config, mode, etc.)
 
-    Behavior:
-        - Without Flyte context: Uses decorator params directly
-        - With Flyte context: Merges context config + decorator params (decorator wins)
+    Decorator Order:
+        For tasks, @wandb_init must be the outermost decorator:
+        @wandb_init
+        @env.task
+        async def my_task():
+            ...
 
     This decorator:
     1. Lazily initializes wandb on first access to flyte.ctx().wandb_run
     2. Auto-generates unique run ID from Flyte action context (reads action name at init time)
-    3. Makes the run available via flyte.ctx().wandb_run (or wandb.run in fallback mode)
-    4. Automatically finishes the run after completion
-
-    Example with @flyte.trace (any decorator order works):
-        @wandb_init
-        @flyte.trace
-        async def my_trace(x: int) -> str:
-            run = flyte.ctx().wandb_run  # Initialized here with correct trace action
-            run.log({"value": x})
-            return f"processed: {x}"
+    3. Makes the run available via flyte.ctx().wandb_run
+    4. Automatically adds a W&B link to the task in the Flyte UI
+    5. Automatically finishes the run after completion
     """
 
     def decorator(func: F) -> F:
@@ -159,30 +157,15 @@ def wandb_init(
 
         # Check if it's a Flyte task (AsyncFunctionTaskTemplate)
         if isinstance(func, AsyncFunctionTaskTemplate):
-            # Get project and entity for the link
-            # Priority: decorator params > context config > None (will use defaults)
-            link_project = project
-            link_entity = entity
+            # Create a Wandb link
+            # Even if new_run=False, we still add a link - it will point to the parent's run
+            wandb_link = Wandb(project=project, entity=entity, new_run=new_run)
 
-            # Try to get from context if not provided in decorator
-            if link_project is None or link_entity is None:
-                context_config = get_wandb_context()
-                if context_config:
-                    if link_project is None:
-                        link_project = context_config.project
-                    if link_entity is None:
-                        link_entity = context_config.entity
+            # Get existing links from the task and add wandb link
+            existing_links = getattr(func, "_links", ())
 
-            # Only add link if we have both project and entity
-            if link_project and link_entity:
-                # Create a Wandb link (run ID will be retrieved from context at runtime)
-                wandb_link = Wandb(project=link_project, entity=link_entity)
-
-                # Get existing links from the task
-                existing_links = getattr(func, "_links", ())
-
-                # Add the wandb link to the task using override
-                func = func.override(links=existing_links + (wandb_link,))
+            # Use override to properly add the link to the task
+            func = func.override(links=existing_links + (wandb_link,))
 
             # Wrap the task's execute method with wandb_run
             original_execute = func.execute
@@ -204,7 +187,21 @@ def wandb_init(
 
             return cast(F, func)
         else:
+            # Not a Flyte task - W&B links cannot be added
+            func_name = getattr(func, "__name__", "unknown")
+            warnings.warn(
+                f"@wandb_init applied to '{func_name}' which is not a Flyte task. "
+                f"W&B links will not be added to the Flyte UI. "
+                f"If this is a task, ensure @wandb_init is applied after @env.task:\n"
+                f"  @wandb_init\n"
+                f"  @env.task\n"
+                f"  async def {func_name}(): ...",
+                UserWarning,
+                stacklevel=2,
+            )
+
             # Regular function (e.g. @flyte.trace)
+            # Note: decorator order doesn't matter for non-task functions
             if iscoroutinefunction(func):
 
                 @functools.wraps(func)
@@ -254,8 +251,12 @@ def _create_sweep():
         prior_runs=prior_runs,
     )
 
-    # Store sweep_id in context (string, so custom_context is sufficient)
+    # Store sweep_id, project, and entity in context (accessible to links)
     ctx.custom_context["_wandb_sweep_id"] = sweep_id
+    if project:
+        ctx.custom_context["_wandb_project"] = project
+    if entity:
+        ctx.custom_context["_wandb_entity"] = entity
 
     try:
         yield sweep_id
@@ -280,35 +281,14 @@ def wandb_sweep(_func: Optional[F] = None) -> F:
     def decorator(func: F) -> F:
         # Check if it's a Flyte task (AsyncFunctionTaskTemplate)
         if isinstance(func, AsyncFunctionTaskTemplate):
-            # Get project and entity for the link
-            link_project = None
-            link_entity = None
+            # Create a WandbSweep link
+            wandb_sweep_link = WandbSweep()
 
-            # Try to get from sweep context first
-            sweep_config = get_wandb_sweep_context()
-            if sweep_config:
-                link_project = sweep_config.project
-                link_entity = sweep_config.entity
+            # Get existing links from the task and add wandb sweep link
+            existing_links = getattr(func, "_links", ())
 
-            # Fallback to wandb context if not in sweep config
-            if link_project is None or link_entity is None:
-                wandb_config = get_wandb_context()
-                if wandb_config:
-                    if link_project is None:
-                        link_project = wandb_config.project
-                    if link_entity is None:
-                        link_entity = wandb_config.entity
-
-            # Only add link if we have both project and entity
-            if link_project and link_entity:
-                # Create a WandbSweep link (sweep_id will be retrieved from context at runtime)
-                wandb_sweep_link = WandbSweep(project=link_project, entity=link_entity)
-
-                # Get existing links from the task
-                existing_links = getattr(func, "_links", ())
-
-                # Add the wandb sweep link to the task using override
-                func = func.override(links=existing_links + (wandb_sweep_link,))
+            # Use override to properly add the link to the task
+            func = func.override(links=existing_links + (wandb_sweep_link,))
 
             original_execute = func.execute
 
@@ -329,7 +309,21 @@ def wandb_sweep(_func: Optional[F] = None) -> F:
 
             return cast(F, func)
         else:
-            # Regular function (e.g. @flyte.trace)
+            # Not a Flyte task - W&B links cannot be added
+            func_name = getattr(func, "__name__", "unknown")
+            warnings.warn(
+                f"@wandb_sweep applied to '{func_name}' which is not a Flyte task. "
+                f"W&B sweep links will not be added to the Flyte UI. "
+                f"If this is a task, ensure @wandb_sweep is applied after @env.task:\n"
+                f"  @wandb_sweep\n"
+                f"  @env.task\n"
+                f"  async def {func_name}(): ...",
+                UserWarning,
+                stacklevel=2,
+            )
+
+            # Regular function (not a task)
+            # Note: decorator order doesn't matter for non-task functions
             if iscoroutinefunction(func):
 
                 @functools.wraps(func)

@@ -32,11 +32,10 @@ env = flyte.TaskEnvironment(
         ),
         name="wandb-test",
     ),
-    secrets=[flyte.Secret(key="samhita_wandb_api_key", as_env_var="WANDB_API_KEY")],
+    secrets=[flyte.Secret(key="wandb_api_key", as_env_var="WANDB_API_KEY")],
 )
 
 
-# Order of decorators does not matter
 @wandb_init
 @flyte.trace
 async def traced_child_task(x: int) -> str:
@@ -54,8 +53,8 @@ async def traced_child_task(x: int) -> str:
     return run.id
 
 
+@wandb_init(new_run=False)
 @env.task
-@wandb_init(new_run=False)  # Use existing run from parent
 async def grandchild_task(x: int) -> str:
     run = flyte.ctx().wandb_run
 
@@ -71,7 +70,7 @@ async def grandchild_task(x: int) -> str:
     return run.id
 
 
-@wandb_init
+@wandb_init(new_run=True)
 @env.task
 async def child_task(x: int) -> str:
     run = flyte.ctx().wandb_run
@@ -100,8 +99,8 @@ async def traced_no_wandb_init() -> str | int:
     return run.id if run else -1
 
 
-@env.task
 @wandb_init
+@env.task
 async def parent_task() -> str:
     run = flyte.ctx().wandb_run
 
@@ -200,8 +199,8 @@ async def sweep_agent(agent_id: int, sweep_id: str, count: int = 5) -> int:
     return agent_id
 
 
-@env.task
 @wandb_sweep
+@env.task
 async def run_parallel_sweep(
     total_trials: int = 15, trials_per_agent: int = 5, max_agents: int = 10
 ) -> str:

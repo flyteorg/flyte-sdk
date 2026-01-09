@@ -1,3 +1,5 @@
+import wandb
+
 from flyte.models import TaskContext
 
 from .context import (
@@ -6,7 +8,7 @@ from .context import (
     wandb_config,
     wandb_sweep_config,
 )
-from .decorator import wandb, wandb_init, wandb_sweep
+from .decorator import wandb_init, wandb_sweep
 from .link import Wandb, WandbSweep
 
 __all__ = [
@@ -37,7 +39,7 @@ def _wandb_run_property(self):
     if not self.data or not self.custom_context:
         return None
 
-    # Check if run is already initialized for THIS action
+    # Check if run is already initialized for this action
     run = self.data.get("_wandb_run")
     if run:
         # Verify current action matches the action that has @wandb_init
@@ -56,26 +58,35 @@ def _wandb_run_property(self):
     init_kwargs = init_kwargs_data["init_kwargs"].copy()
     saved_run_id = init_kwargs_data["saved_run_id"]
 
-    current_action = self.action.name
-
     # Mark which action has @wandb_init
+    current_action = self.action.name
     self.custom_context["_wandb_init_action"] = current_action
+
+    # Determine if we should reuse parent's run or create new
+    should_reuse = False
+    if new_run == False:
+        should_reuse = True
+    elif new_run == "auto":
+        # Auto: reuse if parent exists, otherwise create new
+        should_reuse = bool(saved_run_id)
+    # else: new_run == True, create new (should_reuse stays False)
 
     # Determine run ID using the current action name
     if "id" not in init_kwargs or init_kwargs["id"] is None:
-        if new_run or not saved_run_id:
-            # Create new run ID with current action name
+        if should_reuse:
+            # Reuse parent's run ID
+            if not saved_run_id:
+                raise RuntimeError("Cannot reuse parent run: no parent run ID found")
+            init_kwargs["id"] = saved_run_id
+        else:
+            # Create new run ID
             init_kwargs["id"] = f"{self.action.run_name}-{current_action}"
             if "reinit" not in init_kwargs:
                 init_kwargs["reinit"] = "create_new"
-        else:
-            if not saved_run_id:
-                raise RuntimeError("Expected saved_run_id when reusing parent's run ID")
-            # Reuse parent's run ID
-            init_kwargs["id"] = saved_run_id
 
     # Configure shared mode settings
-    is_primary = new_run or not saved_run_id
+    is_primary = not should_reuse
+
     existing_settings = init_kwargs.get("settings", {})
     shared_config = {
         "mode": "shared",
@@ -90,8 +101,10 @@ def _wandb_run_property(self):
     # Initialize wandb
     run = wandb.init(**init_kwargs)
 
-    # Store run ID in custom_context (shared with child tasks)
+    # Store run ID, project, and entity in custom_context (shared with child tasks and accessible to links)
     self.custom_context["_wandb_run_id"] = run.id
+    self.custom_context["_wandb_project"] = run.project
+    self.custom_context["_wandb_entity"] = run.entity
 
     # Store run object in ctx.data (task-local only)
     self.data["_wandb_run"] = run
