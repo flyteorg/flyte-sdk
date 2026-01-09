@@ -76,6 +76,11 @@ jobs:
           - "plugins/connectors"
           - "plugins/sglang"
           - "plugins/vllm"
+        include:
+          - workdir: "plugins/sglang"
+            image-type: sglang
+          - workdir: "plugins/vllm"
+            image-type: vllm
     steps:
       - uses: actions/checkout@v4
         with:

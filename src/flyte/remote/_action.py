@@ -323,6 +323,22 @@ class Action(ToJSONMixin):
         return self.pb2.status.start_time.ToDatetime().replace(tzinfo=timezone.utc)
 
     @syncify
+    async def abort(self):
+        """
+        Aborts / Terminates the action.
+        """
+        try:
+            await get_client().run_service.AbortAction(
+                run_service_pb2.AbortActionRequest(
+                    action_id=self.pb2.id,
+                )
+            )
+        except grpc.aio.AioRpcError as e:
+            if e.code() == grpc.StatusCode.NOT_FOUND:
+                return
+            raise
+
+    @syncify
     async def show_logs(
         self,
         attempt: int | None = None,

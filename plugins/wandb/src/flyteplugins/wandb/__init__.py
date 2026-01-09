@@ -1,6 +1,10 @@
+import logging
+
 import wandb
 
 from flyte.models import TaskContext
+
+logger = logging.getLogger(__name__)
 
 from .context import (
     get_wandb_context,
@@ -28,39 +32,30 @@ __version__ = "0.1.0"
 # Add wandb_run property to TaskContext
 def _wandb_run_property(self):
     """
-    Get the current wandb run if within a @wandb_init decorated task/trace.
+    Get the current wandb run if within a @wandb_init decorated task or trace.
 
-    Uses lazy initialization: if the run hasn't been initialized yet, this will
-    call wandb.init() on first access. This ensures ctx.action.name is read after
-    all decorators (including @flyte.trace) have set up their contexts.
-
-    Returns None otherwise.
+    Uses lazy initialization, i.e., the run is created when you access this property `flyte.ctx().wandb_run`.
     """
     if not self.data or not self.custom_context:
         return None
 
-    # Check if run is already initialized for this action
+    # Check if run is already initialized for this action - is available for traces only
     run = self.data.get("_wandb_run")
     if run:
-        # Verify current action matches the action that has @wandb_init
-        current_action = self.action.name
-        wandb_action = self.custom_context.get("_wandb_init_action")
-        if current_action == wandb_action:
-            return run
-        # If actions don't match, this is a parent's run - fall through to check for lazy init
+        # This is a trace and parent's run is already initialized
+        return run
 
-    # Check if we have init kwargs for lazy initialization
+    current_action = self.action.name
+
+    # Check if we have init kwargs
     init_kwargs_data = self.data.get("_wandb_init_kwargs")
     if not init_kwargs_data:
+        logger.debug(f"No init kwargs found for action '{current_action}'")
         return None
 
     new_run = init_kwargs_data["new_run"]
     init_kwargs = init_kwargs_data["init_kwargs"].copy()
     saved_run_id = init_kwargs_data["saved_run_id"]
-
-    # Mark which action has @wandb_init
-    current_action = self.action.name
-    self.custom_context["_wandb_init_action"] = current_action
 
     # Determine if we should reuse parent's run or create new
     should_reuse = False
@@ -106,7 +101,7 @@ def _wandb_run_property(self):
     self.custom_context["_wandb_project"] = run.project
     self.custom_context["_wandb_entity"] = run.entity
 
-    # Store run object in ctx.data (task-local only)
+    # Store run object in ctx.data (task-local only and accessible to traces)
     self.data["_wandb_run"] = run
 
     return run

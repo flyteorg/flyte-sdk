@@ -32,11 +32,11 @@ env = flyte.TaskEnvironment(
         ),
         name="wandb-test",
     ),
-    secrets=[flyte.Secret(key="wandb_api_key", as_env_var="WANDB_API_KEY")],
+    secrets=[flyte.Secret(key="samhita_wandb_api_key", as_env_var="WANDB_API_KEY")],
 )
 
 
-@wandb_init
+# Traces can access parent task's wandb run (no @wandb_init decorator allowed on traces)
 @flyte.trace
 async def traced_child_task(x: int) -> str:
     run = flyte.ctx().wandb_run
@@ -53,7 +53,7 @@ async def traced_child_task(x: int) -> str:
     return run.id
 
 
-@wandb_init(new_run=False)
+@wandb_init(new_run=False)  # same as new_run="auto"
 @env.task
 async def grandchild_task(x: int) -> str:
     run = flyte.ctx().wandb_run
@@ -91,10 +91,29 @@ async def child_task(x: int) -> str:
     return run.id
 
 
-@flyte.trace
-async def traced_no_wandb_init() -> str | int:
+@wandb_init
+@env.task
+async def child_task_with_config(x: int) -> str:
     run = flyte.ctx().wandb_run
-    print(f"Traced no wandb init task - Run ID: {run}")  # Should be None
+
+    print(f"Child task with config - Run ID: {run.id}")
+    print(f"Child task with config - Project: {run.project}")
+    print(f"Child task with config - Entity: {run.entity}")
+    print(f"Child task with config - Name: {run.name}")
+    print(f"Child task with config - Tags: {run.tags}")
+    print(f"Child task with config - Config: {run.config}")
+
+    # Log some metrics
+    run.log({"child_metric": x * 2, "input": x})
+
+    return run.id
+
+
+@env.task
+async def task_without_wandb_init() -> str | int:
+    # Task without @wandb_init - should return None
+    run = flyte.ctx().wandb_run
+    print(f"Task without @wandb_init - Run: {run}")
 
     return run.id if run else -1
 
@@ -114,19 +133,23 @@ async def parent_task() -> str:
     run.log({"parent_metric": 100})
 
     # Call child task
-    # 1. Overwrite name and tags
+    # 1. Child task with new_run=True and custom config - creates new run
     with wandb_config(name="child-run", tags=["child-task"]):
         result1 = await child_task(5)
 
-    # 2. Use parent's config
+    # 2. Child task with new_run=True and parent's config - creates new run
     result2 = await child_task(10)
 
-    # 3. Call traced child task with new config
-    with wandb_config(name="traced-child-run", tags=["traced-child-task"]):
-        result3 = await traced_child_task(15)
+    # 3. Child task with config override and new_run="auto" i.e. logs to parent run
+    # This isn't desired behavior
+    with wandb_config(tags=["child-with-config"], config={"learning_rate": 0.01}):
+        result3 = await child_task_with_config(20)
 
-    # 4. Call traced task without wandb_init
-    traced_no_wandb_result = await traced_no_wandb_init()
+    # 4. Call traced task - accesses parent's run (no @wandb_init needed)
+    result4 = await traced_child_task(15)
+
+    # 5. Call task without @wandb_init - should return -1 (no run available)
+    no_wandb_result = await task_without_wandb_init()
 
     # Verify parent's run context is unchanged
     print("Parent task after child calls")
@@ -136,7 +159,7 @@ async def parent_task() -> str:
     print(f"Parent task - Name: {run.name}")
     print(f"Parent task - Tags: {run.tags}")
 
-    return f"Parent complete with children: {result1}, {result2}, {result3}, {traced_no_wandb_result}"
+    return f"Parent complete: child1={result1}, child2={result2}, child3={result3}, trace={result4}, no_wandb={no_wandb_result}"
 
 
 @wandb_init

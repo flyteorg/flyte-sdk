@@ -1,5 +1,5 @@
 import functools
-import warnings
+import logging
 from contextlib import contextmanager
 from dataclasses import asdict
 from inspect import iscoroutinefunction
@@ -12,6 +12,8 @@ from flyte._task import AsyncFunctionTaskTemplate
 
 from .context import get_wandb_context, get_wandb_sweep_context
 from .link import Wandb, WandbSweep
+
+logger = logging.getLogger(__name__)
 
 F = TypeVar("F", bound=Callable[..., Any])
 
@@ -30,14 +32,13 @@ def _build_init_kwargs() -> dict[str, Any]:
 
 
 @contextmanager
-def _wandb_run(new_run: bool = True, **decorator_kwargs):
-    """Context manager for wandb run lifecycle and action marking."""
+def _wandb_run(new_run: bool = "auto", func: bool = False, **decorator_kwargs):
+    """Context manager for wandb run lifecycle."""
     # Try to get Flyte context
     ctx = flyte.ctx()
 
-    # Fallback mode: No Flyte context available
     # This enables @wandb_init to work in wandb.agent() callbacks (sweep objectives)
-    if ctx is None:
+    if func and ctx is None:
         # Use config from decorator params (no lazy init for fallback mode)
         run = wandb.init(**decorator_kwargs)
         try:
@@ -45,17 +46,21 @@ def _wandb_run(new_run: bool = True, **decorator_kwargs):
         finally:
             run.finish()
         return
+    elif func and ctx:
+        raise RuntimeError(
+            "@wandb_init cannot be applied to traces. "
+            "Traces can access the parent's wandb run via flyte.ctx().wandb_run."
+        )
 
     # Full Flyte-aware mode with lazy initialization
     # Save existing state to restore later
     saved_run = ctx.data.get("_wandb_run")
     saved_run_id = ctx.custom_context.get("_wandb_run_id")
-    saved_action = ctx.custom_context.get("_wandb_init_action")
     saved_init_kwargs = ctx.data.get("_wandb_init_kwargs")
 
     # Build init kwargs from context
-    init_kwargs = _build_init_kwargs()
-    init_kwargs.update(decorator_kwargs)
+    context_init_kwargs = _build_init_kwargs()
+    init_kwargs = {**context_init_kwargs, **decorator_kwargs}
 
     # Store initialization parameters for lazy init
     # The wandb_run property will call wandb.init() on first access
@@ -87,17 +92,11 @@ def _wandb_run(new_run: bool = True, **decorator_kwargs):
         else:
             ctx.data.pop("_wandb_run", None)
 
-        # Restore shared state
+        # Restore run ID
         if saved_run_id is not None:
             ctx.custom_context["_wandb_run_id"] = saved_run_id
         else:
             ctx.custom_context.pop("_wandb_run_id", None)
-
-        # Restore action
-        if saved_action is not None:
-            ctx.custom_context["_wandb_init_action"] = saved_action
-        else:
-            ctx.custom_context.pop("_wandb_init_action", None)
 
         # Restore init kwargs
         if saved_init_kwargs is not None:
@@ -186,27 +185,13 @@ def wandb_init(
                 func.execute = wrapped_execute
 
             return cast(F, func)
+        # Regular function
         else:
-            # Not a Flyte task - W&B links cannot be added
-            func_name = getattr(func, "__name__", "unknown")
-            warnings.warn(
-                f"@wandb_init applied to '{func_name}' which is not a Flyte task. "
-                f"W&B links will not be added to the Flyte UI. "
-                f"If this is a task, ensure @wandb_init is applied after @env.task:\n"
-                f"  @wandb_init\n"
-                f"  @env.task\n"
-                f"  async def {func_name}(): ...",
-                UserWarning,
-                stacklevel=2,
-            )
-
-            # Regular function (e.g. @flyte.trace)
-            # Note: decorator order doesn't matter for non-task functions
             if iscoroutinefunction(func):
 
                 @functools.wraps(func)
                 async def async_wrapper(*args, **wrapper_kwargs):
-                    with _wandb_run(new_run=new_run, **decorator_kwargs):
+                    with _wandb_run(new_run=new_run, func=True, **decorator_kwargs):
                         return await func(*args, **wrapper_kwargs)
 
                 return cast(F, async_wrapper)
@@ -214,7 +199,7 @@ def wandb_init(
 
                 @functools.wraps(func)
                 def sync_wrapper(*args, **wrapper_kwargs):
-                    with _wandb_run(new_run=new_run, **decorator_kwargs):
+                    with _wandb_run(new_run=new_run, func=True, **decorator_kwargs):
                         return func(*args, **wrapper_kwargs)
 
                 return cast(F, sync_wrapper)
@@ -309,37 +294,7 @@ def wandb_sweep(_func: Optional[F] = None) -> F:
 
             return cast(F, func)
         else:
-            # Not a Flyte task - W&B links cannot be added
-            func_name = getattr(func, "__name__", "unknown")
-            warnings.warn(
-                f"@wandb_sweep applied to '{func_name}' which is not a Flyte task. "
-                f"W&B sweep links will not be added to the Flyte UI. "
-                f"If this is a task, ensure @wandb_sweep is applied after @env.task:\n"
-                f"  @wandb_sweep\n"
-                f"  @env.task\n"
-                f"  async def {func_name}(): ...",
-                UserWarning,
-                stacklevel=2,
-            )
-
-            # Regular function (not a task)
-            # Note: decorator order doesn't matter for non-task functions
-            if iscoroutinefunction(func):
-
-                @functools.wraps(func)
-                async def async_wrapper(*args, **kwargs):
-                    with _create_sweep():
-                        return await func(*args, **kwargs)
-
-                return cast(F, async_wrapper)
-            else:
-
-                @functools.wraps(func)
-                def sync_wrapper(*args, **kwargs):
-                    with _create_sweep():
-                        return func(*args, **kwargs)
-
-                return cast(F, sync_wrapper)
+            raise RuntimeError("@wandb_sweep can only be used with Flyte tasks.")
 
     if _func is None:
         return decorator

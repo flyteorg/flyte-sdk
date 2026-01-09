@@ -7,7 +7,6 @@ import uuid
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Tuple, Union, cast
 
-import flyte.errors
 from flyte._context import contextual_run, internal_ctx
 from flyte._environment import Environment
 from flyte._initialize import (
@@ -146,6 +145,7 @@ class _Runner:
         from flyteidl2.workflow import run_definition_pb2, run_service_pb2
         from google.protobuf import wrappers_pb2
 
+        import flyte.report
         from flyte.remote import Run
         from flyte.remote._task import LazyEntity, TaskDetails
 
@@ -220,7 +220,21 @@ class _Runner:
                 image_cache=image_cache,
                 root_dir=cfg.root_dir,
             )
-            task_spec = translate_task_to_wire(obj, s_ctx)
+            action = ActionID(
+                name="{{.actionName}}", run_name="{{.runName}}", project=project, domain=domain, org=cfg.org
+            )
+            tctx = TaskContext(
+                action=action,
+                code_bundle=code_bundle,
+                output_path="",
+                version=version if version else "na",
+                raw_data_path=RawDataPath(path=""),
+                compiled_image_cache=image_cache,
+                run_base_dir="",
+                report=flyte.report.Report(name=action.name),
+                custom_context=self._custom_context,
+            )
+            task_spec = translate_task_to_wire(obj, s_ctx, default_inputs=None, task_context=tctx)
             inputs = await convert_from_native_to_inputs(
                 obj.native_interface, *args, custom_context=self._custom_context, **kwargs
             )
@@ -250,7 +264,8 @@ class _Runner:
                     "ClientNotInitializedError",
                     "user",
                     "flyte.run requires client to be initialized. "
-                    "Call flyte.init() with a valid endpoint or api-key before using this function.",
+                    "Call flyte.init() with a valid endpoint/api-key before using this function"
+                    "or Call flyte.init_from_config() with a valid path to the config file",
                 )
             run_id = None
             project_id = None
@@ -479,6 +494,7 @@ class _Runner:
 
     async def _run_local(self, obj: TaskTemplate[P, R, F], *args: P.args, **kwargs: P.kwargs) -> Run:
         from flyteidl2.common import identifier_pb2
+        from flyteidl2.task import common_pb2
 
         from flyte._internal.controllers import create_controller
         from flyte._internal.controllers._local_controller import LocalController
@@ -535,7 +551,9 @@ class _Runner:
             def __init__(self, outputs: Tuple[Any, ...] | Any):
                 from flyteidl2.workflow import run_definition_pb2
 
-                self._outputs = outputs
+                self._outputs = ActionOutputs(
+                    common_pb2.Outputs(), outputs if isinstance(outputs, tuple) else (outputs,)
+                )
                 super().__init__(
                     pb2=run_definition_pb2.Run(
                         action=run_definition_pb2.Action(
@@ -561,7 +579,7 @@ class _Runner:
 
             @syncify
             async def outputs(self) -> ActionOutputs:  # type: ignore[override]
-                return cast(ActionOutputs, self._outputs)
+                return self._outputs
 
         return _LocalRun(outputs)
 

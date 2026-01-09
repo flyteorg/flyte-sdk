@@ -147,7 +147,7 @@ class TaskDetails(ToJSONMixin):
                     ):
                         tasks.append(x)
                     if not tasks:
-                        raise flyte.errors.RemoteTaskError(
+                        raise flyte.errors.RemoteTaskNotFoundError(
                             f"No versions found for Task {name} in project {project}, domain {domain}."
                         )
                     _version = tasks[0].version
@@ -173,7 +173,7 @@ class TaskDetails(ToJSONMixin):
                 return cls(resp.details)
             except grpc.aio.AioRpcError as err:
                 if err.code() == grpc.StatusCode.NOT_FOUND:
-                    raise flyte.errors.RemoteTaskError(
+                    raise flyte.errors.RemoteTaskNotFoundError(
                         f"Task {name}, version {_version} not found in {project} {domain}."
                     )
                 raise
@@ -284,8 +284,9 @@ class TaskDetails(ToJSONMixin):
         """
         # TODO support kwargs, for this we need ordered inputs to be stored in the task spec.
         if len(args) > 0:
-            raise flyte.errors.RemoteTaskError(
-                f"Remote task {self.name} does not support positional argumentscurrently. Please use keyword arguments."
+            raise flyte.errors.RemoteTaskUsageError(
+                f"Remote task {self.name} does not support positional arguments currently. "
+                f"Please use keyword arguments."
             )
 
         ctx = internal_ctx()
@@ -304,7 +305,9 @@ class TaskDetails(ToJSONMixin):
                     )
             if controller:
                 return await controller.submit_task_ref(self, *args, **kwargs)
-        raise flyte.errors.RemoteTaskError(f"Remote tasks [{self.name}] cannot be executed locally, only remotely.")
+        raise flyte.errors.RemoteTaskUsageError(
+            f"Remote tasks [{self.name}] cannot be executed locally, only remotely."
+        )
 
     @property
     def queue(self) -> Optional[str]:
@@ -342,7 +345,7 @@ class TaskDetails(ToJSONMixin):
         :return: A new TaskDetails instance with the overrides applied.
         """
         if len(kwargs) > 0:
-            raise ValueError(
+            raise flyte.errors.RemoteTaskUsageError(
                 f"RemoteTasks [{self.name}] do not support overriding with kwargs: {kwargs}, "
                 f"Check the parameters for override method."
             )

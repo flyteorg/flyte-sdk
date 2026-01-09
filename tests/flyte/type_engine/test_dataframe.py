@@ -79,9 +79,9 @@ async def test_aio_running(ctx_with_test_raw_data_path):
 
     await flyte.init.aio()
     result = await flyte.run.aio(t1, a=generate_pandas())
-    assert isinstance(result.outputs(), pd.DataFrame)
+    assert isinstance(result.outputs()[0], pd.DataFrame)
     result = flyte.run(t1, a=generate_pandas())
-    assert isinstance(result.outputs(), pd.DataFrame)
+    assert isinstance(result.outputs()[0], pd.DataFrame)
 
     # this should be an empty string format
     flyte_interface = task_serde.transform_native_to_typed_interface(t1.native_interface)
@@ -115,7 +115,7 @@ async def test_setting_of_unset_formats():
         assert res.format == ""
         res = flyte.run(wf, path=fname)
         # Now that it's passed through an encoder however, it should be set.
-        assert res.outputs().format == "parquet"
+        assert res.outputs()[0].format == "parquet"
 
 
 class MyDF(pd.DataFrame): ...
