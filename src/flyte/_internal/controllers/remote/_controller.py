@@ -192,7 +192,7 @@ class RemoteController(Controller):
             root_dir=root_dir,
         )
 
-        task_spec = translate_task_to_wire(_task, new_serialization_context)
+        task_spec = translate_task_to_wire(_task, new_serialization_context, task_context=tctx)
         inputs_hash = convert.generate_inputs_hash_from_proto(inputs.proto_inputs)
         sub_action_id, sub_action_output_path = convert.generate_sub_action_id_and_output_path(
             tctx, task_spec, inputs_hash, _task_call_seq
