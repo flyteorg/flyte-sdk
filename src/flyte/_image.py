@@ -11,7 +11,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar, Dict, List, Literal, Optional, Tuple, TypeVar, Union
 
 import rich.repr
-from packaging.version import Version
 
 if TYPE_CHECKING:
     from flyte import Secret, SecretRequest
@@ -465,6 +464,7 @@ class Image:
         # Would love a way to move this outside of this class (but still needs to be accessible via Image.auto())
         # this default image definition may need to be updated once there is a released pypi version
         from flyte._version import __version__
+        from packaging.version import Version
 
         dev_mode = (__version__ and "dev" in __version__) and not flyte_version and install_flyte
         if install_flyte is False:
