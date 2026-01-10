@@ -248,11 +248,11 @@ class Informer:
                 logger.info(f"Watch cancelled: {self.name}")
                 return
             except asyncio.TimeoutError as e:
-                logger.error(f"Watch timeout: {self.name}", exc_info=e)
+                logger.error(f"Watch timeout: {self.name}, {e}", exc_info=False)
                 last_exc = e
                 retries += 1
             except grpc.aio.AioRpcError as e:
-                logger.exception(f"RPC error: {self.name}", exc_info=e)
+                logger.error(f"RPC error: {self.name}, {e}", exc_info=False)
                 last_exc = e
                 retries += 1
             except Exception as e:

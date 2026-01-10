@@ -382,7 +382,7 @@ class Controller:
                             e.code().name, f"Precondition failed: {e.details()}"
                         ) from e
                     # For all other errors, we will retry with backoff
-                    logger.exception(
+                    logger.error(
                         f"Failed to launch action: {action.name}, Code: {e.code()}, "
                         f"Details {e.details()} backing off..."
                     )
