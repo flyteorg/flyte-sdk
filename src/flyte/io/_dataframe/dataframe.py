@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 import _datetime
+import asyncio
 import collections
+import os
+import pathlib
+import tempfile
 import types
 import typing
 from abc import ABC, abstractmethod
@@ -213,6 +217,9 @@ class DataFrame(BaseModel, SerializableType):
             await self._set_literal(expected)
 
         return await flyte_dataset_transformer.open_as(self.literal, self._dataframe_type, self.metadata)
+
+    def all_sync(self) -> DF:  # type: ignore
+        return asyncio.run(self.all())
 
     async def _set_literal(self, expected: types_pb2.LiteralType) -> None:
         """
@@ -742,7 +749,19 @@ class DataFrameTransformerEngine(TypeTransformer[DataFrame]):
                 if not uri:
                     raise ValueError(f"If dataframe is not specified, then the uri should be specified. {python_val}")
                 if not storage.is_remote(uri):
-                    uri = await storage.put(uri, recursive=True)
+                    try:
+                        uri = await storage.put(uri, recursive=True)
+                    except ValueError:
+                        # If the raw data path is not found, then upload the file via flyte.remote.upload_{file, dir}
+                        import flyte.remote
+
+                        local_path = pathlib.Path(uri)
+                        if local_path.is_file():
+                            _, uri = await flyte.remote.upload_file.aio(local_path)
+                        elif local_path.is_dir():
+                            uri = await flyte.remote.upload_dir(local_path)
+                        else:
+                            raise ValueError(f"Expected a file or directory, {local_path} is neither")
 
                 # Check the user-specified format
                 # When users specify format for a DataFrame, the format should be retained
@@ -771,7 +790,14 @@ class DataFrameTransformerEngine(TypeTransformer[DataFrame]):
             # 3. This is the third and probably most common case. The python DataFrame object wraps a dataframe
             # that we will need to invoke an encoder for. Figure out which encoder to call and invoke it.
             df_type = type(python_val.val)
-            protocol = self._protocol_from_type_or_prefix(df_type, python_val.uri)
+
+            try:
+                protocol = self._protocol_from_type_or_prefix(df_type, python_val.uri)
+            except ValueError:
+                # If the protocol is not found and assume that we need to write the
+                # dataframe to a temporary directory to upload it via flyte.remote.upload_{file, dir}
+                fmt = self.DEFAULT_FORMATS.get(df_type, "")
+                return await self._upload_to_remote(python_val.val, df_type, fmt, sdt)
 
             return await self.encode(
                 python_val,
@@ -783,14 +809,50 @@ class DataFrameTransformerEngine(TypeTransformer[DataFrame]):
 
         # Otherwise assume it's a dataframe instance. Wrap it with some defaults
         fmt = self.DEFAULT_FORMATS.get(python_type, "")
-        protocol = self._protocol_from_type_or_prefix(python_type)
+        try:
+            protocol = self._protocol_from_type_or_prefix(python_type)
+            remote_uri = None
+        except ValueError:
+            # If the protocol is not found and assume that we need to write the
+            # dataframe to a temporary directory to upload it via flyte.remote.upload_{file, dir}
+            return await self._upload_to_remote(python_val, python_type, fmt, sdt)
+
         meta = literals_pb2.StructuredDatasetMetadata(
             structured_dataset_type=expected.structured_dataset_type if expected else None
         )
 
-        fdf = DataFrame.from_df(val=python_val)
+        fdf = DataFrame.from_df(val=python_val, uri=remote_uri)
         fdf._metadata = meta
         return await self.encode(fdf, python_type, protocol, fmt, sdt)
+
+    async def _upload_to_remote(
+        self,
+        python_val: typing.Any,
+        python_type: Union[Type[DataFrame], Type],
+        fmt: str,
+        sdt: types_pb2.StructuredDatasetType,
+    ) -> literals_pb2.Literal:
+        import flyte.remote
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            handler: DataFrameEncoder = self.get_encoder(python_type, "file", fmt)
+            sd_model = await handler.encode(DataFrame.from_df(val=python_val, uri=temp_dir), sdt)
+
+            path = pathlib.Path(sd_model.uri)
+            local_files = list(path.glob("**/*"))
+            if len(local_files) == 1:
+                file_path = local_files[0]
+                _, remote_uri = await flyte.remote.upload_file.aio(file_path)
+                remote_uri = os.path.dirname(remote_uri)
+            elif len(local_files) > 1:
+                remote_uri = await flyte.remote.upload_dir(path)
+            else:
+                raise ValueError(f"Expected 1 or more files in {path}, got {len(local_files)}")
+
+            sd_model.uri = remote_uri
+            literal = literals_pb2.Literal(scalar=literals_pb2.Scalar(structured_dataset=sd_model))
+            modify_literal_uris(literal)
+            return literal
 
     def _protocol_from_type_or_prefix(self, df_type: Type, uri: Optional[str] = None) -> str:
         """
@@ -805,7 +867,8 @@ class DataFrameTransformerEngine(TypeTransformer[DataFrame]):
             ctx = internal_ctx()
             protocol = get_protocol(uri or ctx.raw_data.path)
             logger.debug(
-                f"No default protocol for type {df_type} found, using {protocol} from output prefix {ctx.raw_data.path}"
+                f"No default protocol for type {df_type} found, using {protocol} from "
+                f"output prefix {uri or ctx.raw_data.path}"
             )
             return protocol
 
@@ -1004,6 +1067,23 @@ class DataFrameTransformerEngine(TypeTransformer[DataFrame]):
             external_schema_bytes=typing.cast(pa.lib.Schema, pa_schema).to_string().encode() if pa_schema else None,
         )
 
+    def _get_type_tag(self, t: Type) -> typing.Optional[str]:
+        """
+        Get the fully qualified type name for storing in the literal type tag.
+        This allows us to recover the original dataframe type (e.g., pd.DataFrame) when guessing Python types.
+        At deserialization time, we will use this tag to lookup the registered decoder for the dataframe type.
+
+        Returns None if the type is DataFrame itself (no tag needed).
+        """
+        base_type, *_ = extract_cols_and_format(t)  # type: ignore
+
+        # If it's the DataFrame class itself, no tag needed
+        if base_type is DataFrame or (isinstance(base_type, type) and issubclass(base_type, DataFrame)):
+            return None
+
+        # Return the fully qualified name for registered dataframe types that have encoders/decoders
+        return f"{base_type.__module__}.{base_type.__qualname__}"
+
     def get_literal_type(self, t: typing.Union[Type[DataFrame], typing.Any]) -> types_pb2.LiteralType:
         """
         Provide a concrete implementation so that writers of custom dataframe handlers since there's nothing that
@@ -1012,12 +1092,28 @@ class DataFrameTransformerEngine(TypeTransformer[DataFrame]):
 
         :param t: The python dataframe type, which is mostly ignored.
         """
-        return types_pb2.LiteralType(structured_dataset_type=self._get_dataset_type(t))
+        tag = self._get_type_tag(t)
+        sdt = self._get_dataset_type(t)
+
+        if tag:
+            return types_pb2.LiteralType(
+                structured_dataset_type=sdt,
+                structure=types_pb2.TypeStructure(tag=tag),
+            )
+        return types_pb2.LiteralType(structured_dataset_type=sdt)
 
     def guess_python_type(self, literal_type: types_pb2.LiteralType) -> Type[DataFrame]:
-        # todo: technically we should return the dataframe type specified in the constructor, but to do that,
-        #   we'd have to store that, which we don't do today. See possibly #1363
         if literal_type.HasField("structured_dataset_type"):
+            # Check if we have a tag that identifies the original dataframe type
+            if literal_type.HasField("structure") and literal_type.structure.tag:
+                tag = literal_type.structure.tag
+                # Look up the type in our registered decoders
+                for registered_type in self.DECODERS.keys():
+                    type_name = f"{registered_type.__module__}.{registered_type.__qualname__}"
+                    if type_name == tag:
+                        return registered_type
+                # If we couldn't find the type in decoders, log a warning and fall back to DataFrame
+                logger.debug(f"Could not find registered decoder for type tag '{tag}', falling back to DataFrame")
             return DataFrame
         raise ValueError(f"DataFrameTransformerEngine cannot reverse {literal_type}")
 

@@ -97,11 +97,13 @@ class StructuredDatasetParamType(click.ParamType):
     def convert(
         self, value: typing.Any, param: typing.Optional[click.Parameter], ctx: typing.Optional[click.Context]
     ) -> typing.Any:
+        from flyte.io._dataframe.dataframe import DataFrame
+
         if isinstance(value, str):
-            return StructuredDataset(uri=value)
-        elif isinstance(value, StructuredDataset):
+            return DataFrame(uri=value)
+        elif isinstance(value, DataFrame):
             return value
-        return StructuredDataset(dataframe=value)
+        return DataFrame.from_df(val=value)
 
 
 class FileParamType(click.ParamType):

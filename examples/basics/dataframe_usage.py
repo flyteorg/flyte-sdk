@@ -79,16 +79,44 @@ async def get_employee_data(raw_dataframe: pd.DataFrame, flyte_dataframe: pd.Dat
 
 
 if __name__ == "__main__":
-    flyte.init_from_config()
+    import logging
+
+    import flyte.io
+    import flyte.storage
+
+    # make sure to set the following environment variables:
+    # - AWS_ACCESS_KEY_ID
+    # - AWS_SECRET_ACCESS_KEY
+    # - AWS_SESSION_TOKEN (if applicable)
+    #
+    # You may also set this with `aws sso login`:
+    # $ aws sso login --profile $profile
+    # $ eval "$(aws configure export-credentials --profile $profile --format env)"
+
+    flyte.init_from_config(
+        log_level=logging.DEBUG,
+        storage=flyte.storage.S3.auto(region="us-east-2"),
+    )
     # Get the data sources
 
-    raw_df = flyte.with_runcontext(mode="local").run(create_raw_dataframe)
-    flyte_df = flyte.with_runcontext(mode="local").run(create_flyte_dataframe)
+    raw_df_run = flyte.run(create_raw_dataframe)
+    print(raw_df_run.url)
+    raw_df_run.wait()
+    raw_df: pd.DataFrame = raw_df_run.outputs()[0]
+    print(raw_df)
+
+    flyte_df_run = flyte.run(create_flyte_dataframe)
+    print(flyte_df_run.url)
+    flyte_df_run.wait()
+    flyte_df: flyte.io.DataFrame = flyte_df_run.outputs()[0]
 
     # Pass both to get_employee_data - Flyte auto-converts flyte.io.DataFrame to pd.DataFrame
-    run = flyte.with_runcontext(mode="local").run(
+    run = flyte.run(
         get_employee_data,
-        raw_dataframe=raw_df.outputs(),
-        flyte_dataframe=flyte_df.outputs(),
+        raw_dataframe=raw_df,
+        flyte_dataframe=flyte_df,
     )
-    print("Results:", run.outputs())
+    print(run.url)
+    run.wait()
+    results: pd.DataFrame = run.outputs()[0]
+    print(results)
