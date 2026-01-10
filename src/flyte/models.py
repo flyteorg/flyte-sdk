@@ -77,6 +77,20 @@ class ActionID:
         new_name = base36_encode(bytes_digest)
         return self.new_sub_action(new_name)
 
+    def unique_id_str(self, salt: str | None = None) -> str:
+        """
+        Generate a unique ID string for this action in the format:
+        {project}-{domain}-{run_name}-{action_name}
+
+        This is optimized for performance assuming all fields are available.
+
+        :return: A unique ID string
+        """
+        v = f"{self.project}-{self.domain}-{self.run_name}-{self.name}"
+        if salt is not None:
+            return f"{v}-{salt}"
+        return v
+
 
 @rich.repr.auto
 @dataclass
