@@ -135,7 +135,7 @@ class TestDefaultMetadataUnaryUnaryInterceptor:
         assert captured_call_details is not None
 
         # Check metadata was added - convert to dict properly
-        metadata_dict = {k: v for k, v in captured_call_details.metadata}
+        metadata_dict = {k: v for k, v in captured_call_details.metadata}  # noqa: C416
         assert "accept" in metadata_dict
         assert metadata_dict["accept"] == "application/grpc"
         assert "x-request-id" in metadata_dict
@@ -165,7 +165,7 @@ class TestDefaultMetadataUnaryUnaryInterceptor:
         assert captured_call_details is not None
 
         # Check metadata was added and existing was preserved
-        metadata_dict = {k: v for k, v in captured_call_details.metadata}
+        metadata_dict = {k: v for k, v in captured_call_details.metadata}  # noqa: C416
         assert "existing-key" in metadata_dict
         assert metadata_dict["existing-key"] == "existing-value"
         assert "accept" in metadata_dict
@@ -198,7 +198,7 @@ class TestDefaultMetadataUnaryUnaryInterceptor:
             assert captured_call_details is not None
 
             # Check request ID contains context information
-            metadata_dict = {k: v for k, v in captured_call_details.metadata}
+            metadata_dict = {k: v for k, v in captured_call_details.metadata}  # noqa: C416
             request_id = metadata_dict["x-request-id"]
             assert "test-project" in request_id
             assert "test-domain" in request_id
@@ -292,7 +292,7 @@ class TestAllInterceptorTypes:
                 updated_call_details = await interceptor._inject_default_metadata(mock_call_details)
 
                 # Verify both headers are present
-                metadata_dict = {k: v for k, v in updated_call_details.metadata}
+                metadata_dict = {k: v for k, v in updated_call_details.metadata}  # noqa: C416
                 assert "accept" in metadata_dict, f"Missing 'accept' header in {interceptor.__class__.__name__}"
                 assert metadata_dict["accept"] == "application/grpc"
                 assert "x-request-id" in metadata_dict, (
