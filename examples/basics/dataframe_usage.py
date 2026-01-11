@@ -82,7 +82,7 @@ if __name__ == "__main__":
     flyte.init_from_config()
     # Get the data sources
 
-    run1 = flyte.with_runcontext(mode="remote").run(create_raw_dataframe)
+    run1 = flyte.with_runcontext(mode="local").run(create_raw_dataframe)
     run2 = flyte.with_runcontext(mode="remote").run(create_flyte_dataframe)
     run1.wait()
     run2.wait()

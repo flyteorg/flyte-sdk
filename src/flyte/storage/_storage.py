@@ -19,6 +19,7 @@ from obstore.store import ObjectStore
 from flyte._initialize import get_storage
 from flyte._logging import logger
 from flyte.errors import InitializationError, OnlyAsyncIOSupportedError
+from ._remote_fs import FlyteFS
 
 if typing.TYPE_CHECKING:
     from obstore import AsyncReadableFile, AsyncWritableFile
@@ -458,3 +459,4 @@ def exists_sync(path: str, **kwargs) -> bool:
 
 
 register(_OBSTORE_SUPPORTED_PROTOCOLS, asynchronous=True)
+fsspec.register_implementation("flyte", FlyteFS, clobber=True)
