@@ -82,13 +82,15 @@ if __name__ == "__main__":
     flyte.init_from_config()
     # Get the data sources
 
-    run1 = flyte.with_runcontext(mode="local").run(create_raw_dataframe)
-    run2 = flyte.with_runcontext(mode="local").run(create_flyte_dataframe)
+    run1 = flyte.with_runcontext(mode="remote").run(create_raw_dataframe)
+    run2 = flyte.with_runcontext(mode="remote").run(create_flyte_dataframe)
+    run1.wait()
+    run2.wait()
 
     # Pass both to get_employee_data - Flyte auto-converts flyte.io.DataFrame to pd.DataFrame
-    run = flyte.with_runcontext(mode="local").run(
+    run = flyte.with_runcontext(mode="remote").run(
         get_employee_data,
         raw_dataframe=run1.outputs()[0],
         flyte_dataframe=run2.outputs()[0],
     )
-    print("Results:", run.outputs())
+    print("Results:", run.url)
