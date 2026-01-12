@@ -1,7 +1,17 @@
 import functools
 import inspect
 import time
-from typing import Any, AsyncGenerator, AsyncIterator, Awaitable, Callable, TypeGuard, TypeVar, Union, cast
+from typing import (
+    Any,
+    AsyncGenerator,
+    AsyncIterator,
+    Awaitable,
+    Callable,
+    TypeGuard,
+    TypeVar,
+    Union,
+    cast,
+)
 
 import flyte.errors
 from flyte._logging import logger
@@ -41,11 +51,12 @@ def trace(func: Callable[..., T]) -> Callable[..., T]:
                 elif info.error:
                     raise info.error
             else:
-                logger.debug(f"No existing trace info found for {func}, proceeding to execute.")
+                logger.debug(
+                    f"No existing trace info found for {func}, proceeding to execute."
+                )
             start_time = time.time()
 
             # Create a new context with the trace's action ID
-            assert ctx.data.task_context is not None  # Guaranteed by is_task_context() check above
             trace_task_context = ctx.data.task_context.replace(action=info.action)
             trace_context = ctx.replace_task_context(trace_task_context)
 
@@ -58,7 +69,9 @@ def trace(func: Callable[..., T]) -> Callable[..., T]:
                 coroutine_result = cast(Awaitable[Any], func(*args, **kwargs))
                 try:
                     results = await coroutine_result
-                    info.add_outputs(results, start_time=start_time, end_time=time.time())
+                    info.add_outputs(
+                        results, start_time=start_time, end_time=time.time()
+                    )
                 except Exception as e:
                     error = e
                     info.add_error(e, start_time=start_time, end_time=time.time())
@@ -102,7 +115,6 @@ def trace(func: Callable[..., T]) -> Callable[..., T]:
             start_time = time.time()
 
             # Create a new context with the trace's action ID
-            assert ctx.data.task_context is not None  # Guaranteed by is_task_context() check above
             trace_task_context = ctx.data.task_context.replace(action=info.action)
             trace_context = ctx.replace_task_context(trace_task_context)
 
@@ -120,7 +132,9 @@ def trace(func: Callable[..., T]) -> Callable[..., T]:
                         async for item in async_iter:
                             items.append(item)
                             yield item
-                        info.add_outputs(items, start_time=start_time, end_time=time.time())
+                        info.add_outputs(
+                            items, start_time=start_time, end_time=time.time()
+                        )
                     except Exception as e:
                         error = e
                         info.add_error(e, start_time=start_time, end_time=time.time())
