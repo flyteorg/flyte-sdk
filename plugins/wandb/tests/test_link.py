@@ -276,6 +276,89 @@ class TestWandbLink:
 
         assert uri == "https://wandb.ai/test-entity/test-project/runs/test-run-{{.actionName}}"
 
+    def test_wandb_link_with_custom_id_in_link(self):
+        """Test link generation with custom run ID provided to Wandb link."""
+        link = Wandb(
+            project="test-project",
+            entity="test-entity",
+            new_run=True,
+            id="my-custom-run-id",
+        )
+
+        uri = link.get_link(
+            run_name="test-run",
+            project="flyte-project",
+            domain="development",
+            context={},
+            parent_action_name="parent",
+            action_name="{{.actionName}}",
+            pod_name="{{.podName}}",
+        )
+
+        # Should use custom ID from link parameter
+        assert uri == "https://wandb.ai/test-entity/test-project/runs/my-custom-run-id"
+
+    def test_wandb_link_with_custom_id_in_context(self):
+        """Test link generation with custom run ID from context."""
+        link = Wandb(project="test-project", entity="test-entity", new_run=True)
+
+        uri = link.get_link(
+            run_name="test-run",
+            project="flyte-project",
+            domain="development",
+            context={"wandb_id": "context-custom-id"},
+            parent_action_name="parent",
+            action_name="{{.actionName}}",
+            pod_name="{{.podName}}",
+        )
+
+        # Should use custom ID from context
+        assert uri == "https://wandb.ai/test-entity/test-project/runs/context-custom-id"
+
+    def test_wandb_link_custom_id_priority(self):
+        """Test that link.id takes precedence over context wandb_id."""
+        link = Wandb(
+            project="test-project",
+            entity="test-entity",
+            new_run=True,
+            id="link-custom-id",  # This should win
+        )
+
+        uri = link.get_link(
+            run_name="test-run",
+            project="flyte-project",
+            domain="development",
+            context={"wandb_id": "context-custom-id"},  # This should be ignored
+            parent_action_name="parent",
+            action_name="{{.actionName}}",
+            pod_name="{{.podName}}",
+        )
+
+        # Link ID should take precedence over context ID
+        assert uri == "https://wandb.ai/test-entity/test-project/runs/link-custom-id"
+
+    def test_wandb_link_custom_id_with_new_run_auto(self):
+        """Test custom ID works with new_run='auto' when no parent run exists."""
+        link = Wandb(
+            project="test-project",
+            entity="test-entity",
+            new_run="auto",
+            id="auto-custom-id",
+        )
+
+        uri = link.get_link(
+            run_name="test-run",
+            project="flyte-project",
+            domain="development",
+            context={},  # No parent run ID
+            parent_action_name="parent",
+            action_name="{{.actionName}}",
+            pod_name="{{.podName}}",
+        )
+
+        # Should use custom ID since no parent run exists
+        assert uri == "https://wandb.ai/test-entity/test-project/runs/auto-custom-id"
+
 
 class TestWandbSweepLink:
     """Tests for WandbSweep link class."""
@@ -496,3 +579,62 @@ class TestWandbSweepLink:
 
         # Should link to specific sweep when sweep_id available
         assert uri == "https://wandb.ai/test-entity/test-project/sweeps/sweep-abc123"
+
+    def test_wandb_sweep_link_with_custom_id_in_link(self):
+        """Test sweep link generation with custom sweep ID provided to WandbSweep link."""
+        link = WandbSweep(
+            project="test-project",
+            entity="test-entity",
+            id="my-custom-sweep-id",
+        )
+
+        uri = link.get_link(
+            run_name="test-run",
+            project="flyte-project",
+            domain="development",
+            context={},
+            parent_action_name="parent",
+            action_name="{{.actionName}}",
+            pod_name="{{.podName}}",
+        )
+
+        # Should use custom sweep ID from link parameter
+        assert uri == "https://wandb.ai/test-entity/test-project/sweeps/my-custom-sweep-id"
+
+    def test_wandb_sweep_link_with_custom_id_in_context(self):
+        """Test sweep link generation with custom sweep ID from context."""
+        link = WandbSweep(project="test-project", entity="test-entity")
+
+        uri = link.get_link(
+            run_name="test-run",
+            project="flyte-project",
+            domain="development",
+            context={"_wandb_sweep_id": "context-sweep-id"},
+            parent_action_name="parent",
+            action_name="{{.actionName}}",
+            pod_name="{{.podName}}",
+        )
+
+        # Should use sweep ID from context
+        assert uri == "https://wandb.ai/test-entity/test-project/sweeps/context-sweep-id"
+
+    def test_wandb_sweep_link_custom_id_priority(self):
+        """Test that link.id takes precedence over context _wandb_sweep_id."""
+        link = WandbSweep(
+            project="test-project",
+            entity="test-entity",
+            id="link-sweep-id",  # This should win
+        )
+
+        uri = link.get_link(
+            run_name="test-run",
+            project="flyte-project",
+            domain="development",
+            context={"_wandb_sweep_id": "context-sweep-id"},  # This should be ignored
+            parent_action_name="parent",
+            action_name="{{.actionName}}",
+            pod_name="{{.podName}}",
+        )
+
+        # Link ID should take precedence over context ID
+        assert uri == "https://wandb.ai/test-entity/test-project/sweeps/link-sweep-id"

@@ -10,6 +10,7 @@ class Wandb(Link):
     project: Optional[str] = None
     entity: Optional[str] = None
     new_run: bool | str = "auto"
+    id: Optional[str] = None
     name: str = "Weights & Biases"
 
     def get_link(
@@ -26,7 +27,7 @@ class Wandb(Link):
         wandb_project = self.project
         wandb_entity = self.entity
         wandb_run_id = None
-        user_provided_id = None
+        user_provided_id = self.id  # Prioritize ID provided at link creation time
 
         if context:
             # Try to get from context if not provided at decoration time
@@ -38,8 +39,9 @@ class Wandb(Link):
             # Get parent's run ID if available (set by parent task)
             parent_run_id = context.get("_wandb_run_id")
 
-            # Check if user provided a custom run ID in wandb_config
-            user_provided_id = context.get("wandb_id")
+            # Check if user provided a custom run ID in wandb_config (lower priority than self.id)
+            if not user_provided_id:
+                user_provided_id = context.get("wandb_id")
         else:
             parent_run_id = None
 
@@ -73,6 +75,7 @@ class WandbSweep(Link):
     host: str = "https://wandb.ai"
     project: Optional[str] = None
     entity: Optional[str] = None
+    id: Optional[str] = None
     name: str = "Weights & Biases Sweep"
 
     def get_link(
@@ -88,7 +91,7 @@ class WandbSweep(Link):
         # Get project and entity from decorator values or context
         wandb_project = self.project
         wandb_entity = self.entity
-        sweep_id = None
+        sweep_id = self.id  # Prioritize ID provided at link creation time
 
         if context:
             # Try to get from context config if not provided at decoration time
@@ -97,17 +100,18 @@ class WandbSweep(Link):
             if not wandb_entity:
                 wandb_entity = context.get("wandb_entity")
 
-            # Try to get the sweep_id if it was stored at runtime (from parent)
+            # Try to get the sweep_id from context if not provided at link creation
             # Child tasks inherit this from the parent that created the sweep
-            sweep_id = context.get("_wandb_sweep_id")
-
-            if sweep_id and wandb_project and wandb_entity:
-                # Child task: has sweep_id from parent, link to specific sweep
-                return f"{self.host}/{wandb_entity}/{wandb_project}/sweeps/{sweep_id}"
+            if not sweep_id:
+                sweep_id = context.get("_wandb_sweep_id")
 
         # If we don't have project/entity, return base URL
         if not wandb_project or not wandb_entity:
             return self.host
 
-        # Parent task or no sweep_id: link to the project's sweeps list page
+        # If we have a sweep_id, link to specific sweep
+        if sweep_id:
+            return f"{self.host}/{wandb_entity}/{wandb_project}/sweeps/{sweep_id}"
+
+        # No sweep_id: link to the project's sweeps list page
         return f"{self.host}/{wandb_entity}/{wandb_project}/sweeps"

@@ -37,7 +37,7 @@ def _wandb_run(new_run: bool = "auto", func: bool = False, **decorator_kwargs):
     Context manager for wandb run lifecycle.
 
     Initializes wandb.init() when the context is entered.
-    The initialized run is available via flyte.ctx().wandb_run.
+    The initialized run is available via get_wandb_run().
     """
     # Try to get Flyte context
     ctx = flyte.ctx()
@@ -54,7 +54,7 @@ def _wandb_run(new_run: bool = "auto", func: bool = False, **decorator_kwargs):
     elif func and ctx:
         raise RuntimeError(
             "@wandb_init cannot be applied to traces. "
-            "Traces can access the parent's wandb run via flyte.ctx().wandb_run."
+            "Traces can access the parent's wandb run via get_wandb_run()."
         )
 
     # Save existing state to restore later
@@ -202,7 +202,7 @@ def wandb_init(
     This decorator:
     1. Initializes wandb when the context manager is entered
     2. Auto-generates unique run ID from Flyte action context if not provided
-    3. Makes the run available via flyte.ctx().wandb_run
+    3. Makes the run available via get_wandb_run()
     4. Automatically adds a W&B link to the task in the Flyte UI
     5. Automatically finishes the run after completion
     """
@@ -327,7 +327,7 @@ def wandb_sweep(_func: Optional[F] = None) -> F:
 
     This decorator:
     1. Creates a wandb sweep using config from context
-    2. Makes sweep_id available via flyte.ctx().wandb_sweep_id
+    2. Makes sweep_id available via get_wandb_sweep_id()
     3. Automatically adds a W&B sweep link to the task
     """
 
