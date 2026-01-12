@@ -138,7 +138,9 @@ class Context:
 
 
 # Global context variable to hold the current context
-root_context_var = contextvars.ContextVar("root", default=Context(data=ContextData(raw_data_path=RawDataPath(path="flyte://data"))))
+root_context_var = contextvars.ContextVar(
+    "root", default=Context(data=ContextData(raw_data_path=RawDataPath(path="flyte://data")))
+)
 
 
 def ctx() -> Optional[TaskContext]:

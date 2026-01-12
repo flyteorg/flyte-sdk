@@ -1,3 +1,4 @@
+import logging
 from typing import Annotated
 
 import numpy as np
@@ -79,7 +80,7 @@ async def get_employee_data(raw_dataframe: pd.DataFrame, flyte_dataframe: pd.Dat
 
 
 if __name__ == "__main__":
-    flyte.init_from_config()
+    flyte.init_from_config(log_level=logging.DEBUG)
     # Get the data sources
 
     run1 = flyte.with_runcontext(mode="local").run(create_raw_dataframe)

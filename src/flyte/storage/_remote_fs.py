@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import os
 import pathlib
 import tempfile
@@ -9,7 +10,7 @@ import typing
 import fsspec
 import fsspec.callbacks
 import fsspec.utils
-from fsspec.implementations.http import HTTPFileSystem
+from fsspec.asyn import AsyncFileSystem
 
 from flyte._logging import logger
 
@@ -33,7 +34,12 @@ class RemoteFSPathResolver:
         """
         with cls._lock:
             if flyte_uri in cls._flyte_path_to_remote_map:
-                return cls._flyte_path_to_remote_map[flyte_uri]
+                resolved = cls._flyte_path_to_remote_map[flyte_uri]
+                logger.debug(f"Resolved {flyte_uri} -> {resolved}")
+                return resolved
+            logger.warning(
+                f"Failed to resolve {flyte_uri}. Available mappings: {list(cls._flyte_path_to_remote_map.keys())}"
+            )
             return None
 
     @classmethod
@@ -46,12 +52,33 @@ class RemoteFSPathResolver:
 
 
 class HttpFileWriter(fsspec.spec.AbstractBufferedFile):
+    # Class-level registry of pending upload tasks
+    _pending_uploads: typing.ClassVar[typing.Dict[str, asyncio.Task]] = {}
+    _pending_uploads_lock = threading.Lock()
+
     def __init__(self, filename: str, **kwargs):
-        super().__init__(**kwargs)
         self._filename = filename
         # Create a temporary file to buffer chunks before upload
-        self._tmp_file_obj = tempfile.NamedTemporaryFile(mode='wb', delete=False, suffix=f"_{filename}")
+        # Sanitize filename for use in suffix
+        safe_suffix = "".join(c if c.isalnum() or c in ".-_" else "_" for c in filename)[:50]
+        self._tmp_file_obj = tempfile.NamedTemporaryFile(mode="wb", delete=False, suffix=f"_{safe_suffix}")
         self._tmp_file_path = pathlib.Path(self._tmp_file_obj.name)
+        super().__init__(**kwargs)
+
+    @classmethod
+    async def wait_for_pending_uploads(cls) -> None:
+        """Wait for all pending uploads to complete."""
+        with cls._pending_uploads_lock:
+            tasks = list(cls._pending_uploads.values())
+
+        if tasks:
+            logger.debug(f"Waiting for {len(tasks)} pending uploads")
+            await asyncio.gather(*tasks, return_exceptions=True)
+            logger.debug("All pending uploads completed")
+
+        # Clear completed tasks
+        with cls._pending_uploads_lock:
+            cls._pending_uploads.clear()
 
     def _upload_chunk(self, final=False):
         """Only uploads the file at once from the buffer.
@@ -64,27 +91,47 @@ class HttpFileWriter(fsspec.spec.AbstractBufferedFile):
 
         if final is False:
             # Write buffer contents to temp file
-            self._tmp_file_obj.write(self.buffer.getvalue())
+            buffer_data = self.buffer.getvalue()
+            if buffer_data:
+                self._tmp_file_obj.write(buffer_data)
+                self._tmp_file_obj.flush()
             self.buffer.seek(0)
             self.buffer.truncate(0)
             return False
 
         # Final upload: write any remaining buffer content, close temp file, and upload
-        self._tmp_file_obj.write(self.buffer.getvalue())
+        buffer_data = self.buffer.getvalue()
+        if buffer_data:
+            self._tmp_file_obj.write(buffer_data)
+        self._tmp_file_obj.flush()
         self._tmp_file_obj.close()
 
-        try:
-            # Upload the temp file using remote.upload_file
-            md5, native_uri =  remote.upload_file(fp=self._tmp_file_path)
-            RemoteFSPathResolver.add_mapping(self.path, native_uri)
-            return True
-        finally:
-            # Clean up the temporary file
-            if self._tmp_file_path.exists():
-                self._tmp_file_path.unlink()
+        # Schedule the upload asynchronously and store it in the pending uploads registry
+        # The encode function will wait for it to complete
+        loop = asyncio.get_running_loop()
+
+        async def upload_and_map():
+            try:
+                md5, native_uri = await remote.upload_file.aio(fp=self._tmp_file_path)
+                # Add mapping with the flyte:// protocol prefix
+                flyte_uri = f"flyte://{self.path}"
+                RemoteFSPathResolver.add_mapping(flyte_uri, native_uri)
+                return md5, native_uri
+            finally:
+                # Clean up the temporary file
+                if self._tmp_file_path.exists():
+                    self._tmp_file_path.unlink()
+
+        task = loop.create_task(upload_and_map())
+
+        # Register the task so the encode function can wait for it
+        with self._pending_uploads_lock:
+            self._pending_uploads[self.path] = task
+
+        return True
 
 
-class FlyteFS(HTTPFileSystem):
+class FlyteFS(AsyncFileSystem):
     """
     Want this to behave mostly just like the HTTP file system.
     """
@@ -93,9 +140,9 @@ class FlyteFS(HTTPFileSystem):
     protocol = "flyte"
 
     def __init__(
-            self,
-            asynchronous: bool = False,
-            **storage_options,
+        self,
+        asynchronous: bool = False,
+        **storage_options,
     ):
         super().__init__(asynchronous=asynchronous, **storage_options)
 
@@ -111,19 +158,20 @@ class FlyteFS(HTTPFileSystem):
         raise NotImplementedError("FlyteFS currently doesn't support downloading files.")
 
     async def _put_file(
-            self,
-            lpath,
-            rpath,
-            chunk_size=5 * 2 ** 20,
-            callback=fsspec.callbacks.DEFAULT_CALLBACK,
-            method="put",
-            **kwargs,
+        self,
+        lpath,
+        rpath,
+        chunk_size=5 * 2**20,
+        callback=fsspec.callbacks.DEFAULT_CALLBACK,
+        method="put",
+        **kwargs,
     ):
         """
         fsspec will call this method to upload a file. If recursive, rpath will already be individual files.
         Make the request and upload, but then how do we get the s3 paths back to the user?
         """
         import flyte.remote as remote
+
         prefix = None
         if _PREFIX_KEY in kwargs:
             prefix = kwargs[_PREFIX_KEY]
@@ -170,10 +218,10 @@ class FlyteFS(HTTPFileSystem):
         This is done by hashing the sorted list of file paths and then base32 encoding the result.
         If the input is empty, then generate a random string
         """
-        import hashlib
         import base64
-        import uuid
+        import hashlib
         import random
+        import uuid
 
         if len(file_info) == 0:
             return uuid.UUID(int=random.getrandbits(128)).hex
@@ -201,17 +249,18 @@ class FlyteFS(HTTPFileSystem):
             return hashes
         else:
             from flyte.remote._data import hash_file
+
             md5_bytes, _, content_length = hash_file(p.resolve())
             return {str(p.absolute()): (md5_bytes, content_length)}
 
     async def _put(
-            self,
-            lpath,
-            rpath,
-            recursive=False,
-            callback=fsspec.callbacks.DEFAULT_CALLBACK,
-            batch_size=None,
-            **kwargs,
+        self,
+        lpath,
+        rpath,
+        recursive=False,
+        callback=fsspec.callbacks.DEFAULT_CALLBACK,
+        batch_size=None,
+        **kwargs,
     ):
         """
         cp file.txt flyte://data/...
@@ -236,15 +285,15 @@ class FlyteFS(HTTPFileSystem):
         raise NotImplementedError("flyte file system currently can't check if a file exists.")
 
     def _open(
-            self,
-            path,
-            mode="wb",
-            block_size=None,
-            autocommit=None,  # XXX: This differs from the base class.
-            cache_type=None,
-            cache_options=None,
-            size=None,
-            **kwargs,
+        self,
+        path,
+        mode="wb",
+        block_size=None,
+        autocommit=None,  # XXX: This differs from the base class.
+        cache_type=None,
+        cache_options=None,
+        size=None,
+        **kwargs,
     ):
         if mode != "wb":
             raise ValueError("Only wb mode is supported")
@@ -252,9 +301,7 @@ class FlyteFS(HTTPFileSystem):
         # Dataframes are written as multiple files, default is the first file with 00000 suffix, we should drop
         # that suffix and use the parent directory as the remote path.
 
-        return HttpFileWriter(
-            os.path.basename(path), fs=self, path=os.path.dirname(path), mode=mode, **kwargs
-        )
+        return HttpFileWriter(os.path.basename(path), fs=self, path=os.path.dirname(path), mode=mode, **kwargs)
 
     def __str__(self):
         p = super().__str__()

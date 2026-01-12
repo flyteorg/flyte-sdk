@@ -133,6 +133,13 @@ class PandasToParquetEncodingHandler(DataFrameEncoder):
             allow_truncated_timestamps=False,
             storage_options=get_pandas_storage_options(uri=path),
         )
+
+        # Wait for any pending uploads to complete before continuing
+        # This ensures the URI mapping is available when modify_literal_uris is called
+        from flyte.storage._remote_fs import HttpFileWriter
+
+        await HttpFileWriter.wait_for_pending_uploads()
+
         structured_dataset_type.format = PARQUET
         return literals_pb2.StructuredDataset(
             uri=uri, metadata=literals_pb2.StructuredDatasetMetadata(structured_dataset_type=structured_dataset_type)

@@ -19,6 +19,7 @@ from obstore.store import ObjectStore
 from flyte._initialize import get_storage
 from flyte._logging import logger
 from flyte.errors import InitializationError, OnlyAsyncIOSupportedError
+
 from ._remote_fs import FlyteFS
 
 if typing.TYPE_CHECKING:
