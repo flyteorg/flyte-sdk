@@ -13,7 +13,6 @@ from typing import (
     cast,
 )
 
-import flyte.errors
 from flyte._logging import logger
 from flyte.models import NativeInterface
 
@@ -57,7 +56,8 @@ def trace(func: Callable[..., T]) -> Callable[..., T]:
             start_time = time.time()
 
             # Create a new context with the trace's action ID
-            trace_task_context = ctx.data.task_context.replace(action=info.action)
+            # Note: ctx.data.task_context is guaranteed to be non-None by is_task_context() check above
+            trace_task_context = ctx.data.task_context.replace(action=info.action)  # type: ignore[union-attr]
             trace_context = ctx.replace_task_context(trace_task_context)
 
             # Execute function in trace context, then record outside it
@@ -115,7 +115,8 @@ def trace(func: Callable[..., T]) -> Callable[..., T]:
             start_time = time.time()
 
             # Create a new context with the trace's action ID
-            trace_task_context = ctx.data.task_context.replace(action=info.action)
+            # Note: ctx.data.task_context is guaranteed to be non-None by is_task_context() check above
+            trace_task_context = ctx.data.task_context.replace(action=info.action)  # type: ignore[union-attr]
             trace_context = ctx.replace_task_context(trace_task_context)
 
             # Execute function in trace context, then record outside it
