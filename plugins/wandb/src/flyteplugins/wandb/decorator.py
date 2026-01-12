@@ -5,10 +5,10 @@ from dataclasses import asdict
 from inspect import iscoroutinefunction
 from typing import Any, Callable, Optional, TypeVar, cast
 
-import wandb
-
 import flyte
 from flyte._task import AsyncFunctionTaskTemplate
+
+import wandb
 
 from .context import get_wandb_context, get_wandb_sweep_context
 from .link import Wandb, WandbSweep
@@ -80,7 +80,7 @@ def _wandb_run(new_run: bool = "auto", func: bool = False, **decorator_kwargs):
 
     # Determine if we should reuse parent's run
     should_reuse = False
-    if new_run == False:
+    if new_run is False:
         should_reuse = True
     elif new_run == "auto":
         should_reuse = bool(saved_run_id)
@@ -116,9 +116,7 @@ def _wandb_run(new_run: bool = "auto", func: bool = False, **decorator_kwargs):
         if not is_primary:
             shared_config["x_update_finish_state"] = False
 
-        init_kwargs["settings"] = wandb.Settings(
-            **{**existing_settings, **shared_config}
-        )
+        init_kwargs["settings"] = wandb.Settings(**{**existing_settings, **shared_config})
 
     # Initialize wandb
     run = wandb.init(**init_kwargs)
@@ -226,7 +224,7 @@ def wandb_init(
             existing_links = getattr(func, "links", ())
 
             # Use override to properly add the link to the task
-            func = func.override(links=existing_links + (wandb_link,))
+            func = func.override(links=(*existing_links, wandb_link))
 
             # Wrap the task's execute method with wandb_run
             original_execute = func.execute
@@ -341,7 +339,7 @@ def wandb_sweep(_func: Optional[F] = None) -> F:
             existing_links = getattr(func, "links", ())
 
             # Use override to properly add the link to the task
-            func = func.override(links=existing_links + (wandb_sweep_link,))
+            func = func.override(links=(*existing_links, wandb_sweep_link))
 
             original_execute = func.execute
 

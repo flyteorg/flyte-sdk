@@ -48,10 +48,10 @@ class Wandb(Link):
             return self.host
 
         # Determine run ID based on new_run setting
-        if self.new_run == True:
+        if self.new_run is True:
             # Always create new run - use user-provided ID if available, otherwise generate
             wandb_run_id = user_provided_id or f"{run_name}-{action_name}"
-        elif self.new_run == False:
+        elif self.new_run is False:
             # Always reuse parent's run
             if parent_run_id:
                 wandb_run_id = parent_run_id

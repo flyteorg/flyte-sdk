@@ -3,7 +3,10 @@ import time
 from datetime import timedelta
 from pathlib import Path
 
+import flyte
 import wandb
+from flyte._image import PythonWheels
+
 from flyteplugins.wandb import (
     get_wandb_context,
     wandb_config,
@@ -11,9 +14,6 @@ from flyteplugins.wandb import (
     wandb_sweep,
     wandb_sweep_config,
 )
-
-import flyte
-from flyte._image import PythonWheels
 
 env = flyte.TaskEnvironment(
     name="wandb-test",
@@ -27,9 +27,7 @@ env = flyte.TaskEnvironment(
         name="wandb-test",
     )
     .with_apt_packages("git")
-    .with_pip_packages(
-        "git+https://github.com/flyteorg/flyte-sdk.git@144738932528f0fbaefcffc56e953824aca6d701"
-    ),
+    .with_pip_packages("git+https://github.com/flyteorg/flyte-sdk.git@144738932528f0fbaefcffc56e953824aca6d701"),
     secrets=[flyte.Secret(key="wandb_api_key", as_env_var="WANDB_API_KEY")],
 )
 
@@ -157,7 +155,10 @@ async def parent_task() -> str:
     print(f"Parent task - Name: {run.name}")
     print(f"Parent task - Tags: {run.tags}")
 
-    return f"Parent complete: child1={result1}, child2={result2}, child3={result3}, trace={result4}, no_wandb={no_wandb_result}"
+    return (
+        f"Parent complete: child1={result1}, child2={result2}, "
+        f"child3={result3}, trace={result4}, no_wandb={no_wandb_result}"
+    )
 
 
 @wandb_init
@@ -165,18 +166,14 @@ def objective():
     run = wandb.run
     config = run.config
 
-    print(
-        f"Training with lr={config.learning_rate}, batch_size={config.batch_size}, epochs={config.epochs}"
-    )
+    print(f"Training with lr={config.learning_rate}, batch_size={config.batch_size}, epochs={config.epochs}")
 
     # Simulate training loop
     best_loss = float("inf")
     for epoch in range(config.epochs):
         # Simulate training metrics
         loss = 1.0 / (config.learning_rate * config.batch_size) + epoch * 0.1
-        accuracy = min(
-            0.95, config.learning_rate * config.batch_size * (epoch + 1) * 0.01
-        )
+        accuracy = min(0.95, config.learning_rate * config.batch_size * (epoch + 1) * 0.01)
 
         run.log(
             {
@@ -213,9 +210,7 @@ async def sweep_agent(agent_id: int, sweep_id: str, count: int = 5) -> int:
     print(f"[Agent {agent_id}] Starting agent for sweep {sweep_id}")
     print(f"[Agent {agent_id}] Will run up to {count} trials")
 
-    wandb.agent(
-        sweep_id, function=objective, count=count, project=get_wandb_context().project
-    )
+    wandb.agent(sweep_id, function=objective, count=count, project=get_wandb_context().project)
 
     print(f"[Agent {agent_id}] Finished!")
     return agent_id
@@ -223,9 +218,7 @@ async def sweep_agent(agent_id: int, sweep_id: str, count: int = 5) -> int:
 
 @wandb_sweep
 @env.task
-async def run_parallel_sweep(
-    total_trials: int = 15, trials_per_agent: int = 5, max_agents: int = 10
-) -> str:
+async def run_parallel_sweep(total_trials: int = 15, trials_per_agent: int = 5, max_agents: int = 10) -> str:
     sweep_id = flyte.ctx().wandb_sweep_id
 
     print(f"Starting sweep {sweep_id} with total {total_trials} trials")
@@ -260,9 +253,7 @@ if __name__ == "__main__":
     print("Running Example 1: Parent/Child Task Logging")
 
     run_1 = flyte.with_runcontext(
-        custom_context=wandb_config(
-            project="flyte-wandb-test", tags=["parent"], entity="samhita-alla"
-        ),
+        custom_context=wandb_config(project="flyte-wandb-test", tags=["parent"], entity="samhita-alla"),
     ).run(parent_task)
 
     print(run_1.url)

@@ -1,6 +1,5 @@
 """Tests for wandb link generation."""
 
-
 from flyteplugins.wandb.link import Wandb, WandbSweep
 
 

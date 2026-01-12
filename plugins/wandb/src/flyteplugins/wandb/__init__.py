@@ -2,8 +2,6 @@ import logging
 
 from flyte.models import TaskContext
 
-logger = logging.getLogger(__name__)
-
 from .context import (
     get_wandb_context,
     get_wandb_sweep_context,
@@ -12,6 +10,9 @@ from .context import (
 )
 from .decorator import wandb_init, wandb_sweep
 from .link import Wandb, WandbSweep
+
+logger = logging.getLogger(__name__)
+
 
 __all__ = [
     "Wandb",
