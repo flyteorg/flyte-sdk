@@ -45,6 +45,7 @@ def trace(func: Callable[..., T]) -> Callable[..., T]:
             start_time = time.time()
 
             # Create a new context with the trace's action ID
+            assert ctx.data.task_context is not None  # Guaranteed by is_task_context() check above
             trace_task_context = ctx.data.task_context.replace(action=info.action)
             trace_context = ctx.replace_task_context(trace_task_context)
 
@@ -100,10 +101,8 @@ def trace(func: Callable[..., T]) -> Callable[..., T]:
                     raise info.error
             start_time = time.time()
 
-            if ctx.data.task_context is None:
-                raise flyte.errors.RuntimeSystemError("BadContext", "Task context not initialized")
-
             # Create a new context with the trace's action ID
+            assert ctx.data.task_context is not None  # Guaranteed by is_task_context() check above
             trace_task_context = ctx.data.task_context.replace(action=info.action)
             trace_context = ctx.replace_task_context(trace_task_context)
 
