@@ -116,7 +116,9 @@ def _wandb_run(new_run: bool = "auto", func: bool = False, **decorator_kwargs):
         if not is_primary:
             shared_config["x_update_finish_state"] = False
 
-        init_kwargs["settings"] = wandb.Settings(**{**existing_settings, **shared_config})
+        init_kwargs["settings"] = wandb.Settings(
+            **{**existing_settings, **shared_config}
+        )
 
     # Initialize wandb
     run = wandb.init(**init_kwargs)
@@ -138,7 +140,7 @@ def _wandb_run(new_run: bool = "auto", func: bool = False, **decorator_kwargs):
             should_finish = False
 
             if flyte.ctx().mode == "remote":
-                # In remote/shared mode, ALWAYS call run.finish() to flush data
+                # In remote/shared mode, always call run.finish() to flush data
                 # For secondary tasks, x_update_finish_state=False prevents actually finishing
                 # For primary tasks, this properly finishes the run
                 should_finish = True
