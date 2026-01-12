@@ -1,7 +1,8 @@
 import asyncio
 import time
+from datetime import timedelta
+from pathlib import Path
 
-import flyte
 import wandb
 from flyteplugins.wandb import (
     get_wandb_context,
@@ -10,20 +11,13 @@ from flyteplugins.wandb import (
     wandb_sweep,
     wandb_sweep_config,
 )
-from datetime import timedelta
+
+import flyte
 from flyte._image import PythonWheels
-from pathlib import Path
 
 env = flyte.TaskEnvironment(
     name="wandb-test",
     image=flyte.Image.from_debian_base()
-    .clone(
-        addl_layer=PythonWheels(
-            wheel_dir=Path(__file__).parent.parent.parent / "dist",
-            package_name="flyte",
-            pre=True,
-        )
-    )
     .clone(
         addl_layer=PythonWheels(
             wheel_dir=Path(__file__).parent / "dist",
@@ -31,8 +25,12 @@ env = flyte.TaskEnvironment(
             pre=True,
         ),
         name="wandb-test",
+    )
+    .with_apt_packages("git")
+    .with_pip_packages(
+        "git+https://github.com/flyteorg/flyte-sdk.git@144738932528f0fbaefcffc56e953824aca6d701"
     ),
-    secrets=[flyte.Secret(key="samhita_wandb_api_key", as_env_var="WANDB_API_KEY")],
+    secrets=[flyte.Secret(key="wandb_api_key", as_env_var="WANDB_API_KEY")],
 )
 
 
@@ -55,7 +53,7 @@ async def traced_child_task(x: int) -> str:
 
 @wandb_init(new_run=False)  # same as new_run="auto"
 @env.task
-async def grandchild_task(x: int) -> str:
+def grandchild_task(x: int) -> str:
     run = flyte.ctx().wandb_run
 
     print(f"Grandchild task - Run ID: {run.id}")
@@ -65,7 +63,7 @@ async def grandchild_task(x: int) -> str:
     print(f"Grandchild task - Tags: {run.tags}")
 
     # Log some metrics
-    run.log({"child_metric": x * 4, "input": x})
+    run.log({"child_metric": x * 4, "input": x, "grandchild_metric": x + 1})
 
     return run.id
 
@@ -85,7 +83,7 @@ async def child_task(x: int) -> str:
     run.log({"child_metric": x * 2, "input": x})
 
     # Call grandchild task
-    grandchild_result = await grandchild_task(x + 1)
+    grandchild_result = grandchild_task(x + 1)
     print(f"Grandchild result: {grandchild_result}")
 
     return run.id
@@ -196,6 +194,7 @@ def objective():
     print(f"Training complete! Best loss: {best_loss}")
 
 
+@wandb_sweep
 @env.task
 async def sweep_agent(agent_id: int, sweep_id: str, count: int = 5) -> int:
     """
@@ -229,6 +228,8 @@ async def run_parallel_sweep(
 ) -> str:
     sweep_id = flyte.ctx().wandb_sweep_id
 
+    print(f"Starting sweep {sweep_id} with total {total_trials} trials")
+
     # Dynamic scaling: Calculate optimal agent count based on workload
     num_agents = min(
         (total_trials + trials_per_agent - 1) // trials_per_agent,
@@ -259,7 +260,9 @@ if __name__ == "__main__":
     print("Running Example 1: Parent/Child Task Logging")
 
     run_1 = flyte.with_runcontext(
-        custom_context=wandb_config(project="flyte-wandb-test", tags=["parent"]),
+        custom_context=wandb_config(
+            project="flyte-wandb-test", tags=["parent"], entity="samhita-alla"
+        ),
     ).run(parent_task)
 
     print(run_1.url)
@@ -268,7 +271,7 @@ if __name__ == "__main__":
 
     run_2 = flyte.with_runcontext(
         custom_context={
-            **wandb_config(project="flyte-wandb-test"),
+            **wandb_config(project="flyte-wandb-test", entity="samhita-alla"),
             **wandb_sweep_config(
                 method="random",
                 metric={"name": "loss", "goal": "minimize"},
@@ -277,7 +280,6 @@ if __name__ == "__main__":
                     "batch_size": {"values": [16, 32, 64, 128]},
                     "epochs": {"values": [3, 5, 10]},
                 },
-                name="flyte-hyperparameter-optimization",
                 description="Parallel agents",
             ),
         },

@@ -22,21 +22,24 @@ class Wandb(Link):
         action_name: str,
         pod_name: str,
     ) -> str:
-        # Get project and entity from decorator values or runtime context
+        # Get project and entity from decorator values or context
         wandb_project = self.project
         wandb_entity = self.entity
         wandb_run_id = None
+        user_provided_id = None
 
         if context:
             # Try to get from context if not provided at decoration time
-            # These are stored when wandb.init() is called
             if not wandb_project:
-                wandb_project = context.get("_wandb_project")
+                wandb_project = context.get("wandb_project")
             if not wandb_entity:
-                wandb_entity = context.get("_wandb_entity")
+                wandb_entity = context.get("wandb_entity")
 
-            # Get parent's run ID if available
+            # Get parent's run ID if available (set by parent task)
             parent_run_id = context.get("_wandb_run_id")
+
+            # Check if user provided a custom run ID in wandb_config
+            user_provided_id = context.get("wandb_id")
         else:
             parent_run_id = None
 
@@ -46,8 +49,8 @@ class Wandb(Link):
 
         # Determine run ID based on new_run setting
         if self.new_run == True:
-            # Always create new run - generate ID for this task
-            wandb_run_id = f"{run_name}-{action_name}"
+            # Always create new run - use user-provided ID if available, otherwise generate
+            wandb_run_id = user_provided_id or f"{run_name}-{action_name}"
         elif self.new_run == False:
             # Always reuse parent's run
             if parent_run_id:
@@ -60,7 +63,7 @@ class Wandb(Link):
             if parent_run_id:
                 wandb_run_id = parent_run_id
             else:
-                wandb_run_id = f"{run_name}-{action_name}"
+                wandb_run_id = user_provided_id or f"{run_name}-{action_name}"
 
         return f"{self.host}/{wandb_entity}/{wandb_project}/runs/{wandb_run_id}"
 
@@ -82,29 +85,29 @@ class WandbSweep(Link):
         action_name: str,
         pod_name: str,
     ) -> str:
-        # Get project and entity from decorator values or runtime context
+        # Get project and entity from decorator values or context
         wandb_project = self.project
         wandb_entity = self.entity
-
         sweep_id = None
-        if context:
-            # Try to get from context if not provided at decoration time
-            # These are stored when wandb.init() is called
-            if not wandb_project:
-                wandb_project = context.get("_wandb_project")
-            if not wandb_entity:
-                wandb_entity = context.get("_wandb_entity")
 
-            # Try to get sweep_id from context
+        if context:
+            # Try to get from context config if not provided at decoration time
+            if not wandb_project:
+                wandb_project = context.get("wandb_project")
+            if not wandb_entity:
+                wandb_entity = context.get("wandb_entity")
+
+            # Try to get the sweep_id if it was stored at runtime (from parent)
+            # Child tasks inherit this from the parent that created the sweep
             sweep_id = context.get("_wandb_sweep_id")
+
+            if sweep_id and wandb_project and wandb_entity:
+                # Child task: has sweep_id from parent, link to specific sweep
+                return f"{self.host}/{wandb_entity}/{wandb_project}/sweeps/{sweep_id}"
 
         # If we don't have project/entity, return base URL
         if not wandb_project or not wandb_entity:
             return self.host
 
-        # If we have a sweep_id, return the specific sweep URL
-        if sweep_id:
-            return f"{self.host}/{wandb_entity}/{wandb_project}/sweeps/{sweep_id}"
-
-        # Otherwise, return the sweeps list URL as a fallback
+        # Parent task or no sweep_id: link to the project's sweeps list page
         return f"{self.host}/{wandb_entity}/{wandb_project}/sweeps"

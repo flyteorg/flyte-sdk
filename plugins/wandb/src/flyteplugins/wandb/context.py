@@ -119,8 +119,36 @@ class _WandBConfig:
     def __getitem__(self, key):
         return self.to_dict()[key]
 
+    def __setitem__(self, key, value):
+        # For setting items, we need to update the actual Flyte context
+        ctx = flyte.ctx()
+        if ctx and ctx.custom_context:
+            ctx.custom_context[key] = value
+
+    def __delitem__(self, key):
+        # For deleting items, we need to update the actual Flyte context
+        ctx = flyte.ctx()
+        if ctx and ctx.custom_context:
+            del ctx.custom_context[key]
+
     def items(self):
         return self.to_dict().items()
+
+    def get(self, key, default=None):
+        return self.to_dict().get(key, default)
+
+    def pop(self, key, default=None):
+        # For popping items, we need to update the actual Flyte context
+        ctx = flyte.ctx()
+        if ctx and ctx.custom_context:
+            return ctx.custom_context.pop(key, default)
+        return default
+
+    def update(self, *args, **kwargs):
+        # For updating, we need to update the actual Flyte context
+        ctx = flyte.ctx()
+        if ctx and ctx.custom_context:
+            ctx.custom_context.update(*args, **kwargs)
 
     # Context manager implementation
     def __enter__(self):
@@ -190,6 +218,7 @@ def wandb_config(
 @dataclass
 class _WandBSweepConfig:
     # Essential sweep parameters
+    name: Optional[str] = None
     method: Optional[str] = None
     metric: Optional[dict[str, Any]] = None
     parameters: Optional[dict[str, Any]] = None
@@ -236,8 +265,36 @@ class _WandBSweepConfig:
     def __getitem__(self, key):
         return self.to_dict()[key]
 
+    def __setitem__(self, key, value):
+        # For setting items, we need to update the actual Flyte context
+        ctx = flyte.ctx()
+        if ctx and ctx.custom_context:
+            ctx.custom_context[key] = value
+
+    def __delitem__(self, key):
+        # For deleting items, we need to update the actual Flyte context
+        ctx = flyte.ctx()
+        if ctx and ctx.custom_context:
+            del ctx.custom_context[key]
+
     def items(self):
         return self.to_dict().items()
+
+    def get(self, key, default=None):
+        return self.to_dict().get(key, default)
+
+    def pop(self, key, default=None):
+        # For popping items, we need to update the actual Flyte context
+        ctx = flyte.ctx()
+        if ctx and ctx.custom_context:
+            return ctx.custom_context.pop(key, default)
+        return default
+
+    def update(self, *args, **kwargs):
+        # For updating, we need to update the actual Flyte context
+        ctx = flyte.ctx()
+        if ctx and ctx.custom_context:
+            ctx.custom_context.update(*args, **kwargs)
 
     # Context manager implementation
     def __enter__(self):
@@ -254,9 +311,7 @@ def get_wandb_sweep_context() -> Optional[_WandBSweepConfig]:
     if ctx is None or not ctx.custom_context:
         return None
 
-    has_wandb_sweep_keys = any(
-        k.startswith("wandb_sweep_") for k in ctx.custom_context.keys()
-    )
+    has_wandb_sweep_keys = any(k.startswith("wandb_sweep_") for k in ctx.custom_context.keys())
     if not has_wandb_sweep_keys:
         return None
 
@@ -270,21 +325,22 @@ def wandb_sweep_config(
     project: Optional[str] = None,
     entity: Optional[str] = None,
     prior_runs: Optional[list[str]] = None,
+    name: Optional[str] = None,
     **kwargs: Any,
 ) -> _WandBSweepConfig:
     """
     Create wandb sweep configuration for hyperparameter optimization.
 
     Args:
-        method: Sweep method
-        metric: Metric to optimize
-        parameters: Parameter definitions
+        method: Sweep method (e.g., "random", "grid", "bayes")
+        metric: Metric to optimize (e.g., {"name": "loss", "goal": "minimize"})
+        parameters: Parameter definitions for the sweep
         project: W&B project for the sweep
         entity: W&B entity for the sweep
         prior_runs: List of prior run IDs to include in the sweep analysis
+        name: Sweep name (auto-generated as "{run_name}-{action_name}" if not provided)
         **kwargs: Additional sweep config parameters like:
             - early_terminate: Early termination config
-            - name: Sweep name
             - description: Sweep description
             - command: CLI command to run
             - controller: Sweep controller config
@@ -292,6 +348,7 @@ def wandb_sweep_config(
     See: https://docs.wandb.ai/models/sweeps/sweep-config-keys
     """
     return _WandBSweepConfig(
+        name=name,
         method=method,
         metric=metric,
         parameters=parameters,

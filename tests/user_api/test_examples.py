@@ -27,7 +27,7 @@ def test_none_type():
 
     flyte.init()
     result = flyte.run(foo)
-    assert result.outputs() == (None, )
+    assert result.outputs() == (None,)
 
 
 def test_basic_types():
@@ -64,7 +64,7 @@ def test_collection_types():
     flyte.init()
     result = flyte.run(collection_types)
     outputs = result.outputs()
-    assert outputs == ({"list_result": [2, 4, 6], "dict_result": [2, 4]}, )
+    assert outputs == ({"list_result": [2, 4, 6], "dict_result": [2, 4]},)
 
 
 def test_optional_types():
@@ -87,7 +87,7 @@ def test_optional_types():
     flyte.init()
     result = flyte.run(optional_types)
     outputs = result.outputs()
-    assert outputs == ({"int_provided": True, "int_value": 10, "str_provided": False, "str_value": None}, )
+    assert outputs == ({"int_provided": True, "int_value": 10, "str_provided": False, "str_value": None},)
 
 
 def test_union_types():

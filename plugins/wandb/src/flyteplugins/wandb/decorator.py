@@ -33,7 +33,12 @@ def _build_init_kwargs() -> dict[str, Any]:
 
 @contextmanager
 def _wandb_run(new_run: bool = "auto", func: bool = False, **decorator_kwargs):
-    """Context manager for wandb run lifecycle."""
+    """
+    Context manager for wandb run lifecycle.
+
+    Initializes wandb.init() when the context is entered.
+    The initialized run is available via flyte.ctx().wandb_run.
+    """
     # Try to get Flyte context
     ctx = flyte.ctx()
 
@@ -52,45 +57,107 @@ def _wandb_run(new_run: bool = "auto", func: bool = False, **decorator_kwargs):
             "Traces can access the parent's wandb run via flyte.ctx().wandb_run."
         )
 
-    # Full Flyte-aware mode with lazy initialization
     # Save existing state to restore later
-    saved_run = ctx.data.get("_wandb_run")
     saved_run_id = ctx.custom_context.get("_wandb_run_id")
-    saved_init_kwargs = ctx.data.get("_wandb_init_kwargs")
+    saved_run = ctx.data.get("_wandb_run")
 
     # Build init kwargs from context
     context_init_kwargs = _build_init_kwargs()
     init_kwargs = {**context_init_kwargs, **decorator_kwargs}
 
-    # Store initialization parameters for lazy init
-    # The wandb_run property will call wandb.init() on first access
-    ctx.data["_wandb_init_kwargs"] = {
-        "new_run": new_run,
-        "init_kwargs": init_kwargs,
-        "saved_run_id": saved_run_id,
-    }
+    # Check if this is a trace accessing parent's run
+    run = ctx.data.get("_wandb_run")
+    if run:
+        # This is a trace - yield existing run without initializing
+        try:
+            yield run
+        finally:
+            pass  # Don't clean up - parent owns this run
+        return
+
+    # Get current action name for run ID generation
+    current_action = ctx.action.name
+
+    # Determine if we should reuse parent's run
+    should_reuse = False
+    if new_run == False:
+        should_reuse = True
+    elif new_run == "auto":
+        should_reuse = bool(saved_run_id)
+
+    # Determine run ID
+    if "id" not in init_kwargs or init_kwargs["id"] is None:
+        if should_reuse:
+            if not saved_run_id:
+                raise RuntimeError("Cannot reuse parent run: no parent run ID found")
+            init_kwargs["id"] = saved_run_id
+        else:
+            init_kwargs["id"] = f"{ctx.action.run_name}-{current_action}"
+
+    # Configure reinit parameter (only for local mode)
+    # In remote/shared mode, wandb handles run creation/joining automatically
+    if flyte.ctx().mode == "local":
+        if should_reuse:
+            if "reinit" not in init_kwargs:
+                init_kwargs["reinit"] = "return_previous"
+        else:
+            init_kwargs["reinit"] = "create_new"
+
+    # Configure remote mode settings
+    if flyte.ctx().mode == "remote":
+        is_primary = not should_reuse
+        existing_settings = init_kwargs.get("settings", {})
+
+        shared_config = {
+            "mode": "shared",
+            "x_primary": is_primary,
+            "x_label": current_action,
+        }
+        if not is_primary:
+            shared_config["x_update_finish_state"] = False
+
+        init_kwargs["settings"] = wandb.Settings(
+            **{**existing_settings, **shared_config}
+        )
+
+    # Initialize wandb
+    run = wandb.init(**init_kwargs)
+
+    # Store run ID in custom_context (shared with child tasks and accessible to links)
+    ctx.custom_context["_wandb_run_id"] = run.id
+
+    # Store run object in ctx.data (task-local only and accessible to traces)
+    ctx.data["_wandb_run"] = run
 
     try:
-        yield None
+        yield run
     finally:
-        # Clean up the run if it was initialized
-        run = ctx.data.get("_wandb_run")
-        if run and run != saved_run:  # Only finish if we created it
-            try:
-                # Check if there was an exception (handled by caller)
-                run.finish(exit_code=0)
-            except Exception:
-                try:
-                    run.finish(exit_code=1)
-                except Exception:
-                    pass  # Ignore errors during cleanup
-                raise
+        # Determine if this is a primary run
+        is_primary_run = new_run is True or (new_run == "auto" and saved_run_id is None)
 
-        # Restore task-local state
-        if saved_run is not None:
-            ctx.data["_wandb_run"] = saved_run
-        else:
-            ctx.data.pop("_wandb_run", None)
+        if run:
+            # Different cleanup logic for local vs remote mode
+            should_finish = False
+
+            if flyte.ctx().mode == "remote":
+                # In remote/shared mode, ALWAYS call run.finish() to flush data
+                # For secondary tasks, x_update_finish_state=False prevents actually finishing
+                # For primary tasks, this properly finishes the run
+                should_finish = True
+            elif is_primary_run:
+                # In local mode, only primary tasks should call run.finish()
+                # Secondary tasks reuse the parent's run object, so they must not finish it
+                should_finish = True
+
+            if should_finish:
+                try:
+                    run.finish(exit_code=0)
+                except Exception:
+                    try:
+                        run.finish(exit_code=1)
+                    except Exception:
+                        pass
+                    raise
 
         # Restore run ID
         if saved_run_id is not None:
@@ -98,11 +165,11 @@ def _wandb_run(new_run: bool = "auto", func: bool = False, **decorator_kwargs):
         else:
             ctx.custom_context.pop("_wandb_run_id", None)
 
-        # Restore init kwargs
-        if saved_init_kwargs is not None:
-            ctx.data["_wandb_init_kwargs"] = saved_init_kwargs
+        # Restore run object
+        if saved_run is not None:
+            ctx.data["_wandb_run"] = saved_run
         else:
-            ctx.data.pop("_wandb_init_kwargs", None)
+            ctx.data.pop("_wandb_run", None)
 
 
 def wandb_init(
@@ -114,12 +181,7 @@ def wandb_init(
     **kwargs,
 ) -> F:
     """
-    Decorator to automatically initialize wandb for Flyte tasks and traces.
-
-    Uses lazy initialization: wandb.init() is called when flyte.ctx().wandb_run is first
-    accessed, ensuring all decorators (including @flyte.trace) have set up their contexts.
-
-    Works with or without Flyte context - decorator params provide config when context unavailable.
+    Decorator to automatically initialize wandb for Flyte tasks and wandb sweep objectives.
 
     Args:
         new_run: Controls whether to create a new W&B run or reuse an existing one:
@@ -138,8 +200,8 @@ def wandb_init(
             ...
 
     This decorator:
-    1. Lazily initializes wandb on first access to flyte.ctx().wandb_run
-    2. Auto-generates unique run ID from Flyte action context (reads action name at init time)
+    1. Initializes wandb when the context manager is entered
+    2. Auto-generates unique run ID from Flyte action context if not provided
     3. Makes the run available via flyte.ctx().wandb_run
     4. Automatically adds a W&B link to the task in the Flyte UI
     5. Automatically finishes the run after completion
@@ -161,7 +223,7 @@ def wandb_init(
             wandb_link = Wandb(project=project, entity=entity, new_run=new_run)
 
             # Get existing links from the task and add wandb link
-            existing_links = getattr(func, "_links", ())
+            existing_links = getattr(func, "links", ())
 
             # Use override to properly add the link to the task
             func = func.override(links=existing_links + (wandb_link,))
@@ -228,26 +290,35 @@ def _create_sweep():
     entity = sweep_config.entity or (wandb_config.entity if wandb_config else None)
     prior_runs = sweep_config.prior_runs or []
 
+    # Get sweep config dict
+    sweep_dict = sweep_config.to_sweep_config()
+
+    # Generate deterministic sweep name if not provided
+    if "name" not in sweep_dict or sweep_dict["name"] is None:
+        sweep_dict["name"] = f"{ctx.action.run_name}-{ctx.action.name}"
+
+    # Save existing context values to restore later
+    saved_sweep_id = ctx.custom_context.get("_wandb_sweep_id")
+
     # Create the sweep
     sweep_id = wandb.sweep(
-        sweep=sweep_config.to_sweep_config(),
+        sweep=sweep_dict,
         project=project,
         entity=entity,
         prior_runs=prior_runs,
     )
 
-    # Store sweep_id, project, and entity in context (accessible to links)
+    # Store sweep_id in context (accessible to links)
     ctx.custom_context["_wandb_sweep_id"] = sweep_id
-    if project:
-        ctx.custom_context["_wandb_project"] = project
-    if entity:
-        ctx.custom_context["_wandb_entity"] = entity
 
     try:
         yield sweep_id
     finally:
-        # Clean up
-        ctx.custom_context.pop("_wandb_sweep_id", None)
+        # Restore previous context values
+        if saved_sweep_id is not None:
+            ctx.custom_context["_wandb_sweep_id"] = saved_sweep_id
+        else:
+            ctx.custom_context.pop("_wandb_sweep_id", None)
 
 
 def wandb_sweep(_func: Optional[F] = None) -> F:
@@ -258,9 +329,6 @@ def wandb_sweep(_func: Optional[F] = None) -> F:
     1. Creates a wandb sweep using config from context
     2. Makes sweep_id available via flyte.ctx().wandb_sweep_id
     3. Automatically adds a W&B sweep link to the task
-
-    The local controller pattern is recommended for production workloads with Flyte,
-    as it allows Flyte to handle orchestration while W&B provides the sweep algorithm.
     """
 
     def decorator(func: F) -> F:
@@ -270,7 +338,7 @@ def wandb_sweep(_func: Optional[F] = None) -> F:
             wandb_sweep_link = WandbSweep()
 
             # Get existing links from the task and add wandb sweep link
-            existing_links = getattr(func, "_links", ())
+            existing_links = getattr(func, "links", ())
 
             # Use override to properly add the link to the task
             func = func.override(links=existing_links + (wandb_sweep_link,))
