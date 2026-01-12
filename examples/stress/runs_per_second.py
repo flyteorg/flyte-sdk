@@ -9,7 +9,7 @@ import flyte.report
 env = flyte.TaskEnvironment(
     name="runs_per_second",
     resources=flyte.Resources(cpu=1, memory="1Gi"),
-    image=flyte.Image.from_debian_base(flyte_version="2.0.0b34").with_pip_packages("plotly", "kaleido", "numpy"),
+    image=flyte.Image.from_debian_base(flyte_version="2.0.0b44").with_pip_packages("plotly", "kaleido", "numpy"),
 )
 
 downstream_env = flyte.TaskEnvironment(
@@ -21,9 +21,7 @@ downstream_env = flyte.TaskEnvironment(
         concurrency=50,
         scaledown_ttl=60,
     ),
-    image=flyte.Image.from_debian_base().with_pip_packages(
-        "unionai-reuse==0.1.9",
-    ),
+    image=flyte.Image.from_debian_base(flyte_version="2.0.0b44").with_pip_packages("unionai-reuse"),
 )
 
 
