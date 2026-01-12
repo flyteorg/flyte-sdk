@@ -14,6 +14,7 @@ class Link(Protocol):
         parent_action_name: str,
         action_name: str,
         pod_name: str,
+        **kwargs,
     ) -> str:
         """
         Returns a task log link given the action.

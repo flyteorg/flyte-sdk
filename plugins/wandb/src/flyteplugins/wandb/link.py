@@ -22,6 +22,7 @@ class Wandb(Link):
         parent_action_name: str,
         action_name: str,
         pod_name: str,
+        **kwargs,
     ) -> str:
         # Get project and entity from decorator values or context
         wandb_project = self.project
@@ -87,6 +88,7 @@ class WandbSweep(Link):
         parent_action_name: str,
         action_name: str,
         pod_name: str,
+        **kwargs,
     ) -> str:
         # Get project and entity from decorator values or context
         wandb_project = self.project
