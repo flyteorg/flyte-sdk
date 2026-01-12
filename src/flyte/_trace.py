@@ -44,9 +44,6 @@ def trace(func: Callable[..., T]) -> Callable[..., T]:
                 logger.debug(f"No existing trace info found for {func}, proceeding to execute.")
             start_time = time.time()
 
-            if ctx.data.task_context is None:
-                raise flyte.errors.RuntimeSystemError("BadContext", "Task context not initialized")
-
             # Create a new context with the trace's action ID
             trace_task_context = ctx.data.task_context.replace(action=info.action)
             trace_context = ctx.replace_task_context(trace_task_context)
