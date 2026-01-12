@@ -11,6 +11,7 @@ from ._common import CLIConfig
 from ._create import create
 from ._delete import delete
 from ._deploy import deploy
+from ._edit import edit
 from ._gen import gen
 from ._get import get
 from ._plugins import discover_and_register_plugins
@@ -36,6 +37,10 @@ help_config = click.RichHelpConfiguration(
             {
                 "name": "Management of various objects.",
                 "commands": ["create", "get", "delete", "update"],
+            },
+            {
+                "name": "Settings management.",
+                "commands": ["edit"],
             },
             {
                 "name": "Build and deploy environments, tasks and images.",
@@ -241,6 +246,7 @@ main.add_command(whoami)  # type: ignore
 main.add_command(update)  # type: ignore
 main.add_command(serve)  # type: ignore
 main.add_command(prefetch)  # type: ignore
+main.add_command(edit)  # type: ignore
 
 # Discover and register CLI plugins from installed packages
 discover_and_register_plugins(main)
