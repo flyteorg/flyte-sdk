@@ -67,7 +67,7 @@ async def test_traces():
     print(run.name)
     print(run.url)
     run.wait()
-    assert run.outputs() == 30
+    assert run.outputs() == (30,)
 
 
 @pytest.mark.asyncio
