@@ -1004,6 +1004,23 @@ class DataFrameTransformerEngine(TypeTransformer[DataFrame]):
             external_schema_bytes=typing.cast(pa.lib.Schema, pa_schema).to_string().encode() if pa_schema else None,
         )
 
+    def _get_type_tag(self, t: Type) -> typing.Optional[str]:
+        """
+        Get the fully qualified type name for storing in the literal type tag.
+        This allows us to recover the original dataframe type (e.g., pd.DataFrame) when guessing Python types.
+        At deserialization time, we will use this tag to lookup the registered decoder for the dataframe type.
+
+        Returns None if the type is DataFrame itself (no tag needed).
+        """
+        base_type, *_ = extract_cols_and_format(t)  # type: ignore
+
+        # If it's the DataFrame class itself, no tag needed
+        if base_type is DataFrame or (isinstance(base_type, type) and issubclass(base_type, DataFrame)):
+            return None
+
+        # Return the fully qualified name for registered dataframe types that have encoders/decoders
+        return f"{base_type.__module__}.{base_type.__qualname__}"
+
     def get_literal_type(self, t: typing.Union[Type[DataFrame], typing.Any]) -> types_pb2.LiteralType:
         """
         Provide a concrete implementation so that writers of custom dataframe handlers since there's nothing that
@@ -1012,7 +1029,15 @@ class DataFrameTransformerEngine(TypeTransformer[DataFrame]):
 
         :param t: The python dataframe type, which is mostly ignored.
         """
-        return types_pb2.LiteralType(structured_dataset_type=self._get_dataset_type(t))
+        tag = self._get_type_tag(t)
+        sdt = self._get_dataset_type(t)
+
+        if tag:
+            return types_pb2.LiteralType(
+                structured_dataset_type=sdt,
+                structure=types_pb2.TypeStructure(tag=tag),
+            )
+        return types_pb2.LiteralType(structured_dataset_type=sdt)
 
     def guess_python_type(self, literal_type: types_pb2.LiteralType) -> Type[DataFrame]:
         # todo: technically we should return the dataframe type specified in the constructor, but to do that,

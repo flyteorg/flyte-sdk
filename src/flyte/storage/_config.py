@@ -4,7 +4,7 @@ import datetime
 import os
 import typing
 from dataclasses import dataclass
-from typing import ClassVar
+from typing import ClassVar, Literal
 
 from flyte.config import set_if_exists
 
@@ -71,7 +71,7 @@ class S3(Storage):
 
     # Refer to https://github.com/developmentseed/obstore/blob/33654fc37f19a657689eb93327b621e9f9e01494/obstore/python/obstore/store/_aws.pyi#L11
     # for key and secret
-    _CONFIG_KEY_FSSPEC_S3_KEY_ID: ClassVar = "access_key_id"
+    _CONFIG_KEY_FSSPEC_S3_KEY_ID: ClassVar[Literal["access_key_id"]] = "access_key_id"
     _CONFIG_KEY_FSSPEC_S3_SECRET: ClassVar = "secret_access_key"
     _CONFIG_KEY_ENDPOINT: ClassVar = "endpoint_url"
     _KEY_SKIP_SIGNATURE: ClassVar = "skip_signature"

@@ -2,6 +2,7 @@
 import asyncio
 import json
 import pathlib
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -18,6 +19,7 @@ TEST_CODE_PATH = pathlib.Path(__file__).parent
 RUN_TESTDATA = TEST_CODE_PATH / "run_testdata"
 HELLO_WORLD_PY = RUN_TESTDATA / "hello_world.py"
 COMPLEX_INPUTS_PY = RUN_TESTDATA / "complex_inputs.py"
+DATAFRAME_INPUTS_PY = RUN_TESTDATA / "dataframe_inputs.py"
 PARQUET_FILE = RUN_TESTDATA / "df.parquet"
 
 
@@ -174,3 +176,221 @@ def test_build_images_image_name_not_found_error(runner):
     error_msg = str(exc_info.value)
     assert "Image name 'invalid' not found in config" in error_msg
     assert "'custom'" in error_msg
+
+
+# ============================================================================
+# Tests for DataFrame CLI inputs
+# ============================================================================
+
+pd = None
+try:
+    import pandas as pd
+except ImportError:
+    pass
+
+
+@pytest.fixture
+def temp_parquet_file():
+    """Create a temporary parquet file for testing."""
+    if pd is None:
+        pytest.skip("pandas is not installed")
+
+    df = pd.DataFrame({"name": ["Alice", "Bob", "Charlie"], "age": [25, 30, 35], "city": ["NYC", "SF", "LA"]})
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".parquet") as f:
+        df.to_parquet(f.name)
+        yield f.name
+    # Cleanup
+    Path(f.name).unlink(missing_ok=True)
+
+
+@pytest.fixture
+def temp_parquet_dir():
+    """Create a temporary directory with a single parquet file for testing."""
+    if pd is None:
+        pytest.skip("pandas is not installed")
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        df = pd.DataFrame({"name": ["Alice", "Bob", "Charlie"], "age": [25, 30, 35], "city": ["NYC", "SF", "LA"]})
+        # Write as a single parquet file in the directory
+        df.to_parquet(Path(temp_dir) / "data.parquet")
+        yield temp_dir
+
+
+@pytest.fixture
+def temp_partitioned_parquet_dir():
+    """Create a temporary directory with partitioned parquet files (using partition_cols)."""
+    if pd is None:
+        pytest.skip("pandas is not installed")
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        df = pd.DataFrame(
+            {
+                "name": ["Alice", "Bob", "Charlie", "David"],
+                "age": [25, 30, 35, 40],
+                "category": ["A", "B", "A", "C"],
+                "active": [True, False, True, True],
+            }
+        )
+        # Write as partitioned parquet files (creates subdirectories like category=A/, category=B/, etc.)
+        df.to_parquet(temp_dir, partition_cols=["category"])
+        yield temp_dir
+
+
+@pytest.mark.skipif(pd is None, reason="pandas is not installed")
+def test_cli_run_with_parquet_file_pd_dataframe_input(runner, temp_parquet_file):
+    """Test CLI run with a file path to parquet, task expects pd.DataFrame."""
+    try:
+        cmd = [
+            "--local",
+            str(DATAFRAME_INPUTS_PY),
+            "process_pd_df",
+            "--df",
+            temp_parquet_file,
+        ]
+        result = runner.invoke(run, cmd)
+        assert result.exit_code == 0, result.output
+    except ValueError as ve:
+        if "I/O operation on closed file" in str(ve):
+            # Known click issue
+            return
+        raise ve
+
+
+@pytest.mark.skipif(pd is None, reason="pandas is not installed")
+def test_cli_run_with_parquet_file_flyte_dataframe_input(runner, temp_parquet_file):
+    """Test CLI run with a file path to parquet, task expects flyte.io.DataFrame."""
+    try:
+        cmd = [
+            "--local",
+            str(DATAFRAME_INPUTS_PY),
+            "process_fdf",
+            "--df",
+            temp_parquet_file,
+        ]
+        result = runner.invoke(run, cmd)
+        assert result.exit_code == 0, result.output
+    except ValueError as ve:
+        if "I/O operation on closed file" in str(ve):
+            # Known click issue
+            return
+        raise ve
+
+
+@pytest.mark.skipif(pd is None, reason="pandas is not installed")
+def test_cli_run_with_parquet_dir_pd_dataframe_input(runner, temp_parquet_dir):
+    """Test CLI run with a directory path to parquet, task expects pd.DataFrame."""
+    try:
+        cmd = [
+            "--local",
+            str(DATAFRAME_INPUTS_PY),
+            "process_pd_df",
+            "--df",
+            temp_parquet_dir,
+        ]
+        result = runner.invoke(run, cmd)
+        assert result.exit_code == 0, result.output
+    except ValueError as ve:
+        if "I/O operation on closed file" in str(ve):
+            # Known click issue
+            return
+        raise ve
+
+
+@pytest.mark.skipif(pd is None, reason="pandas is not installed")
+def test_cli_run_with_parquet_dir_flyte_dataframe_input(runner, temp_parquet_dir):
+    """Test CLI run with a directory path to parquet, task expects flyte.io.DataFrame."""
+    try:
+        cmd = [
+            "--local",
+            str(DATAFRAME_INPUTS_PY),
+            "process_fdf",
+            "--df",
+            temp_parquet_dir,
+        ]
+        result = runner.invoke(run, cmd)
+        assert result.exit_code == 0, result.output
+    except ValueError as ve:
+        if "I/O operation on closed file" in str(ve):
+            # Known click issue
+            return
+        raise ve
+
+
+@pytest.mark.skipif(pd is None, reason="pandas is not installed")
+def test_cli_run_with_existing_parquet_file(runner):
+    """Test CLI run with the existing df.parquet file in run_testdata."""
+    try:
+        cmd = [
+            "--local",
+            str(DATAFRAME_INPUTS_PY),
+            "process_pd_df",
+            "--df",
+            str(PARQUET_FILE),
+        ]
+        result = runner.invoke(run, cmd)
+        assert result.exit_code == 0, result.output
+    except ValueError as ve:
+        if "I/O operation on closed file" in str(ve):
+            # Known click issue
+            return
+        raise ve
+
+
+@pytest.mark.skipif(pd is None, reason="pandas is not installed")
+def test_cli_run_with_existing_parquet_file_flyte_dataframe(runner):
+    """Test CLI run with the existing df.parquet file, task expects flyte.io.DataFrame."""
+    try:
+        cmd = [
+            "--local",
+            str(DATAFRAME_INPUTS_PY),
+            "process_fdf",
+            "--df",
+            str(PARQUET_FILE),
+        ]
+        result = runner.invoke(run, cmd)
+        assert result.exit_code == 0, result.output
+    except ValueError as ve:
+        if "I/O operation on closed file" in str(ve):
+            # Known click issue
+            return
+        raise ve
+
+
+@pytest.mark.skipif(pd is None, reason="pandas is not installed")
+def test_cli_run_with_partitioned_parquet_dir_pd_dataframe_input(runner, temp_partitioned_parquet_dir):
+    """Test CLI run with a partitioned parquet directory (partition_cols), task expects pd.DataFrame."""
+    try:
+        cmd = [
+            "--local",
+            str(DATAFRAME_INPUTS_PY),
+            "process_pd_df",
+            "--df",
+            temp_partitioned_parquet_dir,
+        ]
+        result = runner.invoke(run, cmd)
+        assert result.exit_code == 0, result.output
+    except ValueError as ve:
+        if "I/O operation on closed file" in str(ve):
+            # Known click issue
+            return
+        raise ve
+
+
+@pytest.mark.skipif(pd is None, reason="pandas is not installed")
+def test_cli_run_with_partitioned_parquet_dir_flyte_dataframe_input(runner, temp_partitioned_parquet_dir):
+    """Test CLI run with a partitioned parquet directory (partition_cols), task expects flyte.io.DataFrame."""
+    try:
+        cmd = [
+            "--local",
+            str(DATAFRAME_INPUTS_PY),
+            "process_fdf",
+            "--df",
+            temp_partitioned_parquet_dir,
+        ]
+        result = runner.invoke(run, cmd)
+        assert result.exit_code == 0, result.output
+    except ValueError as ve:
+        if "I/O operation on closed file" in str(ve):
+            # Known click issue
+            return
+        raise ve
