@@ -202,14 +202,17 @@ class RunTaskCommand(click.RichCommand):
                         (param_name, param.type.get_metavar(param, ctx) or param.type.name.upper() or param.type)
                     )
 
-        if ctx.obj.org is None and ctx.obj.config.task.org is None:
-            missing_options.append(("org", "string"))
+        task_cfg = getattr(getattr(ctx.obj, "config", None), "task", None)
 
-        if self.run_args.project is None and ctx.obj.config.task.project is None:
-            missing_options.append(("project", "string"))
+        if not self.run_args.local:
+            if not getattr(ctx.obj, "org", None) and not getattr(task_cfg, "org", None):
+                missing_options.append(("org", "TEXT"))
 
-        if self.run_args.domain is None and ctx.obj.config.task.domain is None:
-            missing_options.append(("domain", "string"))
+            if not self.run_args.project and not getattr(task_cfg, "project", None):
+                missing_options.append(("project", "TEXT"))
+
+            if not self.run_args.domain and not getattr(task_cfg, "domain", None):
+                missing_options.append(("domain", "TEXT"))
         
         if missing_options and missing_params:
             raise click.UsageError(
@@ -378,15 +381,16 @@ class RunRemoteTaskCommand(click.RichCommand):
                         (param_name, param.type.get_metavar(param, ctx) or param.type.name.upper() or param.type)
                     )
         
+        task_cfg = getattr(getattr(ctx.obj, "config", None), "task", None)
 
-        if ctx.obj.org is None and ctx.obj.config.task.org is None:
-            missing_options.append(("org", "string"))
+        if not getattr(ctx.obj, "org", None) and not getattr(task_cfg, "org", None):
+            missing_options.append(("org", "TEXT"))
 
-        if self.run_args.run_project is None and ctx.obj.config.task.project is None:
-            missing_options.append(("run-project", "string"))
+        if not self.run_args.run_project and not getattr(task_cfg, "project", None):
+            missing_options.append(("run-project", "TEXT"))
 
-        if self.run_args.run_domain is None and ctx.obj.config.task.domain is None:
-            missing_options.append(("run-domain", "string"))
+        if not self.run_args.run_domain and not getattr(task_cfg, "domain", None):
+            missing_options.append(("run-domain", "TEXT"))
         
         if missing_options and missing_params:
             raise click.UsageError(
