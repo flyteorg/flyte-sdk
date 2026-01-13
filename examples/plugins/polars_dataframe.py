@@ -6,6 +6,7 @@ This example shows:
 2. Using polars.LazyFrame as task input/output
 3. Performing data transformations with both eager and lazy evaluation
 """
+import sys
 
 import polars as pl
 
@@ -14,14 +15,14 @@ from flyte._image import DIST_FOLDER, PythonWheels
 
 # Create task environment with required dependencies
 img = (
-    flyte.Image.from_debian_base(name="flyteplugins-polars-image")
+    flyte.Image.from_debian_base()
     # NOTE: due to a dependency conflict, the polars flyte plugin needs to be installed as a separate layer:
     # Run the following command to build the wheel:
     # `rm -rf ./dist-plugins && uv run python -m build --wheel --installer uv --outdir ./dist-plugins plugins/polars`
     # Once a release of the plugin is out, you can installed it via `with_pip_packages("flyteplugins-polars")`
     .clone(
         addl_layer=PythonWheels(
-            wheel_dir=DIST_FOLDER.parent / "dist-plugins", package_name="flyteplugins-polars", pre=True
+            wheel_dir=DIST_FOLDER.parent / "dist", package_name="flyteplugins-polars", pre=True
         )
     )
 )
@@ -143,23 +144,9 @@ async def aggregate_with_lazyframe(lf: pl.LazyFrame) -> pl.DataFrame:
 if __name__ == "__main__":
     import logging
 
-    import flyte.storage
+    flyte.init_from_config()
 
-    # make sure to set the following environment variables:
-    # - AWS_ACCESS_KEY_ID
-    # - AWS_SECRET_ACCESS_KEY
-    # - AWS_SESSION_TOKEN (if applicable)
-    #
-    # You may also set this with `aws sso login`:
-    # $ aws sso login --profile $profile
-    # $ eval "$(aws configure export-credentials --profile $profile --format env)"
-
-    flyte.init_from_config(
-        log_level=logging.DEBUG,
-        storage=flyte.storage.S3.auto(region="us-east-2"),
-    )
-
-    # Example 1: Using polars DataFrame (eager evaluation)
+    # # Example 1: Using polars DataFrame (eager evaluation)
     print("Example 1: Polars DataFrame (eager evaluation)")
     df_run = flyte.run(create_polars_dataframe)
     print(df_run.url)
@@ -172,6 +159,7 @@ if __name__ == "__main__":
     print(processed_df_run.wait())
     processed_result = processed_df_run.outputs()[0]
     print(f"\nProcessed DataFrame: {processed_result}")
+    sys.exit()
 
     # Example 2: Using polars LazyFrame (lazy evaluation)
     print("\n\nExample 2: Polars LazyFrame (lazy evaluation)")
