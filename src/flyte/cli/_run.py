@@ -193,6 +193,7 @@ class RunTaskCommand(click.RichCommand):
         Validate that all required parameters are provided.
         """
         missing_params = []
+        missing_options = []
         for param in self.params:
             if isinstance(param, click.Option) and param.required:
                 param_name = param.name
@@ -201,10 +202,32 @@ class RunTaskCommand(click.RichCommand):
                         (param_name, param.type.get_metavar(param, ctx) or param.type.name.upper() or param.type)
                     )
 
+        if ctx.obj.org is None and ctx.obj.config.task.org is None:
+            missing_options.append(("org", "string"))
+
+        if self.run_args.project is None and ctx.obj.config.task.project is None:
+            missing_options.append(("project", "string"))
+
+        if self.run_args.domain is None and ctx.obj.config.task.domain is None:
+            missing_options.append(("domain", "string"))
+        
+        if missing_options and missing_params:
+            raise click.UsageError(
+                f"""
+Missing required Options(s): {', '.join(f'--{p[0]} (type: {p[1]})' for p in missing_options)}
+Missing required parameter(s): {', '.join(f'--{p[0]} (type: {p[1]})' for p in missing_params)}"""
+            )
+
+        if missing_options:
+            raise click.UsageError(
+                f"Missing required Options(s): {', '.join(f'--{p[0]} (type: {p[1]})' for p in missing_options)}"
+            )
+        
         if missing_params:
             raise click.UsageError(
                 f"Missing required parameter(s): {', '.join(f'--{p[0]} (type: {p[1]})' for p in missing_params)}"
             )
+
 
     async def _execute_and_render(self, ctx: click.Context, config: common.CLIConfig):
         """Separate execution logic from the Click entry point for better testability."""
@@ -346,6 +369,7 @@ class RunRemoteTaskCommand(click.RichCommand):
         Validate that all required parameters are provided.
         """
         missing_params = []
+        missing_options = []
         for param in self.params:
             if isinstance(param, click.Option) and param.required:
                 param_name = param.name
@@ -353,7 +377,29 @@ class RunRemoteTaskCommand(click.RichCommand):
                     missing_params.append(
                         (param_name, param.type.get_metavar(param, ctx) or param.type.name.upper() or param.type)
                     )
+        
 
+        if ctx.obj.org is None and ctx.obj.config.task.org is None:
+            missing_options.append(("org", "string"))
+
+        if self.run_args.run_project is None and ctx.obj.config.task.project is None:
+            missing_options.append(("run-project", "string"))
+
+        if self.run_args.run_domain is None and ctx.obj.config.task.domain is None:
+            missing_options.append(("run-domain", "string"))
+        
+        if missing_options and missing_params:
+            raise click.UsageError(
+                f"""
+Missing required Options(s): {', '.join(f'--{p[0]} (type: {p[1]})' for p in missing_options)}
+Missing required parameter(s): {', '.join(f'--{p[0]} (type: {p[1]})' for p in missing_params)}"""
+            )
+
+        if missing_options:
+            raise click.UsageError(
+                f"Missing required Options(s): {', '.join(f'--{p[0]} (type: {p[1]})' for p in missing_options)}"
+            )
+        
         if missing_params:
             raise click.UsageError(
                 f"Missing required parameter(s): {', '.join(f'--{p[0]} (type: {p[1]})' for p in missing_params)}"
