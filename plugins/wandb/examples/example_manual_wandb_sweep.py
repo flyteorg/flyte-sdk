@@ -10,29 +10,15 @@ This example demonstrates:
 """
 
 import asyncio
-from pathlib import Path
 
 import flyte
 import wandb
-from flyte._image import PythonWheels
 
 from flyteplugins.wandb import WandbSweep, wandb_config
 
 env = flyte.TaskEnvironment(
     name="wandb-manual-sweep-example",
-    image=flyte.Image.from_debian_base()
-    .clone(
-        addl_layer=PythonWheels(
-            wheel_dir=Path(__file__).parent / "dist",
-            package_name="flyteplugins-wandb",
-            pre=True,
-        ),
-        name="wandb-manual-sweep-example",
-    )
-    .with_apt_packages("git")
-    .with_pip_packages(
-        "git+https://github.com/flyteorg/flyte-sdk.git@144738932528f0fbaefcffc56e953824aca6d701"
-    ),
+    image=flyte.Image.from_debian_base().with_pip_packages("flyteplugins-wandb"),
     secrets=[flyte.Secret(key="wandb_api_key", as_env_var="WANDB_API_KEY")],
 )
 
