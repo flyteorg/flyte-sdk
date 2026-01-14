@@ -3,7 +3,7 @@ import logging
 from contextlib import contextmanager
 from dataclasses import asdict
 from inspect import iscoroutinefunction
-from typing import Any, Callable, Optional, TypeVar, cast
+from typing import Any, Callable, Literal, Optional, TypeVar, cast
 
 import flyte
 from flyte._task import AsyncFunctionTaskTemplate
@@ -32,7 +32,11 @@ def _build_init_kwargs() -> dict[str, Any]:
 
 
 @contextmanager
-def _wandb_run(new_run: bool = "auto", func: bool = False, **decorator_kwargs):
+def _wandb_run(
+    run_mode: Literal["auto", "new", "shared"] = "auto",
+    func: bool = False,
+    **decorator_kwargs,
+):
     """
     Context manager for wandb run lifecycle.
 
@@ -53,8 +57,7 @@ def _wandb_run(new_run: bool = "auto", func: bool = False, **decorator_kwargs):
         return
     elif func and ctx:
         raise RuntimeError(
-            "@wandb_init cannot be applied to traces. "
-            "Traces can access the parent's wandb run via get_wandb_run()."
+            "@wandb_init cannot be applied to traces. Traces can access the parent's wandb run via get_wandb_run()."
         )
 
     # Save existing state to restore later
@@ -80,9 +83,9 @@ def _wandb_run(new_run: bool = "auto", func: bool = False, **decorator_kwargs):
 
     # Determine if we should reuse parent's run
     should_reuse = False
-    if new_run is False:
+    if run_mode == "shared":
         should_reuse = True
-    elif new_run == "auto":
+    elif run_mode == "auto":
         should_reuse = bool(saved_run_id)
 
     # Determine run ID
@@ -116,9 +119,7 @@ def _wandb_run(new_run: bool = "auto", func: bool = False, **decorator_kwargs):
         if not is_primary:
             shared_config["x_update_finish_state"] = False
 
-        init_kwargs["settings"] = wandb.Settings(
-            **{**existing_settings, **shared_config}
-        )
+        init_kwargs["settings"] = wandb.Settings(**{**existing_settings, **shared_config})
 
     # Initialize wandb
     run = wandb.init(**init_kwargs)
@@ -133,7 +134,7 @@ def _wandb_run(new_run: bool = "auto", func: bool = False, **decorator_kwargs):
         yield run
     finally:
         # Determine if this is a primary run
-        is_primary_run = new_run is True or (new_run == "auto" and saved_run_id is None)
+        is_primary_run = run_mode == "new" or (run_mode == "auto" and saved_run_id is None)
 
         if run:
             # Different cleanup logic for local vs remote mode
@@ -175,7 +176,7 @@ def _wandb_run(new_run: bool = "auto", func: bool = False, **decorator_kwargs):
 def wandb_init(
     _func: Optional[F] = None,
     *,
-    new_run: bool | str = "auto",
+    run_mode: Literal["auto", "new", "shared"] = "auto",
     project: Optional[str] = None,
     entity: Optional[str] = None,
     **kwargs,
@@ -184,10 +185,10 @@ def wandb_init(
     Decorator to automatically initialize wandb for Flyte tasks and wandb sweep objectives.
 
     Args:
-        new_run: Controls whether to create a new W&B run or reuse an existing one:
-                 - "auto" (default): Creates new run if no parent run exists, otherwise reuses parent's run
-                 - True: Always creates a new wandb run with a unique ID
-                 - False: Always reuses the parent's run ID (useful for child tasks)
+        run_mode: Controls whether to create a new W&B run or share an existing one:
+                 - "auto" (default): Creates new run if no parent run exists, otherwise shares parent's run
+                 - "new": Always creates a new wandb run with a unique ID
+                 - "shared": Always shares the parent's run ID (useful for child tasks)
         project: W&B project name (overrides context config if provided)
         entity: W&B entity/team name (overrides context config if provided)
         **kwargs: Additional wandb.init() parameters (tags, config, mode, etc.)
@@ -219,8 +220,8 @@ def wandb_init(
         # Check if it's a Flyte task (AsyncFunctionTaskTemplate)
         if isinstance(func, AsyncFunctionTaskTemplate):
             # Create a Wandb link
-            # Even if new_run=False, we still add a link - it will point to the parent's run
-            wandb_link = Wandb(project=project, entity=entity, new_run=new_run)
+            # Even if run_mode="shared", we still add a link - it will point to the parent's run
+            wandb_link = Wandb(project=project, entity=entity, run_mode=run_mode)
 
             # Get existing links from the task and add wandb link
             existing_links = getattr(func, "links", ())
@@ -234,14 +235,14 @@ def wandb_init(
             if iscoroutinefunction(original_execute):
 
                 async def wrapped_execute(*args, **exec_kwargs):
-                    with _wandb_run(new_run=new_run, **decorator_kwargs):
+                    with _wandb_run(run_mode=run_mode, **decorator_kwargs):
                         return await original_execute(*args, **exec_kwargs)
 
                 func.execute = wrapped_execute
             else:
 
                 def wrapped_execute(*args, **exec_kwargs):
-                    with _wandb_run(new_run=new_run, **decorator_kwargs):
+                    with _wandb_run(run_mode=run_mode, **decorator_kwargs):
                         return original_execute(*args, **exec_kwargs)
 
                 func.execute = wrapped_execute
@@ -253,7 +254,7 @@ def wandb_init(
 
                 @functools.wraps(func)
                 async def async_wrapper(*args, **wrapper_kwargs):
-                    with _wandb_run(new_run=new_run, func=True, **decorator_kwargs):
+                    with _wandb_run(run_mode=run_mode, func=True, **decorator_kwargs):
                         return await func(*args, **wrapper_kwargs)
 
                 return cast(F, async_wrapper)
@@ -261,7 +262,7 @@ def wandb_init(
 
                 @functools.wraps(func)
                 def sync_wrapper(*args, **wrapper_kwargs):
-                    with _wandb_run(new_run=new_run, func=True, **decorator_kwargs):
+                    with _wandb_run(run_mode=run_mode, func=True, **decorator_kwargs):
                         return func(*args, **wrapper_kwargs)
 
                 return cast(F, sync_wrapper)

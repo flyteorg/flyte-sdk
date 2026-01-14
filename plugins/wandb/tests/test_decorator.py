@@ -87,44 +87,44 @@ class TestWandbInitDecorator:
         assert test_task.links[0].project == "test-project"
         assert test_task.links[0].entity == "test-entity"
 
-    def test_wandb_init_on_task_with_new_run_true(self):
-        """Test @wandb_init with new_run=True."""
+    def test_wandb_init_on_task_with_run_mode_new(self):
+        """Test @wandb_init with run_mode="new"."""
         env = flyte.TaskEnvironment(name="test-env")
 
-        @wandb_init(project="test-project", entity="test-entity", new_run=True)
+        @wandb_init(project="test-project", entity="test-entity", run_mode="new")
         @env.task
         async def test_task():
             return "result"
 
         # Check link configuration
         link = test_task.links[0]
-        assert link.new_run is True
+        assert link.run_mode == "new"
 
-    def test_wandb_init_on_task_with_new_run_false(self):
-        """Test @wandb_init with new_run=False."""
+    def test_wandb_init_on_task_with_run_mode_shared(self):
+        """Test @wandb_init with run_mode="shared"."""
         env = flyte.TaskEnvironment(name="test-env")
 
-        @wandb_init(project="test-project", entity="test-entity", new_run=False)
+        @wandb_init(project="test-project", entity="test-entity", run_mode="shared")
         @env.task
         async def test_task():
             return "result"
 
         # Check link configuration
         link = test_task.links[0]
-        assert link.new_run is False
+        assert link.run_mode == "shared"
 
-    def test_wandb_init_on_task_with_new_run_auto(self):
-        """Test @wandb_init with new_run='auto'."""
+    def test_wandb_init_on_task_with_run_mode_auto(self):
+        """Test @wandb_init with run_mode='auto'."""
         env = flyte.TaskEnvironment(name="test-env")
 
-        @wandb_init(new_run="auto")
+        @wandb_init(run_mode="auto")
         @env.task
         async def test_task():
             return "result"
 
         # Check link configuration
         link = test_task.links[0]
-        assert link.new_run == "auto"
+        assert link.run_mode == "auto"
 
     def test_wandb_init_preserves_existing_links(self):
         """Test that @wandb_init preserves existing task links."""
@@ -288,7 +288,7 @@ class TestWandbRunContextManager:
 
         from flyteplugins.wandb.decorator import _wandb_run
 
-        with _wandb_run(new_run=True, project="test"):
+        with _wandb_run(run_mode="new", project="test"):
             # Should initialize wandb eagerly and store the run
             assert "_wandb_run" in mock_context.data
             assert mock_context.data["_wandb_run"] == mock_run
@@ -307,7 +307,7 @@ class TestWandbRunContextManager:
 
         from flyteplugins.wandb.decorator import _wandb_run
 
-        with _wandb_run(new_run=True, project="test"):
+        with _wandb_run(run_mode="new", project="test"):
             pass
 
         # Should restore previous state
@@ -338,7 +338,7 @@ class TestWandbRunContextManager:
 
         from flyteplugins.wandb.decorator import _wandb_run
 
-        with _wandb_run(new_run=True, project="test"):
+        with _wandb_run(run_mode="new", project="test"):
             # Run should be initialized during context
             assert "_wandb_run" in mock_context.data
 
@@ -357,7 +357,7 @@ class TestWandbRunContextManager:
 
         from flyteplugins.wandb.decorator import _wandb_run
 
-        with _wandb_run(new_run=True, func=True, project="test"):
+        with _wandb_run(run_mode="new", func=True, project="test"):
             pass
 
         # Should call wandb.init directly in func mode
@@ -373,7 +373,7 @@ class TestWandbRunContextManager:
         from flyteplugins.wandb.decorator import _wandb_run
 
         with pytest.raises(RuntimeError, match="cannot be applied to traces"):
-            with _wandb_run(new_run=True, func=True):
+            with _wandb_run(run_mode="new", func=True):
                 pass
 
 
@@ -541,7 +541,7 @@ class TestModeSpecificBehavior:
     @patch("flyteplugins.wandb.decorator.flyte.ctx")
     @patch("flyteplugins.wandb.decorator._build_init_kwargs")
     def test_local_mode_uses_reinit_create_new(self, mock_build_kwargs, mock_ctx, mock_wandb_init):
-        """Test that local mode with new_run=True uses reinit='create_new'."""
+        """Test that local mode with run_mode="new" uses reinit='create_new'."""
         mock_context = MagicMock()
         mock_context.data = {}
         mock_context.custom_context = {}
@@ -560,7 +560,7 @@ class TestModeSpecificBehavior:
 
         from flyteplugins.wandb.decorator import _wandb_run
 
-        with _wandb_run(new_run=True, project="test"):
+        with _wandb_run(run_mode="new", project="test"):
             pass
 
         # Verify wandb.init was called with reinit='create_new'
@@ -571,7 +571,7 @@ class TestModeSpecificBehavior:
     @patch("flyteplugins.wandb.decorator.flyte.ctx")
     @patch("flyteplugins.wandb.decorator._build_init_kwargs")
     def test_local_mode_uses_reinit_return_previous(self, mock_build_kwargs, mock_ctx, mock_wandb_init):
-        """Test that local mode with new_run=False uses reinit='return_previous'."""
+        """Test that local mode with run_mode="shared" uses reinit='return_previous'."""
         mock_context = MagicMock()
         mock_context.data = {}
         mock_context.custom_context = {"_wandb_run_id": "parent-run-id"}
@@ -590,7 +590,7 @@ class TestModeSpecificBehavior:
 
         from flyteplugins.wandb.decorator import _wandb_run
 
-        with _wandb_run(new_run=False, project="test"):
+        with _wandb_run(run_mode="shared", project="test"):
             pass
 
         # Verify wandb.init was called with reinit='return_previous'
@@ -625,7 +625,7 @@ class TestModeSpecificBehavior:
 
         from flyteplugins.wandb.decorator import _wandb_run
 
-        with _wandb_run(new_run=True, project="test"):
+        with _wandb_run(run_mode="new", project="test"):
             pass
 
         # Verify wandb.Settings was called with shared mode config
@@ -667,7 +667,7 @@ class TestModeSpecificBehavior:
 
         from flyteplugins.wandb.decorator import _wandb_run
 
-        with _wandb_run(new_run=False, project="test"):
+        with _wandb_run(run_mode="shared", project="test"):
             pass
 
         # Verify wandb.Settings was called with secondary task config
@@ -693,7 +693,7 @@ class TestModeSpecificBehavior:
 
         from flyteplugins.wandb.decorator import _wandb_run
 
-        with _wandb_run(new_run=True, project="test") as run:
+        with _wandb_run(run_mode="new", project="test") as run:
             # Should yield existing run
             assert run == mock_existing_run
 
@@ -703,8 +703,8 @@ class TestModeSpecificBehavior:
     @patch("flyteplugins.wandb.decorator.wandb.init")
     @patch("flyteplugins.wandb.decorator.flyte.ctx")
     @patch("flyteplugins.wandb.decorator._build_init_kwargs")
-    def test_new_run_auto_with_parent_reuses_run(self, mock_build_kwargs, mock_ctx, mock_wandb_init):
-        """Test that new_run='auto' reuses parent run when parent run_id exists."""
+    def test_run_mode_auto_with_parent_reuses_run(self, mock_build_kwargs, mock_ctx, mock_wandb_init):
+        """Test that run_mode='auto' reuses parent run when parent run_id exists."""
         mock_context = MagicMock()
         mock_context.data = {}
         mock_context.custom_context = {"_wandb_run_id": "parent-run-id"}
@@ -723,7 +723,7 @@ class TestModeSpecificBehavior:
 
         from flyteplugins.wandb.decorator import _wandb_run
 
-        with _wandb_run(new_run="auto", project="test"):
+        with _wandb_run(run_mode="auto", project="test"):
             pass
 
         # Verify it used parent's run_id
@@ -734,8 +734,8 @@ class TestModeSpecificBehavior:
     @patch("flyteplugins.wandb.decorator.wandb.init")
     @patch("flyteplugins.wandb.decorator.flyte.ctx")
     @patch("flyteplugins.wandb.decorator._build_init_kwargs")
-    def test_new_run_auto_without_parent_creates_new(self, mock_build_kwargs, mock_ctx, mock_wandb_init):
-        """Test that new_run='auto' creates new run when no parent run_id exists."""
+    def test_run_mode_auto_without_parent_creates_new(self, mock_build_kwargs, mock_ctx, mock_wandb_init):
+        """Test that run_mode='auto' creates new run when no parent run_id exists."""
         mock_context = MagicMock()
         mock_context.data = {}
         mock_context.custom_context = {}
@@ -754,7 +754,7 @@ class TestModeSpecificBehavior:
 
         from flyteplugins.wandb.decorator import _wandb_run
 
-        with _wandb_run(new_run="auto", project="test"):
+        with _wandb_run(run_mode="auto", project="test"):
             pass
 
         # Verify it created new run_id
@@ -764,8 +764,8 @@ class TestModeSpecificBehavior:
 
     @patch("flyteplugins.wandb.decorator.flyte.ctx")
     @patch("flyteplugins.wandb.decorator._build_init_kwargs")
-    def test_new_run_false_without_parent_raises_error(self, mock_build_kwargs, mock_ctx):
-        """Test that new_run=False raises error when no parent run_id available."""
+    def test_run_mode_shared_without_parent_raises_error(self, mock_build_kwargs, mock_ctx):
+        """Test that run_mode="shared" raises error when no parent run_id available."""
         mock_context = MagicMock()
         mock_context.data = {}
         mock_context.custom_context = {}
@@ -779,7 +779,7 @@ class TestModeSpecificBehavior:
         from flyteplugins.wandb.decorator import _wandb_run
 
         with pytest.raises(RuntimeError, match="Cannot reuse parent run: no parent run ID found"):
-            with _wandb_run(new_run=False, project="test"):
+            with _wandb_run(run_mode="shared", project="test"):
                 pass
 
 
@@ -809,7 +809,7 @@ class TestRunFinishingLogic:
 
         from flyteplugins.wandb.decorator import _wandb_run
 
-        with _wandb_run(new_run=True, project="test"):
+        with _wandb_run(run_mode="new", project="test"):
             pass
 
         # Should call run.finish in remote mode
@@ -838,7 +838,7 @@ class TestRunFinishingLogic:
 
         from flyteplugins.wandb.decorator import _wandb_run
 
-        with _wandb_run(new_run=False, project="test"):
+        with _wandb_run(run_mode="shared", project="test"):
             pass
 
         # Even secondary tasks should call finish in remote mode (x_update_finish_state=False prevents actual finish)
@@ -867,7 +867,7 @@ class TestRunFinishingLogic:
 
         from flyteplugins.wandb.decorator import _wandb_run
 
-        with _wandb_run(new_run=True, project="test"):
+        with _wandb_run(run_mode="new", project="test"):
             pass
 
         # Primary task in local mode should call finish
@@ -896,7 +896,7 @@ class TestRunFinishingLogic:
 
         from flyteplugins.wandb.decorator import _wandb_run
 
-        with _wandb_run(new_run=False, project="test"):
+        with _wandb_run(run_mode="shared", project="test"):
             pass
 
         # Secondary task in local mode should NOT call finish (shares parent's run object)
@@ -940,7 +940,7 @@ class TestStateSaveRestore:
         from flyteplugins.wandb.decorator import _wandb_run
 
         # Execute child context
-        with _wandb_run(new_run=True, project="child-project", entity="child-entity"):
+        with _wandb_run(run_mode="new", project="child-project", entity="child-entity"):
             # During execution, child state should be active
             assert mock_context.data["_wandb_run"] == mock_child_run
             assert mock_context.custom_context["_wandb_run_id"] == "child-run-id"
@@ -973,7 +973,7 @@ class TestStateSaveRestore:
 
         from flyteplugins.wandb.decorator import _wandb_run
 
-        with _wandb_run(new_run=True, project="test"):
+        with _wandb_run(run_mode="new", project="test"):
             # State should be set during execution
             assert "_wandb_run" in mock_context.data
             assert "_wandb_run_id" in mock_context.custom_context

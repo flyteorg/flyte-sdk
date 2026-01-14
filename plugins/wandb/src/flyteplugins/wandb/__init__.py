@@ -36,7 +36,7 @@ Basic Usage:
        run = get_wandb_run()
        run.log({"parent_metric": 100})
 
-       # Child reuses parent's run by default (new_run="auto")
+       # Child reuses parent's run by default (run_mode="auto")
        await child_task(5)
        return run.id
 
@@ -54,7 +54,7 @@ Basic Usage:
 
 4. Creating new runs for child tasks:
 
-   @wandb_init(new_run=True)  # Always creates a new run
+   @wandb_init(run_mode="new")  # Always creates a new run
    @env.task
    async def independent_child() -> str:
        run = get_wandb_run()
@@ -135,7 +135,6 @@ from .context import (
 )
 from .decorator import wandb_init, wandb_sweep
 from .link import Wandb, WandbSweep
-
 
 __all__ = [
     "Wandb",

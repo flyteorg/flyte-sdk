@@ -50,9 +50,7 @@ def trace(func: Callable[..., T]) -> Callable[..., T]:
                 elif info.error:
                     raise info.error
             else:
-                logger.debug(
-                    f"No existing trace info found for {func}, proceeding to execute."
-                )
+                logger.debug(f"No existing trace info found for {func}, proceeding to execute.")
             start_time = time.time()
 
             # Create a new context with the trace's action ID
@@ -69,9 +67,7 @@ def trace(func: Callable[..., T]) -> Callable[..., T]:
                 coroutine_result = cast(Awaitable[Any], func(*args, **kwargs))
                 try:
                     results = await coroutine_result
-                    info.add_outputs(
-                        results, start_time=start_time, end_time=time.time()
-                    )
+                    info.add_outputs(results, start_time=start_time, end_time=time.time())
                 except Exception as e:
                     error = e
                     info.add_error(e, start_time=start_time, end_time=time.time())
@@ -133,9 +129,7 @@ def trace(func: Callable[..., T]) -> Callable[..., T]:
                         async for item in async_iter:
                             items.append(item)
                             yield item
-                        info.add_outputs(
-                            items, start_time=start_time, end_time=time.time()
-                        )
+                        info.add_outputs(items, start_time=start_time, end_time=time.time())
                     except Exception as e:
                         error = e
                         info.add_error(e, start_time=start_time, end_time=time.time())

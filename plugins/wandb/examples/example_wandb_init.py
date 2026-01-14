@@ -38,7 +38,7 @@ async def traced_child_task(x: int) -> str:
     return run.id
 
 
-@wandb_init(new_run=False)  # Reuses parent's run
+@wandb_init(run_mode="shared")  # Reuses parent's run
 @env.task
 def grandchild_task(x: int) -> str:
     run = get_wandb_run()
@@ -52,7 +52,7 @@ def grandchild_task(x: int) -> str:
     return run.id
 
 
-@wandb_init(new_run=True)  # Always creates new run
+@wandb_init(run_mode="new")  # Always creates new run
 @env.task
 async def child_task(x: int) -> str:
     run = get_wandb_run()
@@ -70,7 +70,7 @@ async def child_task(x: int) -> str:
     return run.id
 
 
-@wandb_init  # new_run="auto" by default - reuses parent if available
+@wandb_init  # run_mode="auto" by default - reuses parent if available
 @env.task
 async def child_task_with_config(x: int) -> str:
     run = get_wandb_run()
@@ -107,14 +107,14 @@ async def parent_task() -> str:
     # Log parent metrics
     run.log({"parent_metric": 100})
 
-    # 1. Child task with new_run=True and custom config - creates new run
+    # 1. Child task with run_mode="new" and custom config - creates new run
     with wandb_config(name="child-run", tags=["child-task"]):
         result1 = await child_task(5)
 
-    # 2. Child task with new_run=True and parent's config - creates new run
+    # 2. Child task with run_mode="new" and parent's config - creates new run
     result2 = await child_task(10)
 
-    # 3. Child task with new_run="auto" and config override - reuses parent run
+    # 3. Child task with run_mode="auto" and config override - reuses parent run
     with wandb_config(tags=["child-with-config"], config={"learning_rate": 0.01}):
         result3 = await child_task_with_config(20)
 

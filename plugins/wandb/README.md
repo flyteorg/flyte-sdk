@@ -10,10 +10,10 @@
       ...
   ```
 
-- By default (`new_run="auto"`), child tasks automatically reuse their parent's W&B run if one exists, or create a new run if they're top-level tasks. You can override this with `new_run=True` (always create new) or `new_run=False` (always reuse parent).
+- By default (`run_mode="auto"`), child tasks automatically reuse their parent's W&B run if one exists, or create a new run if they're top-level tasks. You can override this with `run_mode="new"` (always create new) or `run_mode="shared"` (always reuse parent).
 - `@wandb_init` should be applied to tasks (not traces). Traces can access the parent task's W&B run via `get_wandb_run()`. `@wandb_init` can also be applied to regular Python functions for use in `wandb.agent()` sweep callbacks.
 - The wandb run can be accessed via `get_wandb_run()`, which returns the run object or `None` if not within a `@wandb_init` decorated task.
-- When using `new_run=False` or `new_run="auto"` (with a parent run), child tasks reuse the parent's run ID. Configuration from `wandb_config()` is merged with decorator parameters.
+- When using `run_mode="shared"` or `run_mode="auto"` (with a parent run), child tasks reuse the parent's run ID. Configuration from `wandb_config()` is merged with decorator parameters.
 - `wandb_config` can be used to pass configuration to tasks enclosed within the context manager and can also be provided via `with_runcontext`.
 - When the context manager exits, the configuration falls back to the parent task's config.
 - Arguments passed to `wandb_init` decorator are available only within the current task and traces and are not propagated to child tasks (use `wandb_config` for child tasks).

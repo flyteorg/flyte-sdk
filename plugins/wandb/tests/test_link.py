@@ -133,9 +133,9 @@ class TestWandbLink:
         # Should return base host when entity is missing
         assert uri == "https://wandb.ai"
 
-    def test_wandb_link_with_parent_run_id_new_run_true(self):
-        """Test link generation with new_run=True (always creates new run)."""
-        link = Wandb(project="test-project", entity="test-entity", new_run=True)
+    def test_wandb_link_with_parent_run_id_run_mode_new(self):
+        """Test link generation with run_mode="new" (always creates new run)."""
+        link = Wandb(project="test-project", entity="test-entity", run_mode="new")
 
         uri = link.get_link(
             run_name="test-run",
@@ -152,9 +152,9 @@ class TestWandbLink:
         # Should always create new run ID even when parent exists
         assert uri == "https://wandb.ai/test-entity/test-project/runs/test-run-{{.actionName}}"
 
-    def test_wandb_link_with_parent_run_id_new_run_false(self):
-        """Test link generation with new_run=False (always reuses parent)."""
-        link = Wandb(project="test-project", entity="test-entity", new_run=False)
+    def test_wandb_link_with_parent_run_id_run_mode_shared(self):
+        """Test link generation with run_mode="shared" (always reuses parent)."""
+        link = Wandb(project="test-project", entity="test-entity", run_mode="shared")
 
         uri = link.get_link(
             run_name="test-run",
@@ -171,9 +171,9 @@ class TestWandbLink:
         # Should reuse parent's run ID
         assert uri == "https://wandb.ai/test-entity/test-project/runs/parent-run-id"
 
-    def test_wandb_link_new_run_false_no_parent(self):
-        """Test link generation with new_run=False but no parent run."""
-        link = Wandb(project="test-project", entity="test-entity", new_run=False)
+    def test_wandb_link_run_mode_shared_no_parent(self):
+        """Test link generation with run_mode="shared" but no parent run."""
+        link = Wandb(project="test-project", entity="test-entity", run_mode="shared")
 
         uri = link.get_link(
             run_name="test-run",
@@ -188,9 +188,9 @@ class TestWandbLink:
         # Should return project URL without run ID when can't reuse parent
         assert uri == "https://wandb.ai/test-entity/test-project"
 
-    def test_wandb_link_new_run_auto_with_parent(self):
-        """Test link generation with new_run='auto' and parent exists."""
-        link = Wandb(project="test-project", entity="test-entity", new_run="auto")
+    def test_wandb_link_run_mode_auto_with_parent(self):
+        """Test link generation with run_mode='auto' and parent exists."""
+        link = Wandb(project="test-project", entity="test-entity", run_mode="auto")
 
         uri = link.get_link(
             run_name="test-run",
@@ -207,9 +207,9 @@ class TestWandbLink:
         # Should reuse parent's run ID when available
         assert uri == "https://wandb.ai/test-entity/test-project/runs/parent-run-id"
 
-    def test_wandb_link_new_run_auto_without_parent(self):
-        """Test link generation with new_run='auto' and no parent."""
-        link = Wandb(project="test-project", entity="test-entity", new_run="auto")
+    def test_wandb_link_run_mode_auto_without_parent(self):
+        """Test link generation with run_mode='auto' and no parent."""
+        link = Wandb(project="test-project", entity="test-entity", run_mode="auto")
 
         uri = link.get_link(
             run_name="test-run",
@@ -281,7 +281,7 @@ class TestWandbLink:
         link = Wandb(
             project="test-project",
             entity="test-entity",
-            new_run=True,
+            run_mode="new",
             id="my-custom-run-id",
         )
 
@@ -300,7 +300,7 @@ class TestWandbLink:
 
     def test_wandb_link_with_custom_id_in_context(self):
         """Test link generation with custom run ID from context."""
-        link = Wandb(project="test-project", entity="test-entity", new_run=True)
+        link = Wandb(project="test-project", entity="test-entity", run_mode="new")
 
         uri = link.get_link(
             run_name="test-run",
@@ -320,7 +320,7 @@ class TestWandbLink:
         link = Wandb(
             project="test-project",
             entity="test-entity",
-            new_run=True,
+            run_mode="new",
             id="link-custom-id",  # This should win
         )
 
@@ -337,12 +337,12 @@ class TestWandbLink:
         # Link ID should take precedence over context ID
         assert uri == "https://wandb.ai/test-entity/test-project/runs/link-custom-id"
 
-    def test_wandb_link_custom_id_with_new_run_auto(self):
-        """Test custom ID works with new_run='auto' when no parent run exists."""
+    def test_wandb_link_custom_id_with_run_mode_auto(self):
+        """Test custom ID works with run_mode='auto' when no parent run exists."""
         link = Wandb(
             project="test-project",
             entity="test-entity",
-            new_run="auto",
+            run_mode="auto",
             id="auto-custom-id",
         )
 

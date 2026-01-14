@@ -59,7 +59,7 @@ async def train_model_basic(learning_rate: float, batch_size: int) -> str:
         Wandb(
             project="flyte-wandb-test",
             entity="samhita-alla",
-            new_run=True,
+            run_mode="new",
             id="my-custom-run-id",  # Provide custom run ID to the link
         ),
     )
@@ -129,7 +129,7 @@ async def train_model_child(learning_rate: float, batch_size: int, run_id: str) 
         Wandb(
             project="flyte-wandb-test",
             entity="samhita-alla",
-            new_run=True,
+            run_mode="new",
             id="parent-run-custom-id",
         ),
     )
@@ -179,7 +179,7 @@ async def parent_training_task() -> str:
         Wandb(
             project="flyte-wandb-test",
             entity="samhita-alla",
-            new_run=True,
+            run_mode="new",
             # No id parameter - link will auto-generate from run_name-action_name
         ),
     )
@@ -214,33 +214,27 @@ if __name__ == "__main__":
     flyte.init_from_config()
 
     print("\n=== Method 1: Basic task with link added via override ===")
-    run1 = flyte.with_runcontext(
-        custom_context=wandb_config(project="flyte-wandb-test", entity="samhita-alla")
-    ).run(
-        train_model_basic.override(
-            links=(
-                Wandb(project="flyte-wandb-test", entity="samhita-alla", new_run=True),
-            )
-        ),
+    run1 = flyte.with_runcontext(custom_context=wandb_config(project="flyte-wandb-test", entity="samhita-alla")).run(
+        train_model_basic.override(links=(Wandb(project="flyte-wandb-test", entity="samhita-alla", run_mode="new"),)),
         learning_rate=0.001,
         batch_size=32,
     )
     print(f"Run URL: {run1.url}\n")
 
     print("=== Method 2: Task with link and custom run ID ===")
-    run2 = flyte.with_runcontext(
-        custom_context=wandb_config(project="flyte-wandb-test", entity="samhita-alla")
-    ).run(train_model_with_link, learning_rate=0.01, batch_size=64)
+    run2 = flyte.with_runcontext(custom_context=wandb_config(project="flyte-wandb-test", entity="samhita-alla")).run(
+        train_model_with_link, learning_rate=0.01, batch_size=64
+    )
     print(f"Run URL: {run2.url}\n")
 
     print("=== Method 3: Parent task with children (custom IDs) ===")
-    run3 = flyte.with_runcontext(
-        custom_context=wandb_config(project="flyte-wandb-test", entity="samhita-alla")
-    ).run(parent_training_task)
+    run3 = flyte.with_runcontext(custom_context=wandb_config(project="flyte-wandb-test", entity="samhita-alla")).run(
+        parent_training_task
+    )
     print(f"Run URL: {run3.url}\n")
 
     print("=== Method 4: Task with link but auto-generated ID ===")
-    run4 = flyte.with_runcontext(
-        custom_context=wandb_config(project="flyte-wandb-test", entity="samhita-alla")
-    ).run(train_model_autoid, learning_rate=0.005)
+    run4 = flyte.with_runcontext(custom_context=wandb_config(project="flyte-wandb-test", entity="samhita-alla")).run(
+        train_model_autoid, learning_rate=0.005
+    )
     print(f"Run URL: {run4.url}\n")

@@ -16,7 +16,7 @@ class TestWandbInitIntegration:
         """Test that a task decorated with @wandb_init has the correct link."""
         env = flyte.TaskEnvironment(name="test-env")
 
-        @wandb_init(project="integration-project", entity="integration-entity", new_run=True)
+        @wandb_init(project="integration-project", entity="integration-entity", run_mode="new")
         @env.task
         async def integration_task():
             return "result"
@@ -27,7 +27,7 @@ class TestWandbInitIntegration:
         assert isinstance(link, Wandb)
         assert link.project == "integration-project"
         assert link.entity == "integration-entity"
-        assert link.new_run is True
+        assert link.run_mode is True
 
     def test_multiple_wandb_init_tasks_independent(self):
         """Test that multiple tasks with @wandb_init are independent."""
@@ -38,7 +38,7 @@ class TestWandbInitIntegration:
         async def task_1():
             return "result-1"
 
-        @wandb_init(project="project-2", entity="entity-2", new_run=False)
+        @wandb_init(project="project-2", entity="entity-2", run_mode="shared")
         @env.task
         async def task_2():
             return "result-2"
@@ -49,11 +49,11 @@ class TestWandbInitIntegration:
 
         assert link_1.project == "project-1"
         assert link_1.entity == "entity-1"
-        assert link_1.new_run == "auto"  # default
+        assert link_1.run_mode == "auto"  # default
 
         assert link_2.project == "project-2"
         assert link_2.entity == "entity-2"
-        assert link_2.new_run is False
+        assert link_2.run_mode is False
 
     @patch("flyteplugins.wandb.decorator.flyte.ctx")
     @patch("flyteplugins.wandb.decorator._build_init_kwargs")
@@ -105,7 +105,7 @@ class TestWandbSweepIntegration:
         """Test sweep task that calls child tasks with @wandb_init."""
         env = flyte.TaskEnvironment(name="test-env")
 
-        @wandb_init(new_run=True)
+        @wandb_init(run_mode="new")
         @env.task
         async def objective_task(lr: float):
             return f"trained with lr={lr}"
@@ -271,12 +271,12 @@ class TestLinkGenerationIntegration:
         assert "ent3" in uri3 and "proj3" in uri3
 
 
-class TestNewRunBehaviorIntegration:
-    """Integration tests for new_run parameter behavior."""
+class TestRunModeBehaviorIntegration:
+    """Integration tests for run_mode parameter behavior."""
 
-    def test_new_run_true_always_creates_new(self):
-        """Test that new_run=True always creates a new run ID."""
-        link = Wandb(project="proj", entity="ent", new_run=True)
+    def test_run_mode_new_always_creates_new(self):
+        """Test that run_mode="new" always creates a new run ID."""
+        link = Wandb(project="proj", entity="ent", run_mode="new")
 
         # Even with parent run ID in context, should create new
         uri = link.get_link(
@@ -293,9 +293,9 @@ class TestNewRunBehaviorIntegration:
         assert "parent-123" not in uri
         assert "child-action" in uri
 
-    def test_new_run_false_reuses_parent(self):
-        """Test that new_run=False reuses parent's run ID."""
-        link = Wandb(project="proj", entity="ent", new_run=False)
+    def test_run_mode_shared_reuses_parent(self):
+        """Test that run_mode="shared" reuses parent's run ID."""
+        link = Wandb(project="proj", entity="ent", run_mode="shared")
 
         # Should reuse parent run ID
         uri = link.get_link(
@@ -310,9 +310,9 @@ class TestNewRunBehaviorIntegration:
 
         assert "parent-123" in uri
 
-    def test_new_run_auto_with_parent(self):
-        """Test that new_run='auto' reuses parent when available."""
-        link = Wandb(project="proj", entity="ent", new_run="auto")
+    def test_run_mode_auto_with_parent(self):
+        """Test that run_mode='auto' reuses parent when available."""
+        link = Wandb(project="proj", entity="ent", run_mode="auto")
 
         # Should reuse parent when available
         uri = link.get_link(
@@ -327,9 +327,9 @@ class TestNewRunBehaviorIntegration:
 
         assert "parent-123" in uri
 
-    def test_new_run_auto_without_parent(self):
-        """Test that new_run='auto' creates new when no parent."""
-        link = Wandb(project="proj", entity="ent", new_run="auto")
+    def test_run_mode_auto_without_parent(self):
+        """Test that run_mode='auto' creates new when no parent."""
+        link = Wandb(project="proj", entity="ent", run_mode="auto")
 
         # Should create new run when no parent
         uri = link.get_link(
@@ -440,28 +440,28 @@ class TestRealWorldScenarios:
     """Tests simulating real-world usage scenarios."""
 
     def test_parent_child_task_hierarchy(self):
-        """Test parent task with child tasks using different new_run settings."""
+        """Test parent task with child tasks using different run_mode settings."""
         env = flyte.TaskEnvironment(name="test-env")
 
-        @wandb_init(project="proj", entity="ent", new_run="auto")
+        @wandb_init(project="proj", entity="ent", run_mode="auto")
         @env.task
         async def parent():
             return "parent-result"
 
-        @wandb_init(project="proj", entity="ent", new_run=True)
+        @wandb_init(project="proj", entity="ent", run_mode="new")
         @env.task
         async def child_new_run():
             return "child-result"
 
-        @wandb_init(project="proj", entity="ent", new_run=False)
+        @wandb_init(project="proj", entity="ent", run_mode="shared")
         @env.task
         async def child_reuse_run():
             return "child-result"
 
         # Each should have correct link configuration
-        assert parent.links[0].new_run == "auto"
-        assert child_new_run.links[0].new_run is True
-        assert child_reuse_run.links[0].new_run is False
+        assert parent.links[0].run_mode == "auto"
+        assert child_new_run.links[0].run_mode == "new"
+        assert child_reuse_run.links[0].run_mode == "shared"
 
     def test_sweep_with_parallel_agents(self):
         """Test sweep task that spawns multiple agent tasks."""

@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Dict, Optional
+from typing import Dict, Literal, Optional
 
 from flyte import Link
 
@@ -9,7 +9,7 @@ class Wandb(Link):
     host: str = "https://wandb.ai"
     project: Optional[str] = None
     entity: Optional[str] = None
-    new_run: bool | str = "auto"
+    run_mode: Literal["auto", "new", "shared"] = "auto"
     id: Optional[str] = None
     name: str = "Weights & Biases"
 
@@ -50,18 +50,18 @@ class Wandb(Link):
         if not wandb_project or not wandb_entity:
             return self.host
 
-        # Determine run ID based on new_run setting
-        if self.new_run is True:
+        # Determine run ID based on run_mode setting
+        if self.run_mode == "new":
             # Always create new run - use user-provided ID if available, otherwise generate
             wandb_run_id = user_provided_id or f"{run_name}-{action_name}"
-        elif self.new_run is False:
+        elif self.run_mode == "shared":
             # Always reuse parent's run
             if parent_run_id:
                 wandb_run_id = parent_run_id
             else:
                 # Can't generate link without parent run ID
                 return f"{self.host}/{wandb_entity}/{wandb_project}"
-        else:  # new_run == "auto"
+        else:  # run_mode == "auto"
             # Use parent's run if available, otherwise create new
             if parent_run_id:
                 wandb_run_id = parent_run_id

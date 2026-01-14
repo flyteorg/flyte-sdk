@@ -104,6 +104,6 @@ async def test_trace_uses_own_action_id():
     # Verify that the trace had a different action ID than the parent
     assert parent_action_name is not None, "Parent action name should be captured"
     assert trace_action_name is not None, "Trace action name should be captured"
-    assert (
-        trace_action_name != parent_action_name
-    ), f"Trace should have different action ID than parent. Trace: {trace_action_name}, Parent: {parent_action_name}"
+    assert trace_action_name != parent_action_name, (
+        f"Trace should have different action ID than parent. Trace: {trace_action_name}, Parent: {parent_action_name}"
+    )

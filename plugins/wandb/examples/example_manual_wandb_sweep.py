@@ -28,17 +28,13 @@ def objective_function():
     run = wandb.run
     config = run.config
 
-    print(
-        f"Training with lr={config.learning_rate}, batch_size={config.batch_size}, epochs={config.epochs}"
-    )
+    print(f"Training with lr={config.learning_rate}, batch_size={config.batch_size}, epochs={config.epochs}")
 
     # Simulate training
     best_loss = float("inf")
     for epoch in range(config.epochs):
         loss = 1.0 / (config.learning_rate * config.batch_size) + epoch * 0.1
-        accuracy = min(
-            0.95, config.learning_rate * config.batch_size * (epoch + 1) * 0.01
-        )
+        accuracy = min(0.95, config.learning_rate * config.batch_size * (epoch + 1) * 0.01)
         run.log({"epoch": epoch, "loss": loss, "accuracy": accuracy})
         best_loss = min(best_loss, loss)
 
@@ -77,9 +73,7 @@ async def sweep_agent_task(agent_id: int, sweep_id: str, count: int = 3) -> int:
         ),
     )
 )
-async def manual_sweep_with_agents(
-    num_agents: int = 2, trials_per_agent: int = 3
-) -> str:
+async def manual_sweep_with_agents(num_agents: int = 2, trials_per_agent: int = 3) -> str:
     """
     Task that manually creates a sweep and launches multiple agents in parallel.
 
@@ -133,7 +127,7 @@ async def manual_sweep_with_agents(
 if __name__ == "__main__":
     flyte.init_from_config()
 
-    run = flyte.with_runcontext(
-        custom_context=wandb_config(project="flyte-wandb-test", entity="samhita-alla")
-    ).run(manual_sweep_with_agents, num_agents=2, trials_per_agent=3)
+    run = flyte.with_runcontext(custom_context=wandb_config(project="flyte-wandb-test", entity="samhita-alla")).run(
+        manual_sweep_with_agents, num_agents=2, trials_per_agent=3
+    )
     print(f"Sweep URL: {run.url}\n")
