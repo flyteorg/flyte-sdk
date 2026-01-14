@@ -1,3 +1,5 @@
+import asyncio
+import logging
 from typing import Annotated
 
 import numpy as np
@@ -79,18 +81,21 @@ async def get_employee_data(raw_dataframe: pd.DataFrame, flyte_dataframe: pd.Dat
 
 
 if __name__ == "__main__":
-    flyte.init_from_config()
+    flyte.init_from_config(log_level=logging.DEBUG)
     # Get the data sources
 
-    run1 = flyte.with_runcontext(mode="remote").run(create_raw_dataframe)
-    run2 = flyte.with_runcontext(mode="remote").run(create_flyte_dataframe)
-    run1.wait()
-    run2.wait()
+    # run1 = flyte.with_runcontext(mode="remote").run(create_raw_dataframe)
+    # run2 = flyte.with_runcontext(mode="remote").run(create_flyte_dataframe)
+    # run1.wait()
+    # run2.wait()
+
+    df = pd.DataFrame(BASIC_EMPLOYEE_DATA)
+    fdf = asyncio.run(flyte.io.DataFrame.from_local(df))
 
     # Pass both to get_employee_data - Flyte auto-converts flyte.io.DataFrame to pd.DataFrame
     run = flyte.with_runcontext(mode="remote").run(
         get_employee_data,
-        raw_dataframe=run1.outputs()[0],
-        flyte_dataframe=run2.outputs()[0],
+        raw_dataframe=fdf,
+        flyte_dataframe=fdf,
     )
     print("Results:", run.url)

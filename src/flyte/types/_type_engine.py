@@ -1252,7 +1252,8 @@ class TypeEngine(typing.Generic[T]):
                         f"Type conversion failed for variable '{k}'.\n"
                         f"Expected type: {python_type}\n"
                         f"Actual type: {type(d[k])}\n"
-                        f"Value received: {d[k]!r}"
+                        f"Value received: {d[k]!r}\n"
+                        f"Reason: {e}"
                     ) from e
                 else:
                     raise e

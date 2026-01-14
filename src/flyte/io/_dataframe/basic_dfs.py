@@ -133,6 +133,7 @@ class PandasToParquetEncodingHandler(DataFrameEncoder):
             allow_truncated_timestamps=False,
             storage_options=get_pandas_storage_options(uri=path),
         )
+
         structured_dataset_type.format = PARQUET
         return literals_pb2.StructuredDataset(
             uri=uri, metadata=literals_pb2.StructuredDatasetMetadata(structured_dataset_type=structured_dataset_type)

@@ -18,12 +18,12 @@ import flyte.storage as storage
 from flyte._logging import logger
 from flyte._utils import lazy_module
 from flyte._utils.asyn import loop_manager
+from flyte.syncify import syncify
 from flyte.types import TypeEngine, TypeTransformer, TypeTransformerFailedError
 from flyte.types._renderer import Renderable
 from flyte.types._type_engine import modify_literal_uris
 
 MESSAGEPACK = "msgpack"
-
 
 if typing.TYPE_CHECKING:
     import pandas as pd
@@ -45,10 +45,51 @@ GENERIC_FORMAT: DataFrameFormat = ""
 GENERIC_PROTOCOL: str = "generic protocol"
 
 
+@syncify
+async def _upload_local_df_using_flyte(
+    df: typing.Any, converted_columns: typing.Sequence[types_pb2.StructuredDatasetType.DatasetColumn]
+) -> literals_pb2.Literal:
+    import tempfile
+
+    import flyte.models
+    from flyte._context import internal_ctx
+    from flyte.types import TypeEngine
+
+    tf = TypeEngine.get_transformer(type(df))
+    sd_type = tf.get_literal_type(type(df))
+    updated_type = types_pb2.LiteralType(
+        structured_dataset_type=types_pb2.StructuredDatasetType(
+            columns=converted_columns,
+            format=sd_type.structured_dataset_type.format,
+            external_schema_type=sd_type.structured_dataset_type.external_schema_type,
+            external_schema_bytes=sd_type.structured_dataset_type.external_schema_bytes,
+        )
+    )
+    with tempfile.TemporaryDirectory() as tmpdir:
+        print(f"Temp dir: {tmpdir}")
+        with internal_ctx().new_raw_data_path(flyte.models.RawDataPath(path=tmpdir)):
+            lit = await tf.to_literal(python_type=type(df), python_val=df, expected=updated_type)
+            print(lit)
+            # Now we need to upload the directory using remote.upload_dir
+            return lit
+
+
 class DataFrame(BaseModel, SerializableType):
     """
-    This is the user facing DataFrame class. Please don't confuse it with the literals.StructuredDataset
-    class (that is just a model, a Python class representation of the protobuf).
+    A Flyte meta DataFrame object, that wraps all other dataframe types (usually available as plugins, pandas.DataFrame
+    and pyarrow.Table are supported natively, just install these libraries).
+
+    Known eco-system plugins that supply other dataframe encoding plugins are,
+    1. `flyteplugins-polars` - pl.DataFrame
+    2. `flyteplugins-spark` - pyspark.DataFrame
+
+    You can add other implementations by extending following `flyte.io.extend`.
+
+    The Flyte DataFrame object serves 2 main purposes:
+    1. Interoperability between various dataframe objects. A task can generate a pandas.DataFrame and another task
+     can accept a flyte.io.DataFrame, which can be converted to any dataframe.
+    2. Allows for non materialized access to DataFrame objects. So, for example you can accept any dataframe as a
+    flyte.io.DataFrame and this is just a reference and will not materialize till you force `.all()` or `.iter()` etc
     """
 
     uri: typing.Optional[str] = Field(default=None)
@@ -140,17 +181,70 @@ class DataFrame(BaseModel, SerializableType):
         return [k for k, v in cls.columns().items()]
 
     @classmethod
+    async def from_local(
+        cls, df: typing.Any, columns: typing.Dict[str, typing.Any] | None = None, remote_destination: str | None = None
+    ) -> DataFrame:
+        """
+        This method is useful to upload the dataframe eagerly and get the actual DataFrame.
+
+        This is useful to upload small local datasets onto Flyte and also upload dataframes from notebooks. This
+        uses signed urls and is thus not the most efficient way of uploading.
+
+        In tasks (at runtime) it uses the task context and the underlying fast storage sub-system to upload the data.
+
+        At runtime it is recommended to use `DataFrame.wrap_df` as it is simpler.
+
+        :param df: The dataframe object to be uploaded and converted.
+        :param columns: Optionally, any column information to be stored as part of the metadata
+        :param remote_destination: Optional destination URI to upload to, if not specified, this is automatically
+            determined based on the current context. For example, locally it will use flyte:// automatic data management
+            system to upload data (this is slow and useful for smaller datasets). On remote it will use the storage
+            configuration and the raw data directory setting in the task context.
+
+        Returns: DataFrame object.
+        """
+        import flyte
+
+        sdt = flyte_dataset_transformer.get_structured_dataset_type(column_map=columns)
+        if flyte.ctx() is None and remote_destination is None:
+            logger.debug("Local context detected, dataframe will be uploaded through Flyte local data upload system.")
+            final_lit = await _upload_local_df_using_flyte(df, converted_columns=sdt.columns)
+            fdf = cls.from_existing_remote(remote_path=final_lit.scalar.structured_dataset.uri, format=PARQUET)
+            fdf._metadata = final_lit.scalar.structured_dataset.metadata
+            return fdf
+        else:
+            fdf = cls.wrap_df(df, uri=remote_destination)
+            fdf._metadata = literals_pb2.StructuredDatasetMetadata(structured_dataset_type=sdt)
+
+    @classmethod
     def from_df(
         cls,
         val: typing.Optional[typing.Any] = None,
         uri: typing.Optional[str] = None,
     ) -> DataFrame:
         """
-        Wrapper to create a DataFrame from a dataframe.
-        The reason this is implemented as a wrapper instead of a full translation invoking
-        the type engine and the encoders is because there's too much information in the type
-        signature of the task that we don't want the user to have to replicate.
+        Deprecated: Please use wrap_df, as that is the right name.
+
+        Creates a new Flyte DataFrame from any registered DataFrame type (For example, pandas.DataFrame).
+        Other dataframe types are usually supported through plugins like `flyteplugins-polars`, `flyteplugins-spark`
+        etc.
         """
+        return cls.wrap_df(val, uri=uri)
+
+    @classmethod
+    def wrap_df(
+        cls,
+        val: typing.Optional[typing.Any] = None,
+        uri: typing.Optional[str] = None,
+    ) -> DataFrame:
+        """
+        Wrapper to create a DataFrame from a dataframe.
+        Other dataframe types are usually supported through plugins like `flyteplugins-polars`, `flyteplugins-spark`
+        etc.
+        """
+        #  The reason this is implemented as a wrapper instead of a full translation invoking
+        #  the type engine and the encoders is because there's too much information in the type
+        #  signature of the task that we don't want the user to have to replicate.
         instance = cls(uri=uri)
         instance._raw_df = val
         return instance
@@ -992,7 +1086,14 @@ class DataFrameTransformerEngine(TypeTransformer[DataFrame]):
     def _get_dataset_type(self, t: typing.Union[Type[DataFrame], typing.Any]) -> types_pb2.StructuredDatasetType:
         _original_python_type, column_map, storage_format, pa_schema = extract_cols_and_format(t)  # type: ignore
 
-        # Get the column information
+        return self.get_structured_dataset_type(column_map, storage_format, pa_schema)
+
+    def get_structured_dataset_type(
+        self,
+        storage_format: str | None = None,
+        pa_schema: Optional["pa.lib.Schema"] = None,
+        column_map: typing.Dict[str, typing.Any] | None = None,
+    ) -> types_pb2.StructuredDatasetType:
         converted_cols: typing.List[types_pb2.StructuredDatasetType.DatasetColumn] = (
             self._convert_ordered_dict_of_columns_to_list(column_map)
         )

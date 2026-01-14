@@ -210,7 +210,7 @@ async def upload_file(fp: Path, verify: bool = True) -> Tuple[str, str]:
     return await _upload_single_file(cfg, fp, verify=verify)
 
 
-async def upload_dir(dir_path: Path, verify: bool = True) -> str:
+async def upload_dir(dir_path: Path, verify: bool = True, prefix: str | None = None) -> str:
     """
     Uploads a directory to a remote location and returns the remote URI.
 
@@ -224,7 +224,8 @@ async def upload_dir(dir_path: Path, verify: bool = True) -> str:
     if not dir_path.is_dir():
         raise ValueError(f"{dir_path} is not a directory, upload arg must be a directory.")
 
-    prefix = uuid.uuid4().hex
+    if prefix is None:
+        prefix = uuid.uuid4().hex
 
     files = dir_path.rglob("*")
     uploaded_files = []
