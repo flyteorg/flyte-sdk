@@ -236,7 +236,12 @@ async def _serve(
         if asyncio.iscoroutinefunction(app_env._server):
             await app_env._server(**bound_params)
         else:
-            app_env._server(**bound_params)
+            # Run the function on a separate thread, in case the sync function
+            # relies on third party libraries that use an event loop internally.
+            def run_sync():
+                return app_env._server(**bound_params)
+
+            await loop.run_in_executor(None, run_sync)
     finally:
         await shutdown()
 
