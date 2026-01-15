@@ -200,7 +200,7 @@ async def upload_file(fp: Path, verify: bool = True) -> Tuple[str, str]:
 
     :param fp: The file path to upload.
     :param verify: Whether to verify the certificate for HTTPS requests.
-    :return: A tuple containing the MD5 digest and the remote URI.
+    :return: Tuple of (MD5 digest hex string, remote native URL).
     """
     # This is a placeholder implementation. Replace with actual upload logic.
     ensure_client()

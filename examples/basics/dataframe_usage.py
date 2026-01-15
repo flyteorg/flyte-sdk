@@ -43,18 +43,6 @@ ADDL_EMPLOYEE_DATA = {
 
 
 @env.task
-async def create_raw_dataframe() -> pd.DataFrame:
-    """
-    This task creates a raw pandas DataFrame with basic employee information.
-    This is the most basic use-case of how to pass dataframes (of all kinds, not just pandas). Create the dataframe
-    as normal, and return it. Note that the output signature is of the dataframe library type.
-    Uploading of the actual bits of the dataframe (which for pandas is serialized to parquet) happens at the
-    end of the task, the TypeEngine uploads from memory to blob store.
-    """
-    return pd.DataFrame(BASIC_EMPLOYEE_DATA)
-
-
-@env.task
 async def create_flyte_dataframe() -> Annotated[flyte.io.DataFrame, "csv"]:
     """
     This task creates a Flyte DataFrame with compensation and project data.
@@ -82,18 +70,15 @@ if __name__ == "__main__":
     flyte.init_from_config()  # log_level=logging.DEBUG)
     # Get the data sources
 
-    # run1 = flyte.with_runcontext(mode="remote").run(create_raw_dataframe)
-    # run2 = flyte.with_runcontext(mode="remote").run(create_flyte_dataframe)
-    # run1.wait()
-    # run2.wait()
-
-    df = pd.DataFrame(BASIC_EMPLOYEE_DATA)
-    fdf = flyte.io.DataFrame.from_local_sync(df)
+    local_df = pd.DataFrame(BASIC_EMPLOYEE_DATA)
+    local_fdf = flyte.io.DataFrame.from_local_sync(local_df)
+    run2 = flyte.with_runcontext(mode="remote").run(create_flyte_dataframe)
+    run2.wait()
 
     # Pass both to get_employee_data - Flyte auto-converts flyte.io.DataFrame to pd.DataFrame
     run = flyte.with_runcontext(mode="remote").run(
         get_employee_data,
-        raw_dataframe=fdf,
-        flyte_dataframe=fdf,
+        raw_dataframe=local_fdf,
+        flyte_dataframe=run2.outputs()[0],
     )
     print("Results:", run.url)

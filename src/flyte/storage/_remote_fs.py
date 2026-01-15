@@ -99,6 +99,7 @@ class HttpFileWriter(fsspec.asyn.AbstractAsyncStreamedFile):
                 self._tmp_file_path.unlink()
 
 
+# This file system is not used today
 class FlyteFS(AsyncFileSystem):
     """
     Want this to behave mostly just like the HTTP file system.

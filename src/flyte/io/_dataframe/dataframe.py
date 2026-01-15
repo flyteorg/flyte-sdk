@@ -46,40 +46,6 @@ GENERIC_FORMAT: DataFrameFormat = ""
 GENERIC_PROTOCOL: str = "generic protocol"
 
 
-@syncify
-async def _upload_local_df_using_flyte(
-    df: typing.Any, converted_columns: typing.Sequence[types_pb2.StructuredDatasetType.DatasetColumn]
-) -> literals_pb2.Literal:
-    import tempfile
-
-    import flyte.models
-    import flyte.remote as remote
-    from flyte._context import internal_ctx
-    from flyte.types import TypeEngine
-
-    tf = TypeEngine.get_transformer(type(df))
-    sd_type = tf.get_literal_type(type(df))
-    updated_type = types_pb2.LiteralType(
-        structured_dataset_type=types_pb2.StructuredDatasetType(
-            columns=converted_columns,
-            format=sd_type.structured_dataset_type.format,
-            external_schema_type=sd_type.structured_dataset_type.external_schema_type,
-            external_schema_bytes=sd_type.structured_dataset_type.external_schema_bytes,
-        )
-    )
-    with tempfile.TemporaryDirectory() as tmpdir:
-        print(f"Temp dir: {tmpdir}")
-        ctx = internal_ctx().new_raw_data_path(flyte.models.RawDataPath(path=tmpdir))
-        with ctx:
-            print(f"{internal_ctx().data.raw_data_path}")
-            lit = await tf.to_literal(python_type=type(df), python_val=df, expected=updated_type)
-            print(lit)
-            native_uri = await remote.upload_dir.aio(pathlib.Path(lit.scalar.structured_dataset.uri))
-            lit.scalar.structured_dataset.uri = native_uri
-            # Now we need to upload the directory using remote.upload_dir
-            return lit
-
-
 class DataFrame(BaseModel, SerializableType):
     """
     A Flyte meta DataFrame object, that wraps all other dataframe types (usually available as plugins, pandas.DataFrame
@@ -187,6 +153,40 @@ class DataFrame(BaseModel, SerializableType):
         return [k for k, v in cls.columns().items()]
 
     @classmethod
+    @syncify
+    async def _upload_local_df_using_flyte(
+        cls, df: typing.Any, converted_columns: typing.Sequence[types_pb2.StructuredDatasetType.DatasetColumn]
+    ) -> DataFrame:
+        import tempfile
+
+        import flyte.models
+        import flyte.remote as remote
+        from flyte._context import internal_ctx
+        from flyte.types import TypeEngine
+
+        tf = TypeEngine.get_transformer(type(df))
+        sd_type = tf.get_literal_type(type(df))
+        updated_type = types_pb2.LiteralType(
+            structured_dataset_type=types_pb2.StructuredDatasetType(
+                columns=converted_columns,
+                format=sd_type.structured_dataset_type.format,
+                external_schema_type=sd_type.structured_dataset_type.external_schema_type,
+                external_schema_bytes=sd_type.structured_dataset_type.external_schema_bytes,
+            )
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            ctx = internal_ctx().new_raw_data_path(flyte.models.RawDataPath(path=tmpdir))
+            with ctx:
+                lit = await tf.to_literal(python_type=type(df), python_val=df, expected=updated_type)
+                native_uri = await remote.upload_dir.aio(pathlib.Path(lit.scalar.structured_dataset.uri))
+                lit.scalar.structured_dataset.uri = native_uri
+                # Now we make a Flyte Dataframe to pass around.
+                fdf = cls.from_existing_remote(remote_path=lit.scalar.structured_dataset.uri, format=PARQUET)
+                fdf._literal_sd = lit.scalar.structured_dataset
+                fdf._metadata = lit.scalar.structured_dataset.metadata
+                return fdf
+
+    @classmethod
     async def from_local(
         cls,
         df: typing.Any,
@@ -217,11 +217,7 @@ class DataFrame(BaseModel, SerializableType):
         sdt = flyte_dataset_transformer.get_structured_dataset_type(column_map=columns)
         if flyte.ctx() is None and remote_destination is None:
             logger.debug("Local context detected, dataframe will be uploaded through Flyte local data upload system.")
-            final_lit = await _upload_local_df_using_flyte.aio(df, converted_columns=sdt.columns)
-            fdf = cls.from_existing_remote(remote_path=final_lit.scalar.structured_dataset.uri, format=PARQUET)
-            fdf._literal_sd = final_lit.scalar.structured_dataset
-            fdf._metadata = final_lit.scalar.structured_dataset.metadata
-            return fdf
+            return await cls._upload_local_df_using_flyte.aio(df, converted_columns=sdt.columns)
         fdf = cls.wrap_df(df, uri=remote_destination)
         fdf._metadata = literals_pb2.StructuredDatasetMetadata(structured_dataset_type=sdt)
         return fdf
@@ -257,11 +253,7 @@ class DataFrame(BaseModel, SerializableType):
         sdt = flyte_dataset_transformer.get_structured_dataset_type(column_map=columns)
         if flyte.ctx() is None and remote_destination is None:
             logger.debug("Local context detected, dataframe will be uploaded through Flyte local data upload system.")
-            final_lit = _upload_local_df_using_flyte(df, converted_columns=sdt.columns)
-            fdf = cls.from_existing_remote(remote_path=final_lit.scalar.structured_dataset.uri, format=PARQUET)
-            fdf._literal_sd = final_lit.scalar.structured_dataset
-            fdf._metadata = final_lit.scalar.structured_dataset.metadata
-            return fdf
+            return cls._upload_local_df_using_flyte(df, converted_columns=sdt.columns)
         fdf = cls.wrap_df(df, uri=remote_destination)
         fdf._metadata = literals_pb2.StructuredDatasetMetadata(structured_dataset_type=sdt)
         return fdf
@@ -949,10 +941,20 @@ class DataFrameTransformerEngine(TypeTransformer[DataFrame]):
             from flyte._context import internal_ctx
 
             ctx = internal_ctx()
-            protocol = get_protocol(uri or ctx.raw_data.path)
-            logger.debug(
-                f"No default protocol for type {df_type} found, using {protocol} from output prefix {ctx.raw_data.path}"
-            )
+            path = uri
+            if path is None:
+                if ctx.has_raw_data:
+                    path = ctx.raw_data.path
+                else:
+                    raise ValueError(
+                        "Storage is available only when working in a task. "
+                        "If you are trying to pass a local object to a remote run, but want the data to be uploaded "
+                        "then use flyte.io.DataFrame.from_local instead."
+                        " Refer to docs regarding, working with local data."
+                    )
+
+            protocol = get_protocol(path)
+            logger.debug(f"No default protocol for type {df_type} found, using {protocol} from output prefix {path}")
             return protocol
 
     async def encode(

@@ -30,6 +30,7 @@ import flyte.errors
 import flyte.storage as storage
 from flyte._context import internal_ctx
 from flyte._initialize import requires_initialization
+from flyte._logging import logger
 from flyte.io._hashing_io import AsyncHashingReader, HashingWriter, HashMethod, PrecomputedValue
 from flyte.types import TypeEngine, TypeTransformer, TypeTransformerFailedError
 
@@ -687,6 +688,13 @@ class File(BaseModel, Generic[T], SerializableType):
         if not os.path.exists(local_path):
             raise ValueError(f"File not found: {local_path}")
 
+        if flyte.ctx() is None and remote_destination is None:
+            logger.debug("Local context detected, File will be uploaded through Flyte local data upload system.")
+            import flyte.remote as remote
+
+            md5, remote_uri = remote.upload_file(local_path)
+            return cls.from_existing_remote(remote_path=remote_uri, file_cache_key=md5)
+
         remote_path = remote_destination or internal_ctx().raw_data.get_random_remote_path()
         protocol = get_protocol(remote_path)
         filename = Path(local_path).name
@@ -796,6 +804,13 @@ class File(BaseModel, Generic[T], SerializableType):
         """
         if not os.path.exists(local_path):
             raise ValueError(f"File not found: {local_path}")
+
+        if flyte.ctx() is None and remote_destination is None:
+            logger.debug("Local context detected, File will be uploaded through Flyte local data upload system.")
+            import flyte.remote as remote
+
+            md5, remote_uri = await remote.upload_file.aio(local_path)
+            return cls.from_existing_remote(remote_path=remote_uri, file_cache_key=md5)
 
         filename = Path(local_path).name
         remote_path = remote_destination or internal_ctx().raw_data.get_random_remote_path(filename)

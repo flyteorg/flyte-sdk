@@ -12,6 +12,7 @@ from pydantic import BaseModel, model_validator
 
 import flyte.storage as storage
 from flyte._context import internal_ctx
+from flyte._logging import logger
 from flyte.io._file import File
 from flyte.types import TypeEngine, TypeTransformer, TypeTransformerFailedError
 
@@ -600,6 +601,15 @@ class Dir(BaseModel, Generic[T], SerializableType):
         Returns:
             A new Dir instance pointing to the uploaded directory
         """
+        import flyte
+
+        if flyte.ctx() is None and remote_destination is None:
+            logger.debug("Local context detected, File will be uploaded through Flyte local data upload system.")
+            import flyte.remote as remote
+
+            remote_uri = await remote.upload_dir.aio(local_path)
+            return cls.from_existing_remote(remote_path=remote_uri)
+
         local_path_str = str(local_path)
         dirname = os.path.basename(os.path.normpath(local_path_str))
         resolved_remote_path = remote_destination or internal_ctx().raw_data.get_random_remote_path(dirname)
@@ -670,6 +680,15 @@ class Dir(BaseModel, Generic[T], SerializableType):
         Returns:
             A new Dir instance pointing to the uploaded directory
         """
+        import flyte
+
+        if flyte.ctx() is None and remote_destination is None:
+            logger.debug("Local context detected, File will be uploaded through Flyte local data upload system.")
+            import flyte.remote as remote
+
+            remote_uri = remote.upload_dir(local_path)
+            return cls.from_existing_remote(remote_path=remote_uri)
+
         local_path_str = str(local_path)
         dirname = os.path.basename(os.path.normpath(local_path_str))
 

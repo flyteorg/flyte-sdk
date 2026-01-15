@@ -137,3 +137,35 @@ async def test_storage_exists():
     listed = os.listdir("/tmp")[0]
     assert await storage.exists(os.path.join("/tmp", listed)), f"{listed} not found"
     assert not await storage.exists("/non-existent/test")
+
+
+@pytest.mark.parametrize(
+    "path,expected",
+    [
+        # Linux paths - not remote
+        ("/path/to/file", False),
+        ("/home/user/data.txt", False),
+        ("./relative/path", False),
+        ("relative/path/file.txt", False),
+        # Windows paths - not remote
+        ("C:\\Users\\test\\file.txt", False),
+        ("D:\\data\\folder", False),
+        ("C:/Users/test/file.txt", False),
+        # file:// protocol - not remote
+        ("file:///path/to/file", False),
+        ("file:///home/user/data.txt", False),
+        ("file://C:/Users/test/file.txt", False),
+        # S3 paths - remote
+        ("s3://bucket/path/to/file", True),
+        ("s3://my-bucket/data.parquet", True),
+        # GCS paths - remote
+        ("gs://bucket/path/to/file", True),
+        ("gs://my-bucket/data.parquet", True),
+        # Azure paths - remote
+        ("abfs://container/path/to/file", True),
+        ("abfss://container/path/to/file", True),
+        ("abfs://my-container@storageaccount.dfs.core.windows.net/data", True),
+    ],
+)
+def test_is_remote(path, expected):
+    assert storage.is_remote(path) == expected
