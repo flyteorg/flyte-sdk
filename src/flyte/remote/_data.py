@@ -210,6 +210,7 @@ async def upload_file(fp: Path, verify: bool = True) -> Tuple[str, str]:
     return await _upload_single_file(cfg, fp, verify=verify)
 
 
+@syncify
 async def upload_dir(dir_path: Path, verify: bool = True, prefix: str | None = None) -> str:
     """
     Uploads a directory to a remote location and returns the remote URI.
@@ -236,6 +237,6 @@ async def upload_dir(dir_path: Path, verify: bool = True, prefix: str | None = N
     urls = await asyncio.gather(*uploaded_files)
     native_url = urls[0][1]  # Assuming all files are uploaded to the same prefix
     # native_url is of the form s3://my-s3-bucket/flytesnacks/development/{prefix}/source/empty.md
-    uri = native_url.split(prefix)[0] + "/" + prefix
+    uri = native_url.split(prefix)[0] + prefix
 
     return uri

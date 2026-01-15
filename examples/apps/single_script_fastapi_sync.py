@@ -15,6 +15,7 @@ env = FastAPIAppEnvironment(
     port=8080,
 )
 
+
 @env.server
 def server():
     print("Starting server...")

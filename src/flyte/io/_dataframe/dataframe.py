@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import _datetime
 import collections
+import pathlib
 import types
 import typing
 from abc import ABC, abstractmethod
@@ -52,6 +53,7 @@ async def _upload_local_df_using_flyte(
     import tempfile
 
     import flyte.models
+    import flyte.remote as remote
     from flyte._context import internal_ctx
     from flyte.types import TypeEngine
 
@@ -67,9 +69,13 @@ async def _upload_local_df_using_flyte(
     )
     with tempfile.TemporaryDirectory() as tmpdir:
         print(f"Temp dir: {tmpdir}")
-        with internal_ctx().new_raw_data_path(flyte.models.RawDataPath(path=tmpdir)):
+        ctx = internal_ctx().new_raw_data_path(flyte.models.RawDataPath(path=tmpdir))
+        with ctx:
+            print(f"{internal_ctx().data.raw_data_path}")
             lit = await tf.to_literal(python_type=type(df), python_val=df, expected=updated_type)
             print(lit)
+            native_uri = await remote.upload_dir.aio(pathlib.Path(lit.scalar.structured_dataset.uri))
+            lit.scalar.structured_dataset.uri = native_uri
             # Now we need to upload the directory using remote.upload_dir
             return lit
 
@@ -182,7 +188,10 @@ class DataFrame(BaseModel, SerializableType):
 
     @classmethod
     async def from_local(
-        cls, df: typing.Any, columns: typing.Dict[str, typing.Any] | None = None, remote_destination: str | None = None
+        cls,
+        df: typing.Any,
+        columns: typing.OrderedDict[str, type[typing.Any]] | None = None,
+        remote_destination: str | None = None,
     ) -> DataFrame:
         """
         This method is useful to upload the dataframe eagerly and get the actual DataFrame.
@@ -208,13 +217,54 @@ class DataFrame(BaseModel, SerializableType):
         sdt = flyte_dataset_transformer.get_structured_dataset_type(column_map=columns)
         if flyte.ctx() is None and remote_destination is None:
             logger.debug("Local context detected, dataframe will be uploaded through Flyte local data upload system.")
-            final_lit = await _upload_local_df_using_flyte(df, converted_columns=sdt.columns)
+            final_lit = await _upload_local_df_using_flyte.aio(df, converted_columns=sdt.columns)
             fdf = cls.from_existing_remote(remote_path=final_lit.scalar.structured_dataset.uri, format=PARQUET)
+            fdf._literal_sd = final_lit.scalar.structured_dataset
             fdf._metadata = final_lit.scalar.structured_dataset.metadata
             return fdf
-        else:
-            fdf = cls.wrap_df(df, uri=remote_destination)
-            fdf._metadata = literals_pb2.StructuredDatasetMetadata(structured_dataset_type=sdt)
+        fdf = cls.wrap_df(df, uri=remote_destination)
+        fdf._metadata = literals_pb2.StructuredDatasetMetadata(structured_dataset_type=sdt)
+        return fdf
+
+    @classmethod
+    def from_local_sync(
+        cls,
+        df: typing.Any,
+        columns: typing.OrderedDict[str, type[typing.Any]] | None = None,
+        remote_destination: str | None = None,
+    ) -> DataFrame:
+        """
+        This method is useful to upload the dataframe eagerly and get the actual DataFrame.
+
+        This is useful to upload small local datasets onto Flyte and also upload dataframes from notebooks. This
+        uses signed urls and is thus not the most efficient way of uploading.
+
+        In tasks (at runtime) it uses the task context and the underlying fast storage sub-system to upload the data.
+
+        At runtime it is recommended to use `DataFrame.wrap_df` as it is simpler.
+
+        :param df: The dataframe object to be uploaded and converted.
+        :param columns: Optionally, any column information to be stored as part of the metadata
+        :param remote_destination: Optional destination URI to upload to, if not specified, this is automatically
+            determined based on the current context. For example, locally it will use flyte:// automatic data management
+            system to upload data (this is slow and useful for smaller datasets). On remote it will use the storage
+            configuration and the raw data directory setting in the task context.
+
+        Returns: DataFrame object.
+        """
+        import flyte
+
+        sdt = flyte_dataset_transformer.get_structured_dataset_type(column_map=columns)
+        if flyte.ctx() is None and remote_destination is None:
+            logger.debug("Local context detected, dataframe will be uploaded through Flyte local data upload system.")
+            final_lit = _upload_local_df_using_flyte(df, converted_columns=sdt.columns)
+            fdf = cls.from_existing_remote(remote_path=final_lit.scalar.structured_dataset.uri, format=PARQUET)
+            fdf._literal_sd = final_lit.scalar.structured_dataset
+            fdf._metadata = final_lit.scalar.structured_dataset.metadata
+            return fdf
+        fdf = cls.wrap_df(df, uri=remote_destination)
+        fdf._metadata = literals_pb2.StructuredDatasetMetadata(structured_dataset_type=sdt)
+        return fdf
 
     @classmethod
     def from_df(
@@ -268,7 +318,9 @@ class DataFrame(BaseModel, SerializableType):
             df = DataFrame.from_existing_remote("s3://bucket/data.parquet", format="parquet")
             ```
         """
-        return cls(uri=remote_path, format=format or GENERIC_FORMAT, **kwargs)
+        fdf = cls(uri=remote_path, format=format or GENERIC_FORMAT, **kwargs)
+        fdf._already_uploaded = True
+        return fdf
 
     @property
     def val(self) -> Optional[DF]:
@@ -1086,17 +1138,15 @@ class DataFrameTransformerEngine(TypeTransformer[DataFrame]):
     def _get_dataset_type(self, t: typing.Union[Type[DataFrame], typing.Any]) -> types_pb2.StructuredDatasetType:
         _original_python_type, column_map, storage_format, pa_schema = extract_cols_and_format(t)  # type: ignore
 
-        return self.get_structured_dataset_type(column_map, storage_format, pa_schema)
+        return self.get_structured_dataset_type(storage_format, column_map=column_map, pa_schema=pa_schema)
 
     def get_structured_dataset_type(
         self,
         storage_format: str | None = None,
         pa_schema: Optional["pa.lib.Schema"] = None,
-        column_map: typing.Dict[str, typing.Any] | None = None,
+        column_map: typing.OrderedDict[str, type[typing.Any]] | None = None,
     ) -> types_pb2.StructuredDatasetType:
-        converted_cols: typing.List[types_pb2.StructuredDatasetType.DatasetColumn] = (
-            self._convert_ordered_dict_of_columns_to_list(column_map)
-        )
+        converted_cols = self._convert_ordered_dict_of_columns_to_list(column_map)
 
         return types_pb2.StructuredDatasetType(
             columns=converted_cols,

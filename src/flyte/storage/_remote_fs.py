@@ -88,7 +88,7 @@ class HttpFileWriter(fsspec.asyn.AbstractAsyncStreamedFile):
 
         try:
             # Upload the temp file synchronously using remote.upload_file
-            md5, native_uri = await remote.upload_file.aio(fp=self._tmp_file_path)
+            _, native_uri = await remote.upload_file.aio(fp=self._tmp_file_path)
             # Add mapping with the flyte:// protocol prefix
             flyte_uri = f"flyte://{self.path}"
             RemoteFSPathResolver.add_mapping(flyte_uri, native_uri)

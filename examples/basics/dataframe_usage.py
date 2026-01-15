@@ -1,5 +1,3 @@
-import asyncio
-import logging
 from typing import Annotated
 
 import numpy as np
@@ -81,7 +79,7 @@ async def get_employee_data(raw_dataframe: pd.DataFrame, flyte_dataframe: pd.Dat
 
 
 if __name__ == "__main__":
-    flyte.init_from_config(log_level=logging.DEBUG)
+    flyte.init_from_config()  # log_level=logging.DEBUG)
     # Get the data sources
 
     # run1 = flyte.with_runcontext(mode="remote").run(create_raw_dataframe)
@@ -90,7 +88,7 @@ if __name__ == "__main__":
     # run2.wait()
 
     df = pd.DataFrame(BASIC_EMPLOYEE_DATA)
-    fdf = asyncio.run(flyte.io.DataFrame.from_local(df))
+    fdf = flyte.io.DataFrame.from_local_sync(df)
 
     # Pass both to get_employee_data - Flyte auto-converts flyte.io.DataFrame to pd.DataFrame
     run = flyte.with_runcontext(mode="remote").run(
