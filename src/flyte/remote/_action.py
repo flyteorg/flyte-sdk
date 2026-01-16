@@ -323,7 +323,7 @@ class Action(ToJSONMixin):
         return self.pb2.status.start_time.ToDatetime().replace(tzinfo=timezone.utc)
 
     @syncify
-    async def abort(self):
+    async def abort(self, reason: str = "Manually aborted from the SDK."):
         """
         Aborts / Terminates the action.
         """
@@ -331,6 +331,7 @@ class Action(ToJSONMixin):
             await get_client().run_service.AbortAction(
                 run_service_pb2.AbortActionRequest(
                     action_id=self.pb2.id,
+                    reason=reason,
                 )
             )
         except grpc.aio.AioRpcError as e:

@@ -11,7 +11,7 @@ from dataclasses import dataclass, replace
 from functools import lru_cache
 from pathlib import Path
 from types import MappingProxyType, ModuleType
-from typing import Any, Dict, Iterable, List, Literal, Optional
+from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Literal, Optional
 
 import rich.box
 import rich.repr
@@ -26,6 +26,9 @@ import flyte
 import flyte.errors
 from flyte._logging import LogFormat
 from flyte.config import Config
+
+if TYPE_CHECKING:
+    from flyte.cli._run import RunArguments
 
 OutputFormat = Literal["table", "json", "table-simple", "json-raw"]
 
@@ -109,6 +112,9 @@ class CLIConfig:
     org: str | None = None
     auth_type: str | None = None
     output_format: OutputFormat = "table"
+    run_args: RunArguments | None = (
+        None  # run_args is set when running tasks via CLI to provide context to parameter converters
+    )
 
     def replace(self, **kwargs) -> CLIConfig:
         """

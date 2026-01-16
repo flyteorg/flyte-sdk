@@ -13,8 +13,9 @@ def abort():
 
 @abort.command(cls=common.CommandBase)
 @click.argument("run-name", type=str, required=True)
+@click.option("--reason", default="Manually aborted from the CLI", required=False, help="The reason to abort the run.")
 @click.pass_obj
-def run(cfg: common.CLIConfig, run_name: str, project: str | None = None, domain: str | None = None):
+def run(cfg: common.CLIConfig, run_name: str, reason: str, project: str | None = None, domain: str | None = None):
     """
     Abort a run.
     """
@@ -24,16 +25,22 @@ def run(cfg: common.CLIConfig, run_name: str, project: str | None = None, domain
     if r:
         console = common.get_console()
         with console.status(f"Aborting run '{run_name}'...", spinner="dots"):
-            r.abort()
+            r.abort(reason=reason)
         console.print(f"Run '{run_name}' has been aborted.")
 
 
 @abort.command(cls=common.CommandBase)
 @click.argument("run-name", type=str, required=True)
 @click.argument("action-name", type=str, required=True)
+@click.option("--reason", default="Manually aborted from the CLI", required=False, help="The reason to abort the run.")
 @click.pass_obj
 def action(
-    cfg: common.CLIConfig, run_name: str, action_name: str, project: str | None = None, domain: str | None = None
+    cfg: common.CLIConfig,
+    run_name: str,
+    action_name: str,
+    reason: str,
+    project: str | None = None,
+    domain: str | None = None,
 ):
     """
     Abort an action associated with a run.
@@ -45,5 +52,5 @@ def action(
     if a:
         console = common.get_console()
         with console.status(f"Aborting action '{action_name}' for run '{run_name}'...", spinner="dots"):
-            a.abort()
+            a.abort(reason=reason)
         console.print(f"Action '{action_name}' for run '{run_name}' has been aborted.")

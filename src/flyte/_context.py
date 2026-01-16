@@ -70,6 +70,14 @@ class Context:
         raise ValueError("Raw data path has not been set in the context.")
 
     @property
+    def has_raw_data(self) -> bool:
+        if self.data and self.data.task_context and self.data.task_context.raw_data_path:
+            return True
+        if self.data and self.data.raw_data_path:
+            return True
+        return False
+
+    @property
     def id(self) -> int:
         """Viewable ID."""
         return self._id
