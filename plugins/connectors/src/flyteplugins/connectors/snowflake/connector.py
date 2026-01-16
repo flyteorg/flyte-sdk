@@ -166,7 +166,8 @@ class SnowflakeConnector(AsyncConnector):
 
         def _execute_query():
             cursor = conn.cursor()
-            cursor.execute_async(query)
+
+            cursor.execute_async(query, inputs)
             query_id = cursor.sfqid
             cursor.close()
             return query_id
