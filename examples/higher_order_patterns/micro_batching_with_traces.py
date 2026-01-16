@@ -3,7 +3,7 @@ Micro-batching pattern with Flyte Traces for fault tolerance.
 
 This example demonstrates how to process large numbers of items by:
 1. Breaking work into batches to avoid hitting action limits
-2. Using @flyte.trace to checkpoint progress for resumability
+2. Using @flyte.trace to checkpoint progress for recoverability
 3. Processing batches in parallel for efficiency
 
 Key benefits:
