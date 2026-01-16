@@ -72,13 +72,17 @@ if __name__ == "__main__":
 
     local_df = pd.DataFrame(BASIC_EMPLOYEE_DATA)
     local_fdf = flyte.io.DataFrame.from_local_sync(local_df)
-    run2 = flyte.with_runcontext(mode="remote").run(create_flyte_dataframe)
+    run2 = flyte.with_runcontext(mode="local").run(create_flyte_dataframe)
+    print(run2.url)
     run2.wait()
+    print(run2.outputs()[0])
 
     # Pass both to get_employee_data - Flyte auto-converts flyte.io.DataFrame to pd.DataFrame
-    run = flyte.with_runcontext(mode="remote").run(
+    run = flyte.with_runcontext(mode="local").run(
         get_employee_data,
         raw_dataframe=local_fdf,
         flyte_dataframe=run2.outputs()[0],
     )
     print("Results:", run.url)
+    run.wait()
+    print(run.outputs()[0])

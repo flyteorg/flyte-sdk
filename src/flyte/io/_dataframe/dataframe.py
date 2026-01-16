@@ -7,7 +7,7 @@ import types
 import typing
 from abc import ABC, abstractmethod
 from dataclasses import is_dataclass
-from typing import Any, ClassVar, Coroutine, Dict, Generic, List, Optional, Type, Union
+from typing import Any, Callable, ClassVar, Coroutine, Dict, Generic, List, Optional, Type, Union
 
 from flyteidl2.core import literals_pb2, types_pb2
 from fsspec.utils import get_protocol
@@ -19,7 +19,6 @@ import flyte.storage as storage
 from flyte._logging import logger
 from flyte._utils import lazy_module
 from flyte._utils.asyn import loop_manager
-from flyte.syncify import syncify
 from flyte.types import TypeEngine, TypeTransformer, TypeTransformerFailedError
 from flyte.types._renderer import Renderable
 from flyte.types._type_engine import modify_literal_uris
@@ -76,6 +75,9 @@ class DataFrame(BaseModel, SerializableType):
     _dataframe_type: Optional[Type[Any]] = PrivateAttr(default=None)
     _already_uploaded: bool = PrivateAttr(default=False)
 
+    # lazy uploader is used to upload local file to the remote storage when in remote mode
+    _lazy_uploader: Callable[[], Coroutine[Any, Any, Any]] | None = PrivateAttr(default=None)
+
     # loop manager is working better than synchronicity for some reason, was getting an error but may be an easy fix
     def _serialize(self) -> Dict[str, Optional[str]]:
         # dataclass case
@@ -88,6 +90,14 @@ class DataFrame(BaseModel, SerializableType):
             "uri": sd.uri,
             "format": sd.format,
         }
+
+    @property
+    def lazy_uploader(self) -> Callable[[], Coroutine[Any, Any, Any]] | None:
+        return self._lazy_uploader
+
+    @lazy_uploader.setter
+    def lazy_uploader(self, lazy_uploader: Callable[[], Coroutine[Any, Any, Any]] | None):
+        self._lazy_uploader = lazy_uploader
 
     @classmethod
     def _deserialize(cls, value) -> DataFrame:
@@ -153,7 +163,6 @@ class DataFrame(BaseModel, SerializableType):
         return [k for k, v in cls.columns().items()]
 
     @classmethod
-    @syncify
     async def _upload_local_df_using_flyte(
         cls, df: typing.Any, converted_columns: typing.Sequence[types_pb2.StructuredDatasetType.DatasetColumn]
     ) -> DataFrame:
@@ -212,12 +221,30 @@ class DataFrame(BaseModel, SerializableType):
 
         Returns: DataFrame object.
         """
-        import flyte
+        from flyte._context import internal_ctx
 
         sdt = flyte_dataset_transformer.get_structured_dataset_type(column_map=columns)
-        if flyte.ctx() is None and remote_destination is None:
-            logger.debug("Local context detected, dataframe will be uploaded through Flyte local data upload system.")
-            return await cls._upload_local_df_using_flyte.aio(df, converted_columns=sdt.columns)
+
+        ctx = internal_ctx()
+        if not ctx.has_raw_data and remote_destination is None:
+
+            async def _lazy_uploader() -> Any:
+                from flyte._run import _get_main_run_mode
+
+                if _get_main_run_mode() == "local":
+                    logger.debug("Local run mode detected, dataframe will be returned without uploading.")
+                    return df
+
+                logger.debug(
+                    "Local context detected, dataframe will be uploaded through Flyte local data upload system."
+                )
+                return await cls._upload_local_df_using_flyte(df, converted_columns=sdt.columns)
+
+            fdf = cls.wrap_df(df)
+            fdf._metadata = literals_pb2.StructuredDatasetMetadata(structured_dataset_type=sdt)
+            fdf._lazy_uploader = _lazy_uploader
+            return fdf
+
         fdf = cls.wrap_df(df, uri=remote_destination)
         fdf._metadata = literals_pb2.StructuredDatasetMetadata(structured_dataset_type=sdt)
         return fdf
@@ -248,12 +275,29 @@ class DataFrame(BaseModel, SerializableType):
 
         Returns: DataFrame object.
         """
-        import flyte
+        from flyte._context import internal_ctx
 
         sdt = flyte_dataset_transformer.get_structured_dataset_type(column_map=columns)
-        if flyte.ctx() is None and remote_destination is None:
-            logger.debug("Local context detected, dataframe will be uploaded through Flyte local data upload system.")
-            return cls._upload_local_df_using_flyte(df, converted_columns=sdt.columns)
+        ctx = internal_ctx()
+        if not ctx.has_raw_data and remote_destination is None:
+
+            async def _lazy_uploader() -> Any:
+                from flyte._run import _get_main_run_mode
+
+                if _get_main_run_mode() == "local":
+                    logger.debug("Local run mode detected, dataframe will be returned without uploading.")
+                    return df
+
+                logger.debug(
+                    "Local context detected, dataframe will be uploaded through Flyte local data upload system."
+                )
+                return await cls._upload_local_df_using_flyte(df, converted_columns=sdt.columns)
+
+            fdf = cls.wrap_df(df)
+            fdf._metadata = literals_pb2.StructuredDatasetMetadata(structured_dataset_type=sdt)
+            fdf._lazy_uploader = _lazy_uploader
+            return fdf
+
         fdf = cls.wrap_df(df, uri=remote_destination)
         fdf._metadata = literals_pb2.StructuredDatasetMetadata(structured_dataset_type=sdt)
         return fdf
@@ -844,6 +888,11 @@ class DataFrameTransformerEngine(TypeTransformer[DataFrame]):
                 external_schema_type=expected.structured_dataset_type.external_schema_type,
                 external_schema_bytes=expected.structured_dataset_type.external_schema_bytes,
             )
+
+        if isinstance(python_val, DataFrame) and python_val.lazy_uploader:
+            # Handle lazy uploader if present. This is only used when the user needs to upload a local dataframe to
+            # remote storage when running tasks in remote mode.
+            python_val = await python_val.lazy_uploader()
 
         # If the type signature has the DataFrame class, it will, or at least should, also be a
         # DataFrame instance.

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import pathlib
 import sys
 import uuid
@@ -56,6 +57,11 @@ class _CacheValue:
 
 _RUN_CACHE: Dict[_CacheKey, _CacheValue] = {}
 
+# ContextVar for run mode - thread-safe and coroutine-safe alternative to a global variable.
+# This allows offloaded types (files, directories, dataframes) to be aware of the run mode
+# for controlling auto-uploading behavior (only enabled in remote mode).
+_run_mode_var: contextvars.ContextVar[Mode | None] = contextvars.ContextVar("run_mode", default=None)
+
 
 async def _get_code_bundle_for_run(name: str) -> CodeBundle | None:
     """
@@ -71,6 +77,11 @@ async def _get_code_bundle_for_run(name: str) -> CodeBundle | None:
         spec = run_details.action_details.pb2.resolved_task_spec
         return extract_code_bundle(spec)
     return None
+
+
+def _get_main_run_mode() -> Mode | None:
+    """Get the current run mode from the context variable."""
+    return _run_mode_var.get()
 
 
 class _Runner:
@@ -716,6 +727,11 @@ def with_runcontext(
         raise ValueError("Run name and run base dir are required for hybrid mode")
     if copy_style == "none" and not version:
         raise ValueError("Version is required when copy_style is 'none'")
+
+    # Set the run mode in the context variable so that offloaded types (files, directories, dataframes)
+    # can check the mode for controlling auto-uploading behavior (only enabled in remote mode).
+    _run_mode_var.set(mode)
+
     return _Runner(
         force_mode=mode,
         name=name,

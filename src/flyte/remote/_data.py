@@ -204,7 +204,6 @@ async def upload_file(fp: Path, verify: bool = True, fname: str | None = None) -
     :param fname: Optional file name for the remote path.
     :return: Tuple of (MD5 digest hex string, remote native URL).
     """
-    # This is a placeholder implementation. Replace with actual upload logic.
     ensure_client()
     cfg = get_init_config()
     if not fp.is_file():
@@ -221,7 +220,6 @@ async def upload_dir(dir_path: Path, verify: bool = True, prefix: str | None = N
     :param verify: Whether to verify the certificate for HTTPS requests.
     :return: The remote URI of the uploaded directory.
     """
-    # This is a placeholder implementation. Replace with actual upload logic.
     ensure_client()
     cfg = get_init_config()
     if not dir_path.is_dir():
