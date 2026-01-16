@@ -60,17 +60,8 @@ image = (
     .with_env_vars({"CUDA_HOME": "/usr/local/cuda-12.8", "PATH": "/root/.cargo/bin:/usr/local/cuda-12.8/bin:$PATH"})
     .with_pip_packages("flashinfer-python", "flashinfer-cubin")
     .with_pip_packages("flashinfer-jit-cache", index_url="https://flashinfer.ai/whl/cu128")
-    .with_pip_packages("sglang")
-    # .with_local_v2()
-    # NOTE: build the sglang wheel with:
-    # `rm -rf ./dist-plugins && uv run python -m build --wheel --installer uv --outdir ./dist-plugins plugins/sglang`
-    .clone(
-        addl_layer=PythonWheels(
-            wheel_dir=DIST_FOLDER.parent / "dist-plugins", package_name="flyteplugins-sglang", pre=True
-        )
-    )
-    # NOTE: call `make dist` to build the flyte wheel
-    .clone(addl_layer=PythonWheels(wheel_dir=DIST_FOLDER, package_name="flyte", pre=True))
+    .with_pip_packages("sglang==0.5.7")
+    .with_pip_packages("flyteplugins-sglang", pre=True)
 )
 
 # Define the SGLang app environment for the smallest Qwen3 model
