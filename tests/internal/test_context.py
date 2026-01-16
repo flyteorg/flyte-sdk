@@ -217,4 +217,3 @@ def test_has_raw_data_priority():
         assert internal_ctx().has_raw_data is True
         # Also verify that raw_data returns the task context path
         assert internal_ctx().raw_data.path == "/task/path"
-

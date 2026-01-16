@@ -104,10 +104,12 @@ class StructuredDatasetParamType(click.ParamType):
             if not path.exists():
                 raise click.BadParameter(f"Dataframe input path does not exist: {value}")
             if path.is_file():
-                _, uri = remote.upload_file(path)
+                fname = None
                 format = "parquet"
                 if path.suffix == ".csv":
                     format = "csv"
+                    fname = "data.csv"
+                _, uri = remote.upload_file(path, fname=fname)
                 uri = uri.rsplit("/", 1)[0]
                 return io.DataFrame.from_existing_remote(remote_path=uri, format=format)
             uri = remote.upload_dir(path)
