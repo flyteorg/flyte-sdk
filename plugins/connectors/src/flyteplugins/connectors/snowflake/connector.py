@@ -27,9 +27,7 @@ class SnowflakeJobMetadata(ResourceMeta):
     connection_kwargs: Optional[Dict[str, Any]] = None
 
 
-def _get_private_key(
-    private_key_content: str, private_key_passphrase: Optional[str] = None
-) -> bytes:
+def _get_private_key(private_key_content: str, private_key_passphrase: Optional[str] = None) -> bytes:
     """
     Decode the private key from the secret and return it in DER format.
     """
@@ -122,17 +120,11 @@ class SnowflakeConnector(AsyncConnector):
         """
         Submit a query to Snowflake asynchronously.
         """
-        custom = (
-            json_format.MessageToDict(task_template.custom)
-            if task_template.custom
-            else {}
-        )
+        custom = json_format.MessageToDict(task_template.custom) if task_template.custom else {}
 
         account = custom.get("account")
         if not account:
-            raise ValueError(
-                f"Missing Snowflake account. Please set it through task configuration."
-            )
+            raise ValueError("Missing Snowflake account. Please set it through task configuration.")
 
         user = custom.get("user")
         database = custom.get("database")
@@ -140,9 +132,7 @@ class SnowflakeConnector(AsyncConnector):
         warehouse = custom.get("warehouse")
 
         if not all([user, database, warehouse]):
-            raise ValueError(
-                "User, database and warehouse must be specified in the task configuration."
-            )
+            raise ValueError("User, database and warehouse must be specified in the task configuration.")
 
         # Extract authentication secrets from kwargs
         private_key_content = kwargs.get("snowflake_private_key")
@@ -184,8 +174,7 @@ class SnowflakeConnector(AsyncConnector):
             schema=schema,
             warehouse=warehouse,
             query_id=query_id,
-            has_output=task_template.interface.outputs is not None
-            and len(task_template.interface.outputs) > 0,
+            has_output=task_template.interface.outputs is not None and len(task_template.interface.outputs) > 0,
             connection_kwargs=connection_kwargs,
         )
 
@@ -232,9 +221,7 @@ class SnowflakeConnector(AsyncConnector):
 
         if error:
             logger.error(f"Snowflake query failed: {error}")
-            return Resource(
-                phase=TaskExecution.FAILED, message=error, log_links=[log_link]
-            )
+            return Resource(phase=TaskExecution.FAILED, message=error, log_links=[log_link])
 
         # Map Snowflake status to Flyte phase
         # Snowflake statuses: RUNNING, SUCCESS, FAILED_WITH_ERROR, ABORTING, etc.
@@ -249,9 +236,7 @@ class SnowflakeConnector(AsyncConnector):
             )
             outputs = {"results": DataFrame(uri=output_location)}
 
-        return Resource(
-            phase=cur_phase, message=status.name, log_links=[log_link], outputs=outputs
-        )
+        return Resource(phase=cur_phase, message=status.name, log_links=[log_link], outputs=outputs)
 
     async def delete(
         self,
@@ -279,9 +264,7 @@ class SnowflakeConnector(AsyncConnector):
         def _cancel_query():
             cursor = conn.cursor()
             try:
-                cursor.execute(
-                    f"SELECT SYSTEM$CANCEL_QUERY('{resource_meta.query_id}')"
-                )
+                cursor.execute(f"SELECT SYSTEM$CANCEL_QUERY('{resource_meta.query_id}')")
             finally:
                 cursor.close()
                 conn.close()

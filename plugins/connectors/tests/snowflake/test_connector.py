@@ -97,9 +97,7 @@ class TestSnowflakeConnector:
     @pytest.mark.asyncio
     async def test_create_minimal(self, connector, task_template_minimal):
         """Test creating a Snowflake query without inputs."""
-        with patch(
-            "flyteplugins.connectors.snowflake.connector._get_snowflake_connection"
-        ) as mock_get_conn:
+        with patch("flyteplugins.connectors.snowflake.connector._get_snowflake_connection") as mock_get_conn:
             mock_conn = MagicMock()
             mock_cursor = MagicMock()
             mock_cursor.sfqid = "query-123"
@@ -132,9 +130,7 @@ class TestSnowflakeConnector:
     @pytest.mark.asyncio
     async def test_create_with_output(self, connector, task_template_with_output):
         """Test creating a Snowflake query with output location."""
-        with patch(
-            "flyteplugins.connectors.snowflake.connector._get_snowflake_connection"
-        ) as mock_get_conn:
+        with patch("flyteplugins.connectors.snowflake.connector._get_snowflake_connection") as mock_get_conn:
             mock_conn = MagicMock()
             mock_cursor = MagicMock()
             mock_cursor.sfqid = "query-456"
@@ -191,9 +187,7 @@ class TestSnowflakeConnector:
             has_output=True,
         )
 
-        with patch(
-            "flyteplugins.connectors.snowflake.connector._get_snowflake_connection"
-        ) as mock_get_conn:
+        with patch("flyteplugins.connectors.snowflake.connector._get_snowflake_connection") as mock_get_conn:
             mock_conn = MagicMock()
             mock_cursor = MagicMock()
 
@@ -236,9 +230,7 @@ class TestSnowflakeConnector:
             has_output=False,
         )
 
-        with patch(
-            "flyteplugins.connectors.snowflake.connector._get_snowflake_connection"
-        ) as mock_get_conn:
+        with patch("flyteplugins.connectors.snowflake.connector._get_snowflake_connection") as mock_get_conn:
             mock_conn = MagicMock()
             mock_cursor = MagicMock()
 
@@ -270,9 +262,7 @@ class TestSnowflakeConnector:
             has_output=False,
         )
 
-        with patch(
-            "flyteplugins.connectors.snowflake.connector._get_snowflake_connection"
-        ) as mock_get_conn:
+        with patch("flyteplugins.connectors.snowflake.connector._get_snowflake_connection") as mock_get_conn:
             mock_conn = MagicMock()
             mock_cursor = MagicMock()
 
@@ -304,9 +294,7 @@ class TestSnowflakeConnector:
             has_output=False,
         )
 
-        with patch(
-            "flyteplugins.connectors.snowflake.connector._get_snowflake_connection"
-        ) as mock_get_conn:
+        with patch("flyteplugins.connectors.snowflake.connector._get_snowflake_connection") as mock_get_conn:
             mock_conn = MagicMock()
             mock_cursor = MagicMock()
 
@@ -334,9 +322,7 @@ class TestSnowflakeConnector:
             has_output=False,
         )
 
-        with patch(
-            "flyteplugins.connectors.snowflake.connector._get_snowflake_connection"
-        ) as mock_get_conn:
+        with patch("flyteplugins.connectors.snowflake.connector._get_snowflake_connection") as mock_get_conn:
             mock_conn = MagicMock()
             mock_cursor = MagicMock()
             mock_conn.cursor.return_value = mock_cursor
@@ -365,9 +351,7 @@ class TestSnowflakeConnector:
             has_output=False,
         )
 
-        with patch(
-            "flyteplugins.connectors.snowflake.connector._get_snowflake_connection"
-        ) as mock_get_conn:
+        with patch("flyteplugins.connectors.snowflake.connector._get_snowflake_connection") as mock_get_conn:
             mock_conn = MagicMock()
             mock_cursor = MagicMock()
 

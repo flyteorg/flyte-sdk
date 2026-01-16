@@ -5,7 +5,6 @@ from typing import Any, Dict, Optional, Type
 from flyte.connectors import AsyncConnectorExecutorMixin
 from flyte.extend import TaskTemplate
 from flyte.io import DataFrame
-
 from flyte.models import NativeInterface, SerializationContext
 from flyteidl2.core import tasks_pb2
 
@@ -52,7 +51,8 @@ class Snowflake(AsyncConnectorExecutorMixin, TaskTemplate):
         :param output_dataframe_type: If some data is produced by this query, then you can specify the
          output dataframe type.
         :param snowflake_private_key: The name of the secret containing the Snowflake private key for key-pair auth.
-        :param snowflake_private_key_passphrase: The name of the secret containing the private key passphrase (if encrypted).
+        :param snowflake_private_key_passphrase: The name of the secret containing the private key passphrase
+            (if encrypted).
 
         Note: For password authentication or other auth methods, pass them via plugin_config.connection_kwargs.
         """
@@ -70,9 +70,7 @@ class Snowflake(AsyncConnectorExecutorMixin, TaskTemplate):
         )
         self.output_dataframe_type = output_dataframe_type
         self.plugin_config = plugin_config
-        self.query_template = re.sub(
-            r"\s+", " ", query_template.replace("\n", " ").replace("\t", " ")
-        ).strip()
+        self.query_template = re.sub(r"\s+", " ", query_template.replace("\n", " ").replace("\t", " ")).strip()
         self.snowflake_private_key = snowflake_private_key
         self.snowflake_private_key_passphrase = snowflake_private_key_passphrase
 
@@ -93,16 +91,12 @@ class Snowflake(AsyncConnectorExecutorMixin, TaskTemplate):
         if self.snowflake_private_key is not None:
             secrets["snowflake_private_key"] = self.snowflake_private_key
         if self.snowflake_private_key_passphrase is not None:
-            secrets["snowflake_private_key_passphrase"] = (
-                self.snowflake_private_key_passphrase
-            )
+            secrets["snowflake_private_key_passphrase"] = self.snowflake_private_key_passphrase
         if secrets:
             config["secrets"] = secrets
 
         return config
 
     def sql(self, sctx: SerializationContext) -> Optional[str]:
-        sql = tasks_pb2.Sql(
-            statement=self.query_template, dialect=tasks_pb2.Sql.Dialect.ANSI
-        )
+        sql = tasks_pb2.Sql(statement=self.query_template, dialect=tasks_pb2.Sql.Dialect.ANSI)
         return sql
