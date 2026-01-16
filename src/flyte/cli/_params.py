@@ -108,6 +108,7 @@ class StructuredDatasetParamType(click.ParamType):
                 format = "parquet"
                 if path.suffix == ".csv":
                     format = "csv"
+                uri = uri.rsplit("/", 1)[0]
                 return io.DataFrame.from_existing_remote(remote_path=uri, format=format)
             uri = remote.upload_dir(path)
             return io.DataFrame.from_existing_remote(remote_path=uri)
