@@ -3,15 +3,15 @@ import logging
 from contextlib import contextmanager
 from dataclasses import asdict
 from inspect import iscoroutinefunction
-from typing import Any, Callable, Literal, Optional, TypeVar, cast
+from typing import Any, Callable, Optional, TypeVar, cast
+
+import wandb
 
 import flyte
 from flyte._task import AsyncFunctionTaskTemplate
 
-import wandb
-
 from .context import get_wandb_context, get_wandb_sweep_context
-from .link import Wandb, WandbSweep
+from .link import RunMode, Wandb, WandbSweep
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +33,7 @@ def _build_init_kwargs() -> dict[str, Any]:
 
 @contextmanager
 def _wandb_run(
-    run_mode: Literal["auto", "new", "shared"] = "auto",
+    run_mode: RunMode = "auto",
     func: bool = False,
     **decorator_kwargs,
 ):
@@ -119,7 +119,9 @@ def _wandb_run(
         if not is_primary:
             shared_config["x_update_finish_state"] = False
 
-        init_kwargs["settings"] = wandb.Settings(**{**existing_settings, **shared_config})
+        init_kwargs["settings"] = wandb.Settings(
+            **{**existing_settings, **shared_config}
+        )
 
     # Initialize wandb
     run = wandb.init(**init_kwargs)
@@ -134,7 +136,9 @@ def _wandb_run(
         yield run
     finally:
         # Determine if this is a primary run
-        is_primary_run = run_mode == "new" or (run_mode == "auto" and saved_run_id is None)
+        is_primary_run = run_mode == "new" or (
+            run_mode == "auto" and saved_run_id is None
+        )
 
         if run:
             # Different cleanup logic for local vs remote mode
@@ -176,7 +180,7 @@ def _wandb_run(
 def wandb_init(
     _func: Optional[F] = None,
     *,
-    run_mode: Literal["auto", "new", "shared"] = "auto",
+    run_mode: RunMode = "auto",
     project: Optional[str] = None,
     entity: Optional[str] = None,
     **kwargs,

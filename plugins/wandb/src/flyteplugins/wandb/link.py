@@ -3,13 +3,15 @@ from typing import Dict, Literal, Optional
 
 from flyte import Link
 
+RunMode = Literal["auto", "new", "shared"]
+
 
 @dataclass
 class Wandb(Link):
     host: str = "https://wandb.ai"
     project: Optional[str] = None
     entity: Optional[str] = None
-    run_mode: Literal["auto", "new", "shared"] = "auto"
+    run_mode: RunMode = "auto"
     id: Optional[str] = None
     name: str = "Weights & Biases"
 
