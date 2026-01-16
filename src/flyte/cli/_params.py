@@ -110,7 +110,6 @@ class StructuredDatasetParamType(click.ParamType):
                     format = "csv"
                     fname = "data.csv"
                 _, uri = remote.upload_file(path, fname=fname)
-                uri = uri.rsplit("/", 1)[0]
                 return io.DataFrame.from_existing_remote(remote_path=uri, format=format)
             uri = remote.upload_dir(path)
             return io.DataFrame.from_existing_remote(remote_path=uri)

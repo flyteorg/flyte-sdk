@@ -84,12 +84,9 @@ class CSVToPandasDecodingHandler(DataFrameDecoder):
         columns = None
         kwargs = get_pandas_storage_options(uri=uri)
 
-        csv_file = storage.join(uri, "data.csv")
-        fs = storage.get_underlying_filesystem(uri)
-        if fs:
-            files = fs.listdir(uri, detail=False)
-            if files and len(files) >= 1:
-                csv_file = storage.join(uri, files[0])
+        csv_file = uri
+        if not uri.endswith(".csv"):
+            csv_file = storage.join(uri, "data.csv")
 
         if current_task_metadata.structured_dataset_type and current_task_metadata.structured_dataset_type.columns:
             columns = [c.name for c in current_task_metadata.structured_dataset_type.columns]
