@@ -601,9 +601,7 @@ class Dir(BaseModel, Generic[T], SerializableType):
         Returns:
             A new Dir instance pointing to the uploaded directory
         """
-        import flyte
-
-        if flyte.ctx() is None and remote_destination is None:
+        if not internal_ctx().has_raw_data and remote_destination is None:
             logger.debug("Local context detected, File will be uploaded through Flyte local data upload system.")
             import flyte.remote as remote
 
@@ -680,9 +678,7 @@ class Dir(BaseModel, Generic[T], SerializableType):
         Returns:
             A new Dir instance pointing to the uploaded directory
         """
-        import flyte
-
-        if flyte.ctx() is None and remote_destination is None:
+        if not internal_ctx().has_raw_data and remote_destination is None:
             logger.debug("Local context detected, File will be uploaded through Flyte local data upload system.")
             import flyte.remote as remote
 
