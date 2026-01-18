@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import functools
+import os
 import sys
 import threading
 import typing
@@ -393,8 +394,6 @@ async def init_from_api_key(
       into the remote container (default: True)
     :return: None
     """
-    import os
-
     from flyte._utils import sanitize_endpoint
     from flyte.remote._client.auth._auth_utils import decode_api_key
 
@@ -445,8 +444,6 @@ async def init_in_cluster(
     endpoint: str | None = None,
     insecure: bool = False,
 ) -> dict[str, typing.Any]:
-    import os
-
     from flyte._utils import str2bool
 
     PROJECT_NAME = "FLYTE_INTERNAL_EXECUTION_PROJECT"
@@ -503,6 +500,8 @@ async def init_passthrough(
     This authentication mode allows you to pass custom authentication metadata
     using the `flyte.remote.auth_metadata()` context manager.
 
+    The endpoint is automatically configured from the environment if in a flyte cluster with endpoint injected.
+
     :param org: Optional organization name
     :param project: Optional project name
     :param domain: Optional domain name
@@ -510,13 +509,16 @@ async def init_passthrough(
     :param insecure: Whether to use an insecure channel
     :return: Dictionary of remote kwargs used for initialization
     """
+    ENDPOINT_OVERRIDE = "_U_EP_OVERRIDE"
+    ep = endpoint or os.environ.get(ENDPOINT_OVERRIDE, None)
+
     await init.aio(
         org=org,
         project=project,
         domain=domain,
         root_dir=Path.cwd(),
         image_builder="remote",
-        endpoint=endpoint,
+        endpoint=ep,
         insecure=insecure,
         auth_type="Passthrough",
     )
