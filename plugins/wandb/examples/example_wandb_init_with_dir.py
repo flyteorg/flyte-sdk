@@ -9,6 +9,7 @@ This example demonstrates:
 """
 
 import flyte
+from flyte.io import Dir
 
 from flyteplugins.wandb import (
     download_wandb_run_dir,
@@ -17,13 +18,10 @@ from flyteplugins.wandb import (
     wandb_config,
     wandb_init,
 )
-from flyte.io import Dir
 
 env = flyte.TaskEnvironment(
     name="wandb-dir-example",
-    image=flyte.Image.from_debian_base(name="wandb-dir-example").with_pip_packages(
-        "flyteplugins-wandb"
-    ),
+    image=flyte.Image.from_debian_base(name="wandb-dir-example").with_pip_packages("flyteplugins-wandb"),
     secrets=[flyte.Secret(key="wandb_api_key", as_env_var="WANDB_API_KEY")],
 )
 
@@ -113,11 +111,11 @@ async def parent_orchestrator() -> dict[str, str | Dir]:
 
     # Manually download logs for runs that didn't use download_logs=True
     # This is useful for parent tasks that want to collect all child logs
-    print(f"\nManually downloading logs for async_run_2...")
+    print("\nManually downloading logs for async_run_2...")
     async_run_2_logs = download_wandb_run_dir(run_id=async_run_2)
     print(f"Downloaded to: {async_run_2_logs}")
 
-    print(f"Manually downloading logs for sync_run_2...")
+    print("Manually downloading logs for sync_run_2...")
     sync_run_2_logs = download_wandb_run_dir(run_id=sync_run_2)
     print(f"Downloaded to: {sync_run_2_logs}")
 

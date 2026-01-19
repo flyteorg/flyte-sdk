@@ -26,9 +26,7 @@ from flyteplugins.wandb import (
 
 env = flyte.TaskEnvironment(
     name="wandb-sweep-example",
-    image=flyte.Image.from_debian_base(name="wandb-sweep-example").with_pip_packages(
-        "flyteplugins-wandb"
-    ),
+    image=flyte.Image.from_debian_base(name="wandb-sweep-example").with_pip_packages("flyteplugins-wandb"),
     secrets=[flyte.Secret(key="wandb_api_key", as_env_var="WANDB_API_KEY")],
 )
 
@@ -39,18 +37,14 @@ def objective():
     run = wandb.run
     config = run.config
 
-    print(
-        f"Training with lr={config.learning_rate}, batch_size={config.batch_size}, epochs={config.epochs}"
-    )
+    print(f"Training with lr={config.learning_rate}, batch_size={config.batch_size}, epochs={config.epochs}")
 
     # Simulate training loop
     best_loss = float("inf")
     for epoch in range(config.epochs):
         # Simulate training metrics
         loss = 1.0 / (config.learning_rate * config.batch_size) + epoch * 0.1
-        accuracy = min(
-            0.95, config.learning_rate * config.batch_size * (epoch + 1) * 0.01
-        )
+        accuracy = min(0.95, config.learning_rate * config.batch_size * (epoch + 1) * 0.01)
 
         run.log(
             {
@@ -87,9 +81,7 @@ async def sweep_agent(agent_id: int, sweep_id: str, count: int = 5) -> int:
     print(f"[Agent {agent_id}] Starting agent for sweep {sweep_id}")
     print(f"[Agent {agent_id}] Will run up to {count} trials")
 
-    wandb.agent(
-        sweep_id, function=objective, count=count, project=get_wandb_context().project
-    )
+    wandb.agent(sweep_id, function=objective, count=count, project=get_wandb_context().project)
 
     print(f"[Agent {agent_id}] Finished!")
     return agent_id
@@ -97,9 +89,7 @@ async def sweep_agent(agent_id: int, sweep_id: str, count: int = 5) -> int:
 
 @wandb_sweep
 @env.task
-async def run_parallel_sweep(
-    total_trials: int = 15, trials_per_agent: int = 5, max_agents: int = 10
-) -> str:
+async def run_parallel_sweep(total_trials: int = 15, trials_per_agent: int = 5, max_agents: int = 10) -> str:
     """
     Run a W&B sweep with multiple agents in parallel.
 

@@ -425,9 +425,7 @@ class TestDownloadWandbSweepDirs:
 
     @patch("flyteplugins.wandb.get_wandb_context")
     @patch("flyteplugins.wandb.get_wandb_sweep_id")
-    def test_download_wandb_sweep_dirs_raises_error_when_no_sweep_id(
-        self, mock_get_sweep_id, mock_get_context
-    ):
+    def test_download_wandb_sweep_dirs_raises_error_when_no_sweep_id(self, mock_get_sweep_id, mock_get_context):
         """Test that download_wandb_sweep_dirs raises error when no sweep_id."""
         mock_get_sweep_id.return_value = None
 
@@ -436,9 +434,7 @@ class TestDownloadWandbSweepDirs:
 
     @patch("flyteplugins.wandb.get_wandb_context")
     @patch("flyteplugins.wandb.get_wandb_sweep_id")
-    def test_download_wandb_sweep_dirs_raises_error_when_no_entity_project(
-        self, mock_get_sweep_id, mock_get_context
-    ):
+    def test_download_wandb_sweep_dirs_raises_error_when_no_entity_project(self, mock_get_sweep_id, mock_get_context):
         """Test that download_wandb_sweep_dirs raises error when no entity/project."""
         mock_get_sweep_id.return_value = "test-sweep-id"
         mock_get_context.return_value = None

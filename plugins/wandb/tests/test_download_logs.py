@@ -2,11 +2,10 @@
 
 from unittest.mock import MagicMock, patch
 
+import flyte
 import pytest
 
 from flyteplugins.wandb.decorator import wandb_init, wandb_sweep
-
-import flyte
 
 
 class TestWandbInitDownloadLogsExecution:
@@ -15,9 +14,7 @@ class TestWandbInitDownloadLogsExecution:
     @pytest.mark.asyncio
     @patch("flyteplugins.wandb.download_wandb_run_logs")
     @patch("wandb.init")
-    async def test_download_logs_true_calls_trace_function(
-        self, mock_wandb_init, mock_download_logs
-    ):
+    async def test_download_logs_true_calls_trace_function(self, mock_wandb_init, mock_download_logs):
         """Test that download_logs=True actually calls the download trace function."""
         env = flyte.TaskEnvironment(name="test-env")
 
@@ -43,9 +40,7 @@ class TestWandbInitDownloadLogsExecution:
     @pytest.mark.asyncio
     @patch("flyteplugins.wandb.download_wandb_run_logs")
     @patch("wandb.init")
-    async def test_download_logs_false_does_not_call_trace(
-        self, mock_wandb_init, mock_download_logs
-    ):
+    async def test_download_logs_false_does_not_call_trace(self, mock_wandb_init, mock_download_logs):
         """Test that download_logs=False does NOT call the download trace function."""
         env = flyte.TaskEnvironment(name="test-env")
 
@@ -71,9 +66,7 @@ class TestWandbInitDownloadLogsExecution:
     @pytest.mark.asyncio
     @patch("flyteplugins.wandb.download_wandb_run_logs")
     @patch("wandb.init")
-    async def test_download_logs_none_defaults_to_false(
-        self, mock_wandb_init, mock_download_logs
-    ):
+    async def test_download_logs_none_defaults_to_false(self, mock_wandb_init, mock_download_logs):
         """Test that download_logs=None defaults to False (no download)."""
         env = flyte.TaskEnvironment(name="test-env")
 
@@ -99,9 +92,7 @@ class TestWandbInitDownloadLogsExecution:
     @pytest.mark.asyncio
     @patch("flyteplugins.wandb.download_wandb_run_logs")
     @patch("wandb.init")
-    async def test_download_logs_context_fallback(
-        self, mock_wandb_init, mock_download_logs
-    ):
+    async def test_download_logs_context_fallback(self, mock_wandb_init, mock_download_logs):
         """Test that decorator falls back to context config when download_logs=None."""
         env = flyte.TaskEnvironment(name="test-env")
 
@@ -121,9 +112,7 @@ class TestWandbInitDownloadLogsExecution:
         from flyteplugins.wandb import wandb_config
 
         result = await flyte.with_runcontext(
-            custom_context=wandb_config(
-                project="test-project", download_logs=True
-            )
+            custom_context=wandb_config(project="test-project", download_logs=True)
         ).run.aio(test_task)
 
         # Verify download WAS called because context has download_logs=True
@@ -133,9 +122,7 @@ class TestWandbInitDownloadLogsExecution:
     @pytest.mark.asyncio
     @patch("flyteplugins.wandb.download_wandb_run_logs")
     @patch("wandb.init")
-    async def test_download_logs_decorator_overrides_context(
-        self, mock_wandb_init, mock_download_logs
-    ):
+    async def test_download_logs_decorator_overrides_context(self, mock_wandb_init, mock_download_logs):
         """Test that decorator parameter overrides context config."""
         env = flyte.TaskEnvironment(name="test-env")
 
@@ -156,7 +143,8 @@ class TestWandbInitDownloadLogsExecution:
 
         result = await flyte.with_runcontext(
             custom_context=wandb_config(
-                project="test-project", download_logs=True  # Context says True
+                project="test-project",
+                download_logs=True,  # Context says True
             )
         ).run.aio(test_task)
 
@@ -167,9 +155,7 @@ class TestWandbInitDownloadLogsExecution:
     @pytest.mark.asyncio
     @patch("flyteplugins.wandb.download_wandb_run_logs")
     @patch("wandb.init")
-    async def test_download_logs_sync_task_true_calls_trace(
-        self, mock_wandb_init, mock_download_logs
-    ):
+    async def test_download_logs_sync_task_true_calls_trace(self, mock_wandb_init, mock_download_logs):
         """Test that download_logs=True works with sync tasks."""
         env = flyte.TaskEnvironment(name="test-env")
 
@@ -195,9 +181,7 @@ class TestWandbInitDownloadLogsExecution:
     @pytest.mark.asyncio
     @patch("flyteplugins.wandb.download_wandb_run_logs")
     @patch("wandb.init")
-    async def test_download_logs_sync_task_false_no_trace(
-        self, mock_wandb_init, mock_download_logs
-    ):
+    async def test_download_logs_sync_task_false_no_trace(self, mock_wandb_init, mock_download_logs):
         """Test that download_logs=False works with sync tasks."""
         env = flyte.TaskEnvironment(name="test-env")
 
@@ -227,9 +211,7 @@ class TestWandbSweepDownloadLogsExecution:
     @pytest.mark.asyncio
     @patch("flyteplugins.wandb.download_wandb_sweep_logs")
     @patch("wandb.sweep")
-    async def test_download_logs_true_calls_trace_function(
-        self, mock_wandb_sweep, mock_download_logs
-    ):
+    async def test_download_logs_true_calls_trace_function(self, mock_wandb_sweep, mock_download_logs):
         """Test that download_logs=True actually calls the download trace function."""
         env = flyte.TaskEnvironment(name="test-env")
 
@@ -260,9 +242,7 @@ class TestWandbSweepDownloadLogsExecution:
     @pytest.mark.asyncio
     @patch("flyteplugins.wandb.download_wandb_sweep_logs")
     @patch("wandb.sweep")
-    async def test_download_logs_false_does_not_call_trace(
-        self, mock_wandb_sweep, mock_download_logs
-    ):
+    async def test_download_logs_false_does_not_call_trace(self, mock_wandb_sweep, mock_download_logs):
         """Test that download_logs=False does NOT call the download trace function."""
         env = flyte.TaskEnvironment(name="test-env")
 
@@ -293,9 +273,7 @@ class TestWandbSweepDownloadLogsExecution:
     @pytest.mark.asyncio
     @patch("flyteplugins.wandb.download_wandb_sweep_logs")
     @patch("wandb.sweep")
-    async def test_download_logs_none_defaults_to_false(
-        self, mock_wandb_sweep, mock_download_logs
-    ):
+    async def test_download_logs_none_defaults_to_false(self, mock_wandb_sweep, mock_download_logs):
         """Test that download_logs=None defaults to False (no download)."""
         env = flyte.TaskEnvironment(name="test-env")
 
@@ -326,9 +304,7 @@ class TestWandbSweepDownloadLogsExecution:
     @pytest.mark.asyncio
     @patch("flyteplugins.wandb.download_wandb_sweep_logs")
     @patch("wandb.sweep")
-    async def test_download_logs_context_fallback(
-        self, mock_wandb_sweep, mock_download_logs
-    ):
+    async def test_download_logs_context_fallback(self, mock_wandb_sweep, mock_download_logs):
         """Test that decorator falls back to sweep context config when download_logs=None."""
         env = flyte.TaskEnvironment(name="test-env")
 
@@ -360,9 +336,7 @@ class TestWandbSweepDownloadLogsExecution:
     @pytest.mark.asyncio
     @patch("flyteplugins.wandb.download_wandb_sweep_logs")
     @patch("wandb.sweep")
-    async def test_download_logs_decorator_overrides_context(
-        self, mock_wandb_sweep, mock_download_logs
-    ):
+    async def test_download_logs_decorator_overrides_context(self, mock_wandb_sweep, mock_download_logs):
         """Test that decorator parameter overrides context config."""
         env = flyte.TaskEnvironment(name="test-env")
 
@@ -394,9 +368,7 @@ class TestWandbSweepDownloadLogsExecution:
     @pytest.mark.asyncio
     @patch("flyteplugins.wandb.download_wandb_sweep_logs")
     @patch("wandb.sweep")
-    async def test_download_logs_sync_task_true_calls_trace(
-        self, mock_wandb_sweep, mock_download_logs
-    ):
+    async def test_download_logs_sync_task_true_calls_trace(self, mock_wandb_sweep, mock_download_logs):
         """Test that download_logs=True works with sync sweep tasks."""
         env = flyte.TaskEnvironment(name="test-env")
 
@@ -427,9 +399,7 @@ class TestWandbSweepDownloadLogsExecution:
     @pytest.mark.asyncio
     @patch("flyteplugins.wandb.download_wandb_sweep_logs")
     @patch("wandb.sweep")
-    async def test_download_logs_sync_task_false_no_trace(
-        self, mock_wandb_sweep, mock_download_logs
-    ):
+    async def test_download_logs_sync_task_false_no_trace(self, mock_wandb_sweep, mock_download_logs):
         """Test that download_logs=False works with sync sweep tasks."""
         env = flyte.TaskEnvironment(name="test-env")
 
@@ -464,9 +434,7 @@ class TestDownloadLogsEdgeCases:
     @pytest.mark.asyncio
     @patch("flyteplugins.wandb.download_wandb_run_logs")
     @patch("wandb.init")
-    async def test_multiple_tasks_independent_download_settings(
-        self, mock_wandb_init, mock_download_logs
-    ):
+    async def test_multiple_tasks_independent_download_settings(self, mock_wandb_init, mock_download_logs):
         """Test that multiple tasks with different download_logs settings work independently."""
         env = flyte.TaskEnvironment(name="test-env")
 
@@ -509,9 +477,7 @@ class TestDownloadLogsEdgeCases:
     @pytest.mark.asyncio
     @patch("flyteplugins.wandb.download_wandb_sweep_logs")
     @patch("wandb.sweep")
-    async def test_sweep_download_logs_with_empty_sweep(
-        self, mock_wandb_sweep, mock_download_logs
-    ):
+    async def test_sweep_download_logs_with_empty_sweep(self, mock_wandb_sweep, mock_download_logs):
         """Test that sweep download works even with no trials."""
         env = flyte.TaskEnvironment(name="test-env")
 

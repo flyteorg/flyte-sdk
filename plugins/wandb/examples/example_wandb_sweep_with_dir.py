@@ -12,7 +12,10 @@ import asyncio
 import time
 from datetime import timedelta
 
+import flyte
 import wandb
+from flyte.io import Dir
+
 from flyteplugins.wandb import (
     download_wandb_sweep_dirs,
     get_wandb_context,
@@ -24,15 +27,9 @@ from flyteplugins.wandb import (
     wandb_sweep_config,
 )
 
-import flyte
-from flyte.io import Dir
-
-
 env = flyte.TaskEnvironment(
     name="wandb-sweep-dir-example",
-    image=flyte.Image.from_debian_base(
-        name="wandb-sweep-dir-example"
-    ).with_pip_packages("flyteplugins-wandb"),
+    image=flyte.Image.from_debian_base(name="wandb-sweep-dir-example").with_pip_packages("flyteplugins-wandb"),
     secrets=[flyte.Secret(key="wandb_api_key", as_env_var="WANDB_API_KEY")],
 )
 
@@ -43,9 +40,7 @@ def objective():
     run = wandb.run
     config = run.config
 
-    print(
-        f"Training with lr={config.learning_rate}, batch_size={config.batch_size}, epochs={config.epochs}"
-    )
+    print(f"Training with lr={config.learning_rate}, batch_size={config.batch_size}, epochs={config.epochs}")
 
     # Access local run directory for this trial
     local_dir = get_wandb_run_dir()
@@ -56,9 +51,7 @@ def objective():
     for epoch in range(config.epochs):
         # Simulate training metrics
         loss = 1.0 / (config.learning_rate * config.batch_size) + epoch * 0.1
-        accuracy = min(
-            0.95, config.learning_rate * config.batch_size * (epoch + 1) * 0.01
-        )
+        accuracy = min(0.95, config.learning_rate * config.batch_size * (epoch + 1) * 0.01)
 
         run.log(
             {
@@ -83,9 +76,7 @@ async def sweep_agent_async(agent_id: int, sweep_id: str, count: int = 3) -> int
     print(f"[Async Agent {agent_id}] Starting agent for sweep {sweep_id}")
     print(f"[Async Agent {agent_id}] Will run up to {count} trials")
 
-    wandb.agent(
-        sweep_id, function=objective, count=count, project=get_wandb_context().project
-    )
+    wandb.agent(sweep_id, function=objective, count=count, project=get_wandb_context().project)
 
     print(f"[Async Agent {agent_id}] Finished!")
     return agent_id
@@ -93,9 +84,7 @@ async def sweep_agent_async(agent_id: int, sweep_id: str, count: int = 3) -> int
 
 @wandb_sweep(download_logs=True)
 @env.task
-async def run_async_sweep(
-    total_trials: int = 6, trials_per_agent: int = 3, max_agents: int = 2
-) -> str:
+async def run_async_sweep(total_trials: int = 6, trials_per_agent: int = 3, max_agents: int = 2) -> str:
     """
     Run an async sweep with parallel agents and automatic log downloads.
 
@@ -105,9 +94,9 @@ async def run_async_sweep(
     """
     sweep_id = get_wandb_sweep_id()
 
-    print(f"\n{'='*70}")
+    print(f"\n{'=' * 70}")
     print(f"ASYNC SWEEP: Starting sweep {sweep_id} with total {total_trials} trials")
-    print(f"{'='*70}\n")
+    print(f"{'=' * 70}\n")
 
     # Calculate number of agents
     num_agents = min(
@@ -115,9 +104,7 @@ async def run_async_sweep(
         max_agents,
     )
 
-    print(
-        f"Launching {num_agents} async agents in parallel with {trials_per_agent} trials each"
-    )
+    print(f"Launching {num_agents} async agents in parallel with {trials_per_agent} trials each")
 
     # Launch agents in parallel
     agent_tasks = [
@@ -144,9 +131,7 @@ def sweep_agent_sync(agent_id: int, sweep_id: str, count: int = 3) -> int:
     print(f"[Sync Agent {agent_id}] Starting agent for sweep {sweep_id}")
     print(f"[Sync Agent {agent_id}] Will run up to {count} trials")
 
-    wandb.agent(
-        sweep_id, function=objective, count=count, project=get_wandb_context().project
-    )
+    wandb.agent(sweep_id, function=objective, count=count, project=get_wandb_context().project)
 
     print(f"[Sync Agent {agent_id}] Finished!")
     return agent_id
@@ -154,9 +139,7 @@ def sweep_agent_sync(agent_id: int, sweep_id: str, count: int = 3) -> int:
 
 @wandb_sweep(download_logs=True)
 @env.task
-def run_sync_sweep(
-    total_trials: int = 6, trials_per_agent: int = 3
-) -> dict[str, str | int | list[Dir]]:
+def run_sync_sweep(total_trials: int = 6, trials_per_agent: int = 3) -> dict[str, str | int | list[Dir]]:
     """
     Run a sync sweep with sequential agents and automatic log downloads.
 
@@ -166,20 +149,16 @@ def run_sync_sweep(
     """
     sweep_id = get_wandb_sweep_id()
 
-    print(f"\n{'='*70}")
+    print(f"\n{'=' * 70}")
     print(f"SYNC SWEEP: Starting sweep {sweep_id} with total {total_trials} trials")
-    print(f"{'='*70}\n")
+    print(f"{'=' * 70}\n")
 
     # Run agents sequentially
     num_agents = (total_trials + trials_per_agent - 1) // trials_per_agent
-    print(
-        f"Running {num_agents} sync agents sequentially with {trials_per_agent} trials each"
-    )
+    print(f"Running {num_agents} sync agents sequentially with {trials_per_agent} trials each")
 
     for i in range(num_agents):
-        agent_id = sweep_agent_sync(
-            agent_id=i + 1, sweep_id=sweep_id, count=trials_per_agent
-        )
+        agent_id = sweep_agent_sync(agent_id=i + 1, sweep_id=sweep_id, count=trials_per_agent)
         print(f"  Agent {agent_id} completed")
 
     # Manually download sweep trial directories after completion (alternative to download_logs=True)

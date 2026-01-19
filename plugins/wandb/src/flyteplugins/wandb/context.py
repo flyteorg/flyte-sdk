@@ -333,9 +333,7 @@ def get_wandb_sweep_context() -> Optional[_WandBSweepConfig]:
     if ctx is None or not ctx.custom_context:
         return None
 
-    has_wandb_sweep_keys = any(
-        k.startswith("wandb_sweep_") for k in ctx.custom_context.keys()
-    )
+    has_wandb_sweep_keys = any(k.startswith("wandb_sweep_") for k in ctx.custom_context.keys())
     if not has_wandb_sweep_keys:
         return None
 

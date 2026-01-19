@@ -36,9 +36,7 @@ class TestDownloadWandbRunDirErrors:
     @patch("flyteplugins.wandb.os.makedirs")
     @patch("flyteplugins.wandb.wandb.Api")
     @patch("flyteplugins.wandb.get_wandb_context")
-    def test_download_run_auth_failure_raises_error(
-        self, mock_get_context, mock_api_class, mock_makedirs
-    ):
+    def test_download_run_auth_failure_raises_error(self, mock_get_context, mock_api_class, mock_makedirs):
         """Test that authentication failure raises RuntimeError."""
         # Setup context
         mock_context = MagicMock()
@@ -57,9 +55,7 @@ class TestDownloadWandbRunDirErrors:
 
     @patch("flyteplugins.wandb.os.makedirs")
     @patch("flyteplugins.wandb.get_wandb_context")
-    def test_download_run_directory_creation_failure_raises_error(
-        self, mock_get_context, mock_makedirs
-    ):
+    def test_download_run_directory_creation_failure_raises_error(self, mock_get_context, mock_makedirs):
         """Test that directory creation failure raises RuntimeError."""
         # Setup context
         mock_context = MagicMock()
@@ -77,9 +73,7 @@ class TestDownloadWandbRunDirErrors:
     @patch("flyteplugins.wandb.wandb.Api")
     @patch("flyteplugins.wandb.get_wandb_context")
     @patch("flyteplugins.wandb.os.makedirs")
-    def test_download_run_file_download_failure_raises_error(
-        self, mock_makedirs, mock_get_context, mock_api_class
-    ):
+    def test_download_run_file_download_failure_raises_error(self, mock_makedirs, mock_get_context, mock_api_class):
         """Test that file download failure raises RuntimeError."""
         # Setup context
         mock_context = MagicMock()
@@ -125,15 +119,13 @@ class TestDownloadWandbRunDirErrors:
         mock_run.summary = {"loss": 0.5}
 
         # Should raise RuntimeError
-        with pytest.raises(RuntimeError, match="Failed to write summary.json"):
+        with pytest.raises(RuntimeError, match=r"Failed to write summary\.json"):
             download_wandb_run_dir(run_id="test-run")
 
     @patch("flyteplugins.wandb.wandb.Api")
     @patch("flyteplugins.wandb.get_wandb_context")
     @patch("flyteplugins.wandb.os.makedirs")
-    def test_download_run_unexpected_api_error_raises_error(
-        self, mock_makedirs, mock_get_context, mock_api_class
-    ):
+    def test_download_run_unexpected_api_error_raises_error(self, mock_makedirs, mock_get_context, mock_api_class):
         """Test that unexpected API errors raise RuntimeError."""
         # Setup context
         mock_context = MagicMock()
@@ -208,9 +200,7 @@ class TestDownloadWandbSweepDirsErrors:
     @patch("flyteplugins.wandb.wandb.Api")
     @patch("flyteplugins.wandb.get_wandb_context")
     @patch("flyteplugins.wandb.download_wandb_run_dir")
-    def test_download_sweep_all_runs_fail_raises_error(
-        self, mock_download_run, mock_get_context, mock_api_class
-    ):
+    def test_download_sweep_all_runs_fail_raises_error(self, mock_download_run, mock_get_context, mock_api_class):
         """Test that if all runs fail to download, raises RuntimeError."""
         # Setup context
         mock_context = MagicMock()
