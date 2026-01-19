@@ -4,7 +4,7 @@
 #     "ipdb",
 #     "fastapi",
 #     "uvicorn",
-#     "flyte==2.0.0b42",
+#     "flyte==2.0.0b48",
 # ]
 # ///
 
@@ -184,6 +184,8 @@ if __name__ == "__main__":
     import flyte.remote
 
     flyte.init_from_config(log_level=logging.DEBUG)
+
+    flyte.deploy(task_env)
 
     # deploy the environments
     served_app = flyte.serve(app_env)
