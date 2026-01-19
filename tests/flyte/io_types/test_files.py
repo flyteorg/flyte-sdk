@@ -441,3 +441,110 @@ async def test_download_file_with_no_local_target_local(tmp_path, ctx_with_test_
     assert os.path.isfile(downloaded_path)
     suffix = uploaded_file.path.split(os.sep)[-1]
     assert downloaded_path.endswith(suffix)
+
+
+# Tests for lazy_uploader functionality
+
+
+@pytest.mark.asyncio
+async def test_file_from_local_creates_lazy_uploader_without_raw_data_context():
+    """Test that File.from_local creates a lazy_uploader when there's no raw_data context."""
+    flyte.init()
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        local_path = os.path.join(temp_dir, "test_file.txt")
+        with open(local_path, "w") as f:  # noqa: ASYNC230
+            f.write("test content for lazy uploader")
+
+        # When creating a File from local without raw_data context, it should have lazy_uploader
+        file = await File.from_local(local_path)
+
+        # The file should have a lazy_uploader set
+        assert file.lazy_uploader is not None
+        # The path should be the local path
+        assert file.path == local_path
+
+
+@pytest.mark.asyncio
+async def test_file_from_local_sync_creates_lazy_uploader_without_raw_data_context():
+    """Test that File.from_local_sync creates a lazy_uploader when there's no raw_data context."""
+    flyte.init()
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        local_path = os.path.join(temp_dir, "test_file_sync.txt")
+        with open(local_path, "w") as f:
+            f.write("test content for lazy uploader sync")
+
+        # When creating a File from local without raw_data context, it should have lazy_uploader
+        file = File.from_local_sync(local_path)
+
+        # The file should have a lazy_uploader set
+        assert file.lazy_uploader is not None
+        # The path should be the local path
+        assert file.path == local_path
+
+
+@pytest.mark.asyncio
+async def test_lazy_uploader_returns_local_path_in_local_mode():
+    """Test that lazy_uploader returns local path when in local mode."""
+    from flyte._run import _run_mode_var
+
+    flyte.init()
+    _run_mode_var.set("local")
+
+    try:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            local_path = os.path.join(temp_dir, "test_local_mode.txt")
+            with open(local_path, "w") as f:  # noqa: ASYNC230
+                f.write("content for local mode test")
+
+            file = await File.from_local(local_path)
+            assert file.lazy_uploader is not None
+
+            # When we call lazy_uploader in local mode, it should return the local path
+            hash_val, uri = await file.lazy_uploader()
+            assert uri == local_path
+            assert hash_val is None
+    finally:
+        _run_mode_var.set(None)
+
+
+@pytest.mark.asyncio
+async def test_file_transformer_uses_lazy_uploader_in_local_mode():
+    """Test that FileTransformer.to_literal uses lazy_uploader when in local mode."""
+    from flyte._run import _run_mode_var
+
+    flyte.init()
+    _run_mode_var.set("local")
+
+    try:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            local_path = os.path.join(temp_dir, "transformer_test.txt")
+            with open(local_path, "w") as f:  # noqa: ASYNC230
+                f.write("content for transformer test")
+
+            file = await File.from_local(local_path)
+
+            lt = TypeEngine.to_literal_type(File)
+            lv = await FileTransformer().to_literal(file, File, lt)
+
+            # The literal should contain the local path
+            assert lv.scalar.blob.uri == local_path
+    finally:
+        _run_mode_var.set(None)
+
+
+@pytest.mark.asyncio
+async def test_file_without_lazy_uploader_uses_existing_path():
+    """Test that File without lazy_uploader uses the existing path in to_literal."""
+    flyte.init()
+
+    # Create a File pointing to a remote path (no lazy_uploader)
+    remote_file = File.from_existing_remote("s3://bucket/remote_file.txt")
+    assert remote_file.lazy_uploader is None
+
+    lt = TypeEngine.to_literal_type(File)
+    lv = await FileTransformer().to_literal(remote_file, File, lt)
+
+    # The literal should contain the original remote path
+    assert lv.scalar.blob.uri == "s3://bucket/remote_file.txt"
