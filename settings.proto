@@ -1,0 +1,149 @@
+syntax = "proto3";
+
+package flyte.settings;
+
+// SettingsService provides hierarchical configuration management across ROOT, DOMAIN, and PROJECT scopes.
+//
+// The service supports:
+// - Hierarchical settings inheritance (ROOT -> DOMAIN -> PROJECT)
+// - Local overrides at each scope level
+// - Origin tracking for each effective setting
+// - Simple two-method API: GetSettings and UpdateSettings
+service SettingsService {
+  // GetSettings retrieves settings for a given scope, returning both effective
+  // (inherited + local) settings with origin metadata, and local overrides only.
+  //
+  // Scope is determined by the presence of domain and project fields:
+  // - Neither set: ROOT scope
+  // - Only domain set: DOMAIN scope
+  // - Both set: PROJECT scope
+  rpc GetSettings(GetSettingsRequest) returns (GetSettingsResponse);
+
+  // UpdateSettings replaces the complete set of local overrides for a given scope.
+  //
+  // Any setting not included in local_settings will be removed as an override
+  // and will inherit from parent scope. This is a full replacement operation,
+  // not a merge.
+  rpc UpdateSettings(UpdateSettingsRequest) returns (UpdateSettingsResponse);
+}
+
+// SettingValue represents a configuration value with support for common types.
+message SettingValue {
+  oneof kind {
+    string string_value = 1;
+    int64 int_value = 2;
+    double double_value = 3;
+    bool bool_value = 4;
+  }
+}
+
+// SettingOrigin identifies where a setting value originates from in the hierarchy.
+message SettingOrigin {
+  // scope_type is one of: "ROOT", "DOMAIN", or "PROJECT"
+  string scope_type = 1;
+
+  // domain is populated for DOMAIN and PROJECT scopes, empty for ROOT
+  string domain = 2;
+
+  // project is populated only for PROJECT scope, empty for ROOT and DOMAIN
+  string project = 3;
+}
+
+// EffectiveSetting represents a resolved setting value with its origin.
+// This shows what value is actually in effect, considering inheritance.
+message EffectiveSetting {
+  // key is the setting name (e.g., "default_queue", "run_concurrency")
+  string key = 1;
+
+  // value is the resolved setting value
+  SettingValue value = 2;
+
+  // origin indicates which scope this value comes from
+  SettingOrigin origin = 3;
+}
+
+// LocalSetting represents an explicit override at a specific scope.
+message LocalSetting {
+  // key is the setting name
+  string key = 1;
+
+  // value is the override value
+  SettingValue value = 2;
+}
+
+// GetSettingsRequest specifies the scope to retrieve settings for.
+message GetSettingsRequest {
+  // domain is optional. If empty, ROOT scope is queried.
+  string domain = 1;
+
+  // project is optional. Requires domain to be set. If both are set, PROJECT scope is queried.
+  string project = 2;
+}
+
+// GetSettingsResponse contains both effective settings (with inheritance) and local overrides.
+message GetSettingsResponse {
+  // effective_settings contains all resolved settings with their origin metadata.
+  // This includes both inherited settings and local overrides.
+  repeated EffectiveSetting effective_settings = 1;
+
+  // local_settings contains only the explicit overrides set at this scope.
+  // Settings not present here are inherited from parent scopes.
+  repeated LocalSetting local_settings = 2;
+}
+
+// UpdateSettingsRequest replaces the complete set of local overrides for a scope.
+message UpdateSettingsRequest {
+  // domain is optional. If empty, ROOT scope is updated.
+  string domain = 1;
+
+  // project is optional. Requires domain to be set. If both are set, PROJECT scope is updated.
+  string project = 2;
+
+  // local_settings is the complete list of local overrides for this scope.
+  // Any previous override not included here will be removed.
+  repeated LocalSetting local_settings = 3;
+}
+
+// UpdateSettingsResponse is currently empty but reserved for future extensions.
+message UpdateSettingsResponse {}
+
+// ============================================================================
+// Available Settings Reference
+// ============================================================================
+//
+// The following settings are supported in the Flyte settings hierarchy:
+//
+// Queue Configuration:
+// - default_queue (string): The default queue for task execution
+// - accessible_queues (string): Comma-separated list of accessible queues
+// - queue_priority (int): Priority level for queue processing
+//
+// Concurrency Controls:
+// - run_concurrency (int): Maximum concurrent runs
+// - action_concurrency (int): Maximum concurrent actions
+// - child_action_concurrency (int): Maximum concurrent child actions
+//
+// Cluster and Namespace:
+// - cluster_mappings (string): JSON mapping of cluster assignments
+// - namespace_mappings (string): JSON mapping of namespace assignments
+// - namespace_auto_creation (bool): Enable automatic namespace creation on project creation
+//
+// Resource Defaults:
+// - task_resource_defaults (string): JSON of default task resource requests/limits
+// - service_account_defaults (string): Default service account name
+// - metadata_bucket_defaults (string): Default metadata storage bucket
+// - data_storage_location_defaults (string): Default data storage location
+//
+// Labels and Annotations:
+// - labels (string): JSON map of Kubernetes labels to apply
+// - annotations (string): JSON map of Kubernetes annotations to apply
+//
+// Runtime Configuration:
+// - environment_variables (string): JSON map of environment variables
+// - resource_quotas (string): JSON of resource quota definitions
+// - interruptible (bool): Enable interruptible task execution
+// - overwrite_cache (bool): Force cache overwrite
+//
+// Registry and Secrets:
+// - container_registry (string): Container image registry URL
+// - secrets (string): JSON map of secret references
