@@ -43,7 +43,6 @@ from flyteplugins.sglang import SGLangAppEnvironment
 
 import flyte
 import flyte.app
-from flyte._image import DIST_FOLDER, PythonWheels
 
 image = (
     flyte.Image.from_debian_base(name="sglang-app-image", install_flyte=False)

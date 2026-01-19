@@ -43,7 +43,6 @@ from flyteplugins.vllm import VLLMAppEnvironment
 
 import flyte
 import flyte.app
-from flyte._image import DIST_FOLDER, PythonWheels
 
 # Define the vLLM app environment for the smallest Qwen3 model
 vllm_app = VLLMAppEnvironment(

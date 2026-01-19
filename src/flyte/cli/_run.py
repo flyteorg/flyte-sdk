@@ -583,6 +583,9 @@ class TaskFiles(common.FileGroup):
 
     def get_command(self, ctx, cmd_name):
         run_args = RunArguments.from_dict(ctx.params)
+        # Store run_args on ctx.obj so parameter converters can access run context
+        if ctx.obj is not None and hasattr(ctx.obj, "replace"):
+            ctx.obj = ctx.obj.replace(run_args=run_args)
         if cmd_name == RUN_REMOTE_CMD:
             return RemoteTaskGroup(
                 name=cmd_name,

@@ -251,7 +251,7 @@ class Run(ToJSONMixin):
         )
 
     @syncify
-    async def abort(self):
+    async def abort(self, reason: str = "Manually aborted from the SDK api."):
         """
         Aborts / Terminates the run.
         """
@@ -259,6 +259,7 @@ class Run(ToJSONMixin):
             await get_client().run_service.AbortRun(
                 run_service_pb2.AbortRunRequest(
                     run_id=self.pb2.action.id.run,
+                    reason=reason,
                 )
             )
         except grpc.aio.AioRpcError as e:

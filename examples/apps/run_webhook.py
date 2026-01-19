@@ -34,16 +34,15 @@ async def lifespan(app: FastAPI):
     This initializes Flyte with passthrough authentication, allowing the app to
     pass user credentials from incoming requests to the Flyte control plane.
     """
+    PROJECT_NAME_ENV_VAR = "FLYTE_INTERNAL_EXECUTION_PROJECT"
+    DOMAIN_NAME_ENV_VAR = "FLYTE_INTERNAL_EXECUTION_DOMAIN"
+
     # Startup: Initialize Flyte with passthrough authentication
-    endpoint = os.getenv("FLYTE_ENDPOINT", None)
-    if not endpoint:
-        raise RuntimeError("FLYTE_ENDPOINT environment variable not set")
     await flyte.init_passthrough.aio(
-        endpoint=endpoint,
-        project=os.getenv("FLYTE_INTERNAL_EXECUTION_PROJECT", None),
-        domain=os.getenv("FLYTE_INTERNAL_EXECUTION_DOMAIN", None),
+        project=os.getenv(PROJECT_NAME_ENV_VAR, None),
+        domain=os.getenv(DOMAIN_NAME_ENV_VAR, None),
     )
-    logger.info(f"Initialized Flyte passthrough auth to {endpoint}")
+    logger.info("Initialized Flyte passthrough auth")
     yield
     # Shutdown: Clean up if needed
 
@@ -166,9 +165,6 @@ app_env = FastAPIAppEnvironment(
     image=image,
     resources=flyte.Resources(cpu=1, memory="512Mi"),
     requires_auth=True,  # Platform handles auth at gateway
-    env_vars={
-        "FLYTE_ENDPOINT": os.environ.get("_U_EP_OVERRIDE", "dogfood-gcp.cloud-staging.union.ai"),
-    },
     depends_on=[task_env],
     scaling=flyte.app.Scaling(replicas=1),
 )

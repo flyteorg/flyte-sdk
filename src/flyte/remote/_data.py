@@ -126,7 +126,7 @@ async def _upload_with_retry(
 
 @require_project_and_domain
 async def _upload_single_file(
-    cfg: CommonInit, fp: Path, verify: bool = True, basedir: str | None = None
+    cfg: CommonInit, fp: Path, verify: bool = True, basedir: str | None = None, fname: str | None = None
 ) -> Tuple[str, str]:
     """
     Upload a single file to remote storage using a signed URL.
@@ -135,6 +135,7 @@ async def _upload_single_file(
     :param fp: Path to the file to upload.
     :param verify: Whether to verify SSL certificates.
     :param basedir: Optional base directory prefix for the remote path.
+    :param fname: Optional file name for the remote path.
     :return: Tuple of (MD5 digest hex string, remote native URL).
     """
     md5_bytes, str_digest, _ = hash_file(fp)
@@ -149,7 +150,7 @@ async def _upload_single_file(
                 project=cfg.project,
                 domain=cfg.domain,
                 content_md5=md5_bytes,
-                filename=fp.name,
+                filename=fname or fp.name,
                 expires_in=expires_in_pb,
                 filename_root=basedir,
                 add_content_md5_metadata=True,
@@ -194,23 +195,24 @@ async def _upload_single_file(
 
 
 @syncify
-async def upload_file(fp: Path, verify: bool = True) -> Tuple[str, str]:
+async def upload_file(fp: Path, verify: bool = True, fname: str | None = None) -> Tuple[str, str]:
     """
     Uploads a file to a remote location and returns the remote URI.
 
     :param fp: The file path to upload.
     :param verify: Whether to verify the certificate for HTTPS requests.
-    :return: A tuple containing the MD5 digest and the remote URI.
+    :param fname: Optional file name for the remote path.
+    :return: Tuple of (MD5 digest hex string, remote native URL).
     """
-    # This is a placeholder implementation. Replace with actual upload logic.
     ensure_client()
     cfg = get_init_config()
     if not fp.is_file():
         raise ValueError(f"{fp} is not a single file, upload arg must be a single file.")
-    return await _upload_single_file(cfg, fp, verify=verify)
+    return await _upload_single_file(cfg, fp, verify=verify, fname=fname)
 
 
-async def upload_dir(dir_path: Path, verify: bool = True) -> str:
+@syncify
+async def upload_dir(dir_path: Path, verify: bool = True, prefix: str | None = None) -> str:
     """
     Uploads a directory to a remote location and returns the remote URI.
 
@@ -218,13 +220,13 @@ async def upload_dir(dir_path: Path, verify: bool = True) -> str:
     :param verify: Whether to verify the certificate for HTTPS requests.
     :return: The remote URI of the uploaded directory.
     """
-    # This is a placeholder implementation. Replace with actual upload logic.
     ensure_client()
     cfg = get_init_config()
     if not dir_path.is_dir():
         raise ValueError(f"{dir_path} is not a directory, upload arg must be a directory.")
 
-    prefix = uuid.uuid4().hex
+    if prefix is None:
+        prefix = uuid.uuid4().hex
 
     files = dir_path.rglob("*")
     uploaded_files = []
@@ -235,6 +237,6 @@ async def upload_dir(dir_path: Path, verify: bool = True) -> str:
     urls = await asyncio.gather(*uploaded_files)
     native_url = urls[0][1]  # Assuming all files are uploaded to the same prefix
     # native_url is of the form s3://my-s3-bucket/flytesnacks/development/{prefix}/source/empty.md
-    uri = native_url.split(prefix)[0] + "/" + prefix
+    uri = native_url.split(prefix)[0] + prefix
 
     return uri
