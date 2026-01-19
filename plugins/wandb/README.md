@@ -20,3 +20,5 @@
 - At most 20 sweep agents can be launched at a time: https://docs.wandb.ai/models/sweeps/existing-project#3-launch-agents.
 - `@wandb_sweep` creates a W&B sweep and adds a sweep link to the decorated task. The sweep ID is available via `get_wandb_sweep_id()`. For the parent task that creates the sweep, the link points to the project's sweeps list page. For child tasks, the link points to the specific sweep (they inherit the `sweep_id` from the parent's context).
 - The objective function passed to `wandb.agent()` should be a vanilla Python function decorated with `@wandb_init` to initialize the run. You can access the run with `wandb.run` since the Flyte context won't be available during the objective function call.
+- Set `download_logs=True` in `wandb_config` or `@wandb_init` to download W&B run logs after task completion. The I/O of this download functionality is traced by Flyte's `@flyte.trace`.
+- Set `download_logs=True` in `wandb_sweep_config` or `@wandb_sweep` to download W&B sweep logs after task completion. The I/O of this download functionality is traced by Flyte's `@flyte.trace`.

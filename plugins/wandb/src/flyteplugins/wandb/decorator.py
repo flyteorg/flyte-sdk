@@ -10,8 +10,8 @@ import wandb
 import flyte
 from flyte._task import AsyncFunctionTaskTemplate
 
-from .context import get_wandb_context, get_wandb_sweep_context
-from .link import RunMode, Wandb, WandbSweep
+from .context import RunMode, get_wandb_context, get_wandb_sweep_context
+from .link import Wandb, WandbSweep
 
 logger = logging.getLogger(__name__)
 
@@ -24,10 +24,15 @@ def _build_init_kwargs() -> dict[str, Any]:
     if context_config:
         config_dict = asdict(context_config)
         extra_kwargs = config_dict.pop("kwargs", None) or {}
-        return {
-            **extra_kwargs,
-            **{k: v for k, v in config_dict.items() if v is not None},
-        }
+
+        # Remove Flyte-specific fields that shouldn't be passed to wandb.init()
+        config_dict.pop("run_mode", None)
+        config_dict.pop("download_logs", None)
+
+        # Filter out None values
+        filtered_config = {k: v for k, v in config_dict.items() if v is not None}
+
+        return {**extra_kwargs, **filtered_config}
     return {}
 
 
@@ -181,6 +186,7 @@ def wandb_init(
     _func: Optional[F] = None,
     *,
     run_mode: RunMode = "auto",
+    download_logs: Optional[bool] = None,
     project: Optional[str] = None,
     entity: Optional[str] = None,
     **kwargs,
@@ -193,6 +199,9 @@ def wandb_init(
                  - "auto" (default): Creates new run if no parent run exists, otherwise shares parent's run
                  - "new": Always creates a new wandb run with a unique ID
                  - "shared": Always shares the parent's run ID (useful for child tasks)
+        download_logs: If True, downloads wandb run files after task completes
+            and shows them as a trace output in the Flyte UI. If None, uses
+            the value from wandb_config() context if set.
         project: W&B project name (overrides context config if provided)
         entity: W&B entity/team name (overrides context config if provided)
         **kwargs: Additional wandb.init() parameters (tags, config, mode, etc.)
@@ -210,6 +219,7 @@ def wandb_init(
     3. Makes the run available via get_wandb_run()
     4. Automatically adds a W&B link to the task in the Flyte UI
     5. Automatically finishes the run after completion
+    6. Optionally downloads run logs as a trace output (if download_logs=True)
     """
 
     def decorator(func: F) -> F:
@@ -236,20 +246,25 @@ def wandb_init(
             # Wrap the task's execute method with wandb_run
             original_execute = func.execute
 
-            if iscoroutinefunction(original_execute):
+            async def wrapped_execute(*args, **exec_kwargs):
+                with _wandb_run(run_mode=run_mode, **decorator_kwargs) as run:
+                    result = await original_execute(*args, **exec_kwargs)
 
-                async def wrapped_execute(*args, **exec_kwargs):
-                    with _wandb_run(run_mode=run_mode, **decorator_kwargs):
-                        return await original_execute(*args, **exec_kwargs)
+                # After run finishes, optionally download logs
+                should_download = download_logs
+                if should_download is None:
+                    # Check context config
+                    ctx_config = get_wandb_context()
+                    should_download = ctx_config.download_logs if ctx_config else False
 
-                func.execute = wrapped_execute
-            else:
+                if should_download and run:
+                    from . import download_wandb_run_logs
 
-                def wrapped_execute(*args, **exec_kwargs):
-                    with _wandb_run(run_mode=run_mode, **decorator_kwargs):
-                        return original_execute(*args, **exec_kwargs)
+                    await download_wandb_run_logs(run.id)
 
-                func.execute = wrapped_execute
+                return result
+
+            func.execute = wrapped_execute
 
             return cast(F, func)
         # Regular function
@@ -277,9 +292,17 @@ def wandb_init(
 
 
 @contextmanager
-def _create_sweep():
+def _create_sweep(
+    project: Optional[str] = None, entity: Optional[str] = None, **decorator_kwargs
+):
     """Context manager for wandb sweep creation."""
     ctx = flyte.ctx()
+
+    # Check if a sweep already exists in context - reuse it instead of creating new
+    existing_sweep_id = ctx.custom_context.get("_wandb_sweep_id")
+    if existing_sweep_id:
+        yield existing_sweep_id
+        return
 
     # Get sweep config from context
     sweep_config = get_wandb_sweep_context()
@@ -291,8 +314,16 @@ def _create_sweep():
 
     # Get wandb config for project/entity (fallback)
     wandb_config = get_wandb_context()
-    project = sweep_config.project or (wandb_config.project if wandb_config else None)
-    entity = sweep_config.entity or (wandb_config.entity if wandb_config else None)
+
+    # Priority: decorator kwargs > sweep config > wandb config
+    project = (
+        project
+        or sweep_config.project
+        or (wandb_config.project if wandb_config else None)
+    )
+    entity = (
+        entity or sweep_config.entity or (wandb_config.entity if wandb_config else None)
+    )
     prior_runs = sweep_config.prior_runs or []
 
     # Get sweep config dict
@@ -302,15 +333,13 @@ def _create_sweep():
     if "name" not in sweep_dict or sweep_dict["name"] is None:
         sweep_dict["name"] = f"{ctx.action.run_name}-{ctx.action.name}"
 
-    # Save existing context values to restore later
-    saved_sweep_id = ctx.custom_context.get("_wandb_sweep_id")
-
     # Create the sweep
     sweep_id = wandb.sweep(
         sweep=sweep_dict,
         project=project,
         entity=entity,
         prior_runs=prior_runs,
+        **decorator_kwargs,
     )
 
     # Store sweep_id in context (accessible to links)
@@ -319,14 +348,18 @@ def _create_sweep():
     try:
         yield sweep_id
     finally:
-        # Restore previous context values
-        if saved_sweep_id is not None:
-            ctx.custom_context["_wandb_sweep_id"] = saved_sweep_id
-        else:
-            ctx.custom_context.pop("_wandb_sweep_id", None)
+        # Clean up sweep_id from context
+        ctx.custom_context.pop("_wandb_sweep_id", None)
 
 
-def wandb_sweep(_func: Optional[F] = None) -> F:
+def wandb_sweep(
+    _func: Optional[F] = None,
+    *,
+    project: Optional[str] = None,
+    entity: Optional[str] = None,
+    download_logs: Optional[bool] = None,
+    **kwargs,
+) -> F:
     """
     Decorator to create a wandb sweep and make sweep_id available.
 
@@ -334,6 +367,22 @@ def wandb_sweep(_func: Optional[F] = None) -> F:
     1. Creates a wandb sweep using config from context
     2. Makes sweep_id available via get_wandb_sweep_id()
     3. Automatically adds a W&B sweep link to the task
+    4. Optionally downloads all sweep run logs as a trace output (if download_logs=True)
+
+    Args:
+        project: W&B project name (overrides context config if provided)
+        entity: W&B entity/team name (overrides context config if provided)
+        download_logs: If True, downloads all sweep run files after task completes
+            and shows them as a trace output in the Flyte UI. If None, uses
+            the value from wandb_sweep_config() context if set.
+        **kwargs: Additional wandb.sweep() parameters
+
+    Decorator Order:
+        For tasks, @wandb_sweep must be the outermost decorator:
+        @wandb_sweep
+        @env.task
+        async def my_task():
+            ...
     """
 
     def decorator(func: F) -> F:
@@ -350,20 +399,29 @@ def wandb_sweep(_func: Optional[F] = None) -> F:
 
             original_execute = func.execute
 
-            if iscoroutinefunction(original_execute):
+            async def wrapped_execute(*args, **exec_kwargs):
+                with _create_sweep(
+                    project=project, entity=entity, **kwargs
+                ) as sweep_id:
+                    result = await original_execute(*args, **exec_kwargs)
 
-                async def wrapped_execute(*args, **kwargs):
-                    with _create_sweep():
-                        return await original_execute(*args, **kwargs)
+                # After sweep finishes, optionally download logs
+                should_download = download_logs
+                if should_download is None:
+                    # Check context config
+                    sweep_config = get_wandb_sweep_context()
+                    should_download = (
+                        sweep_config.download_logs if sweep_config else False
+                    )
 
-                func.execute = wrapped_execute
-            else:
+                if should_download and sweep_id:
+                    from . import download_wandb_sweep_logs
 
-                def wrapped_execute(*args, **kwargs):
-                    with _create_sweep():
-                        return original_execute(*args, **kwargs)
+                    await download_wandb_sweep_logs(sweep_id)
 
-                func.execute = wrapped_execute
+                return result
+
+            func.execute = wrapped_execute
 
             return cast(F, func)
         else:

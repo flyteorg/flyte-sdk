@@ -120,12 +120,27 @@ Decorator Order:
 
 Helper Functions:
 - get_wandb_run(): Access the current W&B run object (or None if not in a run)
+- get_wandb_run_dir(): Get local path to current run's directory (no network call)
+- download_wandb_run_dir(): Download run files from wandb cloud (for cross-task access)
+- download_wandb_run_logs(): Async traced function to download run logs after task completion
+- download_wandb_sweep_dirs(): Download all run directories for a sweep
+- download_wandb_sweep_logs(): Async traced function to download sweep logs after task completion
 - get_wandb_sweep_id(): Access the current sweep ID (or None if not in a sweep)
 - get_wandb_context(): Access the current W&B context
 - get_wandb_sweep_context(): Access the current W&B sweep context
 """
 
+import json
+import logging
+import os
+from typing import Optional
+
+import wandb
+
 import flyte
+from flyte.io import Dir
+
+logger = logging.getLogger(__name__)
 
 from .context import (
     get_wandb_context,
@@ -139,8 +154,13 @@ from .link import Wandb, WandbSweep
 __all__ = [
     "Wandb",
     "WandbSweep",
+    "download_wandb_run_dir",
+    "download_wandb_run_logs",
+    "download_wandb_sweep_dirs",
+    "download_wandb_sweep_logs",
     "get_wandb_context",
     "get_wandb_run",
+    "get_wandb_run_dir",
     "get_wandb_sweep_context",
     "get_wandb_sweep_id",
     "wandb_config",
@@ -148,6 +168,7 @@ __all__ = [
     "wandb_sweep",
     "wandb_sweep_config",
 ]
+
 
 __version__ = "0.1.0"
 
@@ -183,3 +204,307 @@ def get_wandb_sweep_id() -> str | None:
         return None
 
     return ctx.custom_context.get("_wandb_sweep_id")
+
+
+def get_wandb_run_dir() -> Optional[str]:
+    """
+    Get the local directory path for the current wandb run.
+
+    Use this for accessing files written by the current task without any
+    network calls. For accessing files from other tasks (or after a task
+    completes), use download_wandb_run_dir() instead.
+
+    Returns:
+        Local path to wandb run directory (wandb.run.dir) or None if no
+        active run.
+    """
+    run = get_wandb_run()
+    if run is None:
+        return None
+    return run.dir
+
+
+def download_wandb_run_dir(
+    run_id: Optional[str] = None,
+    path: Optional[str] = None,
+    include_history: bool = True,
+) -> str:
+    """
+    Download wandb run data from wandb cloud.
+
+    Downloads all run files and optionally exports metrics history to JSON.
+    This enables access to wandb data from any task or after workflow completion.
+
+    Downloaded contents:
+        - summary.json - final summary metrics (always exported)
+        - metrics_history.json - step-by-step metrics (if include_history=True)
+        - Plus any files synced by wandb (requirements.txt, wandb_metadata.json, etc.)
+
+    Args:
+        run_id: The wandb run ID to download. If None, uses the current run's ID
+            from context (useful for shared runs across tasks).
+        path: Local directory to download files to. If None, downloads to
+            /tmp/wandb_runs/{run_id}.
+        include_history: If True, exports the step-by-step metrics history
+            to metrics_history.json. Defaults to True.
+
+    Returns:
+        Local path where files were downloaded.
+
+    Raises:
+        RuntimeError: If no run_id provided and no active run in context.
+        wandb.errors.CommError: If run not found in wandb cloud.
+
+    Note:
+        There may be a brief delay between when files are written locally and
+        when they're available in wandb cloud. For immediate local access
+        within the same task, use get_wandb_run_dir() instead.
+    """
+    # Determine run_id
+    if run_id is None:
+        ctx = flyte.ctx()
+        if ctx and ctx.custom_context:
+            run_id = ctx.custom_context.get("_wandb_run_id")
+        if run_id is None:
+            run = get_wandb_run()
+            if run:
+                run_id = run.id
+        if run_id is None:
+            raise RuntimeError(
+                "No run_id provided and no active wandb run found in context. "
+                "Provide a run_id explicitly or call from within a @wandb_init task."
+            )
+
+    # Get entity/project from context
+    wandb_ctx = get_wandb_context()
+    entity = wandb_ctx.entity if wandb_ctx else None
+    project = wandb_ctx.project if wandb_ctx else None
+
+    # Build run path for API
+    if entity and project:
+        run_path = f"{entity}/{project}/{run_id}"
+    elif project:
+        run_path = f"{project}/{run_id}"
+    else:
+        # wandb API can sometimes work with just run_id if logged in
+        run_path = run_id
+
+    # Set download path
+    if path is None:
+        path = f"/tmp/wandb_runs/{run_id}"
+
+    # Ensure directory exists
+    try:
+        os.makedirs(path, exist_ok=True)
+    except OSError as e:
+        raise RuntimeError(f"Failed to create download directory {path}: {e}") from e
+
+    # Download files from wandb cloud
+    try:
+        api = wandb.Api()
+        api_run = api.run(run_path)
+    except wandb.errors.AuthenticationError as e:
+        # Must check AuthenticationError before CommError (it's a subclass)
+        raise RuntimeError(
+            f"Authentication failed when accessing wandb run '{run_path}'. "
+            f"Please ensure WANDB_API_KEY is set correctly. Error: {e}"
+        ) from e
+    except wandb.errors.CommError as e:
+        raise RuntimeError(
+            f"Failed to fetch wandb run '{run_path}' from wandb cloud. "
+            f"The run may not exist, or you may not have access to it. "
+            f"Error: {e}"
+        ) from e
+    except Exception as e:
+        raise RuntimeError(
+            f"Unexpected error fetching wandb run '{run_path}': {e}"
+        ) from e
+
+    try:
+        for file in api_run.files():
+            file.download(root=path, replace=True)
+    except Exception as e:
+        raise RuntimeError(f"Failed to download files for run '{run_id}': {e}") from e
+
+    # Export summary to JSON
+    try:
+        summary_data = dict(api_run.summary)
+        if summary_data:
+            with open(os.path.join(path, "summary.json"), "w") as f:
+                json.dump(summary_data, f, indent=2, default=str)
+    except (IOError, OSError) as e:
+        raise RuntimeError(
+            f"Failed to write summary.json for run '{run_id}': {e}"
+        ) from e
+    except Exception as e:
+        raise RuntimeError(
+            f"Failed to export summary data for run '{run_id}': {e}"
+        ) from e
+
+    # Export metrics history to JSON
+    if include_history:
+        try:
+            history = api_run.history()
+            if history:
+                with open(os.path.join(path, "metrics_history.json"), "w") as f:
+                    json.dump(history, f, indent=2, default=str)
+        except (IOError, OSError) as e:
+            raise RuntimeError(
+                f"Failed to write metrics_history.json for run '{run_id}': {e}"
+            ) from e
+        except Exception as e:
+            raise RuntimeError(
+                f"Failed to export history data for run '{run_id}': {e}"
+            ) from e
+
+    return path
+
+
+def download_wandb_sweep_dirs(
+    sweep_id: Optional[str] = None,
+    base_path: Optional[str] = None,
+    include_history: bool = True,
+) -> list[str]:
+    """
+    Download all run data for a wandb sweep.
+
+    Queries the wandb API for all runs in the sweep and downloads their files
+    and metrics history. This is useful for collecting results from all sweep
+    trials after completion.
+
+    Args:
+        sweep_id: The wandb sweep ID. If None, uses the current sweep's ID
+            from context (set by @wandb_sweep decorator).
+        base_path: Base directory to download files to. Each run's files will be
+            in a subdirectory named by run_id. If None, uses /tmp/wandb_runs/.
+        include_history: If True, exports the step-by-step metrics history
+            to metrics_history.json for each run. Defaults to True.
+
+    Returns:
+        List of local paths where run data was downloaded.
+
+    Raises:
+        RuntimeError: If no sweep_id provided and no active sweep in context.
+        wandb.errors.CommError: If sweep not found in wandb cloud.
+    """
+    # Determine sweep_id
+    if sweep_id is None:
+        sweep_id = get_wandb_sweep_id()
+        if sweep_id is None:
+            raise RuntimeError(
+                "No sweep_id provided and no active wandb sweep found in context. "
+                "Provide a sweep_id explicitly or call from within a @wandb_sweep task."
+            )
+
+    # Get entity/project from context
+    wandb_ctx = get_wandb_context()
+    entity = wandb_ctx.entity if wandb_ctx else None
+    project = wandb_ctx.project if wandb_ctx else None
+
+    if not entity or not project:
+        raise RuntimeError(
+            "Cannot query sweep without entity and project. "
+            "Set them via wandb_config()."
+        )
+
+    # Query sweep runs via wandb API
+    try:
+        api = wandb.Api()
+        sweep = api.sweep(f"{entity}/{project}/{sweep_id}")
+        run_ids = [run.id for run in sweep.runs]
+    except wandb.errors.AuthenticationError as e:
+        # Must check AuthenticationError before CommError (it's a subclass)
+        raise RuntimeError(
+            f"Authentication failed when accessing wandb sweep '{entity}/{project}/{sweep_id}'. "
+            f"Please ensure WANDB_API_KEY is set correctly. Error: {e}"
+        ) from e
+    except wandb.errors.CommError as e:
+        raise RuntimeError(
+            f"Failed to fetch wandb sweep '{entity}/{project}/{sweep_id}' from wandb cloud. "
+            f"The sweep may not exist, or you may not have access to it. "
+            f"Error: {e}"
+        ) from e
+    except Exception as e:
+        raise RuntimeError(
+            f"Unexpected error fetching wandb sweep '{entity}/{project}/{sweep_id}': {e}"
+        ) from e
+
+    # Download each run's data
+    downloaded_paths = []
+    failed_runs = []
+
+    for run_id in run_ids:
+        path = f"{base_path or '/tmp/wandb_runs'}/{run_id}"
+        try:
+            download_wandb_run_dir(
+                run_id=run_id, path=path, include_history=include_history
+            )
+            downloaded_paths.append(path)
+        except Exception as e:
+            # Log failure but continue with other runs
+            failed_runs.append((run_id, str(e)))
+
+    # If some runs failed, include that information
+    if failed_runs:
+        failed_info = ", ".join([f"{rid} ({err})" for rid, err in failed_runs])
+        if not downloaded_paths:
+            # All runs failed
+            raise RuntimeError(
+                f"Failed to download all {len(run_ids)} runs for sweep '{sweep_id}'. "
+                f"Failed runs: {failed_info}"
+            )
+        else:
+            # Some runs succeeded, log warning but continue
+            logger.warning(
+                f"Failed to download {len(failed_runs)}/{len(run_ids)} runs for sweep '{sweep_id}'. "
+                f"Failed runs: {failed_info}"
+            )
+
+    return downloaded_paths
+
+
+@flyte.trace
+async def download_wandb_run_logs(run_id: str) -> Dir:
+    """
+    Traced function to download wandb run logs after task completion.
+
+    This function is called automatically when download_logs=True is set
+    in @wandb_init or wandb_config(). The downloaded files appear as a
+    trace output in the Flyte UI.
+
+    Args:
+        run_id: The wandb run ID to download.
+
+    Returns:
+        Dir containing the downloaded wandb run files.
+
+    Raises:
+        RuntimeError: If download fails (network error, run not found, auth failure, etc.)
+    """
+    path = download_wandb_run_dir(run_id=run_id)
+    return await Dir.from_local(path)
+
+
+@flyte.trace
+async def download_wandb_sweep_logs(sweep_id: str) -> Dir:
+    """
+    Traced function to download wandb sweep logs after task completion.
+
+    This function is called automatically when download_logs=True is set
+    in @wandb_sweep or wandb_sweep_config(). The downloaded files appear as a
+    trace output in the Flyte UI.
+
+    Args:
+        sweep_id: The wandb sweep ID to download.
+
+    Returns:
+        Dir containing the downloaded wandb sweep run files.
+
+    Raises:
+        RuntimeError: If download fails (network error, sweep not found, auth failure, etc.)
+    """
+    paths = download_wandb_sweep_dirs(sweep_id=sweep_id)
+
+    # Return the base directory containing all run subdirectories
+    base_path = os.path.dirname(paths[0]) if paths else "/tmp/wandb_runs"
+    return await Dir.from_local(base_path)

@@ -1,9 +1,9 @@
 from dataclasses import dataclass
-from typing import Dict, Literal, Optional
+from typing import Dict, Optional
 
 from flyte import Link
 
-RunMode = Literal["auto", "new", "shared"]
+from .context import RunMode
 
 
 @dataclass
@@ -31,6 +31,7 @@ class Wandb(Link):
         wandb_entity = self.entity
         wandb_run_id = None
         user_provided_id = self.id  # Prioritize ID provided at link creation time
+        run_mode = self.run_mode  # Defaults to "auto"
 
         if context:
             # Try to get from context if not provided at decoration time
@@ -53,10 +54,10 @@ class Wandb(Link):
             return self.host
 
         # Determine run ID based on run_mode setting
-        if self.run_mode == "new":
+        if run_mode == "new":
             # Always create new run - use user-provided ID if available, otherwise generate
             wandb_run_id = user_provided_id or f"{run_name}-{action_name}"
-        elif self.run_mode == "shared":
+        elif run_mode == "shared":
             # Always reuse parent's run
             if parent_run_id:
                 wandb_run_id = parent_run_id

@@ -244,6 +244,113 @@ class TestWandBConfig:
         assert config.mode == "offline"
         assert config.kwargs == {"custom_param": "value"}
 
+    def test_wandb_config_with_run_mode(self):
+        """Test wandb_config() with run_mode parameter."""
+        config = wandb_config(
+            project="test-project",
+            entity="test-entity",
+            run_mode="shared",
+        )
+
+        assert config.run_mode == "shared"
+
+    def test_wandb_config_default_run_mode(self):
+        """Test that wandb_config() has 'auto' as default run_mode."""
+        config = wandb_config(project="test-project", entity="test-entity")
+
+        assert config.run_mode == "auto"
+
+    def test_wandb_config_run_mode_to_dict(self):
+        """Test that run_mode is included in to_dict()."""
+        config = _WandBConfig(
+            project="test-project",
+            run_mode="new",
+        )
+
+        result = config.to_dict()
+
+        assert result["wandb_run_mode"] == "new"
+
+    def test_wandb_config_run_mode_from_dict(self):
+        """Test that run_mode is parsed from dict."""
+        input_dict = {
+            "wandb_project": "test-project",
+            "wandb_run_mode": "shared",
+        }
+
+        config = _WandBConfig.from_dict(input_dict)
+
+        assert config.project == "test-project"
+        assert config.run_mode == "shared"
+
+    def test_wandb_config_download_logs_serialization_true(self):
+        """Test that download_logs=True serializes correctly as JSON boolean."""
+        config = _WandBConfig(
+            project="test-project",
+            download_logs=True,
+        )
+
+        result = config.to_dict()
+
+        # Should be JSON "true" (lowercase), not Python "True"
+        assert result["wandb_download_logs"] == "true"
+        assert result["wandb_download_logs"] == json.dumps(True)
+
+    def test_wandb_config_download_logs_serialization_false(self):
+        """Test that download_logs=False serializes correctly as JSON boolean."""
+        config = _WandBConfig(
+            project="test-project",
+            download_logs=False,
+        )
+
+        result = config.to_dict()
+
+        # Should be JSON "false" (lowercase), not Python "False"
+        assert result["wandb_download_logs"] == "false"
+        assert result["wandb_download_logs"] == json.dumps(False)
+
+    def test_wandb_config_download_logs_deserialization_true(self):
+        """Test that download_logs deserializes correctly from JSON true."""
+        input_dict = {
+            "wandb_project": "test-project",
+            "wandb_download_logs": "true",  # JSON format
+        }
+
+        config = _WandBConfig.from_dict(input_dict)
+
+        assert config.project == "test-project"
+        assert config.download_logs is True
+        assert isinstance(config.download_logs, bool)
+
+    def test_wandb_config_download_logs_deserialization_false(self):
+        """Test that download_logs deserializes correctly from JSON false."""
+        input_dict = {
+            "wandb_project": "test-project",
+            "wandb_download_logs": "false",  # JSON format
+        }
+
+        config = _WandBConfig.from_dict(input_dict)
+
+        assert config.project == "test-project"
+        assert config.download_logs is False
+        assert isinstance(config.download_logs, bool)
+
+    def test_wandb_config_download_logs_roundtrip(self):
+        """Test that download_logs survives a roundtrip through serialization."""
+        # Test with True
+        config_true = _WandBConfig(project="test-project", download_logs=True)
+        dict_true = config_true.to_dict()
+        restored_true = _WandBConfig.from_dict(dict_true)
+        assert restored_true.download_logs is True
+        assert isinstance(restored_true.download_logs, bool)
+
+        # Test with False
+        config_false = _WandBConfig(project="test-project", download_logs=False)
+        dict_false = config_false.to_dict()
+        restored_false = _WandBConfig.from_dict(dict_false)
+        assert restored_false.download_logs is False
+        assert isinstance(restored_false.download_logs, bool)
+
 
 class TestWandBSweepConfig:
     """Tests for _WandBSweepConfig class."""
@@ -362,6 +469,74 @@ class TestWandBSweepConfig:
         assert config.entity == "test-entity"
         assert config.prior_runs == ["run1"]
         assert config.kwargs == {"early_terminate": {"type": "hyperband"}}
+
+    def test_wandb_sweep_config_download_logs_serialization_true(self):
+        """Test that download_logs=True serializes correctly as JSON boolean for sweep config."""
+        config = _WandBSweepConfig(
+            method="random",
+            download_logs=True,
+        )
+
+        result = config.to_dict()
+
+        # Should be JSON "true" (lowercase), not Python "True"
+        assert result["wandb_sweep_download_logs"] == "true"
+        assert result["wandb_sweep_download_logs"] == json.dumps(True)
+
+    def test_wandb_sweep_config_download_logs_serialization_false(self):
+        """Test that download_logs=False serializes correctly as JSON boolean for sweep config."""
+        config = _WandBSweepConfig(
+            method="random",
+            download_logs=False,
+        )
+
+        result = config.to_dict()
+
+        # Should be JSON "false" (lowercase), not Python "False"
+        assert result["wandb_sweep_download_logs"] == "false"
+        assert result["wandb_sweep_download_logs"] == json.dumps(False)
+
+    def test_wandb_sweep_config_download_logs_deserialization_true(self):
+        """Test that download_logs deserializes correctly from JSON true for sweep config."""
+        input_dict = {
+            "wandb_sweep_method": "random",
+            "wandb_sweep_download_logs": "true",  # JSON format
+        }
+
+        config = _WandBSweepConfig.from_dict(input_dict)
+
+        assert config.method == "random"
+        assert config.download_logs is True
+        assert isinstance(config.download_logs, bool)
+
+    def test_wandb_sweep_config_download_logs_deserialization_false(self):
+        """Test that download_logs deserializes correctly from JSON false for sweep config."""
+        input_dict = {
+            "wandb_sweep_method": "random",
+            "wandb_sweep_download_logs": "false",  # JSON format
+        }
+
+        config = _WandBSweepConfig.from_dict(input_dict)
+
+        assert config.method == "random"
+        assert config.download_logs is False
+        assert isinstance(config.download_logs, bool)
+
+    def test_wandb_sweep_config_download_logs_roundtrip(self):
+        """Test that download_logs survives a roundtrip through serialization for sweep config."""
+        # Test with True
+        config_true = _WandBSweepConfig(method="random", download_logs=True)
+        dict_true = config_true.to_dict()
+        restored_true = _WandBSweepConfig.from_dict(dict_true)
+        assert restored_true.download_logs is True
+        assert isinstance(restored_true.download_logs, bool)
+
+        # Test with False
+        config_false = _WandBSweepConfig(method="random", download_logs=False)
+        dict_false = config_false.to_dict()
+        restored_false = _WandBSweepConfig.from_dict(dict_false)
+        assert restored_false.download_logs is False
+        assert isinstance(restored_false.download_logs, bool)
 
 
 class TestGetWandBContext:

@@ -1,8 +1,10 @@
 import json
 from dataclasses import asdict, dataclass
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 import flyte
+
+RunMode = Literal["auto", "new", "shared"]
 
 
 def _to_dict_helper(obj, prefix: str) -> dict[str, str]:
@@ -10,7 +12,8 @@ def _to_dict_helper(obj, prefix: str) -> dict[str, str]:
     result = {}
     for key, value in asdict(obj).items():
         if value is not None:
-            if isinstance(value, (list, dict)):
+            if isinstance(value, (list, dict, bool)):
+                # Use json.dumps for lists, dicts, and bools for proper serialization
                 try:
                     result[f"{prefix}_{key}"] = json.dumps(value)
                 except (TypeError, ValueError) as e:
@@ -80,7 +83,7 @@ def _context_manager_exit(ctx_mgr, saved_config: dict, prefix: str, *args):
 class _WandBConfig:
     """
     Pass any other wandb.init() parameters via kwargs dict:
-      - notes, dir, job_type, save_code
+      - notes, job_type, save_code
       - resume, resume_from, fork_from, reinit
       - anonymous, allow_val_change, force
       - settings, and more
@@ -99,6 +102,13 @@ class _WandBConfig:
     # Common optional fields
     mode: Optional[str] = None
     group: Optional[str] = None
+
+    # Flyte-specific run mode (not passed to wandb.init)
+    # Controls whether to create a new W&B run or share an existing one
+    run_mode: RunMode = "auto"  # "auto", "new", or "shared"
+
+    # Flyte-specific: download wandb logs after task completes
+    download_logs: bool = False
 
     # Catch-all for additional wandb.init() parameters
     kwargs: Optional[dict[str, Any]] = None
@@ -182,6 +192,8 @@ def wandb_config(
     config: Optional[dict[str, Any]] = None,
     mode: Optional[str] = None,
     group: Optional[str] = None,
+    run_mode: RunMode = "auto",
+    download_logs: bool = False,
     **kwargs: Any,
 ) -> _WandBConfig:
     """
@@ -200,6 +212,10 @@ def wandb_config(
         config: dictionary of hyperparameters
         mode: "online", "offline", or "disabled"
         group: group name for related runs
+        run_mode: Flyte-specific run mode - "auto", "new", or "shared"
+            Controls whether tasks create new W&B runs or share existing ones
+        download_logs: If True, downloads wandb run files after task completes
+            and shows them as a trace output in the Flyte UI
         **kwargs: additional wandb.init() parameters
     """
     return _WandBConfig(
@@ -211,6 +227,8 @@ def wandb_config(
         config=config,
         mode=mode,
         group=group,
+        run_mode=run_mode,
+        download_logs=download_logs,
         kwargs=kwargs if kwargs else None,
     )
 
@@ -228,6 +246,9 @@ class _WandBSweepConfig:
     entity: Optional[str] = None
     prior_runs: Optional[list[str]] = None
 
+    # Flyte-specific: download wandb sweep logs after task completes
+    download_logs: bool = False
+
     # Catch-all for additional sweep config parameters
     # (e.g. early_terminate, name, description, command, controller, etc.)
     kwargs: Optional[dict[str, Any]] = None
@@ -240,6 +261,7 @@ class _WandBSweepConfig:
         config.pop("project", None)
         config.pop("entity", None)
         config.pop("prior_runs", None)
+        config.pop("download_logs", None)
 
         # Merge kwargs into the main config
         extra_kwargs = config.pop("kwargs", None)
@@ -311,7 +333,9 @@ def get_wandb_sweep_context() -> Optional[_WandBSweepConfig]:
     if ctx is None or not ctx.custom_context:
         return None
 
-    has_wandb_sweep_keys = any(k.startswith("wandb_sweep_") for k in ctx.custom_context.keys())
+    has_wandb_sweep_keys = any(
+        k.startswith("wandb_sweep_") for k in ctx.custom_context.keys()
+    )
     if not has_wandb_sweep_keys:
         return None
 
@@ -326,6 +350,7 @@ def wandb_sweep_config(
     entity: Optional[str] = None,
     prior_runs: Optional[list[str]] = None,
     name: Optional[str] = None,
+    download_logs: bool = False,
     **kwargs: Any,
 ) -> _WandBSweepConfig:
     """
@@ -339,6 +364,8 @@ def wandb_sweep_config(
         entity: W&B entity for the sweep
         prior_runs: List of prior run IDs to include in the sweep analysis
         name: Sweep name (auto-generated as "{run_name}-{action_name}" if not provided)
+        download_logs: If True, downloads all sweep run files after task completes
+            and shows them as a trace output in the Flyte UI
         **kwargs: Additional sweep config parameters like:
             - early_terminate: Early termination config
             - description: Sweep description
@@ -355,5 +382,6 @@ def wandb_sweep_config(
         project=project,
         entity=entity,
         prior_runs=prior_runs,
+        download_logs=download_logs,
         kwargs=kwargs if kwargs else None,
     )
