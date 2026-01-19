@@ -472,7 +472,7 @@ async def test_file_from_local_sync_creates_lazy_uploader_without_raw_data_conte
 
     with tempfile.TemporaryDirectory() as temp_dir:
         local_path = os.path.join(temp_dir, "test_file_sync.txt")
-        with open(local_path, "w") as f:
+        with open(local_path, "w") as f:  # noqa: ASYNC230
             f.write("test content for lazy uploader sync")
 
         # When creating a File from local without raw_data context, it should have lazy_uploader
