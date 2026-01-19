@@ -8,11 +8,10 @@ from flyte.extend import ImageBuildEngine
 async def build_flyte_vllm_image(registry: str | None = None, name: str | None = None, builder: str | None = "local"):
     """
     Build the SDK default Debian-based image, optionally overriding
-    the container registry and image name.
+    the container registry name.
 
     Args:
         registry: e.g. "ghcr.io/my-org" or "123456789012.dkr.ecr.us-west-2.amazonaws.com".
-        name:     e.g. "my-flyte-image".
         builder:  e.g. "local" or "remote".
     """
     import flyteplugins.vllm
@@ -24,7 +23,7 @@ async def build_flyte_vllm_image(registry: str | None = None, name: str | None =
 async def build_flyte_sglang_image(registry: str | None = None, name: str | None = None, builder: str | None = "local"):
     """
     Build the SDK default Debian-based image, optionally overriding
-    the container registry and image name.
+    the container registry name.
     """
     import flyteplugins.sglang
 
@@ -32,31 +31,37 @@ async def build_flyte_sglang_image(registry: str | None = None, name: str | None
     await ImageBuildEngine.build(default_image, builder=builder)
 
 
-async def build_all(registry: str | None = None, name: str | None = None, builder: str | None = "local"):
-    await asyncio.gather(
-        build_flyte_vllm_image(registry=registry, name=name, builder=builder),
-        build_flyte_sglang_image(registry=registry, name=name, builder=builder),
-    )
-
-
 if __name__ == "__main__":
+    import os
+
     parser = argparse.ArgumentParser(description="Build the default Flyte image.")
     parser.add_argument("--registry", help="Docker registry to push to")
-    parser.add_argument("--name", help="Custom image name (without tag)")
-    parser.add_argument("--type", choices=["vllm", "sglang", "all"], help="Type of image to build")
+    parser.add_argument("--type", choices=["vllm", "sglang"], help="Type of image to build")
     parser.add_argument("--builder", choices=["local", "remote"], default="local", help="Image builder to use")
 
     args = parser.parse_args()
-    # can remove this and only specify one in the future
-    assert (args.registry and args.name) or (not args.registry and not args.name)
 
-    flyte.init_from_config()
+    if os.getenv("GITHUB_ACTIONS", "") == "true":
+        flyte.init(
+            endpoint=os.getenv("FLYTE_ENDPOINT", "dns:///playground.canary.unionai.cloud"),
+            auth_type="ClientSecret",
+            client_id="flyte-sdk-ci",
+            client_credentials_secret=os.getenv("FLYTE_SDK_CI_TOKEN"),
+            insecure=False,
+            image_builder="remote",
+            project=os.getenv("FLYTE_PROJECT", "flyte-sdk"),
+            domain=os.getenv("FLYTE_DOMAIN", "development"),
+        )
+        builder = "remote"
+    else:
+        flyte.init_from_config()
+        builder = args.builder
+
     if args.type == "vllm":
         print("Building vllm image...")
-        asyncio.run(build_flyte_vllm_image(registry=args.registry, name=args.name, builder=args.builder))
+        asyncio.run(build_flyte_vllm_image(registry=args.registry, builder=builder))
     elif args.type == "sglang":
         print("Building sglang image...")
-        asyncio.run(build_flyte_sglang_image(registry=args.registry, name=args.name, builder=args.builder))
+        asyncio.run(build_flyte_sglang_image(registry=args.registry, builder=builder))
     else:
-        print("Building all images...")
-        asyncio.run(build_all(registry=args.registry, name=args.name, builder=args.builder))
+        raise ValueError(f"Invalid type: {args.type}. Valid types are: [vllm, sglang].")
