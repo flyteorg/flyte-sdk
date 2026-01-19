@@ -586,6 +586,12 @@ class TaskFiles(common.FileGroup):
         # Store run_args on ctx.obj so parameter converters can access run context
         if ctx.obj is not None and hasattr(ctx.obj, "replace"):
             ctx.obj = ctx.obj.replace(run_args=run_args)
+        else:
+            # When run command is invoked directly (not through main), ctx.obj may be None.
+            # Create a CLIConfig object to hold run_args for parameter converters.
+            import flyte.config
+
+            ctx.obj = common.CLIConfig(config=flyte.config.auto(), ctx=ctx, run_args=run_args)
         if cmd_name == RUN_REMOTE_CMD:
             return RemoteTaskGroup(
                 name=cmd_name,
