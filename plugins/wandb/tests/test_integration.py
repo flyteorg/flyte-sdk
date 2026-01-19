@@ -27,7 +27,7 @@ class TestWandbInitIntegration:
         assert isinstance(link, Wandb)
         assert link.project == "integration-project"
         assert link.entity == "integration-entity"
-        assert link.run_mode is True
+        assert link.run_mode == "new"
 
     def test_multiple_wandb_init_tasks_independent(self):
         """Test that multiple tasks with @wandb_init are independent."""
@@ -53,7 +53,7 @@ class TestWandbInitIntegration:
 
         assert link_2.project == "project-2"
         assert link_2.entity == "entity-2"
-        assert link_2.run_mode is False
+        assert link_2.run_mode == "shared"
 
     @patch("flyteplugins.wandb.decorator.flyte.ctx")
     @patch("flyteplugins.wandb.decorator._build_init_kwargs")

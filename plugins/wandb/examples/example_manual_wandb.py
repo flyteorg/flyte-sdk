@@ -14,7 +14,7 @@ from flyteplugins.wandb import Wandb, wandb_config
 
 env = flyte.TaskEnvironment(
     name="wandb-manual-example",
-    image=flyte.Image.from_debian_base().with_pip_packages("flyteplugins-wandb"),
+    image=flyte.Image.from_debian_base(name="wandb-manual-example").with_pip_packages("flyteplugins-wandb"),
     secrets=[flyte.Secret(key="wandb_api_key", as_env_var="WANDB_API_KEY")],
 )
 

@@ -359,6 +359,67 @@ class TestWandbLink:
         # Should use custom ID since no parent run exists
         assert uri == "https://wandb.ai/test-entity/test-project/runs/auto-custom-id"
 
+    def test_wandb_link_default_run_mode_is_auto(self):
+        """Test that default run_mode is 'auto'."""
+        link = Wandb(project="test-project", entity="test-entity")  # No run_mode set
+
+        assert link.run_mode == "auto"
+
+        uri = link.get_link(
+            run_name="test-run",
+            project="flyte-project",
+            domain="development",
+            context={
+                "_wandb_run_id": "parent-run-id",
+            },
+            parent_action_name="parent",
+            action_name="{{.actionName}}",
+            pod_name="{{.podName}}",
+        )
+
+        # With auto mode and parent run ID, should use parent's run
+        assert uri == "https://wandb.ai/test-entity/test-project/runs/parent-run-id"
+
+    def test_wandb_link_auto_mode_without_parent(self):
+        """Test that auto mode creates new run when no parent."""
+        link = Wandb(project="test-project", entity="test-entity")  # Defaults to auto
+
+        uri = link.get_link(
+            run_name="test-run",
+            project="flyte-project",
+            domain="development",
+            context={},  # No parent run ID
+            parent_action_name="parent",
+            action_name="{{.actionName}}",
+            pod_name="{{.podName}}",
+        )
+
+        # Should create new run ID since no parent
+        assert uri == "https://wandb.ai/test-entity/test-project/runs/test-run-{{.actionName}}"
+
+    def test_wandb_link_explicit_run_mode_new(self):
+        """Test that explicit run_mode='new' always creates new run."""
+        link = Wandb(
+            project="test-project",
+            entity="test-entity",
+            run_mode="new",
+        )
+
+        uri = link.get_link(
+            run_name="test-run",
+            project="flyte-project",
+            domain="development",
+            context={
+                "_wandb_run_id": "parent-run-id",
+            },
+            parent_action_name="parent",
+            action_name="{{.actionName}}",
+            pod_name="{{.podName}}",
+        )
+
+        # Should create new run ID even though parent exists
+        assert uri == "https://wandb.ai/test-entity/test-project/runs/test-run-{{.actionName}}"
+
 
 class TestWandbSweepLink:
     """Tests for WandbSweep link class."""
