@@ -91,9 +91,14 @@ write_to = "src/flyte/_version.py"
 
 [tool.pytest.ini_options]
 markers = [
-    "integration",
+    "integration: Integration tests against Flyte backend",
     "editable",
-    "sandbox"
+    "sandbox",
+    "apps: App deployment tests using flyte.deploy",
+    "gpu: Tests requiring GPU resources",
+    "external: Tests requiring external services (BigQuery, etc.)",
+    "stress: Stress/load tests (skip by default)",
+    "secrets: Tests requiring secrets configuration",
 ]
 norecursedirs = []
 log_cli = true
