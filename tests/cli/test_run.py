@@ -176,221 +176,215 @@ def test_build_images_image_name_not_found_error(runner):
     assert "'custom'" in error_msg
 
 
-# Tests for CLI parameter converters in local mode
+def test_run_with_local_file_input(runner):
+    """Test that --local mode correctly handles local file inputs without uploading.
+
+    This test uses an existing parquet file as input to avoid temp file path issues.
+    """
+    try:
+        cmd = [
+            "--local",
+            str(COMPLEX_INPUTS_PY),
+            "print_all",
+            "--a",
+            "1",
+            "--b",
+            "Hello",
+            "--c",
+            "1.1",
+            "--d",
+            '{"i":1,"a":["h","e"]}',
+            "--e",
+            "[1,2,3]",
+            "--f",
+            '{"x":1.0, "y":2.0}',
+            "--g",
+            str(PARQUET_FILE),  # File input - uses local path in local mode
+            "--i",
+            "2020-05-01",
+            "--j",
+            "P1D",
+            "--k",
+            "RED",
+            "--h",
+            "--m",
+            '{"hello": "world"}',
+            "--p",
+            "Any",
+            "--q",
+            str(RUN_TESTDATA),  # Dir input
+            "--r",
+            json.dumps([{"i": 1, "a": ["h", "e"]}]),
+            "--s",
+            json.dumps({"x": {"i": 1, "a": ["h", "e"]}}),
+            "--t",
+            json.dumps({"i": [{"i": 1, "a": ["h", "e"]}]}),
+        ]
+        result = runner.invoke(run, cmd)
+        assert result.exit_code == 0, result.output
+    except ValueError as ve:
+        if "I/O operation on closed file" in str(ve):
+            return
+        raise ve
 
 
-class TestCLILocalModeParameterConverters:
-    """Tests for CLI parameter converters (File, Dir, DataFrame) in local mode."""
+def test_run_with_local_dir_input(runner):
+    """Test that --local mode correctly handles local directory inputs without uploading.
 
-    def test_run_with_local_file_input(self, runner):
-        """Test that --local mode correctly handles local file inputs without uploading.
-
-        This test uses an existing parquet file as input to avoid temp file path issues.
-        """
-        try:
-            cmd = [
-                "--local",
-                str(COMPLEX_INPUTS_PY),
-                "print_all",
-                "--a",
-                "1",
-                "--b",
-                "Hello",
-                "--c",
-                "1.1",
-                "--d",
-                '{"i":1,"a":["h","e"]}',
-                "--e",
-                "[1,2,3]",
-                "--f",
-                '{"x":1.0, "y":2.0}',
-                "--g",
-                str(PARQUET_FILE),  # File input - uses local path in local mode
-                "--i",
-                "2020-05-01",
-                "--j",
-                "P1D",
-                "--k",
-                "RED",
-                "--h",
-                "--m",
-                '{"hello": "world"}',
-                "--p",
-                "Any",
-                "--q",
-                str(RUN_TESTDATA),  # Dir input
-                "--r",
-                json.dumps([{"i": 1, "a": ["h", "e"]}]),
-                "--s",
-                json.dumps({"x": {"i": 1, "a": ["h", "e"]}}),
-                "--t",
-                json.dumps({"i": [{"i": 1, "a": ["h", "e"]}]}),
-            ]
-            result = runner.invoke(run, cmd)
-            assert result.exit_code == 0, result.output
-        except ValueError as ve:
-            if "I/O operation on closed file" in str(ve):
-                return
-            raise ve
-
-    def test_run_with_local_dir_input(self, runner):
-        """Test that --local mode correctly handles local directory inputs without uploading.
-
-        This test uses an existing directory as input to avoid temp file path issues.
-        """
-        try:
-            cmd = [
-                "--local",
-                str(COMPLEX_INPUTS_PY),
-                "print_all",
-                "--a",
-                "1",
-                "--b",
-                "Hello",
-                "--c",
-                "1.1",
-                "--d",
-                '{"i":1,"a":["h","e"]}',
-                "--e",
-                "[1,2,3]",
-                "--f",
-                '{"x":1.0, "y":2.0}',
-                "--g",
-                str(PARQUET_FILE),  # File input
-                "--i",
-                "2020-05-01",
-                "--j",
-                "P1D",
-                "--k",
-                "RED",
-                "--h",
-                "--m",
-                '{"hello": "world"}',
-                "--p",
-                "Any",
-                "--q",
-                str(RUN_TESTDATA),  # Dir input - uses local path in local mode
-                "--r",
-                json.dumps([{"i": 1, "a": ["h", "e"]}]),
-                "--s",
-                json.dumps({"x": {"i": 1, "a": ["h", "e"]}}),
-                "--t",
-                json.dumps({"i": [{"i": 1, "a": ["h", "e"]}]}),
-            ]
-            result = runner.invoke(run, cmd)
-            assert result.exit_code == 0, result.output
-        except ValueError as ve:
-            if "I/O operation on closed file" in str(ve):
-                return
-            raise ve
-
-    @pytest.mark.integration
-    def test_run_with_local_dataframe_file_input(self, runner):
-        """Test that --local mode correctly handles local parquet file inputs for DataFrames."""
-        try:
-            cmd = [
-                "--local",
-                str(COMPLEX_INPUTS_PY),
-                "print_all",
-                "--a",
-                "1",
-                "--b",
-                "Hello",
-                "--c",
-                "1.1",
-                "--d",
-                '{"i":1,"a":["h","e"]}',
-                "--e",
-                "[1,2,3]",
-                "--f",
-                '{"x":1.0, "y":2.0}',
-                "--g",
-                str(PARQUET_FILE),  # File input
-                "--i",
-                "2020-05-01",
-                "--j",
-                "P1D",
-                "--k",
-                "RED",
-                "--h",
-                "--m",
-                '{"hello": "world"}',
-                "--p",
-                "Any",
-                "--q",
-                str(RUN_TESTDATA),  # Dir input
-                "--r",
-                json.dumps([{"i": 1, "a": ["h", "e"]}]),
-                "--s",
-                json.dumps({"x": {"i": 1, "a": ["h", "e"]}}),
-                "--t",
-                json.dumps({"i": [{"i": 1, "a": ["h", "e"]}]}),
-            ]
-            result = runner.invoke(run, cmd)
-            assert result.exit_code == 0, result.output
-        except ValueError as ve:
-            if "I/O operation on closed file" in str(ve):
-                return
-            raise ve
+    This test uses an existing directory as input to avoid temp file path issues.
+    """
+    try:
+        cmd = [
+            "--local",
+            str(COMPLEX_INPUTS_PY),
+            "print_all",
+            "--a",
+            "1",
+            "--b",
+            "Hello",
+            "--c",
+            "1.1",
+            "--d",
+            '{"i":1,"a":["h","e"]}',
+            "--e",
+            "[1,2,3]",
+            "--f",
+            '{"x":1.0, "y":2.0}',
+            "--g",
+            str(PARQUET_FILE),  # File input
+            "--i",
+            "2020-05-01",
+            "--j",
+            "P1D",
+            "--k",
+            "RED",
+            "--h",
+            "--m",
+            '{"hello": "world"}',
+            "--p",
+            "Any",
+            "--q",
+            str(RUN_TESTDATA),  # Dir input - uses local path in local mode
+            "--r",
+            json.dumps([{"i": 1, "a": ["h", "e"]}]),
+            "--s",
+            json.dumps({"x": {"i": 1, "a": ["h", "e"]}}),
+            "--t",
+            json.dumps({"i": [{"i": 1, "a": ["h", "e"]}]}),
+        ]
+        result = runner.invoke(run, cmd)
+        assert result.exit_code == 0, result.output
+    except ValueError as ve:
+        if "I/O operation on closed file" in str(ve):
+            return
+        raise ve
 
 
-class TestCLIParameterConverterLogic:
-    """Unit tests for CLI parameter converter logic."""
+@pytest.mark.integration
+def test_run_with_local_dataframe_file_input(runner):
+    """Test that --local mode correctly handles local parquet file inputs for DataFrames."""
+    try:
+        cmd = [
+            "--local",
+            str(COMPLEX_INPUTS_PY),
+            "print_all",
+            "--a",
+            "1",
+            "--b",
+            "Hello",
+            "--c",
+            "1.1",
+            "--d",
+            '{"i":1,"a":["h","e"]}',
+            "--e",
+            "[1,2,3]",
+            "--f",
+            '{"x":1.0, "y":2.0}',
+            "--g",
+            str(PARQUET_FILE),  # File input
+            "--i",
+            "2020-05-01",
+            "--j",
+            "P1D",
+            "--k",
+            "RED",
+            "--h",
+            "--m",
+            '{"hello": "world"}',
+            "--p",
+            "Any",
+            "--q",
+            str(RUN_TESTDATA),  # Dir input
+            "--r",
+            json.dumps([{"i": 1, "a": ["h", "e"]}]),
+            "--s",
+            json.dumps({"x": {"i": 1, "a": ["h", "e"]}}),
+            "--t",
+            json.dumps({"i": [{"i": 1, "a": ["h", "e"]}]}),
+        ]
+        result = runner.invoke(run, cmd)
+        assert result.exit_code == 0, result.output
+    except ValueError as ve:
+        if "I/O operation on closed file" in str(ve):
+            return
+        raise ve
 
-    def test_file_param_type_returns_file_with_local_path_in_local_mode(self):
-        """Test that FileParamType returns File with local path when run_args.local is True."""
-        import tempfile
-        from unittest.mock import MagicMock
 
-        from flyte.cli._params import FileParamType
-        from flyte.cli._run import RunArguments
-        from flyte.io import File
+def test_file_param_type_returns_file_with_local_path_in_local_mode():
+    """Test that FileParamType returns File with local path when run_args.local is True."""
+    import tempfile
+    from unittest.mock import MagicMock
 
-        # Create mock context object with run_args.local = True
-        run_args = RunArguments(local=True)
-        mock_cli_obj = MagicMock()
-        mock_cli_obj.run_args = run_args
+    from flyte.cli._params import FileParamType
+    from flyte.cli._run import RunArguments
+    from flyte.io import File
 
-        ctx = MagicMock()
-        ctx.obj = mock_cli_obj
+    # Create mock context object with run_args.local = True
+    run_args = RunArguments(local=True)
+    mock_cli_obj = MagicMock()
+    mock_cli_obj.run_args = run_args
 
-        # Create a temporary file for testing
-        with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".txt") as tmp:
-            tmp.write("test content")
-            tmp_path = tmp.name
+    ctx = MagicMock()
+    ctx.obj = mock_cli_obj
 
-        try:
-            param_type = FileParamType()
-            result = param_type.convert(tmp_path, None, ctx)
+    # Create a temporary file for testing
+    with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".txt") as tmp:
+        tmp.write("test content")
+        tmp_path = tmp.name
 
-            # Should return a File object with the local path
-            assert isinstance(result, File)
-            assert result.path == tmp_path
-        finally:
-            Path(tmp_path).unlink()
+    try:
+        param_type = FileParamType()
+        result = param_type.convert(tmp_path, None, ctx)
 
-    def test_dir_param_type_returns_dir_with_local_path_in_local_mode(self):
-        """Test that DirParamType returns Dir with local path when run_args.local is True."""
-        import tempfile
-        from unittest.mock import MagicMock
+        # Should return a File object with the local path
+        assert isinstance(result, File)
+        assert result.path == tmp_path
+    finally:
+        Path(tmp_path).unlink()
 
-        from flyte.cli._params import DirParamType
-        from flyte.cli._run import RunArguments
-        from flyte.io import Dir
 
-        # Create mock context object with run_args.local = True
-        run_args = RunArguments(local=True)
-        mock_cli_obj = MagicMock()
-        mock_cli_obj.run_args = run_args
+def test_dir_param_type_returns_dir_with_local_path_in_local_mode():
+    """Test that DirParamType returns Dir with local path when run_args.local is True."""
+    import tempfile
+    from unittest.mock import MagicMock
 
-        ctx = MagicMock()
-        ctx.obj = mock_cli_obj
+    from flyte.cli._params import DirParamType
+    from flyte.cli._run import RunArguments
+    from flyte.io import Dir
 
-        # Create a temporary directory for testing
-        with tempfile.TemporaryDirectory() as tmp_dir:
-            param_type = DirParamType()
-            result = param_type.convert(tmp_dir, None, ctx)
+    # Create mock context object with run_args.local = True
+    run_args = RunArguments(local=True)
+    mock_cli_obj = MagicMock()
+    mock_cli_obj.run_args = run_args
 
-            # Should return a Dir object with the local path
-            assert isinstance(result, Dir)
-            assert result.path == tmp_dir
+    ctx = MagicMock()
+    ctx.obj = mock_cli_obj
+
+    # Create a temporary directory for testing
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        param_type = DirParamType()
+        result = param_type.convert(tmp_dir, None, ctx)
+
+        # Should return a Dir object with the local path
+        assert isinstance(result, Dir)
+        assert result.path == tmp_dir
