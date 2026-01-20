@@ -421,28 +421,46 @@ def test_app_endpoint_model_validate_json():
 
 
 @pytest.mark.asyncio
-async def test_app_endpoint_materialize_private():
+async def test_app_endpoint_materialize_returns_self():
     """
-    GOAL: Verify AppEndpoint materializes private endpoint from env var.
+    GOAL: Verify AppEndpoint materialize() returns the AppEndpoint object itself.
 
-    Tests that private endpoints are constructed using the env var pattern.
+    The actual URL retrieval is deferred to serving time via _retrieve_endpoint(),
+    so materialize() simply returns self for later processing.
+    """
+    ae = AppEndpoint(app_name="upstream-app", public=False)
+    result = await ae.materialize()
+
+    # materialize() should return the AppEndpoint object itself
+    assert result is ae
+    assert isinstance(result, AppEndpoint)
+
+
+@pytest.mark.asyncio
+async def test_app_endpoint_retrieve_endpoint_private():
+    """
+    GOAL: Verify AppEndpoint retrieves private endpoint from env var at serving time.
+
+    Tests that _retrieve_endpoint() constructs private endpoints using the env var pattern.
+    This is called at serving time in serve.py, not at deployment time.
     """
     with (
         patch.dict(os.environ, {"INTERNAL_APP_ENDPOINT_PATTERN": "http://{app_fqdn}.internal:8080"}),
         patch("flyte._initialize.is_initialized", return_value=True),
     ):
         ae = AppEndpoint(app_name="upstream-app", public=False)
-        result = await ae.materialize()
+        result = await ae._retrieve_endpoint()
 
         assert result == "http://upstream-app.internal:8080"
 
 
 @pytest.mark.asyncio
-async def test_app_endpoint_materialize_public():
+async def test_app_endpoint_retrieve_endpoint_public():
     """
-    GOAL: Verify AppEndpoint materializes public endpoint via remote App.
+    GOAL: Verify AppEndpoint retrieves public endpoint via remote App at serving time.
 
     Uses mocks to simulate the remote API call for public endpoint.
+    This is called at serving time in serve.py, not at deployment time.
     """
     mock_app = MagicMock()
     mock_app.endpoint = "https://upstream-app.example.com"
@@ -451,22 +469,23 @@ async def test_app_endpoint_materialize_public():
         patch("flyte.remote.App") as MockApp,
         patch("flyte._initialize.is_initialized", return_value=True),
     ):
-        MockApp.get = MagicMock(return_value=mock_app)
+        MockApp.get = MagicMock()
+        MockApp.get.aio = AsyncMock(return_value=mock_app)
 
         ae = AppEndpoint(app_name="upstream-app", public=True)
-        result = await ae.materialize()
+        result = await ae._retrieve_endpoint()
 
         assert result == "https://upstream-app.example.com"
-        MockApp.get.assert_called_once_with("upstream-app")
+        MockApp.get.aio.assert_called_once_with("upstream-app")
 
 
 @pytest.mark.asyncio
-async def test_app_endpoint_materialize_private_no_env_var():
+async def test_app_endpoint_retrieve_endpoint_private_no_env_var():
     """
-    GOAL: Verify AppEndpoint raises error when private and env var not set.
+    GOAL: Verify AppEndpoint raises error when retrieving private endpoint without env var.
 
-    Tests that ValueError is raised when trying to create private endpoint
-    without the INTERNAL_APP_ENDPOINT_PATTERN environment variable.
+    Tests that ValueError is raised when trying to retrieve private endpoint
+    without the INTERNAL_APP_ENDPOINT_PATTERN environment variable at serving time.
     """
     # Ensure the env var is not set
     with (
@@ -476,7 +495,7 @@ async def test_app_endpoint_materialize_private_no_env_var():
         ae = AppEndpoint(app_name="upstream-app", public=False)
 
         with pytest.raises(ValueError, match="INTERNAL_APP_ENDPOINT_PATTERN"):
-            await ae.materialize()
+            await ae._retrieve_endpoint()
 
 
 # =============================================================================
@@ -593,7 +612,8 @@ def test_serializable_input_from_app_endpoint():
     """
     GOAL: Verify SerializableParameter.from_parameter() handles AppEndpoint correctly.
 
-    Tests that AppEndpoint is serialized to JSON with type 'string'.
+    Tests that AppEndpoint is serialized to JSON with type 'app_endpoint'.
+    The actual URL is retrieved at serving time via _retrieve_endpoint().
     """
     ae = AppEndpoint(app_name="upstream-app", public=True)
     param = Parameter(name="api_url", value=ae, env_var="API_URL")
@@ -601,7 +621,7 @@ def test_serializable_input_from_app_endpoint():
     serialized = SerializableParameter.from_parameter(param)
 
     assert serialized.name == "api_url"
-    assert serialized.type == "string"
+    assert serialized.type == "app_endpoint"
     assert serialized.env_var == "API_URL"
     # Value should be JSON serialized
     assert "upstream-app" in serialized.value
@@ -632,7 +652,7 @@ def test_serializable_input_collection_with_mixed_values():
     assert collection.parameters[2].type == "directory"
     assert collection.parameters[2].download is True
     assert collection.parameters[3].type == "string"  # RunOutput type
-    assert collection.parameters[4].type == "string"  # AppEndpoint type
+    assert collection.parameters[4].type == "app_endpoint"  # AppEndpoint type (URL retrieved at serving time)
 
 
 def test_serializable_input_collection_transport_roundtrip():

@@ -19,13 +19,7 @@ else:
     AutoVersioning = Literal["latest", "current"]
 
 ParameterTypes = str | flyte.io.File | flyte.io.Dir
-_SerializedParameterType = Literal["string", "file", "directory"]
-
-PARAMETER_TYPE_MAP = {
-    str: "string",
-    flyte.io.File: "file",
-    flyte.io.Dir: "directory",
-}
+_SerializedParameterType = Literal["string", "file", "directory", "app_endpoint"]
 
 RUNTIME_PARAMETERS_FILE = "flyte-parameters.json"
 
@@ -44,13 +38,11 @@ class _DelayedValue(BaseModel):
             data["type"] = PARAMETER_TYPE_MAP.get(data["type"], data["type"])
         return data
 
-    async def get(self) -> str | flyte.io.File | flyte.io.Dir:
+    async def get(self) -> str | flyte.io.File | flyte.io.Dir | AppEndpoint:
         value = await self.materialize()
-        assert isinstance(value, (str, flyte.io.File, flyte.io.Dir)), (
-            f"Materialized value must be a string, file or directory, found {type(value)}"
+        assert isinstance(value, (str, flyte.io.File, flyte.io.Dir, AppEndpoint)), (
+            f"Materialized value must be a string, file, directory or app endpoint, found {type(value)}"
         )
-        if isinstance(value, (flyte.io.File, flyte.io.Dir)):
-            return value
         return value
 
     async def materialize(self) -> ParameterTypes:
@@ -106,6 +98,8 @@ class RunOutput(_DelayedValue):
             raise ValueError("Either run_name or task_name must be provided")
         if self.run_name is not None and self.task_name is not None:
             raise ValueError("Only one of run_name or task_name must be provided")
+        if self.type == "app_endpoint":
+            raise ValueError("AppEndpoint is not supported as a run output")
 
     @requires_initialization
     async def materialize(self) -> ParameterTypes:
@@ -177,14 +171,19 @@ class AppEndpoint(_DelayedValue):
     public: bool = False
     type: Literal["string"] = "string"
 
-    @requires_initialization
     async def materialize(self) -> str:
+        """Returns the AppEndpoint object, the endpoint is retrieved at serving time by the fserve executable."""
+        return self
+
+    @requires_initialization
+    async def _retrieve_endpoint(self) -> str:
+        """Get the endpoint of the specified app at serving time."""
         from flyte.app._app_environment import INTERNAL_APP_ENDPOINT_PATTERN_ENV_VAR
 
         if self.public:
             from flyte.remote import App
 
-            app = App.get(self.app_name)
+            app = await App.get.aio(self.app_name)
             return app.endpoint
 
         endpoint_pattern = os.getenv(INTERNAL_APP_ENDPOINT_PATTERN_ENV_VAR)
@@ -194,6 +193,14 @@ class AppEndpoint(_DelayedValue):
         raise ValueError(
             f"Environment variable {INTERNAL_APP_ENDPOINT_PATTERN_ENV_VAR} is not set to create a private url."
         )
+
+
+PARAMETER_TYPE_MAP = {
+    str: "string",
+    flyte.io.File: "file",
+    flyte.io.Dir: "directory",
+    AppEndpoint: "app_endpoint",
+}
 
 
 @dataclass
@@ -266,10 +273,14 @@ class SerializableParameter(BaseModel):
             value = param.value.path
             tpe = "directory"
             download = True if param.mount is not None else param.download
-        elif isinstance(param.value, (RunOutput, AppEndpoint)):
+        elif isinstance(param.value, RunOutput):
             value = param.value.model_dump_json()
             tpe = param.value.type
             download = True if param.mount is not None else param.download
+        elif isinstance(param.value, AppEndpoint):
+            value = param.value.model_dump_json()
+            tpe = "app_endpoint"
+            download = False
         else:
             value = typing.cast(str, param.value)
             download = False
