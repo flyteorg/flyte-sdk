@@ -64,6 +64,7 @@ async def greeting_proxy(name: str) -> typing.Any:
         response = await client.get(f"{env1.endpoint}/greeting/{name}")
         return response.json()
 
+
 @app2.get("/app1-url")
 async def get_app1_url() -> str:
     return os.getenv("APP1_URL")

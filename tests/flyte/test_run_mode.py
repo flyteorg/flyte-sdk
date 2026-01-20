@@ -16,7 +16,6 @@ import pytest
 import flyte
 from flyte._run import _get_main_run_mode, _run_mode_var
 
-
 # Tests for the run mode context variable
 
 

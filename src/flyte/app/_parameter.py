@@ -5,7 +5,7 @@ import re
 import typing
 from dataclasses import dataclass, field
 from functools import cache, cached_property
-from typing import TYPE_CHECKING, List, Literal, Optional
+from typing import TYPE_CHECKING, List, Literal, Optional, TypeAlias
 
 from pydantic import BaseModel, model_validator
 
@@ -18,7 +18,8 @@ if TYPE_CHECKING:
 else:
     AutoVersioning = Literal["latest", "current"]
 
-ParameterTypes = str | flyte.io.File | flyte.io.Dir
+
+ParameterTypes: TypeAlias = str | flyte.io.File | flyte.io.Dir | "AppEndpoint"
 _SerializedParameterType = Literal["string", "file", "directory", "app_endpoint"]
 
 RUNTIME_PARAMETERS_FILE = "flyte-parameters.json"
@@ -171,7 +172,7 @@ class AppEndpoint(_DelayedValue):
     public: bool = False
     type: Literal["string"] = "string"
 
-    async def materialize(self) -> str:
+    async def materialize(self) -> AppEndpoint:
         """Returns the AppEndpoint object, the endpoint is retrieved at serving time by the fserve executable."""
         return self
 

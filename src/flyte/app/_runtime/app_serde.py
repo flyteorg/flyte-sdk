@@ -22,7 +22,7 @@ from flyte._internal.runtime.resources_serde import get_proto_extended_resources
 from flyte._internal.runtime.task_serde import get_security_context, lookup_image_in_cache
 from flyte._logging import logger
 from flyte.app import AppEnvironment, Parameter, Scaling
-from flyte.app._parameter import _DelayedValue, AppEndpoint
+from flyte.app._parameter import AppEndpoint, _DelayedValue
 from flyte.models import SerializationContext
 from flyte.syncify import syncify
 
