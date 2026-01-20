@@ -200,7 +200,7 @@ def wandb_config(
     Create wandb configuration.
 
     This function works in two contexts:
-    1. With flyte.with_runcontext() - sets global wandb config
+    1. With `flyte.with_runcontext()` - sets global wandb config
     2. As a context manager - overrides config for specific tasks
 
     Args:
@@ -210,13 +210,13 @@ def wandb_config(
         name: human-readable run name
         tags: list of tags for organizing runs
         config: dictionary of hyperparameters
-        mode: "online", "offline", or "disabled"
+        mode: "online", "offline" or "disabled"
         group: group name for related runs
-        run_mode: Flyte-specific run mode - "auto", "new", or "shared"
+        run_mode: flyte-specific run mode - "auto", "new" or "shared".
             Controls whether tasks create new W&B runs or share existing ones
-        download_logs: If True, downloads wandb run files after task completes
+        download_logs: if `True`, downloads wandb run files after task completes
             and shows them as a trace output in the Flyte UI
-        **kwargs: additional wandb.init() parameters
+        **kwargs: additional `wandb.init()` parameters
     """
     return _WandBConfig(
         project=project,
@@ -333,7 +333,9 @@ def get_wandb_sweep_context() -> Optional[_WandBSweepConfig]:
     if ctx is None or not ctx.custom_context:
         return None
 
-    has_wandb_sweep_keys = any(k.startswith("wandb_sweep_") for k in ctx.custom_context.keys())
+    has_wandb_sweep_keys = any(
+        k.startswith("wandb_sweep_") for k in ctx.custom_context.keys()
+    )
     if not has_wandb_sweep_keys:
         return None
 
@@ -361,10 +363,11 @@ def wandb_sweep_config(
         project: W&B project for the sweep
         entity: W&B entity for the sweep
         prior_runs: List of prior run IDs to include in the sweep analysis
-        name: Sweep name (auto-generated as "{run_name}-{action_name}" if not provided)
-        download_logs: If True, downloads all sweep run files after task completes
+        name: Sweep name (auto-generated as `"{run_name}-{action_name}"` if not provided)
+        download_logs: if `True`, downloads all sweep run files after task completes
             and shows them as a trace output in the Flyte UI
-        **kwargs: Additional sweep config parameters like:
+
+        **kwargs: additional sweep config parameters like:
             - early_terminate: Early termination config
             - description: Sweep description
             - command: CLI command to run

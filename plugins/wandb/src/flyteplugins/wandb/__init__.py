@@ -127,17 +127,6 @@ Decorator order: `@wandb_init` or `@wandb_sweep` must be the outermost decorator
 async def my_task():
     ...
 ```
-
-Helper Functions:
-- get_wandb_run(): Access the current W&B run object (or None if not in a run)
-- get_wandb_run_dir(): Get local path to current run's directory (no network call)
-- download_wandb_run_dir(): Download run files from wandb cloud (for cross-task access)
-- download_wandb_run_logs(): Async traced function to download run logs after task completion
-- download_wandb_sweep_dirs(): Download all run directories for a sweep
-- download_wandb_sweep_logs(): Async traced function to download sweep logs after task completion
-- get_wandb_sweep_id(): Access the current sweep ID (or None if not in a sweep)
-- get_wandb_context(): Access the current W&B context
-- get_wandb_sweep_context(): Access the current W&B sweep context
 """
 
 import json
@@ -205,7 +194,7 @@ def get_wandb_sweep_id() -> str | None:
     """
     Get the current wandb `sweep_id` if within a `@wandb_sweep` decorated task.
 
-    Returns None if not within a wandb_sweep context.
+    Returns `None` if not within a `wandb_sweep` context.
 
     Returns:
         `str` | `None`: The sweep ID or None.
@@ -247,6 +236,7 @@ def download_wandb_run_dir(
     This enables access to wandb data from any task or after workflow completion.
 
     Downloaded contents:
+
         - `summary.json` - final summary metrics (always exported)
         - `metrics_history.json` - step-by-step metrics (if `include_history=True`)
         - Plus any files synced by wandb (`requirements.txt`, `wandb_metadata.json`, etc.)

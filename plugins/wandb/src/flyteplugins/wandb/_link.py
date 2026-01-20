@@ -10,6 +10,18 @@ from ._context import RunMode
 class Wandb(Link):
     """
     Generates a Weights & Biases run link.
+
+    Args:
+        host: base W&B host URL
+        project: W&B project name (overrides context config if provided)
+        entity: W&B entity/team name (overrides context config if provided)
+        run_mode: controls whether to create a new W&B run or share an existing one:
+
+            - "auto" (default): Creates new run if no parent run exists, otherwise shares parent's run
+            - "new": Always creates a new wandb run with a unique ID
+            - "shared": Always shares the parent's run ID (useful for child tasks)
+        id: optional W&B run ID (overrides context config if provided)
+        name: link name in the Flyte UI
     """
 
     host: str = "https://wandb.ai"
@@ -82,6 +94,13 @@ class Wandb(Link):
 class WandbSweep(Link):
     """
     Generates a Weights & Biases Sweep link.
+
+    Args:
+        host: base W&B host URL
+        project: W&B project name (overrides context config if provided)
+        entity: W&B entity/team name (overrides context config if provided)
+        id: optional W&B sweep ID (overrides context config if provided)
+        name: link name in the Flyte UI
     """
 
     host: str = "https://wandb.ai"
