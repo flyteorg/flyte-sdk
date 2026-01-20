@@ -99,8 +99,8 @@ async def test_setting_of_unset_formats():
     env = flyte.TaskEnvironment(name="hello_world-test-sd")
 
     @env.task
-    async def t2(path: str) -> DataFrame:
-        sd = DataFrame.from_df(val=df, uri=path)
+    async def t2(path: str) -> custom:
+        sd = await DataFrame.upload_df(val=df, uri=path, encoder=MyEncoder)
         return sd
 
     @env.task
