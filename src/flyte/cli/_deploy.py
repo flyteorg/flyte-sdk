@@ -149,15 +149,6 @@ class DeployEnvCommand(click.RichCommand):
         console.print(common.format("Environments", deployment[0].env_repr(), obj.output_format))
         console.print(common.format("Entities", deployment[0].table_repr(), obj.output_format))
 
-        # Print URLs on separate lines for apps
-        from flyte.app._deploy import DeployedAppEnvironment
-
-        # Check if any of the deployed environments is an app
-        for deployed_env in deployment[0].envs.values():
-            if isinstance(deployed_env, DeployedAppEnvironment):
-                console.print(f"\n[bold]App public url:[/bold] {deployed_env.deployed_app.endpoint}")
-                console.print(f"[bold]Union console:[/bold] {deployed_env.deployed_app.url}")
-
 
 class DeployEnvRecursiveCommand(click.Command):
     """
