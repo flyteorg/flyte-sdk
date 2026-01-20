@@ -225,21 +225,6 @@ class DeployEnvRecursiveCommand(click.Command):
         )
         console.print(common.format("Tasks", [task for d in deployments for task in d.table_repr()], obj.output_format))
 
-        # Print URLs on separate lines for any apps
-        from flyte.app._deploy import DeployedAppEnvironment
-        app_deployments = []
-        for deployment in deployments:
-            for deployed_env in deployment.envs.values():
-                if isinstance(deployed_env, DeployedAppEnvironment):
-                    app_deployments.append(deployed_env)
-
-        if app_deployments:
-            console.print("\n[bold]Deployed Apps:[/bold]")
-            for app_dep in app_deployments:
-                console.print(f"  [bold]{app_dep.deployed_app.name}:[/bold]")
-                console.print(f"    App endpoint:   {app_dep.deployed_app.endpoint}")
-                console.print(f"    Union console:  {app_dep.deployed_app.url}")
-
 
 class EnvPerFileGroup(common.ObjectsPerFileGroup):
     """
