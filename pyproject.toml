@@ -61,6 +61,8 @@ examples-test = [
     "nest-asyncio",
     "deltalake",
     "unionai-reuse>=0.1.3",
+    "fastapi",
+    "uvicorn",
 ]
 
 [dependency-groups]

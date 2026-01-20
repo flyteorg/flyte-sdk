@@ -106,13 +106,14 @@ async def _deploy_and_verify(env_or_app, test_name: str):
         test_name: Name of the test for logging purposes
 
     Returns:
-        List of deployments
+        List of Deployment objects
     """
     deployments = await flyte.deploy.aio(env_or_app)
     print(f"\n[{test_name}]")
-    for d in deployments:
-        print(f"  Deployed: {d.name}")
-        print(f"  URL: {d.url}")
+    for deployment in deployments:
+        for env_name, deployed_env in deployment.envs.items():
+            print(f"  Deployed: {deployed_env.get_name()}")
+    print("  Deployment successful\n")
     return deployments
 
 
