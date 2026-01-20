@@ -149,6 +149,15 @@ class DeployEnvCommand(click.RichCommand):
         console.print(common.format("Environments", deployment[0].env_repr(), obj.output_format))
         console.print(common.format("Entities", deployment[0].table_repr(), obj.output_format))
 
+        # Print URLs on separate lines for apps
+        from flyte.app._deploy import DeployedAppEnvironment
+
+        # Check if any of the deployed environments is an app
+        for deployed_env in deployment[0].envs.values():
+            if isinstance(deployed_env, DeployedAppEnvironment):
+                console.print(f"\n[bold]App public url:[/bold] {deployed_env.deployed_app.endpoint}")
+                console.print(f"[bold]Union console:[/bold] {deployed_env.deployed_app.url}")
+
 
 class DeployEnvRecursiveCommand(click.Command):
     """
@@ -215,6 +224,21 @@ class DeployEnvRecursiveCommand(click.Command):
             common.format("Environments", [env for d in deployments for env in d.env_repr()], obj.output_format)
         )
         console.print(common.format("Tasks", [task for d in deployments for task in d.table_repr()], obj.output_format))
+
+        # Print URLs on separate lines for any apps
+        from flyte.app._deploy import DeployedAppEnvironment
+        app_deployments = []
+        for deployment in deployments:
+            for deployed_env in deployment.envs.values():
+                if isinstance(deployed_env, DeployedAppEnvironment):
+                    app_deployments.append(deployed_env)
+
+        if app_deployments:
+            console.print("\n[bold]Deployed Apps:[/bold]")
+            for app_dep in app_deployments:
+                console.print(f"  [bold]{app_dep.deployed_app.name}:[/bold]")
+                console.print(f"    App endpoint:   {app_dep.deployed_app.endpoint}")
+                console.print(f"    Union console:  {app_dep.deployed_app.url}")
 
 
 class EnvPerFileGroup(common.ObjectsPerFileGroup):

@@ -54,10 +54,6 @@ class DeployedAppEnvironment:
                     "current state",
                     app_definition_pb2.Status.DeploymentStatus.Name(self.deployed_app.deployment_status),
                 ),
-                (
-                    "public_url",
-                    self.deployed_app.endpoint,
-                ),
             ],
         ]
 
