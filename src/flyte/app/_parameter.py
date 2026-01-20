@@ -5,7 +5,7 @@ import re
 import typing
 from dataclasses import dataclass, field
 from functools import cache, cached_property
-from typing import TYPE_CHECKING, List, Literal, Optional, TypeAlias
+from typing import TYPE_CHECKING, List, Literal, Optional, TypeAlias, Union
 
 from pydantic import BaseModel, model_validator
 
@@ -19,7 +19,7 @@ else:
     AutoVersioning = Literal["latest", "current"]
 
 
-ParameterTypes: TypeAlias = str | flyte.io.File | flyte.io.Dir | "AppEndpoint"
+ParameterTypes: TypeAlias = Union[str, flyte.io.File, flyte.io.Dir, "AppEndpoint"]
 _SerializedParameterType = Literal["string", "file", "directory", "app_endpoint"]
 
 RUNTIME_PARAMETERS_FILE = "flyte-parameters.json"
