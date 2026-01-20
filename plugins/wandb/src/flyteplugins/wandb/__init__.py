@@ -237,9 +237,9 @@ def download_wandb_run_dir(
 
     Downloaded contents:
 
-        - `summary.json` - final summary metrics (always exported)
-        - `metrics_history.json` - step-by-step metrics (if `include_history=True`)
-        - Plus any files synced by wandb (`requirements.txt`, `wandb_metadata.json`, etc.)
+        - summary.json - final summary metrics (always exported)
+        - metrics_history.json - step-by-step metrics (if include_history=True)
+        - Plus any files synced by wandb (requirements.txt, wandb_metadata.json, etc.)
 
     Args:
         run_id: The wandb run ID to download. If `None`, uses the current run's ID
