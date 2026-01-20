@@ -8,7 +8,7 @@ logger.setLevel(logging.DEBUG)
 noop_env = flyte.TaskEnvironment(
     name="env_from_image_ref_name",
     resources=flyte.Resources(cpu=1, memory="1Gi"),
-    image=flyte.Image.from_ref_name("custom-image").with_pip_packages("pandas"),
+    image=flyte.Image.from_ref_name("custom-image"),
 )
 
 
