@@ -51,6 +51,17 @@ connector = [
     "httpx",
     "prometheus-client",
 ]
+examples-test = [
+    # Dependencies for running integration tests on examples
+    "polyglot-hello>=0.1.3",
+    "pandas",
+    "pyarrow",
+    "scikit-learn",
+    "joblib",
+    "nest-asyncio",
+    "deltalake",
+    "unionai-reuse>=0.1.3",
+]
 
 [dependency-groups]
 dev = [

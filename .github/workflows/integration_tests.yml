@@ -33,11 +33,11 @@ jobs:
       - name: Install flyte & Build wheel
         run: |
           make dist
-      - name: Install plugins
+      - name: Install plugins and example dependencies
         working-directory: plugins
         run: |
           uv pip install ./ray ./pytorch ./dask ./spark
-          uv pip install ../  # Make sure the flyte sdk is installed from the current branch
+          uv pip install "../[examples-test]"  # Install flyte with example test dependencies
           uv pip list
       - name: Run integration tests
         env:
