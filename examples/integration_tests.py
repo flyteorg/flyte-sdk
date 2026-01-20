@@ -562,16 +562,15 @@ async def test_apps_single_script_fastapi(flyte_client):
 
 
 # =============================================================================
-# GPU TESTS (skipped by default)
+# GPU TESTS
 # =============================================================================
 
 
 @pytest.mark.integration
 @pytest.mark.gpu
-@pytest.mark.skip(reason="Requires GPU resources - enable in GPU CI")
 @pytest.mark.asyncio
 async def test_accelerators_gpu(flyte_client):
-    """Test GPU accelerator example - requires GPU."""
+    """Test GPU accelerator example."""
     from examples.accelerators.gpu import main
 
     await _run_and_wait(main, "test_accelerators_gpu")
@@ -579,10 +578,9 @@ async def test_accelerators_gpu(flyte_client):
 
 @pytest.mark.integration
 @pytest.mark.gpu
-@pytest.mark.skip(reason="Requires GPU resources - enable in GPU CI")
 @pytest.mark.asyncio
 async def test_ml_gridsearch_gpu(flyte_client):
-    """Test ML gridsearch with GPU - requires GPU."""
+    """Test ML gridsearch with GPU."""
     from examples.ml.gridsearch_gpu import main
 
     await _run_and_wait(main, "test_ml_gridsearch_gpu")
@@ -590,10 +588,9 @@ async def test_ml_gridsearch_gpu(flyte_client):
 
 @pytest.mark.integration
 @pytest.mark.gpu
-@pytest.mark.skip(reason="Requires GPU resources - enable in GPU CI")
 @pytest.mark.asyncio
 async def test_genai_vllm_app(flyte_client):
-    """Test vLLM app deployment - requires GPU."""
+    """Test vLLM app deployment."""
     from examples.genai.vllm.vllm_app import app
 
     await _deploy_and_verify(app, "test_genai_vllm_app")
@@ -601,26 +598,25 @@ async def test_genai_vllm_app(flyte_client):
 
 @pytest.mark.integration
 @pytest.mark.gpu
-@pytest.mark.skip(reason="Requires GPU resources - enable in GPU CI")
 @pytest.mark.asyncio
 async def test_genai_sglang_app(flyte_client):
-    """Test SGLang app deployment - requires GPU."""
+    """Test SGLang app deployment."""
     from examples.genai.sglang.sglang_app import app
 
     await _deploy_and_verify(app, "test_genai_sglang_app")
 
 
 # =============================================================================
-# EXTERNAL SERVICE TESTS (skipped by default)
+# EXTERNAL SERVICE TESTS (skipped - require backend connector configuration)
 # =============================================================================
 
 
 @pytest.mark.integration
 @pytest.mark.external
-@pytest.mark.skip(reason="Requires external service configuration")
+@pytest.mark.skip(reason="Requires BigQuery connector configured in Union backend")
 @pytest.mark.asyncio
 async def test_connectors_bigquery(flyte_client):
-    """Test BigQuery connector - requires BigQuery access."""
+    """Test BigQuery connector."""
     from examples.connectors.bigquery_example import main
 
     await _run_and_wait(main, "test_connectors_bigquery")
@@ -628,26 +624,26 @@ async def test_connectors_bigquery(flyte_client):
 
 @pytest.mark.integration
 @pytest.mark.external
-@pytest.mark.skip(reason="Requires external service configuration")
+@pytest.mark.skip(reason="Requires Databricks connector configured in Union backend")
 @pytest.mark.asyncio
 async def test_connectors_databricks(flyte_client):
-    """Test Databricks connector - requires Databricks access."""
+    """Test Databricks connector."""
     from examples.connectors.databricks_example import main
 
     await _run_and_wait(main, "test_connectors_databricks")
 
 
 # =============================================================================
-# SECRETS TESTS (skipped by default)
+# SECRETS TESTS (skipped - require secrets configured in Union backend)
 # =============================================================================
 
 
 @pytest.mark.integration
 @pytest.mark.secrets
-@pytest.mark.skip(reason="Requires secrets configuration")
+@pytest.mark.skip(reason="Requires OpenAI API key configured as secret in Union backend")
 @pytest.mark.asyncio
 async def test_genai_openai_agent(flyte_client):
-    """Test OpenAI agent - requires API key."""
+    """Test OpenAI agent."""
     from examples.genai.openai_agent import main
 
     await _run_and_wait(main, "test_genai_openai_agent")
@@ -655,10 +651,10 @@ async def test_genai_openai_agent(flyte_client):
 
 @pytest.mark.integration
 @pytest.mark.secrets
-@pytest.mark.skip(reason="Requires secrets configuration")
+@pytest.mark.skip(reason="Requires OpenAI API key configured as secret in Union backend")
 @pytest.mark.asyncio
 async def test_genai_langgraph_agent(flyte_client):
-    """Test LangGraph agent - requires API key."""
+    """Test LangGraph agent."""
     from examples.genai.langgraph_agent import main
 
     await _run_and_wait(main, "test_genai_langgraph_agent")
@@ -666,23 +662,22 @@ async def test_genai_langgraph_agent(flyte_client):
 
 @pytest.mark.integration
 @pytest.mark.secrets
-@pytest.mark.skip(reason="Requires secrets configuration")
+@pytest.mark.skip(reason="Requires W&B API key configured as secret in Union backend")
 @pytest.mark.asyncio
 async def test_context_wandb(flyte_client):
-    """Test W&B context - requires W&B API key."""
+    """Test W&B context."""
     from examples.context.wandb_context import main
 
     await _run_and_wait(main, "test_context_wandb")
 
 
 # =============================================================================
-# STRESS TESTS (skipped by default)
+# STRESS TESTS
 # =============================================================================
 
 
 @pytest.mark.integration
 @pytest.mark.stress
-@pytest.mark.skip(reason="Stress test - enable manually")
 @pytest.mark.asyncio
 async def test_stress_large_fanout(flyte_client):
     """Test large fanout stress test."""
@@ -693,7 +688,6 @@ async def test_stress_large_fanout(flyte_client):
 
 @pytest.mark.integration
 @pytest.mark.stress
-@pytest.mark.skip(reason="Stress test - enable manually")
 @pytest.mark.asyncio
 async def test_stress_long_running(flyte_client):
     """Test long-running stress test."""
@@ -704,7 +698,6 @@ async def test_stress_long_running(flyte_client):
 
 @pytest.mark.integration
 @pytest.mark.stress
-@pytest.mark.skip(reason="Stress test - enable manually")
 @pytest.mark.asyncio
 async def test_stress_runs_per_second(flyte_client):
     """Test runs-per-second stress test."""
@@ -715,7 +708,6 @@ async def test_stress_runs_per_second(flyte_client):
 
 @pytest.mark.integration
 @pytest.mark.stress
-@pytest.mark.skip(reason="Stress test - enable manually")
 @pytest.mark.asyncio
 async def test_stress_large_file_io(flyte_client):
     """Test large file I/O stress test."""
@@ -726,7 +718,6 @@ async def test_stress_large_file_io(flyte_client):
 
 @pytest.mark.integration
 @pytest.mark.stress
-@pytest.mark.skip(reason="Stress test - enable manually")
 @pytest.mark.asyncio
 async def test_stress_fanout_concurrency(flyte_client):
     """Test fanout concurrency stress test."""
