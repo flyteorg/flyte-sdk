@@ -16,11 +16,9 @@ class Wandb(Link):
         project: W&B project name (overrides context config if provided)
         entity: W&B entity/team name (overrides context config if provided)
         run_mode: Controls whether to create a new W&B run or share an existing one:
-
-            - "auto" (default): Creates new run if no parent run exists, otherwise shares parent's run
-            - "new": Always creates a new wandb run with a unique ID
-            - "shared": Always shares the parent's run ID (useful for child tasks)
-
+            1. "auto" (default): Creates new run if no parent run exists, otherwise shares parent's run
+            2. "new": Always creates a new wandb run with a unique ID
+            3. "shared": Always shares the parent's run ID (useful for child tasks)
         id: Optional W&B run ID (overrides context config if provided)
         name: Link name in the Flyte UI
     """
