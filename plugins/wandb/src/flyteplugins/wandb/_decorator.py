@@ -196,12 +196,13 @@ def wandb_init(
 
     Args:
         run_mode: Controls whether to create a new W&B run or share an existing one:
+
             1. "auto" (default): Creates new run if no parent run exists, otherwise shares parent's run
             2. "new": Always creates a new wandb run with a unique ID
             3. "shared": Always shares the parent's run ID (useful for child tasks)
         download_logs: If `True`, downloads wandb run files after task completes
             and shows them as a trace output in the Flyte UI. If None, uses
-            the value from wandb_config() context if set.
+            the value from `wandb_config()` context if set.
         project: W&B project name (overrides context config if provided)
         entity: W&B entity/team name (overrides context config if provided)
         **kwargs: Additional `wandb.init()` parameters (tags, config, mode, etc.)
