@@ -135,19 +135,19 @@ import logging
 import os
 from typing import Optional
 
+import wandb
+
 import flyte
 from flyte.io import Dir
 
-import wandb
-
-from .context import (
+from ._context import (
     get_wandb_context,
     get_wandb_sweep_context,
     wandb_config,
     wandb_sweep_config,
 )
-from .decorator import wandb_init, wandb_sweep
-from .link import Wandb, WandbSweep
+from ._decorator import wandb_init, wandb_sweep
+from ._link import Wandb, WandbSweep
 
 logger = logging.getLogger(__name__)
 
@@ -317,7 +317,9 @@ def download_wandb_run_dir(
             f"Error: {e}"
         ) from e
     except Exception as e:
-        raise RuntimeError(f"Unexpected error fetching wandb run '{run_path}': {e}") from e
+        raise RuntimeError(
+            f"Unexpected error fetching wandb run '{run_path}': {e}"
+        ) from e
 
     try:
         for file in api_run.files():
@@ -332,9 +334,13 @@ def download_wandb_run_dir(
             with open(os.path.join(path, "summary.json"), "w") as f:
                 json.dump(summary_data, f, indent=2, default=str)
     except (IOError, OSError) as e:
-        raise RuntimeError(f"Failed to write summary.json for run '{run_id}': {e}") from e
+        raise RuntimeError(
+            f"Failed to write summary.json for run '{run_id}': {e}"
+        ) from e
     except Exception as e:
-        raise RuntimeError(f"Failed to export summary data for run '{run_id}': {e}") from e
+        raise RuntimeError(
+            f"Failed to export summary data for run '{run_id}': {e}"
+        ) from e
 
     # Export metrics history to JSON
     if include_history:
@@ -344,9 +350,13 @@ def download_wandb_run_dir(
                 with open(os.path.join(path, "metrics_history.json"), "w") as f:
                     json.dump(history, f, indent=2, default=str)
         except (IOError, OSError) as e:
-            raise RuntimeError(f"Failed to write metrics_history.json for run '{run_id}': {e}") from e
+            raise RuntimeError(
+                f"Failed to write metrics_history.json for run '{run_id}': {e}"
+            ) from e
         except Exception as e:
-            raise RuntimeError(f"Failed to export history data for run '{run_id}': {e}") from e
+            raise RuntimeError(
+                f"Failed to export history data for run '{run_id}': {e}"
+            ) from e
 
     return path
 
@@ -393,7 +403,9 @@ def download_wandb_sweep_dirs(
     project = wandb_ctx.project if wandb_ctx else None
 
     if not entity or not project:
-        raise RuntimeError("Cannot query sweep without entity and project. Set them via wandb_config().")
+        raise RuntimeError(
+            "Cannot query sweep without entity and project. Set them via wandb_config()."
+        )
 
     # Query sweep runs via wandb API
     try:
@@ -413,7 +425,9 @@ def download_wandb_sweep_dirs(
             f"Error: {e}"
         ) from e
     except Exception as e:
-        raise RuntimeError(f"Unexpected error fetching wandb sweep '{entity}/{project}/{sweep_id}': {e}") from e
+        raise RuntimeError(
+            f"Unexpected error fetching wandb sweep '{entity}/{project}/{sweep_id}': {e}"
+        ) from e
 
     # Download each run's data
     downloaded_paths = []
@@ -422,7 +436,9 @@ def download_wandb_sweep_dirs(
     for run_id in run_ids:
         path = f"{base_path or '/tmp/wandb_runs'}/{run_id}"
         try:
-            download_wandb_run_dir(run_id=run_id, path=path, include_history=include_history)
+            download_wandb_run_dir(
+                run_id=run_id, path=path, include_history=include_history
+            )
             downloaded_paths.append(path)
         except Exception as e:
             # Log failure but continue with other runs

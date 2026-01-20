@@ -5,13 +5,13 @@ from dataclasses import asdict
 from inspect import iscoroutinefunction
 from typing import Any, Callable, Optional, TypeVar, cast
 
+import wandb
+
 import flyte
 from flyte._task import AsyncFunctionTaskTemplate
 
-import wandb
-
-from .context import RunMode, get_wandb_context, get_wandb_sweep_context
-from .link import Wandb, WandbSweep
+from ._context import RunMode, get_wandb_context, get_wandb_sweep_context
+from ._link import Wandb, WandbSweep
 
 logger = logging.getLogger(__name__)
 
@@ -124,7 +124,9 @@ def _wandb_run(
         if not is_primary:
             shared_config["x_update_finish_state"] = False
 
-        init_kwargs["settings"] = wandb.Settings(**{**existing_settings, **shared_config})
+        init_kwargs["settings"] = wandb.Settings(
+            **{**existing_settings, **shared_config}
+        )
 
     # Initialize wandb
     run = wandb.init(**init_kwargs)
@@ -139,7 +141,9 @@ def _wandb_run(
         yield run
     finally:
         # Determine if this is a primary run
-        is_primary_run = run_mode == "new" or (run_mode == "auto" and saved_run_id is None)
+        is_primary_run = run_mode == "new" or (
+            run_mode == "auto" and saved_run_id is None
+        )
 
         if run:
             # Different cleanup logic for local vs remote mode
@@ -288,7 +292,9 @@ def wandb_init(
 
 
 @contextmanager
-def _create_sweep(project: Optional[str] = None, entity: Optional[str] = None, **decorator_kwargs):
+def _create_sweep(
+    project: Optional[str] = None, entity: Optional[str] = None, **decorator_kwargs
+):
     """Context manager for wandb sweep creation."""
     ctx = flyte.ctx()
 
@@ -310,8 +316,14 @@ def _create_sweep(project: Optional[str] = None, entity: Optional[str] = None, *
     wandb_config = get_wandb_context()
 
     # Priority: decorator kwargs > sweep config > wandb config
-    project = project or sweep_config.project or (wandb_config.project if wandb_config else None)
-    entity = entity or sweep_config.entity or (wandb_config.entity if wandb_config else None)
+    project = (
+        project
+        or sweep_config.project
+        or (wandb_config.project if wandb_config else None)
+    )
+    entity = (
+        entity or sweep_config.entity or (wandb_config.entity if wandb_config else None)
+    )
     prior_runs = sweep_config.prior_runs or []
 
     # Get sweep config dict
@@ -388,7 +400,9 @@ def wandb_sweep(
             original_execute = func.execute
 
             async def wrapped_execute(*args, **exec_kwargs):
-                with _create_sweep(project=project, entity=entity, **kwargs) as sweep_id:
+                with _create_sweep(
+                    project=project, entity=entity, **kwargs
+                ) as sweep_id:
                     result = await original_execute(*args, **exec_kwargs)
 
                 # After sweep finishes, optionally download logs
@@ -396,7 +410,9 @@ def wandb_sweep(
                 if should_download is None:
                     # Check context config
                     sweep_config = get_wandb_sweep_context()
-                    should_download = sweep_config.download_logs if sweep_config else False
+                    should_download = (
+                        sweep_config.download_logs if sweep_config else False
+                    )
 
                 if should_download and sweep_id:
                     from . import download_wandb_sweep_logs

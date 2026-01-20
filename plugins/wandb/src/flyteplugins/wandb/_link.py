@@ -3,11 +3,15 @@ from typing import Dict, Optional
 
 from flyte import Link
 
-from .context import RunMode
+from ._context import RunMode
 
 
 @dataclass
 class Wandb(Link):
+    """
+    Generates a Weights & Biases run link.
+    """
+
     host: str = "https://wandb.ai"
     project: Optional[str] = None
     entity: Optional[str] = None
@@ -76,6 +80,10 @@ class Wandb(Link):
 
 @dataclass
 class WandbSweep(Link):
+    """
+    Generates a Weights & Biases Sweep link.
+    """
+
     host: str = "https://wandb.ai"
     project: Optional[str] = None
     entity: Optional[str] = None
