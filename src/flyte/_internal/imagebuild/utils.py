@@ -76,4 +76,9 @@ def get_and_list_dockerignore(image: Image) -> List[str]:
     except Exception as e:
         logger.error(f"Failed to read .dockerignore file at {dockerignore_path}: {e}")
         return []
-    return patterns
+
+    # Transform Docker glob patterns to fnmatch patterns for use with shutil. ignore_patterns()
+    # Docker uses **/ to mean "at any directory depth", but Python's fnmatch doesn't support this
+    fnmatch_patterns = [p.removeprefix("**/").removesuffix("/") for p in patterns]
+
+    return fnmatch_patterns
