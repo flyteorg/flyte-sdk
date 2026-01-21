@@ -284,8 +284,6 @@ def test_run_with_local_dir_input(runner):
         raise ve
 
 
-
-
 def test_file_param_type_returns_file_with_local_path_in_local_mode():
     """Test that FileParamType returns File with local path when run_args.local is True."""
     import tempfile
@@ -424,7 +422,6 @@ def test_cli_run_with_parquet_file_pd_dataframe_input(runner, temp_parquet_file)
         raise ve
 
 
-
 @pytest.mark.skipif(pd is None, reason="pandas is not installed")
 def test_cli_run_with_parquet_file_flyte_dataframe_input(runner, temp_parquet_file):
     """Test CLI run with a file path to parquet, task expects flyte.io.DataFrame."""
@@ -514,6 +511,7 @@ def test_cli_run_with_parquet_dir_pd_dataframe_input(runner, temp_parquet_dir):
             # Known click issue
             return
         raise ve
+
 
 @pytest.mark.skipif(pd is None, reason="pandas is not installed")
 def test_cli_run_with_parquet_dir_flyte_dataframe_input(runner, temp_parquet_dir):
