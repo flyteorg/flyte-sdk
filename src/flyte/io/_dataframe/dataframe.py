@@ -93,11 +93,11 @@ class DataFrame(BaseModel, SerializableType):
         }
 
     @property
-    def lazy_uploader(self) -> Callable[[], Coroutine[Any, Any, Any]] | None:
+    def lazy_uploader(self) -> Callable[[], Coroutine[Any, Any, DataFrame]] | None:
         return self._lazy_uploader
 
     @lazy_uploader.setter
-    def lazy_uploader(self, lazy_uploader: Callable[[], Coroutine[Any, Any, Any]] | None):
+    def lazy_uploader(self, lazy_uploader: Callable[[], Coroutine[Any, Any, DataFrame]] | None):
         self._lazy_uploader = lazy_uploader
 
     @classmethod
@@ -229,7 +229,7 @@ class DataFrame(BaseModel, SerializableType):
         ctx = internal_ctx()
         if not ctx.has_raw_data and remote_destination is None:
 
-            async def _lazy_uploader() -> Any:
+            async def _lazy_uploader() -> DataFrame:
                 from flyte._run import _get_main_run_mode
 
                 if _get_main_run_mode() == "local":
@@ -244,6 +244,7 @@ class DataFrame(BaseModel, SerializableType):
             fdf = cls.wrap_df(df)
             fdf._metadata = literals_pb2.StructuredDatasetMetadata(structured_dataset_type=sdt)
             fdf._lazy_uploader = _lazy_uploader
+            fdf._raw_df = df
             return fdf
 
         fdf = cls.wrap_df(df, uri=remote_destination)
@@ -282,7 +283,7 @@ class DataFrame(BaseModel, SerializableType):
         ctx = internal_ctx()
         if not ctx.has_raw_data and remote_destination is None:
 
-            async def _lazy_uploader() -> Any:
+            async def _lazy_uploader() -> DataFrame:
                 from flyte._run import _get_main_run_mode
 
                 if _get_main_run_mode() == "local":
@@ -874,6 +875,10 @@ class DataFrameTransformerEngine(TypeTransformer[DataFrame]):
         python_type: Union[Type[DataFrame], Type],
         expected: types_pb2.LiteralType,
     ) -> literals_pb2.Literal:
+        from flyte._context import internal_ctx
+
+        ctx = internal_ctx()
+
         # Make a copy in case we need to hand off to encoders, since we can't be sure of mutations.
         python_type, *_attrs = extract_cols_and_format(python_type)
         sdt = types_pb2.StructuredDatasetType(format=self.DEFAULT_FORMATS.get(python_type, GENERIC_FORMAT))
@@ -933,19 +938,7 @@ class DataFrameTransformerEngine(TypeTransformer[DataFrame]):
                 if not uri:
                     raise ValueError(f"If dataframe is not specified, then the uri should be specified. {python_val}")
                 if not storage.is_remote(uri):
-                    try:
-                        uri = await storage.put(uri, recursive=True)
-                    except ValueError:
-                        # If the raw data path is not found, then upload the file via flyte.remote.upload_{file, dir}
-                        import flyte.remote
-
-                        local_path = pathlib.Path(uri)
-                        if local_path.is_file():
-                            _, uri = await flyte.remote.upload_file.aio(local_path)
-                        elif local_path.is_dir():
-                            uri = await flyte.remote.upload_dir(local_path)
-                        else:
-                            raise ValueError(f"Expected a file or directory, {local_path} is neither")
+                    uri = await storage.put(uri, recursive=True)
 
                 # Check the user-specified format
                 # When users specify format for a DataFrame, the format should be retained
@@ -973,15 +966,12 @@ class DataFrameTransformerEngine(TypeTransformer[DataFrame]):
 
             # 3. This is the third and probably most common case. The python DataFrame object wraps a dataframe
             # that we will need to invoke an encoder for. Figure out which encoder to call and invoke it.
-            df_type = type(python_val.val)
+            if not ctx.has_raw_data:
+                fdf = await DataFrame.from_local(python_val.val)
+                return await self.to_literal(fdf, python_type, expected)
 
-            try:
-                protocol = self._protocol_from_type_or_prefix(df_type, python_val.uri)
-            except ValueError:
-                # If the protocol is not found and assume that we need to write the
-                # dataframe to a temporary directory to upload it via flyte.remote.upload_{file, dir}
-                fmt = self.DEFAULT_FORMATS.get(df_type, "")
-                return await self._upload_to_remote(python_val.val, df_type, fmt, sdt)
+            df_type = type(python_val.val)
+            protocol = self._protocol_from_type_or_prefix(df_type, python_val.uri)
 
             return await self.encode(
                 python_val,
@@ -992,51 +982,19 @@ class DataFrameTransformerEngine(TypeTransformer[DataFrame]):
             )
 
         # Otherwise assume it's a dataframe instance. Wrap it with some defaults
-        fmt = self.DEFAULT_FORMATS.get(python_type, "")
-        try:
-            protocol = self._protocol_from_type_or_prefix(python_type)
-            remote_uri = None
-        except ValueError:
-            # If the protocol is not found and assume that we need to write the
-            # dataframe to a temporary directory to upload it via flyte.remote.upload_{file, dir}
-            return await self._upload_to_remote(python_val, python_type, fmt, sdt)
+        if not ctx.has_raw_data:
+            fdf = await DataFrame.from_local(python_val)
+            return await self.to_literal(fdf, python_type, expected)
 
+        fmt = self.DEFAULT_FORMATS.get(python_type, "")
+        fdf = DataFrame.from_df(val=python_val)
+        protocol = self._protocol_from_type_or_prefix(python_type)
         meta = literals_pb2.StructuredDatasetMetadata(
             structured_dataset_type=expected.structured_dataset_type if expected else None
         )
 
-        fdf = DataFrame.from_df(val=python_val, uri=remote_uri)
         fdf._metadata = meta
         return await self.encode(fdf, python_type, protocol, fmt, sdt)
-
-    async def _upload_to_remote(
-        self,
-        python_val: typing.Any,
-        python_type: Union[Type[DataFrame], Type],
-        fmt: str,
-        sdt: types_pb2.StructuredDatasetType,
-    ) -> literals_pb2.Literal:
-        import flyte.remote
-
-        with tempfile.TemporaryDirectory() as temp_dir:
-            handler: DataFrameEncoder = self.get_encoder(python_type, "file", fmt)
-            sd_model = await handler.encode(DataFrame.from_df(val=python_val, uri=temp_dir), sdt)
-
-            path = pathlib.Path(sd_model.uri)
-            local_files = list(path.glob("**/*"))
-            if len(local_files) == 1:
-                file_path = local_files[0]
-                _, remote_uri = await flyte.remote.upload_file.aio(file_path)
-                remote_uri = os.path.dirname(remote_uri)
-            elif len(local_files) > 1:
-                remote_uri = await flyte.remote.upload_dir(path)
-            else:
-                raise ValueError(f"Expected 1 or more files in {path}, got {len(local_files)}")
-
-            sd_model.uri = remote_uri
-            literal = literals_pb2.Literal(scalar=literals_pb2.Scalar(structured_dataset=sd_model))
-            modify_literal_uris(literal)
-            return literal
 
     def _protocol_from_type_or_prefix(self, df_type: Type, uri: Optional[str] = None) -> str:
         """
