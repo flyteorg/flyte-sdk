@@ -3,6 +3,7 @@ from __future__ import annotations
 import _datetime
 import asyncio
 import collections
+import os
 import pathlib
 import types
 import typing
@@ -17,6 +18,7 @@ from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, model_serializer
 from typing_extensions import Annotated, TypeAlias, get_args, get_origin
 
 import flyte.storage as storage
+from flyte.storage._storage import get_credentials_error
 from flyte._logging import logger
 from flyte._utils import lazy_module
 from flyte._utils.asyn import loop_manager
@@ -1163,7 +1165,12 @@ class DataFrameTransformerEngine(TypeTransformer[DataFrame]):
         """
         protocol = get_protocol(sd.uri)
         decoder = self.get_decoder(df_type, protocol, sd.metadata.structured_dataset_type.format)
-        result = await decoder.decode(sd, updated_metadata)
+
+        try:
+            result = await decoder.decode(sd, updated_metadata)
+        except OSError as exc:
+            raise OSError(f"{exc}\n{get_credentials_error(sd.uri, protocol)}") from exc
+
         return typing.cast(DF, result)
 
     async def iter_as(
@@ -1174,9 +1181,13 @@ class DataFrameTransformerEngine(TypeTransformer[DataFrame]):
     ) -> typing.AsyncIterator[DF]:
         protocol = get_protocol(sd.uri)
         decoder = self.DECODERS[df_type][protocol][sd.metadata.structured_dataset_type.format]
-        result: Union[Coroutine[Any, Any, DF], Coroutine[Any, Any, typing.AsyncIterator[DF]]] = decoder.decode(
-            sd, updated_metadata
-        )
+        try:
+            result: Union[Coroutine[Any, Any, DF], Coroutine[Any, Any, typing.AsyncIterator[DF]]] = decoder.decode(
+                sd, updated_metadata
+            )
+        except OSError as exc:
+            raise OSError(f"{exc}\n{get_credentials_error(sd.uri, protocol)}") from exc
+
         if not isinstance(result, types.AsyncGeneratorType):
             raise ValueError(f"Decoder {decoder} didn't return an async iterator {result} but should have from {sd}")
         return result

@@ -5,7 +5,7 @@ import pathlib
 import random
 import tempfile
 import typing
-from typing import AsyncGenerator, Optional
+from typing import AsyncGenerator, Optional, Coroutine, Any
 from uuid import UUID
 
 import fsspec
@@ -457,6 +457,29 @@ def exists_sync(path: str, **kwargs) -> bool:
         return True
     except FileNotFoundError:
         return False
+
+
+def get_credentials_error(uri: str, protocol: str) -> str:
+    # Check for common credential issues
+    if protocol == "s3":
+        return (
+            f"Failed to download data from {uri}. "
+            f"S3 credentials are required to access the data at {uri}. "
+            "Please set the following environment variables: AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY"
+        )
+    elif protocol in ("gs", "gcs"):
+        return (
+            f"Failed to download data from {uri}. "
+            f"GCS credentials are required to access the data at {uri}. "
+            f"Please set the following environment variable: GOOGLE_APPLICATION_CREDENTIALS"
+        )
+    elif protocol in ("abfs", "abfss"):
+        return (
+            f"Failed to download data from {uri}. "
+            f"Azure credentials are required to access the data at {uri}. "
+            "Please set the following environment variables: AZURE_STORAGE_ACCOUNT_NAME, "
+            "AZURE_STORAGE_ACCOUNT_KEY"
+        )
 
 
 register(_OBSTORE_SUPPORTED_PROTOCOLS, asynchronous=True)
