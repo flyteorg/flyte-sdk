@@ -52,8 +52,8 @@ vllm_app = VLLMAppEnvironment(
     resources=flyte.Resources(cpu="4", memory="16Gi", gpu="V100:1", disk="10Gi"),
     image=(
         flyte.Image.from_debian_base(
-          name="vllm-app-image",
-          install_flyte=False,
+            name="vllm-app-image",
+            install_flyte=False,
         )
         .with_pip_packages("flashinfer-python", "flashinfer-cubin")
         .with_pip_packages("flashinfer-jit-cache", index_url="https://flashinfer.ai/whl/cu129")
