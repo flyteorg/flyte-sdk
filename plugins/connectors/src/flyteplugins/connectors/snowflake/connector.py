@@ -174,7 +174,7 @@ class SnowflakeConnector(AsyncConnector):
             schema=schema,
             warehouse=warehouse,
             query_id=query_id,
-            has_output=task_template.interface.outputs is not None and len(task_template.interface.outputs) > 0,
+            has_output=task_template.interface.outputs is not None and len(task_template.interface.outputs.variables) > 0,
             connection_kwargs=connection_kwargs,
         )
 
@@ -204,17 +204,15 @@ class SnowflakeConnector(AsyncConnector):
         log_link = TaskLog(
             uri=_construct_query_link(resource_meta.account, resource_meta.query_id),
             name="Snowflake Dashboard",
+            ready=True,
         )
 
         def _get_query_status():
-            cursor = conn.cursor()
             try:
-                status = cursor.get_query_status_throw_if_error(resource_meta.query_id)
+                status = conn.get_query_status_throw_if_error(resource_meta.query_id)
                 return status, None
             except Exception as e:
                 return None, str(e)
-            finally:
-                cursor.close()
 
         loop = asyncio.get_running_loop()
         status, error = await loop.run_in_executor(None, _get_query_status)
