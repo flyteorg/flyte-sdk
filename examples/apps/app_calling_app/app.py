@@ -60,6 +60,5 @@ if __name__ == "__main__":
         root_dir=pathlib.Path(__file__).parent,
         log_level=logging.DEBUG,
     )
-    deployments = flyte.deploy(env2)
-    d = deployments[0]
-    print(f"Deployed FastAPI app: {d.env_repr()}")
+    app = flyte.serve(env2)
+    print(f"Deployed FastAPI app: {app.url}")
