@@ -566,3 +566,125 @@ def test_with_servecontext_dependent_apps_with_parameter_overrides():
     frontend_deserialized = SerializableParameterCollection.from_transport(frontend_serialized)
     assert frontend_deserialized.parameters[0].value == "https://api.production.example.com"
     assert frontend_deserialized.parameters[1].value == "production-theme"
+
+
+# =============================================================================
+# Tests for serve method deploying dependent apps
+# =============================================================================
+
+
+def test_serve_discovers_dependent_app_environments():
+    """
+    GOAL: Verify plan_deploy discovers dependent AppEnvironments.
+
+    Tests that when an app depends on another app, plan_deploy correctly
+    discovers both apps in the deployment plan.
+    """
+    from flyte._deploy import plan_deploy
+
+    # Create the backend app (dependency)
+    backend_app = AppEnvironment(
+        name="backend-api",
+        image=Image.from_base("python:3.11"),
+    )
+
+    # Create the frontend app that depends on the backend
+    frontend_app = AppEnvironment(
+        name="frontend-app",
+        image=Image.from_base("python:3.11"),
+        depends_on=[backend_app],
+    )
+
+    # Plan deployment for frontend app
+    deployments = plan_deploy(frontend_app)
+
+    # Verify both apps are in the deployment plan
+    assert len(deployments) == 1
+    deployment_plan = deployments[0]
+    assert "backend-api" in deployment_plan.envs
+    assert "frontend-app" in deployment_plan.envs
+    assert deployment_plan.envs["backend-api"] is backend_app
+    assert deployment_plan.envs["frontend-app"] is frontend_app
+
+
+def test_serve_discovers_transitive_dependencies():
+    """
+    GOAL: Verify plan_deploy discovers transitive dependencies.
+
+    Tests that when app C depends on app B, which depends on app A,
+    all three apps are discovered in the deployment plan.
+    """
+    from flyte._deploy import plan_deploy
+
+    # Create chain of dependencies: app_c -> app_b -> app_a
+    app_a = AppEnvironment(
+        name="app-a",
+        image=Image.from_base("python:3.11"),
+    )
+
+    app_b = AppEnvironment(
+        name="app-b",
+        image=Image.from_base("python:3.11"),
+        depends_on=[app_a],
+    )
+
+    app_c = AppEnvironment(
+        name="app-c",
+        image=Image.from_base("python:3.11"),
+        depends_on=[app_b],
+    )
+
+    # Plan deployment for app_c (which has transitive dependencies)
+    deployments = plan_deploy(app_c)
+
+    # Verify all three apps are in the deployment plan
+    assert len(deployments) == 1
+    deployment_plan = deployments[0]
+    assert "app-a" in deployment_plan.envs
+    assert "app-b" in deployment_plan.envs
+    assert "app-c" in deployment_plan.envs
+
+
+def test_serve_discovers_multiple_direct_dependencies():
+    """
+    GOAL: Verify plan_deploy discovers multiple direct dependencies.
+
+    Tests that when an app depends on multiple other apps,
+    all dependencies are discovered in the deployment plan.
+    """
+    from flyte._deploy import plan_deploy
+
+    # Create multiple dependencies
+    db_app = AppEnvironment(
+        name="db-service",
+        image=Image.from_base("python:3.11"),
+    )
+
+    cache_app = AppEnvironment(
+        name="cache-service",
+        image=Image.from_base("python:3.11"),
+    )
+
+    auth_app = AppEnvironment(
+        name="auth-service",
+        image=Image.from_base("python:3.11"),
+    )
+
+    # Main app depends on all three services
+    main_app = AppEnvironment(
+        name="main-app",
+        image=Image.from_base("python:3.11"),
+        depends_on=[db_app, cache_app, auth_app],
+    )
+
+    # Plan deployment for main_app
+    deployments = plan_deploy(main_app)
+
+    # Verify all four apps are in the deployment plan
+    assert len(deployments) == 1
+    deployment_plan = deployments[0]
+    assert len(deployment_plan.envs) == 4
+    assert "db-service" in deployment_plan.envs
+    assert "cache-service" in deployment_plan.envs
+    assert "auth-service" in deployment_plan.envs
+    assert "main-app" in deployment_plan.envs
