@@ -33,7 +33,7 @@ snowflake_task = Snowflake(
         warehouse="COMPUTE_WH",
     ),
     query_template="INSERT INTO FLYTE.PUBLIC.TEST (ID, NAME, AGE) VALUES (%(id)s, %(name)s, %(age)s);",
-    snowflake_private_key="snowflake",
+    snowflake_private_key="SNOWFLAKE",
 )
 
 flyte.TaskEnvironment.from_task("snowflake_env", snowflake_task)
