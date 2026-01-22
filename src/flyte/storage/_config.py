@@ -34,9 +34,10 @@ class Storage(object):
 
     @classmethod
     def _auto_as_kwargs(cls) -> typing.Dict[str, typing.Any]:
-        retries = os.getenv(cls._KEY_ENV_VAR_MAPPING["retries"])
-        backoff = os.getenv(cls._KEY_ENV_VAR_MAPPING["backoff"])
-        enable_debug = os.getenv(cls._KEY_ENV_VAR_MAPPING["enable_debug"])
+        retries = int(os.getenv(cls._KEY_ENV_VAR_MAPPING["retries"]))
+        backoff = int(os.getenv(cls._KEY_ENV_VAR_MAPPING["backoff"]))
+        enable_debug_str = os.getenv(cls._KEY_ENV_VAR_MAPPING["enable_debug"])
+        enable_debug = enable_debug_str.lower() in ("true", "1", "yes") if enable_debug_str else None
 
         kwargs: typing.Dict[str, typing.Any] = {}
         kwargs = set_if_exists(kwargs, "enable_debug", enable_debug)
