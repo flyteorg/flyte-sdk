@@ -5,7 +5,7 @@ import pathlib
 import random
 import tempfile
 import typing
-from typing import AsyncGenerator, Optional, Coroutine, Any
+from typing import AsyncGenerator, Optional
 from uuid import UUID
 
 import fsspec
@@ -480,6 +480,7 @@ def get_credentials_error(uri: str, protocol: str) -> str:
             "Please set the following environment variables: AZURE_STORAGE_ACCOUNT_NAME, "
             "AZURE_STORAGE_ACCOUNT_KEY"
         )
+    raise ValueError(f"Unsupported protocol: {protocol}")
 
 
 register(_OBSTORE_SUPPORTED_PROTOCOLS, asynchronous=True)
