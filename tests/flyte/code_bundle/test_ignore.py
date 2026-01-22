@@ -132,6 +132,6 @@ node_modules/
         assert git_ignore.is_ignored(pyc_file), "test.pyc should be ignored"
         assert git_ignore.is_ignored(pycache_file), "__pycache__/main.cpython-312.pyc should be ignored"
 
-        # main.py be ignored
+        # main.py should not be ignored
         main_file = (root_path / "main.py").absolute()
         assert not git_ignore.is_ignored(main_file), "main.py should NOT be ignored"
