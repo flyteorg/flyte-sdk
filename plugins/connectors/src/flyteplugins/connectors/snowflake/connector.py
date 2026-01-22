@@ -205,6 +205,7 @@ class SnowflakeConnector(AsyncConnector):
             uri=_construct_query_link(resource_meta.account, resource_meta.query_id),
             name="Snowflake Dashboard",
             ready=True,
+            link_type=TaskLog.DASHBOARD,
         )
 
         def _get_query_status():
