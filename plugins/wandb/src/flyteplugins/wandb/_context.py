@@ -200,23 +200,23 @@ def wandb_config(
     Create wandb configuration.
 
     This function works in two contexts:
-    1. With flyte.with_runcontext() - sets global wandb config
+    1. With `flyte.with_runcontext()` - sets global wandb config
     2. As a context manager - overrides config for specific tasks
 
     Args:
-        project: wandb project name
-        entity: wandb entity (team or username)
-        id: unique run id (auto-generated if not provided)
-        name: human-readable run name
-        tags: list of tags for organizing runs
-        config: dictionary of hyperparameters
-        mode: "online", "offline", or "disabled"
-        group: group name for related runs
-        run_mode: Flyte-specific run mode - "auto", "new", or "shared"
+        project: W&B project name
+        entity: W&B entity (team or username)
+        id: Unique run id (auto-generated if not provided)
+        name: Human-readable run name
+        tags: List of tags for organizing runs
+        config: Dictionary of hyperparameters
+        mode: "online", "offline" or "disabled"
+        group: Group name for related runs
+        run_mode: Flyte-specific run mode - "auto", "new" or "shared".
             Controls whether tasks create new W&B runs or share existing ones
-        download_logs: If True, downloads wandb run files after task completes
+        download_logs: If `True`, downloads wandb run files after task completes
             and shows them as a trace output in the Flyte UI
-        **kwargs: additional wandb.init() parameters
+        **kwargs: Additional `wandb.init()` parameters
     """
     return _WandBConfig(
         project=project,
@@ -333,7 +333,9 @@ def get_wandb_sweep_context() -> Optional[_WandBSweepConfig]:
     if ctx is None or not ctx.custom_context:
         return None
 
-    has_wandb_sweep_keys = any(k.startswith("wandb_sweep_") for k in ctx.custom_context.keys())
+    has_wandb_sweep_keys = any(
+        k.startswith("wandb_sweep_") for k in ctx.custom_context.keys()
+    )
     if not has_wandb_sweep_keys:
         return None
 
@@ -361,14 +363,10 @@ def wandb_sweep_config(
         project: W&B project for the sweep
         entity: W&B entity for the sweep
         prior_runs: List of prior run IDs to include in the sweep analysis
-        name: Sweep name (auto-generated as "{run_name}-{action_name}" if not provided)
-        download_logs: If True, downloads all sweep run files after task completes
+        name: Sweep name (auto-generated as `{run_name}-{action_name}` if not provided)
+        download_logs: If `True`, downloads all sweep run files after task completes
             and shows them as a trace output in the Flyte UI
-        **kwargs: Additional sweep config parameters like:
-            - early_terminate: Early termination config
-            - description: Sweep description
-            - command: CLI command to run
-            - controller: Sweep controller config
+        **kwargs: additional sweep config parameters like `early_terminate`, `description`, `command`, etc.
 
     See: https://docs.wandb.ai/models/sweeps/sweep-config-keys
     """

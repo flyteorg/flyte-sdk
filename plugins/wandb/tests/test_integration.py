@@ -2,11 +2,17 @@
 
 from unittest.mock import MagicMock, patch
 
-import flyte
 import pytest
+from flyteplugins.wandb import (
+    Wandb,
+    WandbSweep,
+    wandb_config,
+    wandb_init,
+    wandb_sweep,
+    wandb_sweep_config,
+)
 
-from flyteplugins.wandb import wandb_config, wandb_init, wandb_sweep, wandb_sweep_config
-from flyteplugins.wandb.link import Wandb, WandbSweep
+import flyte
 
 
 class TestWandbInitIntegration:
@@ -16,7 +22,9 @@ class TestWandbInitIntegration:
         """Test that a task decorated with @wandb_init has the correct link."""
         env = flyte.TaskEnvironment(name="test-env")
 
-        @wandb_init(project="integration-project", entity="integration-entity", run_mode="new")
+        @wandb_init(
+            project="integration-project", entity="integration-entity", run_mode="new"
+        )
         @env.task
         async def integration_task():
             return "result"
@@ -135,7 +143,9 @@ class TestContextManagerIntegration:
         mock_custom_context.return_value = mock_cm
 
         # Simulate using wandb_config in with block
-        config = wandb_config(project="test-project", entity="test-entity", tags=["test"])
+        config = wandb_config(
+            project="test-project", entity="test-entity", tags=["test"]
+        )
 
         with config:
             # Inside the context, config should be active
@@ -147,7 +157,9 @@ class TestContextManagerIntegration:
 
     @patch("flyte.ctx")
     @patch("flyte.custom_context")
-    def test_wandb_sweep_config_context_manager_workflow(self, mock_custom_context, mock_ctx):
+    def test_wandb_sweep_config_context_manager_workflow(
+        self, mock_custom_context, mock_ctx
+    ):
         """Test complete workflow with wandb_sweep_config as context manager."""
         mock_context = MagicMock()
         mock_context.custom_context = {}

@@ -1,6 +1,6 @@
 """Tests for wandb link generation."""
 
-from flyteplugins.wandb.link import Wandb, WandbSweep
+from flyteplugins.wandb import Wandb, WandbSweep
 
 
 class TestWandbLink:
@@ -21,7 +21,10 @@ class TestWandbLink:
         )
 
         # Should use decorator params and generate run ID
-        assert uri == "https://wandb.ai/test-entity/test-project/runs/test-run-{{.actionName}}"
+        assert (
+            uri
+            == "https://wandb.ai/test-entity/test-project/runs/test-run-{{.actionName}}"
+        )
 
     def test_wandb_link_with_context_runtime_keys(self):
         """Test link generation when project/entity are in context (config keys only)."""
@@ -40,7 +43,10 @@ class TestWandbLink:
             pod_name="{{.podName}}",
         )
 
-        assert uri == "https://wandb.ai/context-entity/context-project/runs/test-run-{{.actionName}}"
+        assert (
+            uri
+            == "https://wandb.ai/context-entity/context-project/runs/test-run-{{.actionName}}"
+        )
 
     def test_wandb_link_with_context_config_keys(self):
         """Test link generation when project/entity are in context with config keys."""
@@ -59,7 +65,10 @@ class TestWandbLink:
             pod_name="{{.podName}}",
         )
 
-        assert uri == "https://wandb.ai/config-entity/config-project/runs/test-run-{{.actionName}}"
+        assert (
+            uri
+            == "https://wandb.ai/config-entity/config-project/runs/test-run-{{.actionName}}"
+        )
 
     def test_wandb_link_uses_config_keys(self):
         """Test that config keys (wandb_*) are used when available."""
@@ -78,7 +87,10 @@ class TestWandbLink:
             pod_name="{{.podName}}",
         )
 
-        assert uri == "https://wandb.ai/config-entity/config-project/runs/test-run-{{.actionName}}"
+        assert (
+            uri
+            == "https://wandb.ai/config-entity/config-project/runs/test-run-{{.actionName}}"
+        )
 
     def test_wandb_link_decorator_params_take_precedence_over_context(self):
         """Test that decorator params take precedence over context."""
@@ -97,7 +109,10 @@ class TestWandbLink:
             pod_name="{{.podName}}",
         )
 
-        assert uri == "https://wandb.ai/decorator-entity/decorator-project/runs/test-run-{{.actionName}}"
+        assert (
+            uri
+            == "https://wandb.ai/decorator-entity/decorator-project/runs/test-run-{{.actionName}}"
+        )
 
     def test_wandb_link_missing_project(self):
         """Test link generation when project is missing."""
@@ -150,7 +165,10 @@ class TestWandbLink:
         )
 
         # Should always create new run ID even when parent exists
-        assert uri == "https://wandb.ai/test-entity/test-project/runs/test-run-{{.actionName}}"
+        assert (
+            uri
+            == "https://wandb.ai/test-entity/test-project/runs/test-run-{{.actionName}}"
+        )
 
     def test_wandb_link_with_parent_run_id_run_mode_shared(self):
         """Test link generation with run_mode="shared" (always reuses parent)."""
@@ -222,7 +240,10 @@ class TestWandbLink:
         )
 
         # Should create new run ID when no parent available
-        assert uri == "https://wandb.ai/test-entity/test-project/runs/test-run-{{.actionName}}"
+        assert (
+            uri
+            == "https://wandb.ai/test-entity/test-project/runs/test-run-{{.actionName}}"
+        )
 
     def test_wandb_link_custom_host(self):
         """Test link generation with custom wandb host."""
@@ -242,7 +263,10 @@ class TestWandbLink:
             pod_name="{{.podName}}",
         )
 
-        assert uri == "https://custom.wandb.io/test-entity/test-project/runs/test-run-{{.actionName}}"
+        assert (
+            uri
+            == "https://custom.wandb.io/test-entity/test-project/runs/test-run-{{.actionName}}"
+        )
 
     def test_wandb_link_empty_context(self):
         """Test link generation with empty context dict."""
@@ -258,7 +282,10 @@ class TestWandbLink:
             pod_name="{{.podName}}",
         )
 
-        assert uri == "https://wandb.ai/test-entity/test-project/runs/test-run-{{.actionName}}"
+        assert (
+            uri
+            == "https://wandb.ai/test-entity/test-project/runs/test-run-{{.actionName}}"
+        )
 
     def test_wandb_link_none_context(self):
         """Test link generation with None context."""
@@ -274,7 +301,10 @@ class TestWandbLink:
             pod_name="{{.podName}}",
         )
 
-        assert uri == "https://wandb.ai/test-entity/test-project/runs/test-run-{{.actionName}}"
+        assert (
+            uri
+            == "https://wandb.ai/test-entity/test-project/runs/test-run-{{.actionName}}"
+        )
 
     def test_wandb_link_with_custom_id_in_link(self):
         """Test link generation with custom run ID provided to Wandb link."""
@@ -395,7 +425,10 @@ class TestWandbLink:
         )
 
         # Should create new run ID since no parent
-        assert uri == "https://wandb.ai/test-entity/test-project/runs/test-run-{{.actionName}}"
+        assert (
+            uri
+            == "https://wandb.ai/test-entity/test-project/runs/test-run-{{.actionName}}"
+        )
 
     def test_wandb_link_explicit_run_mode_new(self):
         """Test that explicit run_mode='new' always creates new run."""
@@ -418,7 +451,10 @@ class TestWandbLink:
         )
 
         # Should create new run ID even though parent exists
-        assert uri == "https://wandb.ai/test-entity/test-project/runs/test-run-{{.actionName}}"
+        assert (
+            uri
+            == "https://wandb.ai/test-entity/test-project/runs/test-run-{{.actionName}}"
+        )
 
 
 class TestWandbSweepLink:
@@ -660,7 +696,9 @@ class TestWandbSweepLink:
         )
 
         # Should use custom sweep ID from link parameter
-        assert uri == "https://wandb.ai/test-entity/test-project/sweeps/my-custom-sweep-id"
+        assert (
+            uri == "https://wandb.ai/test-entity/test-project/sweeps/my-custom-sweep-id"
+        )
 
     def test_wandb_sweep_link_with_custom_id_in_context(self):
         """Test sweep link generation with custom sweep ID from context."""
@@ -677,7 +715,9 @@ class TestWandbSweepLink:
         )
 
         # Should use sweep ID from context
-        assert uri == "https://wandb.ai/test-entity/test-project/sweeps/context-sweep-id"
+        assert (
+            uri == "https://wandb.ai/test-entity/test-project/sweeps/context-sweep-id"
+        )
 
     def test_wandb_sweep_link_custom_id_priority(self):
         """Test that link.id takes precedence over context _wandb_sweep_id."""
