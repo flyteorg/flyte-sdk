@@ -115,6 +115,8 @@ class SnowflakeConnector(AsyncConnector):
         self,
         task_template: TaskTemplate,
         inputs: Optional[Dict[str, Any]] = None,
+        snowflake_private_key: Optional[str] = None,
+        snowflake_private_key_passphrase: Optional[str] = None,
         **kwargs,
     ) -> SnowflakeJobMetadata:
         """
@@ -134,10 +136,6 @@ class SnowflakeConnector(AsyncConnector):
         if not all([user, database, warehouse]):
             raise ValueError("User, database and warehouse must be specified in the task configuration.")
 
-        # Extract authentication secrets from kwargs
-        private_key_content = kwargs.get("snowflake_private_key")
-        private_key_passphrase = kwargs.get("snowflake_private_key_passphrase")
-
         # Get additional connection parameters from custom config
         connection_kwargs = custom.get("connection_kwargs", {})
 
@@ -147,8 +145,8 @@ class SnowflakeConnector(AsyncConnector):
             database=database,
             schema=schema,
             warehouse=warehouse,
-            private_key_content=private_key_content,
-            private_key_passphrase=private_key_passphrase,
+            private_key_content=snowflake_private_key,
+            private_key_passphrase=snowflake_private_key_passphrase,
             **connection_kwargs,
         )
 
@@ -181,23 +179,21 @@ class SnowflakeConnector(AsyncConnector):
     async def get(
         self,
         resource_meta: SnowflakeJobMetadata,
+        snowflake_private_key: Optional[str] = None,
+        snowflake_private_key_passphrase: Optional[str] = None,
         **kwargs,
     ) -> Resource:
         """
         Poll the status of a Snowflake query.
         """
-        # Extract authentication secrets from kwargs
-        private_key_content = kwargs.get("snowflake_private_key")
-        private_key_passphrase = kwargs.get("snowflake_private_key_passphrase")
-
         conn = await _get_snowflake_connection(
             account=resource_meta.account,
             user=resource_meta.user,
             database=resource_meta.database,
             schema=resource_meta.schema,
             warehouse=resource_meta.warehouse,
-            private_key_content=private_key_content,
-            private_key_passphrase=private_key_passphrase,
+            private_key_content=snowflake_private_key,
+            private_key_passphrase=snowflake_private_key_passphrase,
             **(resource_meta.connection_kwargs or {}),
         )
 
@@ -240,23 +236,21 @@ class SnowflakeConnector(AsyncConnector):
     async def delete(
         self,
         resource_meta: SnowflakeJobMetadata,
+        snowflake_private_key: Optional[str] = None,
+        snowflake_private_key_passphrase: Optional[str] = None,
         **kwargs,
     ):
         """
         Cancel a running Snowflake query.
         """
-        # Extract authentication secrets from kwargs
-        private_key_content = kwargs.get("snowflake_private_key")
-        private_key_passphrase = kwargs.get("snowflake_private_key_passphrase")
-
         conn = await _get_snowflake_connection(
             account=resource_meta.account,
             user=resource_meta.user,
             database=resource_meta.database,
             schema=resource_meta.schema,
             warehouse=resource_meta.warehouse,
-            private_key_content=private_key_content,
-            private_key_passphrase=private_key_passphrase,
+            private_key_content=snowflake_private_key,
+            private_key_passphrase=snowflake_private_key_passphrase,
             **(resource_meta.connection_kwargs or {}),
         )
 
