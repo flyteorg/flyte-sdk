@@ -38,7 +38,7 @@ class Storage(object):
         retries = int(retries) if retries else None
 
         backoff = os.getenv(cls._KEY_ENV_VAR_MAPPING["backoff"])
-        backoff = int(backoff) if backoff else None
+        backoff = datetime.timedelta(backoff) if backoff else None
 
         enable_debug_str = os.getenv(cls._KEY_ENV_VAR_MAPPING["enable_debug"])
         enable_debug = enable_debug_str.lower() in ("true", "1", "yes") if enable_debug_str else None
