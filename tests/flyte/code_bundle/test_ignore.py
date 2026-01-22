@@ -1,7 +1,8 @@
+import subprocess
 import tempfile
 from pathlib import Path
 
-from flyte._code_bundle._ignore import IgnoreGroup, StandardIgnore
+from flyte._code_bundle._ignore import GitIgnore, IgnoreGroup, StandardIgnore
 
 
 def test_ignore_group_list_ignored():
@@ -81,3 +82,56 @@ def test_standard_ignore_valueerror_handling():
 
         # Clean up
         outside_file.unlink()
+
+
+def test_gitignore_with_absolute_paths():
+    """Test that GitIgnore correctly handles absolute paths by converting to relative paths"""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        root_path = Path(tmpdir).resolve()
+
+        # Initialize a git repo
+        subprocess.run(["git", "init"], cwd=root_path, capture_output=True, check=True)
+
+        # Create .gitignore
+        gitignore_content = """
+.venv/
+*.pyc
+__pycache__/
+node_modules/
+"""
+        (root_path / ".gitignore").write_text(gitignore_content)
+
+        # Create test files and directories
+        (root_path / "main.py").write_text("print('hello')")
+        (root_path / "test.pyc").write_text("bytecode")
+
+        # Create .venv directory with files
+        (root_path / ".venv").mkdir()
+        (root_path / ".venv" / "bin").mkdir()
+        (root_path / ".venv" / "bin" / "python").write_text("#!/usr/bin/env python")
+        (root_path / ".venv" / "lib").mkdir()
+        (root_path / ".venv" / "lib" / "site-packages").mkdir()
+        (root_path / ".venv" / "lib" / "site-packages" / "package.py").write_text("code")
+
+        # Create __pycache__ directory
+        (root_path / "__pycache__").mkdir()
+        (root_path / "__pycache__" / "main.cpython-312.pyc").write_text("bytecode")
+
+        # Add .gitignore to git
+        subprocess.run(["git", "add", ".gitignore"], cwd=root_path, capture_output=True, check=True)
+
+        git_ignore = GitIgnore(root_path)
+
+        # Test that files (use absolute path, as done by list_all_files) are ignored
+        venv_file = (root_path / ".venv" / "bin" / "python").absolute()
+        venv_nested_file = (root_path / ".venv" / "lib" / "site-packages" / "package.py").absolute()
+        pyc_file = (root_path / "test.pyc").absolute()
+        pycache_file = (root_path / "__pycache__" / "main.cpython-312.pyc").absolute()
+        assert git_ignore.is_ignored(venv_file), ".venv/bin/python should be ignored"
+        assert git_ignore.is_ignored(venv_nested_file), ".venv/lib/site-packages/package.py should be ignored"
+        assert git_ignore.is_ignored(pyc_file), "test.pyc should be ignored"
+        assert git_ignore.is_ignored(pycache_file), "__pycache__/main.cpython-312.pyc should be ignored"
+
+        # main.py be ignored
+        main_file = (root_path / "main.py").absolute()
+        assert not git_ignore.is_ignored(main_file), "main.py should NOT be ignored"
