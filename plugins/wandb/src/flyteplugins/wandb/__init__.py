@@ -17,9 +17,9 @@
    @wandb_init(project="my-project", entity="my-team")
    @env.task
    async def train_model(learning_rate: float) -> str:
-       run = get_wandb_run()
-       run.log({"loss": 0.5, "learning_rate": learning_rate})
-       return run.id
+       wandb_run = get_wandb_run()
+       wandb_run.log({"loss": 0.5, "learning_rate": learning_rate})
+       return wandb_run.id
    ```
 
 2. Parent/Child Tasks with Run Reuse:
@@ -28,19 +28,19 @@
    @wandb_init  # Automatically reuses parent's run ID
    @env.task
    async def child_task(x: int) -> str:
-       run = get_wandb_run()
-       run.log({"child_metric": x * 2})
-       return run.id
+       wandb_run = get_wandb_run()
+       wandb_run.log({"child_metric": x * 2})
+       return wandb_run.id
 
    @wandb_init(project="my-project", entity="my-team")
    @env.task
    async def parent_task() -> str:
-       run = get_wandb_run()
-       run.log({"parent_metric": 100})
+       wandb_run = get_wandb_run()
+       wandb_run.log({"parent_metric": 100})
 
        # Child reuses parent's run by default (run_mode="auto")
        await child_task(5)
-       return run.id
+       return wandb_run.id
    ```
 
 3. Configuration with context manager:
@@ -48,7 +48,7 @@
    ```python
    from flyteplugins.wandb import wandb_config
 
-   run = flyte.with_runcontext(
+   r = flyte.with_runcontext(
        custom_context=wandb_config(
            project="my-project",
            entity="my-team",
@@ -63,9 +63,9 @@
    @wandb_init(run_mode="new")  # Always creates a new run
    @env.task
    async def independent_child() -> str:
-       run = get_wandb_run()
-       run.log({"independent_metric": 42})
-       return run.id
+       wandb_run = get_wandb_run()
+       wandb_run.log({"independent_metric": 42})
+       return wandb_run.id
    ```
 
 5. Running sweep agents in parallel:
@@ -76,11 +76,11 @@
 
    @wandb_init
    async def objective():
-       run = wandb.run
-       config = run.config
+       wandb_run = wandb.run
+       config = wandb_run.config
        ...
 
-       run.log({"loss": loss_value})
+       wandb_run.log({"loss": loss_value})
 
    @wandb_sweep
    @env.task
@@ -104,7 +104,7 @@
        return sweep_id
 
    # Run with 2 parallel agents
-   run = flyte.with_runcontext(
+   r = flyte.with_runcontext(
        custom_context={
            **wandb_config(project="my-project", entity="my-team"),
            **wandb_sweep_config(
