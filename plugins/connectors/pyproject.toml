@@ -21,10 +21,15 @@ databricks = [
     "nest-asyncio",
     "flyteplugins-spark",
 ]
+snowflake = [
+    "snowflake-connector-python",
+    "cryptography",
+]
 
 [project.entry-points."flyte.connectors"]
 bigquery = "flyteplugins.connectors.bigquery.connector:BigQueryConnector"
 databricks = "flyteplugins.connectors.databricks.connector:DatabricksConnector"
+snowflake = "flyteplugins.connectors.snowflake.connector:SnowflakeConnector"
 
 [build-system]
 requires = ["setuptools", "setuptools_scm"]
