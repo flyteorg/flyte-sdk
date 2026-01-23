@@ -11,8 +11,7 @@ import flyte.remote
 image = (
     flyte.Image.from_base("apache/spark-py:v3.4.0")
     .clone(name="spark", python_version=(3, 10), registry="ghcr.io/flyteorg")
-    .with_poetry_project(pyproject_file=pathlib.Path(__file__).parent / "pyproject.toml")
-    .with_local_v2()
+    .with_pip_packages("flyteplugins-spark", pre=True)
 )
 
 task_env = flyte.TaskEnvironment(
