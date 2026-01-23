@@ -126,14 +126,17 @@ def get_proto_task(
     )
 
     extra_config: typing.Dict[str, str] = {}
+    pod = None
+    container = None
+    sql = None
 
     if task.pod_template and not isinstance(task.pod_template, str):
         pod = _get_k8s_pod(_get_urun_container(serialize_context, task), task.pod_template)
         extra_config[_PRIMARY_CONTAINER_NAME_FIELD] = task.pod_template.primary_container_name
-        container = None
+    elif task.sql:
+        sql = task.sql(serialize_context)
     else:
         container = _get_urun_container(serialize_context, task)
-        pod = None
 
     log_links = []
     if task.links and task_context:
@@ -152,8 +155,6 @@ def get_proto_task(
             log_links.append(task_log)
 
     custom = task.custom_config(serialize_context)
-
-    sql = task.sql(serialize_context)
 
     # -------------- CACHE HANDLING ----------------------
     task_cache = cache_from_request(task.cache)
@@ -273,7 +274,7 @@ def _get_urun_container(
     if env_name is None:
         raise flyte.errors.RuntimeSystemError("BadConfig", f"Task {task_template.name} has no parent environment name")
 
-    img_uri = lookup_image_in_cache(serialize_context, env_name, img)
+    img_uri = lookup_image_in_cache(serialize_context, env_name, img) if img else None
 
     return tasks_pb2.Container(
         image=img_uri,

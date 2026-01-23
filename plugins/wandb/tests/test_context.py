@@ -410,12 +410,8 @@ class TestWandBSweepConfig:
         result = config.to_dict()
 
         assert result["wandb_sweep_method"] == "random"
-        assert result["wandb_sweep_metric"] == json.dumps(
-            {"name": "loss", "goal": "minimize"}
-        )
-        assert result["wandb_sweep_parameters"] == json.dumps(
-            {"lr": {"min": 0.001, "max": 0.1}}
-        )
+        assert result["wandb_sweep_metric"] == json.dumps({"name": "loss", "goal": "minimize"})
+        assert result["wandb_sweep_parameters"] == json.dumps({"lr": {"min": 0.001, "max": 0.1}})
 
     def test_wandb_sweep_config_from_dict(self):
         """Test creating WandBSweepConfig from dict."""
