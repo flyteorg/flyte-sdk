@@ -173,9 +173,7 @@ class _Serve:
                         parameter_overrides.append(replace(parameter, value=value))
 
                 logger.info(f"Deploying app {env_name}")
-                deployment_coros.append(
-                    _deploy._deploy_app(dep_env, sc, parameter_overrides=parameter_overrides)
-                )
+                deployment_coros.append(_deploy._deploy_app(dep_env, sc, parameter_overrides=parameter_overrides))
                 app_envs_to_deploy.append(dep_env)
 
         # Deploy all apps concurrently

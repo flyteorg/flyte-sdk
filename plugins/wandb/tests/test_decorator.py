@@ -2,7 +2,10 @@
 
 from unittest.mock import MagicMock, patch
 
+import flyte
 import pytest
+from flyte._task import AsyncFunctionTaskTemplate
+
 from flyteplugins.wandb import (
     Wandb,
     WandbSweep,
@@ -10,9 +13,6 @@ from flyteplugins.wandb import (
     wandb_init,
     wandb_sweep,
 )
-
-import flyte
-from flyte._task import AsyncFunctionTaskTemplate
 
 
 class TestBuildInitKwargs:
@@ -166,9 +166,7 @@ class TestWandbInitDecorator:
 
         # Apply wandb_init decorator to task that already has a link
         # The decorator should preserve the existing link
-        decorated_task = wandb_init(project="test-project", entity="test-entity")(
-            base_task_with_link
-        )
+        decorated_task = wandb_init(project="test-project", entity="test-entity")(base_task_with_link)
 
         # Should have both links
         assert len(decorated_task.links) == 2
@@ -295,9 +293,7 @@ class TestWandbRunContextManager:
     @patch("flyteplugins.wandb.decorator.wandb.init")
     @patch("flyteplugins.wandb.decorator.flyte.ctx")
     @patch("flyteplugins.wandb.decorator._build_init_kwargs")
-    def test_wandb_run_initializes_eagerly(
-        self, mock_build_kwargs, mock_ctx, mock_wandb_init
-    ):
+    def test_wandb_run_initializes_eagerly(self, mock_build_kwargs, mock_ctx, mock_wandb_init):
         """Test that _wandb_run eagerly initializes wandb and stores the run."""
         mock_context = MagicMock()
         mock_context.data = {}
@@ -347,9 +343,7 @@ class TestWandbRunContextManager:
     @patch("flyteplugins.wandb.decorator.wandb.init")
     @patch("flyteplugins.wandb.decorator.flyte.ctx")
     @patch("flyteplugins.wandb.decorator._build_init_kwargs")
-    def test_wandb_run_cleans_up_run_on_exit(
-        self, mock_build_kwargs, mock_ctx, mock_wandb_init
-    ):
+    def test_wandb_run_cleans_up_run_on_exit(self, mock_build_kwargs, mock_ctx, mock_wandb_init):
         """Test that _wandb_run cleans up run and metadata on exit."""
         mock_context = MagicMock()
         mock_context.data = {}
@@ -416,9 +410,7 @@ class TestCreateSweep:
     @patch("flyteplugins.wandb.decorator.get_wandb_sweep_context")
     @patch("flyteplugins.wandb.decorator.get_wandb_context")
     @patch("flyteplugins.wandb.decorator.flyte.ctx")
-    def test_create_sweep_basic(
-        self, mock_ctx, mock_get_wandb_ctx, mock_get_sweep_ctx, mock_wandb_sweep
-    ):
+    def test_create_sweep_basic(self, mock_ctx, mock_get_wandb_ctx, mock_get_sweep_ctx, mock_wandb_sweep):
         """Test basic sweep creation."""
         mock_context = MagicMock()
         mock_context.custom_context = {}
@@ -575,9 +567,7 @@ class TestModeSpecificBehavior:
     @patch("flyteplugins.wandb.decorator.wandb.init")
     @patch("flyteplugins.wandb.decorator.flyte.ctx")
     @patch("flyteplugins.wandb.decorator._build_init_kwargs")
-    def test_local_mode_uses_reinit_create_new(
-        self, mock_build_kwargs, mock_ctx, mock_wandb_init
-    ):
+    def test_local_mode_uses_reinit_create_new(self, mock_build_kwargs, mock_ctx, mock_wandb_init):
         """Test that local mode with run_mode="new" uses reinit='create_new'."""
         mock_context = MagicMock()
         mock_context.data = {}
@@ -607,9 +597,7 @@ class TestModeSpecificBehavior:
     @patch("flyteplugins.wandb.decorator.wandb.init")
     @patch("flyteplugins.wandb.decorator.flyte.ctx")
     @patch("flyteplugins.wandb.decorator._build_init_kwargs")
-    def test_local_mode_uses_reinit_return_previous(
-        self, mock_build_kwargs, mock_ctx, mock_wandb_init
-    ):
+    def test_local_mode_uses_reinit_return_previous(self, mock_build_kwargs, mock_ctx, mock_wandb_init):
         """Test that local mode with run_mode="shared" uses reinit='return_previous'."""
         mock_context = MagicMock()
         mock_context.data = {}
@@ -641,9 +629,7 @@ class TestModeSpecificBehavior:
     @patch("flyteplugins.wandb.decorator.wandb.Settings")
     @patch("flyteplugins.wandb.decorator.flyte.ctx")
     @patch("flyteplugins.wandb.decorator._build_init_kwargs")
-    def test_remote_mode_uses_shared_settings(
-        self, mock_build_kwargs, mock_ctx, mock_settings, mock_wandb_init
-    ):
+    def test_remote_mode_uses_shared_settings(self, mock_build_kwargs, mock_ctx, mock_settings, mock_wandb_init):
         """Test that remote mode uses shared mode settings with x_primary=True."""
         mock_context = MagicMock()
         mock_context.data = {}
@@ -685,9 +671,7 @@ class TestModeSpecificBehavior:
     @patch("flyteplugins.wandb.decorator.wandb.Settings")
     @patch("flyteplugins.wandb.decorator.flyte.ctx")
     @patch("flyteplugins.wandb.decorator._build_init_kwargs")
-    def test_remote_mode_secondary_task_settings(
-        self, mock_build_kwargs, mock_ctx, mock_settings, mock_wandb_init
-    ):
+    def test_remote_mode_secondary_task_settings(self, mock_build_kwargs, mock_ctx, mock_settings, mock_wandb_init):
         """Test that remote mode secondary task uses x_primary=False and x_update_finish_state=False."""
         mock_context = MagicMock()
         mock_context.data = {}
@@ -723,9 +707,7 @@ class TestModeSpecificBehavior:
     @patch("flyteplugins.wandb.decorator.wandb.init")
     @patch("flyteplugins.wandb.decorator.flyte.ctx")
     @patch("flyteplugins.wandb.decorator._build_init_kwargs")
-    def test_trace_detection_yields_existing_run(
-        self, mock_build_kwargs, mock_ctx, mock_wandb_init
-    ):
+    def test_trace_detection_yields_existing_run(self, mock_build_kwargs, mock_ctx, mock_wandb_init):
         """Test that when a run exists in ctx.data, it yields that run without re-initializing."""
         mock_existing_run = MagicMock()
         mock_existing_run.id = "existing-run-id"
@@ -748,9 +730,7 @@ class TestModeSpecificBehavior:
     @patch("flyteplugins.wandb.decorator.wandb.init")
     @patch("flyteplugins.wandb.decorator.flyte.ctx")
     @patch("flyteplugins.wandb.decorator._build_init_kwargs")
-    def test_run_mode_auto_with_parent_reuses_run(
-        self, mock_build_kwargs, mock_ctx, mock_wandb_init
-    ):
+    def test_run_mode_auto_with_parent_reuses_run(self, mock_build_kwargs, mock_ctx, mock_wandb_init):
         """Test that run_mode='auto' reuses parent run when parent run_id exists."""
         mock_context = MagicMock()
         mock_context.data = {}
@@ -781,9 +761,7 @@ class TestModeSpecificBehavior:
     @patch("flyteplugins.wandb.decorator.wandb.init")
     @patch("flyteplugins.wandb.decorator.flyte.ctx")
     @patch("flyteplugins.wandb.decorator._build_init_kwargs")
-    def test_run_mode_auto_without_parent_creates_new(
-        self, mock_build_kwargs, mock_ctx, mock_wandb_init
-    ):
+    def test_run_mode_auto_without_parent_creates_new(self, mock_build_kwargs, mock_ctx, mock_wandb_init):
         """Test that run_mode='auto' creates new run when no parent run_id exists."""
         mock_context = MagicMock()
         mock_context.data = {}
@@ -813,9 +791,7 @@ class TestModeSpecificBehavior:
 
     @patch("flyteplugins.wandb.decorator.flyte.ctx")
     @patch("flyteplugins.wandb.decorator._build_init_kwargs")
-    def test_run_mode_shared_without_parent_raises_error(
-        self, mock_build_kwargs, mock_ctx
-    ):
+    def test_run_mode_shared_without_parent_raises_error(self, mock_build_kwargs, mock_ctx):
         """Test that run_mode="shared" raises error when no parent run_id available."""
         mock_context = MagicMock()
         mock_context.data = {}
@@ -829,9 +805,7 @@ class TestModeSpecificBehavior:
 
         from flyteplugins.wandb._decorator import _wandb_run
 
-        with pytest.raises(
-            RuntimeError, match="Cannot reuse parent run: no parent run ID found"
-        ):
+        with pytest.raises(RuntimeError, match="Cannot reuse parent run: no parent run ID found"):
             with _wandb_run(run_mode="shared", project="test"):
                 pass
 
@@ -842,9 +816,7 @@ class TestRunFinishingLogic:
     @patch("flyteplugins.wandb.decorator.wandb.init")
     @patch("flyteplugins.wandb.decorator.flyte.ctx")
     @patch("flyteplugins.wandb.decorator._build_init_kwargs")
-    def test_remote_mode_always_finishes_run(
-        self, mock_build_kwargs, mock_ctx, mock_wandb_init
-    ):
+    def test_remote_mode_always_finishes_run(self, mock_build_kwargs, mock_ctx, mock_wandb_init):
         """Test that remote mode always calls run.finish()."""
         mock_context = MagicMock()
         mock_context.data = {}
@@ -873,9 +845,7 @@ class TestRunFinishingLogic:
     @patch("flyteplugins.wandb.decorator.wandb.init")
     @patch("flyteplugins.wandb.decorator.flyte.ctx")
     @patch("flyteplugins.wandb.decorator._build_init_kwargs")
-    def test_remote_mode_secondary_task_finishes_run(
-        self, mock_build_kwargs, mock_ctx, mock_wandb_init
-    ):
+    def test_remote_mode_secondary_task_finishes_run(self, mock_build_kwargs, mock_ctx, mock_wandb_init):
         """Test that remote mode secondary task also calls run.finish() (to flush data)."""
         mock_context = MagicMock()
         mock_context.data = {}
@@ -904,9 +874,7 @@ class TestRunFinishingLogic:
     @patch("flyteplugins.wandb.decorator.wandb.init")
     @patch("flyteplugins.wandb.decorator.flyte.ctx")
     @patch("flyteplugins.wandb.decorator._build_init_kwargs")
-    def test_local_mode_primary_task_finishes_run(
-        self, mock_build_kwargs, mock_ctx, mock_wandb_init
-    ):
+    def test_local_mode_primary_task_finishes_run(self, mock_build_kwargs, mock_ctx, mock_wandb_init):
         """Test that local mode primary task calls run.finish()."""
         mock_context = MagicMock()
         mock_context.data = {}
@@ -935,9 +903,7 @@ class TestRunFinishingLogic:
     @patch("flyteplugins.wandb.decorator.wandb.init")
     @patch("flyteplugins.wandb.decorator.flyte.ctx")
     @patch("flyteplugins.wandb.decorator._build_init_kwargs")
-    def test_local_mode_secondary_task_does_not_finish_run(
-        self, mock_build_kwargs, mock_ctx, mock_wandb_init
-    ):
+    def test_local_mode_secondary_task_does_not_finish_run(self, mock_build_kwargs, mock_ctx, mock_wandb_init):
         """Test that local mode secondary task does NOT call run.finish()."""
         mock_context = MagicMock()
         mock_context.data = {}
@@ -970,9 +936,7 @@ class TestStateSaveRestore:
     @patch("flyteplugins.wandb.decorator.wandb.init")
     @patch("flyteplugins.wandb.decorator.flyte.ctx")
     @patch("flyteplugins.wandb.decorator._build_init_kwargs")
-    def test_complete_state_save_and_restore(
-        self, mock_build_kwargs, mock_ctx, mock_wandb_init
-    ):
+    def test_complete_state_save_and_restore(self, mock_build_kwargs, mock_ctx, mock_wandb_init):
         """Test that all state (run, run_id) is saved and restored in nested contexts."""
         # Simulate nested context scenario (e.g., parent task calling another context manager)
         # Note: Child tasks have separate ctx.data, so this tests nested calls within same task
@@ -1016,9 +980,7 @@ class TestStateSaveRestore:
     @patch("flyteplugins.wandb.decorator.wandb.init")
     @patch("flyteplugins.wandb.decorator.flyte.ctx")
     @patch("flyteplugins.wandb.decorator._build_init_kwargs")
-    def test_state_cleanup_when_no_parent(
-        self, mock_build_kwargs, mock_ctx, mock_wandb_init
-    ):
+    def test_state_cleanup_when_no_parent(self, mock_build_kwargs, mock_ctx, mock_wandb_init):
         """Test that state is cleaned up when there's no parent state to restore."""
         mock_context = MagicMock()
         mock_context.data = {}
@@ -1054,9 +1016,7 @@ class TestRunModeDefault:
     @patch("flyteplugins.wandb.decorator.wandb.init")
     @patch("flyteplugins.wandb.decorator.flyte.ctx")
     @patch("flyteplugins.wandb.decorator._build_init_kwargs")
-    def test_default_run_mode_is_auto(
-        self, mock_build_kwargs, mock_ctx, mock_wandb_init
-    ):
+    def test_default_run_mode_is_auto(self, mock_build_kwargs, mock_ctx, mock_wandb_init):
         """Test that default run_mode is 'auto'."""
         mock_context = MagicMock()
         mock_context.data = {}
@@ -1086,9 +1046,7 @@ class TestRunModeDefault:
     @patch("flyteplugins.wandb.decorator.wandb.init")
     @patch("flyteplugins.wandb.decorator.flyte.ctx")
     @patch("flyteplugins.wandb.decorator._build_init_kwargs")
-    def test_auto_mode_reuses_parent_when_available(
-        self, mock_build_kwargs, mock_ctx, mock_wandb_init
-    ):
+    def test_auto_mode_reuses_parent_when_available(self, mock_build_kwargs, mock_ctx, mock_wandb_init):
         """Test that auto mode reuses parent run when available."""
         mock_context = MagicMock()
         mock_context.data = {}
@@ -1118,9 +1076,7 @@ class TestRunModeDefault:
     @patch("flyteplugins.wandb.decorator.wandb.init")
     @patch("flyteplugins.wandb.decorator.flyte.ctx")
     @patch("flyteplugins.wandb.decorator._build_init_kwargs")
-    def test_explicit_new_mode_creates_new_run(
-        self, mock_build_kwargs, mock_ctx, mock_wandb_init
-    ):
+    def test_explicit_new_mode_creates_new_run(self, mock_build_kwargs, mock_ctx, mock_wandb_init):
         """Test that explicit run_mode='new' creates new run even with parent."""
         mock_context = MagicMock()
         mock_context.data = {}
@@ -1149,9 +1105,7 @@ class TestRunModeDefault:
     @patch("flyteplugins.wandb.decorator.wandb.init")
     @patch("flyteplugins.wandb.decorator.flyte.ctx")
     @patch("flyteplugins.wandb.decorator._build_init_kwargs")
-    def test_explicit_shared_mode_reuses_parent(
-        self, mock_build_kwargs, mock_ctx, mock_wandb_init
-    ):
+    def test_explicit_shared_mode_reuses_parent(self, mock_build_kwargs, mock_ctx, mock_wandb_init):
         """Test that explicit run_mode='shared' reuses parent run."""
         mock_context = MagicMock()
         mock_context.data = {}

@@ -172,7 +172,8 @@ class SnowflakeConnector(AsyncConnector):
             schema=schema,
             warehouse=warehouse,
             query_id=query_id,
-            has_output=task_template.interface.outputs is not None and len(task_template.interface.outputs.variables) > 0,
+            has_output=task_template.interface.outputs is not None
+            and len(task_template.interface.outputs.variables) > 0,
             connection_kwargs=connection_kwargs,
         )
 

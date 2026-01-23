@@ -192,10 +192,7 @@ def list_all_files(source_path: pathlib.Path, deref_symlinks, ignore_group: Opti
 
         # Filter out ignored directories to avoid walking into them
         if ignore_group:
-            dirnames[:] = [
-                d for d in dirnames
-                if not ignore_group.is_ignored((pathlib.Path(root) / d).absolute())
-            ]
+            dirnames[:] = [d for d in dirnames if not ignore_group.is_ignored((pathlib.Path(root) / d).absolute())]
 
         if deref_symlinks:
             inode = os.stat(root).st_ino

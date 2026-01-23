@@ -1,4 +1,5 @@
 # # Spark Example
+import pathlib
 import random
 from copy import deepcopy
 from operator import add
@@ -10,7 +11,8 @@ import flyte.remote
 image = (
     flyte.Image.from_base("apache/spark-py:v3.4.0")
     .clone(name="spark", python_version=(3, 10), registry="ghcr.io/flyteorg")
-    .with_pip_packages("flyteplugins-spark", pre=True)
+    .with_poetry_project(pyproject_file=pathlib.Path(__file__).parent / "pyproject.toml")
+    .with_local_v2()
 )
 
 task_env = flyte.TaskEnvironment(
@@ -67,7 +69,6 @@ async def spark_overrider(executor_instances: int = 3, partitions: int = 4) -> f
 
 # ## Execute locally
 # You can execute the code locally as if it was a normal Python script.
-
 if __name__ == "__main__":
     flyte.init_from_config()
     run = flyte.run(hello_spark_nested)
