@@ -1161,10 +1161,14 @@ class TypeEngine(typing.Generic[T]):
         """
         Converts a python-native ``NamedTuple`` to a flyte-specific VariableMap of named literals.
         """
-        variables = {}
+        variables = []
         for idx, (var_name, var_type) in enumerate(t.__annotations__.items()):
             literal_type = cls.to_literal_type(var_type)
-            variables[var_name] = interface_pb2.Variable(type=literal_type, description=f"{idx}")
+            variables.append(
+                interface_pb2.VariableEntry(
+                    key=var_name, value=interface_pb2.Variable(type=literal_type, description=f"{idx}")
+                )
+            )
         return interface_pb2.VariableMap(variables=variables)
 
     @classmethod

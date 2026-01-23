@@ -418,7 +418,22 @@ def generate_interface_hash(task_interface: interface_pb2.TypedInterface) -> str
     """
     if not task_interface:
         return ""
-    serialized_interface = task_interface.SerializeToString(deterministic=True)
+
+    # Create a copy and sort variables by key to ensure order-independent hashing
+    sorted_interface = interface_pb2.TypedInterface()
+    sorted_interface.CopyFrom(task_interface)
+
+    if sorted_interface.inputs and sorted_interface.inputs.variables:
+        sorted_inputs = sorted(sorted_interface.inputs.variables, key=lambda entry: entry.key)
+        del sorted_interface.inputs.variables[:]
+        sorted_interface.inputs.variables.extend(sorted_inputs)
+
+    if sorted_interface.outputs and sorted_interface.outputs.variables:
+        sorted_outputs = sorted(sorted_interface.outputs.variables, key=lambda entry: entry.key)
+        del sorted_interface.outputs.variables[:]
+        sorted_interface.outputs.variables.extend(sorted_outputs)
+
+    serialized_interface = sorted_interface.SerializeToString(deterministic=True)
     return hash_data(serialized_interface)
 
 
