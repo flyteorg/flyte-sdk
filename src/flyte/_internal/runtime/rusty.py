@@ -61,6 +61,7 @@ def load_task_from_code_bundle(resolver: str, resolver_args: List[str]) -> TaskT
     :return: The loaded task template.
     """
     logger.debug(f"[rusty] Loading task from code bundle {resolver} with args: {resolver_args}")
+    adjust_sys_path()
     return load_task(resolver, *resolver_args)
 
 
