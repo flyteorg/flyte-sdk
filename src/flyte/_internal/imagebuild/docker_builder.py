@@ -679,7 +679,6 @@ class DockerImageBuilder(ImageBuilder):
                 "docker",
                 "buildx",
                 "build",
-                "--progress=plain",
                 "--builder",
                 DockerImageBuilder._builder_name,
                 "--tag",
