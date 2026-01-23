@@ -13,18 +13,33 @@ class ControllerClient:
     A client for the Controller API.
     """
 
-    def __init__(self, channel: grpc.aio.Channel):
+    def __init__(self, channel: grpc.aio.Channel, endpoint: str | None = None):
         self._channel = channel
+        self._endpoint = endpoint
         self._state_service = state_service_pb2_grpc.StateServiceStub(channel=channel)
         self._queue_service = queue_service_pb2_grpc.QueueServiceStub(channel=channel)
 
     @classmethod
     async def for_endpoint(cls, endpoint: str, insecure: bool = False, **kwargs) -> ControllerClient:
-        return cls(await create_channel(endpoint, None, insecure=insecure, **kwargs))
+        return cls(await create_channel(endpoint, None, insecure=insecure, **kwargs), endpoint=endpoint)
 
     @classmethod
     async def for_api_key(cls, api_key: str, insecure: bool = False, **kwargs) -> ControllerClient:
         return cls(await create_channel(None, api_key, insecure=insecure, **kwargs))
+
+    @property
+    def endpoint(self) -> str | None:
+        """
+        The endpoint this client is connected to.
+        """
+        return self._endpoint
+
+    @property
+    def channel(self) -> grpc.aio.Channel:
+        """
+        The underlying gRPC channel.
+        """
+        return self._channel
 
     @property
     def state_service(self) -> StateService:

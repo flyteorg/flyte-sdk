@@ -191,8 +191,12 @@ class Controller:
         self._running = True
         logger.debug("Waiting for Service Client to be ready")
         client_set = await self._client_coro
+        self._client_set = client_set
         self._state_service: StateService = client_set.state_service
         self._queue_service: QueueService = client_set.queue_service
+        # Log the endpoint for network debugging
+        endpoint = getattr(client_set, 'endpoint', None)
+        logger.info(f"Controller connected to endpoint: {endpoint}")
         self._resource_log_task = asyncio.create_task(self._bg_log_stats())
         # We will wait for this to signal that the thread is ready
         # Signal the main thread that we're ready
@@ -297,14 +301,19 @@ class Controller:
         action.mark_cancelled()
         if started:
             async with self._rate_limiter:
-                logger.info(f"Cancelling action: {action.name}")
+                endpoint = getattr(self._client_set, 'endpoint', 'unknown')
+                logger.info(f"Cancelling action: {action.name}, endpoint={endpoint}")
                 try:
                     await self._queue_service.AbortQueuedAction(
                         queue_service_pb2.AbortQueuedActionRequest(action_id=action.action_id),
                         wait_for_ready=True,
                     )
-                    logger.info(f"Successfully cancelled action: {action.name}")
+                    logger.info(f"Successfully cancelled action: {action.name}, endpoint={endpoint}")
                 except grpc.aio.AioRpcError as e:
+                    logger.debug(
+                        f"AbortQueuedAction RPC error: code={e.code()}, details={e.details()}, "
+                        f"endpoint={endpoint}, action={action.name}"
+                    )
                     if e.code() in [
                         grpc.StatusCode.NOT_FOUND,
                         grpc.StatusCode.FAILED_PRECONDITION,
@@ -352,7 +361,11 @@ class Controller:
                 elif action.type == "trace":
                     trace = action.trace
 
-                logger.debug(f"Attempting to launch action: {action.name}")
+                endpoint = getattr(self._client_set, 'endpoint', 'unknown')
+                logger.debug(
+                    f"Attempting to launch action: {action.name}, endpoint={endpoint}, "
+                    f"timeout={self._enqueue_timeout}s"
+                )
                 try:
                     await self._queue_service.EnqueueAction(
                         queue_service_pb2.EnqueueActionRequest(
@@ -368,8 +381,12 @@ class Controller:
                         wait_for_ready=True,
                         timeout=self._enqueue_timeout,
                     )
-                    logger.info(f"Successfully launched action: {action.name}")
+                    logger.info(f"Successfully launched action: {action.name}, endpoint={endpoint}")
                 except grpc.aio.AioRpcError as e:
+                    logger.debug(
+                        f"EnqueueAction RPC error: code={e.code()}, details={e.details()}, "
+                        f"endpoint={endpoint}, action={action.name}, trailing_metadata={e.trailing_metadata()}"
+                    )
                     if e.code() == grpc.StatusCode.ALREADY_EXISTS:
                         logger.info(f"Action {action.name} already exists, continuing to monitor.")
                         return
@@ -384,7 +401,7 @@ class Controller:
                     # For all other errors, we will retry with backoff
                     logger.error(
                         f"Failed to launch action: {action.name}, Code: {e.code()}, "
-                        f"Details {e.details()} backing off..."
+                        f"Details: {e.details()}, endpoint={endpoint}, backing off..."
                     )
                     logger.debug(f"Action details: {action}")
                     raise flyte.errors.SlowDownError(f"Failed to launch action: {e.details()}") from e
