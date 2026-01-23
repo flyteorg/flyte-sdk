@@ -12,6 +12,7 @@ import aiofiles
 import click
 
 from flyte import Secret
+from flyte._code_bundle._ignore import STANDARD_IGNORE_PATTERNS
 from flyte._image import (
     AptPackages,
     Commands,
@@ -38,7 +39,11 @@ from flyte._internal.imagebuild.image_builder import (
     LocalDockerCommandImageChecker,
     LocalPodmanCommandImageChecker,
 )
-from flyte._internal.imagebuild.utils import copy_files_to_context, get_and_list_dockerignore
+from flyte._internal.imagebuild.utils import (
+    copy_files_to_context,
+    get_and_list_dockerignore,
+    get_uv_editable_install_mounts,
+)
 from flyte._logging import logger
 
 _F_IMG_ID = "_F_IMG_ID"
@@ -49,6 +54,7 @@ UV_LOCK_WITHOUT_PROJECT_INSTALL_TEMPLATE = Template("""\
 RUN --mount=type=cache,sharing=locked,mode=0777,target=/root/.cache/uv,id=uv \
    --mount=type=bind,target=uv.lock,src=$UV_LOCK_PATH,rw \
    --mount=type=bind,target=pyproject.toml,src=$PYPROJECT_PATH \
+   $EDITABLE_INSTALL_MOUNTS \
    $SECRET_MOUNT \
    uv sync --active --inexact $PIP_INSTALL_ARGS
 """)
@@ -271,16 +277,24 @@ class UVProjectHandler:
             pip_install_args = " ".join(layer.get_pip_install_args())
             if "--no-install-project" not in pip_install_args:
                 pip_install_args += " --no-install-project"
-            if "--no-sources" not in pip_install_args:
-                pip_install_args += " --no-sources"
-            # Only Copy pyproject.yaml and uv.lock.
+            # Only Copy pyproject.yaml and uv.lock from the project root.
             pyproject_dst = copy_files_to_context(layer.pyproject, context_path)
             uvlock_dst = copy_files_to_context(layer.uvlock, context_path)
+            # Apply any editable install mounts to the template.
+            editable_install_mounts = get_uv_editable_install_mounts(
+                project_root=layer.pyproject.parent,
+                context_path=context_path,
+                ignore_patterns=[
+                    *STANDARD_IGNORE_PATTERNS,
+                    *docker_ignore_patterns,
+                ],
+            )
             delta = UV_LOCK_WITHOUT_PROJECT_INSTALL_TEMPLATE.substitute(
                 UV_LOCK_PATH=uvlock_dst.relative_to(context_path),
                 PYPROJECT_PATH=pyproject_dst.relative_to(context_path),
                 PIP_INSTALL_ARGS=pip_install_args,
                 SECRET_MOUNT=secret_mounts,
+                EDITABLE_INSTALL_MOUNTS=editable_install_mounts,
             )
         else:
             # Copy the entire project.
@@ -429,19 +443,19 @@ def _get_secret_commands(layers: typing.Tuple[Layer, ...]) -> typing.List[str]:
 def _get_secret_mounts_layer(secrets: typing.Tuple[str | Secret, ...] | None) -> str:
     if secrets is None:
         return ""
-    secret_mounts_layer = ""
+    secret_mounts_layer = []
     for s in secrets:
         secret = Secret(key=s) if isinstance(s, str) else s
         secret_id = hash(secret)
         if secret.mount:
-            secret_mounts_layer += f"--mount=type=secret,id={secret_id},target={secret.mount}"
+            secret_mounts_layer.append(f"--mount=type=secret,id={secret_id},target={secret.mount}")
         elif secret.as_env_var:
-            secret_mounts_layer += f"--mount=type=secret,id={secret_id},env={secret.as_env_var}"
+            secret_mounts_layer.append(f"--mount=type=secret,id={secret_id},env={secret.as_env_var}")
         else:
             secret_default_env_key = "_".join(list(filter(None, (secret.group, secret.key))))
-            secret_mounts_layer += f"--mount=type=secret,id={secret_id},env={secret_default_env_key}"
+            secret_mounts_layer.append(f"--mount=type=secret,id={secret_id},env={secret_default_env_key}")
 
-    return secret_mounts_layer
+    return " ".join(secret_mounts_layer)
 
 
 async def _process_layer(
