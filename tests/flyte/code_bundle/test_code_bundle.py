@@ -1,10 +1,12 @@
 import pathlib
+import subprocess
 import tempfile
 from unittest.mock import Mock
 
 import pytest
 
 import flyte
+from flyte._code_bundle._ignore import GitIgnore, IgnoreGroup, StandardIgnore
 from flyte._code_bundle._utils import list_all_files, ls_relative_files
 from flyte._code_bundle.bundle import build_pkl_bundle
 from flyte._internal.runtime.entrypoints import load_pkl_task
@@ -50,6 +52,47 @@ def test_list_all_files():
 
         files_with_ignore = list_all_files(test_dir, deref_symlinks=False, ignore_group=mock_ignore_group)
         assert len(files_with_ignore) == 4
+
+
+def test_list_all_files_with_gitignore():
+    """Test that list_all_files correctly respects .gitignore patterns"""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        root_path = pathlib.Path(tmpdir).resolve()
+
+        # Initialize a git repo
+        subprocess.run(["git", "init"], cwd=root_path, capture_output=True, check=True)
+
+        # Create .gitignore
+        (root_path / ".gitignore").write_text(".venv/\n*.pyc\n")
+
+        # Create test structure
+        (root_path / "main.py").write_text("code")
+        (root_path / "test.pyc").write_text("bytecode")
+
+        # Create .venv with multiple files
+        (root_path / ".venv").mkdir()
+        (root_path / ".venv" / "file1.py").write_text("code")
+        (root_path / ".venv" / "lib").mkdir()
+        (root_path / ".venv" / "lib" / "file2.py").write_text("code")
+
+        # Add .gitignore to git
+        subprocess.run(["git", "add", ".gitignore"], cwd=root_path, capture_output=True, check=True)
+
+        ignore_group = IgnoreGroup(root_path, GitIgnore, StandardIgnore)
+        all_files = list_all_files(root_path, False, ignore_group)
+
+        # Convert to relative paths for easier validation
+        rel_files = [str(pathlib.Path(f).relative_to(root_path)) for f in all_files]
+
+        assert len(rel_files) == 2, f"Expected 2 files, got {len(rel_files)}: {rel_files}"
+
+        # Only main.py and .gitignore should be included
+        assert "main.py" in rel_files, "main.py should be included"
+        assert ".gitignore" in rel_files, ".gitignore should be included"
+
+        assert "test.pyc" not in rel_files, "test.pyc should be excluded"
+        assert ".venv/file1.py" not in rel_files, ".venv/file1.py should be excluded"
+        assert ".venv/lib/file2.py" not in rel_files, ".venv/lib/file2.py should be excluded"
 
 
 def test_ls_relative_files_with_files():
