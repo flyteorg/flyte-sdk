@@ -320,9 +320,7 @@ class TaskTemplate(Generic[P, R, F]):
 
                 if self._call_as_synchronous:
                     fut = controller.submit_sync(self, *args, **kwargs)
-                    # Add timeout to prevent hanging forever if informer fails
-                    # Use a generous timeout (5 minutes) for long-running tasks
-                    x = fut.result(timeout=300)
+                    x = fut.result(None)
                     return x
                 else:
                     return controller.submit(self, *args, **kwargs)
