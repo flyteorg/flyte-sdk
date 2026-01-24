@@ -243,6 +243,8 @@ class Informer:
                         continue
                     node = await self._action_cache.observe_state(resp.action_update)
                     await self._shared_queue.put(node)
+                    await asyncio.sleep(10)
+                    raise Exception("manual exception)")
                     # hack to work in the absence of sentinel
             except asyncio.CancelledError:
                 logger.info(f"Watch cancelled: {self.name}")
@@ -255,10 +257,10 @@ class Informer:
                 logger.error(f"RPC error: {self.name}, {e}", exc_info=False)
                 last_exc = e
                 retries += 1
-            except Exception as e:
-                logger.exception(f"Watch error: {self.name}", exc_info=e)
-                last_exc = e
-                retries += 1
+            # except Exception as e:
+            #     logger.exception(f"Watch error: {self.name}", exc_info=e)
+            #     last_exc = e
+            #     retries += 1
             backoff = min(self._min_watch_backoff * (2**retries), self._max_watch_backoff)
             logger.warning(f"Watch for {self.name} failed, retrying in {backoff} seconds...")
             await asyncio.sleep(backoff)
@@ -371,8 +373,11 @@ class InformerCache:
 
     async def remove_and_stop_all(self):
         """Stop all informers and remove them from the cache"""
+        print("informer... remove_and_stop_all 1", flush=True)
         async with self._lock:
+            print("informer... remove_and_stop_all 2", flush=True)
             while self._cache:
+                print("informer... remove_and_stop_all 3", flush=True)
                 _name, informer = self._cache.popitem()
                 try:
                     await informer.stop()

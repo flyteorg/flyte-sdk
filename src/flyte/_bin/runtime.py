@@ -179,8 +179,11 @@ def main(
             path = await upload_error(err.err, outputs_path)
             logger.error(f"Run {run_name} Action {name} failed with error: {err}. Uploaded error to {path}")
             await controller.stop()
+            print("CONTROLLER STOPPED AFTER RUNTIME ERROR", flush=True)
+            return
 
     asyncio.run(_run_and_stop())
+    print("asyncio done!!!!!!!!", flush=True)
     logger.warning(f"Flyte runtime completed for action {name} with run name {run_name}")
     for h in logger.handlers:
         h.flush()

@@ -329,6 +329,7 @@ class RemoteController(Controller):
             # Please see LocalController for the general implementation of this pattern.
             def exc_handler(loop, context):
                 logger.error(f"Remote controller submit sync loop caught exception in {loop}: {context}")
+                print("exception handler", flush=True)
 
             with _selector_policy():
                 self._submit_loop = asyncio.new_event_loop()

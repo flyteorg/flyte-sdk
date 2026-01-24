@@ -4,6 +4,8 @@ import asyncio
 import weakref
 from dataclasses import dataclass, field, replace
 from inspect import iscoroutinefunction
+import contextvars
+import threading
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -318,7 +320,9 @@ class TaskTemplate(Generic[P, R, F]):
 
                 if self._call_as_synchronous:
                     fut = controller.submit_sync(self, *args, **kwargs)
-                    x = fut.result(None)
+                    # Add timeout to prevent hanging forever if informer fails
+                    # Use a generous timeout (5 minutes) for long-running tasks
+                    x = fut.result(timeout=300)
                     return x
                 else:
                     return controller.submit(self, *args, **kwargs)
@@ -493,7 +497,54 @@ class AsyncFunctionTaskTemplate(TaskTemplate[P, R, F]):
             if iscoroutinefunction(self.func):
                 v = await self.func(*args, **kwargs)
             else:
-                v = self.func(*args, **kwargs)
+                copied_ctx = contextvars.copy_context()
+                thread_com_lock = threading.Lock()
+                execute_loop = None
+                execute_loop_created = threading.Event()
+
+                def _sync_thread_loop_runner() -> None:
+                    """This method runs the event loop and should be invoked in a separate thread."""
+                    nonlocal execute_loop
+                    execute_loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(execute_loop)
+                    execute_loop_created.set()
+                    try:
+                        # loop.run_until_complete(fut)
+                        execute_loop.run_forever()
+                    finally:
+                        execute_loop.close()
+
+                executor_thread = threading.Thread(
+                    name=f"sync-executor",
+                    daemon=True,
+                    target=_sync_thread_loop_runner,
+                )
+                executor_thread.start()
+
+                async def async_wrapper():
+                    print("start---", flush=True)
+                    res = copied_ctx.run(self.func, *args, **kwargs)
+                    print("done---", flush=True)
+                    return res
+
+                async_fut = None
+                try:
+                    print("waiting for loop created---", flush=True)
+                    # Use a third thread to do the wait
+                    await asyncio.get_event_loop().run_in_executor(None, execute_loop_created.wait)
+                    print("execute loop event set---", flush=True)
+                    fut = asyncio.run_coroutine_threadsafe(async_wrapper(), loop=execute_loop)
+                    async_fut = asyncio.wrap_future(fut)
+                    v = await async_fut
+                    print(f"completed await--- {v=}", flush=True)
+
+                except asyncio.CancelledError:
+                    if async_fut is not None:
+                        async_fut.cancel()
+                    executor_thread.join(0.00001)
+                    print("CancelledError caught in AsyncFunctionTaskTemplate.execute", flush=True)
+
+                    raise
             await self.post(v)
         return v
 

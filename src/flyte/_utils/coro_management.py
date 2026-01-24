@@ -15,9 +15,11 @@ async def run_coros(*coros: typing.Coroutine, return_when: str = asyncio.FIRST_C
     # tasks: typing.List[asyncio.Task[typing.Never]] = [asyncio.create_task(c) for c in coros] # Python 3.11+
     tasks: typing.List[asyncio.Task] = [asyncio.create_task(c) for c in coros]
     done, pending = await asyncio.wait(tasks, return_when=return_when)
+    print(f"Completed {len(done)} tasks, cancelling {pending=} pending tasks.", flush=True)
 
     for t in pending:  # type: asyncio.Task
         t.cancel()  # Cancel all tasks that didn't finish first
+    print("All pending tasks have been cancelled.", flush=True)
 
     # Check for exceptions only in the completed tasks
     for t in done:
