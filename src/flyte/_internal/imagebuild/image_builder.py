@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import typing
 from importlib.metadata import entry_points
 from typing import ClassVar, Dict, Optional, Tuple
@@ -10,9 +11,11 @@ from async_lru import alru_cache
 from pydantic import BaseModel
 from typing_extensions import Protocol
 
-from flyte._image import Architecture, Image
+from flyte._image import Architecture, Image, Layer, PipPackages, PythonWheels, UVScript
 from flyte._initialize import _get_init_config
 from flyte._logging import logger
+
+from .heavy_deps import HEAVY_DEPENDENCIES
 
 
 class ImageBuilder(Protocol):
@@ -137,6 +140,144 @@ class ImageBuildEngine:
     ImageBuilderType = typing.Literal["local", "remote"]
 
     @staticmethod
+    def _optimize_image_layers(image: Image) -> Image:
+        """
+        Optimize pip layers by extracting heavy dependencies to the top for better caching.
+        Heavy packages from each layer are extracted to separate layers (preserving per-layer arguments),
+        and all heavy layers are placed at the top.  Original layers with light packages follow.
+        PythonWheels layers with package_name 'flyte' are moved to the very end.
+        """
+        from flyte._utils import parse_uv_script_file
+
+        # Step 1: Collect heavy and original layers separately
+        heavy_layers: list[PipPackages] = []
+        original_layers: list[Layer] = []
+        flyte_wheel_layers: list[PythonWheels] = []
+
+        for layer in image._layers:
+            if isinstance(layer, PipPackages):
+                assert layer.packages is not None
+
+                heavy_pkgs: list[str] = []
+                light_pkgs: list[str] = []
+
+                # Split packages
+                for pkg in layer.packages:
+                    pkg_name = re.split(r"[<>=~!\[]", pkg, 1)[0].strip()
+                    if pkg_name in HEAVY_DEPENDENCIES:
+                        heavy_pkgs.append(pkg)
+                    else:
+                        light_pkgs.append(pkg)
+
+                # Create heavy layer with original arguments (if any heavy packages)
+                if heavy_pkgs:
+                    heavy_layer = PipPackages(
+                        packages=tuple(heavy_pkgs),
+                        index_url=layer.index_url,
+                        extra_index_urls=layer.extra_index_urls,
+                        pre=layer.pre,
+                        extra_args=layer.extra_args,
+                        secret_mounts=layer.secret_mounts,
+                    )
+                    heavy_layers.append(heavy_layer)
+                    logger.debug(f"Extracted {len(heavy_pkgs)} heavy package(s): {', '.join(heavy_pkgs)}")
+
+                # Create light layer with original arguments (if any light packages)
+                if light_pkgs:
+                    light_layer = PipPackages(
+                        packages=tuple(light_pkgs),
+                        index_url=layer.index_url,
+                        extra_index_urls=layer.extra_index_urls,
+                        pre=layer.pre,
+                        extra_args=layer.extra_args,
+                        secret_mounts=layer.secret_mounts,
+                    )
+                    original_layers.append(light_layer)
+
+            elif isinstance(layer, UVScript):
+                # Parse UV scripts and extract dependencies
+                metadata = parse_uv_script_file(layer.script)
+
+                if metadata.dependencies:
+                    uv_heavy_pkgs: list[str] = []
+                    uv_light_pkgs: list[str] = []
+
+                    for pkg in metadata.dependencies:
+                        pkg_name = re.split(r"[<>=~!\[]", pkg, 1)[0].strip()
+                        if pkg_name in HEAVY_DEPENDENCIES:
+                            uv_heavy_pkgs.append(pkg)
+                        else:
+                            uv_light_pkgs.append(pkg)
+
+                    # Create heavy pip layer from UV (if any heavy packages)
+                    if uv_heavy_pkgs:
+                        heavy_pip_layer = PipPackages(
+                            packages=tuple(uv_heavy_pkgs),
+                            index_url=layer.index_url,
+                            extra_index_urls=layer.extra_index_urls,
+                            pre=layer.pre,
+                            extra_args=layer.extra_args,
+                            secret_mounts=layer.secret_mounts,
+                        )
+                        heavy_layers.append(heavy_pip_layer)
+                        logger.debug(
+                            f"Extracted {len(uv_heavy_pkgs)} heavy package(s) from UV:  {', '.join(uv_heavy_pkgs)}"
+                        )
+
+                    # Create light pip layer from UV (if any light packages)
+                    if uv_light_pkgs:
+                        light_pip_layer = PipPackages(
+                            packages=tuple(uv_light_pkgs),
+                            index_url=layer.index_url,
+                            extra_index_urls=layer.extra_index_urls,
+                            pre=layer.pre,
+                            extra_args=layer.extra_args,
+                            secret_mounts=layer.secret_mounts,
+                        )
+                        original_layers.append(light_pip_layer)
+
+                # Keep the UVScript layer in original_layers section
+                original_layers.append(layer)
+
+            elif isinstance(layer, PythonWheels):
+                # Check if this is a flyte wheel - if so, move to end
+                if layer.package_name == "flyte":
+                    flyte_wheel_layers.append(layer)
+                    logger.debug(f"Moving flyte wheel layer to end: {layer}")
+                else:
+                    # Keep other wheels with original_layers
+                    original_layers.append(layer)
+
+            else:
+                # All other layers (apt, env, etc.) go with light layers
+                original_layers.append(layer)
+
+        # If no heavy packages found, return original image
+        if not heavy_layers:
+            logger.debug("No heavy packages found, skipping optimization")
+            return image
+
+        logger.info(f"Created {len(heavy_layers)} heavy layer(s) at top")
+
+        # Final layer order: all heavy layers at top, then original layers, then flyte wheels at end
+        final_layers = [*heavy_layers, *original_layers, *flyte_wheel_layers]
+
+        if flyte_wheel_layers:
+            logger.debug(f"Moved {len(flyte_wheel_layers)} flyte wheel layer(s) to end")
+
+        return Image._new(
+            base_image=image.base_image,
+            dockerfile=image.dockerfile,
+            registry=image.registry,
+            name=image.name,
+            platform=image.platform,
+            python_version=image.python_version,
+            _layers=tuple(final_layers),
+            _image_registry_secret=image._image_registry_secret,
+            _ref_name=image._ref_name,
+        )
+
+    @staticmethod
     @alru_cache
     async def image_exists(image: Image) -> Optional[str]:
         if image.base_image is not None and not image._layers:
@@ -182,6 +323,7 @@ class ImageBuildEngine:
         builder: ImageBuildEngine.ImageBuilderType | None = None,
         dry_run: bool = False,
         force: bool = False,
+        optimize_layers: bool = True,
     ) -> str:
         """
         Build the image. Images to be tagged with latest will always be built. Otherwise, this engine will check the
@@ -191,8 +333,10 @@ class ImageBuildEngine:
         :param builder:
         :param dry_run: Tell the builder to not actually build. Different builders will have different behaviors.
         :param force: Skip the existence check. Normally if the image already exists we won't build it.
+        :param optimize_layers: If True, consolidate pip packages by category (default: True)
         :return:
         """
+
         # Always trigger a build if this is a dry run since builder shouldn't really do anything, or a force.
         image_uri = (await cls.image_exists(image)) or image.uri
         if force or dry_run or not await cls.image_exists(image):
@@ -200,6 +344,15 @@ class ImageBuildEngine:
 
             # Validate the image before building
             image.validate()
+
+            if optimize_layers:
+                logger.debug("Optimizing image layers by consolidating pip packages...")
+                image = ImageBuildEngine._optimize_image_layers(image)  # Call the optimizer
+                logger.debug("=" * 60)
+                logger.debug("Final layer order after optimization:")
+                for i, layer in enumerate(image._layers):
+                    logger.debug(f"  Layer {i}: {type(layer).__name__} - {layer}")
+                logger.debug("=" * 60)
 
             # If a builder is not specified, use the first registered builder
             cfg = _get_init_config()
