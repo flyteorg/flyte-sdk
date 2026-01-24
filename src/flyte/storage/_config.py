@@ -134,10 +134,14 @@ class S3(Storage):
                 "init_backoff": backoff,
                 "max_backoff": datetime.timedelta(seconds=16),
             },
-            "retry_timeout": datetime.timedelta(minutes=3),
+            "retry_timeout": datetime.timedelta(minutes=10),
         }
 
-        client_options = {"timeout": "99999s", "allow_http": True}
+        client_options = {
+            "timeout": "99999s",
+            "connect_timeout": "99999s",
+            "allow_http": True,
+        }
 
         if config:
             kwargs["config"] = config
