@@ -124,8 +124,6 @@ class Controller:
         await self._failure_event.wait()
         logger.warning(f"Failure event received: {self._failure_event}, cleaning up informers and exiting.")
         self._running = False
-        await asyncio.sleep(1)
-
 
     async def watch_for_errors(self):
         """Watch for errors in the background thread"""
