@@ -137,14 +137,15 @@ class RemoteImageBuilder(ImageBuilder):
                 project=cfg.project, domain=cfg.domain, cache_lookup_scope="project-domain"
             ).run.aio(entity, spec=spec, context=context, target_image=target_image),
         )
-        logger.warning(f"⏳ Waiting for build to finish at: [bold cyan link={run.url}]{run.url}[/bold cyan link]")
 
-        if wait:
-            await run.wait.aio(quiet=True)
-            run_details = await run.details.aio()
+        logger.warning(f"▶️ Started build at: [bold cyan link={run.url}]{run.url}[/bold cyan link]")
+        if not wait:
             # return the run url of the build image task
             return run.url
 
+        logger.warning(f"⏳ Waiting for build to finish")
+        await run.wait.aio(quiet=True)
+        run_details = await run.details.aio()
         elapsed = str(datetime.now(timezone.utc) - start).split(".")[0]
 
         if run_details.action_details.raw_phase == phase_pb2.ACTION_PHASE_SUCCEEDED:

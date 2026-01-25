@@ -20,6 +20,6 @@ class MyImageBuilder(ImageBuilder):
         """Return the image checker."""
         return [MyImageChecker]
 
-    async def build_image(self, image: Image, dry_run: bool = False) -> str:
+    async def build_image(self, image: Image, dry_run: bool = False, wait: bool = True,) -> str:
         print("Building image locally...")
         return image.uri
