@@ -104,7 +104,7 @@ class RemoteImageBuilder(ImageBuilder):
         """Return the image checker."""
         return [RemoteImageChecker]
 
-    async def build_image(self, image: Image, dry_run: bool = False) -> str:
+    async def build_image(self, image: Image, dry_run: bool = False, wait: bool = True) -> str:
         image_name = f"{image.name}:{image._final_tag}"
         spec, context = await _validate_configuration(image)
 
@@ -139,8 +139,11 @@ class RemoteImageBuilder(ImageBuilder):
         )
         logger.warning(f"⏳ Waiting for build to finish at: [bold cyan link={run.url}]{run.url}[/bold cyan link]")
 
-        await run.wait.aio(quiet=True)
-        run_details = await run.details.aio()
+        if wait:
+            await run.wait.aio(quiet=True)
+            run_details = await run.details.aio()
+            # return the run url of the build image task
+            return run.url
 
         elapsed = str(datetime.now(timezone.utc) - start).split(".")[0]
 

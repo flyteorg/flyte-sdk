@@ -16,7 +16,7 @@ from flyte._logging import logger
 
 
 class ImageBuilder(Protocol):
-    async def build_image(self, image: Image, dry_run: bool) -> str: ...
+    async def build_image(self, image: Image, dry_run: bool, wait: bool = True) -> str: ...
 
     def get_checkers(self) -> Optional[typing.List[typing.Type[ImageChecker]]]:
         """
@@ -182,6 +182,7 @@ class ImageBuildEngine:
         builder: ImageBuildEngine.ImageBuilderType | None = None,
         dry_run: bool = False,
         force: bool = False,
+        wait: bool = True,
     ) -> str:
         """
         Build the image. Images to be tagged with latest will always be built. Otherwise, this engine will check the
@@ -191,7 +192,10 @@ class ImageBuildEngine:
         :param builder:
         :param dry_run: Tell the builder to not actually build. Different builders will have different behaviors.
         :param force: Skip the existence check. Normally if the image already exists we won't build it.
-        :return:
+        :param wait: Wait for the build to finish. If wait is False when using the remote image builder, the function will
+            return the build image task URL.
+        :return: The image URI. If wait is False when using the remote image builder, the function will return the build
+            image task URL.
         """
         # Always trigger a build if this is a dry run since builder shouldn't really do anything, or a force.
         image_uri = (await cls.image_exists(image)) or image.uri
@@ -208,7 +212,7 @@ class ImageBuildEngine:
             img_builder = ImageBuildEngine._get_builder(builder)
             logger.debug(f"Using `{img_builder}` image builder to build image.")
 
-            result = await img_builder.build_image(image, dry_run=dry_run)
+            result = await img_builder.build_image(image, dry_run=dry_run, wait=wait)
             return result
         else:
             logger.info(f"Image {image_uri} already exists in registry. Skipping build.")

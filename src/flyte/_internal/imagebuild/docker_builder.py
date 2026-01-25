@@ -544,10 +544,10 @@ class DockerImageBuilder(ImageBuilder):
         # Can get a public token for docker.io but ghcr requires a pat, so harder to get the manifest anonymously
         return [LocalDockerCommandImageChecker, LocalPodmanCommandImageChecker, DockerAPIImageChecker]
 
-    async def build_image(self, image: Image, dry_run: bool = False) -> str:
+    async def build_image(self, image: Image, dry_run: bool = False, wait: bool = True) -> str:
         if image.dockerfile:
             # If a dockerfile is provided, use it directly
-            return await self._build_from_dockerfile(image, push=True)
+            return await self._build_from_dockerfile(image, push=True, wait=wait)
 
         if len(image._layers) == 0:
             logger.warning("No layers to build, returning the image URI as is.")
@@ -559,7 +559,7 @@ class DockerImageBuilder(ImageBuilder):
             dry_run=dry_run,
         )
 
-    async def _build_from_dockerfile(self, image: Image, push: bool) -> str:
+    async def _build_from_dockerfile(self, image: Image, push: bool, wait: bool = True) -> str:
         """
         Build the image from a provided Dockerfile.
         """
@@ -592,7 +592,10 @@ class DockerImageBuilder(ImageBuilder):
         logger.debug(f"Build command: {concat_command}")
         click.secho(f"Run command: {concat_command} ", fg="blue")
 
-        await asyncio.to_thread(subprocess.run, command, cwd=str(cast(Path, image.dockerfile).cwd()), check=True)
+        if wait:
+            await asyncio.to_thread(subprocess.run, command, cwd=str(cast(Path, image.dockerfile).cwd()), check=True)
+        else:
+            await asyncio.to_thread(subprocess.Popen, command, cwd=str(cast(Path, image.dockerfile).cwd()))
 
         return image.uri
 
@@ -633,7 +636,7 @@ class DockerImageBuilder(ImageBuilder):
         else:
             logger.info("Buildx builder already exists.")
 
-    async def _build_image(self, image: Image, *, push: bool = True, dry_run: bool = False) -> str:
+    async def _build_image(self, image: Image, *, push: bool = True, dry_run: bool = False, wait: bool = True) -> str:
         """
         if default image (only base image and locked), raise an error, don't have a dockerfile
         if dockerfile, just build
@@ -715,7 +718,10 @@ class DockerImageBuilder(ImageBuilder):
                 click.secho(f"Run command: {concat_command} ", fg="blue")
 
             try:
-                await asyncio.to_thread(subprocess.run, command, check=True)
+                if wait:
+                    await asyncio.to_thread(subprocess.run, command, check=True)
+                else:
+                    await asyncio.to_thread(subprocess.Popen, command)
             except subprocess.CalledProcessError as e:
                 logger.error(f"Failed to build image: {e}")
                 raise RuntimeError(f"Failed to build image: {e}")
