@@ -22,7 +22,8 @@ async def build(
         wait: Wait for the build to finish. If wait is False, the function will return immediately and the build will
             run in the background.
     Returns:
-        The image URI. If wait is False when using the remote image builder, the function will return the build image task URL.
+        The image URI. If wait is False when using the remote image builder, the function will return the build image
+        task URL.
 
     Example:
     ```

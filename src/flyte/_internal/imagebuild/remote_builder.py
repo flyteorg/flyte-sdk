@@ -143,7 +143,7 @@ class RemoteImageBuilder(ImageBuilder):
             # return the run url of the build image task
             return run.url
 
-        logger.warning(f"⏳ Waiting for build to finish")
+        logger.warning("⏳ Waiting for build to finish")
         await run.wait.aio(quiet=True)
         run_details = await run.details.aio()
         elapsed = str(datetime.now(timezone.utc) - start).split(".")[0]

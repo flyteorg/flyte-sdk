@@ -192,8 +192,8 @@ class ImageBuildEngine:
         :param builder:
         :param dry_run: Tell the builder to not actually build. Different builders will have different behaviors.
         :param force: Skip the existence check. Normally if the image already exists we won't build it.
-        :param wait: Wait for the build to finish. If wait is False when using the remote image builder, the function will
-            return the build image task URL.
+        :param wait: Wait for the build to finish. If wait is False when using the remote image builder, the function
+            will return the build image task URL.
         :return: The image URI. If wait is False when using the remote image builder, the function will return the build
             image task URL.
         """
