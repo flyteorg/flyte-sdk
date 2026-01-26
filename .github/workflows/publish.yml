@@ -76,6 +76,7 @@ jobs:
           - "plugins/connectors"
           - "plugins/sglang"
           - "plugins/vllm"
+          - "plugins/polars"
         include:
           - workdir: "plugins/sglang"
             image-type: sglang
