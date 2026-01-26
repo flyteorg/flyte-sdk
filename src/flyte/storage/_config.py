@@ -134,7 +134,7 @@ class S3(Storage):
                 "init_backoff": backoff,
                 "max_backoff": datetime.timedelta(seconds=16),
             },
-            "retry_timeout": datetime.timedelta(minutes=15),
+            "retry_timeout": datetime.timedelta(minutes=25),
         }
 
         client_options = {
