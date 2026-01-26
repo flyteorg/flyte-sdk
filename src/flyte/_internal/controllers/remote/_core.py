@@ -128,7 +128,7 @@ class Controller:
     async def watch_for_errors(self):
         """Watch for errors in the background thread"""
         await self._run_coroutine_in_controller_thread(self._bg_watch_for_errors())
-        logger.warning(f"DEBUG!!!!, 1.")
+        logger.warning("DEBUG!!!!, 1.")
         raise flyte.errors.RuntimeSystemError(
             code="InformerWatchFailure",
             message=f"Controller thread failed with exception: {self._get_exception()}",

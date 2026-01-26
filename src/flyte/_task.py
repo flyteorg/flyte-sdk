@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import contextvars
+import threading
 import weakref
 from dataclasses import dataclass, field, replace
 from inspect import iscoroutinefunction
-import contextvars
-import threading
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -496,7 +496,6 @@ class AsyncFunctionTaskTemplate(TaskTemplate[P, R, F]):
                 v = await self.func(*args, **kwargs)
             else:
                 copied_ctx = contextvars.copy_context()
-                thread_com_lock = threading.Lock()
                 execute_loop = None
                 execute_loop_created = threading.Event()
 
@@ -507,13 +506,12 @@ class AsyncFunctionTaskTemplate(TaskTemplate[P, R, F]):
                     asyncio.set_event_loop(execute_loop)
                     execute_loop_created.set()
                     try:
-                        # loop.run_until_complete(fut)
                         execute_loop.run_forever()
                     finally:
                         execute_loop.close()
 
                 executor_thread = threading.Thread(
-                    name=f"sync-executor",
+                    name="sync-executor",
                     daemon=True,
                     target=_sync_thread_loop_runner,
                 )
@@ -531,6 +529,7 @@ class AsyncFunctionTaskTemplate(TaskTemplate[P, R, F]):
                     # Use a third thread to do the wait
                     await asyncio.get_event_loop().run_in_executor(None, execute_loop_created.wait)
                     print("execute loop event set---", flush=True)
+                    assert execute_loop is not None
                     fut = asyncio.run_coroutine_threadsafe(async_wrapper(), loop=execute_loop)
                     async_fut = asyncio.wrap_future(fut)
                     v = await async_fut
