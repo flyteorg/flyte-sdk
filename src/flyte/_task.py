@@ -522,21 +522,13 @@ class AsyncFunctionTaskTemplate(TaskTemplate[P, R, F]):
                     return res
 
                 async_fut = None
-                try:
-                    print("waiting for loop created---", flush=True)
-                    # Use a third thread to do the wait
-                    await asyncio.get_event_loop().run_in_executor(None, execute_loop_created.wait)
-                    assert execute_loop is not None
-                    fut = asyncio.run_coroutine_threadsafe(async_wrapper(), loop=execute_loop)
-                    async_fut = asyncio.wrap_future(fut)
-                    v = await async_fut
+                # Use a third thread to do the wait
+                await asyncio.get_event_loop().run_in_executor(None, execute_loop_created.wait)
+                assert execute_loop is not None
+                fut = asyncio.run_coroutine_threadsafe(async_wrapper(), loop=execute_loop)
+                async_fut = asyncio.wrap_future(fut)
+                v = await async_fut
 
-                except asyncio.CancelledError:
-                    if async_fut is not None:
-                        async_fut.cancel()
-                    executor_thread.join(0.00001)
-
-                    raise
             await self.post(v)
         return v
 
