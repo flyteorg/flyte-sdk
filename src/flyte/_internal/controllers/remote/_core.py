@@ -128,7 +128,6 @@ class Controller:
     async def watch_for_errors(self):
         """Watch for errors in the background thread"""
         await self._run_coroutine_in_controller_thread(self._bg_watch_for_errors())
-        logger.warning("DEBUG!!!!, 1.")
         raise flyte.errors.RuntimeSystemError(
             code="InformerWatchFailure",
             message=f"Controller thread failed with exception: {self._get_exception()}",
@@ -460,8 +459,5 @@ class Controller:
     async def _bg_stop(self):
         """Stop the controller"""
         self._running = False
-        print("Stopping controller... _bg_stop 1", flush=True)
         self._resource_log_task.cancel()
-        print("Stopping controller... _bg_stop 2", flush=True)
         await self._informers.remove_and_stop_all()
-        print("Stopping controller... _bg_stop 3", flush=True)
