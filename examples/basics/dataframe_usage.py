@@ -78,7 +78,7 @@ if __name__ == "__main__":
     print(run2.outputs()[0])
 
     # Pass both to get_employee_data - Flyte auto-converts flyte.io.DataFrame to pd.DataFrame
-    run = flyte.with_runcontext(mode="local").run(
+    run = flyte.run(
         get_employee_data,
         raw_dataframe=local_fdf,
         flyte_dataframe=run2.outputs()[0],
