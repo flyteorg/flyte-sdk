@@ -58,7 +58,7 @@ class Environment:
             raise ValueError(f"Environment name '{self.name}' must be in snake_case or kebab-case format.")
 
     def __post_init__(self):
-        if self.image and isinstance(self.image, (Image, str)):
+        if self.image and not isinstance(self.image, (Image, str)):
             raise TypeError(f"Expected image to be of type str or Image, got {type(self.image)}")
         if self.secrets and not isinstance(self.secrets, (str, Secret, List)):
             raise TypeError(f"Expected secrets to be of type SecretRequest, got {type(self.secrets)}")
