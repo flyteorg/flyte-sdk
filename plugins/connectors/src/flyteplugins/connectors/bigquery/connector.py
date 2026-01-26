@@ -108,6 +108,8 @@ class BigQueryConnector(AsyncConnector):
         log_link = TaskLog(
             uri=f"https://console.cloud.google.com/bigquery?project={resource_meta.project}&j=bq:{resource_meta.location}:{resource_meta.job_id}&page=queryresults",
             name="BigQuery Console",
+            ready=True,
+            link_type=TaskLog.DASHBOARD,
         )
 
         job = client.get_job(resource_meta.job_id, resource_meta.project, resource_meta.location)
