@@ -133,7 +133,7 @@ def get_proto_task(
     if task.pod_template and not isinstance(task.pod_template, str):
         pod = _get_k8s_pod(_get_urun_container(serialize_context, task), task.pod_template)
         extra_config[_PRIMARY_CONTAINER_NAME_FIELD] = task.pod_template.primary_container_name
-    elif task.sql:
+    elif task.sql is not None:
         sql = task.sql(serialize_context)
     else:
         container = _get_urun_container(serialize_context, task)

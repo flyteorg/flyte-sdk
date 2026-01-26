@@ -1,5 +1,4 @@
 # # Spark Example
-import pathlib
 import random
 from copy import deepcopy
 from operator import add

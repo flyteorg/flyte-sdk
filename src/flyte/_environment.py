@@ -51,7 +51,7 @@ class Environment:
     env_vars: Optional[Dict[str, str]] = None
     resources: Optional[Resources] = None
     interruptible: bool = False
-    image: Union[str, Image, Literal["auto"]] = "auto"
+    image: Union[str, Image, Literal["auto"], None] = "auto"
 
     def _validate_name(self):
         if not is_snake_or_kebab_with_numbers(self.name):
