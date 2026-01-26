@@ -371,11 +371,8 @@ class InformerCache:
 
     async def remove_and_stop_all(self):
         """Stop all informers and remove them from the cache"""
-        print("informer... remove_and_stop_all 1", flush=True)
         async with self._lock:
-            print("informer... remove_and_stop_all 2", flush=True)
             while self._cache:
-                print("informer... remove_and_stop_all 3", flush=True)
                 _name, informer = self._cache.popitem()
                 try:
                     await informer.stop()

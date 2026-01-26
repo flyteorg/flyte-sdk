@@ -518,9 +518,7 @@ class AsyncFunctionTaskTemplate(TaskTemplate[P, R, F]):
                 executor_thread.start()
 
                 async def async_wrapper():
-                    print("start---", flush=True)
                     res = copied_ctx.run(self.func, *args, **kwargs)
-                    print("done---", flush=True)
                     return res
 
                 async_fut = None
@@ -528,18 +526,15 @@ class AsyncFunctionTaskTemplate(TaskTemplate[P, R, F]):
                     print("waiting for loop created---", flush=True)
                     # Use a third thread to do the wait
                     await asyncio.get_event_loop().run_in_executor(None, execute_loop_created.wait)
-                    print("execute loop event set---", flush=True)
                     assert execute_loop is not None
                     fut = asyncio.run_coroutine_threadsafe(async_wrapper(), loop=execute_loop)
                     async_fut = asyncio.wrap_future(fut)
                     v = await async_fut
-                    print(f"completed await--- {v=}", flush=True)
 
                 except asyncio.CancelledError:
                     if async_fut is not None:
                         async_fut.cancel()
                     executor_thread.join(0.00001)
-                    print("CancelledError caught in AsyncFunctionTaskTemplate.execute", flush=True)
 
                     raise
             await self.post(v)
