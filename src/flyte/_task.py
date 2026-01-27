@@ -490,7 +490,6 @@ class AsyncFunctionTaskTemplate(TaskTemplate[P, R, F]):
         assert ctx.data.task_context is not None, "Function should have already returned if not in a task context"
         ctx_data = await self.pre(*args, **kwargs)
         tctx = ctx.data.task_context.replace(data=ctx_data)
-        # claude: starting here
         with ctx.replace_task_context(tctx):
             if iscoroutinefunction(self.func):
                 v = await self.func(*args, **kwargs)
