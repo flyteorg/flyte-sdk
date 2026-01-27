@@ -106,16 +106,20 @@ def get_cwd_editable_install() -> typing.Optional[Path]:
     #   - if cwd is nested inside the editable install folder.
     #   - if the cwd is exactly one level above the editable install folder.
     cwd = Path.cwd()
+
+    # First, prioritize editable installs that are parents of cwd
     for install in editable_installs:
         # child.is_relative_to(parent) is True if child is inside parent
         if cwd.is_relative_to(install):
             return install
-        else:
-            # check if the cwd is one level above the install folder
-            if install.parent == cwd:
-                # check if the install folder contains a pyproject.toml file
-                if (cwd / "pyproject.toml").exists() or (cwd / "setup.py").exists():
-                    return install  # note we want the install folder, not the parent
+
+    # Then maybe see if one of the installs is exactly one level above cwd
+    for install in editable_installs:
+        # check if the cwd is one level above the install folder
+        if install.parent == cwd:
+            # check if the install folder contains a pyproject.toml file
+            if (cwd / "pyproject.toml").exists() or (cwd / "setup.py").exists():
+                return install  # note we want the install folder, not the parent
 
     return None
 
