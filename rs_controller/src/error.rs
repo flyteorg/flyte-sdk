@@ -16,6 +16,9 @@ pub enum ControllerError {
     TaskError(String),
     #[error("Informer error: {0}")]
     Informer(#[from] InformerError),
+    // Error type that triggers retry with backoff
+    #[error("Slow down error: {0}")]
+    SlowDownError(String),
 }
 
 impl From<tonic::transport::Error> for ControllerError {
