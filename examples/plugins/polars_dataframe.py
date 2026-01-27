@@ -10,20 +10,11 @@ This example shows:
 import polars as pl
 
 import flyte
-from flyte._image import DIST_FOLDER, PythonWheels
 
 # Create task environment with required dependencies
 img = (
     flyte.Image.from_debian_base(name="flyteplugins-polars-image")
-    # NOTE: due to a dependency conflict, the polars flyte plugin needs to be installed as a separate layer:
-    # Run the following command to build the wheel:
-    # `rm -rf ./dist-plugins && uv run python -m build --wheel --installer uv --outdir ./dist-plugins plugins/polars`
-    # Once a release of the plugin is out, you can installed it via `with_pip_packages("flyteplugins-polars")`
-    .clone(
-        addl_layer=PythonWheels(
-            wheel_dir=DIST_FOLDER.parent / "dist-plugins", package_name="flyteplugins-polars", pre=True
-        )
-    )
+    .with_pip_packages("flyteplugins-polars>=2.0.0b52", "flyte>=2.0.0b52", pre=True)
 )
 
 env = flyte.TaskEnvironment(
