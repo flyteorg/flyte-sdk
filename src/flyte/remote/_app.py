@@ -214,6 +214,39 @@ class App(ToJSONMixin):
 
     @syncify
     @classmethod
+    async def delete(
+        cls,
+        name: str,
+        project: str | None = None,
+        domain: str | None = None,
+    ):
+        """
+        Delete an app by name.
+
+        :param name: The name of the app to delete.
+        :param project: The name of the project to delete.
+        :param domain: The name of the domain to delete.
+        """
+        ensure_client()
+        cfg = get_init_config()
+        try:
+            await get_client().app_service.Delete(
+                request=app_payload_pb2.DeleteRequest(
+                    app_id=app_definition_pb2.Identifier(
+                        org=cfg.org,
+                        project=project or cfg.project,
+                        domain=domain or cfg.domain,
+                        name=name,
+                    ),
+                )
+            )
+        except grpc.aio.AioRpcError as e:
+            if e.code() == grpc.StatusCode.NOT_FOUND:
+                return
+            raise
+
+    @syncify
+    @classmethod
     async def replace(
         cls,
         name: str,
