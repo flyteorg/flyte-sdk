@@ -337,13 +337,11 @@ impl CoreBaseController {
                             );
                             action.client_err = Some(e.to_string());
 
-                            // Fire completion event for failed action
                             let opt_informer = self
                                 .informer_cache
                                 .get(&action.get_run_identifier(), &action.parent_action_name)
                                 .await;
                             if let Some(informer) = opt_informer {
-                                // TODO: see how to handle those two errors properly
                                 if let Err(set_err) = informer.set_action_client_err(&action).await
                                 {
                                     error!(
@@ -362,10 +360,7 @@ impl CoreBaseController {
                                     );
                                 }
                             } else {
-                                error!(
-                                    "Error occurred but informer missing for action: {:?}",
-                                    action.action_id
-                                );
+                                error!("Informer missing for action: {:?}", action.action_id);
                             }
                         }
                     }
@@ -493,7 +488,7 @@ impl CoreBaseController {
                     "Failed to launch action: {}, error: {}",
                     action.action_id.name, e
                 );
-                // Propagate the error as-is to preserve SlowDownError semantics
+                // Propagate the error as-is
                 Err(e)
             }
         }
