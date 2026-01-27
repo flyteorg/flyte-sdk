@@ -43,6 +43,8 @@ from flyte.remote import ActionOutputs, Run
 if TYPE_CHECKING:
     from flyteidl2.imagebuilder import definition_pb2 as image_definition_pb2
 
+    from flyte._build import ImageBuild
+
 IMAGE_TASK_NAME = "build-image"
 IMAGE_TASK_PROJECT = "system"
 IMAGE_TASK_DOMAIN = "production"
@@ -104,7 +106,9 @@ class RemoteImageBuilder(ImageBuilder):
         """Return the image checker."""
         return [RemoteImageChecker]
 
-    async def build_image(self, image: Image, dry_run: bool = False, wait: bool = True) -> str:
+    async def build_image(self, image: Image, dry_run: bool = False, wait: bool = True) -> "ImageBuild":
+        from flyte._build import ImageBuild
+
         image_name = f"{image.name}:{image._final_tag}"
         spec, context = await _validate_configuration(image)
 
@@ -140,8 +144,8 @@ class RemoteImageBuilder(ImageBuilder):
 
         logger.warning(f"▶️ Started build at: [bold cyan link={run.url}]{run.url}[/bold cyan link]")
         if not wait:
-            # return the run url of the build image task
-            return run.url
+            # return the ImageBuild with the run object (uri will be None since build hasn't completed)
+            return ImageBuild(uri=None, remote_run=run)
 
         logger.warning("⏳ Waiting for build to finish")
         await run.wait.aio(quiet=True)
@@ -154,7 +158,8 @@ class RemoteImageBuilder(ImageBuilder):
             raise flyte.errors.ImageBuildError(f"❌ Build failed in {elapsed} at {run.url}")
 
         outputs = await run_details.outputs()
-        return _get_fully_qualified_image_name(outputs)
+        uri = _get_fully_qualified_image_name(outputs)
+        return ImageBuild(uri=uri, remote_run=run)
 
 
 async def _validate_configuration(image: Image) -> Tuple[str, Optional[str]]:

@@ -6,12 +6,15 @@ import tempfile
 import typing
 from pathlib import Path, PurePath
 from string import Template
-from typing import ClassVar, Optional, Protocol, cast
+from typing import TYPE_CHECKING, ClassVar, Optional, Protocol, cast
 
 import aiofiles
 import click
 
 from flyte import Secret
+
+if TYPE_CHECKING:
+    from flyte._build import ImageBuild
 from flyte._image import (
     AptPackages,
     Commands,
@@ -544,20 +547,24 @@ class DockerImageBuilder(ImageBuilder):
         # Can get a public token for docker.io but ghcr requires a pat, so harder to get the manifest anonymously
         return [LocalDockerCommandImageChecker, LocalPodmanCommandImageChecker, DockerAPIImageChecker]
 
-    async def build_image(self, image: Image, dry_run: bool = False, wait: bool = True) -> str:
+    async def build_image(self, image: Image, dry_run: bool = False, wait: bool = True) -> "ImageBuild":
+        from flyte._build import ImageBuild
+
         if image.dockerfile:
             # If a dockerfile is provided, use it directly
-            return await self._build_from_dockerfile(image, push=True, wait=wait)
+            uri = await self._build_from_dockerfile(image, push=True, wait=wait)
+            return ImageBuild(uri=uri, remote_run=None)
 
         if len(image._layers) == 0:
             logger.warning("No layers to build, returning the image URI as is.")
-            return image.uri
+            return ImageBuild(uri=image.uri, remote_run=None)
 
-        return await self._build_image(
+        uri = await self._build_image(
             image,
             push=True,
             dry_run=dry_run,
         )
+        return ImageBuild(uri=uri, remote_run=None)
 
     async def _build_from_dockerfile(self, image: Image, push: bool, wait: bool = True) -> str:
         """

@@ -22,5 +22,6 @@ async def t1(data: str = "hello") -> str:
 
 if __name__ == "__main__":
     flyte.init_from_config()
-    uri = flyte.build(image, force=True, wait=False)
-    print(uri)
+    result = flyte.build(image, force=True, wait=False)
+    print(f"URI: {result.uri}")
+    print(f"Remote run: {result.remote_run}")

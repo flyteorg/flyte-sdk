@@ -4,7 +4,7 @@ import asyncio
 import json
 import typing
 from importlib.metadata import entry_points
-from typing import ClassVar, Dict, Optional, Tuple
+from typing import TYPE_CHECKING, ClassVar, Dict, Optional, Tuple
 
 from async_lru import alru_cache
 from pydantic import BaseModel
@@ -14,9 +14,12 @@ from flyte._image import Architecture, Image
 from flyte._initialize import _get_init_config
 from flyte._logging import logger
 
+if TYPE_CHECKING:
+    from flyte._build import ImageBuild
+
 
 class ImageBuilder(Protocol):
-    async def build_image(self, image: Image, dry_run: bool, wait: bool = True) -> str: ...
+    async def build_image(self, image: Image, dry_run: bool, wait: bool = True) -> "ImageBuild": ...
 
     def get_checkers(self) -> Optional[typing.List[typing.Type[ImageChecker]]]:
         """
@@ -183,7 +186,7 @@ class ImageBuildEngine:
         dry_run: bool = False,
         force: bool = False,
         wait: bool = True,
-    ) -> str:
+    ) -> "ImageBuild":
         """
         Build the image. Images to be tagged with latest will always be built. Otherwise, this engine will check the
         registry to see if the manifest exists.
@@ -194,9 +197,10 @@ class ImageBuildEngine:
         :param force: Skip the existence check. Normally if the image already exists we won't build it.
         :param wait: Wait for the build to finish. If wait is False when using the remote image builder, the function
             will return the build image task URL.
-        :return: The image URI. If wait is False when using the remote image builder, the function will return the build
-            image task URL.
+        :return: An ImageBuild object with the image URI and remote run (if applicable).
         """
+        from flyte._build import ImageBuild
+
         # Always trigger a build if this is a dry run since builder shouldn't really do anything, or a force.
         image_uri = (await cls.image_exists(image)) or image.uri
         if force or dry_run or not await cls.image_exists(image):
@@ -216,7 +220,7 @@ class ImageBuildEngine:
             return result
         else:
             logger.info(f"Image {image_uri} already exists in registry. Skipping build.")
-            return image_uri
+            return ImageBuild(uri=image_uri, remote_run=None)
 
     @classmethod
     def _get_builder(cls, builder: ImageBuildEngine.ImageBuilderType | None = "local") -> ImageBuilder:
