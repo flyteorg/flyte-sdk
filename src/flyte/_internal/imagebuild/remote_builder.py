@@ -304,8 +304,11 @@ def _get_layers_proto(image: Image, context_path: Path) -> "image_definition_pb2
             )
             layers.append(pip_layer)
         elif isinstance(layer, UVProject):
-            # Copy pyproject itself
             pyproject_dst = copy_files_to_context(layer.pyproject, context_path)
+            # Keep track of the directory containing the pyproject.toml file
+            # this is what should be passed to the UVProject image definition proto as 'pyproject'
+            pyproject_dir_dst = pyproject_dst.parent
+
             # Copy uv.lock itself
             uvlock_dst = copy_files_to_context(layer.uvlock, context_path)
 
@@ -327,13 +330,15 @@ def _get_layers_proto(image: Image, context_path: Path) -> "image_definition_pb2
                 case "install_project":
                     # Copy the entire project
                     docker_ignore_patterns = get_and_list_dockerignore(image)
-                    pyproject_dst = copy_files_to_context(layer.pyproject.parent, context_path, docker_ignore_patterns)
+                    pyproject_dir_dst = copy_files_to_context(layer.pyproject.parent, context_path, docker_ignore_patterns)
                 case _:
                     raise ValueError(f"Invalid project install mode: {layer.project_install_mode}")
 
             uv_layer = image_definition_pb2.Layer(
                 uv_project=image_definition_pb2.UVProject(
-                    pyproject=str(pyproject_dst.relative_to(context_path)),
+                    # NOTE: UVProject expects 'pyproject' to be the directory containing the pyproject.toml file
+                    # whereas it expects 'uvlock' to be the path to the uv.lock file itself.
+                    pyproject=str(pyproject_dir_dst.relative_to(context_path)),
                     uvlock=str(uvlock_dst.relative_to(context_path)),
                     options=pip_options,
                     secret_mounts=secret_mounts,
