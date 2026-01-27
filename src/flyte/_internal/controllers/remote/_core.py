@@ -213,9 +213,10 @@ class Controller:
         """Target function for the controller thread that creates and manages its own event loop"""
         try:
             # Create a new event loop for this thread
-            self._loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(self._loop)
-            self._loop.set_exception_handler(flyte.errors.silence_grpc_polling_error)
+            with self._thread_com_lock:
+                self._loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(self._loop)
+                self._loop.set_exception_handler(flyte.errors.silence_grpc_polling_error)
             logger.debug(f"Controller thread started with new event loop: {threading.current_thread().name}")
 
             # Create an event to signal the errors were observed in the thread's loop
