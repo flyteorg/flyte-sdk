@@ -13,17 +13,21 @@ from grpc.aio._typing import RequestType
 
 
 class ProjectDomainService(Protocol):
-    async def RegisterProject(
-        self, request: project_service_pb2.ProjectRegisterRequest
-    ) -> project_service_pb2.ProjectRegisterResponse: ...
+    async def CreateProject(
+        self, request: project_service_pb2.CreateProjectRequest
+    ) -> project_service_pb2.CreateProjectResponse: ...
 
     async def UpdateProject(
-        self, request: project_service_pb2.Project
-    ) -> project_service_pb2.ProjectUpdateResponse: ...
+        self, request: project_service_pb2.UpdateProjectRequest
+    ) -> project_service_pb2.UpdateProjectResponse: ...
 
-    async def GetProject(self, request: project_service_pb2.ProjectGetRequest) -> project_service_pb2.Project: ...
+    async def GetProject(
+        self, request: project_service_pb2.GetProjectRequest
+    ) -> project_service_pb2.GetProjectResponse: ...
 
-    async def ListProjects(self, request: project_service_pb2.ProjectListRequest) -> project_service_pb2.Projects: ...
+    async def ListProjects(
+        self, request: project_service_pb2.ListProjectsRequest
+    ) -> project_service_pb2.ListProjectsResponse: ...
 
 
 class TaskService(Protocol):
