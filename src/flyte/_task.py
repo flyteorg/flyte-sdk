@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import contextvars
-import threading
 import weakref
 from dataclasses import dataclass, field, replace
 from inspect import iscoroutinefunction
@@ -26,6 +24,7 @@ from typing import (
 )
 
 from flyte._pod import PodTemplate
+from flyte._utils.asyncify import run_sync_with_loop
 from flyte.errors import RuntimeSystemError, RuntimeUserError
 
 from ._cache import Cache, CacheRequest
@@ -491,43 +490,12 @@ class AsyncFunctionTaskTemplate(TaskTemplate[P, R, F]):
         assert ctx.data.task_context is not None, "Function should have already returned if not in a task context"
         ctx_data = await self.pre(*args, **kwargs)
         tctx = ctx.data.task_context.replace(data=ctx_data)
+        # claude: starting here
         with ctx.replace_task_context(tctx):
             if iscoroutinefunction(self.func):
                 v = await self.func(*args, **kwargs)
             else:
-                copied_ctx = contextvars.copy_context()
-                execute_loop = None
-                execute_loop_created = threading.Event()
-
-                def _sync_thread_loop_runner() -> None:
-                    """This method runs the event loop and should be invoked in a separate thread."""
-                    nonlocal execute_loop
-                    execute_loop = asyncio.new_event_loop()
-                    asyncio.set_event_loop(execute_loop)
-                    execute_loop_created.set()
-                    try:
-                        execute_loop.run_forever()
-                    finally:
-                        execute_loop.close()
-
-                executor_thread = threading.Thread(
-                    name="sync-executor",
-                    daemon=True,
-                    target=_sync_thread_loop_runner,
-                )
-                executor_thread.start()
-
-                async def async_wrapper():
-                    res = copied_ctx.run(self.func, *args, **kwargs)
-                    return res
-
-                async_fut = None
-                # Use a third thread to do the wait
-                await asyncio.get_event_loop().run_in_executor(None, execute_loop_created.wait)
-                assert execute_loop is not None
-                fut = asyncio.run_coroutine_threadsafe(async_wrapper(), loop=execute_loop)
-                async_fut = asyncio.wrap_future(fut)
-                v = await async_fut
+                v = await run_sync_with_loop(self.func, *args, **kwargs)
 
             await self.post(v)
         return v
