@@ -1,4 +1,3 @@
-import asyncio
 import os
 import shutil
 import subprocess
@@ -46,6 +45,7 @@ from flyte._internal.imagebuild.utils import (
     get_uv_editable_install_mounts,
 )
 from flyte._logging import logger
+from flyte._utils.asyncify import run_sync_with_loop
 
 if TYPE_CHECKING:
     from flyte._build import ImageBuild
@@ -615,9 +615,9 @@ class DockerImageBuilder(ImageBuilder):
         click.secho(f"Run command: {concat_command} ", fg="blue")
 
         if wait:
-            await asyncio.to_thread(subprocess.run, command, cwd=str(cast(Path, image.dockerfile).cwd()), check=True)
+            await run_sync_with_loop(subprocess.run, command, cwd=str(cast(Path, image.dockerfile).cwd()), check=True)
         else:
-            await asyncio.to_thread(subprocess.Popen, command, cwd=str(cast(Path, image.dockerfile).cwd()))
+            await run_sync_with_loop(subprocess.Popen, command, cwd=str(cast(Path, image.dockerfile).cwd()))
 
         return image.uri
 
@@ -626,14 +626,14 @@ class DockerImageBuilder(ImageBuilder):
         """Ensure there is a docker buildx builder called flyte"""
         # Check if buildx is available
         try:
-            await asyncio.to_thread(
+            await run_sync_with_loop(
                 subprocess.run, ["docker", "buildx", "version"], check=True, stdout=subprocess.DEVNULL
             )
         except subprocess.CalledProcessError:
             raise RuntimeError("Docker buildx is not available. Make sure BuildKit is installed and enabled.")
 
         # List builders
-        result = await asyncio.to_thread(
+        result = await run_sync_with_loop(
             subprocess.run, ["docker", "buildx", "ls"], capture_output=True, text=True, check=True
         )
         builders = result.stdout
@@ -642,7 +642,7 @@ class DockerImageBuilder(ImageBuilder):
         if DockerImageBuilder._builder_name not in builders:
             # No default builder found, create one
             logger.info("No buildx builder found, creating one...")
-            await asyncio.to_thread(
+            await run_sync_with_loop(
                 subprocess.run,
                 [
                     "docker",
@@ -741,9 +741,9 @@ class DockerImageBuilder(ImageBuilder):
 
             try:
                 if wait:
-                    await asyncio.to_thread(subprocess.run, command, check=True)
+                    await run_sync_with_loop(subprocess.run, command, check=True)
                 else:
-                    await asyncio.to_thread(subprocess.Popen, command)
+                    await run_sync_with_loop(subprocess.Popen, command)
             except subprocess.CalledProcessError as e:
                 logger.error(f"Failed to build image: {e}")
                 raise RuntimeError(f"Failed to build image: {e}")
