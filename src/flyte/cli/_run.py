@@ -205,9 +205,6 @@ class RunTaskCommand(click.RichCommand):
         task_cfg = getattr(getattr(ctx.obj, "config", None), "task", None)
 
         if not self.run_args.local:
-            if not getattr(ctx.obj, "org", None) and not getattr(task_cfg, "org", None):
-                missing_options.append(("org", "TEXT"))
-
             if not self.run_args.project and not getattr(task_cfg, "project", None):
                 missing_options.append(("project", "TEXT"))
 
@@ -381,9 +378,6 @@ class RunRemoteTaskCommand(click.RichCommand):
                     )
 
         task_cfg = getattr(getattr(ctx.obj, "config", None), "task", None)
-
-        if not getattr(ctx.obj, "org", None) and not getattr(task_cfg, "org", None):
-            missing_options.append(("org", "TEXT"))
 
         if not self.run_args.run_project and not getattr(task_cfg, "project", None):
             missing_options.append(("run-project", "TEXT"))
