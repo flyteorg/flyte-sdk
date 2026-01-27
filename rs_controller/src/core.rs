@@ -300,6 +300,84 @@ impl CoreBaseController {
         }
     }
 
+    async fn bg_worker(&self, worker_id: String) {
+        info!(
+            "Worker {} started on thread {:?}",
+            worker_id,
+            std::thread::current().name()
+        );
+        loop {
+            // Receive actions from shared queue
+            let mut rx = self.shared_queue_rx.lock().await;
+            match rx.recv().await {
+                Some(mut action) => {
+                    let run_name = action
+                        .action_id
+                        .run
+                        .as_ref()
+                        .map_or(String::from("<missing>"), |i| i.name.clone());
+                    debug!(
+                        "[{}] Controller worker processing action {}::{}",
+                        worker_id, run_name, action.action_id.name
+                    );
+
+                    // Drop the mutex guard before processing
+                    drop(rx);
+
+                    match self
+                        .process_action_with_retry(&mut action, &worker_id)
+                        .await
+                    {
+                        Ok(_) => {}
+                        Err(e) => {
+                            // Unified error handling for all failures and exceed max retries
+                            error!(
+                                "[{}] Error in controller loop for {}::{}: {:?}",
+                                worker_id, run_name, action.action_id.name, e
+                            );
+                            action.client_err = Some(e.to_string());
+
+                            // Fire completion event for failed action
+                            let opt_informer = self
+                                .informer_cache
+                                .get(&action.get_run_identifier(), &action.parent_action_name)
+                                .await;
+                            if let Some(informer) = opt_informer {
+                                // TODO: see how to handle those two errors properly
+                                if let Err(set_err) = informer.set_action_client_err(&action).await
+                                {
+                                    error!(
+                                        "Error setting error for failed action {}: {}",
+                                        action.get_full_name(),
+                                        set_err
+                                    );
+                                }
+                                if let Err(fire_err) =
+                                    informer.fire_completion_event(&action.action_id.name).await
+                                {
+                                    error!(
+                                        "Error firing completion event for failed action {}: {}",
+                                        action.get_full_name(),
+                                        fire_err
+                                    );
+                                }
+                            } else {
+                                error!(
+                                    "Error occurred but informer missing for action: {:?}",
+                                    action.action_id
+                                );
+                            }
+                        }
+                    }
+                }
+                None => {
+                    warn!("Shared queue channel closed, stopping bg_worker");
+                    break;
+                }
+            }
+        }
+    }
+
     async fn process_action_with_retry(
         &self,
         action: &mut Action,
@@ -329,13 +407,19 @@ impl CoreBaseController {
                     )))
                 } else {
                     // Calculate exponential backoff: min(MIN * 2^(retries-1), MAX)
-                    let backoff_millis = MIN_BACKOFF_ON_ERR.as_millis() as u64
-                        * 2u64.pow(action.retries - 1);
+                    let backoff_millis =
+                        MIN_BACKOFF_ON_ERR.as_millis() as u64 * 2u64.pow(action.retries - 1);
                     let backoff = Duration::from_millis(backoff_millis).min(MAX_BACKOFF_ON_ERR);
 
                     warn!(
                         "[{}] Backing off for {:?} [retry {}/{}] on action {}::{} due to error: {}",
-                        worker_id, backoff, action.retries, MAX_RETRIES, run_name, action.action_id.name, msg
+                        worker_id,
+                        backoff,
+                        action.retries,
+                        MAX_RETRIES,
+                        run_name,
+                        action.action_id.name,
+                        msg
                     );
                     sleep(backoff).await;
 
@@ -345,15 +429,12 @@ impl CoreBaseController {
                     );
 
                     // Re-queue the action for retry
-                    self.shared_queue
-                        .send(action.clone())
-                        .await
-                        .map_err(|e| {
-                            ControllerError::RuntimeError(format!(
-                                "[{}] Failed to re-queue action for retry: {}",
-                                worker_id, e
-                            ))
-                        })?;
+                    self.shared_queue.send(action.clone()).await.map_err(|e| {
+                        ControllerError::RuntimeError(format!(
+                            "[{}] Failed to re-queue action for retry: {}",
+                            worker_id, e
+                        ))
+                    })?;
 
                     Ok(())
                 }
@@ -361,78 +442,6 @@ impl CoreBaseController {
             Err(e) => {
                 // All other errors are propagated up immediately
                 Err(e)
-            }
-        }
-    }
-
-    async fn bg_worker(&self, worker_id: String) {
-        info!(
-            "Worker {} started on thread {:?}",
-            worker_id,
-            std::thread::current().name()
-        );
-        loop {
-            // Receive actions from shared queue
-            let mut rx = self.shared_queue_rx.lock().await;
-            match rx.recv().await {
-                Some(mut action) => {
-                    let run_name = action
-                        .action_id
-                        .run
-                        .as_ref()
-                        .map_or(String::from("<missing>"), |i| i.name.clone());
-                    debug!(
-                        "[{}] Controller worker processing action {}::{}",
-                        worker_id, run_name, action.action_id.name
-                    );
-
-                    // Drop the mutex guard before processing
-                    drop(rx);
-
-                    match self.process_action_with_retry(&mut action, &worker_id).await {
-                        Ok(_) => {}
-                        Err(e) => {
-                            // Unified error handling for all failures and exceed max retries
-                            error!(
-                                "[{}] Error in controller loop for {}::{}: {:?}",
-                                worker_id, run_name, action.action_id.name, e
-                            );
-                            action.client_err = Some(e.to_string());
-
-                            // Fire completion event for failed action
-                            let opt_informer = self
-                                .informer_cache
-                                .get(&action.get_run_identifier(), &action.parent_action_name)
-                                .await;
-                            if let Some(informer) = opt_informer {
-                                // TODO: see how to handle those two errors properly
-                                if let Err(set_err) = informer.set_action_client_err(&action).await {
-                                    error!(
-                                        "Error setting error for failed action {}: {}",
-                                        action.get_full_name(),
-                                        set_err
-                                    );
-                                }
-                                if let Err(fire_err) = informer.fire_completion_event(&action.action_id.name).await {
-                                    error!(
-                                        "Error firing completion event for failed action {}: {}",
-                                        action.get_full_name(),
-                                        fire_err
-                                    );
-                                }
-                            } else {
-                                error!(
-                                    "Error occurred but informer missing for action: {:?}",
-                                    action.action_id
-                                );
-                            }
-                        }
-                    }
-                }
-                None => {
-                    warn!("Shared queue channel closed, stopping bg_worker");
-                    break;
-                }
             }
         }
     }
