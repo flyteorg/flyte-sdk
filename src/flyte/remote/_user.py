@@ -26,7 +26,6 @@ class User(ToJSONMixin):
         Returns: A User object containing details about the user.
         """
         ensure_client()
-
         resp = await get_client().identity_service.UserInfo(identity_pb2.UserInfoRequest())
         return cls(resp)
 

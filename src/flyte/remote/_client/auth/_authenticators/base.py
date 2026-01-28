@@ -68,7 +68,7 @@ class Authenticator(object):
             - app: ASGI application to handle requests
         """
         self._endpoint = endpoint
-        self._creds = credentials # or KeyringStore.retrieve(endpoint)
+        self._creds = credentials or KeyringStore.retrieve(endpoint)
         self._http_proxy_url = http_proxy_url
         self._verify = verify
         self._ca_cert_path = ca_cert_path
