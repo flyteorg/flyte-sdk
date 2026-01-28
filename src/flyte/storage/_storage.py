@@ -268,7 +268,7 @@ async def put(
     from_path: str,
     to_path: Optional[str] = None,
     recursive: bool = False,
-    batch_size: Optional[int] = MAX_CONCURRENCY,
+    batch_size: Optional[int] = None,
     **kwargs,
 ) -> str:
     if not to_path:
@@ -277,6 +277,9 @@ async def put(
         ctx = internal_ctx()
         name = pathlib.Path(from_path).name
         to_path = ctx.raw_data.get_random_remote_path(file_name=name)
+
+    if not batch_size:
+        batch_size = MAX_CONCURRENCY
 
     file_system = get_underlying_filesystem(path=to_path)
     from_path = strip_file_header(from_path)
