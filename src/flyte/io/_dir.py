@@ -576,6 +576,7 @@ class Dir(BaseModel, Generic[T], SerializableType):
         local_path: Union[str, Path],
         remote_destination: Optional[str] = None,
         dir_cache_key: Optional[str] = None,
+        batch_size: Optional[int] = None,
     ) -> Dir[T]:
         """
         Asynchronously create a new Dir by uploading a local directory to remote storage.
@@ -621,6 +622,8 @@ class Dir(BaseModel, Generic[T], SerializableType):
             dir_cache_key: Optional precomputed hash value to use for cache key computation when this Dir is used
                           as an input to discoverable tasks. If not specified, the cache key will be based on
                           directory attributes.
+            batch_size: Optional concurrency limit for uploading files. If not specified, the default value is
+              determined by the FLYTE_IO_MAX_CONCURRENCY environment variable (default: 32).
 
         Returns:
             A new Dir instance pointing to the uploaded directory
@@ -656,7 +659,9 @@ class Dir(BaseModel, Generic[T], SerializableType):
             return cls(path=output_path, name=dirname, hash=dir_cache_key)
 
         # todo: in the future, mirror File and set the file to_path here
-        output_path = await storage.put(from_path=local_path_str, to_path=remote_destination, recursive=True)
+        output_path = await storage.put(
+            from_path=local_path_str, to_path=remote_destination, recursive=True, batch_size=batch_size
+        )
         return cls(path=output_path, name=dirname, hash=dir_cache_key)
 
     @classmethod
