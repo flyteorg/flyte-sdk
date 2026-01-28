@@ -265,7 +265,11 @@ async def _get_from_filesystem(
 
 
 async def put(
-    from_path: str, to_path: Optional[str] = None, recursive: bool = False, batch_size: int = MAX_CONCURRENCY, **kwargs
+    from_path: str,
+    to_path: Optional[str] = None,
+    recursive: bool = False,
+    batch_size: Optional[int] = MAX_CONCURRENCY,
+    **kwargs,
 ) -> str:
     if not to_path:
         from flyte._context import internal_ctx
