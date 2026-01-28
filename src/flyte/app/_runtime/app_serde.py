@@ -48,14 +48,14 @@ def get_proto_container(
     resources = get_proto_resources(app_env.resources)
 
     if app_env.image == "auto":
-        img = Image.from_debian_base()
+        img: Image | None = Image.from_debian_base()
     elif isinstance(app_env.image, str):
         img = Image.from_base(app_env.image)
     else:
         img = app_env.image
 
     env_name = app_env.name
-    img_uri = lookup_image_in_cache(serialization_context, env_name, img)
+    img_uri = lookup_image_in_cache(serialization_context, env_name, img) if img else None
 
     p = app_env.get_port()
     container_ports = [tasks_pb2.ContainerPort(container_port=p.port, name=p.name)]
