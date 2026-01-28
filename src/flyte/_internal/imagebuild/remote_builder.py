@@ -48,6 +48,8 @@ from flyte.remote import ActionOutputs, Run
 if TYPE_CHECKING:
     from flyteidl2.imagebuilder import definition_pb2 as image_definition_pb2
 
+    from flyte._build import ImageBuild
+
 IMAGE_TASK_NAME = "build-image"
 IMAGE_TASK_PROJECT = "system"
 IMAGE_TASK_DOMAIN = "production"
@@ -109,7 +111,9 @@ class RemoteImageBuilder(ImageBuilder):
         """Return the image checker."""
         return [RemoteImageChecker]
 
-    async def build_image(self, image: Image, dry_run: bool = False) -> str:
+    async def build_image(self, image: Image, dry_run: bool = False, wait: bool = True) -> "ImageBuild":
+        from flyte._build import ImageBuild
+
         image_name = f"{image.name}:{image._final_tag}"
         spec, context = await _validate_configuration(image)
 
@@ -142,11 +146,15 @@ class RemoteImageBuilder(ImageBuilder):
                 project=cfg.project, domain=cfg.domain, cache_lookup_scope="project-domain"
             ).run.aio(entity, spec=spec, context=context, target_image=target_image),
         )
-        logger.warning(f"⏳ Waiting for build to finish at: [bold cyan link={run.url}]{run.url}[/bold cyan link]")
 
+        logger.warning(f"▶️ Started build at: [bold cyan link={run.url}]{run.url}[/bold cyan link]")
+        if not wait:
+            # return the ImageBuild with the run object (uri will be None since build hasn't completed)
+            return ImageBuild(uri=None, remote_run=run)
+
+        logger.warning("⏳ Waiting for build to finish")
         await run.wait.aio(quiet=True)
         run_details = await run.details.aio()
-
         elapsed = str(datetime.now(timezone.utc) - start).split(".")[0]
 
         if run_details.action_details.raw_phase == phase_pb2.ACTION_PHASE_SUCCEEDED:
@@ -155,7 +163,8 @@ class RemoteImageBuilder(ImageBuilder):
             raise flyte.errors.ImageBuildError(f"❌ Build failed in {elapsed} at {run.url}")
 
         outputs = await run_details.outputs()
-        return _get_fully_qualified_image_name(outputs)
+        uri = _get_fully_qualified_image_name(outputs)
+        return ImageBuild(uri=uri, remote_run=run)
 
 
 async def _validate_configuration(image: Image) -> Tuple[str, Optional[str]]:

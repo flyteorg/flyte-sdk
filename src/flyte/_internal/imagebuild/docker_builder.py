@@ -1,4 +1,3 @@
-import asyncio
 import os
 import shutil
 import subprocess
@@ -6,12 +5,13 @@ import tempfile
 import typing
 from pathlib import Path, PurePath
 from string import Template
-from typing import ClassVar, Optional, Protocol, cast
+from typing import TYPE_CHECKING, ClassVar, Optional, Protocol, cast
 
 import aiofiles
 import click
 
 from flyte import Secret
+
 from flyte._code_bundle._ignore import STANDARD_IGNORE_PATTERNS
 from flyte._image import (
     AptPackages,
@@ -45,6 +45,10 @@ from flyte._internal.imagebuild.utils import (
     get_uv_editable_install_mounts,
 )
 from flyte._logging import logger
+from flyte._utils.asyncify import run_sync_with_loop
+
+if TYPE_CHECKING:
+    from flyte._build import ImageBuild
 
 _F_IMG_ID = "_F_IMG_ID"
 FLYTE_DOCKER_BUILDER_CACHE_FROM = "FLYTE_DOCKER_BUILDER_CACHE_FROM"
@@ -558,22 +562,26 @@ class DockerImageBuilder(ImageBuilder):
         # Can get a public token for docker.io but ghcr requires a pat, so harder to get the manifest anonymously
         return [LocalDockerCommandImageChecker, LocalPodmanCommandImageChecker, DockerAPIImageChecker]
 
-    async def build_image(self, image: Image, dry_run: bool = False) -> str:
+    async def build_image(self, image: Image, dry_run: bool = False, wait: bool = True) -> "ImageBuild":
+        from flyte._build import ImageBuild
+
         if image.dockerfile:
             # If a dockerfile is provided, use it directly
-            return await self._build_from_dockerfile(image, push=True)
+            uri = await self._build_from_dockerfile(image, push=True, wait=wait)
+            return ImageBuild(uri=uri, remote_run=None)
 
         if len(image._layers) == 0:
             logger.warning("No layers to build, returning the image URI as is.")
-            return image.uri
+            return ImageBuild(uri=image.uri, remote_run=None)
 
-        return await self._build_image(
+        uri = await self._build_image(
             image,
             push=True,
             dry_run=dry_run,
         )
+        return ImageBuild(uri=uri, remote_run=None)
 
-    async def _build_from_dockerfile(self, image: Image, push: bool) -> str:
+    async def _build_from_dockerfile(self, image: Image, push: bool, wait: bool = True) -> str:
         """
         Build the image from a provided Dockerfile.
         """
@@ -606,7 +614,10 @@ class DockerImageBuilder(ImageBuilder):
         logger.debug(f"Build command: {concat_command}")
         click.secho(f"Run command: {concat_command} ", fg="blue")
 
-        await asyncio.to_thread(subprocess.run, command, cwd=str(cast(Path, image.dockerfile).cwd()), check=True)
+        if wait:
+            await run_sync_with_loop(subprocess.run, command, cwd=str(cast(Path, image.dockerfile).cwd()), check=True)
+        else:
+            await run_sync_with_loop(subprocess.Popen, command, cwd=str(cast(Path, image.dockerfile).cwd()))
 
         return image.uri
 
@@ -615,14 +626,14 @@ class DockerImageBuilder(ImageBuilder):
         """Ensure there is a docker buildx builder called flyte"""
         # Check if buildx is available
         try:
-            await asyncio.to_thread(
+            await run_sync_with_loop(
                 subprocess.run, ["docker", "buildx", "version"], check=True, stdout=subprocess.DEVNULL
             )
         except subprocess.CalledProcessError:
             raise RuntimeError("Docker buildx is not available. Make sure BuildKit is installed and enabled.")
 
         # List builders
-        result = await asyncio.to_thread(
+        result = await run_sync_with_loop(
             subprocess.run, ["docker", "buildx", "ls"], capture_output=True, text=True, check=True
         )
         builders = result.stdout
@@ -631,7 +642,7 @@ class DockerImageBuilder(ImageBuilder):
         if DockerImageBuilder._builder_name not in builders:
             # No default builder found, create one
             logger.info("No buildx builder found, creating one...")
-            await asyncio.to_thread(
+            await run_sync_with_loop(
                 subprocess.run,
                 [
                     "docker",
@@ -647,7 +658,7 @@ class DockerImageBuilder(ImageBuilder):
         else:
             logger.info("Buildx builder already exists.")
 
-    async def _build_image(self, image: Image, *, push: bool = True, dry_run: bool = False) -> str:
+    async def _build_image(self, image: Image, *, push: bool = True, dry_run: bool = False, wait: bool = True) -> str:
         """
         if default image (only base image and locked), raise an error, don't have a dockerfile
         if dockerfile, just build
@@ -729,7 +740,10 @@ class DockerImageBuilder(ImageBuilder):
                 click.secho(f"Run command: {concat_command} ", fg="blue")
 
             try:
-                await asyncio.to_thread(subprocess.run, command, check=True)
+                if wait:
+                    await run_sync_with_loop(subprocess.run, command, check=True)
+                else:
+                    await run_sync_with_loop(subprocess.Popen, command)
             except subprocess.CalledProcessError as e:
                 logger.error(f"Failed to build image: {e}")
                 raise RuntimeError(f"Failed to build image: {e}")
