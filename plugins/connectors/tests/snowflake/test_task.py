@@ -1,4 +1,3 @@
-import pytest
 from flyte.models import SerializationContext
 
 from flyteplugins.connectors.snowflake.task import Snowflake, SnowflakeConfig
@@ -15,11 +14,11 @@ SCTX = SerializationContext(version="test")
 
 
 def _make_task(**kwargs) -> Snowflake:
-    defaults = dict(
-        name="test",
-        query_template="SELECT 1",
-        plugin_config=SF_CONFIG,
-    )
+    defaults = {
+        "name": "test",
+        "query_template": "SELECT 1",
+        "plugin_config": SF_CONFIG,
+    }
     defaults.update(kwargs)
     return Snowflake(**defaults)
 

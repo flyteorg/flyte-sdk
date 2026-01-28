@@ -48,15 +48,11 @@ snowflake_select_task = Snowflake(
     snowflake_private_key="snowflake",
 )
 
-snowflake_env = flyte.TaskEnvironment.from_task(
-    "snowflake_env", snowflake_insert_task, snowflake_select_task
-)
+snowflake_env = flyte.TaskEnvironment.from_task("snowflake_env", snowflake_insert_task, snowflake_select_task)
 
 env = flyte.TaskEnvironment(
     name="snowflake_example_env",
-    image=flyte.Image.from_debian_base().with_pip_packages(
-        "flyteplugins-connectors[snowflake]"
-    ),
+    image=flyte.Image.from_debian_base().with_pip_packages("flyteplugins-connectors[snowflake]"),
     secrets=[flyte.Secret(key="snowflake", as_env_var="SNOWFLAKE_PRIVATE_KEY")],
     depends_on=[snowflake_env],
 )
@@ -77,7 +73,5 @@ async def main(ids: list[int], names: list[str], ages: list[int]) -> float:
 
 if __name__ == "__main__":
     flyte.init_from_config()
-    run = flyte.with_runcontext(mode="remote").run(
-        main, ids=[123, 456], names=["Kevin", "Alice"], ages=[30, 25]
-    )
+    run = flyte.with_runcontext(mode="remote").run(main, ids=[123, 456], names=["Kevin", "Alice"], ages=[30, 25])
     print(run.url)

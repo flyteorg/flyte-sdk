@@ -1,19 +1,19 @@
 from unittest.mock import MagicMock, patch
 
 import pytest
+from flyte.io import DataFrame
 from flyteidl2.core.execution_pb2 import TaskExecution
 from flyteidl2.core.interface_pb2 import Variable, VariableMap
 from flyteidl2.core.tasks_pb2 import Sql, TaskTemplate
 from flyteidl2.core.types_pb2 import LiteralType, StructuredDatasetType
+from google.protobuf import struct_pb2
+
 from flyteplugins.connectors.snowflake.connector import (
     SnowflakeConnector,
     SnowflakeJobMetadata,
     _construct_query_link,
     _expand_batch_query,
 )
-from google.protobuf import struct_pb2
-
-from flyte.io import DataFrame
 
 
 def test_metadata_creation():
@@ -39,19 +39,13 @@ def test_metadata_creation():
 def test_construct_query_link_org_account():
     """Test constructing query link with org-account format."""
     link = _construct_query_link("myorg-myaccount", "query-123")
-    assert (
-        link
-        == "https://app.snowflake.com/myorg/myaccount/#/compute/history/queries/query-123/detail"
-    )
+    assert link == "https://app.snowflake.com/myorg/myaccount/#/compute/history/queries/query-123/detail"
 
 
 def test_construct_query_link_simple():
     """Test constructing query link with simple account name (no hyphen)."""
     link = _construct_query_link("myaccount", "query-456")
-    assert (
-        link
-        == "https://app.snowflake.com/myaccount/#/compute/history/queries/query-456/detail"
-    )
+    assert link == "https://app.snowflake.com/myaccount/#/compute/history/queries/query-456/detail"
 
 
 def test_expand_batch_query():
@@ -61,10 +55,7 @@ def test_expand_batch_query():
 
     expanded, params = _expand_batch_query(query, inputs)
 
-    assert expanded == (
-        "INSERT INTO t (id, name) VALUES "
-        "(%(id_0)s, %(name_0)s), (%(id_1)s, %(name_1)s)"
-    )
+    assert expanded == ("INSERT INTO t (id, name) VALUES (%(id_0)s, %(name_0)s), (%(id_1)s, %(name_1)s)")
     assert params == {"id_0": 1, "name_0": "Alice", "id_1": 2, "name_1": "Bob"}
 
 
@@ -115,13 +106,7 @@ class TestSnowflakeConnector:
         # Set output variables so has_output is True
         template.interface.outputs.CopyFrom(
             VariableMap(
-                variables={
-                    "results": Variable(
-                        type=LiteralType(
-                            structured_dataset_type=StructuredDatasetType()
-                        )
-                    )
-                }
+                variables={"results": Variable(type=LiteralType(structured_dataset_type=StructuredDatasetType()))}
             )
         )
 
@@ -201,9 +186,7 @@ class TestSnowflakeConnector:
         custom["batch"] = True
         template.custom.CopyFrom(custom)
 
-        with patch(
-            "flyteplugins.connectors.snowflake.connector._get_snowflake_connection"
-        ) as mock_get_conn:
+        with patch("flyteplugins.connectors.snowflake.connector._get_snowflake_connection") as mock_get_conn:
             mock_conn = MagicMock()
             mock_cursor = MagicMock()
             mock_cursor.sfqid = "query-batch-789"
@@ -220,8 +203,7 @@ class TestSnowflakeConnector:
             call_args = mock_cursor.execute_async.call_args[0]
             expanded_query = call_args[0]
             assert expanded_query == (
-                "INSERT INTO t (id, name) VALUES "
-                "(%(id_0)s, %(name_0)s), (%(id_1)s, %(name_1)s), (%(id_2)s, %(name_2)s)"
+                "INSERT INTO t (id, name) VALUES (%(id_0)s, %(name_0)s), (%(id_1)s, %(name_1)s), (%(id_2)s, %(name_2)s)"
             )
             flat_params = call_args[1]
             assert flat_params == {
@@ -234,13 +216,9 @@ class TestSnowflakeConnector:
             }
 
     @pytest.mark.asyncio
-    async def test_create_scalar_inputs_uses_execute_async(
-        self, connector, task_template_minimal
-    ):
+    async def test_create_scalar_inputs_uses_execute_async(self, connector, task_template_minimal):
         """Test that scalar (non-list) inputs still use execute_async directly."""
-        with patch(
-            "flyteplugins.connectors.snowflake.connector._get_snowflake_connection"
-        ) as mock_get_conn:
+        with patch("flyteplugins.connectors.snowflake.connector._get_snowflake_connection") as mock_get_conn:
             mock_conn = MagicMock()
             mock_cursor = MagicMock()
             mock_cursor.sfqid = "query-scalar-101"
@@ -248,9 +226,7 @@ class TestSnowflakeConnector:
             mock_get_conn.return_value = mock_conn
 
             scalar_inputs = {"id": 1, "name": "Alice"}
-            metadata = await connector.create(
-                task_template_minimal, inputs=scalar_inputs
-            )
+            metadata = await connector.create(task_template_minimal, inputs=scalar_inputs)
 
             assert metadata.query_id == "query-scalar-101"
             mock_cursor.execute_async.assert_called_once_with("SELECT 1", scalar_inputs)
@@ -405,9 +381,7 @@ class TestSnowflakeConnector:
             mock_conn = MagicMock()
 
             # Mock failed query on the connection
-            mock_conn.get_query_status_throw_if_error.side_effect = Exception(
-                "Query execution failed"
-            )
+            mock_conn.get_query_status_throw_if_error.side_effect = Exception("Query execution failed")
             mock_get_conn.return_value = mock_conn
 
             resource = await connector.get(metadata)

@@ -18,9 +18,7 @@ SNOWFLAKE = "snowflake"
 PROTOCOL_SEP = "\\/|://|:"
 
 
-def _get_private_key(
-    private_key_content: str, private_key_passphrase: Optional[str] = None
-) -> bytes:
+def _get_private_key(private_key_content: str, private_key_passphrase: Optional[str] = None) -> bytes:
     """Decode a PEM private key and return it in DER format."""
     from cryptography.hazmat.backends import default_backend
     from cryptography.hazmat.primitives import serialization
@@ -63,9 +61,7 @@ def _get_connection(
     private_key_content = os.environ.get("SNOWFLAKE_PRIVATE_KEY")
     if private_key_content:
         private_key_passphrase = os.environ.get("SNOWFLAKE_PRIVATE_KEY_PASSPHRASE")
-        conn_params["private_key"] = _get_private_key(
-            private_key_content, private_key_passphrase
-        )
+        conn_params["private_key"] = _get_private_key(private_key_content, private_key_passphrase)
 
     return snowflake.connector.connect(**conn_params)
 
@@ -92,9 +88,7 @@ def _read_from_sf(
     if not uri:
         raise ValueError("flyte_value.uri cannot be empty.")
 
-    _, user, account, warehouse, database, schema, query_id = re.split(
-        PROTOCOL_SEP, uri
-    )
+    _, user, account, warehouse, database, schema, query_id = re.split(PROTOCOL_SEP, uri)
 
     conn = _get_connection(user, account, database, schema, warehouse)
     cs = conn.cursor()
@@ -114,9 +108,7 @@ class PandasToSnowflakeEncodingHandlers(DataFrameEncoder):
         _write_to_sf(dataframe)
         return literals_pb2.StructuredDataset(
             uri=typing.cast(str, dataframe.uri),
-            metadata=literals_pb2.StructuredDatasetMetadata(
-                structured_dataset_type=structured_dataset_type
-            ),
+            metadata=literals_pb2.StructuredDatasetMetadata(structured_dataset_type=structured_dataset_type),
         )
 
 

@@ -7,12 +7,8 @@ pd = pytest.importorskip("pandas")
 snowflake_connector = pytest.importorskip("snowflake.connector")
 
 
-SNOWFLAKE_URI_WRITE = (
-    "snowflake://testuser/testaccount/testwarehouse/testdb/testschema/testtable"
-)
-SNOWFLAKE_URI_READ = (
-    "snowflake://testuser/testaccount/testwarehouse/testdb/testschema/query-abc-123"
-)
+SNOWFLAKE_URI_WRITE = "snowflake://testuser/testaccount/testwarehouse/testdb/testschema/testtable"
+SNOWFLAKE_URI_READ = "snowflake://testuser/testaccount/testwarehouse/testdb/testschema/query-abc-123"
 
 
 @pytest.fixture
@@ -36,9 +32,7 @@ class TestGetPrivateKey:
         ):
             from flyte.io._dataframe.snowflake import _get_private_key
 
-            result = _get_private_key(
-                "-----BEGIN PRIVATE KEY-----\nfake\n-----END PRIVATE KEY-----"
-            )
+            result = _get_private_key("-----BEGIN PRIVATE KEY-----\nfake\n-----END PRIVATE KEY-----")
 
             assert result == mock_der_bytes
             mock_load.assert_called_once()
@@ -93,9 +87,7 @@ class TestGetConnection:
         import flyte.io._dataframe.snowflake as sf_module
 
         with (
-            patch.object(
-                sf_module, "_get_private_key", return_value=b"der-key"
-            ) as mock_gpk,
+            patch.object(sf_module, "_get_private_key", return_value=b"der-key") as mock_gpk,
             patch.object(snowflake_connector, "connect") as mock_connect,
         ):
             mock_connect.return_value = MagicMock()
@@ -115,9 +107,7 @@ class TestGetConnection:
         import flyte.io._dataframe.snowflake as sf_module
 
         with (
-            patch.object(
-                sf_module, "_get_private_key", return_value=b"der-key"
-            ) as mock_gpk,
+            patch.object(sf_module, "_get_private_key", return_value=b"der-key") as mock_gpk,
             patch.object(snowflake_connector, "connect") as mock_connect,
         ):
             mock_connect.return_value = MagicMock()
@@ -153,19 +143,13 @@ class TestWriteToSf:
         mock_conn = MagicMock()
 
         with (
-            patch.object(
-                sf_module, "_get_connection", return_value=mock_conn
-            ) as mock_get_conn,
+            patch.object(sf_module, "_get_connection", return_value=mock_conn) as mock_get_conn,
             patch("snowflake.connector.pandas_tools.write_pandas") as mock_wp,
         ):
-            df_wrapper = DataFrame.from_df(
-                val=sample_dataframe, uri=SNOWFLAKE_URI_WRITE
-            )
+            df_wrapper = DataFrame.from_df(val=sample_dataframe, uri=SNOWFLAKE_URI_WRITE)
             sf_module._write_to_sf(df_wrapper)
 
-            mock_get_conn.assert_called_once_with(
-                "testuser", "testaccount", "testdb", "testschema", "testwarehouse"
-            )
+            mock_get_conn.assert_called_once_with("testuser", "testaccount", "testdb", "testschema", "testwarehouse")
             mock_wp.assert_called_once_with(mock_conn, sample_dataframe, "testtable")
 
     def test_raises_on_missing_uri(self):
@@ -188,18 +172,14 @@ class TestReadFromSf:
         mock_cursor.fetch_pandas_all.return_value = sample_dataframe
         mock_conn.cursor.return_value = mock_cursor
 
-        with patch.object(
-            sf_module, "_get_connection", return_value=mock_conn
-        ) as mock_get_conn:
+        with patch.object(sf_module, "_get_connection", return_value=mock_conn) as mock_get_conn:
             flyte_value = literals_pb2.StructuredDataset(uri=SNOWFLAKE_URI_READ)
             metadata = literals_pb2.StructuredDatasetMetadata()
 
             result = sf_module._read_from_sf(flyte_value, metadata)
 
             pd.testing.assert_frame_equal(result, sample_dataframe)
-            mock_get_conn.assert_called_once_with(
-                "testuser", "testaccount", "testdb", "testschema", "testwarehouse"
-            )
+            mock_get_conn.assert_called_once_with("testuser", "testaccount", "testdb", "testschema", "testwarehouse")
             mock_cursor.get_results_from_sfqid.assert_called_once_with("query-abc-123")
 
     def test_raises_on_empty_uri(self):
@@ -230,9 +210,7 @@ class TestPandasToSnowflakeEncoder:
             patch.object(sf_module, "_get_connection", return_value=mock_conn),
             patch("snowflake.connector.pandas_tools.write_pandas"),
         ):
-            df_wrapper = DataFrame.from_df(
-                val=sample_dataframe, uri=SNOWFLAKE_URI_WRITE
-            )
+            df_wrapper = DataFrame.from_df(val=sample_dataframe, uri=SNOWFLAKE_URI_WRITE)
             sd_type = types_pb2.StructuredDatasetType()
 
             result = await encoder.encode(df_wrapper, sd_type)

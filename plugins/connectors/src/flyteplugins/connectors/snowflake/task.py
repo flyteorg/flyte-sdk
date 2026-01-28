@@ -2,11 +2,10 @@ import re
 from dataclasses import dataclass
 from typing import Any, Dict, Optional, Type
 
-from flyteidl2.core import tasks_pb2
-
 from flyte.connectors import AsyncConnectorExecutorMixin
 from flyte.extend import TaskTemplate
 from flyte.models import NativeInterface, SerializationContext
+from flyteidl2.core import tasks_pb2
 
 
 @dataclass
@@ -90,9 +89,7 @@ class Snowflake(AsyncConnectorExecutorMixin, TaskTemplate):
 
         self.output_dataframe_type = output_dataframe_type
         self.plugin_config = plugin_config
-        self.query_template = re.sub(
-            r"\s+", " ", query_template.replace("\n", " ").replace("\t", " ")
-        ).strip()
+        self.query_template = re.sub(r"\s+", " ", query_template.replace("\n", " ").replace("\t", " ")).strip()
         self.batch = batch
         self.secret_group = secret_group
         self.snowflake_private_key = snowflake_private_key
@@ -121,20 +118,14 @@ class Snowflake(AsyncConnectorExecutorMixin, TaskTemplate):
 
         secrets = {}
         if self.snowflake_private_key is not None:
-            secrets["snowflake_private_key"] = self._to_env_var(
-                self.snowflake_private_key
-            )
+            secrets["snowflake_private_key"] = self._to_env_var(self.snowflake_private_key)
         if self.snowflake_private_key_passphrase is not None:
-            secrets["snowflake_private_key_passphrase"] = self._to_env_var(
-                self.snowflake_private_key_passphrase
-            )
+            secrets["snowflake_private_key_passphrase"] = self._to_env_var(self.snowflake_private_key_passphrase)
         if secrets:
             config["secrets"] = secrets
 
         return config
 
     def sql(self, sctx: SerializationContext) -> Optional[str]:
-        sql = tasks_pb2.Sql(
-            statement=self.query_template, dialect=tasks_pb2.Sql.Dialect.ANSI
-        )
+        sql = tasks_pb2.Sql(statement=self.query_template, dialect=tasks_pb2.Sql.Dialect.ANSI)
         return sql
