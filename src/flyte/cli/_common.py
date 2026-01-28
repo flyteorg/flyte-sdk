@@ -459,6 +459,46 @@ def get_console() -> Console:
     return Console(color_system="auto", force_terminal=True, width=120)
 
 
+class CLIOutput:
+    """
+    Unified output handler that switches between rich and JSON formats.
+    Centralizes all output logic to avoid scattered if-else statements.
+    """
+
+    def __init__(self, config: "CLIConfig"):
+        self.config = config
+        self.console = get_console()
+        self.is_json = config.log_format == "json"
+
+    def status(self, message: str, spinner: str = "dots"):
+        """Return a context manager for status display. Returns nullcontext for JSON mode."""
+        from contextlib import nullcontext
+
+        if self.is_json:
+            return nullcontext()
+        return self.console.status(message, spinner=spinner)
+
+    def print_success(self, data: dict, title: str, rich_content: str):
+        """Print success output - JSON dict or rich panel."""
+        if self.is_json:
+            print(json.dumps(data))
+        else:
+            self.console.print(get_panel(title, rich_content, self.config.output_format))
+
+    def print_error(self, error: Exception | str):
+        """Print error output - JSON or rich formatted."""
+        error_str = str(error)
+        if self.is_json:
+            print(json.dumps({"error": error_str}))
+        else:
+            self.console.print(get_panel("Exception", f"[red]✕ Execution failed:[/red] {error_str}", self.config.output_format))
+
+    def print_message(self, message: str):
+        """Print informational message - suppressed in JSON mode."""
+        if not self.is_json:
+            self.console.print(message)
+
+
 def parse_images(cfg: Config, values: tuple[str, ...] | None) -> None:
     """
     Parse image values and update the config.
