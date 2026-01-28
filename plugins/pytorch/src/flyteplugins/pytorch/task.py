@@ -10,8 +10,8 @@ from flyte._logging import logger
 from flyte._task import P, R
 from flyte.extend import AsyncFunctionTaskTemplate, TaskPluginRegistry
 from flyte.models import SerializationContext, TaskContext
-from flyteidl.plugins.kubeflow import common_pb2
-from flyteidl.plugins.kubeflow.pytorch_pb2 import (
+from flyteidl2.plugins.kubeflow import common_pb2
+from flyteidl2.plugins.kubeflow.pytorch_pb2 import (
     DistributedPyTorchTrainingReplicaSpec,
     DistributedPyTorchTrainingTask,
     ElasticConfig,
