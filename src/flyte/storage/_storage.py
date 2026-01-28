@@ -26,7 +26,7 @@ if typing.TYPE_CHECKING:
     from obstore import AsyncReadableFile, AsyncWritableFile
 
 _OBSTORE_SUPPORTED_PROTOCOLS = ["s3", "gs", "abfs", "abfss"]
-MAX_CONCURRENCY = int(os.getenv("FLYTE_IO_MAX_CONCURRENCY", str(32)))
+BATCH_SIZE = int(os.getenv("FLYTE_IO_BATCH_SIZE", str(32)))
 
 
 def _is_obstore_supported_protocol(protocol: str) -> bool:
@@ -279,7 +279,7 @@ async def put(
         to_path = ctx.raw_data.get_random_remote_path(file_name=name)
 
     if not batch_size:
-        batch_size = MAX_CONCURRENCY
+        batch_size = BATCH_SIZE
 
     file_system = get_underlying_filesystem(path=to_path)
     from_path = strip_file_header(from_path)

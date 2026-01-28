@@ -623,7 +623,7 @@ class Dir(BaseModel, Generic[T], SerializableType):
                           as an input to discoverable tasks. If not specified, the cache key will be based on
                           directory attributes.
             batch_size: Optional concurrency limit for uploading files. If not specified, the default value is
-              determined by the FLYTE_IO_MAX_CONCURRENCY environment variable (default: 32).
+              determined by the FLYTE_IO_BATCH_SIZE environment variable (default: 32).
 
         Returns:
             A new Dir instance pointing to the uploaded directory
