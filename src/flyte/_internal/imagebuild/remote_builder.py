@@ -209,6 +209,8 @@ def _get_layers_proto(image: Image, context_path: Path) -> "image_definition_pb2
         )
 
     layers = []
+    docker_ignore_patterns = get_and_list_dockerignore(image)
+
     for layer in image._layers:
         secret_mounts = None
         pip_options = image_definition_pb2.PipOptions()
@@ -270,7 +272,6 @@ def _get_layers_proto(image: Image, context_path: Path) -> "image_definition_pb2
                             ),
                         )
                     )
-                    docker_ignore_patterns = get_and_list_dockerignore(image)
 
                     for pyproject in header.pyprojects:
                         pyproject_dst = copy_files_to_context(Path(pyproject), context_path, docker_ignore_patterns)
@@ -311,7 +312,6 @@ def _get_layers_proto(image: Image, context_path: Path) -> "image_definition_pb2
                     pip_options.extra_args += " --no-sources"
             else:
                 # Copy the entire project
-                docker_ignore_patterns = get_and_list_dockerignore(image)
                 pyproject_dst = copy_files_to_context(layer.pyproject.parent, context_path, docker_ignore_patterns)
 
             uv_layer = image_definition_pb2.Layer(
@@ -354,7 +354,7 @@ def _get_layers_proto(image: Image, context_path: Path) -> "image_definition_pb2
         elif isinstance(layer, DockerIgnore):
             shutil.copy(layer.path, context_path)
         elif isinstance(layer, CopyConfig):
-            dst_path = copy_files_to_context(layer.src, context_path)
+            dst_path = copy_files_to_context(layer.src, context_path, docker_ignore_patterns)
 
             copy_layer = image_definition_pb2.Layer(
                 copy_config=image_definition_pb2.CopyConfig(

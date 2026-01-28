@@ -10,29 +10,38 @@ def copy_files_to_context(src: Path, context_path: Path, ignore_patterns: list[s
     """
     This helper function ensures that absolute paths that users specify are converted correctly to a path in the
     context directory. Doing this prevents collisions while ensuring files are available in the context.
-
-    For example, if a user has
-        img.with_requirements(Path("/Users/username/requirements.txt"))
-           .with_requirements(Path("requirements.txt"))
-           .with_requirements(Path("../requirements.txt"))
-
-    copying with this function ensures that the Docker context folder has all three files.
-
-    :param src: The source path to copy
-    :param context_path: The context path where the files should be copied to
     """
     if src.is_absolute() or ".." in str(src):
         rel_path = PurePath(*src.parts[1:])
         dst_path = context_path / "_flyte_abs_context" / rel_path
     else:
         dst_path = context_path / src
-    dst_path.parent.mkdir(parents=True, exist_ok=True)
+
     if src.is_dir():
-        default_ignore_patterns = [".idea", ".venv"]
-        ignore_patterns = list(set(ignore_patterns + default_ignore_patterns))
-        shutil.copytree(src, dst_path, dirs_exist_ok=True, ignore=shutil.ignore_patterns(*ignore_patterns))
+        from .docker import PatternMatcher
+
+        # Add ** prefix to match patterns anywhere in tree
+        default_ignore_patterns = ["**/.idea", "**/.venv", "**/__pycache__", "**/*.pyc"]
+        all_patterns = ignore_patterns + default_ignore_patterns
+        pm = PatternMatcher(all_patterns)
+
+        # Use walk() to get list of files to include
+        for rel_file in pm.walk(str(src)):
+            src_file = src / rel_file
+            dst_file = dst_path / rel_file
+
+            # Create parent directory if needed
+            dst_file.parent.mkdir(parents=True, exist_ok=True)
+
+            # Copy file (not directory)
+            if src_file.is_file():
+                shutil.copy2(src_file, dst_file)
+
     else:
+        # Single file
+        dst_path.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy(src, dst_path)
+
     return dst_path
 
 
@@ -76,9 +85,4 @@ def get_and_list_dockerignore(image: Image) -> List[str]:
     except Exception as e:
         logger.error(f"Failed to read .dockerignore file at {dockerignore_path}: {e}")
         return []
-
-    # Transform Docker glob patterns to fnmatch patterns for use with shutil. ignore_patterns()
-    # Docker uses **/ to mean "at any directory depth", but Python's fnmatch doesn't support this
-    fnmatch_patterns = [p.removeprefix("**/").removesuffix("/") for p in patterns]
-
-    return fnmatch_patterns
+    return patterns
