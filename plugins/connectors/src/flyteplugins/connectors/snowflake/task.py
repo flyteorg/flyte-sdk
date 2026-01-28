@@ -2,21 +2,29 @@ import re
 from dataclasses import dataclass
 from typing import Any, Dict, Optional, Type
 
+from flyteidl2.core import tasks_pb2
+
 from flyte.connectors import AsyncConnectorExecutorMixin
 from flyte.extend import TaskTemplate
-from flyte.io import DataFrame
 from flyte.models import NativeInterface, SerializationContext
-from flyteidl2.core import tasks_pb2
 
 
 @dataclass
 class SnowflakeConfig(object):
     """
-    SnowflakeConfig should be used to configure a Snowflake Task.
+    Configure a Snowflake Task using a `SnowflakeConfig` object.
 
     Additional connection parameters (role, authenticator, session_parameters, etc.) can be passed
     via connection_kwargs.
     See: https://docs.snowflake.com/en/developer-guide/python-connector/python-connector-api
+
+    Args:
+        account: The Snowflake account identifier.
+        database: The Snowflake database name.
+        schema: The Snowflake schema name.
+        warehouse: The Snowflake warehouse name.
+        user: The Snowflake user name.
+        connection_kwargs: Optional dictionary of additional Snowflake connection parameters.
     """
 
     account: str
@@ -36,29 +44,36 @@ class Snowflake(AsyncConnectorExecutorMixin, TaskTemplate):
         query_template: str,
         plugin_config: SnowflakeConfig,
         inputs: Optional[Dict[str, Type]] = None,
-        output_dataframe_type: Optional[Type[DataFrame]] = None,
+        output_dataframe_type: Optional[Type] = None,
         snowflake_private_key: Optional[str] = None,
         snowflake_private_key_passphrase: Optional[str] = None,
+        batch: bool = False,
         **kwargs,
     ):
         """
-        To be used to query Snowflake databases.
+        Task to run parameterized SQL queries against Snowflake.
 
-        :param name: The name of this task, should be unique in the project
-        :param query_template: The actual query to run. We use Flyte's Golang templating format for query templating.
-        :param plugin_config: SnowflakeConfig object (includes connection_kwargs for additional parameters)
-        :param inputs: Name and type of inputs specified as an ordered dictionary
-        :param output_dataframe_type: If some data is produced by this query, then you can specify the
-         output dataframe type.
-        :param snowflake_private_key: The name of the secret containing the Snowflake private key for key-pair auth.
-        :param snowflake_private_key_passphrase: The name of the secret containing the private key passphrase
-            (if encrypted).
+        Args:
+            name: The name of this task
+            query_template: The actual query to run. This can be parameterized using Python's
+            printf-style string formatting with named parameters (e.g. %(param_name)s)
+            plugin_config: `SnowflakeConfig` object containing connection metadata
+            inputs: Name and type of inputs specified as a dictionary
+            output_dataframe_type: If some data is produced by this query, then you can specify the
+             output dataframe type.
+            snowflake_private_key: The name of the secret containing the Snowflake private key for key-pair auth.
+            snowflake_private_key_passphrase: The name of the secret containing the private key passphrase
+                (if encrypted).
+            batch: When True, list inputs are expanded into a multi-row VALUES clause. The
+                query_template should contain a single ``VALUES (%(col)s, ...)`` placeholder
+                and each input should be a list of equal length.
 
-        Note: For password authentication or other auth methods, pass them via plugin_config.connection_kwargs.
+        Note: For password authentication or other auth methods, pass them via `connection_kwargs`.
         """
         outputs = None
         if output_dataframe_type is not None:
             outputs = {"results": output_dataframe_type}
+
         super().__init__(
             name=name,
             interface=NativeInterface(
@@ -68,9 +83,13 @@ class Snowflake(AsyncConnectorExecutorMixin, TaskTemplate):
             task_type=self._TASK_TYPE,
             **kwargs,
         )
+
         self.output_dataframe_type = output_dataframe_type
         self.plugin_config = plugin_config
-        self.query_template = re.sub(r"\s+", " ", query_template.replace("\n", " ").replace("\t", " ")).strip()
+        self.query_template = re.sub(
+            r"\s+", " ", query_template.replace("\n", " ").replace("\t", " ")
+        ).strip()
+        self.batch = batch
         self.snowflake_private_key = snowflake_private_key
         self.snowflake_private_key_passphrase = snowflake_private_key_passphrase
 
@@ -83,6 +102,9 @@ class Snowflake(AsyncConnectorExecutorMixin, TaskTemplate):
             "user": self.plugin_config.user,
         }
 
+        if self.batch:
+            config["batch"] = True
+
         # Add additional connection parameters
         if self.plugin_config.connection_kwargs:
             config["connection_kwargs"] = self.plugin_config.connection_kwargs
@@ -91,12 +113,16 @@ class Snowflake(AsyncConnectorExecutorMixin, TaskTemplate):
         if self.snowflake_private_key is not None:
             secrets["snowflake_private_key"] = self.snowflake_private_key
         if self.snowflake_private_key_passphrase is not None:
-            secrets["snowflake_private_key_passphrase"] = self.snowflake_private_key_passphrase
+            secrets["snowflake_private_key_passphrase"] = (
+                self.snowflake_private_key_passphrase
+            )
         if secrets:
             config["secrets"] = secrets
 
         return config
 
     def sql(self, sctx: SerializationContext) -> Optional[str]:
-        sql = tasks_pb2.Sql(statement=self.query_template, dialect=tasks_pb2.Sql.Dialect.ANSI)
+        sql = tasks_pb2.Sql(
+            statement=self.query_template, dialect=tasks_pb2.Sql.Dialect.ANSI
+        )
         return sql

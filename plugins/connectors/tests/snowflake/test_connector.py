@@ -1,16 +1,19 @@
 from unittest.mock import MagicMock, patch
 
 import pytest
-from flyte.io import DataFrame
 from flyteidl2.core.execution_pb2 import TaskExecution
+from flyteidl2.core.interface_pb2 import Variable, VariableMap
 from flyteidl2.core.tasks_pb2 import Sql, TaskTemplate
-from google.protobuf import struct_pb2
-
+from flyteidl2.core.types_pb2 import LiteralType, StructuredDatasetType
 from flyteplugins.connectors.snowflake.connector import (
     SnowflakeConnector,
     SnowflakeJobMetadata,
     _construct_query_link,
+    _expand_batch_query,
 )
+from google.protobuf import struct_pb2
+
+from flyte.io import DataFrame
 
 
 def test_metadata_creation():
@@ -33,18 +36,42 @@ def test_metadata_creation():
     assert metadata.has_output is True
 
 
-def test_construct_query_link_with_dots():
-    """Test constructing query link with account containing dots."""
-    link = _construct_query_link("account.us-east-1.aws", "query-123")
-    assert "app.snowflake.com/us-east-1/aws/account" in link
-    assert "query-123" in link
+def test_construct_query_link_org_account():
+    """Test constructing query link with org-account format."""
+    link = _construct_query_link("myorg-myaccount", "query-123")
+    assert (
+        link
+        == "https://app.snowflake.com/myorg/myaccount/#/compute/history/queries/query-123/detail"
+    )
 
 
 def test_construct_query_link_simple():
-    """Test constructing query link with simple account name."""
-    link = _construct_query_link("simple-account", "query-456")
-    assert "app.snowflake.com/simple-account" in link
-    assert "query-456" in link
+    """Test constructing query link with simple account name (no hyphen)."""
+    link = _construct_query_link("myaccount", "query-456")
+    assert (
+        link
+        == "https://app.snowflake.com/myaccount/#/compute/history/queries/query-456/detail"
+    )
+
+
+def test_expand_batch_query():
+    """Test expanding a parameterized query with list inputs into multi-row VALUES."""
+    query = "INSERT INTO t (id, name) VALUES (%(id)s, %(name)s)"
+    inputs = {"id": [1, 2], "name": ["Alice", "Bob"]}
+
+    expanded, params = _expand_batch_query(query, inputs)
+
+    assert expanded == (
+        "INSERT INTO t (id, name) VALUES "
+        "(%(id_0)s, %(name_0)s), (%(id_1)s, %(name_1)s)"
+    )
+    assert params == {"id_0": 1, "name_0": "Alice", "id_1": 2, "name_1": "Bob"}
+
+
+def test_expand_batch_query_no_values_clause():
+    """Test that _expand_batch_query raises on queries without VALUES."""
+    with pytest.raises(ValueError, match="VALUES"):
+        _expand_batch_query("SELECT * FROM t", {"id": [1, 2]})
 
 
 class TestSnowflakeConnector:
@@ -72,7 +99,7 @@ class TestSnowflakeConnector:
 
     @pytest.fixture
     def task_template_with_output(self):
-        """Create a task template with output location."""
+        """Create a task template with output variables."""
         template = TaskTemplate()
         template.sql.CopyFrom(Sql(statement="SELECT * FROM users", dialect=Sql.Dialect.ANSI))
         template.metadata.runtime.version = "1.0.0"
@@ -83,8 +110,20 @@ class TestSnowflakeConnector:
         custom["database"] = "test-db"
         custom["schema"] = "PUBLIC"
         custom["warehouse"] = "test-warehouse"
-        custom["output_location_prefix"] = "s3://bucket/path/"
         template.custom.CopyFrom(custom)
+
+        # Set output variables so has_output is True
+        template.interface.outputs.CopyFrom(
+            VariableMap(
+                variables={
+                    "results": Variable(
+                        type=LiteralType(
+                            structured_dataset_type=StructuredDatasetType()
+                        )
+                    )
+                }
+            )
+        )
 
         return template
 
@@ -124,7 +163,7 @@ class TestSnowflakeConnector:
             assert call_kwargs["warehouse"] == "test-warehouse"
 
             # Verify query was executed
-            mock_cursor.execute_async.assert_called_once_with("SELECT 1")
+            mock_cursor.execute_async.assert_called_once_with("SELECT 1", None)
             mock_cursor.close.assert_called_once()
 
     @pytest.mark.asyncio
@@ -141,6 +180,80 @@ class TestSnowflakeConnector:
 
             assert metadata.query_id == "query-456"
             assert metadata.has_output is True
+
+    @pytest.mark.asyncio
+    async def test_create_batch_inputs(self, connector):
+        """Test creating a Snowflake query with batch flag expands to multi-row VALUES."""
+        template = TaskTemplate()
+        template.sql.CopyFrom(
+            Sql(
+                statement="INSERT INTO t (id, name) VALUES (%(id)s, %(name)s)",
+                dialect=Sql.Dialect.ANSI,
+            )
+        )
+        template.metadata.runtime.version = "1.0.0"
+        custom = struct_pb2.Struct()
+        custom["account"] = "test-account"
+        custom["user"] = "test-user"
+        custom["database"] = "test-db"
+        custom["schema"] = "PUBLIC"
+        custom["warehouse"] = "test-warehouse"
+        custom["batch"] = True
+        template.custom.CopyFrom(custom)
+
+        with patch(
+            "flyteplugins.connectors.snowflake.connector._get_snowflake_connection"
+        ) as mock_get_conn:
+            mock_conn = MagicMock()
+            mock_cursor = MagicMock()
+            mock_cursor.sfqid = "query-batch-789"
+            mock_conn.cursor.return_value = mock_cursor
+            mock_get_conn.return_value = mock_conn
+
+            batch_inputs = {"id": [1, 2, 3], "name": ["Alice", "Bob", "Charlie"]}
+            metadata = await connector.create(template, inputs=batch_inputs)
+
+            assert metadata.query_id == "query-batch-789"
+
+            # Verify execute_async was called with expanded multi-row query
+            mock_cursor.execute_async.assert_called_once()
+            call_args = mock_cursor.execute_async.call_args[0]
+            expanded_query = call_args[0]
+            assert expanded_query == (
+                "INSERT INTO t (id, name) VALUES "
+                "(%(id_0)s, %(name_0)s), (%(id_1)s, %(name_1)s), (%(id_2)s, %(name_2)s)"
+            )
+            flat_params = call_args[1]
+            assert flat_params == {
+                "id_0": 1,
+                "name_0": "Alice",
+                "id_1": 2,
+                "name_1": "Bob",
+                "id_2": 3,
+                "name_2": "Charlie",
+            }
+
+    @pytest.mark.asyncio
+    async def test_create_scalar_inputs_uses_execute_async(
+        self, connector, task_template_minimal
+    ):
+        """Test that scalar (non-list) inputs still use execute_async directly."""
+        with patch(
+            "flyteplugins.connectors.snowflake.connector._get_snowflake_connection"
+        ) as mock_get_conn:
+            mock_conn = MagicMock()
+            mock_cursor = MagicMock()
+            mock_cursor.sfqid = "query-scalar-101"
+            mock_conn.cursor.return_value = mock_cursor
+            mock_get_conn.return_value = mock_conn
+
+            scalar_inputs = {"id": 1, "name": "Alice"}
+            metadata = await connector.create(
+                task_template_minimal, inputs=scalar_inputs
+            )
+
+            assert metadata.query_id == "query-scalar-101"
+            mock_cursor.execute_async.assert_called_once_with("SELECT 1", scalar_inputs)
 
     @pytest.mark.asyncio
     async def test_create_missing_account(self, connector, task_template_minimal):
@@ -189,13 +302,11 @@ class TestSnowflakeConnector:
 
         with patch("flyteplugins.connectors.snowflake.connector._get_snowflake_connection") as mock_get_conn:
             mock_conn = MagicMock()
-            mock_cursor = MagicMock()
 
-            # Mock successful query
+            # Mock successful query status on the connection
             mock_status = MagicMock()
             mock_status.name = "SUCCESS"
-            mock_cursor.get_query_status_throw_if_error.return_value = mock_status
-            mock_conn.cursor.return_value = mock_cursor
+            mock_conn.get_query_status_throw_if_error.return_value = mock_status
             mock_get_conn.return_value = mock_conn
 
             with patch("flyteplugins.connectors.snowflake.connector.convert_to_flyte_phase") as mock_convert:
@@ -206,7 +317,7 @@ class TestSnowflakeConnector:
                 assert resource.phase == TaskExecution.SUCCEEDED
                 assert resource.message == "SUCCESS"
                 assert len(resource.log_links) == 1
-                assert resource.log_links[0].name == "Snowflake Console"
+                assert resource.log_links[0].name == "Snowflake Dashboard"
                 assert "query-123" in resource.log_links[0].uri
 
                 # Verify outputs contain DataFrame with correct URI
@@ -232,12 +343,10 @@ class TestSnowflakeConnector:
 
         with patch("flyteplugins.connectors.snowflake.connector._get_snowflake_connection") as mock_get_conn:
             mock_conn = MagicMock()
-            mock_cursor = MagicMock()
 
             mock_status = MagicMock()
             mock_status.name = "SUCCESS"
-            mock_cursor.get_query_status_throw_if_error.return_value = mock_status
-            mock_conn.cursor.return_value = mock_cursor
+            mock_conn.get_query_status_throw_if_error.return_value = mock_status
             mock_get_conn.return_value = mock_conn
 
             with patch("flyteplugins.connectors.snowflake.connector.convert_to_flyte_phase") as mock_convert:
@@ -264,12 +373,10 @@ class TestSnowflakeConnector:
 
         with patch("flyteplugins.connectors.snowflake.connector._get_snowflake_connection") as mock_get_conn:
             mock_conn = MagicMock()
-            mock_cursor = MagicMock()
 
             mock_status = MagicMock()
             mock_status.name = "RUNNING"
-            mock_cursor.get_query_status_throw_if_error.return_value = mock_status
-            mock_conn.cursor.return_value = mock_cursor
+            mock_conn.get_query_status_throw_if_error.return_value = mock_status
             mock_get_conn.return_value = mock_conn
 
             with patch("flyteplugins.connectors.snowflake.connector.convert_to_flyte_phase") as mock_convert:
@@ -296,11 +403,11 @@ class TestSnowflakeConnector:
 
         with patch("flyteplugins.connectors.snowflake.connector._get_snowflake_connection") as mock_get_conn:
             mock_conn = MagicMock()
-            mock_cursor = MagicMock()
 
-            # Mock failed query
-            mock_cursor.get_query_status_throw_if_error.side_effect = Exception("Query execution failed")
-            mock_conn.cursor.return_value = mock_cursor
+            # Mock failed query on the connection
+            mock_conn.get_query_status_throw_if_error.side_effect = Exception(
+                "Query execution failed"
+            )
             mock_get_conn.return_value = mock_conn
 
             resource = await connector.get(metadata)
@@ -342,7 +449,7 @@ class TestSnowflakeConnector:
     async def test_get_log_link_format(self, connector):
         """Test that the log link is properly formatted."""
         metadata = SnowflakeJobMetadata(
-            account="my-account.us-west-2.aws",
+            account="myorg-myaccount",
             user="test-user",
             database="test-db",
             schema="PUBLIC",
@@ -353,12 +460,10 @@ class TestSnowflakeConnector:
 
         with patch("flyteplugins.connectors.snowflake.connector._get_snowflake_connection") as mock_get_conn:
             mock_conn = MagicMock()
-            mock_cursor = MagicMock()
 
             mock_status = MagicMock()
             mock_status.name = "RUNNING"
-            mock_cursor.get_query_status_throw_if_error.return_value = mock_status
-            mock_conn.cursor.return_value = mock_cursor
+            mock_conn.get_query_status_throw_if_error.return_value = mock_status
             mock_get_conn.return_value = mock_conn
 
             with patch("flyteplugins.connectors.snowflake.connector.convert_to_flyte_phase") as mock_convert:
@@ -368,6 +473,7 @@ class TestSnowflakeConnector:
 
                 assert len(resource.log_links) == 1
                 log_link = resource.log_links[0]
-                assert log_link.name == "Snowflake Console"
-                assert "app.snowflake.com" in log_link.uri
-                assert "query-abc" in log_link.uri
+                assert log_link.name == "Snowflake Dashboard"
+                assert log_link.uri == (
+                    "https://app.snowflake.com/myorg/myaccount/#/compute/history/queries/query-abc/detail"
+                )
