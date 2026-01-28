@@ -82,7 +82,7 @@ class Project(ToJSONMixin):
         yield "name", self.pb2.name
         yield "id", self.pb2.id
         yield "description", self.pb2.description
-        yield "state", project_service_pb2.Project.ProjectState.Name(self.pb2.state)
+        yield "state", project_service_pb2.ProjectState.Name(self.pb2.state)
         yield (
             "labels",
             ", ".join([f"{k}: {v}" for k, v in self.pb2.labels.values.items()]) if self.pb2.labels else None,
