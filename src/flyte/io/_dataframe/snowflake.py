@@ -3,15 +3,14 @@ import re
 import typing
 from typing import Optional
 
-import snowflake.connector
 from flyteidl2.core import literals_pb2, types_pb2
-from snowflake.connector.pandas_tools import write_pandas
 
 from flyte._utils import lazy_module
 from flyte.io._dataframe.dataframe import DataFrame, DataFrameDecoder, DataFrameEncoder
 
 if typing.TYPE_CHECKING:
     import pandas as pd
+    import snowflake.connector
 else:
     pd = lazy_module("pandas")
 
@@ -48,8 +47,10 @@ def _get_connection(
     database: str,
     schema: str,
     warehouse: str,
-) -> snowflake.connector.SnowflakeConnection:
+) -> "snowflake.connector.SnowflakeConnection":
     """Create a Snowflake connection using environment-provided credentials."""
+    import snowflake.connector
+
     conn_params: dict[str, typing.Any] = {
         "user": user,
         "account": account,
@@ -72,6 +73,8 @@ def _get_connection(
 def _write_to_sf(dataframe: DataFrame):
     if not dataframe.uri:
         raise ValueError("dataframe.uri cannot be None.")
+
+    from snowflake.connector.pandas_tools import write_pandas
 
     uri = typing.cast(str, dataframe.uri)
     _, user, account, warehouse, database, schema, table = re.split(PROTOCOL_SEP, uri)

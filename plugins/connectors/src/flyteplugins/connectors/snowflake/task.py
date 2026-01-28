@@ -45,6 +45,7 @@ class Snowflake(AsyncConnectorExecutorMixin, TaskTemplate):
         plugin_config: SnowflakeConfig,
         inputs: Optional[Dict[str, Type]] = None,
         output_dataframe_type: Optional[Type] = None,
+        secret_group: Optional[str] = None,
         snowflake_private_key: Optional[str] = None,
         snowflake_private_key_passphrase: Optional[str] = None,
         batch: bool = False,
@@ -54,15 +55,18 @@ class Snowflake(AsyncConnectorExecutorMixin, TaskTemplate):
         Task to run parameterized SQL queries against Snowflake.
 
         Args:
-            name: The name of this task
+            name: The name of this task.
             query_template: The actual query to run. This can be parameterized using Python's
-            printf-style string formatting with named parameters (e.g. %(param_name)s)
-            plugin_config: `SnowflakeConfig` object containing connection metadata
-            inputs: Name and type of inputs specified as a dictionary
+                printf-style string formatting with named parameters (e.g. %(param_name)s).
+            plugin_config: `SnowflakeConfig` object containing connection metadata.
+            inputs: Name and type of inputs specified as a dictionary.
             output_dataframe_type: If some data is produced by this query, then you can specify the
-             output dataframe type.
-            snowflake_private_key: The name of the secret containing the Snowflake private key for key-pair auth.
-            snowflake_private_key_passphrase: The name of the secret containing the private key passphrase
+                output dataframe type.
+            secret_group: Optional group for secrets in the secret store. The environment variable
+                name is auto-generated from ``{secret_group}_{key}``, uppercased with hyphens
+                replaced by underscores. If omitted, the key alone is used.
+            snowflake_private_key: The secret key for the Snowflake private key (key-pair auth).
+            snowflake_private_key_passphrase: The secret key for the private key passphrase
                 (if encrypted).
             batch: When True, list inputs are expanded into a multi-row VALUES clause. The
                 query_template should contain a single ``VALUES (%(col)s, ...)`` placeholder
@@ -90,8 +94,14 @@ class Snowflake(AsyncConnectorExecutorMixin, TaskTemplate):
             r"\s+", " ", query_template.replace("\n", " ").replace("\t", " ")
         ).strip()
         self.batch = batch
+        self.secret_group = secret_group
         self.snowflake_private_key = snowflake_private_key
         self.snowflake_private_key_passphrase = snowflake_private_key_passphrase
+
+    def _to_env_var(self, key: str) -> str:
+        """Generate an environment variable name from the secret group and key."""
+        env_var = f"{self.secret_group}_{key}" if self.secret_group else key
+        return env_var.replace("-", "_").upper()
 
     def custom_config(self, sctx: SerializationContext) -> Optional[Dict[str, Any]]:
         config = {
@@ -111,9 +121,11 @@ class Snowflake(AsyncConnectorExecutorMixin, TaskTemplate):
 
         secrets = {}
         if self.snowflake_private_key is not None:
-            secrets["snowflake_private_key"] = self.snowflake_private_key
+            secrets["snowflake_private_key"] = self._to_env_var(
+                self.snowflake_private_key
+            )
         if self.snowflake_private_key_passphrase is not None:
-            secrets["snowflake_private_key_passphrase"] = (
+            secrets["snowflake_private_key_passphrase"] = self._to_env_var(
                 self.snowflake_private_key_passphrase
             )
         if secrets:

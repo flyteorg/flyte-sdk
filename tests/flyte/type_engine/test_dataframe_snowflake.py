@@ -4,6 +4,7 @@ import pytest
 from flyteidl2.core import literals_pb2, types_pb2
 
 pd = pytest.importorskip("pandas")
+snowflake_connector = pytest.importorskip("snowflake.connector")
 
 
 SNOWFLAKE_URI_WRITE = (
@@ -95,7 +96,7 @@ class TestGetConnection:
             patch.object(
                 sf_module, "_get_private_key", return_value=b"der-key"
             ) as mock_gpk,
-            patch.object(sf_module.snowflake.connector, "connect") as mock_connect,
+            patch.object(snowflake_connector, "connect") as mock_connect,
         ):
             mock_connect.return_value = MagicMock()
             sf_module._get_connection("user", "account", "db", "schema", "warehouse")
@@ -117,7 +118,7 @@ class TestGetConnection:
             patch.object(
                 sf_module, "_get_private_key", return_value=b"der-key"
             ) as mock_gpk,
-            patch.object(sf_module.snowflake.connector, "connect") as mock_connect,
+            patch.object(snowflake_connector, "connect") as mock_connect,
         ):
             mock_connect.return_value = MagicMock()
             sf_module._get_connection("user", "account", "db", "schema", "warehouse")
@@ -130,7 +131,7 @@ class TestGetConnection:
 
         import flyte.io._dataframe.snowflake as sf_module
 
-        with patch.object(sf_module.snowflake.connector, "connect") as mock_connect:
+        with patch.object(snowflake_connector, "connect") as mock_connect:
             mock_connect.return_value = MagicMock()
             sf_module._get_connection("user", "account", "db", "schema", "warehouse")
 
@@ -155,7 +156,7 @@ class TestWriteToSf:
             patch.object(
                 sf_module, "_get_connection", return_value=mock_conn
             ) as mock_get_conn,
-            patch.object(sf_module, "write_pandas") as mock_wp,
+            patch("snowflake.connector.pandas_tools.write_pandas") as mock_wp,
         ):
             df_wrapper = DataFrame.from_df(
                 val=sample_dataframe, uri=SNOWFLAKE_URI_WRITE
@@ -227,7 +228,7 @@ class TestPandasToSnowflakeEncoder:
 
         with (
             patch.object(sf_module, "_get_connection", return_value=mock_conn),
-            patch.object(sf_module, "write_pandas"),
+            patch("snowflake.connector.pandas_tools.write_pandas"),
         ):
             df_wrapper = DataFrame.from_df(
                 val=sample_dataframe, uri=SNOWFLAKE_URI_WRITE

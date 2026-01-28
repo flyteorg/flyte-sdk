@@ -36,7 +36,8 @@ snowflake_insert_task = Snowflake(
     inputs={"id": list[int], "name": list[str], "age": list[int]},
     plugin_config=sf_config,
     query_template="INSERT INTO FLYTE.PUBLIC.TEST (ID, NAME, AGE) VALUES (%(id)s, %(name)s, %(age)s);",
-    snowflake_private_key="SNOWFLAKE",
+    snowflake_private_key="snowflake",
+    batch=True,
 )
 
 snowflake_select_task = Snowflake(
@@ -44,8 +45,7 @@ snowflake_select_task = Snowflake(
     output_dataframe_type=pd.DataFrame,
     plugin_config=sf_config,
     query_template="SELECT * FROM FLYTE.PUBLIC.TEST;",
-    snowflake_private_key="SNOWFLAKE",
-    batch=True,
+    snowflake_private_key="snowflake",
 )
 
 snowflake_env = flyte.TaskEnvironment.from_task(
@@ -57,6 +57,7 @@ env = flyte.TaskEnvironment(
     image=flyte.Image.from_debian_base().with_pip_packages(
         "flyteplugins-connectors[snowflake]"
     ),
+    secrets=[flyte.Secret(key="snowflake", as_env_var="SNOWFLAKE_PRIVATE_KEY")],
     depends_on=[snowflake_env],
 )
 
