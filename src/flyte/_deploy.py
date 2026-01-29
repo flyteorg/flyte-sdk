@@ -174,12 +174,9 @@ async def _deploy_task(
     from ._internal.runtime.convert import convert_upload_default_inputs
     from ._internal.runtime.task_serde import translate_task_to_wire
     from ._internal.runtime.trigger_serde import to_task_trigger
+    from ._internal.runtime.task_serde import lookup_image_in_cache
 
-    # use the parent env's image for the task, since it may have been overridden
-    # in _build_images call when resolving Image.from_ref_name()
-    assert task.parent_env is not None and task.parent_env() is not None
-    image = task.parent_env().image  # type: ignore
-    image_uri = image.uri if isinstance(image, Image) else image
+    image_uri = lookup_image_in_cache(serialization_context, task.parent_env_name, task.image)
 
     try:
         if dryrun:
