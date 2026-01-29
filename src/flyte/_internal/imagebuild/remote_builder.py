@@ -13,9 +13,9 @@ import aiofiles
 from flyteidl2.common import phase_pb2
 
 import flyte
-from flyte._code_bundle._ignore import STANDARD_IGNORE_PATTERNS
 import flyte.errors
 from flyte import Image, remote
+from flyte._code_bundle._ignore import STANDARD_IGNORE_PATTERNS
 from flyte._code_bundle._utils import tar_strip_file_attributes
 from flyte._image import (
     _BASE_REGISTRY,
@@ -339,7 +339,9 @@ def _get_layers_proto(image: Image, context_path: Path) -> "image_definition_pb2
                 case "install_project":
                     # Copy the entire project
                     docker_ignore_patterns = get_and_list_dockerignore(image)
-                    pyproject_dir_dst = copy_files_to_context(layer.pyproject.parent, context_path, docker_ignore_patterns)
+                    pyproject_dir_dst = copy_files_to_context(
+                        layer.pyproject.parent, context_path, docker_ignore_patterns
+                    )
                 case _:
                     raise ValueError(f"Invalid project install mode: {layer.project_install_mode}")
 
