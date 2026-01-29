@@ -1,5 +1,4 @@
 import asyncio
-import time
 import flyte
 
 
@@ -7,7 +6,7 @@ env = flyte.TaskEnvironment("env")
 
 @env.task
 async def maybe_take_a_while(x: int) -> int:
-    time.sleep(x)
+    await asyncio.sleep(x)
     return x * x
 
 @env.task
