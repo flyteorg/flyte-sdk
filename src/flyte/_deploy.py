@@ -172,9 +172,8 @@ async def _deploy_task(
     import flyte.report
 
     from ._internal.runtime.convert import convert_upload_default_inputs
-    from ._internal.runtime.task_serde import translate_task_to_wire
+    from ._internal.runtime.task_serde import lookup_image_in_cache, translate_task_to_wire
     from ._internal.runtime.trigger_serde import to_task_trigger
-    from ._internal.runtime.task_serde import lookup_image_in_cache
 
     image_uri = lookup_image_in_cache(serialization_context, task.parent_env_name, task.image)
 
