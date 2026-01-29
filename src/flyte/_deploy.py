@@ -328,15 +328,15 @@ def _update_interface_inputs_and_outputs_docstring(
 
     # Update input variable descriptions
     if updated_interface.inputs and updated_interface.inputs.variables:
-        for var_name, desc in input_descriptions.items():
-            if var_name in updated_interface.inputs.variables:
-                updated_interface.inputs.variables[var_name].description = desc
+        for var_entry in updated_interface.inputs.variables:
+            if var_entry.key in input_descriptions:
+                var_entry.value.description = input_descriptions[var_entry.key]
 
     # Update output variable descriptions
     if updated_interface.outputs and updated_interface.outputs.variables:
-        for var_name, desc in output_descriptions.items():
-            if var_name in updated_interface.outputs.variables:
-                updated_interface.outputs.variables[var_name].description = desc
+        for var_entry in updated_interface.outputs.variables:
+            if var_entry.key in output_descriptions:
+                var_entry.value.description = output_descriptions[var_entry.key]
 
     return updated_interface
 

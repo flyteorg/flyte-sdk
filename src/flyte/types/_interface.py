@@ -26,7 +26,7 @@ def guess_interface(
 
     guessed_inputs: Dict[str, Tuple[Type[Any], Any] | Any] = {}
     if interface.inputs is not None and len(interface.inputs.variables) > 0:
-        input_types = flyte.types.TypeEngine.guess_python_types(cast(dict, interface.inputs.variables))
+        input_types = flyte.types.TypeEngine.guess_python_types(interface.inputs.variables)
         for name, t in input_types.items():
             if name not in default_input_literals:
                 guessed_inputs[name] = (t, inspect.Parameter.empty)
@@ -35,6 +35,6 @@ def guess_interface(
 
     guessed_outputs: Dict[str, Type[Any]] = {}
     if interface.outputs is not None and len(interface.outputs.variables) > 0:
-        guessed_outputs = flyte.types.TypeEngine.guess_python_types(cast(dict, interface.outputs.variables))
+        guessed_outputs = flyte.types.TypeEngine.guess_python_types(interface.outputs.variables)
 
     return NativeInterface.from_types(guessed_inputs, guessed_outputs, default_input_literals)

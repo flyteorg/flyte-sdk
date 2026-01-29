@@ -90,15 +90,17 @@ def test_update_interface_with_docstring():
     typed_interface = transform_native_to_typed_interface(interface)
 
     # Before update, descriptions should be empty
-    assert typed_interface.inputs.variables["x"].description == ""
-    assert typed_interface.inputs.variables["y"].description == ""
+    inputs_dict = {entry.key: entry.value for entry in typed_interface.inputs.variables}
+    assert inputs_dict["x"].description == ""
+    assert inputs_dict["y"].description == ""
 
     # Update descriptions
     result = _update_interface_inputs_and_outputs_docstring(typed_interface, interface)
 
     # After update, descriptions should be set
-    assert result.inputs.variables["x"].description == "The input value"
-    assert result.inputs.variables["y"].description == "Another input"
+    result_inputs = {entry.key: entry.value for entry in result.inputs.variables}
+    assert result_inputs["x"].description == "The input value"
+    assert result_inputs["y"].description == "Another input"
 
 
 def test_update_interface_no_docstring():
@@ -112,8 +114,10 @@ def test_update_interface_no_docstring():
     result = _update_interface_inputs_and_outputs_docstring(typed_interface, interface)
 
     # Descriptions should remain empty
-    assert result.inputs.variables["x"].description == ""
-    assert result.outputs.variables["o0"].description == ""
+    result_inputs = {entry.key: entry.value for entry in result.inputs.variables}
+    result_outputs = {entry.key: entry.value for entry in result.outputs.variables}
+    assert result_inputs["x"].description == ""
+    assert result_outputs["o0"].description == ""
 
 
 def test_update_interface_empty_interface():
@@ -149,8 +153,9 @@ def test_update_interface_partial_descriptions():
     result = _update_interface_inputs_and_outputs_docstring(typed_interface, interface)
 
     # Only x should have description
-    assert result.inputs.variables["x"].description == "The input value"
-    assert result.inputs.variables["y"].description == ""
+    result_inputs = {entry.key: entry.value for entry in result.inputs.variables}
+    assert result_inputs["x"].description == "The input value"
+    assert result_inputs["y"].description == ""
 
 
 def test_update_interface_mismatched_names():
@@ -173,5 +178,6 @@ def test_update_interface_mismatched_names():
     result = _update_interface_inputs_and_outputs_docstring(typed_interface, interface)
 
     # Descriptions should not be set (names don't match)
-    assert result.inputs.variables["x"].description == ""
-    assert result.inputs.variables["y"].description == ""
+    result_inputs = {entry.key: entry.value for entry in result.inputs.variables}
+    assert result_inputs["x"].description == ""
+    assert result_inputs["y"].description == ""

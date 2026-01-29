@@ -133,9 +133,11 @@ def test_get_proto_container_task():
     assert proto_task.metadata.timeout.seconds == 60
 
     # Check interface
-    assert proto_task.interface.inputs.variables["a"].type.simple == types_pb2.INTEGER  # Integer
-    assert proto_task.interface.inputs.variables["b"].type.simple == types_pb2.STRING  # String
-    assert proto_task.interface.outputs.variables["o0"].type.simple == types_pb2.STRING  # String
+    inputs_dict = {entry.key: entry.value for entry in proto_task.interface.inputs.variables}
+    outputs_dict = {entry.key: entry.value for entry in proto_task.interface.outputs.variables}
+    assert inputs_dict["a"].type.simple == types_pb2.INTEGER  # Integer
+    assert inputs_dict["b"].type.simple == types_pb2.STRING  # String
+    assert outputs_dict["o0"].type.simple == types_pb2.STRING  # String
 
     # Check container
     assert proto_task.container.image.startswith("python:3.10")
