@@ -175,9 +175,10 @@ async def _deploy_task(
     from ._internal.runtime.task_serde import translate_task_to_wire
     from ._internal.runtime.trigger_serde import to_task_trigger
 
-    # use the parenet env's image for the task, since it may have been overridden
+    # use the parent env's image for the task, since it may have been overridden
     # in _build_images call when resolving Image.from_ref_name()
-    image = task.parent_env().image
+    assert task.parent_env is not None and task.parent_env() is not None
+    image = task.parent_env().image  # type: ignore
     image_uri = image.uri if isinstance(image, Image) else image
 
     try:
