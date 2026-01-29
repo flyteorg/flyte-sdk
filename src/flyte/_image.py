@@ -51,6 +51,28 @@ class Layer:
      layered images programmatically.
     """
 
+    def __post_init__(self):
+        """
+        Validate that no fields in the layer contain lists.
+        Lists are not allowed because Layer objects must be hashable for caching.
+        """
+        import dataclasses
+
+        for f in dataclasses.fields(self):
+            value = getattr(self, f.name)
+            if isinstance(value, list):
+                raise TypeError(
+                    f"{self.__class__.__name__} field '{f.name}' is a list: {value!r}. "
+                    f"Hint: Use a tuple instead of a list."
+                )
+            elif isinstance(value, tuple):
+                for i, item in enumerate(value):
+                    if isinstance(item, list):
+                        raise TypeError(
+                            f"{self.__class__.__name__} field '{f.name}' contains a list at index {i}: {item!r}. "
+                            f"Hint: Use tuples instead of lists."
+                        )
+
     @abstractmethod
     def update_hash(self, hasher: hashlib._Hash):
         """
@@ -116,6 +138,9 @@ class PipOption:
 class PipPackages(PipOption, Layer):
     packages: Optional[Tuple[str, ...]] = None
 
+    def __post_init__(self):
+        super().__post_init__()
+
     def update_hash(self, hasher: hashlib._Hash):
         """
         Update the hash with the pip packages
@@ -138,6 +163,7 @@ class PythonWheels(PipOption, Layer):
 
     def __post_init__(self):
         object.__setattr__(self, "wheel_dir_name", self.wheel_dir.name)
+        super().__post_init__()
 
     def update_hash(self, hasher: hashlib._Hash):
         super().update_hash(hasher)
@@ -169,6 +195,9 @@ class UVProject(PipOption, Layer):
     pyproject: Path
     uvlock: Path
     project_install_mode: typing.Literal["dependencies_only", "install_project"] = "dependencies_only"
+
+    def __post_init__(self):
+        super().__post_init__()
 
     def validate(self):
         if not self.pyproject.exists():
@@ -202,6 +231,9 @@ class PoetryProject(Layer):
     extra_args: Optional[str] = None
     project_install_mode: typing.Literal["dependencies_only", "install_project"] = "dependencies_only"
     secret_mounts: Optional[Tuple[str | Secret, ...]] = None
+
+    def __post_init__(self):
+        super().__post_init__()
 
     def validate(self):
         if not self.pyproject.exists():
@@ -238,6 +270,7 @@ class UVScript(PipOption, Layer):
 
     def __post_init__(self):
         object.__setattr__(self, "script_name", self.script.name)
+        super().__post_init__()
 
     def validate(self):
         if not self.script.exists():
@@ -269,6 +302,9 @@ class AptPackages(Layer):
     packages: Tuple[str, ...]
     secret_mounts: Optional[Tuple[str | Secret, ...]] = None
 
+    def __post_init__(self):
+        super().__post_init__()
+
     def update_hash(self, hasher: hashlib._Hash):
         hash_input = "".join(self.packages)
 
@@ -284,6 +320,9 @@ class Commands(Layer):
     commands: Tuple[str, ...]
     secret_mounts: Optional[Tuple[str | Secret, ...]] = None
 
+    def __post_init__(self):
+        super().__post_init__()
+
     def update_hash(self, hasher: hashlib._Hash):
         hash_input = "".join(self.commands)
 
@@ -298,6 +337,9 @@ class Commands(Layer):
 class WorkDir(Layer):
     workdir: str
 
+    def __post_init__(self):
+        super().__post_init__()
+
     def update_hash(self, hasher: hashlib._Hash):
         hasher.update(self.workdir.encode("utf-8"))
 
@@ -306,6 +348,9 @@ class WorkDir(Layer):
 @dataclass(frozen=True, repr=True)
 class DockerIgnore(Layer):
     path: str
+
+    def __post_init__(self):
+        super().__post_init__()
 
     def update_hash(self, hasher: hashlib._Hash):
         hasher.update(self.path.encode("utf-8"))
@@ -319,6 +364,7 @@ class CopyConfig(Layer):
     dst: str
 
     def __post_init__(self):
+        super().__post_init__()
         if self.path_type not in (0, 1):
             raise ValueError(f"Invalid path_type {self.path_type}, must be 0 (file) or 1 (directory)")
 
@@ -348,6 +394,9 @@ class _DockerLines(Layer):
 
     lines: Tuple[str, ...]
 
+    def __post_init__(self):
+        super().__post_init__()
+
     def update_hash(self, hasher: hashlib._Hash):
         hasher.update("".join(self.lines).encode("utf-8"))
 
@@ -361,6 +410,9 @@ class Env(Layer):
     """
 
     env_vars: Tuple[Tuple[str, str], ...] = field(default_factory=tuple)
+
+    def __post_init__(self):
+        super().__post_init__()
 
     def update_hash(self, hasher: hashlib._Hash):
         txt = [f"{k}={v}" for k, v in self.env_vars]
@@ -438,6 +490,49 @@ class Image:
             raise TypeError(
                 "Direct instantiation of Image not allowed, please use one of the various from_...() methods instead"
             )
+
+    def __hash__(self) -> int:
+        """
+        Custom hash method that provides helpful error messages when a field is unhashable.
+        """
+        try:
+            # Try hashing each field individually to give a better error message
+            fields_to_hash = []
+            for field_name in [
+                "base_image",
+                "dockerfile",
+                "registry",
+                "name",
+                "platform",
+                "python_version",
+                "_ref_name",
+                "_layers",
+                "_tag",
+                "_image_registry_secret",
+            ]:
+                value = getattr(self, field_name, None)
+                try:
+                    hash(value)
+                    fields_to_hash.append(value)
+                except TypeError as e:
+                    # Check if it's a tuple containing unhashable items (like layers)
+                    if field_name == "_layers" and isinstance(value, tuple):
+                        for i, layer in enumerate(value):
+                            try:
+                                hash(layer)
+                            except TypeError:
+                                raise TypeError(
+                                    f"Image layer {i} ({layer.__class__.__name__}) contains an unhashable type. "
+                                    f"Layer details: {layer!r}. "
+                                    f"Check that all arguments are hashable (use tuples instead of lists)."
+                                ) from e
+                    raise TypeError(
+                        f"Image field '{field_name}' contains an unhashable type: {type(value).__name__}. "
+                        f"Value: {value!r}"
+                    ) from e
+            return hash(tuple(fields_to_hash))
+        except TypeError:
+            raise
 
     # Private constructor for internal use only
     @classmethod
@@ -853,7 +948,7 @@ class Image:
         :param secret_mounts: list of secret to mount for the build process.
         :return: Image
         """
-        new_packages: Optional[Tuple] = packages or None
+        new_packages: Optional[Tuple] = _ensure_tuple(packages) if packages else None
         new_extra_index_urls: Optional[Tuple] = _ensure_tuple(extra_index_urls) if extra_index_urls else None
 
         ll = PipPackages(
