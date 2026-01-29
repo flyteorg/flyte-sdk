@@ -131,6 +131,7 @@ async def create_channel(
             insecure_kwargs["options"] = kw_opts
         if compression:
             insecure_kwargs["compression"] = compression
+        logger.debug(f"Creating insecure gRPC channel to endpoint: {endpoint}")
         unauthenticated_channel = grpc.aio.insecure_channel(endpoint, **insecure_kwargs)
     else:
         # Only create SSL credentials if not provided and also only when using secure channel.
@@ -145,6 +146,11 @@ async def create_channel(
                 ssl_credentials = grpc.ssl_channel_credentials(st_cert)
             else:
                 ssl_credentials = grpc.ssl_channel_credentials()
+        logger.debug(
+            f"Creating secure gRPC channel to endpoint: {endpoint}, "
+            f"insecure_skip_verify={insecure_skip_verify}, "
+            f"ca_cert_file_path={ca_cert_file_path}"
+        )
         unauthenticated_channel = grpc.aio.secure_channel(
             target=endpoint,
             credentials=ssl_credentials,
@@ -202,8 +208,16 @@ async def create_channel(
             insecure_kwargs["options"] = kw_opts
         if compression:
             insecure_kwargs["compression"] = compression
+        logger.info(
+            f"gRPC channel ready: endpoint={endpoint}, secure=False, "
+            f"interceptors={len(interceptors)}"
+        )
         return grpc.aio.insecure_channel(endpoint, interceptors=interceptors, **insecure_kwargs)
 
+    logger.info(
+        f"gRPC channel ready: endpoint={endpoint}, secure=True, "
+        f"interceptors={len(interceptors)}, grpc_options={grpc_options}"
+    )
     return grpc.aio.secure_channel(
         target=endpoint,
         credentials=ssl_credentials,
