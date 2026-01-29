@@ -177,7 +177,7 @@ def test_ids_for_different_python_version():
 
 def test_layer_unhashable_type_error_message():
     """Test that Layer subclasses provide helpful error messages when lists are used instead of tuples."""
-    from flyte._image import PipPackages, AptPackages, Commands
+    from flyte._image import AptPackages, Commands, PipPackages
 
     # Test PipPackages with a list inside a tuple (common mistake)
     with pytest.raises(TypeError) as exc_info:

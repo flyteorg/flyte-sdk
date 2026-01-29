@@ -490,6 +490,7 @@ class Image:
             raise TypeError(
                 "Direct instantiation of Image not allowed, please use one of the various from_...() methods instead"
             )
+
     # Private constructor for internal use only
     @classmethod
     def _new(cls, **kwargs) -> Image:
