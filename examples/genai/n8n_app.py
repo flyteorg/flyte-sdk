@@ -1,6 +1,12 @@
 import flyte
 import flyte.app
 
+
+# TODO:
+# - Add postgres database for user data persistence
+# - Set up external runners here: https://docs.n8n.io/hosting/configuration/task-runners/#setting-up-external-mode
+# - Support python nodes: https://docs.n8n.io/code/code-node/#python-native
+# - Add support for Flyte nodes: https://docs.n8n.io/hosting/configuration/task-runners/#adding-extra-dependencies
 image = (
     flyte.Image.from_base("node:24-slim")
     .clone(name="n8n-app-image")
