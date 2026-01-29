@@ -13,9 +13,9 @@ import aiofiles
 from flyteidl2.common import phase_pb2
 
 import flyte
-from flyte._code_bundle._ignore import STANDARD_IGNORE_PATTERNS
 import flyte.errors
 from flyte import Image, remote
+from flyte._code_bundle._ignore import STANDARD_IGNORE_PATTERNS
 from flyte._code_bundle._utils import tar_strip_file_attributes
 from flyte._image import (
     _BASE_REGISTRY,
