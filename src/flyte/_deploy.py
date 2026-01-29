@@ -175,7 +175,11 @@ async def _deploy_task(
     from ._internal.runtime.task_serde import lookup_image_in_cache, translate_task_to_wire
     from ._internal.runtime.trigger_serde import to_task_trigger
 
-    image_uri = lookup_image_in_cache(serialization_context, task.parent_env_name, task.image)
+    assert task.parent_env_name is not None
+    if isinstance(task.image, Image):
+        image_uri = lookup_image_in_cache(serialization_context, task.parent_env_name, task.image)
+    else:
+        image_uri = task.image
 
     try:
         if dryrun:
