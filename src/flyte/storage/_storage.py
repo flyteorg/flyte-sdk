@@ -26,6 +26,7 @@ if typing.TYPE_CHECKING:
     from obstore import AsyncReadableFile, AsyncWritableFile
 
 _OBSTORE_SUPPORTED_PROTOCOLS = ["s3", "gs", "abfs", "abfss"]
+BATCH_SIZE = int(os.getenv("FLYTE_IO_BATCH_SIZE", str(32)))
 
 
 def _is_obstore_supported_protocol(protocol: str) -> bool:
@@ -263,7 +264,13 @@ async def _get_from_filesystem(
     return str(to_path)
 
 
-async def put(from_path: str, to_path: Optional[str] = None, recursive: bool = False, **kwargs) -> str:
+async def put(
+    from_path: str,
+    to_path: Optional[str] = None,
+    recursive: bool = False,
+    batch_size: Optional[int] = None,
+    **kwargs,
+) -> str:
     if not to_path:
         from flyte._context import internal_ctx
 
@@ -271,10 +278,13 @@ async def put(from_path: str, to_path: Optional[str] = None, recursive: bool = F
         name = pathlib.Path(from_path).name
         to_path = ctx.raw_data.get_random_remote_path(file_name=name)
 
+    if not batch_size:
+        batch_size = BATCH_SIZE
+
     file_system = get_underlying_filesystem(path=to_path)
     from_path = strip_file_header(from_path)
     if isinstance(file_system, AsyncFileSystem):
-        dst = await file_system._put(from_path, to_path, recursive=recursive, **kwargs)  # pylint: disable=W0212
+        dst = await file_system._put(from_path, to_path, recursive=recursive, batch_size=batch_size, **kwargs)  # pylint: disable=W0212
     else:
         dst = file_system.put(from_path, to_path, recursive=recursive, **kwargs)
     if isinstance(dst, (str, pathlib.Path)):
