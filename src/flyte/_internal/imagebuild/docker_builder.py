@@ -11,7 +11,6 @@ import aiofiles
 import click
 
 from flyte import Secret
-
 from flyte._code_bundle._ignore import STANDARD_IGNORE_PATTERNS
 from flyte._image import (
     AptPackages,
