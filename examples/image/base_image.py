@@ -6,7 +6,7 @@ from flyte import Image
 image = (
     Image.from_debian_base(install_flyte=False)
     .with_apt_packages("vim", "wget")
-    .with_pip_packages("mypy", "httpx", pre=True)
+    .with_pip_packages(["mypy", "httpx"], pre=True)
     .with_env_vars({"hello": "world1"})
     .with_dockerignore(Path(__file__).parent / ".dockerignore")
     .with_local_v2()

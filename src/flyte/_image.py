@@ -490,50 +490,6 @@ class Image:
             raise TypeError(
                 "Direct instantiation of Image not allowed, please use one of the various from_...() methods instead"
             )
-
-    def __hash__(self) -> int:
-        """
-        Custom hash method that provides helpful error messages when a field is unhashable.
-        """
-        try:
-            # Try hashing each field individually to give a better error message
-            fields_to_hash = []
-            for field_name in [
-                "base_image",
-                "dockerfile",
-                "registry",
-                "name",
-                "platform",
-                "python_version",
-                "_ref_name",
-                "_layers",
-                "_tag",
-                "_image_registry_secret",
-            ]:
-                value = getattr(self, field_name, None)
-                try:
-                    hash(value)
-                    fields_to_hash.append(value)
-                except TypeError as e:
-                    # Check if it's a tuple containing unhashable items (like layers)
-                    if field_name == "_layers" and isinstance(value, tuple):
-                        for i, layer in enumerate(value):
-                            try:
-                                hash(layer)
-                            except TypeError:
-                                raise TypeError(
-                                    f"Image layer {i} ({layer.__class__.__name__}) contains an unhashable type. "
-                                    f"Layer details: {layer!r}. "
-                                    f"Check that all arguments are hashable (use tuples instead of lists)."
-                                ) from e
-                    raise TypeError(
-                        f"Image field '{field_name}' contains an unhashable type: {type(value).__name__}. "
-                        f"Value: {value!r}"
-                    ) from e
-            return hash(tuple(fields_to_hash))
-        except TypeError:
-            raise
-
     # Private constructor for internal use only
     @classmethod
     def _new(cls, **kwargs) -> Image:
