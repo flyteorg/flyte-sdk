@@ -262,7 +262,7 @@ class Trigger(ToJSONMixin):
 
     @syncify
     @classmethod
-    async def delete(cls, name: str, task_name: str):
+    async def delete(cls, name: str, task_name: str, project: str | None = None, domain: str | None = None):
         """
         Delete a trigger by its name.
         """
@@ -273,8 +273,8 @@ class Trigger(ToJSONMixin):
                 names=[
                     identifier_pb2.TriggerName(
                         org=cfg.org,
-                        project=cfg.project,
-                        domain=cfg.domain,
+                        project=project or cfg.project,
+                        domain=domain or cfg.domain,
                         name=name,
                         task_name=task_name,
                     )

@@ -6,8 +6,13 @@ import flyte
 import pytest
 from flyte._task import AsyncFunctionTaskTemplate
 
-from flyteplugins.wandb.decorator import _build_init_kwargs, wandb_init, wandb_sweep
-from flyteplugins.wandb.link import Wandb, WandbSweep
+from flyteplugins.wandb import (
+    Wandb,
+    WandbSweep,
+    _build_init_kwargs,
+    wandb_init,
+    wandb_sweep,
+)
 
 
 class TestBuildInitKwargs:
@@ -307,7 +312,7 @@ class TestWandbRunContextManager:
         mock_run.entity = "test-entity"
         mock_wandb_init.return_value = mock_run
 
-        from flyteplugins.wandb.decorator import _wandb_run
+        from flyteplugins.wandb._decorator import _wandb_run
 
         with _wandb_run(run_mode="new", project="test"):
             # Should initialize wandb eagerly and store the run
@@ -326,7 +331,7 @@ class TestWandbRunContextManager:
         mock_ctx.return_value = mock_context
         mock_build_kwargs.return_value = {}
 
-        from flyteplugins.wandb.decorator import _wandb_run
+        from flyteplugins.wandb._decorator import _wandb_run
 
         with _wandb_run(run_mode="new", project="test"):
             pass
@@ -357,7 +362,7 @@ class TestWandbRunContextManager:
         mock_run.entity = "test-entity"
         mock_wandb_init.return_value = mock_run
 
-        from flyteplugins.wandb.decorator import _wandb_run
+        from flyteplugins.wandb._decorator import _wandb_run
 
         with _wandb_run(run_mode="new", project="test"):
             # Run should be initialized during context
@@ -376,7 +381,7 @@ class TestWandbRunContextManager:
         mock_run = MagicMock()
         mock_wandb_init.return_value = mock_run
 
-        from flyteplugins.wandb.decorator import _wandb_run
+        from flyteplugins.wandb._decorator import _wandb_run
 
         with _wandb_run(run_mode="new", func=True, project="test"):
             pass
@@ -391,7 +396,7 @@ class TestWandbRunContextManager:
         mock_context = MagicMock()
         mock_ctx.return_value = mock_context
 
-        from flyteplugins.wandb.decorator import _wandb_run
+        from flyteplugins.wandb._decorator import _wandb_run
 
         with pytest.raises(RuntimeError, match="cannot be applied to traces"):
             with _wandb_run(run_mode="new", func=True):
@@ -427,7 +432,7 @@ class TestCreateSweep:
 
         mock_wandb_sweep.return_value = "sweep-123"
 
-        from flyteplugins.wandb.decorator import _create_sweep
+        from flyteplugins.wandb._decorator import _create_sweep
 
         with _create_sweep() as sweep_id:
             assert sweep_id == "sweep-123"
@@ -450,7 +455,7 @@ class TestCreateSweep:
         mock_ctx.return_value = mock_context
         mock_get_sweep_ctx.return_value = None
 
-        from flyteplugins.wandb.decorator import _create_sweep
+        from flyteplugins.wandb._decorator import _create_sweep
 
         with pytest.raises(RuntimeError, match="No wandb sweep config found"):
             with _create_sweep():
@@ -485,7 +490,7 @@ class TestCreateSweep:
 
         mock_wandb_sweep.return_value = "sweep-456"
 
-        from flyteplugins.wandb.decorator import _create_sweep
+        from flyteplugins.wandb._decorator import _create_sweep
 
         with _create_sweep():
             pass
@@ -526,7 +531,7 @@ class TestCreateSweep:
 
         mock_wandb_sweep.return_value = "sweep-789"
 
-        from flyteplugins.wandb.decorator import _create_sweep
+        from flyteplugins.wandb._decorator import _create_sweep
 
         with _create_sweep():
             pass
@@ -580,7 +585,7 @@ class TestModeSpecificBehavior:
         mock_run.entity = "test-entity"
         mock_wandb_init.return_value = mock_run
 
-        from flyteplugins.wandb.decorator import _wandb_run
+        from flyteplugins.wandb._decorator import _wandb_run
 
         with _wandb_run(run_mode="new", project="test"):
             pass
@@ -610,7 +615,7 @@ class TestModeSpecificBehavior:
         mock_run.entity = "test-entity"
         mock_wandb_init.return_value = mock_run
 
-        from flyteplugins.wandb.decorator import _wandb_run
+        from flyteplugins.wandb._decorator import _wandb_run
 
         with _wandb_run(run_mode="shared", project="test"):
             pass
@@ -645,7 +650,7 @@ class TestModeSpecificBehavior:
         mock_settings_instance = MagicMock()
         mock_settings.return_value = mock_settings_instance
 
-        from flyteplugins.wandb.decorator import _wandb_run
+        from flyteplugins.wandb._decorator import _wandb_run
 
         with _wandb_run(run_mode="new", project="test"):
             pass
@@ -687,7 +692,7 @@ class TestModeSpecificBehavior:
         mock_settings_instance = MagicMock()
         mock_settings.return_value = mock_settings_instance
 
-        from flyteplugins.wandb.decorator import _wandb_run
+        from flyteplugins.wandb._decorator import _wandb_run
 
         with _wandb_run(run_mode="shared", project="test"):
             pass
@@ -713,7 +718,7 @@ class TestModeSpecificBehavior:
         mock_ctx.return_value = mock_context
         mock_build_kwargs.return_value = {}
 
-        from flyteplugins.wandb.decorator import _wandb_run
+        from flyteplugins.wandb._decorator import _wandb_run
 
         with _wandb_run(run_mode="new", project="test") as run:
             # Should yield existing run
@@ -743,7 +748,7 @@ class TestModeSpecificBehavior:
         mock_run.entity = "test-entity"
         mock_wandb_init.return_value = mock_run
 
-        from flyteplugins.wandb.decorator import _wandb_run
+        from flyteplugins.wandb._decorator import _wandb_run
 
         with _wandb_run(run_mode="auto", project="test"):
             pass
@@ -774,7 +779,7 @@ class TestModeSpecificBehavior:
         mock_run.entity = "test-entity"
         mock_wandb_init.return_value = mock_run
 
-        from flyteplugins.wandb.decorator import _wandb_run
+        from flyteplugins.wandb._decorator import _wandb_run
 
         with _wandb_run(run_mode="auto", project="test"):
             pass
@@ -798,7 +803,7 @@ class TestModeSpecificBehavior:
         mock_ctx.return_value = mock_context
         mock_build_kwargs.return_value = {}
 
-        from flyteplugins.wandb.decorator import _wandb_run
+        from flyteplugins.wandb._decorator import _wandb_run
 
         with pytest.raises(RuntimeError, match="Cannot reuse parent run: no parent run ID found"):
             with _wandb_run(run_mode="shared", project="test"):
@@ -829,7 +834,7 @@ class TestRunFinishingLogic:
         mock_run.entity = "test-entity"
         mock_wandb_init.return_value = mock_run
 
-        from flyteplugins.wandb.decorator import _wandb_run
+        from flyteplugins.wandb._decorator import _wandb_run
 
         with _wandb_run(run_mode="new", project="test"):
             pass
@@ -858,7 +863,7 @@ class TestRunFinishingLogic:
         mock_run.entity = "test-entity"
         mock_wandb_init.return_value = mock_run
 
-        from flyteplugins.wandb.decorator import _wandb_run
+        from flyteplugins.wandb._decorator import _wandb_run
 
         with _wandb_run(run_mode="shared", project="test"):
             pass
@@ -887,7 +892,7 @@ class TestRunFinishingLogic:
         mock_run.entity = "test-entity"
         mock_wandb_init.return_value = mock_run
 
-        from flyteplugins.wandb.decorator import _wandb_run
+        from flyteplugins.wandb._decorator import _wandb_run
 
         with _wandb_run(run_mode="new", project="test"):
             pass
@@ -916,7 +921,7 @@ class TestRunFinishingLogic:
         mock_run.entity = "test-entity"
         mock_wandb_init.return_value = mock_run
 
-        from flyteplugins.wandb.decorator import _wandb_run
+        from flyteplugins.wandb._decorator import _wandb_run
 
         with _wandb_run(run_mode="shared", project="test"):
             pass
@@ -959,7 +964,7 @@ class TestStateSaveRestore:
         mock_child_run.entity = "child-entity"
         mock_wandb_init.return_value = mock_child_run
 
-        from flyteplugins.wandb.decorator import _wandb_run
+        from flyteplugins.wandb._decorator import _wandb_run
 
         # Execute child context
         with _wandb_run(run_mode="new", project="child-project", entity="child-entity"):
@@ -993,7 +998,7 @@ class TestStateSaveRestore:
         mock_run.entity = "test-entity"
         mock_wandb_init.return_value = mock_run
 
-        from flyteplugins.wandb.decorator import _wandb_run
+        from flyteplugins.wandb._decorator import _wandb_run
 
         with _wandb_run(run_mode="new", project="test"):
             # State should be set during execution
@@ -1027,7 +1032,7 @@ class TestRunModeDefault:
         mock_run.id = "test-run-test-action"
         mock_wandb_init.return_value = mock_run
 
-        from flyteplugins.wandb.decorator import _wandb_run
+        from flyteplugins.wandb._decorator import _wandb_run
 
         # Default run_mode is "auto", no parent run exists
         with _wandb_run(project="test"):
@@ -1057,7 +1062,7 @@ class TestRunModeDefault:
         mock_run.id = "parent-run-id"
         mock_wandb_init.return_value = mock_run
 
-        from flyteplugins.wandb.decorator import _wandb_run
+        from flyteplugins.wandb._decorator import _wandb_run
 
         # Default run_mode is "auto", parent run exists
         with _wandb_run(project="test"):
@@ -1087,7 +1092,7 @@ class TestRunModeDefault:
         mock_run.id = "test-run-test-action"
         mock_wandb_init.return_value = mock_run
 
-        from flyteplugins.wandb.decorator import _wandb_run
+        from flyteplugins.wandb._decorator import _wandb_run
 
         with _wandb_run(run_mode="new", project="test"):
             pass
@@ -1116,7 +1121,7 @@ class TestRunModeDefault:
         mock_run.id = "parent-run-id"
         mock_wandb_init.return_value = mock_run
 
-        from flyteplugins.wandb.decorator import _wandb_run
+        from flyteplugins.wandb._decorator import _wandb_run
 
         with _wandb_run(run_mode="shared", project="test"):
             pass
@@ -1137,7 +1142,7 @@ class TestSweepIdReuse:
         mock_context.custom_context = {"_wandb_sweep_id": "existing-sweep-id"}
         mock_ctx.return_value = mock_context
 
-        from flyteplugins.wandb.decorator import _create_sweep
+        from flyteplugins.wandb._decorator import _create_sweep
 
         with _create_sweep() as sweep_id:
             assert sweep_id == "existing-sweep-id"
@@ -1171,7 +1176,7 @@ class TestSweepIdReuse:
 
         mock_wandb_sweep.return_value = "new-sweep-123"
 
-        from flyteplugins.wandb.decorator import _create_sweep
+        from flyteplugins.wandb._decorator import _create_sweep
 
         with _create_sweep() as sweep_id:
             assert sweep_id == "new-sweep-123"

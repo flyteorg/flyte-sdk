@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import sys
 
-from ._build import build
+from ._build import ImageBuild, build
 from ._cache import Cache, CachePolicy, CacheRequest
 from ._context import ctx
 from ._custom_context import custom_context, get_custom_context
@@ -77,6 +77,7 @@ __all__ = [
     "Environment",
     "FixedRate",
     "Image",
+    "ImageBuild",
     "Link",
     "Neuron",
     "PodTemplate",

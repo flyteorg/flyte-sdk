@@ -205,9 +205,6 @@ class RunTaskCommand(click.RichCommand):
         task_cfg = getattr(getattr(ctx.obj, "config", None), "task", None)
 
         if not self.run_args.local:
-            if not getattr(ctx.obj, "org", None) and not getattr(task_cfg, "org", None):
-                missing_options.append(("org", "TEXT"))
-
             if not self.run_args.project and not getattr(task_cfg, "project", None):
                 missing_options.append(("project", "TEXT"))
 
@@ -254,7 +251,7 @@ Missing required parameter(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in mi
                 result = await execution_context.run.aio(self.obj, **ctx.params)
         except Exception as e:
             console.print(common.get_panel("Exception", f"[red]✕ Execution failed:[/red] {e}", config.output_format))
-            return
+            exit(1)
 
         # 3. UI Branching
         if self.run_args.local:
@@ -381,9 +378,6 @@ class RunRemoteTaskCommand(click.RichCommand):
                     )
 
         task_cfg = getattr(getattr(ctx.obj, "config", None), "task", None)
-
-        if not getattr(ctx.obj, "org", None) and not getattr(task_cfg, "org", None):
-            missing_options.append(("org", "TEXT"))
 
         if not self.run_args.run_project and not getattr(task_cfg, "project", None):
             missing_options.append(("run-project", "TEXT"))

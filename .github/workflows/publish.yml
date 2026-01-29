@@ -5,8 +5,8 @@ on:
     types: [published]
   pull_request:
     paths:
-      - '.github/workflows/publish.yml'
-      - 'maint_tools/build_default_image.py'
+      - ".github/workflows/publish.yml"
+      - "maint_tools/build_default_image.py"
 
 jobs:
   flyte-pypi:
@@ -76,6 +76,8 @@ jobs:
           - "plugins/connectors"
           - "plugins/sglang"
           - "plugins/vllm"
+          - "plugins/wandb"
+          - "plugins/polars"
         include:
           - workdir: "plugins/sglang"
             image-type: sglang

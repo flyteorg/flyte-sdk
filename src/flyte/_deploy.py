@@ -343,12 +343,14 @@ def _update_interface_inputs_and_outputs_docstring(
 
 async def _build_image_bg(env_name: str, image: Image) -> Tuple[str, str]:
     """
-    Build the image in the background and return the environment name and the built image.
+    Build the image in the background and return the environment name and the built image URI.
     """
     from ._build import build
 
     logger.info(f"Building image {image.name} for environment {env_name}")
-    return env_name, await build.aio(image)
+    result = await build.aio(image)
+    assert result.uri is not None, "Image build result URI is None, make sure to wait for the build to complete"
+    return env_name, result.uri
 
 
 async def _build_images(deployment: DeploymentPlan, image_refs: Dict[str, str] | None = None) -> ImageCache:

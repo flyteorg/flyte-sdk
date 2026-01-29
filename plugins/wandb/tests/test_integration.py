@@ -5,8 +5,14 @@ from unittest.mock import MagicMock, patch
 import flyte
 import pytest
 
-from flyteplugins.wandb import wandb_config, wandb_init, wandb_sweep, wandb_sweep_config
-from flyteplugins.wandb.link import Wandb, WandbSweep
+from flyteplugins.wandb import (
+    Wandb,
+    WandbSweep,
+    wandb_config,
+    wandb_init,
+    wandb_sweep,
+    wandb_sweep_config,
+)
 
 
 class TestWandbInitIntegration:

@@ -24,6 +24,7 @@ from typing import (
 )
 
 from flyte._pod import PodTemplate
+from flyte._utils.asyncify import run_sync_with_loop
 from flyte.errors import RuntimeSystemError, RuntimeUserError
 
 from ._cache import Cache, CacheRequest
@@ -493,7 +494,8 @@ class AsyncFunctionTaskTemplate(TaskTemplate[P, R, F]):
             if iscoroutinefunction(self.func):
                 v = await self.func(*args, **kwargs)
             else:
-                v = self.func(*args, **kwargs)
+                v = await run_sync_with_loop(self.func, *args, **kwargs)
+
             await self.post(v)
         return v
 

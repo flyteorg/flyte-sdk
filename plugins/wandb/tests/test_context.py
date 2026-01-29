@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from flyteplugins.wandb.context import (
+from flyteplugins.wandb import (
     _WandBConfig,
     _WandBSweepConfig,
     get_wandb_context,
