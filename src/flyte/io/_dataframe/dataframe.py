@@ -910,7 +910,6 @@ class DataFrameTransformerEngine(TypeTransformer[DataFrame]):
         if isinstance(python_val, DataFrame):
             # There are three cases that we need to take care of here.
 
-
             # 2. A task returns a python DataFrame with an uri.
             # Note: this case is also what happens we start a local execution of a task with a python DataFrame.
             #  It gets converted into a literal first, then back into a python DataFrame.
@@ -1143,9 +1142,14 @@ class DataFrameTransformerEngine(TypeTransformer[DataFrame]):
         # If the requested type was not a flyte.DataFrame, then it means it was a raw dataframe type, which means
         # we should do the opening/downloading and whatever else it might entail right now. No iteration option here.
         try:
-            return await self.open_as(lv.scalar.structured_dataset, df_type=expected_python_type, updated_metadata=metad)
+            return await self.open_as(
+                lv.scalar.structured_dataset, df_type=expected_python_type, updated_metadata=metad
+            )
         except GenericError as exc:
-            raise GenericError(f"{exc}\n{get_credentials_error(lv.scalar.structured_dataset.uri, get_protocol(lv.scalar.structured_dataset.uri))}") from exc
+            msg = get_credentials_error(
+                lv.scalar.structured_dataset.uri, get_protocol(lv.scalar.structured_dataset.uri)
+            )
+            raise GenericError(f"{exc}\n{msg}") from exc
 
     def to_html(self, python_val: typing.Any, expected_python_type: Type[T]) -> str:
         if isinstance(python_val, DataFrame):
