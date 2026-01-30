@@ -371,7 +371,7 @@ async def _build_images(deployment: DeploymentPlan, image_refs: Dict[str, str] |
     images = []
     image_identifier_map = {}
     for env_name, env in deployment.envs.items():
-        if not isinstance(env.image, str):
+        if env.image and not isinstance(env.image, str):
             if env.image._ref_name is not None:
                 if env.image._ref_name in image_refs:
                     # If the image is set in the config, set it as the base_image

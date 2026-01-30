@@ -51,14 +51,14 @@ class Environment:
     env_vars: Optional[Dict[str, str]] = None
     resources: Optional[Resources] = None
     interruptible: bool = False
-    image: Union[str, Image, Literal["auto"]] = "auto"
+    image: Union[str, Image, Literal["auto"], None] = "auto"
 
     def _validate_name(self):
         if not is_snake_or_kebab_with_numbers(self.name):
             raise ValueError(f"Environment name '{self.name}' must be in snake_case or kebab-case format.")
 
     def __post_init__(self):
-        if not isinstance(self.image, (Image, str)):
+        if self.image and not isinstance(self.image, (Image, str)):
             raise TypeError(f"Expected image to be of type str or Image, got {type(self.image)}")
         if self.secrets and not isinstance(self.secrets, (str, Secret, List)):
             raise TypeError(f"Expected secrets to be of type SecretRequest, got {type(self.secrets)}")

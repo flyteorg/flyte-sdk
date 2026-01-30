@@ -98,7 +98,7 @@ class TaskTemplate(Generic[P, R, F]):
     short_name: str = ""
     task_type: str = "python"
     task_type_version: int = 0
-    image: Union[str, Image, Literal["auto"]] = "auto"
+    image: Union[str, Image, Literal["auto"]] | None = "auto"
     resources: Optional[Resources] = None
     cache: CacheRequest = "disable"
     interruptible: bool = False
