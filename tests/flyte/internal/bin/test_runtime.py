@@ -4,7 +4,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 from click.testing import CliRunner
-from flyteidl.core import errors_pb2
+from flyteidl2.core import errors_pb2
 
 import flyte.errors
 from flyte._bin.runtime import main

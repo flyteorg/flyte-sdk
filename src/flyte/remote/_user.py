@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from flyteidl.service import identity_pb2
-from flyteidl.service.identity_pb2 import UserInfoResponse
+from flyteidl2.auth import identity_pb2
+from flyteidl2.auth.identity_pb2 import UserInfoResponse
 
 from .._initialize import ensure_client, get_client
 from ..syncify import syncify
@@ -26,7 +26,6 @@ class User(ToJSONMixin):
         Returns: A User object containing details about the user.
         """
         ensure_client()
-
         resp = await get_client().identity_service.UserInfo(identity_pb2.UserInfoRequest())
         return cls(resp)
 
