@@ -910,7 +910,7 @@ class DataFrameTransformerEngine(TypeTransformer[DataFrame]):
         if isinstance(python_val, DataFrame):
             # There are three cases that we need to take care of here.
 
-            # 2. A task returns a python DataFrame with an uri.
+            # 1. A task returns a python DataFrame with an uri.
             # Note: this case is also what happens we start a local execution of a task with a python DataFrame.
             #  It gets converted into a literal first, then back into a python DataFrame.
             #
@@ -930,10 +930,14 @@ class DataFrameTransformerEngine(TypeTransformer[DataFrame]):
 
                     ctx = internal_ctx()
                     if not ctx.has_raw_data and _get_main_run_mode() == "remote":
+                        # handle case where the flyte.io.DataFrame was created in a local task (typically in the context
+                        # of a if __name__ == "__main__" block) and needs to be uploaded to remote storage.
                         import flyte.remote as remote
 
                         uri = await remote.upload_dir.aio(pathlib.Path(uri))
                     else:
+                        # this is the case where the dataframe is uploaded to remote storage in the context of a
+                        # remote task run.
                         uri = await storage.put(uri, recursive=True)
 
                 # Check the user-specified format
@@ -960,7 +964,7 @@ class DataFrameTransformerEngine(TypeTransformer[DataFrame]):
                 )
                 return literals_pb2.Literal(scalar=literals_pb2.Scalar(structured_dataset=sd_model))
 
-            # 1. A task returns a DataFrame that was just a passthrough input. If this happens
+            # 2. A task returns a DataFrame that was just a passthrough input. If this happens
             # then return the original literals.DataFrame without invoking any encoder
             #
             # Ex.
