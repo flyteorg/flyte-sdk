@@ -84,11 +84,6 @@ def _get_main_run_mode() -> Mode | None:
     return _run_mode_var.get()
 
 
-def _set_main_run_mode(mode: Mode | None) -> None:
-    """Set the current run mode in the context variable."""
-    _run_mode_var.set(mode)
-
-
 class _Runner:
     def __init__(
         self,
