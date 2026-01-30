@@ -167,6 +167,73 @@ def test_poetry_project_validate_missing_pyproject():
             poetry_project.validate()
 
 
+def test_with_uv_project_optional_uvlock():
+    """Test that with_uv_project correctly handles optional uvlock."""
+    import tempfile
+
+    from flyte._image import UVProject
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        # Create a pyproject.toml but no uv.lock file
+        pyproject_file = Path(tmpdir) / "pyproject.toml"
+        pyproject_file.write_text("[project]\nname = 'test-project'\nversion='0.1.0'")
+
+        # Test that with_uv_project works without a uv.lock file
+        img = Image.from_debian_base(registry="localhost", name="test-image").with_uv_project(
+            pyproject_file=pyproject_file,
+        )
+
+        # Verify the layer is a UVProject with uvlock=None
+        assert isinstance(img._layers[-1], UVProject)
+        assert img._layers[-1].uvlock is None
+        assert img._layers[-1].pyproject == pyproject_file
+
+        # Now create a uv.lock file and verify it gets picked up
+        uv_lock_file = Path(tmpdir) / "uv.lock"
+        uv_lock_file.write_text("lock content")
+
+        img2 = Image.from_debian_base(registry="localhost", name="test-image").with_uv_project(
+            pyproject_file=pyproject_file,
+        )
+        # uvlock should be set to the default path since it now exists
+        assert img2._layers[-1].uvlock == uv_lock_file
+
+
+def test_uv_project_optional_uvlock():
+    """Test that UVProject works correctly with optional uvlock."""
+    import tempfile
+
+    from flyte._image import UVProject
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        pyproject_file = Path(tmpdir) / "pyproject.toml"
+        pyproject_file.write_text("[project]\nname = 'test-project'\nversion='0.1.0'")
+
+        # Create UVProject without uvlock
+        uv_project = UVProject(pyproject=pyproject_file, uvlock=None)
+        assert uv_project.uvlock is None
+        # Validate should pass even without uvlock
+        uv_project.validate()
+
+        # Test hash computation works without uvlock
+        import hashlib
+
+        hasher = hashlib.md5()
+        uv_project.update_hash(hasher)
+        hash1 = hasher.hexdigest()
+
+        # Create with uvlock and verify hash is different
+        uv_lock_file = Path(tmpdir) / "uv.lock"
+        uv_lock_file.write_text("lock content")
+        uv_project_with_lock = UVProject(pyproject=pyproject_file, uvlock=uv_lock_file)
+
+        hasher2 = hashlib.md5()
+        uv_project_with_lock.update_hash(hasher2)
+        hash2 = hasher2.hexdigest()
+
+        assert hash1 != hash2
+
+
 def test_ids_for_different_python_version():
     ex_11 = Image.from_debian_base(python_version=(3, 11), install_flyte=False).with_source_file(Path(__file__))
     ex_12 = Image.from_debian_base(python_version=(3, 12), install_flyte=False).with_source_file(Path(__file__))
