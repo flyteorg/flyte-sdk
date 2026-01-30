@@ -261,6 +261,9 @@ class UVScript(PipOption, Layer):
     script: Path
     script_name: str = field(init=False)
 
+    def __post_init__(self):
+        object.__setattr__(self, "script_name", self.script.name)
+
     def validate(self):
         if not self.script.exists():
             raise FileNotFoundError(f"UV script {self.script} does not exist")
