@@ -62,6 +62,14 @@ RUN --mount=type=cache,sharing=locked,mode=0777,target=/root/.cache/uv,id=uv \
    VIRTUAL_ENV=$${VIRTUAL_ENV-/opt/venv} uv sync --active --inexact $PIP_INSTALL_ARGS
 """)
 
+UV_NO_LOCK_WITHOUT_PROJECT_INSTALL_TEMPLATE = Template("""\
+RUN --mount=type=cache,sharing=locked,mode=0777,target=/root/.cache/uv,id=uv \
+   --mount=type=bind,target=pyproject.toml,src=$PYPROJECT_PATH \
+   $EDITABLE_INSTALL_MOUNTS \
+   $SECRET_MOUNT \
+   VIRTUAL_ENV=$${VIRTUAL_ENV-/opt/venv} uv sync --active --inexact $PIP_INSTALL_ARGS
+""")
+
 UV_LOCK_INSTALL_TEMPLATE = Template("""\
 RUN --mount=type=cache,sharing=locked,mode=0777,target=/root/.cache/uv,id=uv \
    --mount=type=bind,target=/root/.flyte/$PYPROJECT_PATH,src=$PYPROJECT_PATH,rw \
@@ -280,9 +288,8 @@ class UVProjectHandler:
             pip_install_args = " ".join(layer.get_pip_install_args())
             if "--no-install-project" not in pip_install_args:
                 pip_install_args += " --no-install-project"
-            # Only Copy pyproject.yaml and uv.lock from the project root.
+            # Only Copy pyproject.yaml and uv.lock (if provided) from the project root.
             pyproject_dst = copy_files_to_context(layer.pyproject, context_path)
-            uvlock_dst = copy_files_to_context(layer.uvlock, context_path)
             # Apply any editable install mounts to the template.
             editable_install_mounts = get_uv_editable_install_mounts(
                 project_root=layer.pyproject.parent,
@@ -292,13 +299,22 @@ class UVProjectHandler:
                     *docker_ignore_patterns,
                 ],
             )
-            delta = UV_LOCK_WITHOUT_PROJECT_INSTALL_TEMPLATE.substitute(
-                UV_LOCK_PATH=uvlock_dst.relative_to(context_path),
-                PYPROJECT_PATH=pyproject_dst.relative_to(context_path),
-                PIP_INSTALL_ARGS=pip_install_args,
-                SECRET_MOUNT=secret_mounts,
-                EDITABLE_INSTALL_MOUNTS=editable_install_mounts,
-            )
+            if layer.uvlock is not None:
+                uvlock_dst = copy_files_to_context(layer.uvlock, context_path)
+                delta = UV_LOCK_WITHOUT_PROJECT_INSTALL_TEMPLATE.substitute(
+                    UV_LOCK_PATH=uvlock_dst.relative_to(context_path),
+                    PYPROJECT_PATH=pyproject_dst.relative_to(context_path),
+                    PIP_INSTALL_ARGS=pip_install_args,
+                    SECRET_MOUNT=secret_mounts,
+                    EDITABLE_INSTALL_MOUNTS=editable_install_mounts,
+                )
+            else:
+                delta = UV_NO_LOCK_WITHOUT_PROJECT_INSTALL_TEMPLATE.substitute(
+                    PYPROJECT_PATH=pyproject_dst.relative_to(context_path),
+                    PIP_INSTALL_ARGS=pip_install_args,
+                    SECRET_MOUNT=secret_mounts,
+                    EDITABLE_INSTALL_MOUNTS=editable_install_mounts,
+                )
         else:
             # Copy the entire project.
             pyproject_dst = copy_files_to_context(layer.pyproject.parent, context_path, docker_ignore_patterns)
@@ -306,7 +322,7 @@ class UVProjectHandler:
             # Make sure pyproject.toml and uv.lock files are not removed by docker ignore
             uv_lock_context_path = pyproject_dst / "uv.lock"
             pyproject_context_path = pyproject_dst / "pyproject.toml"
-            if not uv_lock_context_path.exists():
+            if layer.uvlock is not None and not uv_lock_context_path.exists():
                 shutil.copy(layer.uvlock, pyproject_dst)
             if not pyproject_context_path.exists():
                 shutil.copy(layer.pyproject, pyproject_dst)
@@ -489,9 +505,10 @@ async def _process_layer(
                 dockerfile = await AptPackagesHandler.handle(AptPackages(packages=("git",)), context_path, dockerfile)
 
                 for project_path in header.pyprojects:
+                    uv_lock_path = Path(project_path) / "uv.lock"
                     uv_project = UVProject(
                         pyproject=Path(project_path) / "pyproject.toml",
-                        uvlock=Path(project_path) / "uv.lock",
+                        uvlock=uv_lock_path if uv_lock_path.exists() else None,
                         project_install_mode="install_project",
                         secret_mounts=layer.secret_mounts,
                         pre=layer.pre,
