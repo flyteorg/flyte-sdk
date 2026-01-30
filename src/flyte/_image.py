@@ -163,7 +163,6 @@ class PythonWheels(PipOption, Layer):
 
     def __post_init__(self):
         object.__setattr__(self, "wheel_dir_name", self.wheel_dir.name)
-        super().__post_init__()
 
     def update_hash(self, hasher: hashlib._Hash):
         super().update_hash(hasher)
@@ -195,9 +194,6 @@ class UVProject(PipOption, Layer):
     pyproject: Path
     uvlock: Path
     project_install_mode: typing.Literal["dependencies_only", "install_project"] = "dependencies_only"
-
-    def __post_init__(self):
-        super().__post_init__()
 
     def validate(self):
         if not self.pyproject.exists():
@@ -232,9 +228,6 @@ class PoetryProject(Layer):
     project_install_mode: typing.Literal["dependencies_only", "install_project"] = "dependencies_only"
     secret_mounts: Optional[Tuple[str | Secret, ...]] = None
 
-    def __post_init__(self):
-        super().__post_init__()
-
     def validate(self):
         if not self.pyproject.exists():
             raise FileNotFoundError(f"pyproject.toml file {self.pyproject} does not exist")
@@ -267,10 +260,6 @@ class PoetryProject(Layer):
 class UVScript(PipOption, Layer):
     script: Path
     script_name: str = field(init=False)
-
-    def __post_init__(self):
-        object.__setattr__(self, "script_name", self.script.name)
-        super().__post_init__()
 
     def validate(self):
         if not self.script.exists():
@@ -320,9 +309,6 @@ class Commands(Layer):
     commands: Tuple[str, ...]
     secret_mounts: Optional[Tuple[str | Secret, ...]] = None
 
-    def __post_init__(self):
-        super().__post_init__()
-
     def update_hash(self, hasher: hashlib._Hash):
         hash_input = "".join(self.commands)
 
@@ -337,9 +323,6 @@ class Commands(Layer):
 class WorkDir(Layer):
     workdir: str
 
-    def __post_init__(self):
-        super().__post_init__()
-
     def update_hash(self, hasher: hashlib._Hash):
         hasher.update(self.workdir.encode("utf-8"))
 
@@ -348,9 +331,6 @@ class WorkDir(Layer):
 @dataclass(frozen=True, repr=True)
 class DockerIgnore(Layer):
     path: str
-
-    def __post_init__(self):
-        super().__post_init__()
 
     def update_hash(self, hasher: hashlib._Hash):
         hasher.update(self.path.encode("utf-8"))
@@ -364,7 +344,6 @@ class CopyConfig(Layer):
     dst: str
 
     def __post_init__(self):
-        super().__post_init__()
         if self.path_type not in (0, 1):
             raise ValueError(f"Invalid path_type {self.path_type}, must be 0 (file) or 1 (directory)")
 
@@ -394,9 +373,6 @@ class _DockerLines(Layer):
 
     lines: Tuple[str, ...]
 
-    def __post_init__(self):
-        super().__post_init__()
-
     def update_hash(self, hasher: hashlib._Hash):
         hasher.update("".join(self.lines).encode("utf-8"))
 
@@ -410,9 +386,6 @@ class Env(Layer):
     """
 
     env_vars: Tuple[Tuple[str, str], ...] = field(default_factory=tuple)
-
-    def __post_init__(self):
-        super().__post_init__()
 
     def update_hash(self, hasher: hashlib._Hash):
         txt = [f"{k}={v}" for k, v in self.env_vars]
@@ -905,7 +878,7 @@ class Image:
         :param secret_mounts: list of secret to mount for the build process.
         :return: Image
         """
-        new_packages: Optional[Tuple] = packages if packages else None
+        new_packages: Optional[Tuple] = packages or None
         new_extra_index_urls: Optional[Tuple] = _ensure_tuple(extra_index_urls) if extra_index_urls else None
 
         ll = PipPackages(
