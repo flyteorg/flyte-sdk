@@ -346,18 +346,15 @@ def _get_layers_proto(image: Image, context_path: Path) -> "image_definition_pb2
                 case _:
                     raise ValueError(f"Invalid project install mode: {layer.project_install_mode}")
 
-            uv_project_kwargs = {
-                # NOTE: UVProject expects 'pyproject' to be the directory containing the pyproject.toml file
-                # whereas it expects 'uvlock' to be the path to the uv.lock file itself.
-                "pyproject": str(pyproject_dir_dst.relative_to(context_path)),
-                "options": pip_options,
-                "secret_mounts": secret_mounts,
-            }
-            if uvlock_dst is not None:
-                uv_project_kwargs["uvlock"] = str(uvlock_dst.relative_to(context_path))
-
             uv_layer = image_definition_pb2.Layer(
-                uv_project=image_definition_pb2.UVProject(**uv_project_kwargs)
+                uv_project=image_definition_pb2.UVProject(
+                    # NOTE: UVProject expects 'pyproject' to be the directory containing the pyproject.toml file
+                    # whereas it expects 'uvlock' to be the path to the uv.lock file itself.
+                    pyproject=str(pyproject_dir_dst.relative_to(context_path)),
+                    uvlock=str(uvlock_dst.relative_to(context_path)) if uvlock_dst else None,
+                    options=pip_options,
+                    secret_mounts=secret_mounts,
+                )
             )
             layers.append(uv_layer)
         elif isinstance(layer, PoetryProject):

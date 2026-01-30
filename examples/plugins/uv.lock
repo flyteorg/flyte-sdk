@@ -1,0 +1,43 @@
+version = 1
+revision = 3
+requires-python = ">=3.10"
+
+[[package]]
+name = "flyteplugins-spark"
+version = "2.0.0b4"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pyspark" },
+]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/c9/21/50ae51c9ba8a108889ed2ab7a5fd694880579ca8ba7d030a2f22a2333195/flyteplugins_spark-2.0.0b4-py3-none-any.whl", hash = "sha256:c39dcbdb78dfc6452ecd27ce33bc2c2cf99584ccacee3e73144ae5e6079c1936", size = 2980, upload-time = "2025-08-05T00:09:04.604Z" },
+]
+
+[[package]]
+name = "py4j"
+version = "0.10.9.9"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/38/31/0b210511177070c8d5d3059556194352e5753602fa64b85b7ab81ec1a009/py4j-0.10.9.9.tar.gz", hash = "sha256:f694cad19efa5bd1dee4f3e5270eb406613c974394035e5bfc4ec1aba870b879", size = 761089, upload-time = "2025-01-15T03:53:18.624Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/bd/db/ea0203e495be491c85af87b66e37acfd3bf756fd985f87e46fc5e3bf022c/py4j-0.10.9.9-py2.py3-none-any.whl", hash = "sha256:c7c26e4158defb37b0bb124933163641a2ff6e3a3913f7811b0ddbe07ed61533", size = 203008, upload-time = "2025-01-15T03:53:15.648Z" },
+]
+
+[[package]]
+name = "pyspark"
+version = "4.1.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "py4j" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/19/bf/58ee13add151469c25825b7125bbf62c3bdcec05eec4d458fcb5c5516066/pyspark-4.1.1.tar.gz", hash = "sha256:77f78984aa84fbe865c717dd37b49913b4e5c97d76ef6824f932f1aefa6621ec", size = 455359625, upload-time = "2026-01-09T09:38:38.28Z" }
+
+[[package]]
+name = "spark"
+version = "0.1.0"
+source = { virtual = "." }
+dependencies = [
+    { name = "flyteplugins-spark" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "flyteplugins-spark" }]
