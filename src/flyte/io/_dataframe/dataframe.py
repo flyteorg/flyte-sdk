@@ -1145,15 +1145,9 @@ class DataFrameTransformerEngine(TypeTransformer[DataFrame]):
 
         # If the requested type was not a flyte.DataFrame, then it means it was a raw dataframe type, which means
         # we should do the opening/downloading and whatever else it might entail right now. No iteration option here.
-        try:
-            return await self.open_as(
-                lv.scalar.structured_dataset, df_type=expected_python_type, updated_metadata=metad
-            )
-        except GenericError as exc:
-            msg = get_credentials_error(
-                lv.scalar.structured_dataset.uri, get_protocol(lv.scalar.structured_dataset.uri)
-            )
-            raise GenericError(f"{exc}\n{msg}") from exc
+        return await self.open_as(
+            lv.scalar.structured_dataset, df_type=expected_python_type, updated_metadata=metad
+        )
 
     def to_html(self, python_val: typing.Any, expected_python_type: Type[T]) -> str:
         if isinstance(python_val, DataFrame):
@@ -1255,23 +1249,6 @@ class DataFrameTransformerEngine(TypeTransformer[DataFrame]):
             external_schema_bytes=typing.cast(pa.lib.Schema, pa_schema).to_string().encode() if pa_schema else None,
         )
 
-    def _get_type_tag(self, t: Type) -> typing.Optional[str]:
-        """
-        Get the fully qualified type name for storing in the literal type tag.
-        This allows us to recover the original dataframe type (e.g., pd.DataFrame) when guessing Python types.
-        At deserialization time, we will use this tag to lookup the registered decoder for the dataframe type.
-
-        Returns None if the type is DataFrame itself (no tag needed).
-        """
-        base_type, *_ = extract_cols_and_format(t)  # type: ignore
-
-        # If it's the DataFrame class itself, no tag needed
-        if base_type is DataFrame or (isinstance(base_type, type) and issubclass(base_type, DataFrame)):
-            return None
-
-        # Return the fully qualified name for registered dataframe types that have encoders/decoders
-        return f"{base_type.__module__}.{base_type.__qualname__}"
-
     def get_literal_type(self, t: typing.Union[Type[DataFrame], typing.Any]) -> types_pb2.LiteralType:
         """
         Provide a concrete implementation so that writers of custom dataframe handlers since there's nothing that
@@ -1280,28 +1257,11 @@ class DataFrameTransformerEngine(TypeTransformer[DataFrame]):
 
         :param t: The python dataframe type, which is mostly ignored.
         """
-        tag = self._get_type_tag(t)
         sdt = self._get_dataset_type(t)
-
-        if tag:
-            return types_pb2.LiteralType(
-                structured_dataset_type=sdt,
-                structure=types_pb2.TypeStructure(tag=tag),
-            )
         return types_pb2.LiteralType(structured_dataset_type=sdt)
 
     def guess_python_type(self, literal_type: types_pb2.LiteralType) -> Type[DataFrame]:
         if literal_type.HasField("structured_dataset_type"):
-            # Check if we have a tag that identifies the original dataframe type
-            if literal_type.HasField("structure") and literal_type.structure.tag:
-                tag = literal_type.structure.tag
-                # Look up the type in our registered decoders
-                for registered_type in self.DECODERS.keys():
-                    type_name = f"{registered_type.__module__}.{registered_type.__qualname__}"
-                    if type_name == tag:
-                        return registered_type
-                # If we couldn't find the type in decoders, log a warning and fall back to DataFrame
-                logger.debug(f"Could not find registered decoder for type tag '{tag}', falling back to DataFrame")
             return DataFrame
         raise ValueError(f"DataFrameTransformerEngine cannot reverse {literal_type}")
 

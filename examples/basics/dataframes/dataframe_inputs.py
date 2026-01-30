@@ -1,17 +1,5 @@
 """Example for passing raw dataframes as inputs to a task.
 
-Prerequisites: make sure to set the following environment variables:
-- AWS_ACCESS_KEY_ID
-- AWS_SECRET_ACCESS_KEY
-- AWS_SESSION_TOKEN (if applicable)
-
-You may also set this with `aws sso login`:
-
-```
-$ aws sso login --profile $profile
-$ eval "$(aws configure export-credentials --profile $profile --format env)"
-```
-
 Run this script to run the task as a python script.
 
 ```
@@ -109,27 +97,27 @@ if __name__ == "__main__":
         print(run.url)
         run.wait()
         result = run.outputs()[0]
-        assert isinstance(result, pd.DataFrame)
+        assert isinstance(result, flyte.io.DataFrame)
         print(result)
 
         flyte_dataframe = flyte.io.DataFrame.from_df(dataframe)
         run = flyte.run(process_fdf_to_df, df=flyte_dataframe)
         print(run.url)
         run.wait()
-        result: pd.DataFrame = run.outputs()[0]
-        assert isinstance(result, pd.DataFrame)
+        result = run.outputs()[0]
+        assert isinstance(result, flyte.io.DataFrame)
         print(result)
 
         run = flyte.run(process_df_to_fdf, df=dataframe)
         print(run.url)
         run.wait()
-        result: flyte.io.DataFrame = run.outputs()[0]
+        result = run.outputs()[0]
         assert isinstance(result, flyte.io.DataFrame)
         print(result)
 
         run = flyte.run(process_fdf_to_fdf, df=flyte_dataframe)
         print(run.url)
         run.wait()
-        result: flyte.io.DataFrame = run.outputs()[0]
+        result = run.outputs()[0]
         assert isinstance(result, flyte.io.DataFrame)
         print(result)
