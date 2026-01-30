@@ -67,6 +67,15 @@ async def get_employee_data(raw_dataframe: pd.DataFrame, flyte_dataframe: pd.Dat
 
 
 if __name__ == "__main__":
+    # Make sure to set the following environment variables:
+    # - AWS_ACCESS_KEY_ID
+    # - AWS_SECRET_ACCESS_KEY
+    # - AWS_SESSION_TOKEN (if applicable)
+    #
+    # You may also set this with `aws sso login`:
+    # $ aws sso login --profile $profile
+    # $ eval "$(aws configure export-credentials --profile $profile --format env)"
+
     flyte.init_from_config()  # log_level=logging.DEBUG)
     # Get the data sources
 

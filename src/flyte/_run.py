@@ -84,6 +84,11 @@ def _get_main_run_mode() -> Mode | None:
     return _run_mode_var.get()
 
 
+def _set_main_run_mode(mode: Mode | None) -> None:
+    """Set the current run mode in the context variable."""
+    _run_mode_var.set(mode)
+
+
 class _Runner:
     def __init__(
         self,
@@ -630,17 +635,24 @@ class _Runner:
         if not isinstance(task, TaskTemplate) and not isinstance(task, (LazyEntity, TaskDetails)):
             raise TypeError(f"On Flyte tasks can be run, not generic functions or methods '{type(task)}'.")
 
-        if self._mode == "remote":
-            return await self._run_remote(task, *args, **kwargs)
-        task = cast(TaskTemplate, task)
-        if self._mode == "hybrid":
-            return await self._run_hybrid(task, *args, **kwargs)
+        # Set the run mode in the context variable so that offloaded types (files, directories, dataframes)
+        # can check the mode for controlling auto-uploading behavior (only enabled in remote mode).
+        _run_mode_var.set(self._mode)
 
-        # TODO We could use this for remote as well and users could simply pass flyte:// or s3:// or file://
-        with internal_ctx().new_raw_data_path(
-            raw_data_path=RawDataPath.from_local_folder(local_folder=self._raw_data_path)
-        ):
-            return await self._run_local(task, *args, **kwargs)
+        try:
+            if self._mode == "remote":
+                return await self._run_remote(task, *args, **kwargs)
+            task = cast(TaskTemplate, task)
+            if self._mode == "hybrid":
+                return await self._run_hybrid(task, *args, **kwargs)
+
+            # TODO We could use this for remote as well and users could simply pass flyte:// or s3:// or file://
+            with internal_ctx().new_raw_data_path(
+                raw_data_path=RawDataPath.from_local_folder(local_folder=self._raw_data_path)
+            ):
+                return await self._run_local(task, *args, **kwargs)
+        finally:
+            _run_mode_var.set(None)
 
 
 def with_runcontext(
@@ -727,10 +739,6 @@ def with_runcontext(
         raise ValueError("Run name and run base dir are required for hybrid mode")
     if copy_style == "none" and not version:
         raise ValueError("Version is required when copy_style is 'none'")
-
-    # Set the run mode in the context variable so that offloaded types (files, directories, dataframes)
-    # can check the mode for controlling auto-uploading behavior (only enabled in remote mode).
-    _run_mode_var.set(mode)
 
     return _Runner(
         force_mode=mode,
