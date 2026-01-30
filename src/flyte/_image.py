@@ -51,6 +51,28 @@ class Layer:
      layered images programmatically.
     """
 
+    def __post_init__(self):
+        """
+        Validate that no fields in the layer contain lists.
+        Lists are not allowed because Layer objects must be hashable for caching.
+        """
+        import dataclasses
+
+        for f in dataclasses.fields(self):
+            value = getattr(self, f.name)
+            if isinstance(value, list):
+                raise TypeError(
+                    f"{self.__class__.__name__} field '{f.name}' is a list: {value!r}. "
+                    f"Hint: Pass items as separate arguments, e.g., 'vim', 'git' instead of ['vim', 'git']."
+                )
+            elif isinstance(value, tuple):
+                for i, item in enumerate(value):
+                    if isinstance(item, list):
+                        raise TypeError(
+                            f"{self.__class__.__name__} field '{f.name}' contains a list at index {i}: {item!r}. "
+                            f"Hint: Pass items as separate arguments, e.g., 'vim', 'git' instead of ['vim', 'git']."
+                        )
+
     @abstractmethod
     def update_hash(self, hasher: hashlib._Hash):
         """
@@ -115,6 +137,9 @@ class PipOption:
 @dataclass(kw_only=True, frozen=True, repr=True)
 class PipPackages(PipOption, Layer):
     packages: Optional[Tuple[str, ...]] = None
+
+    def __post_init__(self):
+        super().__post_init__()
 
     def update_hash(self, hasher: hashlib._Hash):
         """
@@ -268,6 +293,9 @@ class UVScript(PipOption, Layer):
 class AptPackages(Layer):
     packages: Tuple[str, ...]
     secret_mounts: Optional[Tuple[str | Secret, ...]] = None
+
+    def __post_init__(self):
+        super().__post_init__()
 
     def update_hash(self, hasher: hashlib._Hash):
         hash_input = "".join(self.packages)

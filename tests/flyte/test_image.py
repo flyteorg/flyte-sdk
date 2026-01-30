@@ -173,3 +173,35 @@ def test_ids_for_different_python_version():
     # Override base images to be the same for testing that the identifier does not depends on python version
     object.__setattr__(ex_11, "base_image", "python:3.10-slim-bookworm")
     object.__setattr__(ex_12, "base_image", "python:3.10-slim-bookworm")
+
+
+def test_layer_unhashable_type_error_message():
+    """Test that Layer subclasses provide helpful error messages when lists are used instead of tuples."""
+    from flyte._image import AptPackages, Commands, PipPackages
+
+    # Test PipPackages with a list inside a tuple (common mistake)
+    with pytest.raises(TypeError) as exc_info:
+        PipPackages(packages=(["numpy", "pandas"],))  # tuple containing a list
+    assert "packages" in str(exc_info.value)
+    assert "contains a list" in str(exc_info.value)
+    assert "Hint" in str(exc_info.value)
+
+    # Test AptPackages with a list instead of tuple
+    with pytest.raises(TypeError) as exc_info:
+        AptPackages(packages=["vim", "curl"])  # list instead of tuple
+    assert "packages" in str(exc_info.value)
+    assert "is a list" in str(exc_info.value)
+    assert "Pass items as separate arguments" in str(exc_info.value)
+
+    # Test Commands with a list instead of tuple
+    with pytest.raises(TypeError) as exc_info:
+        Commands(commands=["echo hello", "ls -la"])  # list instead of tuple
+    assert "commands" in str(exc_info.value)
+    assert "is a list" in str(exc_info.value)
+
+    # Verify valid usage works
+    valid_pip = PipPackages(packages=("numpy", "pandas"))
+    assert valid_pip.packages == ("numpy", "pandas")
+
+    valid_apt = AptPackages(packages=("vim", "curl"))
+    assert valid_apt.packages == ("vim", "curl")
