@@ -1,17 +1,5 @@
 """Example for passing raw dataframes as inputs to a task.
 
-Prerequisites: make sure to set the following environment variables:
-- AWS_ACCESS_KEY_ID
-- AWS_SECRET_ACCESS_KEY
-- AWS_SESSION_TOKEN (if applicable)
-
-You may also set this with `aws sso login`:
-
-```
-$ aws sso login --profile $profile
-$ eval "$(aws configure export-credentials --profile $profile --format env)"
-```
-
 Run this script to run the task as a python script.
 
 ```
@@ -55,6 +43,18 @@ env = flyte.TaskEnvironment(
 
 
 @env.task
+def local_df() -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "name": ["Alice", "Bob", "Charlie", "David"],
+            "age": [25, 30, 35, 40],
+            "category": ["A", "B", "A", "C"],
+            "active": [True, False, True, True],
+        }
+    )
+
+
+@env.task
 def process_df(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
@@ -81,7 +81,7 @@ if __name__ == "__main__":
         storage=flyte.storage.S3.auto(region="us-east-2"),
     )
 
-    dataframe = pd.DataFrame(
+    in_mem_dataframe = pd.DataFrame(
         {
             "name": ["Alice", "Bob", "Charlie", "David"],
             "age": [25, 30, 35, 40],
@@ -89,28 +89,35 @@ if __name__ == "__main__":
             "active": [True, False, True, True],
         }
     )
+    local_run = flyte.with_runcontext(mode="local").run(local_df)
+    local_task_df = local_run.outputs()[0]
 
-    run = flyte.run(process_df, df=dataframe)
-    print(run.url)
-    run.wait()
-    result = run.outputs()[0]
-    print(result)
+    for dataframe in [in_mem_dataframe, local_task_df]:
+        run = flyte.run(process_df, df=dataframe)
+        print(run.url)
+        run.wait()
+        result = run.outputs()[0]
+        assert isinstance(result, flyte.io.DataFrame)
+        print(result)
 
-    flyte_dataframe = flyte.io.DataFrame.from_df(dataframe)
-    run = flyte.run(process_fdf_to_df, df=flyte_dataframe)
-    print(run.url)
-    run.wait()
-    result: pd.DataFrame = run.outputs()[0]
-    print(result)
+        flyte_dataframe = flyte.io.DataFrame.from_df(dataframe)
+        run = flyte.run(process_fdf_to_df, df=flyte_dataframe)
+        print(run.url)
+        run.wait()
+        result = run.outputs()[0]
+        assert isinstance(result, flyte.io.DataFrame)
+        print(result)
 
-    run = flyte.run(process_df_to_fdf, df=dataframe)
-    print(run.url)
-    run.wait()
-    result: flyte.io.DataFrame = run.outputs()[0]
-    print(result)
+        run = flyte.run(process_df_to_fdf, df=dataframe)
+        print(run.url)
+        run.wait()
+        result = run.outputs()[0]
+        assert isinstance(result, flyte.io.DataFrame)
+        print(result)
 
-    run = flyte.run(process_fdf_to_fdf, df=flyte_dataframe)
-    print(run.url)
-    run.wait()
-    result: flyte.io.DataFrame = run.outputs()[0]
-    print(result)
+        run = flyte.run(process_fdf_to_fdf, df=flyte_dataframe)
+        print(run.url)
+        run.wait()
+        result = run.outputs()[0]
+        assert isinstance(result, flyte.io.DataFrame)
+        print(result)
