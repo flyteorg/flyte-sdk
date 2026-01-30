@@ -1,4 +1,4 @@
-from flyteplugins.connectors.snowflake import Snowflake, SnowflakeConfig
+from flyteplugins.snowflake import Snowflake, SnowflakeConfig
 
 import flyte
 from flyte.io import DataFrame

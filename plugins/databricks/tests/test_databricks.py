@@ -5,7 +5,7 @@ from flyte import PodTemplate
 from flyte.models import SerializationContext
 from kubernetes.client import V1Container, V1EnvVar, V1LocalObjectReference, V1PodSpec
 
-from flyteplugins.connectors.databricks.task import Databricks, DatabricksFunctionTask
+from flyteplugins.databricks.task import Databricks, DatabricksFunctionTask
 
 
 @pytest.fixture

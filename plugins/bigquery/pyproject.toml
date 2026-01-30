@@ -1,35 +1,18 @@
 [project]
-name = "flyteplugins-connectors"
+name = "flyteplugins-bigquery"
 dynamic = ["version"]
-description = "Connector plugin for flyte"
+description = "BigQuery plugin for flyte"
 readme = "README.md"
 authors = [{ name = "Kevin Su", email = "pingsutw@users.noreply.github.com" }]
 requires-python = ">=3.10"
 dependencies = [
-    "flyte",
-    "grpcio-health-checking",
-    "prometheus-client"
-]
-
-[project.optional-dependencies]
-bigquery = [
+    "flyte[connector]",
     "google-cloud-bigquery",
     "google-cloud-bigquery-storage",
 ]
-databricks = [
-    "aiohttp",
-    "nest-asyncio",
-    "flyteplugins-spark",
-]
-snowflake = [
-    "snowflake-connector-python",
-    "cryptography",
-]
 
 [project.entry-points."flyte.connectors"]
-bigquery = "flyteplugins.connectors.bigquery.connector:BigQueryConnector"
-databricks = "flyteplugins.connectors.databricks.connector:DatabricksConnector"
-snowflake = "flyteplugins.connectors.snowflake.connector:SnowflakeConnector"
+bigquery = "flyteplugins.bigquery.connector:BigQueryConnector"
 
 [build-system]
 requires = ["setuptools", "setuptools_scm"]

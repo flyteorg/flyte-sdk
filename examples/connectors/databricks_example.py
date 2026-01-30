@@ -1,7 +1,7 @@
 import random
 from operator import add
 
-from flyteplugins.connectors.databricks import Databricks
+from flyteplugins.databricks import Databricks
 
 import flyte.remote
 from flyte.storage import S3
@@ -12,7 +12,7 @@ image = (
     .clone(name="spark", registry="ghcr.io/flyteorg")
     .with_env_vars({"UV_PYTHON": "/databricks/python3/bin/python"})
     .with_pip_packages(
-        "flyteplugins-connectors[databricks]",
+        "flyteplugins-databricks",
         pre=True,
     )
     .with_env_vars({"AWS_REGION": "us-west-1", "LOG_LEVEL": 10})
