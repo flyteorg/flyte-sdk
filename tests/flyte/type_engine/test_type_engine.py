@@ -99,8 +99,9 @@ def test_type_engine():
 def test_named_tuple():
     t = typing.NamedTuple("Outputs", [("x_str", str), ("y_int", int)])
     var_map = TypeEngine.named_tuple_to_variable_map(t)
-    assert var_map.variables["x_str"].type.simple == types_pb2.SimpleType.STRING
-    assert var_map.variables["y_int"].type.simple == types_pb2.SimpleType.INTEGER
+    variables_dict = {entry.key: entry.value for entry in var_map.variables}
+    assert variables_dict["x_str"].type.simple == types_pb2.SimpleType.STRING
+    assert variables_dict["y_int"].type.simple == types_pb2.SimpleType.INTEGER
 
 
 def test_type_resolution():
