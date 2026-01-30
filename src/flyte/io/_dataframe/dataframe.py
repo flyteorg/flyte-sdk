@@ -13,7 +13,6 @@ from typing import Any, Callable, ClassVar, Coroutine, Dict, Generic, List, Opti
 from flyteidl2.core import literals_pb2, types_pb2
 from fsspec.utils import get_protocol
 from mashumaro.types import SerializableType
-from obstore.exceptions import GenericError
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, model_serializer, model_validator
 from typing_extensions import Annotated, TypeAlias, get_args, get_origin
 
@@ -1145,9 +1144,7 @@ class DataFrameTransformerEngine(TypeTransformer[DataFrame]):
 
         # If the requested type was not a flyte.DataFrame, then it means it was a raw dataframe type, which means
         # we should do the opening/downloading and whatever else it might entail right now. No iteration option here.
-        return await self.open_as(
-            lv.scalar.structured_dataset, df_type=expected_python_type, updated_metadata=metad
-        )
+        return await self.open_as(lv.scalar.structured_dataset, df_type=expected_python_type, updated_metadata=metad)
 
     def to_html(self, python_val: typing.Any, expected_python_type: Type[T]) -> str:
         if isinstance(python_val, DataFrame):
