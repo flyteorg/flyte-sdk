@@ -191,7 +191,7 @@ def test_layer_unhashable_type_error_message():
         AptPackages(packages=["vim", "curl"])  # list instead of tuple
     assert "packages" in str(exc_info.value)
     assert "is a list" in str(exc_info.value)
-    assert "Use a tuple instead of a list" in str(exc_info.value)
+    assert "Pass items as separate arguments" in str(exc_info.value)
 
     # Test Commands with a list instead of tuple
     with pytest.raises(TypeError) as exc_info:

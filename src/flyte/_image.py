@@ -63,14 +63,14 @@ class Layer:
             if isinstance(value, list):
                 raise TypeError(
                     f"{self.__class__.__name__} field '{f.name}' is a list: {value!r}. "
-                    f"Hint: Use a tuple instead of a list."
+                    f"Hint: Pass items as separate arguments, e.g., 'vim', 'git' instead of ['vim', 'git']."
                 )
             elif isinstance(value, tuple):
                 for i, item in enumerate(value):
                     if isinstance(item, list):
                         raise TypeError(
                             f"{self.__class__.__name__} field '{f.name}' contains a list at index {i}: {item!r}. "
-                            f"Hint: Use tuples instead of lists."
+                            f"Hint: Pass items as separate arguments, e.g., 'vim', 'git' instead of ['vim', 'git']."
                         )
 
     @abstractmethod
@@ -905,7 +905,7 @@ class Image:
         :param secret_mounts: list of secret to mount for the build process.
         :return: Image
         """
-        new_packages: Optional[Tuple] = _ensure_tuple(packages) if packages else None
+        new_packages: Optional[Tuple] = packages if packages else None
         new_extra_index_urls: Optional[Tuple] = _ensure_tuple(extra_index_urls) if extra_index_urls else None
 
         ll = PipPackages(
