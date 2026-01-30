@@ -33,6 +33,7 @@ def generate_random_name() -> str:
 
     return str(uuid4())  # Placeholder for actual random name generation logic
 
+counter = 0
 
 @rich.repr.auto
 @dataclass(frozen=True, kw_only=True)
@@ -67,6 +68,26 @@ class ActionID:
     def new_sub_action_from(self, task_call_seq: int, task_hash: str, input_hash: str, group: str | None) -> ActionID:
         """Make a deterministic name"""
         import hashlib
+        global counter
+
+        from flyte._context import internal_ctx
+        ctx = internal_ctx()
+        current_action_id = ctx.data.task_context.action
+        print(f"In new_sub_action_from: {current_action_id.name}", flush=True)
+
+        if current_action_id.name == "a0":
+            if counter == 0:
+                counter += 1
+                return self.new_sub_action("a1")
+            if counter == 1:
+                counter += 1
+                return self.new_sub_action("a2")
+
+        if current_action_id.name == "a1":
+            return self.new_sub_action("a3")
+
+        if current_action_id.name == "a2":
+            return self.new_sub_action("a4")
 
         from flyte._utils.helpers import base36_encode
 
