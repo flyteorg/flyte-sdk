@@ -3,7 +3,7 @@
 import flyte.app
 
 image = flyte.Image.from_debian_base(python_version=(3, 12)).with_pip_packages(
-    "flyteplugins-connectors[bigquery]", "flyteplugins-connectors[databricks]", pre=True
+    "flyteplugins-bigquery", "flyteplugins-databricks", pre=True
 )
 
 # The `App` declaration.

@@ -44,16 +44,15 @@ async def build_flyte_connector_image(
             Image.from_debian_base(registry=registry, name=name)
             .with_env_vars({"SETUPTOOLS_SCM_PRETEND_VERSION": "9.9.9"})
             .with_uv_project(
-                pyproject_file=(Path(__file__).parent.parent / "plugins/connectors/pyproject.toml"),
+                pyproject_file=(Path(__file__).parent.parent / "plugins/bigquery/pyproject.toml"),
                 pre=True,
-                extra_args="--all-extras",
                 project_install_mode="install_project",
             )
             .with_local_v2()
         )
     else:
         default_image = Image.from_debian_base(registry=registry, name=name).with_pip_packages(
-            "flyteplugins-connectors[bigquery]", pre=True
+            "flyteplugins-bigquery", pre=True
         )
     suffix = __version__.replace("+", "-")
     python_version = _detect_python_version()
