@@ -17,7 +17,7 @@ from abc import ABC, abstractmethod
 from collections import OrderedDict
 from functools import lru_cache
 from types import GenericAlias, NoneType
-from typing import Any, Callable, Dict, NamedTuple, Optional, Tuple, Type, cast
+from typing import Any, Callable, Dict, NamedTuple, Optional, Tuple, Type, TypedDict, cast, is_typeddict
 
 import msgpack
 from flyteidl2.core import interface_pb2, literals_pb2, types_pb2
@@ -1267,6 +1267,276 @@ class NamedTupleTransformer(TypeTransformer[tuple]):
         return Any
 
 
+
+def _is_typed_dict(t: Type) -> bool:
+    """
+    Check if a type is a TypedDict.
+
+    Uses Python's built-in is_typeddict function to detect TypedDict types.
+    """
+    try:
+        return is_typeddict(t)
+    except TypeError:
+        return False
+
+
+class TypedDictTransformer(TypeTransformer[dict]):
+    """
+    Transformer that handles TypedDict types.
+
+    This transformer delegates to PydanticTransformer by wrapping the TypedDict
+    in a dynamically generated Pydantic BaseModel.
+    """
+
+    def __init__(self):
+        super().__init__("TypedDict", dict, enable_type_assertions=False)
+        self._pydantic_transformer = PydanticTransformer()
+
+    def assert_type(self, t: Type, v: Any):
+        """
+        Override assert_type to handle TypedDict properly.
+
+        TypedDict doesn't support isinstance checks, so we validate by checking
+        that the value is a dict with the expected keys and value types.
+        """
+        if not isinstance(v, dict):
+            raise TypeTransformerFailedError(f"Expected a dict for TypedDict {t}, but got {type(v)}")
+
+        # Get expected annotations
+        annotations = getattr(t, "__annotations__", {})
+        required_keys = getattr(t, "__required_keys__", frozenset(annotations.keys()))
+
+        # Check all required keys are present
+        for key in required_keys:
+            if key not in v:
+                raise TypeTransformerFailedError(f"Missing required key '{key}' for TypedDict {t}")
+
+    def _create_typeddict_model(self, t: Type) -> Type[BaseModel]:
+        """Create a Pydantic model that wraps a TypedDict type."""
+        if not _is_typed_dict(t):
+            raise TypeTransformerFailedError(f"{t} is not a TypedDict")
+
+        # Get field names and types from the TypedDict
+        annotations = getattr(t, "__annotations__", {})
+        required_keys = getattr(t, "__required_keys__", frozenset())
+        optional_keys = getattr(t, "__optional_keys__", frozenset())
+
+        field_definitions: Dict[str, Any] = {}
+
+        for field_name, field_type in annotations.items():
+            if field_name in required_keys:
+                field_definitions[field_name] = (field_type, ...)
+            else:
+                # Optional fields get a default of None
+                field_definitions[field_name] = (typing.Optional[field_type], None)
+
+        # Dynamically create a Pydantic model
+        from pydantic import create_model
+
+        model_name = f"TypedDictWrapper_{t.__name__}"
+        return create_model(model_name, **field_definitions)
+
+    def _convert_value_for_pydantic(self, value: Any, field_type: Optional[Type] = None) -> Any:
+        """
+        Recursively convert values to a format that Pydantic can validate.
+
+        This handles:
+        - TypedDict instances (dicts) -> dict (passed through, may need nested conversion)
+        - Pydantic BaseModel instances -> dict (for nested TypedDict wrappers)
+        - Dataclass instances -> dict (for nested dataclasses)
+        - Lists/tuples containing the above
+        - Dicts containing the above
+        """
+        if isinstance(value, BaseModel):
+            # Convert Pydantic models (like TypedDictWrapper_*) to dict
+            return value.model_dump()
+        elif dataclasses.is_dataclass(value) and not isinstance(value, type):
+            # Convert dataclass instances to dict, recursively handling nested values
+            data = dataclasses.asdict(value)
+            return {k: self._convert_value_for_pydantic(v) for k, v in data.items()}
+        elif isinstance(value, dict):
+            # Recursively handle dict values
+            return {k: self._convert_value_for_pydantic(v) for k, v in value.items()}
+        elif isinstance(value, (list, tuple)):
+            # Handle lists and tuples
+            return [self._convert_value_for_pydantic(v) for v in value]
+        return value
+
+    def _typeddict_to_model(self, python_val: dict, model_class: Type[BaseModel], typeddict_type: Type) -> BaseModel:
+        """Convert a TypedDict to a Pydantic model instance."""
+        annotations = getattr(typeddict_type, "__annotations__", {})
+
+        # Convert nested values that might be TypedDicts, dataclasses, or Pydantic models
+        # to a format Pydantic can validate (dicts)
+        converted_data = {}
+        for field_name, value in python_val.items():
+            field_type = annotations.get(field_name)
+            converted_data[field_name] = self._convert_value_for_pydantic(value, field_type)
+
+        return model_class(**converted_data)
+
+    def _convert_value_from_pydantic(self, value: Any, expected_type: Optional[Type] = None) -> Any:
+        """
+        Recursively convert values from Pydantic model format back to their expected types.
+
+        This handles:
+        - Pydantic BaseModel instances -> TypedDict (if expected_type is a TypedDict)
+        - Lists containing the above
+        - Dicts containing the above
+        """
+        if expected_type is not None and _is_typed_dict(expected_type):
+            # Expected type is a TypedDict
+            if isinstance(value, BaseModel):
+                # Recursively convert nested Pydantic model to TypedDict
+                return self._model_to_typeddict(value, expected_type)
+            elif isinstance(value, dict):
+                # Convert dict to TypedDict format
+                annotations = getattr(expected_type, "__annotations__", {})
+                result = {}
+                for name, field_type in annotations.items():
+                    if name in value:
+                        result[name] = self._convert_value_from_pydantic(value[name], field_type)
+                return result
+
+        # Handle generic containers
+        origin = get_origin(expected_type) if expected_type else None
+        args = get_args(expected_type) if expected_type else ()
+
+        if isinstance(value, list) and origin is list and args:
+            return [self._convert_value_from_pydantic(v, args[0]) for v in value]
+        elif isinstance(value, dict) and origin is dict and len(args) >= 2:
+            return {k: self._convert_value_from_pydantic(v, args[1]) for k, v in value.items()}
+
+        return value
+
+    def _model_to_typeddict(self, model_instance: BaseModel, expected_type: Type) -> dict:
+        """Convert a Pydantic model instance back to a TypedDict."""
+        annotations = getattr(expected_type, "__annotations__", {})
+        result = {}
+        for name, field_type in annotations.items():
+            if hasattr(model_instance, name):
+                value = getattr(model_instance, name)
+                # Recursively convert nested values
+                converted_value = self._convert_value_from_pydantic(value, field_type)
+                result[name] = converted_value
+        return result
+
+    def get_literal_type(self, t: Type) -> LiteralType:
+        """Get the literal type for a TypedDict type."""
+        model_class = self._create_typeddict_model(t)
+        return self._pydantic_transformer.get_literal_type(model_class)
+
+    async def to_literal(self, python_val: dict, python_type: Type, expected: LiteralType) -> Literal:
+        """Convert a TypedDict to a Flyte Literal."""
+        if not isinstance(python_val, dict):
+            raise TypeTransformerFailedError(f"Expected a dict but got {type(python_val)}")
+
+        model_class = self._create_typeddict_model(python_type)
+        model_instance = self._typeddict_to_model(python_val, model_class, python_type)
+        return await self._pydantic_transformer.to_literal(model_instance, model_class, expected)
+
+    async def to_python_value(self, lv: Literal, expected_python_type: Type) -> dict:
+        """Convert a Flyte Literal back to a TypedDict."""
+        model_class = self._create_typeddict_model(expected_python_type)
+        model_instance = await self._pydantic_transformer.to_python_value(lv, model_class)
+        return self._model_to_typeddict(model_instance, expected_python_type)
+
+    def guess_python_type(self, literal_type: LiteralType) -> Type:
+        """
+        Guess the Python type from a literal type.
+
+        Creates a dynamic TypedDict from the schema if the title indicates it's a TypedDict wrapper.
+        """
+        if literal_type.simple == SimpleType.STRUCT and literal_type.HasField("metadata"):
+            from google.protobuf import json_format
+
+            metadata = json_format.MessageToDict(literal_type.metadata)
+            title = metadata.get(TITLE, "")
+
+            # Check if this is a TypedDict wrapper
+            if title.startswith("TypedDictWrapper_"):
+                original_name = title[len("TypedDictWrapper_"):]
+                return self._create_typeddict_from_schema(metadata, original_name)
+
+        raise ValueError(f"TypedDict transformer cannot reverse {literal_type}")
+
+    def _create_typeddict_from_schema(self, schema: dict, name: str) -> Type:
+        """Create a dynamic TypedDict type from a JSON schema."""
+        defs = schema.get("$defs", {})
+
+        # Object-based schema (TypedDictWrapper format)
+        properties = schema.get("properties", {})
+        required = set(schema.get("required", []))
+
+        field_types: typing.Dict[str, Type] = {}
+        for prop_name, prop_schema in properties.items():
+            field_type = self._schema_to_type(prop_schema, defs)
+            field_types[prop_name] = field_type
+
+        # Create a TypedDict dynamically
+        # Note: Using TypedDict functional syntax
+        return TypedDict(name, field_types)  # type: ignore
+
+    def _schema_to_type(self, prop_schema: dict, defs: dict) -> Type:
+        """Convert a JSON schema property to a Python type."""
+        # Handle $ref for nested types
+        if "$ref" in prop_schema:
+            ref_path = prop_schema["$ref"]
+            ref_name = ref_path.split("/")[-1]
+            if ref_name in defs:
+                ref_schema = defs[ref_name].copy()
+                ref_schema["$defs"] = defs
+                ref_title = ref_schema.get("title", ref_name)
+
+                # Recursively create nested TypedDict if it's a wrapper
+                if ref_title.startswith("TypedDictWrapper_"):
+                    return self._create_typeddict_from_schema(ref_schema, ref_title[len("TypedDictWrapper_"):])
+
+                # For objects with properties (like dataclasses)
+                if ref_schema.get("type") == "object" and "properties" in ref_schema:
+                    return convert_mashumaro_json_schema_to_python_class(ref_schema, ref_name)
+
+                # Fallback
+                return Any
+
+        # Handle basic types
+        prop_type = prop_schema.get("type")
+        if prop_type == "string":
+            return str
+        elif prop_type == "integer":
+            return int
+        elif prop_type == "number":
+            return float
+        elif prop_type == "boolean":
+            return bool
+        elif prop_type == "array":
+            # Regular list
+            items = prop_schema.get("items", {})
+            item_type = self._schema_to_type(items, defs)
+            return typing.List[item_type]  # type: ignore
+        elif prop_type == "object":
+            # Handle nested objects
+            if "additionalProperties" in prop_schema:
+                additional_props = prop_schema["additionalProperties"]
+                # additionalProperties can be a boolean or a schema dict
+                if isinstance(additional_props, dict):
+                    value_type = self._schema_to_type(additional_props, defs)
+                    return typing.Dict[str, value_type]  # type: ignore
+                elif additional_props is True:
+                    # True means any additional properties are allowed
+                    return typing.Dict[str, Any]  # type: ignore
+                # If False, fall through to check properties or return dict
+            # For nested dataclass-like objects with properties
+            if "properties" in prop_schema:
+                title = prop_schema.get("title", "NestedObject")
+                return convert_mashumaro_json_schema_to_python_class(prop_schema, title)
+            # Untyped dict
+            return dict
+
+        # Default fallback
+        return Any
+
+
 def _is_named_tuple(t: Type) -> bool:
     """
     Check if a type is a NamedTuple.
@@ -1452,6 +1722,7 @@ class TypeEngine(typing.Generic[T]):
     _ENUM_TRANSFORMER: typing.ClassVar[TypeTransformer] = EnumTransformer()
     _TUPLE_TRANSFORMER: typing.ClassVar[TypeTransformer] = TupleTransformer()
     _NAMEDTUPLE_TRANSFORMER: typing.ClassVar[TypeTransformer] = NamedTupleTransformer()
+    _TYPEDDICT_TRANSFORMER: typing.ClassVar[TypeTransformer] = TypedDictTransformer()
     lazy_import_lock: typing.ClassVar[threading.Lock] = threading.Lock()
 
     @classmethod
@@ -1508,6 +1779,10 @@ class TypeEngine(typing.Generic[T]):
         # Special handling for typed tuple types like tuple[int, str]
         if _is_typed_tuple(python_type):
             return cls._TUPLE_TRANSFORMER
+
+        # Special handling for TypedDict types
+        if _is_typed_dict(python_type):
+            return cls._TYPEDDICT_TRANSFORMER
 
         if hasattr(python_type, "__origin__"):
             # If the type is a generic type, we should check the origin type. But consider the case like Iterator[JSON]
@@ -1810,6 +2085,14 @@ class TypeEngine(typing.Generic[T]):
                 return cls._NAMEDTUPLE_TRANSFORMER.guess_python_type(flyte_type)
             except ValueError:
                 logger.debug(f"Skipping transformer {cls._NAMEDTUPLE_TRANSFORMER.name} for {flyte_type}")
+
+        # Try TypedDictTransformer before DataclassTransformer since TypedDicts are serialized
+        # as Pydantic models with "TypedDictWrapper_" prefix in the schema title
+        if cls._TYPEDDICT_TRANSFORMER is not None:
+            try:
+                return cls._TYPEDDICT_TRANSFORMER.guess_python_type(flyte_type)
+            except ValueError:
+                logger.debug(f"Skipping transformer {cls._TYPEDDICT_TRANSFORMER.name} for {flyte_type}")
 
         # Because the dataclass transformer is handled explicitly in the get_transformer code, we have to handle it
         # separately here too.
