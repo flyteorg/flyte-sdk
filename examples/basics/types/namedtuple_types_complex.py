@@ -520,10 +520,7 @@ async def process_nested_complex_outputs(outputs: NestedComplexOutputs) -> str:
     async with outputs.files.predictions.open("rb") as fh:
         total_size += len(bytes(await fh.read()))
 
-    return (
-        f"Model '{model_name}': accuracy={accuracy:.2%}, F1={f1:.2%}, "
-        f"total file size={total_size} bytes"
-    )
+    return f"Model '{model_name}': accuracy={accuracy:.2%}, F1={f1:.2%}, total file size={total_size} bytes"
 
 
 # ============================================================================

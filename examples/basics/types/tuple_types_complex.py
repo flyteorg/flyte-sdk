@@ -96,10 +96,7 @@ async def create_config_and_result() -> tuple[ModelConfig, TrainingResult]:
 async def process_config_result(data: tuple[ModelConfig, TrainingResult]) -> str:
     """Process a tuple containing dataclass instances."""
     config, result = data
-    return (
-        f"Model '{config.model_name}' trained for {result.trained_epochs} epochs "
-        f"with accuracy {result.accuracy:.2%}"
-    )
+    return f"Model '{config.model_name}' trained for {result.trained_epochs} epochs with accuracy {result.accuracy:.2%}"
 
 
 # ============================================================================
@@ -410,49 +407,49 @@ async def complex_tuple_workflow() -> tuple[
     config_result = await create_config_and_result()
     dataclass_output = await process_config_result(data=config_result)
     print(f"   Processed result: {dataclass_output}")
-    print(f"   Returning tuple: (ModelConfig, TrainingResult)")
+    print("   Returning tuple: (ModelConfig, TrainingResult)")
 
     # 2. Pydantic tuples
     print("\n2. Creating and processing Pydantic tuples...")
     pydantic_tuple = await create_pydantic_tuple()
     pydantic_output = await process_pydantic_tuple(data=pydantic_tuple)
     print(f"   Processed result: {pydantic_output}")
-    print(f"   Returning tuple: (DatasetMetadata, ExperimentConfig)")
+    print("   Returning tuple: (DatasetMetadata, ExperimentConfig)")
 
     # 3. File tuples
     print("\n3. Creating and processing File tuples...")
     file_tuple = await create_file_tuple()
     file_output = await process_file_tuple(data=file_tuple)
     print(f"   Total file size: {file_output} bytes")
-    print(f"   Returning tuple: (File, File, str)")
+    print("   Returning tuple: (File, File, str)")
 
     # 4. Dir tuples
     print("\n4. Creating and processing Dir tuples...")
     dir_tuple = await create_dir_tuple()
     dir_output = await process_dir_tuple(data=dir_tuple)
     print(f"   Total files: {dir_output}")
-    print(f"   Returning tuple: (Dir, Dir, str)")
+    print("   Returning tuple: (Dir, Dir, str)")
 
     # 5. DataFrame tuples
     print("\n5. Creating and processing DataFrame tuples...")
     df_tuple = await create_dataframe_tuple()
     df_output = await process_dataframe_tuple(data=df_tuple)
     print(f"   Total rows: {df_output}")
-    print(f"   Returning tuple: (DataFrame, DataFrame, str)")
+    print("   Returning tuple: (DataFrame, DataFrame, str)")
 
     # 6. Mixed complex tuples
     print("\n6. Creating and processing mixed complex tuples...")
     mixed_tuple = await create_mixed_complex_tuple()
     mixed_output = await process_mixed_complex_tuple(data=mixed_tuple)
     print(f"   Processed result: {mixed_output}")
-    print(f"   Returning tuple: (ModelConfig, DatasetMetadata, File, DataFrame)")
+    print("   Returning tuple: (ModelConfig, DatasetMetadata, File, DataFrame)")
 
     # 7. Nested complex tuples
     print("\n7. Creating and processing nested complex tuples...")
     nested_tuple = await create_nested_complex_tuple()
     nested_output = await process_nested_complex_tuple(data=nested_tuple)
     print(f"   Processed result: {nested_output}")
-    print(f"   Returning tuple: ((ModelConfig, TrainingResult), (File, Dir))")
+    print("   Returning tuple: ((ModelConfig, TrainingResult), (File, Dir))")
 
     print("\n=== Complex Tuple Types Workflow Completed! ===")
     print("All complex tuple types are being returned as workflow outputs.")

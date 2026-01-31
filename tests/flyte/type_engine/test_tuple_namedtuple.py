@@ -6,10 +6,9 @@ flyte.io.File, flyte.io.Dir, and flyte.io.DataFrame.
 
 import os
 import tempfile
-import typing
 from dataclasses import dataclass
 from enum import Enum
-from typing import Dict, List, NamedTuple, Optional, Tuple, Union
+from typing import Dict, List, NamedTuple, Optional, Union
 
 import pytest
 from mashumaro.mixins.json import DataClassJSONMixin
@@ -22,7 +21,6 @@ from flyte.types._type_engine import (
     TupleTransformer,
     TypeEngine,
 )
-
 
 # =====================================================
 # Test Fixtures
@@ -1059,9 +1057,7 @@ class TestFlyteTaskIntegration:
         env = flyte.TaskEnvironment(name="test-tuple-dc-task")
 
         @env.task
-        async def process_tuple_dc(
-            data: tuple[SimpleDataclass, int]
-        ) -> tuple[int, str]:
+        async def process_tuple_dc(data: tuple[SimpleDataclass, int]) -> tuple[int, str]:
             return (data[0].x + data[1], data[0].y)
 
         dc = SimpleDataclass(x=10, y="test")
@@ -1074,9 +1070,7 @@ class TestFlyteTaskIntegration:
         env = flyte.TaskEnvironment(name="test-tuple-pydantic-task")
 
         @env.task
-        async def process_tuple_pydantic(
-            data: tuple[SimplePydanticModel, int]
-        ) -> tuple[int, str]:
+        async def process_tuple_pydantic(data: tuple[SimplePydanticModel, int]) -> tuple[int, str]:
             return (data[0].x + data[1], data[0].y)
 
         model = SimplePydanticModel(x=10, y="test")

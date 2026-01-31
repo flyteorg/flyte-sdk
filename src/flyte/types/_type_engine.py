@@ -1281,7 +1281,6 @@ def _is_typed_tuple(t: Type) -> bool:
     return False
 
 
-
 def generate_attribute_list_from_dataclass_json_mixin(schema: dict, schema_name: typing.Any):
     from flyte.io._dir import Dir
     from flyte.io._file import File
