@@ -20,6 +20,7 @@ RUN_TESTDATA = TEST_CODE_PATH / "run_testdata"
 HELLO_WORLD_PY = RUN_TESTDATA / "hello_world.py"
 COMPLEX_INPUTS_PY = RUN_TESTDATA / "complex_inputs.py"
 DATAFRAME_INPUTS_PY = RUN_TESTDATA / "dataframe_inputs.py"
+TUPLE_INPUTS_PY = RUN_TESTDATA / "tuple_inputs.py"
 PARQUET_FILE = RUN_TESTDATA / "df.parquet"
 
 
@@ -609,5 +610,162 @@ def test_cli_run_with_partitioned_parquet_dir_flyte_dataframe_input(runner, temp
     except ValueError as ve:
         if "I/O operation on closed file" in str(ve):
             # Known click issue
+            return
+        raise ve
+
+
+# ============================================================================
+# Tests for tuple and NamedTuple CLI inputs
+# ============================================================================
+
+
+def test_cli_run_with_simple_tuple_input(runner):
+    """Test CLI run with a simple tuple[int, str, float] input."""
+    try:
+        cmd = [
+            "--local",
+            str(TUPLE_INPUTS_PY),
+            "process_simple_tuple",
+            "--data",
+            json.dumps({"item_0": 42, "item_1": "hello", "item_2": 3.14}),
+        ]
+        result = runner.invoke(run, cmd)
+        assert result.exit_code == 0, result.output
+    except ValueError as ve:
+        if "I/O operation on closed file" in str(ve):
+            return
+        raise ve
+
+
+def test_cli_run_with_nested_tuple_input(runner):
+    """Test CLI run with a nested tuple[tuple[int, int], str] input."""
+    try:
+        cmd = [
+            "--local",
+            str(TUPLE_INPUTS_PY),
+            "process_nested_tuple",
+            "--data",
+            json.dumps({"item_0": {"item_0": 10, "item_1": 20}, "item_1": "nested"}),
+        ]
+        result = runner.invoke(run, cmd)
+        assert result.exit_code == 0, result.output
+    except ValueError as ve:
+        if "I/O operation on closed file" in str(ve):
+            return
+        raise ve
+
+
+def test_cli_run_with_tuple_containing_dataclass(runner):
+    """Test CLI run with a tuple containing dataclass elements."""
+    try:
+        cmd = [
+            "--local",
+            str(TUPLE_INPUTS_PY),
+            "process_tuple_with_dataclass",
+            "--data",
+            json.dumps({
+                "item_0": {"x": 0.0, "y": 0.0},
+                "item_1": {"x": 3.0, "y": 4.0},
+                "item_2": "line segment",
+            }),
+        ]
+        result = runner.invoke(run, cmd)
+        assert result.exit_code == 0, result.output
+    except ValueError as ve:
+        if "I/O operation on closed file" in str(ve):
+            return
+        raise ve
+
+
+def test_cli_run_with_tuple_containing_list(runner):
+    """Test CLI run with a tuple containing a list."""
+    try:
+        cmd = [
+            "--local",
+            str(TUPLE_INPUTS_PY),
+            "process_tuple_with_list",
+            "--data",
+            json.dumps({"item_0": [1, 2, 3, 4, 5], "item_1": "numbers"}),
+        ]
+        result = runner.invoke(run, cmd)
+        assert result.exit_code == 0, result.output
+    except ValueError as ve:
+        if "I/O operation on closed file" in str(ve):
+            return
+        raise ve
+
+
+def test_cli_run_with_coordinates_namedtuple(runner):
+    """Test CLI run with a Coordinates NamedTuple input."""
+    try:
+        cmd = [
+            "--local",
+            str(TUPLE_INPUTS_PY),
+            "process_coordinates",
+            "--coords",
+            json.dumps({"latitude": 37.7749, "longitude": -122.4194, "altitude": 16.0}),
+        ]
+        result = runner.invoke(run, cmd)
+        assert result.exit_code == 0, result.output
+    except ValueError as ve:
+        if "I/O operation on closed file" in str(ve):
+            return
+        raise ve
+
+
+def test_cli_run_with_person_namedtuple(runner):
+    """Test CLI run with a PersonInfo NamedTuple input."""
+    try:
+        cmd = [
+            "--local",
+            str(TUPLE_INPUTS_PY),
+            "process_person",
+            "--person",
+            json.dumps({"name": "Alice", "age": 30, "email": "alice@example.com"}),
+        ]
+        result = runner.invoke(run, cmd)
+        assert result.exit_code == 0, result.output
+    except ValueError as ve:
+        if "I/O operation on closed file" in str(ve):
+            return
+        raise ve
+
+
+def test_cli_run_with_metrics_namedtuple(runner):
+    """Test CLI run with a ModelMetrics NamedTuple input."""
+    try:
+        cmd = [
+            "--local",
+            str(TUPLE_INPUTS_PY),
+            "process_metrics",
+            "--metrics",
+            json.dumps({"accuracy": 0.95, "precision": 0.92, "recall": 0.88, "f1_score": 0.90}),
+        ]
+        result = runner.invoke(run, cmd)
+        assert result.exit_code == 0, result.output
+    except ValueError as ve:
+        if "I/O operation on closed file" in str(ve):
+            return
+        raise ve
+
+
+def test_cli_run_with_nested_namedtuple(runner):
+    """Test CLI run with a nested NamedTuple (Employee) containing PersonInfo and Address."""
+    try:
+        cmd = [
+            "--local",
+            str(TUPLE_INPUTS_PY),
+            "process_employee",
+            "--emp",
+            json.dumps({
+                "info": {"name": "Bob", "age": 35, "email": "bob@company.com"},
+                "department": "Engineering",
+                "address": {"street": "123 Main St", "city": "San Francisco", "country": "USA"},
+            }),
+        ]
+        result = runner.invoke(run, cmd)
+        assert result.exit_code == 0, result.output
+    except ValueError as ve:
+        if "I/O operation on closed file" in str(ve):
             return
         raise ve
