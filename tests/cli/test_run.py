@@ -21,6 +21,7 @@ HELLO_WORLD_PY = RUN_TESTDATA / "hello_world.py"
 COMPLEX_INPUTS_PY = RUN_TESTDATA / "complex_inputs.py"
 DATAFRAME_INPUTS_PY = RUN_TESTDATA / "dataframe_inputs.py"
 TUPLE_INPUTS_PY = RUN_TESTDATA / "tuple_inputs.py"
+TYPEDDICT_INPUTS_PY = RUN_TESTDATA / "typeddict_inputs.py"
 PARQUET_FILE = RUN_TESTDATA / "df.parquet"
 
 
@@ -766,6 +767,153 @@ def test_cli_run_with_nested_namedtuple(runner):
                     "address": {"street": "123 Main St", "city": "San Francisco", "country": "USA"},
                 }
             ),
+        ]
+        result = runner.invoke(run, cmd)
+        assert result.exit_code == 0, result.output
+    except ValueError as ve:
+        if "I/O operation on closed file" in str(ve):
+            return
+        raise ve
+
+
+# ============================================================================
+# Tests for TypedDict CLI inputs
+# ============================================================================
+
+
+def test_cli_run_with_simple_typeddict_coordinates(runner):
+    """Test CLI run with a simple Coordinates TypedDict input."""
+    try:
+        cmd = [
+            "--local",
+            str(TYPEDDICT_INPUTS_PY),
+            "process_coordinates",
+            "--coords",
+            json.dumps({"latitude": 37.7749, "longitude": -122.4194, "altitude": 16.0}),
+        ]
+        result = runner.invoke(run, cmd)
+        assert result.exit_code == 0, result.output
+    except ValueError as ve:
+        if "I/O operation on closed file" in str(ve):
+            return
+        raise ve
+
+
+def test_cli_run_with_person_typeddict(runner):
+    """Test CLI run with a PersonInfo TypedDict input."""
+    try:
+        cmd = [
+            "--local",
+            str(TYPEDDICT_INPUTS_PY),
+            "process_person",
+            "--person",
+            json.dumps({"name": "Alice", "age": 30, "email": "alice@example.com"}),
+        ]
+        result = runner.invoke(run, cmd)
+        assert result.exit_code == 0, result.output
+    except ValueError as ve:
+        if "I/O operation on closed file" in str(ve):
+            return
+        raise ve
+
+
+def test_cli_run_with_metrics_typeddict(runner):
+    """Test CLI run with a ModelMetrics TypedDict input."""
+    try:
+        cmd = [
+            "--local",
+            str(TYPEDDICT_INPUTS_PY),
+            "process_metrics",
+            "--metrics",
+            json.dumps({"accuracy": 0.95, "precision": 0.92, "recall": 0.88, "f1_score": 0.90}),
+        ]
+        result = runner.invoke(run, cmd)
+        assert result.exit_code == 0, result.output
+    except ValueError as ve:
+        if "I/O operation on closed file" in str(ve):
+            return
+        raise ve
+
+
+def test_cli_run_with_typeddict_containing_dataclass(runner):
+    """Test CLI run with a TypedDict containing a dataclass (EmployeeInfo)."""
+    try:
+        cmd = [
+            "--local",
+            str(TYPEDDICT_INPUTS_PY),
+            "process_employee",
+            "--emp",
+            json.dumps({
+                "name": "Bob",
+                "age": 35,
+                "department": "Engineering",
+                "address": {"street": "123 Main St", "city": "San Francisco", "country": "USA"},
+            }),
+        ]
+        result = runner.invoke(run, cmd)
+        assert result.exit_code == 0, result.output
+    except ValueError as ve:
+        if "I/O operation on closed file" in str(ve):
+            return
+        raise ve
+
+
+def test_cli_run_with_typeddict_containing_lists(runner):
+    """Test CLI run with a TypedDict containing list fields (TeamInfo)."""
+    try:
+        cmd = [
+            "--local",
+            str(TYPEDDICT_INPUTS_PY),
+            "process_team",
+            "--team",
+            json.dumps({
+                "team_name": "Alpha",
+                "members": ["Alice", "Bob", "Charlie"],
+                "scores": [95.5, 88.0, 92.3],
+            }),
+        ]
+        result = runner.invoke(run, cmd)
+        assert result.exit_code == 0, result.output
+    except ValueError as ve:
+        if "I/O operation on closed file" in str(ve):
+            return
+        raise ve
+
+
+def test_cli_run_with_nested_typeddict(runner):
+    """Test CLI run with a nested TypedDict (OuterConfig containing InnerConfig)."""
+    try:
+        cmd = [
+            "--local",
+            str(TYPEDDICT_INPUTS_PY),
+            "process_nested_typeddict",
+            "--config",
+            json.dumps({
+                "name": "test_config",
+                "inner": {"enabled": True, "threshold": 0.75},
+            }),
+        ]
+        result = runner.invoke(run, cmd)
+        assert result.exit_code == 0, result.output
+    except ValueError as ve:
+        if "I/O operation on closed file" in str(ve):
+            return
+        raise ve
+
+
+def test_cli_run_with_typeddict_containing_dict_fields(runner):
+    """Test CLI run with a TypedDict containing dict fields."""
+    try:
+        cmd = [
+            "--local",
+            str(TYPEDDICT_INPUTS_PY),
+            "process_typeddict_with_dict",
+            "--config",
+            json.dumps({
+                "name": "my_config",
+                "settings": {"key1": "value1", "key2": "value2"},
+                "labels": {"env": "prod", "team": "alpha"},
+            }),
         ]
         result = runner.invoke(run, cmd)
         assert result.exit_code == 0, result.output
