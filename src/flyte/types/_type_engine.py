@@ -905,9 +905,6 @@ class TupleTransformer(TypeTransformer[tuple]):
         properties = schema.get("properties", {})
         defs = schema.get("$defs", {})
 
-        # Get field order from 'required' to preserve order (properties dict may not preserve order)
-        required = schema.get("required", [])
-
         # Sort by item_N to ensure correct order
         item_fields = [(k, v) for k, v in properties.items() if k.startswith("item_")]
         item_fields.sort(key=lambda x: int(x[0].split("_")[1]))

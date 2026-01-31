@@ -891,7 +891,7 @@ class ActionOutputs(tuple, ToJSONMixin):
 
     @cached_property
     def named_outputs(self) -> dict[str, Any]:
-        return {name: x for name, x in zip(self._fields, self)}
+        return dict(zip(self._fields, self))
 
     def __repr__(self) -> str:
         _repr = []

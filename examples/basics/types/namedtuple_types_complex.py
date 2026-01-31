@@ -276,24 +276,24 @@ async def create_dir_outputs() -> DirOutputs:
     """Create a NamedTuple containing Dir objects."""
     # Create training data directory
     train_dir = tempfile.mkdtemp(prefix="training_data_")
-    with open(os.path.join(train_dir, "features.csv"), "w") as f:
+    with open(os.path.join(train_dir, "features.csv"), "w") as f:  # noqa: ASYNC230
         f.write("id,f1,f2,f3\n1,0.1,0.2,0.3\n2,0.4,0.5,0.6\n3,0.7,0.8,0.9\n")
-    with open(os.path.join(train_dir, "labels.csv"), "w") as f:
+    with open(os.path.join(train_dir, "labels.csv"), "w") as f:  # noqa: ASYNC230
         f.write("id,label\n1,0\n2,1\n3,0\n")
     os.makedirs(os.path.join(train_dir, "splits"))
-    with open(os.path.join(train_dir, "splits", "train_ids.txt"), "w") as f:
+    with open(os.path.join(train_dir, "splits", "train_ids.txt"), "w") as f:  # noqa: ASYNC230
         f.write("1\n2\n")
-    with open(os.path.join(train_dir, "splits", "test_ids.txt"), "w") as f:
+    with open(os.path.join(train_dir, "splits", "test_ids.txt"), "w") as f:  # noqa: ASYNC230
         f.write("3\n")
     training_data_dir = await Dir.from_local(train_dir)
 
     # Create model artifacts directory
     artifacts_dir = tempfile.mkdtemp(prefix="model_artifacts_")
-    with open(os.path.join(artifacts_dir, "model_config.json"), "w") as f:
+    with open(os.path.join(artifacts_dir, "model_config.json"), "w") as f:  # noqa: ASYNC230
         f.write('{"model_type": "random_forest", "n_estimators": 100}')
-    with open(os.path.join(artifacts_dir, "feature_importance.csv"), "w") as f:
+    with open(os.path.join(artifacts_dir, "feature_importance.csv"), "w") as f:  # noqa: ASYNC230
         f.write("feature,importance\nf1,0.35\nf2,0.40\nf3,0.25\n")
-    with open(os.path.join(artifacts_dir, "metrics.json"), "w") as f:
+    with open(os.path.join(artifacts_dir, "metrics.json"), "w") as f:  # noqa: ASYNC230
         f.write('{"accuracy": 0.92, "auc": 0.95}')
     model_artifacts_dir = await Dir.from_local(artifacts_dir)
 
@@ -408,9 +408,9 @@ async def create_mixed_complex_outputs() -> MixedComplexOutputs:
 
     # Create data directory
     data_dir_path = tempfile.mkdtemp(prefix="data_")
-    with open(os.path.join(data_dir_path, "metadata.json"), "w") as f:
+    with open(os.path.join(data_dir_path, "metadata.json"), "w") as f:  # noqa: ASYNC230
         f.write('{"version": "2.0", "created": "2024-01-15"}')
-    with open(os.path.join(data_dir_path, "schema.json"), "w") as f:
+    with open(os.path.join(data_dir_path, "schema.json"), "w") as f:  # noqa: ASYNC230
         f.write('{"fields": ["id", "features", "target"]}')
     data_dir = await Dir.from_local(data_dir_path)
 

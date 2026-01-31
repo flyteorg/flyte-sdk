@@ -70,7 +70,7 @@ async def greet_person(person: PersonInfo) -> str:
 async def calculate_metrics(predictions: List[int], labels: List[int]) -> ModelMetrics:
     """Calculate model metrics from predictions and labels."""
     # Simple metric calculation for demonstration
-    correct = sum(1 for p, l in zip(predictions, labels) if p == l)
+    correct = sum(1 for p, label in zip(predictions, labels) if p == label)
     total = len(predictions)
     accuracy = correct / total if total > 0 else 0.0
 

@@ -180,17 +180,17 @@ async def create_dir_tuple() -> tuple[Dir, Dir, str]:
     """Create a tuple containing Dir objects."""
     # Create first directory with training data
     temp_dir1 = tempfile.mkdtemp(prefix="training_data_")
-    with open(os.path.join(temp_dir1, "train.csv"), "w") as f:
+    with open(os.path.join(temp_dir1, "train.csv"), "w") as f:  # noqa: ASYNC230
         f.write("id,feature1,feature2,label\n1,0.5,0.3,1\n2,0.8,0.2,0\n")
-    with open(os.path.join(temp_dir1, "test.csv"), "w") as f:
+    with open(os.path.join(temp_dir1, "test.csv"), "w") as f:  # noqa: ASYNC230
         f.write("id,feature1,feature2,label\n3,0.6,0.4,1\n")
     dir1 = await Dir.from_local(temp_dir1)
 
     # Create second directory with model artifacts
     temp_dir2 = tempfile.mkdtemp(prefix="model_artifacts_")
-    with open(os.path.join(temp_dir2, "config.json"), "w") as f:
+    with open(os.path.join(temp_dir2, "config.json"), "w") as f:  # noqa: ASYNC230
         f.write('{"model_type": "classifier", "version": "1.0"}')
-    with open(os.path.join(temp_dir2, "metadata.txt"), "w") as f:
+    with open(os.path.join(temp_dir2, "metadata.txt"), "w") as f:  # noqa: ASYNC230
         f.write("Trained on: 2024-01-15\nAuthor: ML Team")
     dir2 = await Dir.from_local(temp_dir2)
 
@@ -345,7 +345,7 @@ async def create_nested_complex_tuple() -> tuple[tuple[ModelConfig, TrainingResu
         await fh.write(b"Serialized model data...")
 
     temp_dir = tempfile.mkdtemp(prefix="logs_")
-    with open(os.path.join(temp_dir, "training_log.txt"), "w") as f:
+    with open(os.path.join(temp_dir, "training_log.txt"), "w") as f:  # noqa: ASYNC230
         f.write("Epoch 1: loss=0.5\nEpoch 2: loss=0.3\n")
     logs_dir = await Dir.from_local(temp_dir)
 
