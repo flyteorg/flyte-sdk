@@ -663,11 +663,13 @@ def test_cli_run_with_tuple_containing_dataclass(runner):
             str(TUPLE_INPUTS_PY),
             "process_tuple_with_dataclass",
             "--data",
-            json.dumps({
-                "item_0": {"x": 0.0, "y": 0.0},
-                "item_1": {"x": 3.0, "y": 4.0},
-                "item_2": "line segment",
-            }),
+            json.dumps(
+                {
+                    "item_0": {"x": 0.0, "y": 0.0},
+                    "item_1": {"x": 3.0, "y": 4.0},
+                    "item_2": "line segment",
+                }
+            ),
         ]
         result = runner.invoke(run, cmd)
         assert result.exit_code == 0, result.output
@@ -757,11 +759,13 @@ def test_cli_run_with_nested_namedtuple(runner):
             str(TUPLE_INPUTS_PY),
             "process_employee",
             "--emp",
-            json.dumps({
-                "info": {"name": "Bob", "age": 35, "email": "bob@company.com"},
-                "department": "Engineering",
-                "address": {"street": "123 Main St", "city": "San Francisco", "country": "USA"},
-            }),
+            json.dumps(
+                {
+                    "info": {"name": "Bob", "age": 35, "email": "bob@company.com"},
+                    "department": "Engineering",
+                    "address": {"street": "123 Main St", "city": "San Francisco", "country": "USA"},
+                }
+            ),
         ]
         result = runner.invoke(run, cmd)
         assert result.exit_code == 0, result.output

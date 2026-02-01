@@ -490,21 +490,19 @@ class JsonParamType(click.ParamType):
         # Handle as a list/tuple (direct values)
         elif isinstance(parsed_value, (list, tuple)):
             if len(parsed_value) != len(args):
-                raise click.BadParameter(
-                    f"Expected {len(args)} elements for tuple, got {len(parsed_value)}"
-                )
+                raise click.BadParameter(f"Expected {len(args)} elements for tuple, got {len(parsed_value)}")
             result = []
             for i, (arg, val) in enumerate(zip(args, parsed_value)):
                 if _is_typed_tuple(arg):
-                    val = self._convert_to_tuple(val, arg)
+                    _val = self._convert_to_tuple(val, arg)
                 elif _is_named_tuple(arg):
-                    val = self._convert_to_namedtuple(val, arg)
+                    _val = self._convert_to_namedtuple(val, arg)
                 elif dataclasses.is_dataclass(arg):
                     from mashumaro.codecs.json import JSONDecoder
 
                     decoder = JSONDecoder(arg)
-                    val = decoder.decode(json.dumps(val))
-                result.append(val)
+                    _val = decoder.decode(json.dumps(val))
+                result.append(_val)
             return tuple(result)
         else:
             raise click.BadParameter(f"Expected dict or list for tuple type, got {type(parsed_value)}")
