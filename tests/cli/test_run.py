@@ -843,12 +843,14 @@ def test_cli_run_with_typeddict_containing_dataclass(runner):
             str(TYPEDDICT_INPUTS_PY),
             "process_employee",
             "--emp",
-            json.dumps({
-                "name": "Bob",
-                "age": 35,
-                "department": "Engineering",
-                "address": {"street": "123 Main St", "city": "San Francisco", "country": "USA"},
-            }),
+            json.dumps(
+                {
+                    "name": "Bob",
+                    "age": 35,
+                    "department": "Engineering",
+                    "address": {"street": "123 Main St", "city": "San Francisco", "country": "USA"},
+                }
+            ),
         ]
         result = runner.invoke(run, cmd)
         assert result.exit_code == 0, result.output
@@ -866,11 +868,13 @@ def test_cli_run_with_typeddict_containing_lists(runner):
             str(TYPEDDICT_INPUTS_PY),
             "process_team",
             "--team",
-            json.dumps({
-                "team_name": "Alpha",
-                "members": ["Alice", "Bob", "Charlie"],
-                "scores": [95.5, 88.0, 92.3],
-            }),
+            json.dumps(
+                {
+                    "team_name": "Alpha",
+                    "members": ["Alice", "Bob", "Charlie"],
+                    "scores": [95.5, 88.0, 92.3],
+                }
+            ),
         ]
         result = runner.invoke(run, cmd)
         assert result.exit_code == 0, result.output
@@ -888,10 +892,12 @@ def test_cli_run_with_nested_typeddict(runner):
             str(TYPEDDICT_INPUTS_PY),
             "process_nested_typeddict",
             "--config",
-            json.dumps({
-                "name": "test_config",
-                "inner": {"enabled": True, "threshold": 0.75},
-            }),
+            json.dumps(
+                {
+                    "name": "test_config",
+                    "inner": {"enabled": True, "threshold": 0.75},
+                }
+            ),
         ]
         result = runner.invoke(run, cmd)
         assert result.exit_code == 0, result.output
@@ -909,11 +915,13 @@ def test_cli_run_with_typeddict_containing_dict_fields(runner):
             str(TYPEDDICT_INPUTS_PY),
             "process_typeddict_with_dict",
             "--config",
-            json.dumps({
-                "name": "my_config",
-                "settings": {"key1": "value1", "key2": "value2"},
-                "labels": {"env": "prod", "team": "alpha"},
-            }),
+            json.dumps(
+                {
+                    "name": "my_config",
+                    "settings": {"key1": "value1", "key2": "value2"},
+                    "labels": {"env": "prod", "team": "alpha"},
+                }
+            ),
         ]
         result = runner.invoke(run, cmd)
         assert result.exit_code == 0, result.output

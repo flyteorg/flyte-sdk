@@ -234,7 +234,7 @@ async def create_typeddict_with_tuples() -> TupleContainingTypedDict:
 async def process_typeddict_with_tuples(data: TupleContainingTypedDict) -> str:
     """Process a TypedDict containing tuple types."""
     coord1, coord2 = data["coordinates_pair"]
-    precision, recall, f1, label = data["metrics_with_label"]
+    _, _, f1, label = data["metrics_with_label"]
     return (
         f"Route from ({coord1['latitude']:.2f}, {coord1['longitude']:.2f}) "
         f"to ({coord2['latitude']:.2f}, {coord2['longitude']:.2f}), "
@@ -474,22 +474,22 @@ async def create_typeddict_with_dirs() -> DirContainingTypedDict:
     """Create a TypedDict containing Dir objects."""
     # Create training data directory
     train_dir = tempfile.mkdtemp(prefix="training_data_")
-    with open(os.path.join(train_dir, "features.csv"), "w") as f:
+    with open(os.path.join(train_dir, "features.csv"), "w") as f:  # noqa: ASYNC230
         f.write("id,f1,f2,f3\n1,0.1,0.2,0.3\n2,0.4,0.5,0.6\n3,0.7,0.8,0.9\n")
-    with open(os.path.join(train_dir, "labels.csv"), "w") as f:
+    with open(os.path.join(train_dir, "labels.csv"), "w") as f:  # noqa: ASYNC230
         f.write("id,label\n1,0\n2,1\n3,0\n")
     os.makedirs(os.path.join(train_dir, "splits"))
-    with open(os.path.join(train_dir, "splits", "train_ids.txt"), "w") as f:
+    with open(os.path.join(train_dir, "splits", "train_ids.txt"), "w") as f:  # noqa: ASYNC230
         f.write("1\n2\n")
-    with open(os.path.join(train_dir, "splits", "test_ids.txt"), "w") as f:
+    with open(os.path.join(train_dir, "splits", "test_ids.txt"), "w") as f:  # noqa: ASYNC230
         f.write("3\n")
     training_data_dir = await Dir.from_local(train_dir)
 
     # Create model artifacts directory
     artifacts_dir = tempfile.mkdtemp(prefix="model_artifacts_")
-    with open(os.path.join(artifacts_dir, "model_config.json"), "w") as f:
+    with open(os.path.join(artifacts_dir, "model_config.json"), "w") as f:  # noqa: ASYNC230
         f.write('{"model_type": "random_forest", "n_estimators": 100}')
-    with open(os.path.join(artifacts_dir, "feature_importance.csv"), "w") as f:
+    with open(os.path.join(artifacts_dir, "feature_importance.csv"), "w") as f:  # noqa: ASYNC230
         f.write("feature,importance\nf1,0.35\nf2,0.40\nf3,0.25\n")
     model_artifacts_dir = await Dir.from_local(artifacts_dir)
 
@@ -630,9 +630,9 @@ async def create_mixed_complex_typeddict() -> MixedComplexTypedDict:
 
     # Create data directory
     data_dir_path = tempfile.mkdtemp(prefix="data_")
-    with open(os.path.join(data_dir_path, "metadata.json"), "w") as f:
+    with open(os.path.join(data_dir_path, "metadata.json"), "w") as f:  # noqa: ASYNC230
         f.write('{"version": "2.0", "created": "2024-01-15"}')
-    with open(os.path.join(data_dir_path, "schema.json"), "w") as f:
+    with open(os.path.join(data_dir_path, "schema.json"), "w") as f:  # noqa: ASYNC230
         f.write('{"fields": ["id", "features", "target"]}')
     data_dir = await Dir.from_local(data_dir_path)
 
@@ -804,10 +804,7 @@ async def create_tuple_with_typeddicts() -> tuple[Coordinates, PersonInfo, str]:
 async def process_tuple_with_typeddicts(data: tuple[Coordinates, PersonInfo, str]) -> str:
     """Process a tuple containing TypedDict elements."""
     coords, person, status = data
-    return (
-        f"Person {person['name']} at ({coords['latitude']:.2f}, {coords['longitude']:.2f}), "
-        f"status: {status}"
-    )
+    return f"Person {person['name']} at ({coords['latitude']:.2f}, {coords['longitude']:.2f}), status: {status}"
 
 
 # ============================================================================
@@ -956,10 +953,7 @@ async def process_nested_complex_typeddict(data: NestedComplexTypedDict) -> str:
     async with data["file_output"]["predictions_file"].open("rb") as fh:
         total_size += len(bytes(await fh.read()))
 
-    return (
-        f"Model '{model_name}' on '{dataset_name}': accuracy={accuracy:.2%}, "
-        f"total file size={total_size} bytes"
-    )
+    return f"Model '{model_name}' on '{dataset_name}': accuracy={accuracy:.2%}, total file size={total_size} bytes"
 
 
 # ============================================================================

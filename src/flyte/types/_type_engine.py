@@ -36,7 +36,7 @@ from mashumaro.jsonschema.plugins import BasePlugin
 from mashumaro.jsonschema.schema import Instance
 from mashumaro.mixins.json import DataClassJSONMixin
 from pydantic import BaseModel
-from typing_extensions import Annotated, get_args, get_origin
+from typing_extensions import Annotated, NotRequired, Required, get_args, get_origin
 
 import flyte.storage as storage
 from flyte._logging import logger
@@ -1267,7 +1267,6 @@ class NamedTupleTransformer(TypeTransformer[tuple]):
         return Any
 
 
-
 def _is_typed_dict(t: Type) -> bool:
     """
     Check if a type is a TypedDict.
@@ -1318,23 +1317,41 @@ class TypedDictTransformer(TypeTransformer[dict]):
 
         # Get field names and types from the TypedDict
         annotations = getattr(t, "__annotations__", {})
-        required_keys = getattr(t, "__required_keys__", frozenset())
-        optional_keys = getattr(t, "__optional_keys__", frozenset())
+        required_keys: frozenset[str] = getattr(t, "__required_keys__", frozenset())
 
         field_definitions: Dict[str, Any] = {}
 
         for field_name, field_type in annotations.items():
+            # Unwrap NotRequired and Required type hints to get the inner type
+            # These are only used by TypedDict to mark optional/required fields
+            # and should not be passed to Pydantic
+            inner_type = self._unwrap_typeddict_field_type(field_type)
+
             if field_name in required_keys:
-                field_definitions[field_name] = (field_type, ...)
+                field_definitions[field_name] = (inner_type, ...)
             else:
                 # Optional fields get a default of None
-                field_definitions[field_name] = (typing.Optional[field_type], None)
+                field_definitions[field_name] = (typing.Optional[inner_type], None)
 
         # Dynamically create a Pydantic model
         from pydantic import create_model
 
         model_name = f"TypedDictWrapper_{t.__name__}"
         return create_model(model_name, **field_definitions)
+
+    def _unwrap_typeddict_field_type(self, field_type: Type) -> Type:
+        """
+        Unwrap NotRequired and Required type hints from TypedDict field types.
+
+        TypedDict uses NotRequired[T] and Required[T] to mark optional/required fields,
+        but these wrappers should not be passed to Pydantic - only the inner type T.
+        """
+        origin = get_origin(field_type)
+        if origin is NotRequired or origin is Required:
+            args = get_args(field_type)
+            if args:
+                return args[0]
+        return field_type
 
     def _convert_value_for_pydantic(self, value: Any, field_type: Optional[Type] = None) -> Any:
         """
@@ -1455,7 +1472,7 @@ class TypedDictTransformer(TypeTransformer[dict]):
 
             # Check if this is a TypedDict wrapper
             if title.startswith("TypedDictWrapper_"):
-                original_name = title[len("TypedDictWrapper_"):]
+                original_name = title[len("TypedDictWrapper_") :]
                 return self._create_typeddict_from_schema(metadata, original_name)
 
         raise ValueError(f"TypedDict transformer cannot reverse {literal_type}")
@@ -1466,7 +1483,6 @@ class TypedDictTransformer(TypeTransformer[dict]):
 
         # Object-based schema (TypedDictWrapper format)
         properties = schema.get("properties", {})
-        required = set(schema.get("required", []))
 
         field_types: typing.Dict[str, Type] = {}
         for prop_name, prop_schema in properties.items():
@@ -1490,7 +1506,7 @@ class TypedDictTransformer(TypeTransformer[dict]):
 
                 # Recursively create nested TypedDict if it's a wrapper
                 if ref_title.startswith("TypedDictWrapper_"):
-                    return self._create_typeddict_from_schema(ref_schema, ref_title[len("TypedDictWrapper_"):])
+                    return self._create_typeddict_from_schema(ref_schema, ref_title[len("TypedDictWrapper_") :])
 
                 # For objects with properties (like dataclasses)
                 if ref_schema.get("type") == "object" and "properties" in ref_schema:

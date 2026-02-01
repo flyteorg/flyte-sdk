@@ -1,7 +1,7 @@
 """Test data file for TypedDict CLI input tests."""
 
 from dataclasses import dataclass
-from typing import List, NamedTuple, TypedDict
+from typing import List, TypedDict
 
 import flyte
 
@@ -106,7 +106,7 @@ class TeamInfo(TypedDict):
 @env.task
 async def process_team(team: TeamInfo) -> str:
     """Task that takes a TeamInfo TypedDict with list fields."""
-    avg_score = sum(team['scores']) / len(team['scores']) if team['scores'] else 0
+    avg_score = sum(team["scores"]) / len(team["scores"]) if team["scores"] else 0
     return f"Team {team['team_name']} has {len(team['members'])} members with avg score {avg_score:.2f}"
 
 
@@ -132,7 +132,7 @@ class OuterConfig(TypedDict):
 @env.task
 async def process_nested_typeddict(config: OuterConfig) -> str:
     """Task that takes a nested TypedDict input."""
-    status = "enabled" if config['inner']['enabled'] else "disabled"
+    status = "enabled" if config["inner"]["enabled"] else "disabled"
     return f"Config '{config['name']}' is {status} with threshold {config['inner']['threshold']}"
 
 

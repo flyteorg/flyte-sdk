@@ -537,8 +537,6 @@ class JsonParamType(click.ParamType):
         """Convert a parsed JSON value to a TypedDict."""
         from pydantic import create_model
 
-        from flyte.types._type_engine import _is_typed_dict
-
         if not isinstance(parsed_value, dict):
             raise click.BadParameter(f"Expected dict for TypedDict type, got {type(parsed_value)}")
 
@@ -567,7 +565,9 @@ class JsonParamType(click.ParamType):
                 result[field_name] = self._convert_model_to_dict(value, annotations.get(field_name))
         return result
 
-    def _convert_model_to_dict(self, value: typing.Any, expected_type: typing.Optional[typing.Type] = None) -> typing.Any:
+    def _convert_model_to_dict(
+        self, value: typing.Any, expected_type: typing.Optional[typing.Type] = None
+    ) -> typing.Any:
         """Recursively convert Pydantic model instances back to dicts for TypedDict compatibility."""
         from pydantic import BaseModel
 
