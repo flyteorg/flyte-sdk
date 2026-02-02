@@ -8,6 +8,7 @@ __all__ = [
     "ActionInputs",
     "ActionOutputs",
     "App",
+    "Artifact",
     "Project",
     "Run",
     "RunDetails",
@@ -24,6 +25,7 @@ __all__ = [
 ]
 
 from ._action import Action, ActionDetails, ActionInputs, ActionOutputs
+from ._artifact import Artifact
 from ._app import App
 from ._auth_metadata import auth_metadata
 from ._client.auth import create_channel

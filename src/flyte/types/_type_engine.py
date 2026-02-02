@@ -38,6 +38,7 @@ from mashumaro.mixins.json import DataClassJSONMixin
 from pydantic import BaseModel
 from typing_extensions import Annotated, get_args, get_origin
 
+import flyte.artifacts._wrapper
 import flyte.storage as storage
 from flyte._logging import logger
 from flyte._utils.helpers import load_proto_from_file
@@ -1110,6 +1111,8 @@ class TypeEngine(typing.Generic[T]):
     async def to_literal(
         cls, python_val: typing.Any, python_type: Type[T], expected: types_pb2.LiteralType
     ) -> literals_pb2.Literal:
+        if isinstance(python_val, flyte.artifacts._wrapper.ArtifactWrapper):
+            python_val = python_val._obj
         transformer = cls.get_transformer(python_type)
 
         if transformer.type_assertions_enabled:
