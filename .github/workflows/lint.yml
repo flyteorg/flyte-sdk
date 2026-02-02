@@ -63,9 +63,6 @@ jobs:
       - name: Generate docs
         run: |
           uv lock --check
-          uv lock --prerelease allow --check --directory plugins/snowflake
-          uv lock --prerelease allow --check --directory plugins/databricks
-          uv lock --prerelease allow --check --directory plugins/bigquery
 #  # Disabled for now, as it is failing
 #  check-import-profile:
 #    runs-on: ubuntu-latest
