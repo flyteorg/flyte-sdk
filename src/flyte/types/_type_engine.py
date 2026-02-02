@@ -1271,11 +1271,22 @@ def _is_typed_dict(t: Type) -> bool:
     """
     Check if a type is a TypedDict.
 
-    Uses Python's built-in is_typeddict function to detect TypedDict types.
+    Uses both typing.is_typeddict and typing_extensions.is_typeddict to detect
+    TypedDict types, since typing.is_typeddict doesn't recognize TypedDicts
+    created with typing_extensions.TypedDict on Python < 3.12.
     """
     try:
-        return is_typeddict(t)
+        if is_typeddict(t):
+            return True
     except TypeError:
+        pass
+
+    # Also check with typing_extensions for TypedDicts created with typing_extensions
+    try:
+        from typing_extensions import is_typeddict as te_is_typeddict
+
+        return te_is_typeddict(t)
+    except (ImportError, TypeError):
         return False
 
 
@@ -1310,10 +1321,17 @@ class TypedDictTransformer(TypeTransformer[dict]):
             if key not in v:
                 raise TypeTransformerFailedError(f"Missing required key '{key}' for TypedDict {t}")
 
-    def _create_typeddict_model(self, t: Type) -> Type[BaseModel]:
+    def _create_typeddict_model(self, t: Type, _model_cache: Optional[Dict[Type, Type[BaseModel]]] = None) -> Type[BaseModel]:
         """Create a Pydantic model that wraps a TypedDict type."""
         if not _is_typed_dict(t):
             raise TypeTransformerFailedError(f"{t} is not a TypedDict")
+
+        # Use cache to handle recursive TypedDict types and avoid infinite recursion
+        if _model_cache is None:
+            _model_cache = {}
+
+        if t in _model_cache:
+            return _model_cache[t]
 
         # Get field names and types from the TypedDict
         annotations = getattr(t, "__annotations__", {})
@@ -1321,23 +1339,74 @@ class TypedDictTransformer(TypeTransformer[dict]):
 
         field_definitions: Dict[str, Any] = {}
 
+        # Dynamically create a Pydantic model
+        from pydantic import create_model
+
+        model_name = f"TypedDictWrapper_{t.__name__}"
+
+        # Create a placeholder in the cache before processing fields to handle self-referential types
+        # We'll update it after the model is created
+        _model_cache[t] = None  # type: ignore
+
         for field_name, field_type in annotations.items():
             # Unwrap NotRequired and Required type hints to get the inner type
             # These are only used by TypedDict to mark optional/required fields
             # and should not be passed to Pydantic
             inner_type = self._unwrap_typeddict_field_type(field_type)
 
+            # Convert nested TypedDict types to their Pydantic wrapper models
+            # This is necessary because isinstance() doesn't work with TypedDict on Python < 3.12
+            pydantic_type = self._convert_field_type_for_pydantic(inner_type, _model_cache)
+
             if field_name in required_keys:
-                field_definitions[field_name] = (inner_type, ...)
+                field_definitions[field_name] = (pydantic_type, ...)
             else:
                 # Optional fields get a default of None
-                field_definitions[field_name] = (typing.Optional[inner_type], None)
+                field_definitions[field_name] = (typing.Optional[pydantic_type], None)
 
-        # Dynamically create a Pydantic model
-        from pydantic import create_model
+        model = create_model(model_name, **field_definitions)
+        _model_cache[t] = model
+        return model
 
-        model_name = f"TypedDictWrapper_{t.__name__}"
-        return create_model(model_name, **field_definitions)
+    def _convert_field_type_for_pydantic(self, field_type: Type, _model_cache: Dict[Type, Type[BaseModel]]) -> Type:
+        """
+        Convert a field type to a Pydantic-compatible type.
+
+        This recursively converts nested TypedDict types to their Pydantic wrapper models,
+        which is necessary because isinstance() doesn't work with TypedDict on Python < 3.12.
+        """
+        # Check if it's a TypedDict - convert to Pydantic wrapper model
+        if _is_typed_dict(field_type):
+            return self._create_typeddict_model(field_type, _model_cache)
+
+        # Handle generic types (List, Dict, Optional, etc.)
+        origin = get_origin(field_type)
+        args = get_args(field_type)
+
+        if origin is not None and args:
+            # Convert each type argument recursively
+            converted_args = tuple(self._convert_field_type_for_pydantic(arg, _model_cache) for arg in args)
+
+            # Reconstruct the generic type with converted arguments
+            if origin is list:
+                return typing.List[converted_args[0]]  # type: ignore
+            elif origin is dict:
+                return typing.Dict[converted_args[0], converted_args[1]]  # type: ignore
+            elif origin is set:
+                return typing.Set[converted_args[0]]  # type: ignore
+            elif origin is tuple:
+                return typing.Tuple[converted_args]  # type: ignore
+            elif origin is typing.Union:
+                return typing.Union[converted_args]  # type: ignore
+            else:
+                # For other generic types, try to reconstruct with __class_getitem__
+                try:
+                    return origin[converted_args]  # type: ignore
+                except TypeError:
+                    # If reconstruction fails, return the original type
+                    return field_type
+
+        return field_type
 
     def _unwrap_typeddict_field_type(self, field_type: Type) -> Type:
         """

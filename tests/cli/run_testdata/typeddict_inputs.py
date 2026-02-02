@@ -1,7 +1,13 @@
 """Test data file for TypedDict CLI input tests."""
 
 from dataclasses import dataclass
-from typing import List, TypedDict
+from typing import List
+import sys
+
+if sys.version_info >= (3, 12):
+    from typing import TypedDict
+else:
+    from typing_extensions import TypedDict
 
 import flyte
 
