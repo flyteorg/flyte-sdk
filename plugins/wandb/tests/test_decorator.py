@@ -1401,9 +1401,7 @@ class TestConfigureDistributedRun:
             "num_workers": 1,
         }
         init_kwargs = {}
-        result = _configure_distributed_run(
-            init_kwargs, "auto", dist_info, "my-run-task"
-        )
+        result = _configure_distributed_run(init_kwargs, "auto", dist_info, "my-run-task")
 
         assert result["id"] == "my-run-task"
         assert "group" not in result
@@ -1421,9 +1419,7 @@ class TestConfigureDistributedRun:
             "num_workers": 1,
         }
         init_kwargs = {}
-        result = _configure_distributed_run(
-            init_kwargs, "new", dist_info, "my-run-task"
-        )
+        result = _configure_distributed_run(init_kwargs, "new", dist_info, "my-run-task")
 
         assert result["id"] == "my-run-task-rank-2"
         assert result["group"] == "my-run-task"
@@ -1442,9 +1438,7 @@ class TestConfigureDistributedRun:
             "num_workers": 2,
         }
         init_kwargs = {}
-        result = _configure_distributed_run(
-            init_kwargs, "auto", dist_info, "my-run-task"
-        )
+        result = _configure_distributed_run(init_kwargs, "auto", dist_info, "my-run-task")
 
         assert result["id"] == "my-run-task-worker-1"
         assert "group" not in result
@@ -1463,9 +1457,7 @@ class TestConfigureDistributedRun:
             "num_workers": 2,
         }
         init_kwargs = {}
-        result = _configure_distributed_run(
-            init_kwargs, "new", dist_info, "my-run-task"
-        )
+        result = _configure_distributed_run(init_kwargs, "new", dist_info, "my-run-task")
 
         assert result["id"] == "my-run-task-worker-1-rank-2"
         assert result["group"] == "my-run-task-worker-1"
@@ -1484,9 +1476,7 @@ class TestConfigureDistributedRun:
             "num_workers": 1,
         }
         init_kwargs = {}
-        result = _configure_distributed_run(
-            init_kwargs, "shared", dist_info, "my-run-task"
-        )
+        result = _configure_distributed_run(init_kwargs, "shared", dist_info, "my-run-task")
 
         assert result["id"] == "my-run-task"
         settings = result["settings"]
@@ -1499,9 +1489,7 @@ class TestConfigureDistributedRun:
         dist_info["rank"] = 2
         dist_info["local_rank"] = 2
         init_kwargs = {}
-        result = _configure_distributed_run(
-            init_kwargs, "shared", dist_info, "my-run-task"
-        )
+        result = _configure_distributed_run(init_kwargs, "shared", dist_info, "my-run-task")
 
         settings = result["settings"]
         assert settings.x_primary is False
@@ -1522,9 +1510,7 @@ class TestConfigureDistributedRun:
             "num_workers": 2,
         }
         init_kwargs = {}
-        result = _configure_distributed_run(
-            init_kwargs, "shared", dist_info, "my-run-task"
-        )
+        result = _configure_distributed_run(init_kwargs, "shared", dist_info, "my-run-task")
 
         assert result["id"] == "my-run-task-worker-1"
         settings = result["settings"]
@@ -1537,9 +1523,7 @@ class TestConfigureDistributedRun:
         dist_info["local_rank"] = 2
         dist_info["rank"] = 6
         init_kwargs = {}
-        result = _configure_distributed_run(
-            init_kwargs, "shared", dist_info, "my-run-task"
-        )
+        result = _configure_distributed_run(init_kwargs, "shared", dist_info, "my-run-task")
 
         settings = result["settings"]
         assert settings.x_primary is False
@@ -1559,9 +1543,7 @@ class TestConfigureDistributedRun:
             "num_workers": 1,
         }
         init_kwargs = {"id": "custom-id"}
-        result = _configure_distributed_run(
-            init_kwargs, "new", dist_info, "my-run-task"
-        )
+        result = _configure_distributed_run(init_kwargs, "new", dist_info, "my-run-task")
 
         assert result["id"] == "custom-id"
 
@@ -1572,9 +1554,7 @@ class TestDistributedRunContextManager:
     @patch("flyteplugins.wandb._decorator.wandb.init")
     @patch("flyteplugins.wandb._decorator.flyte.ctx")
     @patch("flyteplugins.wandb._decorator._get_distributed_info")
-    def test_auto_mode_skipped_rank_yields_none(
-        self, mock_dist_info, mock_ctx, mock_wandb_init
-    ):
+    def test_auto_mode_skipped_rank_yields_none(self, mock_dist_info, mock_ctx, mock_wandb_init):
         """Test that skipped ranks yield None in auto mode."""
         mock_context = MagicMock()
         mock_context.data = {}
@@ -1605,9 +1585,7 @@ class TestDistributedRunContextManager:
     @patch("flyteplugins.wandb._decorator.wandb.init")
     @patch("flyteplugins.wandb._decorator.flyte.ctx")
     @patch("flyteplugins.wandb._decorator._get_distributed_info")
-    def test_auto_mode_primary_rank_initializes(
-        self, mock_dist_info, mock_ctx, mock_wandb_init
-    ):
+    def test_auto_mode_primary_rank_initializes(self, mock_dist_info, mock_ctx, mock_wandb_init):
         """Test that primary rank initializes wandb in auto mode."""
         mock_context = MagicMock()
         mock_context.data = {}
@@ -1644,9 +1622,7 @@ class TestDistributedRunContextManager:
     @patch("flyteplugins.wandb._decorator.wandb.init")
     @patch("flyteplugins.wandb._decorator.flyte.ctx")
     @patch("flyteplugins.wandb._decorator._get_distributed_info")
-    def test_new_mode_all_ranks_initialize(
-        self, mock_dist_info, mock_ctx, mock_wandb_init
-    ):
+    def test_new_mode_all_ranks_initialize(self, mock_dist_info, mock_ctx, mock_wandb_init):
         """Test that all ranks initialize wandb in new mode."""
         mock_context = MagicMock()
         mock_context.data = {}
@@ -1684,9 +1660,7 @@ class TestDistributedRunContextManager:
     @patch("flyteplugins.wandb._decorator.wandb.init")
     @patch("flyteplugins.wandb._decorator.flyte.ctx")
     @patch("flyteplugins.wandb._decorator._get_distributed_info")
-    def test_shared_mode_finish_logic_single_node(
-        self, mock_dist_info, mock_ctx, mock_wandb_init
-    ):
+    def test_shared_mode_finish_logic_single_node(self, mock_dist_info, mock_ctx, mock_wandb_init):
         """Test that only rank 0 finishes in single-node shared mode."""
         mock_context = MagicMock()
         mock_context.data = {}
@@ -1739,9 +1713,7 @@ class TestDistributedRunContextManager:
     @patch("flyteplugins.wandb._decorator.wandb.init")
     @patch("flyteplugins.wandb._decorator.flyte.ctx")
     @patch("flyteplugins.wandb._decorator._get_distributed_info")
-    def test_shared_mode_finish_logic_multi_node(
-        self, mock_dist_info, mock_ctx, mock_wandb_init
-    ):
+    def test_shared_mode_finish_logic_multi_node(self, mock_dist_info, mock_ctx, mock_wandb_init):
         """Test that only local_rank 0 finishes in multi-node shared mode."""
         mock_context = MagicMock()
         mock_context.data = {}

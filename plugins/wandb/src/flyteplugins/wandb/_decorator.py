@@ -37,10 +37,10 @@ def _get_distributed_info() -> dict | None:
 
     return {
         "rank": int(os.environ["RANK"]),
-        "local_rank": int(os.environ.get("LOCAL_RANK", 0)),
+        "local_rank": int(os.environ.get("LOCAL_RANK", "0")),
         "world_size": world_size,
         "local_world_size": local_world_size,
-        "worker_index": int(os.environ.get("GROUP_RANK", 0)),
+        "worker_index": int(os.environ.get("GROUP_RANK", "0")),
         "num_workers": world_size // local_world_size if local_world_size > 0 else 1,
     }
 
@@ -108,9 +108,7 @@ def _configure_distributed_run(
         if run_mode == "new":
             # Each rank gets its own run
             if is_multi_node:
-                init_kwargs["id"] = (
-                    f"{base_run_id}-worker-{dist_info['worker_index']}-rank-{dist_info['local_rank']}"
-                )
+                init_kwargs["id"] = f"{base_run_id}-worker-{dist_info['worker_index']}-rank-{dist_info['local_rank']}"
             else:
                 init_kwargs["id"] = f"{base_run_id}-rank-{dist_info['rank']}"
         else:  # run_mode == "auto" or "shared"
@@ -129,9 +127,7 @@ def _configure_distributed_run(
     # Configure W&B shared mode for run_mode="shared"
     if run_mode == "shared":
         if is_multi_node:
-            x_label = (
-                f"worker-{dist_info['worker_index']}-rank-{dist_info['local_rank']}"
-            )
+            x_label = f"worker-{dist_info['worker_index']}-rank-{dist_info['local_rank']}"
             # For multi-node, primary is local_rank 0 within each worker
             is_worker_primary = dist_info["local_rank"] == 0
         else:
@@ -151,9 +147,7 @@ def _configure_distributed_run(
         if existing_settings is None:
             init_kwargs["settings"] = wandb.Settings(**shared_config)
         elif isinstance(existing_settings, dict):
-            init_kwargs["settings"] = wandb.Settings(
-                **{**existing_settings, **shared_config}
-            )
+            init_kwargs["settings"] = wandb.Settings(**{**existing_settings, **shared_config})
         else:
             # existing_settings is already a wandb.Settings object
             for key, value in shared_config.items():
@@ -245,9 +239,7 @@ def _wandb_run(
             yield None
             return
 
-        init_kwargs = _configure_distributed_run(
-            init_kwargs, run_mode, dist_info, base_run_id
-        )
+        init_kwargs = _configure_distributed_run(init_kwargs, run_mode, dist_info, base_run_id)
     else:
         # Non-distributed training
         # Determine if we should reuse parent's run
@@ -261,9 +253,7 @@ def _wandb_run(
         if "id" not in init_kwargs or init_kwargs["id"] is None:
             if should_reuse:
                 if not saved_run_id:
-                    raise RuntimeError(
-                        "Cannot reuse parent run: no parent run ID found"
-                    )
+                    raise RuntimeError("Cannot reuse parent run: no parent run ID found")
                 init_kwargs["id"] = saved_run_id
             else:
                 init_kwargs["id"] = base_run_id
@@ -293,9 +283,7 @@ def _wandb_run(
             if existing_settings is None:
                 init_kwargs["settings"] = wandb.Settings(**shared_config)
             elif isinstance(existing_settings, dict):
-                init_kwargs["settings"] = wandb.Settings(
-                    **{**existing_settings, **shared_config}
-                )
+                init_kwargs["settings"] = wandb.Settings(**{**existing_settings, **shared_config})
             else:
                 # existing_settings is already a wandb.Settings object
                 for key, value in shared_config.items():

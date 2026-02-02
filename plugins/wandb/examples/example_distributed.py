@@ -26,23 +26,22 @@ uv run example_distributed.py single_node_auto
 """
 
 import typing
-from pathlib import Path
 
 import flyte
 import torch
 import torch.distributed
 import torch.nn as nn
 import torch.optim as optim
-from flyte._image import PythonWheels
 from flyteplugins.pytorch.task import Elastic
+from torch.nn.parallel import DistributedDataParallel as DDP
+from torch.utils.data import DataLoader, DistributedSampler
+
 from flyteplugins.wandb import (
     get_distributed_info,
     get_wandb_run,
-    wandb_init,
     wandb_config,
+    wandb_init,
 )
-from torch.nn.parallel import DistributedDataParallel as DDP
-from torch.utils.data import DataLoader, DistributedSampler
 
 image = flyte.Image.from_debian_base(name="torch-wandb").with_pip_packages(
     "flyteplugins-wandb", "flyteplugins-pytorch", pre=True
@@ -51,9 +50,7 @@ image = flyte.Image.from_debian_base(name="torch-wandb").with_pip_packages(
 # Single-node environment (1 node, 4 GPUs)
 single_node_env = flyte.TaskEnvironment(
     name="single_node_env",
-    resources=flyte.Resources(
-        cpu=(1, 2), memory=("1Gi", "10Gi"), gpu="V100:4", shm="auto"
-    ),
+    resources=flyte.Resources(cpu=(1, 2), memory=("1Gi", "10Gi"), gpu="V100:4", shm="auto"),
     plugin_config=Elastic(
         nproc_per_node=4,
         nnodes=1,
@@ -65,9 +62,7 @@ single_node_env = flyte.TaskEnvironment(
 # Multi-node environment (2 nodes, 4 GPUs each)
 multi_node_env = flyte.TaskEnvironment(
     name="multi_node_env",
-    resources=flyte.Resources(
-        cpu=(1, 2), memory=("1Gi", "10Gi"), gpu="V100:4", shm="auto"
-    ),
+    resources=flyte.Resources(cpu=(1, 2), memory=("1Gi", "10Gi"), gpu="V100:4", shm="auto"),
     plugin_config=Elastic(
         nproc_per_node=4,
         nnodes=2,
@@ -80,9 +75,7 @@ multi_node_env = flyte.TaskEnvironment(
 class MLP(nn.Module):
     """Multi-layer perceptron for image classification."""
 
-    def __init__(
-        self, input_dim: int = 784, hidden_dim: int = 512, num_classes: int = 10
-    ):
+    def __init__(self, input_dim: int = 784, hidden_dim: int = 512, num_classes: int = 10):
         super().__init__()
         self.layers = nn.Sequential(
             nn.Linear(input_dim, hidden_dim),
@@ -104,9 +97,7 @@ class MLP(nn.Module):
 class SyntheticDataset(torch.utils.data.Dataset):
     """Synthetic dataset simulating image classification data."""
 
-    def __init__(
-        self, num_samples: int = 50000, input_dim: int = 784, num_classes: int = 10
-    ):
+    def __init__(self, num_samples: int = 50000, input_dim: int = 784, num_classes: int = 10):
         self.num_samples = num_samples
         self.input_dim = input_dim
         self.num_classes = num_classes
@@ -141,9 +132,7 @@ def _train_loop_impl(duration_seconds: int = 300) -> float | None:
 
     # Dataset and dataloader
     dataset = SyntheticDataset(num_samples=50000, input_dim=784, num_classes=10)
-    sampler = DistributedSampler(
-        dataset, num_replicas=world_size, rank=rank, shuffle=True
-    )
+    sampler = DistributedSampler(dataset, num_replicas=world_size, rank=rank, shuffle=True)
     dataloader = DataLoader(
         dataset,
         batch_size=128,
@@ -179,8 +168,8 @@ def _train_loop_impl(duration_seconds: int = 300) -> float | None:
         sampler.set_epoch(epoch)
         model.train()
 
-        for batch_idx, (data, target) in enumerate(dataloader):
-            data, target = data.to(device), target.to(device)
+        for batch_idx, (d, t) in enumerate(dataloader):
+            data, target = d.to(device), t.to(device)
 
             optimizer.zero_grad()
 
@@ -211,9 +200,7 @@ def _train_loop_impl(duration_seconds: int = 300) -> float | None:
                             "train/throughput_samples_per_sec": throughput,
                             "rank": rank,
                             "local_rank": local_rank,
-                            "worker_index": (
-                                dist_info["worker_index"] if dist_info else 0
-                            ),
+                            "worker_index": (dist_info["worker_index"] if dist_info else 0),
                         }
                     )
 
@@ -366,8 +353,6 @@ if __name__ == "__main__":
     print(f"Running scenario: {scenario}")
 
     run = flyte.with_runcontext(
-        custom_context=wandb_config(
-            project="distributed-training-demo", entity="samhita-alla", tags=[scenario]
-        )
+        custom_context=wandb_config(project="distributed-training-demo", entity="samhita-alla", tags=[scenario])
     ).run(task_fn, duration_seconds=300)
     print(f"Run URL: {run.url}")
