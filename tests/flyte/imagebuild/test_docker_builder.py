@@ -484,3 +484,39 @@ async def test_uvproject_handler_includes_editable_mounts_in_dependencies_only_m
         expected_dep_in_container = dep_folder.relative_to(project_root)
         expected_mount = f"--mount=type=bind,src={expected_dep_in_context},target={expected_dep_in_container}"
         assert expected_mount in result
+
+
+@pytest.mark.asyncio
+async def test_uvproject_handler_without_uvlock():
+    """Test that UVProjectHandler works correctly when uvlock is None."""
+    with tempfile.TemporaryDirectory() as tmp_context, tempfile.TemporaryDirectory() as tmp_user:
+        context_path = Path(tmp_context)
+        user_folder = Path(tmp_user)
+
+        # Create a pyproject.toml but no uv.lock file
+        pyproject_file = user_folder / "pyproject.toml"
+        pyproject_file.write_text("[project]\nname = 'test-project'\nversion='0.1.0'")
+
+        # Create UVProject without uvlock
+        uv_project = UVProject(
+            pyproject=pyproject_file.absolute(),
+            uvlock=None,
+            project_install_mode="dependencies_only",
+        )
+
+        initial_dockerfile = "FROM python:3.9\n"
+        result = await UVProjectHandler.handle(
+            layer=uv_project,
+            context_path=context_path,
+            dockerfile=initial_dockerfile,
+            docker_ignore_patterns=[],
+        )
+
+        # Verify the dockerfile is generated correctly
+        assert result.startswith(initial_dockerfile)
+        assert "RUN --mount=type=cache,sharing=locked,mode=0777,target=/root/.cache/uv,id=uv" in result
+        assert "uv sync" in result
+        # Verify that uvlock mount is NOT present
+        assert "--mount=type=bind,target=uv.lock" not in result
+        # Verify pyproject mount IS present
+        assert "--mount=type=bind,target=pyproject.toml" in result

@@ -192,7 +192,7 @@ class Requirements(PipPackages):
 @dataclass(frozen=True, repr=True)
 class UVProject(PipOption, Layer):
     pyproject: Path
-    uvlock: Path
+    uvlock: Optional[Path] = None
     project_install_mode: typing.Literal["dependencies_only", "install_project"] = "dependencies_only"
 
     def validate(self):
@@ -200,7 +200,7 @@ class UVProject(PipOption, Layer):
             raise FileNotFoundError(f"pyproject.toml file {self.pyproject.resolve()} does not exist")
         if not self.pyproject.is_file():
             raise ValueError(f"Pyproject file {self.pyproject.resolve()} is not a file")
-        if not self.uvlock.exists():
+        if self.uvlock is not None and not self.uvlock.exists():
             raise ValueError(f"UVLock file {self.uvlock.resolve()} does not exist")
         super().validate()
 
@@ -209,7 +209,8 @@ class UVProject(PipOption, Layer):
 
         super().update_hash(hasher)
         if self.project_install_mode == "dependencies_only":
-            filehash_update(self.uvlock, hasher)
+            if self.uvlock is not None:
+                filehash_update(self.uvlock, hasher)
             filehash_update(self.pyproject, hasher)
         else:
             update_hasher_for_source(self.pyproject.parent, hasher)
@@ -283,8 +284,11 @@ class UVScript(PipOption, Layer):
         super().update_hash(hasher)
         if header.pyprojects:
             for pyproject in header.pyprojects:
+                uvlock_path = Path(pyproject) / "uv.lock"
                 UVProject(
-                    Path(pyproject) / "pyproject.toml", Path(pyproject) / "uv.lock", "install_project"
+                    pyproject=Path(pyproject) / "pyproject.toml",
+                    uvlock=uvlock_path if uvlock_path.exists() else None,
+                    project_install_mode="install_project",
                 ).update_hash(hasher)
 
 
@@ -959,9 +963,9 @@ class Image:
         If `project_install_mode` is "install_project", it will also copy directory
          where the pyproject.toml file is located into the image.
 
-        :param pyproject_file: path to the pyproject.toml file, needs to have a corresponding uv.lock file
+        :param pyproject_file: path to the pyproject.toml file
         :param uvlock: path to the uv.lock file, if not specified, will use the default uv.lock file in the same
-        directory as the pyproject.toml file. (pyproject.parent / uv.lock)
+        directory as the pyproject.toml file if it exists. (pyproject.parent / uv.lock)
         :param index_url: index url to use for pip install, default is None
         :param extra_index_urls: extra index urls to use for pip install, default is None
         :param pre: whether to allow pre-release versions, default is False
@@ -973,10 +977,14 @@ class Image:
         """
         if isinstance(pyproject_file, str):
             pyproject_file = Path(pyproject_file)
+        # If uvlock is not provided, use the default uv.lock file in the same directory if it exists
+        if uvlock is None:
+            default_uvlock = pyproject_file.parent / "uv.lock"
+            uvlock = default_uvlock if default_uvlock.exists() else None
         new_image = self.clone(
             addl_layer=UVProject(
                 pyproject=pyproject_file,
-                uvlock=uvlock or (pyproject_file.parent / "uv.lock"),
+                uvlock=uvlock,
                 index_url=index_url,
                 extra_index_urls=extra_index_urls,
                 pre=pre,
