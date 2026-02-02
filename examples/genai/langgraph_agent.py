@@ -311,15 +311,19 @@ def generate_html_report(
                 margin-bottom: 30px;
             }}
             .graph-container {{
-                background: rgba(255, 255, 255, 0.95);
+                background: rgba(30, 41, 59, 0.95);
                 border-radius: 15px;
                 padding: 30px;
                 margin: 20px 0;
-                box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
+                box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+                border: 1px solid rgba(0, 212, 255, 0.3);
             }}
             .mermaid {{
                 display: flex;
                 justify-content: center;
+            }}
+            .mermaid svg {{
+                max-width: 100%;
             }}
             .results-container {{
                 background: rgba(0, 0, 0, 0.3);
@@ -424,12 +428,22 @@ def generate_html_report(
                 startOnLoad: true,
                 theme: 'base',
                 themeVariables: {{
-                    primaryColor: '#00d4ff',
-                    primaryTextColor: '#1a1a2e',
-                    primaryBorderColor: '#0f3460',
+                    primaryColor: '#67e8f9',
+                    primaryTextColor: '#0f172a',
+                    primaryBorderColor: '#00d4ff',
                     lineColor: '#00d4ff',
-                    secondaryColor: '#16213e',
-                    tertiaryColor: '#0f3460'
+                    secondaryColor: '#a5f3fc',
+                    tertiaryColor: '#cffafe',
+                    background: '#1e293b',
+                    mainBkg: '#67e8f9',
+                    nodeBorder: '#0891b2',
+                    clusterBkg: '#1e293b',
+                    clusterBorder: '#00d4ff',
+                    titleColor: '#00d4ff',
+                    edgeLabelBackground: '#1e293b',
+                    nodeTextColor: '#0f172a',
+                    textColor: '#e8e8e8',
+                    labelTextColor: '#e8e8e8'
                 }}
             }});
         </script>
