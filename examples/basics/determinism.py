@@ -7,7 +7,7 @@ env = flyte.TaskEnvironment("determinism")
 async def main(n: int) -> int:
     sum = 0
     for i in range(n):
-        print(f"Sleeping {i}")
+        print(f"Sleeping {i} at time {await flyte.extras.durable_time.aio()}")
         await flyte.extras.durable_sleep.aio(5)
         sum += i
     return sum
