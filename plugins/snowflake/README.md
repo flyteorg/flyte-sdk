@@ -23,9 +23,9 @@ config = SnowflakeConfig(
 
 task = Snowflake(
     name="my_query",
-    query_template="SELECT * FROM mytable WHERE id = {{ .user_id }}",
+    query_template="INSERT INTO FLYTE.PUBLIC.TEST (ID, NAME, AGE) VALUES (%(id)s, %(name)s, %(age)s);",
     plugin_config=config,
-    inputs={"user_id": int},
+    inputs={"id": int, "name": str, "age": int},
     snowflake_private_key="snowflake-private-key-secret",
 )
 ```
