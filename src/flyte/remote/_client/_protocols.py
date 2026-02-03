@@ -2,8 +2,8 @@ from typing import AsyncIterator, Protocol
 
 from flyteidl2.app import app_payload_pb2
 from flyteidl2.auth import identity_pb2
-from flyteidl2.project import project_service_pb2
 from flyteidl2.dataproxy import dataproxy_service_pb2
+from flyteidl2.project import project_service_pb2
 from flyteidl2.secret import payload_pb2
 from flyteidl2.task import task_service_pb2
 from flyteidl2.trigger import trigger_service_pb2
