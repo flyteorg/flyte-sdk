@@ -230,20 +230,16 @@ Missing required parameter(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in mi
 
     async def _execute_and_render(self, ctx: click.Context, config: common.CLIConfig):
         """Separate execution logic from the Click entry point for better testability."""
-        from contextlib import nullcontext
-
         import flyte
 
         console = common.get_console()
 
         # 2. Execute with a UX Status Spinner (disabled for json/table-simple)
-        status_ctx = (
-            nullcontext()
-            if config.output_format in ("json", "table-simple")
-            else console.status(f"[bold blue]Launching {'local' if self.run_args.local else 'remote'} execution...", spinner="dots")
-        )
         try:
-            with status_ctx:
+            with common.cli_status(
+                config.output_format,
+                f"[bold blue]Launching {'local' if self.run_args.local else 'remote'} execution...",
+            ):
                 execution_context = flyte.with_runcontext(
                     copy_style=self.run_args.copy_style,
                     mode="local" if self.run_args.local else "remote",
@@ -417,8 +413,6 @@ Missing required parameter(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in mi
         """Separate execution logic from the Click entry point for better testability."""
         import flyte.remote
 
-        from contextlib import nullcontext
-
         task = flyte.remote.Task.get(self.task_name, version=self.version, auto_version="latest")
         console = common.get_console()
         if self.run_args.run_project or self.run_args.run_domain:
@@ -427,13 +421,11 @@ Missing required parameter(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in mi
             )
 
         # 2. Execute with a UX Status Spinner (disabled for json/table-simple)
-        status_ctx = (
-            nullcontext()
-            if config.output_format in ("json", "table-simple")
-            else console.status(f"[bold blue]Launching {'local' if self.run_args.local else 'remote'} execution...", spinner="dots")
-        )
         try:
-            with status_ctx:
+            with common.cli_status(
+                config.output_format,
+                f"[bold blue]Launching {'local' if self.run_args.local else 'remote'} execution...",
+            ):
                 execution_context = flyte.with_runcontext(
                     copy_style=self.run_args.copy_style,
                     mode="local" if self.run_args.local else "remote",
