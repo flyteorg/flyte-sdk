@@ -112,6 +112,7 @@ class _Runner:
         queue: Optional[str] = None,
         custom_context: Dict[str, str] | None = None,
         cache_lookup_scope: CacheLookupScope = "global",
+        preserve_original_types: bool | None = None,
     ):
         from flyte._tools import ipython_check
 
@@ -146,6 +147,9 @@ class _Runner:
         self._queue = queue
         self._custom_context = custom_context or {}
         self._cache_lookup_scope = cache_lookup_scope
+        self._preserve_original_types = (
+            preserve_original_types if preserve_original_types is not None else self._interactive_mode
+        )
 
     @requires_initialization
     async def _run_remote(self, obj: TaskTemplate[P, R, F] | LazyEntity, *args: P.args, **kwargs: P.kwargs) -> Run:
@@ -359,7 +363,7 @@ class _Runner:
                         ),
                     ),
                 )
-                return Run(pb2=resp.run)
+                return Run(pb2=resp.run, _preserve_original_types=self._preserve_original_types)
             except grpc.aio.AioRpcError as e:
                 if e.code() == grpc.StatusCode.UNAVAILABLE:
                     raise flyte.errors.RuntimeSystemError(
@@ -676,6 +680,7 @@ def with_runcontext(
     queue: Optional[str] = None,
     custom_context: Dict[str, str] | None = None,
     cache_lookup_scope: CacheLookupScope = "global",
+    preserve_original_types: bool = False,
 ) -> _Runner:
     """
     Launch a new run with the given parameters as the context.
@@ -727,6 +732,10 @@ def with_runcontext(
         Acts as base/default values that can be overridden by context managers in the code.
     :param cache_lookup_scope: Optional Scope to use for the run. This is used to specify the scope to use for cache
         lookups. If not specified, it will be set to the default scope (global unless overridden at the system level).
+    :param preserve_original_types: Optional If true, the type engine will preserve original types (e.g., pd.DataFrame)
+        when guessing python types from literal types. If false (default), it will return the generic
+        flyte.io.DataFrame. This option is automatically set to True if interactive_mode is True unless overridden
+        explicitly by this parameter.
 
     :return: runner
     """
@@ -760,6 +769,7 @@ def with_runcontext(
         queue=queue,
         custom_context=custom_context,
         cache_lookup_scope=cache_lookup_scope,
+        preserve_original_types=preserve_original_types,
     )
 
 

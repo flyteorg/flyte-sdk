@@ -1292,8 +1292,13 @@ class DataFrameTransformerEngine(TypeTransformer[DataFrame]):
 
     def guess_python_type(self, literal_type: types_pb2.LiteralType) -> Type[DataFrame]:
         if literal_type.HasField("structured_dataset_type"):
-            # Check if we have a tag that identifies the original dataframe type
-            if literal_type.HasField("structure") and literal_type.structure.tag:
+            from flyte._context import internal_ctx
+
+            ctx = internal_ctx()
+            preserve_original_types = ctx.data.preserve_original_types
+
+            # Check if preserve_original_types is enabled and we have a tag
+            if preserve_original_types and literal_type.HasField("structure") and literal_type.structure.tag:
                 tag = literal_type.structure.tag
                 # Look up the type in our registered decoders
                 for registered_type in self.DECODERS.keys():
