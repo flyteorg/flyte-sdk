@@ -192,7 +192,7 @@ class RemoteController(Controller):
             root_dir=root_dir,
         )
 
-        task_spec = translate_task_to_wire(_task, new_serialization_context)
+        task_spec = translate_task_to_wire(_task, new_serialization_context, task_context=tctx)
         inputs_hash = convert.generate_inputs_hash_from_proto(inputs.proto_inputs)
         sub_action_id, sub_action_output_path = convert.generate_sub_action_id_and_output_path(
             tctx, task_spec, inputs_hash, _task_call_seq
@@ -258,7 +258,7 @@ class RemoteController(Controller):
         # If the action is aborted, we should abort the controller as well
         if n.phase == phase_pb2.ACTION_PHASE_ABORTED:
             logger.warning(f"Action {n.action_id.name} was aborted, aborting current Action{current_action_id.name}")
-            raise flyte.errors.RunAbortedError(
+            raise flyte.errors.ActionAbortedError(
                 f"Action {n.action_id.name} was aborted, aborting current Action {current_action_id.name}"
             )
 

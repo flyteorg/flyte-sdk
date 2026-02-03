@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import pathlib
 import sys
 import uuid
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Tuple, Union, cast
 
-import flyte.errors
 from flyte._context import contextual_run, internal_ctx
 from flyte._environment import Environment
 from flyte._initialize import (
@@ -57,6 +57,11 @@ class _CacheValue:
 
 _RUN_CACHE: Dict[_CacheKey, _CacheValue] = {}
 
+# ContextVar for run mode - thread-safe and coroutine-safe alternative to a global variable.
+# This allows offloaded types (files, directories, dataframes) to be aware of the run mode
+# for controlling auto-uploading behavior (only enabled in remote mode).
+_run_mode_var: contextvars.ContextVar[Mode | None] = contextvars.ContextVar("run_mode", default=None)
+
 
 async def _get_code_bundle_for_run(name: str) -> CodeBundle | None:
     """
@@ -72,6 +77,11 @@ async def _get_code_bundle_for_run(name: str) -> CodeBundle | None:
         spec = run_details.action_details.pb2.resolved_task_spec
         return extract_code_bundle(spec)
     return None
+
+
+def _get_main_run_mode() -> Mode | None:
+    """Get the current run mode from the context variable."""
+    return _run_mode_var.get()
 
 
 class _Runner:
@@ -146,6 +156,7 @@ class _Runner:
         from flyteidl2.workflow import run_definition_pb2, run_service_pb2
         from google.protobuf import wrappers_pb2
 
+        import flyte.report
         from flyte.remote import Run
         from flyte.remote._task import LazyEntity, TaskDetails
 
@@ -220,7 +231,21 @@ class _Runner:
                 image_cache=image_cache,
                 root_dir=cfg.root_dir,
             )
-            task_spec = translate_task_to_wire(obj, s_ctx)
+            action = ActionID(
+                name="{{.actionName}}", run_name="{{.runName}}", project=project, domain=domain, org=cfg.org
+            )
+            tctx = TaskContext(
+                action=action,
+                code_bundle=code_bundle,
+                output_path="",
+                version=version if version else "na",
+                raw_data_path=RawDataPath(path=""),
+                compiled_image_cache=image_cache,
+                run_base_dir="",
+                report=flyte.report.Report(name=action.name),
+                custom_context=self._custom_context,
+            )
+            task_spec = translate_task_to_wire(obj, s_ctx, default_inputs=None, task_context=tctx)
             inputs = await convert_from_native_to_inputs(
                 obj.native_interface, *args, custom_context=self._custom_context, **kwargs
             )
@@ -240,7 +265,9 @@ class _Runner:
         # These paths will be appended to sys.path at runtime.
         if cfg.sync_local_sys_paths:
             env[FLYTE_SYS_PATH] = ":".join(
-                f"./{pathlib.Path(p).relative_to(cfg.root_dir)}" for p in sys.path if p.startswith(str(cfg.root_dir))
+                f"./{pathlib.Path(p).relative_to(cfg.root_dir)}"
+                for p in sys.path
+                if pathlib.Path(p).is_relative_to(cfg.root_dir)
             )
 
         if not self._dry_run:
@@ -250,7 +277,8 @@ class _Runner:
                     "ClientNotInitializedError",
                     "user",
                     "flyte.run requires client to be initialized. "
-                    "Call flyte.init() with a valid endpoint or api-key before using this function.",
+                    "Call flyte.init() with a valid endpoint/api-key before using this function"
+                    "or Call flyte.init_from_config() with a valid path to the config file",
                 )
             run_id = None
             project_id = None
@@ -479,6 +507,7 @@ class _Runner:
 
     async def _run_local(self, obj: TaskTemplate[P, R, F], *args: P.args, **kwargs: P.kwargs) -> Run:
         from flyteidl2.common import identifier_pb2
+        from flyteidl2.task import common_pb2
 
         from flyte._internal.controllers import create_controller
         from flyte._internal.controllers._local_controller import LocalController
@@ -535,7 +564,9 @@ class _Runner:
             def __init__(self, outputs: Tuple[Any, ...] | Any):
                 from flyteidl2.workflow import run_definition_pb2
 
-                self._outputs = outputs
+                self._outputs = ActionOutputs(
+                    common_pb2.Outputs(), outputs if isinstance(outputs, tuple) else (outputs,)
+                )
                 super().__init__(
                     pb2=run_definition_pb2.Run(
                         action=run_definition_pb2.Action(
@@ -561,7 +592,7 @@ class _Runner:
 
             @syncify
             async def outputs(self) -> ActionOutputs:  # type: ignore[override]
-                return cast(ActionOutputs, self._outputs)
+                return self._outputs
 
         return _LocalRun(outputs)
 
@@ -698,6 +729,11 @@ def with_runcontext(
         raise ValueError("Run name and run base dir are required for hybrid mode")
     if copy_style == "none" and not version:
         raise ValueError("Version is required when copy_style is 'none'")
+
+    # Set the run mode in the context variable so that offloaded types (files, directories, dataframes)
+    # can check the mode for controlling auto-uploading behavior (only enabled in remote mode).
+    _run_mode_var.set(mode)
+
     return _Runner(
         force_mode=mode,
         name=name,

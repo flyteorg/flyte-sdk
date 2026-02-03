@@ -11,7 +11,7 @@ from dataclasses import dataclass, replace
 from functools import lru_cache
 from pathlib import Path
 from types import MappingProxyType, ModuleType
-from typing import Any, Dict, Iterable, List, Literal, Optional
+from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Literal, Optional
 
 import rich.box
 import rich.repr
@@ -26,6 +26,9 @@ import flyte
 import flyte.errors
 from flyte._logging import LogFormat
 from flyte.config import Config
+
+if TYPE_CHECKING:
+    from flyte.cli._run import RunArguments
 
 OutputFormat = Literal["table", "json", "table-simple", "json-raw"]
 
@@ -81,9 +84,7 @@ def sanitize_auth_type(auth_type: str | None) -> str:
     """
     Convert the auth type to the mode that is used by the Flyte backend.
     """
-    if auth_type is None:
-        return "pkce"
-    if auth_type.lower() in _pkce_options:
+    if auth_type is None or auth_type.lower() in _pkce_options:
         return "Pkce"
     if auth_type.lower() in _device_flow_options:
         return "DeviceFlow"
@@ -111,6 +112,9 @@ class CLIConfig:
     org: str | None = None
     auth_type: str | None = None
     output_format: OutputFormat = "table"
+    run_args: RunArguments | None = (
+        None  # run_args is set when running tasks via CLI to provide context to parameter converters
+    )
 
     def replace(self, **kwargs) -> CLIConfig:
         """
@@ -136,17 +140,9 @@ class CLIConfig:
         # 1. FLYTE_API_KEY is set AND
         # 2. No config file exists
         if api_key and not has_config_file:
-            # Require the endpoint arg in the init_from_api_key function for future proofing.
-            # But for the flyte CLI, we can decode since there's already a --endpoint arg.
-            endpoint = self.endpoint
-            if not endpoint:
-                # Decode the API key to get the endpoint
-                from flyte.remote._client.auth._auth_utils import decode_api_key
-
-                endpoint, _, _, _ = decode_api_key(api_key)
-
+            # The API key is encoded and contains endpoint, client_id, client_secret, and org
+            # init_from_api_key will decode it automatically
             flyte.init_from_api_key(
-                endpoint=endpoint,
                 api_key=api_key,
                 project=project if project is not None else self.config.task.project,
                 domain=domain if domain is not None else self.config.task.domain,

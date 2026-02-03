@@ -193,6 +193,7 @@ class RunTaskCommand(click.RichCommand):
         Validate that all required parameters are provided.
         """
         missing_params = []
+        missing_options = []
         for param in self.params:
             if isinstance(param, click.Option) and param.required:
                 param_name = param.name
@@ -200,6 +201,27 @@ class RunTaskCommand(click.RichCommand):
                     missing_params.append(
                         (param_name, param.type.get_metavar(param, ctx) or param.type.name.upper() or param.type)
                     )
+
+        task_cfg = getattr(getattr(ctx.obj, "config", None), "task", None)
+
+        if not self.run_args.local:
+            if not self.run_args.project and not getattr(task_cfg, "project", None):
+                missing_options.append(("project", "TEXT"))
+
+            if not self.run_args.domain and not getattr(task_cfg, "domain", None):
+                missing_options.append(("domain", "TEXT"))
+
+        if missing_options and missing_params:
+            raise click.UsageError(
+                f"""
+Missing required Options(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in missing_options)}
+Missing required parameter(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in missing_params)}"""
+            )
+
+        if missing_options:
+            raise click.UsageError(
+                f"Missing required Options(s): {', '.join(f'--{p[0]} (type: {p[1]})' for p in missing_options)}"
+            )
 
         if missing_params:
             raise click.UsageError(
@@ -229,7 +251,7 @@ class RunTaskCommand(click.RichCommand):
                 result = await execution_context.run.aio(self.obj, **ctx.params)
         except Exception as e:
             console.print(common.get_panel("Exception", f"[red]✕ Execution failed:[/red] {e}", config.output_format))
-            return
+            exit(1)
 
         # 3. UI Branching
         if self.run_args.local:
@@ -346,6 +368,7 @@ class RunRemoteTaskCommand(click.RichCommand):
         Validate that all required parameters are provided.
         """
         missing_params = []
+        missing_options = []
         for param in self.params:
             if isinstance(param, click.Option) and param.required:
                 param_name = param.name
@@ -353,6 +376,26 @@ class RunRemoteTaskCommand(click.RichCommand):
                     missing_params.append(
                         (param_name, param.type.get_metavar(param, ctx) or param.type.name.upper() or param.type)
                     )
+
+        task_cfg = getattr(getattr(ctx.obj, "config", None), "task", None)
+
+        if not self.run_args.run_project and not getattr(task_cfg, "project", None):
+            missing_options.append(("run-project", "TEXT"))
+
+        if not self.run_args.run_domain and not getattr(task_cfg, "domain", None):
+            missing_options.append(("run-domain", "TEXT"))
+
+        if missing_options and missing_params:
+            raise click.UsageError(
+                f"""
+Missing required Options(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in missing_options)}
+Missing required parameter(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in missing_params)}"""
+            )
+
+        if missing_options:
+            raise click.UsageError(
+                f"Missing required Options(s): {', '.join(f'--{p[0]} (type: {p[1]})' for p in missing_options)}"
+            )
 
         if missing_params:
             raise click.UsageError(
@@ -583,6 +626,15 @@ class TaskFiles(common.FileGroup):
 
     def get_command(self, ctx, cmd_name):
         run_args = RunArguments.from_dict(ctx.params)
+        # Store run_args on ctx.obj so parameter converters can access run context
+        if ctx.obj is not None and hasattr(ctx.obj, "replace"):
+            ctx.obj = ctx.obj.replace(run_args=run_args)
+        else:
+            # When run command is invoked directly (not through main), ctx.obj may be None.
+            # Create a CLIConfig object to hold run_args for parameter converters.
+            import flyte.config
+
+            ctx.obj = common.CLIConfig(config=flyte.config.auto(), ctx=ctx, run_args=run_args)
         if cmd_name == RUN_REMOTE_CMD:
             return RemoteTaskGroup(
                 name=cmd_name,

@@ -1,4 +1,3 @@
-import asyncio
 import os
 import shutil
 import subprocess
@@ -6,12 +5,13 @@ import tempfile
 import typing
 from pathlib import Path, PurePath
 from string import Template
-from typing import ClassVar, Optional, Protocol, cast
+from typing import TYPE_CHECKING, ClassVar, Optional, Protocol, cast
 
 import aiofiles
 import click
 
 from flyte import Secret
+from flyte._code_bundle._ignore import STANDARD_IGNORE_PATTERNS
 from flyte._image import (
     AptPackages,
     Commands,
@@ -38,8 +38,16 @@ from flyte._internal.imagebuild.image_builder import (
     LocalDockerCommandImageChecker,
     LocalPodmanCommandImageChecker,
 )
-from flyte._internal.imagebuild.utils import copy_files_to_context, get_and_list_dockerignore
+from flyte._internal.imagebuild.utils import (
+    copy_files_to_context,
+    get_and_list_dockerignore,
+    get_uv_editable_install_mounts,
+)
 from flyte._logging import logger
+from flyte._utils.asyncify import run_sync_with_loop
+
+if TYPE_CHECKING:
+    from flyte._build import ImageBuild
 
 _F_IMG_ID = "_F_IMG_ID"
 FLYTE_DOCKER_BUILDER_CACHE_FROM = "FLYTE_DOCKER_BUILDER_CACHE_FROM"
@@ -49,15 +57,25 @@ UV_LOCK_WITHOUT_PROJECT_INSTALL_TEMPLATE = Template("""\
 RUN --mount=type=cache,sharing=locked,mode=0777,target=/root/.cache/uv,id=uv \
    --mount=type=bind,target=uv.lock,src=$UV_LOCK_PATH,rw \
    --mount=type=bind,target=pyproject.toml,src=$PYPROJECT_PATH \
+   $EDITABLE_INSTALL_MOUNTS \
    $SECRET_MOUNT \
-   uv sync --active --inexact $PIP_INSTALL_ARGS
+   VIRTUAL_ENV=$${VIRTUAL_ENV-/opt/venv} uv sync --active --inexact $PIP_INSTALL_ARGS
+""")
+
+UV_NO_LOCK_WITHOUT_PROJECT_INSTALL_TEMPLATE = Template("""\
+RUN --mount=type=cache,sharing=locked,mode=0777,target=/root/.cache/uv,id=uv \
+   --mount=type=bind,target=pyproject.toml,src=$PYPROJECT_PATH \
+   $EDITABLE_INSTALL_MOUNTS \
+   $SECRET_MOUNT \
+   VIRTUAL_ENV=$${VIRTUAL_ENV-/opt/venv} uv sync --active --inexact $PIP_INSTALL_ARGS
 """)
 
 UV_LOCK_INSTALL_TEMPLATE = Template("""\
 RUN --mount=type=cache,sharing=locked,mode=0777,target=/root/.cache/uv,id=uv \
    --mount=type=bind,target=/root/.flyte/$PYPROJECT_PATH,src=$PYPROJECT_PATH,rw \
    $SECRET_MOUNT \
-   uv sync --active --inexact --no-editable $PIP_INSTALL_ARGS --project /root/.flyte/$PYPROJECT_PATH
+   VIRTUAL_ENV=$${VIRTUAL_ENV-/opt/venv} uv sync --active --inexact --no-editable \
+    $PIP_INSTALL_ARGS --project /root/.flyte/$PYPROJECT_PATH
 """)
 
 POETRY_LOCK_WITHOUT_PROJECT_INSTALL_TEMPLATE = Template("""\
@@ -71,20 +89,19 @@ RUN --mount=type=cache,sharing=locked,mode=0777,target=/tmp/poetry_cache,id=poet
    --mount=type=bind,target=poetry.lock,src=$POETRY_LOCK_PATH \
    --mount=type=bind,target=pyproject.toml,src=$PYPROJECT_PATH \
    $SECRET_MOUNT \
-   poetry install $POETRY_INSTALL_ARGS
+   VIRTUAL_ENV=$${VIRTUAL_ENV-/opt/venv} poetry install $POETRY_INSTALL_ARGS
 """)
 
 POETRY_LOCK_INSTALL_TEMPLATE = Template("""\
 RUN --mount=type=cache,sharing=locked,mode=0777,target=/root/.cache/uv,id=uv \
    uv pip install poetry
 
-ENV POETRY_CACHE_DIR=/tmp/poetry_cache \
-   POETRY_VIRTUALENVS_IN_PROJECT=true
+ENV POETRY_CACHE_DIR=/tmp/poetry_cache
 
 RUN --mount=type=cache,sharing=locked,mode=0777,target=/tmp/poetry_cache,id=poetry \
    --mount=type=bind,target=/root/.flyte/$PYPROJECT_PATH,src=$PYPROJECT_PATH,rw \
    $SECRET_MOUNT \
-   poetry install $POETRY_INSTALL_ARGS -C /root/.flyte/$PYPROJECT_PATH
+   VIRTUAL_ENV=$${VIRTUAL_ENV-/opt/venv} poetry install $POETRY_INSTALL_ARGS -C /root/.flyte/$PYPROJECT_PATH
 """)
 
 UV_PACKAGE_INSTALL_COMMAND_TEMPLATE = Template("""\
@@ -271,17 +288,33 @@ class UVProjectHandler:
             pip_install_args = " ".join(layer.get_pip_install_args())
             if "--no-install-project" not in pip_install_args:
                 pip_install_args += " --no-install-project"
-            if "--no-sources" not in pip_install_args:
-                pip_install_args += " --no-sources"
-            # Only Copy pyproject.yaml and uv.lock.
+            # Only Copy pyproject.yaml and uv.lock (if provided) from the project root.
             pyproject_dst = copy_files_to_context(layer.pyproject, context_path)
-            uvlock_dst = copy_files_to_context(layer.uvlock, context_path)
-            delta = UV_LOCK_WITHOUT_PROJECT_INSTALL_TEMPLATE.substitute(
-                UV_LOCK_PATH=uvlock_dst.relative_to(context_path),
-                PYPROJECT_PATH=pyproject_dst.relative_to(context_path),
-                PIP_INSTALL_ARGS=pip_install_args,
-                SECRET_MOUNT=secret_mounts,
+            # Apply any editable install mounts to the template.
+            editable_install_mounts = get_uv_editable_install_mounts(
+                project_root=layer.pyproject.parent,
+                context_path=context_path,
+                ignore_patterns=[
+                    *STANDARD_IGNORE_PATTERNS,
+                    *docker_ignore_patterns,
+                ],
             )
+            if layer.uvlock is not None:
+                uvlock_dst = copy_files_to_context(layer.uvlock, context_path)
+                delta = UV_LOCK_WITHOUT_PROJECT_INSTALL_TEMPLATE.substitute(
+                    UV_LOCK_PATH=uvlock_dst.relative_to(context_path),
+                    PYPROJECT_PATH=pyproject_dst.relative_to(context_path),
+                    PIP_INSTALL_ARGS=pip_install_args,
+                    SECRET_MOUNT=secret_mounts,
+                    EDITABLE_INSTALL_MOUNTS=editable_install_mounts,
+                )
+            else:
+                delta = UV_NO_LOCK_WITHOUT_PROJECT_INSTALL_TEMPLATE.substitute(
+                    PYPROJECT_PATH=pyproject_dst.relative_to(context_path),
+                    PIP_INSTALL_ARGS=pip_install_args,
+                    SECRET_MOUNT=secret_mounts,
+                    EDITABLE_INSTALL_MOUNTS=editable_install_mounts,
+                )
         else:
             # Copy the entire project.
             pyproject_dst = copy_files_to_context(layer.pyproject.parent, context_path, docker_ignore_patterns)
@@ -289,7 +322,7 @@ class UVProjectHandler:
             # Make sure pyproject.toml and uv.lock files are not removed by docker ignore
             uv_lock_context_path = pyproject_dst / "uv.lock"
             pyproject_context_path = pyproject_dst / "pyproject.toml"
-            if not uv_lock_context_path.exists():
+            if layer.uvlock is not None and not uv_lock_context_path.exists():
                 shutil.copy(layer.uvlock, pyproject_dst)
             if not pyproject_context_path.exists():
                 shutil.copy(layer.pyproject, pyproject_dst)
@@ -429,19 +462,19 @@ def _get_secret_commands(layers: typing.Tuple[Layer, ...]) -> typing.List[str]:
 def _get_secret_mounts_layer(secrets: typing.Tuple[str | Secret, ...] | None) -> str:
     if secrets is None:
         return ""
-    secret_mounts_layer = ""
+    secret_mounts_layer = []
     for s in secrets:
         secret = Secret(key=s) if isinstance(s, str) else s
         secret_id = hash(secret)
         if secret.mount:
-            secret_mounts_layer += f"--mount=type=secret,id={secret_id},target={secret.mount}"
+            secret_mounts_layer.append(f"--mount=type=secret,id={secret_id},target={secret.mount}")
         elif secret.as_env_var:
-            secret_mounts_layer += f"--mount=type=secret,id={secret_id},env={secret.as_env_var}"
+            secret_mounts_layer.append(f"--mount=type=secret,id={secret_id},env={secret.as_env_var}")
         else:
             secret_default_env_key = "_".join(list(filter(None, (secret.group, secret.key))))
-            secret_mounts_layer += f"--mount=type=secret,id={secret_id},env={secret_default_env_key}"
+            secret_mounts_layer.append(f"--mount=type=secret,id={secret_id},env={secret_default_env_key}")
 
-    return secret_mounts_layer
+    return " ".join(secret_mounts_layer)
 
 
 async def _process_layer(
@@ -472,9 +505,10 @@ async def _process_layer(
                 dockerfile = await AptPackagesHandler.handle(AptPackages(packages=("git",)), context_path, dockerfile)
 
                 for project_path in header.pyprojects:
+                    uv_lock_path = Path(project_path) / "uv.lock"
                     uv_project = UVProject(
                         pyproject=Path(project_path) / "pyproject.toml",
-                        uvlock=Path(project_path) / "uv.lock",
+                        uvlock=uv_lock_path if uv_lock_path.exists() else None,
                         project_install_mode="install_project",
                         secret_mounts=layer.secret_mounts,
                         pre=layer.pre,
@@ -544,22 +578,26 @@ class DockerImageBuilder(ImageBuilder):
         # Can get a public token for docker.io but ghcr requires a pat, so harder to get the manifest anonymously
         return [LocalDockerCommandImageChecker, LocalPodmanCommandImageChecker, DockerAPIImageChecker]
 
-    async def build_image(self, image: Image, dry_run: bool = False) -> str:
+    async def build_image(self, image: Image, dry_run: bool = False, wait: bool = True) -> "ImageBuild":
+        from flyte._build import ImageBuild
+
         if image.dockerfile:
             # If a dockerfile is provided, use it directly
-            return await self._build_from_dockerfile(image, push=True)
+            uri = await self._build_from_dockerfile(image, push=True, wait=wait)
+            return ImageBuild(uri=uri, remote_run=None)
 
         if len(image._layers) == 0:
             logger.warning("No layers to build, returning the image URI as is.")
-            return image.uri
+            return ImageBuild(uri=image.uri, remote_run=None)
 
-        return await self._build_image(
+        uri = await self._build_image(
             image,
             push=True,
             dry_run=dry_run,
         )
+        return ImageBuild(uri=uri, remote_run=None)
 
-    async def _build_from_dockerfile(self, image: Image, push: bool) -> str:
+    async def _build_from_dockerfile(self, image: Image, push: bool, wait: bool = True) -> str:
         """
         Build the image from a provided Dockerfile.
         """
@@ -592,7 +630,10 @@ class DockerImageBuilder(ImageBuilder):
         logger.debug(f"Build command: {concat_command}")
         click.secho(f"Run command: {concat_command} ", fg="blue")
 
-        await asyncio.to_thread(subprocess.run, command, cwd=str(cast(Path, image.dockerfile).cwd()), check=True)
+        if wait:
+            await run_sync_with_loop(subprocess.run, command, cwd=str(cast(Path, image.dockerfile).cwd()), check=True)
+        else:
+            await run_sync_with_loop(subprocess.Popen, command, cwd=str(cast(Path, image.dockerfile).cwd()))
 
         return image.uri
 
@@ -601,14 +642,14 @@ class DockerImageBuilder(ImageBuilder):
         """Ensure there is a docker buildx builder called flyte"""
         # Check if buildx is available
         try:
-            await asyncio.to_thread(
+            await run_sync_with_loop(
                 subprocess.run, ["docker", "buildx", "version"], check=True, stdout=subprocess.DEVNULL
             )
         except subprocess.CalledProcessError:
             raise RuntimeError("Docker buildx is not available. Make sure BuildKit is installed and enabled.")
 
         # List builders
-        result = await asyncio.to_thread(
+        result = await run_sync_with_loop(
             subprocess.run, ["docker", "buildx", "ls"], capture_output=True, text=True, check=True
         )
         builders = result.stdout
@@ -617,7 +658,7 @@ class DockerImageBuilder(ImageBuilder):
         if DockerImageBuilder._builder_name not in builders:
             # No default builder found, create one
             logger.info("No buildx builder found, creating one...")
-            await asyncio.to_thread(
+            await run_sync_with_loop(
                 subprocess.run,
                 [
                     "docker",
@@ -633,7 +674,7 @@ class DockerImageBuilder(ImageBuilder):
         else:
             logger.info("Buildx builder already exists.")
 
-    async def _build_image(self, image: Image, *, push: bool = True, dry_run: bool = False) -> str:
+    async def _build_image(self, image: Image, *, push: bool = True, dry_run: bool = False, wait: bool = True) -> str:
         """
         if default image (only base image and locked), raise an error, don't have a dockerfile
         if dockerfile, just build
@@ -715,7 +756,10 @@ class DockerImageBuilder(ImageBuilder):
                 click.secho(f"Run command: {concat_command} ", fg="blue")
 
             try:
-                await asyncio.to_thread(subprocess.run, command, check=True)
+                if wait:
+                    await run_sync_with_loop(subprocess.run, command, check=True)
+                else:
+                    await run_sync_with_loop(subprocess.Popen, command)
             except subprocess.CalledProcessError as e:
                 logger.error(f"Failed to build image: {e}")
                 raise RuntimeError(f"Failed to build image: {e}")

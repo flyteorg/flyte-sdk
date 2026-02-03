@@ -1,9 +1,9 @@
 from typing import AsyncIterator, Protocol
 
-from flyteidl.service import dataproxy_pb2
 from flyteidl2.app import app_payload_pb2
 from flyteidl2.auth import identity_pb2
 from flyteidl2.project import project_service_pb2
+from flyteidl2.dataproxy import dataproxy_service_pb2
 from flyteidl2.secret import payload_pb2
 from flyteidl2.task import task_service_pb2
 from flyteidl2.trigger import trigger_service_pb2
@@ -65,6 +65,8 @@ class RunService(Protocol):
 
     async def AbortRun(self, request: run_service_pb2.AbortRunRequest) -> run_service_pb2.AbortRunResponse: ...
 
+    async def AbortAction(self, request: run_service_pb2.AbortActionRequest) -> run_service_pb2.AbortActionResponse: ...
+
     async def GetRunDetails(
         self, request: run_service_pb2.GetRunDetailsRequest
     ) -> run_service_pb2.GetRunDetailsResponse: ...
@@ -100,18 +102,8 @@ class RunService(Protocol):
 
 class DataProxyService(Protocol):
     async def CreateUploadLocation(
-        self, request: dataproxy_pb2.CreateUploadLocationRequest
-    ) -> dataproxy_pb2.CreateUploadLocationResponse: ...
-
-    async def CreateDownloadLocation(
-        self, request: dataproxy_pb2.CreateDownloadLocationRequest
-    ) -> dataproxy_pb2.CreateDownloadLocationResponse: ...
-
-    async def CreateDownloadLink(
-        self, request: dataproxy_pb2.CreateDownloadLinkRequest
-    ) -> dataproxy_pb2.CreateDownloadLinkResponse: ...
-
-    async def GetData(self, request: dataproxy_pb2.GetDataRequest) -> dataproxy_pb2.GetDataResponse: ...
+        self, request: dataproxy_service_pb2.CreateUploadLocationRequest
+    ) -> dataproxy_service_pb2.CreateUploadLocationResponse: ...
 
 
 class RunLogsService(Protocol):

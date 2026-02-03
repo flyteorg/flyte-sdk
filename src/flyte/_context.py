@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import contextvars
 from dataclasses import dataclass, replace
-from typing import TYPE_CHECKING, Awaitable, Callable, Optional, ParamSpec, TypeVar
+from typing import TYPE_CHECKING, Awaitable, Callable, Optional, ParamSpec, Tuple, TypeVar
 
 from flyte._logging import logger
 from flyte.models import GroupData, RawDataPath, TaskContext
@@ -29,6 +29,7 @@ class ContextData:
     group_data: Optional[GroupData] = None
     task_context: Optional[TaskContext] = None
     raw_data_path: Optional[RawDataPath] = None
+    metadata: Optional[Tuple[Tuple[str, str], ...]] = None
 
     def replace(self, **kwargs) -> ContextData:
         return replace(self, **kwargs)
@@ -69,6 +70,14 @@ class Context:
         raise ValueError("Raw data path has not been set in the context.")
 
     @property
+    def has_raw_data(self) -> bool:
+        if self.data and self.data.task_context and self.data.task_context.raw_data_path:
+            return True
+        if self.data and self.data.raw_data_path:
+            return True
+        return False
+
+    @property
     def id(self) -> int:
         """Viewable ID."""
         return self._id
@@ -84,6 +93,12 @@ class Context:
         Return a copy of the context with the given raw data path object
         """
         return Context(self.data.replace(raw_data_path=raw_data_path))
+
+    def new_metadata(self, metadata: Tuple[Tuple[str, str], ...]) -> Context:
+        """
+        Return a copy of the context with the given metadata tuple
+        """
+        return Context(self.data.replace(metadata=metadata))
 
     def get_report(self) -> Optional[Report]:
         """

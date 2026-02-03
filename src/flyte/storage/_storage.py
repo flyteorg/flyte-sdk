@@ -20,10 +20,13 @@ from flyte._initialize import get_storage
 from flyte._logging import logger
 from flyte.errors import InitializationError, OnlyAsyncIOSupportedError
 
+from ._remote_fs import FlyteFS
+
 if typing.TYPE_CHECKING:
     from obstore import AsyncReadableFile, AsyncWritableFile
 
 _OBSTORE_SUPPORTED_PROTOCOLS = ["s3", "gs", "abfs", "abfss"]
+BATCH_SIZE = int(os.getenv("FLYTE_IO_BATCH_SIZE", str(32)))
 
 
 def _is_obstore_supported_protocol(protocol: str) -> bool:
@@ -261,7 +264,13 @@ async def _get_from_filesystem(
     return str(to_path)
 
 
-async def put(from_path: str, to_path: Optional[str] = None, recursive: bool = False, **kwargs) -> str:
+async def put(
+    from_path: str,
+    to_path: Optional[str] = None,
+    recursive: bool = False,
+    batch_size: Optional[int] = None,
+    **kwargs,
+) -> str:
     if not to_path:
         from flyte._context import internal_ctx
 
@@ -269,10 +278,13 @@ async def put(from_path: str, to_path: Optional[str] = None, recursive: bool = F
         name = pathlib.Path(from_path).name
         to_path = ctx.raw_data.get_random_remote_path(file_name=name)
 
+    if not batch_size:
+        batch_size = BATCH_SIZE
+
     file_system = get_underlying_filesystem(path=to_path)
     from_path = strip_file_header(from_path)
     if isinstance(file_system, AsyncFileSystem):
-        dst = await file_system._put(from_path, to_path, recursive=recursive, **kwargs)  # pylint: disable=W0212
+        dst = await file_system._put(from_path, to_path, recursive=recursive, batch_size=batch_size, **kwargs)  # pylint: disable=W0212
     else:
         dst = file_system.put(from_path, to_path, recursive=recursive, **kwargs)
     if isinstance(dst, (str, pathlib.Path)):
@@ -457,4 +469,29 @@ def exists_sync(path: str, **kwargs) -> bool:
         return False
 
 
+def get_credentials_error(uri: str, protocol: str) -> str:
+    # Check for common credential issues
+    if protocol == "s3":
+        return (
+            f"Failed to download data from {uri}. "
+            f"S3 credentials are required to access the data at {uri}. "
+            "Please set the following environment variables: AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY"
+        )
+    elif protocol in ("gs", "gcs"):
+        return (
+            f"Failed to download data from {uri}. "
+            f"GCS credentials are required to access the data at {uri}. "
+            f"Please set the following environment variable: GOOGLE_APPLICATION_CREDENTIALS"
+        )
+    elif protocol in ("abfs", "abfss"):
+        return (
+            f"Failed to download data from {uri}. "
+            f"Azure credentials are required to access the data at {uri}. "
+            "Please set the following environment variables: AZURE_STORAGE_ACCOUNT_NAME, "
+            "AZURE_STORAGE_ACCOUNT_KEY"
+        )
+    raise ValueError(f"Unsupported protocol: {protocol}")
+
+
 register(_OBSTORE_SUPPORTED_PROTOCOLS, asynchronous=True)
+fsspec.register_implementation("flyte", FlyteFS, clobber=True)

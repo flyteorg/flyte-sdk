@@ -394,3 +394,119 @@ async def test_download_dir_with_no_local_target_local(tmp_path, tmp_dir_structu
     assert os.path.isdir(os.path.join(downloaded_path, "sibling"))
     suffix = uploaded_dir.path.split(os.sep)[-1]
     assert downloaded_path.endswith(suffix)
+
+
+# Tests for lazy_uploader functionality
+
+
+@pytest.mark.asyncio
+async def test_dir_from_local_creates_lazy_uploader_without_raw_data_context(tmp_dir_structure):
+    """Test that Dir.from_local creates a lazy_uploader when there's no raw_data context."""
+    flyte.init()
+
+    # When creating a Dir from local without raw_data context, it should have lazy_uploader
+    dir_obj = await Dir.from_local(tmp_dir_structure)
+
+    # The dir should have a lazy_uploader set
+    assert dir_obj.lazy_uploader is not None
+    # The path should be the local path
+    assert dir_obj.path == tmp_dir_structure
+
+
+@pytest.mark.asyncio
+async def test_dir_from_local_sync_creates_lazy_uploader_without_raw_data_context(tmp_dir_structure):
+    """Test that Dir.from_local_sync creates a lazy_uploader when there's no raw_data context."""
+    flyte.init()
+
+    # When creating a Dir from local without raw_data context, it should have lazy_uploader
+    dir_obj = Dir.from_local_sync(tmp_dir_structure)
+
+    # The dir should have a lazy_uploader set
+    assert dir_obj.lazy_uploader is not None
+    # The path should be the local path
+    assert dir_obj.path == tmp_dir_structure
+
+
+@pytest.mark.asyncio
+async def test_lazy_uploader_returns_local_path_in_local_mode(tmp_dir_structure):
+    """Test that lazy_uploader returns local path when in local mode."""
+    from flyte._run import _run_mode_var
+
+    flyte.init()
+    _run_mode_var.set("local")
+
+    try:
+        dir_obj = await Dir.from_local(tmp_dir_structure)
+        assert dir_obj.lazy_uploader is not None
+
+        # When we call lazy_uploader in local mode, it should return the local path
+        hash_val, uri = await dir_obj.lazy_uploader()
+        assert uri == tmp_dir_structure
+        assert hash_val is None
+    finally:
+        _run_mode_var.set(None)
+
+
+@pytest.mark.asyncio
+async def test_dir_transformer_uses_lazy_uploader_in_local_mode(tmp_dir_structure):
+    """Test that DirTransformer.to_literal uses lazy_uploader when in local mode."""
+    from flyte._run import _run_mode_var
+    from flyte.types import TypeEngine
+
+    flyte.init()
+    _run_mode_var.set("local")
+
+    try:
+        dir_obj = await Dir.from_local(tmp_dir_structure)
+
+        lt = TypeEngine.to_literal_type(Dir)
+        lv = await DirTransformer().to_literal(dir_obj, Dir, lt)
+
+        # The literal should contain the local path
+        assert lv.scalar.blob.uri == tmp_dir_structure
+    finally:
+        _run_mode_var.set(None)
+
+
+@pytest.mark.asyncio
+async def test_dir_without_lazy_uploader_uses_existing_path():
+    """Test that Dir without lazy_uploader uses the existing path in to_literal."""
+    from flyte.types import TypeEngine
+
+    flyte.init()
+
+    # Create a Dir pointing to a remote path (no lazy_uploader)
+    remote_dir = Dir.from_existing_remote("s3://bucket/remote_dir/")
+    assert remote_dir.lazy_uploader is None
+
+    lt = TypeEngine.to_literal_type(Dir)
+    lv = await DirTransformer().to_literal(remote_dir, Dir, lt)
+
+    # The literal should contain the original remote path
+    assert lv.scalar.blob.uri == "s3://bucket/remote_dir/"
+
+
+@pytest.mark.asyncio
+async def test_dir_lazy_uploader_preserves_hash(tmp_dir_structure):
+    """Test that Dir.from_local with hash preserves the hash through lazy_uploader."""
+    from flyte._run import _run_mode_var
+    from flyte.types import TypeEngine
+
+    flyte.init()
+    _run_mode_var.set("local")
+
+    try:
+        dir_obj = await Dir.from_local(tmp_dir_structure, dir_cache_key="my_custom_hash")
+        assert dir_obj.hash == "my_custom_hash"
+        assert dir_obj.lazy_uploader is not None
+
+        lt = TypeEngine.to_literal_type(Dir)
+        lv = await DirTransformer().to_literal(dir_obj, Dir, lt)
+
+        # The literal should contain the local path
+        assert lv.scalar.blob.uri == tmp_dir_structure
+        # In local mode, lazy_uploader returns (None, local_path), so hash becomes empty/None-like
+        # The protobuf returns '' for unset hash, which is falsy like None
+        assert not lv.hash  # Empty string or None
+    finally:
+        _run_mode_var.set(None)

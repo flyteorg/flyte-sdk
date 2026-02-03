@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import sys
 
-from ._build import build
+from ._build import ImageBuild, build
 from ._cache import Cache, CachePolicy, CacheRequest
 from ._context import ctx
 from ._custom_context import custom_context, get_custom_context
@@ -15,7 +15,7 @@ from ._environment import Environment
 from ._excepthook import custom_excepthook
 from ._group import group
 from ._image import Image
-from ._initialize import current_domain, init, init_from_api_key, init_from_config, init_in_cluster
+from ._initialize import current_domain, init, init_from_api_key, init_from_config, init_in_cluster, init_passthrough
 from ._link import Link
 from ._logging import logger
 from ._map import map
@@ -77,6 +77,7 @@ __all__ = [
     "Environment",
     "FixedRate",
     "Image",
+    "ImageBuild",
     "Link",
     "Neuron",
     "PodTemplate",
@@ -103,6 +104,7 @@ __all__ = [
     "init_from_api_key",
     "init_from_config",
     "init_in_cluster",
+    "init_passthrough",
     "logger",
     "map",
     "run",

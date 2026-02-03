@@ -25,13 +25,6 @@ from flyte._logging import logger
 from flyte.io import Dir, File
 from flyte.types._pickle import FlytePickleTransformer
 
-
-class StructuredDataset:
-    def __init__(self, uri: str | None = None, dataframe: typing.Any = None):
-        self.uri = uri
-        self.dataframe = dataframe
-
-
 # ---------------------------------------------------
 
 
@@ -75,13 +68,21 @@ class DirParamType(click.ParamType):
     def convert(
         self, value: typing.Any, param: typing.Optional[click.Parameter], ctx: typing.Optional[click.Context]
     ) -> typing.Any:
+        import flyte.remote as remote
         from flyte.storage import is_remote
+
+        # Check if we're in local mode (when run_args is available and local=True)
+        run_args = getattr(ctx.obj, "run_args", None) if ctx and ctx.obj else None
+        if run_args is not None and run_args.local:
+            return Dir(path=value)
 
         if not is_remote(value):
             p = pathlib.Path(value)
             if not p.exists() or not p.is_dir():
                 raise click.BadParameter(f"parameter should be a valid flytedirectory path, {value}")
-        return Dir(path=value)
+            uri = remote.upload_dir(p)
+            return Dir.from_existing_remote(remote_path=uri)
+        return Dir.from_existing_remote(remote_path=value)
 
 
 class StructuredDatasetParamType(click.ParamType):
@@ -89,19 +90,48 @@ class StructuredDatasetParamType(click.ParamType):
     TODO handle column types
     """
 
-    name = "structured dataset path (dir/file)"
+    name = "dataframe path (dir/file) (with parquet or csv)"
 
     def get_metavar(self, param: Parameter, ctx: Context) -> str | None:
-        return "Remote parquet URI"
+        return "Remote or Local parquet or csv File path"
 
     def convert(
         self, value: typing.Any, param: typing.Optional[click.Parameter], ctx: typing.Optional[click.Context]
     ) -> typing.Any:
+        import flyte.io as io
+        import flyte.remote as remote
+        import flyte.storage as storage
+
+        # Check if we're in local mode (when run_args is available and local=True)
+        run_args = getattr(ctx.obj, "run_args", None) if ctx and ctx.obj else None
+        if run_args is not None and run_args.local:
+            # In local mode, create DataFrame from the file path (not upload)
+            path = pathlib.Path(value)
+            if not path.exists():
+                raise click.BadParameter(f"Dataframe input path does not exist: {value}")
+            format = "parquet"
+            if path.suffix == ".csv":
+                format = "csv"
+            return io.DataFrame.from_existing_remote(remote_path=str(path), format=format)
+
         if isinstance(value, str):
-            return StructuredDataset(uri=value)
-        elif isinstance(value, StructuredDataset):
-            return value
-        return StructuredDataset(dataframe=value)
+            if storage.is_remote(value):
+                return io.DataFrame.from_existing_remote(remote_path=value)
+            path = pathlib.Path(value)
+            if not path.exists():
+                raise click.BadParameter(f"Dataframe input path does not exist: {value}")
+            if path.is_file():
+                fname = None
+                format = "parquet"
+                if path.suffix == ".csv":
+                    format = "csv"
+                    fname = "data.csv"
+                _, uri = remote.upload_file(path, fname=fname)
+                return io.DataFrame.from_existing_remote(remote_path=uri, format=format)
+            uri = remote.upload_dir(path)
+            return io.DataFrame.from_existing_remote(remote_path=uri)
+        else:
+            raise click.BadParameter(f"Only files / directory paths are supported for dataframe inputs, got {value}.")
 
 
 class FileParamType(click.ParamType):
@@ -113,13 +143,20 @@ class FileParamType(click.ParamType):
     def convert(
         self, value: typing.Any, param: typing.Optional[click.Parameter], ctx: typing.Optional[click.Context]
     ) -> typing.Any:
+        import flyte.remote as remote
         from flyte.storage import is_remote
+
+        # Check if we're in local mode (when run_args is available and local=True)
+        run_args = getattr(ctx.obj, "run_args", None) if ctx and ctx.obj else None
+        if run_args is not None and run_args.local:
+            return File(path=value)
 
         if not is_remote(value):
             p = pathlib.Path(value)
             if not p.exists() or not p.is_file():
                 raise click.BadParameter(f"parameter should be a valid file path, {value}")
-            raise click.BadParameter(f"Only remote paths are supported currently, {value}")
+            md5, uri = remote.upload_file(p)
+            return File.from_existing_remote(uri, md5)
         return File.from_existing_remote(value)
 
 

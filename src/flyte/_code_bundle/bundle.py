@@ -14,6 +14,7 @@ from flyteidl2.core.tasks_pb2 import TaskTemplate
 
 from flyte._logging import log, logger
 from flyte._utils import AsyncLRUCache
+from flyte.errors import CodeBundleError
 from flyte.models import CodeBundle
 
 from ._ignore import GitIgnore, Ignore, StandardIgnore
@@ -144,6 +145,16 @@ async def build_code_bundle(
 
     logger.debug(f"Finding files to bundle, ignoring as configured by: {ignore}")
     files, digest = list_files_to_bundle(from_dir, True, *ignore, copy_style=copy_style)
+    if len(files) == 0:
+        raise CodeBundleError(
+            f"No files found to bundle in '{from_dir}'.\n"
+            "Possible causes:\n"
+            "  - The task file is inside a virtual environment directory (e.g., .venv/, venv/)\n"
+            "  - The task file is excluded by .gitignore\n"
+            "  - The directory does not contain any Python files\n"
+            "To debug, check that your task file exists in the specified directory and is not ignored."
+        )
+
     if logger.getEffectiveLevel() <= logging.INFO:
         print_ls_tree(from_dir, files)
 
@@ -186,12 +197,10 @@ async def build_code_bundle_from_relative_paths(
     Build a code bundle from a list of relative paths.
     :param relative_paths: The list of relative paths to bundle.
     :param from_dir: The directory of the code to bundle. This is the root directory for the source.
-    :param ignore: The list of ignores to apply. This is a list of Ignore classes.
     :param extract_dir: The directory to extract the code bundle to, when in the container. It defaults to the current
         working directory.
     :param dryrun: If dryrun is enabled, files will not be uploaded to the control plane.
     :param copy_bundle_to: If set, the bundle will be copied to this path. This is used for testing purposes.
-    :param copy_style: What to put into the tarball. (either all, or loaded_modules. if none, skip this function)
     :return: The code bundle, which contains the path where the code was zipped to.
     """
     logger.debug("Building code bundle from relative paths.")

@@ -11,7 +11,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar, Dict, List, Literal, Optional, Tuple, TypeVar, Union
 
 import rich.repr
-from packaging.version import Version
 
 if TYPE_CHECKING:
     from flyte import Secret, SecretRequest
@@ -51,6 +50,28 @@ class Layer:
     This is an abstract representation of Container Image Layers, which can be used to create
      layered images programmatically.
     """
+
+    def __post_init__(self):
+        """
+        Validate that no fields in the layer contain lists.
+        Lists are not allowed because Layer objects must be hashable for caching.
+        """
+        import dataclasses
+
+        for f in dataclasses.fields(self):
+            value = getattr(self, f.name)
+            if isinstance(value, list):
+                raise TypeError(
+                    f"{self.__class__.__name__} field '{f.name}' is a list: {value!r}. "
+                    f"Hint: Pass items as separate arguments, e.g., 'vim', 'git' instead of ['vim', 'git']."
+                )
+            elif isinstance(value, tuple):
+                for i, item in enumerate(value):
+                    if isinstance(item, list):
+                        raise TypeError(
+                            f"{self.__class__.__name__} field '{f.name}' contains a list at index {i}: {item!r}. "
+                            f"Hint: Pass items as separate arguments, e.g., 'vim', 'git' instead of ['vim', 'git']."
+                        )
 
     @abstractmethod
     def update_hash(self, hasher: hashlib._Hash):
@@ -117,6 +138,9 @@ class PipOption:
 class PipPackages(PipOption, Layer):
     packages: Optional[Tuple[str, ...]] = None
 
+    def __post_init__(self):
+        super().__post_init__()
+
     def update_hash(self, hasher: hashlib._Hash):
         """
         Update the hash with the pip packages
@@ -168,7 +192,7 @@ class Requirements(PipPackages):
 @dataclass(frozen=True, repr=True)
 class UVProject(PipOption, Layer):
     pyproject: Path
-    uvlock: Path
+    uvlock: Optional[Path] = None
     project_install_mode: typing.Literal["dependencies_only", "install_project"] = "dependencies_only"
 
     def validate(self):
@@ -176,7 +200,7 @@ class UVProject(PipOption, Layer):
             raise FileNotFoundError(f"pyproject.toml file {self.pyproject.resolve()} does not exist")
         if not self.pyproject.is_file():
             raise ValueError(f"Pyproject file {self.pyproject.resolve()} is not a file")
-        if not self.uvlock.exists():
+        if self.uvlock is not None and not self.uvlock.exists():
             raise ValueError(f"UVLock file {self.uvlock.resolve()} does not exist")
         super().validate()
 
@@ -185,7 +209,8 @@ class UVProject(PipOption, Layer):
 
         super().update_hash(hasher)
         if self.project_install_mode == "dependencies_only":
-            filehash_update(self.uvlock, hasher)
+            if self.uvlock is not None:
+                filehash_update(self.uvlock, hasher)
             filehash_update(self.pyproject, hasher)
         else:
             update_hasher_for_source(self.pyproject.parent, hasher)
@@ -259,8 +284,11 @@ class UVScript(PipOption, Layer):
         super().update_hash(hasher)
         if header.pyprojects:
             for pyproject in header.pyprojects:
+                uvlock_path = Path(pyproject) / "uv.lock"
                 UVProject(
-                    Path(pyproject) / "pyproject.toml", Path(pyproject) / "uv.lock", "install_project"
+                    pyproject=Path(pyproject) / "pyproject.toml",
+                    uvlock=uvlock_path if uvlock_path.exists() else None,
+                    project_install_mode="install_project",
                 ).update_hash(hasher)
 
 
@@ -269,6 +297,9 @@ class UVScript(PipOption, Layer):
 class AptPackages(Layer):
     packages: Tuple[str, ...]
     secret_mounts: Optional[Tuple[str | Secret, ...]] = None
+
+    def __post_init__(self):
+        super().__post_init__()
 
     def update_hash(self, hasher: hashlib._Hash):
         hash_input = "".join(self.packages)
@@ -464,6 +495,8 @@ class Image:
     ) -> Image:
         # Would love a way to move this outside of this class (but still needs to be accessible via Image.auto())
         # this default image definition may need to be updated once there is a released pypi version
+        from packaging.version import Version
+
         from flyte._version import __version__
 
         dev_mode = (__version__ and "dev" in __version__) and not flyte_version and install_flyte
@@ -930,9 +963,9 @@ class Image:
         If `project_install_mode` is "install_project", it will also copy directory
          where the pyproject.toml file is located into the image.
 
-        :param pyproject_file: path to the pyproject.toml file, needs to have a corresponding uv.lock file
+        :param pyproject_file: path to the pyproject.toml file
         :param uvlock: path to the uv.lock file, if not specified, will use the default uv.lock file in the same
-        directory as the pyproject.toml file. (pyproject.parent / uv.lock)
+        directory as the pyproject.toml file if it exists. (pyproject.parent / uv.lock)
         :param index_url: index url to use for pip install, default is None
         :param extra_index_urls: extra index urls to use for pip install, default is None
         :param pre: whether to allow pre-release versions, default is False
@@ -944,10 +977,14 @@ class Image:
         """
         if isinstance(pyproject_file, str):
             pyproject_file = Path(pyproject_file)
+        # If uvlock is not provided, use the default uv.lock file in the same directory if it exists
+        if uvlock is None:
+            default_uvlock = pyproject_file.parent / "uv.lock"
+            uvlock = default_uvlock if default_uvlock.exists() else None
         new_image = self.clone(
             addl_layer=UVProject(
                 pyproject=pyproject_file,
-                uvlock=uvlock or (pyproject_file.parent / "uv.lock"),
+                uvlock=uvlock,
                 index_url=index_url,
                 extra_index_urls=extra_index_urls,
                 pre=pre,

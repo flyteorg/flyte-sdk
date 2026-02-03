@@ -29,14 +29,14 @@ async def test_task1_local_direct():
 def test_task1_local_union_sync():
     flyte.init()
     result = flyte.run(task1, "test")
-    assert result.outputs() == "Hello, world test!"
+    assert result.outputs()[0] == "Hello, world test!"
 
 
 @pytest.mark.asyncio
 async def test_task1_local_union_async():
     await flyte.init.aio()
     result = await flyte.run.aio(task1, "test")
-    assert result.outputs() == "Hello, world test!"
+    assert result.outputs()[0] == "Hello, world test!"
 
 
 @pytest.mark.asyncio

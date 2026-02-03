@@ -1782,7 +1782,7 @@ def test_dataclass_encoder_and_decoder_registry():
         return await dynamic_wf()
 
     datum_list = flyte.run(wf)
-    assert len(datum_list.outputs()) == iterations
+    assert len(datum_list.outputs()[0]) == iterations
 
     transformer = TypeEngine.get_transformer(Datum)
     assert transformer._msgpack_encoder.get(Datum)

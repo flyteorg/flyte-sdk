@@ -87,9 +87,11 @@ class _Serve:
         Raises:
             NotImplementedError: If interactive mode is detected
         """
+        import asyncio
         from copy import deepcopy
 
         from flyte.app import _deploy
+        from flyte.app._app_environment import AppEnvironment
 
         from ._code_bundle import build_code_bundle, build_pkl_bundle
         from ._deploy import build_images, plan_deploy
@@ -110,7 +112,7 @@ class _Serve:
         # Update env_vars with logging configuration
         self._env_vars = env
 
-        # Plan deployment
+        # Plan deployment (discovers all dependent environments)
         deployments = plan_deploy(app_env)
         assert deployments
         app_deployment = deployments[0]
@@ -157,19 +159,34 @@ class _Serve:
             root_dir=cfg.root_dir,
         )
 
-        # Inject parameter overrides from the serve
-        parameter_overrides = None
-        if app_env_parameter_values := self._parameter_values.get(app_env.name):
-            parameter_overrides = []
-            for parameter in app_env.parameters:
-                value = app_env_parameter_values.get(parameter.name, parameter.value)
-                parameter_overrides.append(replace(parameter, value=value))
+        # Deploy all AppEnvironments in the deployment plan (including dependencies)
+        deployment_coros = []
+        app_envs_to_deploy = []
+        for env_name, dep_env in app_deployment.envs.items():
+            if isinstance(dep_env, AppEnvironment):
+                # Inject parameter overrides from the serve for this specific app
+                parameter_overrides = None
+                if app_env_parameter_values := self._parameter_values.get(dep_env.name):
+                    parameter_overrides = []
+                    for parameter in dep_env.parameters:
+                        value = app_env_parameter_values.get(parameter.name, parameter.value)
+                        parameter_overrides.append(replace(parameter, value=value))
 
-        # Deploy app
-        deployed_app = await _deploy._deploy_app(app_env, sc, parameter_overrides=parameter_overrides)
-        assert deployed_app
+                logger.info(f"Deploying app {env_name}")
+                deployment_coros.append(_deploy._deploy_app(dep_env, sc, parameter_overrides=parameter_overrides))
+                app_envs_to_deploy.append(dep_env)
 
-        logger.warning(f"Deployed App, you can check the console at {deployed_app.url}")
+        # Deploy all apps concurrently
+        deployed_apps = await asyncio.gather(*deployment_coros)
+
+        # Find the deployed app corresponding to the requested app_env
+        deployed_app = None
+        for dep_env, deployed in zip(app_envs_to_deploy, deployed_apps):
+            logger.warning(f"Deployed App {dep_env.name}, you can check the console at {deployed.url}")
+            if dep_env.name == app_env.name:
+                deployed_app = deployed
+
+        assert deployed_app, f"Failed to find deployed app for {app_env.name}"
         # Mutate app_idl if env_vars or cluster_pool are provided
         # This is a temporary solution until the update/create APIs support these attributes
         if self._env_vars or self._cluster_pool:

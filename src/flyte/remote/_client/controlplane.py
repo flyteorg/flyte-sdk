@@ -16,10 +16,10 @@ if "GRPC_VERBOSITY" not in os.environ:
 #### Has to be before grpc
 
 import grpc
-from flyteidl.service import dataproxy_pb2_grpc
 from flyteidl2.app import app_service_pb2_grpc
 from flyteidl2.auth import identity_pb2_grpc
 from flyteidl2.project import project_service_pb2_grpc
+from flyteidl2.dataproxy import dataproxy_service_pb2_grpc
 from flyteidl2.secret import secret_pb2_grpc
 from flyteidl2.task import task_service_pb2_grpc
 from flyteidl2.trigger import trigger_service_pb2_grpc
@@ -177,11 +177,11 @@ class Console:
 
 class ClientSet:
     def __init__(
-        self,
-        channel: grpc.aio.Channel,
-        endpoint: str,
-        insecure: bool = False,
-        **kwargs,
+            self,
+            channel: grpc.aio.Channel,
+            endpoint: str,
+            insecure: bool = False,
+            **kwargs,
     ):
         self.endpoint = endpoint
         self.insecure = insecure
@@ -191,7 +191,7 @@ class ClientSet:
         self._task_service = task_service_pb2_grpc.TaskServiceStub(channel=channel)
         self._app_service = app_service_pb2_grpc.AppServiceStub(channel=channel)
         self._run_service = run_service_pb2_grpc.RunServiceStub(channel=channel)
-        self._dataproxy = dataproxy_pb2_grpc.DataProxyServiceStub(channel=channel)
+        self._dataproxy = dataproxy_service_pb2_grpc.DataProxyServiceStub(channel=channel)
         self._log_service = run_logs_service_pb2_grpc.RunLogsServiceStub(channel=channel)
         self._secrets_service = secret_pb2_grpc.SecretServiceStub(channel=channel)
         self._identity_service = identity_pb2_grpc.IdentityServiceStub(channel=channel)
