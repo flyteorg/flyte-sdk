@@ -1,13 +1,15 @@
 import asyncio
+
 import flyte
 
-
 env = flyte.TaskEnvironment("env")
+
 
 @env.task
 async def maybe_take_a_while(x: int) -> int:
     await asyncio.sleep(x)
     return x * x
+
 
 @env.task
 async def fanout_calculation(ls: list[int]) -> int:

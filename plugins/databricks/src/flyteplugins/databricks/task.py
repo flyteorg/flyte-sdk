@@ -5,9 +5,10 @@ from flyte._task_plugins import TaskPluginRegistry
 from flyte.connectors import AsyncConnectorExecutorMixin
 from flyte.models import SerializationContext
 from flyteidl2.plugins.spark_pb2 import SparkApplication, SparkJob
+from google.protobuf.json_format import MessageToDict
+
 from flyteplugins.spark import Spark
 from flyteplugins.spark.task import PysparkFunctionTask
-from google.protobuf.json_format import MessageToDict
 
 
 @dataclass
