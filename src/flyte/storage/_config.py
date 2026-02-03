@@ -21,9 +21,9 @@ class Storage(object):
     attach_execution_metadata: bool = True
 
     _KEY_ENV_VAR_MAPPING: ClassVar[typing.Dict[str, str]] = {
-        "enable_debug": "UNION_STORAGE_DEBUG",
-        "retries": "UNION_STORAGE_RETRIES",
-        "backoff": "UNION_STORAGE_BACKOFF_SECONDS",
+        "enable_debug": "FLYTE_STORAGE_DEBUG",
+        "retries": "FLYTE_STORAGE_RETRIES",
+        "backoff": "FLYTE_STORAGE_BACKOFF_SECONDS",
     }
 
     def get_fsspec_kwargs(self, anonymous: bool = False, **kwargs) -> typing.Dict[str, typing.Any]:
@@ -119,7 +119,7 @@ class S3(Storage):
                 self._CONFIG_KEY_FSSPEC_S3_SECRET, self.secret_access_key
             )
         if self._CONFIG_KEY_ENDPOINT in kwargs or self.endpoint:
-            config["endpoint_url"] = kwargs.pop(self._CONFIG_KEY_ENDPOINT, self.endpoint)
+            config["endpoint"] = kwargs.pop(self._CONFIG_KEY_ENDPOINT, self.endpoint)
 
         retries = kwargs.pop("retries", self.retries)
         backoff = kwargs.pop("backoff", self.backoff)
@@ -141,8 +141,8 @@ class S3(Storage):
 
         if config:
             kwargs["config"] = config
-        kwargs["client_options"] = client_options or None
-        kwargs["retry_config"] = retry_config or None
+        kwargs["client_options"] = client_options
+        kwargs["retry_config"] = retry_config
         if self.region:
             kwargs["region"] = self.region
 
@@ -228,7 +228,7 @@ class ABFS(Storage):
         if anonymous:
             config[self._KEY_SKIP_SIGNATURE] = True
 
-        client_options = {"timeout": "99999s", "allow_http": "true"}
+        client_options = {"timeout": "99999s", "allow_http": True}
 
         if config:
             kwargs["config"] = config

@@ -313,7 +313,7 @@ class TaskEnvironment(Environment):
         images = {t.image for t in tasks}
         if len(images) > 1:
             raise ValueError("Tasks must have the same image to be in the same environment.")
-        image: Union[str, Image] = images.pop() if images else "auto"
+        image: Union[str, Image, None] = images.pop() if images else "auto"
         env = cls(name, image=image)
         for t in tasks:
             env._tasks[t.name] = t

@@ -43,7 +43,7 @@ class TestS3Config:
         assert "config" in result
         assert result["config"]["access_key_id"] == "test-key"
         assert result["config"]["secret_access_key"] == "test-secret"
-        assert result["config"]["endpoint_url"] == "http://test-endpoint"
+        assert result["config"]["endpoint"] == "http://test-endpoint"
         assert "anonymous" not in result
 
     def test_get_fsspec_kwargs_anonymous(self):
@@ -66,7 +66,7 @@ class TestS3Config:
         assert "config" in result
         assert result["config"]["access_key_id"] == "override-key"
         assert result["config"]["secret_access_key"] == "override-secret"
-        assert result["config"]["endpoint_url"] == "override-endpoint"
+        assert result["config"]["endpoint"] == "override-endpoint"
         assert "anonymous" not in result
 
     def test_get_fsspec_kwargs_retries_backoff_override(self):
@@ -107,7 +107,7 @@ class TestABFSConfig:
         assert "config" not in result
         assert "client_options" in result
         assert result["client_options"]["timeout"] == "99999s"
-        assert result["client_options"]["allow_http"] == "true"
+        assert result["client_options"]["allow_http"] is True
         assert "anonymous" not in result
 
     def test_get_fsspec_kwargs_with_credentials(self):
