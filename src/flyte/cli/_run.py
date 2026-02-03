@@ -230,13 +230,20 @@ Missing required parameter(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in mi
 
     async def _execute_and_render(self, ctx: click.Context, config: common.CLIConfig):
         """Separate execution logic from the Click entry point for better testability."""
+        from contextlib import nullcontext
+
         import flyte
 
-        output = common.CLIOutput(config)
+        console = common.get_console()
 
-        # 2. Execute with a UX Status Spinner (disabled for JSON output)
+        # 2. Execute with a UX Status Spinner (disabled for json/table-simple)
+        status_ctx = (
+            nullcontext()
+            if config.output_format in ("json", "table-simple")
+            else console.status(f"[bold blue]Launching {'local' if self.run_args.local else 'remote'} execution...", spinner="dots")
+        )
         try:
-            with output.status(f"[bold blue]Launching {'local' if self.run_args.local else 'remote'} execution..."):
+            with status_ctx:
                 execution_context = flyte.with_runcontext(
                     copy_style=self.run_args.copy_style,
                     mode="local" if self.run_args.local else "remote",
@@ -248,37 +255,37 @@ Missing required parameter(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in mi
                 )
                 result = await execution_context.run.aio(self.obj, **ctx.params)
         except Exception as e:
-            output.print_error(e)
+            console.print(common.get_panel("Exception", f"[red]✕ Execution failed:[/red] {e}", config.output_format))
             exit(1)
 
         # 3. UI Branching
         if self.run_args.local:
-            self._render_local_success(output, result)
+            self._render_local_success(console, result, config)
         else:
-            await self._render_remote_success(output, result)
+            await self._render_remote_success(console, result, config)
 
-    def _render_local_success(self, output: common.CLIOutput, result):
-        output.print_success(
-            data={"status": "success", "type": "local", "path": result.url, "outputs": str(result.outputs())},
-            title="Local Success",
-            rich_content=f"[green]Completed Local Run[/green]\nPath: {result.url}\n➡️ Outputs: {result.outputs()}",
-        )
+    def _render_local_success(self, console, result, config):
+        if config.output_format in ("json", "table-simple"):
+            content = f"Completed Local Run\nPath: {result.url}\nOutputs: {result.outputs()}"
+        else:
+            content = f"[green]Completed Local Run[/green]\nPath: {result.url}\n➡️ Outputs: {result.outputs()}"
+        console.print(common.get_panel("Local Success", content, config.output_format))
 
-    async def _render_remote_success(self, output: common.CLIOutput, result):
+    async def _render_remote_success(self, console, result, config):
         if not (isinstance(result, Run) and result.action):
             return
 
-        output.print_success(
-            data={"status": "success", "type": "remote", "run_name": result.name, "url": result.url},
-            title="Remote Run",
-            rich_content=(
+        if config.output_format in ("json", "table-simple"):
+            run_info = f"Created Run: {result.name}\nURL: {result.url}"
+        else:
+            run_info = (
                 f"[green bold]Created Run: {result.name}[/green bold]\n"
                 f"URL: [blue bold][link={result.url}]{result.url}[/link][/blue bold]"
-            ),
-        )
+            )
+        console.print(common.get_panel("Remote Run", run_info, config.output_format))
 
         if self.run_args.follow:
-            output.print_message("[dim]Waiting for log stream...[/dim]")
+            console.print("[dim]Waiting for log stream...[/dim]")
             await result.show_logs.aio(max_lines=30, show_ts=True, raw=False)
 
     def invoke(self, ctx: click.Context):
@@ -410,17 +417,23 @@ Missing required parameter(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in mi
         """Separate execution logic from the Click entry point for better testability."""
         import flyte.remote
 
-        task = flyte.remote.Task.get(self.task_name, version=self.version, auto_version="latest")
-        output = common.CLIOutput(config)
+        from contextlib import nullcontext
 
+        task = flyte.remote.Task.get(self.task_name, version=self.version, auto_version="latest")
+        console = common.get_console()
         if self.run_args.run_project or self.run_args.run_domain:
-            output.print_message(
+            console.print(
                 f"Separate Run project/domain set, using {self.run_args.run_project} and {self.run_args.run_domain}"
             )
 
-        # 2. Execute with a UX Status Spinner (disabled for JSON output)
+        # 2. Execute with a UX Status Spinner (disabled for json/table-simple)
+        status_ctx = (
+            nullcontext()
+            if config.output_format in ("json", "table-simple")
+            else console.status(f"[bold blue]Launching {'local' if self.run_args.local else 'remote'} execution...", spinner="dots")
+        )
         try:
-            with output.status(f"[bold blue]Launching {'local' if self.run_args.local else 'remote'} execution..."):
+            with status_ctx:
                 execution_context = flyte.with_runcontext(
                     copy_style=self.run_args.copy_style,
                     mode="local" if self.run_args.local else "remote",
@@ -430,45 +443,42 @@ Missing required parameter(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in mi
                 )
                 result = await execution_context.run.aio(task, **ctx.params)
         except Exception as e:
-            output.print_error(e)
+            console.print(f"[red]✕ Execution failed:[/red] {e}")
             return
 
         # 3. UI Branching
         if self.run_args.local:
-            self._render_local_success(output, result)
+            self._render_local_success(console, result, config)
         else:
-            await self._render_remote_success(output, result)
+            await self._render_remote_success(console, result, config)
 
-    def _render_local_success(self, output: common.CLIOutput, result):
-        output.print_success(
-            data={"status": "success", "type": "local", "path": result.url, "outputs": str(result.outputs())},
-            title="Local Success",
-            rich_content=f"[green]Completed Local Run[/green]\nPath: {result.url}\n➡️ Outputs: {result.outputs()}",
-        )
+    def _render_local_success(self, console, result, config):
+        if config.output_format in ("json", "table-simple"):
+            content = f"Completed Local Run\nPath: {result.url}\nOutputs: {result.outputs()}"
+        else:
+            content = f"[green]Completed Local Run[/green]\nPath: {result.url}\n➡️ Outputs: {result.outputs()}"
+        console.print(common.get_panel("Local Success", content, config.output_format))
 
-    async def _render_remote_success(self, output: common.CLIOutput, result):
+    async def _render_remote_success(self, console, result, config):
         if not (isinstance(result, Run) and result.action):
             return
 
-        output.print_success(
-            data={
-                "status": "success",
-                "type": "remote",
-                "run_name": result.name,
-                "project": result.action.action_id.run.project,
-                "domain": result.action.action_id.run.domain,
-                "url": result.url,
-            },
-            title="Remote Run",
-            rich_content=(
+        if config.output_format in ("json", "table-simple"):
+            run_info = (
+                f"Created Run: {result.name}\n"
+                f"(Project: {result.action.action_id.run.project}, Domain: {result.action.action_id.run.domain})\n"
+                f"URL: {result.url}"
+            )
+        else:
+            run_info = (
                 f"[green bold]Created Run: {result.name}[/green bold]\n"
                 f"(Project: {result.action.action_id.run.project}, Domain: {result.action.action_id.run.domain})\n"
                 f"➡️  [blue bold][link={result.url}]{result.url}[/link][/blue bold]"
-            ),
-        )
+            )
+        console.print(common.get_panel("Remote Run", run_info, config.output_format))
 
         if self.run_args.follow:
-            output.print_message(
+            console.print(
                 "[dim]Log streaming enabled, will wait for task to start running and log stream to be available[/dim]"
             )
             await result.show_logs.aio(max_lines=30, show_ts=True, raw=False)
