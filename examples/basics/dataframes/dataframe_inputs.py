@@ -105,7 +105,7 @@ if __name__ == "__main__":
     local_task_df = local_run.outputs()[0]
 
     for dataframe in [in_mem_dataframe, local_task_df]:
-        run = flyte.run(process_df, df=dataframe)
+        run = flyte.with_runcontext(preserve_original_types=True).run(process_df, df=dataframe)
         print(run.url)
         run.wait()
         result = run.outputs()[0]
@@ -113,21 +113,21 @@ if __name__ == "__main__":
         print(result)
 
         flyte_dataframe = flyte.io.DataFrame.from_df(dataframe)
-        run = flyte.run(process_fdf_to_df, df=flyte_dataframe)
+        run = flyte.with_runcontext(preserve_original_types=True).run(process_fdf_to_df, df=flyte_dataframe)
         print(run.url)
         run.wait()
         result: pd.DataFrame = run.outputs()[0]
         assert isinstance(result, pd.DataFrame)
         print(result)
 
-        run = flyte.run(process_df_to_fdf, df=dataframe)
+        run = flyte.with_runcontext(preserve_original_types=True).run(process_df_to_fdf, df=dataframe)
         print(run.url)
         run.wait()
         result: flyte.io.DataFrame = run.outputs()[0]
         assert isinstance(result, flyte.io.DataFrame)
         print(result)
 
-        run = flyte.run(process_fdf_to_fdf, df=flyte_dataframe)
+        run = flyte.with_runcontext(preserve_original_types=True).run(process_fdf_to_fdf, df=flyte_dataframe)
         print(run.url)
         run.wait()
         result: flyte.io.DataFrame = run.outputs()[0]
