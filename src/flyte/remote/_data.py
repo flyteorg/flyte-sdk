@@ -12,7 +12,7 @@ from typing import Tuple
 import aiofiles
 import grpc
 import httpx
-from flyteidl.service import dataproxy_pb2
+from flyteidl2.dataproxy import dataproxy_service_pb2
 from google.protobuf import duration_pb2
 
 from flyte._initialize import CommonInit, ensure_client, get_client, get_init_config, require_project_and_domain
@@ -146,7 +146,7 @@ async def _upload_single_file(
         expires_in_pb.FromTimedelta(_UPLOAD_EXPIRES_IN)
         client = get_client()
         resp = await client.dataproxy_service.CreateUploadLocation(  # type: ignore
-            dataproxy_pb2.CreateUploadLocationRequest(
+            dataproxy_service_pb2.CreateUploadLocationRequest(
                 project=cfg.project,
                 domain=cfg.domain,
                 content_md5=md5_bytes,
