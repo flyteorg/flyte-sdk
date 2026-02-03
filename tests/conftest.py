@@ -24,7 +24,11 @@ def ctx_with_test_raw_data_path():
 
 @pytest.fixture
 def ctx_with_preserve_original_types():
-    """Pytest fixture to set up a TaskContext with preserve_original_types=True."""
+    """Pytest fixture to set up a context with preserve_original_types=True.
+
+    Note: preserve_original_types is set on ContextData, not TaskContext,
+    as it's an internal implementation detail that affects type conversion.
+    """
     raw_data_path = RawDataPath.from_local_folder()
     action = ActionID.create_random()
     task_context = TaskContext(
@@ -35,9 +39,14 @@ def ctx_with_preserve_original_types():
         run_base_dir="/tmp/test",
         report=Report(name=action.name),
         mode="local",
-        preserve_original_types=True,
     )
-    ctx = Context(data=ContextData(task_context=task_context, raw_data_path=raw_data_path))
+    ctx = Context(
+        data=ContextData(
+            task_context=task_context,
+            raw_data_path=raw_data_path,
+            preserve_original_types=True,
+        )
+    )
     with ctx:
         yield ctx
 

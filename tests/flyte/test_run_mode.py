@@ -14,7 +14,6 @@ from pathlib import Path
 import pytest
 
 import flyte
-from flyte._context import ctx
 from flyte._run import _get_main_run_mode, _run_mode_var
 
 # Tests for the run mode context variable
@@ -286,51 +285,7 @@ async def test_dataframe_from_local_aio_in_local_mode():
     assert outputs[0] == 4
 
 
-# Tests for preserve_original_types integration with flyte.run
-
-
-def test_preserve_original_types_context_in_runcontext():
-    """Test that preserve_original_types is accessible within a run context via TaskContext."""
-    flyte.init()
-
-    sample_env = flyte.TaskEnvironment(name="test-preserve-original-types")
-
-    @sample_env.task
-    async def check_preserve_types() -> bool:
-        task_context = ctx()
-        return task_context.preserve_original_types if task_context else False
-
-    # Default: preserve_original_types should be False
-    run = flyte.with_runcontext(mode="local").run(check_preserve_types)
-    run.wait()
-    assert run.outputs()[0] is False
-
-    # With preserve_original_types=True
-    run = flyte.with_runcontext(mode="local", preserve_original_types=True).run(check_preserve_types)
-    run.wait()
-    assert run.outputs()[0] is True
-
-
-@pytest.mark.asyncio
-async def test_preserve_original_types_context_in_runcontext_aio():
-    """Test that preserve_original_types is accessible within an async run context via TaskContext."""
-    await flyte.init.aio()
-
-    sample_env = flyte.TaskEnvironment(name="test-preserve-original-types-aio")
-
-    @sample_env.task
-    async def check_preserve_types() -> bool:
-        task_context = ctx()
-        return task_context.preserve_original_types if task_context else False
-
-    # Default: preserve_original_types should be False
-    run = await flyte.with_runcontext(mode="local").run.aio(check_preserve_types)
-    await run.wait.aio()
-    outputs = await run.outputs.aio()
-    assert outputs[0] is False
-
-    # With preserve_original_types=True
-    run = await flyte.with_runcontext(mode="local", preserve_original_types=True).run.aio(check_preserve_types)
-    await run.wait.aio()
-    outputs = await run.outputs.aio()
-    assert outputs[0] is True
+# Note: Tests for preserve_original_types are in tests/flyte/type_engine/test_dataframe_basic.py
+# The preserve_original_types flag affects remote mode output conversion via guess_python_type().
+# In local mode, outputs are returned directly without literal conversion, so the flag has no effect.
+# See test_guess_python_type_returns_pandas_when_preserve_original_types_enabled and related tests.
