@@ -177,7 +177,7 @@ async def _deploy_task(
 
     assert task.parent_env_name is not None
     if isinstance(task.image, Image):
-        image_uri = lookup_image_in_cache(serialization_context, task.parent_env_name, task.image)
+        image_uri: str | None = lookup_image_in_cache(serialization_context, task.parent_env_name, task.image)
     else:
         image_uri = task.image
 
