@@ -63,7 +63,6 @@ jobs:
       - name: Generate docs
         run: |
           uv lock --check
-          uv lock --prerelease allow --check --directory plugins/connectors
 #  # Disabled for now, as it is failing
 #  check-import-profile:
 #    runs-on: ubuntu-latest
