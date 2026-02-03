@@ -26,6 +26,7 @@ jobs:
       - name: Lint
         run: |
           make fmt
+          git diff --exit-code
   mypy:
     name: make mypy
     runs-on: ubuntu-latest
