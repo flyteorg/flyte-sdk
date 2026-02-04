@@ -61,20 +61,22 @@ async def process_job_with_polling(job_id: str) -> str | None:
     )
 
     # Keep polling while result is an int (wait time)
-    try:
-        while isinstance(result, int):
-            wait_seconds = result
-            print(f"Job {job_id} still running, waiting {wait_seconds}s before retry")
-            await asyncio.sleep(wait_seconds)
+    with flyte.group(f"process_job_{job_id}"):
+        try:
+            while isinstance(result, int):
+                wait_seconds = result
+                print(f"Job {job_id} still running, waiting {wait_seconds}s before retry")
+                await asyncio.sleep(wait_seconds)
 
-            attempt += 1
-            # POTENTIAL RACE CONDITION: Using same short_name for different calls
-            result = await poll_job_status.override(short_name=short_name)(
-                job_id=job_id, attempt=attempt
-            )
-    except flyte.errors.RuntimeSystemError as e:
-        print(f"Job {job_id} failed with error: {e}")
-        return None
+                attempt += 1
+                short_name = f"poll_status_{job_id}_{attempt}"
+                # POTENTIAL RACE CONDITION: Using same short_name for different calls
+                result = await poll_job_status.override(short_name=short_name)(
+                    job_id=job_id, attempt=attempt
+                )
+        except flyte.errors.RuntimeSystemError as e:
+            print(f"Job {job_id} failed with error: {e}")
+            return None
 
     return result
 
@@ -84,10 +86,9 @@ async def main(num_jobs: int = 3) -> list[str]:
     """
     Run multiple jobs concurrently, each with its own polling loop.
     """
-    with flyte.group("process_jobs"):
-        results = await asyncio.gather(
-            *[process_job_with_polling(f"job_{i}") for i in range(num_jobs)]
-        )
+    results = await asyncio.gather(
+        *[process_job_with_polling(f"job_{i}") for i in range(num_jobs)]
+    )
     return list(results)
 
 
@@ -96,4 +97,3 @@ if __name__ == "__main__":
     run = flyte.run(main, num_jobs=3)
     print(f"Run name: {run.name}")
     print(f"Run URL: {run.url}")
-    run.wait()
