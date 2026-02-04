@@ -1,4 +1,5 @@
 import datetime
+import json
 from dataclasses import dataclass
 from typing import Any, Dict, Optional
 
@@ -45,7 +46,8 @@ async def _get_bigquery_client(
     project: str, location: str, user_agent: str, google_application_credentials: str
 ) -> bigquery.Client:
     if google_application_credentials is not None:
-        credentials = service_account.Credentials.from_service_account_info(google_application_credentials)
+        info = json.loads(google_application_credentials)
+        credentials = service_account.Credentials.from_service_account_info(info)
     else:
         credentials = None
     cinfo = ClientInfo(user_agent=user_agent)
