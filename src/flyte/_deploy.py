@@ -172,10 +172,14 @@ async def _deploy_task(
     import flyte.report
 
     from ._internal.runtime.convert import convert_upload_default_inputs
-    from ._internal.runtime.task_serde import translate_task_to_wire
+    from ._internal.runtime.task_serde import lookup_image_in_cache, translate_task_to_wire
     from ._internal.runtime.trigger_serde import to_task_trigger
 
-    image_uri = task.image.uri if isinstance(task.image, Image) else task.image
+    assert task.parent_env_name is not None
+    if isinstance(task.image, Image):
+        image_uri: str | None = lookup_image_in_cache(serialization_context, task.parent_env_name, task.image)
+    else:
+        image_uri = task.image
 
     try:
         if dryrun:
@@ -343,12 +347,14 @@ def _update_interface_inputs_and_outputs_docstring(
 
 async def _build_image_bg(env_name: str, image: Image) -> Tuple[str, str]:
     """
-    Build the image in the background and return the environment name and the built image.
+    Build the image in the background and return the environment name and the built image URI.
     """
     from ._build import build
 
     logger.info(f"Building image {image.name} for environment {env_name}")
-    return env_name, await build.aio(image)
+    result = await build.aio(image)
+    assert result.uri is not None, "Image build result URI is None, make sure to wait for the build to complete"
+    return env_name, result.uri
 
 
 async def _build_images(deployment: DeploymentPlan, image_refs: Dict[str, str] | None = None) -> ImageCache:
@@ -365,7 +371,7 @@ async def _build_images(deployment: DeploymentPlan, image_refs: Dict[str, str] |
     images = []
     image_identifier_map = {}
     for env_name, env in deployment.envs.items():
-        if not isinstance(env.image, str):
+        if env.image and not isinstance(env.image, str):
             if env.image._ref_name is not None:
                 if env.image._ref_name in image_refs:
                     # If the image is set in the config, set it as the base_image

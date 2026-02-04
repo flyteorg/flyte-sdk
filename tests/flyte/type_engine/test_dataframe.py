@@ -124,7 +124,7 @@ class MyDF(pd.DataFrame): ...
 
 
 @pytest.mark.asyncio
-async def test_fill_in_literal_type():
+async def test_fill_in_literal_type(ctx_with_test_raw_data_path):
     class TempEncoder(DataFrameEncoder):
         def __init__(self, fmt: str):
             super().__init__(MyDF, "tmpfs://", supported_format=fmt)

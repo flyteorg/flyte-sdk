@@ -1,6 +1,7 @@
+from flyteplugins.snowflake import Snowflake, SnowflakeConfig
+
 import flyte
 from flyte.io import DataFrame
-from flyteplugins.connectors.snowflake import Snowflake, SnowflakeConfig
 
 """
 Example of using Snowflake connector.

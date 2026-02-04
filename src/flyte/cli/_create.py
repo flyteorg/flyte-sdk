@@ -5,7 +5,7 @@ import rich_click as click
 
 import flyte
 import flyte.cli._common as common
-from flyte.cli._option import MutuallyExclusiveOption
+from flyte.cli._option import DependentOption, MutuallyExclusiveOption
 from flyte.remote import SecretTypes
 
 
@@ -46,7 +46,9 @@ def create():
 @click.option(
     "--docker-config-path",
     type=click.Path(exists=True),
+    cls=DependentOption,
     help="Path to Docker config file (defaults to ~/.docker/config.json or $DOCKER_CONFIG).",
+    requires=["from_docker_config"],
 )
 @click.option(
     "--registries",

@@ -2,7 +2,9 @@
 
 from unittest.mock import MagicMock, patch
 
+import flyte
 import pytest
+
 from flyteplugins.wandb import (
     Wandb,
     WandbSweep,
@@ -12,8 +14,6 @@ from flyteplugins.wandb import (
     wandb_sweep_config,
 )
 
-import flyte
-
 
 class TestWandbInitIntegration:
     """Integration tests for @wandb_init decorator with tasks."""
@@ -22,9 +22,7 @@ class TestWandbInitIntegration:
         """Test that a task decorated with @wandb_init has the correct link."""
         env = flyte.TaskEnvironment(name="test-env")
 
-        @wandb_init(
-            project="integration-project", entity="integration-entity", run_mode="new"
-        )
+        @wandb_init(project="integration-project", entity="integration-entity", run_mode="new")
         @env.task
         async def integration_task():
             return "result"
@@ -63,8 +61,8 @@ class TestWandbInitIntegration:
         assert link_2.entity == "entity-2"
         assert link_2.run_mode == "shared"
 
-    @patch("flyteplugins.wandb.decorator.flyte.ctx")
-    @patch("flyteplugins.wandb.decorator._build_init_kwargs")
+    @patch("flyteplugins.wandb._decorator.flyte.ctx")
+    @patch("flyteplugins.wandb._decorator._build_init_kwargs")
     def test_wandb_init_with_context_config(self, mock_build_kwargs, mock_ctx):
         """Test @wandb_init with wandb_config from context."""
         mock_context = MagicMock()
@@ -143,9 +141,7 @@ class TestContextManagerIntegration:
         mock_custom_context.return_value = mock_cm
 
         # Simulate using wandb_config in with block
-        config = wandb_config(
-            project="test-project", entity="test-entity", tags=["test"]
-        )
+        config = wandb_config(project="test-project", entity="test-entity", tags=["test"])
 
         with config:
             # Inside the context, config should be active
@@ -157,9 +153,7 @@ class TestContextManagerIntegration:
 
     @patch("flyte.ctx")
     @patch("flyte.custom_context")
-    def test_wandb_sweep_config_context_manager_workflow(
-        self, mock_custom_context, mock_ctx
-    ):
+    def test_wandb_sweep_config_context_manager_workflow(self, mock_custom_context, mock_ctx):
         """Test complete workflow with wandb_sweep_config as context manager."""
         mock_context = MagicMock()
         mock_context.custom_context = {}

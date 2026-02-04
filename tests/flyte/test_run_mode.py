@@ -73,47 +73,7 @@ def test_get_main_run_mode_returns_remote():
     _run_mode_var.set(None)
 
 
-# Tests for with_runcontext() setting the run mode
-
-
-def test_with_runcontext_sets_local_mode():
-    """Test that with_runcontext(mode='local') sets _run_mode_var to 'local'."""
-    flyte.init()
-    _run_mode_var.set(None)  # Reset first
-
-    # with_runcontext should set the mode
-    flyte.with_runcontext(mode="local")
-
-    assert _get_main_run_mode() == "local"
-    _run_mode_var.set(None)
-
-
-def test_with_runcontext_sets_remote_mode():
-    """Test that with_runcontext(mode='remote') sets _run_mode_var to 'remote'."""
-    flyte.init()
-    _run_mode_var.set(None)  # Reset first
-
-    # with_runcontext should set the mode
-    flyte.with_runcontext(mode="remote")
-
-    assert _get_main_run_mode() == "remote"
-    _run_mode_var.set(None)
-
-
-def test_with_runcontext_sets_none_mode():
-    """Test that with_runcontext(mode=None) sets _run_mode_var to None."""
-    flyte.init()
-    _run_mode_var.set("local")  # Set to something first
-
-    # with_runcontext with mode=None should set to None
-    flyte.with_runcontext(mode=None)
-
-    assert _get_main_run_mode() is None
-
-
 # Tests for run mode integration with flyte.run
-
-
 def test_flyte_run_local_mode():
     """Test that flyte.run in local mode works correctly."""
     flyte.init()
@@ -123,6 +83,7 @@ def test_flyte_run_local_mode():
 
     @sample_env.task
     async def simple_task(x: int) -> int:
+        assert _get_main_run_mode() == "local"
         return x * 2
 
     run = flyte.with_runcontext(mode="local").run(simple_task, x=5)
@@ -140,6 +101,7 @@ async def test_flyte_run_aio_local_mode():
 
     @sample_env.task
     async def simple_task(x: int) -> int:
+        assert _get_main_run_mode() == "local"
         return x * 2
 
     run = await flyte.with_runcontext(mode="local").run.aio(simple_task, x=5)
@@ -321,3 +283,9 @@ async def test_dataframe_from_local_aio_in_local_mode():
     await run.wait.aio()
     outputs = await run.outputs.aio()
     assert outputs[0] == 4
+
+
+# Note: Tests for preserve_original_types are in tests/flyte/type_engine/test_dataframe_basic.py
+# The preserve_original_types flag affects remote mode output conversion via guess_python_type().
+# In local mode, outputs are returned directly without literal conversion, so the flag has no effect.
+# See test_guess_python_type_returns_pandas_when_preserve_original_types_enabled and related tests.

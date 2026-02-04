@@ -15,11 +15,15 @@ class Wandb(Link):
         host: Base W&B host URL
         project: W&B project name (overrides context config if provided)
         entity: W&B entity/team name (overrides context config if provided)
-        run_mode: Controls whether to create a new W&B run or share an existing one:
-
-            1. "auto" (default): Creates new run if no parent run exists, otherwise shares parent's run
-            2. "new": Always creates a new wandb run with a unique ID
-            3. "shared": Always shares the parent's run ID (useful for child tasks)
+        run_mode: Determines the link behavior:
+            - "auto" (default): Use parent's run if available, otherwise create new
+            - "new": Always creates a new wandb run with a unique ID
+            - "shared": Always shares the parent's run ID (useful for child tasks)
+            In distributed training context:
+            - "auto" (default): Single-node: only rank 0 logs
+              Multi-node: only local rank 0 of each worker logs
+            - "shared": Link to a single shared W&B run.
+            - "new": Link to group view.
         id: Optional W&B run ID (overrides context config if provided)
         name: Link name in the Flyte UI
     """
@@ -30,6 +34,10 @@ class Wandb(Link):
     run_mode: RunMode = "auto"
     id: Optional[str] = None
     name: str = "Weights & Biases"
+    # Internal: set by @wandb_init for distributed training tasks
+    _is_distributed: bool = False
+    # Internal: worker index for multi-node distributed training (set by @wandb_init)
+    _worker_index: Optional[int] = None
 
     def get_link(
         self,
@@ -69,6 +77,35 @@ class Wandb(Link):
         if not wandb_project or not wandb_entity:
             return self.host
 
+        # Distributed training links - derived from decorator-time info (plugin_config)
+        # _is_distributed and _worker_index are set by @wandb_init based on Elastic config
+        is_multi_node = self._worker_index is not None
+
+        if self._is_distributed:
+            base_id = user_provided_id or f"{run_name}-{action_name}"
+
+            # For run_mode="new", link to group view
+            if run_mode == "new":
+                if is_multi_node:
+                    # Multi-node: link to per-worker group
+                    group_name = f"{base_id}-worker-{self._worker_index}"
+                else:
+                    # Single-node: link to single group
+                    group_name = base_id
+
+                return f"{self.host}/{wandb_entity}/{wandb_project}/groups/{group_name}"
+
+            # For run_mode="auto" or "shared", link to run directly
+            if is_multi_node:
+                # Multi-node: link to worker-specific run
+                wandb_run_id = f"{base_id}-worker-{self._worker_index}"
+            else:
+                # Single-node: link to single run
+                wandb_run_id = base_id
+
+            return f"{self.host}/{wandb_entity}/{wandb_project}/runs/{wandb_run_id}"
+
+        # Non-distributed: link to specific run
         # Determine run ID based on run_mode setting
         if run_mode == "new":
             # Always create new run - use user-provided ID if available, otherwise generate

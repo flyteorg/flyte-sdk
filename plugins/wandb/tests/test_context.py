@@ -6,13 +6,12 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from flyteplugins.wandb import (
-    _WandBConfig,
-    _WandBSweepConfig,
     get_wandb_context,
     get_wandb_sweep_context,
     wandb_config,
     wandb_sweep_config,
 )
+from flyteplugins.wandb._context import _WandBConfig, _WandBSweepConfig
 
 
 class TestWandBConfig:
@@ -124,7 +123,7 @@ class TestWandBConfig:
         assert config.get("nonexistent") is None
         assert config.get("nonexistent", "default") == "default"
 
-    @patch("flyteplugins.wandb.context.flyte.ctx")
+    @patch("flyteplugins.wandb._context.flyte.ctx")
     def test_wandb_config_dict_protocol_setitem(self, mock_ctx):
         """Test __setitem__ method updates Flyte context."""
         mock_context = MagicMock()
@@ -174,7 +173,7 @@ class TestWandBConfig:
 
         assert result == "default-value"
 
-    @patch("flyteplugins.wandb.context.flyte.ctx")
+    @patch("flyteplugins.wandb._context.flyte.ctx")
     def test_wandb_config_dict_protocol_update(self, mock_ctx):
         """Test update() method updates Flyte context."""
         mock_context = MagicMock()
@@ -410,12 +409,8 @@ class TestWandBSweepConfig:
         result = config.to_dict()
 
         assert result["wandb_sweep_method"] == "random"
-        assert result["wandb_sweep_metric"] == json.dumps(
-            {"name": "loss", "goal": "minimize"}
-        )
-        assert result["wandb_sweep_parameters"] == json.dumps(
-            {"lr": {"min": 0.001, "max": 0.1}}
-        )
+        assert result["wandb_sweep_metric"] == json.dumps({"name": "loss", "goal": "minimize"})
+        assert result["wandb_sweep_parameters"] == json.dumps({"lr": {"min": 0.001, "max": 0.1}})
 
     def test_wandb_sweep_config_from_dict(self):
         """Test creating WandBSweepConfig from dict."""
