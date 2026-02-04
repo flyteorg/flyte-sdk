@@ -137,61 +137,61 @@ compute_image = flyte.Image.from_debian_base().with_pip_packages(
 pytorch_env = flyte.TaskEnvironment(
     name="scale_test_pytorch",
     image=pytorch_image,
-    resources=flyte.Resources(cpu=2, memory="4Gi"),
+    resources=flyte.Resources(cpu="500m", memory="512Mi"),
 )
 
 tensorflow_env = flyte.TaskEnvironment(
     name="scale_test_tensorflow",
     image=tensorflow_image,
-    resources=flyte.Resources(cpu=2, memory="4Gi"),
+    resources=flyte.Resources(cpu="500m", memory="512Mi"),
 )
 
 jax_env = flyte.TaskEnvironment(
     name="scale_test_jax",
     image=jax_image,
-    resources=flyte.Resources(cpu=2, memory="4Gi"),
+    resources=flyte.Resources(cpu="500m", memory="512Mi"),
 )
 
 transformers_env = flyte.TaskEnvironment(
     name="scale_test_transformers",
     image=transformers_image,
-    resources=flyte.Resources(cpu=2, memory="4Gi"),
+    resources=flyte.Resources(cpu="500m", memory="512Mi"),
 )
 
 scipy_env = flyte.TaskEnvironment(
     name="scale_test_scipy",
     image=scipy_image,
-    resources=flyte.Resources(cpu=1, memory="2Gi"),
+    resources=flyte.Resources(cpu="500m", memory="512Mi"),
 )
 
 vision_env = flyte.TaskEnvironment(
     name="scale_test_vision",
     image=vision_image,
-    resources=flyte.Resources(cpu=1, memory="2Gi"),
+    resources=flyte.Resources(cpu="500m", memory="512Mi"),
 )
 
 data_env = flyte.TaskEnvironment(
     name="scale_test_data",
     image=data_image,
-    resources=flyte.Resources(cpu=1, memory="2Gi"),
+    resources=flyte.Resources(cpu="500m", memory="512Mi"),
 )
 
 requests_env = flyte.TaskEnvironment(
     name="scale_test_requests",
     image=requests_image,
-    resources=flyte.Resources(cpu=1, memory="1Gi"),
+    resources=flyte.Resources(cpu="500m", memory="512Mi"),
 )
 
 minimal_env = flyte.TaskEnvironment(
     name="scale_test_minimal",
     image=minimal_image,
-    resources=flyte.Resources(cpu=1, memory="1Gi"),
+    resources=flyte.Resources(cpu="500m", memory="512Mi"),
 )
 
 compute_env = flyte.TaskEnvironment(
     name="scale_test_compute",
     image=compute_image,
-    resources=flyte.Resources(cpu=1, memory="2Gi"),
+    resources=flyte.Resources(cpu="500m", memory="512Mi"),
 )
 
 # ============================================================================
@@ -504,7 +504,7 @@ IMAGE_TYPES = [
 # depends_on ensures all worker images are built before orchestrator runs
 orchestrator_env = flyte.TaskEnvironment(
     name="scale_test_varied_orchestrator",
-    resources=flyte.Resources(cpu=1, memory="1Gi"),
+    resources=flyte.Resources(cpu="500m", memory="512Mi"),
     depends_on=[
         pytorch_env,
         tensorflow_env,
