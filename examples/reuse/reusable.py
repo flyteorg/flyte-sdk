@@ -2,6 +2,7 @@ import asyncio
 from typing import List
 
 import flyte
+from pathlib import Path
 
 # PATH_TO_FASTTASK_WORKER = pathlib.Path("../../../private/flyte/fasttask/worker-v2")
 #
@@ -18,14 +19,17 @@ import flyte
 #     .with_local_v2()
 # )
 
-actor_image = flyte.Image.from_debian_base().with_pip_packages("unionai-reuse==0.1.3")
+actor_image = (flyte.Image.from_debian_base().with_pip_packages("unionai-reuse==0.1.10")
+               .with_env_vars({"PYTHONPATH":"/root:/root/special"})
+               .with_source_file(Path("./custom.py").resolve(), "/root/special/custom.py"))
 
 env = flyte.TaskEnvironment(
     name="reusable",
-    resources=flyte.Resources(memory="500Mi", cpu=1),
+    resources=flyte.Resources(memory="900Mi", cpu=2),
     reusable=flyte.ReusePolicy(
-        replicas=(1, 4),  # Min of 2 replacas are needed to ensure no-starvation of tasks.
+        replicas=(1, 1),  # Min of 2 replacas are needed to ensure no-starvation of tasks.
         idle_ttl=300,
+        concurrency=2,
     ),
     image=actor_image,
 )
@@ -33,6 +37,8 @@ env = flyte.TaskEnvironment(
 
 @env.task
 async def square(x: int) -> int:
+    from custom import get_int
+    print(f"get int {get_int()=}", flush=True)
     return x**2
 
 
@@ -61,7 +67,7 @@ async def main(n: int) -> List[int]:
 
 if __name__ == "__main__":
     flyte.init_from_config()  # establish remote connection from within your script.
-    run = flyte.run(main, n=30)  # run remotely inline and pass data.
+    run = flyte.run(square, x=30)  # run remotely inline and pass data.
     print(run.url)
     run.wait()  # wait for the run to finish.
 
