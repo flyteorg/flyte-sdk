@@ -35,7 +35,8 @@ def transform_native_to_typed_interface(
     inputs_list = transform_variable_map(interface.get_input_types())
     outputs_list = transform_variable_map(interface.outputs)
     return interface_pb2.TypedInterface(
-        inputs=interface_pb2.VariableMap(variables=inputs_list), outputs=interface_pb2.VariableMap(variables=outputs_list)
+        inputs=interface_pb2.VariableMap(variables=inputs_list),
+        outputs=interface_pb2.VariableMap(variables=outputs_list),
     )
 
 

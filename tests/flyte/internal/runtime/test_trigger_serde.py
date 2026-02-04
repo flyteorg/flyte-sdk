@@ -351,9 +351,7 @@ class TestToTaskTrigger:
             variables=[
                 VariableEntry(
                     key="trigger_time",
-                    value=interface_pb2.Variable(
-                        type=types_pb2.LiteralType(simple=types_pb2.SimpleType.DATETIME)
-                    ),
+                    value=interface_pb2.Variable(type=types_pb2.LiteralType(simple=types_pb2.SimpleType.DATETIME)),
                 )
             ]
         )
@@ -428,9 +426,7 @@ class TestToTaskTrigger:
             variables=[
                 VariableEntry(
                     key="trigger_time",
-                    value=interface_pb2.Variable(
-                        type=types_pb2.LiteralType(simple=types_pb2.SimpleType.DATETIME)
-                    ),
+                    value=interface_pb2.Variable(type=types_pb2.LiteralType(simple=types_pb2.SimpleType.DATETIME)),
                 ),
                 VariableEntry(
                     key="count",
@@ -541,9 +537,7 @@ class TestAutomationSpec:
             variables=[
                 VariableEntry(
                     key="scheduled_at",
-                    value=interface_pb2.Variable(
-                        type=types_pb2.LiteralType(simple=types_pb2.SimpleType.DATETIME)
-                    ),
+                    value=interface_pb2.Variable(type=types_pb2.LiteralType(simple=types_pb2.SimpleType.DATETIME)),
                 )
             ]
         )

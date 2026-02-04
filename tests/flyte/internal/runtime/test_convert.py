@@ -433,7 +433,7 @@ def test_generate_inputs_hash_from_proto(name, inputs, expected_hash):
                             key="input_1",
                             value=Variable(
                                 type=LiteralType(simple=SimpleType.INTEGER),
-                            )
+                            ),
                         )
                     ]
                 ),
@@ -443,7 +443,7 @@ def test_generate_inputs_hash_from_proto(name, inputs, expected_hash):
                             key="output_1",
                             value=Variable(
                                 type=LiteralType(simple=SimpleType.INTEGER),
-                            )
+                            ),
                         )
                     ]
                 ),
@@ -459,7 +459,7 @@ def test_generate_inputs_hash_from_proto(name, inputs, expected_hash):
                             key="input_1",
                             value=Variable(
                                 type=LiteralType(simple=SimpleType.STRING),
-                            )
+                            ),
                         )
                     ]
                 ),
@@ -469,7 +469,7 @@ def test_generate_inputs_hash_from_proto(name, inputs, expected_hash):
                             key="output_1",
                             value=Variable(
                                 type=LiteralType(simple=SimpleType.STRING),
-                            )
+                            ),
                         )
                     ]
                 ),
@@ -485,7 +485,7 @@ def test_generate_inputs_hash_from_proto(name, inputs, expected_hash):
                             key="input_1",
                             value=Variable(
                                 type=LiteralType(simple=SimpleType.FLOAT),
-                            )
+                            ),
                         )
                     ]
                 ),
@@ -495,7 +495,7 @@ def test_generate_inputs_hash_from_proto(name, inputs, expected_hash):
                             key="output_1",
                             value=Variable(
                                 type=LiteralType(simple=SimpleType.FLOAT),
-                            )
+                            ),
                         )
                     ]
                 ),
@@ -511,7 +511,7 @@ def test_generate_inputs_hash_from_proto(name, inputs, expected_hash):
                             key="input_1",
                             value=Variable(
                                 type=LiteralType(simple=SimpleType.BOOLEAN),
-                            )
+                            ),
                         )
                     ]
                 ),
@@ -521,7 +521,7 @@ def test_generate_inputs_hash_from_proto(name, inputs, expected_hash):
                             key="output_1",
                             value=Variable(
                                 type=LiteralType(simple=SimpleType.BOOLEAN),
-                            )
+                            ),
                         )
                     ]
                 ),
@@ -539,7 +539,7 @@ def test_generate_inputs_hash_from_proto(name, inputs, expected_hash):
                                 type=LiteralType(
                                     blob=BlobType(format="csv", dimensionality=BlobType.BlobDimensionality.SINGLE)
                                 ),
-                            )
+                            ),
                         )
                     ]
                 ),
@@ -551,7 +551,7 @@ def test_generate_inputs_hash_from_proto(name, inputs, expected_hash):
                                 type=LiteralType(
                                     blob=BlobType(format="csv", dimensionality=BlobType.BlobDimensionality.SINGLE)
                                 ),
-                            )
+                            ),
                         )
                     ]
                 ),
@@ -567,7 +567,7 @@ def test_generate_inputs_hash_from_proto(name, inputs, expected_hash):
                             key="input_1",
                             value=Variable(
                                 type=LiteralType(collection_type=LiteralType(simple=SimpleType.INTEGER)),
-                            )
+                            ),
                         )
                     ]
                 ),
@@ -577,7 +577,7 @@ def test_generate_inputs_hash_from_proto(name, inputs, expected_hash):
                             key="output_1",
                             value=Variable(
                                 type=LiteralType(collection_type=LiteralType(simple=SimpleType.INTEGER)),
-                            )
+                            ),
                         )
                     ]
                 ),
@@ -593,7 +593,7 @@ def test_generate_inputs_hash_from_proto(name, inputs, expected_hash):
                             key="input_1",
                             value=Variable(
                                 type=LiteralType(map_value_type=LiteralType(simple=SimpleType.STRING)),
-                            )
+                            ),
                         )
                     ]
                 ),
@@ -603,7 +603,7 @@ def test_generate_inputs_hash_from_proto(name, inputs, expected_hash):
                             key="output_1",
                             value=Variable(
                                 type=LiteralType(map_value_type=LiteralType(simple=SimpleType.STRING)),
-                            )
+                            ),
                         )
                     ]
                 ),
@@ -618,8 +618,10 @@ def test_generate_inputs_hash_from_proto(name, inputs, expected_hash):
                         VariableEntry(
                             key="input_1",
                             value=Variable(
-                                type=LiteralType(enum_type=EnumType(values=["PENDING", "RUNNING", "COMPLETED", "FAILED"])),
-                            )
+                                type=LiteralType(
+                                    enum_type=EnumType(values=["PENDING", "RUNNING", "COMPLETED", "FAILED"])
+                                ),
+                            ),
                         )
                     ]
                 ),
@@ -628,8 +630,10 @@ def test_generate_inputs_hash_from_proto(name, inputs, expected_hash):
                         VariableEntry(
                             key="output_1",
                             value=Variable(
-                                type=LiteralType(enum_type=EnumType(values=["PENDING", "RUNNING", "COMPLETED", "FAILED"])),
-                            )
+                                type=LiteralType(
+                                    enum_type=EnumType(values=["PENDING", "RUNNING", "COMPLETED", "FAILED"])
+                                ),
+                            ),
                         )
                     ]
                 ),
@@ -652,7 +656,7 @@ def test_generate_inputs_hash_from_proto(name, inputs, expected_hash):
                                         ]
                                     )
                                 ),
-                            )
+                            ),
                         )
                     ]
                 ),
@@ -669,7 +673,7 @@ def test_generate_inputs_hash_from_proto(name, inputs, expected_hash):
                                         ]
                                     )
                                 ),
-                            )
+                            ),
                         )
                     ]
                 ),
@@ -742,7 +746,7 @@ def test_generate_inputs_hash_from_proto(name, inputs, expected_hash):
                                 type=LiteralType(
                                     collection_type=LiteralType(collection_type=LiteralType(simple=SimpleType.FLOAT))
                                 ),
-                            )
+                            ),
                         )
                     ]
                 ),
@@ -754,7 +758,7 @@ def test_generate_inputs_hash_from_proto(name, inputs, expected_hash):
                                 type=LiteralType(
                                     collection_type=LiteralType(collection_type=LiteralType(simple=SimpleType.FLOAT))
                                 ),
-                            )
+                            ),
                         )
                     ]
                 ),
@@ -772,7 +776,7 @@ def test_generate_inputs_hash_from_proto(name, inputs, expected_hash):
                                 type=LiteralType(
                                     map_value_type=LiteralType(collection_type=LiteralType(simple=SimpleType.INTEGER))
                                 ),
-                            )
+                            ),
                         )
                     ]
                 ),
@@ -784,7 +788,7 @@ def test_generate_inputs_hash_from_proto(name, inputs, expected_hash):
                                 type=LiteralType(
                                     map_value_type=LiteralType(collection_type=LiteralType(simple=SimpleType.INTEGER))
                                 ),
-                            )
+                            ),
                         )
                     ]
                 ),

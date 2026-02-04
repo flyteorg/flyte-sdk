@@ -1,5 +1,5 @@
 import inspect
-from typing import Any, Dict, Iterable, Tuple, Type, cast
+from typing import Any, Dict, Iterable, Tuple, Type
 
 from flyteidl2.core import interface_pb2, literals_pb2
 from flyteidl2.task import common_pb2
