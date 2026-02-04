@@ -312,22 +312,55 @@ def test_guess_python_type_returns_dataframe_for_no_tag():
     assert pt is DataFrame
 
 
-def test_guess_python_type_returns_pandas_for_pandas_tag():
-    """Test guess_python_type returns pd.DataFrame when pandas tag is present."""
+def test_guess_python_type_returns_dataframe_by_default_even_with_tag():
+    """Test guess_python_type returns DataFrame by default even when pandas tag is present.
+
+    This is because preserve_original_types defaults to False.
+    """
     fdt = DataFrameTransformerEngine()
     lt = types_pb2.LiteralType(
         structured_dataset_type=types_pb2.StructuredDatasetType(),
         structure=types_pb2.TypeStructure(tag="pandas.core.frame.DataFrame"),
     )
     pt = fdt.guess_python_type(lt)
+    # Default behavior: always return DataFrame
+    assert pt is DataFrame
+
+
+def test_guess_python_type_returns_pandas_when_preserve_original_types_enabled(ctx_with_preserve_original_types):
+    """Test guess_python_type returns pd.DataFrame when preserve_original_types is enabled."""
+    # Ensure pandas handlers are registered (needed for pd.DataFrame to be in DECODERS)
+    lazy_import_dataframe_handler()
+
+    fdt = DataFrameTransformerEngine()
+    lt = types_pb2.LiteralType(
+        structured_dataset_type=types_pb2.StructuredDatasetType(),
+        structure=types_pb2.TypeStructure(tag="pandas.core.frame.DataFrame"),
+    )
+
+    # With preserve_original_types=True (set via ctx_with_preserve_original_types fixture)
+    pt = fdt.guess_python_type(lt)
     assert pt is pd.DataFrame
 
 
-def test_guess_python_type_roundtrip_pandas():
-    """Test roundtrip: to_literal_type -> guess_python_type for pd.DataFrame."""
+def test_guess_python_type_roundtrip_pandas_with_preserve_original_types(ctx_with_preserve_original_types):
+    """Test roundtrip: to_literal_type -> guess_python_type for pd.DataFrame with preserve_original_types."""
+    # Ensure pandas handlers are registered (needed for pd.DataFrame to be in DECODERS)
+    lazy_import_dataframe_handler()
+
     lt = TypeEngine.to_literal_type(pd.DataFrame)
+
+    # With preserve_original_types=True (set via ctx_with_preserve_original_types fixture)
     pt = TypeEngine.guess_python_type(lt)
     assert pt is pd.DataFrame
+
+
+def test_guess_python_type_roundtrip_pandas_default_returns_dataframe():
+    """Test roundtrip: to_literal_type -> guess_python_type for pd.DataFrame returns DataFrame by default."""
+    lt = TypeEngine.to_literal_type(pd.DataFrame)
+    # Default behavior: return DataFrame even for pd.DataFrame literal type
+    pt = TypeEngine.guess_python_type(lt)
+    assert pt is DataFrame
 
 
 def test_guess_python_type_roundtrip_dataframe():
@@ -337,13 +370,19 @@ def test_guess_python_type_roundtrip_dataframe():
     assert pt is DataFrame
 
 
-def test_guess_python_type_fallback_for_unknown_tag():
+def test_guess_python_type_fallback_for_unknown_tag(ctx_with_preserve_original_types):
     """Test guess_python_type falls back to DataFrame for unknown tags."""
+    # Ensure pandas handlers are registered (needed for pd.DataFrame to be in DECODERS)
+    lazy_import_dataframe_handler()
+
     fdt = DataFrameTransformerEngine()
     lt = types_pb2.LiteralType(
         structured_dataset_type=types_pb2.StructuredDatasetType(),
         structure=types_pb2.TypeStructure(tag="unknown.module.UnknownDataFrame"),
     )
+
+    # Even with preserve_original_types=True (set via ctx_with_preserve_original_types fixture),
+    # should fall back to DataFrame for unknown types
     pt = fdt.guess_python_type(lt)
     # Should fall back to DataFrame for unknown types
     assert pt is DataFrame
