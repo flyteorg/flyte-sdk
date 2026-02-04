@@ -189,6 +189,16 @@
 #    See the License for the specific language governing permissions and
 #    limitations under the License.
 
+# NOTICE: This file contains code adapted from Docker's docker-py project:
+# https://github.com/docker/docker-py
+#
+# Specifically adapted from:
+# - docker/utils/build.py (PatternMatcher, Pattern classes and path utilities)
+# - docker/utils/fnmatch.py (fnmatch implementation)
+#
+# The code has been adapted for use in the Flyte project to support .dockerignore
+# pattern matching without requiring docker-py as a dependency.
+
 import os
 import re
 import sys
@@ -198,6 +208,7 @@ IS_WINDOWS_PLATFORM = sys.platform == "win32"
 _SEP = re.compile("/|\\\\") if IS_WINDOWS_PLATFORM else re.compile("/")
 
 # ========== fnmatch implementation ==========
+# reference: https://github.com/docker/docker-py/blob/9ad4bddc9ee23f3646f256280a21ef86274e39bc/docker/utils/fnmatch.py
 _fnmatch_cache: dict[str, re.Pattern[str]] = {}
 _FNMATCH_MAXCACHE = 100
 
@@ -281,6 +292,7 @@ def normalize_slashes(p):
 
 
 # ========== Pattern class ==========
+# reference: https://github.com/docker/docker-py/blob/9ad4bddc9ee23f3646f256280a21ef86274e39bc/docker/utils/build.py#L222
 class Pattern:
     """Represents a single .dockerignore pattern."""
 
