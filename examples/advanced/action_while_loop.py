@@ -37,7 +37,7 @@ async def poll_job_status(job_id: str, attempt: int) -> Union[int, str]:
     print(f"Polling job {job_id}, attempt {attempt}")
 
     # Simulate job completion after a few attempts
-    if attempt >= 3:
+    if attempt >= 50:
         return f"job_{job_id}_completed"
 
     # Return wait time (in seconds) to indicate job is still running
@@ -61,23 +61,22 @@ async def process_job_with_polling(job_id: str) -> str | None:
     )
 
     # Keep polling while result is an int (wait time)
-    with flyte.group(f"process_job_{job_id}"):
-        try:
-            while isinstance(result, int):
-                wait_seconds = result
-                print(f"Job {job_id} still running, waiting {wait_seconds}s before retry")
-                await asyncio.sleep(wait_seconds)
+    try:
+        while isinstance(result, int):
+            wait_seconds = result
+            print(f"Job {job_id} still running, waiting {wait_seconds}s before retry")
+            await asyncio.sleep(wait_seconds)
 
-                attempt += 1
-                short_name = f"poll_status_{job_id}_{attempt}"
-                # POTENTIAL RACE CONDITION: Using same short_name for different calls
-                result = await poll_job_status.override(short_name=short_name)(
-                    job_id=job_id, attempt=attempt
-                )
-        except flyte.errors.RuntimeSystemError as e:
-            print(f"Job {job_id} failed with error: {e}")
-            return None
+            attempt += 1
+            # POTENTIAL RACE CONDITION: Using same short_name for different calls
+            result = await poll_job_status.override(short_name=short_name)(
+                job_id=job_id, attempt=attempt
+            )
+    except flyte.errors.RuntimeSystemError as e:
+        print(f"Job {job_id} failed with error: {e}")
+        raise
 
+    print(f"Job {job_id} completed")
     return result
 
 
@@ -86,9 +85,10 @@ async def main(num_jobs: int = 3) -> list[str]:
     """
     Run multiple jobs concurrently, each with its own polling loop.
     """
-    results = await asyncio.gather(
-        *[process_job_with_polling(f"job_{i}") for i in range(num_jobs)]
-    )
+    with flyte.group("process_jobs"):
+        results = await asyncio.gather(
+            *[process_job_with_polling(f"job_{i}") for i in range(num_jobs)]
+        )
     return list(results)
 
 
