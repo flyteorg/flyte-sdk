@@ -415,6 +415,7 @@ class WorkDirHandler:
 
 def _get_secret_commands(layers: typing.Tuple[Layer, ...]) -> typing.List[str]:
     commands = []
+    seen_secrets: typing.Set[int] = set()
 
     def _get_secret_command(secret: str | Secret) -> typing.List[str]:
         if isinstance(secret, str):
@@ -433,7 +434,11 @@ def _get_secret_commands(layers: typing.Tuple[Layer, ...]) -> typing.List[str]:
         if isinstance(layer, (PipOption, AptPackages, Commands)):
             if layer.secret_mounts:
                 for secret_mount in layer.secret_mounts:
-                    commands.extend(_get_secret_command(secret_mount))
+                    secret = Secret(key=secret_mount) if isinstance(secret_mount, str) else secret_mount
+                    secret_id = hash(secret)
+                    if secret_id not in seen_secrets:
+                        seen_secrets.add(secret_id)
+                        commands.extend(_get_secret_command(secret_mount))
     return commands
 
 
