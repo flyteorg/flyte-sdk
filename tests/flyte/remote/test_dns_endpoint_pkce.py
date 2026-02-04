@@ -3,7 +3,7 @@ from unittest import mock
 
 import grpc
 import grpc.aio
-from flyteidl.admin import project_pb2
+from flyteidl2.project import project_service_pb2
 
 from flyte.remote._client.controlplane import ClientSet
 
@@ -20,7 +20,7 @@ class TestDnsEndpointWithPkce(unittest.TestCase):
 
         # Mock the admin client and its ListProjects method
         mock_admin_client = mock.AsyncMock()
-        mock_projects_response = project_pb2.Projects()
+        mock_projects_response = project_service_pb2.Projects()
         mock_admin_client.ListProjects.return_value = mock_projects_response
 
         # Create a ClientSet with mocked internals
@@ -37,7 +37,7 @@ class TestDnsEndpointWithPkce(unittest.TestCase):
             mock_create_channel.assert_called_once_with(endpoint=endpoint, insecure=False, auth_type="Pkce")
 
             # Call ListProjects and verify it works
-            request = project_pb2.ProjectListRequest()
+            request = project_service_pb2.ProjectListRequest()
             await client_set.project_domain_service.ListProjects(request)
 
             # Verify ListProjects was called

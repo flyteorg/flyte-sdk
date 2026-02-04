@@ -644,7 +644,6 @@ dependencies = [
     { name = "click" },
     { name = "cloudpickle" },
     { name = "docstring-parser" },
-    { name = "flyteidl" },
     { name = "flyteidl2" },
     { name = "fsspec" },
     { name = "grpcio" },
@@ -701,7 +700,6 @@ requires-dist = [
     { name = "click", specifier = ">=8.2.1" },
     { name = "cloudpickle", specifier = ">=3.1.1" },
     { name = "docstring-parser", specifier = ">=0.16" },
-    { name = "flyteidl", specifier = ">=1.15.4b0,<2.0.0" },
     { name = "flyteidl2", specifier = "==2.0.1" },
     { name = "fsspec", specifier = ">=2025.3.0" },
     { name = "grpcio", specifier = ">=1.71.0" },
@@ -741,20 +739,6 @@ dev = [
     { name = "pytest-xdist" },
     { name = "ruff", specifier = ">=0.11.0" },
     { name = "setuptools-scm", specifier = ">=8.2.0" },
-]
-
-[[package]]
-name = "flyteidl"
-version = "1.16.1"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "googleapis-common-protos" },
-    { name = "protobuf" },
-    { name = "protoc-gen-openapiv2" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/5f/f1/afdff6495609e68d10be9aea282f7fde3ab270a5e665b8f491102972b646/flyteidl-1.16.1.tar.gz", hash = "sha256:d834b8a280b2e064ff0ee906dd0401bd83bdb342136fbc84c9cc2621bd05a392", size = 130510, upload-time = "2025-09-13T01:11:02.702Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/dd/15/f07eedf9f47f3644adebc997be1dcf595447aa1ee1bac6b030d282611739/flyteidl-1.16.1-py3-none-any.whl", hash = "sha256:3918732f15c13701619ced7f8063860020859d41f3204dd53fffaf095df1bd53", size = 221739, upload-time = "2025-09-13T01:11:00.754Z" },
 ]
 
 [[package]]
