@@ -338,7 +338,9 @@ def _get_layers_proto(image: Image, context_path: Path) -> "image_definition_pb2
                         )
                 case "install_project":
                     # Copy the entire project
-                    pyproject_dir_dst = copy_files_to_context(layer.pyproject.parent, context_path, docker_ignore_patterns)
+                    pyproject_dir_dst = copy_files_to_context(
+                        layer.pyproject.parent, context_path, docker_ignore_patterns
+                    )
                 case _:
                     raise ValueError(f"Invalid project install mode: {layer.project_install_mode}")
 
