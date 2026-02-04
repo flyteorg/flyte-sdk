@@ -3,7 +3,7 @@ import shutil
 import subprocess
 import tempfile
 import typing
-from pathlib import Path, PurePath
+from pathlib import Path
 from string import Template
 from typing import TYPE_CHECKING, ClassVar, Optional, Protocol, cast
 
@@ -388,29 +388,7 @@ class CopyConfigHandler:
     async def handle(
         layer: CopyConfig, context_path: Path, dockerfile: str, docker_ignore_patterns: list[str] = []
     ) -> str:
-        # Copy the source config file or directory to the context path
-        if layer.src.is_absolute() or ".." in str(layer.src):
-            rel_path = PurePath(*layer.src.parts[1:])
-            dst_path = context_path / "_flyte_abs_context" / rel_path
-        else:
-            dst_path = context_path / layer.src
-
-        dst_path.parent.mkdir(parents=True, exist_ok=True)
-        abs_path = layer.src.absolute()
-
-        if layer.src.is_file():
-            # Copy the file
-            shutil.copy(abs_path, dst_path)
-        elif layer.src.is_dir():
-            # Copy the entire directory
-            shutil.copytree(
-                abs_path, dst_path, dirs_exist_ok=True, ignore=shutil.ignore_patterns(*docker_ignore_patterns)
-            )
-        else:
-            logger.error(f"Source path not exists: {layer.src}")
-            return dockerfile
-
-        # Add a copy command to the dockerfile
+        dst_path = copy_files_to_context(layer.src, context_path, docker_ignore_patterns)
         dockerfile += f"\nCOPY {dst_path.relative_to(context_path)} {layer.dst}\n"
         return dockerfile
 
