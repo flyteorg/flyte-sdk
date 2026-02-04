@@ -234,10 +234,11 @@ Missing required parameter(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in mi
 
         console = common.get_console()
 
-        # 2. Execute with a UX Status Spinner
+        # 2. Execute with a UX Status Spinner (disabled for json/table-simple)
         try:
-            with console.status(
-                f"[bold blue]Launching {'local' if self.run_args.local else 'remote'} execution...", spinner="dots"
+            with common.cli_status(
+                config.output_format,
+                f"[bold blue]Launching {'local' if self.run_args.local else 'remote'} execution...",
             ):
                 execution_context = flyte.with_runcontext(
                     copy_style=self.run_args.copy_style,
@@ -260,17 +261,23 @@ Missing required parameter(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in mi
             await self._render_remote_success(console, result, config)
 
     def _render_local_success(self, console, result, config):
-        content = f"[green]Completed Local Run[/green]\nPath: {result.url}\n➡️ Outputs: {result.outputs()}"
+        if config.output_format in ("json", "table-simple"):
+            content = f"Completed Local Run\nPath: {result.url}\nOutputs: {result.outputs()}"
+        else:
+            content = f"[green]Completed Local Run[/green]\nPath: {result.url}\n➡️ Outputs: {result.outputs()}"
         console.print(common.get_panel("Local Success", content, config.output_format))
 
     async def _render_remote_success(self, console, result, config):
         if not (isinstance(result, Run) and result.action):
             return
 
-        run_info = (
-            f"[green bold]Created Run: {result.name}[/green bold]\n"
-            f"URL: [blue bold][link={result.url}]{result.url}[/link][/blue bold]"
-        )
+        if config.output_format in ("json", "table-simple"):
+            run_info = f"Created Run: {result.name}\nURL: {result.url}"
+        else:
+            run_info = (
+                f"[green bold]Created Run: {result.name}[/green bold]\n"
+                f"URL: [blue bold][link={result.url}]{result.url}[/link][/blue bold]"
+            )
         console.print(common.get_panel("Remote Run", run_info, config.output_format))
 
         if self.run_args.follow:
@@ -413,10 +420,11 @@ Missing required parameter(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in mi
                 f"Separate Run project/domain set, using {self.run_args.run_project} and {self.run_args.run_domain}"
             )
 
-        # 2. Execute with a UX Status Spinner
+        # 2. Execute with a UX Status Spinner (disabled for json/table-simple)
         try:
-            with console.status(
-                f"[bold blue]Launching {'local' if self.run_args.local else 'remote'} execution...", spinner="dots"
+            with common.cli_status(
+                config.output_format,
+                f"[bold blue]Launching {'local' if self.run_args.local else 'remote'} execution...",
             ):
                 execution_context = flyte.with_runcontext(
                     copy_style=self.run_args.copy_style,
@@ -437,18 +445,28 @@ Missing required parameter(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in mi
             await self._render_remote_success(console, result, config)
 
     def _render_local_success(self, console, result, config):
-        content = f"[green]Completed Local Run[/green]\nPath: {result.url}\n➡️ Outputs: {result.outputs()}"
+        if config.output_format in ("json", "table-simple"):
+            content = f"Completed Local Run\nPath: {result.url}\nOutputs: {result.outputs()}"
+        else:
+            content = f"[green]Completed Local Run[/green]\nPath: {result.url}\n➡️ Outputs: {result.outputs()}"
         console.print(common.get_panel("Local Success", content, config.output_format))
 
     async def _render_remote_success(self, console, result, config):
         if not (isinstance(result, Run) and result.action):
             return
 
-        run_info = (
-            f"[green bold]Created Run: {result.name}[/green bold]\n"
-            f"(Project: {result.action.action_id.run.project}, Domain: {result.action.action_id.run.domain})\n"
-            f"➡️  [blue bold][link={result.url}]{result.url}[/link][/blue bold]",
-        )
+        if config.output_format in ("json", "table-simple"):
+            run_info = (
+                f"Created Run: {result.name}\n"
+                f"(Project: {result.action.action_id.run.project}, Domain: {result.action.action_id.run.domain})\n"
+                f"URL: {result.url}"
+            )
+        else:
+            run_info = (
+                f"[green bold]Created Run: {result.name}[/green bold]\n"
+                f"(Project: {result.action.action_id.run.project}, Domain: {result.action.action_id.run.domain})\n"
+                f"➡️  [blue bold][link={result.url}]{result.url}[/link][/blue bold]"
+            )
         console.print(common.get_panel("Remote Run", run_info, config.output_format))
 
         if self.run_args.follow:
