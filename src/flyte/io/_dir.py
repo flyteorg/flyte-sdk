@@ -249,6 +249,8 @@ class Dir(BaseModel, Generic[T], SerializableType):
     @classmethod
     def schema_match(cls, incoming: dict):
         """Internal: Check if incoming schema matches Dir schema. Not intended for direct use."""
+        if not isinstance(incoming, dict):
+            return False
         this_schema = cls.model_json_schema()
         current_required = this_schema.get("required")
         incoming_required = incoming.get("required")

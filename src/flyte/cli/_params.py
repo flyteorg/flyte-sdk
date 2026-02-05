@@ -10,7 +10,7 @@ import re
 import sys
 import typing
 import typing as t
-from typing import get_args
+from typing import Any, get_args
 
 import rich_click as click
 import yaml
@@ -433,7 +433,18 @@ class JsonParamType(click.ParamType):
 
         from pydantic import BaseModel
 
-        if issubclass(self._python_type, BaseModel):
+        from flyte.types._type_engine import _is_named_tuple, _is_typed_tuple
+
+        # Handle tuple types - convert JSON to tuple using the wrapper model
+        if _is_typed_tuple(self._python_type):
+            return self._convert_to_tuple(parsed_value, self._python_type)
+
+        # Handle NamedTuple types - convert JSON to NamedTuple
+        if _is_named_tuple(self._python_type):
+            return self._convert_to_namedtuple(parsed_value, self._python_type)
+
+        # Only call issubclass if the type is a class (not a generic type)
+        if isinstance(self._python_type, type) and issubclass(self._python_type, BaseModel):
             return typing.cast(BaseModel, self._python_type).model_validate_json(
                 json.dumps(parsed_value), strict=False, context={"deserialize": True}
             )
@@ -444,6 +455,79 @@ class JsonParamType(click.ParamType):
             return decoder.decode(value)
 
         return parsed_value
+
+    def _convert_to_tuple(self, parsed_value: typing.Any, tuple_type: typing.Type) -> tuple:
+        """Convert a parsed JSON value to a typed tuple."""
+        from flyte.types._type_engine import _is_named_tuple, _is_typed_tuple
+
+        args = typing.get_args(tuple_type)
+        if not args:
+            raise click.BadParameter(f"Tuple type must have type arguments: {tuple_type}")
+
+        # Handle as a dict with item_0, item_1, etc. keys
+        if isinstance(parsed_value, dict):
+            result = []
+            for i, arg in enumerate(args):
+                field_name = f"item_{i}"
+                if field_name not in parsed_value:
+                    raise click.BadParameter(f"Missing field '{field_name}' in tuple input")
+                field_value = parsed_value[field_name]
+
+                # Recursively convert nested tuples and namedtuples
+                if _is_typed_tuple(arg):
+                    field_value = self._convert_to_tuple(field_value, arg)
+                elif _is_named_tuple(arg):
+                    field_value = self._convert_to_namedtuple(field_value, arg)
+                elif dataclasses.is_dataclass(arg):
+                    from mashumaro.codecs.json import JSONDecoder
+
+                    decoder: JSONDecoder[Any] = JSONDecoder(arg)
+                    field_value = decoder.decode(json.dumps(field_value))
+
+                result.append(field_value)
+            return tuple(result)
+
+        # Handle as a list/tuple (direct values)
+        elif isinstance(parsed_value, (list, tuple)):
+            if len(parsed_value) != len(args):
+                raise click.BadParameter(f"Expected {len(args)} elements for tuple, got {len(parsed_value)}")
+            result = []
+            for arg, val in zip(args, parsed_value):
+                if _is_typed_tuple(arg):
+                    _val = self._convert_to_tuple(val, arg)
+                elif _is_named_tuple(arg):
+                    _val = self._convert_to_namedtuple(val, arg)
+                elif dataclasses.is_dataclass(arg):
+                    from mashumaro.codecs.json import JSONDecoder
+
+                    decoder = JSONDecoder(arg)
+                    _val = decoder.decode(json.dumps(val))
+                else:
+                    _val = val
+                result.append(_val)
+            return tuple(result)
+        else:
+            raise click.BadParameter(f"Expected dict or list for tuple type, got {type(parsed_value)}")
+
+    def _convert_to_namedtuple(self, parsed_value: typing.Any, namedtuple_type: typing.Type) -> tuple:
+        """Convert a parsed JSON value to a NamedTuple."""
+        from pydantic import create_model
+
+        # Get field names and types from the NamedTuple
+        annotations = getattr(namedtuple_type, "__annotations__", {})
+        field_definitions: typing.Dict[str, typing.Any] = {}
+
+        for field_name, field_type in annotations.items():
+            default = getattr(namedtuple_type, field_name, ...)
+            field_definitions[field_name] = (field_type, default)
+
+        # Create a Pydantic model to validate and convert the data
+        model_class = create_model(f"NamedTupleWrapper_{namedtuple_type.__name__}", **field_definitions)
+        model_instance = model_class.model_validate(parsed_value, strict=False, context={"deserialize": True})
+
+        # Convert back to NamedTuple
+        field_names = namedtuple_type._fields
+        return namedtuple_type(*(getattr(model_instance, name) for name in field_names))
 
 
 SIMPLE_TYPE_CONVERTER = {
