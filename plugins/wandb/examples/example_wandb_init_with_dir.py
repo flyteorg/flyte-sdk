@@ -21,12 +21,14 @@ from flyteplugins.wandb import (
 
 env = flyte.TaskEnvironment(
     name="wandb-dir-example",
-    image=flyte.Image.from_debian_base(name="wandb-dir-example").with_pip_packages("flyteplugins-wandb"),
+    image=flyte.Image.from_debian_base(name="wandb-dir-example").with_pip_packages(
+        "flyteplugins-wandb"
+    ),
     secrets=[flyte.Secret(key="wandb_api_key", as_env_var="WANDB_API_KEY")],
 )
 
 
-@wandb_init(download_logs=True)
+@wandb_init(download_logs=True, run_mode="new")
 @env.task
 async def async_child_with_download(x: int) -> str:
     """Async task that automatically downloads logs via download_logs=True."""
