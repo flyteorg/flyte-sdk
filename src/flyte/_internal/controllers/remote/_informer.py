@@ -79,6 +79,7 @@ class ActionCache:
     async def remove(self, name: str) -> Action | None:
         """Remove an action from the cache"""
         async with self._lock:
+            self._completion_events.pop(name, None)
             return self._cache.pop(name, None)
 
     async def wait_for_completion(self, name: str) -> bool:
