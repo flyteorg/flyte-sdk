@@ -35,7 +35,8 @@ def copy_files_to_context(src: Path, context_path: Path, ignore_patterns: list[s
     if src.is_dir():
         from .docker import PatternMatcher
 
-        pm = PatternMatcher(ignore_patterns)
+        all_patterns = ignore_patterns + STANDARD_IGNORE_PATTERNS
+        pm = PatternMatcher(all_patterns)
 
         # Use walk() to get list of files to include
         for rel_file in pm.walk(str(src)):
