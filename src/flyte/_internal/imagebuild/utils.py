@@ -33,9 +33,7 @@ def copy_files_to_context(src: Path, context_path: Path, ignore_patterns: list[s
     if src.is_dir():
         from .docker import PatternMatcher
 
-        # Add ** prefix to match patterns anywhere in tree
-        default_ignore_patterns = ["**/.idea", "**/.venv", "**/__pycache__", "**/*.pyc"]
-        all_patterns = ignore_patterns + default_ignore_patterns
+        all_patterns = ignore_patterns + STANDARD_IGNORE_PATTERNS
         pm = PatternMatcher(all_patterns)
 
         # Use walk() to get list of files to include
@@ -158,6 +156,6 @@ def get_uv_editable_install_mounts(
         mounts.append(
             "--mount=type=bind,"
             f"src={editable_dep_within_context.relative_to(context_path)},"
-            f"target={editable_dep.relative_to(project_root)}"
+            f"target={editable_dep.relative_to(project_root)},rw"
         )
     return " ".join(mounts)
