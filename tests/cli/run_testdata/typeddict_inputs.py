@@ -1,8 +1,8 @@
 """Test data file for TypedDict CLI input tests."""
 
+import sys
 from dataclasses import dataclass
 from typing import List
-import sys
 
 if sys.version_info >= (3, 12):
     from typing import TypedDict
