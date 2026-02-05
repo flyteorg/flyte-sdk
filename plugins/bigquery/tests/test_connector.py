@@ -1,4 +1,5 @@
 import datetime
+import json
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -12,6 +13,7 @@ from google.protobuf import struct_pb2
 from flyteplugins.bigquery.connector import (
     BigQueryConnector,
     BigQueryMetadata,
+    _get_bigquery_client,
     pythonTypeToBigQueryType,
 )
 
@@ -29,13 +31,21 @@ def test_type_mapping_complete():
 
 def test_metadata_creation():
     """Test creating BigQueryMetadata instance."""
-    metadata = BigQueryMetadata(job_id="test-job-123", project="test-project", location="US")
+    metadata = BigQueryMetadata(job_id="test-job-123", project="test-project", location="US", user_agent="Flyte/1.0.0")
     assert metadata.job_id == "test-job-123"
     assert metadata.project == "test-project"
     assert metadata.location == "US"
+    assert metadata.user_agent == "Flyte/1.0.0"
 
 
 class TestBigQueryConnector:
+    @pytest.fixture(autouse=True)
+    def clear_cache(self):
+        """Clear the bigquery client cache before each test."""
+        _get_bigquery_client.cache_clear()
+        yield
+        _get_bigquery_client.cache_clear()
+
     @pytest.fixture
     def connector(self):
         """Create a BigQueryConnector instance."""
@@ -161,7 +171,7 @@ class TestBigQueryConnector:
     @pytest.mark.asyncio
     async def test_get_succeeded_with_destination(self, connector):
         """Test getting a successful BigQuery job with destination table."""
-        metadata = BigQueryMetadata(job_id="job-123", project="test-project", location="US")
+        metadata = BigQueryMetadata(job_id="job-123", project="test-project", location="US", user_agent="Flyte/1.0.0")
 
         with patch("flyteplugins.bigquery.connector.bigquery.Client") as mock_client_class:
             mock_client = MagicMock()
@@ -200,7 +210,7 @@ class TestBigQueryConnector:
     @pytest.mark.asyncio
     async def test_get_succeeded_without_destination(self, connector):
         """Test getting a successful BigQuery job without destination table."""
-        metadata = BigQueryMetadata(job_id="job-123", project="test-project", location="US")
+        metadata = BigQueryMetadata(job_id="job-123", project="test-project", location="US", user_agent="Flyte/1.0.0")
 
         with patch("flyteplugins.bigquery.connector.bigquery.Client") as mock_client_class:
             mock_client = MagicMock()
@@ -226,7 +236,7 @@ class TestBigQueryConnector:
     @pytest.mark.asyncio
     async def test_get_running(self, connector):
         """Test getting a running BigQuery job."""
-        metadata = BigQueryMetadata(job_id="job-123", project="test-project", location="US")
+        metadata = BigQueryMetadata(job_id="job-123", project="test-project", location="US", user_agent="Flyte/1.0.0")
 
         with patch("flyteplugins.bigquery.connector.bigquery.Client") as mock_client_class:
             mock_client = MagicMock()
@@ -250,7 +260,7 @@ class TestBigQueryConnector:
     @pytest.mark.asyncio
     async def test_get_failed(self, connector):
         """Test getting a failed BigQuery job."""
-        metadata = BigQueryMetadata(job_id="job-123", project="test-project", location="US")
+        metadata = BigQueryMetadata(job_id="job-123", project="test-project", location="US", user_agent="Flyte/1.0.0")
 
         with patch("flyteplugins.bigquery.connector.bigquery.Client") as mock_client_class:
             mock_client = MagicMock()
@@ -273,7 +283,7 @@ class TestBigQueryConnector:
     @pytest.mark.asyncio
     async def test_get_pending(self, connector):
         """Test getting a pending BigQuery job."""
-        metadata = BigQueryMetadata(job_id="job-123", project="test-project", location="US")
+        metadata = BigQueryMetadata(job_id="job-123", project="test-project", location="US", user_agent="Flyte/1.0.0")
 
         with patch("flyteplugins.bigquery.connector.bigquery.Client") as mock_client_class:
             mock_client = MagicMock()
@@ -297,7 +307,7 @@ class TestBigQueryConnector:
     @pytest.mark.asyncio
     async def test_delete(self, connector):
         """Test deleting (canceling) a BigQuery job."""
-        metadata = BigQueryMetadata(job_id="job-123", project="test-project", location="US")
+        metadata = BigQueryMetadata(job_id="job-123", project="test-project", location="US", user_agent="Flyte/1.0.0")
 
         with patch("flyteplugins.bigquery.connector.bigquery.Client") as mock_client_class:
             mock_client = MagicMock()
@@ -365,7 +375,9 @@ class TestBigQueryConnector:
     @pytest.mark.asyncio
     async def test_get_log_link_format(self, connector):
         """Test that the log link is properly formatted."""
-        metadata = BigQueryMetadata(job_id="job-abc", project="my-project", location="europe-west1")
+        metadata = BigQueryMetadata(
+            job_id="job-abc", project="my-project", location="europe-west1", user_agent="Flyte/1.0.0"
+        )
 
         with patch("flyteplugins.bigquery.connector.bigquery.Client") as mock_client_class:
             mock_client = MagicMock()
@@ -386,3 +398,52 @@ class TestBigQueryConnector:
                 assert log_link.name == "BigQuery Console"
                 expected_uri = "https://console.cloud.google.com/bigquery?project=my-project&j=bq:europe-west1:job-abc&page=queryresults"
                 assert log_link.uri == expected_uri
+
+    @pytest.mark.asyncio
+    async def test_create_with_google_application_credentials(self, connector, task_template_minimal):
+        """Test that google_application_credentials JSON string is properly parsed."""
+        credentials_dict = {
+            "type": "service_account",
+            "project_id": "test-project",
+            "private_key_id": "key-id-123",
+            "private_key": "-----BEGIN PRIVATE KEY-----\nMIItest\n-----END PRIVATE KEY-----\n",
+            "client_email": "test@test-project.iam.gserviceaccount.com",
+            "client_id": "123456789",
+            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+            "token_uri": "https://oauth2.googleapis.com/token",
+        }
+        credentials_json = json.dumps(credentials_dict)
+
+        with patch("flyteplugins.bigquery.connector.bigquery.Client") as mock_client_class:
+            with patch(
+                "flyteplugins.bigquery.connector.service_account.Credentials.from_service_account_info"
+            ) as mock_creds:
+                mock_credentials = MagicMock()
+                mock_creds.return_value = mock_credentials
+
+                mock_client = MagicMock()
+                mock_client_class.return_value = mock_client
+
+                mock_query_job = MagicMock()
+                mock_query_job.job_id = "job-with-creds"
+                mock_client.query.return_value = mock_query_job
+
+                metadata = await connector.create(
+                    task_template_minimal,
+                    inputs=None,
+                    google_application_credentials=credentials_json,
+                )
+
+                assert metadata.job_id == "job-with-creds"
+
+                # Verify that from_service_account_info was called with a parsed dict, not a string
+                mock_creds.assert_called_once()
+                call_args = mock_creds.call_args[0][0]
+                assert isinstance(call_args, dict)
+                assert call_args["type"] == "service_account"
+                assert call_args["project_id"] == "test-project"
+                assert call_args["client_email"] == "test@test-project.iam.gserviceaccount.com"
+
+                # Verify the credentials were passed to the client
+                mock_client_class.assert_called_once()
+                assert mock_client_class.call_args[1]["credentials"] == mock_credentials

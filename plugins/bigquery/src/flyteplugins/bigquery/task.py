@@ -72,7 +72,7 @@ class BigQueryTask(AsyncConnectorExecutorMixin, TaskTemplate):
         if self.plugin_config.QueryJobConfig is not None:
             config.update(self.plugin_config.QueryJobConfig.to_api_repr()["query"])
         if self.google_application_credentials is not None:
-            config["secrets"] = {"google_application_credentials:": self.google_application_credentials}
+            config["secrets"] = {"google_application_credentials": self.google_application_credentials}
         return config
 
     def sql(self, sctx: SerializationContext) -> Optional[str]:

@@ -196,3 +196,38 @@ class TestBigQueryTask:
         task = BigQueryTask(name="test_task", query_template="   \n\t   ", plugin_config=config)
 
         assert task.query_template == ""
+
+    def test_bigquery_task_custom_config_with_google_application_credentials(self, serialization_context):
+        """Test that google_application_credentials secret key is correct (no trailing colon)."""
+        config = BigQueryConfig(ProjectID="test-project", Location="US")
+        secret_name = "my-gcp-credentials-secret"
+
+        task = BigQueryTask(
+            name="test_task",
+            query_template="SELECT * FROM table",
+            plugin_config=config,
+            google_application_credentials=secret_name,
+        )
+
+        custom_config = task.custom_config(serialization_context)
+
+        # Verify secrets dict exists and has correct key (no trailing colon)
+        assert "secrets" in custom_config
+        assert "google_application_credentials" in custom_config["secrets"]
+        assert "google_application_credentials:" not in custom_config["secrets"]
+        assert custom_config["secrets"]["google_application_credentials"] == secret_name
+
+    def test_bigquery_task_custom_config_without_google_application_credentials(self, serialization_context):
+        """Test that secrets is not included when google_application_credentials is not set."""
+        config = BigQueryConfig(ProjectID="test-project", Location="US")
+
+        task = BigQueryTask(
+            name="test_task",
+            query_template="SELECT * FROM table",
+            plugin_config=config,
+        )
+
+        custom_config = task.custom_config(serialization_context)
+
+        # Verify secrets dict is not included when no credentials are specified
+        assert "secrets" not in custom_config

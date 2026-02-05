@@ -700,7 +700,7 @@ requires-dist = [
     { name = "click", specifier = ">=8.2.1" },
     { name = "cloudpickle", specifier = ">=3.1.1" },
     { name = "docstring-parser", specifier = ">=0.16" },
-    { name = "flyteidl2", specifier = "==2.0.1" },
+    { name = "flyteidl2", specifier = "==2.0.2" },
     { name = "fsspec", specifier = ">=2025.3.0" },
     { name = "grpcio", specifier = ">=1.71.0" },
     { name = "grpcio-health-checking", marker = "extra == 'connector'" },
@@ -743,7 +743,7 @@ dev = [
 
 [[package]]
 name = "flyteidl2"
-version = "2.0.1"
+version = "2.0.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "googleapis-common-protos" },
@@ -752,7 +752,7 @@ dependencies = [
     { name = "protovalidate" },
 ]
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/07/d2/516838c636ea3ce01692e40577b21bc5ecfe759257c1b84b376df75c5d18/flyteidl2-2.0.1-py3-none-any.whl", hash = "sha256:4bf7f5b2ac62b712374f8b48ab7434773c35b063a187274b1c1bee76d6b62a03", size = 254166, upload-time = "2026-02-03T01:32:39.408Z" },
+    { url = "https://files.pythonhosted.org/packages/99/17/66e2a06b8938b870de983b52ee78d430daf3b5df8a574b5c95293d3c66c7/flyteidl2-2.0.2-py3-none-any.whl", hash = "sha256:76651068492b1926dac6c095e4307b49a7251d915310857fb32da39d33d08d81", size = 254198, upload-time = "2026-02-04T22:59:30.97Z" },
 ]
 
 [[package]]
