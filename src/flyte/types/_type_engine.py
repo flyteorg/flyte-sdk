@@ -777,15 +777,21 @@ class EnumTransformer(TypeTransformer[enum.Enum]):
                     parsed."
             )
 
-        values = [v.value for v in t]  # type: ignore
-        if not isinstance(values[0], str):
-            raise TypeTransformerFailedError("Only EnumTypes with value of string are supported")
-        return LiteralType(enum_type=types_pb2.EnumType(values=values))
+        names = [v.name for v in t]  # type: ignore
+        if not isinstance(names[0], str):
+            raise TypeTransformerFailedError("Only EnumTypes with name of string are supported")
+        return LiteralType(enum_type=types_pb2.EnumType(values=names))
 
     async def to_literal(self, python_val: enum.Enum, python_type: Type[T], expected: LiteralType) -> Literal:
         if isinstance(python_val, str):
             # this is the case when python Literals are used as enums
-            if python_val not in expected.enum_type.values:
+            if python_val.__getattribute__("name"):
+                if python_val.__getattribute__("name") not in expected.enum_type.values:
+                    raise TypeTransformerFailedError(
+                        f"Value {python_val.__getattribute__("name")} is not valid value, expected - {expected.enum_type.values}"
+                    )
+                return Literal(scalar=Scalar(primitive=Primitive(string_value=python_val.__getattribute__("name"))))  # type: ignore
+            elif python_val not in expected.enum_type.values:
                 raise TypeTransformerFailedError(
                     f"Value {python_val} is not valid value, expected - {expected.enum_type.values}"
                 )
@@ -795,7 +801,7 @@ class EnumTransformer(TypeTransformer[enum.Enum]):
         if type(python_val.value) is not str:
             raise TypeTransformerFailedError("Only string-valued enums are supported")
 
-        return Literal(scalar=Scalar(primitive=Primitive(string_value=python_val.value)))  # type: ignore
+        return Literal(scalar=Scalar(primitive=Primitive(string_value=python_val.name)))  # type: ignore
 
     async def to_python_value(self, lv: Literal, expected_python_type: Type[T]) -> T:
         if lv.HasField("scalar") and lv.scalar.HasField("binary"):
@@ -806,7 +812,7 @@ class EnumTransformer(TypeTransformer[enum.Enum]):
             # This is the case when python Literal types are used as enums. The class name is always LiteralEnum an
             # hardcoded in flyte.models
             return lv.scalar.primitive.string_value
-        return expected_python_type(lv.scalar.primitive.string_value)  # type: ignore
+        return expected_python_type[lv.scalar.primitive.string_value]  # type: ignore
 
     def guess_python_type(self, literal_type: LiteralType) -> Type[enum.Enum]:
         if literal_type.HasField("enum_type"):
