@@ -158,6 +158,6 @@ def get_uv_editable_install_mounts(
         mounts.append(
             "--mount=type=bind,"
             f"src={editable_dep_within_context.relative_to(context_path)},"
-            f"target={editable_dep.relative_to(project_root)}"
+            f"target={editable_dep.relative_to(project_root)},rw"
         )
     return " ".join(mounts)
