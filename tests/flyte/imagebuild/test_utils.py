@@ -126,8 +126,10 @@ def test_get_uv_editable_install_mounts():
         # However, within the container, it should be mounted to its path relative to the project root.
         # This is done by using the relative_to method on the Path objects.
         expected_mounts = [
-            f"--mount=type=bind,src=_flyte_abs_context{editable_abs},target={Path(editable_abs).relative_to(project_root)},rw",
-            f"--mount=type=bind,src=_flyte_abs_context{project_root / editable_rel},target={Path(editable_rel).name},rw",
+            f"--mount=type=bind,src=_flyte_abs_context{editable_abs},"
+            f"target={Path(editable_abs).relative_to(project_root)},rw",
+            f"--mount=type=bind,src=_flyte_abs_context{project_root / editable_rel},"
+            f"target={Path(editable_rel).relative_to(project_root)},rw",
         ]
         assert mounts == " ".join(expected_mounts)
 

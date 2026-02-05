@@ -92,7 +92,6 @@ STANDARD_IGNORE_PATTERNS = [
     ".env",
     "**/*.egg-info",
     "*.egg",
-    "dist",
     "build",
     "*.whl",
 ]
