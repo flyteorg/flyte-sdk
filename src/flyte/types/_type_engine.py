@@ -17,7 +17,7 @@ from abc import ABC, abstractmethod
 from collections import OrderedDict
 from functools import lru_cache
 from types import GenericAlias, NoneType
-from typing import Any, Dict, NamedTuple, Optional, Tuple, Type, cast
+from typing import Any, Callable, Dict, NamedTuple, Optional, Tuple, Type, cast
 
 import msgpack
 from flyteidl2.core import interface_pb2, literals_pb2, types_pb2
@@ -819,6 +819,90 @@ class EnumTransformer(TypeTransformer[enum.Enum]):
             raise TypeTransformerFailedError(f"Value {v} is not in Enum {t}")
 
 
+# ==============================================================================
+# Shared helpers for Tuple and NamedTuple schema-to-type conversion
+# ==============================================================================
+
+
+def _json_schema_basic_type_to_python(prop_type: Optional[str]) -> Optional[Type]:
+    """Convert JSON schema basic types to Python types."""
+    type_map = {
+        "string": str,
+        "integer": int,
+        "number": float,
+        "boolean": bool,
+    }
+    return type_map.get(prop_type) if prop_type else None
+
+
+def _json_schema_to_python_type(
+    prop_schema: dict,
+    defs: dict,
+    *,
+    recursive_handler: Callable[[dict, dict], Type],
+    prefix_items_handler: Callable[[dict, dict], Type],
+    ref_handler: Callable[[dict, str, dict], Type],
+) -> Type:
+    """
+    Convert a JSON schema property to a Python type.
+
+    This is a shared helper for TupleTransformer and NamedTupleTransformer
+    that handles the common cases of schema-to-type conversion.
+
+    Args:
+        prop_schema: The JSON schema for the property
+        defs: The $defs section of the schema
+        recursive_handler: Callback for recursive type resolution
+        prefix_items_handler: Callback to handle prefixItems (tuple vs NamedTuple)
+        ref_handler: Callback to handle $ref resolution (transformer-specific)
+
+    Returns:
+        The Python type corresponding to the schema.
+    """
+    # Handle $ref for nested types
+    if "$ref" in prop_schema:
+        ref_path = prop_schema["$ref"]
+        ref_name = ref_path.split("/")[-1]
+        if ref_name in defs:
+            ref_schema = defs[ref_name].copy()
+            # Include $defs for nested refs
+            if "$defs" not in ref_schema and defs:
+                ref_schema["$defs"] = defs
+            return ref_handler(ref_schema, ref_name, defs)
+        return Any
+
+    # Handle basic types
+    prop_type = prop_schema.get("type")
+    basic_type = _json_schema_basic_type_to_python(prop_type)
+    if basic_type is not None:
+        return basic_type
+
+    if prop_type == "array":
+        # Handle tuple types (prefixItems)
+        if "prefixItems" in prop_schema:
+            return prefix_items_handler(prop_schema, defs)
+        # Handle list types
+        if "items" in prop_schema:
+            item_type = recursive_handler(prop_schema["items"], defs)
+            return typing.List[item_type]  # type: ignore
+        return typing.List[typing.Any]  # type: ignore
+
+    if prop_type == "object":
+        # Handle dict types with typed values
+        if "additionalProperties" in prop_schema:
+            val_type = recursive_handler(prop_schema["additionalProperties"], defs)
+            return typing.Dict[str, val_type]  # type: ignore
+        # Handle nested dataclass-like objects with properties
+        if "properties" in prop_schema:
+            title = prop_schema.get("title", "NestedObject")
+            return convert_mashumaro_json_schema_to_python_class(prop_schema, title)
+        # Untyped dict
+        return typing.Dict[str, typing.Any]  # type: ignore
+
+    # Default to Any for unknown types
+    return Any
+
+
 class TupleTransformer(TypeTransformer[tuple]):
     """
     Transformer that handles typed tuples like tuple[int, str, float].
@@ -921,58 +1005,30 @@ class TupleTransformer(TypeTransformer[tuple]):
 
     def _schema_to_type(self, prop_schema: dict, defs: dict) -> Type:
         """Convert a JSON schema property to a Python type."""
-        # Handle $ref for nested types
-        if "$ref" in prop_schema:
-            ref_path = prop_schema["$ref"]
-            ref_name = ref_path.split("/")[-1]
-            if ref_name in defs:
-                ref_schema = defs[ref_name].copy()
-                # Include $defs for nested refs
-                if "$defs" not in ref_schema and defs:
-                    ref_schema["$defs"] = defs
+        return _json_schema_to_python_type(
+            prop_schema,
+            defs,
+            recursive_handler=self._schema_to_type,
+            prefix_items_handler=self._handle_prefix_items,
+            ref_handler=self._handle_ref,
+        )
 
-                ref_title = ref_schema.get("title", ref_name)
+    def _handle_prefix_items(self, prop_schema: dict, defs: dict) -> Type:
+        """Handle prefixItems schema as a tuple type."""
+        prefix_items = prop_schema["prefixItems"]
+        item_types = [self._schema_to_type(item, defs) for item in prefix_items]
+        return tuple[tuple(item_types)]  # type: ignore
 
-                # Check if it's a nested tuple
-                if ref_title.startswith("TupleWrapper_"):
-                    return self._create_tuple_from_schema(ref_schema)
+    def _handle_ref(self, ref_schema: dict, ref_name: str, defs: dict) -> Type:
+        """Handle $ref schema for tuple types."""
+        ref_title = ref_schema.get("title", ref_name)
 
-                # Otherwise treat as a dataclass
-                return convert_mashumaro_json_schema_to_python_class(ref_schema, ref_name)
+        # Check if it's a nested tuple
+        if ref_title.startswith("TupleWrapper_"):
+            return self._create_tuple_from_schema(ref_schema)
 
-        # Handle basic types
-        prop_type = prop_schema.get("type")
-        if prop_type == "string":
-            return str
-        elif prop_type == "integer":
-            return int
-        elif prop_type == "number":
-            return float
-        elif prop_type == "boolean":
-            return bool
-        elif prop_type == "array":
-            # Handle list types
-            if "items" in prop_schema:
-                item_type = self._schema_to_type(prop_schema["items"], defs)
-                return typing.List[item_type]  # type: ignore
-            # Handle tuple types (prefixItems)
-            elif "prefixItems" in prop_schema:
-                prefix_items = prop_schema["prefixItems"]
-                item_types = [self._schema_to_type(item, defs) for item in prefix_items]
-                return tuple[tuple(item_types)]  # type: ignore
-            return typing.List[typing.Any]  # type: ignore
-        elif prop_type == "object":
-            # Handle object types - could be a dict or a dataclass
-            if "additionalProperties" in prop_schema:
-                val_type = self._schema_to_type(prop_schema["additionalProperties"], defs)
-                return typing.Dict[str, val_type]  # type: ignore
-            elif "title" in prop_schema:
-                # Nested dataclass
-                return convert_mashumaro_json_schema_to_python_class(prop_schema, prop_schema["title"])
-            return typing.Dict[str, typing.Any]  # type: ignore
-
-        # Default to Any for unknown types
-        return typing.Any
+        # Otherwise treat as a dataclass
+        return convert_mashumaro_json_schema_to_python_class(ref_schema, ref_name)
 
 
 class NamedTupleTransformer(TypeTransformer[tuple]):
@@ -1178,62 +1234,36 @@ class NamedTupleTransformer(TypeTransformer[tuple]):
 
     def _schema_to_type(self, prop_schema: dict, defs: dict) -> Type:
         """Convert a JSON schema property to a Python type."""
-        # Handle $ref for nested types
-        if "$ref" in prop_schema:
-            ref_path = prop_schema["$ref"]
-            ref_name = ref_path.split("/")[-1]
-            if ref_name in defs:
-                ref_schema = defs[ref_name].copy()
-                ref_schema["$defs"] = defs
-                ref_title = ref_schema.get("title", ref_name)
+        return _json_schema_to_python_type(
+            prop_schema,
+            defs,
+            recursive_handler=self._schema_to_type,
+            prefix_items_handler=self._handle_prefix_items,
+            ref_handler=self._handle_ref,
+        )
 
-                # Check if it's an array-based NamedTuple (Pydantic serializes nested NamedTuples as arrays)
-                if ref_schema.get("type") == "array" and "prefixItems" in ref_schema:
-                    return self._create_namedtuple_from_array_schema(ref_schema, ref_name, defs)
+    def _handle_prefix_items(self, prop_schema: dict, defs: dict) -> Type:
+        """Handle prefixItems schema as a NamedTuple type."""
+        title = prop_schema.get("title", "DynamicNamedTuple")
+        return self._create_namedtuple_from_array_schema(prop_schema, title, defs)
 
-                # Recursively create nested NamedTuple if it's a wrapper
-                if ref_title.startswith("NamedTupleWrapper_"):
-                    return self._create_namedtuple_from_schema(ref_schema, ref_title[len("NamedTupleWrapper_") :])
+    def _handle_ref(self, ref_schema: dict, ref_name: str, defs: dict) -> Type:
+        """Handle $ref schema for NamedTuple types."""
+        ref_title = ref_schema.get("title", ref_name)
 
-                # For objects with properties (like dataclasses)
-                if ref_schema.get("type") == "object" and "properties" in ref_schema:
-                    return convert_mashumaro_json_schema_to_python_class(ref_schema, ref_name)
+        # Check if it's an array-based NamedTuple (Pydantic serializes nested NamedTuples as arrays)
+        if ref_schema.get("type") == "array" and "prefixItems" in ref_schema:
+            return self._create_namedtuple_from_array_schema(ref_schema, ref_name, defs)
 
-                # Fallback
-                return Any
+        # Recursively create nested NamedTuple if it's a wrapper
+        if ref_title.startswith("NamedTupleWrapper_"):
+            return self._create_namedtuple_from_schema(ref_schema, ref_title[len("NamedTupleWrapper_") :])
 
-        # Handle basic types
-        prop_type = prop_schema.get("type")
-        if prop_type == "string":
-            return str
-        elif prop_type == "integer":
-            return int
-        elif prop_type == "number":
-            return float
-        elif prop_type == "boolean":
-            return bool
-        elif prop_type == "array":
-            # Check if this is a NamedTuple (has prefixItems)
-            if "prefixItems" in prop_schema:
-                title = prop_schema.get("title", "DynamicNamedTuple")
-                return self._create_namedtuple_from_array_schema(prop_schema, title, defs)
-            # Regular list
-            items = prop_schema.get("items", {})
-            item_type = self._schema_to_type(items, defs)
-            return typing.List[item_type]  # type: ignore
-        elif prop_type == "object":
-            # Handle nested objects
-            if "additionalProperties" in prop_schema:
-                value_type = self._schema_to_type(prop_schema["additionalProperties"], defs)
-                return typing.Dict[str, value_type]  # type: ignore
-            # For nested dataclass-like objects with properties
-            if "properties" in prop_schema:
-                title = prop_schema.get("title", "NestedObject")
-                return convert_mashumaro_json_schema_to_python_class(prop_schema, title)
-            # Untyped dict
-            return dict
+        # For objects with properties (like dataclasses)
+        if ref_schema.get("type") == "object" and "properties" in ref_schema:
+            return convert_mashumaro_json_schema_to_python_class(ref_schema, ref_name)
 
-        # Default fallback
+        # Fallback
         return Any
 
 
