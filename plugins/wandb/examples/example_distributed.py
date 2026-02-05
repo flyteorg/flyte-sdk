@@ -1,17 +1,5 @@
 """
-Example: Distributed Training with W&B Integration
-
 This example demonstrates all distributed training scenarios with W&B logging.
-
-Parameters:
-- run_mode: Controls how W&B runs are created
-  - "auto" (default): Smart behavior based on rank_scope
-  - "shared": All ranks share run(s) (uses W&B shared mode)
-  - "new": Each rank gets its own run (grouped in UI)
-
-- rank_scope: Controls scope for run creation and grouping
-  - "global" (default): Global scope - 1 run/group across all workers
-  - "worker": Worker scope - 1 run/group per worker
 
 Behavior Matrix (Multi-node):
 | run_mode | rank_scope | Who logs?           | W&B Runs | Grouping        |
