@@ -8,7 +8,8 @@ def test_unnamed_typing_tuple():
     def z(a: int, b: str) -> typing.Tuple[int, str]:
         return 5, "hello world"
 
-    result = transform_variable_map(extract_return_annotation(typing.get_type_hints(z).get("return", None)))
+    result_list = transform_variable_map(extract_return_annotation(typing.get_type_hints(z).get("return", None)))
+    result = {entry.key: entry.value for entry in result_list}
     assert result["o0"].type.simple == 1
     assert result["o1"].type.simple == 3
 
@@ -17,7 +18,8 @@ def test_regular_tuple():
     def q(a: int, b: str) -> (int, str):
         return 5, "hello world"
 
-    result = transform_variable_map(extract_return_annotation(typing.get_type_hints(q).get("return", None)))
+    result_list = transform_variable_map(extract_return_annotation(typing.get_type_hints(q).get("return", None)))
+    result = {entry.key: entry.value for entry in result_list}
     assert result["o0"].type.simple == 1
     assert result["o1"].type.simple == 3
 
@@ -26,7 +28,8 @@ def test_single_output_new_decorator():
     def q(a: int, b: str) -> int:
         return a + len(b)
 
-    result = transform_variable_map(extract_return_annotation(typing.get_type_hints(q).get("return", None)))
+    result_list = transform_variable_map(extract_return_annotation(typing.get_type_hints(q).get("return", None)))
+    result = {entry.key: entry.value for entry in result_list}
     assert result["o0"].type.simple == 1
 
 
@@ -37,7 +40,8 @@ def test_sig_files():
 
     def q() -> File: ...
 
-    result = transform_variable_map(extract_return_annotation(typing.get_type_hints(q).get("return", None)))
+    result_list = transform_variable_map(extract_return_annotation(typing.get_type_hints(q).get("return", None)))
+    result = {entry.key: entry.value for entry in result_list}
     assert isinstance(result["o0"].type.blob, types_pb2.BlobType)
 
 

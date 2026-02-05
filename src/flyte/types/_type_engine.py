@@ -1664,10 +1664,14 @@ class TypeEngine(typing.Generic[T]):
         """
         Converts a python-native ``NamedTuple`` to a flyte-specific VariableMap of named literals.
         """
-        variables = {}
+        variables = []
         for idx, (var_name, var_type) in enumerate(t.__annotations__.items()):
             literal_type = cls.to_literal_type(var_type)
-            variables[var_name] = interface_pb2.Variable(type=literal_type, description=f"{idx}")
+            variables.append(
+                interface_pb2.VariableEntry(
+                    key=var_name, value=interface_pb2.Variable(type=literal_type, description=f"{idx}")
+                )
+            )
         return interface_pb2.VariableMap(variables=variables)
 
     @classmethod
@@ -1773,14 +1777,14 @@ class TypeEngine(typing.Generic[T]):
 
     @classmethod
     def guess_python_types(
-        cls, flyte_variable_dict: typing.Dict[str, interface_pb2.Variable]
+        cls, flyte_variable_list: typing.List[interface_pb2.VariableEntry]
     ) -> typing.Dict[str, Type[Any]]:
         """
-        Transforms a dictionary of flyte-specific ``Variable`` objects to a dictionary of regular python values.
+        Transforms a list of flyte-specific ``VariableEntry`` objects to a dictionary of regular python values.
         """
         python_types = {}
-        for k, v in flyte_variable_dict.items():
-            python_types[k] = cls.guess_python_type(v.type)
+        for entry in flyte_variable_list:
+            python_types[entry.key] = cls.guess_python_type(entry.value.type)
         return python_types
 
     @classmethod

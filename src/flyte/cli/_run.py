@@ -308,7 +308,8 @@ Missing required parameter(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in mi
         inputs_interface = task.native_interface.inputs
 
         params: List[click.Parameter] = []
-        for name, var in interface.inputs.variables.items():
+        for entry in interface.inputs.variables:
+            name, var = entry.key, entry.value
             default_val = None
             if inputs_interface[name][1] is not inspect._empty:
                 default_val = inputs_interface[name][1]
@@ -509,7 +510,8 @@ Missing required parameter(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in mi
         inputs_interface = task_details.interface.inputs
 
         params: List[click.Parameter] = []
-        for name, var in interface.inputs.variables.items():
+        for entry in interface.inputs.variables:
+            name, var = entry.key, entry.value
             default_val = None
             if inputs_interface[name][1] is not inspect._empty:
                 default_val = inputs_interface[name][1]
