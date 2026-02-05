@@ -9,7 +9,7 @@ from flyteidl2.core.tasks_pb2 import Sql, TaskTemplate
 from flyteidl2.core.types_pb2 import LiteralType, SimpleType
 from google.protobuf import struct_pb2
 
-from flyteplugins.connectors.bigquery.connector import (
+from flyteplugins.bigquery.connector import (
     BigQueryConnector,
     BigQueryMetadata,
     pythonTypeToBigQueryType,
@@ -88,7 +88,7 @@ class TestBigQueryConnector:
     @pytest.mark.asyncio
     async def test_create_minimal(self, connector, task_template_minimal):
         """Test creating a BigQuery job without inputs."""
-        with patch("flyteplugins.connectors.bigquery.connector.bigquery.Client") as mock_client_class:
+        with patch("flyteplugins.bigquery.connector.bigquery.Client") as mock_client_class:
             mock_client = MagicMock()
             mock_client_class.return_value = mock_client
 
@@ -115,7 +115,7 @@ class TestBigQueryConnector:
     @pytest.mark.asyncio
     async def test_create_with_inputs(self, connector, task_template_with_inputs):
         """Test creating a BigQuery job with input parameters."""
-        with patch("flyteplugins.connectors.bigquery.connector.bigquery.Client") as mock_client_class:
+        with patch("flyteplugins.bigquery.connector.bigquery.Client") as mock_client_class:
             mock_client = MagicMock()
             mock_client_class.return_value = mock_client
 
@@ -143,7 +143,7 @@ class TestBigQueryConnector:
     @pytest.mark.asyncio
     async def test_create_with_domain_in_user_agent(self, connector, task_template_with_inputs):
         """Test that domain is included in user agent when present."""
-        with patch("flyteplugins.connectors.bigquery.connector.bigquery.Client") as mock_client_class:
+        with patch("flyteplugins.bigquery.connector.bigquery.Client") as mock_client_class:
             mock_client = MagicMock()
             mock_client_class.return_value = mock_client
 
@@ -163,7 +163,7 @@ class TestBigQueryConnector:
         """Test getting a successful BigQuery job with destination table."""
         metadata = BigQueryMetadata(job_id="job-123", project="test-project", location="US")
 
-        with patch("flyteplugins.connectors.bigquery.connector.bigquery.Client") as mock_client_class:
+        with patch("flyteplugins.bigquery.connector.bigquery.Client") as mock_client_class:
             mock_client = MagicMock()
             mock_client_class.return_value = mock_client
 
@@ -178,7 +178,7 @@ class TestBigQueryConnector:
 
             mock_client.get_job.return_value = mock_job
 
-            with patch("flyteplugins.connectors.bigquery.connector.convert_to_flyte_phase") as mock_convert:
+            with patch("flyteplugins.bigquery.connector.convert_to_flyte_phase") as mock_convert:
                 mock_convert.return_value = TaskExecution.SUCCEEDED
 
                 resource = await connector.get(metadata)
@@ -202,7 +202,7 @@ class TestBigQueryConnector:
         """Test getting a successful BigQuery job without destination table."""
         metadata = BigQueryMetadata(job_id="job-123", project="test-project", location="US")
 
-        with patch("flyteplugins.connectors.bigquery.connector.bigquery.Client") as mock_client_class:
+        with patch("flyteplugins.bigquery.connector.bigquery.Client") as mock_client_class:
             mock_client = MagicMock()
             mock_client_class.return_value = mock_client
 
@@ -214,7 +214,7 @@ class TestBigQueryConnector:
 
             mock_client.get_job.return_value = mock_job
 
-            with patch("flyteplugins.connectors.bigquery.connector.convert_to_flyte_phase") as mock_convert:
+            with patch("flyteplugins.bigquery.connector.convert_to_flyte_phase") as mock_convert:
                 mock_convert.return_value = TaskExecution.SUCCEEDED
 
                 resource = await connector.get(metadata)
@@ -228,7 +228,7 @@ class TestBigQueryConnector:
         """Test getting a running BigQuery job."""
         metadata = BigQueryMetadata(job_id="job-123", project="test-project", location="US")
 
-        with patch("flyteplugins.connectors.bigquery.connector.bigquery.Client") as mock_client_class:
+        with patch("flyteplugins.bigquery.connector.bigquery.Client") as mock_client_class:
             mock_client = MagicMock()
             mock_client_class.return_value = mock_client
 
@@ -238,7 +238,7 @@ class TestBigQueryConnector:
 
             mock_client.get_job.return_value = mock_job
 
-            with patch("flyteplugins.connectors.bigquery.connector.convert_to_flyte_phase") as mock_convert:
+            with patch("flyteplugins.bigquery.connector.convert_to_flyte_phase") as mock_convert:
                 mock_convert.return_value = TaskExecution.RUNNING
 
                 resource = await connector.get(metadata)
@@ -252,7 +252,7 @@ class TestBigQueryConnector:
         """Test getting a failed BigQuery job."""
         metadata = BigQueryMetadata(job_id="job-123", project="test-project", location="US")
 
-        with patch("flyteplugins.connectors.bigquery.connector.bigquery.Client") as mock_client_class:
+        with patch("flyteplugins.bigquery.connector.bigquery.Client") as mock_client_class:
             mock_client = MagicMock()
             mock_client_class.return_value = mock_client
 
@@ -275,7 +275,7 @@ class TestBigQueryConnector:
         """Test getting a pending BigQuery job."""
         metadata = BigQueryMetadata(job_id="job-123", project="test-project", location="US")
 
-        with patch("flyteplugins.connectors.bigquery.connector.bigquery.Client") as mock_client_class:
+        with patch("flyteplugins.bigquery.connector.bigquery.Client") as mock_client_class:
             mock_client = MagicMock()
             mock_client_class.return_value = mock_client
 
@@ -285,7 +285,7 @@ class TestBigQueryConnector:
 
             mock_client.get_job.return_value = mock_job
 
-            with patch("flyteplugins.connectors.bigquery.connector.convert_to_flyte_phase") as mock_convert:
+            with patch("flyteplugins.bigquery.connector.convert_to_flyte_phase") as mock_convert:
                 mock_convert.return_value = TaskExecution.QUEUED
 
                 resource = await connector.get(metadata)
@@ -299,7 +299,7 @@ class TestBigQueryConnector:
         """Test deleting (canceling) a BigQuery job."""
         metadata = BigQueryMetadata(job_id="job-123", project="test-project", location="US")
 
-        with patch("flyteplugins.connectors.bigquery.connector.bigquery.Client") as mock_client_class:
+        with patch("flyteplugins.bigquery.connector.bigquery.Client") as mock_client_class:
             mock_client = MagicMock()
             mock_client_class.return_value = mock_client
 
@@ -338,7 +338,7 @@ class TestBigQueryConnector:
         custom["Location"] = "EU"
         template.custom.CopyFrom(custom)
 
-        with patch("flyteplugins.connectors.bigquery.connector.bigquery.Client") as mock_client_class:
+        with patch("flyteplugins.bigquery.connector.bigquery.Client") as mock_client_class:
             mock_client = MagicMock()
             mock_client_class.return_value = mock_client
 
@@ -367,7 +367,7 @@ class TestBigQueryConnector:
         """Test that the log link is properly formatted."""
         metadata = BigQueryMetadata(job_id="job-abc", project="my-project", location="europe-west1")
 
-        with patch("flyteplugins.connectors.bigquery.connector.bigquery.Client") as mock_client_class:
+        with patch("flyteplugins.bigquery.connector.bigquery.Client") as mock_client_class:
             mock_client = MagicMock()
             mock_client_class.return_value = mock_client
 
@@ -376,7 +376,7 @@ class TestBigQueryConnector:
             mock_job.state = "RUNNING"
             mock_client.get_job.return_value = mock_job
 
-            with patch("flyteplugins.connectors.bigquery.connector.convert_to_flyte_phase") as mock_convert:
+            with patch("flyteplugins.bigquery.connector.convert_to_flyte_phase") as mock_convert:
                 mock_convert.return_value = TaskExecution.RUNNING
 
                 resource = await connector.get(metadata)

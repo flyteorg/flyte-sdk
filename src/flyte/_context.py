@@ -30,6 +30,7 @@ class ContextData:
     task_context: Optional[TaskContext] = None
     raw_data_path: Optional[RawDataPath] = None
     metadata: Optional[Tuple[Tuple[str, str], ...]] = None
+    preserve_original_types: bool = False
 
     def replace(self, **kwargs) -> ContextData:
         return replace(self, **kwargs)
@@ -99,6 +100,12 @@ class Context:
         Return a copy of the context with the given metadata tuple
         """
         return Context(self.data.replace(metadata=metadata))
+
+    def new_preserve_original_types(self, preserve_original_types: bool) -> Context:
+        """
+        Return a copy of the context with the given preserve original types flag
+        """
+        return Context(self.data.replace(preserve_original_types=preserve_original_types))
 
     def get_report(self) -> Optional[Report]:
         """

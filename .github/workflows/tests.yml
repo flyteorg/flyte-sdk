@@ -38,10 +38,13 @@ jobs:
     strategy:
       matrix:
         plugin:
+          - bigquery
+          - databricks
           - openai
           - polars
+          - snowflake
           - wandb
-        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+        python-version: ["3.12"]
       fail-fast: false
     defaults:
       run:

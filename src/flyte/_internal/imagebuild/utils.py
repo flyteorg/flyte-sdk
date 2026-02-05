@@ -29,13 +29,32 @@ def copy_files_to_context(src: Path, context_path: Path, ignore_patterns: list[s
         dst_path = context_path / "_flyte_abs_context" / rel_path
     else:
         dst_path = context_path / src
-    dst_path.parent.mkdir(parents=True, exist_ok=True)
+
     if src.is_dir():
-        default_ignore_patterns = [".idea", ".venv"]
-        ignore_patterns = list(set(ignore_patterns + default_ignore_patterns))
-        shutil.copytree(src, dst_path, dirs_exist_ok=True, ignore=shutil.ignore_patterns(*ignore_patterns))
+        from .docker import PatternMatcher
+
+        # Add ** prefix to match patterns anywhere in tree
+        default_ignore_patterns = ["**/.idea", "**/.venv", "**/__pycache__", "**/*.pyc"]
+        all_patterns = ignore_patterns + default_ignore_patterns
+        pm = PatternMatcher(all_patterns)
+
+        # Use walk() to get list of files to include
+        for rel_file in pm.walk(str(src)):
+            src_file = src / rel_file
+            dst_file = dst_path / rel_file
+
+            # Create parent directory if needed
+            dst_file.parent.mkdir(parents=True, exist_ok=True)
+
+            # Copy file (not directory)
+            if src_file.is_file():
+                shutil.copy2(src_file, dst_file)
+
     else:
+        # Single file
+        dst_path.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy(src, dst_path)
+
     return dst_path
 
 

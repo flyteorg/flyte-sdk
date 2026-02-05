@@ -66,6 +66,7 @@ class Snowflake(AsyncConnectorExecutorMixin, TaskTemplate):
                 outputs or {},
             ),
             task_type=self._TASK_TYPE,
+            image=None,
             **kwargs,
         )
         self.output_dataframe_type = output_dataframe_type

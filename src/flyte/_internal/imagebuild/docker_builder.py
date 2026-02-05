@@ -3,7 +3,7 @@ import shutil
 import subprocess
 import tempfile
 import typing
-from pathlib import Path, PurePath
+from pathlib import Path
 from string import Template
 from typing import TYPE_CHECKING, ClassVar, Optional, Protocol, cast
 
@@ -56,6 +56,14 @@ FLYTE_DOCKER_BUILDER_CACHE_TO = "FLYTE_DOCKER_BUILDER_CACHE_TO"
 UV_LOCK_WITHOUT_PROJECT_INSTALL_TEMPLATE = Template("""\
 RUN --mount=type=cache,sharing=locked,mode=0777,target=/root/.cache/uv,id=uv \
    --mount=type=bind,target=uv.lock,src=$UV_LOCK_PATH,rw \
+   --mount=type=bind,target=pyproject.toml,src=$PYPROJECT_PATH \
+   $EDITABLE_INSTALL_MOUNTS \
+   $SECRET_MOUNT \
+   VIRTUAL_ENV=$${VIRTUAL_ENV-/opt/venv} uv sync --active --inexact $PIP_INSTALL_ARGS
+""")
+
+UV_NO_LOCK_WITHOUT_PROJECT_INSTALL_TEMPLATE = Template("""\
+RUN --mount=type=cache,sharing=locked,mode=0777,target=/root/.cache/uv,id=uv \
    --mount=type=bind,target=pyproject.toml,src=$PYPROJECT_PATH \
    $EDITABLE_INSTALL_MOUNTS \
    $SECRET_MOUNT \
@@ -280,9 +288,8 @@ class UVProjectHandler:
             pip_install_args = " ".join(layer.get_pip_install_args())
             if "--no-install-project" not in pip_install_args:
                 pip_install_args += " --no-install-project"
-            # Only Copy pyproject.yaml and uv.lock from the project root.
+            # Only Copy pyproject.yaml and uv.lock (if provided) from the project root.
             pyproject_dst = copy_files_to_context(layer.pyproject, context_path)
-            uvlock_dst = copy_files_to_context(layer.uvlock, context_path)
             # Apply any editable install mounts to the template.
             editable_install_mounts = get_uv_editable_install_mounts(
                 project_root=layer.pyproject.parent,
@@ -292,13 +299,22 @@ class UVProjectHandler:
                     *docker_ignore_patterns,
                 ],
             )
-            delta = UV_LOCK_WITHOUT_PROJECT_INSTALL_TEMPLATE.substitute(
-                UV_LOCK_PATH=uvlock_dst.relative_to(context_path),
-                PYPROJECT_PATH=pyproject_dst.relative_to(context_path),
-                PIP_INSTALL_ARGS=pip_install_args,
-                SECRET_MOUNT=secret_mounts,
-                EDITABLE_INSTALL_MOUNTS=editable_install_mounts,
-            )
+            if layer.uvlock is not None:
+                uvlock_dst = copy_files_to_context(layer.uvlock, context_path)
+                delta = UV_LOCK_WITHOUT_PROJECT_INSTALL_TEMPLATE.substitute(
+                    UV_LOCK_PATH=uvlock_dst.relative_to(context_path),
+                    PYPROJECT_PATH=pyproject_dst.relative_to(context_path),
+                    PIP_INSTALL_ARGS=pip_install_args,
+                    SECRET_MOUNT=secret_mounts,
+                    EDITABLE_INSTALL_MOUNTS=editable_install_mounts,
+                )
+            else:
+                delta = UV_NO_LOCK_WITHOUT_PROJECT_INSTALL_TEMPLATE.substitute(
+                    PYPROJECT_PATH=pyproject_dst.relative_to(context_path),
+                    PIP_INSTALL_ARGS=pip_install_args,
+                    SECRET_MOUNT=secret_mounts,
+                    EDITABLE_INSTALL_MOUNTS=editable_install_mounts,
+                )
         else:
             # Copy the entire project.
             pyproject_dst = copy_files_to_context(layer.pyproject.parent, context_path, docker_ignore_patterns)
@@ -306,7 +322,7 @@ class UVProjectHandler:
             # Make sure pyproject.toml and uv.lock files are not removed by docker ignore
             uv_lock_context_path = pyproject_dst / "uv.lock"
             pyproject_context_path = pyproject_dst / "pyproject.toml"
-            if not uv_lock_context_path.exists():
+            if layer.uvlock is not None and not uv_lock_context_path.exists():
                 shutil.copy(layer.uvlock, pyproject_dst)
             if not pyproject_context_path.exists():
                 shutil.copy(layer.pyproject, pyproject_dst)
@@ -372,29 +388,7 @@ class CopyConfigHandler:
     async def handle(
         layer: CopyConfig, context_path: Path, dockerfile: str, docker_ignore_patterns: list[str] = []
     ) -> str:
-        # Copy the source config file or directory to the context path
-        if layer.src.is_absolute() or ".." in str(layer.src):
-            rel_path = PurePath(*layer.src.parts[1:])
-            dst_path = context_path / "_flyte_abs_context" / rel_path
-        else:
-            dst_path = context_path / layer.src
-
-        dst_path.parent.mkdir(parents=True, exist_ok=True)
-        abs_path = layer.src.absolute()
-
-        if layer.src.is_file():
-            # Copy the file
-            shutil.copy(abs_path, dst_path)
-        elif layer.src.is_dir():
-            # Copy the entire directory
-            shutil.copytree(
-                abs_path, dst_path, dirs_exist_ok=True, ignore=shutil.ignore_patterns(*docker_ignore_patterns)
-            )
-        else:
-            logger.error(f"Source path not exists: {layer.src}")
-            return dockerfile
-
-        # Add a copy command to the dockerfile
+        dst_path = copy_files_to_context(layer.src, context_path, docker_ignore_patterns)
         dockerfile += f"\nCOPY {dst_path.relative_to(context_path)} {layer.dst}\n"
         return dockerfile
 
@@ -421,6 +415,7 @@ class WorkDirHandler:
 
 def _get_secret_commands(layers: typing.Tuple[Layer, ...]) -> typing.List[str]:
     commands = []
+    seen_secrets: typing.Set[int] = set()
 
     def _get_secret_command(secret: str | Secret) -> typing.List[str]:
         if isinstance(secret, str):
@@ -439,7 +434,11 @@ def _get_secret_commands(layers: typing.Tuple[Layer, ...]) -> typing.List[str]:
         if isinstance(layer, (PipOption, AptPackages, Commands)):
             if layer.secret_mounts:
                 for secret_mount in layer.secret_mounts:
-                    commands.extend(_get_secret_command(secret_mount))
+                    secret = Secret(key=secret_mount) if isinstance(secret_mount, str) else secret_mount
+                    secret_id = hash(secret)
+                    if secret_id not in seen_secrets:
+                        seen_secrets.add(secret_id)
+                        commands.extend(_get_secret_command(secret_mount))
     return commands
 
 
@@ -489,9 +488,10 @@ async def _process_layer(
                 dockerfile = await AptPackagesHandler.handle(AptPackages(packages=("git",)), context_path, dockerfile)
 
                 for project_path in header.pyprojects:
+                    uv_lock_path = Path(project_path) / "uv.lock"
                     uv_project = UVProject(
                         pyproject=Path(project_path) / "pyproject.toml",
-                        uvlock=Path(project_path) / "uv.lock",
+                        uvlock=uv_lock_path if uv_lock_path.exists() else None,
                         project_install_mode="install_project",
                         secret_mounts=layer.secret_mounts,
                         pre=layer.pre,

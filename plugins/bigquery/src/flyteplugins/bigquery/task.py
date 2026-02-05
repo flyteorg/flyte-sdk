@@ -55,6 +55,7 @@ class BigQueryTask(AsyncConnectorExecutorMixin, TaskTemplate):
             name=name,
             interface=NativeInterface({k: (v, None) for k, v in inputs.items()} if inputs else {}, outputs or {}),
             task_type=self._TASK_TYPE,
+            image=None,
             **kwargs,
         )
         self.output_dataframe_type = output_dataframe_type

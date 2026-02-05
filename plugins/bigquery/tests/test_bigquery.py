@@ -5,7 +5,7 @@ from flyte.io import DataFrame
 from flyte.models import SerializationContext
 from google.cloud import bigquery
 
-from flyteplugins.connectors.bigquery.task import BigQueryConfig, BigQueryTask
+from flyteplugins.bigquery.task import BigQueryConfig, BigQueryTask
 
 
 @pytest.fixture

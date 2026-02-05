@@ -520,6 +520,7 @@ class ActionDetails(ToJSONMixin):
     pb2: run_definition_pb2.ActionDetails
     _inputs: ActionInputs | None = None
     _outputs: ActionOutputs | None = None
+    _preserve_original_types: bool = False
 
     @syncify
     @classmethod
@@ -734,6 +735,7 @@ class ActionDetails(ToJSONMixin):
         Cache the inputs and outputs of the action.
         :return: Returns True if Action is terminal and all data is cached else False.
         """
+        from flyte._context import internal_ctx
         from flyte._internal.runtime import convert
 
         if self._inputs and self._outputs:
@@ -745,31 +747,33 @@ class ActionDetails(ToJSONMixin):
                 action_id=self.pb2.id,
             )
         )
-        native_iface = None
-        if self.pb2.HasField("task"):
-            iface = self.pb2.task.task_template.interface
-            native_iface = types.guess_interface(iface)
-        elif self.pb2.HasField("trace"):
-            iface = self.pb2.trace.interface
-            native_iface = types.guess_interface(iface)
 
-        if resp.inputs:
-            data_dict = (
-                await convert.convert_from_inputs_to_native(native_iface, convert.Inputs(resp.inputs))
-                if native_iface
-                else {}
-            )
-            self._inputs = ActionInputs(pb2=resp.inputs, data=data_dict)
+        with internal_ctx().new_preserve_original_types(self._preserve_original_types):
+            native_iface = None
+            if self.pb2.HasField("task"):
+                iface = self.pb2.task.task_template.interface
+                native_iface = types.guess_interface(iface)
+            elif self.pb2.HasField("trace"):
+                iface = self.pb2.trace.interface
+                native_iface = types.guess_interface(iface)
 
-        if resp.outputs:
-            data_tuple = (
-                await convert.convert_outputs_to_native(native_iface, convert.Outputs(resp.outputs))
-                if native_iface
-                else ()
-            )
-            if not isinstance(data_tuple, tuple):
-                data_tuple = (data_tuple,)
-            self._outputs = ActionOutputs(pb2=resp.outputs, data=data_tuple)
+            if resp.inputs:
+                data_dict = (
+                    await convert.convert_from_inputs_to_native(native_iface, convert.Inputs(resp.inputs))
+                    if native_iface
+                    else {}
+                )
+                self._inputs = ActionInputs(pb2=resp.inputs, data=data_dict)
+
+            if resp.outputs:
+                data_tuple = (
+                    await convert.convert_outputs_to_native(native_iface, convert.Outputs(resp.outputs))
+                    if native_iface
+                    else ()
+                )
+                if not isinstance(data_tuple, tuple):
+                    data_tuple = (data_tuple,)
+                self._outputs = ActionOutputs(pb2=resp.outputs, data=data_tuple)
 
         return self._outputs is not None
 

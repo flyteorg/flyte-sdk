@@ -132,7 +132,7 @@ class RemoteController(Controller):
         self._parent_action_semaphore: DefaultDict[str, asyncio.Semaphore] = defaultdict(
             lambda: asyncio.Semaphore(default_parent_concurrency)
         )
-        self._parent_action_task_call_sequence: DefaultDict[str, DefaultDict[int, int]] = defaultdict(
+        self._parent_action_task_call_sequence: DefaultDict[str, DefaultDict[int | str, int]] = defaultdict(
             lambda: defaultdict(int)
         )
         self._submit_loop: asyncio.AbstractEventLoop | None = None
@@ -143,17 +143,19 @@ class RemoteController(Controller):
         Generate a task call sequence for the given task object and action ID.
         This is used to track the number of times a task is called within an action.
         """
-        uniq = unique_action_name(action_id)
-        current_action_sequencer = self._parent_action_task_call_sequence[uniq]
-        current_task_id = id(task_obj)
-        v = current_action_sequencer[current_task_id]
-        new_seq = v + 1
-        current_action_sequencer[current_task_id] = new_seq
         name = ""
         if hasattr(task_obj, "__name__"):
             name = task_obj.__name__
         elif hasattr(task_obj, "name"):
             name = task_obj.name
+
+        uniq = unique_action_name(action_id)
+        current_action_sequencer = self._parent_action_task_call_sequence[uniq]
+        current_task_id = name or id(task_obj)
+        v = current_action_sequencer[current_task_id]
+        new_seq = v + 1
+        current_action_sequencer[current_task_id] = new_seq
+
         logger.info(f"For action {uniq}, task {name} call sequence is {new_seq}")
         return new_seq
 
