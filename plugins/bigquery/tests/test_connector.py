@@ -375,7 +375,9 @@ class TestBigQueryConnector:
     @pytest.mark.asyncio
     async def test_get_log_link_format(self, connector):
         """Test that the log link is properly formatted."""
-        metadata = BigQueryMetadata(job_id="job-abc", project="my-project", location="europe-west1", user_agent="Flyte/1.0.0")
+        metadata = BigQueryMetadata(
+            job_id="job-abc", project="my-project", location="europe-west1", user_agent="Flyte/1.0.0"
+        )
 
         with patch("flyteplugins.bigquery.connector.bigquery.Client") as mock_client_class:
             mock_client = MagicMock()
@@ -413,7 +415,9 @@ class TestBigQueryConnector:
         credentials_json = json.dumps(credentials_dict)
 
         with patch("flyteplugins.bigquery.connector.bigquery.Client") as mock_client_class:
-            with patch("flyteplugins.bigquery.connector.service_account.Credentials.from_service_account_info") as mock_creds:
+            with patch(
+                "flyteplugins.bigquery.connector.service_account.Credentials.from_service_account_info"
+            ) as mock_creds:
                 mock_credentials = MagicMock()
                 mock_creds.return_value = mock_credentials
 
