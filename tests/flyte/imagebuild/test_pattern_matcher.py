@@ -172,8 +172,9 @@ def test_copy_files_with_dockerignore():
         (src_path / "src").mkdir()
         (src_path / "src" / "app.py").write_text("app")
 
+        ignore_patterns = ["**/*.log", "**/*.csv", *STANDARD_IGNORE_PATTERNS]
         # Copy with custom + default patterns
-        dst = copy_files_to_context(src_path, ctx_path, ignore_patterns=["**/*.log", "**/*.csv"] + STANDARD_IGNORE_PATTERNS)
+        dst = copy_files_to_context(src_path, ctx_path, ignore_patterns=ignore_patterns)
 
         # Should copy Python source
         assert (dst / "main.py").exists()
