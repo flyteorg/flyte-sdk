@@ -38,24 +38,22 @@ uv run example_distributed.py multi_node_auto
 import os
 import time
 import typing
-from pathlib import Path
 
+import flyte
 import torch
 import torch.distributed
 import torch.nn as nn
 import torch.optim as optim
 from flyteplugins.pytorch.task import Elastic
+from torch.nn.parallel import DistributedDataParallel as DDP
+from torch.utils.data import DataLoader, DistributedSampler
+
 from flyteplugins.wandb import (
     get_distributed_info,
     get_wandb_run,
     wandb_config,
     wandb_init,
 )
-from torch.nn.parallel import DistributedDataParallel as DDP
-from torch.utils.data import DataLoader, DistributedSampler
-
-import flyte
-from flyte._image import PythonWheels
 
 image = (
     flyte.Image.from_debian_base(name="torch-wandb")
@@ -66,9 +64,7 @@ image = (
 # Single-node environment (1 node, 4 GPUs)
 single_node_env = flyte.TaskEnvironment(
     name="single_node_env",
-    resources=flyte.Resources(
-        cpu=(1, 2), memory=("1Gi", "10Gi"), gpu="T4:4", shm="auto"
-    ),
+    resources=flyte.Resources(cpu=(1, 2), memory=("1Gi", "10Gi"), gpu="T4:4", shm="auto"),
     plugin_config=Elastic(
         nproc_per_node=4,
         nnodes=1,
@@ -81,9 +77,7 @@ single_node_env = flyte.TaskEnvironment(
 # Multi-node environment (2 nodes, 4 GPUs each)
 multi_node_env = flyte.TaskEnvironment(
     name="multi_node_env",
-    resources=flyte.Resources(
-        cpu=(1, 2), memory=("1Gi", "10Gi"), gpu="T4:4", shm="auto"
-    ),
+    resources=flyte.Resources(cpu=(1, 2), memory=("1Gi", "10Gi"), gpu="T4:4", shm="auto"),
     plugin_config=Elastic(
         nproc_per_node=4,
         nnodes=2,
@@ -136,7 +130,7 @@ class SyntheticDataset(torch.utils.data.Dataset):
 
 def _train_loop_impl(duration_seconds: int = 300) -> float | None:
     """Core training loop. Runs for specified duration."""
-    local_rank = int(os.environ.get("LOCAL_RANK", 0))
+    local_rank = int(os.environ.get("LOCAL_RANK", "0"))
     device = torch.device(f"cuda:{local_rank}")
     torch.cuda.set_device(device)
 
