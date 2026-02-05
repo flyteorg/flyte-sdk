@@ -11,7 +11,7 @@ from flyte._task import AsyncFunctionTaskTemplate
 
 import wandb
 
-from ._context import RunMode, get_wandb_context, get_wandb_sweep_context
+from ._context import RankScope, RunMode, get_wandb_context, get_wandb_sweep_context
 from ._link import Wandb, WandbSweep
 
 logger = logging.getLogger(__name__)
@@ -55,34 +55,38 @@ def _is_primary_rank(info: dict) -> bool:
     return info["rank"] == 0
 
 
-def _should_skip_rank(run_mode: RunMode, dist_info: dict) -> bool:
+def _should_skip_rank(run_mode: RunMode, rank_scope: RankScope, dist_info: dict) -> bool:
     """
     Check if this rank should skip wandb initialization.
 
     For run_mode="auto":
-    - Single-node: Only rank 0 initializes wandb
-    - Multi-node: Only local rank 0 of each worker initializes wandb
+    - rank_scope="global": Only global rank 0 initializes wandb (1 run total)
+    - rank_scope="worker": Only local rank 0 of each worker initializes wandb (1 run per worker)
 
     For run_mode="shared" or "new": All ranks initialize wandb.
     """
     if run_mode != "auto":
         return False
 
-    is_multi_node = _is_multi_node(dist_info)
     is_primary = _is_primary_rank(dist_info)
     is_local_primary = dist_info["local_rank"] == 0
 
-    if is_multi_node:
-        # Multi-node: only local rank 0 of each node logs
-        return not is_local_primary
-    else:
-        # Single-node: only rank 0 logs
+    if rank_scope == "global":
+        # Global scope: only global rank 0 logs
         return not is_primary
+    else:  # rank_scope == "worker"
+        # Worker scope: local rank 0 per worker logs
+        is_multi_node = _is_multi_node(dist_info)
+        if is_multi_node:
+            return not is_local_primary
+        else:
+            return not is_primary
 
 
 def _configure_distributed_run(
     init_kwargs: dict,
     run_mode: RunMode,
+    rank_scope: RankScope,
     dist_info: dict,
     base_run_id: str,
 ) -> dict:
@@ -91,14 +95,19 @@ def _configure_distributed_run(
 
     Sets run ID, group, and shared mode settings based on:
     - run_mode: "auto", "new", or "shared"
+    - rank_scope: "global" or "worker" (affects run ID and grouping)
     - dist_info: distributed topology (rank, worker_index, etc.)
     - base_run_id: base string for generating run IDs
 
     Run ID patterns:
     - Single-node auto/shared: {base_run_id}
     - Single-node new: {base_run_id}-rank-{rank}
-    - Multi-node auto/shared: {base_run_id}-worker-{worker_index}
-    - Multi-node new: {base_run_id}-worker-{worker_index}-rank-{local_rank}
+    - Multi-node auto (rank_scope="global"): {base_run_id}
+    - Multi-node auto (rank_scope="worker"): {base_run_id}-worker-{worker_index}
+    - Multi-node shared (rank_scope="global"): {base_run_id}
+    - Multi-node shared (rank_scope="worker"): {base_run_id}-worker-{worker_index}
+    - Multi-node new (rank_scope="global"): {base_run_id}-rank-{global_rank}
+    - Multi-node new (rank_scope="worker"): {base_run_id}-worker-{worker_index}-rank-{local_rank}
     """
     is_multi_node = _is_multi_node(dist_info)
     is_primary = _is_primary_rank(dist_info)
@@ -108,39 +117,55 @@ def _configure_distributed_run(
         if run_mode == "new":
             # Each rank gets its own run
             if is_multi_node:
-                init_kwargs["id"] = f"{base_run_id}-worker-{dist_info['worker_index']}-rank-{dist_info['local_rank']}"
+                if rank_scope == "global":
+                    # Global scope: use global rank for run ID
+                    init_kwargs["id"] = f"{base_run_id}-rank-{dist_info['rank']}"
+                else:  # rank_scope == "worker"
+                    # Worker scope: use worker index and local rank
+                    init_kwargs["id"] = (
+                        f"{base_run_id}-worker-{dist_info['worker_index']}-rank-{dist_info['local_rank']}"
+                    )
             else:
                 init_kwargs["id"] = f"{base_run_id}-rank-{dist_info['rank']}"
-        else:  # run_mode == "auto" or "shared"
-            if is_multi_node:
+        elif run_mode == "auto" or run_mode == "shared":
+            # For auto and shared mode, run ID depends on rank_scope
+            if is_multi_node and rank_scope == "worker":
+                # Worker scope: each worker gets or shares its own run
                 init_kwargs["id"] = f"{base_run_id}-worker-{dist_info['worker_index']}"
             else:
+                # Global scope or single-node: single (shared) run
                 init_kwargs["id"] = base_run_id
 
     # Set group for multiple runs (run_mode="new")
     if run_mode == "new" and "group" not in init_kwargs:
-        if is_multi_node:
+        if is_multi_node and rank_scope == "worker":
+            # Worker scope: group per worker
             init_kwargs["group"] = f"{base_run_id}-worker-{dist_info['worker_index']}"
         else:
+            # Global scope or single-node: single group for all
             init_kwargs["group"] = base_run_id
 
     # Configure W&B shared mode for run_mode="shared"
     if run_mode == "shared":
         if is_multi_node:
             x_label = f"worker-{dist_info['worker_index']}-rank-{dist_info['local_rank']}"
-            # For multi-node, primary is local_rank 0 within each worker
-            is_worker_primary = dist_info["local_rank"] == 0
+            if rank_scope == "global":
+                # Global scope: all ranks share one run, only global rank 0 is primary
+                is_shared_primary = is_primary  # Only global rank 0
+            else:  # rank_scope == "worker"
+                # Worker scope: each worker has its own shared run
+                is_shared_primary = dist_info["local_rank"] == 0  # local_rank 0 per worker
         else:
             x_label = f"rank-{dist_info['rank']}"
             # For single-node, primary is rank 0
-            is_worker_primary = is_primary
+            is_shared_primary = is_primary
 
         existing_settings = init_kwargs.get("settings")
         shared_config = {
             "mode": "shared",
-            "x_primary": is_worker_primary,
+            "x_primary": is_shared_primary,
             "x_label": x_label,
-            "x_update_finish_state": is_worker_primary,
+            "x_update_finish_state": is_shared_primary,
         }
 
         # Handle both dict and wandb.Settings objects
@@ -166,6 +191,7 @@ def _build_init_kwargs() -> dict[str, Any]:
 
         # Remove Flyte-specific fields that shouldn't be passed to wandb.init()
         config_dict.pop("run_mode", None)
+        config_dict.pop("rank_scope", None)
         config_dict.pop("download_logs", None)
 
         # Filter out None values
@@ -177,7 +203,8 @@ def _build_init_kwargs() -> dict[str, Any]:
 
 @contextmanager
 def _wandb_run(
-    run_mode: RunMode = "auto",
+    run_mode: Optional[RunMode] = None,
+    rank_scope: Optional[RankScope] = None,
     func: bool = False,
     **decorator_kwargs,
 ):
@@ -202,9 +229,9 @@ def _wandb_run(
         return
     elif func and ctx:
         # Check if there's already a W&B run from parent
-        existing_run = ctx.data.get("_wandb_run")
-        if existing_run:
-            yield existing_run
+        saved_run = ctx.data.get("_wandb_run")
+        if saved_run:
+            yield saved_run
             return
 
         raise RuntimeError(
@@ -219,34 +246,35 @@ def _wandb_run(
     context_init_kwargs = _build_init_kwargs()
     init_kwargs = {**context_init_kwargs, **decorator_kwargs}
 
-    # Check if this is a trace accessing parent's run
-    run = ctx.data.get("_wandb_run")
-    if run:
-        # This is a trace - yield existing run without initializing
-        try:
-            yield run
-        finally:
-            pass  # Don't clean up - parent owns this run
-        return
-
     # Get current action name for run ID generation
     current_action = ctx.action.name
     base_run_id = f"{ctx.action.run_name}-{current_action}"
 
+    # Determine effective run_mode and rank_scope: decorator wins if set, otherwise use context
+    context_config = get_wandb_context()
+    effective_run_mode: RunMode = run_mode or (context_config and context_config.run_mode) or "auto"
+    effective_rank_scope: RankScope = rank_scope or (context_config and context_config.rank_scope) or "global"
+
     # Handle distributed training
     if dist_info:
-        if _should_skip_rank(run_mode, dist_info):
+        if _should_skip_rank(effective_run_mode, effective_rank_scope, dist_info):
             yield None
             return
 
-        init_kwargs = _configure_distributed_run(init_kwargs, run_mode, dist_info, base_run_id)
+        init_kwargs = _configure_distributed_run(
+            init_kwargs,
+            effective_run_mode,
+            effective_rank_scope,
+            dist_info,
+            base_run_id,
+        )
     else:
         # Non-distributed training
         # Determine if we should reuse parent's run
         should_reuse = False
-        if run_mode == "shared":
+        if effective_run_mode == "shared":
             should_reuse = True
-        elif run_mode == "auto":
+        elif effective_run_mode == "auto":
             should_reuse = bool(saved_run_id)
 
         # Determine run ID
@@ -303,19 +331,20 @@ def _wandb_run(
         yield run
     finally:
         # Determine if this is a primary run
-        is_primary_run = run_mode == "new" or (run_mode == "auto" and saved_run_id is None)
+        is_primary_run = effective_run_mode == "new" or (effective_run_mode == "auto" and saved_run_id is None)
 
         # Determine if we should call finish()
         should_finish = False
         if run:
-            if dist_info and run_mode == "shared":
-                # For distributed shared mode, only primary (local_rank 0) finishes
-                is_multi_node = _is_multi_node(dist_info)
-                if is_multi_node:
+            if dist_info and effective_run_mode == "shared":
+                # For distributed shared mode, only primary finishes
+                if effective_rank_scope == "global":
+                    # Global scope: only global rank 0 finishes
+                    should_finish = _is_primary_rank(dist_info)
+                else:  # rank_scope == "worker"
+                    # Worker scope: local_rank 0 of each worker finishes
                     should_finish = dist_info["local_rank"] == 0
-                else:
-                    should_finish = dist_info["rank"] == 0
-            elif ctx.mode == "remote" or is_primary_run:
+            elif (ctx and ctx.mode == "remote") or is_primary_run:
                 # In remote mode or for primary runs, always finish
                 should_finish = True
 
@@ -345,7 +374,8 @@ def _wandb_run(
 def wandb_init(
     _func: Optional[F] = None,
     *,
-    run_mode: RunMode = "auto",
+    run_mode: Optional[RunMode] = None,
+    rank_scope: Optional[RankScope] = None,
     download_logs: Optional[bool] = None,
     project: Optional[str] = None,
     entity: Optional[str] = None,
@@ -359,11 +389,22 @@ def wandb_init(
             - "auto" (default): Creates new run if no parent run exists, otherwise shares parent's run
             - "new": Always creates a new wandb run with a unique ID
             - "shared": Always shares the parent's run ID (useful for child tasks)
-            In distributed training context:
-            - "auto" (default): Single-node: only rank 0 logs.
-              Multi-node: local rank 0 of each worker logs (1 run per worker).
+            In distributed training context (single-node):
+            - "auto" (default): Only rank 0 logs.
             - "shared": All ranks log to a single shared W&B run.
             - "new": Each rank gets its own W&B run (grouped in W&B UI).
+            Multi-node: behavior depends on `rank_scope`.
+        rank_scope: Flyte-specific rank scope - "global" or "worker".
+            Controls which ranks log in distributed training.
+            run_mode="auto":
+            - "global" (default): Only global rank 0 logs (1 run total).
+            - "worker": Local rank 0 of each worker logs (1 run per worker).
+            run_mode="shared":
+            - "global": All ranks log to a single shared W&B run.
+            - "worker": Ranks per worker log to a single shared W&B run (1 run per worker).
+            run_mode="new":
+            - "global": Each rank gets its own W&B run (1 run total).
+            - "worker": Each rank gets its own W&B run grouped per worker -> N runs.
         download_logs: If `True`, downloads wandb run files after task completes
             and shows them as a trace output in the Flyte UI. If None, uses
             the value from `wandb_config()` context if set.
@@ -426,13 +467,18 @@ def wandb_init(
             wandb_id = kwargs.get("id")
             existing_links = getattr(func, "links", ())
 
-            if nnodes > 1:
-                # Multi-node: one link per worker
+            # For links, default to "auto"/"global" if not specified in decorator
+            link_run_mode: RunMode = run_mode if run_mode is not None else "auto"
+            link_rank_scope: RankScope = rank_scope if rank_scope is not None else "global"
+
+            if nnodes > 1 and link_rank_scope == "worker":
+                # Multi-node with worker scope: one link per worker
                 wandb_links = tuple(
                     Wandb(
                         project=project,
                         entity=entity,
-                        run_mode=run_mode,
+                        run_mode=link_run_mode,
+                        rank_scope=link_rank_scope,
                         id=wandb_id,
                         _is_distributed=True,
                         _worker_index=i,
@@ -442,38 +488,73 @@ def wandb_init(
                 )
                 func = func.override(links=(*existing_links, *wandb_links))
             else:
-                # Single-node (distributed or not): one link
+                # Single-node or multi-node with global scope: one link
                 wandb_link = Wandb(
                     project=project,
                     entity=entity,
-                    run_mode=run_mode,
+                    run_mode=link_run_mode,
+                    rank_scope=link_rank_scope,
                     id=wandb_id,
                     _is_distributed=is_distributed,
                 )
                 func = func.override(links=(*existing_links, wandb_link))
 
-            # Wrap the task's execute method with wandb_run
-            original_execute = func.execute
+            if is_distributed:
+                # Distributed: wrap func with sync wrapper
+                # The wrapper runs inside each worker after Elastic sets up distributed env vars
+                original_fn = func.func
 
-            async def wrapped_execute(*args, **exec_kwargs):
-                with _wandb_run(run_mode=run_mode, **decorator_kwargs) as run:
-                    result = await original_execute(*args, **exec_kwargs)
-
-                # After run finishes, optionally download logs
+                # Warn if download_logs is requested for distributed tasks
                 should_download = download_logs
                 if should_download is None:
-                    # Check context config
                     ctx_config = get_wandb_context()
                     should_download = ctx_config.download_logs if ctx_config else False
+                if should_download:
+                    logger.warning(
+                        "download_logs is not supported for distributed tasks. "
+                        "Logs will not be downloaded automatically."
+                    )
 
-                if should_download and run:
-                    from . import download_wandb_run_logs
+                if iscoroutinefunction(original_fn):
+                    logger.warning("Async task functions are not supported with Elastic. Use a sync function instead.")
 
-                    await download_wandb_run_logs(run.id)
+                    @functools.wraps(original_fn)
+                    async def wrapped_fn(*args, **fn_kwargs):
+                        with _wandb_run(run_mode=run_mode, rank_scope=rank_scope, **decorator_kwargs):
+                            result = await original_fn(*args, **fn_kwargs)
+                        return result
 
-                return result
+                else:
 
-            func.execute = wrapped_execute
+                    @functools.wraps(original_fn)
+                    def wrapped_fn(*args, **fn_kwargs):
+                        with _wandb_run(run_mode=run_mode, rank_scope=rank_scope, **decorator_kwargs):
+                            result = original_fn(*args, **fn_kwargs)
+                        return result
+
+                func.func = wrapped_fn
+            else:
+                # Non-distributed: wrap execute with wandb initialization
+                original_execute = func.execute
+
+                async def wrapped_execute(*args, **exec_kwargs):
+                    with _wandb_run(run_mode=run_mode, rank_scope=rank_scope, **decorator_kwargs) as run:
+                        result = await original_execute(*args, **exec_kwargs)
+
+                    # After run finishes, optionally download logs
+                    should_download = download_logs
+                    if should_download is None:
+                        ctx_config = get_wandb_context()
+                        should_download = ctx_config.download_logs if ctx_config else False
+
+                    if should_download and run:
+                        from . import download_wandb_run_logs
+
+                        await download_wandb_run_logs(run.id)
+
+                    return result
+
+                func.execute = wrapped_execute
 
             return cast(F, func)
         # Regular function
@@ -482,7 +563,12 @@ def wandb_init(
 
                 @functools.wraps(func)
                 async def async_wrapper(*args, **wrapper_kwargs):
-                    with _wandb_run(run_mode=run_mode, func=True, **decorator_kwargs):
+                    with _wandb_run(
+                        run_mode=run_mode,
+                        rank_scope=rank_scope,
+                        func=True,
+                        **decorator_kwargs,
+                    ):
                         return await func(*args, **wrapper_kwargs)
 
                 return cast(F, async_wrapper)
@@ -490,7 +576,12 @@ def wandb_init(
 
                 @functools.wraps(func)
                 def sync_wrapper(*args, **wrapper_kwargs):
-                    with _wandb_run(run_mode=run_mode, func=True, **decorator_kwargs):
+                    with _wandb_run(
+                        run_mode=run_mode,
+                        rank_scope=rank_scope,
+                        func=True,
+                        **decorator_kwargs,
+                    ):
                         return func(*args, **wrapper_kwargs)
 
                 return cast(F, sync_wrapper)

@@ -1,30 +1,30 @@
 """
-Example: Distributed Training with W&B Integration
+This example demonstrates all distributed training scenarios with W&B logging.
 
-This example demonstrates all distributed training scenarios with W&B logging:
-
-1. Single-node multi-GPU:
-   - run_mode="auto" (default): Only rank 0 logs → 1 W&B run
-   - run_mode="shared": All GPUs log to 1 shared run
-   - run_mode="new": Each GPU gets its own run (grouped)
-
-2. Multi-node multi-GPU:
-   - run_mode="auto" (default): Local rank 0 of each worker logs → N W&B runs (1 per worker)
-   - run_mode="shared": All GPUs per worker log to shared run → N W&B runs (1 per worker)
-   - run_mode="new": Each GPU gets its own run (grouped per worker) → NxGPUs W&B runs
+Behavior Matrix (Multi-node):
+| run_mode | rank_scope | Who logs?           | W&B Runs | Grouping        |
+|----------|------------|---------------------|----------|-----------------|
+| auto     | global     | rank 0 only         | 1        | -               |
+| auto     | worker     | local_rank 0/worker | N        | -               |
+| shared   | global     | all ranks           | 1        | -               |
+| shared   | worker     | all ranks           | N        | -               |
+| new      | global     | all ranks           | NxM      | 1 group         |
+| new      | worker     | all ranks           | NxM      | N groups        |
 
 Run ID patterns:
-- Single-node auto: {run_name}-{action_name}
-- Single-node shared: {run_name}-{action_name}
-- Single-node new: {run_name}-{action_name}-rank-{rank} (grouped)
-- Multi-node auto: {run_name}-{action_name}-worker-{worker_index}
-- Multi-node shared: {run_name}-{action_name}-worker-{worker_index}
-- Multi-node new: {run_name}-{action_name}-worker-{worker_index}-rank-{local_rank} (grouped per worker)
+- auto/shared (global): {base}
+- auto/shared (worker): {base}-worker-{idx}
+- new (global): {base}-rank-{global_rank}
+- new (worker): {base}-worker-{idx}-rank-{local_rank}
+
+Where {base} = {run_name}-{action_name}
 
 Example command:
-uv run example_distributed.py single_node_auto
+uv run example_distributed.py multi_node_auto
 """
 
+import os
+import time
 import typing
 
 import flyte
@@ -43,32 +43,36 @@ from flyteplugins.wandb import (
     wandb_init,
 )
 
-image = flyte.Image.from_debian_base(name="torch-wandb").with_pip_packages(
-    "flyteplugins-wandb", "flyteplugins-pytorch", pre=True
+image = (
+    flyte.Image.from_debian_base(name="torch-wandb")
+    .with_pip_packages("numpy")
+    .with_pip_packages("flyteplugins-wandb", "flyteplugins-pytorch", pre=True)
 )
 
 # Single-node environment (1 node, 4 GPUs)
 single_node_env = flyte.TaskEnvironment(
     name="single_node_env",
-    resources=flyte.Resources(cpu=(1, 2), memory=("1Gi", "10Gi"), gpu="V100:4", shm="auto"),
+    resources=flyte.Resources(cpu=(1, 2), memory=("1Gi", "10Gi"), gpu="T4:4", shm="auto"),
     plugin_config=Elastic(
         nproc_per_node=4,
         nnodes=1,
     ),
     image=image,
     secrets=flyte.Secret(key="wandb_api_key", as_env_var="WANDB_API_KEY"),
+    env_vars={"NCCL_DEBUG": "INFO", "TORCH_NCCL_TRACE_BUFFER_SIZE": "1000"},
 )
 
 # Multi-node environment (2 nodes, 4 GPUs each)
 multi_node_env = flyte.TaskEnvironment(
     name="multi_node_env",
-    resources=flyte.Resources(cpu=(1, 2), memory=("1Gi", "10Gi"), gpu="V100:4", shm="auto"),
+    resources=flyte.Resources(cpu=(1, 2), memory=("1Gi", "10Gi"), gpu="T4:4", shm="auto"),
     plugin_config=Elastic(
         nproc_per_node=4,
         nnodes=2,
     ),
     image=image,
     secrets=flyte.Secret(key="wandb_api_key", as_env_var="WANDB_API_KEY"),
+    env_vars={"NCCL_DEBUG": "INFO", "TORCH_NCCL_TRACE_BUFFER_SIZE": "1000"},
 )
 
 
@@ -114,17 +118,14 @@ class SyntheticDataset(torch.utils.data.Dataset):
 
 def _train_loop_impl(duration_seconds: int = 300) -> float | None:
     """Core training loop. Runs for specified duration."""
-    import time
+    local_rank = int(os.environ.get("LOCAL_RANK", "0"))
+    device = torch.device(f"cuda:{local_rank}")
+    torch.cuda.set_device(device)
 
-    torch.distributed.init_process_group("nccl")
+    torch.distributed.init_process_group("nccl", device_id=device)
 
     rank = torch.distributed.get_rank()
     world_size = torch.distributed.get_world_size()
-    local_rank = int(torch.distributed.get_rank() % 4)
-
-    # Set device
-    device = torch.device(f"cuda:{local_rank}")
-    torch.cuda.set_device(device)
 
     # Model
     model = MLP(input_dim=784, hidden_dim=512, num_classes=10).to(device)
@@ -257,7 +258,7 @@ def single_node_auto(duration_seconds: int) -> typing.Optional[float]:
     return _train_loop_impl(duration_seconds=duration_seconds)
 
 
-@wandb_init(run_mode="shared")
+@wandb_init
 @single_node_env.task
 def single_node_shared(duration_seconds: int) -> typing.Optional[float]:
     """
@@ -266,11 +267,12 @@ def single_node_shared(duration_seconds: int) -> typing.Optional[float]:
     - All ranks log to the same W&B run
     - Uses W&B shared mode with x_label to identify each rank
     - Results in 1 W&B run with metrics from all GPUs
+    - Config (run_mode) comes from wandb_config context
     """
     return _train_loop_impl(duration_seconds=duration_seconds)
 
 
-@wandb_init(run_mode="new")
+@wandb_init
 @single_node_env.task
 def single_node_new(duration_seconds: int) -> typing.Optional[float]:
     """
@@ -280,6 +282,7 @@ def single_node_new(duration_seconds: int) -> typing.Optional[float]:
     - Runs are grouped together in W&B UI
     - Results in N W&B runs (1 per GPU)
     - Run IDs: {run_name}-{action_name}-rank-{rank}
+    - Config (run_mode) comes from wandb_config context
     """
     return _train_loop_impl(duration_seconds=duration_seconds)
 
@@ -288,12 +291,27 @@ def single_node_new(duration_seconds: int) -> typing.Optional[float]:
 @multi_node_env.task
 def multi_node_auto(duration_seconds: int) -> typing.Optional[float]:
     """
-    Multi-node with run_mode="auto" (default).
+    Multi-node with run_mode="auto", rank_scope="global" (default).
+
+    - Only global rank 0 initializes W&B and logs
+    - Other ranks get None from get_wandb_run()
+    - Results in 1 W&B run total
+    - Run ID: {run_name}-{action_name}
+    """
+    return _train_loop_impl(duration_seconds=duration_seconds)
+
+
+@wandb_init
+@multi_node_env.task
+def multi_node_auto_worker_scope(duration_seconds: int) -> typing.Optional[float]:
+    """
+    Multi-node with run_mode="auto", rank_scope="worker".
 
     - Local rank 0 of each worker initializes W&B and logs
     - Other ranks get None from get_wandb_run()
     - Results in N W&B runs (1 per worker/node)
     - Run IDs: {run_name}-{action_name}-worker-{worker_index}
+    - Config (rank_scope) comes from wandb_config context
     """
     return _train_loop_impl(duration_seconds=duration_seconds)
 
@@ -305,9 +323,23 @@ def multi_node_shared(duration_seconds: int) -> typing.Optional[float]:
     Multi-node with run_mode="shared".
 
     - All ranks within each worker log to a shared run
+    - Results in 1 W&B run
+    - Run ID: {run_name}-{action_name}
+    """
+    return _train_loop_impl(duration_seconds=duration_seconds)
+
+
+@wandb_init
+@multi_node_env.task
+def multi_node_shared_worker_scope(duration_seconds: int) -> typing.Optional[float]:
+    """
+    Multi-node with run_mode="shared", rank_scope="worker".
+
+    - All ranks within each worker log to a shared run
     - Each worker has its own shared W&B run
     - Results in N W&B runs (1 per worker/node)
     - Run IDs: {run_name}-{action_name}-worker-{worker_index}
+    - Config (run_mode, rank_scope) comes from wandb_config context
     """
     return _train_loop_impl(duration_seconds=duration_seconds)
 
@@ -319,9 +351,24 @@ def multi_node_new(duration_seconds: int) -> typing.Optional[float]:
     Multi-node with run_mode="new".
 
     - Each rank gets its own W&B run
+    - Runs are grouped together in W&B UI
+    - Results in NxGPUs W&B runs
+    - Run IDs: {run_name}-{action_name}-rank-{global_rank}
+    """
+    return _train_loop_impl(duration_seconds=duration_seconds)
+
+
+@wandb_init(run_mode="new")
+@multi_node_env.task
+def multi_node_new_worker_scope(duration_seconds: int) -> typing.Optional[float]:
+    """
+    Multi-node with run_mode="new", rank_scope="worker".
+
+    - Each rank gets its own W&B run
     - Runs are grouped per worker in W&B UI
     - Results in NxGPUs W&B runs
     - Run IDs: {run_name}-{action_name}-worker-{worker_index}-rank-{local_rank}
+    - Config (rank_scope) comes from wandb_config context
     """
     return _train_loop_impl(duration_seconds=duration_seconds)
 
@@ -335,13 +382,25 @@ if __name__ == "__main__":
 
     scenarios = {
         # Single-node scenarios
-        "single_node_auto": single_node_auto,
-        "single_node_shared": single_node_shared,
-        "single_node_new": single_node_new,
+        "single_node_auto": (single_node_auto, {}),
+        "single_node_shared": (single_node_shared, {"run_mode": "shared"}),
+        "single_node_new": (single_node_new, {"run_mode": "new"}),
         # Multi-node scenarios
-        "multi_node_auto": multi_node_auto,
-        "multi_node_shared": multi_node_shared,
-        "multi_node_new": multi_node_new,
+        "multi_node_auto": (multi_node_auto, {}),
+        "multi_node_auto_worker_scope": (
+            multi_node_auto_worker_scope,
+            {"rank_scope": "worker"},
+        ),
+        "multi_node_shared": (multi_node_shared, {}),
+        "multi_node_shared_worker_scope": (
+            multi_node_shared_worker_scope,
+            {"run_mode": "shared", "rank_scope": "worker"},
+        ),
+        "multi_node_new": (multi_node_new, {}),
+        "multi_node_new_worker_scope": (
+            multi_node_new_worker_scope,
+            {"rank_scope": "worker"},
+        ),
     }
 
     if scenario not in scenarios:
@@ -349,10 +408,17 @@ if __name__ == "__main__":
         print(f"Available scenarios: {list(scenarios.keys())}")
         sys.exit(1)
 
-    task_fn = scenarios[scenario]
+    task_fn, config_overrides = scenarios[scenario]
     print(f"Running scenario: {scenario}")
+    if config_overrides:
+        print(f"Config from wandb_config context: {config_overrides}")
 
     run = flyte.with_runcontext(
-        custom_context=wandb_config(project="distributed-training-demo", entity="samhita-alla", tags=[scenario])
+        custom_context=wandb_config(
+            project="distributed-training-demo",
+            entity="samhita-alla",
+            tags=[scenario],
+            **config_overrides,
+        )
     ).run(task_fn, duration_seconds=300)
     print(f"Run URL: {run.url}")
