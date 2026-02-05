@@ -12,7 +12,6 @@ from dataclasses import dataclass
 
 import flyte
 
-
 env = flyte.TaskEnvironment(
     name="tuple_types_example",
     image=flyte.Image.from_debian_base(),
