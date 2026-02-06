@@ -21,7 +21,6 @@ import flyte.storage as storage
 from flyte._logging import logger
 from flyte._utils import lazy_module
 from flyte._utils.asyn import loop_manager
-from flyte.syncify import syncify
 from flyte.storage._storage import get_credentials_error
 from flyte.types import TypeEngine, TypeTransformer, TypeTransformerFailedError
 from flyte.types._renderer import Renderable
@@ -83,17 +82,21 @@ class DataFrame(BaseModel, SerializableType):
     _lazy_uploader: Callable[[], Coroutine[Any, Any, Any]] | None = PrivateAttr(default=None)
 
     def _serialize(self) -> Dict[str, Optional[str]]:
-        # dataclass case - use syncify for consistency with flyte.run() context
+        # If we already have a URI (e.g., lazy_uploader was already invoked by DataclassTransformer),
+        # just return it directly. This avoids re-invoking the transformer and prevents issues
+        # when called from different async contexts.
         if self.uri is not None:
             return {
                 "uri": self.uri,
                 "format": self.format,
             }
 
+        # Fall back to invoking the transformer for cases where _serialize is called
+        # directly (not via DataclassTransformer.to_literal())
         lt = TypeEngine.to_literal_type(type(self))
         engine = DataFrameTransformerEngine()
-        lv = syncify._bg_loop.call_in_loop_sync(engine.to_literal(self, type(self), lt))  # type: ignore
-        sd = DataFrame(uri=lv.scalar.structured_dataset.uri)  # type: ignore
+        lv = loop_manager.run_sync(engine.to_literal, self, type(self), lt)
+        sd = DataFrame(uri=lv.scalar.structured_dataset.uri)
         sd.format = lv.scalar.structured_dataset.metadata.structured_dataset_type.format
         return {
             "uri": sd.uri,
@@ -117,39 +120,37 @@ class DataFrame(BaseModel, SerializableType):
             raise ValueError("DataFrame's uri and file format should not be None")
 
         engine = DataFrameTransformerEngine()
-        return syncify._bg_loop.call_in_loop_sync(
-            engine.to_python_value(
-                literals_pb2.Literal(
-                    scalar=literals_pb2.Scalar(
-                        structured_dataset=literals_pb2.StructuredDataset(
-                            metadata=literals_pb2.StructuredDatasetMetadata(
-                                structured_dataset_type=types_pb2.StructuredDatasetType(format=format_val)
-                            ),
-                            uri=uri,
-                        )
+        return loop_manager.run_sync(
+            engine.to_python_value,
+            literals_pb2.Literal(
+                scalar=literals_pb2.Scalar(
+                    structured_dataset=literals_pb2.StructuredDataset(
+                        metadata=literals_pb2.StructuredDatasetMetadata(
+                            structured_dataset_type=types_pb2.StructuredDatasetType(format=format_val)
+                        ),
+                        uri=uri,
                     )
-                ),
-                cls,
-            )
+                )
+            ),
+            cls,
         )
 
     @model_serializer
     def serialize_dataframe(self) -> Dict[str, Optional[str]]:
-        # If we already have a URI (e.g., lazy_uploader was already invoked), just return it
-        # This avoids re-invoking the transformer unnecessarily and prevents deadlocks
-        # when called from the syncify context after pre-processing
+        # If we already have a URI (e.g., lazy_uploader was already invoked by PydanticTransformer),
+        # just return it directly. This avoids re-invoking the transformer and prevents issues
+        # when called from different async contexts.
         if self.uri is not None:
             return {
                 "uri": self.uri,
                 "format": self.format,
             }
 
-        # Need to invoke the transformer to get the URI
-        # Use syncify's background loop to ensure consistency with flyte.run() context
-        # This prevents deadlock when nested inside Pydantic models
+        # Fall back to invoking the transformer for cases where model_dump_json() is called
+        # directly by user code (not via PydanticTransformer.to_literal())
         lt = TypeEngine.to_literal_type(type(self))
         sde = DataFrameTransformerEngine()
-        lv = syncify._bg_loop.call_in_loop_sync(sde.to_literal(self, type(self), lt))
+        lv = loop_manager.run_sync(sde.to_literal, self, type(self), lt)
         return {
             "uri": lv.scalar.structured_dataset.uri,
             "format": lv.scalar.structured_dataset.metadata.structured_dataset_type.format,
@@ -161,20 +162,19 @@ class DataFrame(BaseModel, SerializableType):
             return self
 
         engine = DataFrameTransformerEngine()
-        return syncify._bg_loop.call_in_loop_sync(
-            engine.to_python_value(
-                literals_pb2.Literal(
-                    scalar=literals_pb2.Scalar(
-                        structured_dataset=literals_pb2.StructuredDataset(
-                            metadata=literals_pb2.StructuredDatasetMetadata(
-                                structured_dataset_type=types_pb2.StructuredDatasetType(format=self.format)
-                            ),
-                            uri=self.uri,
-                        )
+        return loop_manager.run_sync(
+            engine.to_python_value,
+            literals_pb2.Literal(
+                scalar=literals_pb2.Scalar(
+                    structured_dataset=literals_pb2.StructuredDataset(
+                        metadata=literals_pb2.StructuredDatasetMetadata(
+                            structured_dataset_type=types_pb2.StructuredDatasetType(format=self.format)
+                        ),
+                        uri=self.uri,
                     )
-                ),
-                type(self),
-            )
+                )
+            ),
+            type(self),
         )
 
     @classmethod

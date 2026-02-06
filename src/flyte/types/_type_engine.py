@@ -65,6 +65,66 @@ def _default_msgpack_decoder(data: bytes) -> Any:
     return msgpack.unpackb(data, strict_map_key=False)
 
 
+async def _invoke_lazy_uploaders(obj: typing.Any) -> None:
+    """
+    Recursively find and invoke lazy uploaders on Flyte IO types (DataFrame, File, Dir)
+    nested within a Pydantic model or dataclass. This must be done BEFORE serialization
+    to ensure uploads happen in the correct async context (syncify loop) where gRPC works.
+
+    The lazy uploaders set the URI/path on the objects, so subsequent serialization
+    can just return the existing values without invoking async operations.
+
+    Args:
+        obj: The object to process (can be a Pydantic model, dataclass, or collection)
+    """
+    from flyte.io import DataFrame, Dir, File
+
+    if obj is None:
+        return
+
+    # Handle Flyte IO types with lazy uploaders
+    if isinstance(obj, DataFrame) and obj.lazy_uploader:
+        uploaded = await obj.lazy_uploader()
+        # Copy the uploaded URI and metadata back to the original object
+        obj.uri = uploaded.uri
+        obj.format = uploaded.format
+        obj._lazy_uploader = None  # Clear to avoid re-uploading
+        return
+
+    if isinstance(obj, (File, Dir)) and obj.lazy_uploader:
+        hash_val, uri = await obj.lazy_uploader()
+        obj.path = uri
+        if hash_val:
+            obj.hash = hash_val
+        obj._lazy_uploader = None  # Clear to avoid re-uploading
+        return
+
+    # Recursively process Pydantic models
+    if isinstance(obj, BaseModel):
+        for field_name in obj.__class__.model_fields:
+            field_value = getattr(obj, field_name, None)
+            await _invoke_lazy_uploaders(field_value)
+        return
+
+    # Recursively process dataclasses
+    if dataclasses.is_dataclass(obj) and not isinstance(obj, type):
+        for field in dataclasses.fields(obj):
+            field_value = getattr(obj, field.name, None)
+            await _invoke_lazy_uploaders(field_value)
+        return
+
+    # Handle collections
+    if isinstance(obj, dict):
+        for value in obj.values():
+            await _invoke_lazy_uploaders(value)
+        return
+
+    if isinstance(obj, (list, tuple)):
+        for item in obj:
+            await _invoke_lazy_uploaders(item)
+        return
+
+
 def modify_literal_uris(lit: Literal):
     """
     Modifies the literal object recursively to replace the URIs with the native paths in case they are of
@@ -375,55 +435,6 @@ class PydanticTransformer(TypeTransformer[BaseModel]):
             annotation=TypeAnnotation(annotations=meta_struct),
         )
 
-    async def _invoke_lazy_uploaders(self, obj: typing.Any) -> None:
-        """
-        Recursively find and invoke lazy uploaders on Flyte IO types (DataFrame, File, Dir)
-        nested within a Pydantic model. This must be done BEFORE model_dump_json() is called
-        to avoid deadlocks when running in the syncify context.
-
-        The lazy uploaders set the URI on the objects, so subsequent serialization
-        can just return the existing URI without invoking async operations.
-        """
-        from flyte.io import DataFrame, Dir, File
-
-        if obj is None:
-            return
-
-        # Handle Flyte IO types with lazy uploaders
-        if isinstance(obj, DataFrame) and obj.lazy_uploader:
-            uploaded = await obj.lazy_uploader()
-            # Copy the uploaded URI and metadata back to the original object
-            obj.uri = uploaded.uri
-            obj.format = uploaded.format
-            obj._lazy_uploader = None  # Clear to avoid re-uploading
-            return
-
-        if isinstance(obj, (File, Dir)) and obj.lazy_uploader:
-            hash_val, uri = await obj.lazy_uploader()
-            obj.path = uri
-            if hash_val:
-                obj.hash = hash_val
-            obj._lazy_uploader = None  # Clear to avoid re-uploading
-            return
-
-        # Recursively process Pydantic models
-        if isinstance(obj, BaseModel):
-            for field_name in obj.model_fields:
-                field_value = getattr(obj, field_name, None)
-                await self._invoke_lazy_uploaders(field_value)
-            return
-
-        # Handle collections
-        if isinstance(obj, dict):
-            for value in obj.values():
-                await self._invoke_lazy_uploaders(value)
-            return
-
-        if isinstance(obj, (list, tuple)):
-            for item in obj:
-                await self._invoke_lazy_uploaders(item)
-            return
-
     async def to_literal(
         self,
         python_val: BaseModel,
@@ -431,9 +442,9 @@ class PydanticTransformer(TypeTransformer[BaseModel]):
         expected: LiteralType,
     ) -> Literal:
         # Pre-process the model to invoke any lazy uploaders on nested Flyte IO types.
-        # This prevents deadlocks when the @model_serializer tries to run async code
-        # from within the syncify context.
-        await self._invoke_lazy_uploaders(python_val)
+        # This ensures uploads happen in the syncify context where gRPC clients work correctly,
+        # and prevents deadlocks when @model_serializer tries to run async code via loop_manager.
+        await _invoke_lazy_uploaders(python_val)
 
         json_str = python_val.model_dump_json()
         dict_obj = json.loads(json_str)
@@ -654,6 +665,11 @@ class DataclassTransformer(TypeTransformer[object]):
                 f"{type(python_val)} is not of type @dataclass, only Dataclasses are supported for "
                 f"user defined datatypes in Flytekit"
             )
+
+        # Pre-process the dataclass to invoke any lazy uploaders on nested Flyte IO types.
+        # This ensures uploads happen in the syncify context where gRPC clients work correctly,
+        # and prevents issues when _serialize tries to run async code via loop_manager.
+        await _invoke_lazy_uploaders(python_val)
 
         # The function looks up or creates a MessagePackEncoder specifically designed for the object's type.
         # This encoder is then used to convert a data class into MessagePack Bytes.
