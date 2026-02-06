@@ -1,11 +1,14 @@
+import asyncio
+import subprocess
 import tempfile
 from pathlib import Path, PurePath
 from unittest.mock import patch
 
 import pytest
+import pytest_asyncio
 
 from flyte import Secret
-from flyte._image import Image, PipPackages, PoetryProject, Requirements
+from flyte._image import Image, PipPackages, PoetryProject, Requirements, UVProject
 from flyte._internal.imagebuild.docker_builder import (
     CopyConfig,
     CopyConfigHandler,
@@ -429,3 +432,91 @@ async def test_uvproject_handler_with_project_install():
             assert (expected_dst_path / "uv.lock").exists(), "uv.lock should be included"
             assert not (expected_dst_path / "memo.txt").exists(), "memo.txt should be excluded"
             assert not (expected_dst_path / ".cache").exists(), ".cache directory should be excluded"
+
+
+@pytest_asyncio.fixture
+async def uv_project_with_editable(tmp_path: Path):
+    """An empty uv project with a single editable dependency"""
+
+    async def _uv(cmd: list[str], cwd: Path):
+        return await asyncio.to_thread(
+            subprocess.run, ["uv", *cmd], cwd=str(cwd), capture_output=True, text=True, check=True
+        )
+
+    project_root = tmp_path / "project"
+    project_root.mkdir(parents=True)
+    # Create a main project
+    await _uv(["init", "--lib"], project_root)
+    # Create an editable dependency
+    dep_folder = project_root / "libs" / "editable_dep"
+    dep_folder.mkdir(parents=True)
+    # Create an editable dependency project and add it to the main project
+    await _uv(["init", "--lib"], dep_folder)
+    await _uv(["add", "--editable", "./libs/editable_dep", "--no-sync"], project_root)
+    # Generate a lock file for the main project
+    await _uv(["lock"], project_root)
+    yield project_root, dep_folder
+
+
+@pytest.mark.asyncio
+async def test_uvproject_handler_includes_editable_mounts_in_dependencies_only_mode(uv_project_with_editable):
+    with tempfile.TemporaryDirectory() as tmp_context:
+        context_path = Path(tmp_context)
+
+        project_root, dep_folder = uv_project_with_editable
+        pyproject_file = project_root / "pyproject.toml"
+        uv_lock_file = project_root / "uv.lock"
+
+        uv_project = UVProject(
+            pyproject=pyproject_file.absolute(),
+            uvlock=uv_lock_file.absolute(),
+            project_install_mode="dependencies_only",
+        )
+
+        initial_dockerfile = "FROM python:3.9\n"
+        result = await UVProjectHandler.handle(
+            layer=uv_project,
+            context_path=context_path,
+            dockerfile=initial_dockerfile,
+            docker_ignore_patterns=[],
+        )
+        expected_dep_in_context = "_flyte_abs_context" + str(dep_folder)
+        expected_dep_in_container = dep_folder.relative_to(project_root)
+        expected_mount = f"--mount=type=bind,src={expected_dep_in_context},target={expected_dep_in_container}"
+        assert expected_mount in result
+
+
+@pytest.mark.asyncio
+async def test_uvproject_handler_without_uvlock():
+    """Test that UVProjectHandler works correctly when uvlock is None."""
+    with tempfile.TemporaryDirectory() as tmp_context, tempfile.TemporaryDirectory() as tmp_user:
+        context_path = Path(tmp_context)
+        user_folder = Path(tmp_user)
+
+        # Create a pyproject.toml but no uv.lock file
+        pyproject_file = user_folder / "pyproject.toml"
+        pyproject_file.write_text("[project]\nname = 'test-project'\nversion='0.1.0'")
+
+        # Create UVProject without uvlock
+        uv_project = UVProject(
+            pyproject=pyproject_file.absolute(),
+            uvlock=None,
+            project_install_mode="dependencies_only",
+        )
+
+        initial_dockerfile = "FROM python:3.9\n"
+        result = await UVProjectHandler.handle(
+            layer=uv_project,
+            context_path=context_path,
+            dockerfile=initial_dockerfile,
+            docker_ignore_patterns=[],
+        )
+
+        # Verify the dockerfile is generated correctly
+        assert result.startswith(initial_dockerfile)
+        assert "RUN --mount=type=cache,sharing=locked,mode=0777,target=/root/.cache/uv,id=uv" in result
+        assert "uv sync" in result
+        # Verify that uvlock mount is NOT present
+        assert "--mount=type=bind,target=uv.lock" not in result
+        # Verify pyproject mount IS present
+        assert "--mount=type=bind,target=pyproject.toml" in result

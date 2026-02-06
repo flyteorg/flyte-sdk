@@ -1,5 +1,5 @@
 import pandas as pd
-from flyteplugins.connectors.snowflake import Snowflake, SnowflakeConfig
+from flyteplugins.snowflake import Snowflake, SnowflakeConfig
 
 import flyte
 
@@ -52,7 +52,7 @@ snowflake_env = flyte.TaskEnvironment.from_task("snowflake_env", snowflake_inser
 
 env = flyte.TaskEnvironment(
     name="snowflake_example_env",
-    image=flyte.Image.from_debian_base().with_pip_packages("flyteplugins-connectors[snowflake]"),
+    image=flyte.Image.from_debian_base().with_pip_packages("flyteplugins-snowflake"),
     secrets=[flyte.Secret(key="snowflake", as_env_var="SNOWFLAKE_PRIVATE_KEY")],
     depends_on=[snowflake_env],
 )

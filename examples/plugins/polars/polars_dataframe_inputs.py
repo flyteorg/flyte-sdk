@@ -42,15 +42,10 @@ import polars as pl
 
 import flyte
 import flyte.io
-from flyte._image import DIST_FOLDER, PythonWheels
 
 # Create task environment with required dependencies
-# NOTE: due to a dependency conflict, the polars flyte plugin needs to be installed as a separate layer:
-# Run the following command to build the wheel:
-# `rm -rf ./dist-plugins && uv run python -m build --wheel --installer uv --outdir ./dist-plugins plugins/polars`
-# Once a release of the plugin is out, you can install it via `with_pip_packages("flyteplugins-polars")`
-img = flyte.Image.from_debian_base(name="flyteplugins-polars-image").clone(
-    addl_layer=PythonWheels(wheel_dir=DIST_FOLDER.parent / "dist-plugins", package_name="flyteplugins-polars", pre=True)
+img = flyte.Image.from_debian_base(name="flyteplugins-polars-image").with_pip_packages(
+    "flyteplugins-polars>=2.0.0b52", "flyte>=2.0.0b52", pre=True
 )
 
 env = flyte.TaskEnvironment(

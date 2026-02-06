@@ -14,6 +14,7 @@ from flyteidl2.core.tasks_pb2 import TaskTemplate
 
 from flyte._logging import log, logger
 from flyte._utils import AsyncLRUCache
+from flyte.errors import CodeBundleError
 from flyte.models import CodeBundle
 
 from ._ignore import GitIgnore, Ignore, StandardIgnore
@@ -144,6 +145,16 @@ async def build_code_bundle(
 
     logger.debug(f"Finding files to bundle, ignoring as configured by: {ignore}")
     files, digest = list_files_to_bundle(from_dir, True, *ignore, copy_style=copy_style)
+    if len(files) == 0:
+        raise CodeBundleError(
+            f"No files found to bundle in '{from_dir}'.\n"
+            "Possible causes:\n"
+            "  - The task file is inside a virtual environment directory (e.g., .venv/, venv/)\n"
+            "  - The task file is excluded by .gitignore\n"
+            "  - The directory does not contain any Python files\n"
+            "To debug, check that your task file exists in the specified directory and is not ignored."
+        )
+
     if logger.getEffectiveLevel() <= logging.INFO:
         print_ls_tree(from_dir, files)
 

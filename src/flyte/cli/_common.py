@@ -430,11 +430,11 @@ def format(title: str, vals: Iterable[Any], of: OutputFormat = "table") -> Table
         case "json":
             if not vals:
                 return pretty_repr([])
-            return pretty_repr([v.to_dict() for v in vals])
+            return pretty_repr([dict(v) for v in vals])
         case "json-raw":
             if not vals:
                 return []
-            return json.dumps([v.to_dict() for v in vals])
+            return json.dumps([dict(v) for v in vals])
 
     raise click.ClickException("Unknown output format. Supported formats are: table, table-simple, json.")
 
@@ -457,6 +457,18 @@ def get_console() -> Console:
     Get a console that is configured to use colors if the terminal supports it.
     """
     return Console(color_system="auto", force_terminal=True, width=120)
+
+
+def cli_status(output_format: OutputFormat, message: str, spinner: str = "dots"):
+    """
+    Return a context manager for status display.
+    Returns nullcontext for json/table-simple formats, otherwise a console status spinner.
+    """
+    from contextlib import nullcontext
+
+    if output_format in ("json", "table-simple"):
+        return nullcontext()
+    return get_console().status(message, spinner=spinner)
 
 
 def parse_images(cfg: Config, values: tuple[str, ...] | None) -> None:

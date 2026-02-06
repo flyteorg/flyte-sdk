@@ -213,7 +213,12 @@ def wandb_config(
         mode: "online", "offline" or "disabled"
         group: Group name for related runs
         run_mode: Flyte-specific run mode - "auto", "new" or "shared".
-            Controls whether tasks create new W&B runs or share existing ones
+            Controls whether tasks create new W&B runs or share existing ones.
+            In distributed training context:
+            - "auto" (default): Single-node: only rank 0 logs.
+              Multi-node: local rank 0 of each worker logs (1 run per worker).
+            - "shared": All ranks log to a single shared W&B run.
+            - "new": Each rank gets its own W&B run (grouped in W&B UI).
         download_logs: If `True`, downloads wandb run files after task completes
             and shows them as a trace output in the Flyte UI
         **kwargs: Additional `wandb.init()` parameters

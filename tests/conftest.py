@@ -7,8 +7,9 @@ import pytest
 import pytest_asyncio
 
 from flyte._cache.local_cache import LocalTaskCache
-from flyte._context import RawDataPath, internal_ctx
-from flyte.models import SerializationContext
+from flyte._context import Context, ContextData, internal_ctx
+from flyte.models import ActionID, RawDataPath, SerializationContext, TaskContext
+from flyte.report import Report
 
 
 @pytest.fixture
@@ -18,6 +19,35 @@ def ctx_with_test_raw_data_path():
     ctx = internal_ctx()
     new_context = ctx.new_raw_data_path(raw_data_path=raw_data_path)
     with new_context as ctx:
+        yield ctx
+
+
+@pytest.fixture
+def ctx_with_preserve_original_types():
+    """Pytest fixture to set up a context with preserve_original_types=True.
+
+    Note: preserve_original_types is set on ContextData, not TaskContext,
+    as it's an internal implementation detail that affects type conversion.
+    """
+    raw_data_path = RawDataPath.from_local_folder()
+    action = ActionID.create_random()
+    task_context = TaskContext(
+        action=action,
+        version="test",
+        raw_data_path=raw_data_path,
+        output_path="/tmp/test/output",
+        run_base_dir="/tmp/test",
+        report=Report(name=action.name),
+        mode="local",
+    )
+    ctx = Context(
+        data=ContextData(
+            task_context=task_context,
+            raw_data_path=raw_data_path,
+            preserve_original_types=True,
+        )
+    )
+    with ctx:
         yield ctx
 
 
