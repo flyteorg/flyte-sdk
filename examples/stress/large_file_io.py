@@ -19,7 +19,7 @@ env = flyte.TaskEnvironment(
 
 
 @env.task(cache="auto")
-async def create_large_file(size_gigabytes: int = 5) -> flyte.io.File:
+async def create_large_file(size_gigabytes: int = 1) -> flyte.io.File:
     f = flyte.io.File.new_remote()
     chunk_size = 1024 * 1024
     async with f.open("wb", block_size=chunk_size) as fp:
