@@ -77,9 +77,17 @@ async def _invoke_lazy_uploaders(obj: typing.Any) -> None:
     Args:
         obj: The object to process (can be a Pydantic model, dataclass, or collection)
     """
+    from flyte._context import internal_ctx
+    from flyte._run import _get_main_run_mode
     from flyte.io import DataFrame, Dir, File
 
+    ctx = internal_ctx()
+    if not ctx.has_raw_data and _get_main_run_mode() == "local":
+        logger.debug("Local context detected, skipping lazy uploaders.")
+        return
+
     if obj is None:
+        logger.debug("Object is None, skipping lazy uploaders.")
         return
 
     # Handle Flyte IO types with lazy uploaders
