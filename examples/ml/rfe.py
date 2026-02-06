@@ -23,6 +23,7 @@ worker = flyte.TaskEnvironment(
         __file__,
         name="flyte",
         registry="ghcr.io/flyteorg",
+        pre=True,
     ).with_apt_packages("ca-certificates"),
 )
 
