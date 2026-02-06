@@ -4,16 +4,21 @@ This module provides utilities to convert Flyte tasks into Anthropic tool defini
 and run Claude agents with those tools.
 """
 
+import asyncio
 import inspect
 import json
+import logging
 import os
 import typing
 from dataclasses import dataclass, field
 from functools import partial
 
-from flyte._task import AsyncFunctionTaskTemplate, TaskTemplate
+from flyte._task import AsyncFunctionTaskTemplate
+from flyte.models import NativeInterface
 
 import anthropic
+
+logger = logging.getLogger(__name__)
 
 # Type mapping from Python types to JSON schema types
 TYPE_MAP: dict[type, str] = {
@@ -31,12 +36,11 @@ def _python_type_to_json_schema(py_type: type) -> dict[str, typing.Any]:
     origin = typing.get_origin(py_type)
     args = typing.get_args(py_type)
 
-    # Handle Optional types
+    # Handle Optional types (Union[X, None])
     if origin is typing.Union:
         non_none_args = [a for a in args if a is not type(None)]
         if len(non_none_args) == 1:
-            schema = _python_type_to_json_schema(non_none_args[0])
-            return schema
+            return _python_type_to_json_schema(non_none_args[0])
         return {"anyOf": [_python_type_to_json_schema(a) for a in non_none_args]}
 
     # Handle list[X]
@@ -58,7 +62,7 @@ def _python_type_to_json_schema(py_type: type) -> dict[str, typing.Any]:
 
 
 def _get_function_schema(func: typing.Callable) -> dict[str, typing.Any]:
-    """Extract JSON schema from a function's type hints and docstring."""
+    """Extract JSON schema from a function's type hints."""
     sig = inspect.signature(func)
     hints = typing.get_type_hints(func)
 
@@ -71,8 +75,6 @@ def _get_function_schema(func: typing.Callable) -> dict[str, typing.Any]:
 
         param_type = hints.get(name, str)
         prop_schema = _python_type_to_json_schema(param_type)
-
-        # Add description from docstring if available
         properties[name] = prop_schema
 
         # Check if parameter is required (no default value)
@@ -91,14 +93,17 @@ class FunctionTool:
     """A Flyte-compatible tool definition for Anthropic Claude.
 
     This dataclass represents a tool that can be used with Claude's tool use API.
-    It wraps a Flyte task and provides the necessary schema for Claude to invoke it.
+    It wraps a Flyte task or regular callable and provides the necessary schema
+    for Claude to invoke it.
     """
 
     name: str
     description: str
     input_schema: dict[str, typing.Any]
     func: typing.Callable
-    task: TaskTemplate | None = None
+    task: AsyncFunctionTaskTemplate | None = None
+    native_interface: NativeInterface | None = None
+    report: bool = False
     is_async: bool = False
 
     def to_anthropic_tool(self) -> dict[str, typing.Any]:
@@ -110,14 +115,18 @@ class FunctionTool:
         }
 
     async def execute(self, **kwargs) -> typing.Any:
-        """Execute the tool with the given arguments."""
+        """Execute the tool with the given arguments.
+
+        Async functions are awaited directly. Sync functions are run in a
+        thread executor to avoid blocking the event loop.
+        """
         if self.task is not None:
             if self.is_async:
                 return await self.task(**kwargs)
-            return self.task(**kwargs)
+            return await asyncio.to_thread(self.task, **kwargs)
         if self.is_async:
             return await self.func(**kwargs)
-        return self.func(**kwargs)
+        return await asyncio.to_thread(self.func, **kwargs)
 
 
 def function_tool(
@@ -125,11 +134,14 @@ def function_tool(
     *,
     name: str | None = None,
     description: str | None = None,
-) -> FunctionTool:
+) -> "FunctionTool | partial[FunctionTool]":
     """Convert a function or Flyte task to an Anthropic-compatible tool.
 
-    This decorator/function converts a Python function or Flyte task into a
-    FunctionTool that can be used with Claude's tool use API.
+    This function converts a Python function, @flyte.trace decorated function,
+    or Flyte task into a FunctionTool that can be used with Claude's tool use API.
+
+    For @flyte.trace decorated functions, the tracing context is preserved
+    automatically since functools.wraps maintains the original function's metadata.
 
     Args:
         func: The function or Flyte task to convert.
@@ -156,9 +168,16 @@ def function_tool(
     if isinstance(func, AsyncFunctionTaskTemplate):
         actual_func = func.func
         task = func
+        native_interface = func.interface
+        report = func.report
     else:
+        # Regular callables and @flyte.trace decorated functions.
+        # @flyte.trace uses functools.wraps, so __name__, __doc__ and type hints
+        # are preserved. The tracing activates automatically in a task context.
         actual_func = func
         task = None
+        native_interface = None
+        report = False
 
     tool_name = name or actual_func.__name__
     tool_description = description or (actual_func.__doc__ or f"Execute {tool_name}")
@@ -171,6 +190,8 @@ def function_tool(
         input_schema=input_schema,
         func=actual_func,
         task=task,
+        native_interface=native_interface,
+        report=report,
         is_async=is_async,
     )
 
@@ -257,25 +278,36 @@ async def run_agent(
     # Initialize conversation
     messages: list[dict[str, typing.Any]] = [{"role": "user", "content": prompt}]
 
+    # Build base kwargs for the API call
+    create_kwargs: dict[str, typing.Any] = {
+        "model": model,
+        "max_tokens": max_tokens,
+        "system": system or "You are a helpful assistant.",
+        "messages": messages,
+    }
+    if anthropic_tools:
+        create_kwargs["tools"] = anthropic_tools
+
     for _ in range(max_iterations):
         # Call Claude
-        response = await client.messages.create(
-            model=model,
-            max_tokens=max_tokens,
-            system=system or "You are a helpful assistant.",
-            tools=anthropic_tools if anthropic_tools else anthropic.NOT_GIVEN,
-            messages=messages,
-        )
+        create_kwargs["messages"] = messages
+        response = await client.messages.create(**create_kwargs)
 
-        # Check if we're done (no tool use)
+        # Extract text from response content
         if response.stop_reason == "end_turn":
-            # Extract final text response
             for block in response.content:
                 if block.type == "text":
                     return block.text
             return ""
 
-        # Process tool calls
+        # Handle non-tool-use stop reasons (max_tokens, stop_sequence, refusal)
+        if response.stop_reason != "tool_use":
+            text_parts = [block.text for block in response.content if block.type == "text"]
+            if text_parts:
+                return " ".join(text_parts)
+            return f"Agent stopped unexpectedly: {response.stop_reason}"
+
+        # Process tool calls (stop_reason == "tool_use")
         tool_results = []
         assistant_content = []
 
@@ -295,22 +327,36 @@ async def run_agent(
                 # Execute the tool
                 tool = tool_map.get(block.name)
                 if tool is None:
-                    result = f"Error: Unknown tool '{block.name}'"
+                    tool_results.append(
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": block.id,
+                            "content": f"Error: Unknown tool '{block.name}'",
+                            "is_error": True,
+                        }
+                    )
                 else:
                     try:
                         result = await tool.execute(**block.input)
                         if not isinstance(result, str):
                             result = json.dumps(result)
-                    except Exception as e:
-                        result = f"Error executing tool: {e}"
-
-                tool_results.append(
-                    {
-                        "type": "tool_result",
-                        "tool_use_id": block.id,
-                        "content": result,
-                    }
-                )
+                        tool_results.append(
+                            {
+                                "type": "tool_result",
+                                "tool_use_id": block.id,
+                                "content": result,
+                            }
+                        )
+                    except Exception:
+                        logger.exception("Error executing tool '%s'", block.name)
+                        tool_results.append(
+                            {
+                                "type": "tool_result",
+                                "tool_use_id": block.id,
+                                "content": f"Error executing tool '{block.name}'",
+                                "is_error": True,
+                            }
+                        )
 
         # Add assistant message and tool results to conversation
         messages.append({"role": "assistant", "content": assistant_content})
