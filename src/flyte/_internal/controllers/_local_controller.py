@@ -135,6 +135,17 @@ class LocalController:
         out = None
         captured_stdout = ""
         captured_stderr = ""
+        task_row_id = -1
+        if run_id:
+            task_name_for_db = getattr(_task, "name", getattr(_task, "short_name", "task")).split(".")[-1]
+            input_value = local_ui_db.maybe_float(next(iter(task_inputs.values()), 0.0))
+            task_row_id = local_ui_db.record_task_start(
+                run_id=run_id,
+                name=task_name_for_db,
+                action_name=sub_action_id.name,
+                input_value=input_value if input_value is not None else 0.0,
+                start_time=start_time,
+            )
         # We only get output from cache if the cache behavior is set to auto
         if task_cache.behavior == "auto":
             out = await LocalTaskCache.get(cache_key)
@@ -221,13 +232,10 @@ class LocalController:
                     log_lines.append("--- stderr ---")
                     log_lines.append(captured_stderr.rstrip())
                 log_text = "\n".join(log_lines)
-                local_ui_db.record_task(
-                    run_id=run_id,
-                    name=task_name.split(".")[-1],
-                    input_value=input_value if input_value is not None else 0.0,
+                local_ui_db.record_task_finish(
+                    row_id=task_row_id,
                     output_value=output_value,
                     status=status,
-                    start_time=start_time,
                     end_time=end_time,
                     duration_ms=duration_ms,
                     log_text=log_text,

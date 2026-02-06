@@ -83,3 +83,16 @@ unit_test_plugins:
 cli-docs-gen: ## Generate CLI documentation
 	@echo "📖 Generating CLI documentation..."
 	@uv run flyte gen docs --type markdown
+
+.PHONY: ui-backend
+ui-backend: ## Run the local UI backend (FastAPI)
+	@cd ui/backend && uvicorn main:app --reload
+
+.PHONY: ui-frontend
+ui-frontend: ## Run the local UI frontend (Next.js)
+	@cd ui/frontend && npm run dev
+
+.PHONY: ui-dev
+ui-dev: ## Run backend + frontend (use: make -j2 ui-dev)
+	@echo "Tip: run in parallel with 'make -j2 ui-dev'"
+	@$(MAKE) ui-backend

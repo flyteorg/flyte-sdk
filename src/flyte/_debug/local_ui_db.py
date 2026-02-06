@@ -82,6 +82,7 @@ def _init_db() -> None:
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 run_id TEXT NOT NULL,
                 name TEXT NOT NULL,
+                action_name TEXT,
                 task_index INTEGER NOT NULL,
                 input REAL NOT NULL,
                 output REAL,
@@ -107,6 +108,8 @@ def _init_db() -> None:
             db.execute("ALTER TABLE tasks ADD COLUMN report_html TEXT")
         if "log_text" not in cols:
             db.execute("ALTER TABLE tasks ADD COLUMN log_text TEXT")
+        if "action_name" not in cols:
+            db.execute("ALTER TABLE tasks ADD COLUMN action_name TEXT")
         db.commit()
 
 
@@ -215,6 +218,73 @@ def record_task(
                 log_text,
                 report_html,
             ),
+        )
+        db.commit()
+
+
+def record_task_start(
+    run_id: str,
+    name: str,
+    action_name: str,
+    input_value: float,
+    start_time: str,
+) -> int:
+    if _get_db_path() is None:
+        return -1
+    _init_db()
+    db = _get_db()
+    with _db_lock:
+        row = db.execute(
+            "SELECT COUNT(*) as cnt FROM tasks WHERE run_id = ? AND name = ?",
+            (run_id, name),
+        ).fetchone()
+        task_index = int(row["cnt"]) if row else 0
+        cur = db.execute(
+            """
+            INSERT INTO tasks (
+                run_id, name, action_name, task_index, input, output, status, start_time, end_time, duration_ms, log_text, report_html
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                run_id,
+                name,
+                action_name,
+                task_index,
+                input_value,
+                None,
+                "running",
+                start_time,
+                start_time,
+                0.0,
+                "",
+                None,
+            ),
+        )
+        db.commit()
+        return int(cur.lastrowid)
+
+
+def record_task_finish(
+    row_id: int,
+    output_value: Optional[float],
+    status: str,
+    end_time: str,
+    duration_ms: float,
+    log_text: str,
+    report_html: Optional[str],
+) -> None:
+    if _get_db_path() is None or row_id < 0:
+        return
+    _init_db()
+    db = _get_db()
+    with _db_lock:
+        db.execute(
+            """
+            UPDATE tasks
+            SET output = ?, status = ?, end_time = ?, duration_ms = ?, log_text = ?, report_html = ?
+            WHERE id = ?
+            """,
+            (output_value, status, end_time, duration_ms, log_text, report_html, row_id),
         )
         db.commit()
 
