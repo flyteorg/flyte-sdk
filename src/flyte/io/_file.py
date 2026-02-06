@@ -38,6 +38,9 @@ from flyte.types import TypeEngine, TypeTransformer, TypeTransformerFailedError
 if typing.TYPE_CHECKING:
     from obstore import AsyncReadableFile, AsyncWritableFile
 
+if typing.TYPE_CHECKING:
+    from obstore import AsyncReadableFile, AsyncWritableFile
+
 # Type variable for the file format
 T = TypeVar("T")
 
@@ -385,13 +388,9 @@ class File(BaseModel, Generic[T], SerializableType):
                 yield fh
                 return
             finally:
-                from fsspec.asyn import AbstractAsyncStreamedFile
-                from obstore import AsyncReadableFile, AsyncWritableFile
-
-                if isinstance(fh, (AsyncReadableFile, AsyncWritableFile, AbstractAsyncStreamedFile)):
-                    await fh.close()
-                else:
-                    fh.close()
+                co = fh.close()
+                if isinstance(co, typing.Awaitable):
+                    await co
         except flyte.errors.OnlyAsyncIOSupportedError:
             # Fall back to aiofiles
             fs = storage.get_underlying_filesystem(path=self.path)
