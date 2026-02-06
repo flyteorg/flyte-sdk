@@ -30,8 +30,7 @@ async def process_file_with_preset_hash(input_file: File) -> str:
     random_num = random.randint(1, 1000000)
     async with input_file.open("rb") as f:
         # when running locally, fsspec filesystem is not async.
-        content = await f.read()
-        content = content.decode("utf-8")
+        content = bytes(await f.read()).decode("utf-8")
         lines = content.strip().split("\n")
         return f"Processed {len(lines)} lines from {input_file.name} - Random: {random_num}"
 
