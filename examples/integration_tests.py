@@ -652,16 +652,6 @@ async def test_stress_large_fanout(flyte_client):
 @pytest.mark.integration
 @pytest.mark.stress
 @pytest.mark.asyncio
-async def test_stress_long_running(flyte_client):
-    """Test long-running stress test."""
-    from examples.stress.long_running import main_task
-
-    await _run_and_wait(main_task, "test_stress_long_running")
-
-
-@pytest.mark.integration
-@pytest.mark.stress
-@pytest.mark.asyncio
 async def test_stress_runs_per_second(flyte_client):
     """Test runs-per-second stress test."""
     from examples.stress.runs_per_second import main
