@@ -67,22 +67,48 @@ async def get_employee_data(raw_dataframe: pd.DataFrame, flyte_dataframe: pd.Dat
 
 
 if __name__ == "__main__":
+    # Make sure to set the following environment variables:
+    # - AWS_ACCESS_KEY_ID
+    # - AWS_SECRET_ACCESS_KEY
+    # - AWS_SESSION_TOKEN (if applicable)
+    #
+    # You may also set this with `aws sso login`:
+    # $ aws sso login --profile $profile
+    # $ eval "$(aws configure export-credentials --profile $profile --format env)"
+
     flyte.init_from_config()  # log_level=logging.DEBUG)
     # Get the data sources
 
     local_df = pd.DataFrame(BASIC_EMPLOYEE_DATA)
     local_fdf = flyte.io.DataFrame.from_local_sync(local_df)
-    run2 = flyte.with_runcontext(mode="local").run(create_flyte_dataframe)
+    run2 = flyte.with_runcontext(
+        mode="local",
+    ).run(create_flyte_dataframe)
     print(run2.url)
     run2.wait()
     print(run2.outputs()[0])
 
-    # Pass both to get_employee_data - Flyte auto-converts flyte.io.DataFrame to pd.DataFrame
-    run = flyte.with_runcontext(mode="local").run(
+    # Pass both to get_employee_data. When preserve_original_types is False (the default),
+    # the run outputs a flyte.io.DataFrame, which is the flyte representation of the pandas DataFrame.
+    run = flyte.with_runcontext(preserve_original_types=False).run(
         get_employee_data,
         raw_dataframe=local_fdf,
         flyte_dataframe=run2.outputs()[0],
     )
     print("Results:", run.url)
     run.wait()
-    print(run.outputs()[0])
+    flyte_df = run.outputs()[0]
+    assert isinstance(flyte_df, flyte.io.DataFrame)
+    print(flyte_df)
+
+    # When preserve_original_types is True, the run outputs a flyte.io.DataFrame
+    run = flyte.with_runcontext(preserve_original_types=True).run(
+        get_employee_data,
+        raw_dataframe=local_fdf,
+        flyte_dataframe=run2.outputs()[0],
+    )
+    print("Results:", run.url)
+    run.wait()
+    pandas_df = run.outputs()[0]
+    assert isinstance(pandas_df, pd.DataFrame)
+    print(pandas_df)

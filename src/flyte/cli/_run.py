@@ -116,6 +116,17 @@ class RunArguments:
             )
         },
     )
+    tui: bool = field(
+        default=False,
+        metadata={
+            "click.option": click.Option(
+                ["--tui"],
+                is_flag=True,
+                default=False,
+                help="Show interactive TUI for local execution (requires flyte[tui]).",
+            )
+        },
+    )
     image: List[str] = field(
         default_factory=list,
         metadata={
@@ -205,9 +216,6 @@ class RunTaskCommand(click.RichCommand):
         task_cfg = getattr(getattr(ctx.obj, "config", None), "task", None)
 
         if not self.run_args.local:
-            if not getattr(ctx.obj, "org", None) and not getattr(task_cfg, "org", None):
-                missing_options.append(("org", "TEXT"))
-
             if not self.run_args.project and not getattr(task_cfg, "project", None):
                 missing_options.append(("project", "TEXT"))
 
@@ -237,10 +245,11 @@ Missing required parameter(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in mi
 
         console = common.get_console()
 
-        # 2. Execute with a UX Status Spinner
+        # 2. Execute with a UX Status Spinner (disabled for json/table-simple)
         try:
-            with console.status(
-                f"[bold blue]Launching {'local' if self.run_args.local else 'remote'} execution...", spinner="dots"
+            with common.cli_status(
+                config.output_format,
+                f"[bold blue]Launching {'local' if self.run_args.local else 'remote'} execution...",
             ):
                 execution_context = flyte.with_runcontext(
                     copy_style=self.run_args.copy_style,
@@ -254,7 +263,7 @@ Missing required parameter(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in mi
                 result = await execution_context.run.aio(self.obj, **ctx.params)
         except Exception as e:
             console.print(common.get_panel("Exception", f"[red]✕ Execution failed:[/red] {e}", config.output_format))
-            return
+            exit(1)
 
         # 3. UI Branching
         if self.run_args.local:
@@ -263,22 +272,51 @@ Missing required parameter(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in mi
             await self._render_remote_success(console, result, config)
 
     def _render_local_success(self, console, result, config):
-        content = f"[green]Completed Local Run[/green]\nPath: {result.url}\n➡️ Outputs: {result.outputs()}"
+        if config.output_format in ("json", "table-simple"):
+            content = f"Completed Local Run\nPath: {result.url}\nOutputs: {result.outputs()}"
+        else:
+            content = f"[green]Completed Local Run[/green]\nPath: {result.url}\n➡️ Outputs: {result.outputs()}"
         console.print(common.get_panel("Local Success", content, config.output_format))
 
     async def _render_remote_success(self, console, result, config):
         if not (isinstance(result, Run) and result.action):
             return
 
-        run_info = (
-            f"[green bold]Created Run: {result.name}[/green bold]\n"
-            f"URL: [blue bold][link={result.url}]{result.url}[/link][/blue bold]"
-        )
+        if config.output_format in ("json", "table-simple"):
+            run_info = f"Created Run: {result.name}\nURL: {result.url}"
+        else:
+            run_info = (
+                f"[green bold]Created Run: {result.name}[/green bold]\n"
+                f"URL: [blue bold][link={result.url}]{result.url}[/link][/blue bold]"
+            )
         console.print(common.get_panel("Remote Run", run_info, config.output_format))
 
         if self.run_args.follow:
             console.print("[dim]Waiting for log stream...[/dim]")
             await result.show_logs.aio(max_lines=30, show_ts=True, raw=False)
+
+    def _run_with_tui(self, ctx: click.Context, config: common.CLIConfig) -> None:
+        from ._tui import launch_tui
+        from ._tui._tracker import ActionTracker
+
+        tracker = ActionTracker()
+
+        async def execute_fn():
+            import flyte
+
+            execution_context = flyte.with_runcontext(
+                copy_style=self.run_args.copy_style,
+                mode="local",
+                name=self.run_args.name,
+                raw_data_path=self.run_args.raw_data_path,
+                service_account=self.run_args.service_account,
+                log_format=config.log_format,
+                reset_root_logger=config.reset_root_logger,
+                _tracker=tracker,
+            )
+            return await execution_context.run.aio(self.obj, **ctx.params)
+
+        launch_tui(tracker, execute_fn)
 
     def invoke(self, ctx: click.Context):
         config: common.CLIConfig = common.initialize_config(
@@ -290,6 +328,11 @@ Missing required parameter(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in mi
             not self.run_args.no_sync_local_sys_paths,
         )
         self._validate_required_params(ctx)
+        if self.run_args.tui:
+            if not self.run_args.local:
+                raise click.UsageError("--tui can only be used with --local")
+            self._run_with_tui(ctx, config)
+            return
         # Main entry point remains very thin
         asyncio.run(self._execute_and_render(ctx, config))
 
@@ -304,7 +347,8 @@ Missing required parameter(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in mi
         inputs_interface = task.native_interface.inputs
 
         params: List[click.Parameter] = []
-        for name, var in interface.inputs.variables.items():
+        for entry in interface.inputs.variables:
+            name, var = entry.key, entry.value
             default_val = None
             if inputs_interface[name][1] is not inspect._empty:
                 default_val = inputs_interface[name][1]
@@ -382,9 +426,6 @@ class RunRemoteTaskCommand(click.RichCommand):
 
         task_cfg = getattr(getattr(ctx.obj, "config", None), "task", None)
 
-        if not getattr(ctx.obj, "org", None) and not getattr(task_cfg, "org", None):
-            missing_options.append(("org", "TEXT"))
-
         if not self.run_args.run_project and not getattr(task_cfg, "project", None):
             missing_options.append(("run-project", "TEXT"))
 
@@ -419,10 +460,11 @@ Missing required parameter(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in mi
                 f"Separate Run project/domain set, using {self.run_args.run_project} and {self.run_args.run_domain}"
             )
 
-        # 2. Execute with a UX Status Spinner
+        # 2. Execute with a UX Status Spinner (disabled for json/table-simple)
         try:
-            with console.status(
-                f"[bold blue]Launching {'local' if self.run_args.local else 'remote'} execution...", spinner="dots"
+            with common.cli_status(
+                config.output_format,
+                f"[bold blue]Launching {'local' if self.run_args.local else 'remote'} execution...",
             ):
                 execution_context = flyte.with_runcontext(
                     copy_style=self.run_args.copy_style,
@@ -443,18 +485,28 @@ Missing required parameter(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in mi
             await self._render_remote_success(console, result, config)
 
     def _render_local_success(self, console, result, config):
-        content = f"[green]Completed Local Run[/green]\nPath: {result.url}\n➡️ Outputs: {result.outputs()}"
+        if config.output_format in ("json", "table-simple"):
+            content = f"Completed Local Run\nPath: {result.url}\nOutputs: {result.outputs()}"
+        else:
+            content = f"[green]Completed Local Run[/green]\nPath: {result.url}\n➡️ Outputs: {result.outputs()}"
         console.print(common.get_panel("Local Success", content, config.output_format))
 
     async def _render_remote_success(self, console, result, config):
         if not (isinstance(result, Run) and result.action):
             return
 
-        run_info = (
-            f"[green bold]Created Run: {result.name}[/green bold]\n"
-            f"(Project: {result.action.action_id.run.project}, Domain: {result.action.action_id.run.domain})\n"
-            f"➡️  [blue bold][link={result.url}]{result.url}[/link][/blue bold]",
-        )
+        if config.output_format in ("json", "table-simple"):
+            run_info = (
+                f"Created Run: {result.name}\n"
+                f"(Project: {result.action.action_id.run.project}, Domain: {result.action.action_id.run.domain})\n"
+                f"URL: {result.url}"
+            )
+        else:
+            run_info = (
+                f"[green bold]Created Run: {result.name}[/green bold]\n"
+                f"(Project: {result.action.action_id.run.project}, Domain: {result.action.action_id.run.domain})\n"
+                f"➡️  [blue bold][link={result.url}]{result.url}[/link][/blue bold]"
+            )
         console.print(common.get_panel("Remote Run", run_info, config.output_format))
 
         if self.run_args.follow:
@@ -497,7 +549,8 @@ Missing required parameter(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in mi
         inputs_interface = task_details.interface.inputs
 
         params: List[click.Parameter] = []
-        for name, var in interface.inputs.variables.items():
+        for entry in interface.inputs.variables:
+            name, var = entry.key, entry.value
             default_val = None
             if inputs_interface[name][1] is not inspect._empty:
                 default_val = inputs_interface[name][1]

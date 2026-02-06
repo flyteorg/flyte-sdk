@@ -62,17 +62,25 @@ class GitIgnore(Ignore):
 
     def _is_ignored(self, path: pathlib.Path) -> bool:
         if self.ignored_files:
+            # Convert absolute path to relative path for comparison with git output
+            try:
+                rel_path = path.relative_to(self.root)
+            except ValueError:
+                # If path is not under root, don't ignore it
+                return False
+
             # git-ls-files uses POSIX paths
-            if Path(path).as_posix() in self.ignored_files:
+            if rel_path.as_posix() in self.ignored_files:
                 return True
             # Ignore empty directories
             if os.path.isdir(os.path.join(self.root, path)) and self.ignored_dirs:
-                return Path(path).as_posix() + "/" in self.ignored_dirs
+                return rel_path.as_posix() + "/" in self.ignored_dirs
         return False
 
 
 STANDARD_IGNORE_PATTERNS = [
     "*.pyc",
+    "**/*.pyc",
     "__pycache__",
     "**/__pycache__",
     ".cache",
@@ -80,11 +88,15 @@ STANDARD_IGNORE_PATTERNS = [
     ".pytest_cache",
     "**/.pytest_cache",
     ".venv",
+    "**/.venv",
+    ".idea",
+    "**/.idea",
     "venv",
     "env",
     "*.log",
     ".env",
     "*.egg-info",
+    "**/*.egg-info",
     "*.egg",
     "dist",
     "build",

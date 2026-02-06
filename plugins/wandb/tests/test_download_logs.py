@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch
 import flyte
 import pytest
 
-from flyteplugins.wandb.decorator import wandb_init, wandb_sweep
+from flyteplugins.wandb import wandb_init, wandb_sweep
 
 
 class TestWandbInitDownloadLogsExecution:

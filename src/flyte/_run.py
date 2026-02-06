@@ -8,7 +8,7 @@ import uuid
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Tuple, Union, cast
 
-from flyte._context import contextual_run, internal_ctx
+from flyte._context import Context, contextual_run, internal_ctx
 from flyte._environment import Environment
 from flyte._initialize import (
     _get_init_config,
@@ -112,9 +112,12 @@ class _Runner:
         queue: Optional[str] = None,
         custom_context: Dict[str, str] | None = None,
         cache_lookup_scope: CacheLookupScope = "global",
+        preserve_original_types: bool | None = None,
+        _tracker: Any = None,
     ):
         from flyte._tools import ipython_check
 
+        self._tracker = _tracker
         init_config = _get_init_config()
         client = init_config.client if init_config else None
         if not force_mode and client is not None:
@@ -146,6 +149,9 @@ class _Runner:
         self._queue = queue
         self._custom_context = custom_context or {}
         self._cache_lookup_scope = cache_lookup_scope
+        self._preserve_original_types = (
+            preserve_original_types if preserve_original_types is not None else self._interactive_mode
+        )
 
     @requires_initialization
     async def _run_remote(self, obj: TaskTemplate[P, R, F] | LazyEntity, *args: P.args, **kwargs: P.kwargs) -> Run:
@@ -265,7 +271,9 @@ class _Runner:
         # These paths will be appended to sys.path at runtime.
         if cfg.sync_local_sys_paths:
             env[FLYTE_SYS_PATH] = ":".join(
-                f"./{pathlib.Path(p).relative_to(cfg.root_dir)}" for p in sys.path if p.startswith(str(cfg.root_dir))
+                f"./{pathlib.Path(p).relative_to(cfg.root_dir)}"
+                for p in sys.path
+                if pathlib.Path(p).is_relative_to(cfg.root_dir)
             )
 
         if not self._dry_run:
@@ -359,7 +367,7 @@ class _Runner:
                         ),
                     ),
                 )
-                return Run(pb2=resp.run)
+                return Run(pb2=resp.run, _preserve_original_types=self._preserve_original_types)
             except grpc.aio.AioRpcError as e:
                 if e.code() == grpc.StatusCode.UNAVAILABLE:
                     raise flyte.errors.RuntimeSystemError(
@@ -549,6 +557,9 @@ class _Runner:
             custom_context=self._custom_context,
         )
 
+        if self._tracker is not None:
+            ctx = Context(ctx.data.replace(tracker=self._tracker))
+
         with ctx.replace_task_context(tctx):
             # make the local version always runs on a different thread, returns a wrapped future.
             if obj._call_as_synchronous:
@@ -630,17 +641,24 @@ class _Runner:
         if not isinstance(task, TaskTemplate) and not isinstance(task, (LazyEntity, TaskDetails)):
             raise TypeError(f"On Flyte tasks can be run, not generic functions or methods '{type(task)}'.")
 
-        if self._mode == "remote":
-            return await self._run_remote(task, *args, **kwargs)
-        task = cast(TaskTemplate, task)
-        if self._mode == "hybrid":
-            return await self._run_hybrid(task, *args, **kwargs)
+        # Set the run mode in the context variable so that offloaded types (files, directories, dataframes)
+        # can check the mode for controlling auto-uploading behavior (only enabled in remote mode).
+        _run_mode_var.set(self._mode)
 
-        # TODO We could use this for remote as well and users could simply pass flyte:// or s3:// or file://
-        with internal_ctx().new_raw_data_path(
-            raw_data_path=RawDataPath.from_local_folder(local_folder=self._raw_data_path)
-        ):
-            return await self._run_local(task, *args, **kwargs)
+        try:
+            if self._mode == "remote":
+                return await self._run_remote(task, *args, **kwargs)
+            task = cast(TaskTemplate, task)
+            if self._mode == "hybrid":
+                return await self._run_hybrid(task, *args, **kwargs)
+
+            # TODO We could use this for remote as well and users could simply pass flyte:// or s3:// or file://
+            with internal_ctx().new_raw_data_path(
+                raw_data_path=RawDataPath.from_local_folder(local_folder=self._raw_data_path)
+            ):
+                return await self._run_local(task, *args, **kwargs)
+        finally:
+            _run_mode_var.set(None)
 
 
 def with_runcontext(
@@ -669,6 +687,8 @@ def with_runcontext(
     queue: Optional[str] = None,
     custom_context: Dict[str, str] | None = None,
     cache_lookup_scope: CacheLookupScope = "global",
+    preserve_original_types: bool = False,
+    _tracker: Any = None,
 ) -> _Runner:
     """
     Launch a new run with the given parameters as the context.
@@ -720,17 +740,19 @@ def with_runcontext(
         Acts as base/default values that can be overridden by context managers in the code.
     :param cache_lookup_scope: Optional Scope to use for the run. This is used to specify the scope to use for cache
         lookups. If not specified, it will be set to the default scope (global unless overridden at the system level).
+    :param preserve_original_types: Optional If true, the type engine will preserve original types (e.g., pd.DataFrame)
+        when guessing python types from literal types. If false (default), it will return the generic
+        flyte.io.DataFrame. This option is automatically set to True if interactive_mode is True unless overridden
+        explicitly by this parameter.
+    :param _tracker: This is an internal only parameter used by the CLI to render the TUI.
 
     :return: runner
+
     """
     if mode == "hybrid" and not name and not run_base_dir:
         raise ValueError("Run name and run base dir are required for hybrid mode")
     if copy_style == "none" and not version:
         raise ValueError("Version is required when copy_style is 'none'")
-
-    # Set the run mode in the context variable so that offloaded types (files, directories, dataframes)
-    # can check the mode for controlling auto-uploading behavior (only enabled in remote mode).
-    _run_mode_var.set(mode)
 
     return _Runner(
         force_mode=mode,
@@ -757,6 +779,8 @@ def with_runcontext(
         queue=queue,
         custom_context=custom_context,
         cache_lookup_scope=cache_lookup_scope,
+        preserve_original_types=preserve_original_types,
+        _tracker=_tracker,
     )
 
 

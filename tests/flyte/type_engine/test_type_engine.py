@@ -10,8 +10,7 @@ from enum import Enum, auto
 from typing import Dict, List
 
 import pytest
-from flyteidl.core import errors_pb2
-from flyteidl2.core import literals_pb2, types_pb2
+from flyteidl2.core import errors_pb2, literals_pb2, types_pb2
 from flyteidl2.core.literals_pb2 import (
     Literal,
     LiteralCollection,
@@ -99,8 +98,9 @@ def test_type_engine():
 def test_named_tuple():
     t = typing.NamedTuple("Outputs", [("x_str", str), ("y_int", int)])
     var_map = TypeEngine.named_tuple_to_variable_map(t)
-    assert var_map.variables["x_str"].type.simple == types_pb2.SimpleType.STRING
-    assert var_map.variables["y_int"].type.simple == types_pb2.SimpleType.INTEGER
+    variables_dict = {entry.key: entry.value for entry in var_map.variables}
+    assert variables_dict["x_str"].type.simple == types_pb2.SimpleType.STRING
+    assert variables_dict["y_int"].type.simple == types_pb2.SimpleType.INTEGER
 
 
 def test_type_resolution():
@@ -487,7 +487,7 @@ async def test_protos():
     pb = errors_pb2.ContainerError(code="code", message="message")
     lt = TypeEngine.to_literal_type(errors_pb2.ContainerError)
     assert lt.simple == SimpleType.STRUCT
-    assert lt.metadata["pb_type"] == "flyteidl.core.errors_pb2.ContainerError"
+    assert lt.metadata["pb_type"] == "flyteidl2.core.errors_pb2.ContainerError"
 
     lit = await TypeEngine.to_literal(pb, errors_pb2.ContainerError, lt)
     new_python_val = await TypeEngine.to_python_value(lit, errors_pb2.ContainerError)
@@ -2347,3 +2347,96 @@ async def test_union_pydantic():
 
     python_value = await TypeEngine.to_python_value(literal_value, UnionModel)
     assert python_value == model1_instance
+
+
+@pytest.mark.asyncio
+async def test_typeddict_transformer():
+    """Test TypedDict serialization and deserialization."""
+    from typing import TypedDict
+
+    from flyte.types._type_engine import TypedDictTransformer, _is_typed_dict
+
+    # Define a simple TypedDict
+    class PersonInfo(TypedDict):
+        name: str
+        age: int
+        email: str
+
+    # Test _is_typed_dict helper
+    assert _is_typed_dict(PersonInfo) is True
+    assert _is_typed_dict(dict) is False
+    assert _is_typed_dict(int) is False
+
+    # Test that TypeEngine returns TypedDictTransformer for TypedDict
+    transformer = TypeEngine.get_transformer(PersonInfo)
+    assert isinstance(transformer, TypedDictTransformer)
+
+    # Test to_literal_type
+    lt = TypeEngine.to_literal_type(PersonInfo)
+    assert lt.simple == SimpleType.STRUCT
+    assert lt.HasField("metadata")
+
+    # Test to_literal and to_python_value roundtrip
+    person: PersonInfo = {"name": "Alice", "age": 30, "email": "alice@example.com"}
+    literal = await TypeEngine.to_literal(person, PersonInfo, lt)
+    assert literal.HasField("scalar")
+    assert literal.scalar.HasField("binary")
+
+    # Convert back to Python value
+    result = await TypeEngine.to_python_value(literal, PersonInfo)
+    assert result["name"] == "Alice"
+    assert result["age"] == 30
+    assert result["email"] == "alice@example.com"
+
+
+@pytest.mark.asyncio
+async def test_typeddict_nested():
+    """Test TypedDict with nested types."""
+    from dataclasses import dataclass
+    from typing import TypedDict
+
+    @dataclass
+    class Address:
+        street: str
+        city: str
+
+    class Employee(TypedDict):
+        name: str
+        address: Address
+
+    # Test roundtrip with nested dataclass
+    employee: Employee = {
+        "name": "Bob",
+        "address": Address(street="123 Main St", city="NYC"),
+    }
+
+    lt = TypeEngine.to_literal_type(Employee)
+    literal = await TypeEngine.to_literal(employee, Employee, lt)
+    result = await TypeEngine.to_python_value(literal, Employee)
+
+    assert result["name"] == "Bob"
+    # The address comes back as a dataclass-like object
+    assert result["address"].street == "123 Main St"
+    assert result["address"].city == "NYC"
+
+
+@pytest.mark.asyncio
+async def test_typeddict_with_list():
+    """Test TypedDict with List fields."""
+    from typing import List, TypedDict
+
+    class ModelMetrics(TypedDict):
+        accuracy: float
+        scores: List[float]
+
+    metrics: ModelMetrics = {
+        "accuracy": 0.95,
+        "scores": [0.9, 0.92, 0.97],
+    }
+
+    lt = TypeEngine.to_literal_type(ModelMetrics)
+    literal = await TypeEngine.to_literal(metrics, ModelMetrics, lt)
+    result = await TypeEngine.to_python_value(literal, ModelMetrics)
+
+    assert result["accuracy"] == pytest.approx(0.95)
+    assert result["scores"] == pytest.approx([0.9, 0.92, 0.97])

@@ -1,5 +1,5 @@
-from flyteidl.core.interface_pb2 import Variable
-from flyteidl.core.types_pb2 import LiteralType, SimpleType
+from flyteidl2.core.interface_pb2 import Variable
+from flyteidl2.core.types_pb2 import LiteralType, SimpleType
 
 from flyte.cli._params import to_click_option
 

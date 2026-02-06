@@ -26,6 +26,7 @@ include = ["flyteplugins*"]
 root = "../../"
 
 [tool.pytest.ini_options]
+pythonpath = ["src"]
 norecursedirs = []
 log_cli = true
 log_cli_level = 20

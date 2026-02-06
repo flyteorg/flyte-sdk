@@ -274,3 +274,12 @@ class RestrictedTypeError(RuntimeUserError):
 
     def __init__(self, message: str):
         super().__init__("RestrictedTypeUsage", message, "user")
+
+
+class CodeBundleError(RuntimeUserError):
+    """
+    This error is raised when the code bundle cannot be created, for example when no files are found to bundle.
+    """
+
+    def __init__(self, message: str):
+        super().__init__("CodeBundleError", message, "user")

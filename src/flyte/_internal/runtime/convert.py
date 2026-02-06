@@ -232,8 +232,11 @@ async def convert_outputs_to_native(interface: NativeInterface, outputs: Outputs
     elif len(kwargs) == 1:
         return next(iter(kwargs.values()))
     else:
-        # Return as tuple if multiple outputs, make sure to order correctly as it seems proto maps can change ordering
-        return tuple(kwargs[k] for k in interface.outputs.keys())
+        # Return as tuple if multiple outputs, using the order from the proto literals list
+        # (which preserves the original serialization order) rather than interface.outputs.keys()
+        # (which may have different order due to protobuf map not preserving order)
+        output_order = [named_literal.name for named_literal in outputs.proto_outputs.literals]
+        return tuple(kwargs[k] for k in output_order)
 
 
 def convert_error_to_native(err: execution_pb2.ExecutionError | Exception | Error) -> Exception | None:
@@ -418,7 +421,22 @@ def generate_interface_hash(task_interface: interface_pb2.TypedInterface) -> str
     """
     if not task_interface:
         return ""
-    serialized_interface = task_interface.SerializeToString(deterministic=True)
+
+    # Create a copy and sort variables by key to ensure order-independent hashing
+    sorted_interface = interface_pb2.TypedInterface()
+    sorted_interface.CopyFrom(task_interface)
+
+    if sorted_interface.inputs and sorted_interface.inputs.variables:
+        sorted_inputs = sorted(sorted_interface.inputs.variables, key=lambda entry: entry.key)
+        del sorted_interface.inputs.variables[:]
+        sorted_interface.inputs.variables.extend(sorted_inputs)
+
+    if sorted_interface.outputs and sorted_interface.outputs.variables:
+        sorted_outputs = sorted(sorted_interface.outputs.variables, key=lambda entry: entry.key)
+        del sorted_interface.outputs.variables[:]
+        sorted_interface.outputs.variables.extend(sorted_outputs)
+
+    serialized_interface = sorted_interface.SerializeToString(deterministic=True)
     return hash_data(serialized_interface)
 
 

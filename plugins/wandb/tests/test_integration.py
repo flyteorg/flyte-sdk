@@ -5,8 +5,14 @@ from unittest.mock import MagicMock, patch
 import flyte
 import pytest
 
-from flyteplugins.wandb import wandb_config, wandb_init, wandb_sweep, wandb_sweep_config
-from flyteplugins.wandb.link import Wandb, WandbSweep
+from flyteplugins.wandb import (
+    Wandb,
+    WandbSweep,
+    wandb_config,
+    wandb_init,
+    wandb_sweep,
+    wandb_sweep_config,
+)
 
 
 class TestWandbInitIntegration:
@@ -55,8 +61,8 @@ class TestWandbInitIntegration:
         assert link_2.entity == "entity-2"
         assert link_2.run_mode == "shared"
 
-    @patch("flyteplugins.wandb.decorator.flyte.ctx")
-    @patch("flyteplugins.wandb.decorator._build_init_kwargs")
+    @patch("flyteplugins.wandb._decorator.flyte.ctx")
+    @patch("flyteplugins.wandb._decorator._build_init_kwargs")
     def test_wandb_init_with_context_config(self, mock_build_kwargs, mock_ctx):
         """Test @wandb_init with wandb_config from context."""
         mock_context = MagicMock()

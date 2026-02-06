@@ -17,7 +17,7 @@ from abc import ABC, abstractmethod
 from collections import OrderedDict
 from functools import lru_cache
 from types import GenericAlias, NoneType
-from typing import Any, Dict, NamedTuple, Optional, Type, cast
+from typing import Any, Dict, Optional, Type, cast
 
 import msgpack
 from flyteidl2.core import interface_pb2, literals_pb2, types_pb2
@@ -63,6 +63,83 @@ _TYPE_ENGINE_COROS_BATCH_SIZE = int(os.environ.get("_F_TE_MAX_COROS", "10"))
 # the decoder will raise an error when trying to decode keys that are not strictly typed.
 def _default_msgpack_decoder(data: bytes) -> Any:
     return msgpack.unpackb(data, strict_map_key=False)
+
+
+async def _invoke_lazy_uploaders(obj: typing.Any) -> None:
+    """
+    Recursively find and invoke lazy uploaders on Flyte IO types (DataFrame, File, Dir)
+    nested within a Pydantic model or dataclass. This must be done BEFORE serialization
+    to ensure uploads happen in the correct async context (syncify loop) where gRPC works.
+
+    The lazy uploaders set the URI/path on the objects, so subsequent serialization
+    can just return the existing values without invoking async operations.
+
+    Args:
+        obj: The object to process (can be a Pydantic model, dataclass, or collection)
+    """
+    if obj is None:
+        logger.debug("Object is None, skipping lazy uploaders.")
+        return
+
+    from flyte._context import internal_ctx
+    from flyte._run import _get_main_run_mode
+    from flyte.io import DataFrame, Dir, File
+
+    ctx = internal_ctx()
+    is_remote_ctx = ctx.has_raw_data
+    is_local_ctx_local_run_mode = not ctx.has_raw_data and _get_main_run_mode() == "local"
+
+    if is_remote_ctx:
+        # skip invoking the lazy uploader when in a remote context
+        logger.debug("Remote context detected, skipping lazy uploaders.")
+        return
+
+    if is_local_ctx_local_run_mode:
+        # skip invoking the lazy uploader when in a local context running in local run mode
+        logger.debug("Local context running in local run mode detected, skipping lazy uploaders.")
+        return
+
+    # Handle Flyte IO types with lazy uploaders
+    if isinstance(obj, DataFrame) and obj.lazy_uploader:
+        uploaded = await obj.lazy_uploader()
+        # Copy the uploaded URI and metadata back to the original object
+        obj.uri = uploaded.uri
+        obj.format = uploaded.format
+        obj._lazy_uploader = None  # Clear to avoid re-uploading
+        return
+
+    if isinstance(obj, (File, Dir)) and obj.lazy_uploader:
+        hash_val, uri = await obj.lazy_uploader()
+        obj.path = uri
+        if hash_val:
+            obj.hash = hash_val
+        obj._lazy_uploader = None  # Clear to avoid re-uploading
+        return
+
+    # Recursively process Pydantic models
+    if isinstance(obj, BaseModel):
+        for field_name in obj.__class__.model_fields:
+            field_value = getattr(obj, field_name, None)
+            await _invoke_lazy_uploaders(field_value)
+        return
+
+    # Recursively process dataclasses
+    if dataclasses.is_dataclass(obj) and not isinstance(obj, type):
+        for field in dataclasses.fields(obj):
+            field_value = getattr(obj, field.name, None)
+            await _invoke_lazy_uploaders(field_value)
+        return
+
+    # Handle collections
+    if isinstance(obj, dict):
+        for value in obj.values():
+            await _invoke_lazy_uploaders(value)
+        return
+
+    if isinstance(obj, (list, tuple)):
+        for item in obj:
+            await _invoke_lazy_uploaders(item)
+        return
 
 
 def modify_literal_uris(lit: Literal):
@@ -381,6 +458,11 @@ class PydanticTransformer(TypeTransformer[BaseModel]):
         python_type: Type[BaseModel],
         expected: LiteralType,
     ) -> Literal:
+        # Pre-process the model to invoke any lazy uploaders on nested Flyte IO types.
+        # This ensures uploads happen in the syncify context where gRPC clients work correctly,
+        # and prevents deadlocks when @model_serializer tries to run async code via loop_manager.
+        await _invoke_lazy_uploaders(python_val)
+
         json_str = python_val.model_dump_json()
         dict_obj = json.loads(json_str)
         msgpack_bytes = msgpack.dumps(dict_obj)
@@ -601,6 +683,11 @@ class DataclassTransformer(TypeTransformer[object]):
                 f"user defined datatypes in Flytekit"
             )
 
+        # Pre-process the dataclass to invoke any lazy uploaders on nested Flyte IO types.
+        # This ensures uploads happen in the syncify context where gRPC clients work correctly,
+        # and prevents issues when _serialize tries to run async code via loop_manager.
+        await _invoke_lazy_uploaders(python_val)
+
         # The function looks up or creates a MessagePackEncoder specifically designed for the object's type.
         # This encoder is then used to convert a data class into MessagePack Bytes.
         try:
@@ -819,6 +906,17 @@ class EnumTransformer(TypeTransformer[enum.Enum]):
             raise TypeTransformerFailedError(f"Value {v} is not in Enum {t}")
 
 
+# Import transformers from _tuple_dict module (imported here to avoid circular imports)
+from ._tuple_dict import (  # noqa: E402
+    NamedTupleTransformer,
+    TupleTransformer,
+    TypedDictTransformer,
+    _is_named_tuple,
+    _is_typed_dict,
+    _is_typed_tuple,
+)
+
+
 def generate_attribute_list_from_dataclass_json_mixin(schema: dict, schema_name: typing.Any):
     from flyte.io._dir import Dir
     from flyte.io._file import File
@@ -841,6 +939,10 @@ def generate_attribute_list_from_dataclass_json_mixin(schema: dict, schema_name:
             defs = schema.get("$defs", schema.get("definitions", {}))
             if ref_name in defs:
                 ref_schema = defs[ref_name].copy()
+                # Check if the $ref points to an enum definition (no properties)
+                if ref_schema.get("enum"):
+                    attribute_list.append((property_key, str))
+                    continue
                 # Include $defs so nested models can resolve their own $refs
                 if "$defs" not in ref_schema and defs:
                     ref_schema["$defs"] = defs
@@ -961,6 +1063,9 @@ class TypeEngine(typing.Generic[T]):
     _RESTRICTED_TYPES: typing.ClassVar[typing.List[type]] = []
     _DATACLASS_TRANSFORMER: typing.ClassVar[TypeTransformer] = DataclassTransformer()
     _ENUM_TRANSFORMER: typing.ClassVar[TypeTransformer] = EnumTransformer()
+    _TUPLE_TRANSFORMER: typing.ClassVar[TypeTransformer] = TupleTransformer()
+    _NAMEDTUPLE_TRANSFORMER: typing.ClassVar[TypeTransformer] = NamedTupleTransformer()
+    _TYPEDDICT_TRANSFORMER: typing.ClassVar[TypeTransformer] = TypedDictTransformer()
     lazy_import_lock: typing.ClassVar[threading.Lock] = threading.Lock()
 
     @classmethod
@@ -1009,6 +1114,18 @@ class TypeEngine(typing.Generic[T]):
         if inspect.isclass(python_type) and issubclass(python_type, enum.Enum):
             # Special case: prevent that for a type `FooEnum(str, Enum)`, the str transformer is used.
             return cls._ENUM_TRANSFORMER
+
+        # Special handling for NamedTuple types (isinstance checks don't work for NamedTuple)
+        if _is_named_tuple(python_type):
+            return cls._NAMEDTUPLE_TRANSFORMER
+
+        # Special handling for typed tuple types like tuple[int, str]
+        if _is_typed_tuple(python_type):
+            return cls._TUPLE_TRANSFORMER
+
+        # Special handling for TypedDict types
+        if _is_typed_dict(python_type):
+            return cls._TYPEDDICT_TRANSFORMER
 
         if hasattr(python_type, "__origin__"):
             # If the type is a generic type, we should check the origin type. But consider the case like Iterator[JSON]
@@ -1091,13 +1208,17 @@ class TypeEngine(typing.Generic[T]):
 
     @classmethod
     def to_literal_checks(cls, python_val: typing.Any, python_type: Type[T], expected: LiteralType):
+        # Check for untyped tuples - typed tuples and NamedTuples are now supported
         if isinstance(python_val, tuple):
-            raise AssertionError(
-                "Tuples are not a supported type for individual values in Flyte - got a tuple -"
-                f" {python_val}. If using named tuple in an inner task, please, de-reference the"
-                "actual attribute that you want to use. For example, in NamedTuple('OP', x=int) then"
-                "return v.x, instead of v, even if this has a single element"
-            )
+            # Allow typed tuples and NamedTuples
+            if not (_is_typed_tuple(python_type) or _is_named_tuple(python_type)):
+                raise AssertionError(
+                    "Untyped tuples are not a supported type for individual values in Flyte - got a tuple -"
+                    f" {python_val}. Use a typed tuple like tuple[int, str] or a NamedTuple instead."
+                    " If using named tuple in an inner task, please de-reference the"
+                    " actual attribute that you want to use. For example, in NamedTuple('OP', x=int) then"
+                    " return v.x, instead of v, even if this has a single element"
+                )
         if (
             (python_val is None and python_type is not type(None))
             and expected
@@ -1161,10 +1282,14 @@ class TypeEngine(typing.Generic[T]):
         """
         Converts a python-native ``NamedTuple`` to a flyte-specific VariableMap of named literals.
         """
-        variables = {}
+        variables = []
         for idx, (var_name, var_type) in enumerate(t.__annotations__.items()):
             literal_type = cls.to_literal_type(var_type)
-            variables[var_name] = interface_pb2.Variable(type=literal_type, description=f"{idx}")
+            variables.append(
+                interface_pb2.VariableEntry(
+                    key=var_name, value=interface_pb2.Variable(type=literal_type, description=f"{idx}")
+                )
+            )
         return interface_pb2.VariableMap(variables=variables)
 
     @classmethod
@@ -1270,14 +1395,14 @@ class TypeEngine(typing.Generic[T]):
 
     @classmethod
     def guess_python_types(
-        cls, flyte_variable_dict: typing.Dict[str, interface_pb2.Variable]
+        cls, flyte_variable_list: typing.List[interface_pb2.VariableEntry]
     ) -> typing.Dict[str, Type[Any]]:
         """
-        Transforms a dictionary of flyte-specific ``Variable`` objects to a dictionary of regular python values.
+        Transforms a list of flyte-specific ``VariableEntry`` objects to a dictionary of regular python values.
         """
         python_types = {}
-        for k, v in flyte_variable_dict.items():
-            python_types[k] = cls.guess_python_type(v.type)
+        for entry in flyte_variable_list:
+            python_types[entry.key] = cls.guess_python_type(entry.value.type)
         return python_types
 
     @classmethod
@@ -1291,6 +1416,30 @@ class TypeEngine(typing.Generic[T]):
             except ValueError:
                 # Skipping transformer
                 continue
+
+        # Try TupleTransformer before DataclassTransformer since tuples are serialized
+        # as Pydantic models with "TupleWrapper_" prefix in the schema title
+        if cls._TUPLE_TRANSFORMER is not None:
+            try:
+                return cls._TUPLE_TRANSFORMER.guess_python_type(flyte_type)
+            except ValueError:
+                logger.debug(f"Skipping transformer {cls._TUPLE_TRANSFORMER.name} for {flyte_type}")
+
+        # Try NamedTupleTransformer before DataclassTransformer since NamedTuples are serialized
+        # as Pydantic models with "NamedTupleWrapper_" prefix in the schema title
+        if cls._NAMEDTUPLE_TRANSFORMER is not None:
+            try:
+                return cls._NAMEDTUPLE_TRANSFORMER.guess_python_type(flyte_type)
+            except ValueError:
+                logger.debug(f"Skipping transformer {cls._NAMEDTUPLE_TRANSFORMER.name} for {flyte_type}")
+
+        # Try TypedDictTransformer before DataclassTransformer since TypedDicts are serialized
+        # as Pydantic models with "TypedDictWrapper_" prefix in the schema title
+        if cls._TYPEDDICT_TRANSFORMER is not None:
+            try:
+                return cls._TYPEDDICT_TRANSFORMER.guess_python_type(flyte_type)
+            except ValueError:
+                logger.debug(f"Skipping transformer {cls._TYPEDDICT_TRANSFORMER.name} for {flyte_type}")
 
         # Because the dataclass transformer is handled explicitly in the get_transformer code, we have to handle it
         # separately here too.
@@ -1927,9 +2076,16 @@ def convert_mashumaro_json_schema_to_python_class(schema: dict, schema_name: typ
     return cls
 
 
-def _get_element_type(element_property: typing.Dict[str, str]) -> Type:
+def _get_element_type(element_property: typing.Union[typing.Dict[str, str], bool]) -> Type:
     from flyte.io._dir import Dir
     from flyte.io._file import File
+
+    # Handle additionalProperties: true (means Dict[str, Any])
+    if element_property is True:
+        return typing.Any
+
+    if not isinstance(element_property, dict):
+        return typing.Any
 
     if File.schema_match(element_property):
         return File
@@ -2140,16 +2296,6 @@ def _register_default_type_transformers():
     TypeEngine.register(EnumTransformer())
     TypeEngine.register(ProtobufTransformer())
     TypeEngine.register(PydanticTransformer())
-
-    # inner type is. Also unsupported are typing's Tuples. Even though you can look inside them, Flyte's type system
-    # doesn't support these currently.
-    # Confusing note: typing.NamedTuple is in here even though task functions themselves can return them. We just mean
-    # that the return signature of a task can be a NamedTuple that contains another NamedTuple inside it.
-    # Also, it's not entirely true that Flyte IDL doesn't support tuples. We can always fake them as structs, but we'll
-    # hold off on doing that for now, as we may amend the IDL formally to support tuples.
-    TypeEngine.register_restricted_type("non typed tuple", tuple)
-    TypeEngine.register_restricted_type("non typed tuple", typing.Tuple)
-    TypeEngine.register_restricted_type("named tuple", NamedTuple)
 
 
 class LiteralsResolver(collections.UserDict):

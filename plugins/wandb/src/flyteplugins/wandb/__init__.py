@@ -1,78 +1,87 @@
 """
-Weights & Biases Plugin
+## Key features:
 
-Key Features:
-- Automatic W&B run initialization with @wandb_init decorator
+- Automatic W&B run initialization with `@wandb_init` decorator
 - Automatic W&B links in Flyte UI pointing to runs and sweeps
 - Parent/child task support with automatic run reuse
-- W&B sweep creation and management with @wandb_sweep decorator
-- Configuration management with wandb_config() and wandb_sweep_config()
+- W&B sweep creation and management with `@wandb_sweep` decorator
+- Configuration management with `wandb_config()` and `wandb_sweep_config()`
+- Distributed training support (auto-detects PyTorch DDP/torchrun)
 
-Basic Usage:
+## Basic usage:
 
 1. Simple task with W&B logging:
 
+   ```python
    from flyteplugins.wandb import wandb_init, get_wandb_run
 
    @wandb_init(project="my-project", entity="my-team")
    @env.task
    async def train_model(learning_rate: float) -> str:
-       run = get_wandb_run()
-       run.log({"loss": 0.5, "learning_rate": learning_rate})
-       return run.id
+       wandb_run = get_wandb_run()
+       wandb_run.log({"loss": 0.5, "learning_rate": learning_rate})
+       return wandb_run.id
+   ```
 
 2. Parent/Child Tasks with Run Reuse:
 
+   ```python
    @wandb_init  # Automatically reuses parent's run ID
    @env.task
    async def child_task(x: int) -> str:
-       run = get_wandb_run()
-       run.log({"child_metric": x * 2})
-       return run.id
+       wandb_run = get_wandb_run()
+       wandb_run.log({"child_metric": x * 2})
+       return wandb_run.id
 
    @wandb_init(project="my-project", entity="my-team")
    @env.task
    async def parent_task() -> str:
-       run = get_wandb_run()
-       run.log({"parent_metric": 100})
+       wandb_run = get_wandb_run()
+       wandb_run.log({"parent_metric": 100})
 
        # Child reuses parent's run by default (run_mode="auto")
        await child_task(5)
-       return run.id
+       return wandb_run.id
+   ```
 
 3. Configuration with context manager:
 
+   ```python
    from flyteplugins.wandb import wandb_config
 
-   run = flyte.with_runcontext(
+   r = flyte.with_runcontext(
        custom_context=wandb_config(
            project="my-project",
            entity="my-team",
            tags=["experiment-1"]
        )
    ).run(train_model, learning_rate=0.001)
+   ```
 
 4. Creating new runs for child tasks:
 
+   ```python
    @wandb_init(run_mode="new")  # Always creates a new run
    @env.task
    async def independent_child() -> str:
-       run = get_wandb_run()
-       run.log({"independent_metric": 42})
-       return run.id
+       wandb_run = get_wandb_run()
+       wandb_run.log({"independent_metric": 42})
+       return wandb_run.id
+   ```
 
 5. Running sweep agents in parallel:
 
+   ```python
    import asyncio
    from flyteplugins.wandb import wandb_sweep, get_wandb_sweep_id, get_wandb_context
 
    @wandb_init
    async def objective():
-       run = wandb.run
-       config = run.config
+       wandb_run = wandb.run
+       config = wandb_run.config
        ...
 
-       run.log({"loss": loss_value})
+       wandb_run.log({"loss": loss_value})
 
    @wandb_sweep
    @env.task
@@ -96,7 +105,7 @@ Basic Usage:
        return sweep_id
 
    # Run with 2 parallel agents
-   run = flyte.with_runcontext(
+   r = flyte.with_runcontext(
        custom_context={
            **wandb_config(project="my-project", entity="my-team"),
            **wandb_sweep_config(
@@ -109,25 +118,104 @@ Basic Usage:
            )
        }
    ).run(run_parallel_sweep, num_agents=2, trials_per_agent=5)
+   ```
 
-Decorator Order:
-    @wandb_init or @wandb_sweep must be the outermost decorator:
+6. Distributed Training Support:
 
-    @wandb_init
-    @env.task
-    async def my_task():
-        ...
+   The plugin auto-detects distributed training from environment variables
+   (RANK, WORLD_SIZE, LOCAL_RANK, etc.) set by torchrun/torch.distributed.elastic.
 
-Helper Functions:
-- get_wandb_run(): Access the current W&B run object (or None if not in a run)
-- get_wandb_run_dir(): Get local path to current run's directory (no network call)
-- download_wandb_run_dir(): Download run files from wandb cloud (for cross-task access)
-- download_wandb_run_logs(): Async traced function to download run logs after task completion
-- download_wandb_sweep_dirs(): Download all run directories for a sweep
-- download_wandb_sweep_logs(): Async traced function to download sweep logs after task completion
-- get_wandb_sweep_id(): Access the current sweep ID (or None if not in a sweep)
-- get_wandb_context(): Access the current W&B context
-- get_wandb_sweep_context(): Access the current W&B sweep context
+   The `rank_scope` parameter controls the scope of run creation:
+   - `"global"` (default): Global scope - 1 run/group across all workers
+   - `"worker"`: Worker scope - 1 run/group per worker
+
+   By default (`run_mode="auto"`, `rank_scope="global"`):
+   - Single-node: Only rank 0 logs (1 run)
+   - Multi-node: Only global rank 0 logs (1 run)
+
+   ```python
+   from flyteplugins.pytorch.task import Elastic
+   from flyteplugins.wandb import wandb_init, get_wandb_run
+
+   torch_env = flyte.TaskEnvironment(
+       name="torch_env",
+       resources=flyte.Resources(cpu=(1, 2), memory=("1Gi", "5Gi"), gpu="V100:4"),
+       plugin_config=Elastic(nnodes=2, nproc_per_node=2),
+   )
+
+   @wandb_init
+   @torch_env.task
+   async def train_distributed():
+       torch.distributed.init_process_group("nccl")
+
+       # Only global rank 0 gets a W&B run, other ranks get None
+       run = get_wandb_run()
+       if run:
+           run.log({"loss": loss})
+
+       return run.id if run else "non-primary-rank"
+   ```
+
+   Use `rank_scope="worker"` to get 1 run per worker:
+
+   ```python
+   @wandb_init(rank_scope="worker")
+   @torch_env.task
+   async def train_distributed_per_worker():
+       # Multi-node: local rank 0 of each worker gets a W&B run (1 run per worker)
+       run = get_wandb_run()
+       if run:
+           run.log({"loss": loss})
+       return run.id if run else "non-primary-rank"
+   ```
+
+   Use `run_mode="shared"` for all ranks to log to shared run(s):
+
+   ```python
+   @wandb_init(run_mode="shared")  # rank_scope="global": 1 shared run across all ranks
+   @torch_env.task
+   async def train_distributed_shared():
+       # All ranks log to the same W&B run (with x_label to identify each rank)
+       run = get_wandb_run()
+       run.log({"rank_metric": value})
+       return run.id
+
+   @wandb_init(run_mode="shared", rank_scope="worker")  # 1 shared run per worker
+   @torch_env.task
+   async def train_distributed_shared_per_worker():
+       run = get_wandb_run()
+       run.log({"rank_metric": value})
+       return run.id
+   ```
+
+   Use `run_mode="new"` for each rank to have its own W&B run:
+
+   ```python
+   @wandb_init(run_mode="new")  # rank_scope="global": all runs in 1 group
+   @torch_env.task
+   async def train_distributed_separate_runs():
+       # Each rank gets its own W&B run (grouped in W&B UI)
+       # Run IDs: {base}-rank-{global_rank}
+       run = get_wandb_run()
+       run.log({"rank_metric": value})
+       return run.id
+
+   @wandb_init(run_mode="new", rank_scope="worker")  # runs grouped per worker
+   @torch_env.task
+   async def train_distributed_separate_runs_per_worker():
+       run = get_wandb_run()
+       run.log({"rank_metric": value})
+       return run.id
+   ```
+
+Decorator order: `@wandb_init` or `@wandb_sweep` must be the outermost decorator:
+
+```python
+@wandb_init
+@env.task
+async def my_task():
+    ...
+```
 """
 
 import json
@@ -140,14 +228,18 @@ from flyte.io import Dir
 
 import wandb
 
-from .context import (
+from ._context import (
     get_wandb_context,
     get_wandb_sweep_context,
     wandb_config,
     wandb_sweep_config,
 )
-from .decorator import wandb_init, wandb_sweep
-from .link import Wandb, WandbSweep
+from ._decorator import (
+    _get_distributed_info,
+    wandb_init,
+    wandb_sweep,
+)
+from ._link import Wandb, WandbSweep
 
 logger = logging.getLogger(__name__)
 
@@ -159,6 +251,7 @@ __all__ = [
     "download_wandb_run_logs",
     "download_wandb_sweep_dirs",
     "download_wandb_sweep_logs",
+    "get_distributed_info",
     "get_wandb_context",
     "get_wandb_run",
     "get_wandb_run_dir",
@@ -176,29 +269,33 @@ __version__ = "0.1.0"
 
 def get_wandb_run():
     """
-    Get the current wandb run if within a @wandb_init decorated task or trace.
+    Get the current wandb run if within a `@wandb_init` decorated task or trace.
 
-    The run is initialized when the @wandb_init context manager is entered.
-    Returns None if not within a wandb_init context.
+    The run is initialized when the `@wandb_init` context manager is entered.
+    Returns None if not within a `wandb_init` context.
 
     Returns:
-        wandb.sdk.wandb_run.Run | None: The current wandb run object or None.
+        `wandb.sdk.wandb_run.Run` | `None`: The current wandb run object or None.
     """
+    # First check Flyte context
     ctx = flyte.ctx()
-    if not ctx or not ctx.data:
-        return None
+    if ctx and ctx.data:
+        run = ctx.data.get("_wandb_run")
+        if run:
+            return run
 
-    return ctx.data.get("_wandb_run")
+    # Fallback to wandb's global run
+    return wandb.run
 
 
 def get_wandb_sweep_id() -> str | None:
     """
-    Get the current wandb sweep_id if within a @wandb_sweep decorated task.
+    Get the current wandb `sweep_id` if within a `@wandb_sweep` decorated task.
 
-    Returns None if not within a wandb_sweep context.
+    Returns `None` if not within a `wandb_sweep` context.
 
     Returns:
-        str | None: The sweep ID or None.
+        `str` | `None`: The sweep ID or None.
     """
     ctx = flyte.ctx()
     if not ctx or not ctx.custom_context:
@@ -213,16 +310,35 @@ def get_wandb_run_dir() -> Optional[str]:
 
     Use this for accessing files written by the current task without any
     network calls. For accessing files from other tasks (or after a task
-    completes), use download_wandb_run_dir() instead.
+    completes), use `download_wandb_run_dir()` instead.
 
     Returns:
-        Local path to wandb run directory (wandb.run.dir) or None if no
+        Local path to wandb run directory (`wandb.run.dir`) or `None` if no
         active run.
     """
     run = get_wandb_run()
     if run is None:
         return None
     return run.dir
+
+
+def get_distributed_info() -> dict | None:
+    """
+    Get distributed training info if running in a distributed context.
+
+    This function auto-detects distributed training from environment variables
+    set by torchrun/torch.distributed.elastic.
+
+    Returns:
+        dict | None: Dictionary with distributed info or None if not distributed.
+            - rank: Global rank (0 to world_size-1)
+            - local_rank: Rank within the node (0 to local_world_size-1)
+            - world_size: Total number of processes
+            - local_world_size: Processes per node
+            - worker_index: Node/worker index (0 to num_workers-1)
+            - num_workers: Total number of nodes/workers
+    """
+    return _get_distributed_info()
 
 
 def download_wandb_run_dir(
@@ -237,29 +353,30 @@ def download_wandb_run_dir(
     This enables access to wandb data from any task or after workflow completion.
 
     Downloaded contents:
+
         - summary.json - final summary metrics (always exported)
         - metrics_history.json - step-by-step metrics (if include_history=True)
         - Plus any files synced by wandb (requirements.txt, wandb_metadata.json, etc.)
 
     Args:
-        run_id: The wandb run ID to download. If None, uses the current run's ID
+        run_id: The wandb run ID to download. If `None`, uses the current run's ID
             from context (useful for shared runs across tasks).
-        path: Local directory to download files to. If None, downloads to
-            /tmp/wandb_runs/{run_id}.
-        include_history: If True, exports the step-by-step metrics history
-            to metrics_history.json. Defaults to True.
+        path: Local directory to download files to. If `None`, downloads to
+            `/tmp/wandb_runs/{run_id}`.
+        include_history: If `True`, exports the step-by-step metrics history
+            to `metrics_history.json`. Defaults to `True`.
 
     Returns:
         Local path where files were downloaded.
 
     Raises:
-        RuntimeError: If no run_id provided and no active run in context.
-        wandb.errors.CommError: If run not found in wandb cloud.
+        `RuntimeError`: If no `run_id` provided and no active run in context.
+        `wandb.errors.CommError`: If run not found in wandb cloud.
 
     Note:
         There may be a brief delay between when files are written locally and
         when they're available in wandb cloud. For immediate local access
-        within the same task, use get_wandb_run_dir() instead.
+        within the same task, use `get_wandb_run_dir()` instead.
     """
     # Determine run_id
     if run_id is None:
@@ -364,12 +481,12 @@ def download_wandb_sweep_dirs(
     trials after completion.
 
     Args:
-        sweep_id: The wandb sweep ID. If None, uses the current sweep's ID
-            from context (set by @wandb_sweep decorator).
+        sweep_id: The wandb sweep ID. If `None`, uses the current sweep's ID
+            from context (set by `@wandb_sweep` decorator).
         base_path: Base directory to download files to. Each run's files will be
-            in a subdirectory named by run_id. If None, uses /tmp/wandb_runs/.
-        include_history: If True, exports the step-by-step metrics history
-            to metrics_history.json for each run. Defaults to True.
+            in a subdirectory named by run_id. If `None`, uses `/tmp/wandb_runs/`.
+        include_history: If `True`, exports the step-by-step metrics history
+            to metrics_history.json for each run. Defaults to `True`.
 
     Returns:
         List of local paths where run data was downloaded.
@@ -451,8 +568,8 @@ async def download_wandb_run_logs(run_id: str) -> Dir:
     """
     Traced function to download wandb run logs after task completion.
 
-    This function is called automatically when download_logs=True is set
-    in @wandb_init or wandb_config(). The downloaded files appear as a
+    This function is called automatically when `download_logs=True` is set
+    in `@wandb_init` or `wandb_config()`. The downloaded files appear as a
     trace output in the Flyte UI.
 
     Args:
@@ -473,8 +590,8 @@ async def download_wandb_sweep_logs(sweep_id: str) -> Dir:
     """
     Traced function to download wandb sweep logs after task completion.
 
-    This function is called automatically when download_logs=True is set
-    in @wandb_sweep or wandb_sweep_config(). The downloaded files appear as a
+    This function is called automatically when `download_logs=True` is set
+    in `@wandb_sweep` or `wandb_sweep_config()`. The downloaded files appear as a
     trace output in the Flyte UI.
 
     Args:
