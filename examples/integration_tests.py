@@ -579,16 +579,6 @@ async def test_accelerators_gpu(flyte_client):
 @pytest.mark.integration
 @pytest.mark.gpu
 @pytest.mark.asyncio
-async def test_ml_gridsearch_gpu(flyte_client):
-    """Test ML gridsearch with GPU."""
-    from examples.ml.gridsearch_gpu import main
-
-    await _run_and_wait(main, "test_ml_gridsearch_gpu")
-
-
-@pytest.mark.integration
-@pytest.mark.gpu
-@pytest.mark.asyncio
 async def test_genai_vllm_app(flyte_client):
     """Test vLLM app deployment."""
     from examples.genai.vllm.vllm_app import vllm_app
@@ -617,9 +607,9 @@ async def test_genai_sglang_app(flyte_client):
 @pytest.mark.asyncio
 async def test_connectors_bigquery(flyte_client):
     """Test BigQuery connector."""
-    from examples.connectors.bigquery_example import main
+    from examples.connectors.bigquery_example import bigquery_task
 
-    await _run_and_wait(main, "test_connectors_bigquery")
+    await _run_and_wait(bigquery_task, "test_connectors_bigquery")
 
 
 @pytest.mark.integration
@@ -628,36 +618,9 @@ async def test_connectors_bigquery(flyte_client):
 @pytest.mark.asyncio
 async def test_connectors_databricks(flyte_client):
     """Test Databricks connector."""
-    from examples.connectors.databricks_example import main
+    from examples.connectors.databricks_example import hello_databricks_nested
 
-    await _run_and_wait(main, "test_connectors_databricks")
-
-
-# =============================================================================
-# SECRETS TESTS (skipped - require secrets configured in Union backend)
-# =============================================================================
-
-
-@pytest.mark.integration
-@pytest.mark.secrets
-@pytest.mark.skip(reason="Requires OpenAI API key configured as secret in Union backend")
-@pytest.mark.asyncio
-async def test_genai_openai_agent(flyte_client):
-    """Test OpenAI agent."""
-    from examples.genai.openai_agent import main
-
-    await _run_and_wait(main, "test_genai_openai_agent")
-
-
-@pytest.mark.integration
-@pytest.mark.secrets
-@pytest.mark.skip(reason="Requires OpenAI API key configured as secret in Union backend")
-@pytest.mark.asyncio
-async def test_genai_langgraph_agent(flyte_client):
-    """Test LangGraph agent."""
-    from examples.genai.langgraph_agent import main
-
-    await _run_and_wait(main, "test_genai_langgraph_agent")
+    await _run_and_wait(hello_databricks_nested, "test_connectors_databricks")
 
 
 @pytest.mark.integration

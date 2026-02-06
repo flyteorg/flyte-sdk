@@ -392,7 +392,7 @@ class File(BaseModel, Generic[T], SerializableType):
                 if inspect.iscoroutinefunction(fh.close):
                     await fh.close()
                 else:
-                    fh.close()
+                    await fh.close()
         except flyte.errors.OnlyAsyncIOSupportedError:
             # Fall back to aiofiles
             fs = storage.get_underlying_filesystem(path=self.path)

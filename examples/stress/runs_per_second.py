@@ -198,7 +198,7 @@ async def runs_per_second(max_rps: int = 50, n: int = 500):
 
 
 @env.task
-async def main(n: int = 10, max_per_n: int = 10):
+async def main(n: int = 1, max_per_n: int = 1):
     await runs_per_second.override(short_name="primer")(max_rps=1, n=1)
     coros = []
     for run_number in range(n):

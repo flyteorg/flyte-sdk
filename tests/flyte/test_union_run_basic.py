@@ -40,8 +40,8 @@ async def test_task1_local_union_async():
 
 
 @pytest.mark.asyncio
-@mock.patch("flyte._deploy._build_image_bg")
-@mock.patch("flyte._code_bundle.build_code_bundle")
+@mock.patch("flyte._deploy._build_image_bg", new_callable=AsyncMock)
+@mock.patch("flyte._code_bundle.build_code_bundle", new_callable=AsyncMock)
 @mock.patch("flyte.remote._client.controlplane.ClientSet")  # Patch the Client class
 async def test_task1_remote_union_sync(
     mock_client_class: MagicMock, mock_code_bundler: AsyncMock, mock_build_image_bg: AsyncMock

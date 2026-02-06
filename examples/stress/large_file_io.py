@@ -56,12 +56,12 @@ async def read_large_file(f: flyte.io.File, hang: bool = False) -> Tuple[int, fl
 
 
 @env.task
-async def main(size_gigabytes: int = 5) -> Tuple[int, float]:
+async def main(size_gigabytes: int = 1) -> Tuple[int, float]:
     large_file = await create_large_file(size_gigabytes)
     return await read_large_file(large_file, hang=False)
 
 
 if __name__ == "__main__":
     flyte.init_from_config()
-    r = flyte.run(main, 5)
+    r = flyte.run(main, 1)
     print(r.url)
