@@ -1,0 +1,19 @@
+
+{
+    "task-runners": [
+      {
+        "runner-type": "javascript",
+        "env-overrides": {
+          "NODE_FUNCTION_ALLOW_BUILTIN": "crypto",
+          "NODE_FUNCTION_ALLOW_EXTERNAL": "moment,uuid"
+        }
+      },
+      {
+        "runner-type": "python",
+        "env-overrides": {
+          "PYTHONPATH": "/opt/runners/task-runner-python",
+          "N8N_RUNNERS_STDLIB_ALLOW": "json"
+        }
+      }
+    ]
+}
