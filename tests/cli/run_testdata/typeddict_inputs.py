@@ -9,6 +9,8 @@ if sys.version_info >= (3, 12):
 else:
     from typing_extensions import TypedDict
 
+from typing_extensions import NotRequired
+
 import flyte
 
 env = flyte.TaskEnvironment(name="typeddict_inputs")
@@ -159,3 +161,71 @@ class ConfigWithDict(TypedDict):
 async def process_typeddict_with_dict(config: ConfigWithDict) -> str:
     """Task that takes a TypedDict with dict fields."""
     return f"Config '{config['name']}' has {len(config['settings'])} settings and {len(config['labels'])} labels"
+
+
+# ============================================================================
+# TypedDict with NotRequired fields
+# Tests that NotRequired[T] is properly unwrapped for Pydantic validation
+# and that optional fields not provided are absent from output (not None)
+# ============================================================================
+
+
+class ToolCall(TypedDict):
+    """A tool call made by an AI assistant."""
+
+    name: str
+    args: dict
+
+
+class AIResponse(TypedDict):
+    """Response from an AI assistant with optional tool_calls.
+
+    The tool_calls field uses NotRequired to mark it as optional.
+    This tests that NotRequired[T] is properly unwrapped when passed to Pydantic.
+    """
+
+    content: str
+    role: str
+    tool_calls: NotRequired[List[ToolCall]]
+
+
+@env.task
+async def process_ai_response(response: AIResponse) -> str:
+    """Task that takes an AIResponse TypedDict with NotRequired field.
+
+    Tests:
+    1. NotRequired[T] is properly unwrapped (no PydanticSchemaGenerationError)
+    2. Optional fields not provided are absent (not None)
+    """
+    # This check verifies that tool_calls is absent when not provided, not set to None
+    if "tool_calls" in response:
+        tool_names = [tc["name"] for tc in response["tool_calls"]]
+        return f"{response['role']}: {response['content']} [tools: {', '.join(tool_names)}]"
+    else:
+        return f"{response['role']}: {response['content']}"
+
+
+class UserProfile(TypedDict):
+    """User profile with multiple NotRequired fields."""
+
+    username: str
+    email: str
+    display_name: NotRequired[str]
+    bio: NotRequired[str]
+    age: NotRequired[int]
+
+
+@env.task
+async def process_user_profile(profile: UserProfile) -> str:
+    """Task that takes a UserProfile with multiple NotRequired fields."""
+    parts = [f"User: {profile['username']} ({profile['email']})"]
+
+    # Check each optional field - should be absent, not None
+    if "display_name" in profile:
+        parts.append(f"Display: {profile['display_name']}")
+    if "bio" in profile:
+        parts.append(f"Bio: {profile['bio']}")
+    if "age" in profile:
+        parts.append(f"Age: {profile['age']}")
+
+    return " | ".join(parts)

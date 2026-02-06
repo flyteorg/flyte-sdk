@@ -573,6 +573,8 @@ class TypedDictTransformer(PydanticWrappingTransformer[dict]):
 
     def __init__(self):
         super().__init__("TypedDict", dict)
+        # Instance-level cache for wrapper models to handle self-referential TypedDicts
+        self._model_cache: Dict[Type, Type[BaseModel]] = {}
 
     def assert_type(self, t: Type, v: Any):
         """
@@ -600,9 +602,10 @@ class TypedDictTransformer(PydanticWrappingTransformer[dict]):
         if not _is_typed_dict(t):
             raise TypeTransformerFailedError(f"{t} is not a TypedDict")
 
-        # Use cache to handle recursive TypedDict types and avoid infinite recursion
+        # Use instance-level cache by default to handle self-referential TypedDicts
+        # and persist cache across get_literal_type/to_literal/to_python_value calls
         if _model_cache is None:
-            _model_cache = {}
+            _model_cache = self._model_cache
 
         if t in _model_cache:
             return _model_cache[t]
@@ -712,10 +715,16 @@ class TypedDictTransformer(PydanticWrappingTransformer[dict]):
     def _model_to_value(self, model_instance: BaseModel, expected_type: Type) -> dict:
         """Convert a Pydantic model instance back to a TypedDict."""
         annotations = getattr(expected_type, "__annotations__", {})
+        required_keys: frozenset[str] = getattr(expected_type, "__required_keys__", frozenset())
         result = {}
         for name, field_type in annotations.items():
             if hasattr(model_instance, name):
                 value = getattr(model_instance, name)
+                # Skip NotRequired fields when value is None
+                # This ensures that optional fields not provided in the input
+                # are absent from the output dict (not set to None)
+                if name not in required_keys and value is None:
+                    continue
                 # Recursively convert nested values
                 converted_value = self._convert_value_from_pydantic(value, field_type)
                 result[name] = converted_value
@@ -730,6 +739,13 @@ class TypedDictTransformer(PydanticWrappingTransformer[dict]):
         - Lists containing the above
         - Dicts containing the above
         """
+        # Unwrap NotRequired/Required type hints
+        if expected_type is not None:
+            origin = get_origin(expected_type)
+            if origin is NotRequired or origin is Required:
+                args = get_args(expected_type)
+                expected_type = args[0] if args else expected_type
+
         if expected_type is not None and _is_typed_dict(expected_type):
             # Expected type is a TypedDict
             if isinstance(value, BaseModel):

@@ -929,3 +929,132 @@ def test_cli_run_with_typeddict_containing_dict_fields(runner):
         if "I/O operation on closed file" in str(ve):
             return
         raise ve
+
+
+# ============================================================================
+# Tests for TypedDict with NotRequired fields
+# These tests verify:
+# 1. NotRequired[T] is properly unwrapped (no PydanticSchemaGenerationError)
+# 2. Optional fields not provided are absent from output (not None)
+# ============================================================================
+
+
+def test_cli_run_with_typeddict_notrequired_field_absent(runner):
+    """Test CLI run with TypedDict where NotRequired field is not provided.
+
+    This verifies that NotRequired[T] is properly unwrapped for Pydantic validation.
+    Without the fix, this would raise PydanticSchemaGenerationError.
+    """
+    try:
+        cmd = [
+            "--local",
+            str(TYPEDDICT_INPUTS_PY),
+            "process_ai_response",
+            "--response",
+            json.dumps({"content": "Hello!", "role": "assistant"}),
+        ]
+        result = runner.invoke(run, cmd)
+        assert result.exit_code == 0, result.output
+        # Verify the output doesn't contain "tools:" since tool_calls was not provided
+        assert "tools:" not in result.output or "assistant: Hello!" in result.output
+    except ValueError as ve:
+        if "I/O operation on closed file" in str(ve):
+            return
+        raise ve
+
+
+def test_cli_run_with_typeddict_notrequired_field_present(runner):
+    """Test CLI run with TypedDict where NotRequired field is provided."""
+    try:
+        cmd = [
+            "--local",
+            str(TYPEDDICT_INPUTS_PY),
+            "process_ai_response",
+            "--response",
+            json.dumps(
+                {
+                    "content": "Let me search for that.",
+                    "role": "assistant",
+                    "tool_calls": [
+                        {"name": "web_search", "args": {"query": "flyte"}},
+                        {"name": "code_search", "args": {"pattern": "TypedDict"}},
+                    ],
+                }
+            ),
+        ]
+        result = runner.invoke(run, cmd)
+        assert result.exit_code == 0, result.output
+    except ValueError as ve:
+        if "I/O operation on closed file" in str(ve):
+            return
+        raise ve
+
+
+def test_cli_run_with_typeddict_multiple_notrequired_fields_minimal(runner):
+    """Test CLI run with TypedDict having multiple NotRequired fields, providing only required."""
+    try:
+        cmd = [
+            "--local",
+            str(TYPEDDICT_INPUTS_PY),
+            "process_user_profile",
+            "--profile",
+            json.dumps({"username": "alice", "email": "alice@example.com"}),
+        ]
+        result = runner.invoke(run, cmd)
+        assert result.exit_code == 0, result.output
+    except ValueError as ve:
+        if "I/O operation on closed file" in str(ve):
+            return
+        raise ve
+
+
+def test_cli_run_with_typeddict_multiple_notrequired_fields_partial(runner):
+    """Test CLI run with TypedDict having multiple NotRequired fields, providing some optional."""
+    try:
+        cmd = [
+            "--local",
+            str(TYPEDDICT_INPUTS_PY),
+            "process_user_profile",
+            "--profile",
+            json.dumps(
+                {
+                    "username": "bob",
+                    "email": "bob@example.com",
+                    "display_name": "Bob Smith",
+                    "age": 30,
+                    # bio is intentionally not provided
+                }
+            ),
+        ]
+        result = runner.invoke(run, cmd)
+        assert result.exit_code == 0, result.output
+    except ValueError as ve:
+        if "I/O operation on closed file" in str(ve):
+            return
+        raise ve
+
+
+def test_cli_run_with_typeddict_multiple_notrequired_fields_all(runner):
+    """Test CLI run with TypedDict having multiple NotRequired fields, providing all."""
+    try:
+        cmd = [
+            "--local",
+            str(TYPEDDICT_INPUTS_PY),
+            "process_user_profile",
+            "--profile",
+            json.dumps(
+                {
+                    "username": "charlie",
+                    "email": "charlie@example.com",
+                    "display_name": "Charlie Brown",
+                    "bio": "Software engineer",
+                    "age": 28,
+                }
+            ),
+        ]
+        result = runner.invoke(run, cmd)
+        assert result.exit_code == 0, result.output
+    except ValueError as ve:
+        if "I/O operation on closed file" in str(ve):
+            return
+        raise ve

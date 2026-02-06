@@ -536,6 +536,7 @@ class JsonParamType(click.ParamType):
     def _convert_to_typeddict(self, parsed_value: typing.Any, typeddict_type: typing.Type) -> dict:
         """Convert a parsed JSON value to a TypedDict."""
         from pydantic import create_model
+        from typing_extensions import NotRequired, Required, get_args, get_origin
 
         if not isinstance(parsed_value, dict):
             raise click.BadParameter(f"Expected dict for TypedDict type, got {type(parsed_value)}")
@@ -546,11 +547,20 @@ class JsonParamType(click.ParamType):
         field_definitions: typing.Dict[str, typing.Any] = {}
 
         for field_name, field_type in annotations.items():
+            # Unwrap NotRequired[T] and Required[T] type hints before passing to Pydantic
+            # These are TypedDict-specific markers that Pydantic doesn't understand
+            origin = get_origin(field_type)
+            if origin is NotRequired or origin is Required:
+                args = get_args(field_type)
+                inner_type = args[0] if args else field_type
+            else:
+                inner_type = field_type
+
             if field_name in required_keys:
-                field_definitions[field_name] = (field_type, ...)
+                field_definitions[field_name] = (inner_type, ...)
             else:
                 # Optional fields get a default of None
-                field_definitions[field_name] = (typing.Optional[field_type], None)
+                field_definitions[field_name] = (typing.Optional[inner_type], None)
 
         # Create a Pydantic model to validate and convert the data
         model_class = create_model(f"TypedDictWrapper_{typeddict_type.__name__}", **field_definitions)
@@ -561,6 +571,10 @@ class JsonParamType(click.ParamType):
         for field_name in annotations.keys():
             if hasattr(model_instance, field_name):
                 value = getattr(model_instance, field_name)
+                # Skip NotRequired fields when value is None
+                # This ensures optional fields not provided in input are absent from output
+                if field_name not in required_keys and value is None:
+                    continue
                 # Recursively convert nested TypedDicts back to dicts
                 result[field_name] = self._convert_model_to_dict(value, annotations.get(field_name))
         return result
@@ -570,8 +584,16 @@ class JsonParamType(click.ParamType):
     ) -> typing.Any:
         """Recursively convert Pydantic model instances back to dicts for TypedDict compatibility."""
         from pydantic import BaseModel
+        from typing_extensions import NotRequired, Required, get_args, get_origin
 
         from flyte.types._type_engine import _is_typed_dict
+
+        # Unwrap NotRequired/Required type hints
+        if expected_type is not None:
+            origin = get_origin(expected_type)
+            if origin is NotRequired or origin is Required:
+                args = get_args(expected_type)
+                expected_type = args[0] if args else expected_type
 
         if isinstance(value, BaseModel):
             # Convert Pydantic model to dict
@@ -583,7 +605,15 @@ class JsonParamType(click.ParamType):
                 return {k: self._convert_model_to_dict(v, annotations.get(k)) for k, v in value.items()}
             return {k: self._convert_model_to_dict(v) for k, v in value.items()}
         elif isinstance(value, list):
-            return [self._convert_model_to_dict(v) for v in value]
+            # Get the element type if expected_type is a List[T]
+            element_type = None
+            if expected_type is not None:
+                origin = get_origin(expected_type)
+                if origin is list:
+                    args = get_args(expected_type)
+                    if args:
+                        element_type = args[0]
+            return [self._convert_model_to_dict(v, element_type) for v in value]
         return value
 
 
