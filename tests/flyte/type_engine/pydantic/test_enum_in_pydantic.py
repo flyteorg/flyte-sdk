@@ -5,7 +5,6 @@ import pytest
 from pydantic import BaseModel
 
 from flyte.types import TypeEngine
-from flyte.types._type_engine import convert_mashumaro_json_schema_to_python_class
 
 
 class Status(str, Enum):
