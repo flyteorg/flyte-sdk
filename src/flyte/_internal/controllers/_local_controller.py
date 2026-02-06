@@ -138,6 +138,23 @@ class LocalController:
             native_inputs.update(kwargs)
             # If the parent action isn't tracked yet, this is the top-level call
             parent_id = tctx.action.name if self._tracker.get_action(tctx.action.name) else None
+            # Render log links for this action, replacing template placeholders
+            # with concrete local values (see task_serde.py for remote equivalents).
+            rendered_links: list[tuple[str, str]] | None = None
+            if _task.links:
+                rendered_links = []
+                action = tctx.action
+                for link in _task.links:
+                    uri = link.get_link(
+                        run_name=action.run_name if action.run_name else "",
+                        project=action.project if action.project else "",
+                        domain=action.domain if action.domain else "",
+                        context=tctx.custom_context if tctx.custom_context else {},
+                        parent_action_name=action.name if action.name else "",
+                        action_name=sub_action_id.name,
+                        pod_name="localhost",
+                    )
+                    rendered_links.append((link.name, uri))
             self._tracker.record_start(
                 action_id=sub_action_id.name,
                 task_name=_task.name,
@@ -150,6 +167,7 @@ class LocalController:
                 cache_hit=cache_hit,
                 context=tctx.custom_context or None,
                 group=tctx.group_data.name if tctx.group_data else None,
+                log_links=rendered_links,
             )
 
         if out is None:

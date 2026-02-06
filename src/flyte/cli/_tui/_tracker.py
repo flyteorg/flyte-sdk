@@ -84,6 +84,7 @@ class ActionTracker:
         cache_hit: bool = False,
         context: dict | None = None,
         group: str | None = None,
+        log_links: list[tuple[str, str]] | None = None,
     ) -> None:
         with self._lock:
             node = ActionNode(
@@ -99,6 +100,7 @@ class ActionTracker:
                 cache_hit=cache_hit,
                 context=_safe_json(context) if context else None,
                 group=group,
+                log_links=log_links,
             )
             self._nodes[action_id] = node
 
