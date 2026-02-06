@@ -81,9 +81,18 @@ class DataFrame(BaseModel, SerializableType):
     # lazy uploader is used to upload local file to the remote storage when in remote mode
     _lazy_uploader: Callable[[], Coroutine[Any, Any, Any]] | None = PrivateAttr(default=None)
 
-    # loop manager is working better than synchronicity for some reason, was getting an error but may be an easy fix
     def _serialize(self) -> Dict[str, Optional[str]]:
-        # dataclass case
+        # If we already have a URI (e.g., lazy_uploader was already invoked by DataclassTransformer),
+        # just return it directly. This avoids re-invoking the transformer and prevents issues
+        # when called from different async contexts.
+        if self.uri is not None:
+            return {
+                "uri": self.uri,
+                "format": self.format,
+            }
+
+        # Fall back to invoking the transformer for cases where _serialize is called
+        # directly (not via DataclassTransformer.to_literal())
         lt = TypeEngine.to_literal_type(type(self))
         engine = DataFrameTransformerEngine()
         lv = loop_manager.run_sync(engine.to_literal, self, type(self), lt)
@@ -128,6 +137,17 @@ class DataFrame(BaseModel, SerializableType):
 
     @model_serializer
     def serialize_dataframe(self) -> Dict[str, Optional[str]]:
+        # If we already have a URI (e.g., lazy_uploader was already invoked by PydanticTransformer),
+        # just return it directly. This avoids re-invoking the transformer and prevents issues
+        # when called from different async contexts.
+        if self.uri is not None:
+            return {
+                "uri": self.uri,
+                "format": self.format,
+            }
+
+        # Fall back to invoking the transformer for cases where model_dump_json() is called
+        # directly by user code (not via PydanticTransformer.to_literal())
         lt = TypeEngine.to_literal_type(type(self))
         sde = DataFrameTransformerEngine()
         lv = loop_manager.run_sync(sde.to_literal, self, type(self), lt)

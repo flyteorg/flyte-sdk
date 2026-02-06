@@ -65,6 +65,83 @@ def _default_msgpack_decoder(data: bytes) -> Any:
     return msgpack.unpackb(data, strict_map_key=False)
 
 
+async def _invoke_lazy_uploaders(obj: typing.Any) -> None:
+    """
+    Recursively find and invoke lazy uploaders on Flyte IO types (DataFrame, File, Dir)
+    nested within a Pydantic model or dataclass. This must be done BEFORE serialization
+    to ensure uploads happen in the correct async context (syncify loop) where gRPC works.
+
+    The lazy uploaders set the URI/path on the objects, so subsequent serialization
+    can just return the existing values without invoking async operations.
+
+    Args:
+        obj: The object to process (can be a Pydantic model, dataclass, or collection)
+    """
+    if obj is None:
+        logger.debug("Object is None, skipping lazy uploaders.")
+        return
+
+    from flyte._context import internal_ctx
+    from flyte._run import _get_main_run_mode
+    from flyte.io import DataFrame, Dir, File
+
+    ctx = internal_ctx()
+    is_remote_ctx = ctx.has_raw_data
+    is_local_ctx_local_run_mode = not ctx.has_raw_data and _get_main_run_mode() == "local"
+
+    if is_remote_ctx:
+        # skip invoking the lazy uploader when in a remote context
+        logger.debug("Remote context detected, skipping lazy uploaders.")
+        return
+
+    if is_local_ctx_local_run_mode:
+        # skip invoking the lazy uploader when in a local context running in local run mode
+        logger.debug("Local context running in local run mode detected, skipping lazy uploaders.")
+        return
+
+    # Handle Flyte IO types with lazy uploaders
+    if isinstance(obj, DataFrame) and obj.lazy_uploader:
+        uploaded = await obj.lazy_uploader()
+        # Copy the uploaded URI and metadata back to the original object
+        obj.uri = uploaded.uri
+        obj.format = uploaded.format
+        obj._lazy_uploader = None  # Clear to avoid re-uploading
+        return
+
+    if isinstance(obj, (File, Dir)) and obj.lazy_uploader:
+        hash_val, uri = await obj.lazy_uploader()
+        obj.path = uri
+        if hash_val:
+            obj.hash = hash_val
+        obj._lazy_uploader = None  # Clear to avoid re-uploading
+        return
+
+    # Recursively process Pydantic models
+    if isinstance(obj, BaseModel):
+        for field_name in obj.__class__.model_fields:
+            field_value = getattr(obj, field_name, None)
+            await _invoke_lazy_uploaders(field_value)
+        return
+
+    # Recursively process dataclasses
+    if dataclasses.is_dataclass(obj) and not isinstance(obj, type):
+        for field in dataclasses.fields(obj):
+            field_value = getattr(obj, field.name, None)
+            await _invoke_lazy_uploaders(field_value)
+        return
+
+    # Handle collections
+    if isinstance(obj, dict):
+        for value in obj.values():
+            await _invoke_lazy_uploaders(value)
+        return
+
+    if isinstance(obj, (list, tuple)):
+        for item in obj:
+            await _invoke_lazy_uploaders(item)
+        return
+
+
 def modify_literal_uris(lit: Literal):
     """
     Modifies the literal object recursively to replace the URIs with the native paths in case they are of
@@ -381,6 +458,11 @@ class PydanticTransformer(TypeTransformer[BaseModel]):
         python_type: Type[BaseModel],
         expected: LiteralType,
     ) -> Literal:
+        # Pre-process the model to invoke any lazy uploaders on nested Flyte IO types.
+        # This ensures uploads happen in the syncify context where gRPC clients work correctly,
+        # and prevents deadlocks when @model_serializer tries to run async code via loop_manager.
+        await _invoke_lazy_uploaders(python_val)
+
         json_str = python_val.model_dump_json()
         dict_obj = json.loads(json_str)
         msgpack_bytes = msgpack.dumps(dict_obj)
@@ -600,6 +682,11 @@ class DataclassTransformer(TypeTransformer[object]):
                 f"{type(python_val)} is not of type @dataclass, only Dataclasses are supported for "
                 f"user defined datatypes in Flytekit"
             )
+
+        # Pre-process the dataclass to invoke any lazy uploaders on nested Flyte IO types.
+        # This ensures uploads happen in the syncify context where gRPC clients work correctly,
+        # and prevents issues when _serialize tries to run async code via loop_manager.
+        await _invoke_lazy_uploaders(python_val)
 
         # The function looks up or creates a MessagePackEncoder specifically designed for the object's type.
         # This encoder is then used to convert a data class into MessagePack Bytes.
