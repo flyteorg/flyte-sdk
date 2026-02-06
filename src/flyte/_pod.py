@@ -1,8 +1,9 @@
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Dict, Optional
 
 if TYPE_CHECKING:
     from flyteidl2.core.tasks_pb2 import K8sPod
+    from kubernetes.client import V1PodSpec
 
 
 _PRIMARY_CONTAINER_NAME_FIELD = "primary_container_name"

@@ -8,6 +8,10 @@ on:
     paths:
       - 'examples/integration_tests.py'
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
 jobs:
   integration-tests:
     runs-on: ubuntu-latest

@@ -265,7 +265,7 @@ def test_get_type_tag_for_pandas_dataframe():
     """Test _get_type_tag returns the fully qualified name for pd.DataFrame."""
     fdt = DataFrameTransformerEngine()
     tag = fdt._get_type_tag(pd.DataFrame)
-    assert tag == "pandas.core.frame.DataFrame"
+    assert tag == "pandas.DataFrame"
 
 
 def test_get_type_tag_for_annotated_pandas():
@@ -274,7 +274,7 @@ def test_get_type_tag_for_annotated_pandas():
     my_cols = OrderedDict(name=str, age=int)
     annotated_pd = typing.Annotated[pd.DataFrame, my_cols]
     tag = fdt._get_type_tag(annotated_pd)
-    assert tag == "pandas.core.frame.DataFrame"
+    assert tag == "pandas.DataFrame"
 
 
 def test_get_literal_type_includes_tag_for_pandas():
@@ -282,7 +282,7 @@ def test_get_literal_type_includes_tag_for_pandas():
     lt = TypeEngine.to_literal_type(pd.DataFrame)
     assert lt.structured_dataset_type is not None
     assert lt.HasField("structure")
-    assert lt.structure.tag == "pandas.core.frame.DataFrame"
+    assert lt.structure.tag == "pandas.DataFrame"
 
 
 def test_get_literal_type_no_tag_for_dataframe():
@@ -301,7 +301,7 @@ def test_get_literal_type_includes_tag_for_annotated_pandas():
     assert lt.structured_dataset_type is not None
     assert len(lt.structured_dataset_type.columns) == 2
     assert lt.HasField("structure")
-    assert lt.structure.tag == "pandas.core.frame.DataFrame"
+    assert lt.structure.tag == "pandas.DataFrame"
 
 
 def test_guess_python_type_returns_dataframe_for_no_tag():
@@ -320,7 +320,7 @@ def test_guess_python_type_returns_dataframe_by_default_even_with_tag():
     fdt = DataFrameTransformerEngine()
     lt = types_pb2.LiteralType(
         structured_dataset_type=types_pb2.StructuredDatasetType(),
-        structure=types_pb2.TypeStructure(tag="pandas.core.frame.DataFrame"),
+        structure=types_pb2.TypeStructure(tag="pandas.DataFrame"),
     )
     pt = fdt.guess_python_type(lt)
     # Default behavior: always return DataFrame
@@ -335,7 +335,7 @@ def test_guess_python_type_returns_pandas_when_preserve_original_types_enabled(c
     fdt = DataFrameTransformerEngine()
     lt = types_pb2.LiteralType(
         structured_dataset_type=types_pb2.StructuredDatasetType(),
-        structure=types_pb2.TypeStructure(tag="pandas.core.frame.DataFrame"),
+        structure=types_pb2.TypeStructure(tag="pandas.DataFrame"),
     )
 
     # With preserve_original_types=True (set via ctx_with_preserve_original_types fixture)
