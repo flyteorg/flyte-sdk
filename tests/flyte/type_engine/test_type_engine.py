@@ -2347,3 +2347,96 @@ async def test_union_pydantic():
 
     python_value = await TypeEngine.to_python_value(literal_value, UnionModel)
     assert python_value == model1_instance
+
+
+@pytest.mark.asyncio
+async def test_typeddict_transformer():
+    """Test TypedDict serialization and deserialization."""
+    from typing import TypedDict
+
+    from flyte.types._type_engine import TypedDictTransformer, _is_typed_dict
+
+    # Define a simple TypedDict
+    class PersonInfo(TypedDict):
+        name: str
+        age: int
+        email: str
+
+    # Test _is_typed_dict helper
+    assert _is_typed_dict(PersonInfo) is True
+    assert _is_typed_dict(dict) is False
+    assert _is_typed_dict(int) is False
+
+    # Test that TypeEngine returns TypedDictTransformer for TypedDict
+    transformer = TypeEngine.get_transformer(PersonInfo)
+    assert isinstance(transformer, TypedDictTransformer)
+
+    # Test to_literal_type
+    lt = TypeEngine.to_literal_type(PersonInfo)
+    assert lt.simple == SimpleType.STRUCT
+    assert lt.HasField("metadata")
+
+    # Test to_literal and to_python_value roundtrip
+    person: PersonInfo = {"name": "Alice", "age": 30, "email": "alice@example.com"}
+    literal = await TypeEngine.to_literal(person, PersonInfo, lt)
+    assert literal.HasField("scalar")
+    assert literal.scalar.HasField("binary")
+
+    # Convert back to Python value
+    result = await TypeEngine.to_python_value(literal, PersonInfo)
+    assert result["name"] == "Alice"
+    assert result["age"] == 30
+    assert result["email"] == "alice@example.com"
+
+
+@pytest.mark.asyncio
+async def test_typeddict_nested():
+    """Test TypedDict with nested types."""
+    from dataclasses import dataclass
+    from typing import TypedDict
+
+    @dataclass
+    class Address:
+        street: str
+        city: str
+
+    class Employee(TypedDict):
+        name: str
+        address: Address
+
+    # Test roundtrip with nested dataclass
+    employee: Employee = {
+        "name": "Bob",
+        "address": Address(street="123 Main St", city="NYC"),
+    }
+
+    lt = TypeEngine.to_literal_type(Employee)
+    literal = await TypeEngine.to_literal(employee, Employee, lt)
+    result = await TypeEngine.to_python_value(literal, Employee)
+
+    assert result["name"] == "Bob"
+    # The address comes back as a dataclass-like object
+    assert result["address"].street == "123 Main St"
+    assert result["address"].city == "NYC"
+
+
+@pytest.mark.asyncio
+async def test_typeddict_with_list():
+    """Test TypedDict with List fields."""
+    from typing import List, TypedDict
+
+    class ModelMetrics(TypedDict):
+        accuracy: float
+        scores: List[float]
+
+    metrics: ModelMetrics = {
+        "accuracy": 0.95,
+        "scores": [0.9, 0.92, 0.97],
+    }
+
+    lt = TypeEngine.to_literal_type(ModelMetrics)
+    literal = await TypeEngine.to_literal(metrics, ModelMetrics, lt)
+    result = await TypeEngine.to_python_value(literal, ModelMetrics)
+
+    assert result["accuracy"] == pytest.approx(0.95)
+    assert result["scores"] == pytest.approx([0.9, 0.92, 0.97])

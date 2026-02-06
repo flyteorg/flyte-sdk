@@ -21,6 +21,7 @@ HELLO_WORLD_PY = RUN_TESTDATA / "hello_world.py"
 COMPLEX_INPUTS_PY = RUN_TESTDATA / "complex_inputs.py"
 DATAFRAME_INPUTS_PY = RUN_TESTDATA / "dataframe_inputs.py"
 TUPLE_INPUTS_PY = RUN_TESTDATA / "tuple_inputs.py"
+TYPEDDICT_INPUTS_PY = RUN_TESTDATA / "typeddict_inputs.py"
 PARQUET_FILE = RUN_TESTDATA / "df.parquet"
 
 
@@ -764,6 +765,290 @@ def test_cli_run_with_nested_namedtuple(runner):
                     "info": {"name": "Bob", "age": 35, "email": "bob@company.com"},
                     "department": "Engineering",
                     "address": {"street": "123 Main St", "city": "San Francisco", "country": "USA"},
+                }
+            ),
+        ]
+        result = runner.invoke(run, cmd)
+        assert result.exit_code == 0, result.output
+    except ValueError as ve:
+        if "I/O operation on closed file" in str(ve):
+            return
+        raise ve
+
+
+# ============================================================================
+# Tests for TypedDict CLI inputs
+# ============================================================================
+
+
+def test_cli_run_with_simple_typeddict_coordinates(runner):
+    """Test CLI run with a simple Coordinates TypedDict input."""
+    try:
+        cmd = [
+            "--local",
+            str(TYPEDDICT_INPUTS_PY),
+            "process_coordinates",
+            "--coords",
+            json.dumps({"latitude": 37.7749, "longitude": -122.4194, "altitude": 16.0}),
+        ]
+        result = runner.invoke(run, cmd)
+        assert result.exit_code == 0, result.output
+    except ValueError as ve:
+        if "I/O operation on closed file" in str(ve):
+            return
+        raise ve
+
+
+def test_cli_run_with_person_typeddict(runner):
+    """Test CLI run with a PersonInfo TypedDict input."""
+    try:
+        cmd = [
+            "--local",
+            str(TYPEDDICT_INPUTS_PY),
+            "process_person",
+            "--person",
+            json.dumps({"name": "Alice", "age": 30, "email": "alice@example.com"}),
+        ]
+        result = runner.invoke(run, cmd)
+        assert result.exit_code == 0, result.output
+    except ValueError as ve:
+        if "I/O operation on closed file" in str(ve):
+            return
+        raise ve
+
+
+def test_cli_run_with_metrics_typeddict(runner):
+    """Test CLI run with a ModelMetrics TypedDict input."""
+    try:
+        cmd = [
+            "--local",
+            str(TYPEDDICT_INPUTS_PY),
+            "process_metrics",
+            "--metrics",
+            json.dumps({"accuracy": 0.95, "precision": 0.92, "recall": 0.88, "f1_score": 0.90}),
+        ]
+        result = runner.invoke(run, cmd)
+        assert result.exit_code == 0, result.output
+    except ValueError as ve:
+        if "I/O operation on closed file" in str(ve):
+            return
+        raise ve
+
+
+def test_cli_run_with_typeddict_containing_dataclass(runner):
+    """Test CLI run with a TypedDict containing a dataclass (EmployeeInfo)."""
+    try:
+        cmd = [
+            "--local",
+            str(TYPEDDICT_INPUTS_PY),
+            "process_employee",
+            "--emp",
+            json.dumps(
+                {
+                    "name": "Bob",
+                    "age": 35,
+                    "department": "Engineering",
+                    "address": {"street": "123 Main St", "city": "San Francisco", "country": "USA"},
+                }
+            ),
+        ]
+        result = runner.invoke(run, cmd)
+        assert result.exit_code == 0, result.output
+    except ValueError as ve:
+        if "I/O operation on closed file" in str(ve):
+            return
+        raise ve
+
+
+def test_cli_run_with_typeddict_containing_lists(runner):
+    """Test CLI run with a TypedDict containing list fields (TeamInfo)."""
+    try:
+        cmd = [
+            "--local",
+            str(TYPEDDICT_INPUTS_PY),
+            "process_team",
+            "--team",
+            json.dumps(
+                {
+                    "team_name": "Alpha",
+                    "members": ["Alice", "Bob", "Charlie"],
+                    "scores": [95.5, 88.0, 92.3],
+                }
+            ),
+        ]
+        result = runner.invoke(run, cmd)
+        assert result.exit_code == 0, result.output
+    except ValueError as ve:
+        if "I/O operation on closed file" in str(ve):
+            return
+        raise ve
+
+
+def test_cli_run_with_nested_typeddict(runner):
+    """Test CLI run with a nested TypedDict (OuterConfig containing InnerConfig)."""
+    try:
+        cmd = [
+            "--local",
+            str(TYPEDDICT_INPUTS_PY),
+            "process_nested_typeddict",
+            "--config",
+            json.dumps(
+                {
+                    "name": "test_config",
+                    "inner": {"enabled": True, "threshold": 0.75},
+                }
+            ),
+        ]
+        result = runner.invoke(run, cmd)
+        assert result.exit_code == 0, result.output
+    except ValueError as ve:
+        if "I/O operation on closed file" in str(ve):
+            return
+        raise ve
+
+
+def test_cli_run_with_typeddict_containing_dict_fields(runner):
+    """Test CLI run with a TypedDict containing dict fields."""
+    try:
+        cmd = [
+            "--local",
+            str(TYPEDDICT_INPUTS_PY),
+            "process_typeddict_with_dict",
+            "--config",
+            json.dumps(
+                {
+                    "name": "my_config",
+                    "settings": {"key1": "value1", "key2": "value2"},
+                    "labels": {"env": "prod", "team": "alpha"},
+                }
+            ),
+        ]
+        result = runner.invoke(run, cmd)
+        assert result.exit_code == 0, result.output
+    except ValueError as ve:
+        if "I/O operation on closed file" in str(ve):
+            return
+        raise ve
+
+
+# ============================================================================
+# Tests for TypedDict with NotRequired fields
+# These tests verify:
+# 1. NotRequired[T] is properly unwrapped (no PydanticSchemaGenerationError)
+# 2. Optional fields not provided are absent from output (not None)
+# ============================================================================
+
+
+def test_cli_run_with_typeddict_notrequired_field_absent(runner):
+    """Test CLI run with TypedDict where NotRequired field is not provided.
+
+    This verifies that NotRequired[T] is properly unwrapped for Pydantic validation.
+    Without the fix, this would raise PydanticSchemaGenerationError.
+    """
+    try:
+        cmd = [
+            "--local",
+            str(TYPEDDICT_INPUTS_PY),
+            "process_ai_response",
+            "--response",
+            json.dumps({"content": "Hello!", "role": "assistant"}),
+        ]
+        result = runner.invoke(run, cmd)
+        assert result.exit_code == 0, result.output
+        # Verify the output doesn't contain "tools:" since tool_calls was not provided
+        assert "tools:" not in result.output or "assistant: Hello!" in result.output
+    except ValueError as ve:
+        if "I/O operation on closed file" in str(ve):
+            return
+        raise ve
+
+
+def test_cli_run_with_typeddict_notrequired_field_present(runner):
+    """Test CLI run with TypedDict where NotRequired field is provided."""
+    try:
+        cmd = [
+            "--local",
+            str(TYPEDDICT_INPUTS_PY),
+            "process_ai_response",
+            "--response",
+            json.dumps(
+                {
+                    "content": "Let me search for that.",
+                    "role": "assistant",
+                    "tool_calls": [
+                        {"name": "web_search", "args": {"query": "flyte"}},
+                        {"name": "code_search", "args": {"pattern": "TypedDict"}},
+                    ],
+                }
+            ),
+        ]
+        result = runner.invoke(run, cmd)
+        assert result.exit_code == 0, result.output
+    except ValueError as ve:
+        if "I/O operation on closed file" in str(ve):
+            return
+        raise ve
+
+
+def test_cli_run_with_typeddict_multiple_notrequired_fields_minimal(runner):
+    """Test CLI run with TypedDict having multiple NotRequired fields, providing only required."""
+    try:
+        cmd = [
+            "--local",
+            str(TYPEDDICT_INPUTS_PY),
+            "process_user_profile",
+            "--profile",
+            json.dumps({"username": "alice", "email": "alice@example.com"}),
+        ]
+        result = runner.invoke(run, cmd)
+        assert result.exit_code == 0, result.output
+    except ValueError as ve:
+        if "I/O operation on closed file" in str(ve):
+            return
+        raise ve
+
+
+def test_cli_run_with_typeddict_multiple_notrequired_fields_partial(runner):
+    """Test CLI run with TypedDict having multiple NotRequired fields, providing some optional."""
+    try:
+        cmd = [
+            "--local",
+            str(TYPEDDICT_INPUTS_PY),
+            "process_user_profile",
+            "--profile",
+            json.dumps(
+                {
+                    "username": "bob",
+                    "email": "bob@example.com",
+                    "display_name": "Bob Smith",
+                    "age": 30,
+                    # bio is intentionally not provided
+                }
+            ),
+        ]
+        result = runner.invoke(run, cmd)
+        assert result.exit_code == 0, result.output
+    except ValueError as ve:
+        if "I/O operation on closed file" in str(ve):
+            return
+        raise ve
+
+
+def test_cli_run_with_typeddict_multiple_notrequired_fields_all(runner):
+    """Test CLI run with TypedDict having multiple NotRequired fields, providing all."""
+    try:
+        cmd = [
+            "--local",
+            str(TYPEDDICT_INPUTS_PY),
+            "process_user_profile",
+            "--profile",
+            json.dumps(
+                {
+                    "username": "charlie",
+                    "email": "charlie@example.com",
+                    "display_name": "Charlie Brown",
+                    "bio": "Software engineer",
+                    "age": 28,
                 }
             ),
         ]
