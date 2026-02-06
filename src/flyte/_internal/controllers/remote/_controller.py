@@ -463,7 +463,7 @@ class RemoteController(Controller):
             run_output_base=tctx.run_base_dir,
             start_time=info.start_time,
             end_time=info.end_time,
-            typed_interface=typed_interface if typed_interface else None,
+            typed_interface=typed_interface or None,
         )
 
         async with self._parent_action_semaphore[unique_action_name(current_action_id)]:

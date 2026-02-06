@@ -130,7 +130,7 @@ class RayFunctionTask(AsyncFunctionTaskTemplate):
             ray_cluster=RayCluster(
                 head_group_spec=head_group_spec,
                 worker_group_spec=worker_group_spec,
-                enable_autoscaling=(cfg.enable_autoscaling if cfg.enable_autoscaling else False),
+                enable_autoscaling=(cfg.enable_autoscaling or False),
             ),
             runtime_env=runtime_env,
             runtime_env_yaml=runtime_env_yaml,

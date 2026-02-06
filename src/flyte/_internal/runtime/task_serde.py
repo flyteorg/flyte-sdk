@@ -141,11 +141,11 @@ def get_proto_task(
         action = task_context.action
         for link in task.links:
             uri = link.get_link(
-                run_name=action.run_name if action.run_name else "",
-                project=action.project if action.project else "",
-                domain=action.domain if action.domain else "",
-                context=task_context.custom_context if task_context.custom_context else {},
-                parent_action_name=action.name if action.name else "",
+                run_name=action.run_name or "",
+                project=action.project or "",
+                domain=action.domain or "",
+                context=task_context.custom_context or {},
+                parent_action_name=action.name or "",
                 action_name="{{.actionName}}",
                 pod_name="{{.podName}}",
             )

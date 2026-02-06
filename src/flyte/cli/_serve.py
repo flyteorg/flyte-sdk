@@ -164,9 +164,9 @@ class ServeAppCommand(click.RichCommand):
             # Use with_servecontext to configure the serve operation
             app = await flyte.with_servecontext(
                 copy_style=self.serve_args.copy_style,
-                project=self.serve_args.project if self.serve_args.project else None,
-                domain=self.serve_args.domain if self.serve_args.domain else None,
-                env_vars=env_vars if env_vars else None,
+                project=self.serve_args.project or None,
+                domain=self.serve_args.domain or None,
+                env_vars=env_vars or None,
             ).serve.aio(self.obj)
 
             console.print(

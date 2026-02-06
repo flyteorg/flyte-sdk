@@ -3,9 +3,10 @@ from __future__ import annotations
 import inspect
 import time
 from dataclasses import dataclass
-from typing import Awaitable, Optional, Tuple, Union
+from typing import Optional, Tuple, Union
 
 import pytest
+import pytest_asyncio
 from flyteidl2.core.interface_pb2 import TypedInterface, Variable, VariableEntry, VariableMap
 from flyteidl2.core.literals_pb2 import (
     Literal,
@@ -41,7 +42,7 @@ test_cases = [
 ]
 
 
-@pytest.fixture(params=test_cases)
+@pytest_asyncio.fixture(params=test_cases)
 async def generate_inputs(request) -> Tuple[Inputs, str]:
     if request.param[0] is None:
         return Inputs.empty(), request.param[1]
@@ -52,7 +53,7 @@ async def generate_inputs(request) -> Tuple[Inputs, str]:
 
 
 @pytest.mark.asyncio
-async def test_generate_sub_action_id_and_output_path_consistency_task_name(generate_inputs: Awaitable):
+async def test_generate_sub_action_id_and_output_path_consistency_task_name(generate_inputs: Tuple[Inputs, str]):
     """
     This test checks that the algorithm is consistent and has not changed.
     """
@@ -65,7 +66,7 @@ async def test_generate_sub_action_id_and_output_path_consistency_task_name(gene
         report=Report(name="test"),
     )
 
-    inputs, expected_hash = await generate_inputs
+    inputs, expected_hash = generate_inputs
     serialized_inputs = inputs.proto_inputs.SerializeToString(deterministic=True)
     inputs_hash = convert.generate_inputs_hash(serialized_inputs)
     sub_action_id, path = generate_sub_action_id_and_output_path(
