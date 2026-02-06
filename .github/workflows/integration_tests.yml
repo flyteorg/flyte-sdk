@@ -41,8 +41,8 @@ jobs:
       - name: Install plugins and example dependencies
         working-directory: plugins
         run: |
-          uv pip install ./ray ./pytorch ./dask ./spark ./vllm ./sglang
-          uv pip install "../[examples-test]"  # Install flyte with example test dependencies
+          uv pip install --pre ./ray ./pytorch ./dask ./spark ./vllm ./sglang
+          uv pip install --pre "../[examples-test]"  # Install flyte with example test dependencies
           uv pip list
       - name: Run integration tests
         env:
