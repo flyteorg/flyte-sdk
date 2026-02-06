@@ -5,8 +5,6 @@ PYTHONPATH=. .venv/bin/python test_pydantic_flyte_df_pyapi.py
 
 import signal
 import sys
-import threading
-import traceback
 from dataclasses import dataclass
 from typing import Dict, NamedTuple, Tuple
 
@@ -132,7 +130,6 @@ if __name__ == "__main__":
         print("Calling flyte.run() with NESTED NamedTuple...")
         run = flyte.run(inner_namedtuple, model=MyNamedTuple(data=fdf))
         print(f"SUCCESS (namedtuple): {run}")
-
 
     print("\n=== ALL TESTS PASSED ===")
 
