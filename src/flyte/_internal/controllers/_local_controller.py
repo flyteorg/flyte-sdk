@@ -201,6 +201,7 @@ class LocalController:
             if cache_enabled and out is not None:
                 await LocalTaskCache.set(cache_key, out)
 
+        error_message: str | None = None
         try:
             if _task.native_interface.outputs:
                 if out is None:
@@ -210,8 +211,9 @@ class LocalController:
             else:
                 result = None
             return result
-        except Exception:
+        except Exception as exc:
             status = "failed"
+            error_message = repr(exc)
             raise
         finally:
             if run_id:
@@ -225,6 +227,8 @@ class LocalController:
                     f"[{start_time}] task {task_name} start input={input_display!r}",
                     f"[{end_time}] task {task_name} end output={output_value} status={status} duration_ms={duration_ms:.0f}",
                 ]
+                if error_message:
+                    log_lines.append(f"ERROR: {error_message}")
                 if captured_stdout:
                     log_lines.append("--- stdout ---")
                     log_lines.append(captured_stdout.rstrip())

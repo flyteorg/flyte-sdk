@@ -16,6 +16,7 @@ def fn(x: int) -> int:  # type annotations are recommended.
     print("Running task with input:", x)
     sleep(2)
     print("Finished task with output:", slope * x + intercept)
+    raise ValueError("Something went wrong")
     return slope * x + intercept
 
 

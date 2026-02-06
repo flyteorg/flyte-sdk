@@ -387,6 +387,20 @@ a {
   animation: none;
 }
 
+.task-spinner.error {
+  border: 2px solid var(--danger);
+  background: var(--danger);
+  animation: none;
+}
+
+.task-spinner.aborted,
+.task-spinner.canceled,
+.task-spinner.cancelled {
+  border: 2px solid var(--danger);
+  background: var(--danger);
+  animation: none;
+}
+
 .task-spinner.running {
   border-top-color: var(--accent);
   border-right-color: var(--accent);
@@ -438,6 +452,11 @@ a {
 }
 
 .pill.failed {
+  background: #3a1e1e;
+  color: var(--danger);
+}
+
+.pill.error {
   background: #3a1e1e;
   color: var(--danger);
 }
