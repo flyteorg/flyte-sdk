@@ -61,17 +61,16 @@ env = flyte.TaskEnvironment(
 @env.task
 async def downstream_task(df: pd.DataFrame) -> float:
     mean_age = df["AGE"].mean()
-    return mean_age
+    return mean_age.item()
 
 
 @env.task
 async def main(ids: list[int], names: list[str], ages: list[int]) -> float:
     await snowflake_insert_task(id=ids, name=names, age=ages)
     df = await snowflake_select_task()
-    return downstream_task(df)
-
+    return await downstream_task(df)
 
 if __name__ == "__main__":
     flyte.init_from_config()
-    run = flyte.with_runcontext(mode="remote").run(main, ids=[123, 456], names=["Kevin", "Alice"], ages=[30, 25])
+    run = flyte.with_runcontext(mode="local").run(main, ids=[123, 456], names=["Kevin", "Alice"], ages=[30, 25])
     print(run.url)
