@@ -843,7 +843,7 @@ def generate_attribute_list_from_dataclass_json_mixin(schema: dict, schema_name:
                 ref_schema = defs[ref_name].copy()
                 # Check if the $ref points to an enum definition (no properties)
                 if ref_schema.get("enum"):
-                    attribute_list.append([property_key, str])
+                    attribute_list.append((property_key, str))
                     continue
                 # Include $defs so nested models can resolve their own $refs
                 if "$defs" not in ref_schema and defs:
