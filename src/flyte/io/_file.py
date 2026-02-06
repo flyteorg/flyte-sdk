@@ -389,10 +389,12 @@ class File(BaseModel, Generic[T], SerializableType):
                 yield fh
                 return
             finally:
-                if inspect.iscoroutinefunction(fh.close):
-                    await fh.close()
+                from fsspec.spec import AbstractBufferedFile
+
+                if isinstance(fh, AbstractBufferedFile):
+                    fh.close()
                 else:
-                    await fh.close()
+                    await fh.close()  # type: ignore
         except flyte.errors.OnlyAsyncIOSupportedError:
             # Fall back to aiofiles
             fs = storage.get_underlying_filesystem(path=self.path)
