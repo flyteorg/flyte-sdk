@@ -40,11 +40,11 @@ jobs:
       - name: Install plugins and example dependencies
         working-directory: plugins
         run: |
-          uv pip install ./ray ./pytorch ./dask ./spark
+          uv pip install ./ray ./pytorch ./dask ./spark ./vllm ./sglang
           uv pip install "../[examples-test]"  # Install flyte with example test dependencies
           uv pip list
       - name: Run integration tests
         env:
           FLYTE_SDK_CI_TOKEN: "${{ secrets.FLYTE_SDK_CI_TOKEN }}"
         run: |
-          uv run python -m pytest -n auto -v examples/integration_tests.py
+          uv run python -m pytest -n 10 -v examples/integration_tests.py

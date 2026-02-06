@@ -61,6 +61,7 @@ examples-test = [
     "deltalake",
     "fastapi",
     "uvicorn",
+    "lightning",
 ]
 tui = [
     "textual>=0.80",
