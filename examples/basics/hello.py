@@ -1,4 +1,5 @@
 import flyte
+from time import sleep
 
 # TaskEnvironments provide a simple way of grouping configuration used by tasks (more later).
 env = flyte.TaskEnvironment(
@@ -23,6 +24,9 @@ def main(x_list: list[int]) -> float:
 
     y_list = list(flyte.map(fn, x_list))  # flyte.map is like Python map, but runs in parallel.
     y_mean = sum(y_list) / len(y_list)
+
+    sleep(60)
+
     return y_mean
 
 
