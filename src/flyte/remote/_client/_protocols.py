@@ -1,9 +1,9 @@
 from typing import AsyncIterator, Protocol
 
-from flyteidl.admin import project_attributes_pb2, project_pb2, version_pb2
-from flyteidl.service import identity_pb2
 from flyteidl2.app import app_payload_pb2
+from flyteidl2.auth import identity_pb2
 from flyteidl2.dataproxy import dataproxy_service_pb2
+from flyteidl2.project import project_service_pb2
 from flyteidl2.secret import payload_pb2
 from flyteidl2.task import task_service_pb2
 from flyteidl2.trigger import trigger_service_pb2
@@ -12,46 +12,22 @@ from grpc.aio import UnaryStreamCall
 from grpc.aio._typing import RequestType
 
 
-class MetadataServiceProtocol(Protocol):
-    async def GetVersion(self, request: version_pb2.GetVersionRequest) -> version_pb2.GetVersionResponse: ...
-
-
 class ProjectDomainService(Protocol):
-    async def RegisterProject(
-        self, request: project_pb2.ProjectRegisterRequest
-    ) -> project_pb2.ProjectRegisterResponse: ...
+    async def CreateProject(
+        self, request: project_service_pb2.CreateProjectRequest
+    ) -> project_service_pb2.CreateProjectResponse: ...
 
-    async def UpdateProject(self, request: project_pb2.Project) -> project_pb2.ProjectUpdateResponse: ...
+    async def UpdateProject(
+        self, request: project_service_pb2.UpdateProjectRequest
+    ) -> project_service_pb2.UpdateProjectResponse: ...
 
-    async def GetProject(self, request: project_pb2.ProjectGetRequest) -> project_pb2.Project: ...
+    async def GetProject(
+        self, request: project_service_pb2.GetProjectRequest
+    ) -> project_service_pb2.GetProjectResponse: ...
 
-    async def ListProjects(self, request: project_pb2.ProjectListRequest) -> project_pb2.Projects: ...
-
-    async def GetDomains(self, request: project_pb2.GetDomainRequest) -> project_pb2.GetDomainsResponse: ...
-
-    async def UpdateProjectDomainAttributes(
-        self, request: project_attributes_pb2.ProjectAttributesUpdateRequest
-    ) -> project_pb2.ProjectUpdateResponse: ...
-
-    async def GetProjectDomainAttributes(
-        self, request: project_attributes_pb2.ProjectAttributesGetRequest
-    ) -> project_attributes_pb2.ProjectAttributes: ...
-
-    async def DeleteProjectDomainAttributes(
-        self, request: project_attributes_pb2.ProjectAttributesDeleteRequest
-    ) -> project_attributes_pb2.ProjectAttributesDeleteResponse: ...
-
-    async def UpdateProjectAttributes(
-        self, request: project_attributes_pb2.ProjectAttributesUpdateRequest
-    ) -> project_attributes_pb2.ProjectAttributesUpdateResponse: ...
-
-    async def GetProjectAttributes(
-        self, request: project_attributes_pb2.ProjectAttributesGetRequest
-    ) -> project_attributes_pb2.ProjectAttributes: ...
-
-    async def DeleteProjectAttributes(
-        self, request: project_attributes_pb2.ProjectAttributesDeleteRequest
-    ) -> project_attributes_pb2.ProjectAttributesDeleteResponse: ...
+    async def ListProjects(
+        self, request: project_service_pb2.ListProjectsRequest
+    ) -> project_service_pb2.ListProjectsResponse: ...
 
 
 class TaskService(Protocol):

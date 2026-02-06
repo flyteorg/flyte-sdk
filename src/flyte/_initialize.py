@@ -206,7 +206,7 @@ async def init(
       the "flyte.plugins.types" entry point group.
     :return: None
     """
-    from flyte._utils import get_cwd_editable_install, org_from_endpoint, sanitize_endpoint
+    from flyte._utils import org_from_endpoint, sanitize_endpoint
     from flyte.types import _load_custom_type_transformers
 
     _initialize_logger(log_level=log_level, log_format=log_format, reset_root_logger=reset_root_logger)
@@ -238,13 +238,7 @@ async def init(
             )
 
         if not root_dir:
-            editable_root = get_cwd_editable_install()
-            if editable_root:
-                logger.info(f"Using editable install as root directory: {editable_root}")
-                root_dir = editable_root
-            else:
-                logger.info("No editable install found, using current working directory as root directory.")
-                root_dir = Path.cwd()
+            root_dir = Path.cwd()
         # We will inject the root_dir into the sys,path for module resolution
         sys.path.append(str(root_dir))
 
@@ -732,15 +726,13 @@ async def _init_for_testing(
     log_level: int | None = None,
     client: ClientSet | None = None,
 ):
-    from flyte._utils.helpers import get_cwd_editable_install
-
     global _init_config  # noqa: PLW0603
 
     if log_level:
         initialize_logger(log_level=log_level)
 
     with _init_lock:
-        root_dir = root_dir or get_cwd_editable_install() or Path.cwd()
+        root_dir = root_dir or Path.cwd()
         _init_config = _InitConfig(
             root_dir=root_dir,
             project=project,

@@ -1,5 +1,6 @@
 """Tests for wandb decorators."""
 
+import logging
 import os
 from unittest.mock import MagicMock, patch
 
@@ -260,6 +261,45 @@ class TestWandbInitDecorator:
         # Decorator should accept and pass through additional kwargs
         assert isinstance(test_task, AsyncFunctionTaskTemplate)
 
+    def test_wandb_init_with_rank_scope_global(self):
+        """Test @wandb_init with rank_scope='global'."""
+        env = flyte.TaskEnvironment(name="test-env")
+
+        @wandb_init(project="test-project", entity="test-entity", rank_scope="global")
+        @env.task
+        async def test_task():
+            return "result"
+
+        # Check link configuration
+        link = test_task.links[0]
+        assert link.rank_scope == "global"
+
+    def test_wandb_init_with_rank_scope_worker(self):
+        """Test @wandb_init with rank_scope='worker'."""
+        env = flyte.TaskEnvironment(name="test-env")
+
+        @wandb_init(project="test-project", entity="test-entity", rank_scope="worker")
+        @env.task
+        async def test_task():
+            return "result"
+
+        # Check link configuration
+        link = test_task.links[0]
+        assert link.rank_scope == "worker"
+
+    def test_wandb_init_default_rank_scope_is_global(self):
+        """Test that default rank_scope is 'global'."""
+        env = flyte.TaskEnvironment(name="test-env")
+
+        @wandb_init(project="test-project", entity="test-entity")
+        @env.task
+        async def test_task():
+            return "result"
+
+        # Check link configuration
+        link = test_task.links[0]
+        assert link.rank_scope == "global"
+
 
 class TestWandbSweepDecorator:
     """Tests for @wandb_sweep decorator."""
@@ -356,15 +396,24 @@ class TestWandbRunContextManager:
             # Should also store run ID in custom_context
             assert mock_context.custom_context["_wandb_run_id"] == "test-run-id"
 
+    @patch("flyteplugins.wandb._decorator.wandb.init")
     @patch("flyteplugins.wandb._decorator.flyte.ctx")
     @patch("flyteplugins.wandb._decorator._build_init_kwargs")
-    def test_wandb_run_restores_state_on_exit(self, mock_build_kwargs, mock_ctx):
+    def test_wandb_run_restores_state_on_exit(self, mock_build_kwargs, mock_ctx, mock_wandb_init):
         """Test that _wandb_run restores state on exit."""
         mock_context = MagicMock()
         mock_context.data = {"_wandb_run": "existing_run"}
         mock_context.custom_context = {"_wandb_run_id": "existing_id"}
+        mock_context.action = MagicMock()
+        mock_context.action.run_name = "test-run"
+        mock_context.action.name = "test-action"
+        mock_context.mode = "local"
         mock_ctx.return_value = mock_context
         mock_build_kwargs.return_value = {}
+
+        mock_run = MagicMock()
+        mock_run.id = "new-run-id"
+        mock_wandb_init.return_value = mock_run
 
         from flyteplugins.wandb._decorator import _wandb_run
 
@@ -745,22 +794,20 @@ class TestModeSpecificBehavior:
 
     @patch("flyteplugins.wandb._decorator.wandb.init")
     @patch("flyteplugins.wandb._decorator.flyte.ctx")
-    @patch("flyteplugins.wandb._decorator._build_init_kwargs")
-    def test_trace_detection_yields_existing_run(self, mock_build_kwargs, mock_ctx, mock_wandb_init):
-        """Test that when a run exists in ctx.data, it yields that run without re-initializing."""
+    def test_trace_detection_yields_existing_run(self, mock_ctx, mock_wandb_init):
+        """Test that func mode with existing run in ctx.data yields that run without re-initializing."""
         mock_existing_run = MagicMock()
         mock_existing_run.id = "existing-run-id"
 
         mock_context = MagicMock()
         mock_context.data = {"_wandb_run": mock_existing_run}
-        mock_context.custom_context = {}
         mock_ctx.return_value = mock_context
-        mock_build_kwargs.return_value = {}
 
         from flyteplugins.wandb._decorator import _wandb_run
 
-        with _wandb_run(run_mode="new", project="test") as run:
-            # Should yield existing run
+        # func=True is used for traces/sweep objectives within a task
+        with _wandb_run(run_mode="new", func=True, project="test") as run:
+            # Should yield existing run from parent task
             assert run == mock_existing_run
 
         # Should NOT call wandb.init
@@ -1342,47 +1389,71 @@ class TestShouldSkipRank:
         from flyteplugins.wandb._decorator import _should_skip_rank
 
         dist_info = {"rank": 3, "local_rank": 3, "num_workers": 1}
-        assert _should_skip_rank("shared", dist_info) is False
+        assert _should_skip_rank("shared", "global", dist_info) is False
+        assert _should_skip_rank("shared", "worker", dist_info) is False
 
     def test_new_mode_never_skips(self):
         """Test that run_mode='new' never skips any rank."""
         from flyteplugins.wandb._decorator import _should_skip_rank
 
         dist_info = {"rank": 3, "local_rank": 3, "num_workers": 1}
-        assert _should_skip_rank("new", dist_info) is False
+        assert _should_skip_rank("new", "global", dist_info) is False
+        assert _should_skip_rank("new", "worker", dist_info) is False
 
     def test_auto_mode_single_node_only_rank_0_logs(self):
-        """Test that run_mode='auto' on single-node only allows rank 0."""
+        """Test that run_mode='auto' on single-node only allows rank 0 (both scopes)."""
         from flyteplugins.wandb._decorator import _should_skip_rank
 
-        # Single-node: rank 0 should NOT skip
+        # Single-node: rank 0 should NOT skip (for both global and worker scope)
         dist_info = {"rank": 0, "local_rank": 0, "num_workers": 1}
-        assert _should_skip_rank("auto", dist_info) is False
+        assert _should_skip_rank("auto", "global", dist_info) is False
+        assert _should_skip_rank("auto", "worker", dist_info) is False
 
-        # Single-node: rank 1, 2, 3 should skip
+        # Single-node: rank 1, 2, 3 should skip (for both global and worker scope)
         for rank in [1, 2, 3]:
             dist_info = {"rank": rank, "local_rank": rank, "num_workers": 1}
-            assert _should_skip_rank("auto", dist_info) is True
+            assert _should_skip_rank("auto", "global", dist_info) is True
+            assert _should_skip_rank("auto", "worker", dist_info) is True
 
-    def test_auto_mode_multi_node_only_local_rank_0_logs(self):
-        """Test that run_mode='auto' on multi-node only allows local_rank 0 per worker."""
+    def test_auto_mode_global_scope_only_rank_0_logs(self):
+        """Test that run_mode='auto' with rank_scope='global' only allows global rank 0."""
+        from flyteplugins.wandb._decorator import _should_skip_rank
+
+        # Global rank 0 - should NOT skip
+        dist_info = {"rank": 0, "local_rank": 0, "num_workers": 2}
+        assert _should_skip_rank("auto", "global", dist_info) is False
+
+        # Global rank 1 (worker 0, local_rank 1) - should skip
+        dist_info = {"rank": 1, "local_rank": 1, "num_workers": 2}
+        assert _should_skip_rank("auto", "global", dist_info) is True
+
+        # Global rank 4 (worker 1, local_rank 0) - should skip (not global rank 0)
+        dist_info = {"rank": 4, "local_rank": 0, "num_workers": 2}
+        assert _should_skip_rank("auto", "global", dist_info) is True
+
+        # Global rank 6 (worker 1, local_rank 2) - should skip
+        dist_info = {"rank": 6, "local_rank": 2, "num_workers": 2}
+        assert _should_skip_rank("auto", "global", dist_info) is True
+
+    def test_auto_mode_worker_scope_multi_node(self):
+        """Test that run_mode='auto' with rank_scope='worker' allows local_rank 0 per worker."""
         from flyteplugins.wandb._decorator import _should_skip_rank
 
         # Worker 0, local_rank 0 (global rank 0) - should NOT skip
         dist_info = {"rank": 0, "local_rank": 0, "num_workers": 2}
-        assert _should_skip_rank("auto", dist_info) is False
+        assert _should_skip_rank("auto", "worker", dist_info) is False
 
         # Worker 0, local_rank 1 (global rank 1) - should skip
         dist_info = {"rank": 1, "local_rank": 1, "num_workers": 2}
-        assert _should_skip_rank("auto", dist_info) is True
+        assert _should_skip_rank("auto", "worker", dist_info) is True
 
         # Worker 1, local_rank 0 (global rank 4) - should NOT skip
         dist_info = {"rank": 4, "local_rank": 0, "num_workers": 2}
-        assert _should_skip_rank("auto", dist_info) is False
+        assert _should_skip_rank("auto", "worker", dist_info) is False
 
         # Worker 1, local_rank 2 (global rank 6) - should skip
         dist_info = {"rank": 6, "local_rank": 2, "num_workers": 2}
-        assert _should_skip_rank("auto", dist_info) is True
+        assert _should_skip_rank("auto", "worker", dist_info) is True
 
 
 class TestConfigureDistributedRun:
@@ -1401,7 +1472,7 @@ class TestConfigureDistributedRun:
             "num_workers": 1,
         }
         init_kwargs = {}
-        result = _configure_distributed_run(init_kwargs, "auto", dist_info, "my-run-task")
+        result = _configure_distributed_run(init_kwargs, "auto", "global", dist_info, "my-run-task")
 
         assert result["id"] == "my-run-task"
         assert "group" not in result
@@ -1419,13 +1490,33 @@ class TestConfigureDistributedRun:
             "num_workers": 1,
         }
         init_kwargs = {}
-        result = _configure_distributed_run(init_kwargs, "new", dist_info, "my-run-task")
+        result = _configure_distributed_run(init_kwargs, "new", "global", dist_info, "my-run-task")
 
         assert result["id"] == "my-run-task-rank-2"
         assert result["group"] == "my-run-task"
 
-    def test_multi_node_auto_mode_run_id(self):
-        """Test run ID generation for multi-node auto mode."""
+    def test_multi_node_auto_global_scope_run_id(self):
+        """Test run ID generation for multi-node auto mode with global scope."""
+        from flyteplugins.wandb._decorator import _configure_distributed_run
+
+        # Worker 0, global rank 0
+        dist_info = {
+            "rank": 0,
+            "local_rank": 0,
+            "world_size": 8,
+            "local_world_size": 4,
+            "worker_index": 0,
+            "num_workers": 2,
+        }
+        init_kwargs = {}
+        result = _configure_distributed_run(init_kwargs, "auto", "global", dist_info, "my-run-task")
+
+        # Global scope: single run ID without worker suffix
+        assert result["id"] == "my-run-task"
+        assert "group" not in result
+
+    def test_multi_node_auto_worker_scope_run_id(self):
+        """Test run ID generation for multi-node auto mode with worker scope."""
         from flyteplugins.wandb._decorator import _configure_distributed_run
 
         # Worker 1, local_rank 0
@@ -1438,13 +1529,34 @@ class TestConfigureDistributedRun:
             "num_workers": 2,
         }
         init_kwargs = {}
-        result = _configure_distributed_run(init_kwargs, "auto", dist_info, "my-run-task")
+        result = _configure_distributed_run(init_kwargs, "auto", "worker", dist_info, "my-run-task")
 
+        # Worker scope: run ID includes worker suffix
         assert result["id"] == "my-run-task-worker-1"
         assert "group" not in result
 
-    def test_multi_node_new_mode_run_id(self):
-        """Test run ID generation for multi-node new mode."""
+    def test_multi_node_new_mode_global_scope_run_id(self):
+        """Test run ID generation for multi-node new mode with global scope."""
+        from flyteplugins.wandb._decorator import _configure_distributed_run
+
+        # Worker 1, local_rank 2 (global rank 6)
+        dist_info = {
+            "rank": 6,
+            "local_rank": 2,
+            "world_size": 8,
+            "local_world_size": 4,
+            "worker_index": 1,
+            "num_workers": 2,
+        }
+        init_kwargs = {}
+        result = _configure_distributed_run(init_kwargs, "new", "global", dist_info, "my-run-task")
+
+        # Global scope: run ID uses global rank, single group for all
+        assert result["id"] == "my-run-task-rank-6"
+        assert result["group"] == "my-run-task"
+
+    def test_multi_node_new_mode_worker_scope_run_id(self):
+        """Test run ID generation for multi-node new mode with worker scope."""
         from flyteplugins.wandb._decorator import _configure_distributed_run
 
         # Worker 1, local_rank 2
@@ -1457,8 +1569,9 @@ class TestConfigureDistributedRun:
             "num_workers": 2,
         }
         init_kwargs = {}
-        result = _configure_distributed_run(init_kwargs, "new", dist_info, "my-run-task")
+        result = _configure_distributed_run(init_kwargs, "new", "worker", dist_info, "my-run-task")
 
+        # Worker scope: run ID uses worker index and local rank, group per worker
         assert result["id"] == "my-run-task-worker-1-rank-2"
         assert result["group"] == "my-run-task-worker-1"
 
@@ -1476,7 +1589,7 @@ class TestConfigureDistributedRun:
             "num_workers": 1,
         }
         init_kwargs = {}
-        result = _configure_distributed_run(init_kwargs, "shared", dist_info, "my-run-task")
+        result = _configure_distributed_run(init_kwargs, "shared", "global", dist_info, "my-run-task")
 
         assert result["id"] == "my-run-task"
         settings = result["settings"]
@@ -1489,15 +1602,57 @@ class TestConfigureDistributedRun:
         dist_info["rank"] = 2
         dist_info["local_rank"] = 2
         init_kwargs = {}
-        result = _configure_distributed_run(init_kwargs, "shared", dist_info, "my-run-task")
+        result = _configure_distributed_run(init_kwargs, "shared", "global", dist_info, "my-run-task")
 
         settings = result["settings"]
         assert settings.x_primary is False
         assert settings.x_label == "rank-2"
         assert settings.x_update_finish_state is False
 
-    def test_multi_node_shared_mode_settings(self):
-        """Test W&B settings for multi-node shared mode - local_rank 0 is primary per worker."""
+    def test_multi_node_shared_mode_global_scope_settings(self):
+        """Test W&B settings for multi-node shared mode with global scope - only global rank 0 is primary."""
+        from flyteplugins.wandb._decorator import _configure_distributed_run
+
+        # Global rank 0 (worker 0, local_rank 0) - primary
+        dist_info = {
+            "rank": 0,
+            "local_rank": 0,
+            "world_size": 8,
+            "local_world_size": 4,
+            "worker_index": 0,
+            "num_workers": 2,
+        }
+        init_kwargs = {}
+        result = _configure_distributed_run(init_kwargs, "shared", "global", dist_info, "my-run-task")
+
+        # Global scope: single run ID without worker suffix
+        assert result["id"] == "my-run-task"
+        settings = result["settings"]
+        assert settings.mode == "shared"
+        assert settings.x_primary is True  # Global rank 0 is primary
+        assert settings.x_label == "worker-0-rank-0"
+        assert settings.x_update_finish_state is True
+
+        # Worker 1, local_rank 0 (global rank 4) - NOT primary in global scope
+        dist_info = {
+            "rank": 4,
+            "local_rank": 0,
+            "world_size": 8,
+            "local_world_size": 4,
+            "worker_index": 1,
+            "num_workers": 2,
+        }
+        init_kwargs = {}
+        result = _configure_distributed_run(init_kwargs, "shared", "global", dist_info, "my-run-task")
+
+        assert result["id"] == "my-run-task"  # Same run ID for all
+        settings = result["settings"]
+        assert settings.x_primary is False  # Not global rank 0
+        assert settings.x_label == "worker-1-rank-0"
+        assert settings.x_update_finish_state is False
+
+    def test_multi_node_shared_mode_worker_scope_settings(self):
+        """Test W&B settings for multi-node shared mode with worker scope - local_rank 0 is primary per worker."""
         from flyteplugins.wandb._decorator import _configure_distributed_run
 
         # Worker 1, local_rank 0 - primary for this worker
@@ -1510,12 +1665,13 @@ class TestConfigureDistributedRun:
             "num_workers": 2,
         }
         init_kwargs = {}
-        result = _configure_distributed_run(init_kwargs, "shared", dist_info, "my-run-task")
+        result = _configure_distributed_run(init_kwargs, "shared", "worker", dist_info, "my-run-task")
 
+        # Worker scope: run ID includes worker suffix
         assert result["id"] == "my-run-task-worker-1"
         settings = result["settings"]
         assert settings.mode == "shared"
-        assert settings.x_primary is True
+        assert settings.x_primary is True  # local_rank 0 is primary
         assert settings.x_label == "worker-1-rank-0"
         assert settings.x_update_finish_state is True
 
@@ -1523,7 +1679,7 @@ class TestConfigureDistributedRun:
         dist_info["local_rank"] = 2
         dist_info["rank"] = 6
         init_kwargs = {}
-        result = _configure_distributed_run(init_kwargs, "shared", dist_info, "my-run-task")
+        result = _configure_distributed_run(init_kwargs, "shared", "worker", dist_info, "my-run-task")
 
         settings = result["settings"]
         assert settings.x_primary is False
@@ -1543,7 +1699,7 @@ class TestConfigureDistributedRun:
             "num_workers": 1,
         }
         init_kwargs = {"id": "custom-id"}
-        result = _configure_distributed_run(init_kwargs, "new", dist_info, "my-run-task")
+        result = _configure_distributed_run(init_kwargs, "new", "global", dist_info, "my-run-task")
 
         assert result["id"] == "custom-id"
 
@@ -1714,7 +1870,7 @@ class TestDistributedRunContextManager:
     @patch("flyteplugins.wandb._decorator.flyte.ctx")
     @patch("flyteplugins.wandb._decorator._get_distributed_info")
     def test_shared_mode_finish_logic_multi_node(self, mock_dist_info, mock_ctx, mock_wandb_init):
-        """Test that only local_rank 0 finishes in multi-node shared mode."""
+        """Test finish logic in multi-node shared mode with different rank_scope values."""
         mock_context = MagicMock()
         mock_context.data = {}
         mock_context.custom_context = {}
@@ -1725,12 +1881,29 @@ class TestDistributedRunContextManager:
         mock_ctx.return_value = mock_context
 
         mock_run = MagicMock()
-        mock_run.id = "test-run-test-action-worker-1"
+        mock_run.id = "test-run-test-action"
         mock_wandb_init.return_value = mock_run
 
         from flyteplugins.wandb._decorator import _wandb_run
 
-        # Worker 1, local_rank 0 (global rank 4) - should finish
+        # Test rank_scope="global": only global rank 0 finishes
+        # Global rank 0 - should finish
+        mock_dist_info.return_value = {
+            "rank": 0,
+            "local_rank": 0,
+            "world_size": 8,
+            "local_world_size": 4,
+            "worker_index": 0,
+            "num_workers": 2,
+        }
+
+        with _wandb_run(run_mode="shared", rank_scope="global", project="test"):
+            pass
+
+        mock_run.finish.assert_called_once()
+        mock_run.reset_mock()
+
+        # Global rank 4 (worker 1, local_rank 0) - should NOT finish with global scope
         mock_dist_info.return_value = {
             "rank": 4,
             "local_rank": 0,
@@ -1739,14 +1912,35 @@ class TestDistributedRunContextManager:
             "worker_index": 1,
             "num_workers": 2,
         }
+        mock_context.data = {}
+        mock_context.custom_context = {}
 
-        with _wandb_run(run_mode="shared", project="test"):
+        with _wandb_run(run_mode="shared", rank_scope="global", project="test"):
+            pass
+
+        mock_run.finish.assert_not_called()
+        mock_run.reset_mock()
+
+        # Test rank_scope="worker": local_rank 0 of each worker finishes
+        # Worker 1, local_rank 0 - should finish with worker scope
+        mock_dist_info.return_value = {
+            "rank": 4,
+            "local_rank": 0,
+            "world_size": 8,
+            "local_world_size": 4,
+            "worker_index": 1,
+            "num_workers": 2,
+        }
+        mock_context.data = {}
+        mock_context.custom_context = {}
+
+        with _wandb_run(run_mode="shared", rank_scope="worker", project="test"):
             pass
 
         mock_run.finish.assert_called_once()
         mock_run.reset_mock()
 
-        # Worker 1, local_rank 2 (global rank 6) - should NOT finish
+        # Worker 1, local_rank 2 - should NOT finish
         mock_dist_info.return_value = {
             "rank": 6,
             "local_rank": 2,
@@ -1758,7 +1952,7 @@ class TestDistributedRunContextManager:
         mock_context.data = {}
         mock_context.custom_context = {}
 
-        with _wandb_run(run_mode="shared", project="test"):
+        with _wandb_run(run_mode="shared", rank_scope="worker", project="test"):
             pass
 
         mock_run.finish.assert_not_called()
@@ -1767,8 +1961,8 @@ class TestDistributedRunContextManager:
 class TestWrapTaskDistributed:
     """Tests for _wrap_task with distributed training detection."""
 
-    def test_detects_distributed_from_elastic_config(self):
-        """Test that distributed training is detected from Elastic plugin config."""
+    def test_detects_distributed_from_elastic_config_worker_scope(self):
+        """Test that distributed training with rank_scope='worker' creates per-worker links."""
         env = flyte.TaskEnvironment(name="test-env")
 
         # Create a mock Elastic plugin config
@@ -1784,16 +1978,44 @@ class TestWrapTaskDistributed:
         # Apply the plugin config
         test_task_with_elastic = test_task.override(plugin_config=mock_elastic)
 
-        # Apply wandb_init
-        decorated = wandb_init(project="test")(test_task_with_elastic)
+        # Apply wandb_init with worker scope
+        decorated = wandb_init(project="test", rank_scope="worker")(test_task_with_elastic)
 
-        # Should have 2 links (one per node)
+        # Should have 2 links (one per node) with worker scope
         assert len(decorated.links) == 2
         for i, link in enumerate(decorated.links):
             assert isinstance(link, Wandb)
             assert link._is_distributed is True
             assert link._worker_index == i
+            assert link.rank_scope == "worker"
             assert f"Worker {i}" in link.name
+
+    def test_detects_distributed_from_elastic_config_global_scope(self):
+        """Test that distributed training with rank_scope='global' (default) creates single link."""
+        env = flyte.TaskEnvironment(name="test-env")
+
+        # Create a mock Elastic plugin config
+        mock_elastic = MagicMock()
+        mock_elastic.nnodes = 2
+        mock_elastic.nproc_per_node = 4
+        type(mock_elastic).__name__ = "Elastic"
+
+        @env.task
+        async def test_task():
+            return "result"
+
+        # Apply the plugin config
+        test_task_with_elastic = test_task.override(plugin_config=mock_elastic)
+
+        # Apply wandb_init with global scope (default)
+        decorated = wandb_init(project="test", rank_scope="global")(test_task_with_elastic)
+
+        # Should have 1 link (global scope = single run)
+        assert len(decorated.links) == 1
+        link = decorated.links[0]
+        assert isinstance(link, Wandb)
+        assert link._is_distributed is True
+        assert link.rank_scope == "global"
 
     def test_single_node_distributed_adds_single_link(self):
         """Test that single-node distributed adds one link with _is_distributed=True."""
@@ -1816,3 +2038,119 @@ class TestWrapTaskDistributed:
         assert isinstance(link, Wandb)
         assert link._is_distributed is True
         assert link._worker_index is None  # Single node, no worker index
+
+
+class TestTaskWrappingStrategy:
+    """Tests for the task wrapping strategy (execute vs func.func)."""
+
+    def test_non_distributed_task_wraps_execute(self):
+        """Test that non-distributed tasks wrap execute method."""
+        env = flyte.TaskEnvironment(name="test-env")
+
+        @env.task
+        async def test_task():
+            return "result"
+
+        original_func = test_task.func
+
+        decorated = wandb_init(project="test")(test_task)
+
+        # func should NOT be wrapped (same as original) for non-distributed
+        assert decorated.func == original_func
+        # execute is wrapped but we can't directly compare - check that decoration happened
+        assert len(decorated.links) > 0
+
+    def test_distributed_task_wraps_func(self):
+        """Test that distributed tasks wrap func.func method."""
+        env = flyte.TaskEnvironment(name="test-env")
+
+        mock_elastic = MagicMock()
+        mock_elastic.nnodes = 1
+        mock_elastic.nproc_per_node = 4
+        type(mock_elastic).__name__ = "Elastic"
+
+        @env.task
+        async def test_task():
+            return "result"
+
+        test_task_with_elastic = test_task.override(plugin_config=mock_elastic)
+        original_func = test_task_with_elastic.func
+
+        decorated = wandb_init(project="test")(test_task_with_elastic)
+
+        # func should be wrapped (different from original) for distributed
+        assert decorated.func != original_func
+        # The wrapped func should have __wrapped__ attribute pointing to original
+        assert hasattr(decorated.func, "__wrapped__")
+        assert decorated.func.__wrapped__ == original_func
+
+    def test_multi_node_task_wraps_func(self):
+        """Test that multi-node tasks wrap func.func method."""
+        env = flyte.TaskEnvironment(name="test-env")
+
+        mock_elastic = MagicMock()
+        mock_elastic.nnodes = 2
+        mock_elastic.nproc_per_node = 4
+        type(mock_elastic).__name__ = "Elastic"
+
+        @env.task
+        async def test_task():
+            return "result"
+
+        test_task_with_elastic = test_task.override(plugin_config=mock_elastic)
+        original_func = test_task_with_elastic.func
+
+        decorated = wandb_init(project="test")(test_task_with_elastic)
+
+        # func should be wrapped (different from original) for distributed
+        assert decorated.func != original_func
+        # The wrapped func should have __wrapped__ attribute pointing to original
+        assert hasattr(decorated.func, "__wrapped__")
+        assert decorated.func.__wrapped__ == original_func
+
+
+class TestDownloadLogs:
+    """Tests for download_logs parameter."""
+
+    def test_download_logs_param_accepted(self):
+        """Test that download_logs parameter is accepted by decorator."""
+        env = flyte.TaskEnvironment(name="test-env")
+
+        @wandb_init(project="test", download_logs=True)
+        @env.task
+        async def test_task():
+            return "result"
+
+        # Should not raise and task should be created
+        assert isinstance(test_task, AsyncFunctionTaskTemplate)
+
+    def test_download_logs_false_accepted(self):
+        """Test that download_logs=False is accepted."""
+        env = flyte.TaskEnvironment(name="test-env")
+
+        @wandb_init(project="test", download_logs=False)
+        @env.task
+        async def test_task():
+            return "result"
+
+        assert isinstance(test_task, AsyncFunctionTaskTemplate)
+
+    def test_download_logs_not_supported_for_distributed(self, caplog):
+        """Test that download_logs=True logs a warning for distributed tasks."""
+        env = flyte.TaskEnvironment(name="test-env")
+
+        mock_elastic = MagicMock()
+        mock_elastic.nnodes = 1
+        mock_elastic.nproc_per_node = 4
+        type(mock_elastic).__name__ = "Elastic"
+
+        @env.task
+        async def test_task():
+            return "result"
+
+        test_task_with_elastic = test_task.override(plugin_config=mock_elastic)
+
+        with caplog.at_level(logging.WARNING):
+            wandb_init(project="test", download_logs=True)(test_task_with_elastic)
+
+        assert "download_logs is not supported for distributed tasks" in caplog.text

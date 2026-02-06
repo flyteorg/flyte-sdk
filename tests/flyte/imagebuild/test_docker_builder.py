@@ -8,7 +8,7 @@ import pytest
 import pytest_asyncio
 
 from flyte import Secret
-from flyte._image import Image, PipPackages, PoetryProject, Requirements, UVProject
+from flyte._image import AptPackages, Commands, Image, PipPackages, PoetryProject, Requirements, UVProject
 from flyte._internal.imagebuild.docker_builder import (
     CopyConfig,
     CopyConfigHandler,
@@ -16,7 +16,9 @@ from flyte._internal.imagebuild.docker_builder import (
     PipAndRequirementsHandler,
     PoetryProjectHandler,
     UVProjectHandler,
+    _get_secret_commands,
 )
+from flyte._internal.imagebuild.remote_builder import _get_build_secrets_from_image
 
 
 @pytest.mark.integration
@@ -520,3 +522,139 @@ async def test_uvproject_handler_without_uvlock():
         assert "--mount=type=bind,target=uv.lock" not in result
         # Verify pyproject mount IS present
         assert "--mount=type=bind,target=pyproject.toml" in result
+
+
+def test_get_secret_commands_deduplicates_secrets(monkeypatch):
+    """Test that _get_secret_commands does not add duplicate secrets."""
+    monkeypatch.setenv("GITHUB_TOKEN", "test-value")
+
+    # Create layers with the same secret used multiple times
+    same_secret = Secret(key="github_token")
+    layers = (
+        AptPackages(packages=("git", "vim"), secret_mounts=(same_secret,)),
+        PipPackages(packages=("requests",), secret_mounts=(same_secret,)),
+        Commands(commands=("echo hello",), secret_mounts=(same_secret,)),
+    )
+
+    commands = _get_secret_commands(layers)
+
+    # Count how many times the secret appears in commands
+    secret_count = sum(1 for cmd in commands if cmd == "--secret")
+    assert secret_count == 1, f"Expected 1 secret, got {secret_count}. Commands: {commands}"
+
+
+def test_get_secret_commands_allows_different_secrets(monkeypatch):
+    """Test that _get_secret_commands allows different secrets."""
+    monkeypatch.setenv("SECRET_A", "value-a")
+    monkeypatch.setenv("SECRET_B", "value-b")
+
+    secret_a = Secret(key="secret_a")
+    secret_b = Secret(key="secret_b")
+    layers = (
+        AptPackages(packages=("git",), secret_mounts=(secret_a,)),
+        PipPackages(packages=("requests",), secret_mounts=(secret_b,)),
+    )
+
+    commands = _get_secret_commands(layers)
+
+    # Should have 2 different secrets
+    secret_count = sum(1 for cmd in commands if cmd == "--secret")
+    assert secret_count == 2, f"Expected 2 secrets, got {secret_count}. Commands: {commands}"
+
+
+def test_get_secret_commands_deduplicates_string_secrets(monkeypatch):
+    """Test that _get_secret_commands deduplicates string-based secrets."""
+    monkeypatch.setenv("MY_TOKEN", "test-value")
+
+    layers = (
+        AptPackages(packages=("git",), secret_mounts=("my_token",)),
+        PipPackages(packages=("requests",), secret_mounts=("my_token",)),
+    )
+
+    commands = _get_secret_commands(layers)
+
+    secret_count = sum(1 for cmd in commands if cmd == "--secret")
+    assert secret_count == 1, f"Expected 1 secret, got {secret_count}. Commands: {commands}"
+
+
+def test_get_secret_commands_deduplicates_with_group(monkeypatch):
+    """Test that _get_secret_commands deduplicates secrets with the same group and key."""
+    monkeypatch.setenv("MYGROUP_MYKEY", "test-value")
+
+    same_secret = Secret(group="mygroup", key="mykey")
+    layers = (
+        AptPackages(packages=("git",), secret_mounts=(same_secret,)),
+        PipPackages(packages=("requests",), secret_mounts=(same_secret,)),
+    )
+
+    commands = _get_secret_commands(layers)
+
+    secret_count = sum(1 for cmd in commands if cmd == "--secret")
+    assert secret_count == 1, f"Expected 1 secret, got {secret_count}. Commands: {commands}"
+
+
+def test_get_build_secrets_from_image_deduplicates_secrets():
+    """Test that _get_build_secrets_from_image does not add duplicate secrets."""
+    same_secret = Secret(key="github_token")
+
+    image = (
+        Image.from_debian_base(registry="localhost:30000", name="test", install_flyte=False)
+        .with_apt_packages("git", "vim", secret_mounts=same_secret)
+        .with_pip_packages("requests", secret_mounts=same_secret)
+        .with_commands(["echo hello"], secret_mounts=same_secret)
+    )
+
+    secrets = _get_build_secrets_from_image(image)
+
+    # Should only have 1 secret, not 3
+    assert len(secrets) == 1, f"Expected 1 secret, got {len(secrets)}. Secrets: {secrets}"
+    assert secrets[0].key == "github_token"
+
+
+def test_get_build_secrets_from_image_allows_different_secrets():
+    """Test that _get_build_secrets_from_image allows different secrets."""
+    secret_a = Secret(key="secret_a")
+    secret_b = Secret(key="secret_b")
+
+    image = (
+        Image.from_debian_base(registry="localhost:30000", name="test", install_flyte=False)
+        .with_apt_packages("git", secret_mounts=secret_a)
+        .with_pip_packages("requests", secret_mounts=secret_b)
+    )
+
+    secrets = _get_build_secrets_from_image(image)
+
+    assert len(secrets) == 2, f"Expected 2 secrets, got {len(secrets)}. Secrets: {secrets}"
+    keys = {s.key for s in secrets}
+    assert keys == {"secret_a", "secret_b"}
+
+
+def test_get_build_secrets_from_image_deduplicates_string_secrets():
+    """Test that _get_build_secrets_from_image deduplicates string-based secrets."""
+    image = (
+        Image.from_debian_base(registry="localhost:30000", name="test", install_flyte=False)
+        .with_apt_packages("git", secret_mounts="my_token")
+        .with_pip_packages("requests", secret_mounts="my_token")
+    )
+
+    secrets = _get_build_secrets_from_image(image)
+
+    assert len(secrets) == 1, f"Expected 1 secret, got {len(secrets)}. Secrets: {secrets}"
+    assert secrets[0].key == "my_token"
+
+
+def test_get_build_secrets_from_image_deduplicates_with_group():
+    """Test that _get_build_secrets_from_image deduplicates secrets with the same group and key."""
+    same_secret = Secret(group="mygroup", key="mykey")
+
+    image = (
+        Image.from_debian_base(registry="localhost:30000", name="test", install_flyte=False)
+        .with_apt_packages("git", secret_mounts=same_secret)
+        .with_pip_packages("requests", secret_mounts=same_secret)
+    )
+
+    secrets = _get_build_secrets_from_image(image)
+
+    assert len(secrets) == 1, f"Expected 1 secret, got {len(secrets)}. Secrets: {secrets}"
+    assert secrets[0].key == "mykey"
+    assert secrets[0].group == "mygroup"

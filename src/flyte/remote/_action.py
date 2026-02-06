@@ -883,18 +883,28 @@ class ActionOutputs(tuple, ToJSONMixin):
     ```
     """
 
-    def __new__(cls, pb2: common_pb2.Outputs, data: Tuple[Any, ...]):
+    pb2: common_pb2.Outputs
+    _fields: list[str]
+
+    def __new__(cls, pb2: common_pb2.Outputs, data: Tuple[Any, ...], fields: List[str] | None = None):
         # Create the tuple part
         obj = super().__new__(cls, data)
-        # Store extra data (you can't do this here directly since it's immutable)
+        # Store extra attributes on the tuple instance
         obj.pb2 = pb2
+        obj._fields = fields or [default_output_name(i) for i in range(len(data))]
+        for name, value in zip(obj._fields, obj):
+            setattr(obj, name, value)
         return obj
 
-    def __init__(self, pb2: common_pb2.Outputs, data: Tuple[Any, ...]):
-        # Normally you'd set instance attributes here,
-        # but we've already set `pb2` in `__new__`
-        self.pb2 = pb2
+    def __init__(self, pb2: common_pb2.Outputs, data: Tuple[Any, ...], fields: List[str] | None = None): ...
 
     @cached_property
     def named_outputs(self) -> dict[str, Any]:
-        return {default_output_name(i): x for i, x in enumerate(self)}
+        return dict(zip(self._fields, self))
+
+    def __repr__(self) -> str:
+        _repr = []
+        for name, value in zip(self._fields, self):
+            v = f'"{value}"' if isinstance(value, str) else f"{value}"
+            _repr.append(f"{name}={v}")
+        return f"ActionOutputs({', '.join(_repr)})"

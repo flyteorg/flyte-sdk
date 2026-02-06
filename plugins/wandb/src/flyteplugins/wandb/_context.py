@@ -4,6 +4,7 @@ from typing import Any, Literal, Optional
 
 import flyte
 
+RankScope = Literal["global", "worker"]
 RunMode = Literal["auto", "new", "shared"]
 
 
@@ -107,6 +108,10 @@ class _WandBConfig:
     # Controls whether to create a new W&B run or share an existing one
     run_mode: RunMode = "auto"  # "auto", "new", or "shared"
 
+    # Flyte-specific rank scope (not passed to wandb.init)
+    # Controls which ranks log in distributed training with run_mode="auto"
+    rank_scope: RankScope = "global"  # "global" or "worker"
+
     # Flyte-specific: download wandb logs after task completes
     download_logs: bool = False
 
@@ -193,6 +198,7 @@ def wandb_config(
     mode: Optional[str] = None,
     group: Optional[str] = None,
     run_mode: RunMode = "auto",
+    rank_scope: RankScope = "global",
     download_logs: bool = False,
     **kwargs: Any,
 ) -> _WandBConfig:
@@ -212,13 +218,27 @@ def wandb_config(
         config: Dictionary of hyperparameters
         mode: "online", "offline" or "disabled"
         group: Group name for related runs
-        run_mode: Flyte-specific run mode - "auto", "new" or "shared".
+        run_mode: "auto", "new" or "shared".
             Controls whether tasks create new W&B runs or share existing ones.
-            In distributed training context:
-            - "auto" (default): Single-node: only rank 0 logs.
-              Multi-node: local rank 0 of each worker logs (1 run per worker).
+            - "auto" (default): Creates new run if no parent run exists, otherwise shares parent's run
+            - "new": Always creates a new wandb run with a unique ID
+            - "shared": Always shares the parent's run ID
+            In distributed training context (single-node):
+            - "auto" (default): Only rank 0 logs.
             - "shared": All ranks log to a single shared W&B run.
             - "new": Each rank gets its own W&B run (grouped in W&B UI).
+            Multi-node: behavior depends on `rank_scope`.
+        rank_scope: "global" or "worker".
+            Controls which ranks log in distributed training.
+            run_mode="auto":
+            - "global" (default): Only global rank 0 logs (1 run total).
+            - "worker": Local rank 0 of each worker logs (1 run per worker).
+            run_mode="shared":
+            - "global": All ranks log to a single shared W&B run.
+            - "worker": Ranks per worker log to a single shared W&B run (1 run per worker).
+            run_mode="new":
+            - "global": Each rank gets its own W&B run (1 run total).
+            - "worker": Each rank gets its own W&B run grouped per worker -> N runs.
         download_logs: If `True`, downloads wandb run files after task completes
             and shows them as a trace output in the Flyte UI
         **kwargs: Additional `wandb.init()` parameters
@@ -233,6 +253,7 @@ def wandb_config(
         mode=mode,
         group=group,
         run_mode=run_mode,
+        rank_scope=rank_scope,
         download_logs=download_logs,
         kwargs=kwargs if kwargs else None,
     )

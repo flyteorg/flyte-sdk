@@ -5,6 +5,7 @@ from unittest.mock import MagicMock, patch
 
 from flyte import Image
 from flyte._internal.imagebuild.utils import (
+    copy_files_to_context,
     get_and_list_dockerignore,
     get_uv_editable_install_mounts,
     get_uv_project_editable_dependencies,
@@ -125,7 +126,47 @@ def test_get_uv_editable_install_mounts():
         # However, within the container, it should be mounted to its path relative to the project root.
         # This is done by using the relative_to method on the Path objects.
         expected_mounts = [
-            f"--mount=type=bind,src=_flyte_abs_context{editable_abs},target={Path(editable_abs).relative_to(project_root)}",
-            f"--mount=type=bind,src=_flyte_abs_context{project_root / editable_rel},target={Path(editable_rel).name}",
+            f"--mount=type=bind,src=_flyte_abs_context{editable_abs},"
+            f"target={Path(editable_abs).relative_to(project_root)},rw",
+            f"--mount=type=bind,src=_flyte_abs_context{project_root / editable_rel},"
+            f"target={Path(editable_rel).name},rw",
         ]
         assert mounts == " ".join(expected_mounts)
+
+
+def test_copy_files_to_context_ignores_egg_info():
+    """Test that copy_files_to_context ignores .egg-info directories."""
+    with tempfile.TemporaryDirectory() as tmp_context:
+        src_dir = Path(tmp_context) / "src"
+        context_dir = Path(tmp_context) / "context"
+        src_dir.mkdir()
+        context_dir.mkdir()
+
+        # Create a normal Python file
+        (src_dir / "main.py").write_text("print('hello')")
+
+        # Create a nested directory with a Python file
+        (src_dir / "subdir").mkdir()
+        (src_dir / "subdir" / "module.py").write_text("def func(): pass")
+
+        # Create an .egg-info directory at root level
+        egg_info_dir = src_dir / "seeds.egg-info"
+        egg_info_dir.mkdir()
+        (egg_info_dir / "PKG-INFO").write_text("Name: seeds")
+        (egg_info_dir / "SOURCES.txt").write_text("seeds/__init__.py")
+
+        # Create an .egg-info directory in a subdirectory
+        nested_egg_info = src_dir / "subdir" / "nested.egg-info"
+        nested_egg_info.mkdir()
+        (nested_egg_info / "PKG-INFO").write_text("Name: nested")
+
+        # Copy files to context
+        dst_path = copy_files_to_context(src_dir, context_dir)
+
+        # Verify normal files are copied
+        assert (dst_path / "main.py").exists(), "main.py should be copied"
+        assert (dst_path / "subdir" / "module.py").exists(), "subdir/module.py should be copied"
+
+        # Verify .egg-info directories are NOT copied
+        assert not (dst_path / "seeds.egg-info").exists(), "seeds.egg-info should be ignored"
+        assert not (dst_path / "subdir" / "nested.egg-info").exists(), "nested.egg-info should be ignored"

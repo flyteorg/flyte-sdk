@@ -250,13 +250,13 @@ def _get_layers_proto(image: Image, context_path: Path) -> "image_definition_pb2
             )
             layers.append(apt_layer)
         elif isinstance(layer, PythonWheels):
-            dst_path = copy_files_to_context(layer.wheel_dir, context_path)
+            dst_path = copy_files_to_context(layer.wheel_dir, context_path, [])
             wheel_layer = image_definition_pb2.Layer(
                 python_wheels=image_definition_pb2.PythonWheels(
                     dir=str(dst_path.relative_to(context_path)),
                     options=pip_options,
                     secret_mounts=secret_mounts,
-                )
+                ),
             )
             layers.append(wheel_layer)
 
@@ -328,6 +328,8 @@ def _get_layers_proto(image: Image, context_path: Path) -> "image_definition_pb2
                 case "dependencies_only":
                     if pip_options.extra_args and ("--no-install-project" not in pip_options.extra_args):
                         pip_options.extra_args += " --no-install-project"
+                    else:
+                        pip_options.extra_args = "--no-install-project"
                     # Copy any editable dependencies to the context
                     # We use the docker ignore patterns to avoid copying the editable dependencies to the context.
                     standard_ignore_patterns = STANDARD_IGNORE_PATTERNS.copy()
@@ -422,21 +424,31 @@ def _get_fully_qualified_image_name(outputs: ActionOutputs) -> str:
 
 def _get_build_secrets_from_image(image: Image) -> Optional[typing.List[Secret]]:
     secrets = []
+    seen_secrets: typing.Set[typing.Tuple[typing.Optional[str], str]] = set()
     DEFAULT_SECRET_DIR = Path("/etc/flyte/secrets")
     for layer in image._layers:
         if isinstance(layer, (PipOption, Commands, AptPackages)) and layer.secret_mounts is not None:
             for secret_mount in layer.secret_mounts:
                 # Mount all the image secrets to a default directory that will be passed to the BuildKit server.
                 if isinstance(secret_mount, Secret):
-                    secrets.append(Secret(key=secret_mount.key, group=secret_mount.group, mount=DEFAULT_SECRET_DIR))
+                    secret_id = (secret_mount.group, secret_mount.key)
+                    if secret_id not in seen_secrets:
+                        seen_secrets.add(secret_id)
+                        secrets.append(Secret(key=secret_mount.key, group=secret_mount.group, mount=DEFAULT_SECRET_DIR))
                 elif isinstance(secret_mount, str):
-                    secrets.append(Secret(key=secret_mount, mount=DEFAULT_SECRET_DIR))
+                    secret_id = (None, secret_mount)
+                    if secret_id not in seen_secrets:
+                        seen_secrets.add(secret_id)
+                        secrets.append(Secret(key=secret_mount, mount=DEFAULT_SECRET_DIR))
                 else:
                     raise ValueError(f"Unsupported secret_mount type: {type(secret_mount)}")
 
     image_registry_secret = image._image_registry_secret
     if image_registry_secret:
-        secrets.append(
-            Secret(key=image_registry_secret.key, group=image_registry_secret.group, mount=DEFAULT_SECRET_DIR)
-        )
+        secret_id = (image_registry_secret.group, image_registry_secret.key)
+        if secret_id not in seen_secrets:
+            seen_secrets.add(secret_id)
+            secrets.append(
+                Secret(key=image_registry_secret.key, group=image_registry_secret.group, mount=DEFAULT_SECRET_DIR)
+            )
     return secrets

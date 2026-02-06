@@ -44,7 +44,9 @@ class SnowflakeJobMetadata(ResourceMeta):
     connection_kwargs: Optional[Dict[str, Any]] = None
 
 
-def _get_private_key(private_key_content: str, private_key_passphrase: Optional[str] = None) -> bytes:
+def _get_private_key(
+    private_key_content: str, private_key_passphrase: Optional[str] = None
+) -> bytes:
     """
     Decode the private key from the secret and return it in DER format.
 
@@ -151,7 +153,9 @@ def _construct_query_link(account: str, query_id: str) -> str:
     return f"{base_url}/#/compute/history/queries/{query_id}/detail"
 
 
-def _expand_batch_query(query: str, inputs: Dict[str, List[Any]]) -> Tuple[str, Dict[str, Any]]:
+def _expand_batch_query(
+    query: str, inputs: Dict[str, List[Any]]
+) -> Tuple[str, Dict[str, Any]]:
     """
     Expand a parameterized INSERT query with list inputs into a multi-row VALUES statement.
 
@@ -179,11 +183,17 @@ def _expand_batch_query(query: str, inputs: Dict[str, List[Any]]) -> Tuple[str, 
 
     # Find all VALUES (...) clauses (case-insensitive)
     # The inner group handles %(...)s placeholders which contain literal parentheses
-    matches = list(re.finditer(r"VALUES\s*\(((?:[^()]*|\([^)]*\))*)\)", query, re.IGNORECASE))
+    matches = list(
+        re.finditer(r"VALUES\s*\(((?:[^()]*|\([^)]*\))*)\)", query, re.IGNORECASE)
+    )
     if not matches:
-        raise ValueError("Batch inputs require a query template with a VALUES (...) clause.")
+        raise ValueError(
+            "Batch inputs require a query template with a VALUES (...) clause."
+        )
     if len(matches) > 1:
-        raise ValueError("Batch query expansion supports exactly one VALUES (...) clause.")
+        raise ValueError(
+            "Batch query expansion supports exactly one VALUES (...) clause."
+        )
 
     match = matches[0]
     values_content = match.group(1)
@@ -234,11 +244,17 @@ class SnowflakeConnector(AsyncConnector):
         Returns:
             A SnowflakeJobMetadata object containing the query ID and link to the query dashboard.
         """
-        custom = json_format.MessageToDict(task_template.custom) if task_template.custom else {}
+        custom = (
+            json_format.MessageToDict(task_template.custom)
+            if task_template.custom
+            else {}
+        )
 
         account = custom.get("account")
         if not account:
-            raise ValueError("Missing Snowflake account. Set it through task configuration.")
+            raise ValueError(
+                "Missing Snowflake account. Set it through task configuration."
+            )
 
         user = custom.get("user")
         database = custom.get("database")
@@ -246,7 +262,9 @@ class SnowflakeConnector(AsyncConnector):
         warehouse = custom.get("warehouse")
 
         if not all([user, database, warehouse]):
-            raise ValueError("User, database and warehouse must be specified in the task configuration.")
+            raise ValueError(
+                "User, database and warehouse must be specified in the task configuration."
+            )
 
         # Get additional connection parameters from custom config
         connection_kwargs = custom.get("connection_kwargs", {})
@@ -344,7 +362,9 @@ class SnowflakeConnector(AsyncConnector):
 
         if error:
             logger.error(f"Snowflake query failed: {error}")
-            return Resource(phase=TaskExecution.FAILED, message=error, log_links=[log_link])
+            return Resource(
+                phase=TaskExecution.FAILED, message=error, log_links=[log_link]
+            )
 
         # Map Snowflake status to Flyte phase
         # Snowflake statuses: RUNNING, SUCCESS, FAILED_WITH_ERROR, ABORTING, etc.
@@ -359,7 +379,9 @@ class SnowflakeConnector(AsyncConnector):
             )
             outputs = {"results": DataFrame(uri=output_location)}
 
-        return Resource(phase=cur_phase, message=status.name, log_links=[log_link], outputs=outputs)
+        return Resource(
+            phase=cur_phase, message=status.name, log_links=[log_link], outputs=outputs
+        )
 
     async def delete(
         self,
@@ -390,7 +412,9 @@ class SnowflakeConnector(AsyncConnector):
         def _cancel_query():
             cursor = conn.cursor()
             try:
-                cursor.execute(f"SELECT SYSTEM$CANCEL_QUERY('{resource_meta.query_id}')")
+                cursor.execute(
+                    f"SELECT SYSTEM$CANCEL_QUERY('{resource_meta.query_id}')"
+                )
             finally:
                 cursor.close()
                 conn.close()

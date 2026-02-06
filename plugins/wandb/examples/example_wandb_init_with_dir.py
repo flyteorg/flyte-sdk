@@ -26,7 +26,7 @@ env = flyte.TaskEnvironment(
 )
 
 
-@wandb_init(download_logs=True)
+@wandb_init(download_logs=True, run_mode="new")
 @env.task
 async def async_child_with_download(x: int) -> str:
     """Async task that automatically downloads logs via download_logs=True."""
