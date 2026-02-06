@@ -3,13 +3,13 @@ import re
 import typing
 from typing import Optional
 
-from flyteidl2.core import literals_pb2, types_pb2
-
 from flyte._utils import lazy_module
 from flyte.io._dataframe.dataframe import DataFrame, DataFrameDecoder, DataFrameEncoder
+from flyteidl2.core import literals_pb2, types_pb2
 
 if typing.TYPE_CHECKING:
     import pandas as pd
+
     import snowflake.connector
 else:
     pd = lazy_module("pandas")

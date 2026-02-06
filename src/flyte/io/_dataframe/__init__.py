@@ -100,6 +100,7 @@ def lazy_import_dataframe_handler():
         except DuplicateHandlerError:
             logger.debug("Transformer for bigquery is already registered.")
 
+
 __all__ = [
     "PARQUET",
     "DataFrame",

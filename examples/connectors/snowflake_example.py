@@ -70,6 +70,7 @@ async def main(ids: list[int], names: list[str], ages: list[int]) -> float:
     df = await snowflake_select_task()
     return await downstream_task(df)
 
+
 if __name__ == "__main__":
     flyte.init_from_config()
     run = flyte.with_runcontext(mode="local").run(main, ids=[123, 456], names=["Kevin", "Alice"], ages=[30, 25])

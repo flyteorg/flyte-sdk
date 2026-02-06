@@ -11,7 +11,9 @@ from flyte.io import DataFrame
 from flyteidl2.core.execution_pb2 import TaskExecution, TaskLog
 from flyteidl2.core.tasks_pb2 import TaskTemplate
 from google.protobuf import json_format
-from snowflake import connector
+
+from snowflake.connector import SnowflakeConnection
+from snowflake.connector import connect as snowflake_connect
 
 TASK_TYPE = "snowflake"
 
@@ -82,7 +84,7 @@ async def _get_snowflake_connection(
     private_key_content: Optional[str] = None,
     private_key_passphrase: Optional[str] = None,
     **connection_kwargs,
-) -> connector.SnowflakeConnection:
+) -> SnowflakeConnection:
     """
     Create and return a Snowflake connection.
 
@@ -119,7 +121,7 @@ async def _get_snowflake_connection(
             connection_params["private_key"] = private_key
 
         # Let Snowflake connector validate authentication requirements
-        return connector.connect(**connection_params)
+        return snowflake_connect(**connection_params)
 
     loop = asyncio.get_running_loop()
     return await loop.run_in_executor(None, _create_connection)

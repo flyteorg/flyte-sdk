@@ -137,8 +137,9 @@ class TestGetConnection:
 class TestWriteToSf:
     def test_writes_dataframe(self, sample_dataframe):
         """Test that _write_to_sf parses the URI and writes the DataFrame."""
-        import flyteplugins.snowflake.dataframe as sf_module
         from flyte.io._dataframe.dataframe import DataFrame
+
+        import flyteplugins.snowflake.dataframe as sf_module
 
         mock_conn = MagicMock()
 
@@ -155,6 +156,7 @@ class TestWriteToSf:
     def test_raises_on_missing_uri(self):
         """Test that _write_to_sf raises when URI is not set."""
         from flyte.io._dataframe.dataframe import DataFrame
+
         from flyteplugins.snowflake.dataframe import _write_to_sf
 
         df_wrapper = DataFrame.from_df(val=pd.DataFrame())
@@ -197,8 +199,9 @@ class TestPandasToSnowflakeEncoder:
     @pytest.mark.asyncio
     async def test_encode(self, sample_dataframe):
         """Test that the encoder writes to Snowflake and returns correct literal."""
-        import flyteplugins.snowflake.dataframe as sf_module
         from flyte.io._dataframe.dataframe import DataFrame
+
+        import flyteplugins.snowflake.dataframe as sf_module
 
         encoder = sf_module.PandasToSnowflakeEncodingHandlers()
         assert encoder.protocol == "snowflake"
