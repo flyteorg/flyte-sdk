@@ -17,7 +17,7 @@ from abc import ABC, abstractmethod
 from collections import OrderedDict
 from functools import lru_cache
 from types import GenericAlias, NoneType
-from typing import Any, Callable, Dict, NamedTuple, Optional, Tuple, Type, cast
+from typing import Any, Dict, Optional, Type, cast
 
 import msgpack
 from flyteidl2.core import interface_pb2, literals_pb2, types_pb2
@@ -63,6 +63,83 @@ _TYPE_ENGINE_COROS_BATCH_SIZE = int(os.environ.get("_F_TE_MAX_COROS", "10"))
 # the decoder will raise an error when trying to decode keys that are not strictly typed.
 def _default_msgpack_decoder(data: bytes) -> Any:
     return msgpack.unpackb(data, strict_map_key=False)
+
+
+async def _invoke_lazy_uploaders(obj: typing.Any) -> None:
+    """
+    Recursively find and invoke lazy uploaders on Flyte IO types (DataFrame, File, Dir)
+    nested within a Pydantic model or dataclass. This must be done BEFORE serialization
+    to ensure uploads happen in the correct async context (syncify loop) where gRPC works.
+
+    The lazy uploaders set the URI/path on the objects, so subsequent serialization
+    can just return the existing values without invoking async operations.
+
+    Args:
+        obj: The object to process (can be a Pydantic model, dataclass, or collection)
+    """
+    if obj is None:
+        logger.debug("Object is None, skipping lazy uploaders.")
+        return
+
+    from flyte._context import internal_ctx
+    from flyte._run import _get_main_run_mode
+    from flyte.io import DataFrame, Dir, File
+
+    ctx = internal_ctx()
+    is_remote_ctx = ctx.has_raw_data
+    is_local_ctx_local_run_mode = not ctx.has_raw_data and _get_main_run_mode() == "local"
+
+    if is_remote_ctx:
+        # skip invoking the lazy uploader when in a remote context
+        logger.debug("Remote context detected, skipping lazy uploaders.")
+        return
+
+    if is_local_ctx_local_run_mode:
+        # skip invoking the lazy uploader when in a local context running in local run mode
+        logger.debug("Local context running in local run mode detected, skipping lazy uploaders.")
+        return
+
+    # Handle Flyte IO types with lazy uploaders
+    if isinstance(obj, DataFrame) and obj.lazy_uploader:
+        uploaded = await obj.lazy_uploader()
+        # Copy the uploaded URI and metadata back to the original object
+        obj.uri = uploaded.uri
+        obj.format = uploaded.format
+        obj._lazy_uploader = None  # Clear to avoid re-uploading
+        return
+
+    if isinstance(obj, (File, Dir)) and obj.lazy_uploader:
+        hash_val, uri = await obj.lazy_uploader()
+        obj.path = uri
+        if hash_val:
+            obj.hash = hash_val
+        obj._lazy_uploader = None  # Clear to avoid re-uploading
+        return
+
+    # Recursively process Pydantic models
+    if isinstance(obj, BaseModel):
+        for field_name in obj.__class__.model_fields:
+            field_value = getattr(obj, field_name, None)
+            await _invoke_lazy_uploaders(field_value)
+        return
+
+    # Recursively process dataclasses
+    if dataclasses.is_dataclass(obj) and not isinstance(obj, type):
+        for field in dataclasses.fields(obj):
+            field_value = getattr(obj, field.name, None)
+            await _invoke_lazy_uploaders(field_value)
+        return
+
+    # Handle collections
+    if isinstance(obj, dict):
+        for value in obj.values():
+            await _invoke_lazy_uploaders(value)
+        return
+
+    if isinstance(obj, (list, tuple)):
+        for item in obj:
+            await _invoke_lazy_uploaders(item)
+        return
 
 
 def modify_literal_uris(lit: Literal):
@@ -381,6 +458,11 @@ class PydanticTransformer(TypeTransformer[BaseModel]):
         python_type: Type[BaseModel],
         expected: LiteralType,
     ) -> Literal:
+        # Pre-process the model to invoke any lazy uploaders on nested Flyte IO types.
+        # This ensures uploads happen in the syncify context where gRPC clients work correctly,
+        # and prevents deadlocks when @model_serializer tries to run async code via loop_manager.
+        await _invoke_lazy_uploaders(python_val)
+
         json_str = python_val.model_dump_json()
         dict_obj = json.loads(json_str)
         msgpack_bytes = msgpack.dumps(dict_obj)
@@ -601,6 +683,11 @@ class DataclassTransformer(TypeTransformer[object]):
                 f"user defined datatypes in Flytekit"
             )
 
+        # Pre-process the dataclass to invoke any lazy uploaders on nested Flyte IO types.
+        # This ensures uploads happen in the syncify context where gRPC clients work correctly,
+        # and prevents issues when _serialize tries to run async code via loop_manager.
+        await _invoke_lazy_uploaders(python_val)
+
         # The function looks up or creates a MessagePackEncoder specifically designed for the object's type.
         # This encoder is then used to convert a data class into MessagePack Bytes.
         try:
@@ -819,493 +906,15 @@ class EnumTransformer(TypeTransformer[enum.Enum]):
             raise TypeTransformerFailedError(f"Value {v} is not in Enum {t}")
 
 
-# ==============================================================================
-# Shared helpers for Tuple and NamedTuple schema-to-type conversion
-# ==============================================================================
-
-
-def _json_schema_basic_type_to_python(prop_type: Optional[str]) -> Optional[Type]:
-    """Convert JSON schema basic types to Python types."""
-    type_map = {
-        "string": str,
-        "integer": int,
-        "number": float,
-        "boolean": bool,
-    }
-    return type_map.get(prop_type) if prop_type else None
-
-
-def _json_schema_to_python_type(
-    prop_schema: dict,
-    defs: dict,
-    *,
-    recursive_handler: Callable[[dict, dict], Type],
-    prefix_items_handler: Callable[[dict, dict], Type],
-    ref_handler: Callable[[dict, str, dict], Type],
-) -> Type:
-    """
-    Convert a JSON schema property to a Python type.
-
-    This is a shared helper for TupleTransformer and NamedTupleTransformer
-    that handles the common cases of schema-to-type conversion.
-
-    Args:
-        prop_schema: The JSON schema for the property
-        defs: The $defs section of the schema
-        recursive_handler: Callback for recursive type resolution
-        prefix_items_handler: Callback to handle prefixItems (tuple vs NamedTuple)
-        ref_handler: Callback to handle $ref resolution (transformer-specific)
-
-    Returns:
-        The Python type corresponding to the schema.
-    """
-    # Handle $ref for nested types
-    if "$ref" in prop_schema:
-        ref_path = prop_schema["$ref"]
-        ref_name = ref_path.split("/")[-1]
-        if ref_name in defs:
-            ref_schema = defs[ref_name].copy()
-            # Include $defs for nested refs
-            if "$defs" not in ref_schema and defs:
-                ref_schema["$defs"] = defs
-            return ref_handler(ref_schema, ref_name, defs)
-        return Any
-
-    # Handle basic types
-    prop_type = prop_schema.get("type")
-    basic_type = _json_schema_basic_type_to_python(prop_type)
-    if basic_type is not None:
-        return basic_type
-
-    if prop_type == "array":
-        # Handle tuple types (prefixItems)
-        if "prefixItems" in prop_schema:
-            return prefix_items_handler(prop_schema, defs)
-        # Handle list types
-        if "items" in prop_schema:
-            item_type = recursive_handler(prop_schema["items"], defs)
-            return typing.List[item_type]  # type: ignore
-        return typing.List[typing.Any]  # type: ignore
-
-    if prop_type == "object":
-        # Handle dict types with typed values
-        if "additionalProperties" in prop_schema:
-            val_type = recursive_handler(prop_schema["additionalProperties"], defs)
-            return typing.Dict[str, val_type]  # type: ignore
-        # Handle nested dataclass-like objects with properties
-        if "properties" in prop_schema:
-            title = prop_schema.get("title", "NestedObject")
-            return convert_mashumaro_json_schema_to_python_class(prop_schema, title)
-        # Untyped dict
-        return typing.Dict[str, typing.Any]  # type: ignore
-
-    # Default to Any for unknown types
-    return Any
-
-
-class TupleTransformer(TypeTransformer[tuple]):
-    """
-    Transformer that handles typed tuples like tuple[int, str, float].
-
-    This transformer delegates to PydanticTransformer by wrapping the tuple
-    in a dynamically generated Pydantic BaseModel.
-    """
-
-    def __init__(self):
-        super().__init__("Typed Tuple", tuple, enable_type_assertions=False)
-        self._pydantic_transformer = PydanticTransformer()
-
-    def _create_tuple_model(self, t: Type[tuple]) -> Type[BaseModel]:
-        """Create a Pydantic model that wraps a tuple type."""
-        args = get_args(t)
-        if not args:
-            raise TypeTransformerFailedError("Tuple type must have type arguments")
-
-        # Create field definitions for each tuple element
-        field_definitions: Dict[str, Any] = {}
-        for i, arg in enumerate(args):
-            field_definitions[f"item_{i}"] = (arg, ...)
-
-        # Dynamically create a Pydantic model
-        from pydantic import create_model
-
-        model_name = f"TupleWrapper_{t.__name__}"
-        return create_model(model_name, **field_definitions)
-
-    def _tuple_to_model(self, python_val: tuple, model_class: Type[BaseModel]) -> BaseModel:
-        """Convert a tuple to a Pydantic model instance."""
-        field_names = list(model_class.model_fields.keys())
-        if len(python_val) != len(field_names):
-            raise TypeTransformerFailedError(
-                f"Tuple length {len(python_val)} doesn't match expected length {len(field_names)}"
-            )
-        return model_class(**{field_names[i]: python_val[i] for i in range(len(python_val))})
-
-    def _model_to_tuple(self, model_instance: BaseModel, expected_type: Type[tuple]) -> tuple:
-        """Convert a Pydantic model instance back to a tuple."""
-        field_names = list(model_instance.model_fields.keys())
-        return tuple(getattr(model_instance, name) for name in field_names)
-
-    def get_literal_type(self, t: Type[tuple]) -> LiteralType:
-        """Get the literal type for a tuple type."""
-        model_class = self._create_tuple_model(t)
-        return self._pydantic_transformer.get_literal_type(model_class)
-
-    async def to_literal(self, python_val: tuple, python_type: Type[tuple], expected: LiteralType) -> Literal:
-        """Convert a tuple to a Flyte Literal."""
-        if not isinstance(python_val, tuple):
-            raise TypeTransformerFailedError(f"Expected a tuple but got {type(python_val)}")
-
-        model_class = self._create_tuple_model(python_type)
-        model_instance = self._tuple_to_model(python_val, model_class)
-        return await self._pydantic_transformer.to_literal(model_instance, model_class, expected)
-
-    async def to_python_value(self, lv: Literal, expected_python_type: Type[tuple]) -> tuple:
-        """Convert a Flyte Literal back to a tuple."""
-        model_class = self._create_tuple_model(expected_python_type)
-        model_instance = await self._pydantic_transformer.to_python_value(lv, model_class)
-        return self._model_to_tuple(model_instance, expected_python_type)
-
-    def guess_python_type(self, literal_type: LiteralType) -> Type[tuple]:
-        """
-        Guess the Python type from a literal type.
-
-        Detects tuple types by looking for "TupleWrapper_" prefix in the schema title.
-        Reconstructs tuple[T1, T2, ...] from the schema properties.
-        """
-        if literal_type.simple == SimpleType.STRUCT and literal_type.HasField("metadata"):
-            from google.protobuf import json_format
-
-            metadata = json_format.MessageToDict(literal_type.metadata)
-            title = metadata.get(TITLE, "")
-
-            if title.startswith("TupleWrapper_"):
-                return self._create_tuple_from_schema(metadata)
-
-        raise ValueError(f"Tuple transformer cannot reverse {literal_type}")
-
-    def _create_tuple_from_schema(self, schema: dict) -> Type[tuple]:
-        """Create a tuple type from a JSON schema."""
-        properties = schema.get("properties", {})
-        defs = schema.get("$defs", {})
-
-        # Sort by item_N to ensure correct order
-        item_fields = [(k, v) for k, v in properties.items() if k.startswith("item_")]
-        item_fields.sort(key=lambda x: int(x[0].split("_")[1]))
-
-        element_types: typing.List[Type] = []
-        for field_name, field_schema in item_fields:
-            element_type = self._schema_to_type(field_schema, defs)
-            element_types.append(element_type)
-
-        if not element_types:
-            raise ValueError("No tuple elements found in schema")
-
-        return tuple[tuple(element_types)]  # type: ignore
-
-    def _schema_to_type(self, prop_schema: dict, defs: dict) -> Type:
-        """Convert a JSON schema property to a Python type."""
-        return _json_schema_to_python_type(
-            prop_schema,
-            defs,
-            recursive_handler=self._schema_to_type,
-            prefix_items_handler=self._handle_prefix_items,
-            ref_handler=self._handle_ref,
-        )
-
-    def _handle_prefix_items(self, prop_schema: dict, defs: dict) -> Type:
-        """Handle prefixItems schema as a tuple type."""
-        prefix_items = prop_schema["prefixItems"]
-        item_types = [self._schema_to_type(item, defs) for item in prefix_items]
-        return tuple[tuple(item_types)]  # type: ignore
-
-    def _handle_ref(self, ref_schema: dict, ref_name: str, defs: dict) -> Type:
-        """Handle $ref schema for tuple types."""
-        ref_title = ref_schema.get("title", ref_name)
-
-        # Check if it's a nested tuple
-        if ref_title.startswith("TupleWrapper_"):
-            return self._create_tuple_from_schema(ref_schema)
-
-        # Otherwise treat as a dataclass
-        return convert_mashumaro_json_schema_to_python_class(ref_schema, ref_name)
-
-
-class NamedTupleTransformer(TypeTransformer[tuple]):
-    """
-    Transformer that handles NamedTuple types.
-
-    This transformer delegates to PydanticTransformer by wrapping the NamedTuple
-    in a dynamically generated Pydantic BaseModel.
-    """
-
-    def __init__(self):
-        super().__init__("NamedTuple", tuple, enable_type_assertions=False)
-        self._pydantic_transformer = PydanticTransformer()
-
-    def _create_namedtuple_model(self, t: Type) -> Type[BaseModel]:
-        """Create a Pydantic model that wraps a NamedTuple type."""
-        if not _is_named_tuple(t):
-            raise TypeTransformerFailedError(f"{t} is not a NamedTuple")
-
-        # Get field names and types from the NamedTuple
-        annotations = getattr(t, "__annotations__", {})
-        field_definitions: Dict[str, Any] = {}
-
-        for field_name, field_type in annotations.items():
-            field_definitions[field_name] = (field_type, ...)
-
-        # Dynamically create a Pydantic model
-        from pydantic import create_model
-
-        model_name = f"NamedTupleWrapper_{t.__name__}"
-        return create_model(model_name, **field_definitions)
-
-    def _convert_value_for_pydantic(self, value: Any, field_type: Optional[Type] = None) -> Any:
-        """
-        Recursively convert values to a format that Pydantic can validate.
-
-        This handles:
-        - NamedTuple instances -> dict (so Pydantic can validate and construct)
-        - Pydantic BaseModel instances -> dict (for nested NamedTuple wrappers)
-        - Dataclass instances -> dict (for nested dataclasses)
-        - Lists/tuples containing the above
-        - Dicts containing the above
-        """
-        if isinstance(value, BaseModel):
-            # Convert Pydantic models (like NamedTupleWrapper_*) to dict
-            return value.model_dump()
-        elif hasattr(value, "_asdict"):
-            # Convert NamedTuple to dict, recursively handling nested values
-            data = value._asdict()
-            return {k: self._convert_value_for_pydantic(v) for k, v in data.items()}
-        elif dataclasses.is_dataclass(value) and not isinstance(value, type):
-            # Convert dataclass instances to dict, recursively handling nested values
-            data = dataclasses.asdict(value)
-            return {k: self._convert_value_for_pydantic(v) for k, v in data.items()}
-        elif isinstance(value, (list, tuple)) and not hasattr(value, "_fields"):
-            # Handle lists and regular tuples (but not NamedTuples)
-            return [self._convert_value_for_pydantic(v) for v in value]
-        elif isinstance(value, dict):
-            return {k: self._convert_value_for_pydantic(v) for k, v in value.items()}
-        return value
-
-    def _namedtuple_to_model(self, python_val: tuple, model_class: Type[BaseModel], namedtuple_type: Type) -> BaseModel:
-        """Convert a NamedTuple to a Pydantic model instance."""
-        annotations = getattr(namedtuple_type, "__annotations__", {})
-
-        # NamedTuple instances have _asdict() method
-        if hasattr(python_val, "_asdict"):
-            data = python_val._asdict()
-        else:
-            # Fallback: use field names from the type
-            field_names = namedtuple_type._fields
-            data = {field_names[i]: python_val[i] for i in range(len(python_val))}
-
-        # Convert nested values that might be NamedTuples or Pydantic models
-        # to a format Pydantic can validate (dicts)
-        converted_data = {}
-        for field_name, value in data.items():
-            field_type = annotations.get(field_name)
-            converted_data[field_name] = self._convert_value_for_pydantic(value, field_type)
-
-        return model_class(**converted_data)
-
-    def _convert_value_from_pydantic(self, value: Any, expected_type: Optional[Type] = None) -> Any:
-        """
-        Recursively convert values from Pydantic model format back to their expected types.
-
-        This handles:
-        - Pydantic BaseModel instances -> NamedTuple (if expected_type is a NamedTuple)
-        - Lists containing the above
-        - Dicts containing the above
-        """
-        if expected_type is not None and _is_named_tuple(expected_type):
-            # Expected type is a NamedTuple
-            if isinstance(value, BaseModel):
-                # Recursively convert nested Pydantic model to NamedTuple
-                return self._model_to_namedtuple(value, expected_type)
-            elif isinstance(value, dict):
-                # Convert dict to NamedTuple
-                field_names = expected_type._fields
-                annotations = getattr(expected_type, "__annotations__", {})
-                values = []
-                for name in field_names:
-                    field_value = value.get(name)
-                    field_type = annotations.get(name)
-                    values.append(self._convert_value_from_pydantic(field_value, field_type))
-                return expected_type(*values)
-
-        # Handle generic containers
-        origin = get_origin(expected_type) if expected_type else None
-        args = get_args(expected_type) if expected_type else ()
-
-        if isinstance(value, list) and origin is list and args:
-            return [self._convert_value_from_pydantic(v, args[0]) for v in value]
-        elif isinstance(value, dict) and origin is dict and len(args) >= 2:
-            return {k: self._convert_value_from_pydantic(v, args[1]) for k, v in value.items()}
-
-        return value
-
-    def _model_to_namedtuple(self, model_instance: BaseModel, expected_type: Type) -> tuple:
-        """Convert a Pydantic model instance back to a NamedTuple."""
-        field_names = expected_type._fields
-        annotations = getattr(expected_type, "__annotations__", {})
-        values = []
-        for name in field_names:
-            value = getattr(model_instance, name)
-            field_type = annotations.get(name)
-            # Recursively convert nested values
-            converted_value = self._convert_value_from_pydantic(value, field_type)
-            values.append(converted_value)
-        return expected_type(*values)
-
-    def get_literal_type(self, t: Type) -> LiteralType:
-        """Get the literal type for a NamedTuple type."""
-        model_class = self._create_namedtuple_model(t)
-        return self._pydantic_transformer.get_literal_type(model_class)
-
-    async def to_literal(self, python_val: tuple, python_type: Type, expected: LiteralType) -> Literal:
-        """Convert a NamedTuple to a Flyte Literal."""
-        model_class = self._create_namedtuple_model(python_type)
-        model_instance = self._namedtuple_to_model(python_val, model_class, python_type)
-        return await self._pydantic_transformer.to_literal(model_instance, model_class, expected)
-
-    async def to_python_value(self, lv: Literal, expected_python_type: Type) -> tuple:
-        """Convert a Flyte Literal back to a NamedTuple."""
-        model_class = self._create_namedtuple_model(expected_python_type)
-        model_instance = await self._pydantic_transformer.to_python_value(lv, model_class)
-        return self._model_to_namedtuple(model_instance, expected_python_type)
-
-    def guess_python_type(self, literal_type: LiteralType) -> Type:
-        """
-        Guess the Python type from a literal type.
-
-        Creates a dynamic NamedTuple from the schema if the title indicates it's a NamedTuple wrapper.
-        """
-        if literal_type.simple == SimpleType.STRUCT and literal_type.HasField("metadata"):
-            from google.protobuf import json_format
-
-            metadata = json_format.MessageToDict(literal_type.metadata)
-            title = metadata.get(TITLE, "")
-
-            # Check if this is a NamedTuple wrapper
-            if title.startswith("NamedTupleWrapper_"):
-                original_name = title[len("NamedTupleWrapper_") :]
-                return self._create_namedtuple_from_schema(metadata, original_name)
-
-        raise ValueError(f"NamedTuple transformer cannot reverse {literal_type}")
-
-    def _create_namedtuple_from_schema(self, schema: dict, name: str) -> Type:
-        """Create a dynamic NamedTuple type from a JSON schema."""
-        defs = schema.get("$defs", {})
-
-        # Check if this is an array-based NamedTuple representation (from Pydantic)
-        # Pydantic serializes NamedTuples as arrays with prefixItems
-        if schema.get("type") == "array" and "prefixItems" in schema:
-            return self._create_namedtuple_from_array_schema(schema, name, defs)
-
-        # Object-based schema (NamedTupleWrapper format)
-        properties = schema.get("properties", {})
-        # Use 'required' field to preserve property order if available
-        property_order = schema.get("required", list(properties.keys()))
-
-        field_types: typing.List[typing.Tuple[str, Type]] = []
-        for prop_name in property_order:
-            prop_schema = properties.get(prop_name, {})
-            field_type = self._schema_to_type(prop_schema, defs)
-            field_types.append((prop_name, field_type))
-
-        # Create a NamedTuple dynamically
-        return NamedTuple(name, field_types)  # type: ignore
-
-    def _create_namedtuple_from_array_schema(self, schema: dict, name: str, defs: dict) -> Type:
-        """Create a NamedTuple from an array-based JSON schema (Pydantic's NamedTuple format)."""
-        prefix_items = schema.get("prefixItems", [])
-
-        field_types: typing.List[typing.Tuple[str, Type]] = []
-        for i, item_schema in enumerate(prefix_items):
-            # Use the title as field name if available, otherwise use indexed name
-            field_name = item_schema.get("title", f"field_{i}").lower().replace(" ", "_")
-            field_type = self._schema_to_type(item_schema, defs)
-            field_types.append((field_name, field_type))
-
-        return NamedTuple(name, field_types)  # type: ignore
-
-    def _schema_to_type(self, prop_schema: dict, defs: dict) -> Type:
-        """Convert a JSON schema property to a Python type."""
-        return _json_schema_to_python_type(
-            prop_schema,
-            defs,
-            recursive_handler=self._schema_to_type,
-            prefix_items_handler=self._handle_prefix_items,
-            ref_handler=self._handle_ref,
-        )
-
-    def _handle_prefix_items(self, prop_schema: dict, defs: dict) -> Type:
-        """Handle prefixItems schema as a NamedTuple type."""
-        title = prop_schema.get("title", "DynamicNamedTuple")
-        return self._create_namedtuple_from_array_schema(prop_schema, title, defs)
-
-    def _handle_ref(self, ref_schema: dict, ref_name: str, defs: dict) -> Type:
-        """Handle $ref schema for NamedTuple types."""
-        ref_title = ref_schema.get("title", ref_name)
-
-        # Check if it's an array-based NamedTuple (Pydantic serializes nested NamedTuples as arrays)
-        if ref_schema.get("type") == "array" and "prefixItems" in ref_schema:
-            return self._create_namedtuple_from_array_schema(ref_schema, ref_name, defs)
-
-        # Recursively create nested NamedTuple if it's a wrapper
-        if ref_title.startswith("NamedTupleWrapper_"):
-            return self._create_namedtuple_from_schema(ref_schema, ref_title[len("NamedTupleWrapper_") :])
-
-        # For objects with properties (like dataclasses)
-        if ref_schema.get("type") == "object" and "properties" in ref_schema:
-            return convert_mashumaro_json_schema_to_python_class(ref_schema, ref_name)
-
-        # Fallback
-        return Any
-
-
-def _is_named_tuple(t: Type) -> bool:
-    """
-    Check if a type is a NamedTuple.
-
-    NamedTuple doesn't support isinstance checks directly, so we need to check for
-    specific attributes that indicate a NamedTuple type.
-    """
-    try:
-        # Check for the essential NamedTuple characteristics:
-        # 1. It's a subclass of tuple
-        # 2. It has _fields attribute (tuple of field names)
-        # 3. It has _field_types or __annotations__ (mapping of field names to types)
-        return (
-            isinstance(t, type)
-            and issubclass(t, tuple)
-            and hasattr(t, "_fields")
-            and isinstance(t._fields, tuple)
-            and hasattr(t, "__annotations__")
-        )
-    except TypeError:
-        return False
-
-
-def _is_typed_tuple(t: Type) -> bool:
-    """
-    Check if a type is a typed tuple (e.g., tuple[int, str] or typing.Tuple[int, str]).
-
-    This excludes NamedTuple and untyped tuple.
-    """
-    if _is_named_tuple(t):
-        return False
-
-    origin = get_origin(t)
-    if origin is tuple or origin is Tuple:
-        args = get_args(t)
-        # Exclude empty tuples and variable-length tuples (tuple[int, ...])
-        if args and not (len(args) == 2 and args[1] is ...):
-            return True
-    return False
+# Import transformers from _tuple_dict module (imported here to avoid circular imports)
+from ._tuple_dict import (  # noqa: E402
+    NamedTupleTransformer,
+    TupleTransformer,
+    TypedDictTransformer,
+    _is_named_tuple,
+    _is_typed_dict,
+    _is_typed_tuple,
+)
 
 
 def generate_attribute_list_from_dataclass_json_mixin(schema: dict, schema_name: typing.Any):
@@ -1330,6 +939,10 @@ def generate_attribute_list_from_dataclass_json_mixin(schema: dict, schema_name:
             defs = schema.get("$defs", schema.get("definitions", {}))
             if ref_name in defs:
                 ref_schema = defs[ref_name].copy()
+                # Check if the $ref points to an enum definition (no properties)
+                if ref_schema.get("enum"):
+                    attribute_list.append((property_key, str))
+                    continue
                 # Include $defs so nested models can resolve their own $refs
                 if "$defs" not in ref_schema and defs:
                     ref_schema["$defs"] = defs
@@ -1452,6 +1065,7 @@ class TypeEngine(typing.Generic[T]):
     _ENUM_TRANSFORMER: typing.ClassVar[TypeTransformer] = EnumTransformer()
     _TUPLE_TRANSFORMER: typing.ClassVar[TypeTransformer] = TupleTransformer()
     _NAMEDTUPLE_TRANSFORMER: typing.ClassVar[TypeTransformer] = NamedTupleTransformer()
+    _TYPEDDICT_TRANSFORMER: typing.ClassVar[TypeTransformer] = TypedDictTransformer()
     lazy_import_lock: typing.ClassVar[threading.Lock] = threading.Lock()
 
     @classmethod
@@ -1508,6 +1122,10 @@ class TypeEngine(typing.Generic[T]):
         # Special handling for typed tuple types like tuple[int, str]
         if _is_typed_tuple(python_type):
             return cls._TUPLE_TRANSFORMER
+
+        # Special handling for TypedDict types
+        if _is_typed_dict(python_type):
+            return cls._TYPEDDICT_TRANSFORMER
 
         if hasattr(python_type, "__origin__"):
             # If the type is a generic type, we should check the origin type. But consider the case like Iterator[JSON]
@@ -1814,6 +1432,14 @@ class TypeEngine(typing.Generic[T]):
                 return cls._NAMEDTUPLE_TRANSFORMER.guess_python_type(flyte_type)
             except ValueError:
                 logger.debug(f"Skipping transformer {cls._NAMEDTUPLE_TRANSFORMER.name} for {flyte_type}")
+
+        # Try TypedDictTransformer before DataclassTransformer since TypedDicts are serialized
+        # as Pydantic models with "TypedDictWrapper_" prefix in the schema title
+        if cls._TYPEDDICT_TRANSFORMER is not None:
+            try:
+                return cls._TYPEDDICT_TRANSFORMER.guess_python_type(flyte_type)
+            except ValueError:
+                logger.debug(f"Skipping transformer {cls._TYPEDDICT_TRANSFORMER.name} for {flyte_type}")
 
         # Because the dataclass transformer is handled explicitly in the get_transformer code, we have to handle it
         # separately here too.

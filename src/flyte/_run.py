@@ -8,7 +8,7 @@ import uuid
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Tuple, Union, cast
 
-from flyte._context import contextual_run, internal_ctx
+from flyte._context import Context, contextual_run, internal_ctx
 from flyte._environment import Environment
 from flyte._initialize import (
     _get_init_config,
@@ -113,9 +113,11 @@ class _Runner:
         custom_context: Dict[str, str] | None = None,
         cache_lookup_scope: CacheLookupScope = "global",
         preserve_original_types: bool | None = None,
+        _tracker: Any = None,
     ):
         from flyte._tools import ipython_check
 
+        self._tracker = _tracker
         init_config = _get_init_config()
         client = init_config.client if init_config else None
         if not force_mode and client is not None:
@@ -555,6 +557,9 @@ class _Runner:
             custom_context=self._custom_context,
         )
 
+        if self._tracker is not None:
+            ctx = Context(ctx.data.replace(tracker=self._tracker))
+
         with ctx.replace_task_context(tctx):
             # make the local version always runs on a different thread, returns a wrapped future.
             if obj._call_as_synchronous:
@@ -683,6 +688,7 @@ def with_runcontext(
     custom_context: Dict[str, str] | None = None,
     cache_lookup_scope: CacheLookupScope = "global",
     preserve_original_types: bool = False,
+    _tracker: Any = None,
 ) -> _Runner:
     """
     Launch a new run with the given parameters as the context.
@@ -738,8 +744,10 @@ def with_runcontext(
         when guessing python types from literal types. If false (default), it will return the generic
         flyte.io.DataFrame. This option is automatically set to True if interactive_mode is True unless overridden
         explicitly by this parameter.
+    :param _tracker: This is an internal only parameter used by the CLI to render the TUI.
 
     :return: runner
+
     """
     if mode == "hybrid" and not name and not run_base_dir:
         raise ValueError("Run name and run base dir are required for hybrid mode")
@@ -772,6 +780,7 @@ def with_runcontext(
         custom_context=custom_context,
         cache_lookup_scope=cache_lookup_scope,
         preserve_original_types=preserve_original_types,
+        _tracker=_tracker,
     )
 
 
