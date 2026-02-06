@@ -4,11 +4,12 @@ import json
 from typing import Any, Awaitable, Callable, ClassVar
 
 from rich.text import Text
+from textual import events
 from textual.app import App, ComposeResult
 from textual.binding import Binding, BindingType
 from textual.containers import Horizontal, VerticalScroll
 from textual.reactive import reactive
-from textual.widgets import Footer, Header, Static, Tree
+from textual.widgets import Footer, Header, RichLog, Static, TabbedContent, TabPane, Tree
 from textual.widgets.tree import TreeNode
 from textual.worker import Worker, WorkerState
 
@@ -68,6 +69,13 @@ def _pretty_json(obj: Any) -> str:
         return json.dumps(obj, indent=2, default=repr)
     except (TypeError, ValueError):
         return repr(obj)
+
+
+class _LogViewer(RichLog):
+    """RichLog that writes incoming Print events from Textual's stdout/stderr capture."""
+
+    def on_print(self, event: events.Print) -> None:
+        self.write(event.text)
 
 
 class ActionTreeWidget(Tree[str]):
@@ -309,9 +317,33 @@ class FlyteTUIApp(App[None]):
         background: {_FLYTE_PURPLE_DARK};
         color: {_FLYTE_PURPLE_LIGHT};
     }}
-    DetailPanel {{
+    #right-tabs {{
         width: 2fr;
+    }}
+    DetailPanel {{
         background: {_FLYTE_PURPLE_DARK};
+    }}
+    #log-viewer {{
+        background: {_FLYTE_PURPLE_DARK};
+        color: {_FLYTE_PURPLE_LIGHT};
+    }}
+    TabPane {{
+        padding: 0;
+    }}
+    Tabs {{
+        background: {_FLYTE_PURPLE_DARK};
+        color: {_FLYTE_PURPLE_LIGHT};
+    }}
+    Tab {{
+        background: {_FLYTE_PURPLE_DARK};
+        color: {_FLYTE_PURPLE_LIGHT};
+    }}
+    Tab.-active {{
+        background: {_FLYTE_PURPLE};
+        color: {_FLYTE_PURPLE_LIGHT};
+    }}
+    Underline {{
+        color: {_FLYTE_PURPLE};
     }}
     _DetailBox {{
         border: solid {_FLYTE_PURPLE};
@@ -325,6 +357,8 @@ class FlyteTUIApp(App[None]):
 
     BINDINGS: ClassVar[list[BindingType]] = [
         Binding("q", "quit", "Quit"),
+        Binding("d", "show_details", "Details"),
+        Binding("l", "show_logs", "Logs"),
     ]
 
     def __init__(
@@ -344,12 +378,25 @@ class FlyteTUIApp(App[None]):
             tree = ActionTreeWidget(self._tracker, id="action-tree")
             tree.border_title = "Actions"
             yield tree
-            yield DetailPanel(self._tracker, id="detail-panel")
+            with TabbedContent(initial="tab-details", id="right-tabs"):
+                with TabPane("Details", id="tab-details"):
+                    yield DetailPanel(self._tracker, id="detail-panel")
+                with TabPane("Logs", id="tab-logs"):
+                    yield _LogViewer(
+                        id="log-viewer",
+                        auto_scroll=True,
+                        wrap=True,
+                        markup=False,
+                        highlight=False,
+                        max_lines=10_000,
+                    )
         yield Footer()
 
     def on_mount(self) -> None:
         self.title = "Flyte Local Run"
         self.sub_title = "running..."
+        log_viewer = self.query_one("#log-viewer", _LogViewer)
+        self.begin_capture_print(log_viewer)
         self._run_execution()
         self.set_interval(0.2, self._poll_tracker)
 
@@ -377,3 +424,9 @@ class FlyteTUIApp(App[None]):
             self.sub_title = "completed"
         elif event.state == WorkerState.ERROR:
             self.sub_title = "failed"
+
+    def action_show_details(self) -> None:
+        self.query_one("#right-tabs", TabbedContent).active = "tab-details"
+
+    def action_show_logs(self) -> None:
+        self.query_one("#right-tabs", TabbedContent).active = "tab-logs"
