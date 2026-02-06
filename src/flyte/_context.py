@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import contextvars
 from dataclasses import dataclass, replace
-from typing import TYPE_CHECKING, Awaitable, Callable, Optional, ParamSpec, Tuple, TypeVar
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Optional, ParamSpec, Tuple, TypeVar
 
 from flyte._logging import logger
 from flyte.models import GroupData, RawDataPath, TaskContext
@@ -31,6 +31,7 @@ class ContextData:
     raw_data_path: Optional[RawDataPath] = None
     metadata: Optional[Tuple[Tuple[str, str], ...]] = None
     preserve_original_types: bool = False
+    tracker: Any = None  # ActionTracker instance (optional, set for TUI runs)
 
     def replace(self, **kwargs) -> ContextData:
         return replace(self, **kwargs)

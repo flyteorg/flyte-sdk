@@ -4,12 +4,8 @@ from __future__ import annotations
 
 import threading
 import time
-from unittest.mock import patch
-
-import pytest
 
 from flyte.cli._tui._tracker import ActionNode, ActionStatus, ActionTracker, _safe_json
-
 
 # ---------------------------------------------------------------------------
 # _safe_json
@@ -123,7 +119,7 @@ class TestTrackerRecordStart:
     def test_root_appears_in_snapshot(self):
         t = ActionTracker()
         t.record_start(action_id="a1", task_name="task1")
-        root_ids, children, nodes = t.snapshot()
+        root_ids, _children, nodes = t.snapshot()
         assert "a1" in root_ids
         assert "a1" in nodes
 
@@ -131,7 +127,7 @@ class TestTrackerRecordStart:
         t = ActionTracker()
         t.record_start(action_id="root", task_name="root_task")
         t.record_start(action_id="child", task_name="child_task", parent_id="root")
-        root_ids, children, nodes = t.snapshot()
+        root_ids, children, _nodes = t.snapshot()
         assert "child" not in root_ids
         assert "child" in children.get("root", [])
 
@@ -341,7 +337,7 @@ class TestTrackerSnapshot:
         """Mutations to snapshot should not affect the tracker."""
         t = ActionTracker()
         t.record_start(action_id="a1", task_name="t1")
-        root_ids, children, nodes = t.snapshot()
+        root_ids, _children, nodes = t.snapshot()
         root_ids.append("injected")
         nodes["injected"] = "fake"
         # Original tracker should be unaffected
@@ -469,7 +465,7 @@ class TestTrackerGroupNesting:
         t = ActionTracker()
         t.record_start(action_id="root", task_name="root_task")
         t.record_start(action_id="c1", task_name="child", parent_id="root", group="my_group")
-        _, children, nodes = t.snapshot()
+        _, _children, nodes = t.snapshot()
         group_key = "__group__root__my_group"
         assert group_key in nodes
         assert nodes[group_key].task_name == "my_group"
@@ -499,7 +495,7 @@ class TestTrackerGroupNesting:
         t.record_start(action_id="c1", task_name="child1", parent_id="root", group="grp")
         t.record_start(action_id="c2", task_name="child2", parent_id="root", group="grp")
         t.record_start(action_id="c3", task_name="child3", parent_id="root", group="grp")
-        _, children, nodes = t.snapshot()
+        _, children, _nodes = t.snapshot()
         group_key = "__group__root__grp"
         # Only one group node created
         assert children["root"].count(group_key) == 1

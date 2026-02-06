@@ -30,6 +30,7 @@ class ActionNode:
     cache_hit: bool = False
     context: dict | None = None
     group: str | None = None
+    log_links: list[tuple[str, str]] | None = None
     start_time: float = field(default_factory=time.monotonic)
     end_time: float | None = None
 
@@ -136,6 +137,14 @@ class ActionTracker:
                     node.outputs = _safe_json(outputs)
             node.end_time = time.monotonic()
             self._update_group_status(action_id)
+            self._version += 1
+
+    def record_log_links(self, *, action_id: str, log_links: list[tuple[str, str]]) -> None:
+        with self._lock:
+            node = self._nodes.get(action_id)
+            if node is None:
+                return
+            node.log_links = log_links
             self._version += 1
 
     def record_failure(self, *, action_id: str, error: str) -> None:

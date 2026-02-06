@@ -73,8 +73,11 @@ class LocalController:
     def __init__(self):
         logger.debug("LocalController init")
         self._runner_map: dict[str, _TaskRunner] = {}
-        self._tracker: Any | None = None
         self._sequencer = TaskCallSequencer()
+
+    @property
+    def _tracker(self) -> Any | None:
+        return internal_ctx().data.tracker
 
     @log
     async def submit(self, _task: TaskTemplate, *args, **kwargs) -> Any:

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from typing import Any, Awaitable, Callable, ClassVar
 
+from rich.text import Text
 from textual.app import App, ComposeResult
 from textual.binding import Binding, BindingType
 from textual.containers import Horizontal, VerticalScroll
@@ -10,8 +11,6 @@ from textual.reactive import reactive
 from textual.widgets import Footer, Header, Static, Tree
 from textual.widgets.tree import TreeNode
 from textual.worker import Worker, WorkerState
-
-from rich.text import Text
 
 from ._tracker import ActionNode, ActionStatus, ActionTracker
 
@@ -144,6 +143,7 @@ class DetailPanel(VerticalScroll):
     def compose(self) -> ComposeResult:
         yield _DetailBox(id="box-task-details")
         yield _DetailBox(id="box-report")
+        yield _DetailBox(id="box-log-links")
         yield _DetailBox(id="box-inputs")
         yield _DetailBox(id="box-context")
         yield _DetailBox(id="box-outputs")
@@ -161,6 +161,7 @@ class DetailPanel(VerticalScroll):
         try:
             task_box = self.query_one("#box-task-details", _DetailBox)
             report_box = self.query_one("#box-report", _DetailBox)
+            log_links_box = self.query_one("#box-log-links", _DetailBox)
             inputs_box = self.query_one("#box-inputs", _DetailBox)
             context_box = self.query_one("#box-context", _DetailBox)
             outputs_box = self.query_one("#box-outputs", _DetailBox)
@@ -172,6 +173,7 @@ class DetailPanel(VerticalScroll):
             task_box.update("Select an action to view details.")
             task_box.border_title = "Task Details"
             report_box.display = False
+            log_links_box.display = False
             inputs_box.update("")
             inputs_box.border_title = "Inputs"
             context_box.display = False
@@ -183,6 +185,7 @@ class DetailPanel(VerticalScroll):
         if node is None:
             task_box.update(f"Action {aid} not found.")
             report_box.display = False
+            log_links_box.display = False
             inputs_box.update("")
             context_box.display = False
             outputs_box.update("")
@@ -199,13 +202,14 @@ class DetailPanel(VerticalScroll):
                 details.append(f"duration:   {elapsed}")
             task_box.update("\n".join(details))
             report_box.display = False
+            log_links_box.display = False
             inputs_box.display = False
             context_box.display = False
             outputs_box.display = False
             return
 
         task_box.border_title = "Task Details"
-        details: list[str] = []
+        details = []
         details.append(f"task name:  {node.task_name}")
         details.append(f"action id:  {node.action_id}")
         details.append(f"status:     {node.status.value}")
@@ -225,6 +229,14 @@ class DetailPanel(VerticalScroll):
             report_box.display = True
         else:
             report_box.display = False
+
+        # -- Log Links box (only when available) --
+        if node.log_links:
+            log_links_box.border_title = "Log Links"
+            log_links_box.update("\n".join(f"{name}: {uri}" for name, uri in node.log_links))
+            log_links_box.display = True
+        else:
+            log_links_box.display = False
 
         # -- Inputs box --
         inputs_box.display = True

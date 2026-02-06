@@ -8,7 +8,7 @@ import uuid
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Tuple, Union, cast
 
-from flyte._context import contextual_run, internal_ctx
+from flyte._context import Context, contextual_run, internal_ctx
 from flyte._environment import Environment
 from flyte._initialize import (
     _get_init_config,
@@ -558,7 +558,7 @@ class _Runner:
         )
 
         if self._tracker is not None:
-            controller._tracker = self._tracker
+            ctx = Context(ctx.data.replace(tracker=self._tracker))
 
         with ctx.replace_task_context(tctx):
             # make the local version always runs on a different thread, returns a wrapped future.

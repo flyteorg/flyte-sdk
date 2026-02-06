@@ -44,7 +44,7 @@ def test_tracker_records_single_task():
     tracker = ActionTracker()
     flyte.with_runcontext(mode="local", _tracker=tracker).run(add, a=2, b=3)
 
-    root_ids, children, nodes = tracker.snapshot()
+    root_ids, _children, nodes = tracker.snapshot()
     assert len(root_ids) == 1
     root = nodes[root_ids[0]]
     assert root.status == ActionStatus.SUCCEEDED
@@ -60,7 +60,7 @@ def test_tracker_records_inputs():
     flyte.with_runcontext(mode="local", _tracker=tracker).run(add, a=10, b=20)
 
     _, _, nodes = tracker.snapshot()
-    node = list(nodes.values())[0]
+    node = next(iter(nodes.values()))
     assert node.inputs is not None
     assert node.inputs["a"] == 10
     assert node.inputs["b"] == 20
@@ -73,7 +73,7 @@ def test_tracker_records_outputs():
     flyte.with_runcontext(mode="local", _tracker=tracker).run(add, a=5, b=7)
 
     _, _, nodes = tracker.snapshot()
-    node = list(nodes.values())[0]
+    node = next(iter(nodes.values()))
     assert node.outputs is not None
     # Output should be the pretty-printed version (a dict like {"o0": 12})
     assert node.status == ActionStatus.SUCCEEDED
@@ -151,7 +151,7 @@ def test_tracker_records_cache_disabled():
     flyte.with_runcontext(mode="local", _tracker=tracker).run(add, a=1, b=2)
 
     _, _, nodes = tracker.snapshot()
-    node = list(nodes.values())[0]
+    node = next(iter(nodes.values()))
     assert node.cache_enabled is False
     assert node.cache_hit is False
 
