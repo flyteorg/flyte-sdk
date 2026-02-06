@@ -1,15 +1,14 @@
 """Unit tests for Anthropic agents plugin."""
 
+import flyte
 import pytest
 
-import flyte
 from flyteplugins.anthropic import Agent, function_tool
 from flyteplugins.anthropic.agents._function_tools import (
     FunctionTool,
     _get_function_schema,
     _python_type_to_json_schema,
 )
-
 
 # -- Type conversion tests --
 

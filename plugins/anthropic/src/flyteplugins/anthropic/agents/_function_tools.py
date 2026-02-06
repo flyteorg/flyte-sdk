@@ -11,8 +11,9 @@ import typing
 from dataclasses import dataclass, field
 from functools import partial
 
-import anthropic
 from flyte._task import AsyncFunctionTaskTemplate, TaskTemplate
+
+import anthropic
 
 # Type mapping from Python types to JSON schema types
 TYPE_MAP: dict[type, str] = {
@@ -244,8 +245,7 @@ async def run_agent(
 
     if not api_key:
         raise ValueError(
-            "Anthropic API key is required. Set ANTHROPIC_API_KEY environment variable "
-            "or pass api_key parameter."
+            "Anthropic API key is required. Set ANTHROPIC_API_KEY environment variable or pass api_key parameter."
         )
 
     client = anthropic.AsyncAnthropic(api_key=api_key)
@@ -283,12 +283,14 @@ async def run_agent(
             if block.type == "text":
                 assistant_content.append({"type": "text", "text": block.text})
             elif block.type == "tool_use":
-                assistant_content.append({
-                    "type": "tool_use",
-                    "id": block.id,
-                    "name": block.name,
-                    "input": block.input,
-                })
+                assistant_content.append(
+                    {
+                        "type": "tool_use",
+                        "id": block.id,
+                        "name": block.name,
+                        "input": block.input,
+                    }
+                )
 
                 # Execute the tool
                 tool = tool_map.get(block.name)
@@ -302,11 +304,13 @@ async def run_agent(
                     except Exception as e:
                         result = f"Error executing tool: {e}"
 
-                tool_results.append({
-                    "type": "tool_result",
-                    "tool_use_id": block.id,
-                    "content": result,
-                })
+                tool_results.append(
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": block.id,
+                        "content": result,
+                    }
+                )
 
         # Add assistant message and tool results to conversation
         messages.append({"role": "assistant", "content": assistant_content})

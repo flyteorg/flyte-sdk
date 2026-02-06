@@ -16,8 +16,9 @@ to make a sandwich.
 import asyncio
 from typing import Optional
 
+from flyteplugins.anthropic import function_tool, run_agent
+
 import flyte
-from flyteplugins.anthropic import Agent, function_tool, run_agent
 
 agent_env = flyte.TaskEnvironment(
     "anthropic-agent",
@@ -97,7 +98,11 @@ async def sandwich_agent(goals: list[str]) -> list[str]:
             result = await run_agent(
                 prompt=goal,
                 tools=tools,
-                system="You are a sandwich-making assistant. Use the available tools to make sandwiches according to user requests. Always get ingredients before spreading them, and assemble the sandwich before eating it.",
+                system=(
+                    "You are a sandwich-making assistant. Use the available tools to make"
+                    " sandwiches according to user requests. Always get ingredients before"
+                    " spreading them, and assemble the sandwich before eating it."
+                ),
                 model="claude-sonnet-4-20250514",
             )
             return result
