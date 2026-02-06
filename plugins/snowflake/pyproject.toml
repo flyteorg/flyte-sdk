@@ -13,7 +13,6 @@ dependencies = [
 
 [project.optional-dependencies]
 dataframe = [
-    "pandas",
     "snowflake-connector-python[pandas]",
 ]
 
