@@ -559,33 +559,15 @@ class _Runner:
 
         if self._tracker is not None:
             controller._tracker = self._tracker
-            self._tracker.record_start(
-                action_id=action.name,
-                task_name=obj.name,
-                parent_id=None,
-                inputs=obj.native_interface.convert_to_kwargs(*args, **kwargs),
-                output_path=str(output_path),
-                has_report=obj.report,
-            )
 
         with ctx.replace_task_context(tctx):
             # make the local version always runs on a different thread, returns a wrapped future.
-            try:
-                if obj._call_as_synchronous:
-                    fut = controller.submit_sync(obj, *args, **kwargs)
-                    awaitable = asyncio.wrap_future(fut)
-                    outputs = await awaitable
-                else:
-                    outputs = await controller.submit(obj, *args, **kwargs)
-            except Exception:
-                if self._tracker is not None:
-                    import traceback
-
-                    self._tracker.record_failure(action_id=action.name, error=traceback.format_exc())
-                raise
-
-        if self._tracker is not None:
-            self._tracker.record_complete(action_id=action.name, outputs=outputs)
+            if obj._call_as_synchronous:
+                fut = controller.submit_sync(obj, *args, **kwargs)
+                awaitable = asyncio.wrap_future(fut)
+                outputs = await awaitable
+            else:
+                outputs = await controller.submit(obj, *args, **kwargs)
 
         class _LocalRun(Run):
             def __init__(self, outputs: Tuple[Any, ...] | Any):
@@ -762,8 +744,10 @@ def with_runcontext(
         when guessing python types from literal types. If false (default), it will return the generic
         flyte.io.DataFrame. This option is automatically set to True if interactive_mode is True unless overridden
         explicitly by this parameter.
+    :param _tracker: This is an internal only parameter used by the CLI to render the TUI.
 
     :return: runner
+
     """
     if mode == "hybrid" and not name and not run_base_dir:
         raise ValueError("Run name and run base dir are required for hybrid mode")

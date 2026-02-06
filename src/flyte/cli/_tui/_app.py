@@ -11,12 +11,14 @@ from textual.widgets import Footer, Header, Static, Tree
 from textual.widgets.tree import TreeNode
 from textual.worker import Worker, WorkerState
 
+from rich.text import Text
+
 from ._tracker import ActionNode, ActionStatus, ActionTracker
 
 _STATUS_ICON = {
-    ActionStatus.RUNNING: ">",
-    ActionStatus.SUCCEEDED: "ok",
-    ActionStatus.FAILED: "FAIL",
+    ActionStatus.RUNNING: ("●", "dodger_blue1"),
+    ActionStatus.SUCCEEDED: ("✓", "green"),
+    ActionStatus.FAILED: ("✗", "red"),
 }
 
 
@@ -26,11 +28,38 @@ def _elapsed(node: ActionNode) -> str:
     return ""
 
 
-def _label(node: ActionNode) -> str:
-    icon = _STATUS_ICON[node.status]
-    elapsed = _elapsed(node)
-    suffix = f" ({elapsed})" if elapsed else ""
-    return f"[{icon}] {node.task_name}{suffix}"
+def _cache_icon(node: ActionNode) -> str:
+    if node.cache_hit:
+        return " $"  # cache hit
+    if node.cache_enabled:
+        return " ~"  # cache enabled but miss
+    return ""
+
+
+def _display_name(node: ActionNode) -> str:
+    return node.short_name if node.short_name else node.task_name
+
+
+def _is_group_node(node: ActionNode) -> bool:
+    return node.action_id.startswith("__group__")
+
+
+def _label(node: ActionNode, children_map: dict[str, list[str]] | None = None) -> Text:
+    icon_char, icon_color = _STATUS_ICON[node.status]
+    label = Text()
+    label.append(icon_char, style=icon_color)
+
+    if _is_group_node(node):
+        count = len(children_map.get(node.action_id, [])) if children_map else 0
+        elapsed = _elapsed(node)
+        suffix = f" ({elapsed})" if elapsed else ""
+        label.append(f" {_display_name(node)} [{count}]{suffix}")
+    else:
+        cache = _cache_icon(node)
+        elapsed = _elapsed(node)
+        suffix = f" ({elapsed})" if elapsed else ""
+        label.append(f"{cache} {_display_name(node)}{suffix}")
+    return label
 
 
 def _pretty_json(obj: Any) -> str:
@@ -43,10 +72,15 @@ def _pretty_json(obj: Any) -> str:
 
 
 class ActionTreeWidget(Tree[str]):
-    """Left panel: navigable tree rebuilt from tracker snapshots."""
+    """Left panel: navigable action tree.
+
+    The invisible Textual root is hidden via ``show_root=False``.
+    The first real action becomes the visible top-level node.
+    """
 
     def __init__(self, tracker: ActionTracker, **kwargs: Any) -> None:
         super().__init__("Actions", **kwargs)
+        self.show_root = False
         self._tracker = tracker
         self._node_map: dict[str, TreeNode[str]] = {}
 
@@ -62,7 +96,7 @@ class ActionTreeWidget(Tree[str]):
         for action_id, tree_node in list(self._node_map.items()):
             action = nodes.get(action_id)
             if action is not None:
-                tree_node.set_label(_label(action))
+                tree_node.set_label(_label(action, children))
 
     def _sync_node(
         self,
@@ -75,7 +109,7 @@ class ActionTreeWidget(Tree[str]):
             action = nodes.get(action_id)
             if action is None:
                 return
-            tree_node = parent.add(_label(action), data=action_id, expand=True)
+            tree_node = parent.add(_label(action, children), data=action_id, expand=True)
             self._node_map[action_id] = tree_node
         for child_id in children.get(action_id, []):
             self._sync_node(child_id, self._node_map[action_id], children, nodes)
@@ -95,7 +129,11 @@ class _DetailBox(Static):
 
 
 class DetailPanel(VerticalScroll):
-    """Right panel: separate boxes for task details, report, inputs, outputs."""
+    """Right panel: separate boxes for task details, inputs, outputs.
+
+    Report box is only mounted when the selected action has a report.
+    Context box is only shown when context data is present.
+    """
 
     action_id: reactive[str | None] = reactive(None)
 
@@ -107,6 +145,7 @@ class DetailPanel(VerticalScroll):
         yield _DetailBox(id="box-task-details")
         yield _DetailBox(id="box-report")
         yield _DetailBox(id="box-inputs")
+        yield _DetailBox(id="box-context")
         yield _DetailBox(id="box-outputs")
 
     def on_mount(self) -> None:
@@ -123,6 +162,7 @@ class DetailPanel(VerticalScroll):
             task_box = self.query_one("#box-task-details", _DetailBox)
             report_box = self.query_one("#box-report", _DetailBox)
             inputs_box = self.query_one("#box-inputs", _DetailBox)
+            context_box = self.query_one("#box-context", _DetailBox)
             outputs_box = self.query_one("#box-outputs", _DetailBox)
         except Exception:
             return
@@ -130,24 +170,40 @@ class DetailPanel(VerticalScroll):
         aid = self.action_id
         if aid is None:
             task_box.update("Select an action to view details.")
-            report_box.update("")
-            inputs_box.update("")
-            outputs_box.update("")
             task_box.border_title = "Task Details"
-            report_box.border_title = "Report"
+            report_box.display = False
+            inputs_box.update("")
             inputs_box.border_title = "Inputs"
+            context_box.display = False
+            outputs_box.update("")
             outputs_box.border_title = "Outputs"
             return
 
         node = self._tracker.get_action(aid)
         if node is None:
             task_box.update(f"Action {aid} not found.")
-            report_box.update("")
+            report_box.display = False
             inputs_box.update("")
+            context_box.display = False
             outputs_box.update("")
             return
 
         # -- Task Details box --
+        if _is_group_node(node):
+            task_box.border_title = "Group Details"
+            details: list[str] = []
+            details.append(f"group:   {node.task_name}")
+            details.append(f"status:  {node.status.value}")
+            elapsed = _elapsed(node)
+            if elapsed:
+                details.append(f"duration:   {elapsed}")
+            task_box.update("\n".join(details))
+            report_box.display = False
+            inputs_box.display = False
+            context_box.display = False
+            outputs_box.display = False
+            return
+
         task_box.border_title = "Task Details"
         details: list[str] = []
         details.append(f"task name:  {node.task_name}")
@@ -162,14 +218,16 @@ class DetailPanel(VerticalScroll):
         details.append(f"cache:      {cache_str}")
         task_box.update("\n".join(details))
 
-        # -- Report box --
-        report_box.border_title = "Report"
+        # -- Report box (only when available) --
         if node.has_report and node.output_path:
+            report_box.border_title = "Report"
             report_box.update(f"{node.output_path}/report.html")
+            report_box.display = True
         else:
-            report_box.update("(no report)")
+            report_box.display = False
 
         # -- Inputs box --
+        inputs_box.display = True
         inputs_box.border_title = "Inputs"
         input_parts: list[str] = []
         if node.output_path:
@@ -178,7 +236,16 @@ class DetailPanel(VerticalScroll):
         input_parts.append(_pretty_json(node.inputs))
         inputs_box.update("\n".join(input_parts))
 
+        # -- Context box (only when available) --
+        if node.context:
+            context_box.border_title = "Context"
+            context_box.update(_pretty_json(node.context))
+            context_box.display = True
+        else:
+            context_box.display = False
+
         # -- Outputs / Error box --
+        outputs_box.display = True
         if node.error:
             outputs_box.border_title = "Error"
             error_parts: list[str] = []
@@ -197,21 +264,51 @@ class DetailPanel(VerticalScroll):
             outputs_box.update("\n".join(output_parts))
 
 
+# Flyte brand purple palette
+_FLYTE_PURPLE = "#7652a2"
+_FLYTE_PURPLE_LIGHT = "#f7f5fd"
+_FLYTE_PURPLE_DARK = "#171020"
+_FLYTE_BORDER = "#DEDDE4"
+
+
 class FlyteTUIApp(App[None]):
     """Interactive TUI for ``flyte run --local --tui``."""
 
-    CSS = """
-    Horizontal {
+    CSS = f"""
+    Screen {{
+        background: {_FLYTE_PURPLE_DARK};
+    }}
+    Header {{
+        background: {_FLYTE_PURPLE};
+        color: {_FLYTE_PURPLE_LIGHT};
+    }}
+    Footer {{
+        background: {_FLYTE_PURPLE};
+        color: {_FLYTE_PURPLE_LIGHT};
+    }}
+    Horizontal {{
         height: 1fr;
-    }
-    ActionTreeWidget {
+    }}
+    ActionTreeWidget {{
         width: 1fr;
         min-width: 30;
-        border: solid green;
-    }
-    DetailPanel {
+        border: solid {_FLYTE_PURPLE};
+        border-title-color: {_FLYTE_PURPLE_LIGHT};
+        background: {_FLYTE_PURPLE_DARK};
+        color: {_FLYTE_PURPLE_LIGHT};
+    }}
+    DetailPanel {{
         width: 2fr;
-    }
+        background: {_FLYTE_PURPLE_DARK};
+    }}
+    _DetailBox {{
+        border: solid {_FLYTE_PURPLE};
+        border-title-color: {_FLYTE_PURPLE_LIGHT};
+        padding: 0 1;
+        margin-bottom: 1;
+        height: auto;
+        color: {_FLYTE_PURPLE_LIGHT};
+    }}
     """
 
     BINDINGS: ClassVar[list[BindingType]] = [
@@ -232,7 +329,9 @@ class FlyteTUIApp(App[None]):
     def compose(self) -> ComposeResult:
         yield Header()
         with Horizontal():
-            yield ActionTreeWidget(self._tracker, id="action-tree")
+            tree = ActionTreeWidget(self._tracker, id="action-tree")
+            tree.border_title = "Actions"
+            yield tree
             yield DetailPanel(self._tracker, id="detail-panel")
         yield Footer()
 

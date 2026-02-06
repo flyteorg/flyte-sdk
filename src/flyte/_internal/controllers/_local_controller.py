@@ -133,15 +133,20 @@ class LocalController:
                 if i < len(param_names):
                     native_inputs[param_names[i]] = arg
             native_inputs.update(kwargs)
+            # If the parent action isn't tracked yet, this is the top-level call
+            parent_id = tctx.action.name if self._tracker.get_action(tctx.action.name) else None
             self._tracker.record_start(
                 action_id=sub_action_id.name,
                 task_name=_task.name,
-                parent_id=tctx.action.name,
+                short_name=_task.short_name if _task.short_name != _task.name else None,
+                parent_id=parent_id,
                 inputs=native_inputs,
                 output_path=sub_action_output_path,
                 has_report=_task.report,
                 cache_enabled=cache_enabled,
                 cache_hit=cache_hit,
+                context=tctx.custom_context or None,
+                group=tctx.group_data.name if tctx.group_data else None,
             )
 
         if out is None:
@@ -274,7 +279,7 @@ class LocalController:
             converted_outputs = await convert.convert_from_native_to_outputs(info.output, info.interface, info.name)
             assert converted_outputs
             if self._tracker is not None:
-                self._tracker.record_complete(action_id=info.action.name, outputs=info.output)
+                self._tracker.record_complete(action_id=info.action.name, outputs=converted_outputs)
         elif info.error:
             # If there is an error, convert it to a native error
             converted_error = convert.convert_from_native_to_error(info.error)
