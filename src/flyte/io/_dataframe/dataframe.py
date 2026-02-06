@@ -92,8 +92,8 @@ class DataFrame(BaseModel, SerializableType):
 
         lt = TypeEngine.to_literal_type(type(self))
         engine = DataFrameTransformerEngine()
-        lv = syncify._bg_loop.call_in_loop_sync(engine.to_literal(self, type(self), lt))
-        sd = DataFrame(uri=lv.scalar.structured_dataset.uri)
+        lv = syncify._bg_loop.call_in_loop_sync(engine.to_literal(self, type(self), lt))  # type: ignore
+        sd = DataFrame(uri=lv.scalar.structured_dataset.uri)  # type: ignore
         sd.format = lv.scalar.structured_dataset.metadata.structured_dataset_type.format
         return {
             "uri": sd.uri,

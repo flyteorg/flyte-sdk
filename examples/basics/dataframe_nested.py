@@ -1,6 +1,6 @@
 """Repro: nested Pydantic+FlyteDataFrame deadlock via Python API.
 
-    PYTHONPATH=. .venv/bin/python test_pydantic_flyte_df_pyapi.py
+PYTHONPATH=. .venv/bin/python test_pydantic_flyte_df_pyapi.py
 """
 
 import signal
@@ -8,10 +8,11 @@ import sys
 import threading
 import traceback
 
-import flyte
 import pandas as pd
-from flyte.io import DataFrame as FlyteDataFrame
 from pydantic import BaseModel
+
+import flyte
+from flyte.io import DataFrame as FlyteDataFrame
 
 env = flyte.TaskEnvironment(
     name="repro",
