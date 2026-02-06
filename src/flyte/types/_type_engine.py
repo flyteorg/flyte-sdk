@@ -375,12 +375,66 @@ class PydanticTransformer(TypeTransformer[BaseModel]):
             annotation=TypeAnnotation(annotations=meta_struct),
         )
 
+    async def _invoke_lazy_uploaders(self, obj: typing.Any) -> None:
+        """
+        Recursively find and invoke lazy uploaders on Flyte IO types (DataFrame, File, Dir)
+        nested within a Pydantic model. This must be done BEFORE model_dump_json() is called
+        to avoid deadlocks when running in the syncify context.
+
+        The lazy uploaders set the URI on the objects, so subsequent serialization
+        can just return the existing URI without invoking async operations.
+        """
+        from flyte.io import DataFrame, Dir, File
+
+        if obj is None:
+            return
+
+        # Handle Flyte IO types with lazy uploaders
+        if isinstance(obj, DataFrame) and obj.lazy_uploader:
+            uploaded = await obj.lazy_uploader()
+            # Copy the uploaded URI and metadata back to the original object
+            obj.uri = uploaded.uri
+            obj.format = uploaded.format
+            obj._lazy_uploader = None  # Clear to avoid re-uploading
+            return
+
+        if isinstance(obj, (File, Dir)) and obj.lazy_uploader:
+            hash_val, uri = await obj.lazy_uploader()
+            obj.path = uri
+            if hash_val:
+                obj.hash = hash_val
+            obj._lazy_uploader = None  # Clear to avoid re-uploading
+            return
+
+        # Recursively process Pydantic models
+        if isinstance(obj, BaseModel):
+            for field_name in obj.model_fields:
+                field_value = getattr(obj, field_name, None)
+                await self._invoke_lazy_uploaders(field_value)
+            return
+
+        # Handle collections
+        if isinstance(obj, dict):
+            for value in obj.values():
+                await self._invoke_lazy_uploaders(value)
+            return
+
+        if isinstance(obj, (list, tuple)):
+            for item in obj:
+                await self._invoke_lazy_uploaders(item)
+            return
+
     async def to_literal(
         self,
         python_val: BaseModel,
         python_type: Type[BaseModel],
         expected: LiteralType,
     ) -> Literal:
+        # Pre-process the model to invoke any lazy uploaders on nested Flyte IO types.
+        # This prevents deadlocks when the @model_serializer tries to run async code
+        # from within the syncify context.
+        await self._invoke_lazy_uploaders(python_val)
+
         json_str = python_val.model_dump_json()
         dict_obj = json.loads(json_str)
         msgpack_bytes = msgpack.dumps(dict_obj)
