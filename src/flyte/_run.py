@@ -560,14 +560,40 @@ class _Runner:
         if self._tracker is not None:
             ctx = Context(ctx.data.replace(tracker=self._tracker))
 
-        with ctx.replace_task_context(tctx):
-            # make the local version always runs on a different thread, returns a wrapped future.
-            if obj._call_as_synchronous:
-                fut = controller.submit_sync(obj, *args, **kwargs)
-                awaitable = asyncio.wrap_future(fut)
-                outputs = await awaitable
-            else:
-                outputs = await controller.submit(obj, *args, **kwargs)
+        from flyte._initialize import is_persistence_enabled
+
+        _persist = is_persistence_enabled()
+        run_name = action.run_name or action.name
+
+        if _persist:
+            from flyte._persistence._run_store import RunStore
+
+            RunStore.initialize_sync()
+            controller.enable_persistence(run_name)
+            RunStore.record_start_sync(
+                run_name=run_name, action_name="a0", task_name=obj.name, parent_id=None,
+            )
+
+        try:
+            with ctx.replace_task_context(tctx):
+                # make the local version always runs on a different thread, returns a wrapped future.
+                if obj._call_as_synchronous:
+                    fut = controller.submit_sync(obj, *args, **kwargs)
+                    awaitable = asyncio.wrap_future(fut)
+                    outputs = await awaitable
+                else:
+                    outputs = await controller.submit(obj, *args, **kwargs)
+        except Exception as e:
+            if _persist:
+                from flyte._persistence._run_store import RunStore
+
+                RunStore.record_failure_sync(run_name=run_name, action_name="a0", error=str(e))
+            raise
+        else:
+            if _persist:
+                from flyte._persistence._run_store import RunStore
+
+                RunStore.record_complete_sync(run_name=run_name, action_name="a0")
 
         class _LocalRun(Run):
             def __init__(self, outputs: Tuple[Any, ...] | Any):

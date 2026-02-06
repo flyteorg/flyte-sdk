@@ -8,7 +8,7 @@ from typing import Any, Callable, Tuple, TypeVar
 
 import flyte.errors
 from flyte._cache.cache import VersionParameters, cache_from_request
-from flyte._cache.local_cache import LocalTaskCache
+from flyte._persistence._task_cache import LocalTaskCache
 from flyte._context import internal_ctx
 from flyte._internal.controllers import TaskCallSequencer, TraceInfo
 from flyte._internal.runtime import convert
@@ -74,6 +74,12 @@ class LocalController:
         logger.debug("LocalController init")
         self._runner_map: dict[str, _TaskRunner] = {}
         self._sequencer = TaskCallSequencer()
+        self._persist = False
+        self._run_name: str | None = None
+
+    def enable_persistence(self, run_name: str):
+        self._persist = True
+        self._run_name = run_name
 
     @property
     def _tracker(self) -> Any | None:
@@ -129,18 +135,28 @@ class LocalController:
                     f"Cache hit for task '{_task.name}' (version: {cache_version}), getting result from cache..."
                 )
 
-        if self._tracker is not None:
+        # Build common metadata used by both the TUI tracker and persistence.
+        # Hoisted so both consumers see identical data.
+        native_inputs: dict[str, Any] | None = None
+        parent_id: str | None = None
+        rendered_links: list[tuple[str, str]] | None = None
+
+        if self._tracker is not None or self._persist:
             param_names = list(_task.native_interface.inputs.keys())
-            native_inputs: dict[str, Any] = {}
+            native_inputs = {}
             for i, arg in enumerate(args):
                 if i < len(param_names):
                     native_inputs[param_names[i]] = arg
             native_inputs.update(kwargs)
-            # If the parent action isn't tracked yet, this is the top-level call
-            parent_id = tctx.action.name if self._tracker.get_action(tctx.action.name) else None
+
+            if self._tracker is not None:
+                # If the parent action isn't tracked yet, this is the top-level call
+                parent_id = tctx.action.name if self._tracker.get_action(tctx.action.name) else None
+            else:
+                parent_id = None
+
             # Render log links for this action, replacing template placeholders
             # with concrete local values (see task_serde.py for remote equivalents).
-            rendered_links: list[tuple[str, str]] | None = None
             if _task.links:
                 rendered_links = []
                 action = tctx.action
@@ -155,6 +171,8 @@ class LocalController:
                         pod_name="localhost",
                     )
                     rendered_links.append((link.name, uri))
+
+        if self._tracker is not None:
             self._tracker.record_start(
                 action_id=sub_action_id.name,
                 task_name=_task.name,
@@ -167,6 +185,26 @@ class LocalController:
                 cache_hit=cache_hit,
                 context=tctx.custom_context or None,
                 group=tctx.group_data.name if tctx.group_data else None,
+                log_links=rendered_links,
+            )
+
+        if self._persist and self._run_name:
+            from flyte._persistence._run_store import RunStore
+
+            persist_parent = "a0" if parent_id is None else parent_id
+            RunStore.record_start_sync(
+                run_name=self._run_name,
+                action_name=sub_action_id.name,
+                task_name=_task.name,
+                parent_id=persist_parent,
+                short_name=_task.short_name if _task.short_name != _task.name else None,
+                inputs=native_inputs,
+                output_path=sub_action_output_path,
+                has_report=bool(_task.report),
+                cache_enabled=cache_enabled,
+                cache_hit=cache_hit,
+                context=tctx.custom_context or None,
+                group_name=tctx.group_data.name if tctx.group_data else None,
                 log_links=rendered_links,
             )
 
@@ -187,6 +225,12 @@ class LocalController:
             if err:
                 if self._tracker is not None:
                     self._tracker.record_failure(action_id=sub_action_id.name, error=str(err))
+                if self._persist and self._run_name:
+                    from flyte._persistence._run_store import RunStore
+
+                    RunStore.record_failure_sync(
+                        run_name=self._run_name, action_name=sub_action_id.name, error=str(err)
+                    )
                 exc = convert.convert_error_to_native(err)
                 if exc:
                     raise exc
@@ -199,6 +243,21 @@ class LocalController:
 
         if self._tracker is not None:
             self._tracker.record_complete(action_id=sub_action_id.name, outputs=out)
+
+        if self._persist and self._run_name:
+            from flyte._persistence._run_store import RunStore
+
+            outputs_str = None
+            if out is not None:
+                try:
+                    from flyte.types._string_literals import literal_string_repr
+
+                    outputs_str = repr(literal_string_repr(out))
+                except Exception:
+                    outputs_str = repr(out)
+            RunStore.record_complete_sync(
+                run_name=self._run_name, action_name=sub_action_id.name, outputs=outputs_str
+            )
 
         if _task.native_interface.outputs:
             if out is None:
