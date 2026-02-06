@@ -2270,7 +2270,7 @@ NoneTransformer = SimpleTransformer(
     type(None),
     types_pb2.LiteralType(simple=types_pb2.SimpleType.NONE),
     lambda x: Literal(scalar=Scalar(none_type=Void())),
-    lambda x: _check_and_convert_void(x),
+    _check_and_convert_void,
 )
 
 

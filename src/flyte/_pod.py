@@ -3,7 +3,6 @@ from typing import TYPE_CHECKING, Dict, Optional
 
 if TYPE_CHECKING:
     from flyteidl2.core.tasks_pb2 import K8sPod
-    from kubernetes.client import V1PodSpec
 
 
 _PRIMARY_CONTAINER_NAME_FIELD = "primary_container_name"
@@ -14,14 +13,17 @@ _PRIMARY_CONTAINER_DEFAULT_NAME = "primary"
 class PodTemplate(object):
     """Custom PodTemplate specification for a Task."""
 
-    pod_spec: Optional["V1PodSpec"] = field(default_factory=lambda: V1PodSpec())
+    pod_spec: Optional["V1PodSpec"] = None
     primary_container_name: str = _PRIMARY_CONTAINER_DEFAULT_NAME
     labels: Optional[Dict[str, str]] = None
     annotations: Optional[Dict[str, str]] = None
 
     def to_k8s_pod(self) -> "K8sPod":
         from flyteidl2.core.tasks_pb2 import K8sObjectMetadata, K8sPod
-        from kubernetes.client import ApiClient
+        from kubernetes.client import ApiClient, V1PodSpec
+
+        if self.pod_spec is None:
+            self.pod_spec = V1PodSpec()
 
         return K8sPod(
             metadata=K8sObjectMetadata(labels=self.labels, annotations=self.annotations),
