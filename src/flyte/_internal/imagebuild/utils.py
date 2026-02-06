@@ -9,7 +9,7 @@ from flyte._image import DockerIgnore, Image
 from flyte._logging import logger
 
 
-def copy_files_to_context(src: Path, context_path: Path, ignore_patterns: list[str] = []) -> Path:
+def copy_files_to_context(src: Path, context_path: Path, ignore_patterns: list[str] = STANDARD_IGNORE_PATTERNS) -> Path:
     """
     This helper function ensures that absolute paths that users specify are converted correctly to a path in the
     context directory. Doing this prevents collisions while ensuring files are available in the context.
@@ -23,6 +23,8 @@ def copy_files_to_context(src: Path, context_path: Path, ignore_patterns: list[s
 
     :param src: The source path to copy
     :param context_path: The context path where the files should be copied to
+    :param ignore_patterns: A list of ignore patterns to apply when copying files. This is used to filter out files
+        that should not be included in the Docker build context, such as those specified in a .dockerignore file.
     """
     if src.is_absolute() or ".." in str(src):
         rel_path = PurePath(*src.parts[1:])
@@ -33,10 +35,7 @@ def copy_files_to_context(src: Path, context_path: Path, ignore_patterns: list[s
     if src.is_dir():
         from .docker import PatternMatcher
 
-        # Add ** prefix to match patterns anywhere in tree
-        default_ignore_patterns = ["**/.idea", "**/.venv", "**/__pycache__", "**/*.pyc"]
-        all_patterns = ignore_patterns + default_ignore_patterns
-        pm = PatternMatcher(all_patterns)
+        pm = PatternMatcher(ignore_patterns)
 
         # Use walk() to get list of files to include
         for rel_file in pm.walk(str(src)):
@@ -158,6 +157,6 @@ def get_uv_editable_install_mounts(
         mounts.append(
             "--mount=type=bind,"
             f"src={editable_dep_within_context.relative_to(context_path)},"
-            f"target={editable_dep.relative_to(project_root)}"
+            f"target={editable_dep.relative_to(project_root)},rw"
         )
     return " ".join(mounts)

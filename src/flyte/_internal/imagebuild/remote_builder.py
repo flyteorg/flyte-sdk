@@ -250,13 +250,13 @@ def _get_layers_proto(image: Image, context_path: Path) -> "image_definition_pb2
             )
             layers.append(apt_layer)
         elif isinstance(layer, PythonWheels):
-            dst_path = copy_files_to_context(layer.wheel_dir, context_path)
+            dst_path = copy_files_to_context(layer.wheel_dir, context_path, [])
             wheel_layer = image_definition_pb2.Layer(
                 python_wheels=image_definition_pb2.PythonWheels(
                     dir=str(dst_path.relative_to(context_path)),
                     options=pip_options,
                     secret_mounts=secret_mounts,
-                )
+                ),
             )
             layers.append(wheel_layer)
 
@@ -328,6 +328,8 @@ def _get_layers_proto(image: Image, context_path: Path) -> "image_definition_pb2
                 case "dependencies_only":
                     if pip_options.extra_args and ("--no-install-project" not in pip_options.extra_args):
                         pip_options.extra_args += " --no-install-project"
+                    else:
+                        pip_options.extra_args = "--no-install-project"
                     # Copy any editable dependencies to the context
                     # We use the docker ignore patterns to avoid copying the editable dependencies to the context.
                     standard_ignore_patterns = STANDARD_IGNORE_PATTERNS.copy()
