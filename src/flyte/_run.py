@@ -113,9 +113,11 @@ class _Runner:
         custom_context: Dict[str, str] | None = None,
         cache_lookup_scope: CacheLookupScope = "global",
         preserve_original_types: bool | None = None,
+        _tracker: Any = None,
     ):
         from flyte._tools import ipython_check
 
+        self._tracker = _tracker
         init_config = _get_init_config()
         client = init_config.client if init_config else None
         if not force_mode and client is not None:
@@ -555,14 +557,35 @@ class _Runner:
             custom_context=self._custom_context,
         )
 
+        if self._tracker is not None:
+            controller._tracker = self._tracker
+            self._tracker.record_start(
+                action_id=action.name,
+                task_name=obj.name,
+                parent_id=None,
+                inputs=obj.native_interface.convert_to_kwargs(*args, **kwargs),
+                output_path=str(output_path),
+                has_report=obj.report,
+            )
+
         with ctx.replace_task_context(tctx):
             # make the local version always runs on a different thread, returns a wrapped future.
-            if obj._call_as_synchronous:
-                fut = controller.submit_sync(obj, *args, **kwargs)
-                awaitable = asyncio.wrap_future(fut)
-                outputs = await awaitable
-            else:
-                outputs = await controller.submit(obj, *args, **kwargs)
+            try:
+                if obj._call_as_synchronous:
+                    fut = controller.submit_sync(obj, *args, **kwargs)
+                    awaitable = asyncio.wrap_future(fut)
+                    outputs = await awaitable
+                else:
+                    outputs = await controller.submit(obj, *args, **kwargs)
+            except Exception:
+                if self._tracker is not None:
+                    import traceback
+
+                    self._tracker.record_failure(action_id=action.name, error=traceback.format_exc())
+                raise
+
+        if self._tracker is not None:
+            self._tracker.record_complete(action_id=action.name, outputs=outputs)
 
         class _LocalRun(Run):
             def __init__(self, outputs: Tuple[Any, ...] | Any):
@@ -683,6 +706,7 @@ def with_runcontext(
     custom_context: Dict[str, str] | None = None,
     cache_lookup_scope: CacheLookupScope = "global",
     preserve_original_types: bool = False,
+    _tracker: Any = None,
 ) -> _Runner:
     """
     Launch a new run with the given parameters as the context.
@@ -772,6 +796,7 @@ def with_runcontext(
         custom_context=custom_context,
         cache_lookup_scope=cache_lookup_scope,
         preserve_original_types=preserve_original_types,
+        _tracker=_tracker,
     )
 
 

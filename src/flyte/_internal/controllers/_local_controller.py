@@ -10,7 +10,7 @@ import flyte.errors
 from flyte._cache.cache import VersionParameters, cache_from_request
 from flyte._cache.local_cache import LocalTaskCache
 from flyte._context import internal_ctx
-from flyte._internal.controllers import TraceInfo
+from flyte._internal.controllers import TaskCallSequencer, TraceInfo
 from flyte._internal.runtime import convert
 from flyte._internal.runtime.entrypoints import direct_dispatch
 from flyte._internal.runtime.types_serde import transform_native_to_typed_interface
@@ -73,6 +73,8 @@ class LocalController:
     def __init__(self):
         logger.debug("LocalController init")
         self._runner_map: dict[str, _TaskRunner] = {}
+        self._tracker: Any | None = None
+        self._sequencer = TaskCallSequencer()
 
     @log
     async def submit(self, _task: TaskTemplate, *args, **kwargs) -> Any:
@@ -88,8 +90,9 @@ class LocalController:
         inputs_hash = convert.generate_inputs_hash_from_proto(inputs.proto_inputs)
         task_interface = transform_native_to_typed_interface(_task.interface)
 
+        task_call_seq = self._sequencer.next_seq(_task, tctx.action.name)
         sub_action_id, sub_action_output_path = convert.generate_sub_action_id_and_output_path(
-            tctx, _task.name, inputs_hash, 0
+            tctx, _task.name, inputs_hash, task_call_seq
         )
         sub_action_raw_data_path = tctx.raw_data_path
         # Make sure the output path exists
@@ -113,13 +116,33 @@ class LocalController:
         )
 
         out = None
+        cache_hit = False
         # We only get output from cache if the cache behavior is set to auto
         if task_cache.behavior == "auto":
             out = await LocalTaskCache.get(cache_key)
             if out is not None:
+                cache_hit = True
                 logger.info(
                     f"Cache hit for task '{_task.name}' (version: {cache_version}), getting result from cache..."
                 )
+
+        if self._tracker is not None:
+            param_names = list(_task.native_interface.inputs.keys())
+            native_inputs: dict[str, Any] = {}
+            for i, arg in enumerate(args):
+                if i < len(param_names):
+                    native_inputs[param_names[i]] = arg
+            native_inputs.update(kwargs)
+            self._tracker.record_start(
+                action_id=sub_action_id.name,
+                task_name=_task.name,
+                parent_id=tctx.action.name,
+                inputs=native_inputs,
+                output_path=sub_action_output_path,
+                has_report=_task.report,
+                cache_enabled=cache_enabled,
+                cache_hit=cache_hit,
+            )
 
         if out is None:
             out, err = await direct_dispatch(
@@ -136,6 +159,8 @@ class LocalController:
             )
 
             if err:
+                if self._tracker is not None:
+                    self._tracker.record_failure(action_id=sub_action_id.name, error=str(err))
                 exc = convert.convert_error_to_native(err)
                 if exc:
                     raise exc
@@ -145,6 +170,9 @@ class LocalController:
             # store into cache
             if cache_enabled and out is not None:
                 await LocalTaskCache.set(cache_key, out)
+
+        if self._tracker is not None:
+            self._tracker.record_complete(action_id=sub_action_id.name, outputs=out)
 
         if _task.native_interface.outputs:
             if out is None:
@@ -196,13 +224,30 @@ class LocalController:
             assert converted_inputs
 
         inputs_hash = convert.generate_inputs_hash_from_proto(converted_inputs.proto_inputs)
+        invoke_seq_num = self._sequencer.next_seq(_func, tctx.action.name)
         action_id, action_output_path = convert.generate_sub_action_id_and_output_path(
             tctx,
             _func.__name__,
             inputs_hash,
-            0,
+            invoke_seq_num,
         )
         assert action_output_path
+
+        if self._tracker is not None:
+            native_inputs: dict[str, Any] = {}
+            param_names = list(_interface.inputs.keys())
+            for i, arg in enumerate(args):
+                if i < len(param_names):
+                    native_inputs[param_names[i]] = arg
+            native_inputs.update(kwargs)
+            self._tracker.record_start(
+                action_id=action_id.name,
+                task_name=_func.__name__,
+                parent_id=tctx.action.name,
+                inputs=native_inputs,
+                output_path=action_output_path,
+            )
+
         return (
             TraceInfo(
                 name=_func.__name__,
@@ -228,10 +273,14 @@ class LocalController:
             # If the result is not an AsyncGenerator, convert it directly
             converted_outputs = await convert.convert_from_native_to_outputs(info.output, info.interface, info.name)
             assert converted_outputs
+            if self._tracker is not None:
+                self._tracker.record_complete(action_id=info.action.name, outputs=info.output)
         elif info.error:
             # If there is an error, convert it to a native error
             converted_error = convert.convert_from_native_to_error(info.error)
             assert converted_error
+            if self._tracker is not None:
+                self._tracker.record_failure(action_id=info.action.name, error=str(info.error))
         assert info.action
         assert info.start_time
         assert info.end_time

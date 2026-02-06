@@ -116,6 +116,17 @@ class RunArguments:
             )
         },
     )
+    tui: bool = field(
+        default=False,
+        metadata={
+            "click.option": click.Option(
+                ["--tui"],
+                is_flag=True,
+                default=False,
+                help="Show interactive TUI for local execution (requires flyte[tui]).",
+            )
+        },
+    )
     image: List[str] = field(
         default_factory=list,
         metadata={
@@ -284,6 +295,29 @@ Missing required parameter(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in mi
             console.print("[dim]Waiting for log stream...[/dim]")
             await result.show_logs.aio(max_lines=30, show_ts=True, raw=False)
 
+    def _run_with_tui(self, ctx: click.Context, config: common.CLIConfig) -> None:
+        from ._tui import launch_tui
+        from ._tui._tracker import ActionTracker
+
+        tracker = ActionTracker()
+
+        async def execute_fn():
+            import flyte
+
+            execution_context = flyte.with_runcontext(
+                copy_style=self.run_args.copy_style,
+                mode="local",
+                name=self.run_args.name,
+                raw_data_path=self.run_args.raw_data_path,
+                service_account=self.run_args.service_account,
+                log_format=config.log_format,
+                reset_root_logger=config.reset_root_logger,
+                _tracker=tracker,
+            )
+            return await execution_context.run.aio(self.obj, **ctx.params)
+
+        launch_tui(tracker, execute_fn)
+
     def invoke(self, ctx: click.Context):
         config: common.CLIConfig = common.initialize_config(
             ctx,
@@ -294,6 +328,11 @@ Missing required parameter(s): {", ".join(f"--{p[0]} (type: {p[1]})" for p in mi
             not self.run_args.no_sync_local_sys_paths,
         )
         self._validate_required_params(ctx)
+        if self.run_args.tui:
+            if not self.run_args.local:
+                raise click.UsageError("--tui can only be used with --local")
+            self._run_with_tui(ctx, config)
+            return
         # Main entry point remains very thin
         asyncio.run(self._execute_and_render(ctx, config))
 

@@ -50,6 +50,9 @@ connector = [
     "httpx",
     "prometheus-client",
 ]
+tui = [
+    "textual>=0.80",
+]
 
 [dependency-groups]
 dev = [
