@@ -25,4 +25,4 @@ async def parallel_main(n: int):
 @env.task
 async def main(n: int):
     for i in range(n):
-       await sleeper()
+        await sleeper()
