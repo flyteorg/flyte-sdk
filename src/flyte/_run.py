@@ -513,6 +513,7 @@ class _Runner:
         from flyteidl2.common import identifier_pb2
         from flyteidl2.task import common_pb2
 
+        from flyte._debug import local_ui_db
         from flyte._internal.controllers import create_controller
         from flyte._internal.controllers._local_controller import LocalController
         from flyte.remote import ActionOutputs, Run
@@ -555,14 +556,34 @@ class _Runner:
             custom_context=self._custom_context,
         )
 
-        with ctx.replace_task_context(tctx):
-            # make the local version always runs on a different thread, returns a wrapped future.
-            if obj._call_as_synchronous:
-                fut = controller.submit_sync(obj, *args, **kwargs)
-                awaitable = asyncio.wrap_future(fut)
-                outputs = await awaitable
-            else:
-                outputs = await controller.submit(obj, *args, **kwargs)
+        run_id = pathlib.Path(metadata_path).name
+        run_timer = local_ui_db.Timer()
+        run_inputs = local_ui_db.coerce_inputs(getattr(obj, "func", None), args, kwargs)
+        local_ui_db.ensure_run(
+            run_id,
+            run_inputs,
+            workflow_module=getattr(getattr(obj, "func", None), "__module__", None),
+            workflow_name=getattr(getattr(obj, "func", None), "__name__", None),
+            raw_args=run_inputs,
+        )
+
+        try:
+            with ctx.replace_task_context(tctx):
+                # make the local version always runs on a different thread, returns a wrapped future.
+                if obj._call_as_synchronous:
+                    fut = controller.submit_sync(obj, *args, **kwargs)
+                    awaitable = asyncio.wrap_future(fut)
+                    outputs = await awaitable
+                else:
+                    outputs = await controller.submit(obj, *args, **kwargs)
+        except Exception:
+            local_ui_db.update_run(
+                run_id=run_id,
+                status="failed",
+                duration_ms=run_timer.ms(),
+                output_payload={"error": "run failed"},
+            )
+            raise
 
         class _LocalRun(Run):
             def __init__(self, outputs: Tuple[Any, ...] | Any):
@@ -598,6 +619,12 @@ class _Runner:
             async def outputs(self) -> ActionOutputs:  # type: ignore[override]
                 return self._outputs
 
+        local_ui_db.update_run(
+            run_id=run_id,
+            status="completed",
+            duration_ms=run_timer.ms(),
+            output_payload={"result": outputs},
+        )
         return _LocalRun(outputs)
 
     @syncify  # type: ignore[arg-type]

@@ -1,3 +1,5 @@
+from time import sleep
+
 import flyte
 
 # TaskEnvironments provide a simple way of grouping configuration used by tasks (more later).
@@ -11,6 +13,9 @@ env = flyte.TaskEnvironment(
 @env.task
 def fn(x: int) -> int:  # type annotations are recommended.
     slope, intercept = 2, 5
+    print("Running task with input:", x)
+    sleep(2)
+    print("Finished task with output:", slope * x + intercept)
     return slope * x + intercept
 
 

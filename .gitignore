@@ -195,3 +195,5 @@ examples/remote_example.py
 config.yaml
 .claude/
 tests/flyte/internal/bin/flyte-parameters.json
+ui/frontend/node_modules/
+ui/frontend/.next/

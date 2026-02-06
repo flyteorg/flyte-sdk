@@ -4,6 +4,8 @@ import concurrent.futures
 import os
 import pathlib
 import threading
+import io as _io
+import contextlib
 from typing import Any, Callable, Tuple, TypeVar
 
 import flyte.errors
@@ -79,10 +81,28 @@ class LocalController:
         """
         Main entrypoint for submitting a task to the local controller.
         """
+        from flyte._debug import local_ui_db
+
         ctx = internal_ctx()
         tctx = ctx.data.task_context
         if not tctx:
             raise flyte.errors.RuntimeSystemError("BadContext", "Task context not initialized")
+
+        run_id = local_ui_db.get_run_id_from_context()
+        task_inputs = local_ui_db.coerce_inputs(getattr(_task, "func", None), args, kwargs)
+        if run_id:
+            local_ui_db.ensure_run(
+                run_id,
+                task_inputs,
+                workflow_module=getattr(getattr(_task, "func", None), "__module__", None),
+                workflow_name=getattr(getattr(_task, "func", None), "__name__", None),
+                raw_args=task_inputs,
+            )
+
+        start_time = local_ui_db._utc_now_iso() if run_id else ""
+        timer = local_ui_db.Timer() if run_id else None
+        status = "completed"
+        output_value = None
 
         inputs = await convert.convert_from_native_to_inputs(_task.native_interface, *args, **kwargs)
         inputs_hash = convert.generate_inputs_hash_from_proto(inputs.proto_inputs)
@@ -113,6 +133,8 @@ class LocalController:
         )
 
         out = None
+        captured_stdout = ""
+        captured_stderr = ""
         # We only get output from cache if the cache behavior is set to auto
         if task_cache.behavior == "auto":
             out = await LocalTaskCache.get(cache_key)
@@ -122,18 +144,40 @@ class LocalController:
                 )
 
         if out is None:
-            out, err = await direct_dispatch(
-                _task,
-                controller=self,
-                action=sub_action_id,
-                raw_data_path=sub_action_raw_data_path,
-                inputs=inputs,
-                version=cache_version,
-                checkpoints=tctx.checkpoints,
-                code_bundle=tctx.code_bundle,
-                output_path=sub_action_output_path,
-                run_base_dir=tctx.run_base_dir,
-            )
+            stdout_buffer: _io.StringIO | None = None
+            stderr_buffer: _io.StringIO | None = None
+            if run_id:
+                stdout_buffer = _io.StringIO()
+                stderr_buffer = _io.StringIO()
+            if stdout_buffer and stderr_buffer:
+                with contextlib.redirect_stdout(stdout_buffer), contextlib.redirect_stderr(stderr_buffer):
+                    out, err = await direct_dispatch(
+                        _task,
+                        controller=self,
+                        action=sub_action_id,
+                        raw_data_path=sub_action_raw_data_path,
+                        inputs=inputs,
+                        version=cache_version,
+                        checkpoints=tctx.checkpoints,
+                        code_bundle=tctx.code_bundle,
+                        output_path=sub_action_output_path,
+                        run_base_dir=tctx.run_base_dir,
+                    )
+            else:
+                out, err = await direct_dispatch(
+                    _task,
+                    controller=self,
+                    action=sub_action_id,
+                    raw_data_path=sub_action_raw_data_path,
+                    inputs=inputs,
+                    version=cache_version,
+                    checkpoints=tctx.checkpoints,
+                    code_bundle=tctx.code_bundle,
+                    output_path=sub_action_output_path,
+                    run_base_dir=tctx.run_base_dir,
+                )
+            captured_stdout = stdout_buffer.getvalue() if stdout_buffer else ""
+            captured_stderr = stderr_buffer.getvalue() if stderr_buffer else ""
 
             if err:
                 exc = convert.convert_error_to_native(err)
@@ -146,12 +190,49 @@ class LocalController:
             if cache_enabled and out is not None:
                 await LocalTaskCache.set(cache_key, out)
 
-        if _task.native_interface.outputs:
-            if out is None:
-                raise flyte.errors.RuntimeSystemError("BadOutput", "Task output not captured.")
-            result = await convert.convert_outputs_to_native(_task.native_interface, out)
+        try:
+            if _task.native_interface.outputs:
+                if out is None:
+                    raise flyte.errors.RuntimeSystemError("BadOutput", "Task output not captured.")
+                result = await convert.convert_outputs_to_native(_task.native_interface, out)
+                output_value = local_ui_db.maybe_float(result)
+            else:
+                result = None
             return result
-        return None
+        except Exception:
+            status = "failed"
+            raise
+        finally:
+            if run_id:
+                end_time = local_ui_db._utc_now_iso()
+                duration_ms = timer.ms() if timer else 0.0
+                task_name = getattr(_task, "name", getattr(_task, "short_name", "task"))
+                input_display = next(iter(task_inputs.values()), None)
+                input_value = local_ui_db.maybe_float(input_display)
+                report_html = local_ui_db.read_report_html(sub_action_output_path)
+                log_lines = [
+                    f"[{start_time}] task {task_name} start input={input_display!r}",
+                    f"[{end_time}] task {task_name} end output={output_value} status={status} duration_ms={duration_ms:.0f}",
+                ]
+                if captured_stdout:
+                    log_lines.append("--- stdout ---")
+                    log_lines.append(captured_stdout.rstrip())
+                if captured_stderr:
+                    log_lines.append("--- stderr ---")
+                    log_lines.append(captured_stderr.rstrip())
+                log_text = "\n".join(log_lines)
+                local_ui_db.record_task(
+                    run_id=run_id,
+                    name=task_name.split(".")[-1],
+                    input_value=input_value if input_value is not None else 0.0,
+                    output_value=output_value,
+                    status=status,
+                    start_time=start_time,
+                    end_time=end_time,
+                    duration_ms=duration_ms,
+                    log_text=log_text,
+                    report_html=report_html,
+                )
 
     def submit_sync(self, _task: TaskTemplate, *args, **kwargs) -> concurrent.futures.Future:
         name = threading.current_thread().name + f"PID:{os.getpid()}"
