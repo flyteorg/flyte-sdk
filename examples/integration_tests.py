@@ -591,9 +591,9 @@ async def test_ml_gridsearch_gpu(flyte_client):
 @pytest.mark.asyncio
 async def test_genai_vllm_app(flyte_client):
     """Test vLLM app deployment."""
-    from examples.genai.vllm.vllm_app import app
+    from examples.genai.vllm.vllm_app import vllm_app
 
-    await _deploy_and_verify(app, "test_genai_vllm_app")
+    await _deploy_and_verify(vllm_app, "test_genai_vllm_app")
 
 
 @pytest.mark.integration
@@ -601,9 +601,9 @@ async def test_genai_vllm_app(flyte_client):
 @pytest.mark.asyncio
 async def test_genai_sglang_app(flyte_client):
     """Test SGLang app deployment."""
-    from examples.genai.sglang.sglang_app import app
+    from examples.genai.sglang.sglang_app import sglang_app
 
-    await _deploy_and_verify(app, "test_genai_sglang_app")
+    await _deploy_and_verify(sglang_app, "test_genai_sglang_app")
 
 
 # =============================================================================
@@ -691,9 +691,9 @@ async def test_stress_large_fanout(flyte_client):
 @pytest.mark.asyncio
 async def test_stress_long_running(flyte_client):
     """Test long-running stress test."""
-    from examples.stress.long_running import main
+    from examples.stress.long_running import main_task
 
-    await _run_and_wait(main, "test_stress_long_running")
+    await _run_and_wait(main_task, "test_stress_long_running")
 
 
 @pytest.mark.integration
@@ -721,6 +721,6 @@ async def test_stress_large_file_io(flyte_client):
 @pytest.mark.asyncio
 async def test_stress_fanout_concurrency(flyte_client):
     """Test fanout concurrency stress test."""
-    from examples.stress.fanout_concurrency import main
+    from examples.stress.fanout_concurrency import reuse_concurrency
 
-    await _run_and_wait(main, "test_stress_fanout_concurrency")
+    await _run_and_wait(reuse_concurrency, "test_stress_fanout_concurrency")

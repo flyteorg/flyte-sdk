@@ -52,13 +52,10 @@ async def test_task1_remote_union_sync(
 
     inputs = "say test"
 
-    async def get_code_bundle():
-        return CodeBundle(
-            computed_version="v1",
-            tgz="test.tgz",
-        )
-
-    mock_code_bundler.return_value = get_code_bundle()
+    mock_code_bundler.return_value = CodeBundle(
+        computed_version="v1",
+        tgz="test.tgz",
+    )
     mock_build_image_bg.return_value = (env.name, "image_name")
 
     await _init_for_testing(
