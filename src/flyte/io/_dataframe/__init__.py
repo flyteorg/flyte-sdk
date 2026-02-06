@@ -82,21 +82,6 @@ def register_bigquery_handlers():
         )
 
 
-@functools.lru_cache(maxsize=None)
-def register_snowflake_handlers():
-    try:
-        from .snowflake import PandasToSnowflakeEncodingHandlers, SnowflakeToPandasDecodingHandler
-
-        DataFrameTransformerEngine.register(SnowflakeToPandasDecodingHandler())
-        DataFrameTransformerEngine.register(PandasToSnowflakeEncodingHandlers())
-
-    except ImportError:
-        logger.info(
-            "We won't register snowflake handler for structured dataset because "
-            "we can't find package snowflake-connector-python"
-        )
-
-
 def lazy_import_dataframe_handler():
     if is_imported("pandas"):
         try:
@@ -114,11 +99,6 @@ def lazy_import_dataframe_handler():
             register_bigquery_handlers()
         except DuplicateHandlerError:
             logger.debug("Transformer for bigquery is already registered.")
-    if is_imported("snowflake.connector"):
-        try:
-            register_snowflake_handlers()
-        except DuplicateHandlerError:
-            logger.debug("Transformer for snowflake is already registered.")
 
 
 __all__ = [
