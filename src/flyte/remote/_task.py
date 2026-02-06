@@ -254,7 +254,7 @@ class TaskDetails(ToJSONMixin):
 
         return flyte.Cache(
             behavior=behavior,
-            version_override=metadata.discovery_version if metadata.discovery_version else None,
+            version_override=metadata.discovery_version or None,
             serialize=metadata.cache_serializable,
             ignored_inputs=tuple(metadata.cache_ignore_input_vars),
         )

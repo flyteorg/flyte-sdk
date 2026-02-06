@@ -272,7 +272,7 @@ class App(ToJSONMixin):
             metadata=app_definition_pb2.Meta(
                 id=app.pb2.metadata.id,
                 revision=app.revision,
-                labels=labels if labels else app.pb2.metadata.labels,
+                labels=labels or app.pb2.metadata.labels,
             ),
             spec=updated_app_spec,
             status=app.pb2.status,

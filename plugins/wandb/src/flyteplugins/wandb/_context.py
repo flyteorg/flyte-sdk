@@ -255,7 +255,7 @@ def wandb_config(
         run_mode=run_mode,
         rank_scope=rank_scope,
         download_logs=download_logs,
-        kwargs=kwargs if kwargs else None,
+        kwargs=kwargs or None,
     )
 
 
@@ -403,5 +403,5 @@ def wandb_sweep_config(
         entity=entity,
         prior_runs=prior_runs,
         download_logs=download_logs,
-        kwargs=kwargs if kwargs else None,
+        kwargs=kwargs or None,
     )

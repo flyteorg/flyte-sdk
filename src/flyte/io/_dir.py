@@ -936,7 +936,7 @@ class DirTransformer(TypeTransformer[Dir]):
             raise TypeTransformerFailedError(f"Expected Dir object, received {type(python_val)}")
 
         uri = python_val.path
-        hash_value = python_val.hash if python_val.hash else None
+        hash_value = python_val.hash or None
         if python_val.lazy_uploader:
             hash_value, uri = await python_val.lazy_uploader()
 
@@ -969,7 +969,7 @@ class DirTransformer(TypeTransformer[Dir]):
 
         uri = lv.scalar.blob.uri
         filename = Path(uri).name
-        hash_value = lv.hash if lv.hash else None
+        hash_value = lv.hash or None
         f: Dir = Dir(path=uri, name=filename, format=lv.scalar.blob.metadata.type.format, hash=hash_value)
         return f
 

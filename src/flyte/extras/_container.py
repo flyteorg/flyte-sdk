@@ -283,4 +283,4 @@ class ContainerTask(TaskTemplate):
         )
 
     def container_args(self, sctx: SerializationContext) -> List[str]:
-        return self._cmd + (self._args if self._args else [])
+        return self._cmd + (self._args or [])

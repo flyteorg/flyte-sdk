@@ -94,7 +94,7 @@ def add_reusable(
         )
 
     logger.debug(f"Adding reusable policy for task: {task.id.name}")
-    name = parent_env_name if parent_env_name else ""
+    name = parent_env_name or ""
     if parent_env_name is None:
         name = task.id.name.split(".")[0]
 
