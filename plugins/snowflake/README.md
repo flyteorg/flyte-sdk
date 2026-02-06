@@ -6,9 +6,6 @@ Run Snowflake SQL queries as Flyte tasks with parameterized inputs, key-pair aut
 
 ```bash
 pip install flyteplugins-snowflake
-
-# With DataFrame support (read query results as pandas DataFrames):
-pip install flyteplugins-snowflake[dataframe]
 ```
 
 ## Quick start
@@ -97,7 +94,7 @@ insert_rows = Snowflake(
 
 ## Reading results as DataFrames
 
-Install with `pip install flyteplugins-snowflake[dataframe]`, then set `output_dataframe_type`:
+Set `output_dataframe_type` to get query results as a pandas DataFrame:
 
 ```python
 import pandas as pd
@@ -148,7 +145,7 @@ snowflake_env = flyte.TaskEnvironment.from_task("snowflake_env", insert_task, se
 
 env = flyte.TaskEnvironment(
     name="example_env",
-    image=flyte.Image.from_debian_base().with_pip_packages("flyteplugins-snowflake[dataframe]"),
+    image=flyte.Image.from_debian_base().with_pip_packages("flyteplugins-snowflake"),
     secrets=[flyte.Secret(key="snowflake", as_env_var="SNOWFLAKE_PRIVATE_KEY")],
     depends_on=[snowflake_env],
 )

@@ -7,13 +7,8 @@ authors = [{ name = "Kevin Su", email = "pingsutw@users.noreply.github.com" }]
 requires-python = ">=3.10"
 dependencies = [
     "flyte[connector]",
-    "snowflake-connector-python",
-    "cryptography",
-]
-
-[project.optional-dependencies]
-dataframe = [
     "snowflake-connector-python[pandas]",
+    "cryptography",
 ]
 
 [project.entry-points."flyte.connectors"]

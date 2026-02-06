@@ -43,17 +43,16 @@ if __name__ == "__main__":
 ```
 """
 
+from flyte.io._dataframe.dataframe import DataFrameTransformerEngine
+
 from flyteplugins.snowflake.connector import SnowflakeConnector
+from flyteplugins.snowflake.dataframe import (
+    PandasToSnowflakeEncodingHandlers,
+    SnowflakeToPandasDecodingHandler,
+)
 from flyteplugins.snowflake.task import Snowflake, SnowflakeConfig
 
-try:
-    from flyte.io._dataframe.dataframe import DataFrameTransformerEngine
-
-    from flyteplugins.snowflake.dataframe import PandasToSnowflakeEncodingHandlers, SnowflakeToPandasDecodingHandler
-
-    DataFrameTransformerEngine.register(PandasToSnowflakeEncodingHandlers())
-    DataFrameTransformerEngine.register(SnowflakeToPandasDecodingHandler())
-except ImportError:
-    pass
+DataFrameTransformerEngine.register(PandasToSnowflakeEncodingHandlers())
+DataFrameTransformerEngine.register(SnowflakeToPandasDecodingHandler())
 
 __all__ = ["Snowflake", "SnowflakeConfig", "SnowflakeConnector"]
