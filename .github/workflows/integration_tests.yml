@@ -36,6 +36,7 @@ jobs:
           key: uv-${{ runner.os }}-${{ matrix.python-version }}
       - name: Install flyte & Build wheel
         run: |
+          export SETUPTOOLS_SCM_PRETEND_VERSION="9.9.9"
           make dist
       - name: Install plugins and example dependencies
         working-directory: plugins
