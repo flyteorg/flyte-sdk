@@ -260,7 +260,7 @@ async def download_s3fs(remote_path: str, is_directory: bool = False) -> Tuple[i
     _, tmp_path = tempfile.mkstemp() if not is_directory else (None, tempfile.mkdtemp())
 
     # Parse S3 path
-    protocol = remote_path.split("://")[0]
+    protocol = remote_path.split("://", maxsplit=1)[0]
     if protocol != "s3":
         raise ValueError(f"s3fs benchmark only supports s3:// paths, got {protocol}")
 

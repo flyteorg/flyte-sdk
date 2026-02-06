@@ -806,7 +806,6 @@ examples-test = [
     { name = "pyarrow" },
     { name = "scikit-learn", version = "1.7.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "scikit-learn", version = "1.8.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
-    { name = "unionai-reuse" },
     { name = "uvicorn" },
 ]
 tui = [
@@ -870,7 +869,6 @@ requires-dist = [
     { name = "scikit-learn", marker = "extra == 'examples-test'" },
     { name = "textual", marker = "extra == 'tui'", specifier = ">=0.80" },
     { name = "toml", specifier = ">=0.10.2" },
-    { name = "unionai-reuse", marker = "extra == 'examples-test'", specifier = ">=0.1.3" },
     { name = "uvicorn", marker = "extra == 'examples-test'" },
 ]
 provides-extras = ["aiosqlite", "connector", "examples-test", "tui"]
@@ -1255,7 +1253,7 @@ name = "importlib-metadata"
 version = "8.7.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "zipp" },
+    { name = "zipp", marker = "python_full_version < '3.12'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/f3/49/3b30cad09e7771a4982d9975a8cbf64f00d4a1ececb53297f1d9a7be1b10/importlib_metadata-8.7.1.tar.gz", hash = "sha256:49fef1ae6440c182052f407c8d34a68f72efc36db9ca90dc0113398f2fdde8bb", size = 57107, upload-time = "2025-12-21T10:00:19.278Z" }
 wheels = [
@@ -3994,8 +3992,8 @@ name = "secretstorage"
 version = "3.5.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "cryptography" },
-    { name = "jeepney" },
+    { name = "cryptography", marker = "(python_full_version < '3.11' and sys_platform == 'emscripten') or (python_full_version < '3.11' and sys_platform == 'win32') or (sys_platform != 'emscripten' and sys_platform != 'win32')" },
+    { name = "jeepney", marker = "(python_full_version < '3.11' and sys_platform == 'emscripten') or (python_full_version < '3.11' and sys_platform == 'win32') or (sys_platform != 'emscripten' and sys_platform != 'win32')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/1c/03/e834bcd866f2f8a49a85eaff47340affa3bfa391ee9912a952a1faa68c7b/secretstorage-3.5.0.tar.gz", hash = "sha256:f04b8e4689cbce351744d5537bf6b1329c6fc68f91fa666f60a380edddcd11be", size = 19884, upload-time = "2025-11-23T19:02:53.191Z" }
 wheels = [
@@ -4259,19 +4257,6 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/91/7a/146a99696aee0609e3712f2b44c6274566bc368dfe8375191278045186b8/uc-micro-py-1.0.3.tar.gz", hash = "sha256:d321b92cff673ec58027c04015fcaa8bb1e005478643ff4a500882eaab88c48a", size = 6043, upload-time = "2024-02-09T16:52:01.654Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/37/87/1f677586e8ac487e29672e4b17455758fce261de06a0d086167bb760361a/uc_micro_py-1.0.3-py3-none-any.whl", hash = "sha256:db1dffff340817673d7b466ec86114a9dc0e9d4d9b5ba229d9d60e5c12600cd5", size = 6229, upload-time = "2024-02-09T16:52:00.371Z" },
-]
-
-[[package]]
-name = "unionai-reuse"
-version = "0.1.10"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "flyte" },
-]
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/1d/4f/230fcc4db843072387ec39c2b3b5d89119da9739d756678702c6b91e9012/unionai_reuse-0.1.10-cp38-abi3-macosx_11_0_arm64.whl", hash = "sha256:1a8b2b5012ea64b9b13ada61cc5b69557e588c7a0b49b272d897167639935989", size = 1820273, upload-time = "2025-12-19T19:20:54.396Z" },
-    { url = "https://files.pythonhosted.org/packages/78/88/192b6412fc7596e7e4bfbf1a347cecb84f9951afc0d2ac68482a040cff1f/unionai_reuse-0.1.10-cp38-abi3-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:9d32a22d2903b780d8b18e119d5325a645e3483e6cc708f85cfeddc0d8ecba58", size = 2105470, upload-time = "2025-12-19T19:20:55.725Z" },
-    { url = "https://files.pythonhosted.org/packages/ba/34/beafa6839b79ea6a814ec1c24308e56ff3f03f442c69bd2c61dab9a36d15/unionai_reuse-0.1.10-cp38-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:eaaec24b7d5836fd7d5cae588b519682d751c1127e115c65de4470803cb34396", size = 2130804, upload-time = "2025-12-19T19:20:57.037Z" },
 ]
 
 [[package]]

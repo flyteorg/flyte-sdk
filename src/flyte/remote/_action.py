@@ -211,7 +211,7 @@ class Action(ToJSONMixin):
                 limit=100,
                 token=token,
                 sort_by=sort_pb2,
-                filters=filter_list if filter_list else None,
+                filters=filter_list or None,
             )
             resp = await get_client().run_service.ListActions(
                 run_service_pb2.ListActionsRequest(
