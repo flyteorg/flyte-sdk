@@ -60,7 +60,7 @@ if __name__ == "__main__":
     local_app = flyte.with_servecontext(mode="local").serve(app_env)
 
     # Wait for the app to be ready
-    local_app.activate()
+    local_app.activate(wait=True)
     print(f"App is ready at {local_app.endpoint}")
 
     # Call the app endpoint which internally runs the task
@@ -71,5 +71,5 @@ if __name__ == "__main__":
     assert data["result"] == 42
 
     # Shut down the local app
-    local_app.deactivate()
+    local_app.deactivate(wait=True)
     print("Done!")

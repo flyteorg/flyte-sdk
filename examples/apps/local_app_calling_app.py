@@ -90,12 +90,12 @@ if __name__ == "__main__":
 
     # Serve app1 first (app2 depends on it)
     local_app1 = serve_ctx.serve(app1_env)
-    local_app1.activate()
+    local_app1.activate(wait=True)
     print(f"App 1 (square) is ready at {local_app1.endpoint}")
 
     # Serve app2
     local_app2 = serve_ctx.serve(app2_env)
-    local_app2.activate()
+    local_app2.activate(wait=True)
     print(f"App 2 (square+1) is ready at {local_app2.endpoint}")
 
     # Call app2 which internally calls app1
@@ -106,6 +106,6 @@ if __name__ == "__main__":
     assert data["result"] == 26  # 5^2 + 1 = 26
 
     # Shut down both apps
-    local_app2.deactivate()
-    local_app1.deactivate()
+    local_app2.deactivate(wait=True)
+    local_app1.deactivate(wait=True)
     print("Done!")
