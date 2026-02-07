@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import AsyncIterator, Literal, Mapping, Tuple, cast
+from contextlib import asynccontextmanager, contextmanager
+from typing import AsyncGenerator, AsyncIterator, Generator, Literal, Mapping, Tuple, cast
 
 import grpc
 import rich.repr
@@ -180,12 +181,34 @@ class App(ToJSONMixin):
         :param wait: Wait for the app to reach the deactivated state
         """
         if self.is_deactivated():
-            return
+            return self
         return await self._update(
             app_definition_pb2.Spec.DESIRED_STATE_STOPPED,
             "User requested to deactivate app from flyte-sdk",
             "deactivated" if wait else None,
         )
+
+    @asynccontextmanager
+    async def ephemeral(self) -> AsyncGenerator[None, None]:
+        """
+        Async context manager that activates the app and deactivates it when the context is exited.
+        """
+        try:
+            await self.activate.aio(wait=True)
+            yield
+        finally:
+            await self.deactivate.aio(wait=True)
+
+    @contextmanager
+    def ephemeral_sync(self) -> Generator[None, None, None]:
+        """
+        Context manager that activates the app and deactivates it when the context is exited.
+        """
+        try:
+            self.activate(wait=True)
+            yield
+        finally:
+            self.deactivate(wait=True)
 
     def __rich_repr__(self) -> rich.repr.Result:
         """

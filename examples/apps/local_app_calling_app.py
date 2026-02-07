@@ -17,7 +17,7 @@ from flyte.app.extras import FastAPIAppEnvironment
 image = flyte.Image.from_debian_base(python_version=(3, 12)).with_pip_packages("fastapi", "uvicorn", "httpx")
 
 # ---------------------------------------------------------------------------
-# App 1 – a simple "square" service
+# App 1 - a simple "square" service
 # ---------------------------------------------------------------------------
 
 app1 = FastAPI(
@@ -49,7 +49,7 @@ async def app1_health() -> dict[str, str]:
 
 
 # ---------------------------------------------------------------------------
-# App 2 – proxies to App 1 and adds its own logic
+# App 2 - proxies to App 1 and adds its own logic
 # ---------------------------------------------------------------------------
 
 app2 = FastAPI(

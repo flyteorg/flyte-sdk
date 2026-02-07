@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import signal
-import sys
 from dataclasses import dataclass, field, fields
 from pathlib import Path
 from types import ModuleType
