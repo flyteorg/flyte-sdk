@@ -1,9 +1,15 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
+import os
 import pathlib
+import shlex
+import subprocess
+import threading
+import time
 from dataclasses import replace
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Literal, Optional
 
 import cloudpickle
 
@@ -20,6 +26,91 @@ if TYPE_CHECKING:
 
     from ._code_bundle import CopyFiles
 
+ServeMode = Literal["local", "remote"]
+
+# Module-level registry for local app endpoints so AppEnvironment.endpoint
+# can resolve them when running locally.
+_LOCAL_APP_ENDPOINTS: dict[str, str] = {}
+
+
+class _LocalApp:
+    """
+    Represents a locally-served app environment.
+
+    Provides an interface similar to the remote ``App`` object so that callers
+    of ``_Serve.serve`` can use the result uniformly.
+    """
+
+    def __init__(
+        self,
+        app_env: "AppEnvironment",
+        host: str,
+        port: int,
+        process: subprocess.Popen | None = None,
+        thread: threading.Thread | None = None,
+    ):
+        self._app_env = app_env
+        self._host = host
+        self._port = port
+        self._process = process
+        self._thread = thread
+
+    @property
+    def name(self) -> str:
+        return self._app_env.name
+
+    @property
+    def endpoint(self) -> str:
+        return f"http://{self._host}:{self._port}"
+
+    @property
+    def url(self) -> str:
+        return self.endpoint
+
+    def is_ready(self, path: str = "/", timeout: float = 30.0, interval: float = 0.5) -> bool:
+        """
+        Poll the app endpoint until it responds successfully or timeout is reached.
+
+        Args:
+            path: The path to poll (default: "/"). Set to "/health" if your app
+                  exposes a health endpoint.
+            timeout: Maximum time in seconds to wait for the app to be ready.
+            interval: Seconds between polling attempts.
+
+        Returns:
+            True if the app responded within the timeout, False otherwise.
+        """
+        import httpx
+
+        url = f"{self.endpoint}{path}"
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            try:
+                resp = httpx.get(url, timeout=2.0)
+                if resp.status_code < 500:
+                    return True
+            except (httpx.ConnectError, httpx.ReadError, httpx.TimeoutException, OSError):
+                pass
+            time.sleep(interval)
+        return False
+
+    def shutdown(self):
+        """Shut down the locally-served app."""
+        if self._process is not None:
+            try:
+                self._process.terminate()
+            except (ProcessLookupError, PermissionError, OSError):
+                pass
+            try:
+                self._process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                try:
+                    self._process.kill()
+                except (ProcessLookupError, PermissionError, OSError):
+                    pass
+        # Remove from the local endpoint registry
+        _LOCAL_APP_ENDPOINTS.pop(self._app_env.name, None)
+
 
 class _Serve:
     """
@@ -30,6 +121,7 @@ class _Serve:
 
     def __init__(
         self,
+        mode: ServeMode | None = None,
         version: Optional[str] = None,
         copy_style: CopyFiles = "loaded_modules",
         dry_run: bool = False,
@@ -47,6 +139,9 @@ class _Serve:
         Initialize serve context.
 
         Args:
+            mode: Serve mode - "local" to run on localhost, "remote" to deploy to
+                  the Flyte backend.  When ``None`` the mode is inferred: if a Flyte
+                  client is configured the mode defaults to "remote", otherwise "local".
             version: Optional version override for the app deployment
             copy_style: Code bundle copy style (default: "loaded_modules")
             dry_run: If True, don't actually deploy (default: False)
@@ -60,6 +155,14 @@ class _Serve:
             interactive_mode: If True, raises NotImplementedError (apps don't support interactive/notebook mode)
             copy_bundle_to: When dry_run is True, the bundle will be copied to this location if specified
         """
+        from flyte._initialize import _get_init_config
+
+        if mode is None:
+            init_config = _get_init_config()
+            client = init_config.client if init_config else None
+            mode = "remote" if client is not None else "local"
+
+        self._mode: ServeMode = mode
         self._version = version
         self._copy_style = copy_style
         self._dry_run = dry_run
@@ -73,21 +176,139 @@ class _Serve:
         self._interactive_mode = interactive_mode if interactive_mode is not None else ipython_check()
         self._copy_bundle_to = copy_bundle_to
 
-    @syncify
-    async def serve(self, app_env: "AppEnvironment") -> "App":
+    # ------------------------------------------------------------------
+    # Local serving
+    # ------------------------------------------------------------------
+
+    def _serve_local(self, app_env: "AppEnvironment") -> _LocalApp:
         """
-        Serve an app with the configured context.
+        Serve an AppEnvironment locally in a background thread or subprocess.
 
-        Args:
-            app_env: The app environment to serve
-
-        Returns:
-            Deployed and activated App instance
-
-        Raises:
-            NotImplementedError: If interactive mode is detected
+        The method is **non-blocking**: it starts the app in the background and
+        returns a ``_LocalApp`` handle immediately after verifying readiness.
         """
-        import asyncio
+
+        port = app_env.get_port().port
+        host = "127.0.0.1"
+
+        # Materialise parameters (simple string values only for local mode)
+        materialized_parameters: dict[str, str] = {}
+        for parameter in app_env.parameters:
+            if app_env_param_values := self._parameter_values.get(app_env.name):
+                value = app_env_param_values.get(parameter.name, parameter.value)
+            else:
+                value = parameter.value
+            if isinstance(value, str):
+                materialized_parameters[parameter.name] = value
+            else:
+                materialized_parameters[parameter.name] = str(value)
+
+        # Set env_vars from parameters
+        for parameter in app_env.parameters:
+            if parameter.env_var:
+                val = materialized_parameters.get(parameter.name)
+                if val is not None:
+                    os.environ[parameter.env_var] = val
+
+        # Set user-supplied env_vars
+        for k, v in self._env_vars.items():
+            os.environ[k] = v
+
+        if app_env._server is not None:
+            # Use the @app_env.server decorator function - run in a background thread
+            return self._serve_local_with_server_func(app_env, host, port, materialized_parameters)
+        elif app_env.command is not None:
+            # Use the command / args specification - run as a subprocess
+            return self._serve_local_with_command(app_env, host, port)
+        elif app_env.args is not None:
+            return self._serve_local_with_command(app_env, host, port)
+        else:
+            raise ValueError(
+                f"AppEnvironment '{app_env.name}' has no server function, command, or args defined. "
+                "Cannot serve locally."
+            )
+
+    def _serve_local_with_server_func(
+        self,
+        app_env: "AppEnvironment",
+        host: str,
+        port: int,
+        materialized_parameters: dict[str, str],
+    ) -> _LocalApp:
+        """Start the app via the ``@app_env.server`` decorated function in a daemon thread."""
+        from flyte._bin.serve import _bind_parameters
+
+        assert app_env._server is not None
+
+        def _run():
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                # Run on_startup if defined
+                if app_env._on_startup is not None:
+                    bound_params = _bind_parameters(app_env._on_startup, materialized_parameters)
+                    if asyncio.iscoroutinefunction(app_env._on_startup):
+                        loop.run_until_complete(app_env._on_startup(**bound_params))
+                    else:
+                        app_env._on_startup(**bound_params)
+
+                # Run the server function
+                bound_params = _bind_parameters(app_env._server, materialized_parameters)
+                if asyncio.iscoroutinefunction(app_env._server):
+                    loop.run_until_complete(app_env._server(**bound_params))
+                else:
+                    app_env._server(**bound_params)
+            except Exception:
+                logger.exception("Local app server raised an exception")
+            finally:
+                loop.close()
+
+        thread = threading.Thread(target=_run, daemon=True, name=f"flyte-local-app-{app_env.name}")
+        thread.start()
+
+        local_app = _LocalApp(app_env=app_env, host=host, port=port, thread=thread)
+
+        # Register the endpoint so AppEnvironment.endpoint can resolve it
+        _LOCAL_APP_ENDPOINTS[app_env.name] = local_app.endpoint
+
+        return local_app
+
+    def _serve_local_with_command(
+        self,
+        app_env: "AppEnvironment",
+        host: str,
+        port: int,
+    ) -> _LocalApp:
+        """Start the app via its ``command`` or ``args`` as a subprocess."""
+        if app_env.command is not None:
+            if isinstance(app_env.command, str):
+                cmd = shlex.split(app_env.command)
+            else:
+                cmd = list(app_env.command)
+        elif app_env.args is not None:
+            if isinstance(app_env.args, str):
+                cmd = shlex.split(app_env.args)
+            else:
+                cmd = list(app_env.args)
+        else:
+            raise ValueError("No command or args to run")
+
+        logger.info(f"Starting local app '{app_env.name}' with command: {cmd}")
+        process = subprocess.Popen(cmd, env=os.environ.copy())
+
+        local_app = _LocalApp(app_env=app_env, host=host, port=port, process=process)
+
+        # Register the endpoint so AppEnvironment.endpoint can resolve it
+        _LOCAL_APP_ENDPOINTS[app_env.name] = local_app.endpoint
+
+        return local_app
+
+    # ------------------------------------------------------------------
+    # Remote serving (unchanged logic, extracted for clarity)
+    # ------------------------------------------------------------------
+
+    async def _serve_remote(self, app_env: "AppEnvironment") -> "App":
+        """Deploy an AppEnvironment to the remote Flyte backend."""
         from copy import deepcopy
 
         from flyte.app import _deploy
@@ -226,8 +447,29 @@ class _Serve:
         # Watch for activation
         return await deployed_app.watch.aio(wait_for="activated")
 
+    @syncify
+    async def serve(self, app_env: "AppEnvironment") -> "_LocalApp | App":
+        """
+        Serve an app with the configured context.
+
+        Args:
+            app_env: The app environment to serve
+
+        Returns:
+            - In local mode: a ``_LocalApp`` handle (non-blocking).
+            - In remote mode: the deployed and activated ``App`` instance.
+
+        Raises:
+            NotImplementedError: If interactive mode is detected (remote only)
+        """
+        if self._mode == "local":
+            return self._serve_local(app_env)
+        return await self._serve_remote(app_env)
+
 
 def with_servecontext(
+    mode: ServeMode | None = None,
+    *,
     version: Optional[str] = None,
     copy_style: CopyFiles = "loaded_modules",
     dry_run: bool = False,
@@ -247,15 +489,22 @@ def with_servecontext(
     This function allows you to customize how an app is served, including
     overriding environment variables, cluster pool, logging, and other deployment settings.
 
-    Example:
+    Use ``mode="local"`` to serve the app on localhost (non-blocking) so you can
+    immediately invoke tasks that call the app endpoint:
+
     ```python
-    import logging
     import flyte
-    from flyte.app.extras import FastAPIAppEnvironment
 
-    env = FastAPIAppEnvironment(name="my-app", ...)
+    local_app = flyte.with_servecontext(mode="local").serve(app_env)
+    local_app.is_ready()  # wait for the server to start
+    # ... call tasks that use app_env.endpoint ...
+    local_app.shutdown()
+    ```
 
-    # Serve with custom env vars, logging, and cluster pool
+    Use ``mode="remote"`` (or omit *mode* when a Flyte client is configured) to
+    deploy the app to the Flyte backend:
+
+    ```python
     app = flyte.with_servecontext(
         env_vars={"DATABASE_URL": "postgresql://..."},
         log_level=logging.DEBUG,
@@ -269,6 +518,8 @@ def with_servecontext(
     ```
 
     Args:
+        mode: "local" to run on localhost, "remote" to deploy to the Flyte backend.
+            When ``None`` the mode is inferred from the current configuration.
         version: Optional version override for the app deployment
         copy_style: Code bundle copy style. Options: "loaded_modules", "all", "none" (default: "loaded_modules")
         dry_run: If True, don't actually deploy (default: False)
@@ -290,7 +541,7 @@ def with_servecontext(
         _Serve: Serve context manager with configured settings
 
     Raises:
-        NotImplementedError: If called from a notebook/interactive environment
+        NotImplementedError: If called from a notebook/interactive environment (remote mode only)
 
     Notes:
         - Apps do not support pickle-based bundling (interactive mode)
@@ -299,6 +550,7 @@ def with_servecontext(
         - This is a temporary solution until the API natively supports these fields
     """
     return _Serve(
+        mode=mode,
         version=version,
         copy_style=copy_style,
         dry_run=dry_run,
@@ -315,7 +567,7 @@ def with_servecontext(
 
 
 @syncify
-async def serve(app_env: "AppEnvironment") -> "App":
+async def serve(app_env: "AppEnvironment") -> "_LocalApp | App":
     """
     Serve a Flyte app using an AppEnvironment.
 
@@ -338,10 +590,7 @@ async def serve(app_env: "AppEnvironment") -> "App":
         app_env: The app environment to serve
 
     Returns:
-        Deployed and activated App instance
-
-    Raises:
-        NotImplementedError: If called from a notebook/interactive environment
+        Deployed and activated App instance (remote) or _LocalApp handle (local)
 
     See Also:
         with_servecontext: For customizing deployment settings

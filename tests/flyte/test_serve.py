@@ -5,16 +5,21 @@ These tests verify the serve context functionality including:
 - _Serve class initialization and configuration
 - with_servecontext() function
 - Parameter value override handling
+- Local serving mode
 """
 
+import json
 import pathlib
 from dataclasses import replace
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from unittest.mock import patch
+from urllib.parse import parse_qs, urlparse
 
+import httpx
 import pytest
 
 from flyte._image import Image
-from flyte._serve import _Serve, with_servecontext
+from flyte._serve import _LOCAL_APP_ENDPOINTS, _LocalApp, _Serve, with_servecontext
 from flyte.app import AppEnvironment
 from flyte.app._parameter import Parameter
 
@@ -688,3 +693,273 @@ def test_serve_discovers_multiple_direct_dependencies():
     assert "cache-service" in deployment_plan.envs
     assert "auth-service" in deployment_plan.envs
     assert "main-app" in deployment_plan.envs
+
+
+# =============================================================================
+# Tests for local serving mode
+# =============================================================================
+
+
+def test_serve_local_mode_initialization():
+    """
+    GOAL: Verify _Serve initializes with mode='local' correctly.
+    """
+    serve = _Serve(mode="local")
+    assert serve._mode == "local"
+
+
+def test_serve_remote_mode_initialization():
+    """
+    GOAL: Verify _Serve initializes with mode='remote' when explicitly set.
+    """
+    serve = _Serve(mode="remote")
+    assert serve._mode == "remote"
+
+
+def test_with_servecontext_local_mode():
+    """
+    GOAL: Verify with_servecontext passes mode parameter.
+    """
+    serve = with_servecontext(mode="local")
+    assert serve._mode == "local"
+
+
+def test_with_servecontext_remote_mode():
+    """
+    GOAL: Verify with_servecontext passes mode='remote'.
+    """
+    serve = with_servecontext(mode="remote")
+    assert serve._mode == "remote"
+
+
+def test_local_app_properties():
+    """
+    GOAL: Verify _LocalApp has correct properties.
+    """
+    app_env = AppEnvironment(
+        name="test-local-props",
+        image=Image.from_base("python:3.11"),
+        port=9999,
+    )
+    local_app = _LocalApp(app_env=app_env, host="127.0.0.1", port=9999)
+    assert local_app.name == "test-local-props"
+    assert local_app.endpoint == "http://127.0.0.1:9999"
+    assert local_app.url == "http://127.0.0.1:9999"
+
+
+def test_local_serve_with_server_decorator():
+    """
+    GOAL: Verify local serving works with the @app_env.server decorator pattern.
+
+    Tests that:
+    - The app starts in a background thread
+    - The endpoint is registered in _LOCAL_APP_ENDPOINTS
+    - The endpoint is reachable
+    - app_env.endpoint returns the local endpoint
+    - The app can be shut down cleanly
+    """
+
+    class TestHandler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            parsed = urlparse(self.path)
+            if parsed.path == "/health":
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps({"status": "ok"}).encode())
+            elif parsed.path == "/":
+                params = parse_qs(parsed.query)
+                x = int(params.get("x", [0])[0])
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps({"result": x + 1}).encode())
+            else:
+                self.send_response(404)
+                self.end_headers()
+
+        def log_message(self, format, *args):
+            pass
+
+    app_env = AppEnvironment(
+        name="test-local-server-decorator",
+        image=Image.from_base("python:3.11"),
+        port=18091,
+    )
+
+    @app_env.server
+    def serve():
+        server = HTTPServer(("127.0.0.1", 18091), TestHandler)
+        server.serve_forever()
+
+    try:
+        local_app = with_servecontext(mode="local").serve(app_env)
+
+        # Verify endpoint is registered
+        assert "test-local-server-decorator" in _LOCAL_APP_ENDPOINTS
+        assert _LOCAL_APP_ENDPOINTS["test-local-server-decorator"] == "http://127.0.0.1:18091"
+
+        # Verify app_env.endpoint returns the local endpoint
+        assert app_env.endpoint == "http://127.0.0.1:18091"
+
+        # Wait for readiness
+        assert local_app.is_ready(path="/health", timeout=10.0)
+
+        # Verify the endpoint is actually working
+        resp = httpx.get("http://127.0.0.1:18091/", params={"x": 5})
+        assert resp.status_code == 200
+        assert resp.json()["result"] == 6
+    finally:
+        local_app.shutdown()
+        # Verify endpoint is removed after shutdown
+        assert "test-local-server-decorator" not in _LOCAL_APP_ENDPOINTS
+
+
+def test_local_serve_with_command():
+    """
+    GOAL: Verify local serving works with the command specification pattern.
+
+    Tests that:
+    - The app starts as a subprocess
+    - The endpoint is registered in _LOCAL_APP_ENDPOINTS
+    - The endpoint is reachable
+    - The app can be shut down cleanly
+    """
+    app_env = AppEnvironment(
+        name="test-local-cmd",
+        image=Image.from_base("python:3.11"),
+        command="python -m http.server 18092",
+        port=18092,
+    )
+
+    try:
+        local_app = with_servecontext(mode="local").serve(app_env)
+
+        # Verify endpoint is registered
+        assert "test-local-cmd" in _LOCAL_APP_ENDPOINTS
+
+        # Wait for readiness
+        assert local_app.is_ready(path="/", timeout=10.0)
+
+        # Verify the endpoint is actually working
+        resp = httpx.get("http://127.0.0.1:18092/")
+        assert resp.status_code == 200
+    finally:
+        local_app.shutdown()
+        assert "test-local-cmd" not in _LOCAL_APP_ENDPOINTS
+
+
+def test_local_serve_no_server_or_command_raises():
+    """
+    GOAL: Verify that serving an app without server function or command raises ValueError.
+    """
+    app_env = AppEnvironment(
+        name="test-local-no-server",
+        image=Image.from_base("python:3.11"),
+    )
+
+    with pytest.raises(ValueError, match="has no server function, command, or args defined"):
+        with_servecontext(mode="local").serve(app_env)
+
+
+def test_local_app_is_ready_timeout():
+    """
+    GOAL: Verify is_ready returns False when app is not reachable within timeout.
+    """
+    app_env = AppEnvironment(
+        name="test-timeout",
+        image=Image.from_base("python:3.11"),
+        port=18099,
+    )
+    local_app = _LocalApp(app_env=app_env, host="127.0.0.1", port=18099)
+
+    # Nothing listening on port 18099, so should timeout
+    assert not local_app.is_ready(timeout=1.0, interval=0.2)
+
+
+def test_local_serve_env_vars():
+    """
+    GOAL: Verify that env_vars from servecontext are set in the environment.
+    """
+    import os
+
+    class TestHandler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            env_val = os.environ.get("TEST_LOCAL_SERVE_VAR", "")
+            self.wfile.write(json.dumps({"env_val": env_val}).encode())
+
+        def log_message(self, format, *args):
+            pass
+
+    app_env = AppEnvironment(
+        name="test-local-envvars",
+        image=Image.from_base("python:3.11"),
+        port=18093,
+    )
+
+    @app_env.server
+    def serve():
+        server = HTTPServer(("127.0.0.1", 18093), TestHandler)
+        server.serve_forever()
+
+    try:
+        local_app = with_servecontext(
+            mode="local",
+            env_vars={"TEST_LOCAL_SERVE_VAR": "hello-world"},
+        ).serve(app_env)
+
+        assert local_app.is_ready(timeout=10.0)
+
+        # Verify the environment variable was set
+        assert os.environ.get("TEST_LOCAL_SERVE_VAR") == "hello-world"
+    finally:
+        local_app.shutdown()
+        os.environ.pop("TEST_LOCAL_SERVE_VAR", None)
+
+
+def test_local_serve_endpoint_resolves_correctly():
+    """
+    GOAL: Verify that app_env.endpoint resolves to the local endpoint when served locally.
+
+    This is the key integration point: when an AppEnvironment is served locally,
+    its .endpoint property should return the local address so tasks can call it.
+    """
+
+    class TestHandler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps({"ok": True}).encode())
+
+        def log_message(self, format, *args):
+            pass
+
+    app_env = AppEnvironment(
+        name="test-endpoint-resolve",
+        image=Image.from_base("python:3.11"),
+        port=18094,
+    )
+
+    @app_env.server
+    def serve():
+        server = HTTPServer(("127.0.0.1", 18094), TestHandler)
+        server.serve_forever()
+
+    try:
+        local_app = with_servecontext(mode="local").serve(app_env)
+        assert local_app.is_ready(timeout=10.0)
+
+        # The key assertion: app_env.endpoint should resolve locally
+        endpoint = app_env.endpoint
+        assert endpoint == "http://127.0.0.1:18094"
+
+        # And we can actually call it
+        resp = httpx.get(endpoint)
+        assert resp.status_code == 200
+        assert resp.json()["ok"] is True
+    finally:
+        local_app.shutdown()
