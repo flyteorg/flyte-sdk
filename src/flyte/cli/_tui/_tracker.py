@@ -130,13 +130,7 @@ class ActionTracker:
             if node is None:
                 return
             node.status = ActionStatus.SUCCEEDED
-            if outputs is not None:
-                try:
-                    from flyte.types._string_literals import literal_string_repr
-
-                    node.outputs = literal_string_repr(outputs)
-                except Exception:
-                    node.outputs = _safe_json(outputs)
+            node.outputs = outputs
             node.end_time = time.monotonic()
             self._update_group_status(action_id)
             self._version += 1
@@ -150,12 +144,16 @@ class ActionTracker:
             self._version += 1
 
     def record_failure(self, *, action_id: str, error: str) -> None:
+        from flyte._internal.runtime.convert import Error
         with self._lock:
             node = self._nodes.get(action_id)
             if node is None:
                 return
             node.status = ActionStatus.FAILED
-            node.error = error
+            if isinstance(error, Error):
+                node.error = error.err
+            else:
+                node.error = error
             node.end_time = time.monotonic()
             self._update_group_status(action_id)
             self._version += 1

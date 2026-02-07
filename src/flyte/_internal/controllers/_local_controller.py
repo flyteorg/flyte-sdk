@@ -9,6 +9,7 @@ from typing import Any, Callable, Tuple, TypeVar
 import flyte.errors
 from flyte._cache.cache import VersionParameters, cache_from_request
 from flyte._persistence._task_cache import LocalTaskCache
+from flyte._persistence._recorder import RunRecorder
 from flyte._context import internal_ctx
 from flyte._internal.controllers import TaskCallSequencer, TraceInfo
 from flyte._internal.runtime import convert
@@ -74,16 +75,10 @@ class LocalController:
         logger.debug("LocalController init")
         self._runner_map: dict[str, _TaskRunner] = {}
         self._sequencer = TaskCallSequencer()
-        self._persist = False
-        self._run_name: str | None = None
+        self._recorder = RunRecorder()
 
-    def enable_persistence(self, run_name: str):
-        self._persist = True
-        self._run_name = run_name
-
-    @property
-    def _tracker(self) -> Any | None:
-        return internal_ctx().data.tracker
+    def set_recorder(self, recorder: RunRecorder) -> None:
+        self._recorder = recorder
 
     @log
     async def submit(self, _task: TaskTemplate, *args, **kwargs) -> Any:
@@ -135,13 +130,12 @@ class LocalController:
                     f"Cache hit for task '{_task.name}' (version: {cache_version}), getting result from cache..."
                 )
 
-        # Build common metadata used by both the TUI tracker and persistence.
-        # Hoisted so both consumers see identical data.
+        # Build common metadata for the recorder (tracker + persistence).
         native_inputs: dict[str, Any] | None = None
         parent_id: str | None = None
         rendered_links: list[tuple[str, str]] | None = None
 
-        if self._tracker is not None or self._persist:
+        if self._recorder.is_active:
             param_names = list(_task.native_interface.inputs.keys())
             native_inputs = {}
             for i, arg in enumerate(args):
@@ -149,11 +143,8 @@ class LocalController:
                     native_inputs[param_names[i]] = arg
             native_inputs.update(kwargs)
 
-            if self._tracker is not None:
-                # If the parent action isn't tracked yet, this is the top-level call
-                parent_id = tctx.action.name if self._tracker.get_action(tctx.action.name) else None
-            else:
-                parent_id = None
+            # If the parent action isn't tracked yet, this is the top-level call
+            parent_id = tctx.action.name if self._recorder.get_action(tctx.action.name) else None
 
             # Render log links for this action, replacing template placeholders
             # with concrete local values (see task_serde.py for remote equivalents).
@@ -172,41 +163,20 @@ class LocalController:
                     )
                     rendered_links.append((link.name, uri))
 
-        if self._tracker is not None:
-            self._tracker.record_start(
-                action_id=sub_action_id.name,
-                task_name=_task.name,
-                short_name=_task.short_name if _task.short_name != _task.name else None,
-                parent_id=parent_id,
-                inputs=native_inputs,
-                output_path=sub_action_output_path,
-                has_report=_task.report,
-                cache_enabled=cache_enabled,
-                cache_hit=cache_hit,
-                context=tctx.custom_context or None,
-                group=tctx.group_data.name if tctx.group_data else None,
-                log_links=rendered_links,
-            )
-
-        if self._persist and self._run_name:
-            from flyte._persistence._run_store import RunStore
-
-            persist_parent = "a0" if parent_id is None else parent_id
-            RunStore.record_start_sync(
-                run_name=self._run_name,
-                action_name=sub_action_id.name,
-                task_name=_task.name,
-                parent_id=persist_parent,
-                short_name=_task.short_name if _task.short_name != _task.name else None,
-                inputs=native_inputs,
-                output_path=sub_action_output_path,
-                has_report=bool(_task.report),
-                cache_enabled=cache_enabled,
-                cache_hit=cache_hit,
-                context=tctx.custom_context or None,
-                group_name=tctx.group_data.name if tctx.group_data else None,
-                log_links=rendered_links,
-            )
+        self._recorder.record_start(
+            action_id=sub_action_id.name,
+            task_name=_task.name,
+            short_name=_task.short_name if _task.short_name != _task.name else None,
+            parent_id=parent_id,
+            inputs=native_inputs,
+            output_path=sub_action_output_path,
+            has_report=_task.report,
+            cache_enabled=cache_enabled,
+            cache_hit=cache_hit,
+            context=tctx.custom_context or None,
+            group=tctx.group_data.name if tctx.group_data else None,
+            log_links=rendered_links,
+        )
 
         if out is None:
             out, err = await direct_dispatch(
@@ -223,14 +193,7 @@ class LocalController:
             )
 
             if err:
-                if self._tracker is not None:
-                    self._tracker.record_failure(action_id=sub_action_id.name, error=str(err))
-                if self._persist and self._run_name:
-                    from flyte._persistence._run_store import RunStore
-
-                    RunStore.record_failure_sync(
-                        run_name=self._run_name, action_name=sub_action_id.name, error=str(err)
-                    )
+                self._recorder.record_failure(action_id=sub_action_id.name, error=str(err))
                 exc = convert.convert_error_to_native(err)
                 if exc:
                     raise exc
@@ -241,23 +204,7 @@ class LocalController:
             if cache_enabled and out is not None:
                 await LocalTaskCache.set(cache_key, out)
 
-        if self._tracker is not None:
-            self._tracker.record_complete(action_id=sub_action_id.name, outputs=out)
-
-        if self._persist and self._run_name:
-            from flyte._persistence._run_store import RunStore
-
-            outputs_str = None
-            if out is not None:
-                try:
-                    from flyte.types._string_literals import literal_string_repr
-
-                    outputs_str = repr(literal_string_repr(out))
-                except Exception:
-                    outputs_str = repr(out)
-            RunStore.record_complete_sync(
-                run_name=self._run_name, action_name=sub_action_id.name, outputs=outputs_str
-            )
+        self._recorder.record_complete(action_id=sub_action_id.name, outputs=out)
 
         if _task.native_interface.outputs:
             if out is None:
@@ -318,14 +265,14 @@ class LocalController:
         )
         assert action_output_path
 
-        if self._tracker is not None:
+        if self._recorder.is_active:
             native_inputs: dict[str, Any] = {}
             param_names = list(_interface.inputs.keys())
             for i, arg in enumerate(args):
                 if i < len(param_names):
                     native_inputs[param_names[i]] = arg
             native_inputs.update(kwargs)
-            self._tracker.record_start(
+            self._recorder.record_start(
                 action_id=action_id.name,
                 task_name=_func.__name__,
                 parent_id=tctx.action.name,
@@ -358,14 +305,12 @@ class LocalController:
             # If the result is not an AsyncGenerator, convert it directly
             converted_outputs = await convert.convert_from_native_to_outputs(info.output, info.interface, info.name)
             assert converted_outputs
-            if self._tracker is not None:
-                self._tracker.record_complete(action_id=info.action.name, outputs=converted_outputs)
+            self._recorder.record_complete(action_id=info.action.name, outputs=converted_outputs)
         elif info.error:
             # If there is an error, convert it to a native error
             converted_error = convert.convert_from_native_to_error(info.error)
             assert converted_error
-            if self._tracker is not None:
-                self._tracker.record_failure(action_id=info.action.name, error=str(info.error))
+            self._recorder.record_failure(action_id=info.action.name, error=str(info.error))
         assert info.action
         assert info.start_time
         assert info.end_time

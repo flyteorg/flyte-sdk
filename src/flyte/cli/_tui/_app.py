@@ -123,7 +123,11 @@ class ActionTreeWidget(Tree[str]):
 
 
 class _DetailBox(Static):
-    """A bordered box used inside the detail panel."""
+    """A bordered box used inside the detail panel.
+
+    Markup is disabled so that JSON/repr content with ``[brackets]`` is
+    rendered literally instead of being parsed as Rich markup tags.
+    """
 
     DEFAULT_CSS = """
     _DetailBox {
@@ -133,6 +137,10 @@ class _DetailBox(Static):
         height: auto;
     }
     """
+
+    def __init__(self, *args, **kwargs):
+        kwargs.setdefault("markup", False)
+        super().__init__(*args, **kwargs)
 
 
 class DetailPanel(VerticalScroll):

@@ -561,18 +561,18 @@ class _Runner:
             ctx = Context(ctx.data.replace(tracker=self._tracker))
 
         from flyte._initialize import is_persistence_enabled
+        from flyte._persistence._recorder import RunRecorder
 
-        _persist = is_persistence_enabled()
+        persist = is_persistence_enabled()
         run_name = action.run_name or action.name
 
-        if _persist:
-            from flyte._persistence._run_store import RunStore
+        if persist:
+            RunRecorder.initialize_persistence()
 
-            RunStore.initialize_sync()
-            controller.enable_persistence(run_name)
-            RunStore.record_start_sync(
-                run_name=run_name, action_name="a0", task_name=obj.name, parent_id=None,
-            )
+        recorder = RunRecorder(tracker=self._tracker, persist=persist, run_name=run_name)
+        controller.set_recorder(recorder)
+
+        recorder.record_root_start(task_name=obj.name)
 
         try:
             with ctx.replace_task_context(tctx):
@@ -584,16 +584,10 @@ class _Runner:
                 else:
                     outputs = await controller.submit(obj, *args, **kwargs)
         except Exception as e:
-            if _persist:
-                from flyte._persistence._run_store import RunStore
-
-                RunStore.record_failure_sync(run_name=run_name, action_name="a0", error=str(e))
+            recorder.record_root_failure(error=str(e))
             raise
         else:
-            if _persist:
-                from flyte._persistence._run_store import RunStore
-
-                RunStore.record_complete_sync(run_name=run_name, action_name="a0")
+            recorder.record_root_complete()
 
         class _LocalRun(Run):
             def __init__(self, outputs: Tuple[Any, ...] | Any):

@@ -103,7 +103,7 @@ class ExploreScreen(Screen):
         if table.row_count == 0:
             return
         row_key, _ = table.coordinate_to_cell_key(table.cursor_coordinate)
-        run_name = str(row_key)
+        run_name = str(row_key.value)
         self.app.push_screen(RunDetailScreen(run_name))
 
     def action_delete_run(self) -> None:
@@ -113,7 +113,7 @@ class ExploreScreen(Screen):
         if table.row_count == 0:
             return
         row_key, _ = table.coordinate_to_cell_key(table.cursor_coordinate)
-        run_name = str(row_key)
+        run_name = str(row_key.value)
         RunStore.delete_run_sync(run_name)
         table.populate()
 
