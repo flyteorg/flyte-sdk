@@ -174,7 +174,7 @@ class App(ToJSONMixin):
         )
 
     @syncify
-    async def deactivate(self, wait: bool = False):
+    async def deactivate(self, wait: bool = False) -> App:
         """
         Stop the app
         :param wait: Wait for the app to reach the deactivated state

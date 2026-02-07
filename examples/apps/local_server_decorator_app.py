@@ -85,7 +85,7 @@ if __name__ == "__main__":
     local_app = flyte.with_servecontext(mode="local").serve(app_env)
 
     # Wait for the app to be ready
-    assert local_app.is_ready(path="/health"), "App failed to become ready"
+    local_app.activate()
     print(f"App is ready at {local_app.endpoint}")
 
     # Run a task that calls the local app
@@ -94,5 +94,5 @@ if __name__ == "__main__":
     assert result.outputs()[0] == 42
 
     # Shut down the local app
-    local_app.shutdown()
+    local_app.deactivate()
     print("Done!")

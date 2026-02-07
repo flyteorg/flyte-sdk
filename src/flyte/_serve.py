@@ -10,6 +10,8 @@ import threading
 import time
 from dataclasses import replace
 from typing import TYPE_CHECKING, Literal, Optional
+from urllib.request import urlopen
+from urllib.error import URLError
 
 import cloudpickle
 
@@ -30,7 +32,13 @@ ServeMode = Literal["local", "remote"]
 
 # Module-level registry for local app endpoints so AppEnvironment.endpoint
 # can resolve them when running locally.
+_LOCAL_HOST: str = "localhost"
 _LOCAL_APP_ENDPOINTS: dict[str, str] = {}
+_LOCAL_DEACTIVATE_TIMEOUT: float = 6.0
+_LOCAL_IS_ACTIVE_TOTAL_TIMEOUT: float = 60.0
+_LOCAL_IS_ACTIVE_RESPONSE_TIMEOUT: float = 2.0
+_LOCAL_IS_ACTIVE_INTERVAL: float = 1.0
+_LOCAL_HEALTH_CHECK_PATH: str = "/health"
 
 
 class _LocalApp:
@@ -46,6 +54,7 @@ class _LocalApp:
         app_env: "AppEnvironment",
         host: str,
         port: int,
+        _serve_obj: "_Serve | None" = None,
         process: subprocess.Popen | None = None,
         thread: threading.Thread | None = None,
     ):
@@ -54,6 +63,7 @@ class _LocalApp:
         self._port = port
         self._process = process
         self._thread = thread
+        self._serve_obj = _serve_obj
 
     @property
     def name(self) -> str:
@@ -67,49 +77,78 @@ class _LocalApp:
     def url(self) -> str:
         return self.endpoint
 
-    def is_ready(self, path: str = "/", timeout: float = 30.0, interval: float = 0.5) -> bool:
+    def is_active(self) -> bool:
         """
-        Poll the app endpoint until it responds successfully or timeout is reached.
-
-        Args:
-            path: The path to poll (default: "/"). Set to "/health" if your app
-                  exposes a health endpoint.
-            timeout: Maximum time in seconds to wait for the app to be ready.
-            interval: Seconds between polling attempts.
-
-        Returns:
-            True if the app responded within the timeout, False otherwise.
+        Check if the app is currently active or started.
         """
-        import httpx
+        health_check_path = self._serve_obj._health_check_path if self._serve_obj else _LOCAL_HEALTH_CHECK_PATH
+        health_check_timeout = self._serve_obj._health_check_timeout if self._serve_obj else _LOCAL_IS_ACTIVE_RESPONSE_TIMEOUT
+        url = f"{self.endpoint}{health_check_path}"
+        try:
+            resp = urlopen(url, timeout=health_check_timeout)
+            if resp.status < 500:
+                return True
+        except (URLError, OSError):
+            pass
 
-        url = f"{self.endpoint}{path}"
-        deadline = time.monotonic() + timeout
-        while time.monotonic() < deadline:
-            try:
-                resp = httpx.get(url, timeout=2.0)
-                if resp.status_code < 500:
-                    return True
-            except (httpx.ConnectError, httpx.ReadError, httpx.TimeoutException, OSError):
-                pass
-            time.sleep(interval)
         return False
 
-    def shutdown(self):
-        """Shut down the locally-served app."""
+    def is_deactivated(self) -> bool:
+        """
+        Check if the app is currently deactivated.
+        """
+        return self._process is None or self._process.poll() is not None
+
+    def _is_running(self) -> bool:
+        """Check whether the underlying server thread or process is still alive."""
+        if self._thread is not None and self._thread.is_alive():
+            return True
+        if self._process is not None and self._process.poll() is None:
+            return True
+        return False
+
+    def activate(self, wait: bool = False) -> _LocalApp:
+        """Start the locally-served app."""
+        if self.is_active():
+            return self
+
+        activate_timeout = self._serve_obj._activate_timeout if self._serve_obj else _LOCAL_IS_ACTIVE_TOTAL_TIMEOUT
+        health_check_interval = self._serve_obj._health_check_interval if self._serve_obj else _LOCAL_IS_ACTIVE_INTERVAL
+
+        # Only start a new server if one isn't already running (it may just
+        # not be ready to accept connections yet).
+        if not self._is_running():
+            self._serve_obj._serve_local(self._app_env)
+
+        if wait:
+            deadline = time.monotonic() + activate_timeout
+            while time.monotonic() < deadline:
+                if self.is_active():
+                    return self
+                time.sleep(health_check_interval)
+            raise TimeoutError(f"App '{self._app_env.name}' failed to become active within {activate_timeout} seconds")
+        return self
+
+    def deactivate(self, wait: bool = False) -> _LocalApp:
+        """Stop the locally-served app."""
+        deactivate_timeout = self._serve_obj._deactivate_timeout if self._serve_obj else _LOCAL_DEACTIVATE_TIMEOUT
         if self._process is not None:
             try:
                 self._process.terminate()
             except (ProcessLookupError, PermissionError, OSError):
                 pass
-            try:
-                self._process.wait(timeout=5)
-            except subprocess.TimeoutExpired:
+
+            if wait:
                 try:
-                    self._process.kill()
-                except (ProcessLookupError, PermissionError, OSError):
-                    pass
+                    self._process.wait(timeout=deactivate_timeout)
+                except subprocess.TimeoutExpired:
+                    try:
+                        self._process.kill()
+                    except (ProcessLookupError, PermissionError, OSError):
+                        pass
         # Remove from the local endpoint registry
         _LOCAL_APP_ENDPOINTS.pop(self._app_env.name, None)
+        return self
 
 
 class _Serve:
@@ -122,6 +161,7 @@ class _Serve:
     def __init__(
         self,
         mode: ServeMode | None = None,
+        *,
         version: Optional[str] = None,
         copy_style: CopyFiles = "loaded_modules",
         dry_run: bool = False,
@@ -134,6 +174,12 @@ class _Serve:
         log_format: LogFormat = "console",
         interactive_mode: bool | None = None,
         copy_bundle_to: pathlib.Path | None = None,
+        # Local-serving parameters
+        deactivate_timeout: float | None = None,
+        activate_timeout: float | None = None,
+        health_check_timeout: float | None = None,
+        health_check_interval: float | None = None,
+        health_check_path: str | None = None,
     ):
         """
         Initialize serve context.
@@ -154,6 +200,16 @@ class _Serve:
             log_format: Optional log format ("console" or "json", default: "console")
             interactive_mode: If True, raises NotImplementedError (apps don't support interactive/notebook mode)
             copy_bundle_to: When dry_run is True, the bundle will be copied to this location if specified
+            deactivate_timeout: Timeout in seconds for waiting for the app to stop during
+                ``deactivate(wait=True)``. Defaults to ``_LOCAL_DEACTIVATE_TIMEOUT`` (6 s).
+            activate_timeout: Total timeout in seconds when polling the health-check endpoint
+                during ``activate(wait=True)``. Defaults to ``_LOCAL_IS_ACTIVE_TOTAL_TIMEOUT`` (60 s).
+            health_check_timeout: Per-request timeout in seconds for each health-check HTTP
+                request. Defaults to ``_LOCAL_IS_ACTIVE_RESPONSE_TIMEOUT`` (2 s).
+            health_check_interval: Interval in seconds between consecutive health-check polls.
+                Defaults to ``_LOCAL_IS_ACTIVE_INTERVAL`` (1 s).
+            health_check_path: URL path used for the local health-check probe (e.g. ``"/healthz"``).
+                Defaults to ``_LOCAL_HEALTH_CHECK_PATH`` (``"/health"``).
         """
         from flyte._initialize import _get_init_config
 
@@ -176,6 +232,13 @@ class _Serve:
         self._interactive_mode = interactive_mode if interactive_mode is not None else ipython_check()
         self._copy_bundle_to = copy_bundle_to
 
+        # Local-serving configuration (fall back to module-level defaults)
+        self._deactivate_timeout = deactivate_timeout if deactivate_timeout is not None else _LOCAL_DEACTIVATE_TIMEOUT
+        self._activate_timeout = activate_timeout if activate_timeout is not None else _LOCAL_IS_ACTIVE_TOTAL_TIMEOUT
+        self._health_check_timeout = health_check_timeout if health_check_timeout is not None else _LOCAL_IS_ACTIVE_RESPONSE_TIMEOUT
+        self._health_check_interval = health_check_interval if health_check_interval is not None else _LOCAL_IS_ACTIVE_INTERVAL
+        self._health_check_path = health_check_path if health_check_path is not None else _LOCAL_HEALTH_CHECK_PATH
+
     # ------------------------------------------------------------------
     # Local serving
     # ------------------------------------------------------------------
@@ -189,7 +252,6 @@ class _Serve:
         """
 
         port = app_env.get_port().port
-        host = "127.0.0.1"
 
         # Materialise parameters (simple string values only for local mode)
         materialized_parameters: dict[str, str] = {}
@@ -216,12 +278,12 @@ class _Serve:
 
         if app_env._server is not None:
             # Use the @app_env.server decorator function - run in a background thread
-            return self._serve_local_with_server_func(app_env, host, port, materialized_parameters)
+            return self._serve_local_with_server_func(app_env, _LOCAL_HOST, port, materialized_parameters)
         elif app_env.command is not None:
             # Use the command / args specification - run as a subprocess
-            return self._serve_local_with_command(app_env, host, port)
+            return self._serve_local_with_command(app_env, _LOCAL_HOST, port)
         elif app_env.args is not None:
-            return self._serve_local_with_command(app_env, host, port)
+            return self._serve_local_with_command(app_env, _LOCAL_HOST, port)
         else:
             raise ValueError(
                 f"AppEnvironment '{app_env.name}' has no server function, command, or args defined. "
@@ -266,7 +328,7 @@ class _Serve:
         thread = threading.Thread(target=_run, daemon=True, name=f"flyte-local-app-{app_env.name}")
         thread.start()
 
-        local_app = _LocalApp(app_env=app_env, host=host, port=port, thread=thread)
+        local_app = _LocalApp(app_env=app_env, _serve_obj=self, host=host, port=port, thread=thread)
 
         # Register the endpoint so AppEnvironment.endpoint can resolve it
         _LOCAL_APP_ENDPOINTS[app_env.name] = local_app.endpoint
@@ -280,7 +342,7 @@ class _Serve:
         port: int,
     ) -> _LocalApp:
         """Start the app via its ``command`` or ``args`` as a subprocess."""
-        if app_env.command is not None:
+        if app_env.command is not None: 
             if isinstance(app_env.command, str):
                 cmd = shlex.split(app_env.command)
             else:
@@ -296,7 +358,7 @@ class _Serve:
         logger.info(f"Starting local app '{app_env.name}' with command: {cmd}")
         process = subprocess.Popen(cmd, env=os.environ.copy())
 
-        local_app = _LocalApp(app_env=app_env, host=host, port=port, process=process)
+        local_app = _LocalApp(app_env=app_env, _serve_obj=self, host=host, port=port, process=process)
 
         # Register the endpoint so AppEnvironment.endpoint can resolve it
         _LOCAL_APP_ENDPOINTS[app_env.name] = local_app.endpoint
@@ -482,6 +544,12 @@ def with_servecontext(
     log_format: LogFormat = "console",
     interactive_mode: bool | None = None,
     copy_bundle_to: pathlib.Path | None = None,
+    # Local-serving parameters
+    deactivate_timeout: float | None = None,
+    activate_timeout: float | None = None,
+    health_check_timeout: float | None = None,
+    health_check_interval: float | None = None,
+    health_check_path: str | None = None,
 ) -> _Serve:
     """
     Create a serve context with custom configuration.
@@ -498,7 +566,7 @@ def with_servecontext(
     local_app = flyte.with_servecontext(mode="local").serve(app_env)
     local_app.is_ready()  # wait for the server to start
     # ... call tasks that use app_env.endpoint ...
-    local_app.shutdown()
+    local_app.deactivate()
     ```
 
     Use ``mode="remote"`` (or omit *mode* when a Flyte client is configured) to
@@ -536,6 +604,16 @@ def with_servecontext(
             considered interactive mode, while scripts are not. This is used to determine how the code bundle is
             created. This is used to determine if the app should be served in interactive mode or not.
         copy_bundle_to: When dry_run is True, the bundle will be copied to this location if specified
+        deactivate_timeout: Timeout in seconds for waiting for the app to stop during
+            ``deactivate(wait=True)``. Defaults to 6 s.
+        activate_timeout: Total timeout in seconds when polling the health-check endpoint
+            during ``activate(wait=True)``. Defaults to 60 s.
+        health_check_timeout: Per-request timeout in seconds for each health-check HTTP
+            request. Defaults to 2 s.
+        health_check_interval: Interval in seconds between consecutive health-check polls.
+            Defaults to 1 s.
+        health_check_path: URL path used for the local health-check probe (e.g. ``"/healthz"``).
+            Defaults to ``"/health"``.
 
     Returns:
         _Serve: Serve context manager with configured settings
@@ -563,6 +641,11 @@ def with_servecontext(
         log_format=log_format,
         interactive_mode=interactive_mode,
         copy_bundle_to=copy_bundle_to,
+        deactivate_timeout=deactivate_timeout,
+        activate_timeout=activate_timeout,
+        health_check_timeout=health_check_timeout,
+        health_check_interval=health_check_interval,
+        health_check_path=health_check_path,
     )
 
 

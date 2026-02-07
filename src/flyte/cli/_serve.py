@@ -183,7 +183,7 @@ class ServeAppCommand(click.RichCommand):
             console.print("[green]App is ready![/green]")
         else:
             console.print("[red]App failed to become ready within timeout.[/red]")
-            local_app.shutdown()
+            local_app.deactivate()
             sys.exit(1)
 
         console.print("[dim]Press Ctrl+C to stop the app.[/dim]")
@@ -203,7 +203,7 @@ class ServeAppCommand(click.RichCommand):
                 pass
         finally:
             console.print("\n[yellow]Shutting down local app...[/yellow]")
-            local_app.shutdown()
+            local_app.deactivate()
             console.print("[green]App stopped.[/green]")
 
     def _invoke_remote(self, ctx: click.Context):

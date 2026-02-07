@@ -810,7 +810,7 @@ def test_local_serve_with_server_decorator():
         assert resp.status_code == 200
         assert resp.json()["result"] == 6
     finally:
-        local_app.shutdown()
+        local_app.deactivate()
         # Verify endpoint is removed after shutdown
         assert "test-local-server-decorator" not in _LOCAL_APP_ENDPOINTS
 
@@ -845,7 +845,7 @@ def test_local_serve_with_command():
         resp = httpx.get("http://127.0.0.1:18092/")
         assert resp.status_code == 200
     finally:
-        local_app.shutdown()
+        local_app.deactivate()
         assert "test-local-cmd" not in _LOCAL_APP_ENDPOINTS
 
 
@@ -916,7 +916,7 @@ def test_local_serve_env_vars():
         # Verify the environment variable was set
         assert os.environ.get("TEST_LOCAL_SERVE_VAR") == "hello-world"
     finally:
-        local_app.shutdown()
+        local_app.deactivate()
         os.environ.pop("TEST_LOCAL_SERVE_VAR", None)
 
 
@@ -962,4 +962,4 @@ def test_local_serve_endpoint_resolves_correctly():
         assert resp.status_code == 200
         assert resp.json()["ok"] is True
     finally:
-        local_app.shutdown()
+        local_app.deactivate()
