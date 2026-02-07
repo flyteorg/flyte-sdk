@@ -179,7 +179,7 @@ class ServeAppCommand(click.RichCommand):
         )
 
         console.print("[dim]Waiting for app to be ready...[/dim]")
-        if local_app.is_ready():
+        if local_app.activate():
             console.print("[green]App is ready![/green]")
         else:
             console.print("[red]App failed to become ready within timeout.[/red]")

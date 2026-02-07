@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import asyncio
+import atexit
 import hashlib
 import os
 import pathlib
 import shlex
+import signal
 import subprocess
 import threading
 import time
@@ -40,6 +42,70 @@ _LOCAL_IS_ACTIVE_RESPONSE_TIMEOUT: float = 2.0
 _LOCAL_IS_ACTIVE_INTERVAL: float = 1.0
 _LOCAL_HEALTH_CHECK_PATH: str = "/health"
 
+# ---------------------------------------------------------------------------
+# Global registry of active _LocalApp instances and signal-based cleanup
+# ---------------------------------------------------------------------------
+_ACTIVE_LOCAL_APPS: set[_LocalApp] = set()
+_SIGNAL_HANDLERS_INSTALLED: bool = False
+_ORIGINAL_SIGINT_HANDLER: signal.Handlers | None = None
+_ORIGINAL_SIGTERM_HANDLER: signal.Handlers | None = None
+
+
+def _cleanup_local_apps() -> None:
+    """Deactivate every registered _LocalApp.
+
+    Called automatically via signal handlers (SIGINT / SIGTERM) and via
+    ``atexit`` so that child processes and daemon threads are torn down
+    even if the user Ctrl-C's or kills the parent process.
+    """
+    # Iterate over a copy because deactivate() removes from the set.
+    for app in list(_ACTIVE_LOCAL_APPS):
+        try:
+            app.deactivate()
+        except Exception:  # noqa: BLE001
+            pass
+
+
+def _signal_handler(signum: int, frame) -> None:
+    """Signal handler that cleans up local apps then re-raises the signal."""
+    _cleanup_local_apps()
+
+    # Re-invoke the original handler so normal behaviour is preserved
+    # (e.g. KeyboardInterrupt for SIGINT).
+    original = _ORIGINAL_SIGINT_HANDLER if signum == signal.SIGINT else _ORIGINAL_SIGTERM_HANDLER
+    if callable(original):
+        original(signum, frame)
+    elif original == signal.SIG_DFL:
+        # Re-raise with default disposition
+        signal.signal(signum, signal.SIG_DFL)
+        os.kill(os.getpid(), signum)
+
+
+def _install_signal_handlers() -> None:
+    """Install SIGINT / SIGTERM handlers (idempotent, main-thread only)."""
+    global _SIGNAL_HANDLERS_INSTALLED, _ORIGINAL_SIGINT_HANDLER, _ORIGINAL_SIGTERM_HANDLER  # noqa: PLW0603
+
+    if _SIGNAL_HANDLERS_INSTALLED:
+        return
+
+    # signal.signal() can only be called from the main thread.
+    if threading.current_thread() is not threading.main_thread():
+        return
+
+    try:
+        _ORIGINAL_SIGINT_HANDLER = signal.getsignal(signal.SIGINT)
+        signal.signal(signal.SIGINT, _signal_handler)
+
+        _ORIGINAL_SIGTERM_HANDLER = signal.getsignal(signal.SIGTERM)
+        signal.signal(signal.SIGTERM, _signal_handler)
+    except (OSError, ValueError):
+        # Some environments (e.g. certain embedded interpreters) do not
+        # allow changing signal handlers — fall through silently.
+        pass
+
+    atexit.register(_cleanup_local_apps)
+    _SIGNAL_HANDLERS_INSTALLED = True
+
 
 class _LocalApp:
     """
@@ -64,6 +130,10 @@ class _LocalApp:
         self._process = process
         self._thread = thread
         self._serve_obj = _serve_obj
+
+        # Register this instance so it can be cleaned up on process exit.
+        _ACTIVE_LOCAL_APPS.add(self)
+        _install_signal_handlers()
 
     @property
     def name(self) -> str:
@@ -148,6 +218,8 @@ class _LocalApp:
                         pass
         # Remove from the local endpoint registry
         _LOCAL_APP_ENDPOINTS.pop(self._app_env.name, None)
+        # Unregister from the global active-apps set.
+        _ACTIVE_LOCAL_APPS.discard(self)
         return self
 
 
@@ -564,7 +636,7 @@ def with_servecontext(
     import flyte
 
     local_app = flyte.with_servecontext(mode="local").serve(app_env)
-    local_app.is_ready()  # wait for the server to start
+    local_app.is_active()  # wait for the server to start
     # ... call tasks that use app_env.endpoint ...
     local_app.deactivate()
     ```

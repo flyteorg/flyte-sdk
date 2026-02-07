@@ -920,6 +920,137 @@ def test_local_serve_env_vars():
         os.environ.pop("TEST_LOCAL_SERVE_VAR", None)
 
 
+def test_local_app_registered_in_active_set():
+    """
+    GOAL: Verify that creating a _LocalApp registers it in _ACTIVE_LOCAL_APPS
+    and deactivating it removes it.
+    """
+    from flyte._serve import _ACTIVE_LOCAL_APPS
+
+    app_env = AppEnvironment(
+        name="test-active-set",
+        image=Image.from_base("python:3.11"),
+        port=18096,
+    )
+    local_app = _LocalApp(app_env=app_env, host="127.0.0.1", port=18096)
+
+    # Should be registered on creation
+    assert local_app in _ACTIVE_LOCAL_APPS
+
+    # Deactivate should remove it
+    local_app.deactivate()
+    assert local_app not in _ACTIVE_LOCAL_APPS
+
+
+def test_cleanup_local_apps_deactivates_all():
+    """
+    GOAL: Verify _cleanup_local_apps() deactivates all registered _LocalApp instances.
+    """
+    from flyte._serve import _ACTIVE_LOCAL_APPS, _cleanup_local_apps
+
+    app_env_a = AppEnvironment(
+        name="test-cleanup-a",
+        image=Image.from_base("python:3.11"),
+        port=18096,
+    )
+    app_env_b = AppEnvironment(
+        name="test-cleanup-b",
+        image=Image.from_base("python:3.11"),
+        port=18097,
+    )
+    local_app_a = _LocalApp(app_env=app_env_a, host="127.0.0.1", port=18096)
+    local_app_b = _LocalApp(app_env=app_env_b, host="127.0.0.1", port=18097)
+
+    assert local_app_a in _ACTIVE_LOCAL_APPS
+    assert local_app_b in _ACTIVE_LOCAL_APPS
+
+    _cleanup_local_apps()
+
+    assert local_app_a not in _ACTIVE_LOCAL_APPS
+    assert local_app_b not in _ACTIVE_LOCAL_APPS
+
+
+def test_cleanup_terminates_subprocess():
+    """
+    GOAL: Verify _cleanup_local_apps() calls terminate() on child processes of registered apps.
+    """
+    from unittest.mock import MagicMock
+
+    from flyte._serve import _ACTIVE_LOCAL_APPS, _cleanup_local_apps
+
+    app_env = AppEnvironment(
+        name="test-cleanup-proc",
+        image=Image.from_base("python:3.11"),
+        port=18098,
+    )
+
+    mock_proc = MagicMock()
+    mock_proc.poll.return_value = None  # simulate a running process
+    local_app = _LocalApp(app_env=app_env, host="127.0.0.1", port=18098, process=mock_proc)
+
+    assert local_app in _ACTIVE_LOCAL_APPS
+
+    _cleanup_local_apps()
+
+    # The process should have been asked to terminate
+    mock_proc.terminate.assert_called_once()
+    assert local_app not in _ACTIVE_LOCAL_APPS
+
+
+def test_signal_handler_cleans_up_apps():
+    """
+    GOAL: Verify that simulating SIGINT triggers cleanup of registered local apps.
+    """
+    import signal as _signal
+
+    from flyte._serve import (
+        _ACTIVE_LOCAL_APPS,
+        _install_signal_handlers,
+        _signal_handler,
+    )
+
+    # Ensure signal handlers are installed
+    _install_signal_handlers()
+
+    app_env = AppEnvironment(
+        name="test-signal-cleanup",
+        image=Image.from_base("python:3.11"),
+        port=18096,
+    )
+    local_app = _LocalApp(app_env=app_env, host="127.0.0.1", port=18096)
+    assert local_app in _ACTIVE_LOCAL_APPS
+
+    # Directly invoke the signal handler (don't actually send a signal
+    # because that would interrupt the test runner).  We pass frame=None.
+    # Patch the original handler to avoid side-effects.
+    with patch("flyte._serve._ORIGINAL_SIGINT_HANDLER", new=_signal.SIG_IGN):
+        _signal_handler(_signal.SIGINT, None)
+
+    assert local_app not in _ACTIVE_LOCAL_APPS
+
+
+def test_deactivate_idempotent():
+    """
+    GOAL: Verify that calling deactivate() multiple times is safe.
+    """
+    from flyte._serve import _ACTIVE_LOCAL_APPS
+
+    app_env = AppEnvironment(
+        name="test-deactivate-idempotent",
+        image=Image.from_base("python:3.11"),
+        port=18096,
+    )
+    local_app = _LocalApp(app_env=app_env, host="127.0.0.1", port=18096)
+    assert local_app in _ACTIVE_LOCAL_APPS
+
+    local_app.deactivate()
+    assert local_app not in _ACTIVE_LOCAL_APPS
+
+    # Second call should not raise
+    local_app.deactivate()
+    assert local_app not in _ACTIVE_LOCAL_APPS
+
+
 def test_local_serve_endpoint_resolves_correctly():
     """
     GOAL: Verify that app_env.endpoint resolves to the local endpoint when served locally.
