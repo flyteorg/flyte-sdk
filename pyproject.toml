@@ -86,6 +86,7 @@ dev = [
     "ipywidgets>=8.1.7",
     "mypy>=1.16.0",
     "kubernetes",
+    "textual>=0.80",
 ]
 
 [tool.setuptools]
