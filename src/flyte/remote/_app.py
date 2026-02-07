@@ -189,7 +189,7 @@ class App(ToJSONMixin):
         )
 
     @asynccontextmanager
-    async def ephemeral(self) -> AsyncGenerator[None, None]:
+    async def ephemeral_ctx(self) -> AsyncGenerator[None, None]:
         """
         Async context manager that activates the app and deactivates it when the context is exited.
         """
@@ -200,7 +200,7 @@ class App(ToJSONMixin):
             await self.deactivate.aio(wait=True)
 
     @contextmanager
-    def ephemeral_sync(self) -> Generator[None, None, None]:
+    def ephemeral_ctx_sync(self) -> Generator[None, None, None]:
         """
         Context manager that activates the app and deactivates it when the context is exited.
         """

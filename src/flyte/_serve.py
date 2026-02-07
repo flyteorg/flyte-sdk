@@ -10,8 +10,9 @@ import signal
 import subprocess
 import threading
 import time
+from contextlib import asynccontextmanager, contextmanager
 from dataclasses import replace
-from typing import TYPE_CHECKING, Any, Callable, Literal, Optional
+from typing import TYPE_CHECKING, Any, AsyncGenerator, Callable, Generator, Literal, Optional
 from urllib.error import URLError
 from urllib.request import urlopen
 
@@ -109,25 +110,6 @@ def _install_signal_handlers() -> None:
     _SIGNAL_HANDLERS_INSTALLED = True
 
 
-class _EphemeralContext:
-    def __init__(self, app: _LocalApp):
-        self._app = app
-
-    def __enter__(self) -> "_EphemeralContext":
-        self._app.activate(wait=True)
-        return self
-
-    def __exit__(self, exc_type, exc_value, traceback) -> None:
-        self._app.deactivate(wait=True)
-
-    async def __aenter__(self) -> "_EphemeralContext":
-        await self._app.activate.aio(wait=True)
-        return self
-
-    async def __aexit__(self, exc_type, exc_value, traceback) -> None:
-        await self._app.deactivate.aio(wait=True)
-
-
 class _LocalApp:
     """
     Represents a locally-served app environment.
@@ -155,9 +137,6 @@ class _LocalApp:
         # Register this instance so it can be cleaned up on process exit.
         _ACTIVE_LOCAL_APPS.add(self)
         _install_signal_handlers()
-
-    def ephemeral_context(self) -> _EphemeralContext:
-        return _EphemeralContext(self)
 
     @property
     def name(self) -> str:
@@ -250,27 +229,27 @@ class _LocalApp:
         _ACTIVE_LOCAL_APPS.discard(self)
         return self
 
-    # @asynccontextmanager
-    # async def ephemeral(self) -> AsyncGenerator[None, None]:
-    #     """
-    #     Async context manager that activates the app and deactivates it when the context is exited.
-    #     """
-    #     try:
-    #         await self.activate.aio(wait=True)
-    #         yield
-    #     finally:
-    #         await self.deactivate.aio(wait=True)
+    @asynccontextmanager
+    async def ephemeral_ctx(self) -> AsyncGenerator[None, None]:
+        """
+        Async context manager that activates the app and deactivates it when the context is exited.
+        """
+        try:
+            await self.activate.aio(wait=True)
+            yield
+        finally:
+            await self.deactivate.aio(wait=True)
 
-    # @contextmanager
-    # def ephemeral_sync(self) -> Generator[None, None, None]:
-    #     """
-    #     Context manager that activates the app and deactivates it when the context is exited.
-    #     """
-    #     try:
-    #         self.activate(wait=True)
-    #         yield
-    #     finally:
-    #         self.deactivate(wait=True)
+    @contextmanager
+    def ephemeral_ctx_sync(self) -> Generator[None, None, None]:
+        """
+        Context manager that activates the app and deactivates it when the context is exited.
+        """
+        try:
+            self.activate(wait=True)
+            yield
+        finally:
+            self.deactivate(wait=True)
 
 
 class _Serve:

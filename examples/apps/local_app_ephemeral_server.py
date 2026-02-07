@@ -88,7 +88,7 @@ if __name__ == "__main__":
 
     # Use ephemeral_server to ensure the app is activated and deactivated
     async def main():
-        async with local_app.ephemeral_context():
+        async with local_app.ephemeral_ctx():
             print(f"App is ready at {local_app.endpoint}")
 
             # Call the app endpoint directly
