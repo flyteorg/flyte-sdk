@@ -19,9 +19,9 @@ import flyte
 driver = flyte.TaskEnvironment(
     name="driver",
     resources=flyte.Resources(cpu=1, memory="250Mi"),
-    image=flyte.Image.from_uv_script(
-        __file__, name="flyte", registry="ghcr.io/flyteorg", arch=("linux/amd64", "linux/arm64")
-    ).with_apt_packages("ca-certificates"),
+    image=flyte.Image.from_uv_script(__file__, name="flyte", registry="ghcr.io/flyteorg", pre=True).with_apt_packages(
+        "ca-certificates"
+    ),
 )
 
 

@@ -48,8 +48,8 @@ def _union_types_match(downstream: UnionType, upstream: UnionType) -> bool:
     if len(downstream.variants) != len(upstream.variants):
         return False
 
-    down_sorted = sorted(downstream.variants, key=lambda x: str(x))
-    up_sorted = sorted(upstream.variants, key=lambda x: str(x))
+    down_sorted = sorted(downstream.variants, key=str)
+    up_sorted = sorted(upstream.variants, key=str)
 
     for downstream_variant, upstream_variant in zip(down_sorted, up_sorted):
         if not literal_types_match(downstream_variant, upstream_variant):

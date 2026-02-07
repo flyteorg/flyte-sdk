@@ -2236,9 +2236,11 @@ DatetimeTransformer = SimpleTransformer(
     datetime.datetime,
     types_pb2.LiteralType(simple=types_pb2.SimpleType.DATETIME),
     lambda x: Literal(scalar=Scalar(primitive=Primitive(datetime=x))),
-    lambda x: x.scalar.primitive.datetime.ToDatetime().replace(tzinfo=datetime.timezone.utc)
-    if x.scalar.primitive.HasField("datetime")
-    else None,
+    lambda x: (
+        x.scalar.primitive.datetime.ToDatetime().replace(tzinfo=datetime.timezone.utc)
+        if x.scalar.primitive.HasField("datetime")
+        else None
+    ),
 )
 
 TimedeltaTransformer = SimpleTransformer(
@@ -2256,9 +2258,11 @@ DateTransformer = SimpleTransformer(
     lambda x: Literal(
         scalar=Scalar(primitive=Primitive(datetime=datetime.datetime.combine(x, datetime.time.min)))
     ),  # convert datetime to date
-    lambda x: x.scalar.primitive.datetime.ToDatetime().replace(tzinfo=datetime.timezone.utc).date()
-    if x.scalar.primitive.HasField("datetime")
-    else None,
+    lambda x: (
+        x.scalar.primitive.datetime.ToDatetime().replace(tzinfo=datetime.timezone.utc).date()
+        if x.scalar.primitive.HasField("datetime")
+        else None
+    ),
 )
 
 NoneTransformer = SimpleTransformer(
@@ -2266,7 +2270,7 @@ NoneTransformer = SimpleTransformer(
     type(None),
     types_pb2.LiteralType(simple=types_pb2.SimpleType.NONE),
     lambda x: Literal(scalar=Scalar(none_type=Void())),
-    lambda x: _check_and_convert_void(x),
+    _check_and_convert_void,
 )
 
 

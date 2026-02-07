@@ -75,7 +75,7 @@ class RemoteImageChecker(ImageChecker):
             msg = "remote image builder is not enabled. Please contact Union support to enable it."
             raise flyte.errors.ImageBuildError(msg) from e
 
-        image_name = f"{repository.split('/')[-1]}:{tag}"
+        image_name = f"{repository.rsplit('/', maxsplit=1)[-1]}:{tag}"
 
         try:
             from flyteidl2.common.identifier_pb2 import ProjectIdentifier

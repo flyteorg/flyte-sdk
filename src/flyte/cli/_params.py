@@ -722,8 +722,7 @@ class FlyteLiteralConverter(object):
             raise
         except Exception as e:
             raise click.BadParameter(
-                f"Failed to convert param: {param if param else 'NA'}, value: {value} to type: {self._python_type}."
-                f" Reason {e}"
+                f"Failed to convert param: {param or 'NA'}, value: {value} to type: {self._python_type}. Reason {e}"
             ) from e
 
 
