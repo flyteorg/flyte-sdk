@@ -179,13 +179,8 @@ class ServeAppCommand(click.RichCommand):
         )
 
         console.print("[dim]Waiting for app to be ready...[/dim]")
-        if local_app.activate():
-            console.print("[green]App is ready![/green]")
-        else:
-            console.print("[red]App failed to become ready within timeout.[/red]")
-            local_app.deactivate()
-            sys.exit(1)
-
+        local_app.activate(wait=True)
+        console.print("[green]App is ready![/green]")
         console.print("[dim]Press Ctrl+C to stop the app.[/dim]")
 
         # Block until Ctrl+C
