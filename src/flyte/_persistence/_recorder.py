@@ -22,7 +22,7 @@ class RunRecorder:
     ) -> None:
         self._tracker = tracker
         self._persist = persist and run_name is not None
-        self._run_name = run_name
+        self._run_name: str = run_name or ""
 
     @property
     def is_active(self) -> bool:
@@ -119,8 +119,8 @@ class RunRecorder:
         is unavailable or raises.
         """
         try:
-            from flyte.types._string_literals import literal_string_repr
             from flyte._internal.runtime.io import Outputs
+            from flyte.types._string_literals import literal_string_repr
 
             if isinstance(outputs, Outputs):
                 return literal_string_repr(outputs.proto_outputs)

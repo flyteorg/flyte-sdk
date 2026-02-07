@@ -7,21 +7,18 @@ from typing import Any, ClassVar
 from rich.text import Text
 from textual.app import App, ComposeResult
 from textual.binding import Binding, BindingType
-from textual.containers import Horizontal, VerticalScroll
+from textual.containers import Horizontal
 from textual.screen import Screen
-from textual.widgets import DataTable, Footer, Header, Static, TabbedContent, TabPane
-from textual.widgets.tree import TreeNode
+from textual.widgets import DataTable, Footer, Header, TabbedContent, TabPane
 
 from ._app import (
-    ActionTreeWidget,
-    DetailPanel,
-    _FLYTE_BORDER,
     _FLYTE_PURPLE,
     _FLYTE_PURPLE_DARK,
     _FLYTE_PURPLE_LIGHT,
-    _DetailBox,
+    ActionTreeWidget,
+    DetailPanel,
 )
-from ._tracker import ActionStatus, ActionTracker
+from ._tracker import ActionTracker
 
 _STATUS_COLORS = {
     "running": "dodger_blue1",

@@ -4,7 +4,7 @@ import time
 import pytest
 
 from flyte._persistence._db import LocalDB
-from flyte._persistence._run_store import RunRecord, RunStore
+from flyte._persistence._run_store import RunStore
 
 
 @pytest.fixture(autouse=True)
@@ -26,7 +26,10 @@ def _reset_db(tmp_path, monkeypatch):
 def test_record_start_and_list():
     RunStore.initialize_sync()
     RunStore.record_start_sync(
-        run_name="run-1", action_name="a0", task_name="my_task", parent_id=None,
+        run_name="run-1",
+        action_name="a0",
+        task_name="my_task",
+        parent_id=None,
     )
     runs = RunStore.list_runs_sync()
     assert len(runs) == 1
@@ -128,7 +131,11 @@ def test_clear():
 def test_cache_fields():
     RunStore.initialize_sync()
     RunStore.record_start_sync(
-        run_name="run-1", action_name="a0", task_name="t1", cache_enabled=True, cache_hit=True,
+        run_name="run-1",
+        action_name="a0",
+        task_name="t1",
+        cache_enabled=True,
+        cache_hit=True,
     )
     action = RunStore.get_action_sync("run-1", "a0")
     assert action is not None
@@ -139,7 +146,10 @@ def test_cache_fields():
 def test_inputs_stored_as_json():
     RunStore.initialize_sync()
     RunStore.record_start_sync(
-        run_name="run-1", action_name="a0", task_name="t1", inputs={"x": 42, "y": "hello"},
+        run_name="run-1",
+        action_name="a0",
+        task_name="t1",
+        inputs={"x": 42, "y": "hello"},
     )
     action = RunStore.get_action_sync("run-1", "a0")
     assert action is not None

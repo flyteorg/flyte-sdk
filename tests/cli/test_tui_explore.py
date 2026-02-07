@@ -22,7 +22,6 @@ def _reset_db(tmp_path, monkeypatch):
 
 def test_explore_screen_imports():
     """Verify that the explore module can be imported without error."""
-    from flyte.cli._tui._explore import ExploreScreen, ExploreTUIApp, RunDetailScreen, RunsTable
 
 
 def test_runs_table_populate_empty():
@@ -30,7 +29,7 @@ def test_runs_table_populate_empty():
     from flyte.cli._tui._explore import RunsTable
 
     RunStore.initialize_sync()
-    table = RunsTable()
+    RunsTable()
     # We can't call populate() outside of a textual app mount, but we can verify
     # the underlying data is empty
     runs = RunStore.list_runs_sync()

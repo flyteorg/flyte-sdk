@@ -1,7 +1,6 @@
 from flyteidl2.task import common_pb2
 
 from flyte._internal.runtime import convert
-from flyte._logging import logger
 from flyte._persistence._db import HAS_AIOSQLITE, LocalDB
 
 

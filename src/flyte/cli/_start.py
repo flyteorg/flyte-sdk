@@ -4,7 +4,6 @@ import rich_click as click
 @click.group()
 def start():
     """Start various Flyte services."""
-    pass
 
 
 @start.command()

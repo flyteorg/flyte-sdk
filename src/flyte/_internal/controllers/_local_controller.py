@@ -8,14 +8,14 @@ from typing import Any, Callable, Tuple, TypeVar
 
 import flyte.errors
 from flyte._cache.cache import VersionParameters, cache_from_request
-from flyte._persistence._task_cache import LocalTaskCache
-from flyte._persistence._recorder import RunRecorder
 from flyte._context import internal_ctx
 from flyte._internal.controllers import TaskCallSequencer, TraceInfo
 from flyte._internal.runtime import convert
 from flyte._internal.runtime.entrypoints import direct_dispatch
 from flyte._internal.runtime.types_serde import transform_native_to_typed_interface
 from flyte._logging import log, logger
+from flyte._persistence._recorder import RunRecorder
+from flyte._persistence._task_cache import LocalTaskCache
 from flyte._task import AsyncFunctionTaskTemplate, TaskTemplate
 from flyte._utils.helpers import _selector_policy
 from flyte.models import ActionID, NativeInterface

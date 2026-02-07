@@ -127,9 +127,7 @@ class RunStore:
         """List top-level runs (action_name='a0') ordered by start_time DESC."""
         with LocalDB._write_lock:
             conn = LocalDB.get_sync()
-            cursor = conn.execute(
-                "SELECT * FROM runs WHERE action_name='a0' ORDER BY start_time DESC"
-            )
+            cursor = conn.execute("SELECT * FROM runs WHERE action_name='a0' ORDER BY start_time DESC")
             return [RunStore._row_to_record(row) for row in cursor.fetchall()]
 
     @staticmethod

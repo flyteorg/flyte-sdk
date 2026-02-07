@@ -152,4 +152,4 @@ def test_migration_adds_missing_columns(tmp_path, monkeypatch):
 
     cursor = c.execute("SELECT has_report, context, group_name, log_links FROM runs WHERE run_name='r1'")
     row = cursor.fetchone()
-    assert row == (1, '{}', 'g', '[]')
+    assert row == (1, "{}", "g", "[]")

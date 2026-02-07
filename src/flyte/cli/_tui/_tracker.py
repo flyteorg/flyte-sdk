@@ -145,6 +145,7 @@ class ActionTracker:
 
     def record_failure(self, *, action_id: str, error: str) -> None:
         from flyte._internal.runtime.convert import Error
+
         with self._lock:
             node = self._nodes.get(action_id)
             if node is None:
