@@ -741,7 +741,8 @@ def test_local_app_properties():
         image=Image.from_base("python:3.11"),
         port=9999,
     )
-    local_app = _LocalApp(app_env=app_env, host="127.0.0.1", port=9999)
+    serve_obj = _Serve(mode="local")
+    local_app = _LocalApp(app_env=app_env, host="127.0.0.1", port=9999, _serve_obj=serve_obj)
     assert local_app.name == "test-local-props"
     assert local_app.endpoint == "http://127.0.0.1:9999"
     assert local_app.url == "http://127.0.0.1:9999"
@@ -797,13 +798,13 @@ def test_local_serve_with_server_decorator():
 
         # Verify endpoint is registered
         assert "test-local-server-decorator" in _LOCAL_APP_ENDPOINTS
-        assert _LOCAL_APP_ENDPOINTS["test-local-server-decorator"] == "http://127.0.0.1:18091"
+        assert _LOCAL_APP_ENDPOINTS["test-local-server-decorator"] == "http://localhost:18091"
 
         # Verify app_env.endpoint returns the local endpoint
-        assert app_env.endpoint == "http://127.0.0.1:18091"
+        assert app_env.endpoint == "http://localhost:18091"
 
         # Wait for readiness
-        assert local_app.is_ready(path="/health", timeout=10.0)
+        local_app.activate(wait=True)
 
         # Verify the endpoint is actually working
         resp = httpx.get("http://127.0.0.1:18091/", params={"x": 5})
@@ -828,21 +829,21 @@ def test_local_serve_with_command():
     app_env = AppEnvironment(
         name="test-local-cmd",
         image=Image.from_base("python:3.11"),
-        command="python -m http.server 18092",
-        port=18092,
+        command="python -m http.server 18192",
+        port=18192,
     )
 
     try:
-        local_app = with_servecontext(mode="local").serve(app_env)
+        local_app = with_servecontext(mode="local", activate_timeout=10.0, health_check_path="/").serve(app_env)
 
         # Verify endpoint is registered
         assert "test-local-cmd" in _LOCAL_APP_ENDPOINTS
 
         # Wait for readiness
-        assert local_app.is_ready(path="/", timeout=10.0)
+        local_app.activate(wait=True)
 
         # Verify the endpoint is actually working
-        resp = httpx.get("http://127.0.0.1:18092/")
+        resp = httpx.get("http://localhost:18192/")
         assert resp.status_code == 200
     finally:
         local_app.deactivate()
@@ -864,17 +865,18 @@ def test_local_serve_no_server_or_command_raises():
 
 def test_local_app_is_ready_timeout():
     """
-    GOAL: Verify is_ready returns False when app is not reachable within timeout.
+    GOAL: Verify is_active returns False when app is not reachable.
     """
     app_env = AppEnvironment(
         name="test-timeout",
         image=Image.from_base("python:3.11"),
         port=18099,
     )
-    local_app = _LocalApp(app_env=app_env, host="127.0.0.1", port=18099)
+    serve_obj = _Serve(mode="local")
+    local_app = _LocalApp(app_env=app_env, host="127.0.0.1", port=18099, _serve_obj=serve_obj)
 
-    # Nothing listening on port 18099, so should timeout
-    assert not local_app.is_ready(timeout=1.0, interval=0.2)
+    # Nothing listening on port 18099, so is_active should return False
+    assert not local_app.is_active()
 
 
 def test_local_serve_env_vars():
@@ -911,7 +913,7 @@ def test_local_serve_env_vars():
             env_vars={"TEST_LOCAL_SERVE_VAR": "hello-world"},
         ).serve(app_env)
 
-        assert local_app.is_ready(timeout=10.0)
+        local_app.activate(wait=True)
 
         # Verify the environment variable was set
         assert os.environ.get("TEST_LOCAL_SERVE_VAR") == "hello-world"
@@ -932,7 +934,8 @@ def test_local_app_registered_in_active_set():
         image=Image.from_base("python:3.11"),
         port=18096,
     )
-    local_app = _LocalApp(app_env=app_env, host="127.0.0.1", port=18096)
+    serve_obj = _Serve(mode="local")
+    local_app = _LocalApp(app_env=app_env, host="127.0.0.1", port=18096, _serve_obj=serve_obj)
 
     # Should be registered on creation
     assert local_app in _ACTIVE_LOCAL_APPS
@@ -958,8 +961,9 @@ def test_cleanup_local_apps_deactivates_all():
         image=Image.from_base("python:3.11"),
         port=18097,
     )
-    local_app_a = _LocalApp(app_env=app_env_a, host="127.0.0.1", port=18096)
-    local_app_b = _LocalApp(app_env=app_env_b, host="127.0.0.1", port=18097)
+    serve_obj = _Serve(mode="local")
+    local_app_a = _LocalApp(app_env=app_env_a, host="127.0.0.1", port=18096, _serve_obj=serve_obj)
+    local_app_b = _LocalApp(app_env=app_env_b, host="127.0.0.1", port=18097, _serve_obj=serve_obj)
 
     assert local_app_a in _ACTIVE_LOCAL_APPS
     assert local_app_b in _ACTIVE_LOCAL_APPS
@@ -984,9 +988,10 @@ def test_cleanup_terminates_subprocess():
         port=18098,
     )
 
+    serve_obj = _Serve(mode="local")
     mock_proc = MagicMock()
     mock_proc.poll.return_value = None  # simulate a running process
-    local_app = _LocalApp(app_env=app_env, host="127.0.0.1", port=18098, process=mock_proc)
+    local_app = _LocalApp(app_env=app_env, host="127.0.0.1", port=18098, _serve_obj=serve_obj, process=mock_proc)
 
     assert local_app in _ACTIVE_LOCAL_APPS
 
@@ -1017,7 +1022,8 @@ def test_signal_handler_cleans_up_apps():
         image=Image.from_base("python:3.11"),
         port=18096,
     )
-    local_app = _LocalApp(app_env=app_env, host="127.0.0.1", port=18096)
+    serve_obj = _Serve(mode="local")
+    local_app = _LocalApp(app_env=app_env, host="127.0.0.1", port=18096, _serve_obj=serve_obj)
     assert local_app in _ACTIVE_LOCAL_APPS
 
     # Directly invoke the signal handler (don't actually send a signal
@@ -1040,7 +1046,8 @@ def test_deactivate_idempotent():
         image=Image.from_base("python:3.11"),
         port=18096,
     )
-    local_app = _LocalApp(app_env=app_env, host="127.0.0.1", port=18096)
+    serve_obj = _Serve(mode="local")
+    local_app = _LocalApp(app_env=app_env, host="127.0.0.1", port=18096, _serve_obj=serve_obj)
     assert local_app in _ACTIVE_LOCAL_APPS
 
     local_app.deactivate()
@@ -1082,11 +1089,11 @@ def test_local_serve_endpoint_resolves_correctly():
 
     try:
         local_app = with_servecontext(mode="local").serve(app_env)
-        assert local_app.is_ready(timeout=10.0)
+        local_app.activate(wait=True)
 
         # The key assertion: app_env.endpoint should resolve locally
         endpoint = app_env.endpoint
-        assert endpoint == "http://127.0.0.1:18094"
+        assert endpoint == "http://localhost:18094"
 
         # And we can actually call it
         resp = httpx.get(endpoint)
