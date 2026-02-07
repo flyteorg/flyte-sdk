@@ -10,9 +10,8 @@ import signal
 import subprocess
 import threading
 import time
-from contextlib import asynccontextmanager, contextmanager
 from dataclasses import replace
-from typing import TYPE_CHECKING, Any, AsyncGenerator, Callable, Generator, Literal, Optional
+from typing import TYPE_CHECKING, Any, Callable, Literal, Optional
 from urllib.error import URLError
 from urllib.request import urlopen
 
@@ -223,7 +222,7 @@ class _LocalApp:
             while time.monotonic() < deadline:
                 if self.is_active():
                     return self
-                time.sleep(health_check_interval)
+                await asyncio.sleep(health_check_interval)
             raise TimeoutError(f"App '{self._app_env.name}' failed to become active within {activate_timeout} seconds")
         return self
 
