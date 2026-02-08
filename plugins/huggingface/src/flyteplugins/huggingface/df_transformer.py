@@ -4,7 +4,7 @@ import typing
 from pathlib import Path
 
 import flyte.storage as storage
-from flyte._logging import logger
+from flyte import logger
 from flyte._utils import lazy_module
 from flyte.io._dataframe.dataframe import PARQUET, DataFrame
 from flyte.io.extend import (
