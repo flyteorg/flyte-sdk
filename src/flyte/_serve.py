@@ -12,7 +12,17 @@ import threading
 import time
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import replace
-from typing import TYPE_CHECKING, Any, AsyncGenerator, Callable, Generator, Literal, Optional
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    AsyncGenerator,
+    Callable,
+    Generator,
+    Literal,
+    Optional,
+    Protocol,
+    runtime_checkable,
+)
 from urllib.error import URLError
 from urllib.request import urlopen
 
@@ -44,6 +54,34 @@ _LOCAL_IS_ACTIVE_TOTAL_TIMEOUT: float = 60.0
 _LOCAL_IS_ACTIVE_RESPONSE_TIMEOUT: float = 2.0
 _LOCAL_IS_ACTIVE_INTERVAL: float = 1.0
 _LOCAL_HEALTH_CHECK_PATH: str = "/health"
+
+# ---------------------------------------------------------------------------
+# Protocol for the shared App / _LocalApp interface
+# ---------------------------------------------------------------------------
+
+
+@runtime_checkable
+class AppHandle(Protocol):
+    """Protocol defining the common interface between local and remote app handles.
+
+    Both ``_LocalApp`` (local serving) and ``App`` (remote serving) satisfy this
+    protocol, enabling calling code to work uniformly regardless of the serving mode.
+    """
+
+    @property
+    def name(self) -> str: ...
+
+    @property
+    def endpoint(self) -> str: ...
+
+    def is_active(self) -> bool: ...
+
+    def is_deactivated(self) -> bool: ...
+
+    def activate(self, wait: bool = False) -> AppHandle: ...
+
+    def deactivate(self, wait: bool = False) -> AppHandle: ...
+
 
 # ---------------------------------------------------------------------------
 # Global registry of active _LocalApp instances and signal-based cleanup
@@ -133,6 +171,8 @@ class _LocalApp:
         self._process = process
         self._thread = thread
         self._serve_obj = _serve_obj
+        self._stop_event = threading.Event()
+        self._thread_loop: asyncio.AbstractEventLoop | None = None
 
         # Register this instance so it can be cleaned up on process exit.
         _ACTIVE_LOCAL_APPS.add(self)
@@ -172,7 +212,11 @@ class _LocalApp:
         """
         Check if the app is currently deactivated.
         """
-        return self._process is None or self._process.poll() is not None
+        if self._thread is not None:
+            return not self._thread.is_alive()
+        if self._process is not None:
+            return self._process.poll() is not None
+        return True
 
     def _is_running(self) -> bool:
         """Check whether the underlying server thread or process is still alive."""
@@ -210,7 +254,7 @@ class _LocalApp:
 
     @syncify
     async def deactivate(self, wait: bool = False) -> _LocalApp:
-        """Activate the locally-served app.
+        """Deactivate the locally-served app.
 
         :param wait: Wait for the app to reach deactivated state
         """
@@ -229,6 +273,19 @@ class _LocalApp:
                         self._process.kill()
                     except (ProcessLookupError, PermissionError, OSError):
                         pass
+        elif self._thread is not None and self._thread.is_alive():
+            # Signal the thread to stop
+            self._stop_event.set()
+            # Try to stop the event loop running in the thread so that
+            # blocking ``loop.run_until_complete()`` calls are interrupted.
+            if self._thread_loop is not None and self._thread_loop.is_running():
+                try:
+                    self._thread_loop.call_soon_threadsafe(self._thread_loop.stop)
+                except RuntimeError:
+                    # Loop already closed or not running
+                    pass
+            if wait:
+                self._thread.join(timeout=deactivate_timeout)
         # Remove from the local endpoint registry
         _LOCAL_APP_ENDPOINTS.pop(self._app_env.name, None)
         # Unregister from the global active-apps set.
@@ -412,9 +469,14 @@ class _Serve:
 
         assert app_env._server is not None
 
+        # Create the _LocalApp handle first so the thread closure can store
+        # its event-loop reference on it for graceful shutdown.
+        local_app = _LocalApp(app_env=app_env, _serve_obj=self, host=host, port=port)
+
         def _run():
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
+            local_app._thread_loop = loop
             try:
                 # Run on_startup if defined
                 if app_env._on_startup is not None:
@@ -433,12 +495,12 @@ class _Serve:
             except Exception:
                 logger.exception("Local app server raised an exception")
             finally:
+                local_app._thread_loop = None
                 loop.close()
 
         thread = threading.Thread(target=_run, daemon=True, name=f"flyte-local-app-{app_env.name}")
         thread.start()
-
-        local_app = _LocalApp(app_env=app_env, _serve_obj=self, host=host, port=port, thread=thread)
+        local_app._thread = thread
 
         # Register the endpoint so AppEnvironment.endpoint can resolve it
         _LOCAL_APP_ENDPOINTS[app_env.name] = local_app.endpoint
@@ -466,7 +528,7 @@ class _Serve:
             raise ValueError("No command or args to run")
 
         logger.info(f"Starting local app '{app_env.name}' with command: {cmd}")
-        process = subprocess.Popen(cmd, env=os.environ.copy())
+        process = subprocess.Popen(cmd, env=os.environ.copy(), start_new_session=True)
 
         local_app = _LocalApp(app_env=app_env, _serve_obj=self, host=host, port=port, process=process)
 
@@ -620,7 +682,7 @@ class _Serve:
         return await deployed_app.watch.aio(wait_for="activated")
 
     @syncify
-    async def serve(self, app_env: "AppEnvironment") -> "_LocalApp | App":
+    async def serve(self, app_env: "AppEnvironment") -> AppHandle:
         """
         Serve an app with the configured context.
 
@@ -628,8 +690,9 @@ class _Serve:
             app_env: The app environment to serve
 
         Returns:
-            - In local mode: a ``_LocalApp`` handle (non-blocking).
-            - In remote mode: the deployed and activated ``App`` instance.
+            An :class:`AppHandle` — either a ``_LocalApp`` (local mode) or a
+            remote ``App`` (remote mode).  Both satisfy the same protocol so
+            callers can use them interchangeably.
 
         Raises:
             NotImplementedError: If interactive mode is detected (remote only)
@@ -760,7 +823,7 @@ def with_servecontext(
 
 
 @syncify
-async def serve(app_env: "AppEnvironment") -> "_LocalApp | App":
+async def serve(app_env: "AppEnvironment") -> AppHandle:
     """
     Serve a Flyte app using an AppEnvironment.
 
@@ -783,7 +846,7 @@ async def serve(app_env: "AppEnvironment") -> "_LocalApp | App":
         app_env: The app environment to serve
 
     Returns:
-        Deployed and activated App instance (remote) or _LocalApp handle (local)
+        An :class:`AppHandle` — either a ``_LocalApp`` (local) or ``App`` (remote)
 
     See Also:
         with_servecontext: For customizing deployment settings

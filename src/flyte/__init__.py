@@ -25,7 +25,7 @@ from ._retry import RetryStrategy
 from ._reusable_environment import ReusePolicy
 from ._run import run, with_runcontext
 from ._secret import Secret, SecretRequest
-from ._serve import serve, with_servecontext
+from ._serve import AppHandle, serve, with_servecontext
 from ._task_environment import TaskEnvironment
 from ._timeout import Timeout, TimeoutType
 from ._trace import trace
@@ -68,6 +68,7 @@ __all__ = [
     "GPU",
     "HABANA_GAUDI",
     "TPU",
+    "AppHandle",
     "Cache",
     "CachePolicy",
     "CacheRequest",

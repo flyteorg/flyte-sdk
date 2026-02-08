@@ -1101,3 +1101,216 @@ def test_local_serve_endpoint_resolves_correctly():
         assert resp.json()["ok"] is True
     finally:
         local_app.deactivate()
+
+
+# =============================================================================
+# Tests for is_deactivated() thread-aware fix
+# =============================================================================
+
+
+def test_is_deactivated_false_while_thread_alive():
+    """
+    GOAL: Verify is_deactivated() returns False while the server thread is alive.
+
+    Previously, is_deactivated() only checked self._process and would always
+    return True for thread-based apps (since _process is None).
+    """
+    import threading
+
+    app_env = AppEnvironment(
+        name="test-deactivated-thread-alive",
+        image=Image.from_base("python:3.11"),
+        port=18200,
+    )
+
+    stop = threading.Event()
+
+    def _blocker():
+        stop.wait()
+
+    serve_obj = _Serve(mode="local")
+    thread = threading.Thread(target=_blocker, daemon=True)
+    thread.start()
+
+    local_app = _LocalApp(app_env=app_env, host="127.0.0.1", port=18200, _serve_obj=serve_obj, thread=thread)
+
+    try:
+        # Thread is alive, so is_deactivated should return False
+        assert not local_app.is_deactivated()
+    finally:
+        stop.set()
+        thread.join(timeout=2)
+        local_app.deactivate()
+
+
+def test_is_deactivated_true_after_thread_exits():
+    """
+    GOAL: Verify is_deactivated() returns True after the server thread has exited.
+    """
+    import threading
+
+    app_env = AppEnvironment(
+        name="test-deactivated-thread-exited",
+        image=Image.from_base("python:3.11"),
+        port=18201,
+    )
+
+    def _noop():
+        pass
+
+    serve_obj = _Serve(mode="local")
+    thread = threading.Thread(target=_noop, daemon=True)
+    thread.start()
+    thread.join(timeout=2)  # Wait for it to finish
+
+    local_app = _LocalApp(app_env=app_env, host="127.0.0.1", port=18201, _serve_obj=serve_obj, thread=thread)
+
+    try:
+        # Thread has exited, so is_deactivated should return True
+        assert local_app.is_deactivated()
+    finally:
+        local_app.deactivate()
+
+
+def test_is_deactivated_true_no_thread_no_process():
+    """
+    GOAL: Verify is_deactivated() returns True when neither thread nor process is set.
+    """
+    app_env = AppEnvironment(
+        name="test-deactivated-no-thread-no-proc",
+        image=Image.from_base("python:3.11"),
+        port=18202,
+    )
+    serve_obj = _Serve(mode="local")
+    local_app = _LocalApp(app_env=app_env, host="127.0.0.1", port=18202, _serve_obj=serve_obj)
+
+    try:
+        assert local_app.is_deactivated()
+    finally:
+        local_app.deactivate()
+
+
+# =============================================================================
+# Tests for thread-based deactivate() with stop_event and loop shutdown
+# =============================================================================
+
+
+def test_deactivate_stops_thread_based_app():
+    """
+    GOAL: Verify deactivate(wait=True) stops a thread-based app by signalling
+    the stop event and stopping the event loop.
+    """
+    import asyncio
+    import threading
+
+    app_env = AppEnvironment(
+        name="test-deactivate-thread-app",
+        image=Image.from_base("python:3.11"),
+        port=18203,
+    )
+
+    serve_obj = _Serve(mode="local")
+    local_app = _LocalApp(app_env=app_env, host="127.0.0.1", port=18203, _serve_obj=serve_obj)
+
+    # Simulate the pattern used in _serve_local_with_server_func:
+    # create an event loop in a thread, store it on local_app, and run forever.
+    def _run():
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        local_app._thread_loop = loop
+        try:
+            loop.run_forever()
+        finally:
+            local_app._thread_loop = None
+            loop.close()
+
+    thread = threading.Thread(target=_run, daemon=True)
+    thread.start()
+    local_app._thread = thread
+
+    # Give the thread a moment to start the loop
+    import time
+
+    time.sleep(0.1)
+
+    assert not local_app.is_deactivated()
+    assert local_app._stop_event is not None
+    assert not local_app._stop_event.is_set()
+
+    # Deactivate should set stop_event, stop the loop, and join the thread
+    local_app.deactivate(wait=True)
+
+    assert local_app._stop_event.is_set()
+    assert not thread.is_alive()
+    assert local_app.is_deactivated()
+
+
+def test_deactivate_sets_stop_event_for_thread():
+    """
+    GOAL: Verify deactivate() sets the _stop_event even without wait=True.
+    """
+    import threading
+
+    app_env = AppEnvironment(
+        name="test-deactivate-stop-event",
+        image=Image.from_base("python:3.11"),
+        port=18204,
+    )
+
+    serve_obj = _Serve(mode="local")
+    stop = threading.Event()
+
+    def _blocker():
+        stop.wait()
+
+    thread = threading.Thread(target=_blocker, daemon=True)
+    thread.start()
+
+    local_app = _LocalApp(app_env=app_env, host="127.0.0.1", port=18204, _serve_obj=serve_obj, thread=thread)
+
+    local_app.deactivate()
+    assert local_app._stop_event.is_set()
+
+    # Clean up
+    stop.set()
+    thread.join(timeout=2)
+
+
+# =============================================================================
+# Tests for AppHandle Protocol
+# =============================================================================
+
+
+def test_local_app_satisfies_app_handle_protocol():
+    """
+    GOAL: Verify that _LocalApp is recognized as an AppHandle instance.
+    """
+    from flyte._serve import AppHandle
+
+    app_env = AppEnvironment(
+        name="test-protocol-local",
+        image=Image.from_base("python:3.11"),
+        port=18205,
+    )
+    serve_obj = _Serve(mode="local")
+    local_app = _LocalApp(app_env=app_env, host="127.0.0.1", port=18205, _serve_obj=serve_obj)
+
+    try:
+        assert isinstance(local_app, AppHandle)
+    finally:
+        local_app.deactivate()
+
+
+def test_app_handle_protocol_has_required_attributes():
+    """
+    GOAL: Verify the AppHandle protocol defines the expected interface.
+    """
+    from flyte._serve import AppHandle
+
+    # Check that the Protocol has the expected abstract members
+    assert hasattr(AppHandle, "name")
+    assert hasattr(AppHandle, "endpoint")
+    assert hasattr(AppHandle, "is_active")
+    assert hasattr(AppHandle, "is_deactivated")
+    assert hasattr(AppHandle, "activate")
+    assert hasattr(AppHandle, "deactivate")
