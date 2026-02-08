@@ -82,6 +82,10 @@ class AppHandle(Protocol):
 
     def deactivate(self, wait: bool = False) -> AppHandle: ...
 
+    def ephemeral_ctx(self) -> AsyncGenerator[None, None]: ...
+
+    def ephemeral_ctx_sync(self) -> Generator[None, None, None]: ...
+
 
 # ---------------------------------------------------------------------------
 # Global registry of active _LocalApp instances and signal-based cleanup
@@ -492,9 +496,43 @@ class _Serve:
                     loop.run_until_complete(app_env._server(**bound_params))
                 else:
                     app_env._server(**bound_params)
+            except RuntimeError as e:
+                # When deactivate() stops the event loop via loop.stop(),
+                # run_until_complete raises "Event loop stopped before Future
+                # completed." — this is expected and not an error.
+                if "Event loop stopped before Future completed" not in str(e):
+                    logger.exception("Local app server raised an exception")
             except Exception:
                 logger.exception("Local app server raised an exception")
             finally:
+                # Cancel all pending tasks so lifespan handlers and other
+                # coroutines can clean up before the loop is closed.  Without
+                # this, tasks are garbage-collected after loop.close() which
+                # triggers "Task was destroyed but it is pending!" warnings and
+                # RuntimeError("Event loop is closed") in cleanup callbacks.
+                try:
+                    pending = asyncio.all_tasks(loop)
+                    for task in pending:
+                        task.cancel()
+                    if pending:
+                        # Temporarily suppress logging during task cleanup to
+                        # avoid noisy CancelledError tracebacks from ASGI
+                        # server internals (e.g. uvicorn/starlette lifespan
+                        # handlers) that are expected during forced shutdown.
+                        import logging as _logging
+
+                        _prev_disable = _logging.root.manager.disable
+                        _logging.disable(_logging.CRITICAL)
+                        try:
+                            loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+                        finally:
+                            _logging.disable(_prev_disable)
+                except Exception:
+                    pass
+                try:
+                    loop.run_until_complete(loop.shutdown_asyncgens())
+                except Exception:
+                    pass
                 local_app._thread_loop = None
                 loop.close()
 
