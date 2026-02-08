@@ -917,137 +917,221 @@ from ._tuple_dict import (  # noqa: E402
 )
 
 
-def generate_attribute_list_from_dataclass_json_mixin(schema: dict, schema_name: typing.Any):
+def _resolve_ref(ref_path: str, schema: dict) -> typing.Optional[dict]:
+    """Resolve a $ref path to its definition in the schema."""
+    ref_name = ref_path.rsplit("/", maxsplit=1)[-1]
+    defs = schema.get("$defs", schema.get("definitions", {}))
+    if ref_name in defs:
+        ref_schema = defs[ref_name].copy()
+        if "$defs" not in ref_schema and defs:
+            ref_schema["$defs"] = defs
+        return ref_schema
+    return None
+
+
+def _is_optional_anyof(any_of: list) -> bool:
+    """Check if an anyOf represents Optional[T] (exactly 2 elements, second is null)."""
+    return len(any_of) == 2 and isinstance(any_of[1], dict) and any_of[1].get("type") == "null"
+
+
+def _resolve_property_type(
+    property_key: str,
+    property_val: dict,
+    schema: dict,
+    nested_types: typing.Dict[str, typing.Tuple[str, type]],
+    is_required: bool = True,
+) -> typing.Any:
+    """Resolve a single JSON schema property to a tuple for make_dataclass.
+
+    Returns a 2-tuple (name, type) for required fields, or a 3-tuple (name, type, field)
+    for optional fields that need a default value.
+    """
+
+    # Handle direct $ref (field: NestedModel)
+    if property_val.get("$ref"):
+        ref_schema = _resolve_ref(property_val["$ref"], schema)
+        if ref_schema is not None:
+            if ref_schema.get("enum"):
+                return (property_key, str)
+            nested_class: type = convert_mashumaro_json_schema_to_python_class(
+                ref_schema, property_val["$ref"].split("/")[-1]
+            )
+            nested_types[property_key] = ("direct", nested_class)
+            return (property_key, typing.cast(GenericAlias, nested_class))
+        return (property_key, str)
+
+    # Handle anyOf (Optional[T], Union[T1, T2])
+    if property_val.get("anyOf"):
+        any_of = property_val["anyOf"]
+        first_option = any_of[0]
+
+        if _is_optional_anyof(any_of):
+            # Optional[T] - resolve the inner type from first_option
+            inner_type = _resolve_single_type(property_key, first_option, schema, nested_types)
+            optional_type = typing.Optional[inner_type]  # type: ignore
+            # Only add default=None for fields not in 'required' list
+            if not is_required:
+                return (property_key, optional_type, dataclasses.field(default=None))
+            return (property_key, optional_type)
+        else:
+            # Non-optional anyOf - use existing behavior (take first type)
+            if first_option.get("type"):
+                property_type = first_option["type"]
+                return _resolve_typed_property(property_key, property_type, property_val, schema, nested_types)
+            elif first_option.get("$ref"):
+                ref_schema = _resolve_ref(first_option["$ref"], schema)
+                if ref_schema is not None and not ref_schema.get("enum"):
+                    nested_class_: type = convert_mashumaro_json_schema_to_python_class(
+                        ref_schema, first_option["$ref"].split("/")[-1]
+                    )
+                    nested_types[property_key] = ("direct", nested_class_)
+                    return (property_key, typing.cast(GenericAlias, nested_class_))
+                return (property_key, str)
+            return (property_key, str)
+
+    # Determine property type
+    if property_val.get("enum"):
+        return (property_key, str)
+
+    property_type = property_val.get("type", "string")
+    return _resolve_typed_property(property_key, property_type, property_val, schema, nested_types)
+
+
+def _resolve_single_type(
+    property_key: str,
+    type_def: dict,
+    schema: dict,
+    nested_types: typing.Dict[str, typing.Tuple[str, type]],
+) -> typing.Any:
+    """Resolve a single type definition (not anyOf) to a Python type.
+
+    Used for resolving the inner type of Optional[T].
+    """
+    # Handle $ref
+    if type_def.get("$ref"):
+        ref_schema = _resolve_ref(type_def["$ref"], schema)
+        if ref_schema is not None:
+            if ref_schema.get("enum"):
+                return str
+            nested_class: type = convert_mashumaro_json_schema_to_python_class(
+                ref_schema, type_def["$ref"].split("/")[-1]
+            )
+            nested_types[property_key] = ("direct", nested_class)
+            return typing.cast(GenericAlias, nested_class)
+        return str
+
+    prop_type = type_def.get("type", "string")
+
+    if prop_type == "array":
+        items = type_def.get("items", {})
+        elem_type = _get_element_type(items, schema)
+        inner = typing.List[elem_type]  # type: ignore
+        if dataclasses.is_dataclass(elem_type):
+            nested_types[property_key] = ("list", elem_type)
+        return inner
+
+    if prop_type == "object":
+        if type_def.get("additionalProperties"):
+            elem_type = _get_element_type(type_def["additionalProperties"], schema)
+            inner = typing.Dict[str, elem_type]  # type: ignore
+            if dataclasses.is_dataclass(elem_type):
+                nested_types[property_key] = ("dict", elem_type)
+            return inner
+        if type_def.get("title"):
+            return typing.cast(
+                GenericAlias,
+                convert_mashumaro_json_schema_to_python_class(type_def, type_def["title"]),
+            )
+        return dict
+
+    return _get_element_type(type_def, schema)
+
+
+def _resolve_typed_property(
+    property_key: str,
+    property_type: str,
+    property_val: dict,
+    schema: dict,
+    nested_types: typing.Dict[str, typing.Tuple[str, type]],
+) -> typing.Tuple[str, typing.Any]:
+    """Resolve a property with a known type string to a (name, type) tuple."""
     from flyte.io._dir import Dir
     from flyte.io._file import File
 
+    # Handle list
+    if property_type == "array":
+        items = property_val.get("items", {})
+        elem_type = _get_element_type(items, schema)
+        if dataclasses.is_dataclass(elem_type):
+            nested_types[property_key] = ("list", elem_type)
+        return (property_key, typing.List[elem_type])  # type: ignore
+    # Handle dataclass and dict
+    elif property_type == "object":
+        if property_val.get("anyOf"):
+            # For optional with dataclass (mashumaro schema)
+            sub_schemea = property_val["anyOf"][0]
+            sub_schemea_name = sub_schemea.get("title")
+            if sub_schemea_name is None:
+                return (property_key, dict)
+            if File.schema_match(property_val):
+                return (property_key, typing.cast(GenericAlias, File))
+            elif Dir.schema_match(property_val):
+                return (property_key, typing.cast(GenericAlias, Dir))
+            nested_class: type = convert_mashumaro_json_schema_to_python_class(sub_schemea, sub_schemea_name)
+            nested_types[property_key] = ("direct", nested_class)
+            return (property_key, typing.cast(GenericAlias, nested_class))
+        elif property_val.get("additionalProperties"):
+            # For typing.Dict type - $ref resolved centrally via _get_element_type
+            elem_type = _get_element_type(property_val["additionalProperties"], schema)
+            if dataclasses.is_dataclass(elem_type):
+                nested_types[property_key] = ("dict", elem_type)
+            return (property_key, typing.Dict[str, elem_type])  # type: ignore
+        elif property_val.get("title"):
+            # For nested dataclass
+            sub_schemea_name = property_val["title"]
+            # Check Flyte offloaded types
+            if File.schema_match(property_val):
+                return (property_key, typing.cast(GenericAlias, File))
+            elif Dir.schema_match(property_val):
+                return (property_key, typing.cast(GenericAlias, Dir))
+            nested_class_t: type = convert_mashumaro_json_schema_to_python_class(property_val, sub_schemea_name)
+            nested_types[property_key] = ("direct", nested_class_t)
+            return (property_key, typing.cast(GenericAlias, nested_class_t))
+        else:
+            # For untyped dict
+            return (property_key, dict)
+    # Handle int, float, bool or str
+    else:
+        return (property_key, _get_element_type(property_val, schema))
+
+
+def generate_attribute_list_from_dataclass_json_mixin(schema: dict, schema_name: typing.Any):
     attribute_list: typing.List[typing.Tuple[Any, Any]] = []
-    nested_types: typing.Dict[str, type] = {}  # Track nested model types for conversion
+    # Track nested model types for conversion: (container_kind, nested_class)
+    # container_kind: "direct" for field: Model, "list" for field: list[Model], "dict" for field: dict[str, Model]
+    nested_types: typing.Dict[str, typing.Tuple[str, type]] = {}
 
     # Use 'required' field to preserve property order, as protobuf Struct doesn't preserve dict order
+    # Also include optional properties (those not in 'required') so they are not skipped
     properties = schema["properties"]
-    property_order = schema.get("required", list(properties.keys()))
+    required = schema.get("required", list(properties.keys()))
+    property_order = list(required)
+    for key in properties:
+        if key not in property_order:
+            property_order.append(key)
 
+    required_set = set(required)
     for property_key in property_order:
         property_val = properties[property_key]
-        # Handle $ref for nested Pydantic models
-        if property_val.get("$ref"):
-            ref_path = property_val["$ref"]
-            # Extract the definition name from the $ref path (e.g., "#/$defs/MyNestedModel" -> "MyNestedModel")
-            ref_name = ref_path.split("/")[-1]
-            # Get the referenced schema from $defs (or definitions for older schemas)
-            defs = schema.get("$defs", schema.get("definitions", {}))
-            if ref_name in defs:
-                ref_schema = defs[ref_name].copy()
-                # Check if the $ref points to an enum definition (no properties)
-                if ref_schema.get("enum"):
-                    attribute_list.append((property_key, str))
-                    continue
-                # Include $defs so nested models can resolve their own $refs
-                if "$defs" not in ref_schema and defs:
-                    ref_schema["$defs"] = defs
-                nested_class: type = convert_mashumaro_json_schema_to_python_class(ref_schema, ref_name)
-                attribute_list.append(
-                    (
-                        property_key,
-                        typing.cast(GenericAlias, nested_class),
-                    )
-                )
-                # Track this as a nested type that needs dict-to-object conversion
-                nested_types[property_key] = nested_class
-            continue
+        attr = _resolve_property_type(
+            property_key,
+            property_val,
+            schema,
+            nested_types,
+            is_required=(property_key in required_set),
+        )
+        attribute_list.append(attr)
 
-        if property_val.get("anyOf"):
-            property_type = property_val["anyOf"][0]["type"]
-        elif property_val.get("enum"):
-            property_type = "enum"
-        else:
-            property_type = property_val["type"]
-        # Handle list
-        if property_type == "array":
-            attribute_list.append((property_key, typing.List[_get_element_type(property_val["items"])]))  # type: ignore
-        # Handle dataclass and dict
-        elif property_type == "object":
-            if property_val.get("anyOf"):
-                # For optional with dataclass
-                sub_schemea = property_val["anyOf"][0]
-                sub_schemea_name = sub_schemea["title"]
-                if File.schema_match(property_val):
-                    attribute_list.append(
-                        (
-                            property_key,
-                            typing.cast(
-                                GenericAlias,
-                                File,
-                            ),
-                        )
-                    )
-                    continue
-                elif Dir.schema_match(property_val):
-                    attribute_list.append(
-                        (
-                            property_key,
-                            typing.cast(
-                                GenericAlias,
-                                Dir,
-                            ),
-                        )
-                    )
-                    continue
-                nested_class = convert_mashumaro_json_schema_to_python_class(sub_schemea, sub_schemea_name)
-                attribute_list.append(
-                    (
-                        property_key,
-                        typing.cast(GenericAlias, nested_class),
-                    )
-                )
-                nested_types[property_key] = nested_class
-            elif property_val.get("additionalProperties"):
-                # For typing.Dict type
-                elem_type = _get_element_type(property_val["additionalProperties"])
-                attribute_list.append((property_key, typing.Dict[str, elem_type]))  # type: ignore
-            elif property_val.get("title"):
-                # For nested dataclass
-                sub_schemea_name = property_val["title"]
-                # Check Flyte offloaded types
-                if File.schema_match(property_val):
-                    attribute_list.append(
-                        (
-                            property_key,
-                            typing.cast(
-                                GenericAlias,
-                                File,
-                            ),
-                        )
-                    )
-                    continue
-                elif Dir.schema_match(property_val):
-                    attribute_list.append(
-                        (
-                            property_key,
-                            typing.cast(
-                                GenericAlias,
-                                Dir,
-                            ),
-                        )
-                    )
-                    continue
-                nested_class = convert_mashumaro_json_schema_to_python_class(property_val, sub_schemea_name)
-                attribute_list.append(
-                    (
-                        property_key,
-                        typing.cast(GenericAlias, nested_class),
-                    )
-                )
-                nested_types[property_key] = nested_class
-            else:
-                # For untyped dict
-                attribute_list.append((property_key, dict))  # type: ignore
-        elif property_type == "enum":
-            attribute_list.append([property_key, str])  # type: ignore
-        # Handle int, float, bool or str
-        else:
-            attribute_list.append([property_key, _get_element_type(property_val)])  # type: ignore
     return attribute_list, nested_types
 
 
@@ -2064,11 +2148,17 @@ def convert_mashumaro_json_schema_to_python_class(schema: dict, schema_name: typ
 
         def __init__(self, *args, **kwargs):  # type: ignore[misc]
             # Convert dict values to nested types before calling original __init__
-            for field_name, field_type in nested_types.items():
+            for field_name, (kind, field_type) in nested_types.items():
                 if field_name in kwargs:
                     value = kwargs[field_name]
-                    if isinstance(value, dict):
+                    if kind == "direct" and isinstance(value, dict):
                         kwargs[field_name] = field_type(**value)
+                    elif kind == "list" and isinstance(value, list):
+                        kwargs[field_name] = [field_type(**item) if isinstance(item, dict) else item for item in value]
+                    elif kind == "dict" and isinstance(value, dict):
+                        kwargs[field_name] = {
+                            k: field_type(**v) if isinstance(v, dict) else v for k, v in value.items()
+                        }
             original_init(self, *args, **kwargs)
 
         cls.__init__ = __init__  # type: ignore[method-assign, misc]
@@ -2076,7 +2166,10 @@ def convert_mashumaro_json_schema_to_python_class(schema: dict, schema_name: typ
     return cls
 
 
-def _get_element_type(element_property: typing.Union[typing.Dict[str, str], bool]) -> Type:
+def _get_element_type(
+    element_property: typing.Union[typing.Dict[str, typing.Any], bool],
+    schema: typing.Optional[typing.Dict[str, typing.Any]] = None,
+) -> Type:
     from flyte.io._dir import Dir
     from flyte.io._file import File
 
@@ -2087,6 +2180,19 @@ def _get_element_type(element_property: typing.Union[typing.Dict[str, str], bool
     if not isinstance(element_property, dict):
         return typing.Any
 
+    # Handle $ref for nested models (e.g., List[NestedModel], Dict[str, NestedModel])
+    if element_property.get("$ref") and schema is not None:
+        ref_path = element_property["$ref"]
+        ref_name = ref_path.split("/")[-1]
+        defs = schema.get("$defs", schema.get("definitions", {}))
+        if ref_name in defs:
+            ref_schema = defs[ref_name].copy()
+            if ref_schema.get("enum"):
+                return str
+            if "$defs" not in ref_schema and defs:
+                ref_schema["$defs"] = defs
+            return convert_mashumaro_json_schema_to_python_class(ref_schema, ref_name)
+
     if File.schema_match(element_property):
         return File
     elif Dir.schema_match(element_property):
@@ -2094,13 +2200,13 @@ def _get_element_type(element_property: typing.Union[typing.Dict[str, str], bool
     element_type = (
         [e_property["type"] for e_property in element_property["anyOf"]]  # type: ignore
         if element_property.get("anyOf")
-        else element_property["type"]
+        else element_property.get("type", "string")
     )
     element_format = element_property["format"] if "format" in element_property else None
 
     if isinstance(element_type, list):
         # Element type of Optional[int] is [integer, None]
-        return typing.Optional[_get_element_type({"type": element_type[0]})]  # type: ignore
+        return typing.Optional[_get_element_type({"type": element_type[0]}, schema)]  # type: ignore
 
     if element_type == "string":
         return str
