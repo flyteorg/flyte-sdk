@@ -184,7 +184,10 @@ class _LocalApp:
 
     @syncify
     async def activate(self, wait: bool = False) -> _LocalApp:
-        """Start the locally-served app."""
+        """Activate the locally-served app.
+
+        :param wait: Wait for the app to reach activated state
+        """
         if self.is_active():
             return self
 
@@ -207,7 +210,10 @@ class _LocalApp:
 
     @syncify
     async def deactivate(self, wait: bool = False) -> _LocalApp:
-        """Stop the locally-served app."""
+        """Activate the locally-served app.
+
+        :param wait: Wait for the app to reach deactivated state
+        """
         deactivate_timeout = self._serve_obj._deactivate_timeout if self._serve_obj else _LOCAL_DEACTIVATE_TIMEOUT
         if self._process is not None:
             try:

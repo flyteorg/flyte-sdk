@@ -163,7 +163,7 @@ class App(ToJSONMixin):
     async def activate(self, wait: bool = False) -> App:
         """
         Start the app
-        :param wait: Wait for the app to reach started state
+        :param wait: Wait for the app to reach activated state
 
         """
         if self.is_active():
