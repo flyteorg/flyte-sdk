@@ -75,7 +75,7 @@ unit_test_plugins:
 	@for plugin in $${FLYTE_PLUGIN:-plugins/*}; do \
 		if [ -d "$$plugin/tests" ]; then \
 			echo "🚀 Testing plugin: $$plugin..."; \
-			cd "$$plugin" && uv run python -m pytest tests/ && cd ../../..; \
+			cd "$$plugin" && uv run --active python -m pytest tests/ && cd ../../..; \
 		fi \
 	done
 
