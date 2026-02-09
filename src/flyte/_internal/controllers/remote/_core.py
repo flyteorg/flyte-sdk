@@ -362,7 +362,7 @@ class Controller:
                             trace=trace,
                             input_uri=action.inputs_uri,
                             run_output_base=action.run_output_base,
-                            group=action.group.name if action.group else "",
+                            group=action.group.name if action.group else None,
                             # Subject is not used in the current implementation
                         ),
                         wait_for_ready=True,

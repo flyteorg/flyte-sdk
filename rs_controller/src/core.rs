@@ -618,7 +618,7 @@ impl CoreBaseController {
             let mut client = self.queue_client.clone();
             // todo: tonic doesn't seem to have wait_for_ready, or maybe the .ready is already doing this.
             let enqueue_result = client.enqueue_action(enqueue_request).await;
-            // Add logic from resiliency pr here, return certain errors, but change others to be a specific slowdown error.
+
             match enqueue_result {
                 Ok(response) => {
                     debug!("Successfully enqueued action: {:?}", action.action_id);
