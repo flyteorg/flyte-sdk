@@ -3,7 +3,8 @@ import asyncio
 import pytest
 
 import flyte
-from flyte._context import internal_ctx
+from flyte._context import Context, ContextData, internal_ctx
+from flyte.errors import TraceDoesNotAllowNestedTasksError
 from flyte.models import ActionID, RawDataPath, TaskContext
 from flyte.report import Report
 from flyte.syncify import syncify
@@ -217,3 +218,72 @@ def test_has_raw_data_priority():
         assert internal_ctx().has_raw_data is True
         # Also verify that raw_data returns the task context path
         assert internal_ctx().raw_data.path == "/task/path"
+
+
+# --- Tasks cannot be nested inside flyte.trace ---
+
+env = flyte.TaskEnvironment(name="test_trace_nesting")
+
+
+@env.task
+async def async_child_task(x: int) -> int:
+    return x + 1
+
+
+@env.task
+def sync_child_task(x: int) -> int:
+    return x + 1
+
+
+def _make_trace_context() -> Context:
+    """Create a context that simulates being inside a @trace within a task."""
+    task_ctx = TaskContext(
+        action=ActionID(name="test"),
+        run_base_dir="test",
+        output_path="test",
+        raw_data_path=RawDataPath(path=""),
+        version="",
+        report=Report("test"),
+    )
+    return Context(data=ContextData(task_context=task_ctx, in_trace=True))
+
+
+def test_task_call_raises_in_trace_context():
+    """Calling a @task via __call__ inside a flyte.trace context must raise."""
+    trace_ctx = _make_trace_context()
+    with trace_ctx:
+        with pytest.raises(TraceDoesNotAllowNestedTasksError):
+            sync_child_task(1)
+
+
+def test_async_task_call_raises_in_trace_context():
+    """Calling an async @task via __call__ inside a flyte.trace context must raise."""
+    trace_ctx = _make_trace_context()
+    with trace_ctx:
+        with pytest.raises(TraceDoesNotAllowNestedTasksError):
+            async_child_task(1)
+
+
+@pytest.mark.asyncio
+async def test_task_aio_raises_in_trace_context():
+    """Calling a @task via .aio() inside a flyte.trace context must raise."""
+    trace_ctx = _make_trace_context()
+    async with trace_ctx:
+        with pytest.raises(TraceDoesNotAllowNestedTasksError):
+            await async_child_task.aio(1)
+
+
+@pytest.mark.asyncio
+async def test_sync_task_aio_raises_in_trace_context():
+    """Calling a sync @task via .aio() inside a flyte.trace context must raise."""
+    trace_ctx = _make_trace_context()
+    async with trace_ctx:
+        with pytest.raises(TraceDoesNotAllowNestedTasksError):
+            await sync_child_task.aio(1)
+
+
+def test_task_forward_bypasses_trace_check():
+    """Calling task.forward() should work even in trace context (it's the escape hatch)."""
+    trace_ctx = _make_trace_context()
+    with trace_ctx:
+        assert sync_child_task.forward(1) == 2

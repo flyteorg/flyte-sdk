@@ -31,7 +31,7 @@ def trace(func: Callable[..., T]) -> Callable[..., T]:
 
     @functools.wraps(func)
     async def wrapper_async(*args: Any, **kwargs: Any) -> Any:
-        from flyte._context import internal_ctx
+        from flyte._context import Context, internal_ctx
 
         ctx = internal_ctx()
         if ctx.is_task_context():
@@ -53,10 +53,12 @@ def trace(func: Callable[..., T]) -> Callable[..., T]:
                 logger.debug(f"No existing trace info found for {func}, proceeding to execute.")
             start_time = time.time()
 
-            # Create a new context with the trace's action ID
+            # Create a new context with the trace's action ID and mark as in_trace
+            # so that nested task calls run as pure Python instead of submitting to the controller.
             # Note: ctx.data.task_context is guaranteed to be non-None by is_task_context() check above
             trace_task_context = ctx.data.task_context.replace(action=info.action)  # type: ignore[union-attr]
-            trace_context = ctx.replace_task_context(trace_task_context)
+            trace_data = ctx.data.replace(task_context=trace_task_context, in_trace=True)
+            trace_context = Context(trace_data)
 
             # Execute function in trace context, then record outside it
             error = None
@@ -90,7 +92,7 @@ def trace(func: Callable[..., T]) -> Callable[..., T]:
 
     @functools.wraps(func)
     async def wrapper_async_iterator(*args: Any, **kwargs: Any) -> AsyncIterator[Any]:
-        from flyte._context import internal_ctx
+        from flyte._context import Context, internal_ctx
 
         ctx = internal_ctx()
         if ctx.is_task_context():
@@ -110,10 +112,12 @@ def trace(func: Callable[..., T]) -> Callable[..., T]:
                     raise info.error
             start_time = time.time()
 
-            # Create a new context with the trace's action ID
+            # Create a new context with the trace's action ID and mark as in_trace
+            # so that nested task calls run as pure Python instead of submitting to the controller.
             # Note: ctx.data.task_context is guaranteed to be non-None by is_task_context() check above
             trace_task_context = ctx.data.task_context.replace(action=info.action)  # type: ignore[union-attr]
-            trace_context = ctx.replace_task_context(trace_task_context)
+            trace_data = ctx.data.replace(task_context=trace_task_context, in_trace=True)
+            trace_context = Context(trace_data)
 
             # Execute function in trace context, then record outside it
             error = None
