@@ -36,6 +36,7 @@ from mashumaro.jsonschema.plugins import BasePlugin
 from mashumaro.jsonschema.schema import Instance
 from mashumaro.mixins.json import DataClassJSONMixin
 from pydantic import BaseModel
+from pydantic.json_schema import GenerateJsonSchema
 from typing_extensions import Annotated, get_args, get_origin
 
 import flyte.storage as storage
@@ -429,12 +430,27 @@ class RestrictedTypeTransformer(TypeTransformer[T], ABC):
         raise RestrictedTypeError(f"Transformer for type {self.python_type} is restricted currently")
 
 
+class CustomPydanticJsonSchemaGenerator(GenerateJsonSchema):
+    """Custom JSON schema generator that uses enum member names instead of values.
+
+    This ensures consistency with EnumTransformer.get_literal_type(), which uses
+    enum names (e.name) for standalone enum types.
+    """
+
+    def enum_schema(self, schema):
+        result = super().enum_schema(schema)
+        enum_cls = schema.get("cls")
+        if enum_cls and issubclass(enum_cls, enum.Enum) and "enum" in result:
+            result["enum"] = [e.name for e in enum_cls]
+        return result
+
+
 class PydanticTransformer(TypeTransformer[BaseModel]):
     def __init__(self):
         super().__init__("Pydantic Transformer", BaseModel, enable_type_assertions=False)
 
     def get_literal_type(self, t: Type[BaseModel]) -> LiteralType:
-        schema = t.model_json_schema()
+        schema = t.model_json_schema(schema_generator=CustomPydanticJsonSchemaGenerator)
 
         meta_struct = struct_pb2.Struct()
         meta_struct.update(
@@ -507,7 +523,7 @@ class PydanticSchemaPlugin(BasePlugin):
 
         try:
             if issubclass(instance.type, BaseModel):
-                pydantic_schema = instance.type.model_json_schema()
+                pydantic_schema = instance.type.model_json_schema(schema_generator=CustomPydanticJsonSchemaGenerator)
                 return JSONSchema.from_dict(pydantic_schema)
         except TypeError:
             return None
