@@ -28,11 +28,11 @@ import asyncio
 import json
 import textwrap
 
-from flyte._image import PythonWheels, DIST_FOLDER
 from flyteplugins.anthropic import function_tool, run_agent
 
 import flyte
 import flyte.report
+from flyte._image import DIST_FOLDER, PythonWheels
 
 # ---------------------------------------------------------------------------
 # Environments
@@ -42,8 +42,9 @@ sandbox_env = flyte.TaskEnvironment(
     "python-sandbox",
     resources=flyte.Resources(cpu=1, memory="1Gi"),
     image=(
-        flyte.Image.from_debian_base(python_version=(3, 13))
-        .with_pip_packages("numpy", "pandas", "scikit-learn", "matplotlib")
+        flyte.Image.from_debian_base(python_version=(3, 13)).with_pip_packages(
+            "numpy", "pandas", "scikit-learn", "matplotlib"
+        )
     ),
 )
 
@@ -66,10 +67,10 @@ agent_env = flyte.TaskEnvironment(
 # Token-budget constants (character limits, ~4 chars ≈ 1 token)
 # ---------------------------------------------------------------------------
 
-MAX_SEARCH_SNIPPET_CHARS = 400       # per search result content snippet
-MAX_SEARCH_RESULTS = 3               # default results per web search call
-MAX_EXEC_OUTPUT_CHARS = 3000         # stdout/stderr cap from execute_python
-MAX_SUMMARY_CHARS_FOR_CRITIC = 600   # per sub-result when evaluating quality
+MAX_SEARCH_SNIPPET_CHARS = 400  # per search result content snippet
+MAX_SEARCH_RESULTS = 3  # default results per web search call
+MAX_EXEC_OUTPUT_CHARS = 3000  # stdout/stderr cap from execute_python
+MAX_SUMMARY_CHARS_FOR_CRITIC = 600  # per sub-result when evaluating quality
 MAX_SUMMARY_CHARS_FOR_SYNTHESIS = 1500  # per sub-result when synthesizing
 
 
@@ -94,6 +95,7 @@ async def web_search(query: str, max_results: int = MAX_SEARCH_RESULTS) -> str:
     snippets (each capped to ~400 chars to keep token usage low).
     """
     import os
+
     from tavily import TavilyClient
 
     client = TavilyClient(api_key=os.environ["TAVILY_API_KEY"])
@@ -104,11 +106,13 @@ async def web_search(query: str, max_results: int = MAX_SEARCH_RESULTS) -> str:
     )
     results = []
     for r in response.get("results", []):
-        results.append({
-            "title": r.get("title", ""),
-            "url": r.get("url", ""),
-            "content": _truncate(r.get("content", ""), MAX_SEARCH_SNIPPET_CHARS),
-        })
+        results.append(
+            {
+                "title": r.get("title", ""),
+                "url": r.get("url", ""),
+                "content": _truncate(r.get("content", ""), MAX_SEARCH_SNIPPET_CHARS),
+            }
+        )
     # Compact JSON (no indent) to save tokens
     return json.dumps(results, separators=(",", ":"))
 
@@ -159,10 +163,7 @@ async def execute_python(code: str) -> str:
             fig = plt.figure(num)
             w, h = fig.get_size_inches()
             n_axes = len(fig.axes)
-            output += (
-                f"\n[Generated Figure {i}: "
-                f"{w:.0f}x{h:.0f} in, {n_axes} axes]"
-            )
+            output += f"\n[Generated Figure {i}: {w:.0f}x{h:.0f} in, {n_axes} axes]"
         if fig_nums:
             plt.close("all")
     except Exception:
@@ -326,9 +327,7 @@ async def build_report_section(
     sources_html = ""
     if sources.strip():
         source_items = [
-            f'<li><a href="{s.strip()}" target="_blank">{s.strip()}</a></li>'
-            for s in sources.split(",")
-            if s.strip()
+            f'<li><a href="{s.strip()}" target="_blank">{s.strip()}</a></li>' for s in sources.split(",") if s.strip()
         ]
         sources_html = f"""
         <div class="sources">
@@ -413,7 +412,7 @@ research_tools = [
 ]
 
 
-@flyte.trace
+@agent_env.task
 async def run_research_sub_agent(question: str, name: str) -> dict:
     """Run a single research sub-agent for one sub-question."""
     with flyte.group(f"researcher-{name}"):
@@ -677,9 +676,7 @@ async def evaluate_quality(
     comprehensibility_score, groundedness_score, critique, follow_up_questions.
     """
     sub_summaries = "\n\n".join(
-        f"### {r['question']}\n"
-        f"{_truncate(r['summary'], MAX_SUMMARY_CHARS_FOR_CRITIC)}"
-        for r in sub_results
+        f"### {r['question']}\n{_truncate(r['summary'], MAX_SUMMARY_CHARS_FOR_CRITIC)}" for r in sub_results
     )
     raw = await run_agent(
         prompt=(
@@ -719,7 +716,7 @@ def _build_section_htmls(sub_results: list[dict]) -> list[str]:
         content_html = md.markdown(result["summary"], extensions=md_extensions)
         fallback_section = f"""
         <div class="report-section">
-            <h3>{result['question']}</h3>
+            <h3>{result["question"]}</h3>
             <div class="section-content">
                 {content_html}
             </div>
@@ -746,8 +743,7 @@ async def synthesize_summaries(
     if previous_summary:
         # Refinement mode
         new_summaries = "\n\n".join(
-            f"### Follow-up: {r['question']}\n"
-            f"{_truncate(r['summary'], MAX_SUMMARY_CHARS_FOR_SYNTHESIS)}"
+            f"### Follow-up: {r['question']}\n{_truncate(r['summary'], MAX_SUMMARY_CHARS_FOR_SYNTHESIS)}"
             for r in sub_results
         )
         prompt = (
@@ -760,8 +756,7 @@ async def synthesize_summaries(
     else:
         # Initial synthesis
         summaries_text = "\n\n".join(
-            f"### Sub-question: {r['question']}\n"
-            f"{_truncate(r['summary'], MAX_SUMMARY_CHARS_FOR_SYNTHESIS)}"
+            f"### Sub-question: {r['question']}\n{_truncate(r['summary'], MAX_SUMMARY_CHARS_FOR_SYNTHESIS)}"
             for r in sub_results
         )
         prompt = (
@@ -790,10 +785,7 @@ async def decompose_query(query: str) -> list[dict[str, str]]:
     Returns a list of dicts with "name" and "question" keys.
     """
     raw = await run_agent(
-        prompt=(
-            f"Decompose this research query into 3-5 specific "
-            f"sub-questions:\n\n{query}"
-        ),
+        prompt=(f"Decompose this research query into 3-5 specific sub-questions:\n\n{query}"),
         system=DECOMPOSE_SYSTEM_PROMPT,
         model="claude-sonnet-4-20250514",
         max_tokens=1024,
@@ -808,15 +800,19 @@ async def decompose_query(query: str) -> list[dict[str, str]]:
         sub_questions: list[dict[str, str]] = []
         for idx, item in enumerate(parsed, start=1):
             if isinstance(item, dict):
-                sub_questions.append({
-                    "name": item.get("name", f"sub-q-{idx}"),
-                    "question": item.get("question", str(item)),
-                })
+                sub_questions.append(
+                    {
+                        "name": item.get("name", f"sub-q-{idx}"),
+                        "question": item.get("question", str(item)),
+                    }
+                )
             else:
-                sub_questions.append({
-                    "name": f"sub-q-{idx}",
-                    "question": str(item),
-                })
+                sub_questions.append(
+                    {
+                        "name": f"sub-q-{idx}",
+                        "question": str(item),
+                    }
+                )
     except json.JSONDecodeError:
         # Fallback: treat the response as a single question
         sub_questions = [{"name": "sub-q-1", "question": raw}]
@@ -847,10 +843,7 @@ async def deep_research_agent(query: str, max_refinements: int = 2) -> str:
 
     # --- Step 2: Fan out parallel research sub-agents ---
     with flyte.group("parallel-research"):
-        tasks = [
-            run_research_sub_agent(sq["question"], sq["name"])
-            for sq in sub_questions
-        ]
+        tasks = [run_research_sub_agent(sq["question"], sq["name"]) for sq in sub_questions]
         sub_results = list(await asyncio.gather(*tasks))
 
     # --- Step 3: Synthesize into executive summary ---
@@ -864,7 +857,9 @@ async def deep_research_agent(query: str, max_refinements: int = 2) -> str:
     for refinement_round in range(max_refinements):
         with flyte.group(f"evaluate-{refinement_round}"):
             evaluation = await evaluate_quality(
-                query, executive_summary, latest_sub_results,
+                query,
+                executive_summary,
+                latest_sub_results,
             )
 
         print(
@@ -886,10 +881,7 @@ async def deep_research_agent(query: str, max_refinements: int = 2) -> str:
             print("Critic found issues but no follow-up questions — finalizing.")
             break
 
-        print(
-            f"Quality check failed (round {refinement_round + 1}). "
-            f"Critique: {critique}"
-        )
+        print(f"Quality check failed (round {refinement_round + 1}). Critique: {critique}")
         print(f"Follow-up questions: {follow_ups}")
 
         # --- Step 4a: Targeted follow-up research ---
@@ -917,10 +909,7 @@ async def deep_research_agent(query: str, max_refinements: int = 2) -> str:
                 critique=critique,
             )
     else:
-        print(
-            f"Reached maximum refinement iterations ({max_refinements}). "
-            f"Finalizing with best available output."
-        )
+        print(f"Reached maximum refinement iterations ({max_refinements}). Finalizing with best available output.")
 
     # --- Step 5: Build and publish final HTML report ---
     section_htmls = _build_section_htmls(sub_results)

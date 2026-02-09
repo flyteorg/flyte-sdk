@@ -8,18 +8,19 @@ to make a sandwich.
 import asyncio
 from typing import Optional
 
-from flyte._image import PythonWheels, DIST_FOLDER
 from flyteplugins.anthropic import function_tool, run_agent
 
 import flyte
+from flyte._image import DIST_FOLDER, PythonWheels
 
 agent_env = flyte.TaskEnvironment(
     "anthropic-agent",
     resources=flyte.Resources(cpu=1),
     secrets=[flyte.Secret(key="niels-anthropic-api-key", as_env_var="ANTHROPIC_API_KEY")],
     image=(
-        flyte.Image.from_debian_base(python_version=(3, 13))
-        .clone(addl_layer=PythonWheels(wheel_dir=DIST_FOLDER, package_name="flyteplugins-anthropic", pre=True))
+        flyte.Image.from_debian_base(python_version=(3, 13)).clone(
+            addl_layer=PythonWheels(wheel_dir=DIST_FOLDER, package_name="flyteplugins-anthropic", pre=True)
+        )
     ),
 )
 
