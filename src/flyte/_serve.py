@@ -5,7 +5,6 @@ import atexit
 import hashlib
 import os
 import pathlib
-import shlex
 import signal
 import subprocess
 import threading
@@ -23,8 +22,6 @@ from typing import (
     Protocol,
     runtime_checkable,
 )
-from urllib.error import URLError
-from urllib.request import urlopen
 
 import cloudpickle
 
@@ -198,6 +195,9 @@ class _LocalApp:
         """
         Check if the app is currently active or started.
         """
+        from urllib.error import URLError
+        from urllib.request import urlopen
+
         health_check_path = self._serve_obj._health_check_path if self._serve_obj else _LOCAL_HEALTH_CHECK_PATH
         health_check_timeout = (
             self._serve_obj._health_check_timeout if self._serve_obj else _LOCAL_IS_ACTIVE_RESPONSE_TIMEOUT
@@ -552,6 +552,8 @@ class _Serve:
         port: int,
     ) -> _LocalApp:
         """Start the app via its ``command`` or ``args`` as a subprocess."""
+        import shlex
+
         if app_env.command is not None:
             if isinstance(app_env.command, str):
                 cmd = shlex.split(app_env.command)
