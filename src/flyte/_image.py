@@ -709,10 +709,10 @@ class Image:
                 "Flyte current cannot add additional layers to a Dockerfile-based Image."
                 " Please amend the dockerfile directly."
             )
-        registry = registry if registry else self.registry
-        name = name if name else self.name
-        registry_secret = registry_secret if registry_secret else self._image_registry_secret
-        base_image = base_image if base_image else self.base_image
+        registry = registry or self.registry
+        name = name or self.name
+        registry_secret = registry_secret or self._image_registry_secret
+        base_image = base_image or self.base_image
         if addl_layer and (not name):
             raise ValueError(
                 f"Cannot add additional layer {addl_layer} to an image without name. Please first clone()."
@@ -785,7 +785,7 @@ class Image:
 
     @property
     def _final_tag(self) -> str:
-        t = self._tag if self._tag else self._get_hash_digest()
+        t = self._tag or self._get_hash_digest()
         return t or "latest"
 
     @cached_property

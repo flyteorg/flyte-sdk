@@ -146,11 +146,11 @@ class LocalController:
                 action = tctx.action
                 for link in _task.links:
                     uri = link.get_link(
-                        run_name=action.run_name if action.run_name else "",
-                        project=action.project if action.project else "",
-                        domain=action.domain if action.domain else "",
-                        context=tctx.custom_context if tctx.custom_context else {},
-                        parent_action_name=action.name if action.name else "",
+                        run_name=action.run_name or "",
+                        project=action.project or "",
+                        domain=action.domain or "",
+                        context=tctx.custom_context or {},
+                        parent_action_name=action.name or "",
                         action_name=sub_action_id.name,
                         pod_name="localhost",
                     )

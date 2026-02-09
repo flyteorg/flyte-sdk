@@ -131,7 +131,7 @@ class _Runner:
         self._copy_files = copy_style
         self._dry_run = dry_run
         self._copy_bundle_to = copy_bundle_to
-        self._interactive_mode = interactive_mode if interactive_mode else ipython_check()
+        self._interactive_mode = interactive_mode or ipython_check()
         self._raw_data_path = raw_data_path
         self._metadata_path = metadata_path
         self._run_base_dir = run_base_dir
@@ -244,7 +244,7 @@ class _Runner:
                 action=action,
                 code_bundle=code_bundle,
                 output_path="",
-                version=version if version else "na",
+                version=version or "na",
                 raw_data_path=RawDataPath(path=""),
                 compiled_image_cache=image_cache,
                 run_base_dir="",
@@ -293,7 +293,7 @@ class _Runner:
                     project=project,
                     domain=domain,
                     org=cfg.org,
-                    name=self._name if self._name else None,
+                    name=self._name or None,
                 )
             else:
                 project_id = identifier_pb2.ProjectIdentifier(
@@ -304,11 +304,11 @@ class _Runner:
             # Fill in task id inside the task template if it's not provided.
             # Maybe this should be done here, or the backend.
             if task_spec.task_template.id.project == "":
-                task_spec.task_template.id.project = project if project else ""
+                task_spec.task_template.id.project = project or ""
             if task_spec.task_template.id.domain == "":
-                task_spec.task_template.id.domain = domain if domain else ""
+                task_spec.task_template.id.domain = domain or ""
             if task_spec.task_template.id.org == "":
-                task_spec.task_template.id.org = cfg.org if cfg.org else ""
+                task_spec.task_template.id.org = cfg.org or ""
             if task_spec.task_template.id.version == "":
                 task_spec.task_template.id.version = version
 
@@ -496,7 +496,7 @@ class _Runner:
                 checkpoints=checkpoints,
                 code_bundle=code_bundle,
                 output_path=output_path,
-                version=version if version else "na",
+                version=version or "na",
                 raw_data_path=raw_data_path_obj,
                 compiled_image_cache=image_cache,
                 run_base_dir=run_base_dir,
