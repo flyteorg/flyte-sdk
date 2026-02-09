@@ -485,6 +485,7 @@ class AsyncFunctionTaskTemplate(TaskTemplate[P, R, F]):
         # TODO We may need to keep this as the bare func execute, and need a pre and post execute some other func.
         """
         from flyte._utils.asyncify import run_sync_with_loop
+
         ctx = internal_ctx()
         assert ctx.data.task_context is not None, "Function should have already returned if not in a task context"
         ctx_data = await self.pre(*args, **kwargs)
