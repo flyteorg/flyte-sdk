@@ -560,14 +560,34 @@ class _Runner:
         if self._tracker is not None:
             ctx = Context(ctx.data.replace(tracker=self._tracker))
 
-        with ctx.replace_task_context(tctx):
-            # make the local version always runs on a different thread, returns a wrapped future.
-            if obj._call_as_synchronous:
-                fut = controller.submit_sync(obj, *args, **kwargs)
-                awaitable = asyncio.wrap_future(fut)
-                outputs = await awaitable
-            else:
-                outputs = await controller.submit(obj, *args, **kwargs)
+        from flyte._initialize import is_persistence_enabled
+        from flyte._persistence._recorder import RunRecorder
+
+        persist = is_persistence_enabled()
+        run_name = action.run_name or action.name
+
+        if persist:
+            RunRecorder.initialize_persistence()
+
+        recorder = RunRecorder(tracker=self._tracker, persist=persist, run_name=run_name)
+        controller.set_recorder(recorder)
+
+        recorder.record_root_start(task_name=obj.name)
+
+        try:
+            with ctx.replace_task_context(tctx):
+                # make the local version always runs on a different thread, returns a wrapped future.
+                if obj._call_as_synchronous:
+                    fut = controller.submit_sync(obj, *args, **kwargs)
+                    awaitable = asyncio.wrap_future(fut)
+                    outputs = await awaitable
+                else:
+                    outputs = await controller.submit(obj, *args, **kwargs)
+        except Exception as e:
+            recorder.record_root_failure(error=str(e))
+            raise
+        else:
+            recorder.record_root_complete()
 
         class _LocalRun(Run):
             def __init__(self, outputs: Tuple[Any, ...] | Any):
