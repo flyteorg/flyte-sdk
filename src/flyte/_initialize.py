@@ -37,6 +37,7 @@ class CommonInit:
     batch_size: int = 1000
     source_config_path: Optional[Path] = None  # Only used for documentation
     sync_local_sys_paths: bool = True
+    local_persistence: bool = False
 
 
 @dataclass(init=True, kw_only=True, repr=True, eq=True, frozen=True)
@@ -162,6 +163,7 @@ async def init(
     source_config_path: Optional[Path] = None,
     sync_local_sys_paths: bool = True,
     load_plugin_type_transformers: bool = True,
+    local_persistence: bool = False,
 ) -> None:
     """
     Initialize the Flyte system with the given configuration. This method should be called before any other Flyte
@@ -204,6 +206,7 @@ async def init(
       into the remote container (default: True).
     :param load_plugin_type_transformers: If enabled (default True), load the type transformer plugins registered under
       the "flyte.plugins.types" entry point group.
+    :param local_persistence: Whether to enable SQLite persistence for local run metadata (default: False).
     :return: None
     """
     from flyte._utils import org_from_endpoint, sanitize_endpoint
@@ -254,6 +257,7 @@ async def init(
             images=images or {},
             source_config_path=source_config_path,
             sync_local_sys_paths=sync_local_sys_paths,
+            local_persistence=local_persistence,
         )
 
 
@@ -346,6 +350,7 @@ async def init_from_config(
         storage=storage,
         source_config_path=cfg_path,
         sync_local_sys_paths=sync_local_sys_paths,
+        local_persistence=cfg.local.persistence,
     )
 
 
@@ -588,6 +593,14 @@ def is_initialized() -> bool:
     :return: True if initialized, False otherwise
     """
     return _get_init_config() is not None
+
+
+def is_persistence_enabled() -> bool:
+    """Check if local run persistence is enabled."""
+    cfg = _get_init_config()
+    if cfg is None:
+        return False
+    return cfg.local_persistence
 
 
 def initialize_in_cluster() -> None:

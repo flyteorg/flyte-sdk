@@ -283,6 +283,13 @@ class AppEnvironment(Environment):
 
     @property
     def endpoint(self) -> str:
+        # Check if this app is being served locally first
+        from flyte._serve import _LOCAL_APP_ENDPOINTS
+
+        local_endpoint = _LOCAL_APP_ENDPOINTS.get(self.name)
+        if local_endpoint is not None:
+            return local_endpoint
+
         endpoint_pattern = os.getenv(INTERNAL_APP_ENDPOINT_PATTERN_ENV_VAR)
         if endpoint_pattern is not None:
             return endpoint_pattern.format(app_fqdn=self.name)
