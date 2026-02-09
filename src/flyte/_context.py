@@ -125,6 +125,13 @@ class Context:
         """
         return self.data.task_context is not None
 
+    def is_in_trace(self) -> bool:
+        """
+        Returns true if the context is in a trace context, else False
+        Returns: bool
+        """
+        return self.data.in_trace
+
     def __enter__(self):
         """Enter the context, setting it as the current context."""
         self._token = root_context_var.set(self)
