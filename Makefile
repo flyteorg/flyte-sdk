@@ -30,7 +30,8 @@ dist: clean
 
 .PHONY: dist
 dist-plugins: clean
-	for plugin in plugins/*; do \
+    # set FLYTE_PLUGIN_DIST to the directory of a specific plugin to build
+	for plugin in $${FLYTE_PLUGIN_DIST:-plugins/*}; do \
 		if [ -d "$$plugin" ]; then \
 			uv run python -m build --wheel --installer uv --outdir ./dist "$$plugin"; \
 		fi \
