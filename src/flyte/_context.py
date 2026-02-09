@@ -32,6 +32,7 @@ class ContextData:
     metadata: Optional[Tuple[Tuple[str, str], ...]] = None
     preserve_original_types: bool = False
     tracker: Any = None  # ActionTracker instance (optional, set for TUI runs)
+    in_trace: bool = False  # True when executing inside a @trace decorated function
 
     def replace(self, **kwargs) -> ContextData:
         return replace(self, **kwargs)

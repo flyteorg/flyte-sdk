@@ -264,7 +264,7 @@ class TaskTemplate(Generic[P, R, F]):
         :return:
         """
         ctx = internal_ctx()
-        if ctx.is_task_context():
+        if ctx.is_task_context() and not ctx.data.in_trace:
             from ._internal.controllers import get_controller
 
             # If we are in a task context, that implies we are executing a Run.
@@ -307,7 +307,7 @@ class TaskTemplate(Generic[P, R, F]):
         """
         try:
             ctx = internal_ctx()
-            if ctx.is_task_context():
+            if ctx.is_task_context() and not ctx.data.in_trace:
                 # If we are in a task context, that implies we are executing a Run.
                 # In this scenario, we should submit the task to the controller.
                 # We will also check if we are not initialized, It is not expected to be not initialized
