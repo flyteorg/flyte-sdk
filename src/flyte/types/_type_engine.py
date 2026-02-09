@@ -430,6 +430,94 @@ class RestrictedTypeTransformer(TypeTransformer[T], ABC):
         raise RestrictedTypeError(f"Transformer for type {self.python_type} is restricted currently")
 
 
+def _unwrap_optional(tp: type) -> type:
+    """Unwrap Optional[X] to X. Returns tp unchanged if not Optional."""
+    origin = get_origin(tp)
+    args = get_args(tp)
+    if origin is typing.Union:
+        non_none = [a for a in args if a is not type(None)]
+        if len(non_none) == 1:
+            return non_none[0]
+    return tp
+
+
+def _convert_enum_field(value: typing.Any, field_type: type, *, to_names: bool) -> typing.Any:
+    """Convert a value based on field type, handling enums, nested BaseModels, lists, and dicts.
+
+    When to_names=True (serialization): converts enum value strings to name strings.
+    When to_names=False (deserialization): converts enum name strings to enum instances.
+    """
+    resolved = _unwrap_optional(field_type)
+
+    if value is None:
+        return None
+
+    # Direct enum field
+    if isinstance(resolved, type) and issubclass(resolved, enum.Enum):
+        if to_names:
+            # Serialization: value string → name string (e.g., "red" → "RED")
+            if isinstance(value, (str, int, float)):
+                try:
+                    return resolved(value).name
+                except (ValueError, KeyError):
+                    return value
+        else:
+            # Deserialization: name string → enum instance, with value fallback
+            if isinstance(value, str):
+                try:
+                    return resolved[value]  # Try name lookup first
+                except KeyError:
+                    try:
+                        return resolved(value)  # Fall back to value lookup
+                    except (ValueError, KeyError):
+                        return value
+        return value
+
+    # Nested BaseModel
+    if isinstance(resolved, type) and issubclass(resolved, BaseModel):
+        if isinstance(value, dict):
+            return _walk_enum_fields(value, resolved, to_names=to_names)
+        return value
+
+    origin = get_origin(resolved)
+    args = get_args(resolved)
+
+    # list[X]
+    if origin is list and args and isinstance(value, list):
+        return [_convert_enum_field(item, args[0], to_names=to_names) for item in value]
+
+    # dict[K, V]
+    if origin is dict and len(args) == 2 and isinstance(value, dict):
+        key_type, val_type = args
+        return {
+            _convert_enum_field(k, key_type, to_names=to_names): _convert_enum_field(v, val_type, to_names=to_names)
+            for k, v in value.items()
+        }
+
+    return value
+
+
+def _walk_enum_fields(data: dict, model_type: Type[BaseModel], *, to_names: bool) -> dict:
+    """Walk a dict and convert enum fields guided by the model's type hints.
+
+    When to_names=True: converts enum value strings to name strings (for serialization).
+    When to_names=False: converts enum name strings to enum instances (for deserialization).
+    """
+    try:
+        hints = typing.get_type_hints(model_type)
+    except Exception:
+        return data
+
+    result = {}
+    for key, value in data.items():
+        field_type = hints.get(key)
+        if field_type is None:
+            result[key] = value
+            continue
+        result[key] = _convert_enum_field(value, field_type, to_names=to_names)
+    return result
+
+
 class CustomPydanticJsonSchemaGenerator(GenerateJsonSchema):
     """Custom JSON schema generator that uses enum member names instead of values.
 
@@ -481,15 +569,16 @@ class PydanticTransformer(TypeTransformer[BaseModel]):
 
         json_str = python_val.model_dump_json()
         dict_obj = json.loads(json_str)
+        dict_obj = _walk_enum_fields(dict_obj, type(python_val), to_names=True)
         msgpack_bytes = msgpack.dumps(dict_obj)
         return Literal(scalar=Scalar(binary=Binary(value=msgpack_bytes, tag=MESSAGEPACK)))
 
     def from_binary_idl(self, binary_idl_object: Binary, expected_python_type: Type[BaseModel]) -> BaseModel:
         if binary_idl_object.tag == MESSAGEPACK:
             dict_obj = msgpack.loads(binary_idl_object.value, strict_map_key=False)
-            json_str = json.dumps(dict_obj)
-            python_val = expected_python_type.model_validate_json(
-                json_data=json_str, strict=False, context={"deserialize": True}
+            dict_obj = _walk_enum_fields(dict_obj, expected_python_type, to_names=False)
+            python_val = expected_python_type.model_validate(
+                dict_obj, strict=False, context={"deserialize": True}
             )
             return python_val
         else:
@@ -506,7 +595,11 @@ class PydanticTransformer(TypeTransformer[BaseModel]):
             return self.from_binary_idl(lv.scalar.binary, expected_python_type)  # type: ignore
 
         json_str = _json_format.MessageToJson(lv.scalar.generic)
-        python_val = expected_python_type.model_validate_json(json_str, strict=False, context={"deserialize": True})
+        dict_obj = json.loads(json_str)
+        dict_obj = _walk_enum_fields(dict_obj, expected_python_type, to_names=False)
+        python_val = expected_python_type.model_validate(
+            dict_obj, strict=False, context={"deserialize": True}
+        )
         return python_val
 
 
