@@ -24,7 +24,6 @@ from typing import (
 )
 
 from flyte._pod import PodTemplate
-from flyte._utils.asyncify import run_sync_with_loop
 from flyte.errors import RuntimeSystemError, RuntimeUserError
 
 from ._cache import Cache, CacheRequest
@@ -485,6 +484,7 @@ class AsyncFunctionTaskTemplate(TaskTemplate[P, R, F]):
         This is the execute method that will be called when the task is invoked. It will call the actual function.
         # TODO We may need to keep this as the bare func execute, and need a pre and post execute some other func.
         """
+        from flyte._utils.asyncify import run_sync_with_loop
 
         ctx = internal_ctx()
         assert ctx.data.task_context is not None, "Function should have already returned if not in a task context"

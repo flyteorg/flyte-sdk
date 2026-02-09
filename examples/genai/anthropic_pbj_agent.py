@@ -1,11 +1,3 @@
-# /// script
-# requires-python = "==3.13"
-# dependencies = [
-#     "flyte==2.0.0b0",
-#     "flyteplugins-anthropic",
-# ]
-# ///
-
 """Example of using Anthropic Claude as an agent with Flyte tasks as tools.
 
 This example demonstrates how to create a Claude agent that can use Flyte tasks
@@ -19,12 +11,17 @@ from typing import Optional
 from flyteplugins.anthropic import function_tool, run_agent
 
 import flyte
+from flyte._image import DIST_FOLDER, PythonWheels
 
 agent_env = flyte.TaskEnvironment(
     "anthropic-agent",
     resources=flyte.Resources(cpu=1),
-    secrets=[flyte.Secret(key="anthropic_api_key", as_env_var="ANTHROPIC_API_KEY")],
-    image=flyte.Image.from_uv_script(__file__, name="anthropic-agent", pre=True),
+    secrets=[flyte.Secret(key="niels-anthropic-api-key", as_env_var="ANTHROPIC_API_KEY")],
+    image=(
+        flyte.Image.from_debian_base(python_version=(3, 13)).clone(
+            addl_layer=PythonWheels(wheel_dir=DIST_FOLDER, package_name="flyteplugins-anthropic", pre=True)
+        )
+    ),
 )
 
 
@@ -101,7 +98,8 @@ async def sandwich_agent(goals: list[str]) -> list[str]:
                 system=(
                     "You are a sandwich-making assistant. Use the available tools to make"
                     " sandwiches according to user requests. Always get ingredients before"
-                    " spreading them, and assemble the sandwich before eating it."
+                    " spreading them, and assemble the sandwich before eating it. Make sure"
+                    " to only get the ingredients needed for the user's request."
                 ),
                 model="claude-sonnet-4-20250514",
             )
@@ -123,4 +121,5 @@ if __name__ == "__main__":
         ],
     )
     print(f"View at: {run.url}")
-    print(f"Results: {run.result}")
+    run.wait()
+    print(f"Results: {run.outputs()}")
