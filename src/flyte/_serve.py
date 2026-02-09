@@ -10,7 +10,7 @@ import signal
 import subprocess
 import threading
 import time
-from contextlib import asynccontextmanager, contextmanager
+from contextlib import AbstractAsyncContextManager, AbstractContextManager, asynccontextmanager, contextmanager
 from dataclasses import replace
 from typing import (
     TYPE_CHECKING,
@@ -82,9 +82,9 @@ class AppHandle(Protocol):
 
     def deactivate(self, wait: bool = False) -> AppHandle: ...
 
-    def ephemeral_ctx(self) -> AsyncGenerator[None, None]: ...
+    def ephemeral_ctx(self) -> AbstractAsyncContextManager[None]: ...
 
-    def ephemeral_ctx_sync(self) -> Generator[None, None, None]: ...
+    def ephemeral_ctx_sync(self) -> AbstractContextManager[None]: ...
 
 
 # ---------------------------------------------------------------------------
