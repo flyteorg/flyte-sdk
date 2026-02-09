@@ -47,11 +47,17 @@ CREATE TABLE IF NOT EXISTS runs (
 """
 
 
+_RUNS_INDEXES = [
+    "CREATE INDEX IF NOT EXISTS idx_runs_action_start ON runs (action_name, start_time)",
+    "CREATE INDEX IF NOT EXISTS idx_runs_status_start ON runs (status, start_time)",
+]
+
 _RUNS_MIGRATIONS = [
     "ALTER TABLE runs ADD COLUMN has_report INTEGER DEFAULT 0",
     "ALTER TABLE runs ADD COLUMN context TEXT",
     "ALTER TABLE runs ADD COLUMN group_name TEXT",
     "ALTER TABLE runs ADD COLUMN log_links TEXT",
+    *_RUNS_INDEXES,
 ]
 
 
@@ -105,6 +111,8 @@ class LocalDB:
         conn = await aiosqlite.connect(db_path)
         await conn.execute(_TASK_CACHE_DDL)
         await conn.execute(_RUNS_DDL)
+        for idx_stmt in _RUNS_INDEXES:
+            await conn.execute(idx_stmt)
         await conn.commit()
         LocalDB._conn = conn
         # Also open a sync connection for sync callers

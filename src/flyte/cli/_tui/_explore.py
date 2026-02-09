@@ -9,7 +9,7 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding, BindingType
 from textual.containers import Horizontal
 from textual.screen import Screen
-from textual.widgets import DataTable, Footer, Header, TabbedContent, TabPane
+from textual.widgets import DataTable, Footer, Header, Input, Label, Select, TabbedContent, TabPane
 
 from ._app import (
     _FLYTE_PURPLE,
@@ -41,15 +41,49 @@ def _fmt_time(ts: float | None) -> str:
     return datetime.datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M:%S")
 
 
+_SORTABLE_COLUMNS = [
+    ("start_time", "Start Time"),
+    ("run_name", "Run Name"),
+    ("task_name", "Task"),
+    ("status", "Status"),
+    ("duration", "Duration"),
+]
+
+
 class RunsTable(DataTable):
     """Table of all persisted runs."""
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self.sort_key: str = "start_time"
+        self.sort_ascending: bool = False
+        self.filter_status: str | None = None
+        self.filter_task_name: str | None = None
+
+    def _header_label(self, db_col: str, display: str) -> str:
+        if db_col == self.sort_key:
+            arrow = " ▲" if self.sort_ascending else " ▼"
+            return display + arrow
+        return display
 
     def populate(self) -> None:
         from flyte._persistence._run_store import RunStore
 
         self.clear(columns=True)
-        self.add_columns("Run Name", "Task", "Status", "Duration", "Start Time", "Error")
-        runs = RunStore.list_runs_sync()
+        self.add_columns(
+            self._header_label("run_name", "Run Name"),
+            self._header_label("task_name", "Task"),
+            self._header_label("status", "Status"),
+            self._header_label("duration", "Duration"),
+            self._header_label("start_time", "Start Time"),
+            "Error",
+        )
+        runs = RunStore.list_runs_sync(
+            order_by=self.sort_key,
+            ascending=self.sort_ascending,
+            status=self.filter_status,
+            task_name=self.filter_task_name,
+        )
         for r in runs:
             status_text = Text(r.status, style=_STATUS_COLORS.get(r.status, ""))
             error_text = (r.error or "")[:60]
@@ -64,6 +98,16 @@ class RunsTable(DataTable):
             )
 
 
+# Map column index in the DataTable to the db sort key.
+_COL_INDEX_TO_SORT_KEY = {
+    0: "run_name",
+    1: "task_name",
+    2: "status",
+    3: "duration",
+    4: "start_time",
+}
+
+
 class ExploreScreen(Screen):
     """First screen: list of all past runs."""
 
@@ -73,10 +117,21 @@ class ExploreScreen(Screen):
         Binding("enter", "view_run", "View Run"),
         Binding("d", "delete_run", "Delete Run"),
         Binding("c", "clear_all", "Clear All"),
+        Binding("s", "cycle_sort", "Sort"),
     ]
 
     def compose(self) -> ComposeResult:
         yield Header()
+        with Horizontal(id="filter-bar"):
+            yield Label("Status:")
+            yield Select(
+                [("All", "all"), ("Running", "running"), ("Succeeded", "succeeded"), ("Failed", "failed")],
+                value="all",
+                id="status-filter",
+                allow_blank=False,
+            )
+            yield Label("Task:")
+            yield Input(placeholder="Filter by task name...", id="task-filter")
         yield RunsTable(id="runs-table")
         yield Footer()
 
@@ -88,12 +143,27 @@ class ExploreScreen(Screen):
         table.cursor_type = "row"
         table.populate()
 
+    def _repopulate(self) -> None:
+        table = self.query_one("#runs-table", RunsTable)
+        table.populate()
+
+    def on_select_changed(self, event: Select.Changed) -> None:
+        if event.select.id == "status-filter":
+            table = self.query_one("#runs-table", RunsTable)
+            table.filter_status = None if event.value == "all" else str(event.value)
+            self._repopulate()
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        if event.input.id == "task-filter":
+            table = self.query_one("#runs-table", RunsTable)
+            table.filter_task_name = event.value.strip() or None
+            self._repopulate()
+
     def action_quit_app(self) -> None:
         self.app.exit()
 
     def action_refresh(self) -> None:
-        table = self.query_one("#runs-table", RunsTable)
-        table.populate()
+        self._repopulate()
 
     def action_view_run(self) -> None:
         table = self.query_one("#runs-table", RunsTable)
@@ -112,14 +182,34 @@ class ExploreScreen(Screen):
         row_key, _ = table.coordinate_to_cell_key(table.cursor_coordinate)
         run_name = str(row_key.value)
         RunStore.delete_run_sync(run_name)
-        table.populate()
+        self._repopulate()
 
     def action_clear_all(self) -> None:
         from flyte._persistence._run_store import RunStore
 
         RunStore.clear_sync()
+        self._repopulate()
+
+    def _toggle_sort(self, sort_key: str) -> None:
         table = self.query_one("#runs-table", RunsTable)
-        table.populate()
+        if table.sort_key == sort_key:
+            table.sort_ascending = not table.sort_ascending
+        else:
+            table.sort_key = sort_key
+            table.sort_ascending = False
+        self._repopulate()
+
+    def action_cycle_sort(self) -> None:
+        table = self.query_one("#runs-table", RunsTable)
+        keys = [k for k, _ in _SORTABLE_COLUMNS]
+        idx = keys.index(table.sort_key) if table.sort_key in keys else 0
+        next_key = keys[(idx + 1) % len(keys)]
+        self._toggle_sort(next_key)
+
+    def on_data_table_header_selected(self, event: DataTable.HeaderSelected) -> None:
+        sort_key = _COL_INDEX_TO_SORT_KEY.get(event.column_index)
+        if sort_key:
+            self._toggle_sort(sort_key)
 
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
         run_name = str(event.row_key.value)
@@ -212,7 +302,7 @@ class ExploreTUIApp(App[None]):
         background: {_FLYTE_PURPLE};
         color: {_FLYTE_PURPLE_LIGHT};
     }}
-    Horizontal {{
+    RunDetailScreen Horizontal {{
         height: 1fr;
     }}
     ActionTreeWidget {{
@@ -254,6 +344,22 @@ class ExploreTUIApp(App[None]):
         margin-bottom: 1;
         height: auto;
         color: {_FLYTE_PURPLE_LIGHT};
+    }}
+    #filter-bar {{
+        height: 3;
+        padding: 0 1;
+        background: {_FLYTE_PURPLE_DARK};
+    }}
+    #filter-bar Label {{
+        padding: 1 1 0 0;
+        color: {_FLYTE_PURPLE_LIGHT};
+        width: auto;
+    }}
+    #status-filter {{
+        width: 16;
+    }}
+    #task-filter {{
+        width: 1fr;
     }}
     RunsTable {{
         height: 1fr;

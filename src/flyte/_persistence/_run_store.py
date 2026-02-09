@@ -1,6 +1,7 @@
 import json
 import time
 from dataclasses import dataclass
+from typing import ClassVar
 
 from flyte._persistence._db import LocalDB
 
@@ -122,35 +123,65 @@ class RunStore:
 
     # -- Read methods (sync) --
 
+    # Columns that are safe to use in ORDER BY.
+    _SORTABLE_COLUMNS: ClassVar[set[str]] = {
+        "start_time",
+        "run_name",
+        "task_name",
+        "status",
+        "duration",
+    }
+
+    _VALID_STATUSES: ClassVar[set[str]] = {"running", "succeeded", "failed"}
+
     @staticmethod
-    def list_runs_sync() -> list[RunRecord]:
-        """List top-level runs (action_name='a0') ordered by start_time DESC."""
-        with LocalDB._write_lock:
-            conn = LocalDB.get_sync()
-            cursor = conn.execute("SELECT * FROM runs WHERE action_name='a0' ORDER BY start_time DESC")
-            return [RunStore._row_to_record(row) for row in cursor.fetchall()]
+    def list_runs_sync(
+        order_by: str = "start_time",
+        ascending: bool = False,
+        status: str | None = None,
+        task_name: str | None = None,
+    ) -> list[RunRecord]:
+        """List top-level runs (action_name='a0') with configurable sort and filter."""
+        if order_by not in RunStore._SORTABLE_COLUMNS:
+            order_by = "start_time"
+        direction = "ASC" if ascending else "DESC"
+        sql_order = "(end_time - start_time)" if order_by == "duration" else order_by
+
+        where = "action_name='a0'"
+        params: list[str] = []
+        if status and status in RunStore._VALID_STATUSES:
+            where += " AND status=?"
+            params.append(status)
+        if task_name:
+            where += " AND task_name LIKE ?"
+            params.append(f"%{task_name}%")
+
+        conn = LocalDB.get_sync()
+        cursor = conn.execute(
+            f"SELECT * FROM runs WHERE {where} ORDER BY {sql_order} {direction}",
+            params,
+        )
+        return [RunStore._row_to_record(row) for row in cursor.fetchall()]
 
     @staticmethod
     def list_actions_for_run_sync(run_name: str) -> list[RunRecord]:
         """List all actions for a given run."""
-        with LocalDB._write_lock:
-            conn = LocalDB.get_sync()
-            cursor = conn.execute(
-                "SELECT * FROM runs WHERE run_name=? ORDER BY start_time ASC",
-                (run_name,),
-            )
-            return [RunStore._row_to_record(row) for row in cursor.fetchall()]
+        conn = LocalDB.get_sync()
+        cursor = conn.execute(
+            "SELECT * FROM runs WHERE run_name=? ORDER BY start_time ASC",
+            (run_name,),
+        )
+        return [RunStore._row_to_record(row) for row in cursor.fetchall()]
 
     @staticmethod
     def get_action_sync(run_name: str, action_name: str) -> RunRecord | None:
-        with LocalDB._write_lock:
-            conn = LocalDB.get_sync()
-            cursor = conn.execute(
-                "SELECT * FROM runs WHERE run_name=? AND action_name=?",
-                (run_name, action_name),
-            )
-            row = cursor.fetchone()
-            return RunStore._row_to_record(row) if row else None
+        conn = LocalDB.get_sync()
+        cursor = conn.execute(
+            "SELECT * FROM runs WHERE run_name=? AND action_name=?",
+            (run_name, action_name),
+        )
+        row = cursor.fetchone()
+        return RunStore._row_to_record(row) if row else None
 
     # -- Management --
 
