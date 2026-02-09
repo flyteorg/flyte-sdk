@@ -29,12 +29,12 @@ n8n_with_runner_pod_template = flyte.PodTemplate(
                     kubernetes.client.V1EnvVar(name="N8N_RUNNERS_AUTH_TOKEN", value=N8N_RUNNERS_AUTH_TOKEN),
                     kubernetes.client.V1EnvVar(name="N8N_NATIVE_PYTHON_RUNNER", value="true"),
                 ],
-                volume_mounts=[
-                    kubernetes.client.V1VolumeMount(
-                        name="n8n-data",
-                        mount_path="/home/node/.n8n",
-                    ),
-                ],
+                # volume_mounts=[
+                #     kubernetes.client.V1VolumeMount(
+                #         name="n8n-data",
+                #         mount_path="/home/node/.n8n",
+                #     ),
+                # ],
             ),
             # Sidecar container: task runners
             kubernetes.client.V1Container(
@@ -48,12 +48,12 @@ n8n_with_runner_pod_template = flyte.PodTemplate(
                 ],
             ),
         ],
-        volumes=[
-            kubernetes.client.V1Volume(
-                name="n8n-data",
-                empty_dir=kubernetes.client.V1EmptyDirVolumeSource(),
-            ),
-        ],
+        # volumes=[
+        #     kubernetes.client.V1Volume(
+        #         name="n8n-data",
+        #         empty_dir=kubernetes.client.V1EmptyDirVolumeSource(),
+        #     ),
+        # ],
     )
 )
 
@@ -92,22 +92,25 @@ bump = "4"
 n8n_app = flyte.app.AppEnvironment(
     name="n8n-app",
     image=n8n_app_image,
-    pod_template=n8n_with_runner_pod_template,
+    # pod_template=n8n_with_runner_pod_template,
     resources=flyte.Resources(cpu=2, memory="2Gi"),
     port=5678,
     command=["n8n", "start"],
     secrets=[
         flyte.Secret("n8n_postgres_password", as_env_var="DB_POSTGRESDB_PASSWORD"),
-        flyte.Secret("n8n_postgres_host", as_env_var="DB_POSTGRESDB_HOST"),
     ],
     requires_auth=False,
     env_vars={
         "N8N_ENCRYPTION_KEY": "abc123",
         
         # db config
+        # https://docs.n8n.io/hosting/installation/docker/#using-with-postgresql
+        "DB_TYPE": "postgresdb",
+        "DB_POSTGRESDB_HOST": "aws-0-us-west-2.pooler.supabase.com",
         "DB_POSTGRESDB_DATABASE": "postgres",
-        "DB_POSTGRESDB_USER": "postgres",
-        "DB_POSTGRESDB_PORT": "5432",
+        "DB_POSTGRESDB_USER": "postgres.qcfcidgymclxvslgphyb",
+        "DB_POSTGRESDB_PORT": "6543",
+        "DB_POSTGRESDB_SCHEMA": "public",
 
         "BUMP": bump,
     }
@@ -158,5 +161,6 @@ n8n_debugger = FastAPIAppEnvironment(
 
 if __name__ == "__main__":
     flyte.init_from_config()
-    app = flyte.serve(n8n_debugger)
+    # app = flyte.serve(n8n_debugger)
+    app = flyte.serve(n8n_app)
     print(app.url)
