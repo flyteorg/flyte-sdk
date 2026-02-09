@@ -65,6 +65,8 @@ def _label(node: ActionNode, children_map: dict[str, list[str]] | None = None) -
 def _pretty_json(obj: Any) -> str:
     if obj is None:
         return "(none)"
+    if isinstance(obj, str):
+        return obj
     try:
         return json.dumps(obj, indent=2, default=repr)
     except (TypeError, ValueError):
