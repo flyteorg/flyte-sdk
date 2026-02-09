@@ -1,7 +1,6 @@
 import pytest
 
 import flyte
-from flyte.errors import TraceDoesNotAllowNestedTasksError
 
 env = flyte.TaskEnvironment(
     name="traces",
@@ -129,5 +128,6 @@ async def parent_calling_trace_with_task(x: int = 5) -> int:
 async def test_task_nested_in_trace_raises():
     """Calling a @task inside a @flyte.trace must raise TraceDoesNotAllowNestedTasksError."""
     await flyte.init.aio()
-    with pytest.raises(TraceDoesNotAllowNestedTasksError):
+    with pytest.raises(flyte.errors.RuntimeUserError) as excinfo:
         flyte.run(parent_calling_trace_with_task, x=5)
+    assert excinfo.value.code == "TraceDoesNotAllowNestedTasksError"
