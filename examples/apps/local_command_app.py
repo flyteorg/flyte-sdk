@@ -30,7 +30,7 @@ if __name__ == "__main__":
     flyte.init()
 
     # Serve the app locally (non-blocking)
-    local_app = flyte.with_servecontext(mode="local").serve(app_env)
+    local_app = flyte.with_servecontext(mode="local", health_check_path="/").serve(app_env)
 
     # Wait for the app to be ready
     local_app.activate(wait=True)
