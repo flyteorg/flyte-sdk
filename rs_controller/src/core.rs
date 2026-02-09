@@ -21,10 +21,7 @@ use tokio::{
     sync::{mpsc, oneshot},
     time::sleep,
 };
-use tonic::{
-    transport::{Certificate, ClientTlsConfig, Endpoint},
-    Status,
-};
+use tonic::transport::{Certificate, ClientTlsConfig, Endpoint};
 use tower::ServiceBuilder;
 use tracing::{debug, error, info, warn};
 
@@ -304,9 +301,6 @@ impl CoreBaseController {
     }
 
     async fn bg_worker(&self, worker_id: String) {
-        const MIN_BACKOFF_ON_ERR: Duration = Duration::from_millis(100);
-        const MAX_RETRIES: u32 = 5;
-
         info!(
             "Worker {} started on thread {:?}",
             worker_id,
@@ -317,7 +311,7 @@ impl CoreBaseController {
             let mut rx = self.shared_queue_rx.lock().await;
             match rx.recv().await {
                 Some(mut action) => {
-                    let run_name = &action
+                    let run_name = action
                         .action_id
                         .run
                         .as_ref()
@@ -330,76 +324,43 @@ impl CoreBaseController {
                     // Drop the mutex guard before processing
                     drop(rx);
 
-                    match self.handle_action(&mut action).await {
+                    match self
+                        .process_action_with_retry(&mut action, &worker_id)
+                        .await
+                    {
                         Ok(_) => {}
-                        // Add handling here for new slow down error
                         Err(e) => {
-                            error!("Error in controller loop: {:?}", e);
-                            // Handle backoff and retry logic
-                            sleep(MIN_BACKOFF_ON_ERR).await;
-                            action.retries += 1;
+                            // Unified error handling for all failures and exceed max retries
+                            error!(
+                                "[{}] Error in controller loop for {}::{}: {:?}",
+                                worker_id, run_name, action.action_id.name, e
+                            );
+                            action.client_err = Some(e.to_string());
 
-                            if action.retries > MAX_RETRIES {
-                                error!(
-                                    "[{}] Controller failed processing {}::{}, system retries {} crossed threshold {}",
-                                    worker_id, run_name, action.action_id.name, action.retries, MAX_RETRIES
-                                );
-                                action.client_err = Some(format!(
-                                    "[{}] Controller failed {}::{}, system retries {} crossed threshold {}",
-                                    worker_id, run_name, action.action_id.name, action.retries, MAX_RETRIES
-                                ));
-
-                                // Fire completion event for failed action
-                                let opt_informer = self
-                                    .informer_cache
-                                    .get(&action.get_run_identifier(), &action.parent_action_name)
-                                    .await;
-                                if let Some(informer) = opt_informer {
-                                    // Before firing completion event, update the action in the
-                                    // informer, otherwise client_err will not be set.
-                                    // todo: gain a better understanding of these two errors and handle
-                                    let res = informer.set_action_client_err(&action).await;
-                                    match res {
-                                        Ok(()) => {}
-                                        Err(e) => {
-                                            error!(
-                                                "Error setting error for failed action {}: {}",
-                                                &action.get_full_name(),
-                                                e
-                                            )
-                                        }
-                                    }
-                                    let res = informer
-                                        .fire_completion_event(&action.action_id.name)
-                                        .await;
-                                    match res {
-                                        Ok(()) => {}
-                                        Err(e) => {
-                                            error!("Error firing completion event for failed action {}: {}", &action.get_full_name(), e)
-                                        }
-                                    }
-                                } else {
+                            let opt_informer = self
+                                .informer_cache
+                                .get(&action.get_run_identifier(), &action.parent_action_name)
+                                .await;
+                            if let Some(informer) = opt_informer {
+                                if let Err(set_err) = informer.set_action_client_err(&action).await
+                                {
                                     error!(
-                                        "Max retries hit for action but informer missing: {:?}",
-                                        action.action_id
+                                        "Error setting error for failed action {}: {}",
+                                        action.get_full_name(),
+                                        set_err
+                                    );
+                                }
+                                if let Err(fire_err) =
+                                    informer.fire_completion_event(&action.action_id.name).await
+                                {
+                                    error!(
+                                        "Error firing completion event for failed action {}: {}",
+                                        action.get_full_name(),
+                                        fire_err
                                     );
                                 }
                             } else {
-                                // Re-queue the action for retry
-                                info!(
-                                    "[{}] Re-queuing action {}::{} for retry, attempt {}/{}",
-                                    worker_id,
-                                    run_name,
-                                    action.action_id.name,
-                                    action.retries,
-                                    MAX_RETRIES
-                                );
-                                if let Err(send_err) = self.shared_queue.send(action).await {
-                                    error!(
-                                        "[{}] Failed to re-queue action for retry: {}",
-                                        worker_id, send_err
-                                    );
-                                }
+                                error!("Informer missing for action: {:?}", action.action_id);
                             }
                         }
                     }
@@ -408,6 +369,74 @@ impl CoreBaseController {
                     warn!("Shared queue channel closed, stopping bg_worker");
                     break;
                 }
+            }
+        }
+    }
+
+    async fn process_action_with_retry(
+        &self,
+        action: &mut Action,
+        worker_id: &str,
+    ) -> Result<(), ControllerError> {
+        const MIN_BACKOFF_ON_ERR: Duration = Duration::from_millis(500);
+        const MAX_BACKOFF_ON_ERR: Duration = Duration::from_secs(10);
+        const MAX_RETRIES: u32 = 5;
+
+        let run_name = action
+            .action_id
+            .run
+            .as_ref()
+            .map_or(String::from("<missing>"), |i| i.name.clone());
+
+        match self.handle_action(action).await {
+            Ok(_) => Ok(()),
+            // Process action with retry logic for SlowDownError
+            Err(ControllerError::SlowDownError(msg)) => {
+                action.retries += 1;
+
+                if action.retries > MAX_RETRIES {
+                    // Max retries exceeded, return error to be handled by caller
+                    Err(ControllerError::RuntimeError(format!(
+                        "[{}] Controller failed {}::{}, system retries {} crossed threshold {}: SlowDownError: {}",
+                        worker_id, run_name, action.action_id.name, action.retries, MAX_RETRIES, msg
+                    )))
+                } else {
+                    // Calculate exponential backoff: min(MIN * 2^(retries-1), MAX)
+                    let backoff_millis =
+                        MIN_BACKOFF_ON_ERR.as_millis() as u64 * 2u64.pow(action.retries - 1);
+                    let backoff = Duration::from_millis(backoff_millis).min(MAX_BACKOFF_ON_ERR);
+
+                    warn!(
+                        "[{}] Backing off for {:?} [retry {}/{}] on action {}::{} due to error: {}",
+                        worker_id,
+                        backoff,
+                        action.retries,
+                        MAX_RETRIES,
+                        run_name,
+                        action.action_id.name,
+                        msg
+                    );
+                    sleep(backoff).await;
+
+                    warn!(
+                        "[{}] Retrying action {}::{} after backoff",
+                        worker_id, run_name, action.action_id.name
+                    );
+
+                    // Re-queue the action for retry
+                    self.shared_queue.send(action.clone()).await.map_err(|e| {
+                        ControllerError::RuntimeError(format!(
+                            "[{}] Failed to re-queue action for retry: {}",
+                            worker_id, e
+                        ))
+                    })?;
+
+                    Ok(())
+                }
+            }
+            Err(e) => {
+                // All other errors are propagated up immediately
+                Err(e)
             }
         }
     }
@@ -459,10 +488,8 @@ impl CoreBaseController {
                     "Failed to launch action: {}, error: {}",
                     action.action_id.name, e
                 );
-                Err(ControllerError::RuntimeError(format!(
-                    "Launch failed: {}",
-                    e
-                )))
+                // Propagate the error as-is
+                Err(e)
             }
         }
     }
@@ -583,7 +610,7 @@ impl CoreBaseController {
         })
     }
 
-    async fn launch_task(&self, action: &Action) -> Result<EnqueueActionResponse, Status> {
+    async fn launch_task(&self, action: &Action) -> Result<EnqueueActionResponse, ControllerError> {
         if !action.started && action.task.is_some() {
             let enqueue_request = self
                 .create_enqueue_action_request(action)
@@ -591,7 +618,7 @@ impl CoreBaseController {
             let mut client = self.queue_client.clone();
             // todo: tonic doesn't seem to have wait_for_ready, or maybe the .ready is already doing this.
             let enqueue_result = client.enqueue_action(enqueue_request).await;
-            // Add logic from resiliency pr here, return certain errors, but change others to be a specific slowdown error.
+
             match enqueue_result {
                 Ok(response) => {
                     debug!("Successfully enqueued action: {:?}", action.action_id);
@@ -604,14 +631,25 @@ impl CoreBaseController {
                             action.action_id.name
                         );
                         Ok(EnqueueActionResponse {})
+                    } else if e.code() == tonic::Code::FailedPrecondition
+                        || e.code() == tonic::Code::InvalidArgument
+                        || e.code() == tonic::Code::NotFound
+                    {
+                        Err(ControllerError::RuntimeError(format!(
+                            "Precondition failed: {}",
+                            e
+                        )))
                     } else {
+                        // For all other errors, retry with backoff through raising SlowDownError
                         error!(
                             "Failed to launch action: {:?}, backing off...",
                             action.action_id
                         );
                         error!("Error details: {}", e);
-                        // Handle backoff logic here
-                        Err(e)
+                        Err(ControllerError::SlowDownError(format!(
+                            "Failed to launch action: {}",
+                            e
+                        )))
                     }
                 }
             }
