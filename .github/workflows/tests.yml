@@ -60,5 +60,5 @@ jobs:
 
       - name: Run tests
         env:
-          FLYTE_PLUGINS: plugins/${{ matrix.plugin }}
+          FLYTE_PLUGIN: plugins/${{ matrix.plugin }}
         run: make unit_test_plugins
