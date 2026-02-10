@@ -1,0 +1,13 @@
+"""WSGI config for the Django hello world app.
+
+This module contains the WSGI application used by Gunicorn.
+"""
+
+import os
+import time
+
+from django.core.wsgi import get_wsgi_application
+
+os.environ.setdefault("DJANGO_SETTINGS_MODULE", "settings")
+
+application = get_wsgi_application()
