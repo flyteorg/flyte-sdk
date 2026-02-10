@@ -5,7 +5,7 @@ import os
 import re
 import shlex
 from dataclasses import dataclass, field, replace
-from typing import TYPE_CHECKING, Any, Callable, List, Literal, Optional, Union
+from typing import Any, Callable, List, Literal, Optional, Union
 
 import rich.repr
 
@@ -13,10 +13,6 @@ from flyte import Environment, Image, Resources, SecretRequest
 from flyte.app._parameter import Parameter
 from flyte.app._types import Domain, Link, Port, Scaling
 from flyte.models import SerializationContext
-
-if TYPE_CHECKING:
-    pass
-
 
 APP_NAME_RE = re.compile(r"[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*")
 INVALID_APP_PORTS = [8012, 8022, 8112, 9090, 9091]
@@ -283,9 +279,15 @@ class AppEnvironment(Environment):
 
     @property
     def endpoint(self) -> str:
-        # Check if this app is being served locally first
-        from flyte._serve import _LOCAL_APP_ENDPOINTS
+        from flyte._serve import _FSERVE_MODE_ENV_VAR, _LOCAL_APP_ENDPOINTS, _LOCAL_HOST, serve_mode_var
 
+        # Check if we're running in local mode via environment variable for subprocess-based apps, or when serving
+        # both apps from two different python processes using `flyte serve --local`
+        if serve_mode_var.get() == "local" or os.getenv(_FSERVE_MODE_ENV_VAR) == "local":
+            return f"http://{_LOCAL_HOST}:{self.get_port().port}"
+
+        # This handles cases where two apps are being served in the same process
+        # (e.g. when calling an app from another app)
         local_endpoint = _LOCAL_APP_ENDPOINTS.get(self.name)
         if local_endpoint is not None:
             return local_endpoint

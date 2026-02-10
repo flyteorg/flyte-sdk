@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import atexit
+import contextvars
 import hashlib
 import os
 import pathlib
@@ -51,6 +52,16 @@ _LOCAL_IS_ACTIVE_TOTAL_TIMEOUT: float = 60.0
 _LOCAL_IS_ACTIVE_RESPONSE_TIMEOUT: float = 2.0
 _LOCAL_IS_ACTIVE_INTERVAL: float = 1.0
 _LOCAL_HEALTH_CHECK_PATH: str = "/health"
+
+# Environment variable to indicate the serve mode for subprocess-based apps.
+# This allows apps started via command/args to detect they're running locally.
+_FSERVE_MODE_ENV_VAR: str = "_FSERVE_MODE"
+
+
+# Serve mode context variable to allow the framework to distinguish between
+# 'local' and 'remote' server modes, even across async call contexts.
+serve_mode_var: contextvars.ContextVar[ServeMode] = contextvars.ContextVar("serve_mode", default="remote")
+
 
 # ---------------------------------------------------------------------------
 # Protocol for the shared App / _LocalApp interface
@@ -481,6 +492,21 @@ class _Serve:
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             local_app._thread_loop = loop
+            serve_mode_var.set("local")
+
+            # Copy the context after setting serve_mode_var
+            ctx = contextvars.copy_context()
+
+            # Install a custom task factory that ensures all tasks created in this loop
+            # inherit the context with serve_mode_var set to "local". This is necessary
+            # because ASGI servers like uvicorn create new tasks for each request, and
+            # those tasks would otherwise get a fresh context without our variable.
+            def _context_task_factory(loop, coro, context=None):
+                # Use our captured context if no explicit context is provided
+                return asyncio.Task(coro, loop=loop, context=context or ctx)
+
+            loop.set_task_factory(_context_task_factory)
+
             try:
                 # Run on_startup if defined
                 if app_env._on_startup is not None:
@@ -535,6 +561,7 @@ class _Serve:
                     pass
                 local_app._thread_loop = None
                 loop.close()
+                serve_mode_var.set("remote")
 
         thread = threading.Thread(target=_run, daemon=True, name=f"flyte-local-app-{app_env.name}")
         thread.start()
@@ -567,8 +594,13 @@ class _Serve:
         else:
             raise ValueError("No command or args to run")
 
+        # Set up environment for the subprocess, including the serve mode
+        # so that AppEnvironment.endpoint can detect local mode
+        subprocess_env = os.environ.copy()
+        subprocess_env[_FSERVE_MODE_ENV_VAR] = "local"
+
         logger.info(f"Starting local app '{app_env.name}' with command: {cmd}")
-        process = subprocess.Popen(cmd, env=os.environ.copy(), start_new_session=True)
+        process = subprocess.Popen(cmd, env=subprocess_env, start_new_session=True)
 
         local_app = _LocalApp(app_env=app_env, _serve_obj=self, host=host, port=port, process=process)
 

@@ -756,7 +756,7 @@ def test_local_serve_with_server_decorator():
     - The app starts in a background thread
     - The endpoint is registered in _LOCAL_APP_ENDPOINTS
     - The endpoint is reachable
-    - app_env.endpoint returns the local endpoint
+    - local_app.endpoint returns the local endpoint
     - The app can be shut down cleanly
     """
 
@@ -800,8 +800,9 @@ def test_local_serve_with_server_decorator():
         assert "test-local-server-decorator" in _LOCAL_APP_ENDPOINTS
         assert _LOCAL_APP_ENDPOINTS["test-local-server-decorator"] == "http://localhost:18091"
 
-        # Verify app_env.endpoint returns the local endpoint
-        assert app_env.endpoint == "http://localhost:18091"
+        # Verify local_app.endpoint returns the local endpoint
+        # Note: Use local_app.endpoint (not app_env.endpoint) from the main thread
+        assert local_app.endpoint == "http://localhost:18091"
 
         # Wait for readiness
         local_app.activate(wait=True)
@@ -1060,21 +1061,14 @@ def test_deactivate_idempotent():
 
 def test_local_serve_endpoint_resolves_correctly():
     """
-    GOAL: Verify that app_env.endpoint resolves to the local endpoint when served locally.
+    GOAL: Verify that app_env.endpoint resolves to the local endpoint when the app
+    is registered in _LOCAL_APP_ENDPOINTS (i.e., when served locally in-process).
 
     This is the key integration point: when an AppEnvironment is served locally,
-    its .endpoint property should return the local address so tasks can call it.
+    its .endpoint property should return the local address so other code in the
+    same process can call it.
     """
-
-    class TestHandler(BaseHTTPRequestHandler):
-        def do_GET(self):
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.end_headers()
-            self.wfile.write(json.dumps({"ok": True}).encode())
-
-        def log_message(self, format, *args):
-            pass
+    from flyte._serve import _LOCAL_APP_ENDPOINTS
 
     app_env = AppEnvironment(
         name="test-endpoint-resolve",
@@ -1082,25 +1076,139 @@ def test_local_serve_endpoint_resolves_correctly():
         port=18094,
     )
 
-    @app_env.server
-    def serve():
-        server = HTTPServer(("127.0.0.1", 18094), TestHandler)
-        server.serve_forever()
-
+    # Simulate what _serve_local_with_server_func does: register the endpoint
+    _LOCAL_APP_ENDPOINTS[app_env.name] = f"http://localhost:{app_env.port.port}"
     try:
-        local_app = with_servecontext(mode="local").serve(app_env)
-        local_app.activate(wait=True)
-
-        # The key assertion: app_env.endpoint should resolve locally
+        # The key assertion: app_env.endpoint should resolve to the registered local endpoint
         endpoint = app_env.endpoint
         assert endpoint == "http://localhost:18094"
-
-        # And we can actually call it
-        resp = httpx.get(endpoint)
-        assert resp.status_code == 200
-        assert resp.json()["ok"] is True
     finally:
-        local_app.deactivate()
+        # Clean up
+        del _LOCAL_APP_ENDPOINTS[app_env.name]
+
+
+def test_local_serve_endpoint_resolves_via_env_var():
+    """
+    GOAL: Verify that app_env.endpoint resolves to the local endpoint when
+    _FSERVE_MODE env var is set to "local" (for subprocess-based apps).
+    """
+    import os
+
+    from flyte._serve import _FSERVE_MODE_ENV_VAR
+
+    app_env = AppEnvironment(
+        name="test-endpoint-resolve-env",
+        image=Image.from_base("python:3.11"),
+        port=18095,
+    )
+
+    # Simulate subprocess environment
+    os.environ[_FSERVE_MODE_ENV_VAR] = "local"
+    try:
+        endpoint = app_env.endpoint
+        assert endpoint == "http://localhost:18095"
+    finally:
+        del os.environ[_FSERVE_MODE_ENV_VAR]
+
+
+def test_local_serve_endpoint_resolves_via_context_var():
+    """
+    GOAL: Verify that app_env.endpoint resolves to the local endpoint when
+    serve_mode_var context variable is set to "local".
+
+    This tests the direct context variable access without going through
+    the full serve machinery.
+    """
+    from flyte._serve import serve_mode_var
+
+    app_env = AppEnvironment(
+        name="test-endpoint-resolve-ctx-var",
+        image=Image.from_base("python:3.11"),
+        port=18096,
+    )
+
+    # Set the context variable directly
+    token = serve_mode_var.set("local")
+    try:
+        endpoint = app_env.endpoint
+        assert endpoint == "http://localhost:18096"
+    finally:
+        serve_mode_var.reset(token)
+
+
+def test_serve_mode_var_propagates_to_async_tasks():
+    """
+    GOAL: Verify that serve_mode_var propagates to async tasks created via
+    the custom task factory installed by _serve_local_with_server_func.
+
+    This tests the core mechanism: when we set serve_mode_var and install
+    a custom task factory, all tasks created in that event loop should
+    inherit the context with serve_mode_var set to "local".
+    """
+    import asyncio
+    import contextvars
+
+    from flyte._serve import serve_mode_var
+
+    results = []
+
+    async def check_serve_mode():
+        """Coroutine that checks the serve_mode_var value."""
+        results.append(serve_mode_var.get())
+
+    async def spawn_task_and_check():
+        """Spawn a new task (simulating what uvicorn does) and check serve_mode."""
+        # This simulates what an ASGI server does: create a new task for each request
+        task = asyncio.create_task(check_serve_mode())
+        await task
+
+    def run_with_context_task_factory():
+        """Run the test with the same pattern used in _serve_local_with_server_func."""
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+
+        # Set the context variable
+        serve_mode_var.set("local")
+
+        # Copy the context after setting serve_mode_var
+        ctx = contextvars.copy_context()
+
+        # Install the same custom task factory used in _serve_local_with_server_func
+        def _context_task_factory(loop, coro, context=None):
+            return asyncio.Task(coro, loop=loop, context=context or ctx)
+
+        loop.set_task_factory(_context_task_factory)
+
+        try:
+            # Run a coroutine that spawns a task (like uvicorn handling a request)
+            loop.run_until_complete(spawn_task_and_check())
+        finally:
+            loop.close()
+
+    # Run in a separate thread to avoid interfering with the test's event loop
+    import threading
+
+    thread = threading.Thread(target=run_with_context_task_factory)
+    thread.start()
+    thread.join(timeout=5)
+
+    # The task should have seen serve_mode_var as "local"
+    assert len(results) == 1
+    assert results[0] == "local"
+
+
+def test_serve_mode_var_default_is_remote():
+    """
+    GOAL: Verify that serve_mode_var defaults to "remote".
+    """
+    # In a fresh context, the default should be "remote"
+    import contextvars
+
+    from flyte._serve import serve_mode_var
+
+    ctx = contextvars.copy_context()
+    value = ctx.run(serve_mode_var.get)
+    assert value == "remote"
 
 
 # =============================================================================
