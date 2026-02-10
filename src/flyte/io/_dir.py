@@ -662,7 +662,7 @@ class Dir(BaseModel, Generic[T], SerializableType):
 
         # todo: in the future, mirror File and set the file to_path here
         output_path = await storage.put(
-            from_path=local_path_str, to_path=remote_destination, recursive=True, batch_size=batch_size
+            from_path=local_path_str, to_path=resolved_remote_path, recursive=True, batch_size=batch_size
         )
         return cls(path=output_path, name=dirname, hash=dir_cache_key)
 
