@@ -793,15 +793,15 @@ async def test_enum_type():
     t = TypeEngine.to_literal_type(Color)
     assert t is not None
     assert t.HasField("enum_type")
-    assert t.enum_type.values == [c.value for c in Color]
+    assert t.enum_type.values == [c.name for c in Color]
 
     g = TypeEngine.guess_python_type(t)
-    assert [e.value for e in g] == [e.value for e in Color]
+    assert [e.value for e in g] == [e.name for e in Color]
 
     lv = await TypeEngine.to_literal(Color.RED, Color, TypeEngine.to_literal_type(Color))
     assert lv
     assert lv.scalar
-    assert lv.scalar.primitive.string_value == "red"
+    assert lv.scalar.primitive.string_value == "RED"
 
     v = await TypeEngine.to_python_value(lv, Color)
     assert v
@@ -809,15 +809,15 @@ async def test_enum_type():
 
     v = await TypeEngine.to_python_value(lv, str)
     assert v
-    assert v == "red"
+    assert v == "RED"
 
-    with pytest.raises(ValueError):
+    with pytest.raises(KeyError):
         await TypeEngine.to_python_value(
             Literal(scalar=Scalar(primitive=Primitive(string_value=str(Color.RED)))),
             Color,
         )
 
-    with pytest.raises(ValueError):
+    with pytest.raises(KeyError):
         await TypeEngine.to_python_value(Literal(scalar=Scalar(primitive=Primitive(string_value="bad"))), Color)
 
     with pytest.raises(AssertionError):
