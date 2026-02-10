@@ -510,3 +510,40 @@ async def test_dir_lazy_uploader_preserves_hash(tmp_dir_structure):
         assert not lv.hash  # Empty string or None
     finally:
         _run_mode_var.set(None)
+
+
+@pytest.mark.sandbox
+@pytest.mark.asyncio
+async def test_list_dir_mock_s3(tmp_path, tmp_dir_structure, ctx_with_test_local_s3_stack_raw_data_path):
+    """
+    Test downloading a directory to a directory path.
+    When a directory path is provided, the directory contents should be downloaded directly into that path.
+    """
+    from flyte.storage import S3
+
+    await flyte.init.aio(storage=S3.for_sandbox())
+
+    # Upload to S3
+    uploaded_dir = await Dir.from_local(tmp_dir_structure)
+
+    # List files
+    replica_dir = Dir.from_existing_remote(uploaded_dir.path)
+    files = await replica_dir.list_files()
+    assert len(files) == 3
+
+
+@pytest.mark.asyncio
+async def test_list_dir_local_fs(tmp_path, tmp_dir_structure, ctx_with_test_raw_data_path):
+    """
+    Test listing files in a directory using local filesystem storage (no S3).
+    Mirrors test_list_dir_mock_s3 but uses local raw data path instead.
+    """
+    flyte.init()
+
+    # Upload to local "remote"
+    uploaded_dir = await Dir.from_local(tmp_dir_structure)
+
+    # List files
+    replica_dir = Dir(path=uploaded_dir.path)
+    files = await replica_dir.list_files()
+    assert len(files) == 3
