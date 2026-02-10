@@ -224,7 +224,7 @@ async def test_raw_dataframe_io(ctx_with_test_raw_data_path, sample_dataframe):
         return df.with_columns((pl.col("age") + 1).alias("age_plus_one"))
 
     run = flyte.with_runcontext("local").run(process_dataframe, sample_dataframe)
-    result = run.outputs()
+    result = run.outputs()[0]
     assert isinstance(result, pl.DataFrame)
     assert "age_plus_one" in result.columns
     assert result.shape[0] == sample_dataframe.shape[0]
@@ -242,7 +242,7 @@ async def test_raw_lazyframe_io(ctx_with_test_raw_data_path, sample_lazyframe):
         return lf.with_columns((pl.col("age") + 1).alias("age_plus_one"))
 
     run = flyte.with_runcontext("local").run(process_lazyframe, sample_lazyframe)
-    result = run.outputs()
+    result = run.outputs()[0]
     assert isinstance(result, pl.LazyFrame)
     # Collect to check
     collected = result.collect()

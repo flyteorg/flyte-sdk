@@ -69,8 +69,8 @@ class BigQueryConnector(AsyncConnector):
         job_config = None
         if inputs:
             python_interface_inputs = {
-                name: TypeEngine.guess_python_type(lt.type)
-                for name, lt in task_template.interface.inputs.variables.items()
+                variable.key: TypeEngine.guess_python_type(variable.value.type)
+                for variable in task_template.interface.inputs.variables
             }
             job_config = bigquery.QueryJobConfig(
                 query_parameters=[
