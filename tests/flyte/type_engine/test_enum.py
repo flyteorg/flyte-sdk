@@ -1,11 +1,11 @@
-from enum import StrEnum
+from enum import Enum
 
 import pytest
 
 from flyte.types import TypeEngine
 
 
-class Foo(StrEnum):
+class Foo(Enum):
     A = "AAA"
     B = "BBB"
     C = "CCC"

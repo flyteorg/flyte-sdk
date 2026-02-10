@@ -1,4 +1,4 @@
-from enum import StrEnum
+from enum import Enum
 
 import pytest
 from pydantic import BaseModel
@@ -219,7 +219,7 @@ async def test_deeply_nested_chain():
     assert pv.l2.l3.l4.value == 100
 
 
-class Foo(StrEnum):
+class Foo(Enum):
     A = "AAA"
     B = "BBB"
     C = "CCC"

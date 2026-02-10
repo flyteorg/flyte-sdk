@@ -969,9 +969,10 @@ class EnumTransformer(TypeTransformer[enum.Enum]):
                     parsed."
             )
 
+        values = [v.value for v in t]  # type: ignore
+        if not isinstance(values[0], str):
+            raise TypeTransformerFailedError("Only EnumTypes with name of value are supported")
         names = [v.name for v in t]  # type: ignore
-        if not isinstance(names[0], str):
-            raise TypeTransformerFailedError("Only EnumTypes with name of string are supported")
         return LiteralType(enum_type=types_pb2.EnumType(values=names))
 
     async def to_literal(self, python_val: enum.Enum, python_type: Type[T], expected: LiteralType) -> Literal:
