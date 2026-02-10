@@ -664,7 +664,6 @@ class Dir(BaseModel, Generic[T], SerializableType):
         output_path = await storage.put(
             from_path=local_path_str, to_path=resolved_remote_path, recursive=True, batch_size=batch_size
         )
-        # breakpoint()
         return cls(path=output_path, name=dirname, hash=dir_cache_key)
 
     @classmethod
