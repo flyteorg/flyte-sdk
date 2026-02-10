@@ -764,7 +764,7 @@ def replace_client(client):
 def current_domain() -> str:
     """
     Returns the current domain from Runtime environment (on the cluster) or from the initialized configuration.
-    This is safe to be used during `dep loy`, `run` and within `task` code.
+    This is safe to be used during `deploy`, `run` and within `task` code.
 
     NOTE: This will not work if you deploy a task to a domain and then run it in another domain.
 
