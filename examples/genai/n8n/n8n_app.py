@@ -1,11 +1,10 @@
 import pathlib
 
 import kubernetes
+from flyte_webhook_app import flyte_n8n_webhook_app
 
 import flyte
 import flyte.app
-
-from flyte_webhook_app import flyte_n8n_webhook_app
 
 
 def n8n_pod_template(version: str, runner_auth_token: str, runner_image_uri: str | None = None) -> flyte.PodTemplate:

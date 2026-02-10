@@ -188,7 +188,9 @@ flyte_n8n_webhook_app = FastAPIAppEnvironment(
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
     import argparse
+
     import httpx
+
     import flyte.remote
 
     parser = argparse.ArgumentParser(description="Deploy the n8n app.")
