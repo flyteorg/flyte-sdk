@@ -29,7 +29,6 @@ from pathlib import Path
 import flyte
 import flyte.app
 
-
 # Create an image with Django and Gunicorn installed
 image = flyte.Image.from_debian_base(python_version=(3, 12)).with_pip_packages(
     "django==5.1.4",

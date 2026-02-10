@@ -23,11 +23,13 @@ def health(request):
 
 def api_info(request):
     """API info endpoint."""
-    return JsonResponse({
-        "app": "Django Hello World",
-        "version": "1.0.0",
-        "message": "This Django app is served via Flyte AppEnvironment",
-    })
+    return JsonResponse(
+        {
+            "app": "Django Hello World",
+            "version": "1.0.0",
+            "message": "This Django app is served via Flyte AppEnvironment",
+        }
+    )
 
 
 urlpatterns = [

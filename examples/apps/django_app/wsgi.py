@@ -4,7 +4,6 @@ This module contains the WSGI application used by Gunicorn.
 """
 
 import os
-import time
 
 from django.core.wsgi import get_wsgi_application
 
