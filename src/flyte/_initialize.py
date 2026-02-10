@@ -792,7 +792,7 @@ def current_domain() -> str:
 
 def current_project() -> str:
     """
-    Returns the current project from Runtime environment (on the cluster) or from the initialized configuration.
+    Returns the current project from the Runtime environment (on the cluster) or from the initialized configuration.
     This is safe to be used during `deploy`, `run` and within `task` code.
 
     NOTE: This will not work if you deploy a task to a project and then run it in another project.
