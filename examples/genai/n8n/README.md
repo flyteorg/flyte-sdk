@@ -25,3 +25,8 @@ Then deploy the app:
 ```bash
 python n8n_app.py
 ```
+
+This will deploy two apps and one task environment:
+1. `n8n-app` - The main n8n app. This contains a sidecar container that runs the n8n javascript and python task runners.
+2. `flyte-n8n-webhook-app` - A webhook app that allows you to trigger Flyte tasks from n8n workflows.
+3. `flyte-n8n-webhook-task` - A task environment that contains some toy Flyte task that can be triggered via the webhook.
