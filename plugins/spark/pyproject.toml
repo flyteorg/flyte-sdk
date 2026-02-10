@@ -67,3 +67,6 @@ ignore = ["PGH003", "PLC0415", "ASYNC240"]
 
 [tool.ruff.lint.per-file-ignores]
 "examples/*" = ["E402"]
+
+[tool.uv.sources]
+flyte = { path = "../../", editable = true }

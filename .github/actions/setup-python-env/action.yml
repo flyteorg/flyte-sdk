@@ -31,8 +31,6 @@ runs:
           uv.lock
     - name: Install Python dependencies
       run: |
-        export SETUPTOOLS_SCM_PRETEND_VERSION="9.9.9"
-        export UV_PYTHON=${PWD}/.venv/bin/python
         uv sync --all-groups --frozen
         uv pip list
       shell: bash
