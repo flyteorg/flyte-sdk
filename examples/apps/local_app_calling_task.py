@@ -12,6 +12,7 @@ import httpx
 from fastapi import FastAPI
 
 import flyte
+import flyte.app
 from flyte.app.extras import FastAPIAppEnvironment
 
 app = FastAPI(
@@ -45,7 +46,7 @@ async def double(x: int) -> int:
 @app.get("/")
 async def double_endpoint(x: int) -> dict[str, int]:
     """Endpoint that invokes the ``double`` task and returns the result."""
-    result = flyte.with_runcontext(mode="local").run(double, x=x)
+    result = flyte.with_runcontext(mode=flyte.app.ctx().mode).run(double, x=x)
     return {"result": result.outputs()[0]}
 
 

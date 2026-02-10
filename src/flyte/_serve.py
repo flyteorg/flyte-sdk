@@ -447,6 +447,8 @@ class _Serve:
         for k, v in self._env_vars.items():
             os.environ[k] = v
 
+        os.environ["_RUN_MODE"] = "local"
+
         if app_env._server is not None:
             # Use the @app_env.server decorator function - run in a background thread
             return self._serve_local_with_server_func(app_env, _LOCAL_HOST, port, materialized_parameters)
