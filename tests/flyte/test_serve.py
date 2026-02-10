@@ -5,16 +5,21 @@ These tests verify the serve context functionality including:
 - _Serve class initialization and configuration
 - with_servecontext() function
 - Parameter value override handling
+- Local serving mode
 """
 
+import json
 import pathlib
 from dataclasses import replace
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from unittest.mock import patch
+from urllib.parse import parse_qs, urlparse
 
+import httpx
 import pytest
 
 from flyte._image import Image
-from flyte._serve import _Serve, with_servecontext
+from flyte._serve import _LOCAL_APP_ENDPOINTS, _LocalApp, _Serve, with_servecontext
 from flyte.app import AppEnvironment
 from flyte.app._parameter import Parameter
 
@@ -688,3 +693,624 @@ def test_serve_discovers_multiple_direct_dependencies():
     assert "cache-service" in deployment_plan.envs
     assert "auth-service" in deployment_plan.envs
     assert "main-app" in deployment_plan.envs
+
+
+# =============================================================================
+# Tests for local serving mode
+# =============================================================================
+
+
+def test_serve_local_mode_initialization():
+    """
+    GOAL: Verify _Serve initializes with mode='local' correctly.
+    """
+    serve = _Serve(mode="local")
+    assert serve._mode == "local"
+
+
+def test_serve_remote_mode_initialization():
+    """
+    GOAL: Verify _Serve initializes with mode='remote' when explicitly set.
+    """
+    serve = _Serve(mode="remote")
+    assert serve._mode == "remote"
+
+
+def test_with_servecontext_local_mode():
+    """
+    GOAL: Verify with_servecontext passes mode parameter.
+    """
+    serve = with_servecontext(mode="local")
+    assert serve._mode == "local"
+
+
+def test_with_servecontext_remote_mode():
+    """
+    GOAL: Verify with_servecontext passes mode='remote'.
+    """
+    serve = with_servecontext(mode="remote")
+    assert serve._mode == "remote"
+
+
+def test_local_app_properties():
+    """
+    GOAL: Verify _LocalApp has correct properties.
+    """
+    app_env = AppEnvironment(
+        name="test-local-props",
+        image=Image.from_base("python:3.11"),
+        port=9999,
+    )
+    serve_obj = _Serve(mode="local")
+    local_app = _LocalApp(app_env=app_env, host="127.0.0.1", port=9999, _serve_obj=serve_obj)
+    assert local_app.name == "test-local-props"
+    assert local_app.endpoint == "http://127.0.0.1:9999"
+    assert local_app.url == "http://127.0.0.1:9999"
+
+
+def test_local_serve_with_server_decorator():
+    """
+    GOAL: Verify local serving works with the @app_env.server decorator pattern.
+
+    Tests that:
+    - The app starts in a background thread
+    - The endpoint is registered in _LOCAL_APP_ENDPOINTS
+    - The endpoint is reachable
+    - app_env.endpoint returns the local endpoint
+    - The app can be shut down cleanly
+    """
+
+    class TestHandler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            parsed = urlparse(self.path)
+            if parsed.path == "/health":
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps({"status": "ok"}).encode())
+            elif parsed.path == "/":
+                params = parse_qs(parsed.query)
+                x = int(params.get("x", [0])[0])
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps({"result": x + 1}).encode())
+            else:
+                self.send_response(404)
+                self.end_headers()
+
+        def log_message(self, format, *args):
+            pass
+
+    app_env = AppEnvironment(
+        name="test-local-server-decorator",
+        image=Image.from_base("python:3.11"),
+        port=18091,
+    )
+
+    @app_env.server
+    def serve():
+        server = HTTPServer(("127.0.0.1", 18091), TestHandler)
+        server.serve_forever()
+
+    try:
+        local_app = with_servecontext(mode="local").serve(app_env)
+
+        # Verify endpoint is registered
+        assert "test-local-server-decorator" in _LOCAL_APP_ENDPOINTS
+        assert _LOCAL_APP_ENDPOINTS["test-local-server-decorator"] == "http://localhost:18091"
+
+        # Verify app_env.endpoint returns the local endpoint
+        assert app_env.endpoint == "http://localhost:18091"
+
+        # Wait for readiness
+        local_app.activate(wait=True)
+
+        # Verify the endpoint is actually working
+        resp = httpx.get("http://127.0.0.1:18091/", params={"x": 5})
+        assert resp.status_code == 200
+        assert resp.json()["result"] == 6
+    finally:
+        local_app.deactivate()
+        # Verify endpoint is removed after shutdown
+        assert "test-local-server-decorator" not in _LOCAL_APP_ENDPOINTS
+
+
+def test_local_serve_with_command():
+    """
+    GOAL: Verify local serving works with the command specification pattern.
+
+    Tests that:
+    - The app starts as a subprocess
+    - The endpoint is registered in _LOCAL_APP_ENDPOINTS
+    - The endpoint is reachable
+    - The app can be shut down cleanly
+    """
+    app_env = AppEnvironment(
+        name="test-local-cmd",
+        image=Image.from_base("python:3.11"),
+        command="python -m http.server 18192",
+        port=18192,
+    )
+
+    try:
+        local_app = with_servecontext(mode="local", activate_timeout=10.0, health_check_path="/").serve(app_env)
+
+        # Verify endpoint is registered
+        assert "test-local-cmd" in _LOCAL_APP_ENDPOINTS
+
+        # Wait for readiness
+        local_app.activate(wait=True)
+
+        # Verify the endpoint is actually working
+        resp = httpx.get("http://localhost:18192/")
+        assert resp.status_code == 200
+    finally:
+        local_app.deactivate()
+        assert "test-local-cmd" not in _LOCAL_APP_ENDPOINTS
+
+
+def test_local_serve_no_server_or_command_raises():
+    """
+    GOAL: Verify that serving an app without server function or command raises ValueError.
+    """
+    app_env = AppEnvironment(
+        name="test-local-no-server",
+        image=Image.from_base("python:3.11"),
+    )
+
+    with pytest.raises(ValueError, match="has no server function, command, or args defined"):
+        with_servecontext(mode="local").serve(app_env)
+
+
+def test_local_app_is_ready_timeout():
+    """
+    GOAL: Verify is_active returns False when app is not reachable.
+    """
+    app_env = AppEnvironment(
+        name="test-timeout",
+        image=Image.from_base("python:3.11"),
+        port=18099,
+    )
+    serve_obj = _Serve(mode="local")
+    local_app = _LocalApp(app_env=app_env, host="127.0.0.1", port=18099, _serve_obj=serve_obj)
+
+    # Nothing listening on port 18099, so is_active should return False
+    assert not local_app.is_active()
+
+
+def test_local_serve_env_vars():
+    """
+    GOAL: Verify that env_vars from servecontext are set in the environment.
+    """
+    import os
+
+    class TestHandler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            env_val = os.environ.get("TEST_LOCAL_SERVE_VAR", "")
+            self.wfile.write(json.dumps({"env_val": env_val}).encode())
+
+        def log_message(self, format, *args):
+            pass
+
+    app_env = AppEnvironment(
+        name="test-local-envvars",
+        image=Image.from_base("python:3.11"),
+        port=18093,
+    )
+
+    @app_env.server
+    def serve():
+        server = HTTPServer(("127.0.0.1", 18093), TestHandler)
+        server.serve_forever()
+
+    try:
+        local_app = with_servecontext(
+            mode="local",
+            env_vars={"TEST_LOCAL_SERVE_VAR": "hello-world"},
+        ).serve(app_env)
+
+        local_app.activate(wait=True)
+
+        # Verify the environment variable was set
+        assert os.environ.get("TEST_LOCAL_SERVE_VAR") == "hello-world"
+    finally:
+        local_app.deactivate()
+        os.environ.pop("TEST_LOCAL_SERVE_VAR", None)
+
+
+def test_local_app_registered_in_active_set():
+    """
+    GOAL: Verify that creating a _LocalApp registers it in _ACTIVE_LOCAL_APPS
+    and deactivating it removes it.
+    """
+    from flyte._serve import _ACTIVE_LOCAL_APPS
+
+    app_env = AppEnvironment(
+        name="test-active-set",
+        image=Image.from_base("python:3.11"),
+        port=18096,
+    )
+    serve_obj = _Serve(mode="local")
+    local_app = _LocalApp(app_env=app_env, host="127.0.0.1", port=18096, _serve_obj=serve_obj)
+
+    # Should be registered on creation
+    assert local_app in _ACTIVE_LOCAL_APPS
+
+    # Deactivate should remove it
+    local_app.deactivate()
+    assert local_app not in _ACTIVE_LOCAL_APPS
+
+
+def test_cleanup_local_apps_deactivates_all():
+    """
+    GOAL: Verify _cleanup_local_apps() deactivates all registered _LocalApp instances.
+    """
+    from flyte._serve import _ACTIVE_LOCAL_APPS, _cleanup_local_apps
+
+    app_env_a = AppEnvironment(
+        name="test-cleanup-a",
+        image=Image.from_base("python:3.11"),
+        port=18096,
+    )
+    app_env_b = AppEnvironment(
+        name="test-cleanup-b",
+        image=Image.from_base("python:3.11"),
+        port=18097,
+    )
+    serve_obj = _Serve(mode="local")
+    local_app_a = _LocalApp(app_env=app_env_a, host="127.0.0.1", port=18096, _serve_obj=serve_obj)
+    local_app_b = _LocalApp(app_env=app_env_b, host="127.0.0.1", port=18097, _serve_obj=serve_obj)
+
+    assert local_app_a in _ACTIVE_LOCAL_APPS
+    assert local_app_b in _ACTIVE_LOCAL_APPS
+
+    _cleanup_local_apps()
+
+    assert local_app_a not in _ACTIVE_LOCAL_APPS
+    assert local_app_b not in _ACTIVE_LOCAL_APPS
+
+
+def test_cleanup_terminates_subprocess():
+    """
+    GOAL: Verify _cleanup_local_apps() calls terminate() on child processes of registered apps.
+    """
+    from unittest.mock import MagicMock
+
+    from flyte._serve import _ACTIVE_LOCAL_APPS, _cleanup_local_apps
+
+    app_env = AppEnvironment(
+        name="test-cleanup-proc",
+        image=Image.from_base("python:3.11"),
+        port=18098,
+    )
+
+    serve_obj = _Serve(mode="local")
+    mock_proc = MagicMock()
+    mock_proc.poll.return_value = None  # simulate a running process
+    local_app = _LocalApp(app_env=app_env, host="127.0.0.1", port=18098, _serve_obj=serve_obj, process=mock_proc)
+
+    assert local_app in _ACTIVE_LOCAL_APPS
+
+    _cleanup_local_apps()
+
+    # The process should have been asked to terminate
+    mock_proc.terminate.assert_called_once()
+    assert local_app not in _ACTIVE_LOCAL_APPS
+
+
+def test_signal_handler_cleans_up_apps():
+    """
+    GOAL: Verify that simulating SIGINT triggers cleanup of registered local apps.
+    """
+    import signal as _signal
+
+    from flyte._serve import (
+        _ACTIVE_LOCAL_APPS,
+        _install_signal_handlers,
+        _signal_handler,
+    )
+
+    # Ensure signal handlers are installed
+    _install_signal_handlers()
+
+    app_env = AppEnvironment(
+        name="test-signal-cleanup",
+        image=Image.from_base("python:3.11"),
+        port=18096,
+    )
+    serve_obj = _Serve(mode="local")
+    local_app = _LocalApp(app_env=app_env, host="127.0.0.1", port=18096, _serve_obj=serve_obj)
+    assert local_app in _ACTIVE_LOCAL_APPS
+
+    # Directly invoke the signal handler (don't actually send a signal
+    # because that would interrupt the test runner).  We pass frame=None.
+    # Patch the original handler to avoid side-effects.
+    with patch("flyte._serve._ORIGINAL_SIGINT_HANDLER", new=_signal.SIG_IGN):
+        _signal_handler(_signal.SIGINT, None)
+
+    assert local_app not in _ACTIVE_LOCAL_APPS
+
+
+def test_deactivate_idempotent():
+    """
+    GOAL: Verify that calling deactivate() multiple times is safe.
+    """
+    from flyte._serve import _ACTIVE_LOCAL_APPS
+
+    app_env = AppEnvironment(
+        name="test-deactivate-idempotent",
+        image=Image.from_base("python:3.11"),
+        port=18096,
+    )
+    serve_obj = _Serve(mode="local")
+    local_app = _LocalApp(app_env=app_env, host="127.0.0.1", port=18096, _serve_obj=serve_obj)
+    assert local_app in _ACTIVE_LOCAL_APPS
+
+    local_app.deactivate()
+    assert local_app not in _ACTIVE_LOCAL_APPS
+
+    # Second call should not raise
+    local_app.deactivate()
+    assert local_app not in _ACTIVE_LOCAL_APPS
+
+
+def test_local_serve_endpoint_resolves_correctly():
+    """
+    GOAL: Verify that app_env.endpoint resolves to the local endpoint when served locally.
+
+    This is the key integration point: when an AppEnvironment is served locally,
+    its .endpoint property should return the local address so tasks can call it.
+    """
+
+    class TestHandler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps({"ok": True}).encode())
+
+        def log_message(self, format, *args):
+            pass
+
+    app_env = AppEnvironment(
+        name="test-endpoint-resolve",
+        image=Image.from_base("python:3.11"),
+        port=18094,
+    )
+
+    @app_env.server
+    def serve():
+        server = HTTPServer(("127.0.0.1", 18094), TestHandler)
+        server.serve_forever()
+
+    try:
+        local_app = with_servecontext(mode="local").serve(app_env)
+        local_app.activate(wait=True)
+
+        # The key assertion: app_env.endpoint should resolve locally
+        endpoint = app_env.endpoint
+        assert endpoint == "http://localhost:18094"
+
+        # And we can actually call it
+        resp = httpx.get(endpoint)
+        assert resp.status_code == 200
+        assert resp.json()["ok"] is True
+    finally:
+        local_app.deactivate()
+
+
+# =============================================================================
+# Tests for is_deactivated() thread-aware fix
+# =============================================================================
+
+
+def test_is_deactivated_false_while_thread_alive():
+    """
+    GOAL: Verify is_deactivated() returns False while the server thread is alive.
+
+    Previously, is_deactivated() only checked self._process and would always
+    return True for thread-based apps (since _process is None).
+    """
+    import threading
+
+    app_env = AppEnvironment(
+        name="test-deactivated-thread-alive",
+        image=Image.from_base("python:3.11"),
+        port=18200,
+    )
+
+    stop = threading.Event()
+
+    def _blocker():
+        stop.wait()
+
+    serve_obj = _Serve(mode="local")
+    thread = threading.Thread(target=_blocker, daemon=True)
+    thread.start()
+
+    local_app = _LocalApp(app_env=app_env, host="127.0.0.1", port=18200, _serve_obj=serve_obj, thread=thread)
+
+    try:
+        # Thread is alive, so is_deactivated should return False
+        assert not local_app.is_deactivated()
+    finally:
+        stop.set()
+        thread.join(timeout=2)
+        local_app.deactivate()
+
+
+def test_is_deactivated_true_after_thread_exits():
+    """
+    GOAL: Verify is_deactivated() returns True after the server thread has exited.
+    """
+    import threading
+
+    app_env = AppEnvironment(
+        name="test-deactivated-thread-exited",
+        image=Image.from_base("python:3.11"),
+        port=18201,
+    )
+
+    def _noop():
+        pass
+
+    serve_obj = _Serve(mode="local")
+    thread = threading.Thread(target=_noop, daemon=True)
+    thread.start()
+    thread.join(timeout=2)  # Wait for it to finish
+
+    local_app = _LocalApp(app_env=app_env, host="127.0.0.1", port=18201, _serve_obj=serve_obj, thread=thread)
+
+    try:
+        # Thread has exited, so is_deactivated should return True
+        assert local_app.is_deactivated()
+    finally:
+        local_app.deactivate()
+
+
+def test_is_deactivated_true_no_thread_no_process():
+    """
+    GOAL: Verify is_deactivated() returns True when neither thread nor process is set.
+    """
+    app_env = AppEnvironment(
+        name="test-deactivated-no-thread-no-proc",
+        image=Image.from_base("python:3.11"),
+        port=18202,
+    )
+    serve_obj = _Serve(mode="local")
+    local_app = _LocalApp(app_env=app_env, host="127.0.0.1", port=18202, _serve_obj=serve_obj)
+
+    try:
+        assert local_app.is_deactivated()
+    finally:
+        local_app.deactivate()
+
+
+# =============================================================================
+# Tests for thread-based deactivate() with stop_event and loop shutdown
+# =============================================================================
+
+
+def test_deactivate_stops_thread_based_app():
+    """
+    GOAL: Verify deactivate(wait=True) stops a thread-based app by signalling
+    the stop event and stopping the event loop.
+    """
+    import asyncio
+    import threading
+
+    app_env = AppEnvironment(
+        name="test-deactivate-thread-app",
+        image=Image.from_base("python:3.11"),
+        port=18203,
+    )
+
+    serve_obj = _Serve(mode="local")
+    local_app = _LocalApp(app_env=app_env, host="127.0.0.1", port=18203, _serve_obj=serve_obj)
+
+    # Simulate the pattern used in _serve_local_with_server_func:
+    # create an event loop in a thread, store it on local_app, and run forever.
+    def _run():
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        local_app._thread_loop = loop
+        try:
+            loop.run_forever()
+        finally:
+            local_app._thread_loop = None
+            loop.close()
+
+    thread = threading.Thread(target=_run, daemon=True)
+    thread.start()
+    local_app._thread = thread
+
+    # Give the thread a moment to start the loop
+    import time
+
+    time.sleep(0.1)
+
+    assert not local_app.is_deactivated()
+    assert local_app._stop_event is not None
+    assert not local_app._stop_event.is_set()
+
+    # Deactivate should set stop_event, stop the loop, and join the thread
+    local_app.deactivate(wait=True)
+
+    assert local_app._stop_event.is_set()
+    assert not thread.is_alive()
+    assert local_app.is_deactivated()
+
+
+def test_deactivate_sets_stop_event_for_thread():
+    """
+    GOAL: Verify deactivate() sets the _stop_event even without wait=True.
+    """
+    import threading
+
+    app_env = AppEnvironment(
+        name="test-deactivate-stop-event",
+        image=Image.from_base("python:3.11"),
+        port=18204,
+    )
+
+    serve_obj = _Serve(mode="local")
+    stop = threading.Event()
+
+    def _blocker():
+        stop.wait()
+
+    thread = threading.Thread(target=_blocker, daemon=True)
+    thread.start()
+
+    local_app = _LocalApp(app_env=app_env, host="127.0.0.1", port=18204, _serve_obj=serve_obj, thread=thread)
+
+    local_app.deactivate()
+    assert local_app._stop_event.is_set()
+
+    # Clean up
+    stop.set()
+    thread.join(timeout=2)
+
+
+# =============================================================================
+# Tests for AppHandle Protocol
+# =============================================================================
+
+
+def test_local_app_satisfies_app_handle_protocol():
+    """
+    GOAL: Verify that _LocalApp is recognized as an AppHandle instance.
+    """
+    from flyte._serve import AppHandle
+
+    app_env = AppEnvironment(
+        name="test-protocol-local",
+        image=Image.from_base("python:3.11"),
+        port=18205,
+    )
+    serve_obj = _Serve(mode="local")
+    local_app = _LocalApp(app_env=app_env, host="127.0.0.1", port=18205, _serve_obj=serve_obj)
+
+    try:
+        assert isinstance(local_app, AppHandle)
+    finally:
+        local_app.deactivate()
+
+
+def test_app_handle_protocol_has_required_attributes():
+    """
+    GOAL: Verify the AppHandle protocol defines the expected interface.
+    """
+    from flyte._serve import AppHandle
+
+    # Check that the Protocol has the expected abstract members
+    assert hasattr(AppHandle, "name")
+    assert hasattr(AppHandle, "endpoint")
+    assert hasattr(AppHandle, "is_active")
+    assert hasattr(AppHandle, "is_deactivated")
+    assert hasattr(AppHandle, "activate")
+    assert hasattr(AppHandle, "deactivate")
