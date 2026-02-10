@@ -326,6 +326,7 @@ class AppEnvironment(Environment):
         include = kwargs.pop("include", None)
         parameters = kwargs.pop("parameters", None)
         cluster_pool = kwargs.pop("cluster_pool", None)
+        pod_template = kwargs.pop("pod_template", None)
 
         if kwargs:
             raise TypeError(f"Unexpected keyword arguments: {list(kwargs.keys())}")
@@ -334,6 +335,8 @@ class AppEnvironment(Environment):
         kwargs["name"] = name
         if image is not None:
             kwargs["image"] = image
+        if pod_template is not None:
+            kwargs["pod_template"] = pod_template
         if resources is not None:
             kwargs["resources"] = resources
         if env_vars is not None:

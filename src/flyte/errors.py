@@ -283,3 +283,13 @@ class CodeBundleError(RuntimeUserError):
 
     def __init__(self, message: str):
         super().__init__("CodeBundleError", message, "user")
+
+
+class TraceDoesNotAllowNestedTasksError(RuntimeUserError):
+    """
+    This error is raised when the user tries to use a task from within a trace. Tasks can be nested under tasks
+    not traces.
+    """
+
+    def __init__(self, message: str):
+        super().__init__("TraceDoesNotAllowNestedTasksError", message)
