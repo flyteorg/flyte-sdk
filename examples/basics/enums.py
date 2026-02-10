@@ -11,6 +11,7 @@ env = flyte.TaskEnvironment(name="enums")
 
 # -- Enum definitions ----------------------------------------------------------
 
+
 class Color(str, enum.Enum):
     RED = "red-value"
     GREEN = "green-value"
@@ -32,6 +33,7 @@ class Priority(str, enum.Enum):
 
 
 # -- Pydantic models with enums -----------------------------------------------
+
 
 class ShirtOrder(BaseModel):
     color: Color
@@ -59,6 +61,7 @@ class FullOrder(BaseModel):
 
 # -- Tasks ---------------------------------------------------------------------
 
+
 @env.task
 async def standalone_enum_echo(color: Color, size: Size) -> str:
     """Standalone enums as direct task inputs."""
@@ -74,13 +77,8 @@ async def simple_pydantic_enum(order: ShirtOrder) -> str:
 @env.task
 async def nested_pydantic_enum(order: FullOrder) -> str:
     """Enums inside nested Pydantic models."""
-    items_desc = ", ".join(
-        f"{item.quantity}x {item.color.name}-{item.size.name}" for item in order.items
-    )
-    return (
-        f"Order for {order.customer.name} "
-        f"(priority={order.customer.priority.name}): {items_desc}"
-    )
+    items_desc = ", ".join(f"{item.quantity}x {item.color.name}-{item.size.name}" for item in order.items)
+    return f"Order for {order.customer.name} (priority={order.customer.priority.name}): {items_desc}"
 
 
 @env.task
@@ -92,9 +90,7 @@ async def main() -> list[str]:
     results.append(r)
 
     # 2. Simple pydantic with enums
-    r = await simple_pydantic_enum(
-        order=ShirtOrder(color=Color.BLUE, size=Size.MEDIUM, quantity=3)
-    )
+    r = await simple_pydantic_enum(order=ShirtOrder(color=Color.BLUE, size=Size.MEDIUM, quantity=3))
     results.append(r)
 
     # 3. Nested pydantic with enums

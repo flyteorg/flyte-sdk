@@ -1,4 +1,4 @@
-from enum import StrEnum, IntEnum
+from enum import StrEnum
 
 import pytest
 
@@ -9,6 +9,7 @@ class Foo(StrEnum):
     A = "AAA"
     B = "BBB"
     C = "CCC"
+
 
 @pytest.mark.asyncio
 async def test_enums():

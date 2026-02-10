@@ -224,9 +224,10 @@ class Foo(StrEnum):
     B = "BBB"
     C = "CCC"
 
+
 class MyEnumBase(BaseModel):
-    f : Foo
-    s : str
+    f: Foo
+    s: str
 
 
 @pytest.mark.asyncio
@@ -244,9 +245,7 @@ async def test_enums_in_pydantic():
     # Verify the schema uses enum names, not values
     schema = MessageToDict(lit.metadata)
     foo_def = schema.get("$defs", {}).get("Foo", {})
-    assert foo_def.get("enum") == ["A", "B", "C"], (
-        f"Expected enum names ['A', 'B', 'C'], got {foo_def.get('enum')}"
-    )
+    assert foo_def.get("enum") == ["A", "B", "C"], f"Expected enum names ['A', 'B', 'C'], got {foo_def.get('enum')}"
 
     # Verify serialized data uses enum names, not values
     serialized = msgpack.loads(lv.scalar.binary.value, strict_map_key=False)
@@ -262,7 +261,6 @@ async def test_enums_in_pydantic():
 async def test_enums_backward_compat():
     """Old serialized data with enum values should still deserialize correctly."""
     import msgpack
-
     from flyteidl2.core.literals_pb2 import Binary
 
     from flyte.types._type_engine import MESSAGEPACK, PydanticTransformer
@@ -308,5 +306,3 @@ async def test_nested_enums_roundtrip():
 
     pv = await TypeEngine.to_python_value(lv, OuterWithEnum)
     assert pv == input
-
-

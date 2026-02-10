@@ -577,9 +577,7 @@ class PydanticTransformer(TypeTransformer[BaseModel]):
         if binary_idl_object.tag == MESSAGEPACK:
             dict_obj = msgpack.loads(binary_idl_object.value, strict_map_key=False)
             dict_obj = _walk_enum_fields(dict_obj, expected_python_type, to_names=False)
-            python_val = expected_python_type.model_validate(
-                dict_obj, strict=False, context={"deserialize": True}
-            )
+            python_val = expected_python_type.model_validate(dict_obj, strict=False, context={"deserialize": True})
             return python_val
         else:
             raise TypeTransformerFailedError(f"Unsupported binary format: `{binary_idl_object.tag}`")
@@ -597,9 +595,7 @@ class PydanticTransformer(TypeTransformer[BaseModel]):
         json_str = _json_format.MessageToJson(lv.scalar.generic)
         dict_obj = json.loads(json_str)
         dict_obj = _walk_enum_fields(dict_obj, expected_python_type, to_names=False)
-        python_val = expected_python_type.model_validate(
-            dict_obj, strict=False, context={"deserialize": True}
-        )
+        python_val = expected_python_type.model_validate(dict_obj, strict=False, context={"deserialize": True})
         return python_val
 
 
@@ -984,7 +980,8 @@ class EnumTransformer(TypeTransformer[enum.Enum]):
             if python_val.__getattribute__("name"):
                 if python_val.__getattribute__("name") not in expected.enum_type.values:
                     raise TypeTransformerFailedError(
-                        f"Value {python_val.__getattribute__("name")} is not valid value, expected - {expected.enum_type.values}"
+                        f"Value {python_val.__getattribute__('name')} is not valid value, expected -"
+                        f" {expected.enum_type.values}"
                     )
                 return Literal(scalar=Scalar(primitive=Primitive(string_value=python_val.__getattribute__("name"))))  # type: ignore
             elif python_val not in expected.enum_type.values:
