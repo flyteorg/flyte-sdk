@@ -107,8 +107,7 @@ class TestSnowflakeConnector:
         output_vars = VariableMap()
         output_vars.variables.append(
             VariableEntry(
-                key="results",
-                value=Variable(type=LiteralType(structured_dataset_type=StructuredDatasetType()))
+                key="results", value=Variable(type=LiteralType(structured_dataset_type=StructuredDatasetType()))
             )
         )
         template.interface.outputs.CopyFrom(output_vars)

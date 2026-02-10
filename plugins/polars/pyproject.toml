@@ -7,7 +7,8 @@ authors = [{ name = "Flyte Contributors", email = "admin@flyte.org" }]
 requires-python = ">=3.10"
 dependencies = [
     "polars",
-    "flyte"
+    "flyte",
+    "numpy"
 ]
 
 [dependency-groups]
