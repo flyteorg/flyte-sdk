@@ -965,7 +965,7 @@ def generate_attribute_list_from_dataclass_json_mixin(schema: dict, schema_name:
             property_type = property_val["type"]
         # Handle list
         if property_type == "array":
-            attribute_list.append((property_key, typing.List[_get_element_type(property_val["items"])]))  # type: ignore
+            attribute_list.append((property_key, typing.List[_get_element_type(property_val["items"], schema)]))  # type: ignore
         # Handle dataclass and dict
         elif property_type == "object":
             if property_val.get("anyOf"):
@@ -1004,7 +1004,7 @@ def generate_attribute_list_from_dataclass_json_mixin(schema: dict, schema_name:
                 nested_types[property_key] = nested_class
             elif property_val.get("additionalProperties"):
                 # For typing.Dict type
-                elem_type = _get_element_type(property_val["additionalProperties"])
+                elem_type = _get_element_type(property_val["additionalProperties"], schema)
                 attribute_list.append((property_key, typing.Dict[str, elem_type]))  # type: ignore
             elif property_val.get("title"):
                 # For nested dataclass
@@ -1047,7 +1047,7 @@ def generate_attribute_list_from_dataclass_json_mixin(schema: dict, schema_name:
             attribute_list.append([property_key, str])  # type: ignore
         # Handle int, float, bool or str
         else:
-            attribute_list.append([property_key, _get_element_type(property_val)])  # type: ignore
+            attribute_list.append([property_key, _get_element_type(property_val, schema)])  # type: ignore
     return attribute_list, nested_types
 
 
@@ -2076,7 +2076,14 @@ def convert_mashumaro_json_schema_to_python_class(schema: dict, schema_name: typ
     return cls
 
 
-def _get_element_type(element_property: typing.Union[typing.Dict[str, str], bool]) -> Type:
+# The value in a JSON schema doesn't always have to be a string, they can be dicts e.g. items, additionalProperties,
+# anyOf, lists or bool. The old type hint was inaccurate.
+# New parameter added for schema. `_get_element_type` needs to look up $defs when resolving $ref paths. Default
+# - None, backward compatible.
+def _get_element_type(
+    element_property: typing.Union[typing.Dict[str, typing.Any], bool],
+    schema: typing.Optional[typing.Dict[str, typing.Any]] = None,
+) -> Type:
     from flyte.io._dir import Dir
     from flyte.io._file import File
 
@@ -2091,16 +2098,48 @@ def _get_element_type(element_property: typing.Union[typing.Dict[str, str], bool
         return File
     elif Dir.schema_match(element_property):
         return Dir
-    element_type = (
-        [e_property["type"] for e_property in element_property["anyOf"]]  # type: ignore
-        if element_property.get("anyOf")
-        else element_property["type"]
-    )
-    element_format = element_property["format"] if "format" in element_property else None
 
-    if isinstance(element_type, list):
-        # Element type of Optional[int] is [integer, None]
-        return typing.Optional[_get_element_type({"type": element_type[0]})]  # type: ignore
+    # Handle $ref for nested models and enums
+
+    # Ensure that the element is actually a $ref and we have the entire schema to look up
+    if element_property.get("$ref") and schema is not None:
+        ref_name = element_property["$ref"].split("/")[-1]
+        defs = schema.get("$defs", schema.get("definitions", {}))
+        # Look up for ref_name in the defs defined in the schema
+        if ref_name in defs:
+            # Don't mutate the orignal schema
+            ref_schema = defs[ref_name].copy()
+            # Guard the nested enum elements inside containers
+            if ref_schema.get("enum"):
+                return str
+            # if defs not in the schema, they need to be propogated into the resolved schema
+            if "$defs" not in ref_schema and defs:
+                ref_schema["$defs"] = defs
+            # build a dataclass from the resolved schema
+            return convert_mashumaro_json_schema_to_python_class(ref_schema, ref_name)
+        # default to str on failure. Shouldn't happen with valid pydantic schemas
+        return str
+
+    # Handle anyOf (e.g. Optional[int], Optional[Inner])
+    # Early return block replacing the previous list comprehension which would fail when an anyOf reference was a $ref
+    # (meaning no $type key).
+    if element_property.get("anyOf"):
+        # Separate non null variants. Note a $ref variant would have type None NOT null. A {"type": "null"} variant is
+        # filtered out.
+        variants = element_property["anyOf"]
+        non_null = [v for v in variants if v.get("type") != "null"]
+        # Detect if this is an Optional pattern here
+        has_null = len(non_null) < len(variants)
+        # This recurses on the first non-null variant which would handle the $ref, nested_arrays, nested_objects...
+        # anything. Wrap it in Optional if has_null.
+        if non_null:
+            inner_type = _get_element_type(non_null[0], schema)
+            return typing.Optional[inner_type] if has_null else inner_type  # type: ignore
+        # return None if all types are None
+        return type(None)
+
+    element_type = element_property.get("type", "string")
+    element_format = element_property.get("format")
 
     if element_type == "string":
         return str
@@ -2113,6 +2152,16 @@ def _get_element_type(element_property: typing.Union[typing.Dict[str, str], bool
             return int
         else:
             return float
+    # Recursively discover the types when an array or object element type is discovered
+    elif element_type == "array":
+        return typing.List[_get_element_type(element_property.get("items", {}), schema)]  # type: ignore
+    elif element_type == "object":
+        if element_property.get("additionalProperties"):
+            return typing.Dict[str, _get_element_type(element_property["additionalProperties"], schema)]  # type: ignore
+        return dict
+    # Corner case - practically useless but List[None] is a legal Python type
+    elif element_type == "null":
+        return type(None)
     return str
 
 
