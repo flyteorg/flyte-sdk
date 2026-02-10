@@ -30,8 +30,8 @@ def n8n_pod_template(version: str, runner_auth_token: str, runner_image_uri: str
 
 n8n_app = flyte.app.AppEnvironment(
     name="n8n-app",
-    resources=flyte.Resources(cpu=4, memory="8Gi"),
-    scaling=flyte.app.Scaling(replicas=(0, 1)),
+    resources=flyte.Resources(cpu=4, memory="4Gi"),
+    scaling=flyte.app.Scaling(replicas=(1, 2)),
     port=5678,
     command=["n8n", "start"],
     secrets=[
