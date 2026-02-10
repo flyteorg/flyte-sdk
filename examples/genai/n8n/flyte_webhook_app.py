@@ -39,12 +39,9 @@ image = flyte.Image.from_debian_base().with_pip_packages("fastapi", "uvicorn")
 # ---------------------------------------------------------------------------
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    PROJECT_NAME_ENV_VAR = "FLYTE_INTERNAL_EXECUTION_PROJECT"
-    DOMAIN_NAME_ENV_VAR = "FLYTE_INTERNAL_EXECUTION_DOMAIN"
-
     await flyte.init_passthrough.aio(
-        project=os.getenv(PROJECT_NAME_ENV_VAR, None),
-        domain=os.getenv(DOMAIN_NAME_ENV_VAR, None),
+        project=flyte.current_project(),
+        domain=flyte.current_domain(),
     )
     logger.info("Initialized Flyte passthrough auth")
     yield
