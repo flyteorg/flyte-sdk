@@ -177,6 +177,7 @@ flyte_n8n_webhook_app = FastAPIAppEnvironment(
     depends_on=[task_env],
     scaling=flyte.app.Scaling(replicas=(0, 1)),
     port=8080,
+    domain=flyte.app.Domain(subdomain="n8n-flyte-webhook"),
 )
 
 
