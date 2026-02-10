@@ -15,7 +15,15 @@ from ._environment import Environment
 from ._excepthook import custom_excepthook
 from ._group import group
 from ._image import Image
-from ._initialize import current_domain, current_project, init, init_from_api_key, init_from_config, init_in_cluster, init_passthrough
+from ._initialize import (
+    current_domain,
+    current_project,
+    init,
+    init_from_api_key,
+    init_from_config,
+    init_in_cluster,
+    init_passthrough,
+)
 from ._link import Link
 from ._logging import logger
 from ._map import map
