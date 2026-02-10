@@ -525,8 +525,14 @@ async def test_list_dir_mock_s3(tmp_path, tmp_dir_structure, ctx_with_test_local
 
     # Upload to S3
     uploaded_dir = await Dir.from_local(tmp_dir_structure)
+    uploaded_path = uploaded_dir.path + "/"
 
-    # List files
+    # List files with a trailing /
+    replica_dir = Dir.from_existing_remote(uploaded_path)
+    files = await replica_dir.list_files()
+    assert len(files) == 3
+
+    # List without the /
     replica_dir = Dir.from_existing_remote(uploaded_dir.path)
     files = await replica_dir.list_files()
     assert len(files) == 3
@@ -544,6 +550,6 @@ async def test_list_dir_local_fs(tmp_path, tmp_dir_structure, ctx_with_test_raw_
     uploaded_dir = await Dir.from_local(tmp_dir_structure)
 
     # List files
-    replica_dir = Dir(path=uploaded_dir.path)
+    replica_dir = Dir(path=uploaded_dir.path + "/")
     files = await replica_dir.list_files()
     assert len(files) == 3

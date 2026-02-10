@@ -141,9 +141,7 @@ async def test_storage_exists():
 
 @pytest.mark.sandbox
 @pytest.mark.asyncio
-async def test_get_underlying_filesystem_upload_download(
-    tmp_path, ctx_with_test_local_s3_stack_raw_data_path
-):
+async def test_get_underlying_filesystem_upload_download(tmp_path, ctx_with_test_local_s3_stack_raw_data_path):
     """
     Sandbox integration test that uses get_underlying_filesystem with the sandbox S3
     (LocalStack) to upload and download a file.
@@ -174,7 +172,6 @@ async def test_get_underlying_filesystem_upload_download(
 
     # Also upload via the filesystem directly and read back with storage.get
     s3_path_2 = "s3://bucket/tests/default_upload/fs_uploaded.txt"
-    round_trip_content = b"round trip via filesystem"
     fs.put(str(local_file), s3_path_2)
 
     downloaded_file_2 = tmp_path / "downloaded_2.txt"
