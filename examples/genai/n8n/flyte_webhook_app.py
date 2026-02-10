@@ -93,7 +93,8 @@ async def run_task(
     name: str,
     inputs: dict,
     version: str | None = None,
-):
+    wait: bool = True,
+) -> dict:
     """
     Trigger a Flyte task run with the caller's credentials.
 
@@ -121,6 +122,9 @@ async def run_task(
             auto_version=auto_version,
         )
         r = await flyte.run.aio(tk, **inputs)
+        if wait:
+            await r.wait.aio()
+            return (await r.outputs.aio()).named_outputs
         return {"url": r.url, "name": r.name}
 
     except flyte.errors.RemoteTaskNotFoundError:
@@ -183,45 +187,43 @@ flyte_n8n_webhook_app = FastAPIAppEnvironment(
 # Deploy helper
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
+    import argparse
     import httpx
     import flyte.remote
 
+    parser = argparse.ArgumentParser(description="Deploy the n8n app.")
+    parser.add_argument("--deploy", action="store_true", help="Deploy the n8n app.")
+    parser.add_argument("--test", action="store_true", help="Wait for the task to complete")
+    args = parser.parse_args()
+
     flyte.init_from_config()
-    flyte.deploy(flyte_n8n_webhook_app)
+    if args.deploy:
+        flyte.deploy(flyte_n8n_webhook_app)
 
-    app = flyte.remote.App.get(name="flyte-n8n-webhook-app")
-    url = app.url
-    endpoint = app.endpoint
-    print(f"Deployed webhook app: {url}")
-    print(f"Webhook is served on {endpoint}. you can check logs, status etc {endpoint}")
+    if args.test:
+        app = flyte.remote.App.get(name="flyte-n8n-webhook-app")
+        url = app.url
+        endpoint = app.endpoint
+        print(f"Deployed webhook app: {url}")
+        print(f"Webhook is served on {endpoint}. you can check logs, status etc {endpoint}")
 
-    # --- Quick smoke test ---
-    token = os.getenv("FLYTE_API_KEY")
+        # --- Quick smoke test ---
+        token = os.getenv("FLYTE_API_KEY")
 
-    headers = {"Authorization": f"Bearer {token}"}
+        headers = {"Authorization": f"Bearer {token}"}
 
-    # Test /health
-    health_endpoint = endpoint.rstrip("/") + "/health"
-    resp = httpx.get(health_endpoint, headers=headers)
-    print(f"/health response: {resp.text}")
+        # Test /run-task (triggers the example add_field)
+        data = {"data": {"x": 42, "y": "hello from n8n"}}
+        route = "/run-task/flytesnacks/development/flyte-n8n-webhook-task.add_field"
+        full_endpoint = endpoint.rstrip("/") + route
+        print(f"POST {full_endpoint}")
 
-    # Test /me
-    me_endpoint = endpoint.rstrip("/") + "/me"
-    resp = httpx.get(me_endpoint, headers=headers)
-    print(f"/me response: {resp.text}")
-
-    # Test /run-task (triggers the example add_field)
-    data = {"data": {"x": 42, "y": "hello from n8n"}}
-    route = "/run-task/flytesnacks/development/flyte-n8n-webhook-task.add_field"
-    full_endpoint = endpoint.rstrip("/") + route
-    print(f"POST {full_endpoint}")
-
-    resp = httpx.post(
-        full_endpoint,
-        json=data,
-        headers=headers,
-    )
-    if resp.is_success:
-        print(f"Webhook response: {resp.text}")
-    else:
-        print(f"HTTP Error: {resp.status_code} - {resp.text}")
+        resp = httpx.post(
+            full_endpoint,
+            json=data,
+            headers=headers,
+        )
+        if resp.is_success:
+            print(f"Webhook response: {resp.text}")
+        else:
+            print(f"HTTP Error: {resp.status_code} - {resp.text}")

@@ -5,6 +5,8 @@ import kubernetes
 import flyte
 import flyte.app
 
+from flyte_webhook_app import flyte_n8n_webhook_app
+
 
 def n8n_pod_template(version: str, runner_auth_token: str, runner_image_uri: str | None = None) -> flyte.PodTemplate:
     return flyte.PodTemplate(
@@ -52,6 +54,7 @@ n8n_app = flyte.app.AppEnvironment(
         "DB_POSTGRESDB_PORT": "6543",
         "DB_POSTGRESDB_SCHEMA": "public",
     },
+    depends_on=[flyte_n8n_webhook_app],
 )
 
 
