@@ -39,7 +39,7 @@ n8n_app = flyte.app.AppEnvironment(
         flyte.Secret("n8n_postgres_password", as_env_var="DB_POSTGRESDB_PASSWORD"),
         flyte.Secret("n8n_encryption_key", as_env_var="N8N_ENCRYPTION_KEY"),
     ],
-    requires_auth=False,
+    requires_auth=True,
     env_vars={
         "N8N_RUNNERS_ENABLED": "true",
         "N8N_RUNNERS_MODE": "external",
