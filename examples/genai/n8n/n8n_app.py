@@ -1,8 +1,9 @@
-import flyte
-import flyte.app
 import pathlib
 
 import kubernetes
+
+import flyte
+import flyte.app
 
 
 def n8n_pod_template(version: str, runner_auth_token: str, runner_image_uri: str | None = None) -> flyte.PodTemplate:
@@ -23,7 +24,7 @@ def n8n_pod_template(version: str, runner_auth_token: str, runner_image_uri: str
                     ],
                 ),
             ],
-        )
+        ),
     )
 
 
@@ -43,7 +44,6 @@ n8n_app = flyte.app.AppEnvironment(
         "N8N_RUNNERS_MODE": "external",
         "N8N_RUNNERS_BROKER_LISTEN_ADDRESS": "0.0.0.0",
         "N8N_NATIVE_PYTHON_RUNNER": "true",
-
         # db config: https://docs.n8n.io/hosting/installation/docker/#using-with-postgresql
         "DB_TYPE": "postgresdb",
         "DB_POSTGRESDB_HOST": "aws-0-us-west-2.pooler.supabase.com",
@@ -51,7 +51,7 @@ n8n_app = flyte.app.AppEnvironment(
         "DB_POSTGRESDB_USER": "postgres.qcfcidgymclxvslgphyb",
         "DB_POSTGRESDB_PORT": "6543",
         "DB_POSTGRESDB_SCHEMA": "public",
-    }
+    },
 )
 
 
@@ -72,16 +72,20 @@ def get_webhook_url(subdomain: str) -> str:
 
 
 if __name__ == "__main__":
+    import argparse
     import random
     import string
 
     from flyte._initialize import get_init_config
 
+    parser = argparse.ArgumentParser(description="Deploy the n8n app.")
+    parser.add_argument("--subdomain", type=str, default="n8n-app", help="The subdomain to use for the n8n app.")
+
     n8n_version = "2.6.3"
     # Create a random 32-character alphanumeric string for the n8n runners auth token. it's okay
     # to regenerate this every time the app is deployed, since only the main n8n app and the runner
     # sidecar container use this token.
-    n8n_runners_auth_token = ''.join(random.choices(string.ascii_letters + string.digits, k=32))
+    n8n_runners_auth_token = "".join(random.choices(string.ascii_letters + string.digits, k=32))
 
     image = build_runner_image()
 
@@ -94,13 +98,14 @@ if __name__ == "__main__":
 
     subdomain = "n8n-app"
     webhook_url = get_webhook_url(subdomain)
-    
+
     app = flyte.serve(
         n8n_app.clone_with(
             name="n8n-app-with-runners",
             pod_template=pod_template,
             domain=flyte.app.Domain(subdomain=subdomain),
-            env_vars=n8n_app.env_vars | {
+            env_vars=n8n_app.env_vars
+            | {
                 "WEBHOOK_URL": webhook_url,
                 "N8N_RUNNERS_AUTH_TOKEN": n8n_runners_auth_token,
             },
