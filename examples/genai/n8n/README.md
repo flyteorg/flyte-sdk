@@ -7,4 +7,5 @@ Create postgres database credentials
 ```bash
 flyte create secret n8n_postgres_password --value <password>
 flyte create secret n8n_postgres_host --value <host>
+flyte create secret n8n_encryption_key --value <encryption_key>
 ```
