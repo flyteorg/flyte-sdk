@@ -764,7 +764,7 @@ def replace_client(client):
 def current_domain() -> str:
     """
     Returns the current domain from Runtime environment (on the cluster) or from the initialized configuration.
-    This is safe to be used during `deploy`, `run` and within `task` code.
+    This is safe to be used during `dep loy`, `run` and within `task` code.
 
     NOTE: This will not work if you deploy a task to a domain and then run it in another domain.
 
@@ -788,3 +788,32 @@ def current_domain() -> str:
             " or Call flyte.init_from_config() with a valid path to the config file",
         )
     return cfg.domain
+
+
+def current_project() -> str:
+    """
+    Returns the current project from Runtime environment (on the cluster) or from the initialized configuration.
+    This is safe to be used during `deploy`, `run` and within `task` code.
+
+    NOTE: This will not work if you deploy a task to a project and then run it in another project.
+
+    Raises InitializationError if the configuration is not initialized or project is not set.
+    :return: The current project
+    """
+    from ._context import ctx
+
+    tctx = ctx()
+    if tctx is not None:
+        project = tctx.action.project
+        if project is not None:
+            return project
+
+    cfg = _get_init_config()
+    if cfg is None or cfg.project is None:
+        raise InitializationError(
+            "ProjectNotInitializedError",
+            "user",
+            "Project has not been initialized. Call flyte.init() with a valid project before using this function"
+            " or Call flyte.init_from_config() with a valid path to the config file",
+        )
+    return cfg.project
