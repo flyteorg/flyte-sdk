@@ -1,4 +1,5 @@
 import time
+from datetime import datetime
 
 import flyte
 from flyte.syncify import syncify
@@ -23,7 +24,7 @@ async def durable_sleep(seconds: float):
 
     Examples:
     ```python
-        import flyte.extras
+        import flyte.durable
 
         env = flyte.TaskEnvironment("env")
 
@@ -32,9 +33,9 @@ async def durable_sleep(seconds: float):
             # Do something
             my_work()
             # Now we need to sleep for 1 hour before proceeding.
-            await flyte.extras.durable_sleep.aio(3600)  # Even if process crashes, it will resume and only sleep for
-                                                        # 1 hour in agregate. If the scheduling takes longer, it
-                                                        # will simply return immediately.
+            await flyte.durable.sleep.aio(3600)  # Even if process crashes, it will resume and only sleep for
+                                                  # 1 hour in agregate. If the scheduling takes longer, it
+                                                  # will simply return immediately.
             # thing to be done after 1 hour
             my_work()
     ```
@@ -52,18 +53,25 @@ async def durable_sleep(seconds: float):
     return
 
 
-@flyte.trace
-async def frozen_time() -> float:
-    return time.time()
-
-
 @syncify
+@flyte.trace
 async def durable_time() -> float:
     """
     Returns the current time for every unique invocation of durable_time. If the same invocation is encountered again
     the previously returned time is returned again, ensuring determinism.
+    Similar to using `time.time()` just durable!
     Returns: float
     """
-    return await frozen_time()
+    return time.time()
 
 
+@syncify
+@flyte.trace
+async def durable_now() -> datetime:
+    """
+    Returns the current time for every unique invocation of durable_time. If the same invocation is encountered
+    the previously returned time is returned again, ensuring determinism.
+    Similar to using `datetime.now()` just durable!
+    Returns: datetime.datetime
+    """
+    return datetime.now()

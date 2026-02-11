@@ -11,7 +11,7 @@ This package provides various utilities that make it possible to build highly cu
                    durable.
 """
 from ._container import ContainerTask
-from ._frozen_time import durable_time, durable_sleep
+from flyte.durable._time import durable_time, durable_sleep
 
 __all__ = [
     "ContainerTask",
