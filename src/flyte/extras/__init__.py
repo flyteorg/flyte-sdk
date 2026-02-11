@@ -10,11 +10,13 @@ This package provides various utilities that make it possible to build highly cu
                    time related functions. This determinism persists across crashes and restarts making the process
                    durable.
 """
+
+from flyte.durable._time import durable_sleep, durable_time
+
 from ._container import ContainerTask
-from flyte.durable._time import durable_time, durable_sleep
 
 __all__ = [
     "ContainerTask",
-    "durable_time",
     "durable_sleep",
+    "durable_time",
 ]

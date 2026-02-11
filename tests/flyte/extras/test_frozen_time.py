@@ -4,8 +4,9 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from flyte.durable import sleep as durable_sleep, time as durable_time, now as durable_now
-
+from flyte.durable import now as durable_now
+from flyte.durable import sleep as durable_sleep
+from flyte.durable import time as durable_time
 
 # -- durable_time tests --
 

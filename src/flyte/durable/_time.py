@@ -1,9 +1,9 @@
+import asyncio
 import time
 from datetime import datetime
 
 import flyte
 from flyte.syncify import syncify
-import asyncio
 
 
 @flyte.trace
