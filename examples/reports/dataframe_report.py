@@ -3,7 +3,7 @@ DataFrame Report Example
 
 Generates a sample DataFrame and renders it as a two-tab report:
   - DataFrame tab: styled HTML table via pandas
-  - Profile tab: full statistical profile via ydata-profiling
+  - Charts tab: salary distribution and department breakdown via matplotlib
 """
 
 import random
@@ -13,16 +13,21 @@ import flyte.report
 
 env = flyte.TaskEnvironment(
     name="dataframe_report",
-    image=flyte.Image.from_debian_base().with_pip_packages(
-        "pandas", "ydata-profiling", "setuptools"
+    image=flyte.Image.from_debian_base(python_version=(3, 12)).with_pip_packages(
+        "pandas", "matplotlib"
     ),
 )
 
 
 @env.task(report=True)
 async def generate_dataframe_report():
+    import base64
+    import io
+
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
     import pandas as pd
-    from ydata_profiling import ProfileReport
 
     # Generate a sample dataset
     random.seed(42)
@@ -43,10 +48,33 @@ async def generate_dataframe_report():
     table_tab = flyte.report.get_tab("DataFrame")
     table_tab.log(df.to_html(index=False, border=0, classes="dataframe"))
 
-    # Tab 2: Render a full profile report using ydata-profiling
-    profile = ProfileReport(df, title="Employee Dataset Profile", minimal=True)
-    profile_tab = flyte.report.get_tab("Profile")
-    profile_tab.log(profile.to_html())
+    # Tab 2: Render matplotlib charts as embedded images
+    charts_tab = flyte.report.get_tab("Charts")
+
+    # Helper to convert a matplotlib figure to an HTML <img> tag
+    def fig_to_html(fig):
+        buf = io.BytesIO()
+        fig.savefig(buf, format="png", bbox_inches="tight", dpi=120)
+        buf.seek(0)
+        b64 = base64.b64encode(buf.read()).decode()
+        plt.close(fig)
+        return f'<img src="data:image/png;base64,{b64}" />'
+
+    # Chart 1: Salary distribution histogram
+    fig, ax = plt.subplots(figsize=(8, 4))
+    ax.hist(df["salary"], bins=25, edgecolor="white", color="#7652a2")
+    ax.set_title("Salary Distribution")
+    ax.set_xlabel("Salary ($)")
+    ax.set_ylabel("Count")
+    charts_tab.log(fig_to_html(fig))
+
+    # Chart 2: Average salary by department (bar chart)
+    fig, ax = plt.subplots(figsize=(8, 4))
+    dept_salary = df.groupby("department")["salary"].mean().sort_values()
+    dept_salary.plot.barh(ax=ax, color="#7652a2", edgecolor="white")
+    ax.set_title("Average Salary by Department")
+    ax.set_xlabel("Average Salary ($)")
+    charts_tab.log(fig_to_html(fig))
 
     await flyte.report.flush.aio()
 
