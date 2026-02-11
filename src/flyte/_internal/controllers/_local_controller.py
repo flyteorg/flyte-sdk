@@ -335,16 +335,23 @@ class LocalController:
         logger.debug(f"Registering event: {event.name} with scope: {event.scope}")
         self._registered_events[event.name] = event
 
+    def _get_current_action_id(self) -> str:
+        ctx = internal_ctx()
+        tctx = ctx.data.task_context
+        if tctx is None:
+            raise flyte.errors.RuntimeSystemError("BadContext", "Task context not initialized")
+        return tctx.action.name
+
     async def wait_for_event(self, event: Any) -> Any:
         """
-        Wait for an event to be signaled. Uses rich library to prompt the user for input.
+        Wait for an event to be signaled.
+
+        In TUI mode, records a pending event so the TUI can render an input panel and
+        blocks until the user submits a value. Without TUI, falls back to rich console prompts.
 
         :param event: Event object to wait for
         :return: The payload associated with the event when it is signaled
         """
-        from rich.console import Console
-        from rich.prompt import Confirm, Prompt
-
         from flyte._event import _Event
 
         if not isinstance(event, _Event):
@@ -352,16 +359,40 @@ class LocalController:
 
         logger.info(f"Waiting for event: {event.name}")
 
+        action_id = self._get_current_action_id()
+        pending = self._recorder.record_event_waiting(
+            action_id=action_id,
+            event_name=event.name,
+            prompt=event.prompt,
+            prompt_type=event.prompt_type,
+            data_type=event.data_type,
+            description=event.description,
+        )
+
+        if pending is not None:
+            # TUI mode: block until the TUI resolves the event
+            loop = asyncio.get_event_loop()
+            result = await loop.run_in_executor(None, pending.wait_for_result)
+            if result is None:
+                raise RuntimeError(f"Event '{event.name}' was cancelled (TUI quit).")
+            return result
+
+        # Non-TUI mode: fall back to rich console prompts
+        return self._prompt_event_console(event)
+
+    @staticmethod
+    def _prompt_event_console(event: Any) -> Any:
+        from rich.console import Console
+        from rich.prompt import Confirm, Prompt
+
         console = Console()
         console.print(f"\n[bold cyan]Event:[/bold cyan] {event.name}")
         if event.description:
             console.print(f"[dim]{event.description}[/dim]")
 
-        # Handle different data types
         if event.data_type is bool:
             result = Confirm.ask(event.prompt, console=console)
         elif event.data_type in (int, float, str):
-            # For int, float, str - use the same prompt with type conversion
             while True:
                 try:
                     value = Prompt.ask(event.prompt, console=console)

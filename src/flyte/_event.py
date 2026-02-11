@@ -7,6 +7,7 @@ import rich.repr
 from flyte.syncify import syncify
 
 EventScope = Literal["task", "run", "action"]
+PromptType = Literal["text", "markdown"]
 
 EventType = typing.TypeVar("EventType", bool, int, float, str)
 
@@ -38,8 +39,8 @@ class _Event(Generic[EventType]):
     name: str
     # TODO restrict scope to action only right now
     scope: EventScope = "run"
-    # TODO Support prompt as html
     prompt: str = "Approve?"
+    prompt_type: "PromptType" = "text"
     data_type: Type[EventType] = bool  # type: ignore[assignment]
     description: str = ""
 
@@ -77,6 +78,7 @@ async def new_event(
     /,
     scope: EventScope = "run",
     prompt: str = "Approve?",
+    prompt_type: PromptType = "text",
     data_type: Type[EventType] = bool,  # type: ignore[assignment]
     description: str = "",
 ) -> _Event:
@@ -88,10 +90,11 @@ async def new_event(
     :param scope: Scope of the event - "task", "run", or "action"
     :param prompt: Prompt message for the event
     :param data_type: Data type of the event payload
+    :param prompt_type: Type of prompt rendering - "text" or "markdown"
     :param description: Description of the event
     :return: An instance of _Event representing the created event
     """
-    event = _Event(name=name, scope=scope, prompt=prompt, data_type=data_type, description=description)
+    event = _Event(name=name, scope=scope, prompt=prompt, prompt_type=prompt_type, data_type=data_type, description=description)
     from flyte._context import internal_ctx
 
     ctx = internal_ctx()
