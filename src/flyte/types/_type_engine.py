@@ -46,6 +46,7 @@ from flyte.errors import RestrictedTypeError
 from flyte.models import NativeInterface
 
 from ._utils import literal_types_match
+from .._interface import LITERAL_ENUM
 
 T = typing.TypeVar("T")
 
@@ -972,19 +973,22 @@ class EnumTransformer(TypeTransformer[enum.Enum]):
         values = [v.value for v in t]  # type: ignore
         if not isinstance(values[0], str):
             raise TypeTransformerFailedError("Only EnumTypes with name of value are supported")
+        if isinstance(t, enum.EnumType) and t.__name__ == LITERAL_ENUM:
+            # Use enum values directly when use Literal. e.g., Literal["low", "medium", "high"]
+            return LiteralType(enum_type=types_pb2.EnumType(values=values))
         names = [v.name for v in t]  # type: ignore
         return LiteralType(enum_type=types_pb2.EnumType(values=names))
 
     async def to_literal(self, python_val: enum.Enum, python_type: Type[T], expected: LiteralType) -> Literal:
         if isinstance(python_val, str):
             # this is the case when python Literals are used as enums
-            if python_val.__getattribute__("name"):
-                if python_val.__getattribute__("name") not in expected.enum_type.values:
+            if hasattr(python_val, "name"):
+                if python_val.name not in expected.enum_type.values:
                     raise TypeTransformerFailedError(
-                        f"Value {python_val.__getattribute__('name')} is not valid value, expected -"
+                        f"Value {python_val.name} is not valid value, expected -"
                         f" {expected.enum_type.values}"
                     )
-                return Literal(scalar=Scalar(primitive=Primitive(string_value=python_val.__getattribute__("name"))))  # type: ignore
+                return Literal(scalar=Scalar(primitive=Primitive(string_value=python_val.name)))  # type: ignore
             elif python_val not in expected.enum_type.values:
                 raise TypeTransformerFailedError(
                     f"Value {python_val} is not valid value, expected - {expected.enum_type.values}"
