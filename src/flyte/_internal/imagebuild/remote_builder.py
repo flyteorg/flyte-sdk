@@ -75,7 +75,7 @@ class RemoteImageChecker(ImageChecker):
             msg = "remote image builder is not enabled. Please contact Union support to enable it."
             raise flyte.errors.ImageBuildError(msg) from e
 
-        image_name = f"{repository.split('/')[-1]}:{tag}"
+        image_name = f"{repository.rsplit('/', maxsplit=1)[-1]}:{tag}"
 
         try:
             from flyteidl2.common.identifier_pb2 import ProjectIdentifier
@@ -223,6 +223,8 @@ def _get_layers_proto(image: Image, context_path: Path) -> "image_definition_pb2
         )
 
     layers = []
+    docker_ignore_patterns = get_and_list_dockerignore(image)
+
     for layer in image._layers:
         secret_mounts = None
         pip_options = image_definition_pb2.PipOptions()
@@ -248,13 +250,13 @@ def _get_layers_proto(image: Image, context_path: Path) -> "image_definition_pb2
             )
             layers.append(apt_layer)
         elif isinstance(layer, PythonWheels):
-            dst_path = copy_files_to_context(layer.wheel_dir, context_path)
+            dst_path = copy_files_to_context(layer.wheel_dir, context_path, [])
             wheel_layer = image_definition_pb2.Layer(
                 python_wheels=image_definition_pb2.PythonWheels(
                     dir=str(dst_path.relative_to(context_path)),
                     options=pip_options,
                     secret_mounts=secret_mounts,
-                )
+                ),
             )
             layers.append(wheel_layer)
 
@@ -284,21 +286,21 @@ def _get_layers_proto(image: Image, context_path: Path) -> "image_definition_pb2
                             ),
                         )
                     )
-                    docker_ignore_patterns = get_and_list_dockerignore(image)
 
                     for pyproject in header.pyprojects:
                         pyproject_dst = copy_files_to_context(Path(pyproject), context_path, docker_ignore_patterns)
-                        uv_project_layer = image_definition_pb2.Layer(
-                            uv_project=image_definition_pb2.UVProject(
-                                pyproject=str(pyproject_dst.relative_to(context_path)),
-                                uvlock=str(
-                                    copy_files_to_context(Path(pyproject) / "uv.lock", context_path).relative_to(
-                                        context_path
-                                    )
-                                ),
-                                options=pip_options,
-                                secret_mounts=secret_mounts,
+                        uv_lock_path = Path(pyproject) / "uv.lock"
+                        uv_project_kwargs = {
+                            "pyproject": str(pyproject_dst.relative_to(context_path)),
+                            "options": pip_options,
+                            "secret_mounts": secret_mounts,
+                        }
+                        if uv_lock_path.exists():
+                            uv_project_kwargs["uvlock"] = str(
+                                copy_files_to_context(uv_lock_path, context_path).relative_to(context_path)
                             )
+                        uv_project_layer = image_definition_pb2.Layer(
+                            uv_project=image_definition_pb2.UVProject(**uv_project_kwargs)
                         )
                         layers.append(uv_project_layer)
 
@@ -318,17 +320,18 @@ def _get_layers_proto(image: Image, context_path: Path) -> "image_definition_pb2
             # this is what should be passed to the UVProject image definition proto as 'pyproject'
             pyproject_dir_dst = pyproject_dst.parent
 
-            # Copy uv.lock itself
-            uvlock_dst = copy_files_to_context(layer.uvlock, context_path)
+            # Copy uv.lock itself (if provided)
+            uvlock_dst = copy_files_to_context(layer.uvlock, context_path) if layer.uvlock is not None else None
 
             # Handle the project install mode
             match layer.project_install_mode:
                 case "dependencies_only":
                     if pip_options.extra_args and ("--no-install-project" not in pip_options.extra_args):
                         pip_options.extra_args += " --no-install-project"
+                    else:
+                        pip_options.extra_args = "--no-install-project"
                     # Copy any editable dependencies to the context
                     # We use the docker ignore patterns to avoid copying the editable dependencies to the context.
-                    docker_ignore_patterns = get_and_list_dockerignore(image)
                     standard_ignore_patterns = STANDARD_IGNORE_PATTERNS.copy()
                     for editable_dep in get_uv_project_editable_dependencies(layer.pyproject.parent):
                         copy_files_to_context(
@@ -338,7 +341,6 @@ def _get_layers_proto(image: Image, context_path: Path) -> "image_definition_pb2
                         )
                 case "install_project":
                     # Copy the entire project
-                    docker_ignore_patterns = get_and_list_dockerignore(image)
                     pyproject_dir_dst = copy_files_to_context(
                         layer.pyproject.parent, context_path, docker_ignore_patterns
                     )
@@ -350,7 +352,7 @@ def _get_layers_proto(image: Image, context_path: Path) -> "image_definition_pb2
                     # NOTE: UVProject expects 'pyproject' to be the directory containing the pyproject.toml file
                     # whereas it expects 'uvlock' to be the path to the uv.lock file itself.
                     pyproject=str(pyproject_dir_dst.relative_to(context_path)),
-                    uvlock=str(uvlock_dst.relative_to(context_path)),
+                    uvlock=str(uvlock_dst.relative_to(context_path)) if uvlock_dst else None,
                     options=pip_options,
                     secret_mounts=secret_mounts,
                 )
@@ -387,7 +389,7 @@ def _get_layers_proto(image: Image, context_path: Path) -> "image_definition_pb2
         elif isinstance(layer, DockerIgnore):
             shutil.copy(layer.path, context_path)
         elif isinstance(layer, CopyConfig):
-            dst_path = copy_files_to_context(layer.src, context_path)
+            dst_path = copy_files_to_context(layer.src, context_path, docker_ignore_patterns)
 
             copy_layer = image_definition_pb2.Layer(
                 copy_config=image_definition_pb2.CopyConfig(
@@ -422,21 +424,31 @@ def _get_fully_qualified_image_name(outputs: ActionOutputs) -> str:
 
 def _get_build_secrets_from_image(image: Image) -> Optional[typing.List[Secret]]:
     secrets = []
+    seen_secrets: typing.Set[typing.Tuple[typing.Optional[str], str]] = set()
     DEFAULT_SECRET_DIR = Path("/etc/flyte/secrets")
     for layer in image._layers:
         if isinstance(layer, (PipOption, Commands, AptPackages)) and layer.secret_mounts is not None:
             for secret_mount in layer.secret_mounts:
                 # Mount all the image secrets to a default directory that will be passed to the BuildKit server.
                 if isinstance(secret_mount, Secret):
-                    secrets.append(Secret(key=secret_mount.key, group=secret_mount.group, mount=DEFAULT_SECRET_DIR))
+                    secret_id = (secret_mount.group, secret_mount.key)
+                    if secret_id not in seen_secrets:
+                        seen_secrets.add(secret_id)
+                        secrets.append(Secret(key=secret_mount.key, group=secret_mount.group, mount=DEFAULT_SECRET_DIR))
                 elif isinstance(secret_mount, str):
-                    secrets.append(Secret(key=secret_mount, mount=DEFAULT_SECRET_DIR))
+                    secret_id = (None, secret_mount)
+                    if secret_id not in seen_secrets:
+                        seen_secrets.add(secret_id)
+                        secrets.append(Secret(key=secret_mount, mount=DEFAULT_SECRET_DIR))
                 else:
                     raise ValueError(f"Unsupported secret_mount type: {type(secret_mount)}")
 
     image_registry_secret = image._image_registry_secret
     if image_registry_secret:
-        secrets.append(
-            Secret(key=image_registry_secret.key, group=image_registry_secret.group, mount=DEFAULT_SECRET_DIR)
-        )
+        secret_id = (image_registry_secret.group, image_registry_secret.key)
+        if secret_id not in seen_secrets:
+            seen_secrets.add(secret_id)
+            secrets.append(
+                Secret(key=image_registry_secret.key, group=image_registry_secret.group, mount=DEFAULT_SECRET_DIR)
+            )
     return secrets

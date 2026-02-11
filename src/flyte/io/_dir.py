@@ -249,6 +249,8 @@ class Dir(BaseModel, Generic[T], SerializableType):
     @classmethod
     def schema_match(cls, incoming: dict):
         """Internal: Check if incoming schema matches Dir schema. Not intended for direct use."""
+        if not isinstance(incoming, dict):
+            return False
         this_schema = cls.model_json_schema()
         current_required = this_schema.get("required")
         incoming_required = incoming.get("required")
@@ -660,7 +662,7 @@ class Dir(BaseModel, Generic[T], SerializableType):
 
         # todo: in the future, mirror File and set the file to_path here
         output_path = await storage.put(
-            from_path=local_path_str, to_path=remote_destination, recursive=True, batch_size=batch_size
+            from_path=local_path_str, to_path=resolved_remote_path, recursive=True, batch_size=batch_size
         )
         return cls(path=output_path, name=dirname, hash=dir_cache_key)
 
@@ -934,7 +936,7 @@ class DirTransformer(TypeTransformer[Dir]):
             raise TypeTransformerFailedError(f"Expected Dir object, received {type(python_val)}")
 
         uri = python_val.path
-        hash_value = python_val.hash if python_val.hash else None
+        hash_value = python_val.hash or None
         if python_val.lazy_uploader:
             hash_value, uri = await python_val.lazy_uploader()
 
@@ -967,7 +969,7 @@ class DirTransformer(TypeTransformer[Dir]):
 
         uri = lv.scalar.blob.uri
         filename = Path(uri).name
-        hash_value = lv.hash if lv.hash else None
+        hash_value = lv.hash or None
         f: Dir = Dir(path=uri, name=filename, format=lv.scalar.blob.metadata.type.format, hash=hash_value)
         return f
 

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import contextvars
 from dataclasses import dataclass, replace
-from typing import TYPE_CHECKING, Awaitable, Callable, Optional, ParamSpec, Tuple, TypeVar
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Optional, ParamSpec, Tuple, TypeVar
 
 from flyte._logging import logger
 from flyte.models import GroupData, RawDataPath, TaskContext
@@ -30,6 +30,9 @@ class ContextData:
     task_context: Optional[TaskContext] = None
     raw_data_path: Optional[RawDataPath] = None
     metadata: Optional[Tuple[Tuple[str, str], ...]] = None
+    preserve_original_types: bool = False
+    tracker: Any = None  # ActionTracker instance (optional, set for TUI runs)
+    in_trace: bool = False  # True when executing inside a @trace decorated function
 
     def replace(self, **kwargs) -> ContextData:
         return replace(self, **kwargs)
@@ -100,6 +103,12 @@ class Context:
         """
         return Context(self.data.replace(metadata=metadata))
 
+    def new_preserve_original_types(self, preserve_original_types: bool) -> Context:
+        """
+        Return a copy of the context with the given preserve original types flag
+        """
+        return Context(self.data.replace(preserve_original_types=preserve_original_types))
+
     def get_report(self) -> Optional[Report]:
         """
         Returns a report if within a task context, else a None
@@ -115,6 +124,13 @@ class Context:
         :return: bool
         """
         return self.data.task_context is not None
+
+    def is_in_trace(self) -> bool:
+        """
+        Returns true if the context is in a trace context, else False
+        Returns: bool
+        """
+        return self.data.in_trace
 
     def __enter__(self):
         """Enter the context, setting it as the current context."""

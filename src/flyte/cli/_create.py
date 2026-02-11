@@ -229,6 +229,13 @@ def secret(
     show_default=True,
     required=False,
 )
+@click.option(
+    "--local-persistence",
+    is_flag=True,
+    default=False,
+    help="Enable SQLite persistence for local run metadata, allowing past runs to be browsed via 'flyte start tui'.",
+    show_default=True,
+)
 def config(
     output: str,
     endpoint: str | None = None,
@@ -239,6 +246,7 @@ def config(
     force: bool = False,
     image_builder: str | None = None,
     auth_type: str | None = None,
+    local_persistence: bool = False,
 ):
     """
     Creates a configuration file for Flyte CLI.
@@ -284,6 +292,10 @@ def config(
     if image_builder:
         image["builder"] = image_builder
 
+    local: Dict[str, Any] = {}
+    if local_persistence:
+        local["persistence"] = True
+
     if not admin and not task:
         raise click.BadParameter("At least one of --endpoint or --org must be provided.")
 
@@ -295,6 +307,8 @@ def config(
             d["task"] = task
         if image:
             d["image"] = image
+        if local:
+            d["local"] = local
         yaml.dump(d, f)
 
     click.echo(f"Config file written to {output_path}")

@@ -177,7 +177,7 @@ async def _deploy_task(
 
     assert task.parent_env_name is not None
     if isinstance(task.image, Image):
-        image_uri = lookup_image_in_cache(serialization_context, task.parent_env_name, task.image)
+        image_uri: str | None = lookup_image_in_cache(serialization_context, task.parent_env_name, task.image)
     else:
         image_uri = task.image
 
@@ -332,15 +332,15 @@ def _update_interface_inputs_and_outputs_docstring(
 
     # Update input variable descriptions
     if updated_interface.inputs and updated_interface.inputs.variables:
-        for var_name, desc in input_descriptions.items():
-            if var_name in updated_interface.inputs.variables:
-                updated_interface.inputs.variables[var_name].description = desc
+        for var_entry in updated_interface.inputs.variables:
+            if var_entry.key in input_descriptions:
+                var_entry.value.description = input_descriptions[var_entry.key]
 
     # Update output variable descriptions
     if updated_interface.outputs and updated_interface.outputs.variables:
-        for var_name, desc in output_descriptions.items():
-            if var_name in updated_interface.outputs.variables:
-                updated_interface.outputs.variables[var_name].description = desc
+        for var_entry in updated_interface.outputs.variables:
+            if var_entry.key in output_descriptions:
+                var_entry.value.description = output_descriptions[var_entry.key]
 
     return updated_interface
 
@@ -371,7 +371,7 @@ async def _build_images(deployment: DeploymentPlan, image_refs: Dict[str, str] |
     images = []
     image_identifier_map = {}
     for env_name, env in deployment.envs.items():
-        if not isinstance(env.image, str):
+        if env.image and not isinstance(env.image, str):
             if env.image._ref_name is not None:
                 if env.image._ref_name in image_refs:
                     # If the image is set in the config, set it as the base_image

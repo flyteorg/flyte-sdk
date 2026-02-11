@@ -13,6 +13,7 @@ from typing import Any, Callable, ClassVar, Coroutine, Dict, Generic, List, Opti
 from flyteidl2.core import literals_pb2, types_pb2
 from fsspec.utils import get_protocol
 from mashumaro.types import SerializableType
+from obstore.exceptions import GenericError
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, model_serializer, model_validator
 from typing_extensions import Annotated, TypeAlias, get_args, get_origin
 
@@ -80,9 +81,18 @@ class DataFrame(BaseModel, SerializableType):
     # lazy uploader is used to upload local file to the remote storage when in remote mode
     _lazy_uploader: Callable[[], Coroutine[Any, Any, Any]] | None = PrivateAttr(default=None)
 
-    # loop manager is working better than synchronicity for some reason, was getting an error but may be an easy fix
     def _serialize(self) -> Dict[str, Optional[str]]:
-        # dataclass case
+        # If we already have a URI (e.g., lazy_uploader was already invoked by DataclassTransformer),
+        # just return it directly. This avoids re-invoking the transformer and prevents issues
+        # when called from different async contexts.
+        if self.uri is not None:
+            return {
+                "uri": self.uri,
+                "format": self.format,
+            }
+
+        # Fall back to invoking the transformer for cases where _serialize is called
+        # directly (not via DataclassTransformer.to_literal())
         lt = TypeEngine.to_literal_type(type(self))
         engine = DataFrameTransformerEngine()
         lv = loop_manager.run_sync(engine.to_literal, self, type(self), lt)
@@ -127,6 +137,17 @@ class DataFrame(BaseModel, SerializableType):
 
     @model_serializer
     def serialize_dataframe(self) -> Dict[str, Optional[str]]:
+        # If we already have a URI (e.g., lazy_uploader was already invoked by PydanticTransformer),
+        # just return it directly. This avoids re-invoking the transformer and prevents issues
+        # when called from different async contexts.
+        if self.uri is not None:
+            return {
+                "uri": self.uri,
+                "format": self.format,
+            }
+
+        # Fall back to invoking the transformer for cases where model_dump_json() is called
+        # directly by user code (not via PydanticTransformer.to_literal())
         lt = TypeEngine.to_literal_type(type(self))
         sde = DataFrameTransformerEngine()
         lv = loop_manager.run_sync(sde.to_literal, self, type(self), lt)
@@ -909,22 +930,7 @@ class DataFrameTransformerEngine(TypeTransformer[DataFrame]):
         if isinstance(python_val, DataFrame):
             # There are three cases that we need to take care of here.
 
-            # 1. A task returns a DataFrame that was just a passthrough input. If this happens
-            # then return the original literals.DataFrame without invoking any encoder
-            #
-            # Ex.
-            #   def t1(dataset: Annotated[DataFrame, my_cols]) -> Annotated[DataFrame, my_cols]:
-            #       return dataset
-            if python_val._literal_sd is not None:
-                if python_val._already_uploaded:
-                    return literals_pb2.Literal(scalar=literals_pb2.Scalar(structured_dataset=python_val._literal_sd))
-                if python_val.val is not None:
-                    raise ValueError(
-                        f"Shouldn't have specified both literal {python_val._literal_sd} and dataframe {python_val.val}"
-                    )
-                return literals_pb2.Literal(scalar=literals_pb2.Scalar(structured_dataset=python_val._literal_sd))
-
-            # 2. A task returns a python DataFrame with an uri.
+            # 1. A task returns a python DataFrame with an uri.
             # Note: this case is also what happens we start a local execution of a task with a python DataFrame.
             #  It gets converted into a literal first, then back into a python DataFrame.
             #
@@ -939,7 +945,20 @@ class DataFrameTransformerEngine(TypeTransformer[DataFrame]):
                 if not uri:
                     raise ValueError(f"If dataframe is not specified, then the uri should be specified. {python_val}")
                 if not storage.is_remote(uri):
-                    uri = await storage.put(uri, recursive=True)
+                    from flyte._context import internal_ctx
+                    from flyte._run import _get_main_run_mode
+
+                    ctx = internal_ctx()
+                    if not ctx.has_raw_data and _get_main_run_mode() == "remote":
+                        # handle case where the flyte.io.DataFrame was created in a local task (typically in the context
+                        # of a if __name__ == "__main__" block) and needs to be uploaded to remote storage.
+                        import flyte.remote as remote
+
+                        uri = await remote.upload_dir.aio(pathlib.Path(uri))
+                    else:
+                        # this is the case where the dataframe is uploaded to remote storage in the context of a
+                        # remote task run.
+                        uri = await storage.put(uri, recursive=True)
 
                 # Check the user-specified format
                 # When users specify format for a DataFrame, the format should be retained
@@ -964,6 +983,21 @@ class DataFrameTransformerEngine(TypeTransformer[DataFrame]):
                     metadata=literals_pb2.StructuredDatasetMetadata(structured_dataset_type=sdt),
                 )
                 return literals_pb2.Literal(scalar=literals_pb2.Scalar(structured_dataset=sd_model))
+
+            # 2. A task returns a DataFrame that was just a passthrough input. If this happens
+            # then return the original literals.DataFrame without invoking any encoder
+            #
+            # Ex.
+            #   def t1(dataset: Annotated[DataFrame, my_cols]) -> Annotated[DataFrame, my_cols]:
+            #       return dataset
+            if python_val._literal_sd is not None:
+                if python_val._already_uploaded:
+                    return literals_pb2.Literal(scalar=literals_pb2.Scalar(structured_dataset=python_val._literal_sd))
+                if python_val.val is not None:
+                    raise ValueError(
+                        f"Shouldn't have specified both literal {python_val._literal_sd} and dataframe {python_val.val}"
+                    )
+                return literals_pb2.Literal(scalar=literals_pb2.Scalar(structured_dataset=python_val._literal_sd))
 
             # 3. This is the third and probably most common case. The python DataFrame object wraps a dataframe
             # that we will need to invoke an encoder for. Figure out which encoder to call and invoke it.
@@ -1124,14 +1158,22 @@ class DataFrameTransformerEngine(TypeTransformer[DataFrame]):
         #   t1(input_a: Annotated[DataFrame, my_cols])
         if issubclass(expected_python_type, DataFrame):
             fdf = DataFrame(format=metad.structured_dataset_type.format, uri=lv.scalar.structured_dataset.uri)
-            fdf._already_uploaded = True
+            fdf._already_uploaded = storage.is_remote(lv.scalar.structured_dataset.uri)
             fdf._literal_sd = lv.scalar.structured_dataset
             fdf._metadata = metad
             return fdf
 
         # If the requested type was not a flyte.DataFrame, then it means it was a raw dataframe type, which means
         # we should do the opening/downloading and whatever else it might entail right now. No iteration option here.
-        return await self.open_as(lv.scalar.structured_dataset, df_type=expected_python_type, updated_metadata=metad)
+        try:
+            return await self.open_as(
+                lv.scalar.structured_dataset, df_type=expected_python_type, updated_metadata=metad
+            )
+        except GenericError as exc:
+            msg = get_credentials_error(
+                lv.scalar.structured_dataset.uri, get_protocol(lv.scalar.structured_dataset.uri)
+            )
+            raise GenericError(f"{exc}\n{msg}") from exc
 
     def to_html(self, python_val: typing.Any, expected_python_type: Type[T]) -> str:
         if isinstance(python_val, DataFrame):
@@ -1270,8 +1312,13 @@ class DataFrameTransformerEngine(TypeTransformer[DataFrame]):
 
     def guess_python_type(self, literal_type: types_pb2.LiteralType) -> Type[DataFrame]:
         if literal_type.HasField("structured_dataset_type"):
-            # Check if we have a tag that identifies the original dataframe type
-            if literal_type.HasField("structure") and literal_type.structure.tag:
+            from flyte._context import internal_ctx
+
+            ctx = internal_ctx()
+            preserve_original_types = ctx.data.preserve_original_types
+
+            # Check if preserve_original_types is enabled and we have a tag
+            if preserve_original_types and literal_type.HasField("structure") and literal_type.structure.tag:
                 tag = literal_type.structure.tag
                 # Look up the type in our registered decoders
                 for registered_type in self.DECODERS.keys():

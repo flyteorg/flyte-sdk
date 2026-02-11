@@ -306,7 +306,12 @@ async def _open_obstore_bypass(path: str, mode: str = "rb", **kwargs) -> AsyncRe
 
     if "w" in mode:
         attributes = kwargs.pop("attributes", {})
-        file_handle = obstore.open_writer_async(store, file_path, attributes=attributes)
+        buffer_size = 10 * 2**20
+        if "buffer_size" in kwargs:
+            buffer_size = kwargs.pop("buffer_size")
+        if "chunk_size" in kwargs:
+            buffer_size = kwargs.pop("chunk_size")
+        file_handle = obstore.open_writer_async(store, file_path, attributes=attributes, buffer_size=buffer_size)
     else:  # read mode
         buffer_size = kwargs.pop("buffer_size", 10 * 2**20)
         file_handle = await obstore.open_reader_async(store, file_path, buffer_size=buffer_size)

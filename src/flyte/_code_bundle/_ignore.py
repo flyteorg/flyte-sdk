@@ -80,6 +80,7 @@ class GitIgnore(Ignore):
 
 STANDARD_IGNORE_PATTERNS = [
     "*.pyc",
+    "**/*.pyc",
     "__pycache__",
     "**/__pycache__",
     ".cache",
@@ -87,11 +88,15 @@ STANDARD_IGNORE_PATTERNS = [
     ".pytest_cache",
     "**/.pytest_cache",
     ".venv",
+    "**/.venv",
+    ".idea",
+    "**/.idea",
     "venv",
     "env",
     "*.log",
     ".env",
     "*.egg-info",
+    "**/*.egg-info",
     "*.egg",
     "dist",
     "build",
@@ -105,7 +110,7 @@ class StandardIgnore(Ignore):
 
     def __init__(self, root: Path, patterns: Optional[List[str]] = None):
         super().__init__(root.resolve())
-        self.patterns = patterns if patterns else STANDARD_IGNORE_PATTERNS
+        self.patterns = patterns or STANDARD_IGNORE_PATTERNS
 
     def _is_ignored(self, path: pathlib.Path) -> bool:
         # Convert to relative path for pattern matching

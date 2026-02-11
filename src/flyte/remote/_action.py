@@ -211,7 +211,7 @@ class Action(ToJSONMixin):
                 limit=100,
                 token=token,
                 sort_by=sort_pb2,
-                filters=filter_list if filter_list else None,
+                filters=filter_list or None,
             )
             resp = await get_client().run_service.ListActions(
                 run_service_pb2.ListActionsRequest(
@@ -520,6 +520,7 @@ class ActionDetails(ToJSONMixin):
     pb2: run_definition_pb2.ActionDetails
     _inputs: ActionInputs | None = None
     _outputs: ActionOutputs | None = None
+    _preserve_original_types: bool = False
 
     @syncify
     @classmethod
@@ -734,6 +735,7 @@ class ActionDetails(ToJSONMixin):
         Cache the inputs and outputs of the action.
         :return: Returns True if Action is terminal and all data is cached else False.
         """
+        from flyte._context import internal_ctx
         from flyte._internal.runtime import convert
 
         if self._inputs and self._outputs:
@@ -745,31 +747,33 @@ class ActionDetails(ToJSONMixin):
                 action_id=self.pb2.id,
             )
         )
-        native_iface = None
-        if self.pb2.HasField("task"):
-            iface = self.pb2.task.task_template.interface
-            native_iface = types.guess_interface(iface)
-        elif self.pb2.HasField("trace"):
-            iface = self.pb2.trace.interface
-            native_iface = types.guess_interface(iface)
 
-        if resp.inputs:
-            data_dict = (
-                await convert.convert_from_inputs_to_native(native_iface, convert.Inputs(resp.inputs))
-                if native_iface
-                else {}
-            )
-            self._inputs = ActionInputs(pb2=resp.inputs, data=data_dict)
+        with internal_ctx().new_preserve_original_types(self._preserve_original_types):
+            native_iface = None
+            if self.pb2.HasField("task"):
+                iface = self.pb2.task.task_template.interface
+                native_iface = types.guess_interface(iface)
+            elif self.pb2.HasField("trace"):
+                iface = self.pb2.trace.interface
+                native_iface = types.guess_interface(iface)
 
-        if resp.outputs:
-            data_tuple = (
-                await convert.convert_outputs_to_native(native_iface, convert.Outputs(resp.outputs))
-                if native_iface
-                else ()
-            )
-            if not isinstance(data_tuple, tuple):
-                data_tuple = (data_tuple,)
-            self._outputs = ActionOutputs(pb2=resp.outputs, data=data_tuple)
+            if resp.inputs:
+                data_dict = (
+                    await convert.convert_from_inputs_to_native(native_iface, convert.Inputs(resp.inputs))
+                    if native_iface
+                    else {}
+                )
+                self._inputs = ActionInputs(pb2=resp.inputs, data=data_dict)
+
+            if resp.outputs:
+                data_tuple = (
+                    await convert.convert_outputs_to_native(native_iface, convert.Outputs(resp.outputs))
+                    if native_iface
+                    else ()
+                )
+                if not isinstance(data_tuple, tuple):
+                    data_tuple = (data_tuple,)
+                self._outputs = ActionOutputs(pb2=resp.outputs, data=data_tuple)
 
         return self._outputs is not None
 
@@ -879,18 +883,28 @@ class ActionOutputs(tuple, ToJSONMixin):
     ```
     """
 
-    def __new__(cls, pb2: common_pb2.Outputs, data: Tuple[Any, ...]):
+    pb2: common_pb2.Outputs
+    _fields: list[str]
+
+    def __new__(cls, pb2: common_pb2.Outputs, data: Tuple[Any, ...], fields: List[str] | None = None):
         # Create the tuple part
         obj = super().__new__(cls, data)
-        # Store extra data (you can't do this here directly since it's immutable)
+        # Store extra attributes on the tuple instance
         obj.pb2 = pb2
+        obj._fields = fields or [default_output_name(i) for i in range(len(data))]
+        for name, value in zip(obj._fields, obj):
+            setattr(obj, name, value)
         return obj
 
-    def __init__(self, pb2: common_pb2.Outputs, data: Tuple[Any, ...]):
-        # Normally you'd set instance attributes here,
-        # but we've already set `pb2` in `__new__`
-        self.pb2 = pb2
+    def __init__(self, pb2: common_pb2.Outputs, data: Tuple[Any, ...], fields: List[str] | None = None): ...
 
     @cached_property
     def named_outputs(self) -> dict[str, Any]:
-        return {default_output_name(i): x for i, x in enumerate(self)}
+        return dict(zip(self._fields, self))
+
+    def __repr__(self) -> str:
+        _repr = []
+        for name, value in zip(self._fields, self):
+            v = f'"{value}"' if isinstance(value, str) else f"{value}"
+            _repr.append(f"{name}={v}")
+        return f"ActionOutputs({', '.join(_repr)})"

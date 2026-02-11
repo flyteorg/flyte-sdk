@@ -16,7 +16,7 @@ import flyte.errors
 import flyte.storage as storage
 from flyte._code_bundle import build_pkl_bundle
 from flyte._context import internal_ctx
-from flyte._internal.controllers import TraceInfo
+from flyte._internal.controllers import TaskCallSequencer, TraceInfo
 from flyte._internal.controllers.remote._action import Action
 from flyte._internal.controllers.remote._core import Controller
 from flyte._internal.controllers.remote._service_protocol import ClientSet
@@ -132,9 +132,7 @@ class RemoteController(Controller):
         self._parent_action_semaphore: DefaultDict[str, asyncio.Semaphore] = defaultdict(
             lambda: asyncio.Semaphore(default_parent_concurrency)
         )
-        self._parent_action_task_call_sequence: DefaultDict[str, DefaultDict[int, int]] = defaultdict(
-            lambda: defaultdict(int)
-        )
+        self._sequencer = TaskCallSequencer()
         self._submit_loop: asyncio.AbstractEventLoop | None = None
         self._submit_thread: threading.Thread | None = None
 
@@ -143,19 +141,10 @@ class RemoteController(Controller):
         Generate a task call sequence for the given task object and action ID.
         This is used to track the number of times a task is called within an action.
         """
-        uniq = unique_action_name(action_id)
-        current_action_sequencer = self._parent_action_task_call_sequence[uniq]
-        current_task_id = id(task_obj)
-        v = current_action_sequencer[current_task_id]
-        new_seq = v + 1
-        current_action_sequencer[current_task_id] = new_seq
-        name = ""
-        if hasattr(task_obj, "__name__"):
-            name = task_obj.__name__
-        elif hasattr(task_obj, "name"):
-            name = task_obj.name
-        logger.info(f"For action {uniq}, task {name} call sequence is {new_seq}")
-        return new_seq
+        action_key = unique_action_name(action_id)
+        seq = self._sequencer.next_seq(task_obj, action_key)
+        logger.info(f"For action {action_key}, task call sequence is {seq}")
+        return seq
 
     async def _submit(self, _task_call_seq: int, _task: TaskTemplate, *args, **kwargs) -> Any:
         ctx = internal_ctx()
@@ -359,7 +348,7 @@ class RemoteController(Controller):
         )
         await super()._finalize_parent_action(run_id=run_id, parent_action_name=action_id.name)
         self._parent_action_semaphore.pop(unique_action_name(action_id), None)
-        self._parent_action_task_call_sequence.pop(unique_action_name(action_id), None)
+        self._sequencer.clear(unique_action_name(action_id))
 
     async def get_action_outputs(
         self, _interface: NativeInterface, _func: Callable, *args, **kwargs
@@ -474,7 +463,7 @@ class RemoteController(Controller):
             run_output_base=tctx.run_base_dir,
             start_time=info.start_time,
             end_time=info.end_time,
-            typed_interface=typed_interface if typed_interface else None,
+            typed_interface=typed_interface or None,
         )
 
         async with self._parent_action_semaphore[unique_action_name(current_action_id)]:

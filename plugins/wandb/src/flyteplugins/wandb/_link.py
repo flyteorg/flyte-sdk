@@ -3,7 +3,7 @@ from typing import Dict, Optional
 
 from flyte import Link
 
-from ._context import RunMode
+from ._context import RankScope, RunMode
 
 
 @dataclass
@@ -15,11 +15,26 @@ class Wandb(Link):
         host: Base W&B host URL
         project: W&B project name (overrides context config if provided)
         entity: W&B entity/team name (overrides context config if provided)
-        run_mode: Controls whether to create a new W&B run or share an existing one:
-
-            1. "auto" (default): Creates new run if no parent run exists, otherwise shares parent's run
-            2. "new": Always creates a new wandb run with a unique ID
-            3. "shared": Always shares the parent's run ID (useful for child tasks)
+        run_mode: Determines the link behavior:
+            - "auto" (default): Use parent's run if available, otherwise create new
+            - "new": Always creates a new wandb run with a unique ID
+            - "shared": Always shares the parent's run ID
+            In distributed training context (single-node):
+            - "auto" (default): Only rank 0 logs.
+            - "shared": All ranks log to a single shared W&B run.
+            - "new": Each rank gets its own W&B run (grouped in W&B UI).
+            Multi-node: behavior depends on `rank_scope`.
+        rank_scope: Flyte-specific rank scope - "global" or "worker".
+            Controls which ranks log in distributed training.
+            run_mode="auto":
+            - "global" (default): Only global rank 0 logs (1 run total).
+            - "worker": Local rank 0 of each worker logs (1 run per worker).
+            run_mode="shared":
+            - "global": All ranks log to a single shared W&B run.
+            - "worker": Ranks per worker log to a single shared W&B run (1 run per worker).
+            run_mode="new":
+            - "global": Each rank gets its own W&B run (1 run total).
+            - "worker": Each rank gets its own W&B run grouped per worker -> N runs.
         id: Optional W&B run ID (overrides context config if provided)
         name: Link name in the Flyte UI
     """
@@ -28,8 +43,13 @@ class Wandb(Link):
     project: Optional[str] = None
     entity: Optional[str] = None
     run_mode: RunMode = "auto"
+    rank_scope: RankScope = "global"
     id: Optional[str] = None
     name: str = "Weights & Biases"
+    # Internal: set by @wandb_init for distributed training tasks
+    _is_distributed: bool = False
+    # Internal: worker index for multi-node distributed training (set by @wandb_init)
+    _worker_index: Optional[int] = None
 
     def get_link(
         self,
@@ -69,6 +89,26 @@ class Wandb(Link):
         if not wandb_project or not wandb_entity:
             return self.host
 
+        # Distributed training links - derived from decorator-time info (plugin_config)
+        # _is_distributed and _worker_index are set by @wandb_init based on Elastic config
+        is_multi_node = self._worker_index is not None
+        rank_scope = self.rank_scope  # Defaults to "global"
+
+        if self._is_distributed:
+            base_id = user_provided_id or f"{run_name}-{action_name}"
+
+            is_worker_scope = is_multi_node and rank_scope == "worker"
+            suffix = f"-worker-{self._worker_index}" if is_worker_scope else ""
+            target_id = f"{base_id}{suffix}"
+
+            if run_mode == "new":
+                path = "groups"
+            else:  # "auto" or "shared"
+                path = "runs"
+
+            return f"{self.host}/{wandb_entity}/{wandb_project}/{path}/{target_id}"
+
+        # Non-distributed: link to specific run
         # Determine run ID based on run_mode setting
         if run_mode == "new":
             # Always create new run - use user-provided ID if available, otherwise generate

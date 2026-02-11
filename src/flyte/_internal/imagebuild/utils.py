@@ -9,7 +9,7 @@ from flyte._image import DockerIgnore, Image
 from flyte._logging import logger
 
 
-def copy_files_to_context(src: Path, context_path: Path, ignore_patterns: list[str] = []) -> Path:
+def copy_files_to_context(src: Path, context_path: Path, ignore_patterns: list[str] = STANDARD_IGNORE_PATTERNS) -> Path:
     """
     This helper function ensures that absolute paths that users specify are converted correctly to a path in the
     context directory. Doing this prevents collisions while ensuring files are available in the context.
@@ -23,19 +23,37 @@ def copy_files_to_context(src: Path, context_path: Path, ignore_patterns: list[s
 
     :param src: The source path to copy
     :param context_path: The context path where the files should be copied to
+    :param ignore_patterns: A list of ignore patterns to apply when copying files. This is used to filter out files
+        that should not be included in the Docker build context, such as those specified in a .dockerignore file.
     """
     if src.is_absolute() or ".." in str(src):
         rel_path = PurePath(*src.parts[1:])
         dst_path = context_path / "_flyte_abs_context" / rel_path
     else:
         dst_path = context_path / src
-    dst_path.parent.mkdir(parents=True, exist_ok=True)
+
     if src.is_dir():
-        default_ignore_patterns = [".idea", ".venv"]
-        ignore_patterns = list(set(ignore_patterns + default_ignore_patterns))
-        shutil.copytree(src, dst_path, dirs_exist_ok=True, ignore=shutil.ignore_patterns(*ignore_patterns))
+        from .docker import PatternMatcher
+
+        pm = PatternMatcher(ignore_patterns)
+
+        # Use walk() to get list of files to include
+        for rel_file in pm.walk(str(src)):
+            src_file = src / rel_file
+            dst_file = dst_path / rel_file
+
+            # Create parent directory if needed
+            dst_file.parent.mkdir(parents=True, exist_ok=True)
+
+            # Copy file (not directory)
+            if src_file.is_file():
+                shutil.copy2(src_file, dst_file)
+
     else:
+        # Single file
+        dst_path.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy(src, dst_path)
+
     return dst_path
 
 
@@ -139,6 +157,6 @@ def get_uv_editable_install_mounts(
         mounts.append(
             "--mount=type=bind,"
             f"src={editable_dep_within_context.relative_to(context_path)},"
-            f"target={editable_dep.relative_to(project_root)}"
+            f"target={editable_dep.relative_to(project_root)},rw"
         )
     return " ".join(mounts)
