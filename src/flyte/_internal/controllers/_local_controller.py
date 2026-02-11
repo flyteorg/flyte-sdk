@@ -8,13 +8,14 @@ from typing import Any, Callable, Tuple, TypeVar
 
 import flyte.errors
 from flyte._cache.cache import VersionParameters, cache_from_request
-from flyte._cache.local_cache import LocalTaskCache
 from flyte._context import internal_ctx
-from flyte._internal.controllers import TraceInfo
+from flyte._internal.controllers import TaskCallSequencer, TraceInfo
 from flyte._internal.runtime import convert
 from flyte._internal.runtime.entrypoints import direct_dispatch
 from flyte._internal.runtime.types_serde import transform_native_to_typed_interface
 from flyte._logging import log, logger
+from flyte._persistence._recorder import RunRecorder
+from flyte._persistence._task_cache import LocalTaskCache
 from flyte._task import AsyncFunctionTaskTemplate, TaskTemplate
 from flyte._utils.helpers import _selector_policy
 from flyte.models import ActionID, NativeInterface
@@ -73,7 +74,12 @@ class LocalController:
     def __init__(self):
         logger.debug("LocalController init")
         self._runner_map: dict[str, _TaskRunner] = {}
+        self._sequencer = TaskCallSequencer()
+        self._recorder = RunRecorder()
         self._registered_events: dict[str, Any] = {}
+
+    def set_recorder(self, recorder: RunRecorder) -> None:
+        self._recorder = recorder
 
     @log
     async def submit(self, _task: TaskTemplate, *args, **kwargs) -> Any:
@@ -89,8 +95,9 @@ class LocalController:
         inputs_hash = convert.generate_inputs_hash_from_proto(inputs.proto_inputs)
         task_interface = transform_native_to_typed_interface(_task.interface)
 
+        task_call_seq = self._sequencer.next_seq(_task, tctx.action.name)
         sub_action_id, sub_action_output_path = convert.generate_sub_action_id_and_output_path(
-            tctx, _task.name, inputs_hash, 0
+            tctx, _task.name, inputs_hash, task_call_seq
         )
         sub_action_raw_data_path = tctx.raw_data_path
         # Make sure the output path exists
@@ -114,13 +121,63 @@ class LocalController:
         )
 
         out = None
+        cache_hit = False
         # We only get output from cache if the cache behavior is set to auto
         if task_cache.behavior == "auto":
             out = await LocalTaskCache.get(cache_key)
             if out is not None:
+                cache_hit = True
                 logger.info(
                     f"Cache hit for task '{_task.name}' (version: {cache_version}), getting result from cache..."
                 )
+
+        # Build common metadata for the recorder (tracker + persistence).
+        native_inputs: dict[str, Any] | None = None
+        parent_id: str | None = None
+        rendered_links: list[tuple[str, str]] | None = None
+
+        if self._recorder.is_active:
+            param_names = list(_task.native_interface.inputs.keys())
+            native_inputs = {}
+            for i, arg in enumerate(args):
+                if i < len(param_names):
+                    native_inputs[param_names[i]] = arg
+            native_inputs.update(kwargs)
+
+            # If the parent action isn't tracked yet, this is the top-level call
+            parent_id = tctx.action.name if self._recorder.get_action(tctx.action.name) else None
+
+            # Render log links for this action, replacing template placeholders
+            # with concrete local values (see task_serde.py for remote equivalents).
+            if _task.links:
+                rendered_links = []
+                action = tctx.action
+                for link in _task.links:
+                    uri = link.get_link(
+                        run_name=action.run_name or "",
+                        project=action.project or "",
+                        domain=action.domain or "",
+                        context=tctx.custom_context or {},
+                        parent_action_name=action.name or "",
+                        action_name=sub_action_id.name,
+                        pod_name="localhost",
+                    )
+                    rendered_links.append((link.name, uri))
+
+        self._recorder.record_start(
+            action_id=sub_action_id.name,
+            task_name=_task.name,
+            short_name=_task.short_name if _task.short_name != _task.name else None,
+            parent_id=parent_id,
+            inputs=native_inputs,
+            output_path=sub_action_output_path,
+            has_report=_task.report,
+            cache_enabled=cache_enabled,
+            cache_hit=cache_hit,
+            context=tctx.custom_context or None,
+            group=tctx.group_data.name if tctx.group_data else None,
+            log_links=rendered_links,
+        )
 
         if out is None:
             out, err = await direct_dispatch(
@@ -137,6 +194,7 @@ class LocalController:
             )
 
             if err:
+                self._recorder.record_failure(action_id=sub_action_id.name, error=str(err))
                 exc = convert.convert_error_to_native(err)
                 if exc:
                     raise exc
@@ -146,6 +204,8 @@ class LocalController:
             # store into cache
             if cache_enabled and out is not None:
                 await LocalTaskCache.set(cache_key, out)
+
+        self._recorder.record_complete(action_id=sub_action_id.name, outputs=out)
 
         if _task.native_interface.outputs:
             if out is None:
@@ -197,13 +257,30 @@ class LocalController:
             assert converted_inputs
 
         inputs_hash = convert.generate_inputs_hash_from_proto(converted_inputs.proto_inputs)
+        invoke_seq_num = self._sequencer.next_seq(_func, tctx.action.name)
         action_id, action_output_path = convert.generate_sub_action_id_and_output_path(
             tctx,
             _func.__name__,
             inputs_hash,
-            0,
+            invoke_seq_num,
         )
         assert action_output_path
+
+        if self._recorder.is_active:
+            native_inputs: dict[str, Any] = {}
+            param_names = list(_interface.inputs.keys())
+            for i, arg in enumerate(args):
+                if i < len(param_names):
+                    native_inputs[param_names[i]] = arg
+            native_inputs.update(kwargs)
+            self._recorder.record_start(
+                action_id=action_id.name,
+                task_name=_func.__name__,
+                parent_id=tctx.action.name,
+                inputs=native_inputs,
+                output_path=action_output_path,
+            )
+
         return (
             TraceInfo(
                 name=_func.__name__,
@@ -229,16 +306,18 @@ class LocalController:
             # If the result is not an AsyncGenerator, convert it directly
             converted_outputs = await convert.convert_from_native_to_outputs(info.output, info.interface, info.name)
             assert converted_outputs
+            self._recorder.record_complete(action_id=info.action.name, outputs=converted_outputs)
         elif info.error:
             # If there is an error, convert it to a native error
             converted_error = convert.convert_from_native_to_error(info.error)
             assert converted_error
+            self._recorder.record_failure(action_id=info.action.name, error=str(info.error))
         assert info.action
         assert info.start_time
         assert info.end_time
 
     async def submit_task_ref(self, _task: TaskDetails, max_inline_io_bytes: int, *args, **kwargs) -> Any:
-        raise flyte.errors.RemoteTaskError(
+        raise flyte.errors.RemoteTaskUsageError(
             f"Remote tasks cannot be executed locally, only remotely. Found remote task {_task.name}"
         )
 

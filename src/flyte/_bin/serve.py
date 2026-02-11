@@ -40,12 +40,13 @@ async def sync_parameters(serialized_parameters: str, dest: str) -> tuple[dict, 
         The environment variables dictionary maps environment variable names to their values.
     """
     import flyte.storage as storage
-    from flyte.app._parameter import SerializableParameterCollection
+    from flyte.app._parameter import AppEndpoint, SerializableParameterCollection
 
     print(f"Log level: {logger.getEffectiveLevel()} is set from env {os.environ.get('LOG_LEVEL')}", flush=True)
     logger.info("Reading parameters...")
 
     user_parameters = SerializableParameterCollection.from_transport(serialized_parameters)
+    logger.info(f"User parameters: {user_parameters}")
 
     # these will be serialized to json, the app can fetch these values via
     # env var or with flyte.app.get_input()
@@ -57,6 +58,7 @@ async def sync_parameters(serialized_parameters: str, dest: str) -> tuple[dict, 
     env_vars = {}
 
     for parameter in user_parameters.parameters:
+        logger.info(f"Processing parameter: {parameter}")
         parameter_type = parameter.type
         ser_value = parameter.value
 
@@ -66,6 +68,13 @@ async def sync_parameters(serialized_parameters: str, dest: str) -> tuple[dict, 
             materialized_value = flyte.io.File(path=ser_value)
         elif parameter_type == "directory":
             materialized_value = flyte.io.Dir(path=ser_value)
+        elif parameter_type == "app_endpoint":
+            app_endpoint = AppEndpoint.model_validate_json(ser_value)
+            materialized_value = await app_endpoint._retrieve_endpoint()
+            ser_value = materialized_value
+
+        logger.info(f"Materialized value: {materialized_value}")
+        logger.info(f"Serializable value: {ser_value}")
 
         # download files or directories
         if parameter.download:
@@ -236,7 +245,12 @@ async def _serve(
         if asyncio.iscoroutinefunction(app_env._server):
             await app_env._server(**bound_params)
         else:
-            app_env._server(**bound_params)
+            # Run the function on a separate thread, in case the sync function
+            # relies on third party libraries that use an event loop internally.
+            def run_sync():
+                return app_env._server(**bound_params)
+
+            await loop.run_in_executor(None, run_sync)
     finally:
         await shutdown()
 
@@ -290,13 +304,16 @@ def main(
         ),
     )
 
+    app_env: AppEnvironment | None = None
     if code_bundle is not None:
         if code_bundle.pkl:
             app_env = load_pkl_app_env(code_bundle)
         elif code_bundle.tgz:
-            if resolver is None or resolver_args is None:
-                raise ValueError("--resolver and --resolver-args are required when using --tgz code bundle")
-            app_env = load_app_env(resolver, resolver_args)
+            if resolver is not None and resolver_args is not None:
+                logger.info(f"Loading app env from resolver: {resolver}, args: {resolver_args}")
+                app_env = load_app_env(resolver, resolver_args)
+            else:
+                logger.info("Resolver arguments not provided, started server from command.")
         else:
             raise ValueError("Code bundle did not contain a tgz or pkl file")
 
@@ -311,13 +328,14 @@ def main(
 
     os.environ[RUNTIME_PARAMETERS_FILE] = parameters_file
 
-    if code_bundle is not None and app_env._server is not None:
+    if app_env and app_env._server is not None:
         asyncio.run(_serve(app_env, materialized_parameters))
         exit(0)
 
     if command is None or len(command) == 0:
         raise ValueError("No command provided to execute")
 
+    logger.info(f"Serving app with command: {command}")
     command_list = []
     for arg in command:
         logger.info(f"Processing arg: {arg}")

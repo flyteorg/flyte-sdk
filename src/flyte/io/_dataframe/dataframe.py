@@ -1,16 +1,19 @@
 from __future__ import annotations
 
 import _datetime
+import asyncio
 import collections
+import pathlib
 import types
 import typing
 from abc import ABC, abstractmethod
 from dataclasses import is_dataclass
-from typing import Any, ClassVar, Coroutine, Dict, Generic, List, Optional, Type, Union
+from typing import Any, Callable, ClassVar, Coroutine, Dict, Generic, List, Optional, Type, Union
 
 from flyteidl2.core import literals_pb2, types_pb2
 from fsspec.utils import get_protocol
 from mashumaro.types import SerializableType
+from obstore.exceptions import GenericError
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, model_serializer, model_validator
 from typing_extensions import Annotated, TypeAlias, get_args, get_origin
 
@@ -18,12 +21,12 @@ import flyte.storage as storage
 from flyte._logging import logger
 from flyte._utils import lazy_module
 from flyte._utils.asyn import loop_manager
+from flyte.storage._storage import get_credentials_error
 from flyte.types import TypeEngine, TypeTransformer, TypeTransformerFailedError
 from flyte.types._renderer import Renderable
 from flyte.types._type_engine import modify_literal_uris
 
 MESSAGEPACK = "msgpack"
-
 
 if typing.TYPE_CHECKING:
     import pandas as pd
@@ -47,8 +50,20 @@ GENERIC_PROTOCOL: str = "generic protocol"
 
 class DataFrame(BaseModel, SerializableType):
     """
-    This is the user facing DataFrame class. Please don't confuse it with the literals.StructuredDataset
-    class (that is just a model, a Python class representation of the protobuf).
+    A Flyte meta DataFrame object, that wraps all other dataframe types (usually available as plugins, pandas.DataFrame
+    and pyarrow.Table are supported natively, just install these libraries).
+
+    Known eco-system plugins that supply other dataframe encoding plugins are,
+    1. `flyteplugins-polars` - pl.DataFrame
+    2. `flyteplugins-spark` - pyspark.DataFrame
+
+    You can add other implementations by extending following `flyte.io.extend`.
+
+    The Flyte DataFrame object serves 2 main purposes:
+    1. Interoperability between various dataframe objects. A task can generate a pandas.DataFrame and another task
+     can accept a flyte.io.DataFrame, which can be converted to any dataframe.
+    2. Allows for non materialized access to DataFrame objects. So, for example you can accept any dataframe as a
+    flyte.io.DataFrame and this is just a reference and will not materialize till you force `.all()` or `.iter()` etc
     """
 
     uri: typing.Optional[str] = Field(default=None)
@@ -63,9 +78,21 @@ class DataFrame(BaseModel, SerializableType):
     _dataframe_type: Optional[Type[Any]] = PrivateAttr(default=None)
     _already_uploaded: bool = PrivateAttr(default=False)
 
-    # loop manager is working better than synchronicity for some reason, was getting an error but may be an easy fix
+    # lazy uploader is used to upload local file to the remote storage when in remote mode
+    _lazy_uploader: Callable[[], Coroutine[Any, Any, Any]] | None = PrivateAttr(default=None)
+
     def _serialize(self) -> Dict[str, Optional[str]]:
-        # dataclass case
+        # If we already have a URI (e.g., lazy_uploader was already invoked by DataclassTransformer),
+        # just return it directly. This avoids re-invoking the transformer and prevents issues
+        # when called from different async contexts.
+        if self.uri is not None:
+            return {
+                "uri": self.uri,
+                "format": self.format,
+            }
+
+        # Fall back to invoking the transformer for cases where _serialize is called
+        # directly (not via DataclassTransformer.to_literal())
         lt = TypeEngine.to_literal_type(type(self))
         engine = DataFrameTransformerEngine()
         lv = loop_manager.run_sync(engine.to_literal, self, type(self), lt)
@@ -75,6 +102,14 @@ class DataFrame(BaseModel, SerializableType):
             "uri": sd.uri,
             "format": sd.format,
         }
+
+    @property
+    def lazy_uploader(self) -> Callable[[], Coroutine[Any, Any, DataFrame]] | None:
+        return self._lazy_uploader
+
+    @lazy_uploader.setter
+    def lazy_uploader(self, lazy_uploader: Callable[[], Coroutine[Any, Any, DataFrame]] | None):
+        self._lazy_uploader = lazy_uploader
 
     @classmethod
     def _deserialize(cls, value) -> DataFrame:
@@ -102,6 +137,17 @@ class DataFrame(BaseModel, SerializableType):
 
     @model_serializer
     def serialize_dataframe(self) -> Dict[str, Optional[str]]:
+        # If we already have a URI (e.g., lazy_uploader was already invoked by PydanticTransformer),
+        # just return it directly. This avoids re-invoking the transformer and prevents issues
+        # when called from different async contexts.
+        if self.uri is not None:
+            return {
+                "uri": self.uri,
+                "format": self.format,
+            }
+
+        # Fall back to invoking the transformer for cases where model_dump_json() is called
+        # directly by user code (not via PydanticTransformer.to_literal())
         lt = TypeEngine.to_literal_type(type(self))
         sde = DataFrameTransformerEngine()
         lv = loop_manager.run_sync(sde.to_literal, self, type(self), lt)
@@ -140,17 +186,175 @@ class DataFrame(BaseModel, SerializableType):
         return [k for k, v in cls.columns().items()]
 
     @classmethod
+    async def _upload_local_df_using_flyte(
+        cls, df: typing.Any, converted_columns: typing.Sequence[types_pb2.StructuredDatasetType.DatasetColumn]
+    ) -> DataFrame:
+        import tempfile
+
+        import flyte.models
+        import flyte.remote as remote
+        from flyte._context import internal_ctx
+        from flyte.types import TypeEngine
+
+        tf = TypeEngine.get_transformer(type(df))
+        sd_type = tf.get_literal_type(type(df))
+        updated_type = types_pb2.LiteralType(
+            structured_dataset_type=types_pb2.StructuredDatasetType(
+                columns=converted_columns,
+                format=sd_type.structured_dataset_type.format,
+                external_schema_type=sd_type.structured_dataset_type.external_schema_type,
+                external_schema_bytes=sd_type.structured_dataset_type.external_schema_bytes,
+            )
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            ctx = internal_ctx().new_raw_data_path(flyte.models.RawDataPath(path=tmpdir))
+            with ctx:
+                lit = await tf.to_literal(python_type=type(df), python_val=df, expected=updated_type)
+                native_uri = await remote.upload_dir.aio(pathlib.Path(lit.scalar.structured_dataset.uri))
+                lit.scalar.structured_dataset.uri = native_uri
+                # Now we make a Flyte Dataframe to pass around.
+                fdf = cls.from_existing_remote(remote_path=lit.scalar.structured_dataset.uri, format=PARQUET)
+                fdf._literal_sd = lit.scalar.structured_dataset
+                fdf._metadata = lit.scalar.structured_dataset.metadata
+                return fdf
+
+    @classmethod
+    async def from_local(
+        cls,
+        df: typing.Any,
+        columns: typing.OrderedDict[str, type[typing.Any]] | None = None,
+        remote_destination: str | None = None,
+    ) -> DataFrame:
+        """
+        This method is useful to upload the dataframe eagerly and get the actual DataFrame.
+
+        This is useful to upload small local datasets onto Flyte and also upload dataframes from notebooks. This
+        uses signed urls and is thus not the most efficient way of uploading.
+
+        In tasks (at runtime) it uses the task context and the underlying fast storage sub-system to upload the data.
+
+        At runtime it is recommended to use `DataFrame.wrap_df` as it is simpler.
+
+        :param df: The dataframe object to be uploaded and converted.
+        :param columns: Optionally, any column information to be stored as part of the metadata
+        :param remote_destination: Optional destination URI to upload to, if not specified, this is automatically
+            determined based on the current context. For example, locally it will use flyte:// automatic data management
+            system to upload data (this is slow and useful for smaller datasets). On remote it will use the storage
+            configuration and the raw data directory setting in the task context.
+
+        Returns: DataFrame object.
+        """
+        from flyte._context import internal_ctx
+
+        sdt = flyte_dataset_transformer.get_structured_dataset_type(column_map=columns)
+
+        ctx = internal_ctx()
+        if not ctx.has_raw_data and remote_destination is None:
+
+            async def _lazy_uploader() -> DataFrame:
+                from flyte._run import _get_main_run_mode
+
+                if _get_main_run_mode() == "local":
+                    logger.debug("Local run mode detected, dataframe will be returned without uploading.")
+                    return df
+
+                logger.debug(
+                    "Local context detected, dataframe will be uploaded through Flyte local data upload system."
+                )
+                return await cls._upload_local_df_using_flyte(df, converted_columns=sdt.columns)
+
+            fdf = cls.wrap_df(df)
+            fdf._metadata = literals_pb2.StructuredDatasetMetadata(structured_dataset_type=sdt)
+            fdf._lazy_uploader = _lazy_uploader
+            fdf._raw_df = df
+            return fdf
+
+        fdf = cls.wrap_df(df, uri=remote_destination)
+        fdf._metadata = literals_pb2.StructuredDatasetMetadata(structured_dataset_type=sdt)
+        return fdf
+
+    @classmethod
+    def from_local_sync(
+        cls,
+        df: typing.Any,
+        columns: typing.OrderedDict[str, type[typing.Any]] | None = None,
+        remote_destination: str | None = None,
+    ) -> DataFrame:
+        """
+        This method is useful to upload the dataframe eagerly and get the actual DataFrame.
+
+        This is useful to upload small local datasets onto Flyte and also upload dataframes from notebooks. This
+        uses signed urls and is thus not the most efficient way of uploading.
+
+        In tasks (at runtime) it uses the task context and the underlying fast storage sub-system to upload the data.
+
+        At runtime it is recommended to use `DataFrame.wrap_df` as it is simpler.
+
+        :param df: The dataframe object to be uploaded and converted.
+        :param columns: Optionally, any column information to be stored as part of the metadata
+        :param remote_destination: Optional destination URI to upload to, if not specified, this is automatically
+            determined based on the current context. For example, locally it will use flyte:// automatic data management
+            system to upload data (this is slow and useful for smaller datasets). On remote it will use the storage
+            configuration and the raw data directory setting in the task context.
+
+        Returns: DataFrame object.
+        """
+        from flyte._context import internal_ctx
+
+        sdt = flyte_dataset_transformer.get_structured_dataset_type(column_map=columns)
+        ctx = internal_ctx()
+        if not ctx.has_raw_data and remote_destination is None:
+
+            async def _lazy_uploader() -> DataFrame:
+                from flyte._run import _get_main_run_mode
+
+                if _get_main_run_mode() == "local":
+                    logger.debug("Local run mode detected, dataframe will be returned without uploading.")
+                    return df
+
+                logger.debug(
+                    "Local context detected, dataframe will be uploaded through Flyte local data upload system."
+                )
+                return await cls._upload_local_df_using_flyte(df, converted_columns=sdt.columns)
+
+            fdf = cls.wrap_df(df)
+            fdf._metadata = literals_pb2.StructuredDatasetMetadata(structured_dataset_type=sdt)
+            fdf._lazy_uploader = _lazy_uploader
+            return fdf
+
+        fdf = cls.wrap_df(df, uri=remote_destination)
+        fdf._metadata = literals_pb2.StructuredDatasetMetadata(structured_dataset_type=sdt)
+        return fdf
+
+    @classmethod
     def from_df(
         cls,
         val: typing.Optional[typing.Any] = None,
         uri: typing.Optional[str] = None,
     ) -> DataFrame:
         """
-        Wrapper to create a DataFrame from a dataframe.
-        The reason this is implemented as a wrapper instead of a full translation invoking
-        the type engine and the encoders is because there's too much information in the type
-        signature of the task that we don't want the user to have to replicate.
+        Deprecated: Please use wrap_df, as that is the right name.
+
+        Creates a new Flyte DataFrame from any registered DataFrame type (For example, pandas.DataFrame).
+        Other dataframe types are usually supported through plugins like `flyteplugins-polars`, `flyteplugins-spark`
+        etc.
         """
+        return cls.wrap_df(val, uri=uri)
+
+    @classmethod
+    def wrap_df(
+        cls,
+        val: typing.Optional[typing.Any] = None,
+        uri: typing.Optional[str] = None,
+    ) -> DataFrame:
+        """
+        Wrapper to create a DataFrame from a dataframe.
+        Other dataframe types are usually supported through plugins like `flyteplugins-polars`, `flyteplugins-spark`
+        etc.
+        """
+        #  The reason this is implemented as a wrapper instead of a full translation invoking
+        #  the type engine and the encoders is because there's too much information in the type
+        #  signature of the task that we don't want the user to have to replicate.
         instance = cls(uri=uri)
         instance._raw_df = val
         return instance
@@ -174,7 +378,9 @@ class DataFrame(BaseModel, SerializableType):
             df = DataFrame.from_existing_remote("s3://bucket/data.parquet", format="parquet")
             ```
         """
-        return cls(uri=remote_path, format=format or GENERIC_FORMAT, **kwargs)
+        fdf = cls(uri=remote_path, format=format or GENERIC_FORMAT, **kwargs)
+        fdf._already_uploaded = True
+        return fdf
 
     @property
     def val(self) -> Optional[DF]:
@@ -213,6 +419,9 @@ class DataFrame(BaseModel, SerializableType):
             await self._set_literal(expected)
 
         return await flyte_dataset_transformer.open_as(self.literal, self._dataframe_type, self.metadata)
+
+    def all_sync(self) -> DF:  # type: ignore
+        return asyncio.run(self.all())
 
     async def _set_literal(self, expected: types_pb2.LiteralType) -> None:
         """
@@ -688,6 +897,10 @@ class DataFrameTransformerEngine(TypeTransformer[DataFrame]):
         python_type: Union[Type[DataFrame], Type],
         expected: types_pb2.LiteralType,
     ) -> literals_pb2.Literal:
+        from flyte._context import internal_ctx
+
+        ctx = internal_ctx()
+
         # Make a copy in case we need to hand off to encoders, since we can't be sure of mutations.
         python_type, *_attrs = extract_cols_and_format(python_type)
         sdt = types_pb2.StructuredDatasetType(format=self.DEFAULT_FORMATS.get(python_type, GENERIC_FORMAT))
@@ -707,27 +920,17 @@ class DataFrameTransformerEngine(TypeTransformer[DataFrame]):
                 external_schema_bytes=expected.structured_dataset_type.external_schema_bytes,
             )
 
+        if isinstance(python_val, DataFrame) and python_val.lazy_uploader:
+            # Handle lazy uploader if present. This is only used when the user needs to upload a local dataframe to
+            # remote storage when running tasks in remote mode.
+            python_val = await python_val.lazy_uploader()
+
         # If the type signature has the DataFrame class, it will, or at least should, also be a
         # DataFrame instance.
         if isinstance(python_val, DataFrame):
             # There are three cases that we need to take care of here.
 
-            # 1. A task returns a DataFrame that was just a passthrough input. If this happens
-            # then return the original literals.DataFrame without invoking any encoder
-            #
-            # Ex.
-            #   def t1(dataset: Annotated[DataFrame, my_cols]) -> Annotated[DataFrame, my_cols]:
-            #       return dataset
-            if python_val._literal_sd is not None:
-                if python_val._already_uploaded:
-                    return literals_pb2.Literal(scalar=literals_pb2.Scalar(structured_dataset=python_val._literal_sd))
-                if python_val.val is not None:
-                    raise ValueError(
-                        f"Shouldn't have specified both literal {python_val._literal_sd} and dataframe {python_val.val}"
-                    )
-                return literals_pb2.Literal(scalar=literals_pb2.Scalar(structured_dataset=python_val._literal_sd))
-
-            # 2. A task returns a python DataFrame with an uri.
+            # 1. A task returns a python DataFrame with an uri.
             # Note: this case is also what happens we start a local execution of a task with a python DataFrame.
             #  It gets converted into a literal first, then back into a python DataFrame.
             #
@@ -742,7 +945,20 @@ class DataFrameTransformerEngine(TypeTransformer[DataFrame]):
                 if not uri:
                     raise ValueError(f"If dataframe is not specified, then the uri should be specified. {python_val}")
                 if not storage.is_remote(uri):
-                    uri = await storage.put(uri, recursive=True)
+                    from flyte._context import internal_ctx
+                    from flyte._run import _get_main_run_mode
+
+                    ctx = internal_ctx()
+                    if not ctx.has_raw_data and _get_main_run_mode() == "remote":
+                        # handle case where the flyte.io.DataFrame was created in a local task (typically in the context
+                        # of a if __name__ == "__main__" block) and needs to be uploaded to remote storage.
+                        import flyte.remote as remote
+
+                        uri = await remote.upload_dir.aio(pathlib.Path(uri))
+                    else:
+                        # this is the case where the dataframe is uploaded to remote storage in the context of a
+                        # remote task run.
+                        uri = await storage.put(uri, recursive=True)
 
                 # Check the user-specified format
                 # When users specify format for a DataFrame, the format should be retained
@@ -768,8 +984,27 @@ class DataFrameTransformerEngine(TypeTransformer[DataFrame]):
                 )
                 return literals_pb2.Literal(scalar=literals_pb2.Scalar(structured_dataset=sd_model))
 
+            # 2. A task returns a DataFrame that was just a passthrough input. If this happens
+            # then return the original literals.DataFrame without invoking any encoder
+            #
+            # Ex.
+            #   def t1(dataset: Annotated[DataFrame, my_cols]) -> Annotated[DataFrame, my_cols]:
+            #       return dataset
+            if python_val._literal_sd is not None:
+                if python_val._already_uploaded:
+                    return literals_pb2.Literal(scalar=literals_pb2.Scalar(structured_dataset=python_val._literal_sd))
+                if python_val.val is not None:
+                    raise ValueError(
+                        f"Shouldn't have specified both literal {python_val._literal_sd} and dataframe {python_val.val}"
+                    )
+                return literals_pb2.Literal(scalar=literals_pb2.Scalar(structured_dataset=python_val._literal_sd))
+
             # 3. This is the third and probably most common case. The python DataFrame object wraps a dataframe
             # that we will need to invoke an encoder for. Figure out which encoder to call and invoke it.
+            if not ctx.has_raw_data:
+                fdf = await DataFrame.from_local(python_val.val)
+                return await self.to_literal(fdf, python_type, expected)
+
             df_type = type(python_val.val)
             protocol = self._protocol_from_type_or_prefix(df_type, python_val.uri)
 
@@ -782,13 +1017,17 @@ class DataFrameTransformerEngine(TypeTransformer[DataFrame]):
             )
 
         # Otherwise assume it's a dataframe instance. Wrap it with some defaults
+        if not ctx.has_raw_data:
+            fdf = await DataFrame.from_local(python_val)
+            return await self.to_literal(fdf, python_type, expected)
+
         fmt = self.DEFAULT_FORMATS.get(python_type, "")
+        fdf = DataFrame.from_df(val=python_val)
         protocol = self._protocol_from_type_or_prefix(python_type)
         meta = literals_pb2.StructuredDatasetMetadata(
             structured_dataset_type=expected.structured_dataset_type if expected else None
         )
 
-        fdf = DataFrame.from_df(val=python_val)
         fdf._metadata = meta
         return await self.encode(fdf, python_type, protocol, fmt, sdt)
 
@@ -803,10 +1042,20 @@ class DataFrameTransformerEngine(TypeTransformer[DataFrame]):
             from flyte._context import internal_ctx
 
             ctx = internal_ctx()
-            protocol = get_protocol(uri or ctx.raw_data.path)
-            logger.debug(
-                f"No default protocol for type {df_type} found, using {protocol} from output prefix {ctx.raw_data.path}"
-            )
+            path = uri
+            if path is None:
+                if ctx.has_raw_data:
+                    path = ctx.raw_data.path
+                else:
+                    raise ValueError(
+                        "Storage is available only when working in a task. "
+                        "If you are trying to pass a local object to a remote run, but want the data to be uploaded "
+                        "then use flyte.io.DataFrame.from_local instead."
+                        " Refer to docs regarding, working with local data."
+                    )
+
+            protocol = get_protocol(path)
+            logger.debug(f"No default protocol for type {df_type} found, using {protocol} from output prefix {path}")
             return protocol
 
     async def encode(
@@ -909,14 +1158,22 @@ class DataFrameTransformerEngine(TypeTransformer[DataFrame]):
         #   t1(input_a: Annotated[DataFrame, my_cols])
         if issubclass(expected_python_type, DataFrame):
             fdf = DataFrame(format=metad.structured_dataset_type.format, uri=lv.scalar.structured_dataset.uri)
-            fdf._already_uploaded = True
+            fdf._already_uploaded = storage.is_remote(lv.scalar.structured_dataset.uri)
             fdf._literal_sd = lv.scalar.structured_dataset
             fdf._metadata = metad
             return fdf
 
         # If the requested type was not a flyte.DataFrame, then it means it was a raw dataframe type, which means
         # we should do the opening/downloading and whatever else it might entail right now. No iteration option here.
-        return await self.open_as(lv.scalar.structured_dataset, df_type=expected_python_type, updated_metadata=metad)
+        try:
+            return await self.open_as(
+                lv.scalar.structured_dataset, df_type=expected_python_type, updated_metadata=metad
+            )
+        except GenericError as exc:
+            msg = get_credentials_error(
+                lv.scalar.structured_dataset.uri, get_protocol(lv.scalar.structured_dataset.uri)
+            )
+            raise GenericError(f"{exc}\n{msg}") from exc
 
     def to_html(self, python_val: typing.Any, expected_python_type: Type[T]) -> str:
         if isinstance(python_val, DataFrame):
@@ -949,7 +1206,12 @@ class DataFrameTransformerEngine(TypeTransformer[DataFrame]):
         """
         protocol = get_protocol(sd.uri)
         decoder = self.get_decoder(df_type, protocol, sd.metadata.structured_dataset_type.format)
-        result = await decoder.decode(sd, updated_metadata)
+
+        try:
+            result = await decoder.decode(sd, updated_metadata)
+        except OSError as exc:
+            raise OSError(f"{exc}\n{get_credentials_error(sd.uri, protocol)}") from exc
+
         return typing.cast(DF, result)
 
     async def iter_as(
@@ -960,9 +1222,13 @@ class DataFrameTransformerEngine(TypeTransformer[DataFrame]):
     ) -> typing.AsyncIterator[DF]:
         protocol = get_protocol(sd.uri)
         decoder = self.DECODERS[df_type][protocol][sd.metadata.structured_dataset_type.format]
-        result: Union[Coroutine[Any, Any, DF], Coroutine[Any, Any, typing.AsyncIterator[DF]]] = decoder.decode(
-            sd, updated_metadata
-        )
+        try:
+            result: Union[Coroutine[Any, Any, DF], Coroutine[Any, Any, typing.AsyncIterator[DF]]] = decoder.decode(
+                sd, updated_metadata
+            )
+        except OSError as exc:
+            raise OSError(f"{exc}\n{get_credentials_error(sd.uri, protocol)}") from exc
+
         if not isinstance(result, types.AsyncGeneratorType):
             raise ValueError(f"Decoder {decoder} didn't return an async iterator {result} but should have from {sd}")
         return result
@@ -992,10 +1258,15 @@ class DataFrameTransformerEngine(TypeTransformer[DataFrame]):
     def _get_dataset_type(self, t: typing.Union[Type[DataFrame], typing.Any]) -> types_pb2.StructuredDatasetType:
         _original_python_type, column_map, storage_format, pa_schema = extract_cols_and_format(t)  # type: ignore
 
-        # Get the column information
-        converted_cols: typing.List[types_pb2.StructuredDatasetType.DatasetColumn] = (
-            self._convert_ordered_dict_of_columns_to_list(column_map)
-        )
+        return self.get_structured_dataset_type(storage_format, column_map=column_map, pa_schema=pa_schema)
+
+    def get_structured_dataset_type(
+        self,
+        storage_format: str | None = None,
+        pa_schema: Optional["pa.lib.Schema"] = None,
+        column_map: typing.OrderedDict[str, type[typing.Any]] | None = None,
+    ) -> types_pb2.StructuredDatasetType:
+        converted_cols = self._convert_ordered_dict_of_columns_to_list(column_map)
 
         return types_pb2.StructuredDatasetType(
             columns=converted_cols,
@@ -1003,6 +1274,23 @@ class DataFrameTransformerEngine(TypeTransformer[DataFrame]):
             external_schema_type="arrow" if pa_schema else None,
             external_schema_bytes=typing.cast(pa.lib.Schema, pa_schema).to_string().encode() if pa_schema else None,
         )
+
+    def _get_type_tag(self, t: Type) -> typing.Optional[str]:
+        """
+        Get the fully qualified type name for storing in the literal type tag.
+        This allows us to recover the original dataframe type (e.g., pd.DataFrame) when guessing Python types.
+        At deserialization time, we will use this tag to lookup the registered decoder for the dataframe type.
+
+        Returns None if the type is DataFrame itself (no tag needed).
+        """
+        base_type, *_ = extract_cols_and_format(t)  # type: ignore
+
+        # If it's the DataFrame class itself, no tag needed
+        if base_type is DataFrame or (isinstance(base_type, type) and issubclass(base_type, DataFrame)):
+            return None
+
+        # Return the fully qualified name for registered dataframe types that have encoders/decoders
+        return f"{base_type.__module__}.{base_type.__qualname__}"
 
     def get_literal_type(self, t: typing.Union[Type[DataFrame], typing.Any]) -> types_pb2.LiteralType:
         """
@@ -1012,12 +1300,33 @@ class DataFrameTransformerEngine(TypeTransformer[DataFrame]):
 
         :param t: The python dataframe type, which is mostly ignored.
         """
-        return types_pb2.LiteralType(structured_dataset_type=self._get_dataset_type(t))
+        tag = self._get_type_tag(t)
+        sdt = self._get_dataset_type(t)
+
+        if tag:
+            return types_pb2.LiteralType(
+                structured_dataset_type=sdt,
+                structure=types_pb2.TypeStructure(tag=tag),
+            )
+        return types_pb2.LiteralType(structured_dataset_type=sdt)
 
     def guess_python_type(self, literal_type: types_pb2.LiteralType) -> Type[DataFrame]:
-        # todo: technically we should return the dataframe type specified in the constructor, but to do that,
-        #   we'd have to store that, which we don't do today. See possibly #1363
         if literal_type.HasField("structured_dataset_type"):
+            from flyte._context import internal_ctx
+
+            ctx = internal_ctx()
+            preserve_original_types = ctx.data.preserve_original_types
+
+            # Check if preserve_original_types is enabled and we have a tag
+            if preserve_original_types and literal_type.HasField("structure") and literal_type.structure.tag:
+                tag = literal_type.structure.tag
+                # Look up the type in our registered decoders
+                for registered_type in self.DECODERS.keys():
+                    type_name = f"{registered_type.__module__}.{registered_type.__qualname__}"
+                    if type_name == tag:
+                        return registered_type
+                # If we couldn't find the type in decoders, log a warning and fall back to DataFrame
+                logger.debug(f"Could not find registered decoder for type tag '{tag}', falling back to DataFrame")
             return DataFrame
         raise ValueError(f"DataFrameTransformerEngine cannot reverse {literal_type}")
 

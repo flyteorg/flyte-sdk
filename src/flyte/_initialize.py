@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import functools
+import os
 import sys
 import threading
 import typing
@@ -36,6 +37,7 @@ class CommonInit:
     batch_size: int = 1000
     source_config_path: Optional[Path] = None  # Only used for documentation
     sync_local_sys_paths: bool = True
+    local_persistence: bool = False
 
 
 @dataclass(init=True, kw_only=True, repr=True, eq=True, frozen=True)
@@ -125,8 +127,10 @@ async def _initialize_client(
     )
 
 
-def _initialize_logger(log_level: int | None = None, log_format: LogFormat | None = None) -> None:
-    initialize_logger(log_level=log_level, log_format=log_format, enable_rich=True)
+def _initialize_logger(
+    log_level: int | None = None, log_format: LogFormat | None = None, reset_root_logger: bool = False
+) -> None:
+    initialize_logger(log_level=log_level, log_format=log_format, enable_rich=True, reset_root_logger=reset_root_logger)
 
 
 @syncify
@@ -137,6 +141,7 @@ async def init(
     root_dir: Path | None = None,
     log_level: int | None = None,
     log_format: LogFormat | None = None,
+    reset_root_logger: bool = False,
     endpoint: str | None = None,
     headless: bool = False,
     insecure: bool = False,
@@ -158,6 +163,7 @@ async def init(
     source_config_path: Optional[Path] = None,
     sync_local_sys_paths: bool = True,
     load_plugin_type_transformers: bool = True,
+    local_persistence: bool = False,
 ) -> None:
     """
     Initialize the Flyte system with the given configuration. This method should be called before any other Flyte
@@ -171,6 +177,7 @@ async def init(
       defaults to the editable install directory if the cwd is in a Python editable install, else just the cwd.
     :param log_level: Optional logging level for the logger, default is set using the default initialization policies
     :param log_format: Optional logging format for the logger, default is "console"
+    :param reset_root_logger: By default, we clear out root logger handlers and set up our own.
     :param api_key: Optional API key for authentication
     :param endpoint: Optional API endpoint URL
     :param headless: Optional Whether to run in headless mode
@@ -199,12 +206,13 @@ async def init(
       into the remote container (default: True).
     :param load_plugin_type_transformers: If enabled (default True), load the type transformer plugins registered under
       the "flyte.plugins.types" entry point group.
+    :param local_persistence: Whether to enable SQLite persistence for local run metadata (default: False).
     :return: None
     """
-    from flyte._utils import get_cwd_editable_install, org_from_endpoint, sanitize_endpoint
+    from flyte._utils import org_from_endpoint, sanitize_endpoint
     from flyte.types import _load_custom_type_transformers
 
-    _initialize_logger(log_level=log_level, log_format=log_format)
+    _initialize_logger(log_level=log_level, log_format=log_format, reset_root_logger=reset_root_logger)
     if load_plugin_type_transformers:
         _load_custom_type_transformers()
 
@@ -233,13 +241,7 @@ async def init(
             )
 
         if not root_dir:
-            editable_root = get_cwd_editable_install()
-            if editable_root:
-                logger.info(f"Using editable install as root directory: {editable_root}")
-                root_dir = editable_root
-            else:
-                logger.info("No editable install found, using current working directory as root directory.")
-                root_dir = Path.cwd()
+            root_dir = Path.cwd()
         # We will inject the root_dir into the sys,path for module resolution
         sys.path.append(str(root_dir))
 
@@ -255,6 +257,7 @@ async def init(
             images=images or {},
             source_config_path=source_config_path,
             sync_local_sys_paths=sync_local_sys_paths,
+            local_persistence=local_persistence,
         )
 
 
@@ -347,12 +350,12 @@ async def init_from_config(
         storage=storage,
         source_config_path=cfg_path,
         sync_local_sys_paths=sync_local_sys_paths,
+        local_persistence=cfg.local.persistence,
     )
 
 
 @syncify
 async def init_from_api_key(
-    endpoint: str,
     api_key: str | None = None,
     project: str | None = None,
     domain: str | None = None,
@@ -369,8 +372,13 @@ async def init_from_api_key(
     Initialize the Flyte system using an API key for authentication. This is a convenience
     method for API key-based authentication. Thread-safe implementation.
 
-    :param endpoint: The Flyte API endpoint URL
-    :param api_key: Optional API key for authentication. If None, reads from FLYTE_API_KEY environment variable.
+    The API key should be an encoded API key that contains the endpoint, client ID, client secret,
+    and organization information. You can obtain this encoded API key from your Flyte administrator
+    or cloud provider.
+
+    :param api_key: Optional encoded API key for authentication. If None, reads from FLYTE_API_KEY
+        environment variable. The API key is a base64-encoded string containing endpoint, client_id,
+        client_secret, and org information.
     :param project: Optional project name
     :param domain: Optional domain name
     :param root_dir: Optional root directory from which to determine how to load files, and find paths to files.
@@ -385,9 +393,8 @@ async def init_from_api_key(
       into the remote container (default: True)
     :return: None
     """
-    import os
-
-    from flyte._utils import org_from_endpoint, sanitize_endpoint
+    from flyte._utils import sanitize_endpoint
+    from flyte.remote._client.auth._auth_utils import decode_api_key
 
     # If api_key is not provided, read from environment variable
     if api_key is None:
@@ -399,16 +406,20 @@ async def init_from_api_key(
                 "API key must be provided either as a parameter or via the FLYTE_API_KEY environment variable.",
             )
 
-    # Sanitize the endpoint and extract org from it - sanitize should never return None if input is not None
+    # Decode the API key to extract endpoint, client_id, client_secret, and org
+    endpoint, client_id, client_secret, org = decode_api_key(api_key)
+
+    # Sanitize the endpoint
     endpoint = sanitize_endpoint(endpoint)  # type: ignore[assignment]
-    org = org_from_endpoint(endpoint)
 
     await init.aio(
-        org=org,
+        org=None if org == "None" else org,
         project=project,
         domain=domain,
         endpoint=endpoint,
         api_key=api_key,
+        client_id=client_id,
+        client_credentials_secret=client_secret,
         auth_type="ClientSecret",  # API keys use client credentials flow
         root_dir=root_dir,
         log_level=log_level,
@@ -432,8 +443,6 @@ async def init_in_cluster(
     endpoint: str | None = None,
     insecure: bool = False,
 ) -> dict[str, typing.Any]:
-    import os
-
     from flyte._utils import str2bool
 
     PROJECT_NAME = "FLYTE_INTERNAL_EXECUTION_PROJECT"
@@ -476,6 +485,45 @@ async def init_in_cluster(
     return remote_kwargs
 
 
+@syncify
+async def init_passthrough(
+    endpoint: str | None = None,
+    org: str | None = None,
+    project: str | None = None,
+    domain: str | None = None,
+    insecure: bool = False,
+) -> dict[str, typing.Any]:
+    """
+    Initialize the Flyte system with passthrough authentication.
+
+    This authentication mode allows you to pass custom authentication metadata
+    using the `flyte.remote.auth_metadata()` context manager.
+
+    The endpoint is automatically configured from the environment if in a flyte cluster with endpoint injected.
+
+    :param org: Optional organization name
+    :param project: Optional project name
+    :param domain: Optional domain name
+    :param endpoint: Optional API endpoint URL
+    :param insecure: Whether to use an insecure channel
+    :return: Dictionary of remote kwargs used for initialization
+    """
+    ENDPOINT_OVERRIDE = "_U_EP_OVERRIDE"
+    ep = endpoint or os.environ.get(ENDPOINT_OVERRIDE, None)
+
+    await init.aio(
+        org=org,
+        project=project,
+        domain=domain,
+        root_dir=Path.cwd(),
+        image_builder="remote",
+        endpoint=ep,
+        insecure=insecure,
+        auth_type="Passthrough",
+    )
+    return {"endpoint": endpoint, "insecure": insecure}
+
+
 def _get_init_config() -> Optional[_InitConfig]:
     """
     Get the current initialization configuration. Thread-safe implementation.
@@ -495,10 +543,10 @@ def get_init_config() -> _InitConfig:
     cfg = _get_init_config()
     if cfg is None:
         raise InitializationError(
-            "StorageNotInitializedError",
+            "ClientNotInitializedError",
             "user",
-            "Configuration has not been initialized. Call flyte.init() with a valid endpoint or",
-            " api-key before using this function.",
+            "Configuration has not been initialized. Call flyte.init() with a valid endpoint/api-key before",
+            " using this function or Call flyte.init_from_config() with a valid path to the config file",
         )
     return cfg
 
@@ -514,8 +562,9 @@ def get_storage() -> Storage | None:
         raise InitializationError(
             "StorageNotInitializedError",
             "user",
-            "Configuration has not been initialized. Call flyte.init() with a valid endpoint or",
-            " api-key before using this function.",
+            "Configuration has not been initialized. Call flyte.init() with a valid"
+            " storage configuration before using this function or Call flyte.init_from_config()"
+            " with a valid path to the config file",
         )
     return cfg.storage
 
@@ -531,8 +580,8 @@ def get_client() -> ClientSet:
         raise InitializationError(
             "ClientNotInitializedError",
             "user",
-            "Client has not been initialized. Call flyte.init() with a valid endpoint or"
-            " api-key before using this function.",
+            "Client has not been initialized. Call flyte.init() with a valid endpoint/api-key "
+            "before using this function or Call flyte.init_from_config() with a valid path to the config file",
         )
     return cfg.client
 
@@ -544,6 +593,14 @@ def is_initialized() -> bool:
     :return: True if initialized, False otherwise
     """
     return _get_init_config() is not None
+
+
+def is_persistence_enabled() -> bool:
+    """Check if local run persistence is enabled."""
+    cfg = _get_init_config()
+    if cfg is None:
+        return False
+    return cfg.local_persistence
 
 
 def initialize_in_cluster() -> None:
@@ -568,8 +625,8 @@ def ensure_client():
         raise InitializationError(
             "ClientNotInitializedError",
             "user",
-            "Client has not been initialized. Call flyte.init() with a valid endpoint"
-            " or api-key before using this function.",
+            "Client has not been initialized. Call flyte.init() with a valid endpoint/api-key before using"
+            " this function or Call flyte.init_from_config() with a valid path to the config file",
         )
 
 
@@ -589,7 +646,8 @@ def requires_storage(func: T) -> T:
                 "StorageNotInitializedError",
                 "user",
                 f"Function '{func.__name__}' requires storage to be initialized. "
-                f"Call flyte.init() with a valid storage configuration before using this function.",
+                "Call flyte.init() with a valid storage configuration before using this function."
+                "or Call flyte.init_from_config() with a valid path to the config file",
             )
         return func(*args, **kwargs)
 
@@ -615,7 +673,8 @@ def requires_upload_location(func: T) -> T:
                 "No upload path configured",
                 "user",
                 f"Function '{func.__name__}' requires client to be initialized. "
-                f"Call flyte.init() with storage configuration before using this function.",
+                "Call flyte.init() with storage configuration before using this function."
+                "or Call flyte.init_from_config() with a valid path to the config file.",
             )
         return func(*args, **kwargs)
 
@@ -637,7 +696,8 @@ def requires_initialization(func: T) -> T:
             raise InitializationError(
                 "NotInitConfiguredError",
                 "user",
-                f"Function '{func.__name__}' requires initialization. Call flyte.init() before using this function.",
+                f"Function '{func.__name__}' requires initialization. Call flyte.init() before using this function"
+                " or Call flyte.init_from_config() with a valid path to the config file.",
             )
         return func(*args, **kwargs)
 
@@ -679,15 +739,13 @@ async def _init_for_testing(
     log_level: int | None = None,
     client: ClientSet | None = None,
 ):
-    from flyte._utils.helpers import get_cwd_editable_install
-
     global _init_config  # noqa: PLW0603
 
     if log_level:
         initialize_logger(log_level=log_level)
 
     with _init_lock:
-        root_dir = root_dir or get_cwd_editable_install() or Path.cwd()
+        root_dir = root_dir or Path.cwd()
         _init_config = _InitConfig(
             root_dir=root_dir,
             project=project,
@@ -726,6 +784,36 @@ def current_domain() -> str:
         raise InitializationError(
             "DomainNotInitializedError",
             "user",
-            "Domain has not been initialized. Call flyte.init() with a valid domain before using this function.",
+            "Domain has not been initialized. Call flyte.init() with a valid domain before using this function"
+            " or Call flyte.init_from_config() with a valid path to the config file",
         )
     return cfg.domain
+
+
+def current_project() -> str:
+    """
+    Returns the current project from the Runtime environment (on the cluster) or from the initialized configuration.
+    This is safe to be used during `deploy`, `run` and within `task` code.
+
+    NOTE: This will not work if you deploy a task to a project and then run it in another project.
+
+    Raises InitializationError if the configuration is not initialized or project is not set.
+    :return: The current project
+    """
+    from ._context import ctx
+
+    tctx = ctx()
+    if tctx is not None:
+        project = tctx.action.project
+        if project is not None:
+            return project
+
+    cfg = _get_init_config()
+    if cfg is None or cfg.project is None:
+        raise InitializationError(
+            "ProjectNotInitializedError",
+            "user",
+            "Project has not been initialized. Call flyte.init() with a valid project before using this function"
+            " or Call flyte.init_from_config() with a valid path to the config file",
+        )
+    return cfg.project

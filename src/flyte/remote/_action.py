@@ -4,6 +4,7 @@ import asyncio
 from collections import UserDict
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from functools import cached_property
 from typing import (
     Any,
     AsyncGenerator,
@@ -29,6 +30,7 @@ from rich.progress import Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
 
 from flyte import types
 from flyte._initialize import ensure_client, get_client, get_init_config
+from flyte._interface import default_output_name
 from flyte.models import ActionPhase
 from flyte.remote._common import ToJSONMixin
 from flyte.remote._logs import Logs
@@ -126,7 +128,21 @@ def _action_done_check(phase: phase_pb2.ActionPhase) -> bool:
 @dataclass
 class Action(ToJSONMixin):
     """
-    A class representing an action. It is used to manage the run of a task and its state on the remote Union API.
+    A class representing an action. It is used to manage the "execution" of a task and its state on the remote API.
+
+    From a datamodel perspective, a Run consists of actions. All actions are linearly nested under a parent action.
+     Actions have unique auto-generated identifiers, that are unique within a parent action.
+
+     <pre>
+     run
+      - a0
+        - action1 under a0
+        - action2 under a0
+            - action1 under action2 under a0
+            - action2 under action1 under action2 under a0
+            - ...
+        - ...
+    </pre>
     """
 
     pb2: run_definition_pb2.Action
@@ -195,7 +211,7 @@ class Action(ToJSONMixin):
                 limit=100,
                 token=token,
                 sort_by=sort_pb2,
-                filters=filter_list if filter_list else None,
+                filters=filter_list or None,
             )
             resp = await get_client().run_service.ListActions(
                 run_service_pb2.ListActionsRequest(
@@ -307,6 +323,23 @@ class Action(ToJSONMixin):
         return self.pb2.status.start_time.ToDatetime().replace(tzinfo=timezone.utc)
 
     @syncify
+    async def abort(self, reason: str = "Manually aborted from the SDK."):
+        """
+        Aborts / Terminates the action.
+        """
+        try:
+            await get_client().run_service.AbortAction(
+                run_service_pb2.AbortActionRequest(
+                    action_id=self.pb2.id,
+                    reason=reason,
+                )
+            )
+        except grpc.aio.AioRpcError as e:
+            if e.code() == grpc.StatusCode.NOT_FOUND:
+                return
+            raise
+
+    @syncify
     async def show_logs(
         self,
         attempt: int | None = None,
@@ -315,6 +348,15 @@ class Action(ToJSONMixin):
         raw: bool = False,
         filter_system: bool = False,
     ):
+        """
+        Display logs for the action.
+
+        :param attempt: The attempt number to show logs for (defaults to latest attempt).
+        :param max_lines: Maximum number of log lines to display in the viewer.
+        :param show_ts: Whether to show timestamps with each log line.
+        :param raw: If True, print logs directly without the interactive viewer.
+        :param filter_system: If True, filter out system-generated log lines.
+        """
         details = await self.details()
         if not details.is_running and not details.done():
             # TODO we can short circuit here if the attempt is not the last one and it is done!
@@ -478,6 +520,7 @@ class ActionDetails(ToJSONMixin):
     pb2: run_definition_pb2.ActionDetails
     _inputs: ActionInputs | None = None
     _outputs: ActionOutputs | None = None
+    _preserve_original_types: bool = False
 
     @syncify
     @classmethod
@@ -556,6 +599,11 @@ class ActionDetails(ToJSONMixin):
                 raise e
 
     async def watch_updates(self, cache_data_on_done: bool = False) -> AsyncGenerator[ActionDetails, None]:
+        """
+        Watch for updates to the action details, yielding each update until the action is done.
+
+        :param cache_data_on_done: If True, cache inputs and outputs when the action completes.
+        """
         async for d in self.watch.aio(action_id=self.pb2.id):
             yield d
             if d.done():
@@ -621,20 +669,32 @@ class ActionDetails(ToJSONMixin):
 
     @property
     def metadata(self) -> run_definition_pb2.ActionMetadata:
+        """
+        Get the metadata of the action.
+        """
         return self.pb2.metadata
 
     @property
     def status(self) -> run_definition_pb2.ActionStatus:
+        """
+        Get the status of the action.
+        """
         return self.pb2.status
 
     @property
     def error_info(self) -> run_definition_pb2.ErrorInfo | None:
+        """
+        Get the error information if the action failed, otherwise returns None.
+        """
         if self.pb2.HasField("error_info"):
             return self.pb2.error_info
         return None
 
     @property
     def abort_info(self) -> run_definition_pb2.AbortInfo | None:
+        """
+        Get the abort information if the action was aborted, otherwise returns None.
+        """
         if self.pb2.HasField("abort_info"):
             return self.pb2.abort_info
         return None
@@ -675,6 +735,7 @@ class ActionDetails(ToJSONMixin):
         Cache the inputs and outputs of the action.
         :return: Returns True if Action is terminal and all data is cached else False.
         """
+        from flyte._context import internal_ctx
         from flyte._internal.runtime import convert
 
         if self._inputs and self._outputs:
@@ -686,37 +747,40 @@ class ActionDetails(ToJSONMixin):
                 action_id=self.pb2.id,
             )
         )
-        native_iface = None
-        if self.pb2.HasField("task"):
-            iface = self.pb2.task.task_template.interface
-            native_iface = types.guess_interface(iface)
-        elif self.pb2.HasField("trace"):
-            iface = self.pb2.trace.interface
-            native_iface = types.guess_interface(iface)
 
-        if resp.inputs:
-            data_dict = (
-                await convert.convert_from_inputs_to_native(native_iface, convert.Inputs(resp.inputs))
-                if native_iface
-                else {}
-            )
-            self._inputs = ActionInputs(pb2=resp.inputs, data=data_dict)
+        with internal_ctx().new_preserve_original_types(self._preserve_original_types):
+            native_iface = None
+            if self.pb2.HasField("task"):
+                iface = self.pb2.task.task_template.interface
+                native_iface = types.guess_interface(iface)
+            elif self.pb2.HasField("trace"):
+                iface = self.pb2.trace.interface
+                native_iface = types.guess_interface(iface)
 
-        if resp.outputs:
-            data_tuple = (
-                await convert.convert_outputs_to_native(native_iface, convert.Outputs(resp.outputs))
-                if native_iface
-                else ()
-            )
-            if not isinstance(data_tuple, tuple):
-                data_tuple = (data_tuple,)
-            self._outputs = ActionOutputs(pb2=resp.outputs, data=data_tuple)
+            if resp.inputs:
+                data_dict = (
+                    await convert.convert_from_inputs_to_native(native_iface, convert.Inputs(resp.inputs))
+                    if native_iface
+                    else {}
+                )
+                self._inputs = ActionInputs(pb2=resp.inputs, data=data_dict)
+
+            if resp.outputs:
+                data_tuple = (
+                    await convert.convert_outputs_to_native(native_iface, convert.Outputs(resp.outputs))
+                    if native_iface
+                    else ()
+                )
+                if not isinstance(data_tuple, tuple):
+                    data_tuple = (data_tuple,)
+                self._outputs = ActionOutputs(pb2=resp.outputs, data=data_tuple)
 
         return self._outputs is not None
 
     async def inputs(self) -> ActionInputs:
         """
-        Placeholder for inputs. This can be extended to handle inputs from the run context.
+        Return the inputs of the action.
+        Will return instantly if inputs are available else will fetch and return.
         """
         if not self._inputs:
             await self._cache_data.aio()
@@ -724,7 +788,10 @@ class ActionDetails(ToJSONMixin):
 
     async def outputs(self) -> ActionOutputs:
         """
-        Placeholder for outputs. This can be extended to handle outputs from the run context.
+        Returns the outputs of the action, returns instantly if outputs are already cached, else fetches them and
+        returns. If Action is not in a terminal state, raise a RuntimeError.
+
+        :return: ActionOutputs
         """
         if not self._outputs:
             if not await self._cache_data.aio():
@@ -761,6 +828,21 @@ class ActionInputs(UserDict, ToJSONMixin):
     """
     A class representing the inputs of an action. It is used to manage the inputs of a task and its state on the
     remote Union API.
+
+    ActionInputs extends from a `UserDict` and hence is accessible like a dictionary
+
+    Example Usage:
+    ```python
+    action = Action.get(...)
+    print(action.inputs())
+    ```
+    Output:
+    ```bash
+    {
+      "x": ...,
+      "y": ...,
+    }
+    ```
     """
 
     pb2: common_pb2.Inputs
@@ -776,18 +858,53 @@ class ActionInputs(UserDict, ToJSONMixin):
 
 class ActionOutputs(tuple, ToJSONMixin):
     """
-    A class representing the outputs of an action. It is used to manage the outputs of a task and its state on the
-    remote Union API.
+    A class representing the outputs of an action. The outputs are by default represented as a Tuple. To access them,
+    you can simply read them as a tuple (assign to individual variables, use index to access) or you can use the
+    property `named_outputs` to retrieve a dictionary of outputs with keys that represent output names
+    which are usually auto-generated `o0, o1, o2, o3, ...`.
+
+    Example Usage:
+    ```python
+    action = Action.get(...)
+    print(action.outputs())
+    ```
+    Output:
+    ```python
+    ("val1", "val2", ...)
+    ```
+    OR
+    ```python
+    action = Action.get(...)
+    print(action.outputs().named_outputs)
+    ```
+    Output:
+    ```bash
+    {"o0": "val1", "o1": "val2", ...}
+    ```
     """
 
-    def __new__(cls, pb2: common_pb2.Outputs, data: Tuple[Any, ...]):
+    pb2: common_pb2.Outputs
+    _fields: list[str]
+
+    def __new__(cls, pb2: common_pb2.Outputs, data: Tuple[Any, ...], fields: List[str] | None = None):
         # Create the tuple part
         obj = super().__new__(cls, data)
-        # Store extra data (you can't do this here directly since it's immutable)
+        # Store extra attributes on the tuple instance
         obj.pb2 = pb2
+        obj._fields = fields or [default_output_name(i) for i in range(len(data))]
+        for name, value in zip(obj._fields, obj):
+            setattr(obj, name, value)
         return obj
 
-    def __init__(self, pb2: common_pb2.Outputs, data: Tuple[Any, ...]):
-        # Normally you'd set instance attributes here,
-        # but we've already set `pb2` in `__new__`
-        self.pb2 = pb2
+    def __init__(self, pb2: common_pb2.Outputs, data: Tuple[Any, ...], fields: List[str] | None = None): ...
+
+    @cached_property
+    def named_outputs(self) -> dict[str, Any]:
+        return dict(zip(self._fields, self))
+
+    def __repr__(self) -> str:
+        _repr = []
+        for name, value in zip(self._fields, self):
+            v = f'"{value}"' if isinstance(value, str) else f"{value}"
+            _repr.append(f"{name}={v}")
+        return f"ActionOutputs({', '.join(_repr)})"

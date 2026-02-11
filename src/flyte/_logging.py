@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import logging
 import os
 from datetime import datetime
@@ -117,6 +116,8 @@ class JSONFormatter(logging.Formatter):
     """
 
     def format(self, record: logging.LogRecord) -> str:
+        import json
+
         log_data = {
             "timestamp": datetime.fromtimestamp(record.created).isoformat(),
             "level": record.levelname,
@@ -135,6 +136,12 @@ class JSONFormatter(logging.Formatter):
         if getattr(record, "is_flyte_internal", False):
             log_data["is_flyte_internal"] = True
 
+        # Add metric fields if present
+        if getattr(record, "metric_type", None):
+            log_data["metric_type"] = record.metric_type  # type: ignore[attr-defined]
+            log_data["metric_name"] = record.metric_name  # type: ignore[attr-defined]
+            log_data["duration_seconds"] = record.duration_seconds  # type: ignore[attr-defined]
+
         # Add exception info if present
         if record.exc_info:
             log_data["exc_info"] = self.formatException(record.exc_info)
@@ -142,7 +149,12 @@ class JSONFormatter(logging.Formatter):
         return json.dumps(log_data)
 
 
-def initialize_logger(log_level: int | None = None, log_format: LogFormat | None = None, enable_rich: bool = False):
+def initialize_logger(
+    log_level: int | None = None,
+    log_format: LogFormat | None = None,
+    enable_rich: bool = False,
+    reset_root_logger: bool = False,
+):
     """
     Initializes the global loggers to the default configuration.
     When enable_rich=True, upgrades to Rich handler for local CLI usage.
@@ -154,10 +166,6 @@ def initialize_logger(log_level: int | None = None, log_format: LogFormat | None
     if log_format is None:
         log_format = log_format_from_env()
 
-    # Clear existing handlers to reconfigure
-    root = logging.getLogger()
-    root.handlers.clear()
-
     flyte_logger = logging.getLogger("flyte")
     flyte_logger.handlers.clear()
 
@@ -165,21 +173,13 @@ def initialize_logger(log_level: int | None = None, log_format: LogFormat | None
     use_json = log_format == "json"
     use_rich = enable_rich and not use_json
 
-    # Set up root logger handler
-    root_handler: logging.Handler | None = None
-    if use_json:
-        root_handler = logging.StreamHandler()
-        root_handler.setFormatter(JSONFormatter())
-    elif use_rich:
-        root_handler = get_rich_handler(log_level)
-
-    if root_handler is None:
-        root_handler = logging.StreamHandler()
-
-    # Add context filter to root handler for all logging
-    root_handler.addFilter(ContextFilter())
-    root_handler.setLevel(logging.DEBUG)
-    root.addHandler(root_handler)
+    reset_root_logger = reset_root_logger or os.environ.get("FLYTE_RESET_ROOT_LOGGER") == "1"
+    if reset_root_logger:
+        _setup_root_logger(use_json=use_json, use_rich=use_rich, log_level=log_level)
+    else:
+        root_logger = logging.getLogger()
+        for h in root_logger.handlers:
+            h.addFilter(ContextFilter())
 
     # Set up Flyte logger handler
     flyte_handler: logging.Handler | None = None
@@ -270,22 +270,31 @@ class FlyteInternalFilter(logging.Filter):
         return True
 
 
-def _setup_root_logger():
+def _setup_root_logger(use_json: bool, use_rich: bool, log_level: int):
     """
-    Configure the root logger to capture all logging with context information.
-    This ensures both user code and Flyte internal logging get the context.
+    Wipe all handlers from the root logger and reconfigure. This ensures
+    both user/library logging and Flyte internal logging get context information and look the same.
     """
     root = logging.getLogger()
     root.handlers.clear()  # Remove any existing handlers to prevent double logging
 
-    # Create a basic handler for the root logger
-    handler = logging.StreamHandler()
-    # Add context filter to ALL logging
-    handler.addFilter(ContextFilter())
-    handler.setLevel(logging.DEBUG)
+    root_handler: logging.Handler | None = None
+    if use_json:
+        root_handler = logging.StreamHandler()
+        root_handler.setFormatter(JSONFormatter())
+    elif use_rich:
+        root_handler = get_rich_handler(log_level)
 
-    # Simple formatter since filters handle prefixes
-    root.addHandler(handler)
+    # get_rich_handler can return None in some environments
+    if not root_handler:
+        root_handler = logging.StreamHandler()
+
+    # Add context filter to ALL logging
+    root_handler.addFilter(ContextFilter())
+    root_handler.setLevel(log_level)
+
+    root.addHandler(root_handler)
+    root.setLevel(log_level)
 
 
 def _create_flyte_logger() -> logging.Logger:
@@ -310,9 +319,6 @@ def _create_flyte_logger() -> logging.Logger:
 
     return flyte_logger
 
-
-# Initialize root logger for global context
-_setup_root_logger()
 
 # Create the Flyte internal logger
 logger = _create_flyte_logger()

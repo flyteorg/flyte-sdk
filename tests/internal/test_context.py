@@ -3,7 +3,8 @@ import asyncio
 import pytest
 
 import flyte
-from flyte._context import internal_ctx
+from flyte._context import Context, ContextData, internal_ctx
+from flyte.errors import TraceDoesNotAllowNestedTasksError
 from flyte.models import ActionID, RawDataPath, TaskContext
 from flyte.report import Report
 from flyte.syncify import syncify
@@ -143,3 +144,146 @@ async def simulate_gen_task(new_task_context):
 @pytest.mark.asyncio
 async def test_context_generator(outer_task_ctx):
     await simulate_gen_task(outer_task_ctx)
+
+
+def test_has_raw_data_with_task_context():
+    """Test has_raw_data returns True when raw_data_path is set in task_context"""
+    ctx = internal_ctx()
+    task_ctx = TaskContext(
+        action=ActionID(name="test"),
+        run_base_dir="test",
+        output_path="test",
+        raw_data_path=RawDataPath(path="/some/path"),
+        version="",
+        report=Report("test"),
+    )
+    with ctx.replace_task_context(task_ctx):
+        assert flyte.ctx() is not None
+        assert internal_ctx().has_raw_data is True
+
+
+def test_has_raw_data_with_context_data():
+    """Test has_raw_data returns True when raw_data_path is set in context data"""
+    ctx = internal_ctx()
+    new_ctx = ctx.new_raw_data_path(RawDataPath(path="/some/path"))
+    with new_ctx:
+        assert internal_ctx().has_raw_data is True
+
+
+def test_has_raw_data_without_raw_data_path():
+    """Test has_raw_data returns False when raw_data_path has empty path"""
+    ctx = internal_ctx()
+    task_ctx = TaskContext(
+        action=ActionID(name="test"),
+        run_base_dir="test",
+        output_path="test",
+        raw_data_path=RawDataPath(path=""),
+        version="",
+        report=Report("test"),
+    )
+    with ctx.replace_task_context(task_ctx):
+        assert flyte.ctx() is not None
+        # Empty path should still return True as the RawDataPath object exists
+        assert internal_ctx().has_raw_data is True
+
+
+def test_has_raw_data_empty_context():
+    """Test has_raw_data returns False when no task context is set"""
+    # Create a fresh context with no task context
+    from flyte._context import Context, ContextData
+
+    empty_ctx = Context(data=ContextData())
+    with empty_ctx:
+        assert internal_ctx().has_raw_data is False
+
+
+def test_has_raw_data_priority():
+    """Test that task_context raw_data_path takes priority over context data raw_data_path"""
+    ctx = internal_ctx()
+
+    # Set raw_data_path in context data
+    ctx_with_raw_data = ctx.new_raw_data_path(RawDataPath(path="/context/path"))
+
+    # Set raw_data_path in task context
+    task_ctx = TaskContext(
+        action=ActionID(name="test"),
+        run_base_dir="test",
+        output_path="test",
+        raw_data_path=RawDataPath(path="/task/path"),
+        version="",
+        report=Report("test"),
+    )
+
+    with ctx_with_raw_data.replace_task_context(task_ctx):
+        assert internal_ctx().has_raw_data is True
+        # Also verify that raw_data returns the task context path
+        assert internal_ctx().raw_data.path == "/task/path"
+
+
+# --- Tasks cannot be nested inside flyte.trace ---
+
+env = flyte.TaskEnvironment(name="test_trace_nesting")
+
+
+@env.task
+async def async_child_task(x: int) -> int:
+    return x + 1
+
+
+@env.task
+def sync_child_task(x: int) -> int:
+    return x + 1
+
+
+def _make_trace_context() -> Context:
+    """Create a context that simulates being inside a @trace within a task."""
+    task_ctx = TaskContext(
+        action=ActionID(name="test"),
+        run_base_dir="test",
+        output_path="test",
+        raw_data_path=RawDataPath(path=""),
+        version="",
+        report=Report("test"),
+    )
+    return Context(data=ContextData(task_context=task_ctx, in_trace=True))
+
+
+def test_task_call_raises_in_trace_context():
+    """Calling a @task via __call__ inside a flyte.trace context must raise."""
+    trace_ctx = _make_trace_context()
+    with trace_ctx:
+        with pytest.raises(TraceDoesNotAllowNestedTasksError):
+            sync_child_task(1)
+
+
+def test_async_task_call_raises_in_trace_context():
+    """Calling an async @task via __call__ inside a flyte.trace context must raise."""
+    trace_ctx = _make_trace_context()
+    with trace_ctx:
+        with pytest.raises(TraceDoesNotAllowNestedTasksError):
+            async_child_task(1)
+
+
+@pytest.mark.asyncio
+async def test_task_aio_raises_in_trace_context():
+    """Calling a @task via .aio() inside a flyte.trace context must raise."""
+    trace_ctx = _make_trace_context()
+    async with trace_ctx:
+        with pytest.raises(TraceDoesNotAllowNestedTasksError):
+            await async_child_task.aio(1)
+
+
+@pytest.mark.asyncio
+async def test_sync_task_aio_raises_in_trace_context():
+    """Calling a sync @task via .aio() inside a flyte.trace context must raise."""
+    trace_ctx = _make_trace_context()
+    async with trace_ctx:
+        with pytest.raises(TraceDoesNotAllowNestedTasksError):
+            await sync_child_task.aio(1)
+
+
+def test_task_forward_bypasses_trace_check():
+    """Calling task.forward() should work even in trace context (it's the escape hatch)."""
+    trace_ctx = _make_trace_context()
+    with trace_ctx:
+        assert sync_child_task.forward(1) == 2

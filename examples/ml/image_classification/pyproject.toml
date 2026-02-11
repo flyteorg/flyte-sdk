@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "Flyte example for fine-tuning and serving image classification models"
 requires-python = ">=3.12"
 dependencies = [
-    "flyte>=2.0.0b40",
+    "flyte>=2.0.0b41",
 ]
 
 [project.optional-dependencies]

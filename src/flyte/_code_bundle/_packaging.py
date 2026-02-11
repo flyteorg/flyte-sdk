@@ -151,7 +151,7 @@ def create_bundle(
                 os.path.join(source, ws_file),
                 recursive=False,
                 arcname=rel_path,
-                filter=lambda x: tar_strip_file_attributes(x),
+                filter=tar_strip_file_attributes,
             )
 
     size_mbs = tar_path.stat().st_size / 1024 / 1024

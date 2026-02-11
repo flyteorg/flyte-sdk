@@ -8,7 +8,7 @@ def _connect():
     """Debug commands for Flyte."""
 
 
-@_connect.command()
+@_connect.command(name="c0")
 @click.option(
     "--port",
     default="8000",

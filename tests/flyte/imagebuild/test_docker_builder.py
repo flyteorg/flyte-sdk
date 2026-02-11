@@ -1,11 +1,14 @@
+import asyncio
+import subprocess
 import tempfile
 from pathlib import Path, PurePath
 from unittest.mock import patch
 
 import pytest
+import pytest_asyncio
 
 from flyte import Secret
-from flyte._image import Image, PipPackages, PoetryProject, Requirements
+from flyte._image import AptPackages, Commands, Image, PipPackages, PoetryProject, Requirements, UVProject
 from flyte._internal.imagebuild.docker_builder import (
     CopyConfig,
     CopyConfigHandler,
@@ -13,7 +16,9 @@ from flyte._internal.imagebuild.docker_builder import (
     PipAndRequirementsHandler,
     PoetryProjectHandler,
     UVProjectHandler,
+    _get_secret_commands,
 )
+from flyte._internal.imagebuild.remote_builder import _get_build_secrets_from_image
 
 
 @pytest.mark.integration
@@ -429,3 +434,227 @@ async def test_uvproject_handler_with_project_install():
             assert (expected_dst_path / "uv.lock").exists(), "uv.lock should be included"
             assert not (expected_dst_path / "memo.txt").exists(), "memo.txt should be excluded"
             assert not (expected_dst_path / ".cache").exists(), ".cache directory should be excluded"
+
+
+@pytest_asyncio.fixture
+async def uv_project_with_editable(tmp_path: Path):
+    """An empty uv project with a single editable dependency"""
+
+    async def _uv(cmd: list[str], cwd: Path):
+        return await asyncio.to_thread(
+            subprocess.run, ["uv", *cmd], cwd=str(cwd), capture_output=True, text=True, check=True
+        )
+
+    project_root = tmp_path / "project"
+    project_root.mkdir(parents=True)
+    # Create a main project
+    await _uv(["init", "--lib"], project_root)
+    # Create an editable dependency
+    dep_folder = project_root / "libs" / "editable_dep"
+    dep_folder.mkdir(parents=True)
+    # Create an editable dependency project and add it to the main project
+    await _uv(["init", "--lib"], dep_folder)
+    await _uv(["add", "--editable", "./libs/editable_dep", "--no-sync"], project_root)
+    # Generate a lock file for the main project
+    await _uv(["lock"], project_root)
+    yield project_root, dep_folder
+
+
+@pytest.mark.asyncio
+async def test_uvproject_handler_includes_editable_mounts_in_dependencies_only_mode(uv_project_with_editable):
+    with tempfile.TemporaryDirectory() as tmp_context:
+        context_path = Path(tmp_context)
+
+        project_root, dep_folder = uv_project_with_editable
+        pyproject_file = project_root / "pyproject.toml"
+        uv_lock_file = project_root / "uv.lock"
+
+        uv_project = UVProject(
+            pyproject=pyproject_file.absolute(),
+            uvlock=uv_lock_file.absolute(),
+            project_install_mode="dependencies_only",
+        )
+
+        initial_dockerfile = "FROM python:3.9\n"
+        result = await UVProjectHandler.handle(
+            layer=uv_project,
+            context_path=context_path,
+            dockerfile=initial_dockerfile,
+            docker_ignore_patterns=[],
+        )
+        expected_dep_in_context = "_flyte_abs_context" + str(dep_folder)
+        expected_dep_in_container = dep_folder.relative_to(project_root)
+        expected_mount = f"--mount=type=bind,src={expected_dep_in_context},target={expected_dep_in_container}"
+        assert expected_mount in result
+
+
+@pytest.mark.asyncio
+async def test_uvproject_handler_without_uvlock():
+    """Test that UVProjectHandler works correctly when uvlock is None."""
+    with tempfile.TemporaryDirectory() as tmp_context, tempfile.TemporaryDirectory() as tmp_user:
+        context_path = Path(tmp_context)
+        user_folder = Path(tmp_user)
+
+        # Create a pyproject.toml but no uv.lock file
+        pyproject_file = user_folder / "pyproject.toml"
+        pyproject_file.write_text("[project]\nname = 'test-project'\nversion='0.1.0'")
+
+        # Create UVProject without uvlock
+        uv_project = UVProject(
+            pyproject=pyproject_file.absolute(),
+            uvlock=None,
+            project_install_mode="dependencies_only",
+        )
+
+        initial_dockerfile = "FROM python:3.9\n"
+        result = await UVProjectHandler.handle(
+            layer=uv_project,
+            context_path=context_path,
+            dockerfile=initial_dockerfile,
+            docker_ignore_patterns=[],
+        )
+
+        # Verify the dockerfile is generated correctly
+        assert result.startswith(initial_dockerfile)
+        assert "RUN --mount=type=cache,sharing=locked,mode=0777,target=/root/.cache/uv,id=uv" in result
+        assert "uv sync" in result
+        # Verify that uvlock mount is NOT present
+        assert "--mount=type=bind,target=uv.lock" not in result
+        # Verify pyproject mount IS present
+        assert "--mount=type=bind,target=pyproject.toml" in result
+
+
+def test_get_secret_commands_deduplicates_secrets(monkeypatch):
+    """Test that _get_secret_commands does not add duplicate secrets."""
+    monkeypatch.setenv("GITHUB_TOKEN", "test-value")
+
+    # Create layers with the same secret used multiple times
+    same_secret = Secret(key="github_token")
+    layers = (
+        AptPackages(packages=("git", "vim"), secret_mounts=(same_secret,)),
+        PipPackages(packages=("requests",), secret_mounts=(same_secret,)),
+        Commands(commands=("echo hello",), secret_mounts=(same_secret,)),
+    )
+
+    commands = _get_secret_commands(layers)
+
+    # Count how many times the secret appears in commands
+    secret_count = sum(1 for cmd in commands if cmd == "--secret")
+    assert secret_count == 1, f"Expected 1 secret, got {secret_count}. Commands: {commands}"
+
+
+def test_get_secret_commands_allows_different_secrets(monkeypatch):
+    """Test that _get_secret_commands allows different secrets."""
+    monkeypatch.setenv("SECRET_A", "value-a")
+    monkeypatch.setenv("SECRET_B", "value-b")
+
+    secret_a = Secret(key="secret_a")
+    secret_b = Secret(key="secret_b")
+    layers = (
+        AptPackages(packages=("git",), secret_mounts=(secret_a,)),
+        PipPackages(packages=("requests",), secret_mounts=(secret_b,)),
+    )
+
+    commands = _get_secret_commands(layers)
+
+    # Should have 2 different secrets
+    secret_count = sum(1 for cmd in commands if cmd == "--secret")
+    assert secret_count == 2, f"Expected 2 secrets, got {secret_count}. Commands: {commands}"
+
+
+def test_get_secret_commands_deduplicates_string_secrets(monkeypatch):
+    """Test that _get_secret_commands deduplicates string-based secrets."""
+    monkeypatch.setenv("MY_TOKEN", "test-value")
+
+    layers = (
+        AptPackages(packages=("git",), secret_mounts=("my_token",)),
+        PipPackages(packages=("requests",), secret_mounts=("my_token",)),
+    )
+
+    commands = _get_secret_commands(layers)
+
+    secret_count = sum(1 for cmd in commands if cmd == "--secret")
+    assert secret_count == 1, f"Expected 1 secret, got {secret_count}. Commands: {commands}"
+
+
+def test_get_secret_commands_deduplicates_with_group(monkeypatch):
+    """Test that _get_secret_commands deduplicates secrets with the same group and key."""
+    monkeypatch.setenv("MYGROUP_MYKEY", "test-value")
+
+    same_secret = Secret(group="mygroup", key="mykey")
+    layers = (
+        AptPackages(packages=("git",), secret_mounts=(same_secret,)),
+        PipPackages(packages=("requests",), secret_mounts=(same_secret,)),
+    )
+
+    commands = _get_secret_commands(layers)
+
+    secret_count = sum(1 for cmd in commands if cmd == "--secret")
+    assert secret_count == 1, f"Expected 1 secret, got {secret_count}. Commands: {commands}"
+
+
+def test_get_build_secrets_from_image_deduplicates_secrets():
+    """Test that _get_build_secrets_from_image does not add duplicate secrets."""
+    same_secret = Secret(key="github_token")
+
+    image = (
+        Image.from_debian_base(registry="localhost:30000", name="test", install_flyte=False)
+        .with_apt_packages("git", "vim", secret_mounts=same_secret)
+        .with_pip_packages("requests", secret_mounts=same_secret)
+        .with_commands(["echo hello"], secret_mounts=same_secret)
+    )
+
+    secrets = _get_build_secrets_from_image(image)
+
+    # Should only have 1 secret, not 3
+    assert len(secrets) == 1, f"Expected 1 secret, got {len(secrets)}. Secrets: {secrets}"
+    assert secrets[0].key == "github_token"
+
+
+def test_get_build_secrets_from_image_allows_different_secrets():
+    """Test that _get_build_secrets_from_image allows different secrets."""
+    secret_a = Secret(key="secret_a")
+    secret_b = Secret(key="secret_b")
+
+    image = (
+        Image.from_debian_base(registry="localhost:30000", name="test", install_flyte=False)
+        .with_apt_packages("git", secret_mounts=secret_a)
+        .with_pip_packages("requests", secret_mounts=secret_b)
+    )
+
+    secrets = _get_build_secrets_from_image(image)
+
+    assert len(secrets) == 2, f"Expected 2 secrets, got {len(secrets)}. Secrets: {secrets}"
+    keys = {s.key for s in secrets}
+    assert keys == {"secret_a", "secret_b"}
+
+
+def test_get_build_secrets_from_image_deduplicates_string_secrets():
+    """Test that _get_build_secrets_from_image deduplicates string-based secrets."""
+    image = (
+        Image.from_debian_base(registry="localhost:30000", name="test", install_flyte=False)
+        .with_apt_packages("git", secret_mounts="my_token")
+        .with_pip_packages("requests", secret_mounts="my_token")
+    )
+
+    secrets = _get_build_secrets_from_image(image)
+
+    assert len(secrets) == 1, f"Expected 1 secret, got {len(secrets)}. Secrets: {secrets}"
+    assert secrets[0].key == "my_token"
+
+
+def test_get_build_secrets_from_image_deduplicates_with_group():
+    """Test that _get_build_secrets_from_image deduplicates secrets with the same group and key."""
+    same_secret = Secret(group="mygroup", key="mykey")
+
+    image = (
+        Image.from_debian_base(registry="localhost:30000", name="test", install_flyte=False)
+        .with_apt_packages("git", secret_mounts=same_secret)
+        .with_pip_packages("requests", secret_mounts=same_secret)
+    )
+
+    secrets = _get_build_secrets_from_image(image)
+
+    assert len(secrets) == 1, f"Expected 1 secret, got {len(secrets)}. Secrets: {secrets}"
+    assert secrets[0].key == "mykey"
+    assert secrets[0].group == "mygroup"

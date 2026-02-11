@@ -24,7 +24,7 @@ from typing import (
 )
 
 from flyte._pod import PodTemplate
-from flyte.errors import RuntimeSystemError, RuntimeUserError
+from flyte.errors import RuntimeSystemError, RuntimeUserError, TraceDoesNotAllowNestedTasksError
 
 from ._cache import Cache, CacheRequest
 from ._context import internal_ctx
@@ -97,7 +97,7 @@ class TaskTemplate(Generic[P, R, F]):
     short_name: str = ""
     task_type: str = "python"
     task_type_version: int = 0
-    image: Union[str, Image, Literal["auto"]] = "auto"
+    image: Union[str, Image, Literal["auto"]] | None = "auto"
     resources: Optional[Resources] = None
     cache: CacheRequest = "disable"
     interruptible: bool = False
@@ -264,6 +264,12 @@ class TaskTemplate(Generic[P, R, F]):
         """
         ctx = internal_ctx()
         if ctx.is_task_context():
+            if ctx.is_in_trace():
+                raise TraceDoesNotAllowNestedTasksError(
+                    f"Task {self.name} is invoked from inside a `flyte.trace`. "
+                    "You can continue using the task function, as a regular"
+                    "python function using `task`.forward(...) facade."
+                )
             from ._internal.controllers import get_controller
 
             # If we are in a task context, that implies we are executing a Run.
@@ -307,6 +313,12 @@ class TaskTemplate(Generic[P, R, F]):
         try:
             ctx = internal_ctx()
             if ctx.is_task_context():
+                if ctx.is_in_trace():
+                    raise TraceDoesNotAllowNestedTasksError(
+                        f"Task {self.name} is invoked from inside a `flyte.trace`. "
+                        "You can continue using the task function, as a regular"
+                        "python function using `task`.forward(...) facade."
+                    )
                 # If we are in a task context, that implies we are executing a Run.
                 # In this scenario, we should submit the task to the controller.
                 # We will also check if we are not initialized, It is not expected to be not initialized
@@ -484,6 +496,7 @@ class AsyncFunctionTaskTemplate(TaskTemplate[P, R, F]):
         This is the execute method that will be called when the task is invoked. It will call the actual function.
         # TODO We may need to keep this as the bare func execute, and need a pre and post execute some other func.
         """
+        from flyte._utils.asyncify import run_sync_with_loop
 
         ctx = internal_ctx()
         assert ctx.data.task_context is not None, "Function should have already returned if not in a task context"
@@ -493,7 +506,8 @@ class AsyncFunctionTaskTemplate(TaskTemplate[P, R, F]):
             if iscoroutinefunction(self.func):
                 v = await self.func(*args, **kwargs)
             else:
-                v = self.func(*args, **kwargs)
+                v = await run_sync_with_loop(self.func, *args, **kwargs)
+
             await self.post(v)
         return v
 

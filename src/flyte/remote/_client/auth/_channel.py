@@ -159,7 +159,7 @@ async def create_channel(
         DefaultMetadataUnaryUnaryInterceptor,
     )
 
-    # Add all types of default metadata interceptors
+    # Add all types of default metadata interceptors (includes x-request-id)
     interceptors: typing.List[grpc.aio.ClientInterceptor] = [
         DefaultMetadataUnaryUnaryInterceptor(),
         DefaultMetadataUnaryStreamInterceptor(),

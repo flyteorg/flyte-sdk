@@ -22,7 +22,7 @@ from flyte._internal.runtime.resources_serde import get_proto_extended_resources
 from flyte._internal.runtime.task_serde import get_security_context, lookup_image_in_cache
 from flyte._logging import logger
 from flyte.app import AppEnvironment, Parameter, Scaling
-from flyte.app._parameter import _DelayedValue
+from flyte.app._parameter import AppEndpoint, _DelayedValue
 from flyte.models import SerializationContext
 from flyte.syncify import syncify
 
@@ -48,14 +48,14 @@ def get_proto_container(
     resources = get_proto_resources(app_env.resources)
 
     if app_env.image == "auto":
-        img = Image.from_debian_base()
+        img: Image | None = Image.from_debian_base()
     elif isinstance(app_env.image, str):
         img = Image.from_base(app_env.image)
     else:
         img = app_env.image
 
     env_name = app_env.name
-    img_uri = lookup_image_in_cache(serialization_context, env_name, img)
+    img_uri = lookup_image_in_cache(serialization_context, env_name, img) if img else None
 
     p = app_env.get_port()
     container_ports = [tasks_pb2.ContainerPort(container_port=p.port, name=p.name)]
@@ -227,7 +227,7 @@ async def _materialize_parameters_with_delayed_values(parameters: List[Parameter
         if isinstance(param.value, _DelayedValue):
             logger.info(f"Materializing {param.name} with delayed values of type {param.value.type}")
             value = await param.value.get()
-            assert isinstance(value, (str, flyte.io.File, flyte.io.Dir)), (
+            assert isinstance(value, (str, flyte.io.File, flyte.io.Dir, AppEndpoint)), (
                 f"Materialized value must be a string, file or directory, found {type(value)}"
             )
             _parameters.append(replace(param, value=await param.value.get()))
@@ -254,6 +254,8 @@ async def translate_parameters(parameters: List[Parameter]) -> app_definition_pb
             parameters_list.append(app_definition_pb2.Input(name=param.name, string_value=str(param.value.path)))
         elif isinstance(param.value, flyte.io.Dir):
             parameters_list.append(app_definition_pb2.Input(name=param.name, string_value=str(param.value.path)))
+        elif isinstance(param.value, AppEndpoint):
+            parameters_list.append(app_definition_pb2.Input(name=param.name, string_value=param.value.app_name))
         else:
             raise ValueError(f"Unsupported parameter value type: {type(param.value)}")
     return app_definition_pb2.InputList(items=parameters_list)

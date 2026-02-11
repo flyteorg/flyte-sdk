@@ -156,6 +156,7 @@ def ls_relative_files(relative_paths: list[str], source_path: pathlib.Path) -> t
             else:
                 raise ValueError(f"File {path} is not a valid file, directory, or glob pattern")
 
+    all_files.sort()
     for p in all_files:
         _filehash_update(p, hasher)
         _pathhash_update(p, hasher)
@@ -188,6 +189,11 @@ def list_all_files(source_path: pathlib.Path, deref_symlinks, ignore_group: Opti
     visited_inodes = set()
     for root, dirnames, files in os.walk(source_path, topdown=True, followlinks=deref_symlinks):
         dirnames[:] = [d for d in dirnames if d not in EXCLUDE_DIRS]
+
+        # Filter out ignored directories to avoid walking into them
+        if ignore_group:
+            dirnames[:] = [d for d in dirnames if not ignore_group.is_ignored((pathlib.Path(root) / d).absolute())]
+
         if deref_symlinks:
             inode = os.stat(root).st_ino
             if inode in visited_inodes:
