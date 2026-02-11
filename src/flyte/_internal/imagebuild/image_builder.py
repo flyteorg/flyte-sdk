@@ -142,10 +142,9 @@ class ImageBuildEngine:
     @staticmethod
     @alru_cache
     async def image_exists(image: Image) -> Optional[str]:
-        if image.base_image is not None and not image._layers:
-            logger.debug(f"Image {image} has a base image: {image.base_image} and no layers. Skip existence check.")
+        if image.name is None:
+            logger.debug(f"Image {image} has no name. Skip existence check.")
             return image.uri
-        assert image.name is not None, f"Image name is not set for {image}"
 
         tag = image._final_tag
 
