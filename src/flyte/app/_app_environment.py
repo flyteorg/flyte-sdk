@@ -286,11 +286,11 @@ class AppEnvironment(Environment):
         # Check if this app is being served locally first
         import flyte
 
-        from ._context import ctx
+        from ._context import ctx as app_ctx
 
-        ctx = flyte.ctx() or ctx()
+        ctx = flyte.ctx() or app_ctx()
         if ctx.mode == "local":
-            return f"http://localhost:{self.port.port}"
+            return f"http://localhost:{self.get_port().port}"
 
         endpoint_pattern = os.getenv(INTERNAL_APP_ENDPOINT_PATTERN_ENV_VAR)
         if endpoint_pattern is not None:
