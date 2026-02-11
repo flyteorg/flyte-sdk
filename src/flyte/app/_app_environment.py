@@ -5,7 +5,7 @@ import os
 import re
 import shlex
 from dataclasses import dataclass, field, replace
-from typing import TYPE_CHECKING, Any, Callable, List, Literal, Optional, Union
+from typing import Any, Callable, List, Literal, Optional, Union
 
 import rich.repr
 
@@ -13,10 +13,6 @@ from flyte import Environment, Image, Resources, SecretRequest
 from flyte.app._parameter import Parameter
 from flyte.app._types import Domain, Link, Port, Scaling
 from flyte.models import SerializationContext
-
-if TYPE_CHECKING:
-    pass
-
 
 APP_NAME_RE = re.compile(r"[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*")
 INVALID_APP_PORTS = [8012, 8022, 8112, 9090, 9091]
