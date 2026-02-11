@@ -450,3 +450,4 @@ async def test_combined_model_roundtrip_via_guessed_type():
     assert dataclasses.is_dataclass(pv)
     assert len(pv.files) == 1
     assert len(pv.dir_map) == 1
+    assert pv.df.uri == "s3://bucket/data.parquet"
