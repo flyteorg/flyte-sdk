@@ -973,7 +973,6 @@ class EnumTransformer(TypeTransformer[enum.Enum]):
         values = [v.value for v in t]  # type: ignore
         if not isinstance(values[0], str):
             raise TypeTransformerFailedError("Only EnumTypes with name of value are supported")
-        # Check if this is a LiteralEnum (Python 3.10+ compatible)
         if hasattr(t, "__name__") and t.__name__ == LITERAL_ENUM:
             # Use enum values directly when use Literal. e.g., Literal["low", "medium", "high"]
             return LiteralType(enum_type=types_pb2.EnumType(values=values))

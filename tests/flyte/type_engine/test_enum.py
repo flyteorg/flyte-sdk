@@ -57,5 +57,3 @@ async def test_literal_string_serialization():
         # For LiteralEnum types, to_python_value returns the string value directly
         pv = await TypeEngine.to_python_value(lv, Intensity)
         assert pv == name
-
-
