@@ -296,8 +296,8 @@ def config(
     if local_persistence:
         local["persistence"] = True
 
-    if not admin and not task:
-        raise click.BadParameter("At least one of --endpoint or --org must be provided.")
+    if not admin and not task and not local:
+        raise click.BadParameter("At least one of --endpoint, --org, or --local-persistence must be provided.")
 
     with open(output_path, "w") as f:
         d: Dict[str, Any] = {}
