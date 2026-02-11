@@ -569,10 +569,6 @@ class DockerImageBuilder(ImageBuilder):
             uri = await self._build_from_dockerfile(image, push=True, wait=wait)
             return ImageBuild(uri=uri, remote_run=None)
 
-        if len(image._layers) == 0:
-            logger.warning("No layers to build, returning the image URI as is.")
-            return ImageBuild(uri=image.uri, remote_run=None)
-
         uri = await self._build_image(
             image,
             push=True,
