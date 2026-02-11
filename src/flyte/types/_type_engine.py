@@ -2208,6 +2208,21 @@ def _get_element_type(
         # Element type of Optional[int] is [integer, None]
         return typing.Optional[_get_element_type({"type": element_type[0]}, schema)]  # type: ignore
 
+    # Handle nested array (e.g., List[List[int]])
+    if element_type == "array":
+        inner_items = element_property.get("items", {})
+        return typing.List[_get_element_type(inner_items, schema)]  # type: ignore
+
+    # Handle nested object / dict (e.g., List[Dict[str, int]])
+    if element_type == "object":
+        additional = element_property.get("additionalProperties")
+        if additional:
+            return typing.Dict[str, _get_element_type(additional, schema)]  # type: ignore
+        # Nested dataclass-like object with a title
+        if element_property.get("title"):
+            return convert_mashumaro_json_schema_to_python_class(element_property, element_property["title"])
+        return dict
+
     if element_type == "string":
         return str
     elif element_type == "integer":

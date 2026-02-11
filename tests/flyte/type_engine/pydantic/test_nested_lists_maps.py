@@ -38,6 +38,18 @@ class Profile(BaseModel):
     address: Optional[Tag] = None
 
 
+class NestedLists(BaseModel):
+    matrix: List[List[int]]
+
+
+class NestedDicts(BaseModel):
+    lookup: List[Dict[str, int]]
+
+
+class OptionalInts(BaseModel):
+    values: List[Optional[int]]
+
+
 # -- Dataclass models --
 
 
@@ -261,3 +273,69 @@ async def test_pydantic_empty_dict_of_nested():
     pv = await TypeEngine.to_python_value(lv, Inventory)
     assert pv.items == []
     assert pv.metadata == {}
+
+
+# -- Tests: recursive/nested containers --
+
+
+@pytest.mark.asyncio
+async def test_pydantic_list_of_lists():
+    """List[List[int]] should roundtrip correctly through the type engine."""
+    input_val = NestedLists(matrix=[[1, 2], [3, 4, 5]])
+    lit = TypeEngine.to_literal_type(NestedLists)
+    lv = await TypeEngine.to_literal(input_val, python_type=NestedLists, expected=lit)
+
+    assert lit
+    assert lv
+
+    guessed = TypeEngine.guess_python_type(lit)
+    assert guessed
+
+    v = guessed(matrix=[[1, 2], [3, 4, 5]])
+    new_lv = await TypeEngine.to_literal(v, guessed, lit)
+    assert new_lv == lv
+
+    pv = await TypeEngine.to_python_value(new_lv, NestedLists)
+    assert pv == input_val
+
+
+@pytest.mark.asyncio
+async def test_pydantic_list_of_dicts():
+    """List[Dict[str, int]] should roundtrip correctly through the type engine."""
+    input_val = NestedDicts(lookup=[{"a": 1, "b": 2}, {"c": 3}])
+    lit = TypeEngine.to_literal_type(NestedDicts)
+    lv = await TypeEngine.to_literal(input_val, python_type=NestedDicts, expected=lit)
+
+    assert lit
+    assert lv
+
+    guessed = TypeEngine.guess_python_type(lit)
+    assert guessed
+
+    v = guessed(lookup=[{"a": 1, "b": 2}, {"c": 3}])
+    new_lv = await TypeEngine.to_literal(v, guessed, lit)
+    assert new_lv == lv
+
+    pv = await TypeEngine.to_python_value(new_lv, NestedDicts)
+    assert pv == input_val
+
+
+@pytest.mark.asyncio
+async def test_pydantic_list_of_optional_int():
+    """List[Optional[int]] should roundtrip correctly through the type engine."""
+    input_val = OptionalInts(values=[1, None, 3, None])
+    lit = TypeEngine.to_literal_type(OptionalInts)
+    lv = await TypeEngine.to_literal(input_val, python_type=OptionalInts, expected=lit)
+
+    assert lit
+    assert lv
+
+    guessed = TypeEngine.guess_python_type(lit)
+    assert guessed
+
+    v = guessed(values=[1, None, 3, None])
+    new_lv = await TypeEngine.to_literal(v, guessed, lit)
+    assert new_lv == lv
+
+    pv = await TypeEngine.to_python_value(new_lv, OptionalInts)
+    assert pv == input_val
