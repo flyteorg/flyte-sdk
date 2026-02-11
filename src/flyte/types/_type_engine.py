@@ -45,8 +45,8 @@ from flyte._utils.helpers import load_proto_from_file
 from flyte.errors import RestrictedTypeError
 from flyte.models import NativeInterface
 
-from ._utils import literal_types_match
 from .._interface import LITERAL_ENUM
+from ._utils import literal_types_match
 
 T = typing.TypeVar("T")
 
@@ -973,7 +973,8 @@ class EnumTransformer(TypeTransformer[enum.Enum]):
         values = [v.value for v in t]  # type: ignore
         if not isinstance(values[0], str):
             raise TypeTransformerFailedError("Only EnumTypes with name of value are supported")
-        if isinstance(t, enum.EnumType) and t.__name__ == LITERAL_ENUM:
+        # Check if this is a LiteralEnum (Python 3.10+ compatible)
+        if hasattr(t, "__name__") and t.__name__ == LITERAL_ENUM:
             # Use enum values directly when use Literal. e.g., Literal["low", "medium", "high"]
             return LiteralType(enum_type=types_pb2.EnumType(values=values))
         names = [v.name for v in t]  # type: ignore
@@ -985,8 +986,7 @@ class EnumTransformer(TypeTransformer[enum.Enum]):
             if hasattr(python_val, "name"):
                 if python_val.name not in expected.enum_type.values:
                     raise TypeTransformerFailedError(
-                        f"Value {python_val.name} is not valid value, expected -"
-                        f" {expected.enum_type.values}"
+                        f"Value {python_val.name} is not valid value, expected - {expected.enum_type.values}"
                     )
                 return Literal(scalar=Scalar(primitive=Primitive(string_value=python_val.name)))  # type: ignore
             elif python_val not in expected.enum_type.values:
