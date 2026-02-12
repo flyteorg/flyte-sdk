@@ -16,10 +16,7 @@ from flyte.syncify import syncify
 
 logger = logging.getLogger(__name__)
 
-sandbox_environment = flyte.TaskEnvironment(
-    name="sandbox_runtime",
-    image=flyte.Image.from_debian_base(install_flyte=False),
-)
+sandbox_environment = flyte.TaskEnvironment(name="sandbox_runtime")
 
 
 @dataclass
