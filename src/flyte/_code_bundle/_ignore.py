@@ -59,8 +59,7 @@ class GitIgnore(Ignore):
         return set()
 
     def _list_ignored_files(self) -> set[str]:
-        exclude_args = []
-        return self._git_wrapper(exclude_args)
+        return self._git_wrapper([])
 
     def _list_ignored_dirs(self) -> set[str]:
         return self._git_wrapper(["--directory"])
