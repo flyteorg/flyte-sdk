@@ -2,16 +2,32 @@ from __future__ import annotations
 
 import hashlib
 import inspect
-from typing import Any, Iterable, Optional, Protocol, Union, runtime_checkable
+from typing import Any, Callable, Iterable, Optional, Protocol, Union, runtime_checkable
 
 
 @runtime_checkable
 class HashMethod(Protocol):
-    def update(self, data: memoryview, /) -> None: ...
+    def update(self, data: Any, /) -> None: ...
     def result(self) -> str: ...
 
     # Optional convenience; not required by the writers.
     def reset(self) -> None: ...
+
+
+class HashFunction(HashMethod):
+    def __init__(self, fn: Callable[[Any], str]):
+        self._fn = fn
+        self._value = None
+
+    def update(self, data: Any) -> str:
+        self._value = self._fn(data)
+
+    def result(self) -> str:
+        return self._value
+
+    @classmethod
+    def from_function(cls, fn: Callable[[Any], str]) -> HashFunction:
+        return cls(fn)
 
 
 class PrecomputedValue(HashMethod):

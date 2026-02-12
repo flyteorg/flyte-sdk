@@ -14,6 +14,7 @@ from flyte.io._dataframe.dataframe import (
     DataFrameTransformerEngine,
     extract_cols_and_format,
 )
+from flyte.io._hashing_io import HashFunction, HashMethod
 from flyte.types import TypeEngine
 
 lazy_import_dataframe_handler()
@@ -50,17 +51,47 @@ def test_types_pandas():
 
 def test_annotate_extraction():
     xyz = typing.Annotated[pd.DataFrame, "myformat"]
-    a, b, c, d = extract_cols_and_format(xyz)
+    a, b, c, d, e = extract_cols_and_format(xyz)
     assert a is pd.DataFrame
     assert b is None
     assert c == "myformat"
     assert d is None
+    assert e is None
 
-    a, b, c, d = extract_cols_and_format(pd.DataFrame)
+    a, b, c, d, e = extract_cols_and_format(pd.DataFrame)
     assert a is pd.DataFrame
     assert b is None
     assert c == ""
     assert d is None
+    assert e is None
+
+
+def test_annotate_extraction_with_hash_function():
+    """Test that HashFunction can be extracted from type annotations."""
+
+    def hash_pandas_df(df: pd.DataFrame) -> str:
+        return str(pd.util.hash_pandas_object(df).sum())
+
+    hash_method = HashFunction.from_function(hash_pandas_df)
+    xyz = typing.Annotated[pd.DataFrame, hash_method]
+    a, b, c, d, e = extract_cols_and_format(xyz)
+    assert a is pd.DataFrame
+    assert b is None
+    assert c == ""
+    assert d is None
+    assert isinstance(e, HashMethod)
+    assert e is hash_method
+
+    # Test with multiple annotations including hash_method
+    my_cols = OrderedDict(x=int, y=str)
+    xyz = typing.Annotated[pd.DataFrame, my_cols, "parquet", hash_method]
+    a, b, c, d, e = extract_cols_and_format(xyz)
+    assert a is pd.DataFrame
+    assert b == my_cols
+    assert c == "parquet"
+    assert d is None
+    assert isinstance(e, HashMethod)
+    assert e is hash_method
 
 
 def test_types_annotated():

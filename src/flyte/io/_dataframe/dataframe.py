@@ -21,6 +21,7 @@ import flyte.storage as storage
 from flyte._logging import logger
 from flyte._utils import lazy_module
 from flyte._utils.asyn import loop_manager
+from flyte.io._hashing_io import HashMethod
 from flyte.storage._storage import get_credentials_error
 from flyte.types import TypeEngine, TypeTransformer, TypeTransformerFailedError
 from flyte.types._renderer import Renderable
@@ -68,6 +69,7 @@ class DataFrame(BaseModel, SerializableType):
 
     uri: typing.Optional[str] = Field(default=None)
     format: typing.Optional[str] = Field(default=GENERIC_FORMAT)
+    hash: typing.Optional[str] = Field(default=None)
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
@@ -77,6 +79,7 @@ class DataFrame(BaseModel, SerializableType):
     _literal_sd: Optional[literals_pb2.StructuredDataset] = PrivateAttr(default=None)
     _dataframe_type: Optional[Type[Any]] = PrivateAttr(default=None)
     _already_uploaded: bool = PrivateAttr(default=False)
+    _hash_method: Optional[HashMethod] = PrivateAttr(default=None)
 
     # lazy uploader is used to upload local file to the remote storage when in remote mode
     _lazy_uploader: Callable[[], Coroutine[Any, Any, Any]] | None = PrivateAttr(default=None)
@@ -224,6 +227,7 @@ class DataFrame(BaseModel, SerializableType):
         df: typing.Any,
         columns: typing.OrderedDict[str, type[typing.Any]] | None = None,
         remote_destination: str | None = None,
+        hash_method: HashMethod | str | None = None,
     ) -> DataFrame:
         """
         This method is useful to upload the dataframe eagerly and get the actual DataFrame.
@@ -235,18 +239,47 @@ class DataFrame(BaseModel, SerializableType):
 
         At runtime it is recommended to use `DataFrame.wrap_df` as it is simpler.
 
+        Example (With hash_method for cache key computation):
+
+        ```python
+        import pandas as pd
+        from flyte.io import DataFrame, HashFunction
+
+        def hash_pandas_dataframe(df: pd.DataFrame) -> str:
+            return str(pd.util.hash_pandas_object(df).sum())
+
+        @env.task
+        async def foo() -> DataFrame:
+            df = pd.DataFrame({"a": [1, 2, 3], "b": [4, 5, 6]})
+            hash_method = HashFunction.from_function(hash_pandas_dataframe)
+            return await DataFrame.from_local(df, hash_method=hash_method)
+        ```
+
         :param df: The dataframe object to be uploaded and converted.
         :param columns: Optionally, any column information to be stored as part of the metadata
         :param remote_destination: Optional destination URI to upload to, if not specified, this is automatically
             determined based on the current context. For example, locally it will use flyte:// automatic data management
             system to upload data (this is slow and useful for smaller datasets). On remote it will use the storage
             configuration and the raw data directory setting in the task context.
+        :param hash_method: Optional HashMethod or string to use for cache key computation. If a string is provided,
+            it will be used as a precomputed cache key. If a HashMethod is provided, it will compute the hash
+            from the dataframe. If not specified, the cache key will be based on dataframe attributes.
 
         Returns: DataFrame object.
         """
         from flyte._context import internal_ctx
 
         sdt = flyte_dataset_transformer.get_structured_dataset_type(column_map=columns)
+
+        # Process hash_method: if it's a string, use it directly as the hash value
+        # If it's a HashMethod, compute the hash from the dataframe
+        hash_value: str | None = hash_method if isinstance(hash_method, str) else None
+        hash_method_obj: HashMethod | None = hash_method if isinstance(hash_method, HashMethod) else None
+
+        if hash_method_obj is not None:
+            # Compute the hash using the provided hash method
+            hash_method_obj.update(df)
+            hash_value = hash_method_obj.result()
 
         ctx = internal_ctx()
         if not ctx.has_raw_data and remote_destination is None:
@@ -267,10 +300,14 @@ class DataFrame(BaseModel, SerializableType):
             fdf._metadata = literals_pb2.StructuredDatasetMetadata(structured_dataset_type=sdt)
             fdf._lazy_uploader = _lazy_uploader
             fdf._raw_df = df
+            fdf.hash = hash_value
+            fdf._hash_method = hash_method_obj
             return fdf
 
         fdf = cls.wrap_df(df, uri=remote_destination)
         fdf._metadata = literals_pb2.StructuredDatasetMetadata(structured_dataset_type=sdt)
+        fdf.hash = hash_value
+        fdf._hash_method = hash_method_obj
         return fdf
 
     @classmethod
@@ -279,6 +316,7 @@ class DataFrame(BaseModel, SerializableType):
         df: typing.Any,
         columns: typing.OrderedDict[str, type[typing.Any]] | None = None,
         remote_destination: str | None = None,
+        hash_method: HashMethod | str | None = None,
     ) -> DataFrame:
         """
         This method is useful to upload the dataframe eagerly and get the actual DataFrame.
@@ -290,18 +328,48 @@ class DataFrame(BaseModel, SerializableType):
 
         At runtime it is recommended to use `DataFrame.wrap_df` as it is simpler.
 
+        Example (With hash_method for cache key computation):
+
+        ```python
+        import pandas as pd
+        from flyte.io import DataFrame, HashFunction
+
+        def hash_pandas_dataframe(df: pd.DataFrame) -> str:
+            return str(pd.util.hash_pandas_object(df).sum())
+
+        @env.task
+        def foo() -> DataFrame:
+            df = pd.DataFrame({"a": [1, 2, 3], "b": [4, 5, 6]})
+            hash_method = HashFunction.from_function(hash_pandas_dataframe)
+            return DataFrame.from_local_sync(df, hash_method=hash_method)
+        ```
+
         :param df: The dataframe object to be uploaded and converted.
         :param columns: Optionally, any column information to be stored as part of the metadata
         :param remote_destination: Optional destination URI to upload to, if not specified, this is automatically
             determined based on the current context. For example, locally it will use flyte:// automatic data management
             system to upload data (this is slow and useful for smaller datasets). On remote it will use the storage
             configuration and the raw data directory setting in the task context.
+        :param hash_method: Optional HashMethod or string to use for cache key computation. If a string is provided,
+            it will be used as a precomputed cache key. If a HashMethod is provided, it will compute the hash
+            from the dataframe. If not specified, the cache key will be based on dataframe attributes.
 
         Returns: DataFrame object.
         """
         from flyte._context import internal_ctx
 
         sdt = flyte_dataset_transformer.get_structured_dataset_type(column_map=columns)
+
+        # Process hash_method: if it's a string, use it directly as the hash value
+        # If it's a HashMethod, compute the hash from the dataframe
+        hash_value: str | None = hash_method if isinstance(hash_method, str) else None
+        hash_method_obj: HashMethod | None = hash_method if isinstance(hash_method, HashMethod) else None
+
+        if hash_method_obj is not None:
+            # Compute the hash using the provided hash method
+            hash_method_obj.update(df)
+            hash_value = hash_method_obj.result()
+
         ctx = internal_ctx()
         if not ctx.has_raw_data and remote_destination is None:
 
@@ -320,10 +388,14 @@ class DataFrame(BaseModel, SerializableType):
             fdf = cls.wrap_df(df)
             fdf._metadata = literals_pb2.StructuredDatasetMetadata(structured_dataset_type=sdt)
             fdf._lazy_uploader = _lazy_uploader
+            fdf.hash = hash_value
+            fdf._hash_method = hash_method_obj
             return fdf
 
         fdf = cls.wrap_df(df, uri=remote_destination)
         fdf._metadata = literals_pb2.StructuredDatasetMetadata(structured_dataset_type=sdt)
+        fdf.hash = hash_value
+        fdf._hash_method = hash_method_obj
         return fdf
 
     @classmethod
@@ -484,13 +556,16 @@ def flatten_dict(sub_dict: dict, parent_key: str = "") -> typing.Dict:
 
 def extract_cols_and_format(
     t: typing.Any,
-) -> typing.Tuple[Type[T], Optional[typing.OrderedDict[str, Type]], Optional[str], Optional["pa.lib.Schema"]]:
+) -> typing.Tuple[
+    Type[T], Optional[typing.OrderedDict[str, Type]], Optional[str], Optional["pa.lib.Schema"], Optional["HashMethod"]
+]:
     """
     Helper function, just used to iterate through Annotations and extract out the following information:
       - base type, if not Annotated, it will just be the type that was passed in.
       - column information, as a collections.OrderedDict,
       - the storage format, as a ``DataFrameFormat`` (str),
       - pa.lib.Schema
+      - HashMethod for cache key computation
 
     If more than one of any type of thing is found, an error will be raised.
     If no instances of a given type are found, then None will be returned.
@@ -502,15 +577,22 @@ def extract_cols_and_format(
         the original type,
         optional OrderedDict of columns,
         optional str for the format,
-        optional pyarrow Schema
+        optional pyarrow Schema,
+        optional HashMethod for cache key computation
     """
     fmt = ""
     ordered_dict_cols = None
     pa_schema = None
+    hash_method = None
     if get_origin(t) is Annotated:
         base_type, *annotate_args = get_args(t)
         for aa in annotate_args:
-            if hasattr(aa, "__annotations__"):
+            # Check for HashMethod first since HashFunction has __annotations__ attribute
+            if isinstance(aa, HashMethod):
+                if hash_method is not None:
+                    raise ValueError(f"A hash method was already found {hash_method}, cannot use {aa}")
+                hash_method = aa
+            elif hasattr(aa, "__annotations__"):
                 # handle dataclass argument
                 d = collections.OrderedDict()
                 d.update(aa.__annotations__)
@@ -531,11 +613,11 @@ def extract_cols_and_format(
                 if pa_schema is not None:
                     raise ValueError(f"Arrow schema was already found {pa_schema}, cannot use {aa}")
                 pa_schema = aa
-        return base_type, ordered_dict_cols, fmt, pa_schema
+        return base_type, ordered_dict_cols, fmt, pa_schema, hash_method
 
     # We return None as the format instead of parquet or something because the transformer engine may find
     # a better default for the given dataframe type.
-    return t, ordered_dict_cols, fmt, pa_schema
+    return t, ordered_dict_cols, fmt, pa_schema, hash_method
 
 
 class DataFrameEncoder(ABC, Generic[T]):
@@ -902,7 +984,8 @@ class DataFrameTransformerEngine(TypeTransformer[DataFrame]):
         ctx = internal_ctx()
 
         # Make a copy in case we need to hand off to encoders, since we can't be sure of mutations.
-        python_type, *_attrs = extract_cols_and_format(python_type)
+        # Also extract hash_method from type annotations for raw dataframe types
+        python_type, _cols, _fmt, _pa_schema, annotation_hash_method = extract_cols_and_format(python_type)
         sdt = types_pb2.StructuredDatasetType(format=self.DEFAULT_FORMATS.get(python_type, GENERIC_FORMAT))
 
         if issubclass(python_type, DataFrame) and not isinstance(python_val, DataFrame):
@@ -920,14 +1003,23 @@ class DataFrameTransformerEngine(TypeTransformer[DataFrame]):
                 external_schema_bytes=expected.structured_dataset_type.external_schema_bytes,
             )
 
+        # Track the hash value to include in the literal
+        hash_value: str | None = None
+
         if isinstance(python_val, DataFrame) and python_val.lazy_uploader:
             # Handle lazy uploader if present. This is only used when the user needs to upload a local dataframe to
             # remote storage when running tasks in remote mode.
+            # Preserve the hash before the lazy uploader potentially replaces python_val
+            hash_value = python_val.hash
             python_val = await python_val.lazy_uploader()
 
         # If the type signature has the DataFrame class, it will, or at least should, also be a
         # DataFrame instance.
         if isinstance(python_val, DataFrame):
+            # Get hash from the DataFrame if available
+            if hash_value is None:
+                hash_value = python_val.hash
+
             # There are three cases that we need to take care of here.
 
             # 1. A task returns a python DataFrame with an uri.
@@ -982,7 +1074,7 @@ class DataFrameTransformerEngine(TypeTransformer[DataFrame]):
                     uri=uri,
                     metadata=literals_pb2.StructuredDatasetMetadata(structured_dataset_type=sdt),
                 )
-                return literals_pb2.Literal(scalar=literals_pb2.Scalar(structured_dataset=sd_model))
+                return literals_pb2.Literal(scalar=literals_pb2.Scalar(structured_dataset=sd_model), hash=hash_value)
 
             # 2. A task returns a DataFrame that was just a passthrough input. If this happens
             # then return the original literals.DataFrame without invoking any encoder
@@ -992,17 +1084,24 @@ class DataFrameTransformerEngine(TypeTransformer[DataFrame]):
             #       return dataset
             if python_val._literal_sd is not None:
                 if python_val._already_uploaded:
-                    return literals_pb2.Literal(scalar=literals_pb2.Scalar(structured_dataset=python_val._literal_sd))
+                    return literals_pb2.Literal(
+                        scalar=literals_pb2.Scalar(structured_dataset=python_val._literal_sd), hash=hash_value
+                    )
                 if python_val.val is not None:
                     raise ValueError(
                         f"Shouldn't have specified both literal {python_val._literal_sd} and dataframe {python_val.val}"
                     )
-                return literals_pb2.Literal(scalar=literals_pb2.Scalar(structured_dataset=python_val._literal_sd))
+                return literals_pb2.Literal(
+                    scalar=literals_pb2.Scalar(structured_dataset=python_val._literal_sd), hash=hash_value
+                )
 
             # 3. This is the third and probably most common case. The python DataFrame object wraps a dataframe
             # that we will need to invoke an encoder for. Figure out which encoder to call and invoke it.
             if not ctx.has_raw_data:
-                fdf = await DataFrame.from_local(python_val.val)
+                fdf = await DataFrame.from_local(python_val.val, hash_method=python_val._hash_method)
+                # Preserve the hash from the original DataFrame
+                if fdf.hash is None and hash_value is not None:
+                    fdf.hash = hash_value
                 return await self.to_literal(fdf, python_type, expected)
 
             df_type = type(python_val.val)
@@ -1016,13 +1115,23 @@ class DataFrameTransformerEngine(TypeTransformer[DataFrame]):
                 sdt,
             )
 
-        # Otherwise assume it's a dataframe instance. Wrap it with some defaults
+        # Otherwise assume it's a dataframe instance (raw dataframe type like pd.DataFrame).
+        # Check if there's a hash_method in the type annotation and compute the hash
+        if annotation_hash_method is not None:
+            annotation_hash_method.update(python_val)
+            hash_value = annotation_hash_method.result()
+
         if not ctx.has_raw_data:
-            fdf = await DataFrame.from_local(python_val)
+            fdf = await DataFrame.from_local(python_val, hash_method=annotation_hash_method)
+            # Preserve the computed hash
+            if fdf.hash is None and hash_value is not None:
+                fdf.hash = hash_value
             return await self.to_literal(fdf, python_type, expected)
 
         fmt = self.DEFAULT_FORMATS.get(python_type, "")
         fdf = DataFrame.from_df(val=python_val)
+        fdf.hash = hash_value
+        fdf._hash_method = annotation_hash_method
         protocol = self._protocol_from_type_or_prefix(python_type)
         meta = literals_pb2.StructuredDatasetMetadata(
             structured_dataset_type=expected.structured_dataset_type if expected else None
@@ -1082,7 +1191,10 @@ class DataFrameTransformerEngine(TypeTransformer[DataFrame]):
         # Note that this will always be the same as the incoming format except for when the fallback handler
         # with a format of "" is used.
         sd_model.metadata.structured_dataset_type.format = handler.supported_format
-        lit = literals_pb2.Literal(scalar=literals_pb2.Scalar(structured_dataset=sd_model))
+
+        # Include the hash value in the literal if available
+        hash_value = df.hash
+        lit = literals_pb2.Literal(scalar=literals_pb2.Scalar(structured_dataset=sd_model), hash=hash_value)
 
         # Because the handler.encode may have uploaded something, and because the sd may end up living inside a
         # dataclass, we need to modify any uploaded flyte:// urls here. Needed here even though the Type engine
@@ -1129,7 +1241,12 @@ class DataFrameTransformerEngine(TypeTransformer[DataFrame]):
             raise TypeTransformerFailedError("Attribute access unsupported.")
 
         # Detect annotations and extract out all the relevant information that the user might supply
-        expected_python_type, column_dict, _storage_fmt, _pa_schema = extract_cols_and_format(expected_python_type)
+        expected_python_type, column_dict, _storage_fmt, _pa_schema, _hash_method = extract_cols_and_format(
+            expected_python_type
+        )
+
+        # Extract hash from the literal if available
+        hash_value = lv.hash or None
 
         # Start handling for DataFrame scalars, first look at the columns
         incoming_columns = lv.scalar.structured_dataset.metadata.structured_dataset_type.columns
@@ -1157,7 +1274,9 @@ class DataFrameTransformerEngine(TypeTransformer[DataFrame]):
         #   t1(input_a: DataFrame)  # or
         #   t1(input_a: Annotated[DataFrame, my_cols])
         if issubclass(expected_python_type, DataFrame):
-            fdf = DataFrame(format=metad.structured_dataset_type.format, uri=lv.scalar.structured_dataset.uri)
+            fdf = DataFrame(
+                format=metad.structured_dataset_type.format, uri=lv.scalar.structured_dataset.uri, hash=hash_value
+            )
             fdf._already_uploaded = storage.is_remote(lv.scalar.structured_dataset.uri)
             fdf._literal_sd = lv.scalar.structured_dataset
             fdf._metadata = metad
@@ -1256,7 +1375,7 @@ class DataFrameTransformerEngine(TypeTransformer[DataFrame]):
         return converted_cols
 
     def _get_dataset_type(self, t: typing.Union[Type[DataFrame], typing.Any]) -> types_pb2.StructuredDatasetType:
-        _original_python_type, column_map, storage_format, pa_schema = extract_cols_and_format(t)  # type: ignore
+        _original_python_type, column_map, storage_format, pa_schema, _hash_method = extract_cols_and_format(t)  # type: ignore
 
         return self.get_structured_dataset_type(storage_format, column_map=column_map, pa_schema=pa_schema)
 
