@@ -268,7 +268,9 @@ def list_imported_modules_as_files(source_path: str, modules: List[ModuleType]) 
             except AttributeError:
                 continue
 
-        if mod_file is None:
+        # skip if mod_file is (a) None or (b) not a string. (b) can happen if a third-party package overrides
+        # sys.modules[mod.__name__] with a custom object.
+        if mod_file is None or not isinstance(mod_file, str):
             continue
 
         if any(_file_is_in_directory(mod_file, directory) for directory in invalid_directories):
