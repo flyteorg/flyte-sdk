@@ -262,6 +262,27 @@ class TypeTransformer(typing.Generic[T]):
             f"Conversion to python value expected type {expected_python_type} from literal not implemented"
         )
 
+    def schema_match(self, schema: dict) -> bool:
+        """Check if a JSON schema fragment matches this transformer's python_type.
+
+        For BaseModel subclasses, automatically compares the schema's title, type, and
+        required fields against the type's own JSON schema. For other types, returns
+        False by default — override if needed.
+        """
+        if not isinstance(schema, dict):
+            return False
+        try:
+            if hasattr(self.python_type, "model_json_schema") and self.python_type is not BaseModel:
+                this_schema = self.python_type.model_json_schema()
+                return (
+                    schema.get("title") == this_schema.get("title")
+                    and schema.get("type") == this_schema.get("type")
+                    and set(schema.get("required", [])) == set(this_schema.get("required", []))
+                )
+        except Exception:
+            pass
+        return False
+
     def from_binary_idl(self, binary_idl_object: Binary, expected_python_type: Type[T]) -> Optional[T]:
         """
         This function primarily handles deserialization for untyped dicts, dataclasses, Pydantic BaseModels, and
@@ -545,7 +566,7 @@ class PydanticTransformer(TypeTransformer[BaseModel]):
         meta_struct.update(
             {
                 CACHE_KEY_METADATA: {
-                    SERIALIZATION_FORMAT: MESSAGEPACK,
+                        SERIALIZATION_FORMAT: MESSAGEPACK,
                 }
             }
         )
@@ -1033,10 +1054,15 @@ from ._tuple_dict import (  # noqa: E402
 )
 
 
+def _match_registered_type_from_schema(schema: dict) -> typing.Optional[type]:
+    """Check if a JSON schema fragment matches any registered TypeTransformer."""
+    for transformer in TypeEngine._REGISTRY.values():
+        if transformer.schema_match(schema):
+            return transformer.python_type
+    return None
+
+
 def generate_attribute_list_from_dataclass_json_mixin(schema: dict, schema_name: typing.Any):
-    from flyte.io._dataframe.dataframe import DataFrame
-    from flyte.io._dir import Dir
-    from flyte.io._file import File
 
     attribute_list: typing.List[typing.Tuple[Any, Any]] = []
     nested_types: typing.Dict[str, type] = {}  # Track nested model types for conversion
@@ -1060,30 +1086,10 @@ def generate_attribute_list_from_dataclass_json_mixin(schema: dict, schema_name:
                 if ref_schema.get("enum"):
                     attribute_list.append((property_key, str))
                     continue
-                # Check if the $ref points to a Flyte IO type (File, Dir, DataFrame)
-                if File.schema_match(ref_schema):
-                    attribute_list.append(
-                        (
-                            property_key,
-                            typing.cast(GenericAlias, File),
-                        )
-                    )
-                    continue
-                elif Dir.schema_match(ref_schema):
-                    attribute_list.append(
-                        (
-                            property_key,
-                            typing.cast(GenericAlias, Dir),
-                        )
-                    )
-                    continue
-                elif DataFrame.schema_match(ref_schema):
-                    attribute_list.append(
-                        (
-                            property_key,
-                            typing.cast(GenericAlias, DataFrame),
-                        )
-                    )
+                # Check if the $ref matches a registered custom type
+                matched_type = _match_registered_type_from_schema(ref_schema)
+                if matched_type is not None:
+                    attribute_list.append((property_key, typing.cast(GenericAlias, matched_type)))
                     continue
                 # Include $defs so nested models can resolve their own $refs
                 if "$defs" not in ref_schema and defs:
@@ -1114,38 +1120,9 @@ def generate_attribute_list_from_dataclass_json_mixin(schema: dict, schema_name:
                 # For optional with dataclass
                 sub_schemea = property_val["anyOf"][0]
                 sub_schemea_name = sub_schemea["title"]
-                if File.schema_match(property_val):
-                    attribute_list.append(
-                        (
-                            property_key,
-                            typing.cast(
-                                GenericAlias,
-                                File,
-                            ),
-                        )
-                    )
-                    continue
-                elif Dir.schema_match(property_val):
-                    attribute_list.append(
-                        (
-                            property_key,
-                            typing.cast(
-                                GenericAlias,
-                                Dir,
-                            ),
-                        )
-                    )
-                    continue
-                elif DataFrame.schema_match(property_val):
-                    attribute_list.append(
-                        (
-                            property_key,
-                            typing.cast(
-                                GenericAlias,
-                                DataFrame,
-                            ),
-                        )
-                    )
+                matched_type = _match_registered_type_from_schema(property_val) or _match_registered_type_from_schema(sub_schemea)
+                if matched_type is not None:
+                    attribute_list.append((property_key, typing.cast(GenericAlias, matched_type)))
                     continue
                 nested_class = convert_mashumaro_json_schema_to_python_class(sub_schemea, sub_schemea_name)
                 attribute_list.append(
@@ -1162,39 +1139,9 @@ def generate_attribute_list_from_dataclass_json_mixin(schema: dict, schema_name:
             elif property_val.get("title"):
                 # For nested dataclass
                 sub_schemea_name = property_val["title"]
-                # Check Flyte offloaded types
-                if File.schema_match(property_val):
-                    attribute_list.append(
-                        (
-                            property_key,
-                            typing.cast(
-                                GenericAlias,
-                                File,
-                            ),
-                        )
-                    )
-                    continue
-                elif Dir.schema_match(property_val):
-                    attribute_list.append(
-                        (
-                            property_key,
-                            typing.cast(
-                                GenericAlias,
-                                Dir,
-                            ),
-                        )
-                    )
-                    continue
-                elif DataFrame.schema_match(property_val):
-                    attribute_list.append(
-                        (
-                            property_key,
-                            typing.cast(
-                                GenericAlias,
-                                DataFrame,
-                            ),
-                        )
-                    )
+                matched_type = _match_registered_type_from_schema(property_val)
+                if matched_type is not None:
+                    attribute_list.append((property_key, typing.cast(GenericAlias, matched_type)))
                     continue
                 nested_class = convert_mashumaro_json_schema_to_python_class(property_val, sub_schemea_name)
                 attribute_list.append(
@@ -2248,10 +2195,6 @@ def _get_element_type(
     element_property: typing.Union[typing.Dict[str, typing.Any], bool],
     schema: typing.Optional[typing.Dict[str, typing.Any]] = None,
 ) -> Type:
-    from flyte.io._dataframe.dataframe import DataFrame
-    from flyte.io._dir import Dir
-    from flyte.io._file import File
-
     # Handle additionalProperties: true (means Dict[str, Any])
     if element_property is True:
         return typing.Any
@@ -2259,12 +2202,9 @@ def _get_element_type(
     if not isinstance(element_property, dict):
         return typing.Any
 
-    if File.schema_match(element_property):
-        return File
-    elif Dir.schema_match(element_property):
-        return Dir
-    elif DataFrame.schema_match(element_property):
-        return DataFrame
+    matched_type = _match_registered_type_from_schema(element_property)
+    if matched_type is not None:
+        return matched_type
 
     # Handle $ref for nested models and enums
 
@@ -2279,13 +2219,10 @@ def _get_element_type(
             # Guard the nested enum elements inside containers
             if ref_schema.get("enum"):
                 return str
-            # Check if the $ref points to a Flyte IO type (File, Dir, DataFrame)
-            if File.schema_match(ref_schema):
-                return File
-            elif Dir.schema_match(ref_schema):
-                return Dir
-            elif DataFrame.schema_match(ref_schema):
-                return DataFrame
+            # Check if the $ref matches a registered custom type
+            matched_type = _match_registered_type_from_schema(ref_schema)
+            if matched_type is not None:
+                return matched_type
             # if defs not in the schema, they need to be propogated into the resolved schema
             if "$defs" not in ref_schema and defs:
                 ref_schema["$defs"] = defs
