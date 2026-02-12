@@ -6,9 +6,10 @@ import collections
 import pathlib
 import types
 import typing
+import weakref
 from abc import ABC, abstractmethod
 from dataclasses import is_dataclass
-from typing import Any, Callable, ClassVar, Coroutine, Dict, Generic, List, Optional, Type, Union
+from typing import Any, Callable, ClassVar, Coroutine, Dict, Generic, List, Optional, Tuple, Type, Union
 
 from flyteidl2.core import literals_pb2, types_pb2
 from fsspec.utils import get_protocol
@@ -47,6 +48,13 @@ PARQUET: DataFrameFormat = "parquet"
 CSV: DataFrameFormat = "csv"
 GENERIC_FORMAT: DataFrameFormat = ""
 GENERIC_PROTOCOL: str = "generic protocol"
+
+
+# Dictionary to store hash values for raw DataFrames (like pd.DataFrame, pl.DataFrame)
+# This allows the hash to be preserved when a raw DataFrame is passed between tasks without
+# requiring the Annotated type on the input side.
+# We use id() as the key and store a tuple of (weakref, hash) to allow garbage collection.
+_dataframe_hash_cache: Dict[int, Tuple[weakref.ref, str]] = {}
 
 
 class DataFrame(BaseModel, SerializableType):
@@ -1116,8 +1124,21 @@ class DataFrameTransformerEngine(TypeTransformer[DataFrame]):
             )
 
         # Otherwise assume it's a dataframe instance (raw dataframe type like pd.DataFrame).
-        # Check if there's a hash_method in the type annotation and compute the hash
-        if annotation_hash_method is not None:
+        # First, check if there's a cached hash from a previous to_python_value call.
+        # This allows the hash to be preserved when a raw DataFrame is passed between tasks
+        # without requiring the Annotated type on the input side.
+        cached_entry = _dataframe_hash_cache.get(id(python_val))
+        if cached_entry is not None:
+            ref, cached_hash = cached_entry
+            # Verify the weakref still points to the same object
+            if ref() is python_val:
+                hash_value = cached_hash
+            else:
+                # The object was garbage collected and the id was reused, remove stale entry
+                del _dataframe_hash_cache[id(python_val)]
+
+        # If no cached hash, check if there's a hash_method in the type annotation and compute the hash
+        if hash_value is None and annotation_hash_method is not None:
             annotation_hash_method.update(python_val)
             hash_value = annotation_hash_method.result()
 
@@ -1285,9 +1306,21 @@ class DataFrameTransformerEngine(TypeTransformer[DataFrame]):
         # If the requested type was not a flyte.DataFrame, then it means it was a raw dataframe type, which means
         # we should do the opening/downloading and whatever else it might entail right now. No iteration option here.
         try:
-            return await self.open_as(
+            result = await self.open_as(
                 lv.scalar.structured_dataset, df_type=expected_python_type, updated_metadata=metad
             )
+            # Store the hash in the cache so it can be retrieved when converting back to a literal.
+            # This allows the hash to be preserved when a raw DataFrame is passed between tasks
+            # without requiring the Annotated type on the input side.
+            if hash_value is not None:
+                try:
+                    # Use id() as key with a weakref to allow garbage collection
+                    _dataframe_hash_cache[id(result)] = (weakref.ref(result), hash_value)
+                except TypeError:
+                    # Some DataFrame types may not be weakly referenceable (e.g., if they use __slots__)
+                    # In that case, we just skip caching the hash
+                    pass
+            return result
         except GenericError as exc:
             msg = get_credentials_error(
                 lv.scalar.structured_dataset.uri, get_protocol(lv.scalar.structured_dataset.uri)
