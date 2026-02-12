@@ -17,7 +17,6 @@ from flyte.io import Dir, File
 from flyte.types import TypeEngine
 from flyte.types._type_engine import TypeTransformer, _match_registered_type_from_schema
 
-
 # -- Custom type and transformer --
 
 

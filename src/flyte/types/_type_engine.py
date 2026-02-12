@@ -566,7 +566,7 @@ class PydanticTransformer(TypeTransformer[BaseModel]):
         meta_struct.update(
             {
                 CACHE_KEY_METADATA: {
-                        SERIALIZATION_FORMAT: MESSAGEPACK,
+                    SERIALIZATION_FORMAT: MESSAGEPACK,
                 }
             }
         )
@@ -1120,7 +1120,9 @@ def generate_attribute_list_from_dataclass_json_mixin(schema: dict, schema_name:
                 # For optional with dataclass
                 sub_schemea = property_val["anyOf"][0]
                 sub_schemea_name = sub_schemea["title"]
-                matched_type = _match_registered_type_from_schema(property_val) or _match_registered_type_from_schema(sub_schemea)
+                matched_type = _match_registered_type_from_schema(property_val) or _match_registered_type_from_schema(
+                    sub_schemea
+                )
                 if matched_type is not None:
                     attribute_list.append((property_key, typing.cast(GenericAlias, matched_type)))
                     continue
