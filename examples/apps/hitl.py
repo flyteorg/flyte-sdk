@@ -44,7 +44,8 @@ import uuid
 from contextlib import asynccontextmanager
 from typing import Any, ClassVar, Generic, Literal, Type, TypeVar
 
-from fastapi import FastAPI, HTTPException, Form
+import aiofiles
+from fastapi import FastAPI, Form, HTTPException
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
@@ -113,7 +114,7 @@ def _get_request_path(request_id: str) -> str:
     ctx = internal_ctx()
     if ctx.has_raw_data:
         base = ctx.raw_data.path
-    elif (raw_data_path_env_var := os.getenv("RAW_DATA_PATH")):
+    elif raw_data_path_env_var := os.getenv("RAW_DATA_PATH"):
         base = raw_data_path_env_var
     else:
         # Fallback for local development
@@ -128,7 +129,7 @@ def _get_response_path(request_id: str) -> str:
     ctx = internal_ctx()
     if ctx.has_raw_data:
         base = ctx.raw_data.path
-    elif (raw_data_path_env_var := os.getenv("RAW_DATA_PATH")):
+    elif raw_data_path_env_var := os.getenv("RAW_DATA_PATH"):
         base = raw_data_path_env_var
     else:
         # Fallback for local development
@@ -149,6 +150,7 @@ async def lifespan(app: FastAPI):
     yield
     logger.info("HITL Event App shutting down...")
 
+
 app = FastAPI(
     title="Human-in-the-Loop Event Service",
     description="Provides endpoints for humans to submit input to Flyte workflow events",
@@ -156,18 +158,22 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+
 # Pydantic models for submissions
 class HITLSubmissionTyped(BaseModel):
     """Schema for HITL input submission with explicit type."""
+
     request_id: str
     value: Any
     data_type: str = "str"
     response_path: str = ""  # Full storage path for the response (e.g., s3://bucket/path/response.json)
 
+
 @app.get("/health")
 async def health_check() -> dict[str, str]:
     """Health check endpoint."""
     return {"status": "healthy"}
+
 
 @app.get("/", response_class=HTMLResponse)
 async def index() -> str:
@@ -204,10 +210,11 @@ async def index() -> str:
     </html>
     """
 
+
 @app.get("/form/{request_id}", response_class=HTMLResponse)
 async def input_form(request_id: str) -> str:
     """Render an HTML form for human input.
-    
+
     Args:
         request_id: The unique identifier for this HITL request
         request_path: Optional full storage path to the request metadata (e.g., s3://bucket/path/request.json).
@@ -215,24 +222,22 @@ async def input_form(request_id: str) -> str:
     """
     # Use provided request_path or fall back to local path construction
     request_path = _get_request_path(request_id)
-    
+
     prompt = "Please enter a value"
     data_type_name = "str"
     event_name = "Unknown"
     response_path = ""
 
-    fetched_request_data = False
     print(f"Request path: {request_path}")
     try:
         if await storage.exists(request_path):
             request_data = await storage.get(request_path)
-            with open(request_data, "r") as f:
-                request_data = json.loads(str(f.read()))
+            async with aiofiles.open(request_data, "r") as f:
+                request_data = json.loads(await f.read())
                 prompt = request_data.get("prompt", prompt)
                 data_type_name = request_data.get("data_type", "str")
                 event_name = request_data.get("event_name", "Unknown")
                 response_path = request_data.get("response_path", "")
-        fetched_request_data = True
     except Exception as e:
         print(f"Could not fetch request metadata: {e}")
 
@@ -256,7 +261,19 @@ async def input_form(request_id: str) -> str:
 
     if input_type == "select":
         input_element = """
-            <select name="value" required style="width: 100%; padding: 12px; font-size: 16px; border: 1px solid #ddd; border-radius: 4px; box-sizing: border-box; margin-bottom: 15px;">
+            <select
+                name="value"
+                required
+                style="
+                    width: 100%;
+                    padding: 12px;
+                    font-size: 16px;
+                    border: 1px solid #ddd;
+                    border-radius: 4px;
+                    box-sizing: border-box;
+                    margin-bottom: 15px;"
+                onchange="this.form.submit()"
+            >
                 <option value="">-- Select --</option>
                 <option value="true">True</option>
                 <option value="false">False</option>
@@ -329,6 +346,7 @@ async def input_form(request_id: str) -> str:
     </html>
     """
 
+
 @app.post("/submit")
 async def submit_input(
     request_id: str = Form(...),
@@ -337,7 +355,7 @@ async def submit_input(
     response_path: str = Form(""),
 ) -> dict:
     """Submit human input for a pending event.
-    
+
     Args:
         request_id: The unique identifier for this HITL request
         value: The value submitted by the user
@@ -348,23 +366,22 @@ async def submit_input(
     try:
         converted_value = _convert_value(value, data_type)
     except (ValueError, TypeError) as e:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Failed to convert value '{value}' to type '{data_type}': {e}"
-        )
+        raise HTTPException(status_code=400, detail=f"Failed to convert value '{value}' to type '{data_type}': {e}")
 
     logger.info(f"Received event submission: request_id={request_id}, value={converted_value} (type={data_type})")
 
     # Use provided response_path or fall back to local path construction
     if not response_path:
         response_path = _get_response_path(request_id)
-    
-    response_data = json.dumps({
-        "value": converted_value,
-        "status": "completed",
-        "request_id": request_id,
-        "data_type": data_type,
-    }).encode()
+
+    response_data = json.dumps(
+        {
+            "value": converted_value,
+            "status": "completed",
+            "request_id": request_id,
+            "data_type": data_type,
+        }
+    ).encode()
 
     try:
         await storage.put_stream(response_data, to_path=response_path)
@@ -380,6 +397,7 @@ async def submit_input(
         logger.error(f"Failed to write response: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to save response: {e}")
 
+
 @app.post("/submit/json")
 async def submit_input_json(submission: HITLSubmissionTyped) -> dict:
     """Submit human input via JSON."""
@@ -390,6 +408,7 @@ async def submit_input_json(submission: HITLSubmissionTyped) -> dict:
         response_path=submission.response_path,
     )
 
+
 @app.get("/status/{request_id}")
 async def get_status(
     request_id: str,
@@ -397,7 +416,7 @@ async def get_status(
     response_path: str | None = None,
 ) -> dict:
     """Check the status of an event.
-    
+
     Args:
         request_id: The unique identifier for this HITL request
         request_path: Optional full storage path to the request metadata
@@ -432,6 +451,7 @@ async def get_status(
 
     return result
 
+
 # ============================================================================
 # App and Task Environment for HITL events (module-level)
 # ============================================================================
@@ -439,7 +459,7 @@ async def get_status(
 event_image = (
     flyte.Image.from_debian_base(python_version=(3, 12))
     .with_pip_packages("fastapi", "uvicorn", "python-multipart")
-    .with_pip_packages(f"flyte==2.0.0b56", pre=True)
+    .with_pip_packages("flyte==2.0.0b56", pre=True)
 )
 
 event_app_env = FastAPIAppEnvironment(
@@ -522,6 +542,7 @@ class Event(Generic[T]):
     def form_url(self) -> str:
         """URL where humans can submit input for this event."""
         from urllib.parse import urlencode
+
         params = urlencode({"request_path": self._request_path})
         return f"{self._endpoint}/form/{self.request_id}?{params}"
 
@@ -546,16 +567,9 @@ class Event(Generic[T]):
         # Set the RAW_DATA_PATH environment variable to the raw data path since
         # the backend doesn't inject the raw data path into the flyte serve binary
         print(f"Serving app with RAW_DATA_PATH: {ctx.raw_data_path.path}")
-        app_handle = await (
-            flyte
-            .with_servecontext(
-                parameter_values={
-                    event_app_env.name: {"raw_data_path": ctx.raw_data_path.path}
-                }
-            )
-            .serve.aio(event_app_env)
-        )
-        # app_handle = await flyte.serve.aio(app_env.clone_with(name=app_env.name + "-123", env_vars={"RAW_DATA_PATH": ctx.raw_data_path.path}))
+        app_handle = await flyte.with_servecontext(
+            parameter_values={event_app_env.name: {"raw_data_path": ctx.raw_data_path.path}}
+        ).serve.aio(event_app_env)
         return app_handle
 
     @classmethod
@@ -651,21 +665,6 @@ class Event(Generic[T]):
             timeout_seconds=timeout_seconds,
             poll_interval_seconds=poll_interval_seconds,
         )
-
-        # Print instructions for the human
-        print("\n" + "=" * 60)
-        print("HUMAN INPUT REQUIRED")
-        print("=" * 60)
-        print(f"Event: {name}")
-        print(f"Request ID: {request_id}")
-        print(f"Prompt: {prompt}")
-        print(f"Expected type: {type_name}")
-        print(f"\nSubmit your input at:")
-        print(f"  {event.form_url}")
-        print(f"\nOr POST to: {event.api_url}")
-        print(f"  Body: {{'request_id': '{request_id}', 'value': <your_value>, 'data_type': '{type_name}', 'response_path': '{response_path}'}}")
-        print("=" * 60 + "\n")
-
         return event
 
     @syncify
@@ -686,15 +685,14 @@ class Event(Generic[T]):
         # Generate Flyte report with URLs and instructions
         import html as html_module
 
-        headers = {
-            "Authorization": f"Bearer <flyte_api_key>",
-        }
-
-        curl_body = json.dumps({
-            "request_id": self.request_id,
-            "value": "<your_value>",
-            "data_type": self._type_name,
-        }, indent=2)
+        curl_body = json.dumps(
+            {
+                "request_id": self.request_id,
+                "value": "<your_value>",
+                "data_type": self._type_name,
+            },
+            indent=2,
+        )
 
         report_html = f"""
         <style>
@@ -778,7 +776,9 @@ class Event(Generic[T]):
 
             <div class="hitl-section">
                 <h2>Option 1: Web Form</h2>
-                <p>Submit your input using <a href="{html_module.escape(self.form_url)}" target="_blank">this form</a>:</p>
+                <p>
+                Submit your input using <a href="{html_module.escape(self.form_url)}" target="_blank">this form</a>:
+                </p>
             </div>
 
             <div class="hitl-section">
@@ -789,8 +789,8 @@ class Event(Generic[T]):
   -H "Authorization: Bearer <flyte_api_key>" \\
   -d '{html_module.escape(curl_body)}'</div>
                 <p style="margin-top: 15px; font-size: 0.9em; color: #666;">
-                    <strong>Note:</strong> Replace <code>&lt;your_value&gt;</code> with the actual value you want to submit.
-                    The value should match the expected type: <code>{html_module.escape(self._type_name)}</code>
+                    <strong>Note:</strong> Replace <code>&lt;your_value&gt;</code> with the actual value you want to
+                    submit. The value should match the expected type: <code>{html_module.escape(self._type_name)}</code>
 
                     <p>Replace <code>&lt;flyte_api_key&gt;</code> with your Flyte API key.</p>
                 </p>
@@ -856,10 +856,7 @@ async def wait_for_input_event(
                     print(f"\nReceived human input for '{name}': {value}")
                     return value
 
-        logger.info(
-            f"Event '{name}' waiting for human input... "
-            f"({elapsed}/{timeout_seconds}s elapsed)"
-        )
+        logger.info(f"Event '{name}' waiting for human input... ({elapsed}/{timeout_seconds}s elapsed)")
         await asyncio.sleep(poll_interval_seconds)
         elapsed += poll_interval_seconds
 
@@ -895,8 +892,7 @@ async def new_event(
 task_env = flyte.TaskEnvironment(
     name="hitl-workflow",
     image=(
-        flyte.Image.from_debian_base(python_version=(3, 12))
-        .with_pip_packages("fastapi", "uvicorn", "python-multipart")
+        flyte.Image.from_debian_base(python_version=(3, 12)).with_pip_packages("fastapi", "uvicorn", "python-multipart")
     ),
     resources=flyte.Resources(cpu=1, memory="512Mi"),
     depends_on=[event_task_env],
