@@ -188,7 +188,9 @@ secrets.json
         # Test files ignored by .flyteignore
         assert git_ignore.is_ignored(root_path / "debug.log"), "debug.log should be ignored (from .flyteignore)"
         assert git_ignore.is_ignored(root_path / "secrets.json"), "secrets.json should be ignored (from .flyteignore)"
-        assert git_ignore.is_ignored(root_path / "temp" / "data.txt"), "temp/data.txt should be ignored (from .flyteignore)"
+        assert git_ignore.is_ignored(root_path / "temp" / "data.txt"), (
+            "temp/data.txt should be ignored (from .flyteignore)"
+        )
 
         # Test files that should NOT be ignored
         assert not git_ignore.is_ignored(root_path / "main.py"), "main.py should NOT be ignored"
@@ -229,10 +231,14 @@ artifacts/
         git_ignore = GitIgnore(root_path)
 
         # Test directory patterns from .gitignore
-        assert git_ignore.is_ignored(root_path / "build" / "output.txt"), "build/output.txt should be ignored (from .gitignore)"
+        assert git_ignore.is_ignored(root_path / "build" / "output.txt"), (
+            "build/output.txt should be ignored (from .gitignore)"
+        )
 
         # Test directory patterns from .flyteignore
-        assert git_ignore.is_ignored(root_path / "artifacts" / "result.txt"), "artifacts/result.txt should be ignored (from .flyteignore)"
+        assert git_ignore.is_ignored(root_path / "artifacts" / "result.txt"), (
+            "artifacts/result.txt should be ignored (from .flyteignore)"
+        )
 
         # Test that non-ignored directories still work
         assert not git_ignore.is_ignored(root_path / "src" / "main.py"), "src/main.py should NOT be ignored"
