@@ -195,4 +195,4 @@ examples/remote_example.py
 config.yaml
 .claude/
 tests/flyte/internal/bin/flyte-parameters.json
-.flyteignore
+examples/basics/test1/.flyteignore
