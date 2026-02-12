@@ -40,8 +40,9 @@ from typing import Any, Callable, Dict, Optional, Union, overload
 from flyte._cache import CacheRequest
 from flyte.models import NativeInterface
 
-from ._code_task import CodeTaskTemplate, _classify_refs, _prepare_code_source
+from ._code_task import CodeTaskTemplate, _classify_refs
 from ._config import SandboxedConfig
+from ._source import prepare_code_source
 from ._task import SandboxedTaskTemplate, _lazy_import_monty
 
 __all__ = [
@@ -172,7 +173,7 @@ def code(
 
     functions = functions or {}
 
-    source_code = _prepare_code_source(source)
+    source_code = prepare_code_source(source)
     input_names = list(inputs.keys())
 
     # Build NativeInterface from the explicit type dicts
@@ -234,7 +235,7 @@ async def run(
     """
     Monty = _lazy_import_monty()
 
-    source_code = _prepare_code_source(source)
+    source_code = prepare_code_source(source)
     input_names = list(inputs.keys())
     functions = functions or {}
 

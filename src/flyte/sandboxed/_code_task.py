@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import ast
-import textwrap
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
@@ -43,52 +41,6 @@ def _classify_refs(functions: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
         "trace_refs": trace_refs,
         "durable_refs": durable_refs,
     }
-
-
-def _prepare_code_source(source: str) -> str:
-    """Transform user code so Monty returns the value of the last expression.
-
-    - If the last statement is an expression: assigns it to ``__result__``
-    - If the last statement is a simple assignment ``x = ...``: appends ``__result__ = x``
-    - Appends ``__result__`` as the final expression for Monty to return.
-
-    This mirrors the ``return`` → ``__result__`` rewriting that
-    ``_source.extract_source`` does for decorated functions.
-    """
-    source = textwrap.dedent(source).strip()
-    if not source:
-        return "__result__ = None\n__result__"
-
-    tree = ast.parse(source)
-    if not tree.body:
-        return "__result__ = None\n__result__"
-
-    last = tree.body[-1]
-
-    if isinstance(last, ast.Expr):
-        # Expression statement → replace with ``__result__ = expr``
-        assign = ast.Assign(
-            targets=[ast.Name(id="__result__", ctx=ast.Store())],
-            value=last.value,
-            lineno=last.lineno,
-            col_offset=last.col_offset,
-        )
-        tree.body[-1] = ast.fix_missing_locations(assign)
-    elif isinstance(last, ast.Assign) and len(last.targets) == 1 and isinstance(last.targets[0], ast.Name):
-        # Simple assignment ``x = expr`` → append ``__result__ = x``
-        var_name = last.targets[0].id
-        result_node = ast.Assign(
-            targets=[ast.Name(id="__result__", ctx=ast.Store())],
-            value=ast.Name(id=var_name, ctx=ast.Load()),
-            lineno=0,
-            col_offset=0,
-        )
-        tree.body.append(ast.fix_missing_locations(result_node))
-
-    ast.fix_missing_locations(tree)
-    code = ast.unparse(tree)
-    code += "\n__result__"
-    return code
 
 
 @dataclass(kw_only=True)

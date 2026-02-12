@@ -10,25 +10,25 @@ from flyte.sandboxed import code
 from flyte.sandboxed._code_task import (
     CodeTaskTemplate,
     _classify_refs,
-    _prepare_code_source,
 )
 from flyte.sandboxed._config import SandboxedConfig
+from flyte.sandboxed._source import prepare_code_source
 from flyte.sandboxed._task import SandboxedTaskTemplate
 
 
 # ---------------------------------------------------------------------------
-# _prepare_code_source
+# prepare_code_source
 # ---------------------------------------------------------------------------
 
 
 class TestPrepareCodeSource:
     def test_expression_becomes_result(self):
-        result = _prepare_code_source("x + y")
+        result = prepare_code_source("x + y")
         assert "__result__" in result
         assert "x + y" in result
 
     def test_assignment_appends_result(self):
-        result = _prepare_code_source("result = x + y")
+        result = prepare_code_source("result = x + y")
         # Should contain the assignment AND __result__ = result
         assert "result = x + y" in result
         assert "__result__ = result" in result
@@ -40,7 +40,7 @@ class TestPrepareCodeSource:
         b = a * 2
         b
         """
-        result = _prepare_code_source(src)
+        result = prepare_code_source(src)
         assert "__result__" in result
         # The last line (expression `b`) becomes __result__ = b
         assert "b" in result
@@ -50,25 +50,25 @@ class TestPrepareCodeSource:
         partial = x + y
         result = partial * 2
         """
-        result = _prepare_code_source(src)
+        result = prepare_code_source(src)
         assert "__result__ = result" in result
         assert result.endswith("__result__")
 
     def test_empty_source(self):
-        result = _prepare_code_source("")
+        result = prepare_code_source("")
         assert "__result__" in result
 
     def test_whitespace_only_source(self):
-        result = _prepare_code_source("   \n  \n  ")
+        result = prepare_code_source("   \n  \n  ")
         assert "__result__" in result
 
     def test_single_literal(self):
-        result = _prepare_code_source("42")
+        result = prepare_code_source("42")
         assert "__result__" in result
         assert "42" in result
 
     def test_function_call_expression(self):
-        result = _prepare_code_source("add(x, y) * 2")
+        result = prepare_code_source("add(x, y) * 2")
         assert "__result__" in result
         assert "add(x, y) * 2" in result
 
