@@ -2,9 +2,9 @@
 Reusable Tasks from Code Strings
 =================================
 
-``flyte.sandboxed.code()`` creates a reusable ``CodeTaskTemplate`` from a
-Python code string. The returned template works with ``flyte.run()`` just
-like a decorated task — but the source is a string, not a function.
+``flyte.sandboxed.code_to_task()`` creates a reusable ``CodeTaskTemplate``
+from a Python code string. The returned template works with ``flyte.run()``
+just like a decorated task — but the source is a string, not a function.
 
 This is useful when:
 - Code is generated dynamically (e.g. from a UI or LLM)
@@ -40,7 +40,7 @@ def multiply(x: int, y: int) -> int:
 # --- Example 1: Simple expression -------------------------------------------
 # A single expression — its value is the return value.
 
-double = flyte.sandboxed.code(
+double = flyte.sandboxed.code_to_task(
     "x * 2",
     inputs={"x": int},
     output=int,
@@ -52,7 +52,7 @@ double = flyte.sandboxed.code(
 # --- Example 2: Multi-line with assignment -----------------------------------
 # When the last statement is an assignment, the assigned variable is returned.
 
-scale_and_offset = flyte.sandboxed.code(
+scale_and_offset = flyte.sandboxed.code_to_task(
     """
     scaled = x * factor
     result = scaled + offset
@@ -67,7 +67,7 @@ scale_and_offset = flyte.sandboxed.code(
 # --- Example 3: Calling external tasks --------------------------------------
 # Pass worker tasks via ``functions={}`` so the sandbox can call them.
 
-compute_pipeline = flyte.sandboxed.code(
+compute_pipeline = flyte.sandboxed.code_to_task(
     """
     partial = add(x, y)
     result = multiply(partial, scale)
@@ -83,7 +83,7 @@ compute_pipeline = flyte.sandboxed.code(
 # --- Example 4: String processing -------------------------------------------
 # Sandboxed code can work with strings and collections too.
 
-format_greeting = flyte.sandboxed.code(
+format_greeting = flyte.sandboxed.code_to_task(
     """
     parts = []
     for name in names:
@@ -100,7 +100,7 @@ format_greeting = flyte.sandboxed.code(
 
 # --- Example 5: Conditional logic -------------------------------------------
 
-classify = flyte.sandboxed.code(
+classify = flyte.sandboxed.code_to_task(
     """
     if score >= 90:
         label = "A"
@@ -120,7 +120,7 @@ classify = flyte.sandboxed.code(
 
 # --- Example 6: Building a dict result --------------------------------------
 
-summarize = flyte.sandboxed.code(
+summarize = flyte.sandboxed.code_to_task(
     """
     total = 0
     count = 0
@@ -139,7 +139,7 @@ summarize = flyte.sandboxed.code(
 # --- Example 7: No output (side-effect-free validation) ----------------------
 # Omit ``output=`` to get NoneType — useful for pure validation logic.
 
-validate = flyte.sandboxed.code(
+validate = flyte.sandboxed.code_to_task(
     """
     for item in items:
         if item < 0:
@@ -152,8 +152,8 @@ validate = flyte.sandboxed.code(
 
 
 # --- Attach to an environment for ``flyte run`` -----------------------------
-# ``code()`` creates standalone templates. ``flyte run`` requires every task
-# to belong to a TaskEnvironment.
+# ``code_to_task()`` creates standalone templates. ``flyte run`` requires
+# every task to belong to a TaskEnvironment.
 
 sandbox_env = flyte.TaskEnvironment.from_task(
     "code-string-demo",
@@ -165,3 +165,9 @@ sandbox_env = flyte.TaskEnvironment.from_task(
     summarize,
     validate,
 )
+
+
+if __name__ == "__main__":
+    flyte.init_from_config()
+    r = flyte.run(compute_pipeline, x=10, y=10, scale=10)
+    print(r.url)

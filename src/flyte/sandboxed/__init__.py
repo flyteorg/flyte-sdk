@@ -1,5 +1,7 @@
 """Sandboxed tasks powered by Monty (Pydantic's Rust-based sandboxed Python interpreter).
 
+.. warning:: Experimental feature: alpha — APIs may change without notice.
+
 Sandboxed tasks are:
 - **Side-effect free**: No filesystem, network, or OS access
 - **Super fast**: Microsecond startup for pure Python
@@ -9,6 +11,7 @@ Usage::
 
     from flyte import sandboxed
 
+    # Decorator approach (standalone)
     @sandboxed.task
     def add(x: int, y: int) -> int:
         return x + y
@@ -17,16 +20,23 @@ Usage::
     def multiply(x: int, y: int) -> int:
         return x * y
 
+    # Environment-based approach (preferred for ``flyte run``)
+    env = flyte.TaskEnvironment(name="my-env")
+
+    @env.sandboxed_task
+    def orchestrator(x: int, y: int) -> int:
+        return add(x, y)
+
     # Create a reusable task from a code string
-    pipeline = sandboxed.code(
+    pipeline = sandboxed.code_to_task(
         "add(x, y) * 2",
         inputs={"x": int, "y": int},
         output=int,
         functions={"add": add},
     )
 
-    # One-shot execution of a code string
-    result = await sandboxed.run(
+    # One-shot execution of a code string (local only)
+    result = await sandboxed.run_local_sandbox(
         "x + y",
         inputs={"x": 1, "y": 2},
     )
@@ -35,6 +45,7 @@ Usage::
 from __future__ import annotations
 
 import inspect
+import sys
 from typing import Any, Callable, Dict, Optional, Union, overload
 
 from flyte._cache import CacheRequest
@@ -49,8 +60,8 @@ __all__ = [
     "CodeTaskTemplate",
     "SandboxedConfig",
     "SandboxedTaskTemplate",
-    "code",
-    "run",
+    "code_to_task",
+    "run_local_sandbox",
     "task",
 ]
 
@@ -85,6 +96,8 @@ def task(
     retries: int = 0,
 ) -> Union[SandboxedTaskTemplate, Callable[[Callable], SandboxedTaskTemplate]]:
     """Decorator to create a sandboxed Flyte task.
+
+    .. warning:: Experimental feature: alpha — APIs may change without notice.
 
     Can be used with or without arguments::
 
@@ -124,7 +137,7 @@ def task(
     return decorator
 
 
-def code(
+def code_to_task(
     source: str,
     *,
     inputs: Dict[str, type],
@@ -137,12 +150,14 @@ def code(
 ) -> CodeTaskTemplate:
     """Create a reusable sandboxed task from a code string.
 
+    .. warning:: Experimental feature: alpha — APIs may change without notice.
+
     The returned ``CodeTaskTemplate`` can be passed to ``flyte.run()``
     just like a decorated task.
 
     The **last expression** in *source* becomes the return value::
 
-        pipeline = sandboxed.code(
+        pipeline = sandboxed.code_to_task(
             "add(x, y) * 2",
             inputs={"x": int, "y": int},
             output=int,
@@ -184,8 +199,12 @@ def code(
     config = SandboxedConfig(timeout_ms=timeout_ms)
     image = Image.from_debian_base().with_pip_packages("pydantic-monty")
 
+    # Root the dummy func in the caller's module so the resolver can find the task
+    caller_module = sys._getframe(1).f_globals.get("__name__", "__main__")
+
     # Dummy func for AsyncFunctionTaskTemplate compatibility
     dummy_func = lambda **kwargs: None  # noqa: E731
+    dummy_func.__module__ = caller_module
 
     return CodeTaskTemplate(
         func=dummy_func,
@@ -201,21 +220,23 @@ def code(
     )
 
 
-async def run(
+async def run_local_sandbox(
     source: str,
     *,
     inputs: Dict[str, Any],
     functions: Optional[Dict[str, Any]] = None,
     timeout_ms: int = 30_000,
 ) -> Any:
-    """One-shot execution of a code string in the Monty sandbox.
+    """One-shot local execution of a code string in the Monty sandbox.
+
+    .. warning:: Experimental feature: alpha — APIs may change without notice.
 
     Sends the code + inputs to Monty and returns the result directly,
     without creating a ``TaskTemplate`` or going through the controller.
 
     The **last expression** in *source* becomes the return value::
 
-        result = await sandboxed.run(
+        result = await sandboxed.run_local_sandbox(
             "add(x, y) * 2",
             inputs={"x": 1, "y": 2},
             functions={"add": add},
@@ -249,3 +270,8 @@ async def run(
         refs = _classify_refs(functions)
         bridge = ExternalFunctionBridge(**refs)
         return await bridge.execute_monty(Monty, source_code, input_names, inputs)
+
+
+# Deprecated aliases — will be removed in a future release.
+code = code_to_task
+run = run_local_sandbox

@@ -5,9 +5,9 @@ access), start in microseconds, and many can multiplex safely on a single
 container process.
 
 In this example the orchestrator is a sandboxed task that calls regular
-env.task workers. When the sandboxed orchestrator calls another task,
-Monty *pauses*, the Flyte controller dispatches the worker task in its
-own container, and Monty *resumes* with the result.
+``env.task`` workers. Use ``@env.sandboxed_task`` to register sandboxed
+tasks directly in a ``TaskEnvironment``, so they share the environment's
+image and are ready for ``flyte run`` without extra boilerplate.
 
 Install the optional dependency first:
 
@@ -42,11 +42,11 @@ def fib(n: int) -> int:
 
 
 # --- Sandboxed orchestrator ------------------------------------------------
-# The orchestrator is a sandboxed task. It contains only pure Python
-# control flow — all heavy lifting is dispatched to the regular tasks above.
-# The sandboxed image includes pydantic-monty automatically.
+# The orchestrator is a sandboxed task registered directly in the environment.
+# It contains only pure Python control flow — all heavy lifting is dispatched
+# to the regular tasks above.
 
-@flyte.sandboxed.task
+@env.sandboxed_task
 def pipeline(n: int) -> dict[str, int]:
     fib_result = fib(n)
     linear_result = add(multiply(n, 2), 5)
@@ -59,11 +59,11 @@ def pipeline(n: int) -> dict[str, int]:
     }
 
 
-# --- code(): reusable task from a code string ------------------------------
+# --- code_to_task(): reusable task from a code string ----------------------
 # Instead of defining a @sandboxed.task function, send a code string directly.
 # External tasks are provided via the ``functions`` dict.
 
-code_pipeline = flyte.sandboxed.code(
+code_pipeline = flyte.sandboxed.code_to_task(
     """
     partial = add(x, y)
     result = partial * 2
@@ -76,11 +76,11 @@ code_pipeline = flyte.sandboxed.code(
 # Use with: flyte.run(code_pipeline, x=1, y=2)  → 6
 
 
-# --- run(): one-shot code execution ----------------------------------------
-# For quick one-off computations, ``run()`` sends code + inputs and returns
-# the result directly (no TaskTemplate, no controller).
+# --- run_local_sandbox(): one-shot code execution --------------------------
+# For quick one-off computations, ``run_local_sandbox()`` sends code + inputs
+# and returns the result directly (no TaskTemplate, no controller).
 #
-#   result = await flyte.sandboxed.run(
+#   result = await flyte.sandboxed.run_local_sandbox(
 #       "add(x, y) * 2",
 #       inputs={"x": 1, "y": 2},
 #       functions={"add": add},
@@ -88,14 +88,12 @@ code_pipeline = flyte.sandboxed.code(
 #   # → 6
 
 
-# --- Attach sandboxed tasks to an environment for ``flyte run`` -----------
-# ``@flyte.sandboxed.task`` creates standalone templates.  ``flyte run``
-# requires every task to belong to a TaskEnvironment.  Group them with
-# ``from_task`` so they share the same sandboxed image.
+# --- Attach code-string tasks to an environment for ``flyte run`` ---------
+# ``code_to_task()`` creates standalone templates. Group them with
+# ``from_task`` so they belong to a TaskEnvironment.
 
 sandbox_env = flyte.TaskEnvironment.from_task(
     "sandboxed-orchestrator",
-    pipeline,
     code_pipeline,
 )
 

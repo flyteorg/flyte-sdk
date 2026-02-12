@@ -1,14 +1,17 @@
 """
-One-Shot Code Execution with ``run()``
-======================================
+One-Shot Code Execution with ``run_local_sandbox()``
+=====================================================
 
-``flyte.sandboxed.run()`` sends a code string + inputs to the Monty
-sandbox and returns the result directly. No ``TaskTemplate``, no
-controller, no registration — just *send code, get answer*.
+``flyte.sandboxed.run_local_sandbox()`` sends a code string + inputs to
+the Monty sandbox and returns the result directly. No ``TaskTemplate``,
+no controller, no registration — just *send code, get answer*.
 
 This is the quickest way to evaluate an expression or snippet in the
 sandbox.  It's ``async`` because external function calls (tasks, durable
 ops) require ``await``.
+
+For reusable tasks from code strings, see ``code_to_task()`` which
+creates a ``CodeTaskTemplate`` that can be passed to ``flyte.run()``.
 
 Install the optional dependency first::
 
@@ -38,14 +41,14 @@ def power(base: int, exp: int) -> int:
 
 async def main():
     # --- Pure Python: simple expression --------------------------------------
-    result = await flyte.sandboxed.run(
+    result = await flyte.sandboxed.run_local_sandbox(
         "x + y",
         inputs={"x": 1, "y": 2},
     )
     print(f"x + y = {result}")  # 3
 
     # --- Pure Python: multi-line snippet -------------------------------------
-    result = await flyte.sandboxed.run(
+    result = await flyte.sandboxed.run_local_sandbox(
         """
         total = 0
         for i in range(n):
@@ -57,7 +60,7 @@ async def main():
     print(f"sum(0..9) = {result}")  # 45
 
     # --- Pure Python: string manipulation ------------------------------------
-    result = await flyte.sandboxed.run(
+    result = await flyte.sandboxed.run_local_sandbox(
         """
         words = text.split()
         result = " ".join(reversed(words))
@@ -67,7 +70,7 @@ async def main():
     print(f"reversed words = {result}")  # "world beautiful hello"
 
     # --- Pure Python: list comprehension style (via loop) --------------------
-    result = await flyte.sandboxed.run(
+    result = await flyte.sandboxed.run_local_sandbox(
         """
         squares = []
         for x in items:
@@ -81,7 +84,7 @@ async def main():
     # --- With external tasks -------------------------------------------------
     # When ``functions=`` is provided, external calls pause Monty, dispatch
     # the real task, and resume with the result.
-    result = await flyte.sandboxed.run(
+    result = await flyte.sandboxed.run_local_sandbox(
         "add(x, y) * 2",
         inputs={"x": 3, "y": 4},
         functions={"add": add},
@@ -89,7 +92,7 @@ async def main():
     print(f"add(3, 4) * 2 = {result}")  # 14
 
     # --- Chaining external tasks ---------------------------------------------
-    result = await flyte.sandboxed.run(
+    result = await flyte.sandboxed.run_local_sandbox(
         """
         base_sum = add(a, b)
         result = power(base_sum, exp)
@@ -100,7 +103,7 @@ async def main():
     print(f"(2+3)^3 = {result}")  # 125
 
     # --- Mixing pure Python and external calls -------------------------------
-    result = await flyte.sandboxed.run(
+    result = await flyte.sandboxed.run_local_sandbox(
         """
         results = []
         for i in range(n):

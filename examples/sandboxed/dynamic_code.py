@@ -2,9 +2,10 @@
 Dynamically Generated Code
 ===========================
 
-Because ``flyte.sandboxed.code()`` and ``flyte.sandboxed.run()`` accept
-plain strings, the code can be generated at runtime — from templates,
-user input, or even LLM output.
+Because ``flyte.sandboxed.code_to_task()`` and
+``flyte.sandboxed.run_local_sandbox()`` accept plain strings, the code
+can be generated at runtime — from templates, user input, or even LLM
+output.
 
 This example shows patterns for building code strings programmatically
 and executing them in the sandbox.
@@ -57,7 +58,7 @@ def make_reducer(operation: str) -> flyte.sandboxed.CodeTaskTemplate:
     else:
         raise ValueError(f"Unknown operation: {operation}")
 
-    return flyte.sandboxed.code(
+    return flyte.sandboxed.code_to_task(
         body,
         inputs={"values": list},
         output=int,
@@ -87,7 +88,7 @@ def make_formula_task(
         t = make_formula_task("a * b + c", ["a", "b", "c"])
         flyte.run(t, a=2, b=3, c=4)  # → 10
     """
-    return flyte.sandboxed.code(
+    return flyte.sandboxed.code_to_task(
         formula,
         inputs={v: float for v in variables},
         output=float,
@@ -102,7 +103,7 @@ bmi = make_formula_task("weight / (height * height)", ["weight", "height"])
 # flyte.run(bmi, weight=70.0, height=1.75)  → ~22.86
 
 
-# --- Pattern 3: run() for ad-hoc evaluation ---------------------------------
+# --- Pattern 3: run_local_sandbox() for ad-hoc evaluation --------------------
 
 async def evaluate_expressions():
     """Evaluate a batch of expressions in the sandbox."""
@@ -117,9 +118,9 @@ async def evaluate_expressions():
         # For expressions that don't reference any inputs, we still need
         # at least one input for Monty.
         if not extra_inputs:
-            result = await flyte.sandboxed.run(expr, inputs={"_unused": 0})
+            result = await flyte.sandboxed.run_local_sandbox(expr, inputs={"_unused": 0})
         else:
-            result = await flyte.sandboxed.run(expr, inputs=extra_inputs)
+            result = await flyte.sandboxed.run_local_sandbox(expr, inputs=extra_inputs)
         print(f"  {expr} = {result}")
 
 
@@ -141,7 +142,7 @@ for i in range(1, len(mapped)):
     acc = acc {reduce_op} mapped[i]
 acc
 """
-    return flyte.sandboxed.code(
+    return flyte.sandboxed.code_to_task(
         code,
         inputs={"items": list, "factor": int},
         output=int,

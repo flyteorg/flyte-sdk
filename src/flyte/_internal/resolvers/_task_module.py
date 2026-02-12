@@ -15,7 +15,17 @@ def extract_task_module(task: TaskTemplate, /, source_dir: pathlib.Path) -> Tupl
     """
     if isinstance(task, AsyncFunctionTaskTemplate):
         entity_name = task.func.__name__
-        entity_module_name, _ = extract_obj_module(task.func, source_dir)
+        entity_module_name, entity_module = extract_obj_module(task.func, source_dir)
+
+        # CodeTaskTemplate uses a dummy lambda — find it by scanning the module
+        if not entity_name.isidentifier():
+            for attr in vars(entity_module):
+                if getattr(entity_module, attr, None) is task:
+                    return attr, entity_module_name
+            raise ValueError(
+                f"Task '{task.name}' not found as a module-level attribute in '{entity_module_name}'"
+            )
+
         return entity_name, entity_module_name
     else:
         raise NotImplementedError(f"Task module {task.name} not implemented.")

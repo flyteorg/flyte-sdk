@@ -10,15 +10,19 @@ This means the orchestrator body is pure Python (cheap, fast, side-effect
 free) while the heavy lifting runs in full containers with filesystem
 and network access.
 
+Use ``@env.sandboxed_task`` to define sandboxed tasks directly on a
+``TaskEnvironment``, so they share the environment's image and are
+automatically registered for ``flyte run``.
+
 Install the optional dependency first::
 
     pip install 'flyte[sandboxed]'
 """
 
 import flyte
-import flyte.sandboxed
 
-env = flyte.TaskEnvironment(name="orchestrator-demo")
+env = flyte.TaskEnvironment(name="orchestrator-demo",
+                            image=flyte.Image.from_debian_base().with_pip_packages("pydantic-monty"))
 
 
 # --- Worker tasks (run in their own containers) ------------------------------
@@ -44,8 +48,9 @@ def add(x: int, y: int) -> int:
 # --- Sandboxed orchestrator --------------------------------------------------
 # The orchestrator contains only control flow. Each call to a worker task
 # pauses the sandbox, runs the worker, and resumes with the result.
+# Using ``@env.sandboxed_task`` registers the task directly in the environment.
 
-@flyte.sandboxed.task
+@env.sandboxed_task
 def leaderboard(player_ids: list[int]) -> dict[str, int]:
     """Compute total and bonus scores for a list of players."""
     total = 0
@@ -69,23 +74,11 @@ def leaderboard(player_ids: list[int]) -> dict[str, int]:
 # --- Chained orchestration ---------------------------------------------------
 # Sandboxed tasks can compose multiple workers into a pipeline.
 
-@flyte.sandboxed.task
+@env.sandboxed_task
 def scaled_sum(a: int, b: int, scale: int) -> int:
     """Add two numbers, then multiply by a scale factor."""
     raw = add(a, b)
     return multiply(raw, scale)
-
-
-# --- Attach sandboxed tasks to an environment for ``flyte run`` -----------
-# ``@flyte.sandboxed.task`` creates standalone templates. ``flyte run``
-# requires every task to belong to a TaskEnvironment. Group them with
-# ``from_task`` so they share the same sandboxed image.
-
-sandbox_env = flyte.TaskEnvironment.from_task(
-    "sandboxed-orchestrator",
-    leaderboard,
-    scaled_sum,
-)
 
 
 if __name__ == "__main__":

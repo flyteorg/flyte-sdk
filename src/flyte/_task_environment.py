@@ -31,6 +31,8 @@ from ._retry import RetryStrategy
 from ._reusable_environment import ReusePolicy
 from ._secret import SecretRequest
 from ._task import AsyncFunctionTaskTemplate, TaskTemplate
+from .sandboxed._config import SandboxedConfig
+from .sandboxed._task import SandboxedTaskTemplate
 from ._trigger import Trigger
 from .models import MAX_INLINE_IO_BYTES, NativeInterface
 
@@ -282,6 +284,86 @@ class TaskEnvironment(Environment):
         if _func is None:
             return cast(Callable[[F], AsyncFunctionTaskTemplate[P, R, F]], decorator)
         return cast(AsyncFunctionTaskTemplate[P, R, F], decorator(_func))
+
+    @overload
+    def sandboxed_task(
+        self,
+        _func: Callable[P, R],
+        /,
+    ) -> SandboxedTaskTemplate: ...
+
+    @overload
+    def sandboxed_task(
+        self,
+        *,
+        timeout_ms: int = 30_000,
+        max_memory: int = 50 * 1024 * 1024,
+        max_stack_depth: int = 256,
+        type_check: bool = True,
+        name: Optional[str] = None,
+        cache: CacheRequest | None = None,
+        retries: int = 0,
+    ) -> Callable[[Callable[P, R]], SandboxedTaskTemplate]: ...
+
+    def sandboxed_task(
+        self,
+        _func: F | None = None,
+        *,
+        timeout_ms: int = 30_000,
+        max_memory: int = 50 * 1024 * 1024,
+        max_stack_depth: int = 256,
+        type_check: bool = True,
+        name: Optional[str] = None,
+        cache: CacheRequest | None = None,
+        retries: int = 0,
+    ) -> SandboxedTaskTemplate | Callable[[F], SandboxedTaskTemplate]:
+        """Decorate a function to be a sandboxed task in this environment.
+
+        .. warning:: Experimental feature: alpha — APIs may change without notice.
+
+        Sandboxed tasks run pure Python in a Monty sandbox — no filesystem,
+        network, or OS access. They can call regular ``env.task`` workers
+        via external dispatch.
+
+        Uses the environment's image (which must include ``pydantic-monty``).
+
+        :param _func: The function to decorate.
+        :param timeout_ms: Sandbox execution timeout in milliseconds.
+        :param max_memory: Maximum memory in bytes.
+        :param max_stack_depth: Maximum call stack depth.
+        :param type_check: Whether to validate types at the boundary.
+        :param name: Optional task name override.
+        :param cache: Cache policy (defaults to environment's cache).
+        :param retries: Number of retries on failure.
+        """
+        config = SandboxedConfig(
+            max_memory=max_memory,
+            max_stack_depth=max_stack_depth,
+            timeout_ms=timeout_ms,
+            type_check=type_check,
+        )
+
+        def decorator(func: F) -> SandboxedTaskTemplate:
+            task_name = name or (self.name + "." + func.__name__)
+            interface = NativeInterface.from_callable(func)
+
+            tmpl = SandboxedTaskTemplate(
+                func=func,
+                name=task_name,
+                interface=interface,
+                plugin_config=config,
+                image=self.image,
+                cache=cache or self.cache,
+                retries=retries,
+                parent_env=weakref.ref(self),
+                parent_env_name=self.name,
+            )
+            self._tasks[task_name] = tmpl
+            return tmpl
+
+        if _func is not None:
+            return decorator(_func)
+        return decorator
 
     @property
     def tasks(self) -> Dict[str, TaskTemplate]:

@@ -104,10 +104,10 @@ def robust_transform(values: List[int], factor: int) -> List[int]:
     return result
 
 
-# --- code() with configuration ------------------------------------------------
-# The same options work with ``code()`` for code-string tasks.
+# --- code_to_task() with configuration ----------------------------------------
+# The same options work with ``code_to_task()`` for code-string tasks.
 
-configured_code_task = flyte.sandboxed.code(
+configured_code_task = flyte.sandboxed.code_to_task(
     "x * factor",
     inputs={"x": int, "factor": int},
     output=int,

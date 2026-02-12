@@ -1,4 +1,6 @@
-"""Tests for flyte.sandboxed.code() and flyte.sandboxed.run()."""
+"""Tests for flyte.sandboxed.code_to_task(), flyte.sandboxed.run_local_sandbox(),
+and TaskEnvironment.sandboxed_task().
+"""
 
 from __future__ import annotations
 
@@ -6,7 +8,7 @@ import inspect
 
 import pytest
 
-from flyte.sandboxed import code
+from flyte.sandboxed import code_to_task
 from flyte.sandboxed._code_task import (
     CodeTaskTemplate,
     _classify_refs,
@@ -122,45 +124,45 @@ class TestClassifyRefs:
 
 
 # ---------------------------------------------------------------------------
-# code() factory
+# code_to_task() factory
 # ---------------------------------------------------------------------------
 
 
 class TestCodeFactory:
     def test_creates_code_task_template(self):
-        t = code("x + y", inputs={"x": int, "y": int}, output=int)
+        t = code_to_task("x + y", inputs={"x": int, "y": int}, output=int)
         assert isinstance(t, CodeTaskTemplate)
         assert isinstance(t, SandboxedTaskTemplate)
 
     def test_default_name(self):
-        t = code("x", inputs={"x": int}, output=int)
+        t = code_to_task("x", inputs={"x": int}, output=int)
         assert t.name == "sandboxed-code"
 
     def test_custom_name(self):
-        t = code("x", inputs={"x": int}, output=int, name="my-code")
+        t = code_to_task("x", inputs={"x": int}, output=int, name="my-code")
         assert t.name == "my-code"
 
     def test_interface_from_types(self):
-        t = code("x + y", inputs={"x": int, "y": int}, output=int)
+        t = code_to_task("x + y", inputs={"x": int, "y": int}, output=int)
         assert "x" in t.interface.inputs
         assert "y" in t.interface.inputs
         assert "o0" in t.interface.outputs
 
     def test_interface_no_output(self):
-        t = code("x + y", inputs={"x": int, "y": int})
+        t = code_to_task("x + y", inputs={"x": int, "y": int})
         assert t.interface.outputs == {}
 
     def test_source_code_populated(self):
-        t = code("x + y", inputs={"x": int, "y": int}, output=int)
+        t = code_to_task("x + y", inputs={"x": int, "y": int}, output=int)
         assert t._source_code != ""
         assert "__result__" in t._source_code
 
     def test_input_names_populated(self):
-        t = code("x + y", inputs={"x": int, "y": int}, output=int)
+        t = code_to_task("x + y", inputs={"x": int, "y": int}, output=int)
         assert t._input_names == ["x", "y"]
 
     def test_no_external_refs_pure(self):
-        t = code("x + y", inputs={"x": int, "y": int}, output=int)
+        t = code_to_task("x + y", inputs={"x": int, "y": int}, output=int)
         assert not t._has_external_refs
 
     def test_external_refs_with_functions(self):
@@ -170,7 +172,7 @@ class TestCodeFactory:
         def add(x: int, y: int) -> int:
             return x + y
 
-        t = code(
+        t = code_to_task(
             "add(x, y)",
             inputs={"x": int, "y": int},
             output=int,
@@ -180,34 +182,34 @@ class TestCodeFactory:
         assert "add" in t._external_refs["task_refs"]
 
     def test_task_type(self):
-        t = code("x", inputs={"x": int}, output=int)
+        t = code_to_task("x", inputs={"x": int}, output=int)
         assert t.task_type == "sandboxed-python"
 
     def test_default_plugin_config(self):
-        t = code("x", inputs={"x": int}, output=int)
+        t = code_to_task("x", inputs={"x": int}, output=int)
         assert isinstance(t.plugin_config, SandboxedConfig)
         assert t.plugin_config.timeout_ms == 30_000
 
     def test_custom_timeout(self):
-        t = code("x", inputs={"x": int}, output=int, timeout_ms=5000)
+        t = code_to_task("x", inputs={"x": int}, output=int, timeout_ms=5000)
         assert t.plugin_config.timeout_ms == 5000
 
     def test_retries(self):
-        t = code("x", inputs={"x": int}, output=int, retries=3)
+        t = code_to_task("x", inputs={"x": int}, output=int, retries=3)
         assert t.retries.count == 3
 
     def test_forward_not_supported(self):
-        t = code("x", inputs={"x": int}, output=int)
+        t = code_to_task("x", inputs={"x": int}, output=int)
         with pytest.raises(NotImplementedError, match="does not support forward"):
             t.forward(x=1)
 
     def test_build_inputs(self):
-        t = code("x + y", inputs={"x": int, "y": int}, output=int)
+        t = code_to_task("x + y", inputs={"x": int, "y": int}, output=int)
         inputs = t._build_inputs(1, 2)
         assert inputs == {"x": 1, "y": 2}
 
     def test_build_inputs_kwargs(self):
-        t = code("x + y", inputs={"x": int, "y": int}, output=int)
+        t = code_to_task("x + y", inputs={"x": int, "y": int}, output=int)
         inputs = t._build_inputs(x=1, y=2)
         assert inputs == {"x": 1, "y": 2}
 
@@ -216,18 +218,18 @@ class TestCodeFactory:
             pass
 
         with pytest.raises(TypeError, match="unsupported type"):
-            code("x", inputs={"x": Custom}, output=int)
+            code_to_task("x", inputs={"x": Custom}, output=int)
 
     def test_rejects_unsupported_output_type(self):
         class Custom:
             pass
 
         with pytest.raises(TypeError, match="unsupported type"):
-            code("x", inputs={"x": int}, output=Custom)
+            code_to_task("x", inputs={"x": int}, output=Custom)
 
 
 # ---------------------------------------------------------------------------
-# run() — requires pydantic-monty
+# run_local_sandbox() — requires pydantic-monty
 # ---------------------------------------------------------------------------
 
 try:
@@ -242,23 +244,23 @@ except ImportError:
 class TestRunPurePython:
     @pytest.mark.asyncio
     async def test_simple_expression(self):
-        from flyte.sandboxed import run
+        from flyte.sandboxed import run_local_sandbox
 
-        result = await run("x + y", inputs={"x": 1, "y": 2})
+        result = await run_local_sandbox("x + y", inputs={"x": 1, "y": 2})
         assert result == 3
 
     @pytest.mark.asyncio
     async def test_assignment_return(self):
-        from flyte.sandboxed import run
+        from flyte.sandboxed import run_local_sandbox
 
-        result = await run("result = x * y", inputs={"x": 3, "y": 4})
+        result = await run_local_sandbox("result = x * y", inputs={"x": 3, "y": 4})
         assert result == 12
 
     @pytest.mark.asyncio
     async def test_multiline_code(self):
-        from flyte.sandboxed import run
+        from flyte.sandboxed import run_local_sandbox
 
-        result = await run(
+        result = await run_local_sandbox(
             """
             a = x + 1
             b = y + 2
@@ -270,9 +272,9 @@ class TestRunPurePython:
 
     @pytest.mark.asyncio
     async def test_multiline_assignment(self):
-        from flyte.sandboxed import run
+        from flyte.sandboxed import run_local_sandbox
 
-        result = await run(
+        result = await run_local_sandbox(
             """
             partial = x + y
             result = partial * 2
@@ -283,14 +285,111 @@ class TestRunPurePython:
 
     @pytest.mark.asyncio
     async def test_string_result(self):
-        from flyte.sandboxed import run
+        from flyte.sandboxed import run_local_sandbox
 
-        result = await run("name + ' world'", inputs={"name": "hello"})
+        result = await run_local_sandbox("name + ' world'", inputs={"name": "hello"})
         assert result == "hello world"
 
     @pytest.mark.asyncio
     async def test_list_result(self):
-        from flyte.sandboxed import run
+        from flyte.sandboxed import run_local_sandbox
 
-        result = await run("[x, y, x + y]", inputs={"x": 1, "y": 2})
+        result = await run_local_sandbox("[x, y, x + y]", inputs={"x": 1, "y": 2})
         assert result == [1, 2, 3]
+
+
+# ---------------------------------------------------------------------------
+# TaskEnvironment.sandboxed_task()
+# ---------------------------------------------------------------------------
+
+
+class TestEnvironmentSandboxedTask:
+    def test_bare_decorator(self):
+        """@env.sandboxed_task without arguments."""
+        import flyte
+
+        env = flyte.TaskEnvironment(name="test-env")
+
+        @env.sandboxed_task
+        def add(x: int, y: int) -> int:
+            return x + y
+
+        assert isinstance(add, SandboxedTaskTemplate)
+        assert add.name == "test-env.add"
+        assert "test-env.add" in env.tasks
+
+    def test_decorator_with_args(self):
+        """@env.sandboxed_task(timeout_ms=...) with arguments."""
+        import flyte
+
+        env = flyte.TaskEnvironment(name="test-env2")
+
+        @env.sandboxed_task(timeout_ms=5_000, retries=2)
+        def multiply(x: int, y: int) -> int:
+            return x * y
+
+        assert isinstance(multiply, SandboxedTaskTemplate)
+        assert multiply.plugin_config.timeout_ms == 5_000
+        assert multiply.retries.count == 2
+        assert "test-env2.multiply" in env.tasks
+
+    def test_uses_environment_image(self):
+        """Sandboxed task should use the environment's image, not a hardcoded one."""
+        import flyte
+
+        env = flyte.TaskEnvironment(name="img-test", image="my-custom-image:latest")
+
+        @env.sandboxed_task
+        def noop(x: int) -> int:
+            return x
+
+        assert noop.image.base_image == "my-custom-image:latest"
+
+    def test_parent_env_set(self):
+        """Sandboxed task should have parent_env pointing to the environment."""
+        import flyte
+
+        env = flyte.TaskEnvironment(name="parent-test")
+
+        @env.sandboxed_task
+        def sub(x: int) -> int:
+            return x
+
+        assert sub.parent_env() is env
+        assert sub.parent_env_name == "parent-test"
+
+    def test_rejects_async_function(self):
+        """Sandboxed tasks must be synchronous."""
+        import flyte
+
+        env = flyte.TaskEnvironment(name="async-test")
+
+        with pytest.raises(TypeError, match="must be synchronous"):
+            @env.sandboxed_task
+            async def bad(x: int) -> int:
+                return x
+
+    def test_forward(self):
+        """forward() should call the function directly."""
+        import flyte
+
+        env = flyte.TaskEnvironment(name="fwd-test")
+
+        @env.sandboxed_task
+        def double(x: int) -> int:
+            return x * 2
+
+        assert double.forward(5) == 10
+
+    def test_custom_name(self):
+        """name= overrides the auto-generated name."""
+        import flyte
+
+        env = flyte.TaskEnvironment(name="name-test")
+
+        @env.sandboxed_task(name="my-custom-name")
+        def thing(x: int) -> int:
+            return x
+
+        assert thing.name == "my-custom-name"
+        assert "my-custom-name" in env.tasks
