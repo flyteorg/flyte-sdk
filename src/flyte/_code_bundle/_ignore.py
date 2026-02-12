@@ -40,9 +40,13 @@ class GitIgnore(Ignore):
         self.ignored_dirs = self._list_ignored_dirs()
 
     def _git_wrapper(self, extra_args: List[str]) -> set[str]:
+        if (self.root / ".gitignore").exists():
+            extra_args.extend(["--exclude-from=.gitignore"])
+        if (self.root / ".flyteignore").exists():
+            extra_args.extend(["--exclude-from=.flyteignore"])
         if self.has_git:
             out = subprocess.run(
-                ["git", "ls-files", "-io", "--exclude-standard", *extra_args],
+                ["git", "ls-files", "-io", *extra_args],
                 cwd=self.root,
                 capture_output=True,
                 check=False,
@@ -55,7 +59,8 @@ class GitIgnore(Ignore):
         return set()
 
     def _list_ignored_files(self) -> set[str]:
-        return self._git_wrapper([])
+        exclude_args = []
+        return self._git_wrapper(exclude_args)
 
     def _list_ignored_dirs(self) -> set[str]:
         return self._git_wrapper(["--directory"])

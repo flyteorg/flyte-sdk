@@ -135,3 +135,139 @@ node_modules/
         # main.py should not be ignored
         main_file = (root_path / "main.py").absolute()
         assert not git_ignore.is_ignored(main_file), "main.py should NOT be ignored"
+
+
+def test_gitignore_with_flyteignore():
+    """Test that GitIgnore respects both .gitignore and .flyteignore files"""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        root_path = Path(tmpdir).resolve()
+
+        # Initialize a git repo
+        subprocess.run(["git", "init"], cwd=root_path, capture_output=True, check=True)
+
+        # Create .gitignore with some patterns
+        gitignore_content = """
+*.pyc
+__pycache__/
+.venv/
+"""
+        (root_path / ".gitignore").write_text(gitignore_content)
+
+        # Create .flyteignore with different patterns
+        flyteignore_content = """
+*.log
+temp/
+secrets.json
+"""
+        (root_path / ".flyteignore").write_text(flyteignore_content)
+
+        # Create test files
+        (root_path / "main.py").write_text("print('hello')")
+        (root_path / "test.pyc").write_text("bytecode")  # Should be ignored by .gitignore
+        (root_path / "debug.log").write_text("logs")  # Should be ignored by .flyteignore
+        (root_path / "secrets.json").write_text("{}")  # Should be ignored by .flyteignore
+        (root_path / "config.json").write_text("{}")  # Should NOT be ignored
+
+        # Create temp directory with files (ignored by .flyteignore)
+        (root_path / "temp").mkdir()
+        (root_path / "temp" / "data.txt").write_text("temp data")
+
+        # Create .venv directory (ignored by .gitignore)
+        (root_path / ".venv").mkdir()
+        (root_path / ".venv" / "python").write_text("#!/usr/bin/env python")
+
+        # Add ignore files to git
+        subprocess.run(["git", "add", ".gitignore", ".flyteignore"], cwd=root_path, capture_output=True, check=True)
+
+        git_ignore = GitIgnore(root_path)
+
+        # Test files ignored by .gitignore
+        assert git_ignore.is_ignored(root_path / "test.pyc"), "test.pyc should be ignored (from .gitignore)"
+        assert git_ignore.is_ignored(root_path / ".venv" / "python"), ".venv/python should be ignored (from .gitignore)"
+
+        # Test files ignored by .flyteignore
+        assert git_ignore.is_ignored(root_path / "debug.log"), "debug.log should be ignored (from .flyteignore)"
+        assert git_ignore.is_ignored(root_path / "secrets.json"), "secrets.json should be ignored (from .flyteignore)"
+        assert git_ignore.is_ignored(root_path / "temp" / "data.txt"), "temp/data.txt should be ignored (from .flyteignore)"
+
+        # Test files that should NOT be ignored
+        assert not git_ignore.is_ignored(root_path / "main.py"), "main.py should NOT be ignored"
+        assert not git_ignore.is_ignored(root_path / "config.json"), "config.json should NOT be ignored"
+
+
+def test_gitignore_flyteignore_directory_patterns():
+    """Test that directory patterns work correctly in both .gitignore and .flyteignore"""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        root_path = Path(tmpdir).resolve()
+
+        # Initialize a git repo
+        subprocess.run(["git", "init"], cwd=root_path, capture_output=True, check=True)
+
+        # Create .gitignore with directory pattern
+        gitignore_content = """
+build/
+"""
+        (root_path / ".gitignore").write_text(gitignore_content)
+
+        # Create .flyteignore with directory pattern
+        flyteignore_content = """
+artifacts/
+"""
+        (root_path / ".flyteignore").write_text(flyteignore_content)
+
+        # Create directories and files
+        (root_path / "build").mkdir()
+        (root_path / "build" / "output.txt").write_text("build output")
+        (root_path / "artifacts").mkdir()
+        (root_path / "artifacts" / "result.txt").write_text("artifact")
+        (root_path / "src").mkdir()
+        (root_path / "src" / "main.py").write_text("code")
+
+        # Add ignore files to git
+        subprocess.run(["git", "add", ".gitignore", ".flyteignore"], cwd=root_path, capture_output=True, check=True)
+
+        git_ignore = GitIgnore(root_path)
+
+        # Test directory patterns from .gitignore
+        assert git_ignore.is_ignored(root_path / "build" / "output.txt"), "build/output.txt should be ignored (from .gitignore)"
+
+        # Test directory patterns from .flyteignore
+        assert git_ignore.is_ignored(root_path / "artifacts" / "result.txt"), "artifacts/result.txt should be ignored (from .flyteignore)"
+
+        # Test that non-ignored directories still work
+        assert not git_ignore.is_ignored(root_path / "src" / "main.py"), "src/main.py should NOT be ignored"
+
+
+def test_gitignore_flyteignore_overlapping_patterns():
+    """Test behavior when both .gitignore and .flyteignore have overlapping patterns"""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        root_path = Path(tmpdir).resolve()
+
+        # Initialize a git repo
+        subprocess.run(["git", "init"], cwd=root_path, capture_output=True, check=True)
+
+        # Create .gitignore and .flyteignore with overlapping patterns
+        gitignore_content = """
+*.log
+"""
+        (root_path / ".gitignore").write_text(gitignore_content)
+
+        flyteignore_content = """
+!*.log
+debug/
+"""
+        (root_path / ".flyteignore").write_text(flyteignore_content)
+
+        # Create test files
+        (root_path / "app.log").write_text("logs")
+        (root_path / "debug").mkdir()
+        (root_path / "debug" / "trace.log").write_text("debug logs")
+
+        # Add ignore files to git
+        subprocess.run(["git", "add", ".gitignore", ".flyteignore"], cwd=root_path, capture_output=True, check=True)
+
+        git_ignore = GitIgnore(root_path)
+
+        # Files should be ignored regardless of which file defines the pattern
+        assert not git_ignore.is_ignored(root_path / "app.log"), "app.log should not be ignored"
+        assert git_ignore.is_ignored(root_path / "debug" / "trace.log"), "debug/trace.log should be ignored"
