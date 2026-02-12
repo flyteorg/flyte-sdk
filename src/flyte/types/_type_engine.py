@@ -273,7 +273,7 @@ class TypeTransformer(typing.Generic[T]):
             return False
         try:
             if hasattr(self.python_type, "model_json_schema") and self.python_type is not BaseModel:
-                this_schema = self.python_type.model_json_schema()
+                this_schema = self.python_type.model_json_schema()  # type: ignore[attr-defined]
                 return (
                     schema.get("title") == this_schema.get("title")
                     and schema.get("type") == this_schema.get("type")
