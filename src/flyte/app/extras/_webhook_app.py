@@ -64,7 +64,6 @@ def _create_webhook_app(
     from fastapi import FastAPI, HTTPException, Query
     from starlette import status
 
-    from flyte._image import Architecture
     from flyte.app.extras import FastAPIPassthroughAuthMiddleware
 
     @asynccontextmanager
@@ -647,7 +646,7 @@ def _create_webhook_app(
         apt_packages: list[str] | None = None,
         python_version: str | None = None,
         flyte_version: str | None = None,
-        platform: list[Architecture] | None = None,
+        platform: list[str] | None = None,
         name: str | None = None,
         pre: bool = False,
     ):
@@ -671,12 +670,16 @@ def _create_webhook_app(
         try:
             # Start with base image
             if base_image:
-                image = flyte.Image(base_image)
+                image = flyte.Image(base_image).clone(
+                    name=name,
+                    python_version=python_version,
+                )
             else:
                 image = flyte.Image.from_debian_base(
                     python_version=python_version,
                     flyte_version=flyte_version,
                     platform=platform,
+                    name=name,
                 )
 
             # Add apt packages
@@ -688,7 +691,7 @@ def _create_webhook_app(
                 image = image.with_pip_packages(*pip_packages, pre=pre)
 
             # Build the image
-            image_build = await flyte.build.aio(image, name=name, wait=False)
+            image_build = await flyte.build.aio(image, wait=False)
 
             return {
                 "image_build_run_url": image_build.remote_run,

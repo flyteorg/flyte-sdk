@@ -3,6 +3,7 @@ from __future__ import annotations
 from contextlib import asynccontextmanager, contextmanager
 from typing import AsyncGenerator, AsyncIterator, Generator, Literal, Mapping, Tuple, cast
 
+import asyncio
 import google.protobuf.json_format
 import grpc
 import rich.repr
@@ -16,6 +17,7 @@ from flyte.syncify import syncify
 from ._common import ToJSONMixin, filtering, sorting
 
 WaitFor = Literal["activated", "deactivated"]
+wait_for_interval = 1  # seconds
 
 
 def _is_active(state: app_definition_pb2.Status.DeploymentStatus) -> bool:
@@ -128,6 +130,9 @@ class App(ToJSONMixin):
         async for resp in call:
             if resp.update_event:
                 updated_app = resp.update_event.updated_app
+                if not updated_app.status.conditions:
+                    await asyncio.sleep(wait_for_interval)
+                    continue
                 current_status = updated_app.status.conditions[-1].deployment_status
                 if current_status == app_definition_pb2.Status.DeploymentStatus.DEPLOYMENT_STATUS_FAILED:
                     raise RuntimeError(f"App deployment for app {self.name} has failed!")
