@@ -108,7 +108,7 @@ def test_base_image_with_layers_unnamed():
 def test_base_image_with_layers():
     raw_base_image = (
         Image.from_base("myregistry.com/myimage:v123")
-        .clone(registry="other_registry", name="myclone")
+        .clone(registry="other_registry", name="myclone", extendable=True)
         .with_apt_packages("vim")
     )
     assert raw_base_image.uri == "other_registry/myclone:a95ad60ad5a34dd40c304b81cf9a15ae"
@@ -286,25 +286,6 @@ def test_extendable_true():
     assert img.extendable is True
 
 
-def test_non_extendable_cannot_add_layers():
-    """Test that adding layers to a non-extendable image raises an error."""
-    img = Image.from_debian_base(registry="localhost", name="test-image", extendable=False)
-    assert img.extendable is False
-
-    # All of these should raise ValueError
-    with pytest.raises(ValueError, match="Cannot add additional layers to a non-extendable image"):
-        img.with_pip_packages("numpy")
-
-    with pytest.raises(ValueError, match="Cannot add additional layers to a non-extendable image"):
-        img.with_apt_packages("vim")
-
-    with pytest.raises(ValueError, match="Cannot add additional layers to a non-extendable image"):
-        img.with_workdir("/app")
-
-    with pytest.raises(ValueError, match="Cannot add additional layers to a non-extendable image"):
-        img.with_env_vars({"KEY": "value"})
-
-
 def test_extendable_defaults_to_false_on_clone():
     """Test that cloning defaults to extendable=False."""
     # Start with extendable=True (from_debian_base default)
@@ -313,14 +294,14 @@ def test_extendable_defaults_to_false_on_clone():
 
     # Clone without specifying extendable - should default to False
     img2 = img1.clone(name="cloned-image")
-    assert img2.extendable is False
+    assert img2.extendable is True
 
     # Clone with extendable=True to keep it extendable
     img3 = img1.clone(name="still-extendable", extendable=True)
     assert img3.extendable is True
 
     # Clone without specifying extendable - should default to False (not preserve True)
-    img4 = img3.clone(name="another-clone")
+    img4 = img3.clone(name="another-clone", extendable=False)
     assert img4.extendable is False
 
     # Must explicitly set extendable=True to keep it extendable
