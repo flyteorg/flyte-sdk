@@ -272,3 +272,79 @@ def test_layer_unhashable_type_error_message():
 
     valid_apt = AptPackages(packages=("vim", "curl"))
     assert valid_apt.packages == ("vim", "curl")
+
+
+def test_extendable_default():
+    """Test that images are extendable by default."""
+    img = Image.from_debian_base(registry="localhost", name="test-image")
+    assert img.extendable is True
+
+
+def test_extendable_false():
+    """Test that images can be marked as non-extendable."""
+    img = Image.from_debian_base(registry="localhost", name="test-image").clone(extendable=False)
+    assert img.extendable is False
+
+
+def test_non_extendable_cannot_add_layers():
+    """Test that adding layers to a non-extendable image raises an error."""
+    img = Image.from_debian_base(registry="localhost", name="test-image").clone(extendable=False)
+
+    # All of these should raise ValueError
+    with pytest.raises(ValueError, match="Cannot add additional layers to a non-extendable image"):
+        img.with_pip_packages("numpy")
+
+    with pytest.raises(ValueError, match="Cannot add additional layers to a non-extendable image"):
+        img.with_apt_packages("vim")
+
+    with pytest.raises(ValueError, match="Cannot add additional layers to a non-extendable image"):
+        img.with_workdir("/app")
+
+    with pytest.raises(ValueError, match="Cannot add additional layers to a non-extendable image"):
+        img.with_env_vars({"KEY": "value"})
+
+
+def test_extendable_preserves_on_clone():
+    """Test that extendable value is preserved when cloning without specifying it."""
+    # Start with extendable=True (default)
+    img1 = Image.from_debian_base(registry="localhost", name="test-image")
+    assert img1.extendable is True
+
+    # Clone without specifying extendable - should preserve True
+    img2 = img1.clone(name="cloned-image")
+    assert img2.extendable is True
+
+    # Make it non-extendable
+    img3 = img1.clone(extendable=False)
+    assert img3.extendable is False
+
+    # Clone without specifying extendable - should preserve False
+    img4 = img3.clone(name="another-clone")
+    assert img4.extendable is False
+
+
+def test_extendable_can_change_on_clone():
+    """Test that extendable value can be explicitly changed when cloning."""
+    img1 = Image.from_debian_base(registry="localhost", name="test-image")
+    assert img1.extendable is True
+
+    # Explicitly make it non-extendable
+    img2 = img1.clone(extendable=False)
+    assert img2.extendable is False
+
+    # Make it extendable again
+    img3 = img2.clone(extendable=True)
+    assert img3.extendable is True
+
+
+def test_extendable_allows_layers():
+    """Test that extendable images can have layers added."""
+    img = Image.from_debian_base(registry="localhost", name="test-image")
+    assert img.extendable is True
+
+    # Should not raise any errors
+    img2 = img.with_pip_packages("numpy", "pandas")
+    assert len(img2._layers) > len(img._layers)
+
+    img3 = img2.with_apt_packages("vim")
+    assert len(img3._layers) > len(img2._layers)
