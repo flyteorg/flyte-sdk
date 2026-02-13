@@ -441,7 +441,7 @@ class Image:
     name: Optional[str] = field(default=None)
     platform: Tuple[Architecture, ...] = field(default=("linux/amd64",))
     python_version: Tuple[int, int] = field(default_factory=_detect_python_version)
-    extendable: bool = field(default=True)
+    extendable: bool = field(default=False)
     # Refer to the image_refs (name:image-uri) set in CLI or config
     _ref_name: Optional[str] = field(default=None)
 
@@ -704,7 +704,7 @@ class Image:
         :param extendable: Whether the image is extendable by other images. If True, the image can be used as a base
          image for other images, and additional layers can be added on top of it. If False, the image cannot be
           used as a base image for other images, and additional layers cannot be added on top of it. If not specified,
-          will preserve the current image's extendable value (default is True for new images).
+          will preserve the current image's extendable value (default is False for new images).
         :return:
         """
         from flyte import Secret
