@@ -587,7 +587,7 @@ class Image:
         )
 
         if registry or name:
-            return base_image.clone(registry=registry, name=name, registry_secret=registry_secret)
+            return base_image.clone(registry=registry, name=name, registry_secret=registry_secret, extendable=True)
 
         return base_image
 
@@ -680,7 +680,7 @@ class Image:
             platform=platform,
         )
 
-        return img.clone(addl_layer=ll)
+        return img.clone(addl_layer=ll, extendable=True)
 
     def clone(
         self,
@@ -770,6 +770,7 @@ class Image:
             "dockerfile": file,
             "registry": registry,
             "name": name,
+            "extendable": False,  # Dockerfile-based images cannot have additional layers
         }
         if platform:
             kwargs["platform"] = platform

@@ -348,3 +348,30 @@ def test_extendable_allows_layers():
 
     img3 = img2.with_apt_packages("vim")
     assert len(img3._layers) > len(img2._layers)
+
+
+def test_from_debian_base_is_extendable():
+    """Test that images created with from_debian_base are extendable by default."""
+    img = Image.from_debian_base(registry="localhost", name="test-image")
+    assert img.extendable is True
+
+    # Should be able to add layers
+    img2 = img.with_pip_packages("numpy")
+    assert len(img2._layers) > len(img._layers)
+
+
+def test_from_dockerfile_is_not_extendable():
+    """Test that images created with from_dockerfile are not extendable by default."""
+    import tempfile
+    from pathlib import Path
+
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".Dockerfile", delete=False) as f:
+        f.write("FROM python:3.12-slim\n")
+        f.write("RUN echo 'test'\n")
+        dockerfile_path = Path(f.name)
+
+    try:
+        img = Image.from_dockerfile(file=dockerfile_path, registry="localhost", name="test-image")
+        assert img.extendable is False
+    finally:
+        dockerfile_path.unlink()
