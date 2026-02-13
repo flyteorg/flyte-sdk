@@ -48,7 +48,7 @@ def get_proto_container(
     resources = get_proto_resources(app_env.resources)
 
     if app_env.image == "auto":
-        img: Image | None = Image.from_debian_base()
+        img: Image | None = Image.from_debian_base(extendable=True)
     elif isinstance(app_env.image, str):
         img = Image.from_base(app_env.image)
     else:

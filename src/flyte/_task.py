@@ -125,7 +125,7 @@ class TaskTemplate(Generic[P, R, F]):
     def __post_init__(self):
         # Auto set the image based on the image request
         if self.image == "auto":
-            self.image = Image.from_debian_base()
+            self.image = Image.from_debian_base(extendable=True)
         elif isinstance(self.image, str):
             self.image = Image.from_base(str(self.image))
 

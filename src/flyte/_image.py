@@ -514,6 +514,7 @@ class Image:
             name=_DEFAULT_IMAGE_NAME,
             python_version=python_version,
             platform=("linux/amd64", "linux/arm64") if platform is None else platform,
+            extendable=True,
         )
         labels_and_user = _DockerLines(
             (
@@ -868,7 +869,7 @@ class Image:
 
         Example:
         ```python
-        @flyte.task(image=(flyte.Image.from_debian_base().with_pip_packages("requests", "numpy")))
+        @flyte.task(image=(flyte.Image.from_debian_base(extendable=True).with_pip_packages("requests", "numpy")))
         def my_task(x: int) -> int:
             import numpy as np
             return np.sum([x, 1])
@@ -882,7 +883,7 @@ class Image:
         private_package = "git+https://$GITHUB_PAT@github.com/flyteorg/flytex.git@2e20a2acebfc3877d84af643fdd768edea41d533"
         @flyte.task(
             image=(
-                flyte.Image.from_debian_base()
+                flyte.Image.from_debian_base(extendable=True)
                 .with_pip_packages("private_package", secret_mounts=[Secret(key="GITHUB_PAT")])
                 .with_apt_packages("git", secret_mounts=[Secret(key="apt-secret", mount="/etc/apt/apt-secret")])
         )

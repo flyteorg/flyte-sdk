@@ -394,7 +394,7 @@ async def _build_images(deployment: DeploymentPlan, image_refs: Dict[str, str] |
                 image_uri = image_refs[_DEFAULT_IMAGE_REF_NAME]
                 image_identifier_map[env_name] = image_uri
                 continue
-            auto_image = Image.from_debian_base()
+            auto_image = Image.from_debian_base(extendable=True)
             images.append(_build_image_bg(env_name, auto_image))
     final_images = await asyncio.gather(*images)
 
