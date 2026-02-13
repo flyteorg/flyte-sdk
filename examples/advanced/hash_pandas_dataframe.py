@@ -48,7 +48,7 @@ def hash_pandas_dataframe(df: pd.DataFrame) -> str:
 
 
 # Create a reusable type alias with the hash function annotation
-HashedPandasDataFrame = Annotated[pd.DataFrame, HashFunction.from_function(hash_pandas_dataframe)]
+HashedPandasDataFrame = Annotated[pd.DataFrame, HashFunction.from_fn(hash_pandas_dataframe)]
 
 
 @env.task

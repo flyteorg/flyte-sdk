@@ -52,7 +52,7 @@ def hash_polars_dataframe(df: pl.DataFrame) -> str:
 
 
 # Create a reusable type alias with the hash function annotation
-HashedPolarsDataFrame = Annotated[pl.DataFrame, HashFunction.from_function(hash_polars_dataframe)]
+HashedPolarsDataFrame = Annotated[pl.DataFrame, HashFunction.from_fn(hash_polars_dataframe)]
 
 
 @env.task

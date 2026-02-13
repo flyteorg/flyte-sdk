@@ -59,7 +59,7 @@ async def produce_dataframe() -> DataFrame:
     df["action_name"] = flyte.ctx().action.run_name
 
     # Create a HashFunction from our custom hash function
-    hash_method = HashFunction.from_function(hash_pandas_dataframe)
+    hash_method = HashFunction.from_fn(hash_pandas_dataframe)
 
     # Use from_local to create a DataFrame with the custom hash
     return await DataFrame.from_local(df, hash_method=hash_method)

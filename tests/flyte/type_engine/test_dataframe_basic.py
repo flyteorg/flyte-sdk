@@ -72,7 +72,7 @@ def test_annotate_extraction_with_hash_function():
     def hash_pandas_df(df: pd.DataFrame) -> str:
         return str(pd.util.hash_pandas_object(df).sum())
 
-    hash_method = HashFunction.from_function(hash_pandas_df)
+    hash_method = HashFunction.from_fn(hash_pandas_df)
     xyz = typing.Annotated[pd.DataFrame, hash_method]
     a, b, c, d, e = extract_cols_and_format(xyz)
     assert a is pd.DataFrame

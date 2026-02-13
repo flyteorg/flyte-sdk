@@ -259,7 +259,7 @@ class DataFrame(BaseModel, SerializableType):
         @env.task
         async def foo() -> DataFrame:
             df = pd.DataFrame({"a": [1, 2, 3], "b": [4, 5, 6]})
-            hash_method = HashFunction.from_function(hash_pandas_dataframe)
+            hash_method = HashFunction.from_fn(hash_pandas_dataframe)
             return await DataFrame.from_local(df, hash_method=hash_method)
         ```
 
@@ -348,7 +348,7 @@ class DataFrame(BaseModel, SerializableType):
         @env.task
         def foo() -> DataFrame:
             df = pd.DataFrame({"a": [1, 2, 3], "b": [4, 5, 6]})
-            hash_method = HashFunction.from_function(hash_pandas_dataframe)
+            hash_method = HashFunction.from_fn(hash_pandas_dataframe)
             return DataFrame.from_local_sync(df, hash_method=hash_method)
         ```
 
