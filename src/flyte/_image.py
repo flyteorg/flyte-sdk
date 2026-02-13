@@ -691,7 +691,7 @@ class Image:
         base_image: Optional[str] = None,
         python_version: Optional[Tuple[int, int]] = None,
         addl_layer: Optional[Layer] = None,
-        extendable: Optional[bool] = None,
+        extendable: bool = False,
     ) -> Image:
         """
         Use this method to clone the current image and change the registry and name
@@ -703,9 +703,8 @@ class Image:
         :param python_version: Python version for the image, if not specified, will use the current Python version
         :param addl_layer: Additional layer to add to the image. This will be added to the end of the layers.
         :param extendable: Whether the image is extendable by other images. If True, the image can be used as a base
-         image for other images, and additional layers can be added on top of it. If False, the image cannot be
-          used as a base image for other images, and additional layers cannot be added on top of it. If not specified,
-          will preserve the current image's extendable value (default is False for new images).
+         image for other images, and additional layers can be added on top of it. If False (default), the image cannot be
+          used as a base image for other images, and additional layers cannot be added on top of it.
         :return:
         """
         from flyte import Secret
@@ -738,7 +737,7 @@ class Image:
             name=name,
             platform=self.platform,
             python_version=python_version or self.python_version,
-            extendable=extendable if extendable is not None else self.extendable,
+            extendable=extendable,
             _layers=new_layers,
             _image_registry_secret=Secret(key=registry_secret) if isinstance(registry_secret, str) else registry_secret,
             _ref_name=self._ref_name,

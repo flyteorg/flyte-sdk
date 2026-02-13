@@ -305,23 +305,27 @@ def test_non_extendable_cannot_add_layers():
         img.with_env_vars({"KEY": "value"})
 
 
-def test_extendable_preserves_on_clone():
-    """Test that extendable value is preserved when cloning without specifying it."""
+def test_extendable_defaults_to_false_on_clone():
+    """Test that cloning defaults to extendable=False."""
     # Start with extendable=False (default)
     img1 = Image.from_debian_base(registry="localhost", name="test-image")
     assert img1.extendable is False
 
-    # Clone without specifying extendable - should preserve False
+    # Clone without specifying extendable - should default to False
     img2 = img1.clone(name="cloned-image")
     assert img2.extendable is False
 
     # Make it extendable
-    img3 = img1.clone(extendable=True)
+    img3 = img1.clone(name="extendable-image", extendable=True)
     assert img3.extendable is True
 
-    # Clone without specifying extendable - should preserve True
+    # Clone without specifying extendable - should default to False (not preserve True)
     img4 = img3.clone(name="another-clone")
-    assert img4.extendable is True
+    assert img4.extendable is False
+
+    # Must explicitly set extendable=True to keep it extendable
+    img5 = img3.clone(name="still-extendable", extendable=True)
+    assert img5.extendable is True
 
 
 def test_extendable_can_change_on_clone():
