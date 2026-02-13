@@ -123,6 +123,21 @@ class DataFrame(BaseModel, SerializableType):
         self._lazy_uploader = lazy_uploader
 
     @classmethod
+    def schema_match(cls, incoming: dict) -> bool:
+        # Check if incoming schema matches DataFrame schema. Not intended for direct use.
+        if not isinstance(incoming, dict):
+            return False
+        this_schema = cls.model_json_schema()
+        # DataFrame schema has title "DataFrame" and properties uri, format, hash
+        if incoming.get("title") == this_schema.get("title") and incoming.get("type") == this_schema.get("type"):
+            # Check that the incoming schema has the expected properties
+            incoming_props = incoming.get("properties", {})
+            # DataFrame has uri, format, hash properties
+            if "uri" in incoming_props and "format" in incoming_props:
+                return True
+        return False
+
+    @classmethod
     def _deserialize(cls, value) -> DataFrame:
         uri = value.get("uri", None)
         format_val = value.get("format", None)
