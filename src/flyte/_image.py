@@ -561,7 +561,6 @@ class Image:
         registry_secret: Optional[str | Secret] = None,
         name: Optional[str] = None,
         platform: Optional[Tuple[Architecture, ...]] = None,
-        extendable: bool = True,
     ) -> Image:
         """
         Use this method to start using the default base image, built from this library's base Dockerfile
@@ -591,11 +590,7 @@ class Image:
         )
 
         if registry or name:
-            return base_image.clone(registry=registry, name=name, registry_secret=registry_secret, extendable=extendable)
-
-        # Set extendable on the base image if different from default
-        if extendable != base_image.extendable:
-            return base_image.clone(extendable=extendable)
+            return base_image.clone(registry=registry, name=name, registry_secret=registry_secret, extendable=True)
 
         return base_image
 
@@ -745,7 +740,7 @@ class Image:
             name=name,
             platform=self.platform,
             python_version=python_version or self.python_version,
-            extendable=extendable if extendable is not None else False,
+            extendable=extendable if extendable is not None else self.extendable,
             _layers=new_layers,
             _image_registry_secret=Secret(key=registry_secret) if isinstance(registry_secret, str) else registry_secret,
             _ref_name=self._ref_name,
