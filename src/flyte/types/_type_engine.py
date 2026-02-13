@@ -2204,8 +2204,7 @@ def _get_element_type(
     if not isinstance(element_property, dict):
         return typing.Any
 
-    matched_type = _match_registered_type_from_schema(element_property)
-    if matched_type is not None:
+    if (matched_type := _match_registered_type_from_schema(element_property)) is not None:
         return matched_type
 
     # Handle $ref for nested models and enums
@@ -2222,8 +2221,7 @@ def _get_element_type(
             if ref_schema.get("enum"):
                 return str
             # Check if the $ref matches a registered custom type
-            matched_type = _match_registered_type_from_schema(ref_schema)
-            if matched_type is not None:
+            if (matched_type := _match_registered_type_from_schema(ref_schema)) is not None:
                 return matched_type
             # if defs not in the schema, they need to be propogated into the resolved schema
             if "$defs" not in ref_schema and defs:
