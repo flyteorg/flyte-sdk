@@ -1034,6 +1034,7 @@ from ._tuple_dict import (  # noqa: E402
 
 
 def generate_attribute_list_from_dataclass_json_mixin(schema: dict, schema_name: typing.Any):
+    from flyte.io._dataframe.dataframe import DataFrame
     from flyte.io._dir import Dir
     from flyte.io._file import File
 
@@ -1058,6 +1059,31 @@ def generate_attribute_list_from_dataclass_json_mixin(schema: dict, schema_name:
                 # Check if the $ref points to an enum definition (no properties)
                 if ref_schema.get("enum"):
                     attribute_list.append((property_key, str))
+                    continue
+                # Check if the $ref points to a Flyte IO type (File, Dir, DataFrame)
+                if File.schema_match(ref_schema):
+                    attribute_list.append(
+                        (
+                            property_key,
+                            typing.cast(GenericAlias, File),
+                        )
+                    )
+                    continue
+                elif Dir.schema_match(ref_schema):
+                    attribute_list.append(
+                        (
+                            property_key,
+                            typing.cast(GenericAlias, Dir),
+                        )
+                    )
+                    continue
+                elif DataFrame.schema_match(ref_schema):
+                    attribute_list.append(
+                        (
+                            property_key,
+                            typing.cast(GenericAlias, DataFrame),
+                        )
+                    )
                     continue
                 # Include $defs so nested models can resolve their own $refs
                 if "$defs" not in ref_schema and defs:
@@ -1110,6 +1136,17 @@ def generate_attribute_list_from_dataclass_json_mixin(schema: dict, schema_name:
                         )
                     )
                     continue
+                elif DataFrame.schema_match(property_val):
+                    attribute_list.append(
+                        (
+                            property_key,
+                            typing.cast(
+                                GenericAlias,
+                                DataFrame,
+                            ),
+                        )
+                    )
+                    continue
                 nested_class = convert_mashumaro_json_schema_to_python_class(sub_schemea, sub_schemea_name)
                 attribute_list.append(
                     (
@@ -1144,6 +1181,17 @@ def generate_attribute_list_from_dataclass_json_mixin(schema: dict, schema_name:
                             typing.cast(
                                 GenericAlias,
                                 Dir,
+                            ),
+                        )
+                    )
+                    continue
+                elif DataFrame.schema_match(property_val):
+                    attribute_list.append(
+                        (
+                            property_key,
+                            typing.cast(
+                                GenericAlias,
+                                DataFrame,
                             ),
                         )
                     )
@@ -2200,6 +2248,7 @@ def _get_element_type(
     element_property: typing.Union[typing.Dict[str, typing.Any], bool],
     schema: typing.Optional[typing.Dict[str, typing.Any]] = None,
 ) -> Type:
+    from flyte.io._dataframe.dataframe import DataFrame
     from flyte.io._dir import Dir
     from flyte.io._file import File
 
@@ -2214,6 +2263,8 @@ def _get_element_type(
         return File
     elif Dir.schema_match(element_property):
         return Dir
+    elif DataFrame.schema_match(element_property):
+        return DataFrame
 
     # Handle $ref for nested models and enums
 
@@ -2228,6 +2279,13 @@ def _get_element_type(
             # Guard the nested enum elements inside containers
             if ref_schema.get("enum"):
                 return str
+            # Check if the $ref points to a Flyte IO type (File, Dir, DataFrame)
+            if File.schema_match(ref_schema):
+                return File
+            elif Dir.schema_match(ref_schema):
+                return Dir
+            elif DataFrame.schema_match(ref_schema):
+                return DataFrame
             # if defs not in the schema, they need to be propogated into the resolved schema
             if "$defs" not in ref_schema and defs:
                 ref_schema["$defs"] = defs
