@@ -59,7 +59,6 @@ agent_env = flyte.TaskEnvironment(
         flyte.Image.from_debian_base(python_version=(3, 13))
         .clone(
             addl_layer=PythonWheels(wheel_dir=DIST_FOLDER, package_name="flyteplugins-anthropic", pre=True),
-            extendable=True,
         )
         .with_pip_packages("tavily-python", "markdown")
     ),

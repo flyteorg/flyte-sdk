@@ -525,7 +525,7 @@ class Image:
                 "WORKDIR /root",
             )
         )
-        image = image.clone(addl_layer=labels_and_user, extendable=True)
+        image = image.clone(addl_layer=labels_and_user)
         image = image.with_env_vars(
             {
                 "VIRTUAL_ENV": "/opt/venv",
@@ -574,8 +574,6 @@ class Image:
         :param name: Name of the image if you want to override the default name
         :param platform: Platform to use for the image, default is linux/amd64, use tuple for multiple values
             Example: ("linux/amd64", "linux/arm64")
-        :param extendable: Whether the image should be extendable. Default is True since debian base images
-            are typically used to build upon.
 
         :return: Image
         """
@@ -683,7 +681,7 @@ class Image:
             platform=platform,
         )
 
-        return img.clone(addl_layer=ll, extendable=True)
+        return img.clone(addl_layer=ll)
 
     def clone(
         self,
