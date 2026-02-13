@@ -12,6 +12,29 @@ endpoints for interacting with the Flyte control plane, including:
 - Calling other app endpoints
 - Prefetching HuggingFace models
 
+The module also provides configuration options for:
+- Endpoint group filtering: Enable groups of endpoints using `endpoint_groups` parameter
+- Endpoint filtering: Enable only specific endpoints using the `endpoints` parameter
+- Task allow-listing: Restrict access to specific tasks using `TaskAllowList`
+- App allow-listing: Restrict access to specific apps using `AppAllowList`
+
+Available endpoint groups (WebhookEndpointGroup):
+    - "all": All available endpoints
+    - "core": Health check and user info endpoints ("health", "me")
+    - "task": Task-related endpoints ("run_task", "get_task")
+    - "run": Run-related endpoints ("get_run", "get_run_io", "abort_run")
+    - "app": App-related endpoints ("get_app", "activate_app", "deactivate_app", "call_app")
+    - "trigger": Trigger-related endpoints ("activate_trigger", "deactivate_trigger")
+    - "build": Image build endpoints ("build_image")
+    - "prefetch": HuggingFace prefetch endpoints ("prefetch_hf_model", "get_prefetch_hf_model",
+                  "get_prefetch_hf_model_io", "abort_prefetch_hf_model")
+
+Available endpoint types (WebhookEndpoint):
+    "health", "me", "run_task", "get_task", "get_run", "get_run_io", "abort_run",
+    "get_app", "activate_app", "deactivate_app", "call_app", "activate_trigger",
+    "deactivate_trigger", "build_image", "prefetch_hf_model", "get_prefetch_hf_model",
+    "get_prefetch_hf_model_io", "abort_prefetch_hf_model"
+
 Example:
     Basic usage:
 
@@ -25,6 +48,43 @@ Example:
         domain=flyte.app.Domain(subdomain="my-webhook-subdomain"),
     )
     ```
+
+    With endpoint group filtering:
+
+    ```python
+    from flyte.app.extras import FlyteWebhookAppEnvironment
+
+    # Only enable core, task, and run endpoint groups
+    webhook_env = FlyteWebhookAppEnvironment(
+        name="task-runner-webhook",
+        endpoint_groups=["core", "task", "run"],
+    )
+    ```
+
+    With individual endpoint filtering:
+
+    ```python
+    from flyte.app.extras import FlyteWebhookAppEnvironment
+
+    # Only enable specific endpoints
+    webhook_env = FlyteWebhookAppEnvironment(
+        name="minimal-webhook",
+        endpoints=["health", "run_task", "get_run"],
+    )
+    ```
+
+    With task allow-listing:
+
+    ```python
+    from flyte.app.extras import FlyteWebhookAppEnvironment, TaskAllowList
+
+    webhook_env = FlyteWebhookAppEnvironment(
+        name="restricted-webhook",
+        task_allowlist=TaskAllowList(
+            tasks=["production/my-project/my-task", "another-task"]
+        ),
+    )
+    ```
 """
 
 from __future__ import annotations
@@ -33,7 +93,7 @@ import inspect
 import logging
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal, get_args
 
 import rich.repr
 
@@ -47,6 +107,238 @@ if TYPE_CHECKING:
     import uvicorn
 
 logger = logging.getLogger(__name__)
+
+
+# ==================== Endpoint Type Definitions ====================
+
+# All available individual endpoints
+WebhookEndpoint = Literal[
+    "health",
+    "me",
+    "run_task",
+    "get_task",
+    "get_run",
+    "get_run_io",
+    "abort_run",
+    "get_app",
+    "activate_app",
+    "deactivate_app",
+    "call_app",
+    "activate_trigger",
+    "deactivate_trigger",
+    "build_image",
+    "prefetch_hf_model",
+    "get_prefetch_hf_model",
+    "get_prefetch_hf_model_io",
+    "abort_prefetch_hf_model",
+]
+
+# All available endpoints as a tuple for easy reference
+ALL_WEBHOOK_ENDPOINTS: tuple[WebhookEndpoint, ...] = get_args(WebhookEndpoint)
+
+# ==================== Endpoint Group Definitions ====================
+
+# Available endpoint groups
+WebhookEndpointGroup = Literal[
+    "all",
+    "core",
+    "task",
+    "run",
+    "app",
+    "trigger",
+    "build",
+    "prefetch",
+]
+
+# All available endpoint groups as a tuple for easy reference
+ALL_WEBHOOK_ENDPOINT_GROUPS: tuple[WebhookEndpointGroup, ...] = get_args(WebhookEndpointGroup)
+
+# Mapping from endpoint group names to their constituent endpoints
+ENDPOINT_GROUP_MAPPING: dict[WebhookEndpointGroup, tuple[WebhookEndpoint, ...]] = {
+    "all": ALL_WEBHOOK_ENDPOINTS,
+    "core": ("health", "me"),
+    "task": ("run_task", "get_task"),
+    "run": ("get_run", "get_run_io", "abort_run"),
+    "app": ("get_app", "activate_app", "deactivate_app", "call_app"),
+    "trigger": ("activate_trigger", "deactivate_trigger"),
+    "build": ("build_image",),
+    "prefetch": (
+        "prefetch_hf_model",
+        "get_prefetch_hf_model",
+        "get_prefetch_hf_model_io",
+        "abort_prefetch_hf_model",
+    ),
+}
+
+
+@dataclass
+class TaskAllowList:
+    """
+    Configuration for task allow-listing.
+
+    When configured, only tasks matching the specified criteria will be accessible.
+    If a field is None, that field is not filtered.
+
+    Args:
+        tasks: List of allowed task identifiers in the format "domain/project/name"
+               or just "name" (matches any domain/project).
+               If None, all tasks are allowed.
+
+    Example:
+        ```python
+        # Allow only specific tasks
+        task_allowlist = TaskAllowList(
+            tasks=["production/my-project/my-task", "staging/my-project/another-task"]
+        )
+
+        # Allow tasks by name only (any domain/project)
+        task_allowlist = TaskAllowList(tasks=["my-task", "another-task"])
+        ```
+    """
+
+    tasks: list[str] | None = None
+
+    def is_allowed(self, domain: str, project: str, name: str) -> bool:
+        """Check if a task is allowed based on the allowlist."""
+        if self.tasks is None:
+            return True
+
+        full_path = f"{domain}/{project}/{name}"
+        for allowed in self.tasks:
+            # Check for exact match (domain/project/name)
+            if allowed == full_path:
+                return True
+            # Check for name-only match
+            if "/" not in allowed and allowed == name:
+                return True
+            # Check for project/name match
+            if allowed.count("/") == 1:
+                proj_name = f"{project}/{name}"
+                if allowed == proj_name:
+                    return True
+        return False
+
+
+@dataclass
+class AppAllowList:
+    """
+    Configuration for app allow-listing.
+
+    When configured, only apps matching the specified criteria will be accessible.
+    If a field is None, that field is not filtered.
+
+    Args:
+        apps: List of allowed app names.
+              If None, all apps are allowed.
+
+    Example:
+        ```python
+        # Allow only specific apps
+        app_allowlist = AppAllowList(apps=["my-app", "another-app"])
+        ```
+    """
+
+    apps: list[str] | None = None
+
+    def is_allowed(self, name: str) -> bool:
+        """Check if an app is allowed based on the allowlist."""
+        if self.apps is None:
+            return True
+        return name in self.apps
+
+
+@dataclass
+class TriggerAllowList:
+    """
+    Configuration for trigger allow-listing.
+
+    When configured, only triggers matching the specified criteria will be accessible.
+    If a field is None, that field is not filtered.
+
+    Args:
+        triggers: List of allowed trigger identifiers in the format "task_name/trigger_name"
+                  or just "trigger_name" (matches any task).
+                  If None, all triggers are allowed.
+
+    Example:
+        ```python
+        # Allow only specific triggers with their task names
+        trigger_allowlist = TriggerAllowList(
+            triggers=["my-task/my-trigger", "another-task/another-trigger"]
+        )
+
+        # Allow triggers by name only (any task)
+        trigger_allowlist = TriggerAllowList(triggers=["my-trigger", "another-trigger"])
+        ```
+    """
+
+    triggers: list[str] | None = None
+
+    def is_allowed(self, task_name: str, trigger_name: str) -> bool:
+        """Check if a trigger is allowed based on the allowlist."""
+        if self.triggers is None:
+            return True
+
+        full_path = f"{task_name}/{trigger_name}"
+        for allowed in self.triggers:
+            # Check for exact match (task_name/trigger_name)
+            if allowed == full_path:
+                return True
+            # Check for trigger_name-only match
+            if "/" not in allowed and allowed == trigger_name:
+                return True
+        return False
+
+
+@dataclass
+class _EndpointConfig:
+    """Configuration for a single endpoint."""
+
+    method: str
+    path: str
+    handler: callable
+    name: str | None = None
+
+
+def _resolve_endpoints(
+    endpoint_groups: list[WebhookEndpointGroup] | tuple[WebhookEndpointGroup, ...] | None,
+    endpoints: list[WebhookEndpoint] | tuple[WebhookEndpoint, ...] | None,
+) -> set[WebhookEndpoint]:
+    """
+    Resolve endpoint groups and individual endpoints to a set of enabled endpoints.
+
+    Args:
+        endpoint_groups: List of endpoint groups to enable.
+        endpoints: List of individual endpoints to enable.
+
+    Returns:
+        A set of all enabled endpoints.
+
+    Note:
+        - If both are None, all endpoints are enabled.
+        - If only endpoint_groups is specified, those groups are enabled.
+        - If only endpoints is specified, those individual endpoints are enabled.
+        - If both are specified, the union of both is enabled.
+    """
+    enabled: set[WebhookEndpoint] = set()
+
+    # If neither is specified, enable all endpoints
+    if endpoint_groups is None and endpoints is None:
+        return set(ALL_WEBHOOK_ENDPOINTS)
+
+    # Add endpoints from groups
+    if endpoint_groups is not None:
+        for group in endpoint_groups:
+            if group in ENDPOINT_GROUP_MAPPING:
+                enabled.update(ENDPOINT_GROUP_MAPPING[group])
+            else:
+                logger.warning(f"Unknown endpoint group: {group}, skipping")
+
+    # Add individual endpoints
+    if endpoints is not None:
+        enabled.update(endpoints)
+
+    return enabled
 
 
 def _create_webhook_app(
@@ -66,39 +358,42 @@ def _create_webhook_app(
 
     from flyte.app.extras import FastAPIPassthroughAuthMiddleware
 
-    @asynccontextmanager
-    async def lifespan(app: FastAPI):
-        """
-        FastAPI lifespan context manager to initialize Flyte with passthrough auth.
-        """
-        await flyte.init_passthrough.aio(
-            project=flyte.current_project(),
-            domain=flyte.current_domain(),
-        )
-        logger.info("Initialized Flyte passthrough auth for FlyteWebhookAppEnvironment")
-        yield
+    # Resolve endpoint groups and individual endpoints
+    enabled_endpoints = _resolve_endpoints(webhook_env.endpoint_groups, webhook_env.endpoints)
+    task_allowlist: TaskAllowList | None = webhook_env.task_allowlist
+    app_allowlist: AppAllowList | None = webhook_env.app_allowlist
+    trigger_allowlist: TriggerAllowList | None = webhook_env.trigger_allowlist
 
-    app = FastAPI(
-        title=webhook_env.title or f"Flyte Webhook: {webhook_env.name}",
-        description=webhook_env.description or "A webhook service for Flyte operations",
-        version="1.0.0",
-        lifespan=lifespan,
-    )
+    def _check_task_allowed(domain: str, project: str, name: str):
+        """Check if a task is allowed and raise HTTPException if not."""
+        if task_allowlist is not None and not task_allowlist.is_allowed(domain, project, name):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Task {domain}/{project}/{name} is not in the allowlist",
+            )
 
-    # Add auth middleware - automatically extracts auth headers and sets Flyte context
-    excluded_paths = {"/health", "/docs", "/openapi.json", "/redoc"}
-    app.add_middleware(FastAPIPassthroughAuthMiddleware, excluded_paths=excluded_paths)
+    def _check_app_allowed(name: str):
+        """Check if an app is allowed and raise HTTPException if not."""
+        if app_allowlist is not None and not app_allowlist.is_allowed(name):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"App {name} is not in the allowlist",
+            )
 
-    # ==================== Health Check ====================
+    def _check_trigger_allowed(task_name: str, trigger_name: str):
+        """Check if a trigger is allowed and raise HTTPException if not."""
+        if trigger_allowlist is not None and not trigger_allowlist.is_allowed(task_name, trigger_name):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Trigger {task_name}/{trigger_name} is not in the allowlist",
+            )
 
-    @app.get("/health")
+    # ==================== Endpoint Handler Definitions ====================
+
     async def health_check():
         """Health check endpoint."""
         return {"status": "healthy"}
 
-    # ==================== User Info ====================
-
-    @app.get("/me")
     async def get_current_user():
         """
         Get information about the currently authenticated user.
@@ -121,9 +416,6 @@ def _create_webhook_app(
                 detail="Invalid credentials or unauthorized",
             )
 
-    # ==================== Task Operations ====================
-
-    @app.post("/run-task/{domain}/{project}/{name}")
     async def run_task(
         domain: str,
         project: str,
@@ -148,6 +440,9 @@ def _create_webhook_app(
         """
         import flyte.errors
         import flyte.remote as remote
+
+        # Check task allowlist
+        _check_task_allowed(domain, project, name)
 
         logger.info(f"Running task: {domain}/{project}/{name} version={version}")
 
@@ -182,7 +477,6 @@ def _create_webhook_app(
                 detail=str(e),
             )
 
-    @app.get("/task/{domain}/{project}/{name}")
     async def get_task_metadata(
         domain: str,
         project: str,
@@ -203,6 +497,9 @@ def _create_webhook_app(
         """
         import flyte.errors
         import flyte.remote as remote
+
+        # Check task allowlist
+        _check_task_allowed(domain, project, name)
 
         try:
             auto_version = "latest" if version is None else None
@@ -242,9 +539,6 @@ def _create_webhook_app(
                 detail=str(e),
             )
 
-    # ==================== Run Operations ====================
-
-    @app.get("/run/{name}")
     async def get_run(name: str):
         """
         Get run metadata (status, phase, etc.).
@@ -272,7 +566,6 @@ def _create_webhook_app(
                 detail=f"Run {name} not found: {e}",
             )
 
-    @app.get("/run/{name}/io")
     async def get_run_io(name: str):
         """
         Get run inputs and outputs.
@@ -322,7 +615,6 @@ def _create_webhook_app(
                 detail=f"Run {name} not found or I/O unavailable: {e}",
             )
 
-    @app.post("/run/{name}/abort")
     async def abort_run(
         name: str,
         reason: str = "Aborted via webhook API",
@@ -354,9 +646,6 @@ def _create_webhook_app(
                 detail=f"Failed to abort run {name}: {e}",
             )
 
-    # ==================== App Operations ====================
-
-    @app.get("/app/{name}")
     async def get_app_status(
         name: str,
         domain: str | None = None,
@@ -382,6 +671,9 @@ def _create_webhook_app(
                 detail="Cannot get status of self",
             )
 
+        # Check app allowlist
+        _check_app_allowed(name)
+
         try:
             app = await remote.App.get.aio(name=name, project=project, domain=domain)
             return {
@@ -399,7 +691,6 @@ def _create_webhook_app(
                 detail=f"App {name} not found: {e}",
             )
 
-    @app.post("/app/{name}/activate")
     async def activate_app(
         name: str,
         domain: str | None = None,
@@ -427,6 +718,9 @@ def _create_webhook_app(
                 detail="Cannot activate self",
             )
 
+        # Check app allowlist
+        _check_app_allowed(name)
+
         try:
             app = await remote.App.get.aio(name=name, project=project, domain=domain)
             updated_app = await app.activate.aio(wait=wait)
@@ -443,7 +737,6 @@ def _create_webhook_app(
                 detail=f"Failed to activate app {name}: {e}",
             )
 
-    @app.post("/app/{name}/deactivate")
     async def deactivate_app(
         name: str,
         domain: str | None = None,
@@ -471,6 +764,9 @@ def _create_webhook_app(
                 detail="Cannot deactivate self",
             )
 
+        # Check app allowlist
+        _check_app_allowed(name)
+
         try:
             app = await remote.App.get.aio(name=name, project=project, domain=domain)
             updated_app = await app.deactivate.aio(wait=wait)
@@ -487,7 +783,6 @@ def _create_webhook_app(
                 detail=f"Failed to deactivate app {name}: {e}",
             )
 
-    @app.post("/app/{name}/call")
     async def call_app_endpoint(
         name: str,
         path: str = Query(..., description="The endpoint path to call on the target app"),
@@ -525,6 +820,9 @@ def _create_webhook_app(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Cannot call self",
             )
+
+        # Check app allowlist
+        _check_app_allowed(name)
 
         try:
             app = await remote.App.get.aio(name=name, project=project, domain=domain)
@@ -573,9 +871,6 @@ def _create_webhook_app(
                 detail=f"Failed to call app {name} endpoint {path}: {e}",
             )
 
-    # ==================== Trigger Operations ====================
-
-    @app.post("/trigger/{task_name}/{trigger_name}/activate")
     async def activate_trigger(
         task_name: str,
         trigger_name: str,
@@ -592,6 +887,9 @@ def _create_webhook_app(
         """
         import flyte.remote as remote
 
+        # Check trigger allowlist
+        _check_trigger_allowed(task_name, trigger_name)
+
         try:
             await remote.Trigger.update.aio(name=trigger_name, task_name=task_name, active=True)
             return {
@@ -606,7 +904,6 @@ def _create_webhook_app(
                 detail=f"Failed to activate trigger {trigger_name}: {e}",
             )
 
-    @app.post("/trigger/{task_name}/{trigger_name}/deactivate")
     async def deactivate_trigger(
         task_name: str,
         trigger_name: str,
@@ -623,6 +920,9 @@ def _create_webhook_app(
         """
         import flyte.remote as remote
 
+        # Check trigger allowlist
+        _check_trigger_allowed(task_name, trigger_name)
+
         try:
             await remote.Trigger.update.aio(name=trigger_name, task_name=task_name, active=False)
             return {
@@ -637,9 +937,6 @@ def _create_webhook_app(
                 detail=f"Failed to deactivate trigger {trigger_name}: {e}",
             )
 
-    # ==================== Image Build Operations ====================
-
-    @app.post("/build-image")
     async def build_image(
         base_image: str | None = None,
         pip_packages: list[str] | None = None,
@@ -708,9 +1005,6 @@ def _create_webhook_app(
                 detail=f"Failed to build image: {e}",
             )
 
-    # ==================== Prefetch Operations ====================
-
-    @app.post("/prefetch/hf-model")
     async def prefetch_hf_model(
         repo: str,
         raw_data_path: str | None = None,
@@ -785,7 +1079,6 @@ def _create_webhook_app(
                 detail=f"Failed to prefetch HF model: {e}",
             )
 
-    @app.get("/prefetch/hf-model/{run_name}")
     async def get_prefetch_hf_model_status(run_name: str):
         """
         Get the status of a HuggingFace model prefetch run.
@@ -813,7 +1106,6 @@ def _create_webhook_app(
                 detail=f"Prefetch run {run_name} not found: {e}",
             )
 
-    @app.get("/prefetch/hf-model/{run_name}/io")
     async def get_prefetch_hf_model_io(run_name: str):
         """
         Get the inputs and outputs of a HuggingFace model prefetch run.
@@ -862,7 +1154,6 @@ def _create_webhook_app(
                 detail=f"Prefetch run {run_name} not found or I/O unavailable: {e}",
             )
 
-    @app.post("/prefetch/hf-model/{run_name}/abort")
     async def abort_prefetch_hf_model(
         run_name: str,
         reason: str = "Aborted via webhook API",
@@ -893,6 +1184,144 @@ def _create_webhook_app(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail=f"Failed to abort prefetch run {run_name}: {e}",
             )
+
+    # ==================== Endpoint Registry ====================
+
+    # Map endpoint names to their configurations
+    endpoint_registry: dict[WebhookEndpoint, _EndpointConfig] = {
+        "health": _EndpointConfig(
+            method="GET",
+            path="/health",
+            handler=health_check,
+        ),
+        "me": _EndpointConfig(
+            method="GET",
+            path="/me",
+            handler=get_current_user,
+        ),
+        "run_task": _EndpointConfig(
+            method="POST",
+            path="/run-task/{domain}/{project}/{name}",
+            handler=run_task,
+        ),
+        "get_task": _EndpointConfig(
+            method="GET",
+            path="/task/{domain}/{project}/{name}",
+            handler=get_task_metadata,
+        ),
+        "get_run": _EndpointConfig(
+            method="GET",
+            path="/run/{name}",
+            handler=get_run,
+        ),
+        "get_run_io": _EndpointConfig(
+            method="GET",
+            path="/run/{name}/io",
+            handler=get_run_io,
+        ),
+        "abort_run": _EndpointConfig(
+            method="POST",
+            path="/run/{name}/abort",
+            handler=abort_run,
+        ),
+        "get_app": _EndpointConfig(
+            method="GET",
+            path="/app/{name}",
+            handler=get_app_status,
+        ),
+        "activate_app": _EndpointConfig(
+            method="POST",
+            path="/app/{name}/activate",
+            handler=activate_app,
+        ),
+        "deactivate_app": _EndpointConfig(
+            method="POST",
+            path="/app/{name}/deactivate",
+            handler=deactivate_app,
+        ),
+        "call_app": _EndpointConfig(
+            method="POST",
+            path="/app/{name}/call",
+            handler=call_app_endpoint,
+        ),
+        "activate_trigger": _EndpointConfig(
+            method="POST",
+            path="/trigger/{task_name}/{trigger_name}/activate",
+            handler=activate_trigger,
+        ),
+        "deactivate_trigger": _EndpointConfig(
+            method="POST",
+            path="/trigger/{task_name}/{trigger_name}/deactivate",
+            handler=deactivate_trigger,
+        ),
+        "build_image": _EndpointConfig(
+            method="POST",
+            path="/build-image",
+            handler=build_image,
+        ),
+        "prefetch_hf_model": _EndpointConfig(
+            method="POST",
+            path="/prefetch/hf-model",
+            handler=prefetch_hf_model,
+        ),
+        "get_prefetch_hf_model": _EndpointConfig(
+            method="GET",
+            path="/prefetch/hf-model/{run_name}",
+            handler=get_prefetch_hf_model_status,
+        ),
+        "get_prefetch_hf_model_io": _EndpointConfig(
+            method="GET",
+            path="/prefetch/hf-model/{run_name}/io",
+            handler=get_prefetch_hf_model_io,
+        ),
+        "abort_prefetch_hf_model": _EndpointConfig(
+            method="POST",
+            path="/prefetch/hf-model/{run_name}/abort",
+            handler=abort_prefetch_hf_model,
+        ),
+    }
+
+    # ==================== Create FastAPI App ====================
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        """
+        FastAPI lifespan context manager to initialize Flyte with passthrough auth.
+        """
+        await flyte.init_passthrough.aio(
+            project=flyte.current_project(),
+            domain=flyte.current_domain(),
+        )
+        logger.info("Initialized Flyte passthrough auth for FlyteWebhookAppEnvironment")
+        yield
+
+    app = FastAPI(
+        title=webhook_env.title or f"Flyte Webhook: {webhook_env.name}",
+        description=webhook_env.description or "A webhook service for Flyte operations",
+        version="1.0.0",
+        lifespan=lifespan,
+    )
+
+    # Add auth middleware - automatically extracts auth headers and sets Flyte context
+    excluded_paths = {"/health", "/docs", "/openapi.json", "/redoc"}
+    app.add_middleware(FastAPIPassthroughAuthMiddleware, excluded_paths=excluded_paths)
+
+    # ==================== Register Enabled Endpoints ====================
+
+    for endpoint_name in enabled_endpoints:
+        if endpoint_name not in endpoint_registry:
+            logger.warning(f"Unknown endpoint: {endpoint_name}, skipping")
+            continue
+
+        config = endpoint_registry[endpoint_name]
+
+        # Use add_api_route to programmatically register endpoints
+        app.add_api_route(
+            path=config.path,
+            endpoint=config.handler,
+            methods=[config.method],
+            name=config.name or config.handler.__name__,
+        )
 
     return app
 
@@ -927,9 +1356,46 @@ class FlyteWebhookAppEnvironment(FastAPIAppEnvironment):
         scaling: Scaling configuration for the app environment
         depends_on: Environment dependencies
         secrets: Secrets to inject into the environment
+        endpoint_groups: List of endpoint groups to enable. If None (and endpoints is None),
+            all endpoints are enabled. Available groups (see WebhookEndpointGroup type):
+            - "all": All available endpoints
+            - "core": Health check and user info ("health", "me")
+            - "task": Task operations ("run_task", "get_task")
+            - "run": Run operations ("get_run", "get_run_io", "abort_run")
+            - "app": App operations ("get_app", "activate_app", "deactivate_app", "call_app")
+            - "trigger": Trigger operations ("activate_trigger", "deactivate_trigger")
+            - "build": Image build operations ("build_image")
+            - "prefetch": HuggingFace prefetch operations ("prefetch_hf_model",
+                         "get_prefetch_hf_model", "get_prefetch_hf_model_io", "abort_prefetch_hf_model")
+        endpoints: List of individual endpoints to enable. Can be used alone or combined
+            with endpoint_groups. Available endpoints (see WebhookEndpoint type):
+            - "health": Health check endpoint
+            - "me": Get current user info
+            - "run_task": Run a task
+            - "get_task": Get task metadata
+            - "get_run": Get run status
+            - "get_run_io": Get run inputs/outputs
+            - "abort_run": Abort a run
+            - "get_app": Get app status
+            - "activate_app": Activate an app
+            - "deactivate_app": Deactivate an app
+            - "call_app": Call another app's endpoint
+            - "activate_trigger": Activate a trigger
+            - "deactivate_trigger": Deactivate a trigger
+            - "build_image": Build a container image
+            - "prefetch_hf_model": Prefetch a HuggingFace model
+            - "get_prefetch_hf_model": Get prefetch run status
+            - "get_prefetch_hf_model_io": Get prefetch run I/O
+            - "abort_prefetch_hf_model": Abort a prefetch run
+        task_allowlist: Configuration for task allow-listing. When set, only tasks
+            matching the allowlist can be accessed via task endpoints.
+        app_allowlist: Configuration for app allow-listing. When set, only apps
+            matching the allowlist can be accessed via app endpoints.
+        trigger_allowlist: Configuration for trigger allow-listing. When set, only triggers
+            matching the allowlist can be accessed via trigger endpoints.
 
     Example:
-        Basic usage:
+        Basic usage (all endpoints enabled):
 
         ```python
         import flyte
@@ -944,6 +1410,86 @@ class FlyteWebhookAppEnvironment(FastAPIAppEnvironment):
         # Deploy the webhook
         flyte.serve(webhook_env)
         ```
+
+        With endpoint group filtering:
+
+        ```python
+        from flyte.app.extras import FlyteWebhookAppEnvironment
+
+        # Only enable core, task, and run endpoint groups
+        webhook_env = FlyteWebhookAppEnvironment(
+            name="task-runner-webhook",
+            endpoint_groups=["core", "task", "run"],
+        )
+        ```
+
+        With individual endpoint filtering:
+
+        ```python
+        from flyte.app.extras import FlyteWebhookAppEnvironment
+
+        # Only enable specific endpoints
+        webhook_env = FlyteWebhookAppEnvironment(
+            name="minimal-webhook",
+            endpoints=["health", "run_task", "get_run"],
+        )
+        ```
+
+        Combining endpoint groups and individual endpoints:
+
+        ```python
+        from flyte.app.extras import FlyteWebhookAppEnvironment
+
+        # Enable core group plus specific additional endpoints
+        webhook_env = FlyteWebhookAppEnvironment(
+            name="custom-webhook",
+            endpoint_groups=["core"],
+            endpoints=["run_task", "get_run"],
+        )
+        ```
+
+        With task allow-listing:
+
+        ```python
+        from flyte.app.extras import FlyteWebhookAppEnvironment, TaskAllowList
+
+        # Only allow specific tasks
+        webhook_env = FlyteWebhookAppEnvironment(
+            name="restricted-webhook",
+            endpoint_groups=["core", "task", "run"],
+            task_allowlist=TaskAllowList(
+                tasks=["production/my-project/allowed-task", "my-other-task"]
+            ),
+        )
+        ```
+
+        With app allow-listing:
+
+        ```python
+        from flyte.app.extras import FlyteWebhookAppEnvironment, AppAllowList
+
+        # Only allow specific apps
+        webhook_env = FlyteWebhookAppEnvironment(
+            name="app-manager-webhook",
+            endpoint_groups=["core", "app"],
+            app_allowlist=AppAllowList(apps=["my-app", "another-app"]),
+        )
+        ```
+
+        With trigger allow-listing:
+
+        ```python
+        from flyte.app.extras import FlyteWebhookAppEnvironment, TriggerAllowList
+
+        # Only allow specific triggers
+        webhook_env = FlyteWebhookAppEnvironment(
+            name="trigger-manager-webhook",
+            endpoint_groups=["core", "trigger"],
+            trigger_allowlist=TriggerAllowList(
+                triggers=["my-task/my-trigger", "another-trigger"]
+            ),
+        )
+        ```
     """
 
     title: str | None = None
@@ -953,9 +1499,17 @@ class FlyteWebhookAppEnvironment(FastAPIAppEnvironment):
     image: flyte.Image = field(
         default_factory=lambda: flyte.Image.from_debian_base().with_pip_packages("fastapi", "uvicorn")
     )
+    endpoint_groups: list[WebhookEndpointGroup] | tuple[WebhookEndpointGroup, ...] | None = None
+    endpoints: list[WebhookEndpoint] | tuple[WebhookEndpoint, ...] | None = None
+    task_allowlist: TaskAllowList | None = None
+    app_allowlist: AppAllowList | None = None
+    trigger_allowlist: TriggerAllowList | None = None
     _caller_frame: inspect.FrameInfo | None = None
 
     def __post_init__(self):
+        if self.endpoints is not None and self.endpoint_groups is not None:
+            raise ValueError("Cannot specify both endpoints and endpoint_groups")
+
         self.app = _create_webhook_app(self)
         super().__post_init__()
 
@@ -992,3 +1546,13 @@ class FlyteWebhookAppEnvironment(FastAPIAppEnvironment):
         yield "name", self.name
         yield "title", self.title
         yield "type", self.type
+        if self.endpoint_groups is not None:
+            yield "endpoint_groups", list(self.endpoint_groups)
+        if self.endpoints is not None:
+            yield "endpoints", list(self.endpoints)
+        if self.task_allowlist is not None:
+            yield "task_allowlist", self.task_allowlist
+        if self.app_allowlist is not None:
+            yield "app_allowlist", self.app_allowlist
+        if self.trigger_allowlist is not None:
+            yield "trigger_allowlist", self.trigger_allowlist
