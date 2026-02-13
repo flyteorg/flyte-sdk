@@ -17,9 +17,8 @@ class HashMethod(Protocol):
 class HashFunction(HashMethod):
     def __init__(self, fn: Callable[[Any], str]):
         self._fn = fn
-        self._value = None
 
-    def update(self, data: Any) -> str:
+    def update(self, data: Any):
         self._value = self._fn(data)
 
     def result(self) -> str:
