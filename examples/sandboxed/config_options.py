@@ -18,10 +18,10 @@ from typing import List
 import flyte
 import flyte.sandboxed
 
-
 # --- Custom timeout -----------------------------------------------------------
 # Default is 30 seconds. Use a shorter timeout for tasks that should be fast,
 # or a longer one for complex computations.
+
 
 @flyte.sandboxed.task(timeout_ms=5_000)
 def quick_sum(numbers: List[int]) -> int:
@@ -34,6 +34,7 @@ def quick_sum(numbers: List[int]) -> int:
 # --- Memory limit -------------------------------------------------------------
 # Default is 50 MB. Increase for tasks that work with large data structures.
 
+
 @flyte.sandboxed.task(max_memory=100 * 1024 * 1024)  # 100 MB
 def build_large_list(n: int) -> List[int]:
     result = []
@@ -45,6 +46,7 @@ def build_large_list(n: int) -> List[int]:
 # --- Stack depth --------------------------------------------------------------
 # Default is 256. Increase for deeply recursive computations.
 
+
 @flyte.sandboxed.task(max_stack_depth=512)
 def deep_recursion(n: int) -> int:
     if n <= 1:
@@ -55,6 +57,7 @@ def deep_recursion(n: int) -> int:
 # --- Disable type checking ----------------------------------------------------
 # By default Monty validates types at the boundary. Disable for flexibility.
 
+
 @flyte.sandboxed.task(type_check=False)
 def flexible(x: int, y: int) -> int:
     return x + y
@@ -62,6 +65,7 @@ def flexible(x: int, y: int) -> int:
 
 # --- Caching ------------------------------------------------------------------
 # Enable caching so repeated calls with the same inputs skip re-execution.
+
 
 @flyte.sandboxed.task(cache="auto")
 def expensive_calc(x: int) -> int:
@@ -75,6 +79,7 @@ def expensive_calc(x: int) -> int:
 # --- Retries ------------------------------------------------------------------
 # Automatically retry on failure.
 
+
 @flyte.sandboxed.task(retries=3)
 def flaky_task(x: int) -> int:
     return x * 2
@@ -83,12 +88,14 @@ def flaky_task(x: int) -> int:
 # --- Custom name --------------------------------------------------------------
 # Override the auto-generated task name for clarity in the Flyte UI.
 
+
 @flyte.sandboxed.task(name="my-adder")
 def adder(x: int, y: int) -> int:
     return x + y
 
 
 # --- Combining options --------------------------------------------------------
+
 
 @flyte.sandboxed.task(
     timeout_ms=10_000,

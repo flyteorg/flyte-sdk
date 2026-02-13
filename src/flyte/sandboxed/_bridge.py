@@ -79,9 +79,7 @@ class ExternalFunctionBridge:
                 elif isinstance(progress, MontySnapshot):
                     fn = ext_fns.get(progress.function_name)
                     if fn is None:
-                        raise RuntimeError(
-                            f"Sandboxed task called unknown external function: {progress.function_name}"
-                        )
+                        raise RuntimeError(f"Sandboxed task called unknown external function: {progress.function_name}")
 
                     # Call the external function and await if async
                     result = fn(*progress.args, **progress.kwargs)

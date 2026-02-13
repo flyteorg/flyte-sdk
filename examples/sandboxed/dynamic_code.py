@@ -31,6 +31,7 @@ def add(x: int, y: int) -> int:
 # --- Pattern 1: Parameterized code templates ---------------------------------
 # Build code strings from templates based on runtime configuration.
 
+
 def make_reducer(operation: str) -> flyte.sandboxed.CodeTaskTemplate:
     """Create a sandboxed task that reduces a list using the given operation."""
     if operation == "sum":
@@ -77,6 +78,7 @@ max_task = make_reducer("max")
 # --- Pattern 2: Building formulas from user specs ----------------------------
 # Imagine a config file or API that specifies a formula.
 
+
 def make_formula_task(
     formula: str,
     variables: list[str],
@@ -90,7 +92,7 @@ def make_formula_task(
     """
     return flyte.sandboxed.code_to_task(
         formula,
-        inputs={v: float for v in variables},
+        inputs=dict.fromkeys(variables, float),
         output=float,
         name=f"formula-{formula.replace(' ', '')}",
     )
@@ -105,6 +107,7 @@ bmi = make_formula_task("weight / (height * height)", ["weight", "height"])
 
 # --- Pattern 3: run_local_sandbox() for ad-hoc evaluation --------------------
 
+
 async def evaluate_expressions():
     """Evaluate a batch of expressions in the sandbox."""
     expressions = [
@@ -114,7 +117,6 @@ async def evaluate_expressions():
     ]
 
     for expr, extra_inputs in expressions:
-        inputs = {**extra_inputs} if extra_inputs else {"_unused": 0}
         # For expressions that don't reference any inputs, we still need
         # at least one input for Monty.
         if not extra_inputs:
@@ -126,6 +128,7 @@ async def evaluate_expressions():
 
 # --- Pattern 4: Composing code with external tasks ---------------------------
 # Generate orchestration code that calls worker tasks.
+
 
 def make_map_reduce(
     map_task_name: str,

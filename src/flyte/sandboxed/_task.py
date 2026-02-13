@@ -90,9 +90,7 @@ class SandboxedTaskTemplate(AsyncFunctionTaskTemplate):
         import inspect
 
         if inspect.iscoroutinefunction(self.func):
-            raise TypeError(
-                f"Sandboxed tasks must be synchronous functions, got async: {self.func.__qualname__}"
-            )
+            raise TypeError(f"Sandboxed tasks must be synchronous functions, got async: {self.func.__qualname__}")
 
         # Validate type annotations
         validate_sandboxed_interface(
@@ -106,9 +104,7 @@ class SandboxedTaskTemplate(AsyncFunctionTaskTemplate):
         # Discover external references
         self._external_refs = _discover_external_refs(self.func)
         self._has_external_refs = bool(
-            self._external_refs["task_refs"]
-            or self._external_refs["trace_refs"]
-            or self._external_refs["durable_refs"]
+            self._external_refs["task_refs"] or self._external_refs["trace_refs"] or self._external_refs["durable_refs"]
         )
 
     async def execute(self, *args, **kwargs) -> Any:

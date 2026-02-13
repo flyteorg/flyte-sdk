@@ -21,11 +21,13 @@ Install the optional dependency first::
 
 import flyte
 
-env = flyte.TaskEnvironment(name="orchestrator-demo",
-                            image=flyte.Image.from_debian_base().with_pip_packages("pydantic-monty"))
+env = flyte.TaskEnvironment(
+    name="orchestrator-demo", image=flyte.Image.from_debian_base().with_pip_packages("pydantic-monty")
+)
 
 
 # --- Worker tasks (run in their own containers) ------------------------------
+
 
 @env.task
 def fetch_score(player_id: int) -> int:
@@ -50,6 +52,7 @@ def add(x: int, y: int) -> int:
 # pauses the sandbox, runs the worker, and resumes with the result.
 # Using ``@env.sandboxed_task`` registers the task directly in the environment.
 
+
 @env.sandboxed_task
 def leaderboard(player_ids: list[int]) -> dict[str, int]:
     """Compute total and bonus scores for a list of players."""
@@ -73,6 +76,7 @@ def leaderboard(player_ids: list[int]) -> dict[str, int]:
 
 # --- Chained orchestration ---------------------------------------------------
 # Sandboxed tasks can compose multiple workers into a pipeline.
+
 
 @env.sandboxed_task
 def scaled_sum(a: int, b: int, scale: int) -> int:

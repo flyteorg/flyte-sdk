@@ -31,10 +31,10 @@ from ._retry import RetryStrategy
 from ._reusable_environment import ReusePolicy
 from ._secret import SecretRequest
 from ._task import AsyncFunctionTaskTemplate, TaskTemplate
-from .sandboxed._config import SandboxedConfig
-from .sandboxed._task import SandboxedTaskTemplate
 from ._trigger import Trigger
 from .models import MAX_INLINE_IO_BYTES, NativeInterface
+from .sandboxed._config import SandboxedConfig
+from .sandboxed._task import SandboxedTaskTemplate
 
 if TYPE_CHECKING:
     from ._task import F, P, R

@@ -22,9 +22,7 @@ def extract_task_module(task: TaskTemplate, /, source_dir: pathlib.Path) -> Tupl
             for attr in vars(entity_module):
                 if getattr(entity_module, attr, None) is task:
                     return attr, entity_module_name
-            raise ValueError(
-                f"Task '{task.name}' not found as a module-level attribute in '{entity_module_name}'"
-            )
+            raise ValueError(f"Task '{task.name}' not found as a module-level attribute in '{entity_module_name}'")
 
         return entity_name, entity_module_name
     else:

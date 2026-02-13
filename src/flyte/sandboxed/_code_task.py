@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 from flyte._task import AsyncFunctionTaskTemplate
 
 from ._config import SandboxedConfig
-from ._task import SandboxedTaskTemplate, _lazy_import_monty
+from ._task import SandboxedTaskTemplate
 from ._type_boundary import validate_sandboxed_interface
 
 
@@ -81,6 +81,5 @@ class CodeTaskTemplate(SandboxedTaskTemplate):
     def forward(self, *args, **kwargs) -> Any:
         """Not supported — there is no Python function to call directly."""
         raise NotImplementedError(
-            "CodeTaskTemplate does not support forward(). "
-            "Use flyte.run() to execute through the sandbox."
+            "CodeTaskTemplate does not support forward(). Use flyte.run() to execute through the sandbox."
         )

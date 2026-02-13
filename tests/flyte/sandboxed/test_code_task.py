@@ -4,8 +4,6 @@ and TaskEnvironment.sandboxed_task().
 
 from __future__ import annotations
 
-import inspect
-
 import pytest
 
 from flyte.sandboxed import code_to_task
@@ -16,7 +14,6 @@ from flyte.sandboxed._code_task import (
 from flyte.sandboxed._config import SandboxedConfig
 from flyte.sandboxed._source import prepare_code_source
 from flyte.sandboxed._task import SandboxedTaskTemplate
-
 
 # ---------------------------------------------------------------------------
 # prepare_code_source
@@ -233,7 +230,7 @@ class TestCodeFactory:
 # ---------------------------------------------------------------------------
 
 try:
-    from pydantic_monty import Monty
+    from pydantic_monty import Monty  # noqa: F401
 
     HAS_MONTY = True
 except ImportError:
@@ -365,6 +362,7 @@ class TestEnvironmentSandboxedTask:
         env = flyte.TaskEnvironment(name="async-test")
 
         with pytest.raises(TypeError, match="must be synchronous"):
+
             @env.sandboxed_task
             async def bad(x: int) -> int:
                 return x

@@ -6,29 +6,35 @@ from typing import Any, Dict, Tuple, Type
 from flyte.io import DataFrame, Dir, File
 
 # Types that Monty can handle natively
-_MONTY_PRIMITIVE_TYPES = frozenset({
-    int,
-    float,
-    str,
-    bool,
-    bytes,
-    type(None),
-})
+_MONTY_PRIMITIVE_TYPES = frozenset(
+    {
+        int,
+        float,
+        str,
+        bool,
+        bytes,
+        type(None),
+    }
+)
 
 # Flyte IO types passed as opaque handles through Monty
-_MONTY_COLLECTION_TYPES = frozenset({
-    list,
-    dict,
-    tuple,
-    set,
-    frozenset,
-})
+_MONTY_COLLECTION_TYPES = frozenset(
+    {
+        list,
+        dict,
+        tuple,
+        set,
+        frozenset,
+    }
+)
 
-_FLYTE_IO_TYPES = frozenset({
-    File,
-    Dir,
-    DataFrame,
-})
+_FLYTE_IO_TYPES = frozenset(
+    {
+        File,
+        Dir,
+        DataFrame,
+    }
+)
 
 _ALLOWED_TYPES = _MONTY_PRIMITIVE_TYPES | _MONTY_COLLECTION_TYPES | _FLYTE_IO_TYPES
 

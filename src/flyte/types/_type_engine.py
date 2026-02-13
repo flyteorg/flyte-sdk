@@ -1257,6 +1257,10 @@ class TypeEngine(typing.Generic[T]):
             if python_type.__origin__ in cls._REGISTRY:
                 return cls._REGISTRY[python_type.__origin__]
 
+        if python_type is list:
+            # Generic list, defaults to pickle
+            return None
+
         # Handling UnionType specially - PEP 604
         import types
 

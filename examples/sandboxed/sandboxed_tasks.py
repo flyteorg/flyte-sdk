@@ -22,6 +22,7 @@ env = flyte.TaskEnvironment(name="sandboxed-demo")
 
 # --- Regular tasks — run in their own containers ---------------------------
 
+
 @env.task
 def add(x: int, y: int) -> int:
     return x + y
@@ -45,6 +46,7 @@ def fib(n: int) -> int:
 # The orchestrator is a sandboxed task registered directly in the environment.
 # It contains only pure Python control flow — all heavy lifting is dispatched
 # to the regular tasks above.
+
 
 @env.sandboxed_task
 def pipeline(n: int) -> dict[str, int]:

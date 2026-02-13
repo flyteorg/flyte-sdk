@@ -19,10 +19,10 @@ from typing import Dict, List, Optional
 import flyte
 import flyte.sandboxed
 
-
 # --- Basic tasks -------------------------------------------------------------
 # Use ``@flyte.sandboxed.task`` exactly like ``@env.task``, but the body
 # runs inside Monty instead of a full container.
+
 
 @flyte.sandboxed.task
 def add(x: int, y: int) -> int:
@@ -37,6 +37,7 @@ def greet(name: str) -> str:
 # --- Multiple return styles --------------------------------------------------
 # Monty supports the same return conventions as regular Python.
 
+
 @flyte.sandboxed.task
 def early_return(x: int) -> str:
     if x < 0:
@@ -48,6 +49,7 @@ def early_return(x: int) -> str:
 
 # --- Collection types --------------------------------------------------------
 # list, dict, tuple, set, and their generic forms are all supported.
+
 
 @flyte.sandboxed.task
 def sum_list(numbers: List[int]) -> int:
@@ -72,6 +74,7 @@ def first_and_last(items: List[int]) -> tuple:
 
 # --- Optional types ----------------------------------------------------------
 
+
 @flyte.sandboxed.task
 def maybe_double(x: int, flag: Optional[bool] = None) -> Optional[int]:
     if flag:
@@ -80,6 +83,7 @@ def maybe_double(x: int, flag: Optional[bool] = None) -> Optional[int]:
 
 
 # --- Loops and conditionals --------------------------------------------------
+
 
 @flyte.sandboxed.task
 def fizzbuzz(n: int) -> List[str]:
