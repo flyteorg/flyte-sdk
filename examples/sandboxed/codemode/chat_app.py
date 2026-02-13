@@ -60,7 +60,7 @@ env = FastAPIAppEnvironment(
         "pydantic-monty",
     ),
     secrets=flyte.Secret(key="anthropic-api-key", as_env_var="ANTHROPIC_API_KEY"),
-    requires_auth=False,
+    scaling=flyte.app.Scaling(replicas=1),
 )
 
 agent = CodeModeAgent(tools=ALL_TOOLS, max_retries=2)
