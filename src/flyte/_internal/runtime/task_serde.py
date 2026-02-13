@@ -241,7 +241,7 @@ def lookup_image_in_cache(serialize_context: SerializationContext, env_name: str
         "     Example:\n"
         "         env1 = flyte.TaskEnvironment(\n"
         "             name='outer',\n"
-        "             image=flyte.Image.from_debian_base(extendable=True).with_pip_packages('requests'),\n"
+        "             image=flyte.Image.from_debian_base().with_pip_packages('requests'),\n"
         "             depends_on=[env2, env3],\n"
         "         )\n"
         "  2. If you're using os.getenv() to set the environment name,"

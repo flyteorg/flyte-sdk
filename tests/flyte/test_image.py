@@ -275,9 +275,9 @@ def test_layer_unhashable_type_error_message():
 
 
 def test_extendable_default():
-    """Test that images are NOT extendable by default."""
+    """Test that from_debian_base creates extendable images by default."""
     img = Image.from_debian_base(registry="localhost", name="test-image")
-    assert img.extendable is False
+    assert img.extendable is True
 
 
 def test_extendable_true():
@@ -288,8 +288,8 @@ def test_extendable_true():
 
 def test_non_extendable_cannot_add_layers():
     """Test that adding layers to a non-extendable image raises an error."""
-    img = Image.from_debian_base(registry="localhost", name="test-image")
-    assert img.extendable is False  # Default is False
+    img = Image.from_debian_base(registry="localhost", name="test-image", extendable=False)
+    assert img.extendable is False
 
     # All of these should raise ValueError
     with pytest.raises(ValueError, match="Cannot add additional layers to a non-extendable image"):
@@ -307,16 +307,16 @@ def test_non_extendable_cannot_add_layers():
 
 def test_extendable_defaults_to_false_on_clone():
     """Test that cloning defaults to extendable=False."""
-    # Start with extendable=False (default)
+    # Start with extendable=True (from_debian_base default)
     img1 = Image.from_debian_base(registry="localhost", name="test-image")
-    assert img1.extendable is False
+    assert img1.extendable is True
 
     # Clone without specifying extendable - should default to False
     img2 = img1.clone(name="cloned-image")
     assert img2.extendable is False
 
-    # Make it extendable
-    img3 = img1.clone(name="extendable-image", extendable=True)
+    # Clone with extendable=True to keep it extendable
+    img3 = img1.clone(name="still-extendable", extendable=True)
     assert img3.extendable is True
 
     # Clone without specifying extendable - should default to False (not preserve True)
@@ -324,27 +324,27 @@ def test_extendable_defaults_to_false_on_clone():
     assert img4.extendable is False
 
     # Must explicitly set extendable=True to keep it extendable
-    img5 = img3.clone(name="still-extendable", extendable=True)
+    img5 = img3.clone(name="explicitly-extendable", extendable=True)
     assert img5.extendable is True
 
 
 def test_extendable_can_change_on_clone():
     """Test that extendable value can be explicitly changed when cloning."""
     img1 = Image.from_debian_base(registry="localhost", name="test-image")
-    assert img1.extendable is False
+    assert img1.extendable is True
 
-    # Explicitly make it extendable
-    img2 = img1.clone(extendable=True)
-    assert img2.extendable is True
+    # Explicitly make it non-extendable
+    img2 = img1.clone(name="non-extendable", extendable=False)
+    assert img2.extendable is False
 
-    # Make it non-extendable again
-    img3 = img2.clone(extendable=False)
-    assert img3.extendable is False
+    # Make it extendable again
+    img3 = img2.clone(name="extendable-again", extendable=True)
+    assert img3.extendable is True
 
 
 def test_extendable_allows_layers():
     """Test that extendable images can have layers added."""
-    img = Image.from_debian_base(registry="localhost", name="test-image", extendable=True)
+    img = Image.from_debian_base(registry="localhost", name="test-image")
     assert img.extendable is True
 
     # Should not raise any errors
@@ -355,14 +355,14 @@ def test_extendable_allows_layers():
     assert len(img3._layers) > len(img2._layers)
 
 
-def test_from_debian_base_is_not_extendable_by_default():
-    """Test that images created with from_debian_base are NOT extendable by default."""
+def test_from_debian_base_is_extendable_by_default():
+    """Test that images created with from_debian_base are extendable by default."""
     img = Image.from_debian_base(registry="localhost", name="test-image")
-    assert img.extendable is False
+    assert img.extendable is True
 
-    # Should raise error when trying to add layers
-    with pytest.raises(ValueError, match="Cannot add additional layers to a non-extendable image"):
-        img.with_pip_packages("numpy")
+    # Should be able to add layers
+    img2 = img.with_pip_packages("numpy")
+    assert len(img2._layers) > len(img._layers)
 
 
 def test_from_dockerfile_is_not_extendable():

@@ -80,7 +80,7 @@ class ContainerTask(TaskTemplate):
         self._image = image
         if isinstance(image, str):
             if image == "auto":
-                self._image = Image.from_debian_base(extendable=True)
+                self._image = Image.from_debian_base()
             else:
                 self._image = Image.from_base(image)
 

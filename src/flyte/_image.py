@@ -561,6 +561,7 @@ class Image:
         registry_secret: Optional[str | Secret] = None,
         name: Optional[str] = None,
         platform: Optional[Tuple[Architecture, ...]] = None,
+        extendable: bool = True,
     ) -> Image:
         """
         Use this method to start using the default base image, built from this library's base Dockerfile
@@ -574,6 +575,8 @@ class Image:
         :param name: Name of the image if you want to override the default name
         :param platform: Platform to use for the image, default is linux/amd64, use tuple for multiple values
             Example: ("linux/amd64", "linux/arm64")
+        :param extendable: Whether the image should be extendable. Default is True since debian base images
+            are typically used to build upon.
 
         :return: Image
         """
@@ -588,7 +591,11 @@ class Image:
         )
 
         if registry or name:
-            return base_image.clone(registry=registry, name=name, registry_secret=registry_secret, extendable=True)
+            return base_image.clone(registry=registry, name=name, registry_secret=registry_secret, extendable=extendable)
+
+        # Set extendable on the base image if different from default
+        if extendable != base_image.extendable:
+            return base_image.clone(extendable=extendable)
 
         return base_image
 
@@ -868,7 +875,7 @@ class Image:
 
         Example:
         ```python
-        @flyte.task(image=(flyte.Image.from_debian_base(extendable=True).with_pip_packages("requests", "numpy")))
+        @flyte.task(image=(flyte.Image.from_debian_base().with_pip_packages("requests", "numpy")))
         def my_task(x: int) -> int:
             import numpy as np
             return np.sum([x, 1])
@@ -882,7 +889,7 @@ class Image:
         private_package = "git+https://$GITHUB_PAT@github.com/flyteorg/flytex.git@2e20a2acebfc3877d84af643fdd768edea41d533"
         @flyte.task(
             image=(
-                flyte.Image.from_debian_base(extendable=True)
+                flyte.Image.from_debian_base()
                 .with_pip_packages("private_package", secret_mounts=[Secret(key="GITHUB_PAT")])
                 .with_apt_packages("git", secret_mounts=[Secret(key="apt-secret", mount="/etc/apt/apt-secret")])
         )
