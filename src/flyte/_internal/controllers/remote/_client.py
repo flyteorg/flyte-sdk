@@ -5,7 +5,7 @@ from flyteidl2.workflow import queue_service_pb2_grpc, state_service_pb2_grpc
 
 from flyte.remote import create_channel
 
-from ._service_protocol import QueueService, StateService
+from ._service_protocol import QueueService, StateService, ACTIONS_SERVICE_CHECK_ENV_VAR
 
 
 class ControllerClient:
@@ -17,6 +17,8 @@ class ControllerClient:
         self._channel = channel
         self._state_service = state_service_pb2_grpc.StateServiceStub(channel=channel)
         self._queue_service = queue_service_pb2_grpc.QueueServiceStub(channel=channel)
+        # Claude:
+        #   if ACTIONS_SERVICE_CHECK_ENV_VAR is 1 - or should we use helper function? if helper, where to put?
 
     @classmethod
     async def for_endpoint(cls, endpoint: str, insecure: bool = False, **kwargs) -> ControllerClient:
@@ -39,6 +41,11 @@ class ControllerClient:
         The queue service.
         """
         return self._queue_service
+
+    @property
+    def actions_service(self) -> ActionsService | None:
+        # Claude:
+        ...
 
     def close(self, grace: float | None = None):
         """

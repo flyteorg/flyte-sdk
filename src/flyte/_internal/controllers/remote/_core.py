@@ -355,6 +355,7 @@ class Controller:
 
                 logger.debug(f"Attempting to launch action: {action.name}")
                 try:
+                    # Claude - will need to update this.
                     await self._queue_service.EnqueueAction(
                         queue_service_pb2.EnqueueActionRequest(
                             action_id=action.action_id,

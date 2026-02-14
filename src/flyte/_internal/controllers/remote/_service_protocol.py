@@ -3,7 +3,9 @@ from __future__ import annotations
 from typing import AsyncIterator, Protocol
 
 from flyteidl2.workflow import queue_service_pb2, state_service_pb2
+from flyteidl2.actions import actions_service_pb2
 
+ACTIONS_SERVICE_CHECK_ENV_VAR = "_U_USE_ACTIONS"
 
 class StateService(Protocol):
     """
@@ -15,6 +17,10 @@ class StateService(Protocol):
     ) -> AsyncIterator[state_service_pb2.WatchResponse]:
         """Watch for subrun updates"""
 
+class ActionsService(Protocol):
+    """
+    # Claude: please fill this in.
+    """
 
 class QueueService(Protocol):
     """

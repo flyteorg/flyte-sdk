@@ -24,7 +24,7 @@ dependencies = [
     "async-lru>=2.0.5",
     "mashumaro",
     "aiolimiter>=1.2.1",
-    "flyteidl2==2.0.2",
+    "flyteidl2==2.0.5",
     "packaging",
 ]
 
