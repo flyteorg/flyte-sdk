@@ -106,7 +106,7 @@ def test_named_tuple():
 def test_type_resolution():
     assert type(TypeEngine.get_transformer(typing.List[int])) is ListTransformer
     assert type(TypeEngine.get_transformer(typing.List)) is ListTransformer
-    assert type(TypeEngine.get_transformer(list)) is ListTransformer
+    assert type(TypeEngine.get_transformer(list)) is FlytePickleTransformer
 
     assert type(TypeEngine.get_transformer(typing.Dict[str, int])) is DictTransformer
     assert type(TypeEngine.get_transformer(typing.Dict)) is DictTransformer
@@ -1796,6 +1796,36 @@ def test_ListTransformer_get_sub_type():
 
 def test_ListTransformer_get_sub_type_as_none():
     assert ListTransformer.get_sub_type_or_none(type([])) is None
+
+
+@pytest.mark.asyncio
+async def test_bare_list_uses_pickle_transformer():
+    """A bare `list` (no generics) should fall back to pickle, not raise."""
+    transformer = TypeEngine.get_transformer(list)
+    assert isinstance(transformer, FlytePickleTransformer)
+
+    lt = TypeEngine.to_literal_type(list)
+    assert lt.HasField("union_type")
+
+    val = [1, "hello", {"a": 2}]
+    literal = await TypeEngine.to_literal(val, list, lt)
+    result = await TypeEngine.to_python_value(literal, list)
+    assert result == val
+
+
+@pytest.mark.asyncio
+async def test_bare_dict_round_trips():
+    """A bare `dict` (no generics) should round-trip via DictTransformer's msgpack path."""
+    transformer = TypeEngine.get_transformer(dict)
+    assert isinstance(transformer, DictTransformer)
+
+    lt = TypeEngine.to_literal_type(dict)
+    assert lt.simple == SimpleType.STRUCT
+
+    val = {"a": 1, "b": "hello", "c": [1, 2, 3]}
+    literal = await TypeEngine.to_literal(val, dict, lt)
+    result = await TypeEngine.to_python_value(literal, dict)
+    assert result == val
 
 
 # def test_union_file_directory():
