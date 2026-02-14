@@ -5,13 +5,14 @@ from asyncio import Queue
 from typing import AsyncIterator, Callable, Dict, Optional, Tuple, cast
 
 import grpc.aio
+from flyteidl2.actions import actions_service_pb2
 from flyteidl2.common import identifier_pb2, phase_pb2
 from flyteidl2.workflow import state_service_pb2
 
 from flyte._logging import log, logger
 
 from ._action import Action
-from ._service_protocol import StateService
+from ._service_protocol import ActionsService, StateService
 
 
 class ActionCache:
@@ -133,6 +134,7 @@ class Informer:
         parent_action_name: str,
         shared_queue: Queue,
         client: Optional[StateService] = None,
+        actions_client: Optional[ActionsService] = None,
         min_watch_backoff: float = 1.0,
         max_watch_backoff: float = 30.0,
         watch_conn_timeout_sec: float = 5.0,
@@ -142,6 +144,7 @@ class Informer:
         self.parent_action_name = parent_action_name
         self._run_id = run_id
         self._client = client
+        self._actions_client = actions_client
         self._action_cache = ActionCache(parent_action_name)
         self._shared_queue = shared_queue
         self._running = False
@@ -226,17 +229,24 @@ class Informer:
             try:
                 if retries >= 1:
                     logger.warning(f"Informer watch retrying, attempt {retries}/{self._max_watch_retries}")
-                # Claude: will need to update this
-                watcher = self._client.Watch(
-                    state_service_pb2.WatchRequest(
-                        parent_action_id=identifier_pb2.ActionIdentifier(
-                            name=self.parent_action_name,
-                            run=self._run_id,
-                        ),
-                    ),
-                    wait_for_ready=True,
+                parent_action_id = identifier_pb2.ActionIdentifier(
+                    name=self.parent_action_name,
+                    run=self._run_id,
                 )
-                resp: state_service_pb2.WatchResponse
+                if self._actions_client:
+                    watcher = self._actions_client.WatchForUpdates(
+                        actions_service_pb2.WatchForUpdatesRequest(
+                            parent_action_id=parent_action_id,
+                        ),
+                        wait_for_ready=True,
+                    )
+                else:
+                    watcher = self._client.Watch(
+                        state_service_pb2.WatchRequest(
+                            parent_action_id=parent_action_id,
+                        ),
+                        wait_for_ready=True,
+                    )
                 async for resp in watcher:
                     retries = 0
                     if resp.control_message is not None and resp.control_message.sentinel:
@@ -308,6 +318,7 @@ class InformerCache:
         state_service: StateService,
         fn: Callable[[asyncio.Task], None],
         timeout: Optional[float] = None,
+        actions_service: Optional[ActionsService] = None,
     ) -> Informer:
         """
         Start and add a new informer to the cache
@@ -317,6 +328,7 @@ class InformerCache:
         :param state_service: State service
         :param fn: Callback function to be called when the informer is done
         :param timeout: Timeout for the informer to be ready
+        :param actions_service: Unified actions service (replaces state_service when available)
         :return: Tuple of informer and a boolean indicating if it was created. True if created, false if already exists.
         """
         name = Informer.mkname(run_name=run_id.name, parent_action_name=parent_action_name)
@@ -328,6 +340,7 @@ class InformerCache:
                 parent_action_name=parent_action_name,
                 shared_queue=shared_queue,
                 client=state_service,
+                actions_client=actions_service,
             )
             self._cache[informer.name] = informer
             # TODO This is a potential perf problem for large number of informers.

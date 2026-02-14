@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import grpc.aio
+from flyteidl2.actions import actions_service_pb2_grpc
 from flyteidl2.workflow import queue_service_pb2_grpc, state_service_pb2_grpc
 
 from flyte.remote import create_channel
 
-from ._service_protocol import QueueService, StateService, ACTIONS_SERVICE_CHECK_ENV_VAR
+from ._service_protocol import ActionsService, QueueService, StateService, use_actions_service
 
 
 class ControllerClient:
@@ -17,8 +18,9 @@ class ControllerClient:
         self._channel = channel
         self._state_service = state_service_pb2_grpc.StateServiceStub(channel=channel)
         self._queue_service = queue_service_pb2_grpc.QueueServiceStub(channel=channel)
-        # Claude:
-        #   if ACTIONS_SERVICE_CHECK_ENV_VAR is 1 - or should we use helper function? if helper, where to put?
+        self._actions_service = (
+            actions_service_pb2_grpc.ActionsServiceStub(channel=channel) if use_actions_service() else None
+        )
 
     @classmethod
     async def for_endpoint(cls, endpoint: str, insecure: bool = False, **kwargs) -> ControllerClient:
@@ -44,8 +46,10 @@ class ControllerClient:
 
     @property
     def actions_service(self) -> ActionsService | None:
-        # Claude:
-        ...
+        """
+        The unified actions service (replaces QueueService + StateService when available).
+        """
+        return self._actions_service
 
     def close(self, grace: float | None = None):
         """
