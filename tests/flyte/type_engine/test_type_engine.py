@@ -106,7 +106,7 @@ def test_named_tuple():
 def test_type_resolution():
     assert type(TypeEngine.get_transformer(typing.List[int])) is ListTransformer
     assert type(TypeEngine.get_transformer(typing.List)) is ListTransformer
-    assert type(TypeEngine.get_transformer(list)) is ListTransformer
+    assert type(TypeEngine.get_transformer(list)) is FlytePickleTransformer
 
     assert type(TypeEngine.get_transformer(typing.Dict[str, int])) is DictTransformer
     assert type(TypeEngine.get_transformer(typing.Dict)) is DictTransformer
