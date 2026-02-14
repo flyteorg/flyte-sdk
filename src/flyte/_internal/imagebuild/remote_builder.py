@@ -15,7 +15,6 @@ from flyteidl2.common import phase_pb2
 import flyte
 import flyte.errors
 from flyte import Image, remote
-from flyte._logging import logger
 from flyte._code_bundle._ignore import STANDARD_IGNORE_PATTERNS
 from flyte._code_bundle._utils import tar_strip_file_attributes
 from flyte._image import (
@@ -42,6 +41,7 @@ from flyte._internal.imagebuild.utils import (
     get_uv_project_editable_dependencies,
 )
 from flyte._internal.runtime.task_serde import get_security_context
+from flyte._logging import logger
 from flyte._secret import Secret
 from flyte._status import status
 from flyte.remote import ActionOutputs, Run
