@@ -15,6 +15,7 @@ from flyteidl2.common import phase_pb2
 import flyte
 import flyte.errors
 from flyte import Image, remote
+from flyte._logging import logger
 from flyte._code_bundle._ignore import STANDARD_IGNORE_PATTERNS
 from flyte._code_bundle._utils import tar_strip_file_attributes
 from flyte._image import (
@@ -41,8 +42,8 @@ from flyte._internal.imagebuild.utils import (
     get_uv_project_editable_dependencies,
 )
 from flyte._internal.runtime.task_serde import get_security_context
-from flyte._logging import logger
 from flyte._secret import Secret
+from flyte._status import status
 from flyte.remote import ActionOutputs, Run
 
 if TYPE_CHECKING:
@@ -99,10 +100,10 @@ class RemoteImageChecker(ImageChecker):
                     raise ValueError("remote client should not be None")
                 cls._images_client = image_service_pb2_grpc.ImageServiceStub(cfg.client._channel)
             resp = await cls._images_client.GetImage(req)
-            logger.warning(f"[blue]Image {resp.image.fqin} found. Skip building.[/blue]")
+            logger.debug(f"Image {resp.image.fqin} found in remote registry")
             return resp.image.fqin
         except Exception:
-            logger.warning(f"[blue]Image {image_name} was not found or has expired.[/blue]", extra={"highlight": False})
+            status.info(f"Image {image_name} was not found or has expired")
             return None
 
 
@@ -130,7 +131,7 @@ class RemoteImageBuilder(ImageBuilder):
                 "remote image builder is not enabled. Please contact Union support to enable it."
             )
 
-        logger.warning("[bold blue]🐳 Submitting a new build...[/bold blue]")
+        status.step("Submitting a new build...")
         if image.registry and image.registry != _BASE_REGISTRY:
             target_image = f"{image.registry}/{image_name}"
         else:
@@ -147,18 +148,18 @@ class RemoteImageBuilder(ImageBuilder):
             ).run.aio(entity, spec=spec, context=context, target_image=target_image),
         )
 
-        logger.warning(f"▶️ Started build at: [bold cyan link={run.url}]{run.url}[/bold cyan link]")
+        status.step(f"Started build at: {run.url}")
         if not wait:
             # return the ImageBuild with the run object (uri will be None since build hasn't completed)
             return ImageBuild(uri=None, remote_run=run)
 
-        logger.warning("⏳ Waiting for build to finish")
+        status.step("Waiting for build to finish")
         await run.wait.aio(quiet=True)
         run_details = await run.details.aio()
         elapsed = str(datetime.now(timezone.utc) - start).split(".")[0]
 
         if run_details.action_details.raw_phase == phase_pb2.ACTION_PHASE_SUCCEEDED:
-            logger.warning(f"[bold green]✅ Build completed in {elapsed}![/bold green]")
+            status.success(f"Build completed in {elapsed}")
         else:
             raise flyte.errors.ImageBuildError(f"❌ Build failed in {elapsed} at {run.url}")
 
@@ -203,9 +204,9 @@ async def _validate_configuration(image: Image) -> Tuple[str, Optional[str]]:
 
         context_size = tar_path.stat().st_size
         if context_size > 5 * 1024 * 1024:
-            logger.warning(
-                f"[yellow]Context size is {context_size / (1024 * 1024):.2f} MB, which is larger than 5 MB. "
-                "Upload and build speed will be impacted.[/yellow]",
+            status.warn(
+                f"Context size is {context_size / (1024 * 1024):.2f} MB, which is larger than 5 MB. "
+                "Upload and build speed will be impacted."
             )
         _, context_url = await remote.upload_file.aio(context_dst)
     else:

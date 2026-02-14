@@ -413,74 +413,128 @@ class Action(ToJSONMixin):
         Wait for the run to complete, displaying a rich progress panel with status transitions,
         time elapsed, and error details in case of failure.
         """
-        console = Console()
+        from flyte._status import get_output_mode, status
+
         if self.done():
             if not quiet:
-                if self.pb2.status.phase == phase_pb2.ACTION_PHASE_SUCCEEDED:
-                    console.print(
-                        f"[bold green]Action '{self.name}' in Run '{self.run_name}'"
-                        f" completed successfully.[/bold green]"
-                    )
+                if get_output_mode() == "rich":
+                    console = Console()
+                    if self.pb2.status.phase == phase_pb2.ACTION_PHASE_SUCCEEDED:
+                        console.print(
+                            f"[bold green]Action '{self.name}' in Run '{self.run_name}'"
+                            f" completed successfully.[/bold green]"
+                        )
+                    else:
+                        details = await self.details()
+                        error_message = details.error_info.message if details.error_info else ""
+                        console.print(
+                            f"[bold red]Action '{self.name}' in Run '{self.run_name}'"
+                            f" exited unsuccessfully in state {self.phase} with error: {error_message}[/bold red]"
+                        )
                 else:
-                    details = await self.details()
-                    error_message = details.error_info.message if details.error_info else ""
-                    console.print(
-                        f"[bold red]Action '{self.name}' in Run '{self.run_name}'"
-                        f" exited unsuccessfully in state {self.phase} with error: {error_message}[/bold red]"
-                    )
+                    if self.pb2.status.phase == phase_pb2.ACTION_PHASE_SUCCEEDED:
+                        status.success(f"Action '{self.name}' in Run '{self.run_name}' completed successfully")
+                    else:
+                        details = await self.details()
+                        error_message = details.error_info.message if details.error_info else ""
+                        status.warn(f"Action '{self.name}' in Run '{self.run_name}' failed: {error_message}")
             return
 
         try:
-            with Progress(
-                SpinnerColumn(),
-                TextColumn("[progress.description]{task.description}"),
-                TimeElapsedColumn(),
-                console=console,
-                transient=True,
-                disable=quiet,
-            ) as progress:
-                task_id = progress.add_task(f"Waiting for run '{self.name}'...", start=False)
-                progress.start_task(task_id)
-
-                async for ad in self.watch(cache_data_on_done=True, wait_for=wait_for):
-                    if ad is None:
-                        progress.stop_task(task_id)
-                        break
-
-                    if ad.is_running and wait_for == "running":
-                        progress.start_task(task_id)
-                        break
-
-                    if ad.logs_available() and wait_for == "logs-ready":
-                        progress.start_task(task_id)
-                        break
-
-                    # Update progress description with the current phase
-                    progress.update(
-                        task_id,
-                        description=f"Run: {self.run_name} in {ad.phase}, Runtime: {ad.runtime} secs "
-                        f"Attempts[{ad.attempts}]",
-                    )
-
-                    # If the action is done, handle the final state
-                    if ad.done():
-                        progress.stop_task(task_id)
-                        if not quiet:
-                            if ad.pb2.status.phase == phase_pb2.ACTION_PHASE_SUCCEEDED:
-                                console.print(f"[bold green]Run '{self.run_name}' completed successfully.[/bold green]")
-                            else:
-                                error_message = ad.error_info.message if ad.error_info else ""
-                                console.print(
-                                    f"[bold red]Run '{self.run_name}' exited unsuccessfully in state {ad.phase}"
-                                    f" with error: {error_message}[/bold red]"
-                                )
-                        break
-        except asyncio.CancelledError:
-            # Handle cancellation gracefully
+            if get_output_mode() == "rich":
+                await self._wait_rich(quiet=quiet, wait_for=wait_for)
+            else:
+                await self._wait_plain(quiet=quiet, wait_for=wait_for)
+        except (asyncio.CancelledError, KeyboardInterrupt):
             pass
-        except KeyboardInterrupt:
-            # Handle keyboard interrupt gracefully
-            pass
+
+    async def _wait_rich(self, quiet: bool, wait_for: WaitFor) -> None:
+        """Wait with Rich spinner (interactive/Jupyter)."""
+        console = Console()
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            TimeElapsedColumn(),
+            console=console,
+            transient=True,
+            disable=quiet,
+        ) as progress:
+            task_id = progress.add_task(f"Waiting for run '{self.name}'...", start=False)
+            progress.start_task(task_id)
+
+            async for ad in self.watch(cache_data_on_done=True, wait_for=wait_for):
+                if ad is None:
+                    progress.stop_task(task_id)
+                    break
+
+                if ad.is_running and wait_for == "running":
+                    break
+
+                if ad.logs_available() and wait_for == "logs-ready":
+                    break
+
+                progress.update(
+                    task_id,
+                    description=f"Run: {self.run_name} in {ad.phase}, Runtime: {ad.runtime} secs "
+                    f"Attempts[{ad.attempts}]",
+                )
+
+                if ad.done():
+                    progress.stop_task(task_id)
+                    if not quiet:
+                        self._report_done_rich(ad, console)
+                    break
+
+    async def _wait_plain(self, quiet: bool, wait_for: WaitFor) -> None:
+        """Wait with plain status lines (CI/non-interactive)."""
+        from flyte._status import status
+
+        if not quiet:
+            status.step(f"Waiting for run '{self.run_name}'...")
+
+        last_phase = None
+        async for ad in self.watch(cache_data_on_done=True, wait_for=wait_for):
+            if ad is None:
+                break
+
+            if ad.is_running and wait_for == "running":
+                if not quiet:
+                    status.info(f"Run '{self.run_name}' is now running")
+                break
+
+            if ad.logs_available() and wait_for == "logs-ready":
+                break
+
+            if ad.phase != last_phase:
+                last_phase = ad.phase
+                if not quiet:
+                    status.info(f"Run '{self.run_name}': {ad.phase} ({ad.runtime} secs, attempt {ad.attempts})")
+
+            if ad.done():
+                if not quiet:
+                    self._report_done_plain(ad)
+                break
+
+    def _report_done_rich(self, ad: ActionDetails, console: Console) -> None:
+        """Report terminal state with Rich formatting."""
+        if ad.pb2.status.phase == phase_pb2.ACTION_PHASE_SUCCEEDED:
+            console.print(f"[bold green]Run '{self.run_name}' completed successfully.[/bold green]")
+        else:
+            error_message = ad.error_info.message if ad.error_info else ""
+            console.print(
+                f"[bold red]Run '{self.run_name}' exited unsuccessfully in state {ad.phase}"
+                f" with error: {error_message}[/bold red]"
+            )
+
+    def _report_done_plain(self, ad: ActionDetails) -> None:
+        """Report terminal state with plain status lines."""
+        from flyte._status import status
+
+        if ad.pb2.status.phase == phase_pb2.ACTION_PHASE_SUCCEEDED:
+            status.success(f"Run '{self.run_name}' completed successfully")
+        else:
+            error_message = ad.error_info.message if ad.error_info else ""
+            status.warn(f"Run '{self.run_name}' failed in state {ad.phase}: {error_message}")
 
     def done(self) -> bool:
         """

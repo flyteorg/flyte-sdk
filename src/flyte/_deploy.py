@@ -15,6 +15,7 @@ from ._environment import Environment
 from ._image import Image
 from ._initialize import ensure_client, get_client, get_init_config, requires_initialization
 from ._logging import logger
+from ._status import status
 from ._task import TaskTemplate
 from ._task_environment import TaskEnvironment
 
@@ -224,7 +225,7 @@ async def _deploy_task(
         msg = f"Deploying task {task.name}, with image {image_uri} version {serialization_context.version}"
         if spec.task_template.HasField("container") and spec.task_template.container.args:
             msg += f" from {spec.task_template.container.args[-3]}.{spec.task_template.container.args[-1]}"
-        logger.info(msg)
+        status.step(msg)
         task_id = task_definition_pb2.TaskIdentifier(
             org=spec.task_template.id.org,
             project=spec.task_template.id.project,
@@ -251,10 +252,10 @@ async def _deploy_task(
                     triggers=deployable_triggers,
                 )
             )
-            logger.info(f"Deployed task {task.name} with version {task_id.version}")
+            status.success(f"Deployed task {task.name} (version {task_id.version})")
         except grpc.aio.AioRpcError as e:
             if e.code() == grpc.StatusCode.ALREADY_EXISTS:
-                logger.info(f"Task {task.name} with image {image_uri} already exists, skipping deployment.")
+                status.info(f"Task {task.name} already exists, skipping")
                 return DeployedTask(spec, deployable_triggers)
             raise
 
@@ -351,7 +352,7 @@ async def _build_image_bg(env_name: str, image: Image) -> Tuple[str, str]:
     """
     from ._build import build
 
-    logger.info(f"Building image {image.name} for environment {env_name}")
+    status.step(f"Building image {image.name} for environment {env_name}")
     result = await build.aio(image)
     assert result.uri is not None, "Image build result URI is None, make sure to wait for the build to complete"
     return env_name, result.uri
@@ -396,11 +397,15 @@ async def _build_images(deployment: DeploymentPlan, image_refs: Dict[str, str] |
                 continue
             auto_image = Image.from_debian_base()
             images.append(_build_image_bg(env_name, auto_image))
-    final_images = await asyncio.gather(*images)
 
-    for env_name, image_uri in final_images:
-        logger.warning(f"Built Image for environment {env_name}, image: {image_uri}")
-        image_identifier_map[env_name] = image_uri
+    if images:
+        with status.group(f"Building {len(images)} image{'s' if len(images) > 1 else ''}..."):
+            final_images = await asyncio.gather(*images)
+        for env_name, image_uri in final_images:
+            status.success(f"Built image for environment {env_name}: {image_uri}")
+            image_identifier_map[env_name] = image_uri
+    else:
+        final_images = []
 
     return ImageCache(image_lookup=image_identifier_map)
 
@@ -462,7 +467,7 @@ async def apply(deployment_plan: DeploymentPlan, copy_style: CopyFiles, dryrun: 
 
     deployment_coros = []
     for env_name, env in deployment_plan.envs.items():
-        logger.info(f"Deploying environment {env_name}")
+        status.step(f"Deploying environment {env_name}")
         deployer = get_deployer(type(env))
         context = DeploymentContext(environment=env, serialization_context=sc, dryrun=dryrun)
         deployment_coros.append(deployer(context))
