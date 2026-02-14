@@ -300,6 +300,7 @@ class Controller:
             async with self._rate_limiter:
                 logger.info(f"Cancelling action: {action.name}")
                 try:
+                    # Claude: here too
                     await self._queue_service.AbortQueuedAction(
                         queue_service_pb2.AbortQueuedActionRequest(action_id=action.action_id),
                         wait_for_ready=True,
