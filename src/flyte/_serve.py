@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from tqdm.asyncio import tqdm
 import atexit
 import hashlib
 import os
@@ -663,7 +664,7 @@ class _Serve:
                 app_envs_to_deploy.append(dep_env)
 
         # Deploy all apps concurrently
-        deployed_apps = await asyncio.gather(*deployment_coros)
+        deployed_apps = await tqdm.gather(*deployment_coros,desc=f"Deploying Apps")
 
         # Find the deployed app corresponding to the requested app_env
         deployed_app = None

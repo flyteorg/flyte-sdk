@@ -1,6 +1,6 @@
 import argparse
 import asyncio
-
+from tqdm.asyncio import tqdm
 import flyte
 from flyte.extend import ImageBuildEngine
 
@@ -33,9 +33,10 @@ async def build_flyte_sglang_image(registry: str | None = None, name: str | None
 
 
 async def build_all(registry: str | None = None, name: str | None = None, builder: str | None = "local"):
-    await asyncio.gather(
+    await tqdm.gather(
         build_flyte_vllm_image(registry=registry, name=name, builder=builder),
         build_flyte_sglang_image(registry=registry, name=name, builder=builder),
+        desc="Building plugin images"
     )
 
 

@@ -26,6 +26,7 @@ dependencies = [
     "aiolimiter>=1.2.1",
     "flyteidl2==2.0.2",
     "packaging",
+    "tqdm>=4.67.3",
 ]
 
 [project.scripts]

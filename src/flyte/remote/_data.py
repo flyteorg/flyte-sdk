@@ -1,4 +1,5 @@
 import asyncio
+from tqdm.asyncio import tqdm
 import hashlib
 import os
 import typing
@@ -234,7 +235,7 @@ async def upload_dir(dir_path: Path, verify: bool = True, prefix: str | None = N
         if file.is_file():
             uploaded_files.append(_upload_single_file(cfg, file, verify=verify, basedir=prefix))
 
-    urls = await asyncio.gather(*uploaded_files)
+    urls = await tqdm.gather(*uploaded_files,desc=f"Uploading files to {dir_path}")
     native_url = urls[0][1]  # Assuming all files are uploaded to the same prefix
     # native_url is of the form s3://my-s3-bucket/flytesnacks/development/{prefix}/source/empty.md
     uri = native_url.split(prefix)[0]
