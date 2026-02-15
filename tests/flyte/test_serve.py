@@ -1302,3 +1302,219 @@ def test_app_handle_protocol_has_required_attributes():
     assert hasattr(AppHandle, "is_deactivated")
     assert hasattr(AppHandle, "activate")
     assert hasattr(AppHandle, "deactivate")
+
+
+# =============================================================================
+# Tests for crash-aware blocking (CLI polling loop)
+# =============================================================================
+
+
+def test_local_serve_detects_server_crash():
+    """
+    GOAL: Verify the CLI-style polling loop detects a server crash within ~2s.
+
+    An async server starts, passes the health check, then crashes.
+    The polling loop (as used in cli/_serve.py) should detect the crash
+    via is_deactivated() and break instead of hanging forever.
+    """
+    import asyncio
+    import threading
+
+    app_env = AppEnvironment(
+        name="test-crash-detect",
+        image=Image.from_base("python:3.11"),
+        port=18210,
+    )
+
+    crash_after_health = threading.Event()
+
+    async def _server(host, port):
+        """Async server: serves /health once, then exits."""
+        async def _handle(reader, writer):
+            await reader.readline()
+            writer.write(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok")
+            await writer.drain()
+            writer.close()
+            # Signal that we served the health check
+            crash_after_health.set()
+
+        server = await asyncio.start_server(_handle, host, port)
+        async with server:
+            # Wait until we've served the health check, then crash
+            while not crash_after_health.is_set():
+                await asyncio.sleep(0.05)
+            await asyncio.sleep(0.1)
+            # Exit the function, which causes the thread to die
+
+    @app_env.server
+    def serve():
+        asyncio.run(_server("127.0.0.1", 18210))
+
+    try:
+        local_app = with_servecontext(mode="local").serve(app_env)
+        local_app.activate(wait=True)
+
+        # Server is alive after activation
+        assert not local_app.is_deactivated()
+
+        # Wait for the server to crash (after health check)
+        crash_after_health.wait(timeout=5)
+        # Give the thread a moment to actually exit
+        import time
+        deadline = time.monotonic() + 5.0
+        while not local_app.is_deactivated() and time.monotonic() < deadline:
+            time.sleep(0.1)
+
+        # Simulate the CLI polling loop: it should detect the crash
+        stop_event = threading.Event()
+        detected_crash = False
+        iterations = 0
+
+        while not stop_event.is_set() and iterations < 5:
+            if local_app.is_deactivated():
+                detected_crash = True
+                break
+            stop_event.wait(timeout=1.0)
+            iterations += 1
+
+        assert detected_crash, "Polling loop did not detect server crash"
+    finally:
+        local_app.deactivate()
+
+
+def test_local_serve_async_server_with_async_http_client():
+    """
+    GOAL: Verify an async server using httpx.AsyncClient for outbound calls works.
+
+    A local server receives a request, makes an outbound async HTTP call
+    to a "target" server using httpx.AsyncClient, and returns the result.
+    This simulates the pattern used by AsyncAnthropicClient.
+    """
+    import asyncio
+
+    # --- Target server (simulates external API) ---
+    target_app_env = AppEnvironment(
+        name="test-async-target",
+        image=Image.from_base("python:3.11"),
+        port=18211,
+    )
+
+    class TargetHandler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps({"answer": 42}).encode())
+
+        def log_message(self, format, *args):
+            pass
+
+    @target_app_env.server
+    def target_serve():
+        server = HTTPServer(("127.0.0.1", 18211), TargetHandler)
+        server.serve_forever()
+
+    # --- Proxy server (uses httpx.AsyncClient for outbound call) ---
+    proxy_app_env = AppEnvironment(
+        name="test-async-proxy",
+        image=Image.from_base("python:3.11"),
+        port=18212,
+    )
+
+    async def _proxy_server():
+        async def _handle(reader, writer):
+            # Read the request line
+            await reader.readline()
+            # Make an outbound async HTTP call to the target
+            async with httpx.AsyncClient() as client:
+                resp = await client.get("http://127.0.0.1:18211/")
+                body = resp.text
+            response = f"HTTP/1.1 200 OK\r\nContent-Length: {len(body)}\r\n\r\n{body}"
+            writer.write(response.encode())
+            await writer.drain()
+            writer.close()
+
+        server = await asyncio.start_server(_handle, "127.0.0.1", 18212)
+        async with server:
+            await server.serve_forever()
+
+    @proxy_app_env.server
+    def proxy_serve():
+        asyncio.run(_proxy_server())
+
+    target_local = None
+    proxy_local = None
+    try:
+        target_local = with_servecontext(mode="local").serve(target_app_env)
+        target_local.activate(wait=True)
+
+        proxy_local = with_servecontext(mode="local", health_check_path="/").serve(proxy_app_env)
+        proxy_local.activate(wait=True)
+
+        # Make request through the proxy -> target chain
+        resp = httpx.get("http://127.0.0.1:18212/")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["answer"] == 42
+    finally:
+        if proxy_local:
+            proxy_local.deactivate()
+        if target_local:
+            target_local.deactivate()
+
+
+def test_local_serve_crash_after_activation():
+    """
+    GOAL: Verify is_deactivated() returns True after a server crashes post-activation.
+
+    Server starts, passes health check (activation succeeds), then crashes
+    shortly after. Verify is_deactivated() detects the dead thread.
+    """
+    import asyncio
+    import threading
+    import time
+
+    app_env = AppEnvironment(
+        name="test-crash-after-activation",
+        image=Image.from_base("python:3.11"),
+        port=18213,
+    )
+
+    health_checked = threading.Event()
+
+    async def _crashing_server():
+        """Server that responds to health check, then crashes."""
+        async def _handle(reader, writer):
+            await reader.readline()
+            writer.write(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok")
+            await writer.drain()
+            writer.close()
+            health_checked.set()
+
+        server = await asyncio.start_server(_handle, "127.0.0.1", 18213)
+        async with server:
+            # Wait until health check is served, then crash
+            while not health_checked.is_set():
+                await asyncio.sleep(0.05)
+            await asyncio.sleep(0.2)
+            raise RuntimeError("Simulated post-activation crash!")
+
+    @app_env.server
+    def serve():
+        asyncio.run(_crashing_server())
+
+    try:
+        local_app = with_servecontext(mode="local").serve(app_env)
+        local_app.activate(wait=True)
+
+        # Server is alive after activation
+        assert not local_app.is_deactivated()
+
+        # Wait for the server to crash
+        deadline = time.monotonic() + 5.0
+        while not local_app.is_deactivated() and time.monotonic() < deadline:
+            time.sleep(0.1)
+
+        assert local_app.is_deactivated(), "is_deactivated() should be True after server crash"
+    finally:
+        local_app.deactivate()

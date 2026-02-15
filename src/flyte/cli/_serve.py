@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import signal
+import threading
 from dataclasses import dataclass, field, fields
 from pathlib import Path
 from types import ModuleType
@@ -182,19 +183,28 @@ class ServeAppCommand(click.RichCommand):
         console.print("[green]App is ready![/green]")
         console.print("[dim]Press Ctrl+C to stop the app.[/dim]")
 
-        # Block until Ctrl+C
-        try:
-            signal.signal(signal.SIGINT, lambda *_: None)
-            signal.pause()
-        except (KeyboardInterrupt, AttributeError):
-            # AttributeError on Windows where signal.pause() doesn't exist
-            try:
-                while True:
-                    import time
+        # Block until Ctrl+C or server crash
+        stop_event = threading.Event()
 
-                    time.sleep(1)
-            except KeyboardInterrupt:
-                pass
+        def _on_sigint(signum, frame):
+            stop_event.set()
+
+        try:
+            signal.signal(signal.SIGINT, _on_sigint)
+        except (OSError, ValueError):
+            pass  # Not in main thread or signal not supported
+
+        try:
+            while not stop_event.is_set():
+                if local_app.is_deactivated():
+                    console.print(
+                        "\n[red]Server stopped unexpectedly. "
+                        "Check the logs above for errors.[/red]"
+                    )
+                    break
+                stop_event.wait(timeout=1.0)
+        except KeyboardInterrupt:
+            pass
         finally:
             console.print("\n[yellow]Shutting down local app...[/yellow]")
             local_app.deactivate()
