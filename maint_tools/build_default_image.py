@@ -1,5 +1,6 @@
 import argparse
 import asyncio
+from tqdm.asyncio import tqdm
 from pathlib import Path
 
 import flyte
@@ -72,9 +73,10 @@ async def build_flyte_connector_image(
 
 
 async def build_all(registry: str | None = None, name: str | None = None, builder: str | None = "local"):
-    await asyncio.gather(
+    await tqdm.gather(
         build_flyte_image(registry=registry, name=name, builder=builder),
         build_flyte_connector_image(registry=registry, name=name, builder=builder),
+        desc="Building Images"
     )
 
 

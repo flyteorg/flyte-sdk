@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from tqdm.asyncio import tqdm
 import hashlib
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Dict, List, Optional, Set, Tuple
@@ -396,7 +397,7 @@ async def _build_images(deployment: DeploymentPlan, image_refs: Dict[str, str] |
                 continue
             auto_image = Image.from_debian_base()
             images.append(_build_image_bg(env_name, auto_image))
-    final_images = await asyncio.gather(*images)
+    final_images = await tqdm.gather(*images,desc="Building Images")
 
     for env_name, image_uri in final_images:
         logger.warning(f"Built Image for environment {env_name}, image: {image_uri}")
@@ -417,7 +418,7 @@ async def _deploy_task_env(context: DeploymentContext) -> DeployedTaskEnvironmen
     task_coros = []
     for task in env.tasks.values():
         task_coros.append(_deploy_task(task, context.serialization_context, dryrun=context.dryrun))
-    deployed_task_vals = await asyncio.gather(*task_coros)
+    deployed_task_vals = await tqdm.gather(*task_coros,desc="Deploying Task Environment")
     deployed_tasks = []
     for t in deployed_task_vals:
         deployed_tasks.append(t)
@@ -466,7 +467,7 @@ async def apply(deployment_plan: DeploymentPlan, copy_style: CopyFiles, dryrun: 
         deployer = get_deployer(type(env))
         context = DeploymentContext(environment=env, serialization_context=sc, dryrun=dryrun)
         deployment_coros.append(deployer(context))
-    deployed_envs = await asyncio.gather(*deployment_coros)
+    deployed_envs = await tqdm.gather(*deployment_coros,desc="Deploying Environment")
     envs = {}
     for d in deployed_envs:
         envs[d.get_name()] = d
@@ -533,7 +534,7 @@ async def deploy(
     deployments = []
     for deployment_plan in deployment_plans:
         deployments.append(apply(deployment_plan, copy_style=copy_style, dryrun=dryrun))
-    return await asyncio.gather(*deployments)
+    return await tqdm.gather(*deployments,desc="Deployment in progress")
 
 
 @syncify
