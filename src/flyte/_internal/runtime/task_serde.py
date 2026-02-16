@@ -19,10 +19,9 @@ from flyte._logging import logger
 from flyte._pod import _PRIMARY_CONTAINER_NAME_FIELD, PodTemplate
 from flyte._secret import SecretRequest, secrets_from_request
 from flyte._task import AsyncFunctionTaskTemplate, TaskTemplate
-from flyte.models import CodeBundle, SerializationContext
+from flyte.models import CodeBundle, SerializationContext, TaskContext
 
 from ... import ReusePolicy
-from ..._context import internal_ctx
 from ..._retry import RetryStrategy
 from ..._timeout import TimeoutType, timeout_from_request
 from .resources_serde import get_proto_extended_resources, get_proto_resources
@@ -37,6 +36,7 @@ def translate_task_to_wire(
     task: TaskTemplate,
     serialization_context: SerializationContext,
     default_inputs: Optional[typing.List[common_pb2.NamedParameter]] = None,
+    task_context: Optional[TaskContext] = None,
 ) -> task_definition_pb2.TaskSpec:
     """
     Translate a task to a wire format. This is a placeholder function.
@@ -44,10 +44,11 @@ def translate_task_to_wire(
     :param task: The task to translate.
     :param serialization_context: The serialization context to use for the translation.
     :param default_inputs: Optional list of default inputs for the task.
+    :param task_context: Optional task context.
 
     :return: The translated task.
     """
-    tt = get_proto_task(task, serialization_context)
+    tt = get_proto_task(task, serialization_context, task_context)
     env: environment_pb2.Environment | None = None
 
     if task.parent_env and task.parent_env():
@@ -112,7 +113,9 @@ def get_proto_timeout(timeout: TimeoutType | None) -> Optional[duration_pb2.Dura
     return duration_pb2.Duration(seconds=max_runtime_timeout.seconds)
 
 
-def get_proto_task(task: TaskTemplate, serialize_context: SerializationContext) -> tasks_pb2.TaskTemplate:
+def get_proto_task(
+    task: TaskTemplate, serialize_context: SerializationContext, task_context: Optional[TaskContext] = None
+) -> tasks_pb2.TaskTemplate:
     task_id = identifier_pb2.Identifier(
         resource_type=identifier_pb2.ResourceType.TASK,
         project=serialize_context.project,
@@ -123,27 +126,26 @@ def get_proto_task(task: TaskTemplate, serialize_context: SerializationContext) 
     )
 
     extra_config: typing.Dict[str, str] = {}
+    pod = None
+    container = None
+    sql = task.sql(serialize_context)
 
     if task.pod_template and not isinstance(task.pod_template, str):
         pod = _get_k8s_pod(_get_urun_container(serialize_context, task), task.pod_template)
         extra_config[_PRIMARY_CONTAINER_NAME_FIELD] = task.pod_template.primary_container_name
-        container = None
-    else:
+    elif sql is None:
         container = _get_urun_container(serialize_context, task)
-        pod = None
 
-    ctx = internal_ctx()
-    task_ctx = ctx.data.task_context
     log_links = []
-    if task.links and task_ctx:
-        action = task_ctx.action
+    if task.links and task_context:
+        action = task_context.action
         for link in task.links:
             uri = link.get_link(
-                run_name=action.run_name if action.run_name else "",
-                project=action.project if action.project else "",
-                domain=action.domain if action.domain else "",
-                context=task_ctx.custom_context if task_ctx.custom_context else {},
-                parent_action_name=action.name if action.name else "",
+                run_name=action.run_name or "",
+                project=action.project or "",
+                domain=action.domain or "",
+                context=task_context.custom_context or {},
+                parent_action_name=action.name or "",
                 action_name="{{.actionName}}",
                 pod_name="{{.podName}}",
             )
@@ -151,8 +153,6 @@ def get_proto_task(task: TaskTemplate, serialize_context: SerializationContext) 
             log_links.append(task_log)
 
     custom = task.custom_config(serialize_context)
-
-    sql = task.sql(serialize_context)
 
     # -------------- CACHE HANDLING ----------------------
     task_cache = cache_from_request(task.cache)
@@ -222,31 +222,36 @@ def get_proto_task(task: TaskTemplate, serialize_context: SerializationContext) 
 
 
 def lookup_image_in_cache(serialize_context: SerializationContext, env_name: str, image: flyte.Image) -> str:
+    # Check cache first - this handles resolved ref_name images where base_image
+    # was set on the environment but not propagated to the task's image reference
+    if serialize_context.image_cache and env_name in serialize_context.image_cache.image_lookup:
+        return serialize_context.image_cache.image_lookup[env_name]
+
     if not serialize_context.image_cache or len(image._layers) == 0:
         # This computes the image uri, computing hashes as necessary so can fail if done remotely.
         return image.uri
-    elif serialize_context.image_cache and env_name not in serialize_context.image_cache.image_lookup:
-        raise flyte.errors.RuntimeUserError(
-            "MissingEnvironment",
-            f"Environment '{env_name}' not found in image cache.\n\n"
-            "💡 To fix this:\n"
-            "  1. If your parent environment calls a task in another environment,"
-            " declare that dependency using 'depends_on=[...]'.\n"
-            "     Example:\n"
-            "         env1 = flyte.TaskEnvironment(\n"
-            "             name='outer',\n"
-            "             image=flyte.Image.from_debian_base().with_pip_packages('requests'),\n"
-            "             depends_on=[env2, env3],\n"
-            "         )\n"
-            "  2. If you're using os.getenv() to set the environment name,"
-            " make sure the runtime environment has the same environment variable defined.\n"
-            "     Example:\n"
-            "         env = flyte.TaskEnvironment(\n"
-            '             name=os.getenv("my-name"),\n'
-            '             env_vars={"my-name": os.getenv("my-name")},\n'
-            "         )\n",
-        )
-    return serialize_context.image_cache.image_lookup[env_name]
+
+    # Has cache and layers but env not found in cache
+    raise flyte.errors.RuntimeUserError(
+        "MissingEnvironment",
+        f"Environment '{env_name}' not found in image cache.\n\n"
+        "💡 To fix this:\n"
+        "  1. If your parent environment calls a task in another environment,"
+        " declare that dependency using 'depends_on=[...]'.\n"
+        "     Example:\n"
+        "         env1 = flyte.TaskEnvironment(\n"
+        "             name='outer',\n"
+        "             image=flyte.Image.from_debian_base().with_pip_packages('requests'),\n"
+        "             depends_on=[env2, env3],\n"
+        "         )\n"
+        "  2. If you're using os.getenv() to set the environment name,"
+        " make sure the runtime environment has the same environment variable defined.\n"
+        "     Example:\n"
+        "         env = flyte.TaskEnvironment(\n"
+        '             name=os.getenv("my-name"),\n'
+        '             env_vars={"my-name": os.getenv("my-name")},\n'
+        "         )\n",
+    )
 
 
 def _get_urun_container(
@@ -267,7 +272,7 @@ def _get_urun_container(
     if env_name is None:
         raise flyte.errors.RuntimeSystemError("BadConfig", f"Task {task_template.name} has no parent environment name")
 
-    img_uri = lookup_image_in_cache(serialize_context, env_name, img)
+    img_uri = lookup_image_in_cache(serialize_context, env_name, img) if img else None
 
     return tasks_pb2.Container(
         image=img_uri,

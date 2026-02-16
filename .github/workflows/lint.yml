@@ -26,6 +26,7 @@ jobs:
       - name: Lint
         run: |
           make fmt
+          git diff --exit-code
   rs-fmt:
     name: rust fmt
     runs-on: ubuntu-latest
@@ -88,7 +89,6 @@ jobs:
       - name: Generate docs
         run: |
           uv lock --check
-          uv lock --prerelease allow --check --directory plugins/connectors
 #  # Disabled for now, as it is failing
 #  check-import-profile:
 #    runs-on: ubuntu-latest

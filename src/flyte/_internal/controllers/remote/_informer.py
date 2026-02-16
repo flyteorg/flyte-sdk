@@ -79,6 +79,7 @@ class ActionCache:
     async def remove(self, name: str) -> Action | None:
         """Remove an action from the cache"""
         async with self._lock:
+            self._completion_events.pop(name, None)
             return self._cache.pop(name, None)
 
     async def wait_for_completion(self, name: str) -> bool:
@@ -248,11 +249,11 @@ class Informer:
                 logger.info(f"Watch cancelled: {self.name}")
                 return
             except asyncio.TimeoutError as e:
-                logger.error(f"Watch timeout: {self.name}", exc_info=e)
+                logger.error(f"Watch timeout: {self.name}, {e}", exc_info=False)
                 last_exc = e
                 retries += 1
             except grpc.aio.AioRpcError as e:
-                logger.exception(f"RPC error: {self.name}", exc_info=e)
+                logger.error(f"RPC error: {self.name}, {e}", exc_info=False)
                 last_exc = e
                 retries += 1
             except Exception as e:

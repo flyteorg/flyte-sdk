@@ -82,9 +82,11 @@ async def convert_upload_default_inputs(interface: NativeInterface) -> List[comm
             literal_coros.append(TypeEngine.to_literal(default_value, input_type, lt))
             vars.append((input_name, lt))
 
-    literals: List[literals_pb2.Literal] = await asyncio.gather(*literal_coros)
+    literals: List[literals_pb2.Literal] = await asyncio.gather(*literal_coros, return_exceptions=True)
     named_params = []
     for (name, lt), literal in zip(vars, literals):
+        if isinstance(literal, Exception):
+            raise RuntimeError(f"Failed to convert default value for parameter '{name}'") from literal
         param = interface_pb2.Parameter(
             var=interface_pb2.Variable(
                 type=lt,
@@ -230,8 +232,11 @@ async def convert_outputs_to_native(interface: NativeInterface, outputs: Outputs
     elif len(kwargs) == 1:
         return next(iter(kwargs.values()))
     else:
-        # Return as tuple if multiple outputs, make sure to order correctly as it seems proto maps can change ordering
-        return tuple(kwargs[k] for k in interface.outputs.keys())
+        # Return as tuple if multiple outputs, using the order from the proto literals list
+        # (which preserves the original serialization order) rather than interface.outputs.keys()
+        # (which may have different order due to protobuf map not preserving order)
+        output_order = [named_literal.name for named_literal in outputs.proto_outputs.literals]
+        return tuple(kwargs[k] for k in output_order)
 
 
 def convert_error_to_native(
@@ -418,7 +423,22 @@ def generate_interface_hash(task_interface: interface_pb2.TypedInterface) -> str
     """
     if not task_interface:
         return ""
-    serialized_interface = task_interface.SerializeToString(deterministic=True)
+
+    # Create a copy and sort variables by key to ensure order-independent hashing
+    sorted_interface = interface_pb2.TypedInterface()
+    sorted_interface.CopyFrom(task_interface)
+
+    if sorted_interface.inputs and sorted_interface.inputs.variables:
+        sorted_inputs = sorted(sorted_interface.inputs.variables, key=lambda entry: entry.key)
+        del sorted_interface.inputs.variables[:]
+        sorted_interface.inputs.variables.extend(sorted_inputs)
+
+    if sorted_interface.outputs and sorted_interface.outputs.variables:
+        sorted_outputs = sorted(sorted_interface.outputs.variables, key=lambda entry: entry.key)
+        del sorted_interface.outputs.variables[:]
+        sorted_interface.outputs.variables.extend(sorted_outputs)
+
+    serialized_interface = sorted_interface.SerializeToString(deterministic=True)
     return hash_data(serialized_interface)
 
 

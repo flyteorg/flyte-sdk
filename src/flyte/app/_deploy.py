@@ -44,7 +44,7 @@ class DeployedAppEnvironment:
         return [
             [
                 ("type", "App"),
-                ("name", f"[link={self.deployed_app.url}]{self.deployed_app.name}[/link]"),
+                ("name", self.deployed_app.name),
                 ("revision", str(self.deployed_app.revision)),
                 (
                     "desired state",
@@ -56,7 +56,11 @@ class DeployedAppEnvironment:
                 ),
                 (
                     "public_url",
-                    self.deployed_app.endpoint,
+                    f"[link={self.deployed_app.url}]{self.deployed_app.url}[/link]",
+                ),
+                (
+                    "console_url",
+                    f"[link={self.deployed_app.endpoint}]{self.deployed_app.endpoint}[/link]",
                 ),
             ],
         ]
@@ -78,16 +82,17 @@ async def _deploy_app(
     from flyte.app._runtime import translate_app_env_to_idl
     from flyte.remote import App
 
-    if app.include and serialization_context.code_bundle and serialization_context.code_bundle.pkl is None:
-        # Only bundle the include files if the code bundle is a tgz bundle. If this
-        # is a pkl bundle, assume that the AppEnvironment has a server function
-        # that will be used to serve the app. This function should contain all
-        # of the code needed to serve the app.
+    is_pkl = serialization_context.code_bundle and serialization_context.code_bundle.pkl
+    if app.include and not is_pkl:
+        # Only bundle when not pickling. If this is a pkl bundle, assume that
+        # the AppEnvironment has a server function that will be used to serve
+        # the app. This function should contain all of the code needed to serve the app.
         app_file = Path(app._app_filename)
         app_root_dir = app_file.parent
-        assert serialization_context.code_bundle is not None
-        _files = serialization_context.code_bundle.files or []
-        files = (*_files, *[f for f in app.include if f not in _files])
+        _preexisting_code_bundle_files = []
+        if serialization_context.code_bundle is not None:
+            _preexisting_code_bundle_files = serialization_context.code_bundle.files or []
+        files = (*_preexisting_code_bundle_files, *[f for f in app.include if f not in _preexisting_code_bundle_files])
         code_bundle = await build_code_bundle_from_relative_paths(files, from_dir=app_root_dir)
         serialization_context.code_bundle = code_bundle
 

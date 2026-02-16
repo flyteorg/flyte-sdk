@@ -3,7 +3,8 @@ from __future__ import annotations
 import asyncio
 import json
 import typing
-from typing import ClassVar, Dict, Optional, Tuple
+from importlib.metadata import entry_points
+from typing import TYPE_CHECKING, ClassVar, Dict, Optional, Tuple
 
 from async_lru import alru_cache
 from pydantic import BaseModel
@@ -13,9 +14,12 @@ from flyte._image import Architecture, Image
 from flyte._initialize import _get_init_config
 from flyte._logging import logger
 
+if TYPE_CHECKING:
+    from flyte._build import ImageBuild
+
 
 class ImageBuilder(Protocol):
-    async def build_image(self, image: Image, dry_run: bool) -> str: ...
+    async def build_image(self, image: Image, dry_run: bool, wait: bool = True) -> "ImageBuild": ...
 
     def get_checkers(self) -> Optional[typing.List[typing.Type[ImageChecker]]]:
         """
@@ -138,10 +142,9 @@ class ImageBuildEngine:
     @staticmethod
     @alru_cache
     async def image_exists(image: Image) -> Optional[str]:
-        if image.base_image is not None and not image._layers:
-            logger.debug(f"Image {image} has a base image: {image.base_image} and no layers. Skip existence check.")
+        if image.name is None:
+            logger.debug(f"Image {image} has no name. Skip existence check.")
             return image.uri
-        assert image.name is not None, f"Image name is not set for {image}"
 
         tag = image._final_tag
 
@@ -181,7 +184,8 @@ class ImageBuildEngine:
         builder: ImageBuildEngine.ImageBuilderType | None = None,
         dry_run: bool = False,
         force: bool = False,
-    ) -> str:
+        wait: bool = True,
+    ) -> "ImageBuild":
         """
         Build the image. Images to be tagged with latest will always be built. Otherwise, this engine will check the
         registry to see if the manifest exists.
@@ -190,8 +194,12 @@ class ImageBuildEngine:
         :param builder:
         :param dry_run: Tell the builder to not actually build. Different builders will have different behaviors.
         :param force: Skip the existence check. Normally if the image already exists we won't build it.
-        :return:
+        :param wait: Wait for the build to finish. If wait is False when using the remote image builder, the function
+            will return the build image task URL.
+        :return: An ImageBuild object with the image URI and remote run (if applicable).
         """
+        from flyte._build import ImageBuild
+
         # Always trigger a build if this is a dry run since builder shouldn't really do anything, or a force.
         image_uri = (await cls.image_exists(image)) or image.uri
         if force or dry_run or not await cls.image_exists(image):
@@ -207,11 +215,11 @@ class ImageBuildEngine:
             img_builder = ImageBuildEngine._get_builder(builder)
             logger.debug(f"Using `{img_builder}` image builder to build image.")
 
-            result = await img_builder.build_image(image, dry_run=dry_run)
+            result = await img_builder.build_image(image, dry_run=dry_run, wait=wait)
             return result
         else:
             logger.info(f"Image {image_uri} already exists in registry. Skipping build.")
-            return image_uri
+            return ImageBuild(uri=image_uri, remote_run=None)
 
     @classmethod
     def _get_builder(cls, builder: ImageBuildEngine.ImageBuilderType | None = "local") -> ImageBuilder:
@@ -226,7 +234,26 @@ class ImageBuildEngine:
 
             return DockerImageBuilder()
         else:
-            raise ValueError(f"Unknown image builder type: {builder}. Supported types are 'local' and 'remote'.")
+            return cls._load_custom_type_transformers(builder)
+
+    @classmethod
+    def _load_custom_type_transformers(cls, name: str) -> ImageBuilder:
+        plugins = entry_points(group="flyte.plugins.image_builders")
+        for ep in plugins:
+            if ep.name != name:
+                continue
+            try:
+                logger.info(f"Loading image builder: {ep.name}")
+                builder = ep.load()
+                if callable(builder):
+                    return builder()
+                return builder
+            except Exception as e:
+                raise RuntimeError(f"Failed to load image builder {ep.name} with error: {e}")
+        raise ValueError(
+            f"Unknown image builder type: {name}. Available builders:"
+            f" {[ep.name for ep in plugins] + ['local', 'remote']}"
+        )
 
 
 class ImageCache(BaseModel):

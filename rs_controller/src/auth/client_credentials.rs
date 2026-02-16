@@ -3,6 +3,10 @@ use std::{
     time::{Duration, SystemTime},
 };
 
+use flyteidl2::flyteidl::auth::{
+    auth_metadata_service_client::AuthMetadataServiceClient, GetOAuth2MetadataRequest,
+    GetOAuth2MetadataResponse, GetPublicClientConfigRequest, GetPublicClientConfigResponse,
+};
 use tokio::sync::RwLock;
 use tonic::transport::Channel;
 use tracing::{debug, info};
@@ -11,12 +15,6 @@ use super::{
     config::AuthConfig,
     errors::TokenError,
     token_client::{self, GrantType, TokenResponse},
-};
-
-use flyteidl2::flyteidl::auth::auth_metadata_service_client::AuthMetadataServiceClient;
-use flyteidl2::flyteidl::auth::{
-    GetOAuth2MetadataRequest, GetOAuth2MetadataResponse, GetPublicClientConfigRequest,
-    GetPublicClientConfigResponse,
 };
 
 /// Stored credentials with expiration tracking

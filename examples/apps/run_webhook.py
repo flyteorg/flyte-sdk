@@ -1,53 +1,45 @@
 # /// script
 # requires-python = ">=3.12"
 # dependencies = [
+#     "ipdb",
 #     "fastapi",
 #     "uvicorn",
-#     "flyte",
+#     "flyte==2.0.0b48",
 # ]
 # ///
-import logging
-import os
-import pathlib
-from contextlib import asynccontextmanager
-from typing import Annotated
 
-from fastapi import Depends, FastAPI, HTTPException, Security
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+import logging
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+
+import os
+from contextlib import asynccontextmanager
+
+from fastapi import FastAPI, HTTPException
 from starlette import status
 
 import flyte
 import flyte.errors
 import flyte.remote as remote
-from flyte.app.extras import FastAPIAppEnvironment
+from flyte.app.extras import FastAPIAppEnvironment, FastAPIPassthroughAuthMiddleware
 
-WEBHOOK_API_KEY = os.getenv("WEBHOOK_API_KEY", "test-api-key")
-security = HTTPBearer()
 logger = logging.getLogger(__name__)
-
-
-async def verify_token(
-    credentials: HTTPAuthorizationCredentials = Security(security),
-) -> HTTPAuthorizationCredentials:
-    """Verify the API key from the bearer token."""
-    if credentials.credentials != WEBHOOK_API_KEY:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Could not validate credentials",
-        )
-    return credentials
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """
-    FastAPI lifespan context manager to initialize Flyte before accepting requests.
+    FastAPI lifespan context manager to initialize Flyte with passthrough auth.
 
-    This ensures that the Flyte client is properly initialized before any requests
-    are processed, preventing race conditions and initialization errors.
+    This initializes Flyte with passthrough authentication, allowing the app to
+    pass user credentials from incoming requests to the Flyte control plane.
     """
-    # Startup: Initialize Flyte
-    await flyte.init_in_cluster.aio(org="playground")
+    # Startup: Initialize Flyte with passthrough authentication
+    await flyte.init_passthrough.aio(
+        project=flyte.current_project(),
+        domain=flyte.current_domain(),
+    )
+    logger.info("Initialized Flyte passthrough auth")
     yield
     # Shutdown: Clean up if needed
 
@@ -59,6 +51,9 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# Add auth middleware - automatically extracts auth headers and sets Flyte context
+app.add_middleware(FastAPIPassthroughAuthMiddleware, excluded_paths={"/health"})
+
 
 @app.get("/health")
 async def health_check():
@@ -66,75 +61,167 @@ async def health_check():
     return {"status": "healthy"}
 
 
-@app.post("/run-task/{project}/{domain}/{name}/{version}")
+@app.get("/me")
+async def get_current_user():
+    """
+    Get information about the currently authenticated user.
+
+    Verifies passthrough authentication by fetching user info from the
+    Flyte control plane using the caller's credentials.
+    """
+    try:
+        # Auth metadata automatically set by FastAPIAuthMiddleware
+        user = await remote.User.get.aio()
+        return {
+            "subject": user.subject(),
+            "name": user.name(),
+        }
+    except Exception as e:
+        logger.error(f"Failed to get user info: {type(e).__name__}")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid credentials or unauthorized",
+        )
+
+
+@app.post("/run-task/{project}/{domain}/{name}")
 async def run_task(
     project: str,
     domain: str,
     name: str,
-    version: str,
     inputs: dict,
-    credentials: Annotated[HTTPAuthorizationCredentials, Depends(verify_token)],
+    version: str | None = None,
 ):
     """
-    Trigger a Flyte task run via webhook.
+    Trigger a Flyte task run with the caller's credentials.
 
-    This endpoint launches a Flyte task and returns information about the launched run,
-    including the URL to view the run in the Flyte UI and the run's unique ID.
+    This endpoint launches a Flyte task using passthrough authentication,
+    meaning the task is executed with the permissions of the calling user.
 
     Args:
         project: Flyte project name
         domain: Flyte domain (e.g., development, staging, production)
         name: Task name
-        version: Task version
         inputs: Dictionary of input parameters for the task
-        credentials: Bearer token for authentication
+        version: Task version (optional, defaults to "latest")
 
     Returns:
         Dictionary containing the launched run information:
         - url: URL to view the run in the Flyte UI
         - name: Name of the run
     """
-    logger.info(f"Running task: {name} {version}, with inputs: {inputs}")
+    logger.info(f"Running task: {project}/{domain}/{name} version={version}")
+
     try:
-        tk = remote.Task.get(project=project, domain=domain, name=name, version=version)
+        if version is None:
+            auto_version = "latest"
+        else:
+            auto_version = None
+
+        tk = remote.Task.get(
+            project=project,
+            domain=domain,
+            name=name,
+            version=version,
+            auto_version=auto_version,
+        )
         r = await flyte.run.aio(tk, **inputs)
-    except flyte.errors.RemoteTaskError:
-        return HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
-    return {"url": r.url, "name": r.name}
+
+        return {"url": r.url, "name": r.name}
+
+    except flyte.errors.RemoteTaskNotFoundError:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Task {name} with {version} in {project} and {domain} not found",
+        )
+    except flyte.errors.RemoteTaskUsageError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(e),
+        )
 
 
-env = FastAPIAppEnvironment(
-    name="webhook-runner",
-    app=app,
-    description="A webhook service that triggers Flyte task runs",
-    image=flyte.Image.from_uv_script(__file__, name="webhook-runner", pre=True),
+# image = flyte.Image.from_uv_script(__file__, name="webhook-runner", pre=True)
+image = flyte.Image.from_debian_base().with_pip_packages("ipdb", "fastapi", "uvicorn")
+
+task_env = flyte.TaskEnvironment(
+    name="webhook-runner-task",
+    image=image,
     resources=flyte.Resources(cpu=1, memory="512Mi"),
-    requires_auth=False,
-    env_vars={"WEBHOOK_API_KEY": os.getenv("WEBHOOK_API_KEY", "test-api-key")},
 )
 
+app_env = FastAPIAppEnvironment(
+    name="webhook-runner",
+    app=app,
+    description="A webhook service that triggers Flyte task runs with passthrough auth",
+    image=image,
+    resources=flyte.Resources(cpu=1, memory="512Mi"),
+    requires_auth=True,  # Platform handles auth at gateway
+    depends_on=[task_env],
+    scaling=flyte.app.Scaling(replicas=1),
+)
+
+
+@task_env.task
+async def webhook_task(x: int, y: str) -> str:
+    """Run a Flyte task via webhook."""
+    return f"{x!s} {y}"
+
+
 if __name__ == "__main__":
-    flyte.init_from_config(root_dir=pathlib.Path(__file__).parent, log_level=logging.DEBUG)
-    deployment_list = flyte.deploy(env)
-    if deployment_list:
-        d = deployment_list[0]
-        print(f"Deployed Webhook Runner app: {d.env_repr()}")
+    import json
+    import urllib.error
+    import urllib.request
 
+    import flyte.remote
 
-# TO Test
-# curl -X POST "https://<url>/run-task/<project>/development/py-io.dynamic_wf/cacbbbd8447421fc8ff0c32cf5dc177c" \
-#   -H "Authorization: Bearer test-api-key" \
-#   -H "Content-Type: application/json" \
-#   -d '{
-#         "workflow_config": {
-#           "x": 1,
-#           "y": 2,
-#           "m": {"x": 1},
-#           "m2": {"y": 1, "m": {"j": 1}}
-#         },
-#         "user_params": {
-#           "y": ""
-#         },
-#         "x": 1,
-#         "y": "Hello"
-#       }'
+    flyte.init_from_config(log_level=logging.DEBUG)
+
+    flyte.deploy(task_env)
+
+    # deploy the environments
+    served_app = flyte.serve(app_env)
+    url = served_app.url
+    endpoint = served_app.endpoint
+    print(f"Webhook is served on {endpoint}. you can check logs, status etc {endpoint}")
+
+    # Use a Flyte user token for passthrough auth (instead of static API key)
+    token = os.getenv("FLYTE_API_KEY")
+    if not token:
+        raise ValueError("FLYTE_API_KEY not set. Obtain with: flyte get api-key")
+
+    # Test /me endpoint to verify passthrough auth works
+    me_req = urllib.request.Request(
+        url.rstrip("/") + "/me",
+        headers={"Authorization": f"Bearer {token}"},
+        method="GET",
+    )
+    with urllib.request.urlopen(me_req) as resp:
+        print(f"/me response: {resp.read().decode('utf-8')}")
+
+    # Test /run-task endpoint
+    data = {"x": 42, "y": "hello"}
+    route = "/run-task/flytesnacks/development/webhook-runner-task.webhook_task"
+    full_url = url.rstrip("/") + route
+    print(full_url)
+
+    req = urllib.request.Request(
+        full_url,
+        data=json.dumps(data).encode("utf-8"),
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+            "User-Agent": "flyte-webhook-client/1.0",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req) as resp:
+            print(f"Webhook response: {resp.read().decode('utf-8')}")
+    except urllib.error.HTTPError as http_err:
+        print(f"HTTP Error: {http_err.code} - {http_err.read().decode('utf-8')}")
