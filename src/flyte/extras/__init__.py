@@ -10,20 +10,28 @@ This package provides various utilities that make it possible to build highly cu
                    time related functions. This determinism persists across crashes and restarts making the process
                    durable.
 
-3. Sandbox: Reusable container environment for running code in isolation.
+3. Sandbox: Container environment for running code (and tests) in a sandbox environment.
+            Provides helper functions to build container images.
 """
 
 from flyte.durable._time import durable_sleep, durable_time
 
 from ._container import ContainerTask
-from ._sandbox import ImageConfig, InvalidPackageError, Sandbox, sandbox_environment
+from ._sandbox import (
+    ImageConfig,
+    InvalidPackageError,
+    RunResult,
+    Sandbox,
+    sandbox_environment,
+)
 
 __all__ = [
     "ContainerTask",
     "ImageConfig",
     "InvalidPackageError",
+    "RunResult",
     "Sandbox",
-    "sandbox_environment",
     "durable_sleep",
     "durable_time",
+    "sandbox_environment",
 ]

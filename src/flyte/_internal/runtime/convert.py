@@ -235,8 +235,9 @@ async def convert_outputs_to_native(interface: NativeInterface, outputs: Outputs
         # Return as tuple if multiple outputs, using the order from the proto literals list
         # (which preserves the original serialization order) rather than interface.outputs.keys()
         # (which may have different order due to protobuf map not preserving order)
-        output_order = [named_literal.name for named_literal in outputs.proto_outputs.literals]
-        return tuple(kwargs[k] for k in output_order)
+        # output_order = [named_literal.name for named_literal in outputs.proto_outputs.literals]
+        # return tuple(kwargs[k] for k in output_order)
+        return tuple(kwargs[k] for k in interface.outputs.keys())
 
 
 def convert_error_to_native(err: execution_pb2.ExecutionError | Exception | Error) -> Exception | None:

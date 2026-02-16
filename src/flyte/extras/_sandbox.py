@@ -16,7 +16,12 @@ from flyte.syncify import syncify
 
 logger = logging.getLogger(__name__)
 
-sandbox_environment = flyte.TaskEnvironment(name="sandbox_runtime")
+sandbox_environment = flyte.TaskEnvironment(
+    name="sandbox_runtime",
+    image=flyte.Image.from_debian_base(
+        install_flyte=False
+    ),  # Use a minimal base image without Flyte dependencies
+)
 
 
 @dataclass
@@ -42,11 +47,20 @@ class InvalidPackageError(Exception):
 
 
 @dataclass
+class RunResult:
+    """Result from running tests in a container."""
+
+    output: str
+    exit_code: str
+    tests_passed: bool
+
+
+@dataclass
 class Sandbox:
-    """Reusable container environment for running code in isolation.
+    """Container environment for running code in isolation.
 
     Configure the image (packages, resources) once, then call methods
-    with different code, inputs, and outputs as needed.
+    with different code, inputs and outputs as needed.
 
     Example::
 
@@ -61,11 +75,12 @@ class Sandbox:
             outputs={"result": str},
         )
 
-        output, exit_code, passed = await sandbox.run_tests.aio(
+        result = await sandbox.run_tests.aio(
             code="def add(a, b): return a + b",
             tests="def test_add(): assert add(1, 2) == 3",
             image=image,
         )
+        print(result.output, result.exit_code, result.tests_passed)
     """
 
     packages: list[str] = field(default_factory=list)
@@ -126,7 +141,8 @@ class Sandbox:
         """
         image = self.create_image()
         try:
-            return await flyte.build.aio(image)
+            result = await flyte.build.aio(image)
+            return result.uri
         except Exception as e:
             error_msg = str(e)
             if (
@@ -152,6 +168,7 @@ class Sandbox:
         """Create a ContainerTask that runs code with argparse-style input handling.
 
         Returns a callable wrapper that automatically provides the script file.
+        Outputs are returned as a tuple in the same order as the outputs dict.
 
         Args:
             name: Name for the container task.
@@ -161,7 +178,7 @@ class Sandbox:
             outputs: Output type declarations (e.g., {"result": str}).
 
         Returns:
-            Callable task wrapper.
+            Callable task wrapper that returns a tuple of outputs.
         """
         final_inputs = inputs or {}
 
@@ -193,10 +210,6 @@ class Sandbox:
 
         task_outputs = dict(outputs) if outputs else {}
 
-        # Auto-add exit_code
-        if "exit_code" not in task_outputs:
-            task_outputs["exit_code"] = int
-
         task = ContainerTask(
             name=name,
             image=image,
@@ -210,11 +223,15 @@ class Sandbox:
         )
 
         task.parent_env = weakref.ref(sandbox_environment)
-        task.parent_env_name = sandbox_environment.name
+        task.parent_env_name = (
+            name  # Use a unique name to avoid reusing the parent environment image
+        )
 
-        def task_wrapper(**kwargs):
-            """Wrapper that automatically provides _script input."""
-            return task(_script=File.from_local_sync(script_file), **kwargs)
+        @syncify
+        async def task_wrapper(**kwargs):
+            """Wrapper that provides _script and returns tuple."""
+            script = await File.from_local(script_file)
+            return await task(_script=script, **kwargs)
 
         task_wrapper._task = task
         return task_wrapper
@@ -223,60 +240,54 @@ class Sandbox:
     async def run(
         self,
         code: str,
+        name: Optional[str] = None,
         inputs: Optional[dict[str, type]] = None,
         outputs: Optional[dict[str, type]] = None,
         **kwargs,
-    ) -> dict[str, Any]:
+    ) -> Any:
         """Full lifecycle: build + create task + execute + collect outputs.
 
         Args:
             code: Complete Python code to run (including imports).
+            name: Base name for the container task.
             inputs: Input type declarations.
             outputs: Output type declarations.
             **kwargs: Input values matching inputs.
 
         Returns:
-            Dict of typed outputs including exit_code.
+            Tuple of typed outputs including exit_code.
         """
         image = await self.build.aio()
         task = self.create_task(
-            name="sandbox-exec",
+            name=name or f"sandbox-{flyte.ctx().action.name}",
             code=code,
             image=image,
             inputs=inputs,
             outputs=outputs,
         )
 
-        result_tuple = await task(**kwargs)
-
-        output_names = list(outputs.keys()) if outputs else []
-        if "exit_code" not in output_names:
-            output_names.append("exit_code")
-
-        results = {}
-        for i, out_name in enumerate(output_names):
-            results[out_name] = (
-                result_tuple[i] if isinstance(result_tuple, tuple) else result_tuple
-            )
-
-        return results
+        return await task.aio(**kwargs)
 
     @syncify
     async def run_tests(
         self,
         code: str,
         tests: str,
-        image: Optional[str] = None,
-    ) -> tuple[str, str, bool]:
+        name: Optional[str] = None,
+        image: Optional[str | flyte.Image] = None,
+        _attempt: int = 1,
+    ) -> RunResult:
         """Run tests against code in a container.
 
         Args:
             code: Complete Python code to test (including imports).
             tests: Test code string.
+            name: Base name for the test container task.
             image: Pre-built image URI. If None, builds automatically.
+            _attempt: Internal parameter for retry logic; not for external use.
 
         Returns:
-            (test_output, exit_code_str, tests_passed)
+            RunResult with output, exit_code, and tests_passed.
         """
         if image is None:
             image = await self.build.aio()
@@ -293,15 +304,38 @@ class Sandbox:
         command = [
             "/bin/bash",
             "-c",
-            "set -o pipefail && PYTHONPATH=/var/inputs python -m pytest $2 -v --tb=short 2>&1 | tee /var/outputs/result; echo ${PIPESTATUS[0]} > /var/outputs/exit_code",
+            r"""
+        set -o pipefail
+
+        EXIT_CODE=1
+
+        cleanup() {
+        echo "$EXIT_CODE" > /var/outputs/exit_code
+        sync
+        }
+
+        trap cleanup EXIT
+
+        # $1 = solution file
+        # $2 = test file
+
+        PYTHONPATH=/var/inputs python -m pytest "$2" -v --tb=short \
+        2>&1 | tee /var/outputs/result
+
+        EXIT_CODE=${PIPESTATUS[0]}
+        """,
         ]
+
         arguments = [
-            "/bin/bash",
+            "_",
             "/var/inputs/solution.py",
             "/var/inputs/test_solution.py",
         ]
 
-        container_name = f"sandbox-test-{flyte.ctx().action.name}"
+        if name:
+            container_name = f"{name}-{flyte.ctx().action.name}"
+        else:
+            container_name = f"sandbox-test-{flyte.ctx().action.name}-{_attempt}"
 
         task = ContainerTask(
             name=container_name,
@@ -309,24 +343,26 @@ class Sandbox:
             input_data_dir="/var/inputs",
             output_data_dir="/var/outputs",
             inputs={"solution.py": File, "test_solution.py": File},
-            outputs={"result": str, "exit_code": str},
+            outputs={"exit_code": str, "result": str},
             command=command,
             arguments=arguments,
             resources=self.resources or flyte.Resources(cpu=1, memory="1Gi"),
         )
 
         task.parent_env = weakref.ref(sandbox_environment)
-        task.parent_env_name = sandbox_environment.name
+        task.parent_env_name = container_name  # Use a unique name to avoid reusing the parent environment image
 
         try:
             test_inputs = {
                 "solution.py": await File.from_local(code_file.name),
                 "test_solution.py": await File.from_local(test_file.name),
             }
-            test_output, test_exit_code = await task(**test_inputs)
+            test_exit_code, test_output = await task(**test_inputs)
 
             tests_passed = test_exit_code.strip() == "0"
-            return test_output, test_exit_code, tests_passed
+            return RunResult(
+                output=test_output, exit_code=test_exit_code, tests_passed=tests_passed
+            )
         finally:
             for path in (code_file.name, test_file.name):
                 try:
