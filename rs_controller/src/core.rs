@@ -32,24 +32,8 @@ use crate::{
     informer::{Informer, InformerCache},
 };
 
-// Fetches Amazon root CA certificate from Amazon Trust Services
-pub async fn fetch_amazon_root_ca() -> Result<Certificate, ControllerError> {
-    // Amazon Root CA 1 - the main root used by AWS services
-    let url = "https://www.amazontrust.com/repository/AmazonRootCA1.pem";
-
-    let response = reqwest::get(url)
-        .await
-        .map_err(|e| ControllerError::SystemError(format!("Failed to fetch certificate: {}", e)))?;
-
-    let cert_pem = response
-        .text()
-        .await
-        .map_err(|e| ControllerError::SystemError(format!("Failed to read certificate: {}", e)))?;
-
-    Ok(Certificate::from_pem(cert_pem))
-}
-
-// Helper to create TLS-configured endpoint with Amazon CA certificate
+// Helper to create TLS-configured channel
+// todo: support no verify https://github.com/flyteorg/flyte-sdk/pull/299/files
 pub async fn create_tls_channel(url: &'static str) -> Result<Channel, ControllerError> {
     let endpoint = Endpoint::from_static(url)
         .tls_config(ClientTlsConfig::new().with_native_roots())
