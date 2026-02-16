@@ -34,13 +34,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let auth_config = AuthConfig::new_from_api_key(api_key.as_str())?;
     let endpoint = auth_config.endpoint.clone();
     let static_endpoint = endpoint.clone().leak();
-    // Strip "https://" (8 chars) to get just the hostname for TLS config
-    let domain = endpoint.strip_prefix("https://").ok_or_else(|| {
-        ControllerError::SystemError("Endpoint must start with https://".to_string())
-    })?;
-    let endpoint =
-        flyte_controller_base::core::create_tls_endpoint(static_endpoint, domain).await?;
-    let channel = endpoint.connect().await.map_err(ControllerError::from)?;
+    let channel = flyte_controller_base::core::create_tls_channel(static_endpoint).await?;
 
     let authenticator = Arc::new(ClientCredentialsAuthenticator::new(auth_config));
 

@@ -21,7 +21,7 @@ use tokio::{
     sync::{mpsc, oneshot},
     time::sleep,
 };
-use tonic::transport::{Certificate, ClientTlsConfig, Endpoint};
+use tonic::transport::{Certificate, Channel, ClientTlsConfig, Endpoint};
 use tower::ServiceBuilder;
 use tracing::{debug, error, info, warn};
 
@@ -50,24 +50,15 @@ pub async fn fetch_amazon_root_ca() -> Result<Certificate, ControllerError> {
 }
 
 // Helper to create TLS-configured endpoint with Amazon CA certificate
-// todo: when we resolve the pem issue, also remove the need to have both inputs which are basically the same
-pub async fn create_tls_endpoint(
-    url: &'static str,
-    domain: &str,
-) -> Result<Endpoint, ControllerError> {
-    // Fetch Amazon root CA dynamically
-    let cert = fetch_amazon_root_ca().await?;
-
-    let tls_config = ClientTlsConfig::new()
-        .domain_name(domain)
-        .ca_certificate(cert);
-
+pub async fn create_tls_channel(url: &'static str) -> Result<Channel, ControllerError> {
     let endpoint = Endpoint::from_static(url)
-        .tls_config(tls_config)
+        .tls_config(ClientTlsConfig::new().with_native_roots())
         .map_err(|e| ControllerError::SystemError(format!("TLS config error: {}", e)))?
         .keep_alive_while_idle(true);
 
-    Ok(endpoint)
+    let channel = endpoint.connect().await.map_err(ControllerError::from)?;
+
+    Ok(channel)
 }
 
 enum ChannelType {
@@ -141,17 +132,8 @@ impl CoreBaseController {
         let rt = get_runtime();
         let channel = rt.block_on(async {
             // todo: escape hatch for localhost
-            // Strip "https://" to get just the hostname for TLS config
-            let domain = endpoint_url.strip_prefix("https://").ok_or_else(|| {
-                ControllerError::SystemError(
-                    "Endpoint must start with https:// when using auth".to_string(),
-                )
-            })?;
-
-            // Create TLS-configured endpoint
-            let endpoint = create_tls_endpoint(endpoint_static, domain).await?;
-            let channel = endpoint.connect().await.map_err(ControllerError::from)?;
-
+            // Create TLS-configured channel
+            let channel = create_tls_channel(endpoint_static).await?;
             let authenticator = Arc::new(ClientCredentialsAuthenticator::new(auth_config.clone()));
             let auth_channel = ServiceBuilder::new()
                 .layer(AuthLayer::new(authenticator, channel.clone()))
@@ -216,14 +198,9 @@ impl CoreBaseController {
                 let endpoint = Endpoint::from_static(endpoint_static).keep_alive_while_idle(true);
                 endpoint.connect().await.map_err(ControllerError::from)?
             } else if endpoint.starts_with("https://") {
-                // Strip "https://" to get just the hostname for TLS config
-                let domain = endpoint.strip_prefix("https://").ok_or_else(|| {
-                    ControllerError::SystemError("Endpoint must start with https://".to_string())
-                })?;
-
-                // Create TLS-configured endpoint
-                let endpoint = create_tls_endpoint(endpoint_static, domain).await?;
-                endpoint.connect().await.map_err(ControllerError::from)?
+                // Create TLS-configured channel
+                let channel = create_tls_channel(endpoint_static).await?;
+                channel
             } else {
                 return Err(ControllerError::SystemError(format!(
                     "Malformed endpoint {}",
