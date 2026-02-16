@@ -284,7 +284,7 @@ class RemoteController(BaseController):
             logger.warning(
                 f"Action {n_action_id_pb.name} was aborted, aborting current Action {current_action_id.name}"
             )
-            raise flyte.errors.RunAbortedError(
+            raise flyte.errors.ActionAbortedError(
                 f"Action {n_action_id_pb.name} was aborted, aborting current Action {current_action_id.name}"
             )
 
