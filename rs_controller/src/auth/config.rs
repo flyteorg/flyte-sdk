@@ -10,13 +10,15 @@ pub struct AuthConfig {
     pub client_secret: String,
 }
 
+use flyteidl2::flyteidl::auth::GetPublicClientConfigResponse;
+
 /// Extension trait to add helper methods to the proto-generated PublicClientAuthConfigResponse
 pub trait ClientConfigExt {
     fn header_key(&self) -> &str;
 }
 
 // todo: get rid of this
-impl ClientConfigExt for crate::proto::PublicClientAuthConfigResponse {
+impl ClientConfigExt for GetPublicClientConfigResponse {
     fn header_key(&self) -> &str {
         if self.authorization_metadata_key.is_empty() {
             "authorization"
