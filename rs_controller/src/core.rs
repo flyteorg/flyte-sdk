@@ -518,7 +518,7 @@ impl CoreBaseController {
             .get_or_create_informer(run, parent_action_name)
             .await;
         let action_name = action_id.name.clone();
-        match informer.get_action(action_name).await {
+        match informer.get_action(&action_name).await {
             Some(action) => Ok(Some(action)),
             None => {
                 debug!("Action not found getting from action_id: {:?}", action_id);
@@ -669,10 +669,13 @@ impl CoreBaseController {
         );
 
         // get the action and return it
-        let final_action = informer.get_action(action_name).await;
-        final_action.ok_or(ControllerError::BadContext(String::from(
+        let final_action = informer.get_action(&action_name).await;
+        let final_action = final_action.ok_or(ControllerError::BadContext(String::from(
             "Action not found after done",
-        )))
+        )));
+        // Also remove. May be can do with prior step in the future.
+        informer.remove_action(&action_name).await;
+        final_action
     }
 
     pub async fn finalize_parent_action(&self, run_id: &RunIdentifier, parent_action_name: &str) {
