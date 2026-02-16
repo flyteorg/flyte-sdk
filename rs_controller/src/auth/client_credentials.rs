@@ -8,7 +8,7 @@ use tonic::transport::Channel;
 use tracing::{debug, info};
 
 use super::{
-    config::{AuthConfig, ClientConfigExt},
+    config::AuthConfig,
     errors::TokenError,
     token_client::{self, GrantType, TokenResponse},
 };
@@ -203,10 +203,10 @@ impl ClientCredentialsAuthenticator {
     pub async fn get_header_key(&self) -> String {
         let config_lock = self.client_config.read().await;
         if let Some(cfg) = config_lock.as_ref() {
-            // get rid of this
-            cfg.header_key().to_string()
-        } else {
-            "authorization".to_string()
+            if !cfg.authorization_metadata_key.is_empty() {
+                return cfg.authorization_metadata_key.clone();
+            }
         }
+        "authorization".to_string()
     }
 }
