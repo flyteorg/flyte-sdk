@@ -18,9 +18,7 @@ logger = logging.getLogger(__name__)
 
 sandbox_environment = flyte.TaskEnvironment(
     name="sandbox_runtime",
-    image=flyte.Image.from_debian_base(
-        install_flyte=False
-    ),  # Use a minimal base image without Flyte dependencies
+    image=flyte.Image.from_debian_base(install_flyte=False),  # Use a minimal base image without Flyte dependencies
 )
 
 
@@ -145,13 +143,8 @@ class Sandbox:
             return result.uri
         except Exception as e:
             error_msg = str(e)
-            if (
-                "Unable to locate package" in error_msg
-                or "has no installation candidate" in error_msg
-            ):
-                match = re.search(
-                    r"(?:Unable to locate package|Package '?)([\w.+-]+)", error_msg
-                )
+            if "Unable to locate package" in error_msg or "has no installation candidate" in error_msg:
+                match = re.search(r"(?:Unable to locate package|Package '?)([\w.+-]+)", error_msg)
                 if match:
                     bad_package = match.group(1)
                     raise InvalidPackageError(bad_package, error_msg) from e
@@ -203,7 +196,9 @@ class Sandbox:
         python_args = " ".join(cli_args)
         python_cmd = f"python $1 {python_args}" if python_args else "python $1"
 
-        bash_cmd = f"set -o pipefail && {python_cmd}; _exit=$?; mkdir -p /var/outputs; echo $_exit > /var/outputs/exit_code"
+        bash_cmd = (
+            f"set -o pipefail && {python_cmd}; _exit=$?; mkdir -p /var/outputs; echo $_exit > /var/outputs/exit_code"
+        )
         command = ["/bin/bash", "-c", bash_cmd]
 
         task_inputs = {**final_inputs, "_script": File}
@@ -223,9 +218,7 @@ class Sandbox:
         )
 
         task.parent_env = weakref.ref(sandbox_environment)
-        task.parent_env_name = (
-            name  # Use a unique name to avoid reusing the parent environment image
-        )
+        task.parent_env_name = name  # Use a unique name to avoid reusing the parent environment image
 
         @syncify
         async def task_wrapper(**kwargs):
@@ -360,9 +353,7 @@ class Sandbox:
             test_exit_code, test_output = await task(**test_inputs)
 
             tests_passed = test_exit_code.strip() == "0"
-            return RunResult(
-                output=test_output, exit_code=test_exit_code, tests_passed=tests_passed
-            )
+            return RunResult(output=test_output, exit_code=test_exit_code, tests_passed=tests_passed)
         finally:
             for path in (code_file.name, test_file.name):
                 try:
@@ -375,7 +366,5 @@ class Sandbox:
             "packages": sorted(self.packages),
             "system_packages": sorted(self.system_packages),
         }
-        config_hash = hashlib.sha256(
-            json.dumps(spec, sort_keys=True).encode()
-        ).hexdigest()[:12]
+        config_hash = hashlib.sha256(json.dumps(spec, sort_keys=True).encode()).hexdigest()[:12]
         return f"sandbox-{config_hash}"
