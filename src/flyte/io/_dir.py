@@ -2,16 +2,30 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import AsyncIterator, Dict, Generic, Iterator, List, Optional, Type, TypeVar, Union
+from typing import (
+    Any,
+    AsyncIterator,
+    Callable,
+    Coroutine,
+    Dict,
+    Generic,
+    Iterator,
+    List,
+    Optional,
+    Type,
+    TypeVar,
+    Union,
+)
 
 from flyteidl2.core import literals_pb2, types_pb2
 from fsspec.asyn import AsyncFileSystem
 from fsspec.utils import get_protocol
 from mashumaro.types import SerializableType
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel, PrivateAttr, model_validator
 
 import flyte.storage as storage
 from flyte._context import internal_ctx
+from flyte._logging import logger
 from flyte.io._file import File
 from flyte.types import TypeEngine, TypeTransformer, TypeTransformerFailedError
 
@@ -200,6 +214,9 @@ class Dir(BaseModel, Generic[T], SerializableType):
     format: str = ""
     hash: Optional[str] = None
 
+    # lazy uploader is used to upload local file to the remote storage when in remote mode
+    _lazy_uploader: Callable[[], Coroutine[Any, Any, tuple[str | None, str]]] | None = PrivateAttr(default=None)
+
     class Config:
         arbitrary_types_allowed = True
 
@@ -216,6 +233,14 @@ class Dir(BaseModel, Generic[T], SerializableType):
         pyd_dump = self.model_dump()
         return pyd_dump
 
+    @property
+    def lazy_uploader(self) -> Callable[[], Coroutine[Any, Any, tuple[str | None, str]]] | None:
+        return self._lazy_uploader
+
+    @lazy_uploader.setter
+    def lazy_uploader(self, lazy_uploader: Callable[[], Coroutine[Any, Any, tuple[str | None, str]]] | None):
+        self._lazy_uploader = lazy_uploader
+
     @classmethod
     def _deserialize(cls, file_dump: Dict[str, Optional[str]]) -> Dir:
         """Internal: Deserialize Dir from dictionary. Not intended for direct use."""
@@ -224,6 +249,8 @@ class Dir(BaseModel, Generic[T], SerializableType):
     @classmethod
     def schema_match(cls, incoming: dict):
         """Internal: Check if incoming schema matches Dir schema. Not intended for direct use."""
+        if not isinstance(incoming, dict):
+            return False
         this_schema = cls.model_json_schema()
         current_required = this_schema.get("required")
         incoming_required = incoming.get("required")
@@ -551,6 +578,7 @@ class Dir(BaseModel, Generic[T], SerializableType):
         local_path: Union[str, Path],
         remote_destination: Optional[str] = None,
         dir_cache_key: Optional[str] = None,
+        batch_size: Optional[int] = None,
     ) -> Dir[T]:
         """
         Asynchronously create a new Dir by uploading a local directory to remote storage.
@@ -596,13 +624,35 @@ class Dir(BaseModel, Generic[T], SerializableType):
             dir_cache_key: Optional precomputed hash value to use for cache key computation when this Dir is used
                           as an input to discoverable tasks. If not specified, the cache key will be based on
                           directory attributes.
+            batch_size: Optional concurrency limit for uploading files. If not specified, the default value is
+              determined by the FLYTE_IO_BATCH_SIZE environment variable (default: 32).
 
         Returns:
             A new Dir instance pointing to the uploaded directory
         """
         local_path_str = str(local_path)
         dirname = os.path.basename(os.path.normpath(local_path_str))
-        resolved_remote_path = remote_destination or internal_ctx().raw_data.get_random_remote_path(dirname)
+
+        ctx = internal_ctx()
+        if not ctx.has_raw_data and remote_destination is None:
+
+            async def _lazy_uploader() -> tuple[str | None, str]:
+                from flyte._run import _get_main_run_mode
+
+                if _get_main_run_mode() == "local":
+                    return None, local_path_str
+
+                import flyte.remote as remote
+
+                logger.debug("Local context detected, Dir will be uploaded through Flyte local data upload system.")
+                remote_uri = await remote.upload_dir.aio(Path(local_path_str))
+                return None, remote_uri
+
+            dir = cls(path=local_path_str, name=dirname, hash=dir_cache_key)
+            dir.lazy_uploader = _lazy_uploader
+            return dir
+
+        resolved_remote_path = remote_destination or ctx.raw_data.get_random_remote_path(dirname)
         protocol = get_protocol(resolved_remote_path)
 
         # Shortcut for local, don't copy and just return
@@ -611,7 +661,9 @@ class Dir(BaseModel, Generic[T], SerializableType):
             return cls(path=output_path, name=dirname, hash=dir_cache_key)
 
         # todo: in the future, mirror File and set the file to_path here
-        output_path = await storage.put(from_path=local_path_str, to_path=remote_destination, recursive=True)
+        output_path = await storage.put(
+            from_path=local_path_str, to_path=resolved_remote_path, recursive=True, batch_size=batch_size
+        )
         return cls(path=output_path, name=dirname, hash=dir_cache_key)
 
     @classmethod
@@ -673,7 +725,26 @@ class Dir(BaseModel, Generic[T], SerializableType):
         local_path_str = str(local_path)
         dirname = os.path.basename(os.path.normpath(local_path_str))
 
-        resolved_remote_path = remote_destination or internal_ctx().raw_data.get_random_remote_path(dirname)
+        ctx = internal_ctx()
+        if not ctx.has_raw_data and remote_destination is None:
+
+            async def _lazy_uploader() -> tuple[str | None, str]:
+                from flyte._run import _get_main_run_mode
+
+                if _get_main_run_mode() == "local":
+                    return None, local_path_str
+
+                import flyte.remote as remote
+
+                logger.debug("Local context detected, Dir will be uploaded through Flyte local data upload system.")
+                remote_uri = await remote.upload_dir.aio(Path(local_path_str))
+                return None, remote_uri
+
+            dir = cls(path=local_path_str, name=dirname, hash=dir_cache_key)
+            dir.lazy_uploader = _lazy_uploader
+            return dir
+
+        resolved_remote_path = remote_destination or ctx.raw_data.get_random_remote_path(dirname)
         protocol = get_protocol(resolved_remote_path)
 
         # Shortcut for local, don't copy and just return
@@ -864,6 +935,11 @@ class DirTransformer(TypeTransformer[Dir]):
         if not isinstance(python_val, Dir):
             raise TypeTransformerFailedError(f"Expected Dir object, received {type(python_val)}")
 
+        uri = python_val.path
+        hash_value = python_val.hash or None
+        if python_val.lazy_uploader:
+            hash_value, uri = await python_val.lazy_uploader()
+
         return literals_pb2.Literal(
             scalar=literals_pb2.Scalar(
                 blob=literals_pb2.Blob(
@@ -872,10 +948,10 @@ class DirTransformer(TypeTransformer[Dir]):
                             format=python_val.format, dimensionality=types_pb2.BlobType.BlobDimensionality.MULTIPART
                         )
                     ),
-                    uri=python_val.path,
+                    uri=uri,
                 )
             ),
-            hash=python_val.hash if python_val.hash else None,
+            hash=hash_value,
         )
 
     async def to_python_value(
@@ -893,7 +969,7 @@ class DirTransformer(TypeTransformer[Dir]):
 
         uri = lv.scalar.blob.uri
         filename = Path(uri).name
-        hash_value = lv.hash if lv.hash else None
+        hash_value = lv.hash or None
         f: Dir = Dir(path=uri, name=filename, format=lv.scalar.blob.metadata.type.format, hash=hash_value)
         return f
 

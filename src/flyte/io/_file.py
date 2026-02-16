@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import inspect
 import os
 import typing
 from contextlib import asynccontextmanager, contextmanager
@@ -10,6 +9,8 @@ from typing import (
     Annotated,
     Any,
     AsyncGenerator,
+    Callable,
+    Coroutine,
     Dict,
     Generator,
     Generic,
@@ -23,13 +24,14 @@ import aiofiles
 from flyteidl2.core import literals_pb2, types_pb2
 from fsspec.utils import get_protocol
 from mashumaro.types import SerializableType
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, PrivateAttr, model_validator
 from pydantic.json_schema import SkipJsonSchema
 
 import flyte.errors
 import flyte.storage as storage
 from flyte._context import internal_ctx
 from flyte._initialize import requires_initialization
+from flyte._logging import logger
 from flyte.io._hashing_io import AsyncHashingReader, HashingWriter, HashMethod, PrecomputedValue
 from flyte.types import TypeEngine, TypeTransformer, TypeTransformerFailedError
 
@@ -193,6 +195,9 @@ class File(BaseModel, Generic[T], SerializableType):
     hash: Optional[str] = None
     hash_method: Annotated[Optional[HashMethod], Field(default=None, exclude=True), SkipJsonSchema()] = None
 
+    # lazy uploader is used to upload local file to the remote storage when in remote mode
+    _lazy_uploader: Callable[[], Coroutine[Any, Any, tuple[str | None, str]]] | None = PrivateAttr(default=None)
+
     class Config:
         arbitrary_types_allowed = True
 
@@ -214,9 +219,19 @@ class File(BaseModel, Generic[T], SerializableType):
         """Internal: Deserialize File from dictionary. Not intended for direct use."""
         return File.model_validate(file_dump)
 
+    @property
+    def lazy_uploader(self) -> Callable[[], Coroutine[Any, Any, tuple[str | None, str]]] | None:
+        return self._lazy_uploader
+
+    @lazy_uploader.setter
+    def lazy_uploader(self, lazy_uploader: Callable[[], Coroutine[Any, Any, tuple[str | None, str]]] | None):
+        self._lazy_uploader = lazy_uploader
+
     @classmethod
     def schema_match(cls, incoming: dict):
         """Internal: Check if incoming schema matches File schema. Not intended for direct use."""
+        if not isinstance(incoming, dict):
+            return False
         this_schema = cls.model_json_schema()
         current_required = this_schema.get("required")
         incoming_required = incoming.get("required")
@@ -373,10 +388,9 @@ class File(BaseModel, Generic[T], SerializableType):
                 yield fh
                 return
             finally:
-                if inspect.iscoroutinefunction(fh.close):
-                    await fh.close()
-                else:
-                    fh.close()
+                co = fh.close()
+                if isinstance(co, typing.Awaitable):
+                    await co
         except flyte.errors.OnlyAsyncIOSupportedError:
             # Fall back to aiofiles
             fs = storage.get_underlying_filesystem(path=self.path)
@@ -687,7 +701,26 @@ class File(BaseModel, Generic[T], SerializableType):
         if not os.path.exists(local_path):
             raise ValueError(f"File not found: {local_path}")
 
-        remote_path = remote_destination or internal_ctx().raw_data.get_random_remote_path()
+        ctx = internal_ctx()
+        if not ctx.has_raw_data and remote_destination is None:
+
+            async def _lazy_uploader() -> tuple[str | None, str]:
+                from flyte._run import _get_main_run_mode
+
+                if _get_main_run_mode() == "local":
+                    return None, str(local_path)
+
+                import flyte.remote as remote
+
+                logger.debug("Local context detected, File will be uploaded through Flyte local data upload system.")
+                md5, remote_uri = await remote.upload_file.aio(Path(local_path))
+                return md5, remote_uri
+
+            file = cls(path=str(local_path))
+            file.lazy_uploader = _lazy_uploader
+            return file
+
+        remote_path = remote_destination or ctx.raw_data.get_random_remote_path()
         protocol = get_protocol(remote_path)
         filename = Path(local_path).name
 
@@ -797,6 +830,25 @@ class File(BaseModel, Generic[T], SerializableType):
         if not os.path.exists(local_path):
             raise ValueError(f"File not found: {local_path}")
 
+        ctx = internal_ctx()
+        if not ctx.has_raw_data and remote_destination is None:
+
+            async def _lazy_uploader() -> tuple[str | None, str]:
+                from flyte._run import _get_main_run_mode
+
+                if _get_main_run_mode() == "local":
+                    return None, str(local_path)
+
+                import flyte.remote as remote
+
+                logger.debug("Local context detected, File will be uploaded through Flyte local data upload system.")
+                md5, remote_uri = await remote.upload_file.aio(Path(local_path))
+                return md5, remote_uri
+
+            file = cls(path=str(local_path))
+            file.lazy_uploader = _lazy_uploader
+            return file
+
         filename = Path(local_path).name
         remote_path = remote_destination or internal_ctx().raw_data.get_random_remote_path(filename)
         protocol = get_protocol(remote_path)
@@ -867,6 +919,11 @@ class FileTransformer(TypeTransformer[File]):
         if not isinstance(python_val, File):
             raise TypeTransformerFailedError(f"Expected File object, received {type(python_val)}")
 
+        uri = python_val.path
+        hash_value = python_val.hash or None
+        if python_val.lazy_uploader:
+            hash_value, uri = await python_val.lazy_uploader()
+
         return literals_pb2.Literal(
             scalar=literals_pb2.Scalar(
                 blob=literals_pb2.Blob(
@@ -875,10 +932,10 @@ class FileTransformer(TypeTransformer[File]):
                             format=python_val.format, dimensionality=types_pb2.BlobType.BlobDimensionality.SINGLE
                         )
                     ),
-                    uri=python_val.path,
+                    uri=uri,
                 )
             ),
-            hash=python_val.hash if python_val.hash else None,
+            hash=hash_value,
         )
 
     async def to_python_value(
@@ -896,7 +953,7 @@ class FileTransformer(TypeTransformer[File]):
 
         uri = lv.scalar.blob.uri
         filename = Path(uri).name
-        hash_value = lv.hash if lv.hash else None
+        hash_value = lv.hash or None
         f: File = File(path=uri, name=filename, format=lv.scalar.blob.metadata.type.format, hash=hash_value)
         return f
 

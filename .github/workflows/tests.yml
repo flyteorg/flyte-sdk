@@ -12,7 +12,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: ["3.10", "3.11", "3.12", "3.13"]
+        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
       fail-fast: false
     defaults:
       run:
@@ -38,8 +38,13 @@ jobs:
     strategy:
       matrix:
         plugin:
+          - bigquery
+          - databricks
           - openai
-        python-version: ["3.10", "3.11", "3.12", "3.13"]
+          - polars
+          - snowflake
+          - wandb
+        python-version: ["3.12"]
       fail-fast: false
     defaults:
       run:
@@ -55,5 +60,5 @@ jobs:
 
       - name: Run tests
         env:
-          FLYTE_PLUGINS: ${{ matrix.plugin }}
-        run: make unit_test_plugins 
+          FLYTE_PLUGIN: plugins/${{ matrix.plugin }}
+        run: make unit_test_plugins

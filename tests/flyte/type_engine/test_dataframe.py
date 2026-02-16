@@ -1,4 +1,5 @@
 import os
+import sys
 import tempfile
 import typing
 from collections import OrderedDict
@@ -12,9 +13,11 @@ from fsspec.utils import get_protocol
 import flyte
 from flyte._context import Context, RawDataPath, internal_ctx
 from flyte._utils.lazy_module import is_imported
-from flyte.io._dataframe.dataframe import (
+from flyte.io import (
     PARQUET,
     DataFrame,
+)
+from flyte.io.extend import (
     DataFrameDecoder,
     DataFrameEncoder,
     DataFrameTransformerEngine,
@@ -76,14 +79,16 @@ async def test_aio_running(ctx_with_test_raw_data_path):
 
     await flyte.init.aio()
     result = await flyte.run.aio(t1, a=generate_pandas())
-    assert isinstance(result.outputs(), pd.DataFrame)
+    assert isinstance(result.outputs()[0], pd.DataFrame)
     result = flyte.run(t1, a=generate_pandas())
-    assert isinstance(result.outputs(), pd.DataFrame)
+    assert isinstance(result.outputs()[0], pd.DataFrame)
 
     # this should be an empty string format
     flyte_interface = task_serde.transform_native_to_typed_interface(t1.native_interface)
-    assert flyte_interface.outputs.variables["o0"].type.structured_dataset_type.format == ""
-    assert flyte_interface.inputs.variables["a"].type.structured_dataset_type.format == ""
+    outputs_dict = {entry.key: entry.value for entry in flyte_interface.outputs.variables}
+    inputs_dict = {entry.key: entry.value for entry in flyte_interface.inputs.variables}
+    assert outputs_dict["o0"].type.structured_dataset_type.format == ""
+    assert inputs_dict["a"].type.structured_dataset_type.format == ""
 
 
 @pytest.mark.asyncio
@@ -112,14 +117,14 @@ async def test_setting_of_unset_formats():
         assert res.format == ""
         res = flyte.run(wf, path=fname)
         # Now that it's passed through an encoder however, it should be set.
-        assert res.outputs().format == "parquet"
+        assert res.outputs()[0].format == "parquet"
 
 
 class MyDF(pd.DataFrame): ...
 
 
 @pytest.mark.asyncio
-async def test_fill_in_literal_type():
+async def test_fill_in_literal_type(ctx_with_test_raw_data_path):
     class TempEncoder(DataFrameEncoder):
         def __init__(self, fmt: str):
             super().__init__(MyDF, "tmpfs://", supported_format=fmt)
@@ -203,8 +208,12 @@ async def test_sd():
     )
     assert isinstance(await sd.open(pd.DataFrame).iter(), typing.AsyncGenerator)
 
-    with pytest.raises(TypeError, match="object async_generator can't be used"):
-        await sd.open(pd.DataFrame).all()
+    if sys.version_info < (3, 14):
+        with pytest.raises(TypeError, match="object async_generator can't be used"):
+            await sd.open(pd.DataFrame).all()
+    else:
+        with pytest.raises(TypeError, match="'async_generator' object can't be awaited"):
+            await sd.open(pd.DataFrame).all()
 
     class MockPandasDecodingHandlers(DataFrameDecoder):
         async def decode(
@@ -507,7 +516,7 @@ async def test_read_sd_from_local_uri(local_tmp_pqt_file, ctx_with_test_raw_data
 
 @pytest.mark.asyncio
 @mock.patch("flyte.storage._remote_fs.RemoteFSPathResolver")
-@mock.patch("flyte.io.DataFrameTransformerEngine.get_encoder")
+@mock.patch("flyte.io.extend.DataFrameTransformerEngine.get_encoder")
 async def test_modify_literal_uris_call(mock_get_encoder, mock_resolver, ctx_with_test_raw_data_path):
     sd = DataFrame.from_df(val=pd.DataFrame({"a": [1, 2], "b": [3, 4]}), uri="bq://blah")
 
@@ -586,3 +595,137 @@ def test_retrieving():
 
     with pytest.raises(TypeError, match="We don't support this type of handler"):
         DataFrameTransformerEngine.register(TempEncoder, default_for_type=False)
+
+
+# Tests for lazy_uploader functionality
+
+
+@pytest.mark.asyncio
+async def test_dataframe_from_local_creates_lazy_uploader_without_raw_data_context():
+    """Test that DataFrame.from_local creates a lazy_uploader when there's no raw_data context."""
+    flyte.init()
+
+    test_df = generate_pandas()
+    fdf = await DataFrame.from_local(test_df)
+
+    # The dataframe should have a lazy_uploader set
+    assert fdf.lazy_uploader is not None
+
+
+@pytest.mark.asyncio
+async def test_dataframe_from_local_sync_creates_lazy_uploader_without_raw_data_context():
+    """Test that DataFrame.from_local_sync creates a lazy_uploader when there's no raw_data context."""
+    flyte.init()
+
+    test_df = generate_pandas()
+    fdf = DataFrame.from_local_sync(test_df)
+
+    # The dataframe should have a lazy_uploader set
+    assert fdf.lazy_uploader is not None
+
+
+@pytest.mark.asyncio
+async def test_dataframe_lazy_uploader_returns_df_in_local_mode():
+    """Test that lazy_uploader returns the original dataframe when in local mode."""
+    from flyte._run import _run_mode_var
+
+    flyte.init()
+    _run_mode_var.set("local")
+
+    try:
+        test_df = generate_pandas()
+        fdf = await DataFrame.from_local(test_df)
+        assert fdf.lazy_uploader is not None
+
+        # When we call lazy_uploader in local mode, it should return the original dataframe
+        result = await fdf.lazy_uploader()
+        pd.testing.assert_frame_equal(result, test_df)
+    finally:
+        _run_mode_var.set(None)
+
+
+@pytest.mark.asyncio
+async def test_dataframe_with_lazy_uploader_in_local_mode_returns_original_df():
+    """Test that DataFrame lazy_uploader in local mode returns the original dataframe."""
+    from flyte._run import _run_mode_var
+
+    # Note: We don't use ctx_with_test_raw_data_path here because we want the DataFrame
+    # to create a lazy_uploader (which happens when there's no raw_data context)
+    flyte.init()
+    _run_mode_var.set("local")
+
+    try:
+        test_df = generate_pandas()
+        fdf = await DataFrame.from_local(test_df)
+        assert fdf.lazy_uploader is not None
+
+        # In local mode, lazy_uploader should return the original dataframe
+        result = await fdf.lazy_uploader()
+        pd.testing.assert_frame_equal(result, test_df)
+    finally:
+        _run_mode_var.set(None)
+
+
+@pytest.mark.asyncio
+async def test_dataframe_without_lazy_uploader_uses_existing_uri():
+    """Test that DataFrame without lazy_uploader uses the existing URI in to_literal."""
+    flyte.init()
+
+    # Create a DataFrame with an existing URI (no lazy_uploader)
+    sd = DataFrame.from_existing_remote("s3://bucket/existing_dataframe.parquet", format="parquet")
+    assert sd.lazy_uploader is None
+
+    fdt = DataFrameTransformerEngine()
+    lt = TypeEngine.to_literal_type(DataFrame)
+    lit = await fdt.to_literal(sd, python_type=DataFrame, expected=lt)
+
+    # The literal should contain the original remote path
+    assert lit.scalar.structured_dataset.uri == "s3://bucket/existing_dataframe.parquet"
+
+
+@pytest.mark.asyncio
+async def test_dataframe_lazy_uploader_property_getter_setter():
+    """Test that the lazy_uploader property getter and setter work correctly."""
+    flyte.init()
+
+    # Create a DataFrame
+    test_df = generate_pandas()
+    fdf = DataFrame.from_df(val=test_df)
+
+    # Initially should be None (created via from_df, not from_local)
+    # Note: from_df may or may not set lazy_uploader depending on context
+    # Let's test the getter/setter directly
+    async def custom_uploader():
+        return test_df
+
+    # Set the lazy_uploader
+    fdf.lazy_uploader = custom_uploader
+
+    # Get the lazy_uploader
+    assert fdf.lazy_uploader is custom_uploader
+
+
+@pytest.mark.asyncio
+async def test_dataframe_local_mode_end_to_end(ctx_with_test_raw_data_path):
+    """Test DataFrame end-to-end in local mode with flyte.run."""
+    from flyte._run import _run_mode_var
+
+    await flyte.init.aio()
+    _run_mode_var.set("local")
+
+    try:
+        env = flyte.TaskEnvironment(name="test-df-local-mode")
+
+        @env.task
+        async def process_dataframe(df: pd.DataFrame) -> int:
+            return len(df)
+
+        test_df = generate_pandas()
+        fdf = await DataFrame.from_local(test_df)
+
+        run = await flyte.with_runcontext(mode="local").run.aio(process_dataframe, df=fdf)
+        await run.wait.aio()
+        outputs = await run.outputs.aio()
+        assert outputs[0] == 2  # generate_pandas() creates a 2-row dataframe
+    finally:
+        _run_mode_var.set(None)

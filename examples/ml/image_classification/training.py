@@ -41,7 +41,7 @@ training_image = flyte.Image.from_debian_base().with_uv_project(
 training_env = flyte.TaskEnvironment(
     name="image_finetune_training",
     image=training_image,
-    resources=flyte.Resources(cpu=4, memory="16Gi", gpu=1),
+    resources=flyte.Resources(cpu=4, memory="16Gi", gpu=1, disk="10Gi"),
     cache=flyte.Cache("auto", "1.0"),
     env_vars={"HF_XET_HIGH_PERFORMANCE": "1"},
 )
@@ -106,7 +106,10 @@ async def finetune_image_model(
     def preprocess_images(examples):
         images = [img.convert("RGB") for img in examples["image"]]
         inputs = processor(images, return_tensors="pt")
-        inputs["labels"] = examples["labels"]
+        if "labels" in examples:
+            inputs["labels"] = examples["labels"]
+        elif "label" in examples:
+            inputs["labels"] = examples["label"]
         return inputs
 
     # Prepare datasets

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
-from typing import AsyncIterator, Literal, Mapping, Tuple, cast
+from contextlib import asynccontextmanager, contextmanager
+from typing import AsyncGenerator, AsyncIterator, Generator, Literal, Mapping, Tuple, cast
 
+import google.protobuf.json_format
 import grpc
 import rich.repr
 from flyteidl2.app import app_definition_pb2, app_payload_pb2
@@ -38,14 +40,23 @@ class App(ToJSONMixin):
 
     @property
     def name(self) -> str:
+        """
+        Get the name of the app.
+        """
         return self.pb2.metadata.id.name
 
     @property
     def revision(self) -> int:
+        """
+        Get the revision number of the app.
+        """
         return self.pb2.metadata.revision
 
     @property
     def endpoint(self) -> str:
+        """
+        Get the public endpoint URL of the app.
+        """
         return self.pb2.status.ingress.public_url
 
     @property
@@ -62,16 +73,28 @@ class App(ToJSONMixin):
 
     @property
     def desired_state(self) -> app_definition_pb2.Spec.DesiredState:
+        """
+        Get the desired state of the app.
+        """
         return self.pb2.spec.desired_state
 
     def is_active(self) -> bool:
+        """
+        Check if the app is currently active or started.
+        """
         return _is_active(self.deployment_status)
 
     def is_deactivated(self) -> bool:
+        """
+        Check if the app is currently deactivated or stopped.
+        """
         return _is_deactivated(self.deployment_status)
 
     @property
     def url(self) -> str:
+        """
+        Get the console URL for viewing the app.
+        """
         client = get_client()
         return client.console.app_url(
             project=self.pb2.metadata.id.project,
@@ -121,6 +144,14 @@ class App(ToJSONMixin):
     async def _update(
         self, desired_state: app_definition_pb2.Spec.DesiredState, reason: str, wait_for: WaitFor | None = None
     ) -> App:
+        """
+        Internal method to update the app's desired state.
+
+        :param desired_state: The new desired state for the app.
+        :param reason: Reason for the update.
+        :param wait_for: Optional state to wait for after update.
+        :return: The updated app.
+        """
         new_pb2 = app_definition_pb2.App()
         new_pb2.CopyFrom(self.pb2)
         new_pb2.spec.desired_state = desired_state
@@ -133,7 +164,7 @@ class App(ToJSONMixin):
     async def activate(self, wait: bool = False) -> App:
         """
         Start the app
-        :param wait: Wait for the app to reach started state
+        :param wait: Wait for the app to reach activated state
 
         """
         if self.is_active():
@@ -145,20 +176,45 @@ class App(ToJSONMixin):
         )
 
     @syncify
-    async def deactivate(self, wait: bool = False):
+    async def deactivate(self, wait: bool = False) -> App:
         """
         Stop the app
         :param wait: Wait for the app to reach the deactivated state
         """
         if self.is_deactivated():
-            return
+            return self
         return await self._update(
             app_definition_pb2.Spec.DESIRED_STATE_STOPPED,
             "User requested to deactivate app from flyte-sdk",
             "deactivated" if wait else None,
         )
 
+    @asynccontextmanager
+    async def ephemeral_ctx(self) -> AsyncGenerator[None, None]:
+        """
+        Async context manager that activates the app and deactivates it when the context is exited.
+        """
+        try:
+            await self.activate.aio(wait=True)
+            yield
+        finally:
+            await self.deactivate.aio(wait=True)
+
+    @contextmanager
+    def ephemeral_ctx_sync(self) -> Generator[None, None, None]:
+        """
+        Context manager that activates the app and deactivates it when the context is exited.
+        """
+        try:
+            self.activate(wait=True)
+            yield
+        finally:
+            self.deactivate(wait=True)
+
     def __rich_repr__(self) -> rich.repr.Result:
+        """
+        Rich representation of the App object for pretty printing.
+        """
         yield "name", self.name
         yield "revision", self.revision
         yield "endpoint", self.endpoint
@@ -182,6 +238,56 @@ class App(ToJSONMixin):
 
     @syncify
     @classmethod
+    async def delete(
+        cls,
+        name: str,
+        project: str | None = None,
+        domain: str | None = None,
+    ):
+        """
+        Delete an app by name.
+
+        :param name: The name of the app to delete.
+        :param project: The name of the project to delete.
+        :param domain: The name of the domain to delete.
+        """
+        ensure_client()
+        cfg = get_init_config()
+        try:
+            await get_client().app_service.Delete(
+                request=app_payload_pb2.DeleteRequest(
+                    app_id=app_definition_pb2.Identifier(
+                        org=cfg.org,
+                        project=project or cfg.project,
+                        domain=domain or cfg.domain,
+                        name=name,
+                    ),
+                )
+            )
+        except grpc.aio.AioRpcError as e:
+            if e.code() == grpc.StatusCode.NOT_FOUND:
+                return
+            raise
+
+    @staticmethod
+    async def _app_specs_are_equal(
+        old_app_spec: app_definition_pb2.Spec, updated_app_spec: app_definition_pb2.Spec
+    ) -> bool:
+        """
+        Compare two app specs and return True if they are the same.
+
+        If the updated_app_spec doesn't have any ingress defined, use the old app spec's ingress.
+        """
+        old_app_spec_json = google.protobuf.json_format.MessageToDict(old_app_spec)
+        updated_app_spec_json = google.protobuf.json_format.MessageToDict(updated_app_spec)
+        old_ingress = old_app_spec_json.get("ingress")
+        assert old_ingress is not None
+        if not updated_app_spec_json.get("ingress"):
+            updated_app_spec_json["ingress"] = old_ingress
+        return old_app_spec_json == updated_app_spec_json
+
+    @syncify
+    @classmethod
     async def replace(
         cls,
         name: str,
@@ -202,12 +308,18 @@ class App(ToJSONMixin):
         """
         ensure_client()
         app = await cls.get.aio(name=name, project=project, domain=domain)
+
         updated_app_spec.creator.CopyFrom(app.pb2.spec.creator)
+
+        if await cls._app_specs_are_equal(app.pb2.spec, updated_app_spec):
+            logger.warning(f"No changes in the App spec for '{name}', skipping update")
+            return app
+
         new_app = app_definition_pb2.App(
             metadata=app_definition_pb2.Meta(
                 id=app.pb2.metadata.id,
                 revision=app.revision,
-                labels=labels if labels else app.pb2.metadata.labels,
+                labels=labels or app.pb2.metadata.labels,
             ),
             spec=updated_app_spec,
             status=app.pb2.status,

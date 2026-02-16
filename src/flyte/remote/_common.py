@@ -33,6 +33,12 @@ class ToJSONMixin:
 
 
 def sorting(sort_by: Tuple[str, Literal["asc", "desc"]] | None = None) -> list_pb2.Sort:
+    """
+    Create a protobuf Sort object from a sorting tuple.
+
+    :param sort_by: Tuple of (field_name, direction) for sorting, defaults to ("created_at", "asc").
+    :return: A protobuf Sort object.
+    """
     sort_by = sort_by or ("created_at", "asc")
     return list_pb2.Sort(
         key=sort_by[0],
@@ -41,6 +47,13 @@ def sorting(sort_by: Tuple[str, Literal["asc", "desc"]] | None = None) -> list_p
 
 
 def filtering(created_by_subject: str | None = None, *filters: list_pb2.Filter) -> list[list_pb2.Filter]:
+    """
+    Create a list of filter objects, optionally including a filter by creator subject.
+
+    :param created_by_subject: Optional subject to filter by creator.
+    :param filters: Additional filters to include.
+    :return: A list of protobuf Filter objects.
+    """
     filter_list = list(filters) if filters else []
     if created_by_subject:
         filter_list.append(

@@ -52,19 +52,27 @@ async def process_default_inputs(
     Returns:
         List of NamedLiteral objects
     """
+    # Convert variables list to dict for easier lookup
+    variables_dict = {entry.key: entry.value for entry in task_inputs.variables}
+
     keys = []
     literal_coros = []
     for k, v in default_inputs.items():
-        if k not in task_inputs.variables:
+        if k not in variables_dict:
             raise ValueError(
                 f"Trigger default input '{k}' must be an input to the task, but not found in task {task_name}. "
-                f"Available inputs: {list(task_inputs.variables.keys())}"
+                f"Available inputs: {list(variables_dict.keys())}"
             )
         else:
-            literal_coros.append(flyte.types.TypeEngine.to_literal(v, type(v), task_inputs.variables[k].type))
+            literal_coros.append(flyte.types.TypeEngine.to_literal(v, type(v), variables_dict[k].type))
             keys.append(k)
 
-    final_literals: list[literals_pb2.Literal] = await asyncio.gather(*literal_coros)
+    final_literals: list[literals_pb2.Literal] = await asyncio.gather(*literal_coros, return_exceptions=True)
+
+    # Check for exceptions in the gathered results
+    for k, lit in zip(keys, final_literals):
+        if isinstance(lit, Exception):
+            raise RuntimeError(f"Failed to convert trigger default input '{k}'") from lit
 
     for p in task_default_inputs or []:
         if p.name not in keys:
@@ -128,11 +136,13 @@ async def to_task_trigger(
                 default_inputs[k] = v
 
     # assert that default_inputs and the kickoff_arg_name are infact in the task inputs
-    if kickoff_arg_name is not None and kickoff_arg_name not in task_inputs.variables:
+    # Convert variables list to dict for checking
+    variables_dict = {entry.key: entry.value for entry in task_inputs.variables}
+    if kickoff_arg_name is not None and kickoff_arg_name not in variables_dict:
         raise ValueError(
             f"For a scheduled trigger, the TriggerTime input '{kickoff_arg_name}' "
             f"must be an input to the task, but not found in task {task_name}. "
-            f"Available inputs: {list(task_inputs.variables.keys())}"
+            f"Available inputs: {list(variables_dict.keys())}"
         )
 
     literals = await process_default_inputs(default_inputs, task_name, task_inputs, task_default_inputs)
