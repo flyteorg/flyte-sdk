@@ -19,7 +19,6 @@ from flyte.durable._time import durable_sleep, durable_time
 from ._container import ContainerTask
 from ._sandbox import (
     ImageConfig,
-    InvalidPackageError,
     RunResult,
     Sandbox,
     sandbox_environment,
@@ -28,7 +27,6 @@ from ._sandbox import (
 __all__ = [
     "ContainerTask",
     "ImageConfig",
-    "InvalidPackageError",
     "RunResult",
     "Sandbox",
     "durable_sleep",

@@ -31,19 +31,6 @@ class ImageConfig:
     python_version: Optional[tuple[int, int]] = None
 
 
-class InvalidPackageError(Exception):
-    """Raised when an invalid system package is detected during image build."""
-
-    def __init__(self, package_name: str, original_error: str):
-        self.package_name = package_name
-        self.original_error = original_error
-        super().__init__(
-            f"Invalid system package detected: '{package_name}'. "
-            f"This package does not exist in apt repositories. "
-            f"Error: {original_error}"
-        )
-
-
 @dataclass
 class RunResult:
     """Result from running tests in a container."""
