@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 import flyte
+from flyte.errors import InvalidPackageError
 from flyte.extras._container import ContainerTask
 from flyte.io import Dir, File
 from flyte.syncify import syncify
@@ -74,6 +75,7 @@ class Sandbox:
     resources: Optional[flyte.Resources] = None
     image_config: Optional[ImageConfig] = None
     image_name: Optional[str] = None
+    network_access: bool = False
 
     def create_image(self, name: Optional[str] = None) -> flyte.Image:
         """Create an Image spec with pip/apt packages (not yet built).
@@ -202,6 +204,7 @@ class Sandbox:
             command=command,
             arguments=arguments,
             resources=self.resources or flyte.Resources(cpu=1, memory="1Gi"),
+            network_mode=None if self.network_access else "none",
         )
 
         task.parent_env = weakref.ref(sandbox_environment)
@@ -327,6 +330,7 @@ class Sandbox:
             command=command,
             arguments=arguments,
             resources=self.resources or flyte.Resources(cpu=1, memory="1Gi"),
+            network_mode=None if self.network_access else "none",
         )
 
         task.parent_env = weakref.ref(sandbox_environment)
