@@ -14,10 +14,10 @@ ActionCache (which also has a stale-event bug in remove()).
 """
 
 import asyncio
+from pathlib import Path
 
 import flyte
 from flyte._image import PythonWheels
-from pathlib import Path
 
 controller_dist_folder = Path("/Users/ytong/go/src/github.com/flyteorg/sdk-rust/rs_controller/dist")
 wheel_layer = PythonWheels(wheel_dir=controller_dist_folder, package_name="flyte_controller_base")

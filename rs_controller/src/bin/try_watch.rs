@@ -7,7 +7,6 @@ use std::time::Duration;
 
 use flyte_controller_base::{
     auth::{AuthConfig, AuthLayer, ClientCredentialsAuthenticator},
-    error::ControllerError,
 };
 use flyteidl2::flyteidl::{
     common::{ActionIdentifier, RunIdentifier},

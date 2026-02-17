@@ -4,9 +4,9 @@
 ///   _UNION_EAGER_API_KEY=your_api_key cargo run --bin try_list_tasks
 use std::sync::Arc;
 
+
 use flyte_controller_base::{
     auth::{AuthConfig, AuthLayer, ClientCredentialsAuthenticator},
-    error::ControllerError,
 };
 use flyteidl2::flyteidl::{
     common::{ListRequest, ProjectIdentifier},

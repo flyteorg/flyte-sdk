@@ -21,7 +21,7 @@ use tokio::{
     sync::{mpsc, oneshot},
     time::sleep,
 };
-use tonic::transport::{Certificate, Channel, ClientTlsConfig, Endpoint};
+use tonic::transport::{Channel, ClientTlsConfig, Endpoint};
 use tower::ServiceBuilder;
 use tracing::{debug, error, info, warn};
 
