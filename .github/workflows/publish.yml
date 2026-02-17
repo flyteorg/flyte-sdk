@@ -35,7 +35,7 @@ jobs:
             VERSION="0.0.0.dev0"
           fi
           echo "VERSION=$VERSION" >> $GITHUB_ENV
-          sed -i "s/^version = .*/version = \"$VERSION\"/" rs_controller/pyproject.toml
+          sed "s/^version = .*/version = \"$VERSION\"/" rs_controller/pyproject.toml > tmp && mv tmp rs_controller/pyproject.toml
           echo "Set version to $VERSION"
           cat rs_controller/pyproject.toml
       - name: Build wheels
