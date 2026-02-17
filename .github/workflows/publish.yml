@@ -3,14 +3,91 @@ name: Publish
 on:
   release:
     types: [published]
+  push:
+    branches: [revisit-protos-ci]
   pull_request:
     paths:
       - ".github/workflows/publish.yml"
       - "maint_tools/build_default_image.py"
 
 jobs:
+  rs-controller-wheels:
+    name: Build RS controller wheel (${{ matrix.target }})
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - target: x86_64
+          - target: aarch64
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: "0"
+      - name: Set version from tag
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            VERSION=$(echo "$GITHUB_REF" | sed 's|refs/tags/v||')
+          else
+            VERSION="0.0.0.dev0"
+          fi
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
+          sed -i "s/^version = .*/version = \"$VERSION\"/" rs_controller/pyproject.toml
+          echo "Set version to $VERSION"
+          cat rs_controller/pyproject.toml
+      - name: Build wheels
+        uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.target }}
+          manylinux: auto
+          args: --release --out dist -m rs_controller/Cargo.toml
+          sccache: true
+      - name: Upload wheels
+        uses: actions/upload-artifact@v4
+        with:
+          name: rs-controller-wheel-${{ matrix.target }}
+          path: dist/*.whl
+
+  rs-controller-publish:
+    name: Publish RS controller to PyPI
+    needs: rs-controller-wheels
+    runs-on: ubuntu-latest
+    if: github.event_name == 'release'
+    steps:
+      - name: Download all wheel artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: rs-controller-wheel-*
+          merge-multiple: true
+          path: dist/
+      - name: Install twine
+        run: pip install twine
+      - name: Publish to PyPI
+        env:
+          TWINE_USERNAME: ${{ secrets.PYPI_USERNAME }}
+          TWINE_PASSWORD: ${{ secrets.PYPI_PASSWORD }}
+        run: |
+          twine upload --verbose dist/*
+      - name: Wait for PyPI availability
+        run: |
+          VERSION=$(echo "$GITHUB_REF" | sed 's|refs/tags/v||')
+          LINK="https://pypi.org/project/flyte_controller_base/${VERSION}/"
+          echo "Waiting for $LINK"
+          for i in $(seq 1 60); do
+            if curl -L -I -s -f "$LINK"; then
+              echo "Found on PyPI: $LINK"
+              exit 0
+            else
+              echo "Attempt $i: not yet available, retrying in 10s..."
+              sleep 10
+            fi
+          done
+          echo "ERROR: timed out waiting for PyPI"
+          exit 1
+
   flyte-pypi:
     name: PyPI package
+    needs: rs-controller-publish
+    if: always() && (needs.rs-controller-publish.result == 'success' || needs.rs-controller-publish.result == 'skipped')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -27,18 +104,25 @@ jobs:
         run: |
           uv venv
           uv pip install build twine setuptools wheel
+      - name: Pin flyte_controller_base version (release only)
+        if: github.event_name == 'release'
+        run: |
+          VERSION=$(echo "$GITHUB_REF" | sed 's|refs/tags/v||')
+          sed -i "s/flyte_controller_base>=2.0.0b0/flyte_controller_base==${VERSION}/" pyproject.toml
+          echo "Pinned flyte_controller_base==${VERSION}"
+          grep flyte_controller_base pyproject.toml
       - name: Build and publish
         run: |
           uv run python -m build --wheel --installer uv
       - name: Publish
         if: ${{ github.event_name == 'release' }}
-        working-directory: ${{ matrix.workdir }}
         env:
           TWINE_USERNAME: ${{ secrets.PYPI_USERNAME }}
           TWINE_PASSWORD: ${{ secrets.PYPI_PASSWORD }}
         run: |
           uv run python -m twine upload --verbose dist/*
       - name: Sleep until pypi is available
+        if: ${{ github.event_name == 'release' }}
         id: pypiwait
         run: |
           # from 'refs/tags/v1.2.3 get 1.2.3' and make sure it's not an empty string
