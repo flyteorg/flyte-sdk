@@ -21,6 +21,8 @@ jobs:
             os: ubuntu-latest
           - target: aarch64
             os: ubuntu-24.04-arm
+          - target: aarch64-apple-darwin
+            os: macos-latest
     steps:
       - uses: actions/checkout@v4
         with:
