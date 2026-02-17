@@ -433,7 +433,7 @@ def format(title: str, vals: Iterable[Any], of: OutputFormat = "table") -> Table
             return pretty_repr([dict(v) for v in vals])
         case "json-raw":
             if not vals:
-                return []
+                return "[]"
             return json.dumps([dict(v) for v in vals])
 
     raise click.ClickException("Unknown output format. Supported formats are: table, table-simple, json.")
@@ -443,7 +443,7 @@ def get_panel(title: str, renderable: Any, of: OutputFormat = "table") -> Panel:
     """
     Get a panel from a list of values.
     """
-    if of in ["table-simple", "json"]:
+    if of in ["table-simple", "json", "json-raw"]:
         return renderable
     return Panel.fit(
         renderable,
@@ -466,9 +466,17 @@ def cli_status(output_format: OutputFormat, message: str, spinner: str = "dots")
     """
     from contextlib import nullcontext
 
-    if output_format in ("json", "table-simple"):
+    if output_format in ("json", "table-simple", "json-raw"):
         return nullcontext()
     return get_console().status(message, spinner=spinner)
+
+
+def print_output(renderable: Any, output_format: OutputFormat) -> None:
+    """Print formatted output. Uses plain print for json-raw, Rich console otherwise."""
+    if output_format == "json-raw":
+        print(renderable)
+    else:
+        get_console().print(renderable)
 
 
 def parse_images(cfg: Config, values: tuple[str, ...] | None) -> None:
