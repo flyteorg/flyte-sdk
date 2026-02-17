@@ -13,12 +13,14 @@ on:
 jobs:
   rs-controller-wheels:
     name: Build RS controller wheel (${{ matrix.target }})
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     strategy:
       matrix:
         include:
           - target: x86_64
+            os: ubuntu-latest
           - target: aarch64
+            os: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@v4
         with:
