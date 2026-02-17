@@ -221,9 +221,17 @@ impl Informer {
         }
     }
 
-    pub async fn get_action(&self, action_name: String) -> Option<Action> {
+    pub async fn get_action(&self, action_name: &str) -> Option<Action> {
         let cache = self.action_cache.read().await;
-        cache.get(&action_name).cloned()
+        cache.get(action_name).cloned()
+    }
+
+    pub async fn remove_action(&self, action_name: &str) -> Option<Action> {
+        let mut cache = self.action_cache.write().await;
+        let dropped_action = cache.remove(action_name);
+        self.completion_events.write().await.remove(action_name);
+        debug!("Removed action and completion event for {}", action_name);
+        dropped_action
     }
 
     pub async fn submit_action(

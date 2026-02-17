@@ -34,8 +34,8 @@ async-trait = "0.1"
 thiserror = "1.0"
 # Uncomment this if you need to use local flyteidl2
 #flyteidl2 = { path = "/Users/ytong/go/src/github.com/flyteorg/flyte/gen/rust" }
-flyteidl2 = "=2.0.0"
-reqwest = { version = "0.12", features = ["json", "rustls-tls"] }
+flyteidl2 = "=2.0.6"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 base64 = "0.22"

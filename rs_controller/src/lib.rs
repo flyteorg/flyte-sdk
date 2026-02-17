@@ -6,7 +6,6 @@ pub mod auth;
 pub mod core;
 pub mod error;
 mod informer;
-pub mod proto;
 
 // Python bindings - thin wrappers around core types
 use std::sync::Arc;

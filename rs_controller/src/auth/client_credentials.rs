@@ -3,18 +3,18 @@ use std::{
     time::{Duration, SystemTime},
 };
 
+use flyteidl2::flyteidl::auth::{
+    auth_metadata_service_client::AuthMetadataServiceClient, GetOAuth2MetadataRequest,
+    GetOAuth2MetadataResponse, GetPublicClientConfigRequest, GetPublicClientConfigResponse,
+};
 use tokio::sync::RwLock;
 use tonic::transport::Channel;
 use tracing::{debug, info};
 
 use super::{
-    config::{AuthConfig, ClientConfigExt},
+    config::AuthConfig,
     errors::TokenError,
     token_client::{self, GrantType, TokenResponse},
-};
-use crate::proto::{
-    AuthMetadataServiceClient, OAuth2MetadataRequest, OAuth2MetadataResponse,
-    PublicClientAuthConfigRequest, PublicClientAuthConfigResponse,
 };
 
 /// Stored credentials with expiration tracking
@@ -46,8 +46,8 @@ impl Credentials {
 pub struct ClientCredentialsAuthenticator {
     config: AuthConfig,
     credentials: Arc<RwLock<Option<Credentials>>>,
-    client_config: Arc<RwLock<Option<PublicClientAuthConfigResponse>>>,
-    oauth2_metadata: Arc<RwLock<Option<OAuth2MetadataResponse>>>,
+    client_config: Arc<RwLock<Option<GetPublicClientConfigResponse>>>,
+    oauth2_metadata: Arc<RwLock<Option<GetOAuth2MetadataResponse>>>,
 }
 
 impl ClientCredentialsAuthenticator {
@@ -64,9 +64,9 @@ impl ClientCredentialsAuthenticator {
     async fn fetch_client_config(
         &self,
         channel: Channel,
-    ) -> Result<PublicClientAuthConfigResponse, TokenError> {
+    ) -> Result<GetPublicClientConfigResponse, TokenError> {
         let mut client = AuthMetadataServiceClient::new(channel.clone());
-        let request = tonic::Request::new(PublicClientAuthConfigRequest {});
+        let request = tonic::Request::new(GetPublicClientConfigRequest {});
 
         let response = client
             .get_public_client_config(request)
@@ -80,9 +80,9 @@ impl ClientCredentialsAuthenticator {
     async fn fetch_oauth2_metadata(
         &self,
         channel: Channel,
-    ) -> Result<OAuth2MetadataResponse, TokenError> {
+    ) -> Result<GetOAuth2MetadataResponse, TokenError> {
         let mut client = AuthMetadataServiceClient::new(channel);
-        let request = tonic::Request::new(OAuth2MetadataRequest {});
+        let request = tonic::Request::new(GetOAuth2MetadataRequest {});
 
         let response = client
             .get_o_auth2_metadata(request)
@@ -201,10 +201,10 @@ impl ClientCredentialsAuthenticator {
     pub async fn get_header_key(&self) -> String {
         let config_lock = self.client_config.read().await;
         if let Some(cfg) = config_lock.as_ref() {
-            // get rid of this
-            cfg.header_key().to_string()
-        } else {
-            "authorization".to_string()
+            if !cfg.authorization_metadata_key.is_empty() {
+                return cfg.authorization_metadata_key.clone();
+            }
         }
+        "authorization".to_string()
     }
 }

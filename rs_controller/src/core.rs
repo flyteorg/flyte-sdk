@@ -21,7 +21,7 @@ use tokio::{
     sync::{mpsc, oneshot},
     time::sleep,
 };
-use tonic::transport::{Certificate, ClientTlsConfig, Endpoint};
+use tonic::transport::{Channel, ClientTlsConfig, Endpoint};
 use tower::ServiceBuilder;
 use tracing::{debug, error, info, warn};
 
@@ -32,42 +32,17 @@ use crate::{
     informer::{Informer, InformerCache},
 };
 
-// Fetches Amazon root CA certificate from Amazon Trust Services
-pub async fn fetch_amazon_root_ca() -> Result<Certificate, ControllerError> {
-    // Amazon Root CA 1 - the main root used by AWS services
-    let url = "https://www.amazontrust.com/repository/AmazonRootCA1.pem";
-
-    let response = reqwest::get(url)
-        .await
-        .map_err(|e| ControllerError::SystemError(format!("Failed to fetch certificate: {}", e)))?;
-
-    let cert_pem = response
-        .text()
-        .await
-        .map_err(|e| ControllerError::SystemError(format!("Failed to read certificate: {}", e)))?;
-
-    Ok(Certificate::from_pem(cert_pem))
-}
-
-// Helper to create TLS-configured endpoint with Amazon CA certificate
-// todo: when we resolve the pem issue, also remove the need to have both inputs which are basically the same
-pub async fn create_tls_endpoint(
-    url: &'static str,
-    domain: &str,
-) -> Result<Endpoint, ControllerError> {
-    // Fetch Amazon root CA dynamically
-    let cert = fetch_amazon_root_ca().await?;
-
-    let tls_config = ClientTlsConfig::new()
-        .domain_name(domain)
-        .ca_certificate(cert);
-
+// Helper to create TLS-configured channel
+// todo: support no verify https://github.com/flyteorg/flyte-sdk/pull/299/files
+pub async fn create_tls_channel(url: &'static str) -> Result<Channel, ControllerError> {
     let endpoint = Endpoint::from_static(url)
-        .tls_config(tls_config)
+        .tls_config(ClientTlsConfig::new().with_native_roots())
         .map_err(|e| ControllerError::SystemError(format!("TLS config error: {}", e)))?
         .keep_alive_while_idle(true);
 
-    Ok(endpoint)
+    let channel = endpoint.connect().await.map_err(ControllerError::from)?;
+
+    Ok(channel)
 }
 
 enum ChannelType {
@@ -141,17 +116,8 @@ impl CoreBaseController {
         let rt = get_runtime();
         let channel = rt.block_on(async {
             // todo: escape hatch for localhost
-            // Strip "https://" to get just the hostname for TLS config
-            let domain = endpoint_url.strip_prefix("https://").ok_or_else(|| {
-                ControllerError::SystemError(
-                    "Endpoint must start with https:// when using auth".to_string(),
-                )
-            })?;
-
-            // Create TLS-configured endpoint
-            let endpoint = create_tls_endpoint(endpoint_static, domain).await?;
-            let channel = endpoint.connect().await.map_err(ControllerError::from)?;
-
+            // Create TLS-configured channel
+            let channel = create_tls_channel(endpoint_static).await?;
             let authenticator = Arc::new(ClientCredentialsAuthenticator::new(auth_config.clone()));
             let auth_channel = ServiceBuilder::new()
                 .layer(AuthLayer::new(authenticator, channel.clone()))
@@ -216,14 +182,9 @@ impl CoreBaseController {
                 let endpoint = Endpoint::from_static(endpoint_static).keep_alive_while_idle(true);
                 endpoint.connect().await.map_err(ControllerError::from)?
             } else if endpoint.starts_with("https://") {
-                // Strip "https://" to get just the hostname for TLS config
-                let domain = endpoint.strip_prefix("https://").ok_or_else(|| {
-                    ControllerError::SystemError("Endpoint must start with https://".to_string())
-                })?;
-
-                // Create TLS-configured endpoint
-                let endpoint = create_tls_endpoint(endpoint_static, domain).await?;
-                endpoint.connect().await.map_err(ControllerError::from)?
+                // Create TLS-configured channel
+                let channel = create_tls_channel(endpoint_static).await?;
+                channel
             } else {
                 return Err(ControllerError::SystemError(format!(
                     "Malformed endpoint {}",
@@ -541,7 +502,7 @@ impl CoreBaseController {
             .get_or_create_informer(run, parent_action_name)
             .await;
         let action_name = action_id.name.clone();
-        match informer.get_action(action_name).await {
+        match informer.get_action(&action_name).await {
             Some(action) => Ok(Some(action)),
             None => {
                 debug!("Action not found getting from action_id: {:?}", action_id);
@@ -692,10 +653,13 @@ impl CoreBaseController {
         );
 
         // get the action and return it
-        let final_action = informer.get_action(action_name).await;
-        final_action.ok_or(ControllerError::BadContext(String::from(
+        let final_action = informer.get_action(&action_name).await;
+        let final_action = final_action.ok_or(ControllerError::BadContext(String::from(
             "Action not found after done",
-        )))
+        )));
+        // Also remove. May be can do with prior step in the future.
+        informer.remove_action(&action_name).await;
+        final_action
     }
 
     pub async fn finalize_parent_action(&self, run_id: &RunIdentifier, parent_action_name: &str) {
