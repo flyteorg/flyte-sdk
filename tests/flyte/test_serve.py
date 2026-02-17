@@ -19,7 +19,7 @@ import httpx
 import pytest
 
 from flyte._image import Image
-from flyte._serve import _LOCAL_APP_ENDPOINTS, _LocalApp, _Serve, with_servecontext
+from flyte._serve import _LocalApp, _Serve, with_servecontext
 from flyte.app import AppEnvironment
 from flyte.app._parameter import Parameter
 
@@ -754,7 +754,6 @@ def test_local_serve_with_server_decorator():
 
     Tests that:
     - The app starts in a background thread
-    - The endpoint is registered in _LOCAL_APP_ENDPOINTS
     - The endpoint is reachable
     - app_env.endpoint returns the local endpoint
     - The app can be shut down cleanly
@@ -796,10 +795,6 @@ def test_local_serve_with_server_decorator():
     try:
         local_app = with_servecontext(mode="local").serve(app_env)
 
-        # Verify endpoint is registered
-        assert "test-local-server-decorator" in _LOCAL_APP_ENDPOINTS
-        assert _LOCAL_APP_ENDPOINTS["test-local-server-decorator"] == "http://localhost:18091"
-
         # Verify app_env.endpoint returns the local endpoint
         assert app_env.endpoint == "http://localhost:18091"
 
@@ -812,8 +807,6 @@ def test_local_serve_with_server_decorator():
         assert resp.json()["result"] == 6
     finally:
         local_app.deactivate()
-        # Verify endpoint is removed after shutdown
-        assert "test-local-server-decorator" not in _LOCAL_APP_ENDPOINTS
 
 
 def test_local_serve_with_command():
@@ -822,7 +815,6 @@ def test_local_serve_with_command():
 
     Tests that:
     - The app starts as a subprocess
-    - The endpoint is registered in _LOCAL_APP_ENDPOINTS
     - The endpoint is reachable
     - The app can be shut down cleanly
     """
@@ -836,9 +828,6 @@ def test_local_serve_with_command():
     try:
         local_app = with_servecontext(mode="local", activate_timeout=10.0, health_check_path="/").serve(app_env)
 
-        # Verify endpoint is registered
-        assert "test-local-cmd" in _LOCAL_APP_ENDPOINTS
-
         # Wait for readiness
         local_app.activate(wait=True)
 
@@ -847,7 +836,6 @@ def test_local_serve_with_command():
         assert resp.status_code == 200
     finally:
         local_app.deactivate()
-        assert "test-local-cmd" not in _LOCAL_APP_ENDPOINTS
 
 
 def test_local_serve_no_server_or_command_raises():

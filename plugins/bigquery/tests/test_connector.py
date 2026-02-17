@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from flyte.io import DataFrame
 from flyteidl2.core.execution_pb2 import TaskExecution
-from flyteidl2.core.interface_pb2 import Variable, VariableMap
+from flyteidl2.core.interface_pb2 import Variable, VariableEntry, VariableMap
 from flyteidl2.core.tasks_pb2 import Sql, TaskTemplate
 from flyteidl2.core.types_pb2 import LiteralType, SimpleType
 from google.protobuf import struct_pb2
@@ -72,13 +72,14 @@ class TestBigQueryConnector:
         template.sql.CopyFrom(Sql(statement="SELECT * FROM table WHERE id = @user_id", dialect=Sql.Dialect.ANSI))
         template.metadata.runtime.version = "1.0.0"
 
-        # Add input variables
+        # Add input variables using the new list-based structure
         int_type = LiteralType()
         int_type.simple = SimpleType.INTEGER
         user_id_var = Variable(type=int_type)
 
         variables = VariableMap()
-        variables.variables["user_id"].CopyFrom(user_id_var)
+        var_entry = VariableEntry(key="user_id", value=user_id_var)
+        variables.variables.append(var_entry)
         template.interface.inputs.CopyFrom(variables)
 
         custom = struct_pb2.Struct()
@@ -329,7 +330,7 @@ class TestBigQueryConnector:
         )
         template.metadata.runtime.version = "1.0.0"
 
-        # Add multiple input variables with different types
+        # Add multiple input variables with different types using the new list-based structure
         int_type = LiteralType()
         int_type.simple = SimpleType.INTEGER
         str_type = LiteralType()
@@ -338,9 +339,9 @@ class TestBigQueryConnector:
         bool_type.simple = SimpleType.BOOLEAN
 
         variables = VariableMap()
-        variables.variables["user_id"].CopyFrom(Variable(type=int_type))
-        variables.variables["name"].CopyFrom(Variable(type=str_type))
-        variables.variables["active"].CopyFrom(Variable(type=bool_type))
+        variables.variables.append(VariableEntry(key="user_id", value=Variable(type=int_type)))
+        variables.variables.append(VariableEntry(key="name", value=Variable(type=str_type)))
+        variables.variables.append(VariableEntry(key="active", value=Variable(type=bool_type)))
         template.interface.inputs.CopyFrom(variables)
 
         custom = struct_pb2.Struct()
@@ -447,3 +448,71 @@ class TestBigQueryConnector:
                 # Verify the credentials were passed to the client
                 mock_client_class.assert_called_once()
                 assert mock_client_class.call_args[1]["credentials"] == mock_credentials
+
+    @pytest.mark.asyncio
+    async def test_create_iterates_variables_with_new_structure(self, connector):
+        """Test that the connector correctly iterates over variables using the new iteration pattern.
+
+        This test verifies the change from:
+            for name, lt in task_template.interface.inputs.variables.items()
+        To:
+            for variable in task_template.interface.inputs.variables
+
+        The variables field changed from a map to a repeated field (list), so we now
+        iterate directly over the list of Variable objects which have key and value attributes.
+        """
+        template = TaskTemplate()
+        template.sql.CopyFrom(
+            Sql(
+                statement="SELECT * FROM table WHERE user_id = @user_id AND email = @email",
+                dialect=Sql.Dialect.ANSI,
+            )
+        )
+        template.metadata.runtime.version = "2.0.0"
+
+        # Create variables using the new list-based VariableMap structure
+        int_type = LiteralType()
+        int_type.simple = SimpleType.INTEGER
+        str_type = LiteralType()
+        str_type.simple = SimpleType.STRING
+
+        variables = VariableMap()
+        variables.variables.append(VariableEntry(key="user_id", value=Variable(type=int_type)))
+        variables.variables.append(VariableEntry(key="email", value=Variable(type=str_type)))
+        template.interface.inputs.CopyFrom(variables)
+
+        custom = struct_pb2.Struct()
+        custom["ProjectID"] = "test-project"
+        custom["Location"] = "US"
+        custom["Domain"] = "test-domain"
+        template.custom.CopyFrom(custom)
+
+        with patch("flyteplugins.bigquery.connector.bigquery.Client") as mock_client_class:
+            mock_client = MagicMock()
+            mock_client_class.return_value = mock_client
+
+            mock_query_job = MagicMock()
+            mock_query_job.job_id = "job-iteration-test"
+            mock_client.query.return_value = mock_query_job
+
+            inputs = {"user_id": 42, "email": "test@example.com"}
+            metadata = await connector.create(template, inputs=inputs)
+
+            assert metadata.job_id == "job-iteration-test"
+
+            # Verify that the query was called with proper parameters
+            call_args = mock_client.query.call_args
+            job_config = call_args[1]["job_config"]
+
+            # The new iteration pattern should successfully create query parameters
+            assert len(job_config.query_parameters) == 2
+
+            param_dict = {p.name: p for p in job_config.query_parameters}
+            assert "user_id" in param_dict
+            assert "email" in param_dict
+            assert param_dict["user_id"].value == 42
+            assert param_dict["email"].value == "test@example.com"
+
+            # Verify parameter types are correctly mapped
+            assert param_dict["user_id"].type_ == "INT64"
+            assert param_dict["email"].type_ == "STRING"

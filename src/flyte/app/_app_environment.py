@@ -5,7 +5,7 @@ import os
 import re
 import shlex
 from dataclasses import dataclass, field, replace
-from typing import TYPE_CHECKING, Any, Callable, List, Literal, Optional, Union
+from typing import Any, Callable, List, Literal, Optional, Union
 
 import rich.repr
 
@@ -13,10 +13,6 @@ from flyte import Environment, Image, Resources, SecretRequest
 from flyte.app._parameter import Parameter
 from flyte.app._types import Domain, Link, Port, Scaling
 from flyte.models import SerializationContext
-
-if TYPE_CHECKING:
-    pass
-
 
 APP_NAME_RE = re.compile(r"[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*")
 INVALID_APP_PORTS = [8012, 8022, 8112, 9090, 9091]
@@ -284,11 +280,13 @@ class AppEnvironment(Environment):
     @property
     def endpoint(self) -> str:
         # Check if this app is being served locally first
-        from flyte._serve import _LOCAL_APP_ENDPOINTS
+        import flyte
 
-        local_endpoint = _LOCAL_APP_ENDPOINTS.get(self.name)
-        if local_endpoint is not None:
-            return local_endpoint
+        from ._context import ctx as app_ctx
+
+        ctx = flyte.ctx() or app_ctx()
+        if ctx.mode == "local":
+            return f"http://localhost:{self.get_port().port}"
 
         endpoint_pattern = os.getenv(INTERNAL_APP_ENDPOINT_PATTERN_ENV_VAR)
         if endpoint_pattern is not None:
@@ -326,6 +324,7 @@ class AppEnvironment(Environment):
         include = kwargs.pop("include", None)
         parameters = kwargs.pop("parameters", None)
         cluster_pool = kwargs.pop("cluster_pool", None)
+        pod_template = kwargs.pop("pod_template", None)
 
         if kwargs:
             raise TypeError(f"Unexpected keyword arguments: {list(kwargs.keys())}")
@@ -334,6 +333,8 @@ class AppEnvironment(Environment):
         kwargs["name"] = name
         if image is not None:
             kwargs["image"] = image
+        if pod_template is not None:
+            kwargs["pod_template"] = pod_template
         if resources is not None:
             kwargs["resources"] = resources
         if env_vars is not None:

@@ -3,7 +3,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from flyte.io import DataFrame
 from flyteidl2.core.execution_pb2 import TaskExecution
-from flyteidl2.core.interface_pb2 import Variable, VariableMap
+from flyteidl2.core.interface_pb2 import Variable, VariableEntry, VariableMap
 from flyteidl2.core.tasks_pb2 import Sql, TaskTemplate
 from flyteidl2.core.types_pb2 import LiteralType, StructuredDatasetType
 from google.protobuf import struct_pb2
@@ -104,11 +104,13 @@ class TestSnowflakeConnector:
         template.custom.CopyFrom(custom)
 
         # Set output variables so has_output is True
-        template.interface.outputs.CopyFrom(
-            VariableMap(
-                variables={"results": Variable(type=LiteralType(structured_dataset_type=StructuredDatasetType()))}
+        output_vars = VariableMap()
+        output_vars.variables.append(
+            VariableEntry(
+                key="results", value=Variable(type=LiteralType(structured_dataset_type=StructuredDatasetType()))
             )
         )
+        template.interface.outputs.CopyFrom(output_vars)
 
         return template
 

@@ -86,7 +86,7 @@ class TestDatabricksFunctionTask:
         config = Databricks()
         task = DatabricksFunctionTask(plugin_config=config, name="test_task", interface=None, func=lambda: None)
 
-        assert task._DATABRICKS_TASK_TYPE == "databricks"
+        assert task.task_type == "databricks"
 
     def test_databricks_task_creation_minimal(self):
         """Test creating DatabricksFunctionTask with minimal config"""
