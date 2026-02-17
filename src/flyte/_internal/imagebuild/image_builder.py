@@ -13,6 +13,7 @@ from typing_extensions import Protocol
 from flyte._image import Architecture, Image
 from flyte._initialize import _get_init_config
 from flyte._logging import logger
+from flyte._status import status
 
 if TYPE_CHECKING:
     from flyte._build import ImageBuild
@@ -159,7 +160,7 @@ class ImageBuildEngine:
         image_builder = ImageBuildEngine._get_builder(builder)
         image_checker = image_builder.get_checkers()
         if image_checker is None:
-            logger.info(f"No image checkers found for builder `{image_builder}`, assuming it exists")
+            status.info(f"No image checkers found for builder `{image_builder}`, assuming it exists")
             return image.uri
         for checker in image_checker:
             try:
@@ -173,7 +174,7 @@ class ImageBuildEngine:
                 continue
 
         # If all checkers fail, then assume the image exists. This is current flytekit behavior
-        logger.info(f"All checkers failed to check existence of {image.uri}, assuming it does exists")
+        status.info(f"All checkers failed to check existence of {image.uri}, assuming it exists")
         return image.uri
 
     @classmethod
@@ -203,7 +204,7 @@ class ImageBuildEngine:
         # Always trigger a build if this is a dry run since builder shouldn't really do anything, or a force.
         image_uri = (await cls.image_exists(image)) or image.uri
         if force or dry_run or not await cls.image_exists(image):
-            logger.info(f"Image {image_uri} does not exist in registry or force/dry-run, building...")
+            status.step(f"Image {image_uri} not found, building...")
 
             # Validate the image before building
             image.validate()
@@ -218,7 +219,7 @@ class ImageBuildEngine:
             result = await img_builder.build_image(image, dry_run=dry_run, wait=wait)
             return result
         else:
-            logger.info(f"Image {image_uri} already exists in registry. Skipping build.")
+            status.info(f"Image {image_uri} already exists, skipping build")
             return ImageBuild(uri=image_uri, remote_run=None)
 
     @classmethod
@@ -243,7 +244,7 @@ class ImageBuildEngine:
             if ep.name != name:
                 continue
             try:
-                logger.info(f"Loading image builder: {ep.name}")
+                status.info(f"Loading image builder: {ep.name}")
                 builder = ep.load()
                 if callable(builder):
                     return builder()

@@ -9,6 +9,7 @@ from flyte import Image
 from flyte._code_bundle.bundle import build_code_bundle_from_relative_paths
 from flyte._initialize import ensure_client
 from flyte._logging import logger
+from flyte._status import status
 from flyte.models import SerializationContext
 
 from ._app_environment import AppEnvironment
@@ -114,7 +115,7 @@ async def _deploy_app(
         msg = f"Deploying app {app.name}, with image {image_uri} version {serialization_context.version}"
         if app_idl.spec.HasField("container") and app_idl.spec.container.args:
             msg += f" with args {app_idl.spec.container.args}"
-        logger.info(msg)
+        status.step(msg)
 
         return await App.create.aio(app_idl)
     except Exception as exc:

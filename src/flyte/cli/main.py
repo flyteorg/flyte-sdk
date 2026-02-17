@@ -229,6 +229,10 @@ def main(
         output_format=output_format,
     )
 
+    from flyte._status import set_output_mode
+
+    set_output_mode("rich" if output_format == "table" else "plain")
+
 
 main.add_command(run)
 main.add_command(deploy)
