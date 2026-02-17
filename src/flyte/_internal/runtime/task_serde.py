@@ -227,10 +227,6 @@ def lookup_image_in_cache(serialize_context: SerializationContext, env_name: str
     if serialize_context.image_cache and env_name in serialize_context.image_cache.image_lookup:
         return serialize_context.image_cache.image_lookup[env_name]
 
-    if image._ref_name is None and (not serialize_context.image_cache or len(image._layers) == 0):
-        # This computes the image uri, computing hashes as necessary so can fail if done remotely.
-        return image.uri
-
     # Has cache and layers but env not found in cache
     raise flyte.errors.RuntimeUserError(
         "MissingEnvironment",
