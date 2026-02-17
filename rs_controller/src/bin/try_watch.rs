@@ -5,10 +5,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use flyte_controller_base::{
-    auth::{AuthConfig, AuthLayer, ClientCredentialsAuthenticator},
-    error::ControllerError,
-};
+use flyte_controller_base::auth::{AuthConfig, AuthLayer, ClientCredentialsAuthenticator};
 use flyteidl2::flyteidl::{
     common::{ActionIdentifier, RunIdentifier},
     workflow::{state_service_client::StateServiceClient, watch_request::Filter, WatchRequest},

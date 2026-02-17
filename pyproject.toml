@@ -25,6 +25,7 @@ dependencies = [
     "mashumaro",
     "aiolimiter>=1.2.1",
     "flyteidl2==2.0.6",
+    "flyte_controller_base>=2.0.0b0",
     "packaging",
 ]
 
@@ -165,6 +166,9 @@ ignore = ["PGH003", "PLC0415", "ASYNC210", "ASYNC240", "FURB122"]
 [tool.mypy]
 disable_error_code = ["import-untyped"]
 ignore_missing_imports = true
+
+[tool.uv.sources]
+flyte_controller_base = { path = "rs_controller" }
 
 [tool.ty.rules]
 unused-ignore-comment = "warn"
