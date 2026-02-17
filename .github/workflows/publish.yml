@@ -38,6 +38,7 @@ jobs:
         run: |
           uv run python -m twine upload --verbose dist/*
       - name: Sleep until pypi is available
+        if: ${{ github.event_name == 'release' }}
         id: pypiwait
         run: |
           # from 'v1.2.3' get '1.2.3' and make sure it's not an empty string
