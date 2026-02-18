@@ -28,6 +28,7 @@ Usage::
         --to 123456789.dkr.ecr.us-west-2.amazonaws.com/myorg/myimage:v1.0.0 \
         --builder remote --force
 """
+
 import argparse
 import asyncio
 
@@ -52,9 +53,7 @@ def parse_target(target: str) -> tuple[str, str, str]:
     return registry, name, tag
 
 
-async def build_and_push(
-    from_image: str, to_target: str, builder: str = "local", force: bool = False
-) -> str:
+async def build_and_push(from_image: str, to_target: str, builder: str = "local", force: bool = False) -> str:
     """Build an image from a base and push it to a target registry/name:tag."""
     registry, name, tag = parse_target(to_target)
     image = Image.from_base(from_image).clone(registry=registry, name=name)
@@ -64,14 +63,10 @@ async def build_and_push(
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(
-        description="Build and push an image to a target registry/name:tag."
-    )
+    parser = argparse.ArgumentParser(description="Build and push an image to a target registry/name:tag.")
     parser.add_argument("--from", dest="from_image", required=True, help="Source image URI")
     parser.add_argument("--to", dest="to_target", required=True, help="Target image as registry/name:tag")
-    parser.add_argument(
-        "--builder", choices=["local", "remote"], default="local", help="Image builder to use"
-    )
+    parser.add_argument("--builder", choices=["local", "remote"], default="local", help="Image builder to use")
     parser.add_argument("--force", action="store_true", help="Skip existence check, always rebuild")
 
     args = parser.parse_args()
