@@ -659,11 +659,7 @@ class TypedDictTransformer(PydanticWrappingTransformer[dict]):
         _model_cache[t] = model
 
         # Rebuild to resolve any forward references from self-referential types
-        rebuild_ns = {
-            f"{self._WRAPPER_PREFIX}{k.__name__}": v
-            for k, v in _model_cache.items()
-            if isinstance(v, type)
-        }
+        rebuild_ns = {f"{self._WRAPPER_PREFIX}{k.__name__}": v for k, v in _model_cache.items() if isinstance(v, type)}
         model.model_rebuild(_types_namespace=rebuild_ns)
 
         return model
