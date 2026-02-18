@@ -16,9 +16,8 @@ from typing_extensions import NotRequired
 from flyte.types._type_engine import TypeEngine
 
 
-class Coord(TypedDict):
-    x: float
-    y: float
+# Functional form so annotations are real types, not strings from `from __future__ import annotations`
+Coord = TypedDict("Coord", {"x": float, "y": float})
 
 
 class Node(TypedDict):
