@@ -76,6 +76,7 @@ class LocalController:
         self._runner_map: dict[str, _TaskRunner] = {}
         self._sequencer = TaskCallSequencer()
         self._recorder = RunRecorder()
+        self._registered_events: dict[str, Any] = {}
 
     def set_recorder(self, recorder: RunRecorder) -> None:
         self._recorder = recorder
@@ -319,3 +320,89 @@ class LocalController:
         raise flyte.errors.RemoteTaskUsageError(
             f"Remote tasks cannot be executed locally, only remotely. Found remote task {_task.name}"
         )
+
+    async def register_event(self, event: Any):
+        """
+        Register an event that can be awaited. Stores the event for later retrieval.
+
+        :param event: Event object to register
+        """
+        from flyte._event import _Event
+
+        if not isinstance(event, _Event):
+            raise TypeError(f"Expected _Event, got {type(event)}")
+
+        logger.debug(f"Registering event: {event.name} with scope: {event.scope}")
+        self._registered_events[event.name] = event
+
+    def _get_current_action_id(self) -> str:
+        ctx = internal_ctx()
+        tctx = ctx.data.task_context
+        if tctx is None:
+            raise flyte.errors.RuntimeSystemError("BadContext", "Task context not initialized")
+        return tctx.action.name
+
+    async def wait_for_event(self, event: Any) -> Any:
+        """
+        Wait for an event to be signaled.
+
+        In TUI mode, records a pending event so the TUI can render an input panel and
+        blocks until the user submits a value. Without TUI, falls back to rich console prompts.
+
+        :param event: Event object to wait for
+        :return: The payload associated with the event when it is signaled
+        """
+        from flyte._event import _Event
+
+        if not isinstance(event, _Event):
+            raise TypeError(f"Expected _Event, got {type(event)}")
+
+        logger.info(f"Waiting for event: {event.name}")
+
+        action_id = self._get_current_action_id()
+        pending = self._recorder.record_event_waiting(
+            action_id=action_id,
+            event_name=event.name,
+            prompt=event.prompt,
+            prompt_type=event.prompt_type,
+            data_type=event.data_type,
+            description=event.description,
+        )
+
+        if pending is not None:
+            # TUI mode: block until the TUI resolves the event
+            loop = asyncio.get_event_loop()
+            result = await loop.run_in_executor(None, pending.wait_for_result)
+            if result is None:
+                raise RuntimeError(f"Event '{event.name}' was cancelled (TUI quit).")
+            return result
+
+        # Non-TUI mode: fall back to rich console prompts
+        return self._prompt_event_console(event)
+
+    @staticmethod
+    def _prompt_event_console(event: Any) -> Any:
+        from rich.console import Console
+        from rich.prompt import Confirm, Prompt
+
+        console = Console()
+        console.print(f"\n[bold cyan]Event:[/bold cyan] {event.name}")
+        if event.description:
+            console.print(f"[dim]{event.description}[/dim]")
+
+        if event.data_type is bool:
+            result = Confirm.ask(event.prompt, console=console)
+        elif event.data_type in (int, float, str):
+            while True:
+                try:
+                    value = Prompt.ask(event.prompt, console=console)
+                    result = event.data_type(value)
+                    break
+                except ValueError:
+                    type_name = event.data_type.__name__
+                    console.print(f"[red]Please enter a valid {type_name}[/red]")
+        else:
+            raise ValueError(f"Unsupported data type {event.data_type}")
+
+        logger.debug(f"Event {event.name} received value: {result}")
+        return result

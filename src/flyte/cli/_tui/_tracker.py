@@ -10,6 +10,7 @@ from typing import Any
 
 class ActionStatus(Enum):
     RUNNING = "running"
+    PAUSED = "paused"
     SUCCEEDED = "succeeded"
     FAILED = "failed"
 
@@ -33,6 +34,28 @@ class ActionNode:
     log_links: list[tuple[str, str]] | None = None
     start_time: float = field(default_factory=time.monotonic)
     end_time: float | None = None
+
+
+@dataclass
+class PendingEvent:
+    """Represents an event that the TUI is waiting for the user to resolve."""
+
+    event_name: str
+    action_id: str
+    prompt: str
+    prompt_type: str  # "text" or "markdown"
+    data_type: type
+    description: str = ""
+    _ready: threading.Event = field(default_factory=threading.Event, repr=False)
+    _result: Any = field(default=None, repr=False)
+
+    def set_result(self, value: Any) -> None:
+        self._result = value
+        self._ready.set()
+
+    def wait_for_result(self) -> Any:
+        self._ready.wait()
+        return self._result
 
 
 def _safe_json(obj: Any) -> Any:
@@ -64,6 +87,7 @@ class ActionTracker:
         self._root_ids: list[str] = []
         self._children: dict[str, list[str]] = {}
         self._version: int = 0
+        self._pending_events: dict[str, PendingEvent] = {}
 
     @property
     def version(self) -> int:
@@ -183,6 +207,50 @@ class ActionTracker:
             end_times = [c.end_time for c in child_nodes if c.end_time is not None]
             if end_times:
                 group_node.end_time = max(end_times)
+
+    def record_event_waiting(
+        self,
+        *,
+        action_id: str,
+        event_name: str,
+        prompt: str,
+        prompt_type: str,
+        data_type: type,
+        description: str = "",
+    ) -> PendingEvent:
+        pe = PendingEvent(
+            event_name=event_name,
+            action_id=action_id,
+            prompt=prompt,
+            prompt_type=prompt_type,
+            data_type=data_type,
+            description=description,
+        )
+        with self._lock:
+            self._pending_events[action_id] = pe
+            node = self._nodes.get(action_id)
+            if node is not None:
+                node.status = ActionStatus.PAUSED
+            self._version += 1
+        return pe
+
+    def resolve_event(self, action_id: str, value: Any) -> None:
+        with self._lock:
+            pe = self._pending_events.pop(action_id, None)
+            node = self._nodes.get(action_id)
+            if node is not None:
+                node.status = ActionStatus.RUNNING
+            self._version += 1
+        if pe is not None:
+            pe.set_result(value)
+
+    def get_pending_event(self, action_id: str) -> PendingEvent | None:
+        with self._lock:
+            return self._pending_events.get(action_id)
+
+    def get_all_pending_events(self) -> list[PendingEvent]:
+        with self._lock:
+            return list(self._pending_events.values())
 
     def snapshot(self) -> tuple[list[str], dict[str, list[str]], dict[str, ActionNode]]:
         """Return (root_ids, children_map, all_nodes) — a consistent snapshot."""
