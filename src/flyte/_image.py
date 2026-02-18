@@ -543,7 +543,7 @@ class Image:
             else:
                 flyte_version = typing.cast(str, flyte_version)
                 if Version(flyte_version).is_devrelease or Version(flyte_version).is_prerelease:
-                    image = image.with_pip_packages(f"flyte=={flyte_version}", pre=True)
+                    image = image.with_pip_packages(f"flyte=={flyte_version}")
                 else:
                     image = image.with_pip_packages(f"flyte=={flyte_version}")
         if not dev_mode:
@@ -1095,7 +1095,7 @@ class Image:
         """
         # Manually declare the PythonWheel so we can set the hashing
         # used to compute the identifier. Can remove if we ever decide to expose the lambda in with_ commands
-        with_dist = self.clone(addl_layer=PythonWheels(wheel_dir=DIST_FOLDER, package_name="flyte", pre=True))
+        with_dist = self.clone(addl_layer=PythonWheels(wheel_dir=DIST_FOLDER, package_name="flyte"))
 
         return with_dist
 
