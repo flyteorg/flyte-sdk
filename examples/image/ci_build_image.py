@@ -1,3 +1,33 @@
+"""Build and push an image to a user-specified target from CI.
+
+Takes a source image and re-tags/pushes it to a target registry/name:tag.
+Works with both the local Docker builder and the remote builder.
+
+Usage::
+
+    # Re-tag an existing image and push to ECR
+    python examples/image/ci_build_image.py \
+        --from ghcr.io/flyteorg/flyte:py3.12-v2.0.0b56 \
+        --to 123456789.dkr.ecr.us-west-2.amazonaws.com/myorg/myimage:v1.0.0
+
+    # Use the remote builder
+    python examples/image/ci_build_image.py \
+        --from ghcr.io/flyteorg/flyte:py3.12-v2.0.0b56 \
+        --to 123456789.dkr.ecr.us-west-2.amazonaws.com/myorg/myimage:v1.0.0 \
+        --builder remote
+
+    # Force rebuild even if the target already exists
+    python examples/image/ci_build_image.py \
+        --from ghcr.io/flyteorg/flyte:py3.12-v2.0.0b56 \
+        --to 123456789.dkr.ecr.us-west-2.amazonaws.com/myorg/myimage:v1.0.0 \
+        --force
+
+    # Force rebuild using the remote builder
+    python examples/image/ci_build_image.py \
+        --from ghcr.io/flyteorg/flyte:py3.12-v2.0.0b56 \
+        --to 123456789.dkr.ecr.us-west-2.amazonaws.com/myorg/myimage:v1.0.0 \
+        --builder remote --force
+"""
 import argparse
 import asyncio
 
