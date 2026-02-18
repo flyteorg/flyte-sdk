@@ -8,16 +8,17 @@ Special test cases to test the pydantic non-flyte type transformer.
 
 from __future__ import annotations
 
-from typing import List, TypedDict
+from typing import List
 
 import pytest
-from typing_extensions import NotRequired
+from typing_extensions import NotRequired, TypedDict
 
 from flyte.types._type_engine import TypeEngine
 
 
-# Functional form so annotations are real types, not strings from `from __future__ import annotations`
-Coord = TypedDict("Coord", {"x": float, "y": float})
+class Coord(TypedDict):
+    x: float
+    y: float
 
 
 class Node(TypedDict):
