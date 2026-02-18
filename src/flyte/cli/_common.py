@@ -148,7 +148,7 @@ class CLIConfig:
                 domain=domain if domain is not None else self.config.task.domain,
                 log_level=self.log_level,
                 log_format=self.log_format,
-                root_dir=pathlib.Path(root_dir) if root_dir else None,
+                root_dir=pathlib.Path(root_dir).resolve() if root_dir else None,
                 sync_local_sys_paths=sync_local_sys_paths,
             )
         else:
@@ -173,7 +173,7 @@ class CLIConfig:
                 updated_config,
                 log_level=self.log_level,
                 log_format=self.log_format,
-                root_dir=pathlib.Path(root_dir) if root_dir else None,
+                root_dir=pathlib.Path(root_dir).resolve() if root_dir else None,
                 images=images,
                 sync_local_sys_paths=sync_local_sys_paths,
             )
