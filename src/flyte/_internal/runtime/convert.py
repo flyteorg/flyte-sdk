@@ -239,7 +239,9 @@ async def convert_outputs_to_native(interface: NativeInterface, outputs: Outputs
         return tuple(kwargs[k] for k in output_order)
 
 
-def convert_error_to_native(err: execution_pb2.ExecutionError | Exception | Error) -> Exception | None:
+def convert_error_to_native(
+    err: execution_pb2.ExecutionError | Exception | Error,
+) -> Exception | None:
     if not err:
         return None
 
