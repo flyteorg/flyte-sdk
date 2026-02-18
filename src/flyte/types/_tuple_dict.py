@@ -256,6 +256,8 @@ class PydanticWrappingTransformer(TypeTransformer[T]):
             return [self._convert_value_from_pydantic(v, args[0]) for v in value]
         elif isinstance(value, dict) and origin is dict and len(args) >= 2:
             return {k: self._convert_value_from_pydantic(v, args[1]) for k, v in value.items()}
+        elif isinstance(value, (list, tuple)) and (origin is tuple or origin is Tuple) and args:
+            return tuple(self._convert_value_from_pydantic(v, t) for v, t in zip(value, args))
 
         return value
 
