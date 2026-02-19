@@ -1020,6 +1020,7 @@ dev = [
     { name = "ruff" },
     { name = "setuptools-scm" },
     { name = "textual" },
+    { name = "uvicorn" },
 ]
 
 [package.metadata]
@@ -1083,6 +1084,7 @@ dev = [
     { name = "ruff", specifier = ">=0.11.0" },
     { name = "setuptools-scm", specifier = ">=8.2.0" },
     { name = "textual", specifier = ">=0.80" },
+    { name = "uvicorn", specifier = ">=0.40.0" },
 ]
 
 [[package]]
