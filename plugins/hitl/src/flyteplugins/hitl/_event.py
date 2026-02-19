@@ -44,8 +44,7 @@ event_image = (
     flyte.Image.from_debian_base(python_version=(3, 12))
     .with_apt_packages("git")
     .with_pip_packages("fastapi", "uvicorn", "python-multipart", "aiofiles")
-    .with_pip_packages("flyte>=2.0.0")
-    .with_pip_packages("git+https://github.com/flyteorg/flyte-sdk.git@b9771574#subdirectory=plugins/hitl")
+    .with_pip_packages("flyte>=2.0.0", "flyteplugins-hitl>=2.0.0")
 )
 
 event_app_env = FastAPIAppEnvironment(
@@ -57,6 +56,7 @@ event_app_env = FastAPIAppEnvironment(
     resources=flyte.Resources(cpu=1, memory="512Mi"),
     requires_auth=True,
     env_vars={"LOG_LEVEL": "10"},
+    scaling=flyte.app.Scaling(replicas=(0, 1), scaledown_after=600),
 )
 
 event_task_env = flyte.TaskEnvironment(
@@ -293,7 +293,6 @@ class Event(Generic[T]):
                     endpoint=self.endpoint,
                     request_id=self.request_id,
                     request_path=self._request_path,
-                    name=self.name,
                 )
             ],
         )(report_html)
