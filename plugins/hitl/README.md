@@ -82,7 +82,6 @@ if __name__ == "__main__":
 - **Web Form**: Automatically generates a web form for human input
 - **Programmatic API**: Submit input via curl or any HTTP client
 - **Type Safety**: Supports int, float, str, and bool data types
-- **Crash Resilient**: Uses durable sleep and object storage for state persistence
 
 ## API Reference
 
