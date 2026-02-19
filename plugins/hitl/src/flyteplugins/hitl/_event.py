@@ -44,7 +44,7 @@ event_image = (
     .with_apt_packages("git")
     .with_pip_packages("fastapi", "uvicorn", "python-multipart", "aiofiles")
     .with_pip_packages("flyte>=2.0.0")
-    .with_pip_packages("git+https://github.com/flyteorg/flyte-sdk.git@aca9e5f6#subdirectory=plugins/hitl")
+    .with_pip_packages("git+https://github.com/flyteorg/flyte-sdk.git@4e8bf5cf#subdirectory=plugins/hitl")
 )
 
 event_app_env = FastAPIAppEnvironment(
@@ -274,6 +274,7 @@ class Event(Generic[T]):
         curl_body = json.dumps(
             {
                 "request_id": self.request_id,
+                "response_path": self._response_path,
                 "value": "<your_value>",
                 "data_type": self._type_name,
             },
@@ -372,19 +373,29 @@ class Event(Generic[T]):
                 <p>Use the following curl command to submit input programmatically:</p>
                 <div class="hitl-code">curl -X POST "{html_module.escape(self.api_url)}" \\
   -H "Content-Type: application/json" \\
-  -H "Authorization: Bearer <flyte_api_key>" \\
+  -H "Authorization: Bearer {{FLYTE_API_KEY}}" \\
   -d '{html_module.escape(curl_body)}'</div>
                 <p style="margin-top: 15px; font-size: 0.9em; color: #666;">
                     <strong>Note:</strong> Replace <code>&lt;your_value&gt;</code> with the actual value you want to
                     submit. The value should match the expected type: <code>{html_module.escape(self._type_name)}</code>
 
-                    <p>Replace <code>&lt;flyte_api_key&gt;</code> with your Flyte API key.</p>
+                    <p>Replace <code>{{FLYTE_API_KEY}}</code> with your Flyte API key.</p>
                 </p>
             </div>
         </div>
         """
 
-        await show_form.override(short_name=self.name)(report_html)
+        await show_form.override(
+            short_name=self.name,
+            links=[
+                EventFormLink(
+                    endpoint=self.endpoint,
+                    request_id=self.request_id,
+                    request_path=self._request_path,
+                    name=self.name,
+                )
+            ]
+        )(report_html)
         return await wait_for_input_event(
             name=self.name,
             request_id=self.request_id,
@@ -398,6 +409,33 @@ class Event(Generic[T]):
             f"Event(name={self.name!r}, scope={self.scope!r}, "
             f"data_type={self._type_name}, request_id={self.request_id!r})"
         )
+
+
+class EventFormLink(flyte.Link):
+    """
+    A link to the event form.
+    """
+
+    endpoint: str
+    request_id: str
+    request_path: str
+    name: str = "Event Form"
+
+    def get_link(
+        self,
+        run_name: str,
+        project: str,
+        domain: str,
+        context: dict[str, str],
+        parent_action_name: str,
+        action_name: str,
+        pod_name: str,
+        **kwargs,
+    ) -> str:
+        from urllib.parse import urlencode
+
+        params = urlencode({"request_path": self.request_path})
+        return f"{self.endpoint}/form/{self.request_id}?{params}"
 
 
 @event_task_env.task(report=True)

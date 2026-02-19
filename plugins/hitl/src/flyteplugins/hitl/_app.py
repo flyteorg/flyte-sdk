@@ -217,8 +217,6 @@ async def input_form(request_id: str, request_path: str | None = None) -> str:
         <div class="card">
             <h1>Event Input Required</h1>
             <p class="event-name">Event: {event_name}</p>
-            <p class="original-request-path">Original request path: {original_request_path}</p>
-            <p class="request-path">Request path: {request_path}</p>
             <p class="prompt">{prompt}</p>
             <p class="data-type">Expected type: <code>{data_type_name}</code></p>
             <p class="request-id">Request ID: {request_id}</p>
