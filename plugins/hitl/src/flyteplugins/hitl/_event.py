@@ -13,6 +13,7 @@ import asyncio
 import json
 import logging
 import uuid
+from dataclasses import dataclass
 from typing import Any, ClassVar, Generic, Literal, Type, TypeVar
 
 import flyte
@@ -44,7 +45,7 @@ event_image = (
     .with_apt_packages("git")
     .with_pip_packages("fastapi", "uvicorn", "python-multipart", "aiofiles")
     .with_pip_packages("flyte>=2.0.0")
-    .with_pip_packages("git+https://github.com/flyteorg/flyte-sdk.git@4e8bf5cf#subdirectory=plugins/hitl")
+    .with_pip_packages("git+https://github.com/flyteorg/flyte-sdk.git@e2dd28b9#subdirectory=plugins/hitl")
 )
 
 event_app_env = FastAPIAppEnvironment(
@@ -411,6 +412,7 @@ class Event(Generic[T]):
         )
 
 
+@dataclass
 class EventFormLink(flyte.Link):
     """
     A link to the event form.
