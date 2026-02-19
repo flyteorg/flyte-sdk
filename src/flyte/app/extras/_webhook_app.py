@@ -15,8 +15,9 @@ endpoints for interacting with the Flyte control plane, including:
 The module also provides configuration options for:
 - Endpoint group filtering: Enable groups of endpoints using `endpoint_groups` parameter
 - Endpoint filtering: Enable only specific endpoints using the `endpoints` parameter
-- Task allow-listing: Restrict access to specific tasks using `TaskAllowList`
-- App allow-listing: Restrict access to specific apps using `AppAllowList`
+- Task allow-listing: Restrict access to specific tasks using `task_allowlist` parameter
+- App allow-listing: Restrict access to specific apps using `app_allowlist` parameter
+- Trigger allow-listing: Restrict access to specific triggers using `trigger_allowlist` parameter
 
 Available endpoint groups (WebhookEndpointGroup):
     - "all": All available endpoints
@@ -76,13 +77,11 @@ Example:
     With task allow-listing:
 
     ```python
-    from flyte.app.extras import FlyteWebhookAppEnvironment, TaskAllowList
+    from flyte.app.extras import FlyteWebhookAppEnvironment
 
     webhook_env = FlyteWebhookAppEnvironment(
         name="restricted-webhook",
-        task_allowlist=TaskAllowList(
-            tasks=["production/my-project/my-task", "another-task"]
-        ),
+        task_allowlist=["production/my-project/my-task", "another-task"],
     )
     ```
 """
@@ -93,7 +92,7 @@ import inspect
 import logging
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Literal, get_args
+from typing import TYPE_CHECKING, Any, Callable, Literal, cast, get_args
 
 import rich.repr
 
@@ -171,123 +170,91 @@ ENDPOINT_GROUP_MAPPING: dict[WebhookEndpointGroup, tuple[WebhookEndpoint, ...]] 
 }
 
 
-@dataclass
-class TaskAllowList:
+def is_task_allowed(
+    allowlist: list[str] | None,
+    domain: str,
+    project: str,
+    name: str,
+) -> bool:
     """
-    Configuration for task allow-listing.
-
-    When configured, only tasks matching the specified criteria will be accessible.
-    If a field is None, that field is not filtered.
+    Check if a task is allowed based on the allowlist.
 
     Args:
-        tasks: List of allowed task identifiers in the format "domain/project/name"
-               or just "name" (matches any domain/project).
-               If None, all tasks are allowed.
+        allowlist: List of allowed task identifiers in the format "domain/project/name",
+                   "project/name", or just "name" (matches any domain/project).
+                   If None, all tasks are allowed.
+        domain: The task's domain
+        project: The task's project
+        name: The task's name
 
-    Example:
-        ```python
-        # Allow only specific tasks
-        task_allowlist = TaskAllowList(
-            tasks=["production/my-project/my-task", "staging/my-project/another-task"]
-        )
-
-        # Allow tasks by name only (any domain/project)
-        task_allowlist = TaskAllowList(tasks=["my-task", "another-task"])
-        ```
+    Returns:
+        True if the task is allowed, False otherwise.
     """
+    if allowlist is None:
+        return True
 
-    tasks: list[str] | None = None
-
-    def is_allowed(self, domain: str, project: str, name: str) -> bool:
-        """Check if a task is allowed based on the allowlist."""
-        if self.tasks is None:
+    full_path = f"{domain}/{project}/{name}"
+    for allowed in allowlist:
+        # Check for exact match (domain/project/name)
+        if allowed == full_path:
             return True
-
-        full_path = f"{domain}/{project}/{name}"
-        for allowed in self.tasks:
-            # Check for exact match (domain/project/name)
-            if allowed == full_path:
+        # Check for name-only match
+        if "/" not in allowed and allowed == name:
+            return True
+        # Check for project/name match
+        if allowed.count("/") == 1:
+            proj_name = f"{project}/{name}"
+            if allowed == proj_name:
                 return True
-            # Check for name-only match
-            if "/" not in allowed and allowed == name:
-                return True
-            # Check for project/name match
-            if allowed.count("/") == 1:
-                proj_name = f"{project}/{name}"
-                if allowed == proj_name:
-                    return True
-        return False
+    return False
 
 
-@dataclass
-class AppAllowList:
+def is_app_allowed(allowlist: list[str] | None, name: str) -> bool:
     """
-    Configuration for app allow-listing.
-
-    When configured, only apps matching the specified criteria will be accessible.
-    If a field is None, that field is not filtered.
+    Check if an app is allowed based on the allowlist.
 
     Args:
-        apps: List of allowed app names.
-              If None, all apps are allowed.
+        allowlist: List of allowed app names. If None, all apps are allowed.
+        name: The app's name
 
-    Example:
-        ```python
-        # Allow only specific apps
-        app_allowlist = AppAllowList(apps=["my-app", "another-app"])
-        ```
+    Returns:
+        True if the app is allowed, False otherwise.
     """
-
-    apps: list[str] | None = None
-
-    def is_allowed(self, name: str) -> bool:
-        """Check if an app is allowed based on the allowlist."""
-        if self.apps is None:
-            return True
-        return name in self.apps
+    if allowlist is None:
+        return True
+    return name in allowlist
 
 
-@dataclass
-class TriggerAllowList:
+def is_trigger_allowed(
+    allowlist: list[str] | None,
+    task_name: str,
+    trigger_name: str,
+) -> bool:
     """
-    Configuration for trigger allow-listing.
-
-    When configured, only triggers matching the specified criteria will be accessible.
-    If a field is None, that field is not filtered.
+    Check if a trigger is allowed based on the allowlist.
 
     Args:
-        triggers: List of allowed trigger identifiers in the format "task_name/trigger_name"
-                  or just "trigger_name" (matches any task).
-                  If None, all triggers are allowed.
+        allowlist: List of allowed trigger identifiers in the format "task_name/trigger_name"
+                   or just "trigger_name" (matches any task).
+                   If None, all triggers are allowed.
+        task_name: The trigger's associated task name
+        trigger_name: The trigger's name
 
-    Example:
-        ```python
-        # Allow only specific triggers with their task names
-        trigger_allowlist = TriggerAllowList(
-            triggers=["my-task/my-trigger", "another-task/another-trigger"]
-        )
-
-        # Allow triggers by name only (any task)
-        trigger_allowlist = TriggerAllowList(triggers=["my-trigger", "another-trigger"])
-        ```
+    Returns:
+        True if the trigger is allowed, False otherwise.
     """
+    if allowlist is None:
+        return True
 
-    triggers: list[str] | None = None
-
-    def is_allowed(self, task_name: str, trigger_name: str) -> bool:
-        """Check if a trigger is allowed based on the allowlist."""
-        if self.triggers is None:
+    full_path = f"{task_name}/{trigger_name}"
+    for allowed in allowlist:
+        # Check for exact match (task_name/trigger_name)
+        if allowed == full_path:
             return True
-
-        full_path = f"{task_name}/{trigger_name}"
-        for allowed in self.triggers:
-            # Check for exact match (task_name/trigger_name)
-            if allowed == full_path:
-                return True
-            # Check for trigger_name-only match
-            if "/" not in allowed and allowed == trigger_name:
-                return True
-        return False
+        # Check for trigger_name-only match
+        if "/" not in allowed and allowed == trigger_name:
+            return True
+    return False
 
 
 @dataclass
@@ -296,7 +263,7 @@ class _EndpointConfig:
 
     method: str
     path: str
-    handler: callable
+    handler: Callable[..., Any]
     name: str | None = None
 
 
@@ -360,13 +327,13 @@ def _create_webhook_app(
 
     # Resolve endpoint groups and individual endpoints
     enabled_endpoints = _resolve_endpoints(webhook_env.endpoint_groups, webhook_env.endpoints)
-    task_allowlist: TaskAllowList | None = webhook_env.task_allowlist
-    app_allowlist: AppAllowList | None = webhook_env.app_allowlist
-    trigger_allowlist: TriggerAllowList | None = webhook_env.trigger_allowlist
+    task_allowlist: list[str] | None = webhook_env.task_allowlist
+    app_allowlist: list[str] | None = webhook_env.app_allowlist
+    trigger_allowlist: list[str] | None = webhook_env.trigger_allowlist
 
     def _check_task_allowed(domain: str, project: str, name: str):
         """Check if a task is allowed and raise HTTPException if not."""
-        if task_allowlist is not None and not task_allowlist.is_allowed(domain, project, name):
+        if not is_task_allowed(task_allowlist, domain, project, name):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=f"Task {domain}/{project}/{name} is not in the allowlist",
@@ -374,7 +341,7 @@ def _create_webhook_app(
 
     def _check_app_allowed(name: str):
         """Check if an app is allowed and raise HTTPException if not."""
-        if app_allowlist is not None and not app_allowlist.is_allowed(name):
+        if not is_app_allowed(app_allowlist, name):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=f"App {name} is not in the allowlist",
@@ -382,7 +349,7 @@ def _create_webhook_app(
 
     def _check_trigger_allowed(task_name: str, trigger_name: str):
         """Check if a trigger is allowed and raise HTTPException if not."""
-        if trigger_allowlist is not None and not trigger_allowlist.is_allowed(task_name, trigger_name):
+        if not is_trigger_allowed(trigger_allowlist, task_name, trigger_name):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=f"Trigger {task_name}/{trigger_name} is not in the allowlist",
@@ -447,7 +414,7 @@ def _create_webhook_app(
         logger.info(f"Running task: {domain}/{project}/{name} version={version}")
 
         try:
-            auto_version = "latest" if version is None else None
+            auto_version: Literal["latest", "current"] | None = "latest" if version is None else None
 
             tk = remote.Task.get(
                 project=project,
@@ -502,7 +469,7 @@ def _create_webhook_app(
         _check_task_allowed(domain, project, name)
 
         try:
-            auto_version = "latest" if version is None else None
+            auto_version: Literal["latest", "current"] | None = "latest" if version is None else None
 
             lazy_task = remote.Task.get(
                 project=project,
@@ -595,7 +562,7 @@ def _create_webhook_app(
                 # ActionInputs is a UserDict, so we can access its data directly
                 inputs_dict = dict(inputs) if hasattr(inputs, "keys") else inputs.to_dict()
 
-            outputs_dict = None
+            outputs_dict: dict[str, Any] | list[Any] | None = None
             if outputs is not None:
                 # ActionOutputs is a tuple with named_outputs property
                 if hasattr(outputs, "named_outputs"):
@@ -965,17 +932,34 @@ def _create_webhook_app(
             Image build information.
         """
         try:
+            # Convert python_version string (e.g., "3.12") to tuple (3, 12)
+            python_version_tuple: tuple[int, int] | None = None
+            if python_version is not None:
+                parts = python_version.split(".")
+                if len(parts) >= 2:
+                    python_version_tuple = (int(parts[0]), int(parts[1]))
+
+            # Convert platform list to tuple of Architecture literals
+            platform_tuple: tuple[Literal["linux/amd64", "linux/arm64"], ...] | None = None
+            if platform is not None:
+                valid_archs: list[Literal["linux/amd64", "linux/arm64"]] = []
+                for p in platform:
+                    if p in ("linux/amd64", "linux/arm64"):
+                        valid_archs.append(cast(Literal["linux/amd64", "linux/arm64"], p))
+                if valid_archs:
+                    platform_tuple = tuple(valid_archs)
+
             # Start with base image
             if base_image:
                 image = flyte.Image(base_image).clone(
                     name=name,
-                    python_version=python_version,
+                    python_version=python_version_tuple,
                 )
             else:
                 image = flyte.Image.from_debian_base(
-                    python_version=python_version,
+                    python_version=python_version_tuple,
                     flyte_version=flyte_version,
-                    platform=platform,
+                    platform=platform_tuple,
                     name=name,
                 )
 
@@ -1134,7 +1118,7 @@ def _create_webhook_app(
             if inputs is not None:
                 inputs_dict = dict(inputs) if hasattr(inputs, "keys") else inputs.to_dict()
 
-            outputs_dict = None
+            outputs_dict: dict[str, Any] | list[Any] | None = None
             if outputs is not None:
                 if hasattr(outputs, "named_outputs"):
                     outputs_dict = outputs.named_outputs
@@ -1320,7 +1304,7 @@ def _create_webhook_app(
             path=config.path,
             endpoint=config.handler,
             methods=[config.method],
-            name=config.name or config.handler.__name__,
+            name=config.name or getattr(config.handler, "__name__", "unknown"),
         )
 
     return app
@@ -1387,12 +1371,17 @@ class FlyteWebhookAppEnvironment(FastAPIAppEnvironment):
             - "get_prefetch_hf_model": Get prefetch run status
             - "get_prefetch_hf_model_io": Get prefetch run I/O
             - "abort_prefetch_hf_model": Abort a prefetch run
-        task_allowlist: Configuration for task allow-listing. When set, only tasks
-            matching the allowlist can be accessed via task endpoints.
-        app_allowlist: Configuration for app allow-listing. When set, only apps
-            matching the allowlist can be accessed via app endpoints.
-        trigger_allowlist: Configuration for trigger allow-listing. When set, only triggers
-            matching the allowlist can be accessed via trigger endpoints.
+        task_allowlist: List of allowed task identifiers. When set, only tasks matching
+            the allowlist can be accessed via task endpoints. Supports formats:
+            - "domain/project/name" for exact match
+            - "project/name" for project/name match (any domain)
+            - "name" for name-only match (any domain/project)
+        app_allowlist: List of allowed app names. When set, only apps matching
+            the allowlist can be accessed via app endpoints.
+        trigger_allowlist: List of allowed trigger identifiers. When set, only triggers
+            matching the allowlist can be accessed via trigger endpoints. Supports formats:
+            - "task_name/trigger_name" for exact match
+            - "trigger_name" for name-only match (any task)
 
     Example:
         Basic usage (all endpoints enabled):
@@ -1451,59 +1440,55 @@ class FlyteWebhookAppEnvironment(FastAPIAppEnvironment):
         With task allow-listing:
 
         ```python
-        from flyte.app.extras import FlyteWebhookAppEnvironment, TaskAllowList
+        from flyte.app.extras import FlyteWebhookAppEnvironment
 
         # Only allow specific tasks
         webhook_env = FlyteWebhookAppEnvironment(
             name="restricted-webhook",
             endpoint_groups=["core", "task", "run"],
-            task_allowlist=TaskAllowList(
-                tasks=["production/my-project/allowed-task", "my-other-task"]
-            ),
+            task_allowlist=["production/my-project/allowed-task", "my-other-task"],
         )
         ```
 
         With app allow-listing:
 
         ```python
-        from flyte.app.extras import FlyteWebhookAppEnvironment, AppAllowList
+        from flyte.app.extras import FlyteWebhookAppEnvironment
 
         # Only allow specific apps
         webhook_env = FlyteWebhookAppEnvironment(
             name="app-manager-webhook",
             endpoint_groups=["core", "app"],
-            app_allowlist=AppAllowList(apps=["my-app", "another-app"]),
+            app_allowlist=["my-app", "another-app"],
         )
         ```
 
         With trigger allow-listing:
 
         ```python
-        from flyte.app.extras import FlyteWebhookAppEnvironment, TriggerAllowList
+        from flyte.app.extras import FlyteWebhookAppEnvironment
 
         # Only allow specific triggers
         webhook_env = FlyteWebhookAppEnvironment(
             name="trigger-manager-webhook",
             endpoint_groups=["core", "trigger"],
-            trigger_allowlist=TriggerAllowList(
-                triggers=["my-task/my-trigger", "another-trigger"]
-            ),
+            trigger_allowlist=["my-task/my-trigger", "another-trigger"],
         )
         ```
     """
 
     title: str | None = None
     type: str = "FlyteWebhookApp"
-    app: fastapi.FastAPI | None = field(default=None, init=False)
+    app: "fastapi.FastAPI" = field(default=None, init=False)  # type: ignore[assignment]
     uvicorn_config: "uvicorn.Config | None" = None
     image: flyte.Image = field(
         default_factory=lambda: flyte.Image.from_debian_base().with_pip_packages("fastapi", "uvicorn")
     )
     endpoint_groups: list[WebhookEndpointGroup] | tuple[WebhookEndpointGroup, ...] | None = None
     endpoints: list[WebhookEndpoint] | tuple[WebhookEndpoint, ...] | None = None
-    task_allowlist: TaskAllowList | None = None
-    app_allowlist: AppAllowList | None = None
-    trigger_allowlist: TriggerAllowList | None = None
+    task_allowlist: list[str] | None = None
+    app_allowlist: list[str] | None = None
+    trigger_allowlist: list[str] | None = None
     _caller_frame: inspect.FrameInfo | None = None
 
     def __post_init__(self):

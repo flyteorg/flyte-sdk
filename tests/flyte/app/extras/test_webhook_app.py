@@ -513,7 +513,6 @@ class TestCreateWebhookAppFunction:
         """
         GOAL: Verify that _create_webhook_app uses the custom title when provided.
         """
-        from flyte.app.extras._webhook_app import _create_webhook_app
 
         # Create a webhook env with custom title
         webhook_env = FlyteWebhookAppEnvironment(

@@ -5,7 +5,7 @@
 #     "fastapi",
 #     "uvicorn",
 #     "httpx",
-#     "flyte==2.0.0b56",
+#     "flyte>=2.0.0",
 # ]
 # ///
 

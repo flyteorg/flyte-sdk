@@ -4,7 +4,7 @@
 #     "fastapi",
 #     "uvicorn",
 #     "httpx",
-#     "flyte==2.0.0b56",
+#     "flyte>=2.0.0",
 # ]
 # ///
 
@@ -54,10 +54,11 @@ import time
 from dataclasses import dataclass
 from typing import Any
 
+from fastapi import FastAPI
+
 import flyte
 import flyte.app
-from fastapi import FastAPI
-from flyte.app.extras import FlyteWebhookAppEnvironment, FastAPIAppEnvironment
+from flyte.app.extras import FastAPIAppEnvironment, FlyteWebhookAppEnvironment
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
@@ -276,7 +277,9 @@ class WebhookEndpointTester:
         if query_params:
             body["query_params"] = query_params
         logger.info(f"Testing POST {endpoint_path}")
-        return self._make_request("POST", endpoint_path, json=body or None, params=params, expected_success=expected_success)
+        return self._make_request(
+            "POST", endpoint_path, json=body or None, params=params, expected_success=expected_success
+        )
 
     # ==================== Trigger Endpoints ====================
 
@@ -417,7 +420,8 @@ class WebhookEndpointTester:
                 if result.error:
                     print(f"       Error: {result.error}")
                 elif result.status_code:
-                    print(f"       Status: {result.status_code}, Response: {result.response[:200] if isinstance(result.response, str) else result.response}")
+                    response = result.response[:200] if isinstance(result.response, str) else result.response
+                    print(f"       Status: {result.status_code}, Response: {response}")
 
         print("=" * 80)
         print(f"Total: {len(self.results)} | Passed: {passed} | Failed: {failed}")
@@ -468,15 +472,18 @@ async def long_running_task(duration: int) -> str:
 # Create a second app environment for testing app-to-app calls
 app = FastAPI()
 
+
 @app.get("/ping")
 async def ping():
     """Simple ping endpoint for testing app-to-app calls."""
     return {"message": "pong"}
 
+
 @app.post("/echo")
 async def echo(data: dict):
     """Echo endpoint for testing POST calls."""
     return {"echo": data}
+
 
 helper_app_env = FastAPIAppEnvironment(
     name="webhook-test-helper-app",
