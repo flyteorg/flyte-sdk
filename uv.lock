@@ -1002,6 +1002,7 @@ tui = [
 dev = [
     { name = "build" },
     { name = "docstring-parser" },
+    { name = "fastapi" },
     { name = "google-cloud-bigquery" },
     { name = "ipywidgets" },
     { name = "jupyterlab" },
@@ -1065,6 +1066,7 @@ provides-extras = ["aiosqlite", "connector", "examples-test", "tui"]
 dev = [
     { name = "build", specifier = ">=1.2.2.post1" },
     { name = "docstring-parser" },
+    { name = "fastapi", specifier = ">=0.128.0" },
     { name = "google-cloud-bigquery", specifier = ">=3.31.0" },
     { name = "ipywidgets", specifier = ">=8.1.7" },
     { name = "jupyterlab", specifier = ">=4.4.3" },

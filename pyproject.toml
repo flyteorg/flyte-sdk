@@ -70,6 +70,7 @@ tui = [
 [dependency-groups]
 dev = [
     "build>=1.2.2.post1",
+    "fastapi>=0.128.0",
     "mock>=5.2.0",
     "pytest>=8.3.5",
     "pytest-xdist",
