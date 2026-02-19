@@ -45,7 +45,7 @@ event_image = (
     .with_apt_packages("git")
     .with_pip_packages("fastapi", "uvicorn", "python-multipart", "aiofiles")
     .with_pip_packages("flyte>=2.0.0")
-    .with_pip_packages("git+https://github.com/flyteorg/flyte-sdk.git@b97306bc#subdirectory=plugins/hitl")
+    .with_pip_packages("git+https://github.com/flyteorg/flyte-sdk.git@b9771574#subdirectory=plugins/hitl")
 )
 
 event_app_env = FastAPIAppEnvironment(

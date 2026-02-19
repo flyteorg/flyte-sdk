@@ -165,11 +165,6 @@ def get_submission_success_page(
                 padding: 30px;
             }}
             h1 {{ color: #4CAF50; margin-top: 0; }}
-            .success-icon {{
-                font-size: 48px;
-                text-align: center;
-                margin-bottom: 20px;
-            }}
             .message {{ color: #666; margin-bottom: 20px; font-size: 16px; }}
             .details {{
                 background: #f9f9f9;
@@ -198,7 +193,6 @@ def get_submission_success_page(
     </head>
     <body>
         <div class="card">
-            <div class="success-icon">&#10004;</div>
             <h1>Submission Successful</h1>
             <p class="message">{html_module.escape(message)}</p>
             <div class="details">
