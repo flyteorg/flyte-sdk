@@ -550,3 +550,199 @@ class TestCreateWebhookAppFunction:
         webhook_env = FlyteWebhookAppEnvironment(name="test-webhook")
 
         assert webhook_env.app.description == "A webhook service for Flyte operations"
+
+
+class TestEndpointFiltering:
+    """Tests for endpoint filtering functionality."""
+
+    def test_endpoint_groups_single_group_filters_correctly(self):
+        """
+        GOAL: Verify that specifying a single endpoint group enables only those endpoints
+        and excludes all others.
+        """
+        webhook_env = FlyteWebhookAppEnvironment(
+            name="test-webhook",
+            endpoint_groups=["core"],
+        )
+
+        routes = [route.path for route in webhook_env.app.routes]
+
+        # Core endpoints should be present
+        assert "/health" in routes
+        assert "/me" in routes
+
+        # Other endpoints should NOT be present
+        assert "/run-task/{domain}/{project}/{name}" not in routes
+        assert "/run/{name}" not in routes
+        assert "/app/{name}" not in routes
+        assert "/build-image" not in routes
+
+    def test_endpoint_groups_multiple_groups_combined(self):
+        """
+        GOAL: Verify that multiple endpoint groups can be combined and all their
+        endpoints are enabled while others remain disabled.
+        """
+        webhook_env = FlyteWebhookAppEnvironment(
+            name="test-webhook",
+            endpoint_groups=["core", "task", "run"],
+        )
+
+        routes = [route.path for route in webhook_env.app.routes]
+
+        # Core, task, and run endpoints should be present
+        assert "/health" in routes
+        assert "/me" in routes
+        assert "/run-task/{domain}/{project}/{name}" in routes
+        assert "/task/{domain}/{project}/{name}" in routes
+        assert "/run/{name}" in routes
+        assert "/run/{name}/io" in routes
+
+        # App, trigger, build, prefetch should NOT be present
+        assert "/app/{name}" not in routes
+        assert "/trigger/{task_name}/{trigger_name}/activate" not in routes
+        assert "/build-image" not in routes
+        assert "/prefetch/hf-model" not in routes
+
+    def test_individual_endpoints_filtering(self):
+        """
+        GOAL: Verify that individual endpoints can be cherry-picked regardless of groups.
+        """
+        webhook_env = FlyteWebhookAppEnvironment(
+            name="test-webhook",
+            endpoints=["health", "run_task", "get_run"],
+        )
+
+        routes = [route.path for route in webhook_env.app.routes]
+
+        # Specified endpoints should be present
+        assert "/health" in routes
+        assert "/run-task/{domain}/{project}/{name}" in routes
+        assert "/run/{name}" in routes
+
+        # Other endpoints should NOT be present
+        assert "/me" not in routes
+        assert "/task/{domain}/{project}/{name}" not in routes
+        assert "/app/{name}" not in routes
+
+    def test_cannot_specify_both_endpoints_and_endpoint_groups(self):
+        """
+        GOAL: Verify that specifying both endpoints and endpoint_groups raises an error.
+        """
+        with pytest.raises(ValueError, match="Cannot specify both"):
+            FlyteWebhookAppEnvironment(
+                name="test-webhook",
+                endpoint_groups=["core"],
+                endpoints=["health"],
+            )
+
+
+class TestAllowlistFunctions:
+    """Tests for allowlist helper functions."""
+
+    def test_is_task_allowed_with_various_match_patterns(self):
+        """
+        GOAL: Verify that is_task_allowed correctly handles all match patterns:
+        - None allowlist (all allowed)
+        - Full path match (domain/project/name)
+        - Project/name match (any domain)
+        - Name-only match (any domain/project)
+        """
+        from flyte.app.extras._webhook_app import is_task_allowed
+
+        # None allowlist allows everything
+        assert is_task_allowed(None, "production", "my-project", "my-task") is True
+
+        # Full path match
+        allowlist_full = ["production/my-project/my-task"]
+        assert is_task_allowed(allowlist_full, "production", "my-project", "my-task") is True
+        assert is_task_allowed(allowlist_full, "development", "my-project", "my-task") is False
+
+        # Project/name match (any domain)
+        allowlist_proj = ["my-project/my-task"]
+        assert is_task_allowed(allowlist_proj, "production", "my-project", "my-task") is True
+        assert is_task_allowed(allowlist_proj, "development", "my-project", "my-task") is True
+        assert is_task_allowed(allowlist_proj, "production", "other-project", "my-task") is False
+
+        # Name-only match (any domain/project)
+        allowlist_name = ["my-task"]
+        assert is_task_allowed(allowlist_name, "production", "my-project", "my-task") is True
+        assert is_task_allowed(allowlist_name, "development", "other-project", "my-task") is True
+        assert is_task_allowed(allowlist_name, "production", "my-project", "other-task") is False
+
+    def test_is_app_allowed(self):
+        """
+        GOAL: Verify that is_app_allowed correctly handles None and explicit allowlists.
+        """
+        from flyte.app.extras._webhook_app import is_app_allowed
+
+        # None allowlist allows everything
+        assert is_app_allowed(None, "my-app") is True
+
+        # Explicit allowlist
+        allowlist = ["app-1", "app-2"]
+        assert is_app_allowed(allowlist, "app-1") is True
+        assert is_app_allowed(allowlist, "app-3") is False
+
+    def test_is_trigger_allowed_with_various_match_patterns(self):
+        """
+        GOAL: Verify that is_trigger_allowed correctly handles all match patterns:
+        - None allowlist (all allowed)
+        - Full path match (task_name/trigger_name)
+        - Name-only match (any task)
+        """
+        from flyte.app.extras._webhook_app import is_trigger_allowed
+
+        # None allowlist allows everything
+        assert is_trigger_allowed(None, "my-task", "my-trigger") is True
+
+        # Full path match
+        allowlist_full = ["my-task/my-trigger"]
+        assert is_trigger_allowed(allowlist_full, "my-task", "my-trigger") is True
+        assert is_trigger_allowed(allowlist_full, "other-task", "my-trigger") is False
+
+        # Name-only match (any task)
+        allowlist_name = ["my-trigger"]
+        assert is_trigger_allowed(allowlist_name, "task-1", "my-trigger") is True
+        assert is_trigger_allowed(allowlist_name, "task-2", "my-trigger") is True
+        assert is_trigger_allowed(allowlist_name, "task-1", "other-trigger") is False
+
+
+class TestResolveEndpoints:
+    """Tests for the _resolve_endpoints helper function."""
+
+    def test_resolve_endpoints_none_returns_all(self):
+        """
+        GOAL: Verify that None for both parameters returns all endpoints (default behavior).
+        """
+        from flyte.app.extras._webhook_app import ALL_WEBHOOK_ENDPOINTS, _resolve_endpoints
+
+        result = _resolve_endpoints(None, None)
+        assert result == set(ALL_WEBHOOK_ENDPOINTS)
+
+    def test_resolve_endpoints_combines_multiple_groups(self):
+        """
+        GOAL: Verify that multiple endpoint groups are correctly combined into a union.
+        """
+        from flyte.app.extras._webhook_app import _resolve_endpoints
+
+        result = _resolve_endpoints(["core", "task"], None)
+        assert result == {"health", "me", "run_task", "get_task"}
+
+
+class TestHealthEndpoint:
+    """Tests for the health check endpoint using TestClient."""
+
+    def test_health_endpoint_returns_healthy(self):
+        """
+        GOAL: Verify that the /health endpoint returns a healthy status and is accessible
+        without authentication (excluded from auth middleware).
+        """
+        from starlette.testclient import TestClient
+
+        webhook_env = FlyteWebhookAppEnvironment(name="test-webhook")
+        client = TestClient(webhook_env.app, raise_server_exceptions=False)
+
+        response = client.get("/health")
+
+        assert response.status_code == 200
+        assert response.json() == {"status": "healthy"}
