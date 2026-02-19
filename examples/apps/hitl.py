@@ -41,6 +41,7 @@ import logging
 import flyteplugins.hitl as hitl
 
 import flyte
+from flyte._image import DIST_FOLDER, PythonWheels
 
 logging.basicConfig(
     level=logging.INFO,
@@ -56,7 +57,10 @@ logger = logging.getLogger(__name__)
 task_env = flyte.TaskEnvironment(
     name="hitl-workflow",
     image=(
-        flyte.Image.from_debian_base(python_version=(3, 12)).with_pip_packages("fastapi", "uvicorn", "python-multipart")
+        flyte.Image
+        .from_debian_base(python_version=(3, 12))
+        .with_pip_packages("fastapi", "uvicorn", "python-multipart")
+        .clone(addl_layer=PythonWheels(wheel_dir=DIST_FOLDER, package_name="flyteplugins-hitl", pre=True))
     ),
     resources=flyte.Resources(cpu=1, memory="512Mi"),
     depends_on=[hitl.env],

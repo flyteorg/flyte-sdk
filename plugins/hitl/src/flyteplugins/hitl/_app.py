@@ -98,14 +98,16 @@ async def index() -> str:
 
 
 @app.get("/form/{request_id}", response_class=HTMLResponse)
-async def input_form(request_id: str) -> str:
+async def input_form(request_id: str, request_path: str | None = None) -> str:
     """Render an HTML form for human input.
 
     Args:
         request_id: The unique identifier for this HITL request
     """
     # Use provided request_path or fall back to local path construction
-    request_path = _get_request_path(request_id)
+    original_request_path = request_path
+    if request_path is None:
+        request_path = _get_request_path(request_id)
 
     prompt = "Please enter a value"
     data_type_name = "str"
@@ -215,6 +217,8 @@ async def input_form(request_id: str) -> str:
         <div class="card">
             <h1>Event Input Required</h1>
             <p class="event-name">Event: {event_name}</p>
+            <p class="original-request-path">Original request path: {original_request_path}</p>
+            <p class="request-path">Request path: {request_path}</p>
             <p class="prompt">{prompt}</p>
             <p class="data-type">Expected type: <code>{data_type_name}</code></p>
             <p class="request-id">Request ID: {request_id}</p>

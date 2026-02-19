@@ -24,6 +24,7 @@ from flyte.syncify import syncify
 
 from ._app import app
 from ._helpers import _get_request_path, _get_response_path, _get_type_name
+from flyte._image import DIST_FOLDER, PythonWheels
 
 # Type variable for generic Event
 T = TypeVar("T")
@@ -41,7 +42,7 @@ logger = logging.getLogger(__name__)
 event_image = (
     flyte.Image.from_debian_base(python_version=(3, 12))
     .with_pip_packages("fastapi", "uvicorn", "python-multipart", "aiofiles")
-    .with_pip_packages("flyte==2.0.0b56", pre=True)
+    .with_pip_packages("flyte>=2.0.0")
 )
 
 event_app_env = FastAPIAppEnvironment(
@@ -52,9 +53,6 @@ event_app_env = FastAPIAppEnvironment(
     image=event_image,
     resources=flyte.Resources(cpu=1, memory="512Mi"),
     requires_auth=True,
-    parameters=[
-        flyte.app.Parameter(name="raw_data_path", value="placeholder", env_var="RAW_DATA_PATH"),
-    ],
     env_vars={"LOG_LEVEL": "10"},
 )
 
@@ -149,18 +147,13 @@ class Event(Generic[T]):
     @classmethod
     async def _serve_app(cls) -> flyte.AppHandle:
         """Serve the app and return the app handle."""
+        from flyteplugins.hitl import __version__
+
         await flyte.init_in_cluster.aio()
-
-        ctx = flyte.ctx()
-
-        # Use flyte.serve to start the app (uses module-level app_env)
-        # Set the RAW_DATA_PATH environment variable to the raw data path since
-        # the backend doesn't inject the raw data path into the flyte serve binary
-        print(f"Serving app with RAW_DATA_PATH: {ctx.raw_data_path.path}")
-        app_handle = await flyte.with_servecontext(
-            parameter_values={event_app_env.name: {"raw_data_path": ctx.raw_data_path.path}}
+        return await flyte.with_servecontext(
+            copy_style="none",
+            version=__version__,
         ).serve.aio(event_app_env)
-        return app_handle
 
     @classmethod
     @syncify
@@ -388,7 +381,7 @@ class Event(Generic[T]):
         </div>
         """
 
-        await show_form.override(short_name=self.name).aio(report_html)
+        await show_form.override(short_name=self.name)(report_html)
         return await wait_for_input_event(
             name=self.name,
             request_id=self.request_id,
@@ -438,7 +431,7 @@ async def wait_for_input_event(
                     print(f"\nReceived human input for '{name}': {value}")
                     return value
 
-        logger.info(f"Event '{name}' waiting for human input... ({elapsed}/{timeout_seconds}s elapsed)")
+            logger.info(f"Event '{name}' waiting for human input... ({elapsed}/{timeout_seconds}s elapsed)")
         await asyncio.sleep(poll_interval_seconds)
         elapsed += poll_interval_seconds
 
