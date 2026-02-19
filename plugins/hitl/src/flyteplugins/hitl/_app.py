@@ -12,12 +12,11 @@ from contextlib import asynccontextmanager
 from typing import Any
 
 import aiofiles
+import flyte
+import flyte.storage as storage
 from fastapi import FastAPI, Form, HTTPException
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
-
-import flyte
-import flyte.storage as storage
 
 from ._helpers import _convert_value, _get_request_path, _get_response_path
 

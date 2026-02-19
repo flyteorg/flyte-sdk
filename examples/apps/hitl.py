@@ -38,8 +38,9 @@ Example event-based API usage:
 
 import logging
 
-import flyte
 import flyteplugins.hitl as hitl
+
+import flyte
 
 logging.basicConfig(
     level=logging.INFO,
