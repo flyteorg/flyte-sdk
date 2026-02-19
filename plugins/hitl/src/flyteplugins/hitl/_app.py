@@ -19,6 +19,7 @@ from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
 from ._helpers import _convert_value, _get_request_path, _get_response_path
+from ._html_templates import get_bool_select_element, get_index_page, get_input_form_page, get_submission_success_page
 
 logger = logging.getLogger(__name__)
 
@@ -64,37 +65,7 @@ async def health_check() -> dict[str, str]:
 @app.get("/", response_class=HTMLResponse)
 async def index() -> str:
     """Landing page with instructions."""
-    return """
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <title>HITL Event Service</title>
-        <style>
-            body { font-family: Arial, sans-serif; max-width: 800px; margin: 50px auto; padding: 20px; }
-            h1 { color: #333; }
-            code { background: #f4f4f4; padding: 2px 6px; border-radius: 3px; }
-            .endpoint { margin: 20px 0; padding: 15px; background: #f9f9f9; border-radius: 5px; }
-        </style>
-    </head>
-    <body>
-        <h1>Human-in-the-Loop Event Service</h1>
-        <p>This service allows humans to provide input to paused Flyte workflow events.</p>
-
-        <div class="endpoint">
-            <h3>Submit Input</h3>
-            <p>To submit input for a pending event, visit:</p>
-            <code>GET /form/{request_id}</code>
-            <p>Or POST directly to:</p>
-            <code>POST /submit</code>
-        </div>
-
-        <div class="endpoint">
-            <h3>Check Event Status</h3>
-            <code>GET /status/{request_id}</code>
-        </div>
-    </body>
-    </html>
-    """
+    return get_index_page()
 
 
 @app.get("/form/{request_id}", response_class=HTMLResponse)
@@ -105,7 +76,6 @@ async def input_form(request_id: str, request_path: str | None = None) -> str:
         request_id: The unique identifier for this HITL request
     """
     # Use provided request_path or fall back to local path construction
-    original_request_path = request_path
     if request_path is None:
         request_path = _get_request_path(request_id)
 
@@ -146,100 +116,27 @@ async def input_form(request_id: str, request_path: str | None = None) -> str:
         input_attrs = ""
 
     if input_type == "select":
-        input_element = """
-            <select
-                name="value"
-                required
-                style="
-                    width: 100%;
-                    padding: 12px;
-                    font-size: 16px;
-                    border: 1px solid #ddd;
-                    border-radius: 4px;
-                    box-sizing: border-box;
-                    margin-bottom: 15px;"
-                onchange="this.form.submit()"
-            >
-                <option value="">-- Select --</option>
-                <option value="true">True</option>
-                <option value="false">False</option>
-            </select>
-        """
+        input_element = get_bool_select_element()
     else:
         input_element = f'<input type="{input_type}" name="value" placeholder="{placeholder}" {input_attrs} required>'
 
-    return f"""
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <title>Event Input Required</title>
-        <style>
-            body {{
-                font-family: Arial, sans-serif;
-                max-width: 500px;
-                margin: 25px auto;
-                padding: 20px;
-            }}
-            .card {{
-                background: #fff;
-                border-radius: 8px;
-                box-shadow: 0 2px 10px rgba(0,0,0,0.1);
-                padding: 30px;
-            }}
-            h1 {{ color: #333; margin-top: 0; }}
-            .event-name {{ color: #4CAF50; font-weight: bold; margin-bottom: 10px; }}
-            .prompt {{ color: #666; margin-bottom: 20px; }}
-            .request-id {{ font-size: 12px; color: #999; margin-bottom: 20px; }}
-            .data-type {{ font-size: 12px; color: #666; margin-bottom: 10px; }}
-            input[type="number"], input[type="text"] {{
-                width: 100%;
-                padding: 12px;
-                font-size: 16px;
-                border: 1px solid #ddd;
-                border-radius: 4px;
-                box-sizing: border-box;
-                margin-bottom: 15px;
-            }}
-            button {{
-                width: 100%;
-                padding: 12px;
-                font-size: 16px;
-                background: #4CAF50;
-                color: white;
-                border: none;
-                border-radius: 4px;
-                cursor: pointer;
-            }}
-            button:hover {{ background: #45a049; }}
-        </style>
-    </head>
-    <body>
-        <div class="card">
-            <h1>Event Input Required</h1>
-            <p class="event-name">Event: {event_name}</p>
-            <p class="prompt">{prompt}</p>
-            <p class="data-type">Expected type: <code>{data_type_name}</code></p>
-            <p class="request-id">Request ID: {request_id}</p>
-            <form action="/submit" method="post">
-                <input type="hidden" name="request_id" value="{request_id}">
-                <input type="hidden" name="data_type" value="{data_type_name}">
-                <input type="hidden" name="response_path" value="{response_path}">
-                {input_element}
-                <button type="submit">Submit</button>
-            </form>
-        </div>
-    </body>
-    </html>
-    """
+    return get_input_form_page(
+        event_name=event_name,
+        prompt=prompt,
+        data_type_name=data_type_name,
+        request_id=request_id,
+        response_path=response_path,
+        input_element=input_element,
+    )
 
 
-@app.post("/submit")
+@app.post("/submit", response_class=HTMLResponse)
 async def submit_input(
     request_id: str = Form(...),
     value: str = Form(...),
     data_type: str = Form("str"),
     response_path: str = Form(""),
-) -> dict:
+) -> str:
     """Submit human input for a pending event.
 
     Args:
@@ -272,13 +169,13 @@ async def submit_input(
     try:
         await storage.put_stream(response_data, to_path=response_path)
         logger.info(f"Wrote response to {response_path}")
-        return {
-            "status": "submitted",
-            "request_id": request_id,
-            "value": converted_value,
-            "data_type": data_type,
-            "message": "Input received successfully. The workflow will continue.",
-        }
+        message = "Input received successfully. The workflow will continue."
+        return get_submission_success_page(
+            request_id=request_id,
+            value=str(converted_value),
+            data_type=data_type,
+            message=message,
+        )
     except Exception as e:
         logger.error(f"Failed to write response: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to save response: {e}")
@@ -287,12 +184,45 @@ async def submit_input(
 @app.post("/submit/json")
 async def submit_input_json(submission: HITLSubmissionTyped) -> dict:
     """Submit human input via JSON."""
-    return await submit_input(
-        request_id=submission.request_id,
-        value=str(submission.value),
-        data_type=submission.data_type,
-        response_path=submission.response_path,
+    try:
+        converted_value = _convert_value(str(submission.value), submission.data_type)
+    except (ValueError, TypeError) as e:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Failed to convert value '{submission.value}' to type '{submission.data_type}': {e}",
+        )
+
+    logger.info(
+        f"Received event submission: request_id={submission.request_id}, "
+        f"value={converted_value} (type={submission.data_type})"
     )
+
+    response_path = submission.response_path
+    if not response_path:
+        response_path = _get_response_path(submission.request_id)
+
+    response_data = json.dumps(
+        {
+            "value": converted_value,
+            "status": "completed",
+            "request_id": submission.request_id,
+            "data_type": submission.data_type,
+        }
+    ).encode()
+
+    try:
+        await storage.put_stream(response_data, to_path=response_path)
+        logger.info(f"Wrote response to {response_path}")
+        return {
+            "status": "submitted",
+            "request_id": submission.request_id,
+            "value": converted_value,
+            "data_type": submission.data_type,
+            "message": "Input received successfully. The workflow will continue.",
+        }
+    except Exception as e:
+        logger.error(f"Failed to write response: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to save response: {e}")
 
 
 @app.get("/status/{request_id}")

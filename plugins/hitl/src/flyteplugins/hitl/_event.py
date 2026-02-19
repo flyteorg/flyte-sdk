@@ -25,7 +25,7 @@ from flyte.syncify import syncify
 
 from ._app import app
 from ._helpers import _get_request_path, _get_response_path, _get_type_name
-from flyte._image import DIST_FOLDER, PythonWheels
+from ._html_templates import get_event_report_html
 
 # Type variable for generic Event
 T = TypeVar("T")
@@ -45,7 +45,7 @@ event_image = (
     .with_apt_packages("git")
     .with_pip_packages("fastapi", "uvicorn", "python-multipart", "aiofiles")
     .with_pip_packages("flyte>=2.0.0")
-    .with_pip_packages("git+https://github.com/flyteorg/flyte-sdk.git@e2dd28b9#subdirectory=plugins/hitl")
+    .with_pip_packages("git+https://github.com/flyteorg/flyte-sdk.git@b97306bc#subdirectory=plugins/hitl")
 )
 
 event_app_env = FastAPIAppEnvironment(
@@ -269,122 +269,22 @@ class Event(Generic[T]):
         Raises:
             TimeoutError: If no response is received within the timeout
         """
-        # Generate Flyte report with URLs and instructions
-        import html as html_module
-
         curl_body = json.dumps(
             {
                 "request_id": self.request_id,
                 "response_path": self._response_path,
-                "value": "<your_value>",
+                "value": "{{your_value}}",
                 "data_type": self._type_name,
             },
             indent=2,
         )
 
-        report_html = f"""
-        <style>
-            .hitl-container {{
-                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-                max-width: 800px;
-                margin: 20px auto;
-                padding: 20px;
-                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-                border-radius: 12px;
-                color: white;
-            }}
-            .hitl-header {{
-                text-align: center;
-                margin-bottom: 20px;
-            }}
-            .hitl-header h1 {{
-                margin: 0;
-                font-size: 1.8em;
-            }}
-            .hitl-section {{
-                background: rgba(255, 255, 255, 0.95);
-                border-radius: 8px;
-                padding: 20px;
-                margin-bottom: 15px;
-                color: #333;
-            }}
-            .hitl-section h2 {{
-                margin-top: 0;
-                color: #667eea;
-                font-size: 1.2em;
-                border-bottom: 2px solid #667eea;
-                padding-bottom: 8px;
-            }}
-            .hitl-url {{
-                background: #f5f5f5;
-                padding: 12px;
-                border-radius: 6px;
-                font-family: 'Monaco', 'Menlo', monospace;
-                font-size: 0.9em;
-                word-break: break-all;
-                border-left: 4px solid #667eea;
-            }}
-            .hitl-url a {{
-                color: #667eea;
-                text-decoration: none;
-            }}
-            .hitl-url a:hover {{
-                text-decoration: underline;
-            }}
-            .hitl-code {{
-                background: #1e1e1e;
-                color: #d4d4d4;
-                padding: 15px;
-                border-radius: 6px;
-                font-family: 'Monaco', 'Menlo', monospace;
-                font-size: 0.85em;
-                overflow-x: auto;
-                white-space: pre-wrap;
-                word-break: break-all;
-            }}
-            .hitl-info {{
-                display: grid;
-                grid-template-columns: 120px 1fr;
-                gap: 8px;
-                margin-bottom: 15px;
-            }}
-            .hitl-info-label {{
-                font-weight: bold;
-                color: #667eea;
-            }}
-            .hitl-info-value {{
-                font-family: 'Monaco', 'Menlo', monospace;
-                font-size: 0.9em;
-            }}
-        </style>
-        <div class="hitl-container">
-            <div class="hitl-header">
-                <h1>Event Input Required</h1>
-            </div>
-
-            <div class="hitl-section">
-                <h2>Option 1: Web Form</h2>
-                <p>
-                Submit your input using <a href="{html_module.escape(self.form_url)}" target="_blank">this form</a>:
-                </p>
-            </div>
-
-            <div class="hitl-section">
-                <h2>Option 2: Programmatic API (curl)</h2>
-                <p>Use the following curl command to submit input programmatically:</p>
-                <div class="hitl-code">curl -X POST "{html_module.escape(self.api_url)}" \\
-  -H "Content-Type: application/json" \\
-  -H "Authorization: Bearer {{FLYTE_API_KEY}}" \\
-  -d '{html_module.escape(curl_body)}'</div>
-                <p style="margin-top: 15px; font-size: 0.9em; color: #666;">
-                    <strong>Note:</strong> Replace <code>&lt;your_value&gt;</code> with the actual value you want to
-                    submit. The value should match the expected type: <code>{html_module.escape(self._type_name)}</code>
-
-                    <p>Replace <code>{{FLYTE_API_KEY}}</code> with your Flyte API key.</p>
-                </p>
-            </div>
-        </div>
-        """
+        report_html = get_event_report_html(
+            form_url=self.form_url,
+            api_url=self.api_url,
+            curl_body=curl_body,
+            type_name=self._type_name,
+        )
 
         await show_form.override(
             short_name=self.name,
@@ -395,7 +295,7 @@ class Event(Generic[T]):
                     request_path=self._request_path,
                     name=self.name,
                 )
-            ]
+            ],
         )(report_html)
         return await wait_for_input_event(
             name=self.name,
