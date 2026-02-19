@@ -1,5 +1,7 @@
+import os
 import pathlib
 import subprocess
+import tarfile
 import tempfile
 from types import ModuleType
 from unittest.mock import Mock
@@ -8,7 +10,8 @@ import pytest
 
 import flyte
 from flyte._code_bundle._ignore import GitIgnore, IgnoreGroup, StandardIgnore
-from flyte._code_bundle._utils import list_all_files, list_imported_modules_as_files, ls_relative_files
+from flyte._code_bundle._packaging import create_bundle
+from flyte._code_bundle._utils import list_all_files, list_imported_modules_as_files, ls_files, ls_relative_files
 from flyte._code_bundle.bundle import build_pkl_bundle
 from flyte._internal.runtime.entrypoints import load_pkl_task
 from flyte.extras import ContainerTask
@@ -355,3 +358,184 @@ def test_list_imported_modules_as_files_accepts_valid_string_file():
         # Should include the file since it has a valid string __file__ in source_path
         assert len(result) == 1
         assert str(test_file) in result
+
+
+# =============================================================================
+# Tests for cross-platform path handling (Windows compatibility)
+# =============================================================================
+
+
+def test_ls_relative_files_produces_consistent_hash_with_posix_paths():
+    """Test that ls_relative_files produces consistent hashes using POSIX-style paths.
+
+    This ensures that the same files produce the same hash on both Windows and Unix,
+    regardless of the native path separator.
+    """
+    with tempfile.TemporaryDirectory() as tmpdir:
+        test_dir = pathlib.Path(tmpdir)
+
+        # Create nested directory structure
+        subdir = test_dir / "subdir"
+        subdir.mkdir()
+        (subdir / "module.py").write_text("def foo(): pass")
+        (test_dir / "main.py").write_text("import subdir.module")
+
+        # Get files and digest
+        files, digest = ls_relative_files(["main.py", "subdir/module.py"], test_dir)
+
+        # Verify we got the expected files
+        assert len(files) == 2
+
+        # The digest should be consistent - compute expected hash manually using POSIX paths
+        import hashlib
+
+        hasher = hashlib.md5()
+        for f in sorted(files):
+            # Read file content
+            with open(f, "rb") as fp:
+                chunk = fp.read(65536)
+                while chunk:
+                    hasher.update(chunk)
+                    chunk = fp.read(65536)
+            # Hash the POSIX-style relative path (what the function should use)
+            rel_path = pathlib.Path(f).relative_to(test_dir).as_posix()
+            path_list = rel_path.split("/")
+            hasher.update("".join(path_list).encode("utf-8"))
+
+        expected_digest = hasher.hexdigest()
+        assert digest == expected_digest, (
+            f"Digest mismatch: expected {expected_digest}, got {digest}. "
+            "Hash should use POSIX-style paths for cross-platform consistency."
+        )
+
+
+def test_ls_files_produces_consistent_hash_with_posix_paths():
+    """Test that ls_files produces consistent hashes using POSIX-style paths.
+
+    This ensures that the same files produce the same hash on both Windows and Unix.
+    """
+    with tempfile.TemporaryDirectory() as tmpdir:
+        test_dir = pathlib.Path(tmpdir)
+
+        # Create nested directory structure
+        subdir = test_dir / "subdir"
+        subdir.mkdir()
+        (subdir / "module.py").write_text("def foo(): pass")
+        (test_dir / "main.py").write_text("import subdir.module")
+
+        # Get files and digest using "all" copy style
+        files, digest = ls_files(test_dir, "all", deref_symlinks=False)
+
+        # Verify we got the expected files
+        assert len(files) == 2
+
+        # The digest should be consistent - compute expected hash manually using POSIX paths
+        import hashlib
+
+        hasher = hashlib.md5()
+        for f in sorted(files):
+            # Read file content
+            with open(f, "rb") as fp:
+                chunk = fp.read(65536)
+                while chunk:
+                    hasher.update(chunk)
+                    chunk = fp.read(65536)
+            # Hash the POSIX-style relative path (what the function should use)
+            rel_path = pathlib.Path(f).relative_to(test_dir).as_posix()
+            path_list = rel_path.split("/")
+            hasher.update("".join(path_list).encode("utf-8"))
+
+        expected_digest = hasher.hexdigest()
+        assert digest == expected_digest, (
+            f"Digest mismatch: expected {expected_digest}, got {digest}. "
+            "Hash should use POSIX-style paths for cross-platform consistency."
+        )
+
+
+def test_create_bundle_uses_posix_paths_in_tarball():
+    """Test that create_bundle creates tarball entries with POSIX-style paths (forward slashes).
+
+    This is critical for Windows compatibility - tarball entries must use forward slashes
+    so they can be correctly extracted on Linux servers.
+    """
+    with tempfile.TemporaryDirectory() as tmpdir:
+        test_dir = pathlib.Path(tmpdir)
+        output_dir = pathlib.Path(tmpdir) / "output"
+        output_dir.mkdir()
+
+        # Create nested directory structure
+        subdir = test_dir / "subdir"
+        subdir.mkdir()
+        nested = subdir / "nested"
+        nested.mkdir()
+        (nested / "deep_module.py").write_text("def deep(): pass")
+        (subdir / "module.py").write_text("def foo(): pass")
+        (test_dir / "main.py").write_text("import subdir.module")
+
+        # Get files to bundle
+        files = [
+            str(test_dir / "main.py"),
+            str(subdir / "module.py"),
+            str(nested / "deep_module.py"),
+        ]
+
+        # Create the bundle
+        archive_path, _, _ = create_bundle(test_dir, output_dir, files, "test_digest")
+
+        # Extract and verify the tarball entries use forward slashes
+        with tarfile.open(archive_path, "r:gz") as tar:
+            member_names = tar.getnames()
+
+        # All paths in the tarball should use forward slashes (POSIX style)
+        for name in member_names:
+            assert "\\" not in name, (
+                f"Tarball entry '{name}' contains backslash. "
+                "All tarball entries should use forward slashes for cross-platform compatibility."
+            )
+
+        # Verify expected entries are present with correct POSIX paths
+        assert "main.py" in member_names
+        assert "subdir/module.py" in member_names
+        assert "subdir/nested/deep_module.py" in member_names
+
+
+def test_create_bundle_with_windows_style_input_paths():
+    """Test that create_bundle handles input paths correctly even if they use backslashes.
+
+    On Windows, the file list may contain paths with backslashes. The function should
+    still produce tarball entries with forward slashes.
+    """
+    with tempfile.TemporaryDirectory() as tmpdir:
+        test_dir = pathlib.Path(tmpdir)
+        output_dir = pathlib.Path(tmpdir) / "output"
+        output_dir.mkdir()
+
+        # Create nested directory structure
+        subdir = test_dir / "subdir"
+        subdir.mkdir()
+        (subdir / "module.py").write_text("def foo(): pass")
+        (test_dir / "main.py").write_text("import subdir.module")
+
+        # Simulate Windows-style paths in the file list (using os.path.join which uses native separator)
+        files = [
+            os.path.join(str(test_dir), "main.py"),
+            os.path.join(str(test_dir), "subdir", "module.py"),
+        ]
+
+        # Create the bundle
+        archive_path, _, _ = create_bundle(test_dir, output_dir, files, "test_digest")
+
+        # Extract and verify the tarball entries use forward slashes
+        with tarfile.open(archive_path, "r:gz") as tar:
+            member_names = tar.getnames()
+
+        # All paths in the tarball should use forward slashes
+        for name in member_names:
+            assert "\\" not in name, (
+                f"Tarball entry '{name}' contains backslash. "
+                "All tarball entries should use forward slashes."
+            )
+
+        # Verify expected entries
+        assert "main.py" in member_names
+        assert "subdir/module.py" in member_names
