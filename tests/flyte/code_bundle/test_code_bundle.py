@@ -532,8 +532,7 @@ def test_create_bundle_with_windows_style_input_paths():
         # All paths in the tarball should use forward slashes
         for name in member_names:
             assert "\\" not in name, (
-                f"Tarball entry '{name}' contains backslash. "
-                "All tarball entries should use forward slashes."
+                f"Tarball entry '{name}' contains backslash. All tarball entries should use forward slashes."
             )
 
         # Verify expected entries
