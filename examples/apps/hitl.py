@@ -41,7 +41,6 @@ import logging
 import flyteplugins.hitl as hitl
 
 import flyte
-from flyte._image import DIST_FOLDER, PythonWheels
 
 logging.basicConfig(
     level=logging.INFO,

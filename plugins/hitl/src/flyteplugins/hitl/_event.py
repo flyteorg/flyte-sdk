@@ -41,8 +41,7 @@ logger = logging.getLogger(__name__)
 # ============================================================================
 
 event_image = (
-    flyte.Image.from_debian_base(python_version=(3, 12))
-    .with_apt_packages("git")
+    flyte.Image.from_debian_base()
     .with_pip_packages("fastapi", "uvicorn", "python-multipart", "aiofiles")
     .with_pip_packages("flyte>=2.0.0", "flyteplugins-hitl>=2.0.0")
 )
@@ -55,7 +54,6 @@ event_app_env = FastAPIAppEnvironment(
     image=event_image,
     resources=flyte.Resources(cpu=1, memory="512Mi"),
     requires_auth=True,
-    env_vars={"LOG_LEVEL": "10"},
     scaling=flyte.app.Scaling(replicas=(0, 1), scaledown_after=600),
 )
 
