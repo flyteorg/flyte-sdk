@@ -9,7 +9,6 @@ This module provides the Event class that encapsulates the HITL functionality:
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 import uuid
@@ -18,6 +17,7 @@ from typing import Any, ClassVar, Generic, Literal, Type, TypeVar
 
 import flyte
 import flyte.app
+import flyte.durable
 import flyte.report
 import flyte.storage as storage
 from flyte.app.extras import FastAPIAppEnvironment
@@ -372,7 +372,7 @@ async def wait_for_input_event(
                     return value
 
             logger.info(f"Event '{name}' waiting for human input... ({elapsed}/{timeout_seconds}s elapsed)")
-        await asyncio.sleep(poll_interval_seconds)
+        await flyte.durable.sleep.aio(poll_interval_seconds)
         elapsed += poll_interval_seconds
 
     raise TimeoutError(
