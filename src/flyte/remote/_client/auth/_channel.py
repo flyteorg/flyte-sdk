@@ -1,3 +1,4 @@
+import json
 import ssl
 import typing
 
@@ -127,10 +128,32 @@ async def create_channel(
 
     assert endpoint, "Endpoint must be specified by this point"
 
+    # Configure gRPC-native retry via service config for transient failures
+    if rpc_retries is not None and rpc_retries > 0:
+        service_config = {
+            "methodConfig": [{
+                "name": [{}],
+                "retryPolicy": {
+                    "maxAttempts": rpc_retries + 1,
+                    "initialBackoff": "0.5s",
+                    "maxBackoff": "10s",
+                    "backoffMultiplier": 2,
+                    "retryableStatusCodes": ["UNAVAILABLE", "RESOURCE_EXHAUSTED", "INTERNAL"],
+                },
+            }]
+        }
+        retry_option = ("grpc.service_config", json.dumps(service_config))
+        if grpc_options:
+            grpc_options = list(grpc_options) + [retry_option]
+        else:
+            grpc_options = [retry_option]
+
     # Create an unauthenticated channel first to use to get the server metadata
     if insecure:
         insecure_kwargs = {}
-        if kw_opts := kwargs.get("options"):
+        if grpc_options:
+            insecure_kwargs["options"] = grpc_options
+        elif kw_opts := kwargs.get("options"):
             insecure_kwargs["options"] = kw_opts
         if compression:
             insecure_kwargs["compression"] = compression
@@ -162,28 +185,13 @@ async def create_channel(
         DefaultMetadataUnaryUnaryInterceptor,
     )
 
-    interceptors: typing.List[grpc.aio.ClientInterceptor] = []
-
-    # Add retry interceptors if configured (outermost so retries re-run the full chain)
-    if rpc_retries is not None and rpc_retries > 0:
-        from ._grpc_utils.retry_interceptor import RetryUnaryStreamInterceptor, RetryUnaryUnaryInterceptor
-
-        interceptors.extend(
-            [
-                RetryUnaryUnaryInterceptor(max_retries=rpc_retries),
-                RetryUnaryStreamInterceptor(max_retries=rpc_retries),
-            ]
-        )
-
     # Add all types of default metadata interceptors (includes x-request-id)
-    interceptors.extend(
-        [
-            DefaultMetadataUnaryUnaryInterceptor(),
-            DefaultMetadataUnaryStreamInterceptor(),
-            DefaultMetadataStreamUnaryInterceptor(),
-            DefaultMetadataStreamStreamInterceptor(),
-        ]
-    )
+    interceptors: typing.List[grpc.aio.ClientInterceptor] = [
+        DefaultMetadataUnaryUnaryInterceptor(),
+        DefaultMetadataUnaryStreamInterceptor(),
+        DefaultMetadataStreamUnaryInterceptor(),
+        DefaultMetadataStreamStreamInterceptor(),
+    ]
 
     # Create an HTTP session if not provided so we share the same http client across the stack
     if not http_session:
@@ -216,7 +224,9 @@ async def create_channel(
 
     if insecure:
         insecure_kwargs = {}
-        if kw_opts := kwargs.get("options"):
+        if grpc_options:
+            insecure_kwargs["options"] = grpc_options
+        elif kw_opts := kwargs.get("options"):
             insecure_kwargs["options"] = kw_opts
         if compression:
             insecure_kwargs["compression"] = compression
