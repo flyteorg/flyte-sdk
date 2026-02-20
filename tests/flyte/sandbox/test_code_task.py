@@ -1,19 +1,19 @@
-"""Tests for flyte.sandboxed.code_to_task(), flyte.sandboxed.run_local_sandbox(),
-and TaskEnvironment.sandboxed_task().
+"""Tests for flyte.sandbox.orchestrate(), flyte.sandbox.orchestrate_local(),
+and TaskEnvironment.sandbox.orchestrate().
 """
 
 from __future__ import annotations
 
 import pytest
 
-from flyte.sandboxed import code_to_task
-from flyte.sandboxed._code_task import (
+from flyte.sandbox import orchestrate
+from flyte.sandbox._code_task import (
     CodeTaskTemplate,
     _classify_refs,
 )
-from flyte.sandboxed._config import SandboxedConfig
-from flyte.sandboxed._source import prepare_code_source
-from flyte.sandboxed._task import SandboxedTaskTemplate
+from flyte.sandbox._config import SandboxedConfig
+from flyte.sandbox._source import prepare_code_source
+from flyte.sandbox._task import SandboxedTaskTemplate
 
 # ---------------------------------------------------------------------------
 # prepare_code_source
@@ -84,7 +84,7 @@ class TestClassifyRefs:
 
     def test_task_template_classified(self):
         """TaskTemplate instances go into task_refs."""
-        from flyte.sandboxed import task
+        from flyte.sandbox import task
 
         @task
         def add(x: int, y: int) -> int:
@@ -106,7 +106,7 @@ class TestClassifyRefs:
         assert refs["task_refs"] == {}
 
     def test_mixed_refs(self):
-        from flyte.sandboxed import task
+        from flyte.sandbox import task
 
         @task
         def add(x: int, y: int) -> int:
@@ -121,92 +121,92 @@ class TestClassifyRefs:
 
 
 # ---------------------------------------------------------------------------
-# code_to_task() factory
+# orchestrate() factory
 # ---------------------------------------------------------------------------
 
 
-class TestCodeFactory:
+class TestOrchestrateFactory:
     def test_creates_code_task_template(self):
-        t = code_to_task("x + y", inputs={"x": int, "y": int}, output=int)
+        t = orchestrate("x + y", inputs={"x": int, "y": int}, output=int)
         assert isinstance(t, CodeTaskTemplate)
         assert isinstance(t, SandboxedTaskTemplate)
 
     def test_default_name(self):
-        t = code_to_task("x", inputs={"x": int}, output=int)
+        t = orchestrate("x", inputs={"x": int}, output=int)
         assert t.name == "sandboxed-code"
 
     def test_custom_name(self):
-        t = code_to_task("x", inputs={"x": int}, output=int, name="my-code")
+        t = orchestrate("x", inputs={"x": int}, output=int, name="my-code")
         assert t.name == "my-code"
 
     def test_interface_from_types(self):
-        t = code_to_task("x + y", inputs={"x": int, "y": int}, output=int)
+        t = orchestrate("x + y", inputs={"x": int, "y": int}, output=int)
         assert "x" in t.interface.inputs
         assert "y" in t.interface.inputs
         assert "o0" in t.interface.outputs
 
     def test_interface_no_output(self):
-        t = code_to_task("x + y", inputs={"x": int, "y": int})
+        t = orchestrate("x + y", inputs={"x": int, "y": int})
         assert t.interface.outputs == {}
 
     def test_source_code_populated(self):
-        t = code_to_task("x + y", inputs={"x": int, "y": int}, output=int)
+        t = orchestrate("x + y", inputs={"x": int, "y": int}, output=int)
         assert t._source_code != ""
         assert "__result__" in t._source_code
 
     def test_input_names_populated(self):
-        t = code_to_task("x + y", inputs={"x": int, "y": int}, output=int)
+        t = orchestrate("x + y", inputs={"x": int, "y": int}, output=int)
         assert t._input_names == ["x", "y"]
 
     def test_no_external_refs_pure(self):
-        t = code_to_task("x + y", inputs={"x": int, "y": int}, output=int)
+        t = orchestrate("x + y", inputs={"x": int, "y": int}, output=int)
         assert not t._has_external_refs
 
-    def test_external_refs_with_functions(self):
-        from flyte.sandboxed import task
+    def test_external_refs_with_tasks(self):
+        from flyte.sandbox import task
 
         @task
         def add(x: int, y: int) -> int:
             return x + y
 
-        t = code_to_task(
+        t = orchestrate(
             "add(x, y)",
             inputs={"x": int, "y": int},
             output=int,
-            functions={"add": add},
+            tasks=[add],
         )
         assert t._has_external_refs
         assert "add" in t._external_refs["task_refs"]
 
     def test_task_type(self):
-        t = code_to_task("x", inputs={"x": int}, output=int)
+        t = orchestrate("x", inputs={"x": int}, output=int)
         assert t.task_type == "sandboxed-python"
 
     def test_default_plugin_config(self):
-        t = code_to_task("x", inputs={"x": int}, output=int)
+        t = orchestrate("x", inputs={"x": int}, output=int)
         assert isinstance(t.plugin_config, SandboxedConfig)
         assert t.plugin_config.timeout_ms == 30_000
 
     def test_custom_timeout(self):
-        t = code_to_task("x", inputs={"x": int}, output=int, timeout_ms=5000)
+        t = orchestrate("x", inputs={"x": int}, output=int, timeout_ms=5000)
         assert t.plugin_config.timeout_ms == 5000
 
     def test_retries(self):
-        t = code_to_task("x", inputs={"x": int}, output=int, retries=3)
+        t = orchestrate("x", inputs={"x": int}, output=int, retries=3)
         assert t.retries.count == 3
 
     def test_forward_not_supported(self):
-        t = code_to_task("x", inputs={"x": int}, output=int)
+        t = orchestrate("x", inputs={"x": int}, output=int)
         with pytest.raises(NotImplementedError, match="does not support forward"):
             t.forward(x=1)
 
     def test_build_inputs(self):
-        t = code_to_task("x + y", inputs={"x": int, "y": int}, output=int)
+        t = orchestrate("x + y", inputs={"x": int, "y": int}, output=int)
         inputs = t._build_inputs(1, 2)
         assert inputs == {"x": 1, "y": 2}
 
     def test_build_inputs_kwargs(self):
-        t = code_to_task("x + y", inputs={"x": int, "y": int}, output=int)
+        t = orchestrate("x + y", inputs={"x": int, "y": int}, output=int)
         inputs = t._build_inputs(x=1, y=2)
         assert inputs == {"x": 1, "y": 2}
 
@@ -215,18 +215,18 @@ class TestCodeFactory:
             pass
 
         with pytest.raises(TypeError, match="unsupported type"):
-            code_to_task("x", inputs={"x": Custom}, output=int)
+            orchestrate("x", inputs={"x": Custom}, output=int)
 
     def test_rejects_unsupported_output_type(self):
         class Custom:
             pass
 
         with pytest.raises(TypeError, match="unsupported type"):
-            code_to_task("x", inputs={"x": int}, output=Custom)
+            orchestrate("x", inputs={"x": int}, output=Custom)
 
 
 # ---------------------------------------------------------------------------
-# run_local_sandbox() — requires pydantic-monty
+# orchestrate_local() — requires pydantic-monty
 # ---------------------------------------------------------------------------
 
 try:
@@ -241,23 +241,23 @@ except ImportError:
 class TestRunPurePython:
     @pytest.mark.asyncio
     async def test_simple_expression(self):
-        from flyte.sandboxed import run_local_sandbox
+        from flyte.sandbox import orchestrate_local
 
-        result = await run_local_sandbox("x + y", inputs={"x": 1, "y": 2})
+        result = await orchestrate_local("x + y", inputs={"x": 1, "y": 2})
         assert result == 3
 
     @pytest.mark.asyncio
     async def test_assignment_return(self):
-        from flyte.sandboxed import run_local_sandbox
+        from flyte.sandbox import orchestrate_local
 
-        result = await run_local_sandbox("result = x * y", inputs={"x": 3, "y": 4})
+        result = await orchestrate_local("result = x * y", inputs={"x": 3, "y": 4})
         assert result == 12
 
     @pytest.mark.asyncio
     async def test_multiline_code(self):
-        from flyte.sandboxed import run_local_sandbox
+        from flyte.sandbox import orchestrate_local
 
-        result = await run_local_sandbox(
+        result = await orchestrate_local(
             """
             a = x + 1
             b = y + 2
@@ -269,9 +269,9 @@ class TestRunPurePython:
 
     @pytest.mark.asyncio
     async def test_multiline_assignment(self):
-        from flyte.sandboxed import run_local_sandbox
+        from flyte.sandbox import orchestrate_local
 
-        result = await run_local_sandbox(
+        result = await orchestrate_local(
             """
             partial = x + y
             result = partial * 2
@@ -282,32 +282,32 @@ class TestRunPurePython:
 
     @pytest.mark.asyncio
     async def test_string_result(self):
-        from flyte.sandboxed import run_local_sandbox
+        from flyte.sandbox import orchestrate_local
 
-        result = await run_local_sandbox("name + ' world'", inputs={"name": "hello"})
+        result = await orchestrate_local("name + ' world'", inputs={"name": "hello"})
         assert result == "hello world"
 
     @pytest.mark.asyncio
     async def test_list_result(self):
-        from flyte.sandboxed import run_local_sandbox
+        from flyte.sandbox import orchestrate_local
 
-        result = await run_local_sandbox("[x, y, x + y]", inputs={"x": 1, "y": 2})
+        result = await orchestrate_local("[x, y, x + y]", inputs={"x": 1, "y": 2})
         assert result == [1, 2, 3]
 
 
 # ---------------------------------------------------------------------------
-# TaskEnvironment.sandboxed_task()
+# TaskEnvironment.sandbox.orchestrate()
 # ---------------------------------------------------------------------------
 
 
-class TestEnvironmentSandboxedTask:
+class TestEnvironmentSandboxOrchestrate:
     def test_bare_decorator(self):
-        """@env.sandboxed_task without arguments."""
+        """@env.sandbox.orchestrate without arguments."""
         import flyte
 
         env = flyte.TaskEnvironment(name="test-env")
 
-        @env.sandboxed_task
+        @env.sandbox.orchestrate
         def add(x: int, y: int) -> int:
             return x + y
 
@@ -316,12 +316,12 @@ class TestEnvironmentSandboxedTask:
         assert "test-env.add" in env.tasks
 
     def test_decorator_with_args(self):
-        """@env.sandboxed_task(timeout_ms=...) with arguments."""
+        """@env.sandbox.orchestrate(timeout_ms=...) with arguments."""
         import flyte
 
         env = flyte.TaskEnvironment(name="test-env2")
 
-        @env.sandboxed_task(timeout_ms=5_000, retries=2)
+        @env.sandbox.orchestrate(timeout_ms=5_000, retries=2)
         def multiply(x: int, y: int) -> int:
             return x * y
 
@@ -336,7 +336,7 @@ class TestEnvironmentSandboxedTask:
 
         env = flyte.TaskEnvironment(name="img-test", image="my-custom-image:latest")
 
-        @env.sandboxed_task
+        @env.sandbox.orchestrate
         def noop(x: int) -> int:
             return x
 
@@ -348,7 +348,7 @@ class TestEnvironmentSandboxedTask:
 
         env = flyte.TaskEnvironment(name="parent-test")
 
-        @env.sandboxed_task
+        @env.sandbox.orchestrate
         def sub(x: int) -> int:
             return x
 
@@ -363,7 +363,7 @@ class TestEnvironmentSandboxedTask:
 
         with pytest.raises(TypeError, match="must be synchronous"):
 
-            @env.sandboxed_task
+            @env.sandbox.orchestrate
             async def bad(x: int) -> int:
                 return x
 
@@ -373,7 +373,7 @@ class TestEnvironmentSandboxedTask:
 
         env = flyte.TaskEnvironment(name="fwd-test")
 
-        @env.sandboxed_task
+        @env.sandbox.orchestrate
         def double(x: int) -> int:
             return x * 2
 
@@ -385,7 +385,7 @@ class TestEnvironmentSandboxedTask:
 
         env = flyte.TaskEnvironment(name="name-test")
 
-        @env.sandboxed_task(name="my-custom-name")
+        @env.sandbox.orchestrate(name="my-custom-name")
         def thing(x: int) -> int:
             return x
 

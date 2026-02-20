@@ -2,7 +2,7 @@
 Reusable Tasks from Code Strings
 =================================
 
-``flyte.sandboxed.code_to_task()`` creates a reusable ``CodeTaskTemplate``
+``flyte.sandbox.orchestrate()`` creates a reusable ``CodeTaskTemplate``
 from a Python code string. The returned template works with ``flyte.run()``
 just like a decorated task — but the source is a string, not a function.
 
@@ -16,11 +16,11 @@ code becomes the return value. No ``return`` statement needed.
 
 Install the optional dependency first::
 
-    pip install 'flyte[sandboxed]'
+    pip install 'flyte[sandbox]'
 """
 
 import flyte
-import flyte.sandboxed
+import flyte.sandbox
 
 env = flyte.TaskEnvironment(name="code-string-demo")
 
@@ -41,7 +41,7 @@ def multiply(x: int, y: int) -> int:
 # --- Example 1: Simple expression -------------------------------------------
 # A single expression — its value is the return value.
 
-double = flyte.sandboxed.code_to_task(
+double = flyte.sandbox.orchestrate(
     "x * 2",
     inputs={"x": int},
     output=int,
@@ -53,7 +53,7 @@ double = flyte.sandboxed.code_to_task(
 # --- Example 2: Multi-line with assignment -----------------------------------
 # When the last statement is an assignment, the assigned variable is returned.
 
-scale_and_offset = flyte.sandboxed.code_to_task(
+scale_and_offset = flyte.sandbox.orchestrate(
     """
     scaled = x * factor
     result = scaled + offset
@@ -66,16 +66,16 @@ scale_and_offset = flyte.sandboxed.code_to_task(
 
 
 # --- Example 3: Calling external tasks --------------------------------------
-# Pass worker tasks via ``functions={}`` so the sandbox can call them.
+# Pass worker tasks via ``tasks=[]`` so the sandbox can call them.
 
-compute_pipeline = flyte.sandboxed.code_to_task(
+compute_pipeline = flyte.sandbox.orchestrate(
     """
     partial = add(x, y)
     result = multiply(partial, scale)
     """,
     inputs={"x": int, "y": int, "scale": int},
     output=int,
-    functions={"add": add, "multiply": multiply},
+    tasks=[add, multiply],
     name="compute-pipeline",
 )
 # flyte.run(compute_pipeline, x=2, y=3, scale=4)  → 20
@@ -84,7 +84,7 @@ compute_pipeline = flyte.sandboxed.code_to_task(
 # --- Example 4: String processing -------------------------------------------
 # Sandboxed code can work with strings and collections too.
 
-format_greeting = flyte.sandboxed.code_to_task(
+format_greeting = flyte.sandbox.orchestrate(
     """
     parts = []
     for name in names:
@@ -101,7 +101,7 @@ format_greeting = flyte.sandboxed.code_to_task(
 
 # --- Example 5: Conditional logic -------------------------------------------
 
-classify = flyte.sandboxed.code_to_task(
+classify = flyte.sandbox.orchestrate(
     """
     if score >= 90:
         label = "A"
@@ -121,7 +121,7 @@ classify = flyte.sandboxed.code_to_task(
 
 # --- Example 6: Building a dict result --------------------------------------
 
-summarize = flyte.sandboxed.code_to_task(
+summarize = flyte.sandbox.orchestrate(
     """
     total = 0
     count = 0
@@ -140,7 +140,7 @@ summarize = flyte.sandboxed.code_to_task(
 # --- Example 7: No output (side-effect-free validation) ----------------------
 # Omit ``output=`` to get NoneType — useful for pure validation logic.
 
-validate = flyte.sandboxed.code_to_task(
+validate = flyte.sandbox.orchestrate(
     """
     for item in items:
         if item < 0:
@@ -153,7 +153,7 @@ validate = flyte.sandboxed.code_to_task(
 
 
 # --- Attach to an environment for ``flyte run`` -----------------------------
-# ``code_to_task()`` creates standalone templates. ``flyte run`` requires
+# ``orchestrate()`` creates standalone templates. ``flyte run`` requires
 # every task to belong to a TaskEnvironment.
 
 sandbox_env = flyte.TaskEnvironment.from_task(

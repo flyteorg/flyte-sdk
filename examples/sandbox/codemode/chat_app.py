@@ -25,11 +25,11 @@ Architecture::
 
 Install dependencies::
 
-    pip install 'flyte[sandboxed]' anthropic
+    pip install 'flyte[sandbox]' anthropic
 
 Run::
 
-    python examples/sandboxed/codemode/chat_app.py
+    python examples/sandbox/codemode/chat_app.py
 """
 
 import pathlib

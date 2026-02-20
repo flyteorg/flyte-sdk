@@ -994,7 +994,7 @@ examples-test = [
     { name = "scikit-learn", version = "1.8.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "uvicorn" },
 ]
-sandboxed = [
+sandbox = [
     { name = "pydantic-monty" },
 ]
 tui = [
@@ -1056,7 +1056,7 @@ requires-dist = [
     { name = "protobuf", specifier = ">=6.30.1" },
     { name = "pyarrow", marker = "extra == 'examples-test'" },
     { name = "pydantic", specifier = ">=2.10.6" },
-    { name = "pydantic-monty", marker = "extra == 'sandboxed'", specifier = ">=0.0.3" },
+    { name = "pydantic-monty", marker = "extra == 'sandbox'", specifier = ">=0.0.3" },
     { name = "pyyaml", specifier = ">=6.0.2" },
     { name = "rich-click", specifier = "==1.8.9" },
     { name = "scikit-learn", marker = "extra == 'examples-test'" },
@@ -1064,7 +1064,7 @@ requires-dist = [
     { name = "toml", specifier = ">=0.10.2" },
     { name = "uvicorn", marker = "extra == 'examples-test'" },
 ]
-provides-extras = ["aiosqlite", "connector", "examples-test", "sandboxed", "tui"]
+provides-extras = ["aiosqlite", "connector", "examples-test", "sandbox", "tui"]
 
 [package.metadata.requires-dev]
 dev = [

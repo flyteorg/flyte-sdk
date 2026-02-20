@@ -37,7 +37,7 @@ def _from_monty(value: Any) -> Any:
         cls = _IO_TYPES.get(tag)
         if cls is not None:
             payload = {k: v for k, v in value.items() if k != _IO_TYPE_KEY}
-            return cls.model_validate(payload)
+            return cls.model_validate(payload)  # type: ignore[attr-defined]
     if isinstance(value, dict):
         return {k: _from_monty(v) for k, v in value.items()}
     if isinstance(value, list):

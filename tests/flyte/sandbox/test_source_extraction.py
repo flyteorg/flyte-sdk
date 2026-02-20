@@ -2,7 +2,7 @@
 
 import pytest
 
-from flyte.sandboxed._source import extract_source
+from flyte.sandbox._source import extract_source
 
 
 def test_simple_function_body():

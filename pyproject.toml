@@ -63,7 +63,7 @@ examples-test = [
     "uvicorn",
     "lightning",
 ]
-sandboxed = [
+sandbox = [
     "pydantic-monty>=0.0.3",
 ]
 tui = [

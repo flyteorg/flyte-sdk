@@ -2,8 +2,8 @@
 Dynamically Generated Code
 ===========================
 
-Because ``flyte.sandboxed.code_to_task()`` and
-``flyte.sandboxed.run_local_sandbox()`` accept plain strings, the code
+Because ``flyte.sandbox.orchestrate()`` and
+``flyte.sandbox.orchestrate_local()`` accept plain strings, the code
 can be generated at runtime — from templates, user input, or even LLM
 output.
 
@@ -12,13 +12,13 @@ and executing them in the sandbox.
 
 Install the optional dependency first::
 
-    pip install 'flyte[sandboxed]'
+    pip install 'flyte[sandbox]'
 """
 
 import asyncio
 
 import flyte
-import flyte.sandboxed
+import flyte.sandbox
 
 env = flyte.TaskEnvironment(name="dynamic-demo")
 
@@ -32,7 +32,7 @@ def add(x: int, y: int) -> int:
 # Build code strings from templates based on runtime configuration.
 
 
-def make_reducer(operation: str) -> flyte.sandboxed.CodeTaskTemplate:
+def make_reducer(operation: str) -> flyte.sandbox.CodeTaskTemplate:
     """Create a sandboxed task that reduces a list using the given operation."""
     if operation == "sum":
         body = """
@@ -59,7 +59,7 @@ def make_reducer(operation: str) -> flyte.sandboxed.CodeTaskTemplate:
     else:
         raise ValueError(f"Unknown operation: {operation}")
 
-    return flyte.sandboxed.code_to_task(
+    return flyte.sandbox.orchestrate(
         body,
         inputs={"values": list},
         output=int,
@@ -82,7 +82,7 @@ max_task = make_reducer("max")
 def make_formula_task(
     formula: str,
     variables: list[str],
-) -> flyte.sandboxed.CodeTaskTemplate:
+) -> flyte.sandbox.CodeTaskTemplate:
     """Create a task that evaluates a formula string.
 
     Example::
@@ -90,7 +90,7 @@ def make_formula_task(
         t = make_formula_task("a * b + c", ["a", "b", "c"])
         flyte.run(t, a=2, b=3, c=4)  # → 10
     """
-    return flyte.sandboxed.code_to_task(
+    return flyte.sandbox.orchestrate(
         formula,
         inputs=dict.fromkeys(variables, float),
         output=float,
@@ -105,7 +105,7 @@ bmi = make_formula_task("weight / (height * height)", ["weight", "height"])
 # flyte.run(bmi, weight=70.0, height=1.75)  → ~22.86
 
 
-# --- Pattern 3: run_local_sandbox() for ad-hoc evaluation --------------------
+# --- Pattern 3: orchestrate_local() for ad-hoc evaluation --------------------
 
 
 async def evaluate_expressions():
@@ -120,9 +120,9 @@ async def evaluate_expressions():
         # For expressions that don't reference any inputs, we still need
         # at least one input for Monty.
         if not extra_inputs:
-            result = await flyte.sandboxed.run_local_sandbox(expr, inputs={"_unused": 0})
+            result = await flyte.sandbox.orchestrate_local(expr, inputs={"_unused": 0})
         else:
-            result = await flyte.sandboxed.run_local_sandbox(expr, inputs=extra_inputs)
+            result = await flyte.sandbox.orchestrate_local(expr, inputs=extra_inputs)
         print(f"  {expr} = {result}")
 
 
@@ -134,7 +134,7 @@ def make_map_reduce(
     map_task_name: str,
     reduce_op: str,
     map_task,
-) -> flyte.sandboxed.CodeTaskTemplate:
+) -> flyte.sandbox.CodeTaskTemplate:
     """Build a map-reduce pipeline as sandboxed code."""
     code = f"""
 mapped = []
@@ -145,11 +145,11 @@ for i in range(1, len(mapped)):
     acc = acc {reduce_op} mapped[i]
 acc
 """
-    return flyte.sandboxed.code_to_task(
+    return flyte.sandbox.orchestrate(
         code,
         inputs={"items": list, "factor": int},
         output=int,
-        functions={map_task_name: map_task},
+        tasks=[map_task],
         name=f"map-{map_task_name}-reduce-{reduce_op}",
     )
 

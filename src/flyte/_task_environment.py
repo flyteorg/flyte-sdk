@@ -33,11 +33,12 @@ from ._secret import SecretRequest
 from ._task import AsyncFunctionTaskTemplate, TaskTemplate
 from ._trigger import Trigger
 from .models import MAX_INLINE_IO_BYTES, NativeInterface
-from .sandboxed._config import SandboxedConfig
-from .sandboxed._task import SandboxedTaskTemplate
+from .sandbox._config import SandboxedConfig
+from .sandbox._task import SandboxedTaskTemplate
 
 if TYPE_CHECKING:
     from ._task import F, P, R
+    from .sandbox._code_task import CodeTaskTemplate
 
 
 @rich.repr.auto
@@ -285,85 +286,10 @@ class TaskEnvironment(Environment):
             return cast(Callable[[F], AsyncFunctionTaskTemplate[P, R, F]], decorator)
         return cast(AsyncFunctionTaskTemplate[P, R, F], decorator(_func))
 
-    @overload
-    def sandboxed_task(
-        self,
-        _func: Callable[P, R],
-        /,
-    ) -> SandboxedTaskTemplate: ...
-
-    @overload
-    def sandboxed_task(
-        self,
-        *,
-        timeout_ms: int = 30_000,
-        max_memory: int = 50 * 1024 * 1024,
-        max_stack_depth: int = 256,
-        type_check: bool = True,
-        name: Optional[str] = None,
-        cache: CacheRequest | None = None,
-        retries: int = 0,
-    ) -> Callable[[Callable[P, R]], SandboxedTaskTemplate]: ...
-
-    def sandboxed_task(
-        self,
-        _func: F | None = None,
-        *,
-        timeout_ms: int = 30_000,
-        max_memory: int = 50 * 1024 * 1024,
-        max_stack_depth: int = 256,
-        type_check: bool = True,
-        name: Optional[str] = None,
-        cache: CacheRequest | None = None,
-        retries: int = 0,
-    ) -> SandboxedTaskTemplate | Callable[[F], SandboxedTaskTemplate]:
-        """Decorate a function to be a sandboxed task in this environment.
-
-        .. warning:: Experimental feature: alpha — APIs may change without notice.
-
-        Sandboxed tasks run pure Python in a Monty sandbox — no filesystem,
-        network, or OS access. They can call regular ``env.task`` workers
-        via external dispatch.
-
-        Uses the environment's image (which must include ``pydantic-monty``).
-
-        :param _func: The function to decorate.
-        :param timeout_ms: Sandbox execution timeout in milliseconds.
-        :param max_memory: Maximum memory in bytes.
-        :param max_stack_depth: Maximum call stack depth.
-        :param type_check: Whether to validate types at the boundary.
-        :param name: Optional task name override.
-        :param cache: Cache policy (defaults to environment's cache).
-        :param retries: Number of retries on failure.
-        """
-        config = SandboxedConfig(
-            max_memory=max_memory,
-            max_stack_depth=max_stack_depth,
-            timeout_ms=timeout_ms,
-            type_check=type_check,
-        )
-
-        def decorator(func: F) -> SandboxedTaskTemplate:
-            task_name = name or (self.name + "." + func.__name__)
-            interface = NativeInterface.from_callable(func)
-
-            tmpl = SandboxedTaskTemplate(
-                func=func,
-                name=task_name,
-                interface=interface,
-                plugin_config=config,
-                image=self.image,
-                cache=cache or self.cache,
-                retries=retries,
-                parent_env=weakref.ref(self),
-                parent_env_name=self.name,
-            )
-            self._tasks[task_name] = tmpl
-            return tmpl
-
-        if _func is not None:
-            return decorator(_func)
-        return decorator
+    @property
+    def sandbox(self) -> _SandboxNamespace:
+        """Access the sandbox namespace for creating sandboxed tasks."""
+        return _SandboxNamespace(self)
 
     @property
     def tasks(self) -> Dict[str, TaskTemplate]:
@@ -408,3 +334,166 @@ class TaskEnvironment(Environment):
             t.parent_env = weakref.ref(env)
             t.parent_env_name = name
         return env
+
+
+class _SandboxNamespace:
+    """Namespace for sandbox operations on a ``TaskEnvironment``.
+
+    Accessed via ``env.sandbox``.  Provides a unified ``orchestrate()``
+    method that acts as a decorator (when given a callable), a code-string
+    task factory (when given a string), or a decorator factory (when given
+    only keyword arguments).
+    """
+
+    def __init__(self, env: TaskEnvironment) -> None:
+        self._env = env
+
+    @overload
+    def orchestrate(
+        self,
+        _func_or_source: Callable,
+        /,
+    ) -> SandboxedTaskTemplate: ...
+
+    @overload
+    def orchestrate(
+        self,
+        _func_or_source: str,
+        /,
+        *,
+        tasks: list[Any] | None = None,
+        inputs: dict[str, type] | None = None,
+        output: type = type(None),
+        name: str | None = None,
+        timeout_ms: int = 30_000,
+        cache: CacheRequest | None = None,
+        retries: int = 0,
+    ) -> "CodeTaskTemplate": ...
+
+    @overload
+    def orchestrate(
+        self,
+        *,
+        timeout_ms: int = 30_000,
+        max_memory: int = 50 * 1024 * 1024,
+        max_stack_depth: int = 256,
+        type_check: bool = True,
+        name: str | None = None,
+        cache: CacheRequest | None = None,
+        retries: int = 0,
+    ) -> Callable[[Callable], SandboxedTaskTemplate]: ...
+
+    def orchestrate(  # type: ignore[misc]
+        self,
+        _func_or_source: Any = None,
+        /,
+        *,
+        tasks: list[Any] | None = None,
+        inputs: dict[str, type] | None = None,
+        output: type = type(None),
+        timeout_ms: int = 30_000,
+        max_memory: int = 50 * 1024 * 1024,
+        max_stack_depth: int = 256,
+        type_check: bool = True,
+        name: str | None = None,
+        cache: CacheRequest | None = None,
+        retries: int = 0,
+    ) -> Any:
+        """Unified sandbox orchestration on a ``TaskEnvironment``.
+
+        Three usage modes:
+
+        1. **Decorator** (callable) — creates a ``SandboxedTaskTemplate``::
+
+            @env.sandbox.orchestrate
+            def pipeline(n: int) -> dict: ...
+
+        2. **Code string** — creates a ``CodeTaskTemplate``::
+
+            task = env.sandbox.orchestrate(
+                "add(x, y) * 2",
+                tasks=[add],
+                inputs={"x": int},
+                output=int,
+            )
+
+        3. **Decorator factory** (keyword-only) — returns a decorator::
+
+            @env.sandbox.orchestrate(timeout_ms=5000)
+            def pipeline(n: int) -> dict: ...
+        """
+        env = self._env
+
+        if _func_or_source is None:
+            # Mode 3: decorator factory — keyword-only args
+            config = SandboxedConfig(
+                max_memory=max_memory,
+                max_stack_depth=max_stack_depth,
+                timeout_ms=timeout_ms,
+                type_check=type_check,
+            )
+
+            def decorator(func: Callable) -> SandboxedTaskTemplate:
+                task_name = name or (env.name + "." + func.__name__)
+                interface = NativeInterface.from_callable(func)
+                tmpl = SandboxedTaskTemplate(
+                    func=func,
+                    name=task_name,
+                    interface=interface,
+                    plugin_config=config,
+                    image=env.image,
+                    cache=cache or env.cache,
+                    retries=retries,
+                    parent_env=weakref.ref(env),
+                    parent_env_name=env.name,
+                )
+                env._tasks[task_name] = tmpl
+                return tmpl
+
+            return decorator
+
+        if callable(_func_or_source) and not isinstance(_func_or_source, str):
+            # Mode 1: bare decorator
+            func = _func_or_source
+            config = SandboxedConfig(
+                max_memory=max_memory,
+                max_stack_depth=max_stack_depth,
+                timeout_ms=timeout_ms,
+                type_check=type_check,
+            )
+            task_name = name or (env.name + "." + func.__name__)
+            interface = NativeInterface.from_callable(func)
+            tmpl = SandboxedTaskTemplate(
+                func=func,
+                name=task_name,
+                interface=interface,
+                plugin_config=config,
+                image=env.image,
+                cache=cache or env.cache,
+                retries=retries,
+                parent_env=weakref.ref(env),
+                parent_env_name=env.name,
+            )
+            env._tasks[task_name] = tmpl
+            return tmpl
+
+        if isinstance(_func_or_source, str):
+            # Mode 2: code string
+            import sys
+
+            from .sandbox._api import _orchestrate_impl
+
+            return _orchestrate_impl(
+                _func_or_source,
+                inputs=inputs or {},
+                output=output,
+                tasks=tasks,
+                name=name or "sandboxed-code",
+                timeout_ms=timeout_ms,
+                cache=cache or env.cache,
+                retries=retries,
+                image=env.image,
+                caller_module=sys._getframe(1).f_globals.get("__name__", "__main__"),
+            )
+
+        raise TypeError(f"orchestrate() expects a callable, string, or keyword arguments, got {type(_func_or_source)}")

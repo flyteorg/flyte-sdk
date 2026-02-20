@@ -1,54 +1,16 @@
-"""Sandboxed tasks powered by Monty (Pydantic's Rust-based sandboxed Python interpreter).
+"""Core public API for the sandbox module.
 
-.. warning:: Experimental feature: alpha — APIs may change without notice.
-
-Sandboxed tasks are:
-- **Side-effect free**: No filesystem, network, or OS access
-- **Super fast**: Microsecond startup for pure Python
-- **Multiplexable**: Many tasks run safely on the same Python process
-
-Usage::
-
-    from flyte import sandboxed
-
-    # Decorator approach (standalone)
-    @sandboxed.task
-    def add(x: int, y: int) -> int:
-        return x + y
-
-    @sandboxed.task(timeout_ms=5000)
-    def multiply(x: int, y: int) -> int:
-        return x * y
-
-    # Environment-based approach (preferred for ``flyte run``)
-    env = flyte.TaskEnvironment(name="my-env")
-
-    @env.sandboxed_task
-    def orchestrator(x: int, y: int) -> int:
-        return add(x, y)
-
-    # Create a reusable task from a code string
-    pipeline = sandboxed.code_to_task(
-        "add(x, y) * 2",
-        inputs={"x": int, "y": int},
-        output=int,
-        functions={"add": add},
-    )
-
-    # One-shot execution of a code string (local only)
-    result = await sandboxed.run_local_sandbox(
-        "x + y",
-        inputs={"x": 1, "y": 2},
-    )
+Provides ``orchestrate``, ``orchestrate_local``, and ``task``.
 """
 
 from __future__ import annotations
 
 import inspect
 import sys
-from typing import Any, Callable, Dict, Optional, Union, overload
+from typing import Any, Callable, Dict, List, Optional, Union, overload
 
 from flyte._cache import CacheRequest
+from flyte._task import TaskTemplate
 from flyte.models import NativeInterface
 
 from ._code_task import CodeTaskTemplate, _classify_refs
@@ -56,14 +18,24 @@ from ._config import SandboxedConfig
 from ._source import prepare_code_source
 from ._task import SandboxedTaskTemplate, _lazy_import_monty
 
-__all__ = [
-    "CodeTaskTemplate",
-    "SandboxedConfig",
-    "SandboxedTaskTemplate",
-    "code_to_task",
-    "run_local_sandbox",
-    "task",
-]
+
+def _tasks_to_dict(tasks: List[Any]) -> Dict[str, Any]:
+    """Convert a list of tasks/callables to a name→object dict.
+
+    Raises ``ValueError`` on duplicate names.
+    """
+    result: Dict[str, Any] = {}
+    for t in tasks:
+        if isinstance(t, TaskTemplate):
+            name = getattr(t, "func").__name__
+        elif callable(t):
+            name = t.__name__
+        else:
+            raise TypeError(f"Expected a callable or TaskTemplate, got {type(t)}")
+        if name in result:
+            raise ValueError(f"Duplicate task name '{name}'")
+        result[name] = t
+    return result
 
 
 @overload
@@ -101,11 +73,11 @@ def task(
 
     Can be used with or without arguments::
 
-        @sandboxed.task
+        @sandbox.task
         def add(x: int, y: int) -> int:
             return x + y
 
-        @sandboxed.task(timeout_ms=5000)
+        @sandbox.task(timeout_ms=5000)
         def multiply(x: int, y: int) -> int:
             return x * y
     """
@@ -137,60 +109,23 @@ def task(
     return decorator
 
 
-def code_to_task(
+def _orchestrate_impl(
     source: str,
     *,
     inputs: Dict[str, type],
     output: type = type(None),
-    functions: Optional[Dict[str, Any]] = None,
+    tasks: Optional[List[Any]] = None,
     name: str = "sandboxed-code",
     timeout_ms: int = 30_000,
     cache: CacheRequest = "disable",
     retries: int = 0,
     image: Optional[Any] = None,
+    caller_module: str = "__main__",
 ) -> CodeTaskTemplate:
-    """Create a reusable sandboxed task from a code string.
-
-    .. warning:: Experimental feature: alpha — APIs may change without notice.
-
-    The returned ``CodeTaskTemplate`` can be passed to ``flyte.run()``
-    just like a decorated task.
-
-    The **last expression** in *source* becomes the return value::
-
-        pipeline = sandboxed.code_to_task(
-            "add(x, y) * 2",
-            inputs={"x": int, "y": int},
-            output=int,
-            functions={"add": add},
-        )
-        result = flyte.run(pipeline, x=1, y=2)  # → 6
-
-    Parameters
-    ----------
-    source:
-        Python code string to execute in the sandbox.
-    inputs:
-        Mapping of input names to their types.
-    output:
-        The return type (default ``NoneType``).
-    functions:
-        External functions (tasks, durable ops) available inside the sandbox.
-    name:
-        Task name (default ``"sandboxed-code"``).
-    timeout_ms:
-        Sandbox execution timeout in milliseconds.
-    cache:
-        Cache policy for the task.
-    retries:
-        Number of retries on failure.
-    image:
-        Docker image to use. If not provided, a default Debian image with
-        ``pydantic-monty`` is created automatically.
-    """
+    """Internal implementation — use ``orchestrate()`` or ``env.sandbox.orchestrate()``."""
     from flyte._image import Image
 
-    functions = functions or {}
+    functions = _tasks_to_dict(tasks) if tasks else {}
 
     source_code = prepare_code_source(source)
     input_names = list(inputs.keys())
@@ -203,9 +138,6 @@ def code_to_task(
     config = SandboxedConfig(timeout_ms=timeout_ms)
     if image is None:
         image = Image.from_debian_base().with_pip_packages("pydantic-monty")
-
-    # Root the dummy func in the caller's module so the resolver can find the task
-    caller_module = sys._getframe(1).f_globals.get("__name__", "__main__")
 
     # Dummy func for AsyncFunctionTaskTemplate compatibility
     dummy_func = lambda **kwargs: None  # noqa: E731
@@ -225,11 +157,77 @@ def code_to_task(
     )
 
 
-async def run_local_sandbox(
+def orchestrate(
+    source: str,
+    *,
+    inputs: Dict[str, type],
+    output: type = type(None),
+    tasks: Optional[List[Any]] = None,
+    name: str = "sandboxed-code",
+    timeout_ms: int = 30_000,
+    cache: CacheRequest = "disable",
+    retries: int = 0,
+    image: Optional[Any] = None,
+) -> CodeTaskTemplate:
+    """Create a reusable sandboxed task from a code string.
+
+    .. warning:: Experimental feature: alpha — APIs may change without notice.
+
+    The returned ``CodeTaskTemplate`` can be passed to ``flyte.run()``
+    just like a decorated task.
+
+    The **last expression** in *source* becomes the return value::
+
+        pipeline = sandbox.orchestrate(
+            "add(x, y) * 2",
+            inputs={"x": int, "y": int},
+            output=int,
+            tasks=[add],
+        )
+        result = flyte.run(pipeline, x=1, y=2)  # → 6
+
+    Parameters
+    ----------
+    source:
+        Python code string to execute in the sandbox.
+    inputs:
+        Mapping of input names to their types.
+    output:
+        The return type (default ``NoneType``).
+    tasks:
+        List of external functions (tasks, durable ops) available inside the
+        sandbox. Each item's ``__name__`` is used as the key.
+    name:
+        Task name (default ``"sandboxed-code"``).
+    timeout_ms:
+        Sandbox execution timeout in milliseconds.
+    cache:
+        Cache policy for the task.
+    retries:
+        Number of retries on failure.
+    image:
+        Docker image to use. If not provided, a default Debian image with
+        ``pydantic-monty`` is created automatically.
+    """
+    return _orchestrate_impl(
+        source,
+        inputs=inputs,
+        output=output,
+        tasks=tasks,
+        name=name,
+        timeout_ms=timeout_ms,
+        cache=cache,
+        retries=retries,
+        image=image,
+        caller_module=sys._getframe(1).f_globals.get("__name__", "__main__"),
+    )
+
+
+async def orchestrate_local(
     source: str,
     *,
     inputs: Dict[str, Any],
-    functions: Optional[Dict[str, Any]] = None,
+    tasks: Optional[List[Any]] = None,
     timeout_ms: int = 30_000,
 ) -> Any:
     """One-shot local execution of a code string in the Monty sandbox.
@@ -241,10 +239,10 @@ async def run_local_sandbox(
 
     The **last expression** in *source* becomes the return value::
 
-        result = await sandboxed.run_local_sandbox(
+        result = await sandbox.orchestrate_local(
             "add(x, y) * 2",
             inputs={"x": 1, "y": 2},
-            functions={"add": add},
+            tasks=[add],
         )
         # → 6
 
@@ -254,8 +252,9 @@ async def run_local_sandbox(
         Python code string to execute in the sandbox.
     inputs:
         Mapping of input names to their values.
-    functions:
-        External functions (tasks, durable ops) available inside the sandbox.
+    tasks:
+        List of external functions (tasks, durable ops) available inside the
+        sandbox. Each item's ``__name__`` is used as the key.
     timeout_ms:
         Sandbox execution timeout in milliseconds.
     """
@@ -263,7 +262,7 @@ async def run_local_sandbox(
 
     source_code = prepare_code_source(source)
     input_names = list(inputs.keys())
-    functions = functions or {}
+    functions = _tasks_to_dict(tasks) if tasks else {}
 
     if not functions:
         # Pure Python — fast path, no external calls
@@ -275,8 +274,3 @@ async def run_local_sandbox(
         refs = _classify_refs(functions)
         bridge = ExternalFunctionBridge(**refs)
         return await bridge.execute_monty(Monty, source_code, input_names, inputs)
-
-
-# Deprecated aliases — will be removed in a future release.
-code = code_to_task
-run = run_local_sandbox

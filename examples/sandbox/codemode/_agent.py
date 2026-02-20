@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable
 
 import flyte
-import flyte.sandboxed
+import flyte.sandbox
 
 # ------------------------------------------------------------------
 # LLM call + code extraction (module-level for @flyte.trace compat)
@@ -188,10 +188,10 @@ class CodeModeAgent:
 
     async def _execute(self, code: str) -> dict[str, Any]:
         """Run *code* in a Monty sandbox with the registered tools."""
-        result = await flyte.sandboxed.run_local_sandbox(
+        result = await flyte.sandbox.orchestrate_local(
             code,
             inputs={"_unused": 0},
-            functions=self._execution_tools,
+            tasks=list(self._execution_tools.values()),
         )
         return result  # type: ignore[return-value]
 

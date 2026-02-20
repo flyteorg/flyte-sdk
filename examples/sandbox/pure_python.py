@@ -7,29 +7,29 @@ Python interpreter. They have **no** filesystem, network, or OS access,
 start in microseconds, and many can safely share a single container.
 
 This example shows the basics: defining sandboxed tasks with the
-``@sandboxed.task`` decorator and calling them locally with ``forward()``.
+``@flyte.sandbox.task`` decorator and calling them locally with ``forward()``.
 
 Install the optional dependency first::
 
-    pip install 'flyte[sandboxed]'
+    pip install 'flyte[sandbox]'
 """
 
 from typing import Dict, List, Optional
 
 import flyte
-import flyte.sandboxed
+import flyte.sandbox
 
 # --- Basic tasks -------------------------------------------------------------
-# Use ``@flyte.sandboxed.task`` exactly like ``@env.task``, but the body
+# Use ``@flyte.sandbox.task`` exactly like ``@env.task``, but the body
 # runs inside Monty instead of a full container.
 
 
-@flyte.sandboxed.task
+@flyte.sandbox.task
 def add(x: int, y: int) -> int:
     return x + y
 
 
-@flyte.sandboxed.task
+@flyte.sandbox.task
 def greet(name: str) -> str:
     return "Hello, " + name + "!"
 
@@ -38,7 +38,7 @@ def greet(name: str) -> str:
 # Monty supports the same return conventions as regular Python.
 
 
-@flyte.sandboxed.task
+@flyte.sandbox.task
 def early_return(x: int) -> str:
     if x < 0:
         return "negative"
@@ -51,7 +51,7 @@ def early_return(x: int) -> str:
 # list, dict, tuple, set, and their generic forms are all supported.
 
 
-@flyte.sandboxed.task
+@flyte.sandbox.task
 def sum_list(numbers: List[int]) -> int:
     total = 0
     for n in numbers:
@@ -59,7 +59,7 @@ def sum_list(numbers: List[int]) -> int:
     return total
 
 
-@flyte.sandboxed.task
+@flyte.sandbox.task
 def word_lengths(words: List[str]) -> Dict[str, int]:
     result = {}
     for w in words:
@@ -67,7 +67,7 @@ def word_lengths(words: List[str]) -> Dict[str, int]:
     return result
 
 
-@flyte.sandboxed.task
+@flyte.sandbox.task
 def first_and_last(items: List[int]) -> tuple:
     return (items[0], items[len(items) - 1])
 
@@ -75,7 +75,7 @@ def first_and_last(items: List[int]) -> tuple:
 # --- Optional types ----------------------------------------------------------
 
 
-@flyte.sandboxed.task
+@flyte.sandbox.task
 def maybe_double(x: int, flag: Optional[bool] = None) -> Optional[int]:
     if flag:
         return x * 2
@@ -85,7 +85,7 @@ def maybe_double(x: int, flag: Optional[bool] = None) -> Optional[int]:
 # --- Loops and conditionals --------------------------------------------------
 
 
-@flyte.sandboxed.task
+@flyte.sandbox.task
 def fizzbuzz(n: int) -> List[str]:
     result = []
     for i in range(1, n + 1):
@@ -101,7 +101,7 @@ def fizzbuzz(n: int) -> List[str]:
 
 
 # --- Attach to an environment for ``flyte run`` -----------------------------
-# ``@flyte.sandboxed.task`` creates standalone templates. ``flyte run``
+# ``@flyte.sandbox.task`` creates standalone templates. ``flyte run``
 # requires every task to belong to a TaskEnvironment.
 
 sandbox_env = flyte.TaskEnvironment.from_task(

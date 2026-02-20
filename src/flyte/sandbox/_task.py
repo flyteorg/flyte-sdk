@@ -19,7 +19,7 @@ def _lazy_import_monty():
     except ImportError:
         raise ImportError(
             "pydantic-monty is required for sandboxed tasks. "
-            "Install it with: pip install 'flyte[sandboxed]' or pip install pydantic-monty"
+            "Install it with: pip install 'flyte[sandbox]' or pip install pydantic-monty"
         ) from None
 
 

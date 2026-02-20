@@ -6,7 +6,7 @@ from typing import Dict, List, Optional, Set, Tuple
 import pytest
 
 from flyte.io import DataFrame, Dir, File
-from flyte.sandboxed._type_boundary import validate_sandboxed_interface
+from flyte.sandbox._type_boundary import validate_sandboxed_interface
 
 
 def _make_inputs(**types_and_defaults) -> Dict:

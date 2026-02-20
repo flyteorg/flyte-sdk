@@ -4,9 +4,9 @@ from typing import Dict, List, Optional
 
 import pytest
 
-from flyte.sandboxed import task
-from flyte.sandboxed._config import SandboxedConfig
-from flyte.sandboxed._task import SandboxedTaskTemplate
+from flyte.sandbox import task
+from flyte.sandbox._config import SandboxedConfig
+from flyte.sandbox._task import SandboxedTaskTemplate
 
 
 class TestTaskDecorator:

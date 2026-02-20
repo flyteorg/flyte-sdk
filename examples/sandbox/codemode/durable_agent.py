@@ -20,7 +20,7 @@ Architecture::
 
 Run::
 
-    flyte run examples/sandboxed/codemode/durable_agent.py analyze \\
+    flyte run examples/sandbox/codemode/durable_agent.py analyze \\
         --request "Show me monthly revenue trends for 2024, broken down by region"
 """
 

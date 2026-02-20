@@ -10,20 +10,20 @@ You can also use standard Flyte task options like ``cache`` and ``retries``.
 
 Install the optional dependency first::
 
-    pip install 'flyte[sandboxed]'
+    pip install 'flyte[sandbox]'
 """
 
 from typing import List
 
 import flyte
-import flyte.sandboxed
+import flyte.sandbox
 
 # --- Custom timeout -----------------------------------------------------------
 # Default is 30 seconds. Use a shorter timeout for tasks that should be fast,
 # or a longer one for complex computations.
 
 
-@flyte.sandboxed.task(timeout_ms=5_000)
+@flyte.sandbox.task(timeout_ms=5_000)
 def quick_sum(numbers: List[int]) -> int:
     total = 0
     for n in numbers:
@@ -35,7 +35,7 @@ def quick_sum(numbers: List[int]) -> int:
 # Default is 50 MB. Increase for tasks that work with large data structures.
 
 
-@flyte.sandboxed.task(max_memory=100 * 1024 * 1024)  # 100 MB
+@flyte.sandbox.task(max_memory=100 * 1024 * 1024)  # 100 MB
 def build_large_list(n: int) -> List[int]:
     result = []
     for i in range(n):
@@ -47,7 +47,7 @@ def build_large_list(n: int) -> List[int]:
 # Default is 256. Increase for deeply recursive computations.
 
 
-@flyte.sandboxed.task(max_stack_depth=512)
+@flyte.sandbox.task(max_stack_depth=512)
 def deep_recursion(n: int) -> int:
     if n <= 1:
         return 1
@@ -58,7 +58,7 @@ def deep_recursion(n: int) -> int:
 # By default Monty validates types at the boundary. Disable for flexibility.
 
 
-@flyte.sandboxed.task(type_check=False)
+@flyte.sandbox.task(type_check=False)
 def flexible(x: int, y: int) -> int:
     return x + y
 
@@ -67,7 +67,7 @@ def flexible(x: int, y: int) -> int:
 # Enable caching so repeated calls with the same inputs skip re-execution.
 
 
-@flyte.sandboxed.task(cache="auto")
+@flyte.sandbox.task(cache="auto")
 def expensive_calc(x: int) -> int:
     # Imagine this is expensive — caching avoids redundant work.
     result = x
@@ -80,7 +80,7 @@ def expensive_calc(x: int) -> int:
 # Automatically retry on failure.
 
 
-@flyte.sandboxed.task(retries=3)
+@flyte.sandbox.task(retries=3)
 def flaky_task(x: int) -> int:
     return x * 2
 
@@ -89,7 +89,7 @@ def flaky_task(x: int) -> int:
 # Override the auto-generated task name for clarity in the Flyte UI.
 
 
-@flyte.sandboxed.task(name="my-adder")
+@flyte.sandbox.task(name="my-adder")
 def adder(x: int, y: int) -> int:
     return x + y
 
@@ -97,7 +97,7 @@ def adder(x: int, y: int) -> int:
 # --- Combining options --------------------------------------------------------
 
 
-@flyte.sandboxed.task(
+@flyte.sandbox.task(
     timeout_ms=10_000,
     max_memory=25 * 1024 * 1024,
     cache="auto",
@@ -111,10 +111,10 @@ def robust_transform(values: List[int], factor: int) -> List[int]:
     return result
 
 
-# --- code_to_task() with configuration ----------------------------------------
-# The same options work with ``code_to_task()`` for code-string tasks.
+# --- orchestrate() with configuration ----------------------------------------
+# The same options work with ``orchestrate()`` for code-string tasks.
 
-configured_code_task = flyte.sandboxed.code_to_task(
+configured_code_task = flyte.sandbox.orchestrate(
     "x * factor",
     inputs={"x": int, "factor": int},
     output=int,

@@ -1,6 +1,6 @@
 """Tests for the ExternalFunctionBridge."""
 
-from flyte.sandboxed._bridge import ExternalFunctionBridge
+from flyte.sandbox._bridge import ExternalFunctionBridge
 
 
 class TestExternalFunctionBridge:

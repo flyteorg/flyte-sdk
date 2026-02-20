@@ -19,7 +19,7 @@ This is useful when:
 
 Install the optional dependency first::
 
-    pip install 'flyte[sandboxed]'
+    pip install 'flyte[sandbox]'
 """
 
 import os
@@ -30,7 +30,7 @@ import pandas as pd
 
 import flyte
 import flyte.io
-import flyte.sandboxed
+import flyte.sandbox
 
 img = flyte.Image.from_debian_base().with_pip_packages("pandas", "pyarrow", "pydantic-monty", "aiofiles")
 env = flyte.TaskEnvironment(name="opaque-io-demo", image=img)
@@ -121,7 +121,7 @@ async def merge_files_to_dir(f: flyte.io.File, d: flyte.io.Dir) -> flyte.io.Dir:
 # The sandbox receives a File, passes it to a worker, and returns the count.
 # It never sees the CSV contents.
 
-file_pipeline = flyte.sandboxed.code_to_task(
+file_pipeline = env.sandbox.orchestrate(
     """
     csv_file = create_csv_file()
     row_count = count_csv_rows(csv_file)
@@ -129,12 +129,8 @@ file_pipeline = flyte.sandboxed.code_to_task(
     """,
     inputs={},
     output=dict,
-    functions={
-        "create_csv_file": create_csv_file,
-        "count_csv_rows": count_csv_rows,
-    },
+    tasks=[create_csv_file, count_csv_rows],
     name="file-pipeline",
-    image=img,
 )
 # The sandbox orchestrates the flow: create -> count -> return
 # It holds the File handle but cannot open or read it.
@@ -145,7 +141,7 @@ file_pipeline = flyte.sandboxed.code_to_task(
 # revenue — all via worker tasks. The sandbox only sees the opaque handle
 # and the final float.
 
-dataframe_pipeline = flyte.sandboxed.code_to_task(
+dataframe_pipeline = env.sandbox.orchestrate(
     """
     products = create_dataframe()
     electronics = filter_dataframe(products, "electronics")
@@ -158,13 +154,8 @@ dataframe_pipeline = flyte.sandboxed.code_to_task(
     """,
     inputs={},
     output=dict,
-    functions={
-        "create_dataframe": create_dataframe,
-        "filter_dataframe": filter_dataframe,
-        "total_revenue": total_revenue,
-    },
+    tasks=[create_dataframe, filter_dataframe, total_revenue],
     name="dataframe-pipeline",
-    image=img,
 )
 # The sandbox decides *what* to filter and *which* revenue to compute,
 # but never materializes the DataFrame itself.
@@ -173,7 +164,7 @@ dataframe_pipeline = flyte.sandboxed.code_to_task(
 # --- Example 3: Directory pass-through -------------------------------------
 # The sandbox passes a Dir handle to a worker that counts its files.
 
-dir_pipeline = flyte.sandboxed.code_to_task(
+dir_pipeline = env.sandbox.orchestrate(
     """
     report = create_report_dir()
     n_files = count_dir_files(report)
@@ -181,12 +172,8 @@ dir_pipeline = flyte.sandboxed.code_to_task(
     """,
     inputs={},
     output=dict,
-    functions={
-        "create_report_dir": create_report_dir,
-        "count_dir_files": count_dir_files,
-    },
+    tasks=[create_report_dir, count_dir_files],
     name="dir-pipeline",
-    image=img,
 )
 
 
@@ -194,7 +181,7 @@ dir_pipeline = flyte.sandboxed.code_to_task(
 # A single sandbox orchestrates all three IO types, merging a File into a Dir
 # and computing DataFrame stats — without touching any data directly.
 
-combined_pipeline = flyte.sandboxed.code_to_task(
+combined_pipeline = env.sandbox.orchestrate(
     """
     csv_file = create_csv_file()
     report_dir = create_report_dir()
@@ -215,18 +202,17 @@ combined_pipeline = flyte.sandboxed.code_to_task(
     """,
     inputs={},
     output=dict,
-    functions={
-        "create_csv_file": create_csv_file,
-        "create_report_dir": create_report_dir,
-        "create_dataframe": create_dataframe,
-        "merge_files_to_dir": merge_files_to_dir,
-        "count_dir_files": count_dir_files,
-        "filter_dataframe": filter_dataframe,
-        "total_revenue": total_revenue,
-        "count_csv_rows": count_csv_rows,
-    },
+    tasks=[
+        create_csv_file,
+        create_report_dir,
+        create_dataframe,
+        merge_files_to_dir,
+        count_dir_files,
+        filter_dataframe,
+        total_revenue,
+        count_csv_rows,
+    ],
     name="combined-pipeline",
-    image=img,
 )
 
 
@@ -234,7 +220,7 @@ combined_pipeline = flyte.sandboxed.code_to_task(
 # The sandbox receives a File and DataFrame as inputs from the caller,
 # routes them to workers, and returns derived results.
 
-parameterized_pipeline = flyte.sandboxed.code_to_task(
+parameterized_pipeline = env.sandbox.orchestrate(
     """
     rows = count_csv_rows(csv_file)
     revenue = total_revenue(product_df)
@@ -242,23 +228,19 @@ parameterized_pipeline = flyte.sandboxed.code_to_task(
     """,
     inputs={"csv_file": flyte.io.File, "product_df": flyte.io.DataFrame},
     output=dict,
-    functions={
-        "count_csv_rows": count_csv_rows,
-        "total_revenue": total_revenue,
-    },
+    tasks=[count_csv_rows, total_revenue],
     name="parameterized-pipeline",
-    image=img,
 )
 # flyte.run(parameterized_pipeline, csv_file=some_file, product_df=some_df)
 
 
-# --- Example 6: @env.sandboxed_task decorator ------------------------------
+# --- Example 6: @env.sandbox.orchestrate decorator -------------------------
 # Instead of a code string, use a decorated function as the orchestrator.
 # The sandbox can call regular worker tasks but still cannot access file
 # contents directly.
 
 
-@env.sandboxed_task
+@env.sandbox.orchestrate
 def orchestrate_etl(category: str) -> dict:
     csv_file = create_csv_file()
     row_count = count_csv_rows(csv_file)
