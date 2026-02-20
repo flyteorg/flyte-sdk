@@ -21,11 +21,155 @@ from flyte.app._runtime.app_serde import (
     _get_scaling_metric,
     _materialize_parameters_with_delayed_values,
     _sanitize_resource_name,
+    _serialized_pod_spec,
     get_proto_container,
     translate_app_env_to_idl,
 )
 from flyte.app._types import Domain, Port, Scaling
 from flyte.models import CodeBundle, SerializationContext
+
+
+def test_serialized_pod_spec_merges_app_env_image_into_primary_container():
+    """
+    GOAL: Verify that app_env.image is merged into the primary container when pod_template is used.
+
+    Tests that when a pod_template is provided with a primary container that has no image,
+    the image from app_env.image is used as a fallback.
+    """
+    from kubernetes.client import V1Container, V1PodSpec, V1SecurityContext
+
+    import flyte
+
+    pod_template = flyte.PodTemplate(
+        primary_container_name="app",
+        pod_spec=V1PodSpec(
+            containers=[
+                V1Container(
+                    name="app",
+                    security_context=V1SecurityContext(privileged=True),
+                )
+            ]
+        ),
+    )
+
+    app_env = AppEnvironment(
+        name="test-app",
+        image=Image.from_base("python:3.11"),
+        pod_template=pod_template,
+        resources=Resources(cpu=1, memory="512Mi"),
+    )
+
+    ctx = SerializationContext(
+        org="test-org",
+        project="test-project",
+        domain="test-domain",
+        version="v1",
+        root_dir=pathlib.Path.cwd(),
+    )
+
+    pod_spec_dict = _serialized_pod_spec(app_env, pod_template, ctx)
+
+    # Verify the primary container has the image from app_env
+    containers = pod_spec_dict.get("containers", [])
+    assert len(containers) == 1
+    primary_container = containers[0]
+    assert primary_container["name"] == "app"
+    assert primary_container["image"] is not None
+    assert "python:3.11" in primary_container["image"]
+
+    # Verify security context is preserved
+    assert primary_container.get("securityContext", {}).get("privileged") is True
+
+
+def test_serialized_pod_spec_preserves_explicit_container_image():
+    """
+    GOAL: Verify that an explicit image in the pod_template container is NOT overwritten.
+
+    Tests that when a pod_template's primary container already has an image,
+    the app_env.image does not override it.
+    """
+    from kubernetes.client import V1Container, V1PodSpec
+
+    import flyte
+
+    pod_template = flyte.PodTemplate(
+        primary_container_name="app",
+        pod_spec=V1PodSpec(
+            containers=[
+                V1Container(
+                    name="app",
+                    image="custom-image:latest",
+                )
+            ]
+        ),
+    )
+
+    app_env = AppEnvironment(
+        name="test-app",
+        image=Image.from_base("python:3.11"),
+        pod_template=pod_template,
+    )
+
+    ctx = SerializationContext(
+        org="test-org",
+        project="test-project",
+        domain="test-domain",
+        version="v1",
+        root_dir=pathlib.Path.cwd(),
+    )
+
+    pod_spec_dict = _serialized_pod_spec(app_env, pod_template, ctx)
+
+    # Verify the primary container keeps its explicit image
+    containers = pod_spec_dict.get("containers", [])
+    assert len(containers) == 1
+    primary_container = containers[0]
+    assert primary_container["image"] == "custom-image:latest"
+
+
+def test_serialized_pod_spec_with_auto_image():
+    """
+    GOAL: Verify that app_env.image="auto" works with pod_template.
+
+    Tests that when app_env.image is "auto" and pod_template's primary container
+    has no image, a default debian base image is used.
+    """
+    from kubernetes.client import V1Container, V1PodSpec
+
+    import flyte
+
+    pod_template = flyte.PodTemplate(
+        primary_container_name="app",
+        pod_spec=V1PodSpec(
+            containers=[
+                V1Container(
+                    name="app",
+                )
+            ]
+        ),
+    )
+
+    app_env = AppEnvironment(
+        name="test-app",
+        image="auto",
+        pod_template=pod_template,
+    )
+
+    ctx = SerializationContext(
+        org="test-org",
+        project="test-project",
+        domain="test-domain",
+        version="v1",
+        root_dir=pathlib.Path.cwd(),
+    )
+
+    pod_spec_dict = _serialized_pod_spec(app_env, pod_template, ctx)
+
+    # Verify the primary container has an image (from auto)
+    containers = pod_spec_dict.get("containers", [])
+    assert len(containers) == 1
+    primary_container = containers[0]
+    assert primary_container["image"] is not None
 
 
 def test_sanitize_resource_name():
