@@ -147,6 +147,7 @@ def code_to_task(
     timeout_ms: int = 30_000,
     cache: CacheRequest = "disable",
     retries: int = 0,
+    image: Optional[Any] = None,
 ) -> CodeTaskTemplate:
     """Create a reusable sandboxed task from a code string.
 
@@ -183,6 +184,9 @@ def code_to_task(
         Cache policy for the task.
     retries:
         Number of retries on failure.
+    image:
+        Docker image to use. If not provided, a default Debian image with
+        ``pydantic-monty`` is created automatically.
     """
     from flyte._image import Image
 
@@ -197,7 +201,8 @@ def code_to_task(
     interface = NativeInterface(inputs=input_types, outputs=output_types)
 
     config = SandboxedConfig(timeout_ms=timeout_ms)
-    image = Image.from_debian_base().with_pip_packages("pydantic-monty")
+    if image is None:
+        image = Image.from_debian_base().with_pip_packages("pydantic-monty")
 
     # Root the dummy func in the caller's module so the resolver can find the task
     caller_module = sys._getframe(1).f_globals.get("__name__", "__main__")

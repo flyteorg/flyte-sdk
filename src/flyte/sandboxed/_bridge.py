@@ -5,6 +5,47 @@ from concurrent.futures import ThreadPoolExecutor
 from functools import partial
 from typing import Any, Callable, Dict
 
+from flyte.io import DataFrame, Dir, File
+
+# Tag used to identify marshaled IO types inside Monty
+_IO_TYPE_KEY = "__flyte_io_type__"
+
+_IO_TYPES = {"File": File, "Dir": Dir, "DataFrame": DataFrame}
+
+
+def _to_monty(value: Any) -> Any:
+    """Marshal a flyte.io type to a dict Monty can hold."""
+    if isinstance(value, File):
+        return {_IO_TYPE_KEY: "File", **value.model_dump()}
+    if isinstance(value, Dir):
+        return {_IO_TYPE_KEY: "Dir", **value.model_dump()}
+    if isinstance(value, DataFrame):
+        return {_IO_TYPE_KEY: "DataFrame", **value.model_dump()}
+    if isinstance(value, list):
+        return [_to_monty(v) for v in value]
+    if isinstance(value, dict):
+        return {k: _to_monty(v) for k, v in value.items()}
+    if isinstance(value, tuple):
+        return tuple(_to_monty(v) for v in value)
+    return value
+
+
+def _from_monty(value: Any) -> Any:
+    """Unmarshal a tagged dict back to a flyte.io type."""
+    if isinstance(value, dict) and _IO_TYPE_KEY in value:
+        tag = value[_IO_TYPE_KEY]
+        cls = _IO_TYPES.get(tag)
+        if cls is not None:
+            payload = {k: v for k, v in value.items() if k != _IO_TYPE_KEY}
+            return cls.model_validate(payload)
+    if isinstance(value, dict):
+        return {k: _from_monty(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_from_monty(v) for v in value]
+    if isinstance(value, tuple):
+        return tuple(_from_monty(v) for v in value)
+    return value
+
 
 class ExternalFunctionBridge:
     """Drives Monty execution with external function dispatch.
@@ -64,6 +105,9 @@ class ExternalFunctionBridge:
         monty = monty_cls(code, inputs=input_names, external_functions=ext_names)
         ext_fns = self._build_external_functions()
 
+        # Marshal any IO types in the initial inputs so Monty can hold them
+        monty_inputs = {k: _to_monty(v) for k, v in inputs.items()}
+
         loop = asyncio.get_running_loop()
 
         with ThreadPoolExecutor() as pool:
@@ -71,21 +115,26 @@ class ExternalFunctionBridge:
             async def run_in_pool(func):
                 return await loop.run_in_executor(pool, func)
 
-            progress = await run_in_pool(partial(monty.start, inputs=inputs))
+            progress = await run_in_pool(partial(monty.start, inputs=monty_inputs))
 
             while True:
                 if isinstance(progress, MontyComplete):
-                    return progress.output
+                    return _from_monty(progress.output)
                 elif isinstance(progress, MontySnapshot):
                     fn = ext_fns.get(progress.function_name)
                     if fn is None:
                         raise RuntimeError(f"Sandboxed task called unknown external function: {progress.function_name}")
 
+                    # Unmarshal IO handles before calling the external function
+                    args = [_from_monty(a) for a in progress.args]
+                    kwargs = {k: _from_monty(v) for k, v in progress.kwargs.items()}
+
                     # Call the external function and await if async
-                    result = fn(*progress.args, **progress.kwargs)
+                    result = fn(*args, **kwargs)
                     if inspect.iscoroutine(result):
                         result = await result
 
-                    progress = await run_in_pool(partial(progress.resume, return_value=result))
+                    # Marshal IO types so Monty can hold the return value
+                    progress = await run_in_pool(partial(progress.resume, return_value=_to_monty(result)))
                 else:
                     raise RuntimeError(f"Unexpected Monty progress state: {progress!r}")

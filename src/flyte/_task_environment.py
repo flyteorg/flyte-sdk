@@ -373,7 +373,12 @@ class TaskEnvironment(Environment):
         return self._tasks
 
     @classmethod
-    def from_task(cls, name: str, *tasks: TaskTemplate) -> TaskEnvironment:
+    def from_task(
+        cls,
+        name: str,
+        *tasks: TaskTemplate,
+        depends_on: Optional[List["Environment"]] = None,
+    ) -> TaskEnvironment:
         """
         Create a TaskEnvironment from a list of tasks. All tasks should have the same image or no Image defined.
         Similarity of Image is determined by the python reference, not by value.
@@ -385,6 +390,7 @@ class TaskEnvironment(Environment):
 
         :param name: The name of the environment.
         :param tasks: The list of tasks to create the environment from.
+        :param depends_on: Optional list of environments that this environment depends on.
 
         :raises ValueError: If tasks are assigned to multiple environments or have different images.
         :return: The created TaskEnvironment.
@@ -396,7 +402,7 @@ class TaskEnvironment(Environment):
         if len(images) > 1:
             raise ValueError("Tasks must have the same image to be in the same environment.")
         image: Union[str, Image, None] = images.pop() if images else "auto"
-        env = cls(name, image=image)
+        env = cls(name, image=image, depends_on=depends_on or [])
         for t in tasks:
             env._tasks[t.name] = t
             t.parent_env = weakref.ref(env)

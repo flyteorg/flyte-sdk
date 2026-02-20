@@ -70,13 +70,26 @@ class CodeTaskTemplate(SandboxedTaskTemplate):
 
         validate_sandboxed_interface(self.interface.inputs, self.interface.outputs)
 
-        # Populate the inherited internal fields from our init fields
+        # Populate the inherited internal fields from our init fields.
+        # Monty requires at least one input, so inject a dummy when the
+        # user didn't provide any.  The dummy is internal-only — it never
+        # appears in the task's NativeInterface, so callers don't see it.
         self._source_code = self._user_source
-        self._input_names = list(self._user_input_names)
+        self._needs_dummy_input = not self._user_input_names
+        if self._needs_dummy_input:
+            self._input_names = ["_unused"]
+        else:
+            self._input_names = list(self._user_input_names)
 
         # Build _external_refs from the explicit functions dict
         self._external_refs = _classify_refs(self._user_functions)
         self._has_external_refs = bool(self._user_functions)
+
+    def _build_inputs(self, *args, **kwargs) -> Dict[str, Any]:
+        """Build inputs dict, injecting the dummy when no user inputs exist."""
+        if self._needs_dummy_input:
+            return {"_unused": 0}
+        return super()._build_inputs(*args, **kwargs)
 
     def forward(self, *args, **kwargs) -> Any:
         """Not supported — there is no Python function to call directly."""
