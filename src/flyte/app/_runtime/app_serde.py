@@ -126,6 +126,7 @@ def _serialized_pod_spec(
             # For the primary container, merge the app_env.image if the container's image is not set
             if container.image is None:
                 # Use app_env.image as the fallback for the primary container
+                img: flyte.Image | None = None
                 if app_env.image == "auto":
                     img = flyte.Image.from_debian_base()
                 elif isinstance(app_env.image, str):
