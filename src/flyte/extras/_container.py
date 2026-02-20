@@ -68,6 +68,7 @@ class ContainerTask(TaskTemplate):
         output_data_dir: str | pathlib.Path = "/var/outputs",
         metadata_format: MetadataFormat = "JSON",
         local_logs: bool = True,
+        network_mode: Optional[str] = None,
         **kwargs,
     ):
         super().__init__(
@@ -90,6 +91,7 @@ class ContainerTask(TaskTemplate):
             raise ValueError("All elements in the arguments list must be strings.")
         self._cmd = command
         self._args = arguments
+        self._network_mode = network_mode
         self._input_data_dir = input_data_dir
         if isinstance(input_data_dir, str):
             self._input_data_dir = pathlib.Path(input_data_dir)
@@ -254,18 +256,23 @@ class ContainerTask(TaskTemplate):
         self._pull_image_if_not_exists(client, uri)
         print(f"Command: {commands!r}")
 
-        container = client.containers.run(uri, command=commands, remove=True, volumes=volume_bindings, detach=True)
+        run_kwargs = {"command": commands, "volumes": volume_bindings, "detach": True}
+        if self._network_mode:
+            run_kwargs["network_mode"] = self._network_mode
+        container = client.containers.run(uri, **run_kwargs)
 
         # Wait for the container to finish the task
         # TODO: Add a 'timeout' parameter to control the max wait time for the container to finish the task.
-
-        if self.local_logs:
-            for log in container.logs(stream=True):
-                print(f"[Local Container] {log.strip()!r}")
-
         container.wait()
 
+        if self.local_logs:
+            logs = container.logs()
+            for line in logs.splitlines():
+                print(f"[Local Container] {line!r}")
+
         output = await self._get_output(output_directory)
+
+        container.remove()
         return output
 
     def data_loading_config(self, sctx: SerializationContext) -> tasks_pb2.DataLoadingConfig:
