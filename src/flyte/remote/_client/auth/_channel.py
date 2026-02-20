@@ -82,6 +82,8 @@ async def create_channel(
     :param compression: Compression method for the channel
     :param http_session: Pre-configured HTTP session to use for requests
     :param proxy_command: List of strings for proxy command configuration
+    :param rpc_retries: Number of times to retry gRPC calls (flyte.init defaults to 3). None means do not install
+      the interceptor at all.
     :param kwargs: Additional arguments passed to various functions:
         - For grpc.aio.insecure_channel/secure_channel:
             - root_certificates: Root certificates for SSL credentials
