@@ -199,7 +199,7 @@ class ClientSet:
 
     @classmethod
     async def for_endpoint(cls, endpoint: str, *, insecure: bool = False, **kwargs) -> ClientSet:
-        rpc_retries = kwargs.pop("rpc_retries", 3)
+        rpc_retries = kwargs.pop("rpc_retries", None)
         return cls(
             await create_channel(endpoint, None, insecure=insecure, rpc_retries=rpc_retries, **kwargs),
             endpoint,
@@ -215,7 +215,7 @@ class ClientSet:
         # to return the endpoint
         endpoint, _, _, _ = decode_api_key(api_key)
 
-        rpc_retries = kwargs.pop("rpc_retries", 3)
+        rpc_retries = kwargs.pop("rpc_retries", None)
         return cls(
             await create_channel(None, api_key, insecure=insecure, rpc_retries=rpc_retries, **kwargs),
             endpoint,
