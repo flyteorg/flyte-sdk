@@ -49,14 +49,12 @@ class RetryUnaryUnaryInterceptor(_BaseRetryInterceptor, grpc.aio.UnaryUnaryClien
         client_call_details: ClientCallDetails,
         request: typing.Any,
     ):
-        last_error: Optional[grpc.aio.AioRpcError] = None
         for attempt in range(1 + self._max_retries):
             try:
                 return await (await continuation(client_call_details, request))
             except grpc.aio.AioRpcError as e:
                 if not _is_retryable(e.code()) or attempt >= self._max_retries:
                     raise
-                last_error = e
                 delay = self._backoff(attempt)
                 logger.warning(
                     f"gRPC call {client_call_details.method} failed with {e.code().name}, "
@@ -64,7 +62,7 @@ class RetryUnaryUnaryInterceptor(_BaseRetryInterceptor, grpc.aio.UnaryUnaryClien
                 )
                 await asyncio.sleep(delay)
 
-        raise last_error  # unreachable, but satisfies type checker
+        raise RuntimeError("unreachable")  # linting
 
 
 class _RetryUnaryStreamCall(grpc.aio.UnaryStreamCall):
