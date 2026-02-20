@@ -339,7 +339,7 @@ class TaskEnvironment(Environment):
 class _SandboxNamespace:
     """Namespace for sandbox operations on a ``TaskEnvironment``.
 
-    Accessed via ``env.sandbox``.  Provides a unified ``orchestrate()``
+    Accessed via ``env.sandbox``.  Provides a unified ``orchestrator()``
     method that acts as a decorator (when given a callable), a code-string
     task factory (when given a string), or a decorator factory (when given
     only keyword arguments).
@@ -349,14 +349,14 @@ class _SandboxNamespace:
         self._env = env
 
     @overload
-    def orchestrate(
+    def orchestrator(
         self,
         _func_or_source: Callable,
         /,
     ) -> SandboxedTaskTemplate: ...
 
     @overload
-    def orchestrate(
+    def orchestrator(
         self,
         _func_or_source: str,
         /,
@@ -371,7 +371,7 @@ class _SandboxNamespace:
     ) -> "CodeTaskTemplate": ...
 
     @overload
-    def orchestrate(
+    def orchestrator(
         self,
         *,
         timeout_ms: int = 30_000,
@@ -383,7 +383,7 @@ class _SandboxNamespace:
         retries: int = 0,
     ) -> Callable[[Callable], SandboxedTaskTemplate]: ...
 
-    def orchestrate(  # type: ignore[misc]
+    def orchestrator(  # type: ignore[misc]
         self,
         _func_or_source: Any = None,
         /,
@@ -405,12 +405,12 @@ class _SandboxNamespace:
 
         1. **Decorator** (callable) — creates a ``SandboxedTaskTemplate``::
 
-            @env.sandbox.orchestrate
+            @env.sandbox.orchestrator
             def pipeline(n: int) -> dict: ...
 
         2. **Code string** — creates a ``CodeTaskTemplate``::
 
-            task = env.sandbox.orchestrate(
+            task = env.sandbox.orchestrator(
                 "add(x, y) * 2",
                 tasks=[add],
                 inputs={"x": int},
@@ -419,7 +419,7 @@ class _SandboxNamespace:
 
         3. **Decorator factory** (keyword-only) — returns a decorator::
 
-            @env.sandbox.orchestrate(timeout_ms=5000)
+            @env.sandbox.orchestrator(timeout_ms=5000)
             def pipeline(n: int) -> dict: ...
         """
         env = self._env
@@ -481,9 +481,9 @@ class _SandboxNamespace:
             # Mode 2: code string
             import sys
 
-            from .sandbox._api import _orchestrate_impl
+            from .sandbox._api import _orchestrator_impl
 
-            return _orchestrate_impl(
+            return _orchestrator_impl(
                 _func_or_source,
                 inputs=inputs or {},
                 output=output,
@@ -496,4 +496,4 @@ class _SandboxNamespace:
                 caller_module=sys._getframe(1).f_globals.get("__name__", "__main__"),
             )
 
-        raise TypeError(f"orchestrate() expects a callable, string, or keyword arguments, got {type(_func_or_source)}")
+        raise TypeError(f"orchestrator() expects a callable, string, or keyword arguments, got {type(_func_or_source)}")

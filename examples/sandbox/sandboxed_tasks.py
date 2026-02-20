@@ -5,7 +5,7 @@ access), start in microseconds, and many can multiplex safely on a single
 container process.
 
 In this example the orchestrator is a sandboxed task that calls regular
-``env.task`` workers. Use ``@env.sandbox.orchestrate`` to register sandboxed
+``env.task`` workers. Use ``@env.sandbox.orchestrator`` to register sandboxed
 tasks directly in a ``TaskEnvironment``, so they share the environment's
 image and are ready for ``flyte run`` without extra boilerplate.
 
@@ -48,7 +48,7 @@ def fib(n: int) -> int:
 # to the regular tasks above.
 
 
-@env.sandbox.orchestrate
+@env.sandbox.orchestrator
 def pipeline(n: int) -> dict[str, int]:
     fib_result = fib(n)
     linear_result = add(multiply(n, 2), 5)
@@ -61,11 +61,11 @@ def pipeline(n: int) -> dict[str, int]:
     }
 
 
-# --- orchestrate(): reusable task from a code string ----------------------
+# --- orchestrator(): reusable task from a code string ----------------------
 # Instead of defining a @sandbox.task function, send a code string directly.
 # External tasks are provided via the ``tasks`` list.
 
-code_pipeline = flyte.sandbox.orchestrate(
+code_pipeline = flyte.sandbox.orchestrator(
     """
     partial = add(x, y)
     result = partial * 2
@@ -91,7 +91,7 @@ code_pipeline = flyte.sandbox.orchestrate(
 
 
 # --- Attach code-string tasks to an environment for ``flyte run`` ---------
-# ``orchestrate()`` creates standalone templates. Group them with
+# ``orchestrator()`` creates standalone templates. Group them with
 # ``from_task`` so they belong to a TaskEnvironment.
 
 sandbox_env = flyte.TaskEnvironment.from_task(

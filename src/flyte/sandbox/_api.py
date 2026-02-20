@@ -1,6 +1,6 @@
 """Core public API for the sandbox module.
 
-Provides ``orchestrate``, ``orchestrate_local``, and ``task``.
+Provides ``orchestrator``, ``orchestrate_local``, and ``task``.
 """
 
 from __future__ import annotations
@@ -109,7 +109,7 @@ def task(
     return decorator
 
 
-def _orchestrate_impl(
+def _orchestrator_impl(
     source: str,
     *,
     inputs: Dict[str, type],
@@ -122,7 +122,7 @@ def _orchestrate_impl(
     image: Optional[Any] = None,
     caller_module: str = "__main__",
 ) -> CodeTaskTemplate:
-    """Internal implementation — use ``orchestrate()`` or ``env.sandbox.orchestrate()``."""
+    """Internal implementation — use ``orchestrator()`` or ``env.sandbox.orchestrator()``."""
     from flyte._image import Image
 
     functions = _tasks_to_dict(tasks) if tasks else {}
@@ -157,7 +157,7 @@ def _orchestrate_impl(
     )
 
 
-def orchestrate(
+def orchestrator(
     source: str,
     *,
     inputs: Dict[str, type],
@@ -178,7 +178,7 @@ def orchestrate(
 
     The **last expression** in *source* becomes the return value::
 
-        pipeline = sandbox.orchestrate(
+        pipeline = sandbox.orchestrator(
             "add(x, y) * 2",
             inputs={"x": int, "y": int},
             output=int,
@@ -209,7 +209,7 @@ def orchestrate(
         Docker image to use. If not provided, a default Debian image with
         ``pydantic-monty`` is created automatically.
     """
-    return _orchestrate_impl(
+    return _orchestrator_impl(
         source,
         inputs=inputs,
         output=output,

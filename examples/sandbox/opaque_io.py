@@ -121,7 +121,7 @@ async def merge_files_to_dir(f: flyte.io.File, d: flyte.io.Dir) -> flyte.io.Dir:
 # The sandbox receives a File, passes it to a worker, and returns the count.
 # It never sees the CSV contents.
 
-file_pipeline = env.sandbox.orchestrate(
+file_pipeline = env.sandbox.orchestrator(
     """
     csv_file = create_csv_file()
     row_count = count_csv_rows(csv_file)
@@ -141,7 +141,7 @@ file_pipeline = env.sandbox.orchestrate(
 # revenue — all via worker tasks. The sandbox only sees the opaque handle
 # and the final float.
 
-dataframe_pipeline = env.sandbox.orchestrate(
+dataframe_pipeline = env.sandbox.orchestrator(
     """
     products = create_dataframe()
     electronics = filter_dataframe(products, "electronics")
@@ -164,7 +164,7 @@ dataframe_pipeline = env.sandbox.orchestrate(
 # --- Example 3: Directory pass-through -------------------------------------
 # The sandbox passes a Dir handle to a worker that counts its files.
 
-dir_pipeline = env.sandbox.orchestrate(
+dir_pipeline = env.sandbox.orchestrator(
     """
     report = create_report_dir()
     n_files = count_dir_files(report)
@@ -181,7 +181,7 @@ dir_pipeline = env.sandbox.orchestrate(
 # A single sandbox orchestrates all three IO types, merging a File into a Dir
 # and computing DataFrame stats — without touching any data directly.
 
-combined_pipeline = env.sandbox.orchestrate(
+combined_pipeline = env.sandbox.orchestrator(
     """
     csv_file = create_csv_file()
     report_dir = create_report_dir()
@@ -220,7 +220,7 @@ combined_pipeline = env.sandbox.orchestrate(
 # The sandbox receives a File and DataFrame as inputs from the caller,
 # routes them to workers, and returns derived results.
 
-parameterized_pipeline = env.sandbox.orchestrate(
+parameterized_pipeline = env.sandbox.orchestrator(
     """
     rows = count_csv_rows(csv_file)
     revenue = total_revenue(product_df)
@@ -234,13 +234,13 @@ parameterized_pipeline = env.sandbox.orchestrate(
 # flyte.run(parameterized_pipeline, csv_file=some_file, product_df=some_df)
 
 
-# --- Example 6: @env.sandbox.orchestrate decorator -------------------------
+# --- Example 6: @env.sandbox.orchestrator decorator -------------------------
 # Instead of a code string, use a decorated function as the orchestrator.
 # The sandbox can call regular worker tasks but still cannot access file
 # contents directly.
 
 
-@env.sandbox.orchestrate
+@env.sandbox.orchestrator
 def orchestrate_etl(category: str) -> dict:
     csv_file = create_csv_file()
     row_count = count_csv_rows(csv_file)

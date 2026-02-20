@@ -10,7 +10,7 @@ This means the orchestrator body is pure Python (cheap, fast, side-effect
 free) while the heavy lifting runs in full containers with filesystem
 and network access.
 
-Use ``@env.sandbox.orchestrate`` to define sandboxed tasks directly on a
+Use ``@env.sandbox.orchestrator`` to define sandboxed tasks directly on a
 ``TaskEnvironment``, so they share the environment's image and are
 automatically registered for ``flyte run``.
 
@@ -50,10 +50,10 @@ def add(x: int, y: int) -> int:
 # --- Sandboxed orchestrator --------------------------------------------------
 # The orchestrator contains only control flow. Each call to a worker task
 # pauses the sandbox, runs the worker, and resumes with the result.
-# Using ``@env.sandbox.orchestrate`` registers the task directly in the environment.
+# Using ``@env.sandbox.orchestrator`` registers the task directly in the environment.
 
 
-@env.sandbox.orchestrate
+@env.sandbox.orchestrator
 def leaderboard(player_ids: list[int]) -> dict[str, int]:
     """Compute total and bonus scores for a list of players."""
     total = 0
@@ -78,7 +78,7 @@ def leaderboard(player_ids: list[int]) -> dict[str, int]:
 # Sandboxed tasks can compose multiple workers into a pipeline.
 
 
-@env.sandbox.orchestrate
+@env.sandbox.orchestrator
 def scaled_sum(a: int, b: int, scale: int) -> int:
     """Add two numbers, then multiply by a scale factor."""
     raw = add(a, b)

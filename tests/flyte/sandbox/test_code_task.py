@@ -1,12 +1,12 @@
-"""Tests for flyte.sandbox.orchestrate(), flyte.sandbox.orchestrate_local(),
-and TaskEnvironment.sandbox.orchestrate().
+"""Tests for flyte.sandbox.orchestrator(), flyte.sandbox.orchestrate_local(),
+and TaskEnvironment.sandbox.orchestrator().
 """
 
 from __future__ import annotations
 
 import pytest
 
-from flyte.sandbox import orchestrate
+from flyte.sandbox import orchestrator
 from flyte.sandbox._code_task import (
     CodeTaskTemplate,
     _classify_refs,
@@ -121,45 +121,45 @@ class TestClassifyRefs:
 
 
 # ---------------------------------------------------------------------------
-# orchestrate() factory
+# orchestrator() factory
 # ---------------------------------------------------------------------------
 
 
 class TestOrchestrateFactory:
     def test_creates_code_task_template(self):
-        t = orchestrate("x + y", inputs={"x": int, "y": int}, output=int)
+        t = orchestrator("x + y", inputs={"x": int, "y": int}, output=int)
         assert isinstance(t, CodeTaskTemplate)
         assert isinstance(t, SandboxedTaskTemplate)
 
     def test_default_name(self):
-        t = orchestrate("x", inputs={"x": int}, output=int)
+        t = orchestrator("x", inputs={"x": int}, output=int)
         assert t.name == "sandboxed-code"
 
     def test_custom_name(self):
-        t = orchestrate("x", inputs={"x": int}, output=int, name="my-code")
+        t = orchestrator("x", inputs={"x": int}, output=int, name="my-code")
         assert t.name == "my-code"
 
     def test_interface_from_types(self):
-        t = orchestrate("x + y", inputs={"x": int, "y": int}, output=int)
+        t = orchestrator("x + y", inputs={"x": int, "y": int}, output=int)
         assert "x" in t.interface.inputs
         assert "y" in t.interface.inputs
         assert "o0" in t.interface.outputs
 
     def test_interface_no_output(self):
-        t = orchestrate("x + y", inputs={"x": int, "y": int})
+        t = orchestrator("x + y", inputs={"x": int, "y": int})
         assert t.interface.outputs == {}
 
     def test_source_code_populated(self):
-        t = orchestrate("x + y", inputs={"x": int, "y": int}, output=int)
+        t = orchestrator("x + y", inputs={"x": int, "y": int}, output=int)
         assert t._source_code != ""
         assert "__result__" in t._source_code
 
     def test_input_names_populated(self):
-        t = orchestrate("x + y", inputs={"x": int, "y": int}, output=int)
+        t = orchestrator("x + y", inputs={"x": int, "y": int}, output=int)
         assert t._input_names == ["x", "y"]
 
     def test_no_external_refs_pure(self):
-        t = orchestrate("x + y", inputs={"x": int, "y": int}, output=int)
+        t = orchestrator("x + y", inputs={"x": int, "y": int}, output=int)
         assert not t._has_external_refs
 
     def test_external_refs_with_tasks(self):
@@ -169,7 +169,7 @@ class TestOrchestrateFactory:
         def add(x: int, y: int) -> int:
             return x + y
 
-        t = orchestrate(
+        t = orchestrator(
             "add(x, y)",
             inputs={"x": int, "y": int},
             output=int,
@@ -179,34 +179,34 @@ class TestOrchestrateFactory:
         assert "add" in t._external_refs["task_refs"]
 
     def test_task_type(self):
-        t = orchestrate("x", inputs={"x": int}, output=int)
+        t = orchestrator("x", inputs={"x": int}, output=int)
         assert t.task_type == "sandboxed-python"
 
     def test_default_plugin_config(self):
-        t = orchestrate("x", inputs={"x": int}, output=int)
+        t = orchestrator("x", inputs={"x": int}, output=int)
         assert isinstance(t.plugin_config, SandboxedConfig)
         assert t.plugin_config.timeout_ms == 30_000
 
     def test_custom_timeout(self):
-        t = orchestrate("x", inputs={"x": int}, output=int, timeout_ms=5000)
+        t = orchestrator("x", inputs={"x": int}, output=int, timeout_ms=5000)
         assert t.plugin_config.timeout_ms == 5000
 
     def test_retries(self):
-        t = orchestrate("x", inputs={"x": int}, output=int, retries=3)
+        t = orchestrator("x", inputs={"x": int}, output=int, retries=3)
         assert t.retries.count == 3
 
     def test_forward_not_supported(self):
-        t = orchestrate("x", inputs={"x": int}, output=int)
+        t = orchestrator("x", inputs={"x": int}, output=int)
         with pytest.raises(NotImplementedError, match="does not support forward"):
             t.forward(x=1)
 
     def test_build_inputs(self):
-        t = orchestrate("x + y", inputs={"x": int, "y": int}, output=int)
+        t = orchestrator("x + y", inputs={"x": int, "y": int}, output=int)
         inputs = t._build_inputs(1, 2)
         assert inputs == {"x": 1, "y": 2}
 
     def test_build_inputs_kwargs(self):
-        t = orchestrate("x + y", inputs={"x": int, "y": int}, output=int)
+        t = orchestrator("x + y", inputs={"x": int, "y": int}, output=int)
         inputs = t._build_inputs(x=1, y=2)
         assert inputs == {"x": 1, "y": 2}
 
@@ -215,14 +215,14 @@ class TestOrchestrateFactory:
             pass
 
         with pytest.raises(TypeError, match="unsupported type"):
-            orchestrate("x", inputs={"x": Custom}, output=int)
+            orchestrator("x", inputs={"x": Custom}, output=int)
 
     def test_rejects_unsupported_output_type(self):
         class Custom:
             pass
 
         with pytest.raises(TypeError, match="unsupported type"):
-            orchestrate("x", inputs={"x": int}, output=Custom)
+            orchestrator("x", inputs={"x": int}, output=Custom)
 
 
 # ---------------------------------------------------------------------------
@@ -296,18 +296,18 @@ class TestRunPurePython:
 
 
 # ---------------------------------------------------------------------------
-# TaskEnvironment.sandbox.orchestrate()
+# TaskEnvironment.sandbox.orchestrator()
 # ---------------------------------------------------------------------------
 
 
-class TestEnvironmentSandboxOrchestrate:
+class TestEnvironmentSandboxOrchestrator:
     def test_bare_decorator(self):
-        """@env.sandbox.orchestrate without arguments."""
+        """@env.sandbox.orchestrator without arguments."""
         import flyte
 
         env = flyte.TaskEnvironment(name="test-env")
 
-        @env.sandbox.orchestrate
+        @env.sandbox.orchestrator
         def add(x: int, y: int) -> int:
             return x + y
 
@@ -316,12 +316,12 @@ class TestEnvironmentSandboxOrchestrate:
         assert "test-env.add" in env.tasks
 
     def test_decorator_with_args(self):
-        """@env.sandbox.orchestrate(timeout_ms=...) with arguments."""
+        """@env.sandbox.orchestrator(timeout_ms=...) with arguments."""
         import flyte
 
         env = flyte.TaskEnvironment(name="test-env2")
 
-        @env.sandbox.orchestrate(timeout_ms=5_000, retries=2)
+        @env.sandbox.orchestrator(timeout_ms=5_000, retries=2)
         def multiply(x: int, y: int) -> int:
             return x * y
 
@@ -336,7 +336,7 @@ class TestEnvironmentSandboxOrchestrate:
 
         env = flyte.TaskEnvironment(name="img-test", image="my-custom-image:latest")
 
-        @env.sandbox.orchestrate
+        @env.sandbox.orchestrator
         def noop(x: int) -> int:
             return x
 
@@ -348,7 +348,7 @@ class TestEnvironmentSandboxOrchestrate:
 
         env = flyte.TaskEnvironment(name="parent-test")
 
-        @env.sandbox.orchestrate
+        @env.sandbox.orchestrator
         def sub(x: int) -> int:
             return x
 
@@ -363,7 +363,7 @@ class TestEnvironmentSandboxOrchestrate:
 
         with pytest.raises(TypeError, match="must be synchronous"):
 
-            @env.sandbox.orchestrate
+            @env.sandbox.orchestrator
             async def bad(x: int) -> int:
                 return x
 
@@ -373,7 +373,7 @@ class TestEnvironmentSandboxOrchestrate:
 
         env = flyte.TaskEnvironment(name="fwd-test")
 
-        @env.sandbox.orchestrate
+        @env.sandbox.orchestrator
         def double(x: int) -> int:
             return x * 2
 
@@ -385,7 +385,7 @@ class TestEnvironmentSandboxOrchestrate:
 
         env = flyte.TaskEnvironment(name="name-test")
 
-        @env.sandbox.orchestrate(name="my-custom-name")
+        @env.sandbox.orchestrator(name="my-custom-name")
         def thing(x: int) -> int:
             return x
 

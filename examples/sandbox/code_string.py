@@ -2,7 +2,7 @@
 Reusable Tasks from Code Strings
 =================================
 
-``flyte.sandbox.orchestrate()`` creates a reusable ``CodeTaskTemplate``
+``flyte.sandbox.orchestrator()`` creates a reusable ``CodeTaskTemplate``
 from a Python code string. The returned template works with ``flyte.run()``
 just like a decorated task — but the source is a string, not a function.
 
@@ -41,7 +41,7 @@ def multiply(x: int, y: int) -> int:
 # --- Example 1: Simple expression -------------------------------------------
 # A single expression — its value is the return value.
 
-double = flyte.sandbox.orchestrate(
+double = flyte.sandbox.orchestrator(
     "x * 2",
     inputs={"x": int},
     output=int,
@@ -53,7 +53,7 @@ double = flyte.sandbox.orchestrate(
 # --- Example 2: Multi-line with assignment -----------------------------------
 # When the last statement is an assignment, the assigned variable is returned.
 
-scale_and_offset = flyte.sandbox.orchestrate(
+scale_and_offset = flyte.sandbox.orchestrator(
     """
     scaled = x * factor
     result = scaled + offset
@@ -68,7 +68,7 @@ scale_and_offset = flyte.sandbox.orchestrate(
 # --- Example 3: Calling external tasks --------------------------------------
 # Pass worker tasks via ``tasks=[]`` so the sandbox can call them.
 
-compute_pipeline = flyte.sandbox.orchestrate(
+compute_pipeline = flyte.sandbox.orchestrator(
     """
     partial = add(x, y)
     result = multiply(partial, scale)
@@ -84,7 +84,7 @@ compute_pipeline = flyte.sandbox.orchestrate(
 # --- Example 4: String processing -------------------------------------------
 # Sandboxed code can work with strings and collections too.
 
-format_greeting = flyte.sandbox.orchestrate(
+format_greeting = flyte.sandbox.orchestrator(
     """
     parts = []
     for name in names:
@@ -101,7 +101,7 @@ format_greeting = flyte.sandbox.orchestrate(
 
 # --- Example 5: Conditional logic -------------------------------------------
 
-classify = flyte.sandbox.orchestrate(
+classify = flyte.sandbox.orchestrator(
     """
     if score >= 90:
         label = "A"
@@ -121,7 +121,7 @@ classify = flyte.sandbox.orchestrate(
 
 # --- Example 6: Building a dict result --------------------------------------
 
-summarize = flyte.sandbox.orchestrate(
+summarize = flyte.sandbox.orchestrator(
     """
     total = 0
     count = 0
@@ -140,7 +140,7 @@ summarize = flyte.sandbox.orchestrate(
 # --- Example 7: No output (side-effect-free validation) ----------------------
 # Omit ``output=`` to get NoneType — useful for pure validation logic.
 
-validate = flyte.sandbox.orchestrate(
+validate = flyte.sandbox.orchestrator(
     """
     for item in items:
         if item < 0:
@@ -153,7 +153,7 @@ validate = flyte.sandbox.orchestrate(
 
 
 # --- Attach to an environment for ``flyte run`` -----------------------------
-# ``orchestrate()`` creates standalone templates. ``flyte run`` requires
+# ``orchestrator()`` creates standalone templates. ``flyte run`` requires
 # every task to belong to a TaskEnvironment.
 
 sandbox_env = flyte.TaskEnvironment.from_task(

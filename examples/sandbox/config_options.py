@@ -111,10 +111,10 @@ def robust_transform(values: List[int], factor: int) -> List[int]:
     return result
 
 
-# --- orchestrate() with configuration ----------------------------------------
-# The same options work with ``orchestrate()`` for code-string tasks.
+# --- orchestrator() with configuration ----------------------------------------
+# The same options work with ``orchestrator()`` for code-string tasks.
 
-configured_code_task = flyte.sandbox.orchestrate(
+configured_code_task = flyte.sandbox.orchestrator(
     "x * factor",
     inputs={"x": int, "factor": int},
     output=int,

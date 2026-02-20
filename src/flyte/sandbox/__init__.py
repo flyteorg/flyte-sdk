@@ -19,12 +19,12 @@ Usage::
     # Environment-based approach (preferred for ``flyte run``)
     env = flyte.TaskEnvironment(name="my-env")
 
-    @env.sandbox.orchestrate
-    def orchestrator(x: int, y: int) -> int:
+    @env.sandbox.orchestrator
+    def my_orchestrator(x: int, y: int) -> int:
         return add(x, y)
 
     # Create a reusable task from a code string
-    pipeline = flyte.sandbox.orchestrate(
+    pipeline = flyte.sandbox.orchestrator(
         "add(x, y) * 2",
         inputs={"x": int, "y": int},
         output=int,
@@ -38,7 +38,7 @@ Usage::
     )
 """
 
-from ._api import orchestrate, orchestrate_local, task
+from ._api import orchestrate_local, orchestrator, task
 from ._code_task import CodeTaskTemplate
 from ._config import SandboxedConfig
 from ._task import SandboxedTaskTemplate
@@ -47,7 +47,7 @@ __all__ = [
     "CodeTaskTemplate",
     "SandboxedConfig",
     "SandboxedTaskTemplate",
-    "orchestrate",
     "orchestrate_local",
+    "orchestrator",
     "task",
 ]

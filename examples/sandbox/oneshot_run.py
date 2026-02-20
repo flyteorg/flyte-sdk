@@ -10,7 +10,7 @@ This is the quickest way to evaluate an expression or snippet in the
 sandbox.  It's ``async`` because external function calls (tasks, durable
 ops) require ``await``.
 
-For reusable tasks from code strings, see ``orchestrate()`` which
+For reusable tasks from code strings, see ``orchestrator()`` which
 creates a ``CodeTaskTemplate`` that can be passed to ``flyte.run()``.
 
 Install the optional dependency first::
