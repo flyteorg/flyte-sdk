@@ -59,6 +59,7 @@ async def create_channel(
     compression: typing.Optional[grpc.Compression] = None,
     http_session: httpx.AsyncClient | None = None,
     proxy_command: typing.List[str] | None = None,
+    rpc_retries: typing.Optional[int] = None,
     **kwargs,
 ) -> grpc.aio.Channel:
     """
@@ -159,13 +160,28 @@ async def create_channel(
         DefaultMetadataUnaryUnaryInterceptor,
     )
 
+    interceptors: typing.List[grpc.aio.ClientInterceptor] = []
+
+    # Add retry interceptors if configured (outermost so retries re-run the full chain)
+    if rpc_retries is not None and rpc_retries > 0:
+        from ._grpc_utils.retry_interceptor import RetryUnaryStreamInterceptor, RetryUnaryUnaryInterceptor
+
+        interceptors.extend(
+            [
+                RetryUnaryUnaryInterceptor(max_retries=rpc_retries),
+                RetryUnaryStreamInterceptor(max_retries=rpc_retries),
+            ]
+        )
+
     # Add all types of default metadata interceptors (includes x-request-id)
-    interceptors: typing.List[grpc.aio.ClientInterceptor] = [
-        DefaultMetadataUnaryUnaryInterceptor(),
-        DefaultMetadataUnaryStreamInterceptor(),
-        DefaultMetadataStreamUnaryInterceptor(),
-        DefaultMetadataStreamStreamInterceptor(),
-    ]
+    interceptors.extend(
+        [
+            DefaultMetadataUnaryUnaryInterceptor(),
+            DefaultMetadataUnaryStreamInterceptor(),
+            DefaultMetadataStreamUnaryInterceptor(),
+            DefaultMetadataStreamStreamInterceptor(),
+        ]
+    )
 
     # Create an HTTP session if not provided so we share the same http client across the stack
     if not http_session:
