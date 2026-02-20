@@ -47,7 +47,7 @@ interactive_sandbox_app = AppEnvironment(
         Parameter(name="max_processes", value="50", env_var="MAX_PROCESSES"),
         Parameter(name="timeout", value="30", env_var="COMMAND_TIMEOUT"),
         Parameter(name="allow_network", value="false", env_var="ALLOW_NETWORK"),
-    ]
+    ],
 )
 
 
