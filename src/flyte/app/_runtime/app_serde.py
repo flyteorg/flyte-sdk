@@ -122,10 +122,23 @@ def _serialized_pod_spec(
 
     # Process containers
     for container in containers:
-        img = container.image
-        if isinstance(img, flyte.Image):
-            img = lookup_image_in_cache(serialization_context, container.name, img)
-        container.image = img
+        if container.name == pod_template.primary_container_name:
+            # For the primary container, merge the app_env.image if the container's image is not set
+            if container.image is None:
+                # Use app_env.image as the fallback for the primary container
+                if app_env.image == "auto":
+                    img = flyte.Image.from_debian_base()
+                elif isinstance(app_env.image, str):
+                    img = flyte.Image.from_base(app_env.image)
+                else:
+                    img = app_env.image
+                container.image = lookup_image_in_cache(serialization_context, app_env.name, img) if img else None
+            elif isinstance(container.image, flyte.Image):
+                container.image = lookup_image_in_cache(serialization_context, container.name, container.image)
+        else:
+            # For non-primary containers, just resolve flyte.Image objects
+            if isinstance(container.image, flyte.Image):
+                container.image = lookup_image_in_cache(serialization_context, container.name, container.image)
 
         if container.name == pod_template.primary_container_name:
             container.args = app_env.container_args(serialization_context)
