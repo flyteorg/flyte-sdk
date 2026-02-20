@@ -12,8 +12,6 @@ import sys
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Set
 
-import landlock
-
 try:
     import ctypes.util
 
@@ -63,9 +61,7 @@ class ResourceLimits:
 
 @dataclass
 class SandboxConfig:
-    read_paths: List[str] = field(
-        default_factory=lambda: ["/tmp", "/var/inputs"]
-    )
+    read_paths: List[str] = field(default_factory=lambda: ["/tmp", "/var/inputs"])
     write_paths: List[str] = field(default_factory=lambda: ["/tmp", "/var/outputs"])
     read_write_paths: List[str] = field(default_factory=list)
     device_paths: List[str] = field(
@@ -87,82 +83,204 @@ class SandboxConfig:
     use_seccomp_allowlist: bool = True
     allowed_syscalls: Set[str] = field(
         default_factory=lambda: {
-            "read", "write", "readv", "writev", "pread64", "pwrite64",
-            "lseek", "close", "fstat", "stat", "lstat", "fstatat",
-            "newfstatat", "statx",
-            "open", "openat", "creat", "access", "faccessat", "faccessat2",
-            "readlink", "readlinkat", "getcwd", "chdir", "fchdir",
-            "dup", "dup2", "dup3", "fcntl", "flock",
-            "truncate", "ftruncate",
-            "getdents", "getdents64", "mkdir", "mkdirat", "rmdir",
-            "unlink", "unlinkat", "rename", "renameat", "renameat2",
-            "link", "linkat", "symlink", "symlinkat",
-            "mmap", "munmap", "mprotect", "mremap", "brk",
-            "madvise", "msync",
-            "fork", "vfork", "clone", "clone3", "execve", "execveat",
-            "wait4", "waitid", "exit", "exit_group",
-            "getpid", "getppid", "gettid", "getuid", "getgid",
-            "geteuid", "getegid", "getgroups",
-            "rt_sigaction", "rt_sigprocmask", "rt_sigreturn",
-            "sigaltstack", "kill", "tgkill",
-            "clock_gettime", "clock_getres", "gettimeofday",
-            "nanosleep", "clock_nanosleep",
-            "poll", "ppoll", "select", "pselect6", "epoll_create",
-            "epoll_create1", "epoll_ctl", "epoll_wait", "epoll_pwait",
-            "epoll_pwait2", "eventfd", "eventfd2",
-            "pipe", "pipe2",
-            "getrlimit", "prlimit64", "getrusage",
-            "uname", "sysinfo", "getrandom",
-            "futex", "set_robust_list", "get_robust_list",
-            "set_tid_address", "arch_prctl", "prctl",
+            "read",
+            "write",
+            "readv",
+            "writev",
+            "pread64",
+            "pwrite64",
+            "lseek",
+            "close",
+            "fstat",
+            "stat",
+            "lstat",
+            "fstatat",
+            "newfstatat",
+            "statx",
+            "open",
+            "openat",
+            "creat",
+            "access",
+            "faccessat",
+            "faccessat2",
+            "readlink",
+            "readlinkat",
+            "getcwd",
+            "chdir",
+            "fchdir",
+            "dup",
+            "dup2",
+            "dup3",
+            "fcntl",
+            "flock",
+            "truncate",
+            "ftruncate",
+            "getdents",
+            "getdents64",
+            "mkdir",
+            "mkdirat",
+            "rmdir",
+            "unlink",
+            "unlinkat",
+            "rename",
+            "renameat",
+            "renameat2",
+            "link",
+            "linkat",
+            "symlink",
+            "symlinkat",
+            "mmap",
+            "munmap",
+            "mprotect",
+            "mremap",
+            "brk",
+            "madvise",
+            "msync",
+            "fork",
+            "vfork",
+            "clone",
+            "clone3",
+            "execve",
+            "execveat",
+            "wait4",
+            "waitid",
+            "exit",
+            "exit_group",
+            "getpid",
+            "getppid",
+            "gettid",
+            "getuid",
+            "getgid",
+            "geteuid",
+            "getegid",
+            "getgroups",
+            "rt_sigaction",
+            "rt_sigprocmask",
+            "rt_sigreturn",
+            "sigaltstack",
+            "kill",
+            "tgkill",
+            "clock_gettime",
+            "clock_getres",
+            "gettimeofday",
+            "nanosleep",
+            "clock_nanosleep",
+            "poll",
+            "ppoll",
+            "select",
+            "pselect6",
+            "epoll_create",
+            "epoll_create1",
+            "epoll_ctl",
+            "epoll_wait",
+            "epoll_pwait",
+            "epoll_pwait2",
+            "eventfd",
+            "eventfd2",
+            "pipe",
+            "pipe2",
+            "getrlimit",
+            "prlimit64",
+            "getrusage",
+            "uname",
+            "sysinfo",
+            "getrandom",
+            "futex",
+            "set_robust_list",
+            "get_robust_list",
+            "set_tid_address",
+            "arch_prctl",
+            "prctl",
             "ioctl",
-            "sched_getaffinity", "sched_yield",
+            "sched_getaffinity",
+            "sched_yield",
             "rseq",
         }
     )
     blocked_syscalls: Set[str] = field(
         default_factory=lambda: {
-            "setuid", "setgid", "setreuid", "setregid",
-            "setresuid", "setresgid", "setfsuid", "setfsgid",
-            "capset", "capget",
-            "init_module", "finit_module", "delete_module",
-            "mount", "umount", "umount2", "pivot_root",
-            "sysfs", "statfs", "fstatfs",
-            "ptrace", "process_vm_readv", "process_vm_writev",
-            "iopl", "ioperm", "ioprio_set",
-            "settimeofday", "clock_settime", "adjtimex", "clock_adjtime",
-            "reboot", "kexec_load", "kexec_file_load",
-            "swapon", "swapoff",
-            "unshare", "setns",
-            "add_key", "request_key", "keyctl",
+            "setuid",
+            "setgid",
+            "setreuid",
+            "setregid",
+            "setresuid",
+            "setresgid",
+            "setfsuid",
+            "setfsgid",
+            "capset",
+            "capget",
+            "init_module",
+            "finit_module",
+            "delete_module",
+            "mount",
+            "umount",
+            "umount2",
+            "pivot_root",
+            "sysfs",
+            "statfs",
+            "fstatfs",
+            "ptrace",
+            "process_vm_readv",
+            "process_vm_writev",
+            "iopl",
+            "ioperm",
+            "ioprio_set",
+            "settimeofday",
+            "clock_settime",
+            "adjtimex",
+            "clock_adjtime",
+            "reboot",
+            "kexec_load",
+            "kexec_file_load",
+            "swapon",
+            "swapoff",
+            "unshare",
+            "setns",
+            "add_key",
+            "request_key",
+            "keyctl",
             "bpf",
             "perf_event_open",
             "userfaultfd",
             "personality",
             "acct",
-            "quotactl", "quotactl_fd",
+            "quotactl",
+            "quotactl_fd",
             "nfsservctl",
             "lookup_dcookie",
             "vhangup",
             "modify_ldt",
-            "vm86", "vm86old",
+            "vm86",
+            "vm86old",
             "seccomp",
-            "memfd_create", "memfd_secret",
-            "io_uring_setup", "io_uring_enter", "io_uring_register",
+            "memfd_create",
+            "memfd_secret",
+            "io_uring_setup",
+            "io_uring_enter",
+            "io_uring_register",
         }
     )
     allow_network: bool = False
     network_syscalls: Set[str] = field(
         default_factory=lambda: {
-            "socket", "socketpair",
-            "connect", "accept", "accept4",
-            "bind", "listen",
-            "sendto", "recvfrom",
-            "sendmsg", "recvmsg",
-            "sendmmsg", "recvmmsg",
+            "socket",
+            "socketpair",
+            "connect",
+            "accept",
+            "accept4",
+            "bind",
+            "listen",
+            "sendto",
+            "recvfrom",
+            "sendmsg",
+            "recvmsg",
+            "sendmmsg",
+            "recvmmsg",
             "shutdown",
-            "getsockname", "getpeername",
-            "getsockopt", "setsockopt",
+            "getsockname",
+            "getpeername",
+            "getsockopt",
+            "setsockopt",
         }
     )
     resource_limits: ResourceLimits = field(default_factory=ResourceLimits)
@@ -174,7 +292,6 @@ def check_blocked_paths(command: List[str], blocked_patterns: List[str]) -> Opti
 
     Returns the blocked pattern if found, None otherwise.
     """
-    import shlex
 
     command_str = " ".join(command)
 
@@ -223,7 +340,7 @@ def apply_resource_limits(limits: ResourceLimits) -> Dict[str, bool]:
 
     for name, rlimit_type, value in limit_map:
         try:
-            soft, hard = resource.getrlimit(rlimit_type)
+            _, hard = resource.getrlimit(rlimit_type)
             if hard == resource.RLIM_INFINITY or value <= hard:
                 new_soft = min(value, hard) if hard != resource.RLIM_INFINITY else value
                 resource.setrlimit(rlimit_type, (new_soft, hard))
@@ -252,9 +369,7 @@ def apply_landlock_restrictions(config: SandboxConfig) -> bool:
         rw_dir_paths: Set[str] = set()
         rw_file_paths: Set[str] = set()
 
-        def collect_paths(
-            paths: List[str], dir_set: Set[str], file_set: Set[str]
-        ) -> None:
+        def collect_paths(paths: List[str], dir_set: Set[str], file_set: Set[str]) -> None:
             for path in paths:
                 if path in skip_paths or not os.path.exists(path):
                     continue
@@ -278,9 +393,7 @@ def apply_landlock_restrictions(config: SandboxConfig) -> bool:
 
         read_file_access = ll.FSAccess.ReadFile
         read_dir_access = ll.FSAccess.ReadFile | ll.FSAccess.ReadDir
-        write_file_access = (
-            ll.FSAccess.WriteFile | ll.FSAccess.Truncate
-        )
+        write_file_access = ll.FSAccess.WriteFile | ll.FSAccess.Truncate
         write_dir_access = (
             ll.FSAccess.WriteFile
             | ll.FSAccess.Truncate
@@ -334,9 +447,7 @@ def apply_landlock_restrictions(config: SandboxConfig) -> bool:
                 pass
 
         if paths_added == 0:
-            print(
-                "Warning: No paths could be added to Landlock ruleset", file=sys.stderr
-            )
+            print("Warning: No paths could be added to Landlock ruleset", file=sys.stderr)
             return False
 
         try:
@@ -438,7 +549,7 @@ def run_sandboxed(
 
     env = config.environment if config.environment is not None else SAFE_ENV.copy()
 
-    sandbox_script = f'''
+    sandbox_script = f"""
 import sys
 import os
 import resource
@@ -458,17 +569,17 @@ for rlimit_type, value in limits:
     except:
         pass
 
-sys.path.insert(0, {repr(os.path.dirname(os.path.abspath(__file__)))})
+sys.path.insert(0, {os.path.dirname(os.path.abspath(__file__))!r})
 
 try:
     from sandbox import apply_landlock_restrictions, apply_seccomp_restrictions, SandboxConfig
 
     config = SandboxConfig(
-        read_paths={repr(config.read_paths)},
-        write_paths={repr(config.write_paths)},
-        read_write_paths={repr(config.read_write_paths)},
-        device_paths={repr(config.device_paths)},
-        allow_network={repr(config.allow_network)},
+        read_paths={config.read_paths!r},
+        write_paths={config.write_paths!r},
+        read_write_paths={config.read_write_paths!r},
+        device_paths={config.device_paths!r},
+        allow_network={config.allow_network!r},
         use_seccomp_allowlist=False,
     )
 
@@ -487,22 +598,23 @@ except ImportError as e:
     sys.exit(1)
 
 import subprocess
-cmd = {repr(command)}
+cmd = {command!r}
 try:
-    proc = subprocess.run(cmd, capture_output=True, text=True, cwd={repr(cwd)})
+    proc = subprocess.run(cmd, capture_output=True, text=True, cwd={cwd!r})
     print(proc.stdout, end="")
     print(proc.stderr, end="", file=sys.stderr)
     sys.exit(proc.returncode)
 except Exception as e:
     print(f"Execution error: {{e}}", file=sys.stderr)
     sys.exit(1)
-'''
+"""
 
     try:
         return subprocess.run(
             [sys.executable, "-c", sandbox_script],
             capture_output=True,
             text=True,
+            check=False,
             timeout=timeout,
             cwd=cwd,
             env=env,
@@ -594,6 +706,7 @@ def run_command_sandboxed(
     finally:
         if isolated_tmp_dir and os.path.exists(isolated_tmp_dir):
             import shutil
+
             try:
                 shutil.rmtree(isolated_tmp_dir)
             except OSError:
@@ -683,7 +796,7 @@ def run_python_sandboxed(
 
     escaped_code = json.dumps(code)
 
-    python_script = f'''
+    python_script = f"""
 import sys
 import os
 import resource
@@ -704,17 +817,17 @@ for rlimit_type, value in limits:
     except:
         pass
 
-sys.path.insert(0, {repr(os.path.dirname(os.path.abspath(__file__)))})
+sys.path.insert(0, {os.path.dirname(os.path.abspath(__file__))!r})
 
 try:
     from sandbox import apply_landlock_restrictions, apply_seccomp_restrictions, SandboxConfig
 
     sandbox_config = SandboxConfig(
-        read_paths={repr(config.read_paths)},
-        write_paths={repr(config.write_paths)},
-        read_write_paths={repr(config.read_write_paths)},
-        device_paths={repr(config.device_paths)},
-        allow_network={repr(config.allow_network)},
+        read_paths={config.read_paths!r},
+        write_paths={config.write_paths!r},
+        read_write_paths={config.read_write_paths!r},
+        device_paths={config.device_paths!r},
+        allow_network={config.allow_network!r},
         use_seccomp_allowlist=False,
     )
 
@@ -756,7 +869,7 @@ result_data["stdout"] = stdout_capture.getvalue()
 result_data["stderr"] = stderr_capture.getvalue()
 
 print("__SANDBOX_RESULT__" + json.dumps(result_data))
-'''
+"""
 
     env = config.environment if config.environment is not None else SAFE_ENV.copy()
 
@@ -765,6 +878,7 @@ print("__SANDBOX_RESULT__" + json.dumps(result_data))
             [sys.executable, "-c", python_script],
             capture_output=True,
             text=True,
+            check=False,
             timeout=timeout,
             env=env,
         )
@@ -774,7 +888,7 @@ print("__SANDBOX_RESULT__" + json.dumps(result_data))
 
         if "__SANDBOX_RESULT__" in stdout:
             marker_pos = stdout.find("__SANDBOX_RESULT__")
-            json_str = stdout[marker_pos + len("__SANDBOX_RESULT__"):]
+            json_str = stdout[marker_pos + len("__SANDBOX_RESULT__") :]
             pre_output = stdout[:marker_pos]
             try:
                 result_data = json.loads(json_str.strip())
@@ -817,6 +931,7 @@ print("__SANDBOX_RESULT__" + json.dumps(result_data))
     finally:
         if isolated_tmp_dir and os.path.exists(isolated_tmp_dir):
             import shutil
+
             try:
                 shutil.rmtree(isolated_tmp_dir)
             except OSError:

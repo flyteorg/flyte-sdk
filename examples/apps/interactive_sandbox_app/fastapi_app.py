@@ -1,14 +1,11 @@
 """FastAPI app for running commands with seccomp + Landlock sandboxing."""
 
-import os
-import shlex
 import json
-import subprocess
+import os
 from typing import List, Optional
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
-
 from sandbox import (
     SAFE_ENV,
     check_landlock_support,
@@ -17,7 +14,6 @@ from sandbox import (
     run_command_sandboxed,
     run_python_sandboxed,
 )
-
 
 app = FastAPI(
     title="Interactive Sandbox",
@@ -237,8 +233,7 @@ async def test_python_sandbox() -> dict:
 
     # Test 9: Try to use subprocess (should fail if seccomp blocks fork/exec)
     result = run_python_sandboxed(
-        "import subprocess; subprocess.run(['echo', 'test'], capture_output=True).stdout",
-        timeout=5
+        "import subprocess; subprocess.run(['echo', 'test'], capture_output=True).stdout", timeout=5
     )
     tests["subprocess_restricted"] = {
         "passed": True,  # This may or may not work depending on seccomp config
@@ -250,10 +245,7 @@ async def test_python_sandbox() -> dict:
 
     # Test 10: Try network access (should fail if network disabled)
     if not ALLOW_NETWORK:
-        result = run_python_sandboxed(
-            "import socket; s = socket.socket(); s.connect(('example.com', 80))",
-            timeout=5
-        )
+        result = run_python_sandboxed("import socket; s = socket.socket(); s.connect(('example.com', 80))", timeout=5)
         tests["network_blocked"] = {
             "passed": result.get("returncode") != 0 or result.get("error") is not None,
             "description": "Network access should be blocked",
@@ -310,9 +302,7 @@ async def test_sandbox() -> dict:
         "returncode": result.returncode,
     }
 
-    result = run_command_sandboxed(
-        "touch /tmp/sandbox_test && rm /tmp/sandbox_test", timeout=5
-    )
+    result = run_command_sandboxed("touch /tmp/sandbox_test && rm /tmp/sandbox_test", timeout=5)
     tests["write_tmp"] = {
         "passed": result.returncode == 0,
         "description": "Should be able to write to /tmp",
@@ -327,9 +317,7 @@ async def test_sandbox() -> dict:
     }
 
     if not ALLOW_NETWORK:
-        result = run_command_sandboxed(
-            "curl -s --connect-timeout 2 https://example.com", timeout=5
-        )
+        result = run_command_sandboxed("curl -s --connect-timeout 2 https://example.com", timeout=5)
         tests["network_blocked"] = {
             "passed": result.returncode != 0,
             "description": "Network access should be blocked",
