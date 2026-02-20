@@ -1002,6 +1002,7 @@ tui = [
 dev = [
     { name = "build" },
     { name = "docstring-parser" },
+    { name = "fastapi" },
     { name = "google-cloud-bigquery" },
     { name = "ipywidgets" },
     { name = "jupyterlab" },
@@ -1019,6 +1020,7 @@ dev = [
     { name = "ruff" },
     { name = "setuptools-scm" },
     { name = "textual" },
+    { name = "uvicorn" },
 ]
 
 [package.metadata]
@@ -1065,6 +1067,7 @@ provides-extras = ["aiosqlite", "connector", "examples-test", "tui"]
 dev = [
     { name = "build", specifier = ">=1.2.2.post1" },
     { name = "docstring-parser" },
+    { name = "fastapi", specifier = ">=0.128.0" },
     { name = "google-cloud-bigquery", specifier = ">=3.31.0" },
     { name = "ipywidgets", specifier = ">=8.1.7" },
     { name = "jupyterlab", specifier = ">=4.4.3" },
@@ -1081,6 +1084,7 @@ dev = [
     { name = "ruff", specifier = ">=0.11.0" },
     { name = "setuptools-scm", specifier = ">=8.2.0" },
     { name = "textual", specifier = ">=0.80" },
+    { name = "uvicorn", specifier = ">=0.40.0" },
 ]
 
 [[package]]
