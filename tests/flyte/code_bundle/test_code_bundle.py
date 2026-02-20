@@ -1,13 +1,14 @@
 import pathlib
 import subprocess
 import tempfile
+from types import ModuleType
 from unittest.mock import Mock
 
 import pytest
 
 import flyte
 from flyte._code_bundle._ignore import GitIgnore, IgnoreGroup, StandardIgnore
-from flyte._code_bundle._utils import list_all_files, ls_relative_files
+from flyte._code_bundle._utils import list_all_files, list_imported_modules_as_files, ls_relative_files
 from flyte._code_bundle.bundle import build_pkl_bundle
 from flyte._internal.runtime.entrypoints import load_pkl_task
 from flyte.extras import ContainerTask
@@ -270,3 +271,87 @@ async def test_from_task_sets_env():
         object.__setattr__(pkled, "downloaded_path", pkled.pkl)
         tt = load_pkl_task(pkled)
         assert tt.parent_env_name == "container_env"
+
+
+def test_list_imported_modules_as_files_skips_none_file():
+    """Test that list_imported_modules_as_files skips modules with __file__ = None."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        source_path = tmpdir
+
+        # Create a mock module with __file__ = None (like some built-in modules)
+        mock_module = ModuleType("mock_module_none")
+        mock_module.__file__ = None
+
+        modules = [mock_module]
+        result = list_imported_modules_as_files(source_path, modules)
+
+        # Should return empty list since the module has __file__ = None
+        assert result == []
+
+
+def test_list_imported_modules_as_files_skips_non_string_file():
+    """Test that list_imported_modules_as_files skips modules with non-string __file__.
+
+    This can happen when a third-party package overrides sys.modules[mod.__name__]
+    with a custom object that has a __file__ attribute that is not a string.
+    """
+    with tempfile.TemporaryDirectory() as tmpdir:
+        source_path = tmpdir
+
+        # Create a mock module with __file__ as a non-string object
+        mock_module = ModuleType("mock_module_non_string")
+        mock_module.__file__ = 12345  # Integer instead of string
+
+        modules = [mock_module]
+        result = list_imported_modules_as_files(source_path, modules)
+
+        # Should return empty list since the module has non-string __file__
+        assert result == []
+
+
+def test_list_imported_modules_as_files_skips_custom_file_object():
+    """Test that list_imported_modules_as_files skips modules with custom __file__ objects.
+
+    Some third-party packages may set __file__ to a custom object (e.g., a Path-like object
+    or other custom type) instead of a plain string.
+    """
+    with tempfile.TemporaryDirectory() as tmpdir:
+        source_path = tmpdir
+
+        # Create a custom object that mimics a path but is not a string
+        class CustomPath:
+            def __str__(self):
+                return "/some/path.py"
+
+            def __fspath__(self):
+                return "/some/path.py"
+
+        mock_module = ModuleType("mock_module_custom_path")
+        mock_module.__file__ = CustomPath()
+
+        modules = [mock_module]
+        result = list_imported_modules_as_files(source_path, modules)
+
+        # Should return empty list since __file__ is not a string
+        assert result == []
+
+
+def test_list_imported_modules_as_files_accepts_valid_string_file():
+    """Test that list_imported_modules_as_files correctly processes modules with valid string __file__."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        source_path = tmpdir
+
+        # Create a test file in the source path
+        test_file = pathlib.Path(tmpdir) / "test_module.py"
+        test_file.write_text("# test module")
+
+        # Create a mock module with a valid string __file__
+        mock_module = ModuleType("test_module")
+        mock_module.__file__ = str(test_file)
+
+        modules = [mock_module]
+        result = list_imported_modules_as_files(source_path, modules)
+
+        # Should include the file since it has a valid string __file__ in source_path
+        assert len(result) == 1
+        assert str(test_file) in result

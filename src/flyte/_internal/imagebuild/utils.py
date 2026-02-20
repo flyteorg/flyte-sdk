@@ -126,12 +126,6 @@ def get_uv_project_editable_dependencies(project_root: Path) -> list[Path]:
         # If the the path is absolute already, keep as-is
         # otherwise we need to complete it by pre-pending the project root where 'uv export' was run from.
         resolved_path = Path(match) if Path(match).is_absolute() else (project_root / match)
-        # Raise an error if the path isn't a child of the project root
-        if not resolved_path.is_relative_to(project_root):
-            raise ValueError(
-                "Editable dependency paths must be within the project root, this is not supported."
-                f"Found {resolved_path=} outside of {project_root=}."
-            )
         paths.append(resolved_path)
     return paths
 
