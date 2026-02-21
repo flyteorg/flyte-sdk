@@ -63,6 +63,11 @@ class Elastic:
             Defaults to 3.
         rdzv_configs (Dict[str, Any]): Rendezvous configuration key-value pairs.
             Defaults to {"timeout": 900, "join_timeout": 900}.
+        nccl_heartbeat_timeout_sec (Optional[int]): Timeout in seconds for the NCCL heartbeat
+            monitor. When a worker hits CUDA OOM and stops participating in collectives,
+            surviving workers detect the failure after this timeout and abort. Defaults to
+            300 (5 min) instead of PyTorch's 1800s (30 min). Set to None to use PyTorch
+            default.
     """
 
     nnodes: Union[int, str]
@@ -72,6 +77,7 @@ class Elastic:
     monitor_interval: int = 3
     max_restarts: int = 3
     rdzv_configs: Dict[str, Any] = field(default_factory=lambda: {"timeout": 900, "join_timeout": 900})
+    nccl_heartbeat_timeout_sec: Optional[int] = 300
 
 
 def launcher_entrypoint(tctx: TaskContext, fn: bytes, kwargs: dict):
@@ -119,36 +125,57 @@ class TorchFunctionTask(AsyncFunctionTaskTemplate):
                 omp_num_threads,
             )
             os.environ["OMP_NUM_THREADS"] = str(omp_num_threads)
+
+        # Set NCCL heartbeat timeout so surviving workers detect a dead peer
+        # (e.g. CUDA OOM crash) faster than the PyTorch default of 1800s.
+        if (
+            self.plugin_config.nccl_heartbeat_timeout_sec is not None
+            and "TORCH_NCCL_HEARTBEAT_TIMEOUT_SEC" not in os.environ
+        ):
+            os.environ["TORCH_NCCL_HEARTBEAT_TIMEOUT_SEC"] = str(self.plugin_config.nccl_heartbeat_timeout_sec)
+
         return {}
 
     async def execute(self, *args: P.args, **kwargs: P.kwargs) -> R:
-        tctx = internal_ctx().data.task_context
+        from flyte._utils.asyncify import run_sync_with_loop
+
+        ctx = internal_ctx()
+        tctx = ctx.data.task_context
+
         if tctx.mode == "local":
-            return self.func(**kwargs)
+            return self.func(*args, **kwargs)
 
-        config = LaunchConfig(
-            run_id=flyte.ctx().action.run_name,
-            min_nodes=self.min_nodes,
-            max_nodes=self.max_nodes,
-            nproc_per_node=self.plugin_config.nproc_per_node,
-            rdzv_backend=self.plugin_config.rdzv_backend,
-            rdzv_configs=self.plugin_config.rdzv_configs,
-            rdzv_endpoint=os.environ.get("PET_RDZV_ENDPOINT", "localhost:0"),
-            max_restarts=self.plugin_config.max_restarts,
-            monitor_interval=self.plugin_config.monitor_interval,
-        )
+        ctx_data = await self.pre(*args, **kwargs)
+        tctx = tctx.replace(data=ctx_data)
 
-        out = elastic_launch(config=config, entrypoint=launcher_entrypoint)(
-            tctx,
-            cloudpickle.dumps(self.func),
-            kwargs,
-        )
+        with ctx.replace_task_context(tctx):
+            config = LaunchConfig(
+                run_id=flyte.ctx().action.run_name,
+                min_nodes=self.min_nodes,
+                max_nodes=self.max_nodes,
+                nproc_per_node=self.plugin_config.nproc_per_node,
+                rdzv_backend=self.plugin_config.rdzv_backend,
+                rdzv_configs=self.plugin_config.rdzv_configs,
+                rdzv_endpoint=os.environ.get("PET_RDZV_ENDPOINT", "localhost:0"),
+                max_restarts=self.plugin_config.max_restarts,
+                monitor_interval=self.plugin_config.monitor_interval,
+            )
 
-        # `out` is a dictionary of rank (not local rank) -> result
-        # Rank 0 returns the result of the task function
-        if 0 in out:
-            return out[0]
-        return None
+            def _launch():
+                return elastic_launch(config=config, entrypoint=launcher_entrypoint)(
+                    tctx,
+                    cloudpickle.dumps(self.func),
+                    kwargs,
+                )
+
+            out = await run_sync_with_loop(_launch)
+
+            # `out` is a dictionary of rank (not local rank) -> result
+            # Rank 0 returns the result of the task function
+            result = out[0] if 0 in out else None
+            await self.post(result)
+
+        return result
 
     def custom_config(self, sctx: SerializationContext) -> Optional[Dict[str, Any]]:
         """
