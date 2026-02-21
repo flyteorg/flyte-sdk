@@ -63,12 +63,16 @@ examples-test = [
     "uvicorn",
     "lightning",
 ]
+sandbox = [
+    "pydantic-monty>=0.0.3",
+]
 tui = [
     "textual>=0.80",
 ]
 
 [dependency-groups]
 dev = [
+    "pydantic-monty>=0.0.3",
     "build>=1.2.2.post1",
     "fastapi>=0.128.0",
     "uvicorn>=0.40.0",
