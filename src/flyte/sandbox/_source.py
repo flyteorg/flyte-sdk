@@ -1,74 +1,34 @@
-"""AST rewriting for Monty sandbox execution.
+"""Source extraction for Monty sandbox execution.
 
-Monty (Pydantic's Rust-based sandboxed Python interpreter) doesn't support
-``return`` statements — it returns the value of the *last expression* in the
-code.  The functions here use ``ast`` to transform normal Python source into
-Monty-compatible form:
+Monty (Pydantic's Rust-based sandboxed Python interpreter) natively supports
+``return`` statements inside function definitions and returns the value of the
+last expression.  The functions here prepare Python source for Monty without
+any AST rewriting:
 
-- ``extract_source``: takes a decorated function, extracts its body, and
-  rewrites every ``return X`` into ``__result__ = X``.
-- ``prepare_code_source``: takes a raw code string and rewrites the last
-  statement so its value is captured in ``__result__``.
-
-Both append ``__result__`` as the final expression so Monty returns it.
+- ``extract_source``: takes a decorated function, strips decorators, and
+  appends a trailing call so Monty executes the function and returns its result.
+- ``prepare_code_source``: takes a raw code string, dedents/strips it, and
+  passes it through as-is.  Monty returns the last expression natively.
 """
 
 from __future__ import annotations
 
-import ast
 import inspect
 import textwrap
 from typing import Callable, List, Tuple
 
 
-def _make_result_assign(value: ast.expr, *, lineno: int = 0, col_offset: int = 0) -> ast.Assign:
-    """Create ``__result__ = <value>`` and fix locations."""
-    node = ast.Assign(
-        targets=[ast.Name(id="__result__", ctx=ast.Store())],
-        value=value,
-        lineno=lineno,
-        col_offset=col_offset,
-    )
-    return ast.fix_missing_locations(node)
-
-
-def _unparse_with_result(tree: ast.Module) -> str:
-    """Unparse *tree* and append ``__result__`` as the final expression."""
-    ast.fix_missing_locations(tree)
-    code = ast.unparse(tree)
-    code += "\n__result__"
-    return code
-
-
-class _ReturnRewriter(ast.NodeTransformer):
-    """Rewrite ``return X`` to ``__result__ = X`` so Monty can capture the result."""
-
-    def visit_Return(self, node: ast.Return) -> ast.AST:
-        value = node.value if node.value is not None else ast.Constant(value=None)
-        return _make_result_assign(value, lineno=node.lineno, col_offset=node.col_offset)
-
-    # Don't recurse into nested function/class definitions
-    def visit_FunctionDef(self, node: ast.FunctionDef) -> ast.AST:
-        return node
-
-    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> ast.AST:
-        return node
-
-    def visit_ClassDef(self, node: ast.ClassDef) -> ast.AST:
-        return node
-
-
 def extract_source(func: Callable) -> Tuple[str, List[str]]:
-    """Extract the body source of *func* for Monty execution.
+    """Extract the source of *func* for Monty execution.
 
-    Returns ``(code, input_names)`` where *code* has ``return`` statements
-    rewritten to ``__result__ = ...`` assignments, with ``__result__``
-    appended as the final expression so Monty returns it.
+    Returns ``(code, input_names)`` where *code* contains the full function
+    definition (with ``return`` statements preserved) followed by a trailing
+    call ``func_name(param1, param2, ...)`` so Monty executes the function
+    and returns its result.  For ``async def`` functions the trailing call
+    is wrapped in ``await``.
 
-    Raises ``TypeError`` for async, generator, or context-manager functions.
+    Raises ``TypeError`` for generator functions.
     """
-    if inspect.iscoroutinefunction(func):
-        raise TypeError(f"Sandboxed tasks cannot be async: {func.__qualname__}")
     if inspect.isgeneratorfunction(func):
         raise TypeError(f"Sandboxed tasks cannot be generators: {func.__qualname__}")
     if inspect.isasyncgenfunction(func):
@@ -76,63 +36,44 @@ def extract_source(func: Callable) -> Tuple[str, List[str]]:
 
     source = inspect.getsource(func)
     dedented = textwrap.dedent(source)
-    tree = ast.parse(dedented)
 
-    # The top-level node should be a Module containing a single FunctionDef
-    func_def: ast.FunctionDef | None = None
-    for node in ast.iter_child_nodes(tree):
-        if isinstance(node, ast.FunctionDef):
-            func_def = node
+    # Strip decorator lines: find the first line starting with 'def ' or 'async def '
+    lines = dedented.splitlines(keepends=True)
+    start_idx = 0
+    for i, line in enumerate(lines):
+        stripped = line.lstrip()
+        if stripped.startswith(("def ", "async def")):
+            start_idx = i
             break
+    func_source = "".join(lines[start_idx:])
 
-    if func_def is None:
-        raise TypeError(f"Could not find function definition in source of {func.__qualname__}")
+    # Get parameter names via inspect.signature
+    sig = inspect.signature(func)
+    input_names = [
+        name
+        for name, param in sig.parameters.items()
+        if param.kind in (param.POSITIONAL_ONLY, param.POSITIONAL_OR_KEYWORD, param.KEYWORD_ONLY)
+    ]
 
-    # Validate: reject async def at the AST level too (belt-and-suspenders)
-    if isinstance(func_def, ast.AsyncFunctionDef):
-        raise TypeError(f"Sandboxed tasks cannot be async: {func.__qualname__}")
+    # Append trailing call: func_name(param1, param2, ...)
+    # For async functions, wrap in ``await`` so Monty drives the coroutine.
+    func_name = func.__name__
+    args_str = ", ".join(input_names)
+    call = f"{func_name}({args_str})"
+    if inspect.iscoroutinefunction(func):
+        call = f"await {call}"
+    code = f"{func_source.rstrip()}\n{call}"
 
-    # Check for yield / yield from in the body
-    for node in ast.walk(ast.Module(body=func_def.body, type_ignores=[])):
-        if isinstance(node, (ast.Yield, ast.YieldFrom)):
-            raise TypeError(f"Sandboxed tasks cannot be generators: {func.__qualname__}")
-
-    # Extract input parameter names
-    input_names = [arg.arg for arg in func_def.args.args]
-
-    # Build a new Module from just the function body, with returns rewritten
-    body_module = ast.Module(body=func_def.body, type_ignores=[])
-    rewritten = _ReturnRewriter().visit(body_module)
-
-    return _unparse_with_result(rewritten), input_names
+    return code, input_names
 
 
 def prepare_code_source(source: str) -> str:
-    """Transform user code so Monty returns the value of the last expression.
+    """Dedent and strip a user code string for Monty execution.
 
-    - If the last statement is an expression: assigns it to ``__result__``
-    - If the last statement is a simple assignment ``x = ...``: appends ``__result__ = x``
-    - Appends ``__result__`` as the final expression for Monty to return.
-
-    This mirrors the ``return`` → ``__result__`` rewriting that
-    ``extract_source`` does for decorated functions.
+    Monty returns the value of the last expression natively, so no
+    rewriting is needed.  Returns ``"None"`` for empty input.
     """
     source = textwrap.dedent(source).strip()
     if not source:
-        return "__result__ = None\n__result__"
-
-    tree = ast.parse(source)
-    if not tree.body:
-        return "__result__ = None\n__result__"
-
-    last = tree.body[-1]
-
-    if isinstance(last, ast.Expr):
-        # Expression statement → replace with ``__result__ = expr``
-        tree.body[-1] = _make_result_assign(last.value, lineno=last.lineno, col_offset=last.col_offset)
-    elif isinstance(last, ast.Assign) and len(last.targets) == 1 and isinstance(last.targets[0], ast.Name):
-        # Simple assignment ``x = expr`` → append ``__result__ = x``
-        var_name = last.targets[0].id
-        tree.body.append(_make_result_assign(ast.Name(id=var_name, ctx=ast.Load())))
-
-    return _unparse_with_result(tree)
+        return "None"
+    return source

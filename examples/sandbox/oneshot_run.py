@@ -63,7 +63,7 @@ async def main():
     result = await flyte.sandbox.orchestrate_local(
         """
         words = text.split()
-        result = " ".join(reversed(words))
+        " ".join(reversed(words))
         """,
         inputs={"text": "hello beautiful world"},
     )
@@ -95,7 +95,7 @@ async def main():
     result = await flyte.sandbox.orchestrate_local(
         """
         base_sum = add(a, b)
-        result = power(base_sum, exp)
+        power(base_sum, exp)
         """,
         inputs={"a": 2, "b": 3, "exp": 3},
         tasks=[add, power],

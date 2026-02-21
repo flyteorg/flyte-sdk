@@ -45,12 +45,13 @@ class TestTaskDecorator:
 
 
 class TestSandboxedTaskTemplate:
-    def test_rejects_async_function(self):
-        with pytest.raises(TypeError, match="must be synchronous"):
+    def test_accepts_async_function(self):
+        @task
+        async def async_fn(x: int) -> int:
+            return x
 
-            @task
-            async def bad_fn(x: int) -> int:
-                return x
+        assert isinstance(async_fn, SandboxedTaskTemplate)
+        assert "async def async_fn" in async_fn._source_code
 
     def test_rejects_unsupported_types(self):
         class Custom:

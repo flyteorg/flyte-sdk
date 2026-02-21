@@ -6,6 +6,9 @@ Sandboxed tasks execute pure Python inside Monty — Pydantic's Rust-based
 Python interpreter. They have **no** filesystem, network, or OS access,
 start in microseconds, and many can safely share a single container.
 
+Both ``def`` and ``async def`` functions are supported — Monty natively
+handles ``await`` expressions.
+
 This example shows the basics: defining sandboxed tasks with the
 ``@flyte.sandbox.task`` decorator and calling them locally with ``forward()``.
 
@@ -100,6 +103,24 @@ def fizzbuzz(n: int) -> List[str]:
     return result
 
 
+# --- Async tasks -------------------------------------------------------------
+# ``async def`` functions are fully supported. Monty drives the coroutine
+# natively, so ``await`` works inside the sandbox.
+
+
+@flyte.sandbox.task
+async def async_add(x: int, y: int) -> int:
+    return x + y
+
+
+@flyte.sandbox.task
+async def async_transform(items: List[int]) -> List[int]:
+    result = []
+    for item in items:
+        result.append(item * 2 + 1)
+    return result
+
+
 # --- Attach to an environment for ``flyte run`` -----------------------------
 # ``@flyte.sandbox.task`` creates standalone templates. ``flyte run``
 # requires every task to belong to a TaskEnvironment.
@@ -114,6 +135,8 @@ sandbox_env = flyte.TaskEnvironment.from_task(
     first_and_last,
     maybe_double,
     fizzbuzz,
+    async_add,
+    async_transform,
 )
 
 
@@ -131,3 +154,5 @@ if __name__ == "__main__":
     print("maybe_double(5, True) =", maybe_double.forward(5, True))
     print("maybe_double(5) =", maybe_double.forward(5))
     print("fizzbuzz(15) =", fizzbuzz.forward(15))
+    print("async_add(10, 20) =", async_add.forward(10, 20))
+    print("async_transform([1,2,3]) =", async_transform.forward([1, 2, 3]))

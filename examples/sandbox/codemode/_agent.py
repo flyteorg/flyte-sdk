@@ -107,7 +107,7 @@ class CodeModeAgent:
         tools: dict[str, Callable],
         *,
         execution_tools: dict[str, Callable] | None = None,
-        model: str = "claude-sonnet-4-20250514",
+        model: str = "claude-sonnet-4-6",
         max_retries: int = 2,
     ) -> None:
         self._tools = tools  # for prompt generation
@@ -186,14 +186,15 @@ class CodeModeAgent:
     # Sandbox execution
     # ------------------------------------------------------------------
 
-    async def _execute(self, code: str) -> dict[str, Any]:
+    async def _execute(self, code: str) -> Any:
         """Run *code* in a Monty sandbox with the registered tools."""
-        result = await flyte.sandbox.orchestrate_local(
+        # Monty requires at least one input, so pass a dummy when
+        # the LLM-generated code doesn't receive any external inputs.
+        return await flyte.sandbox.orchestrate_local(
             code,
             inputs={"_unused": 0},
             tasks=list(self._execution_tools.values()),
         )
-        return result  # type: ignore[return-value]
 
     # ------------------------------------------------------------------
     # Main entry point

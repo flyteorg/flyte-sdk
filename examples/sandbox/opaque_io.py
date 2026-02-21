@@ -125,7 +125,7 @@ file_pipeline = env.sandbox.orchestrator(
     """
     csv_file = create_csv_file()
     row_count = count_csv_rows(csv_file)
-    result = {"file": csv_file, "rows": row_count}
+    {"file": csv_file, "rows": row_count}
     """,
     inputs={},
     output=dict,
@@ -147,7 +147,7 @@ dataframe_pipeline = env.sandbox.orchestrator(
     electronics = filter_dataframe(products, "electronics")
     electronics_revenue = total_revenue(electronics)
     all_revenue = total_revenue(products)
-    result = {
+    {
         "electronics_revenue": electronics_revenue,
         "all_revenue": all_revenue,
     }
@@ -168,7 +168,7 @@ dir_pipeline = env.sandbox.orchestrator(
     """
     report = create_report_dir()
     n_files = count_dir_files(report)
-    result = {"dir": report, "file_count": n_files}
+    {"dir": report, "file_count": n_files}
     """,
     inputs={},
     output=dict,
@@ -194,7 +194,7 @@ combined_pipeline = env.sandbox.orchestrator(
     revenue = total_revenue(electronics)
     row_count = count_csv_rows(csv_file)
 
-    result = {
+    {
         "merged_file_count": merged_count,
         "electronics_revenue": revenue,
         "csv_rows": row_count,
@@ -224,7 +224,7 @@ parameterized_pipeline = env.sandbox.orchestrator(
     """
     rows = count_csv_rows(csv_file)
     revenue = total_revenue(product_df)
-    result = {"csv_rows": rows, "revenue": revenue}
+    {"csv_rows": rows, "revenue": revenue}
     """,
     inputs={"csv_file": flyte.io.File, "product_df": flyte.io.DataFrame},
     output=dict,

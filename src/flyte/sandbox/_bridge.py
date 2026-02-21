@@ -129,9 +129,11 @@ class ExternalFunctionBridge:
                     args = [_from_monty(a) for a in progress.args]
                     kwargs = {k: _from_monty(v) for k, v in progress.kwargs.items()}
 
-                    # Call the external function and await if async
+                    # Call the external function and await if async.
+                    # Loop because TaskTemplate.aio() in local mode may return
+                    # an unawaited coroutine from forward() for async functions.
                     result = fn(*args, **kwargs)
-                    if inspect.iscoroutine(result):
+                    while inspect.iscoroutine(result):
                         result = await result
 
                     # Marshal IO types so Monty can hold the return value

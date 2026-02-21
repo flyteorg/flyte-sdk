@@ -116,7 +116,7 @@ _DATASETS: dict[str, Callable[[], list[dict]]] = {
 # ---------------------------------------------------------------------------
 
 
-def fetch_data(dataset: str) -> list:
+async def fetch_data(dataset: str) -> list:
     """Fetch tabular data by dataset name.
 
     Available datasets:
@@ -131,7 +131,7 @@ def fetch_data(dataset: str) -> list:
     return []
 
 
-def create_chart(chart_type: str, title: str, labels: list, values: list) -> str:
+async def create_chart(chart_type: str, title: str, labels: list, values: list) -> str:
     """Generate a self-contained Chart.js HTML snippet.
 
     Args:
@@ -194,7 +194,7 @@ def create_chart(chart_type: str, title: str, labels: list, values: list) -> str
     )
 
 
-def calculate_statistics(data: list, column: str) -> dict:
+async def calculate_statistics(data: list, column: str) -> dict:
     """Calculate descriptive statistics for a numeric column.
 
     Args:
@@ -226,7 +226,7 @@ def calculate_statistics(data: list, column: str) -> dict:
     }
 
 
-def filter_data(data: list, column: str, operator: str, value: object) -> list:
+async def filter_data(data: list, column: str, operator: str, value: object) -> list:
     """Filter rows where *column* matches the condition.
 
     Args:
@@ -252,7 +252,7 @@ def filter_data(data: list, column: str, operator: str, value: object) -> list:
     return [row for row in data if column in row and fn(row[column], value)]
 
 
-def group_and_aggregate(data: list, group_by: str, agg_column: str, agg_func: str) -> list:
+async def group_and_aggregate(data: list, group_by: str, agg_column: str, agg_func: str) -> list:
     """Group rows and aggregate a numeric column.
 
     Args:
@@ -288,7 +288,7 @@ def group_and_aggregate(data: list, group_by: str, agg_column: str, agg_func: st
     return results
 
 
-def sort_data(data: list, column: str, descending: bool = False) -> list:
+async def sort_data(data: list, column: str, descending: bool = False) -> list:
     """Sort rows by a column.
 
     Args:

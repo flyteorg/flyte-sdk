@@ -86,12 +86,6 @@ class SandboxedTaskTemplate(AsyncFunctionTaskTemplate):
         if self.plugin_config is None:
             self.plugin_config = SandboxedConfig()
 
-        # Validate the function is synchronous
-        import inspect
-
-        if inspect.iscoroutinefunction(self.func):
-            raise TypeError(f"Sandboxed tasks must be synchronous functions, got async: {self.func.__qualname__}")
-
         # Validate type annotations
         validate_sandboxed_interface(
             self.interface.inputs,

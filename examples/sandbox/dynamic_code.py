@@ -117,8 +117,7 @@ async def evaluate_expressions():
     ]
 
     for expr, extra_inputs in expressions:
-        # For expressions that don't reference any inputs, we still need
-        # at least one input for Monty.
+        # Monty requires at least one input, so pass a dummy for bare expressions.
         if not extra_inputs:
             result = await flyte.sandbox.orchestrate_local(expr, inputs={"_unused": 0})
         else:

@@ -50,13 +50,13 @@ double = flyte.sandbox.orchestrator(
 # flyte.run(double, x=5)  → 10
 
 
-# --- Example 2: Multi-line with assignment -----------------------------------
-# When the last statement is an assignment, the assigned variable is returned.
+# --- Example 2: Multi-line with last expression ------------------------------
+# The last expression is the return value.
 
 scale_and_offset = flyte.sandbox.orchestrator(
     """
     scaled = x * factor
-    result = scaled + offset
+    scaled + offset
     """,
     inputs={"x": int, "factor": int, "offset": int},
     output=int,
@@ -71,7 +71,7 @@ scale_and_offset = flyte.sandbox.orchestrator(
 compute_pipeline = flyte.sandbox.orchestrator(
     """
     partial = add(x, y)
-    result = multiply(partial, scale)
+    multiply(partial, scale)
     """,
     inputs={"x": int, "y": int, "scale": int},
     output=int,
@@ -89,7 +89,7 @@ format_greeting = flyte.sandbox.orchestrator(
     parts = []
     for name in names:
         parts.append(greeting + ", " + name + "!")
-    result = "; ".join(parts)
+    "; ".join(parts)
     """,
     inputs={"greeting": str, "names": list},
     output=str,
@@ -103,14 +103,16 @@ format_greeting = flyte.sandbox.orchestrator(
 
 classify = flyte.sandbox.orchestrator(
     """
-    if score >= 90:
-        label = "A"
-    elif score >= 80:
-        label = "B"
-    elif score >= 70:
-        label = "C"
-    else:
-        label = "F"
+    def classify_score(score):
+        if score >= 90:
+            return "A"
+        elif score >= 80:
+            return "B"
+        elif score >= 70:
+            return "C"
+        else:
+            return "F"
+    classify_score(score)
     """,
     inputs={"score": int},
     output=str,
@@ -128,7 +130,7 @@ summarize = flyte.sandbox.orchestrator(
     for v in values:
         total = total + v
         count = count + 1
-    result = {"total": total, "count": count, "avg": total / count}
+    {"total": total, "count": count, "avg": total / count}
     """,
     inputs={"values": list},
     output=dict,

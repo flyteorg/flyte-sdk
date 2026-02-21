@@ -10,6 +10,9 @@ This means the orchestrator body is pure Python (cheap, fast, side-effect
 free) while the heavy lifting runs in full containers with filesystem
 and network access.
 
+Both ``def`` and ``async def`` orchestrators are supported — Monty natively
+handles ``await`` expressions.
+
 Use ``@env.sandbox.orchestrator`` to define sandboxed tasks directly on a
 ``TaskEnvironment``, so they share the environment's image and are
 automatically registered for ``flyte run``.
@@ -85,8 +88,32 @@ def scaled_sum(a: int, b: int, scale: int) -> int:
     return multiply(raw, scale)
 
 
+# --- Async orchestrator -------------------------------------------------------
+# ``async def`` orchestrators are fully supported. Monty drives the coroutine
+# natively, so ``await`` works inside the sandbox.
+
+
+@env.sandbox.orchestrator
+async def async_leaderboard(player_ids: list[int]) -> dict[str, int]:
+    """Same as leaderboard, but defined as an async function."""
+    total = 0
+    best = 0
+    for pid in player_ids:
+        score = fetch_score(pid)
+        total = add(total, score)
+        if score > best:
+            best = score
+    bonus = multiply(best, 2)
+    return {
+        "total": total,
+        "best": best,
+        "bonus": bonus,
+    }
+
+
 if __name__ == "__main__":
     # forward() calls the Python function directly — external calls
     # resolve to the worker's forward() as well.
     print("leaderboard([1,2,3]) =", leaderboard.forward([1, 2, 3]))
     print("scaled_sum(3, 4, 10) =", scaled_sum.forward(3, 4, 10))
+    print("async_leaderboard([1,2,3]) =", async_leaderboard.forward([1, 2, 3]))

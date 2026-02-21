@@ -1,4 +1,4 @@
-"""Tests for sandboxed source extraction and return rewriting."""
+"""Tests for sandboxed source extraction."""
 
 import pytest
 
@@ -11,8 +11,9 @@ def test_simple_function_body():
 
     code, input_names = extract_source(add)
     assert input_names == ["x", "y"]
-    assert "__result__" in code
-    assert "x + y" in code
+    assert "def add" in code
+    assert "return x + y" in code
+    assert code.endswith("add(x, y)")
 
 
 def test_multiline_function():
@@ -23,9 +24,11 @@ def test_multiline_function():
 
     code, input_names = extract_source(compute)
     assert input_names == ["a", "b"]
-    assert "__result__ = d" in code
+    assert "def compute" in code
     assert "c = a + b" in code
     assert "d = c * 2" in code
+    assert "return d" in code
+    assert code.endswith("compute(a, b)")
 
 
 def test_no_return():
@@ -34,9 +37,8 @@ def test_no_return():
 
     code, input_names = extract_source(noop)
     assert input_names == ["x"]
-    # No return statement means only the trailing __result__ expression (no assignment)
-    assert "__result__ =" not in code
-    assert code.endswith("__result__")
+    assert "def noop" in code
+    assert code.endswith("noop(x)")
 
 
 def test_bare_return():
@@ -46,7 +48,9 @@ def test_bare_return():
 
     code, input_names = extract_source(bare)
     assert input_names == ["x"]
-    assert "__result__ = None" in code
+    assert "def bare" in code
+    assert "return" in code
+    assert code.endswith("bare(x)")
 
 
 def test_multiple_returns():
@@ -57,16 +61,21 @@ def test_multiple_returns():
 
     code, input_names = extract_source(branching)
     assert input_names == ["x"]
-    # 2 assignments + 1 trailing expression
-    assert code.count("__result__") == 3
+    assert "def branching" in code
+    assert "return x" in code
+    assert "return -x" in code
+    assert code.endswith("branching(x)")
 
 
-def test_rejects_async_function():
-    async def bad(x: int) -> int:
-        return x
+def test_async_function():
+    async def fetch(x: int) -> int:
+        return x + 1
 
-    with pytest.raises(TypeError, match="cannot be async"):
-        extract_source(bad)
+    code, input_names = extract_source(fetch)
+    assert input_names == ["x"]
+    assert "async def fetch" in code
+    assert "return x + 1" in code
+    assert code.endswith("await fetch(x)")
 
 
 def test_rejects_generator():
@@ -96,8 +105,11 @@ def test_preserves_conditionals():
 
     code, input_names = extract_source(classify)
     assert input_names == ["x"]
-    # 3 assignments + 1 trailing expression
-    assert code.count("__result__") == 4
+    assert "def classify" in code
+    assert 'return "positive"' in code
+    assert 'return "negative"' in code
+    assert 'return "zero"' in code
+    assert code.endswith("classify(x)")
 
 
 def test_string_operations():
@@ -106,4 +118,6 @@ def test_string_operations():
 
     code, input_names = extract_source(greet)
     assert input_names == ["name"]
-    assert "__result__" in code
+    assert "def greet" in code
+    assert "return" in code
+    assert code.endswith("greet(name)")

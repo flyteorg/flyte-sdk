@@ -2,8 +2,8 @@
 =======================================================
 
 Same ``CodeModeAgent`` and tool definitions as the chat app, but each tool
-is wrapped with ``@env.task`` so the sandbox dispatches them as durable Flyte
-tasks through the controller (rather than calling them directly in-process).
+is defined as an ``@env.task`` so the sandbox dispatches them as durable Flyte
+tasks through the controller.
 
 Architecture::
 
@@ -13,9 +13,9 @@ Architecture::
     analyze(request) -- @env.task(report=True)
       +-- CodeModeAgent.run(request, [])
              +-- LLM call (generate code)
-             +-- run_local_sandbox(code, functions=durable_tools)
-                    +-- fetch_data(dataset) -- @env.task (durable)
-                    +-- create_chart(...)   -- @env.task (durable)
+             +-- orchestrate_local(code, tasks=[...])
+                    +-- fetch_data(dataset)   -- @env.task (durable)
+                    +-- create_chart(...)      -- @env.task (durable)
       +-- flyte.report.replace(html) + flush()
 
 Run::
@@ -37,52 +37,115 @@ env = flyte.TaskEnvironment(
     name="llm-code-mode",
     secrets=[flyte.Secret(key="anthropic-api-key", as_env_var="ANTHROPIC_API_KEY")],
     image=flyte.Image.from_debian_base().with_pip_packages("httpx", "pydantic-monty", "unionai-reuse"),
-    reusable=flyte.ReusePolicy(
-        replicas=1,
-        concurrency=10,
-    ),
 )
 
 # ---------------------------------------------------------------------------
-# Durable tool tasks — module-level declarations so the task runner can
-# resolve them by name.  Each delegates to the plain function in _tools.py.
+# Durable tool tasks — defined here so cloudpickle serializes references to
+# this module (which is in the code bundle), not to _tools (which may not be).
+# Delegate to the shared implementations in _tools.py.
 # ---------------------------------------------------------------------------
 
 
 @env.task
 async def fetch_data(dataset: str) -> list:
-    return _tools.fetch_data(dataset)
+    """Fetch tabular data by dataset name.
+
+    Available datasets:
+    - "sales_2024": columns month, region, revenue, units
+    - "employees": columns name, department, salary, years_exp, performance_rating
+    - "website_traffic": columns date, page, visitors, bounce_rate, avg_duration
+    - "inventory": columns product, category, stock, price, supplier
+    """
+    return await _tools.fetch_data(dataset)
 
 
 @env.task
 async def create_chart(chart_type: str, title: str, labels: list, values: list) -> str:
-    return _tools.create_chart(chart_type, title, labels, values)
+    """Generate a self-contained Chart.js HTML snippet.
+
+    Args:
+        chart_type: One of "bar", "line", "pie", "doughnut".
+        title: Chart title displayed above the canvas.
+        labels: X-axis labels (or slice labels for pie/doughnut).
+        values: Either a flat list of numbers, or a list of
+                {"label": str, "data": list[number]} dicts for multi-series.
+
+    Returns:
+        HTML string with a <canvas> and <script> block.
+    """
+    return await _tools.create_chart(chart_type, title, labels, values)
 
 
 @env.task
 async def calculate_statistics(data: list, column: str) -> dict:
-    return _tools.calculate_statistics(data, column)
+    """Calculate descriptive statistics for a numeric column.
+
+    Args:
+        data: List of row dicts (e.g. from fetch_data).
+        column: Name of the numeric column to analyze.
+
+    Returns:
+        Dict with keys: count, mean, median, min, max, std_dev.
+    """
+    return await _tools.calculate_statistics(data, column)
 
 
 @env.task
 async def filter_data(data: list, column: str, operator: str, value: object) -> list:
-    return _tools.filter_data(data, column, operator, value)
+    """Filter rows where *column* matches the condition.
+
+    Args:
+        data: List of row dicts.
+        column: Column name to test.
+        operator: One of "==", "!=", ">", ">=", "<", "<=".
+        value: The value to compare against.
+
+    Returns:
+        Filtered list of row dicts.
+    """
+    return await _tools.filter_data(data, column, operator, value)
 
 
 @env.task
 async def group_and_aggregate(data: list, group_by: str, agg_column: str, agg_func: str) -> list:
-    return _tools.group_and_aggregate(data, group_by, agg_column, agg_func)
+    """Group rows and aggregate a numeric column.
+
+    Args:
+        data: List of row dicts.
+        group_by: Column to group on.
+        agg_column: Numeric column to aggregate.
+        agg_func: One of "sum", "mean", "count", "min", "max".
+
+    Returns:
+        List of {"group": key, "value": aggregated_value} dicts.
+    """
+    return await _tools.group_and_aggregate(data, group_by, agg_column, agg_func)
 
 
 @env.task
 async def sort_data(data: list, column: str, descending: bool = False) -> list:
-    return _tools.sort_data(data, column, descending)
+    """Sort rows by a column.
+
+    Args:
+        data: List of row dicts.
+        column: Column to sort by.
+        descending: If True, sort in descending order.
+
+    Returns:
+        New sorted list of row dicts.
+    """
+    return await _tools.sort_data(data, column, descending)
 
 
-# Build execution tools dict from the module-level task declarations
-durable_tools = {name: globals()[name] for name in ALL_TOOLS}
+# ---------------------------------------------------------------------------
+# Agent setup
+# ---------------------------------------------------------------------------
 
-# Plain tools for prompt generation, task-wrapped for sandbox execution
+# Plain functions from _tools for prompt generation (signatures + docstrings),
+# task-wrapped versions for durable sandbox execution.
+_tool_tasks = [fetch_data, create_chart, calculate_statistics, filter_data, group_and_aggregate, sort_data]
+durable_tools = {t.func.__name__: t for t in _tool_tasks}
+
 agent = CodeModeAgent(tools=ALL_TOOLS, execution_tools=durable_tools)
 
 

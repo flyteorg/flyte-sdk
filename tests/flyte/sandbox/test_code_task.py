@@ -2,8 +2,6 @@
 and TaskEnvironment.sandbox.orchestrator().
 """
 
-from __future__ import annotations
-
 import pytest
 
 from flyte.sandbox import orchestrator
@@ -21,55 +19,50 @@ from flyte.sandbox._task import SandboxedTaskTemplate
 
 
 class TestPrepareCodeSource:
-    def test_expression_becomes_result(self):
+    def test_expression_passes_through(self):
         result = prepare_code_source("x + y")
-        assert "__result__" in result
-        assert "x + y" in result
+        assert result == "x + y"
 
-    def test_assignment_appends_result(self):
+    def test_assignment_passes_through(self):
+        """Assignments pass through as-is — no magic variable appending."""
         result = prepare_code_source("result = x + y")
-        # Should contain the assignment AND __result__ = result
-        assert "result = x + y" in result
-        assert "__result__ = result" in result
-        assert result.endswith("__result__")
+        assert result == "result = x + y"
 
-    def test_multiline_last_expression(self):
+    def test_multiline_passes_through(self):
         src = """\
         a = x + 1
         b = a * 2
         b
         """
         result = prepare_code_source(src)
-        assert "__result__" in result
-        # The last line (expression `b`) becomes __result__ = b
-        assert "b" in result
-
-    def test_multiline_last_assignment(self):
-        src = """\
-        partial = x + y
-        result = partial * 2
-        """
-        result = prepare_code_source(src)
-        assert "__result__ = result" in result
-        assert result.endswith("__result__")
+        assert "a = x + 1" in result
+        assert "b = a * 2" in result
+        lines = result.splitlines()
+        assert lines[-1] == "b"
 
     def test_empty_source(self):
         result = prepare_code_source("")
-        assert "__result__" in result
+        assert result == "None"
 
     def test_whitespace_only_source(self):
         result = prepare_code_source("   \n  \n  ")
-        assert "__result__" in result
+        assert result == "None"
 
     def test_single_literal(self):
         result = prepare_code_source("42")
-        assert "__result__" in result
-        assert "42" in result
+        assert result == "42"
 
     def test_function_call_expression(self):
         result = prepare_code_source("add(x, y) * 2")
-        assert "__result__" in result
-        assert "add(x, y) * 2" in result
+        assert result == "add(x, y) * 2"
+
+    def test_dedents_indented_source(self):
+        src = """\
+        x = 1
+        x + 2
+        """
+        result = prepare_code_source(src)
+        assert result == "x = 1\nx + 2"
 
 
 # ---------------------------------------------------------------------------
@@ -152,7 +145,7 @@ class TestOrchestrateFactory:
     def test_source_code_populated(self):
         t = orchestrator("x + y", inputs={"x": int, "y": int}, output=int)
         assert t._source_code != ""
-        assert "__result__" in t._source_code
+        assert "x + y" in t._source_code
 
     def test_input_names_populated(self):
         t = orchestrator("x + y", inputs={"x": int, "y": int}, output=int)
@@ -247,10 +240,10 @@ class TestRunPurePython:
         assert result == 3
 
     @pytest.mark.asyncio
-    async def test_assignment_return(self):
+    async def test_expression_return(self):
         from flyte.sandbox import orchestrate_local
 
-        result = await orchestrate_local("result = x * y", inputs={"x": 3, "y": 4})
+        result = await orchestrate_local("x * y", inputs={"x": 3, "y": 4})
         assert result == 12
 
     @pytest.mark.asyncio
@@ -268,13 +261,13 @@ class TestRunPurePython:
         assert result == 15  # (2+1) * (3+2)
 
     @pytest.mark.asyncio
-    async def test_multiline_assignment(self):
+    async def test_multiline_last_expression(self):
         from flyte.sandbox import orchestrate_local
 
         result = await orchestrate_local(
             """
             partial = x + y
-            result = partial * 2
+            partial * 2
             """,
             inputs={"x": 1, "y": 2},
         )
@@ -355,17 +348,18 @@ class TestEnvironmentSandboxOrchestrator:
         assert sub.parent_env() is env
         assert sub.parent_env_name == "parent-test"
 
-    def test_rejects_async_function(self):
-        """Sandboxed tasks must be synchronous."""
+    def test_accepts_async_function(self):
+        """Sandboxed tasks support async def — Monty handles async natively."""
         import flyte
 
         env = flyte.TaskEnvironment(name="async-test")
 
-        with pytest.raises(TypeError, match="must be synchronous"):
+        @env.sandbox.orchestrator
+        async def async_orch(x: int) -> int:
+            return x
 
-            @env.sandbox.orchestrator
-            async def bad(x: int) -> int:
-                return x
+        assert isinstance(async_orch, SandboxedTaskTemplate)
+        assert "async def async_orch" in async_orch._source_code
 
     def test_forward(self):
         """forward() should call the function directly."""
@@ -391,3 +385,286 @@ class TestEnvironmentSandboxOrchestrator:
 
         assert thing.name == "my-custom-name"
         assert "my-custom-name" in env.tasks
+
+    def test_code_string_mode(self):
+        """env.sandbox.orchestrator with a code string creates CodeTaskTemplate."""
+        import flyte
+        from flyte.sandbox import task
+
+        @task
+        def add(x: int, y: int) -> int:
+            return x + y
+
+        env = flyte.TaskEnvironment(name="code-str-test")
+        t = env.sandbox.orchestrator(
+            "add(x, y)",
+            inputs={"x": int, "y": int},
+            output=int,
+            tasks=[add],
+        )
+        assert isinstance(t, CodeTaskTemplate)
+        assert t.name == "sandboxed-code"
+
+
+# ---------------------------------------------------------------------------
+# Monty return support — requires pydantic-monty
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.skipif(not HAS_MONTY, reason="pydantic-monty not installed")
+class TestMontyReturnSupport:
+    """Prove that Monty natively supports return statements in function defs."""
+
+    def test_function_def_with_return(self):
+        """Function def with return + trailing call returns correct value."""
+        from pydantic_monty import Monty
+
+        code = """\
+def add(x, y):
+    return x + y
+add(x, y)
+"""
+        monty = Monty(code, inputs=["x", "y"])
+        result = monty.run(inputs={"x": 3, "y": 4})
+        assert result == 7
+
+    def test_conditional_returns(self):
+        """Conditional returns (if/elif/else) each branch works."""
+        from pydantic_monty import Monty
+
+        code = """\
+def classify(x):
+    if x > 0:
+        return "positive"
+    elif x < 0:
+        return "negative"
+    else:
+        return "zero"
+classify(x)
+"""
+        monty = Monty(code, inputs=["x"])
+        assert monty.run(inputs={"x": 5}) == "positive"
+        assert monty.run(inputs={"x": -3}) == "negative"
+        assert monty.run(inputs={"x": 0}) == "zero"
+
+    def test_bare_return(self):
+        """Bare return (no value) returns None."""
+        from pydantic_monty import Monty
+
+        code = """\
+def noop(x):
+    if x > 0:
+        return
+    return x
+noop(x)
+"""
+        monty = Monty(code, inputs=["x"])
+        assert monty.run(inputs={"x": 5}) is None
+        assert monty.run(inputs={"x": -1}) == -1
+
+    def test_function_no_return(self):
+        """Function with no return returns None."""
+        from pydantic_monty import Monty
+
+        code = """\
+def noop(x):
+    _ = x + 1
+noop(x)
+"""
+        monty = Monty(code, inputs=["x"])
+        assert monty.run(inputs={"x": 42}) is None
+
+    def test_function_with_external_functions(self):
+        """Function def with external calls uses MontySnapshot for pause/resume."""
+        from pydantic_monty import MontyComplete, MontySnapshot
+
+        code = """\
+def pipeline(x):
+    doubled = double(x)
+    return doubled + 1
+pipeline(x)
+"""
+        from pydantic_monty import Monty
+
+        monty = Monty(code, inputs=["x"], external_functions=["double"])
+        snapshot = monty.start(inputs={"x": 5})
+        assert isinstance(snapshot, MontySnapshot)
+        assert snapshot.function_name == "double"
+        assert snapshot.args == (5,)
+
+        # Resume with the result of the external function
+        result = snapshot.resume(return_value=10)  # double(5) = 10
+        assert isinstance(result, MontyComplete)
+        assert result.output == 11  # 10 + 1
+
+
+# ---------------------------------------------------------------------------
+# orchestrate_local with function defs — requires pydantic-monty
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.skipif(not HAS_MONTY, reason="pydantic-monty not installed")
+class TestRunPurePythonFunctionDefs:
+    @pytest.mark.asyncio
+    async def test_function_def_with_return(self):
+        from flyte.sandbox import orchestrate_local
+
+        result = await orchestrate_local(
+            """
+            def compute(x, y):
+                return x * y + 1
+            compute(x, y)
+            """,
+            inputs={"x": 3, "y": 4},
+        )
+        assert result == 13  # 3 * 4 + 1
+
+    @pytest.mark.asyncio
+    async def test_conditional_returns(self):
+        from flyte.sandbox import orchestrate_local
+
+        result = await orchestrate_local(
+            """
+            def classify(x):
+                if x > 0:
+                    return "positive"
+                else:
+                    return "non-positive"
+            classify(x)
+            """,
+            inputs={"x": 5},
+        )
+        assert result == "positive"
+
+    @pytest.mark.asyncio
+    async def test_with_external_task(self):
+        from flyte.sandbox import orchestrate_local, task
+
+        @task
+        def double(x: int) -> int:
+            return x * 2
+
+        result = await orchestrate_local(
+            "double(x) + 1",
+            inputs={"x": 5},
+            tasks=[double],
+        )
+        assert result == 11  # 5 * 2 + 1
+
+
+# ---------------------------------------------------------------------------
+# Sandbox IO types — validates interface accepts File/Dir/DataFrame
+# ---------------------------------------------------------------------------
+
+
+class TestSandboxIOTypes:
+    def test_task_with_file_input_output(self):
+        """@sandbox.task with File input/output type annotations validates."""
+        from flyte.io import File
+        from flyte.sandbox import task
+
+        @task
+        def process(f: File) -> File:
+            return f
+
+        assert isinstance(process, SandboxedTaskTemplate)
+        assert "f" in process.interface.inputs
+        assert "o0" in process.interface.outputs
+
+    def test_task_with_dir_input_output(self):
+        """@sandbox.task with Dir input/output type annotations validates."""
+        from flyte.io import Dir
+        from flyte.sandbox import task
+
+        @task
+        def process(d: Dir) -> Dir:
+            return d
+
+        assert isinstance(process, SandboxedTaskTemplate)
+        assert "d" in process.interface.inputs
+        assert "o0" in process.interface.outputs
+
+    def test_task_with_dataframe_input_output(self):
+        """@sandbox.task with DataFrame input/output type annotations validates."""
+        from flyte.io import DataFrame
+        from flyte.sandbox import task
+
+        @task
+        def process(df: DataFrame) -> DataFrame:
+            return df
+
+        assert isinstance(process, SandboxedTaskTemplate)
+        assert "df" in process.interface.inputs
+        assert "o0" in process.interface.outputs
+
+    def test_orchestrator_with_file_types(self):
+        """orchestrator() code string with File in inputs/output validates."""
+        from flyte.io import File
+
+        t = orchestrator("f", inputs={"f": File}, output=File)
+        assert isinstance(t, CodeTaskTemplate)
+        assert "f" in t.interface.inputs
+        assert "o0" in t.interface.outputs
+
+    def test_orchestrator_with_dir_types(self):
+        """orchestrator() code string with Dir in inputs/output validates."""
+        from flyte.io import Dir
+
+        t = orchestrator("d", inputs={"d": Dir}, output=Dir)
+        assert isinstance(t, CodeTaskTemplate)
+        assert "d" in t.interface.inputs
+        assert "o0" in t.interface.outputs
+
+    def test_orchestrator_with_dataframe_types(self):
+        """orchestrator() code string with DataFrame in inputs/output validates."""
+        from flyte.io import DataFrame
+
+        t = orchestrator("df", inputs={"df": DataFrame}, output=DataFrame)
+        assert isinstance(t, CodeTaskTemplate)
+        assert "df" in t.interface.inputs
+        assert "o0" in t.interface.outputs
+
+    def test_env_orchestrator_with_file_types(self):
+        """env.sandbox.orchestrator decorated function with File annotations validates."""
+        import flyte
+        from flyte.io import File
+
+        env = flyte.TaskEnvironment(name="io-file-test")
+
+        @env.sandbox.orchestrator
+        def passthrough(f: File) -> File:
+            return f
+
+        assert isinstance(passthrough, SandboxedTaskTemplate)
+        assert "f" in passthrough.interface.inputs
+        assert "o0" in passthrough.interface.outputs
+
+    def test_env_orchestrator_with_dir_types(self):
+        """env.sandbox.orchestrator decorated function with Dir annotations validates."""
+        import flyte
+        from flyte.io import Dir
+
+        env = flyte.TaskEnvironment(name="io-dir-test")
+
+        @env.sandbox.orchestrator
+        def passthrough(d: Dir) -> Dir:
+            return d
+
+        assert isinstance(passthrough, SandboxedTaskTemplate)
+        assert "d" in passthrough.interface.inputs
+        assert "o0" in passthrough.interface.outputs
+
+    def test_env_orchestrator_with_dataframe_types(self):
+        """env.sandbox.orchestrator decorated function with DataFrame annotations validates."""
+        import flyte
+        from flyte.io import DataFrame
+
+        env = flyte.TaskEnvironment(name="io-df-test")
+
+        @env.sandbox.orchestrator
+        def passthrough(df: DataFrame) -> DataFrame:
+            return df
+
+        assert isinstance(passthrough, SandboxedTaskTemplate)
+        assert "df" in passthrough.interface.inputs
+        assert "o0" in passthrough.interface.outputs

@@ -7,6 +7,7 @@ depth, and type checking. These settings control the Monty sandbox
 environment.
 
 You can also use standard Flyte task options like ``cache`` and ``retries``.
+Both ``def`` and ``async def`` functions are supported with all options.
 
 Install the optional dependency first::
 
@@ -111,6 +112,18 @@ def robust_transform(values: List[int], factor: int) -> List[int]:
     return result
 
 
+# --- Async with configuration -------------------------------------------------
+# All configuration options work with ``async def`` functions too.
+
+
+@flyte.sandbox.task(timeout_ms=5_000, cache="auto")
+async def async_sum(numbers: List[int]) -> int:
+    total = 0
+    for n in numbers:
+        total = total + n
+    return total
+
+
 # --- orchestrator() with configuration ----------------------------------------
 # The same options work with ``orchestrator()`` for code-string tasks.
 
@@ -137,6 +150,7 @@ sandbox_env = flyte.TaskEnvironment.from_task(
     flaky_task,
     adder,
     robust_transform,
+    async_sum,
     configured_code_task,
 )
 
@@ -150,3 +164,4 @@ if __name__ == "__main__":
     print("flaky_task(7) =", flaky_task.forward(7))
     print("adder(1, 2) =", adder.forward(1, 2))
     print("robust_transform([1,2,3], 10) =", robust_transform.forward([1, 2, 3], 10))
+    print("async_sum([1,2,3,4,5]) =", async_sum.forward([1, 2, 3, 4, 5]))

@@ -68,7 +68,7 @@ def pipeline(n: int) -> dict[str, int]:
 code_pipeline = flyte.sandbox.orchestrator(
     """
     partial = add(x, y)
-    result = partial * 2
+    partial * 2
     """,
     inputs={"x": int, "y": int},
     output=int,
