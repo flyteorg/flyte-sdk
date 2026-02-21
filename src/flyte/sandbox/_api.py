@@ -1,13 +1,13 @@
 """Core public API for the sandbox module.
 
-Provides ``orchestrator``, ``orchestrator_from_str``, and ``orchestrate_local``.
+Provides ``orchestrator_from_str`` and ``orchestrate_local``.
 """
 
 from __future__ import annotations
 
 import inspect
 import sys
-from typing import Any, Callable, Dict, List, Optional, Union, overload
+from typing import Any, Dict, List, Optional
 
 from flyte._cache import CacheRequest
 from flyte._task import TaskTemplate
@@ -16,7 +16,7 @@ from flyte.models import NativeInterface
 from ._code_task import CodeTaskTemplate, _classify_refs
 from ._config import SandboxedConfig
 from ._source import prepare_code_source
-from ._task import SandboxedTaskTemplate, _lazy_import_monty
+from ._task import _lazy_import_monty
 
 
 def _tasks_to_dict(tasks: List[Any]) -> Dict[str, Any]:
@@ -36,77 +36,6 @@ def _tasks_to_dict(tasks: List[Any]) -> Dict[str, Any]:
             raise ValueError(f"Duplicate task name '{name}'")
         result[name] = t
     return result
-
-
-@overload
-def orchestrator(_func: Callable, /) -> SandboxedTaskTemplate: ...
-
-
-@overload
-def orchestrator(
-    *,
-    timeout_ms: int = 30_000,
-    max_memory: int = 50 * 1024 * 1024,
-    max_stack_depth: int = 256,
-    type_check: bool = True,
-    name: Optional[str] = None,
-    cache: CacheRequest = "disable",
-    retries: int = 0,
-) -> Callable[[Callable], SandboxedTaskTemplate]: ...
-
-
-def orchestrator(
-    _func: Optional[Callable] = None,
-    /,
-    *,
-    timeout_ms: int = 30_000,
-    max_memory: int = 50 * 1024 * 1024,
-    max_stack_depth: int = 256,
-    type_check: bool = True,
-    name: Optional[str] = None,
-    cache: CacheRequest = "disable",
-    retries: int = 0,
-) -> Union[SandboxedTaskTemplate, Callable[[Callable], SandboxedTaskTemplate]]:
-    """Decorator to create a sandboxed Flyte task.
-
-    .. warning:: Experimental feature: alpha — APIs may change without notice.
-
-    Can be used with or without arguments::
-
-        @sandbox.orchestrator
-        def add(x: int, y: int) -> int:
-            return x + y
-
-        @sandbox.orchestrator(timeout_ms=5000)
-        def multiply(x: int, y: int) -> int:
-            return x * y
-    """
-    config = SandboxedConfig(
-        max_memory=max_memory,
-        max_stack_depth=max_stack_depth,
-        timeout_ms=timeout_ms,
-        type_check=type_check,
-    )
-
-    def decorator(func: Callable) -> SandboxedTaskTemplate:
-        from flyte._image import Image
-
-        image = Image.from_debian_base().with_pip_packages("pydantic-monty")
-
-        interface = NativeInterface.from_callable(func)
-        return SandboxedTaskTemplate(
-            func=func,
-            name=name or func.__qualname__,
-            interface=interface,
-            plugin_config=config,
-            image=image,
-            cache=cache,
-            retries=retries,
-        )
-
-    if _func is not None:
-        return decorator(_func)
-    return decorator
 
 
 def _orchestrator_impl(

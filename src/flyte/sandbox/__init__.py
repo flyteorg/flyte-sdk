@@ -9,12 +9,8 @@ Sandboxed tasks are:
 
 Usage::
 
+    import flyte
     import flyte.sandbox
-
-    # Decorator approach (standalone)
-    @flyte.sandbox.orchestrator
-    def add(x: int, y: int) -> int:
-        return x + y
 
     # Environment-based approach (preferred for ``flyte run``)
     env = flyte.TaskEnvironment(name="my-env")
@@ -38,7 +34,7 @@ Usage::
     )
 """
 
-from ._api import orchestrate_local, orchestrator, orchestrator_from_str
+from ._api import orchestrate_local, orchestrator_from_str
 from ._code_task import CodeTaskTemplate
 from ._config import SandboxedConfig
 from ._task import SandboxedTaskTemplate
@@ -78,6 +74,5 @@ __all__ = [
     "SandboxedConfig",
     "SandboxedTaskTemplate",
     "orchestrate_local",
-    "orchestrator",
     "orchestrator_from_str",
 ]

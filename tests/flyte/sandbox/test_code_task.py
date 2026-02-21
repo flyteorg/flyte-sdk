@@ -75,19 +75,6 @@ class TestClassifyRefs:
         refs = _classify_refs({})
         assert refs == {"task_refs": {}, "trace_refs": {}, "durable_refs": {}}
 
-    def test_task_template_classified(self):
-        """TaskTemplate instances go into task_refs."""
-        from flyte.sandbox import orchestrator
-
-        @orchestrator
-        def add(x: int, y: int) -> int:
-            return x + y
-
-        refs = _classify_refs({"add": add})
-        assert "add" in refs["task_refs"]
-        assert refs["trace_refs"] == {}
-        assert refs["durable_refs"] == {}
-
     def test_plain_callable_classified_as_trace(self):
         """Plain callables default to trace_refs."""
 
@@ -98,10 +85,27 @@ class TestClassifyRefs:
         assert "my_func" in refs["trace_refs"]
         assert refs["task_refs"] == {}
 
-    def test_mixed_refs(self):
-        from flyte.sandbox import orchestrator
+    def test_task_template_classified(self):
+        """TaskTemplate instances go into task_refs."""
+        import flyte
 
-        @orchestrator
+        env = flyte.TaskEnvironment(name="classify-test")
+
+        @env.sandbox.orchestrator
+        def add(x: int, y: int) -> int:
+            return x + y
+
+        refs = _classify_refs({"add": add})
+        assert "add" in refs["task_refs"]
+        assert refs["trace_refs"] == {}
+        assert refs["durable_refs"] == {}
+
+    def test_mixed_refs(self):
+        import flyte
+
+        env = flyte.TaskEnvironment(name="classify-mixed-test")
+
+        @env.sandbox.orchestrator
         def add(x: int, y: int) -> int:
             return x + y
 
@@ -156,9 +160,11 @@ class TestOrchestrateFactory:
         assert not t._has_external_refs
 
     def test_external_refs_with_tasks(self):
-        from flyte.sandbox import orchestrator
+        import flyte
 
-        @orchestrator
+        env = flyte.TaskEnvironment(name="ext-refs-test")
+
+        @env.sandbox.orchestrator
         def add(x: int, y: int) -> int:
             return x + y
 
@@ -389,13 +395,13 @@ class TestEnvironmentSandboxOrchestrator:
     def test_code_string_mode(self):
         """env.sandbox.orchestrator with a code string creates CodeTaskTemplate."""
         import flyte
-        from flyte.sandbox import orchestrator
 
-        @orchestrator
+        env = flyte.TaskEnvironment(name="code-str-test")
+
+        @env.sandbox.orchestrator
         def add(x: int, y: int) -> int:
             return x + y
 
-        env = flyte.TaskEnvironment(name="code-str-test")
         t = env.sandbox.orchestrator(
             "add(x, y)",
             inputs={"x": int, "y": int},
@@ -538,9 +544,12 @@ class TestRunPurePythonFunctionDefs:
 
     @pytest.mark.asyncio
     async def test_with_external_task(self):
-        from flyte.sandbox import orchestrate_local, orchestrator
+        import flyte
+        from flyte.sandbox import orchestrate_local
 
-        @orchestrator
+        env = flyte.TaskEnvironment(name="ext-task-test")
+
+        @env.sandbox.orchestrator
         def double(x: int) -> int:
             return x * 2
 
@@ -558,45 +567,6 @@ class TestRunPurePythonFunctionDefs:
 
 
 class TestSandboxIOTypes:
-    def test_task_with_file_input_output(self):
-        """@sandbox.orchestrator with File input/output type annotations validates."""
-        from flyte.io import File
-        from flyte.sandbox import orchestrator
-
-        @orchestrator
-        def process(f: File) -> File:
-            return f
-
-        assert isinstance(process, SandboxedTaskTemplate)
-        assert "f" in process.interface.inputs
-        assert "o0" in process.interface.outputs
-
-    def test_task_with_dir_input_output(self):
-        """@sandbox.orchestrator with Dir input/output type annotations validates."""
-        from flyte.io import Dir
-        from flyte.sandbox import orchestrator
-
-        @orchestrator
-        def process(d: Dir) -> Dir:
-            return d
-
-        assert isinstance(process, SandboxedTaskTemplate)
-        assert "d" in process.interface.inputs
-        assert "o0" in process.interface.outputs
-
-    def test_task_with_dataframe_input_output(self):
-        """@sandbox.orchestrator with DataFrame input/output type annotations validates."""
-        from flyte.io import DataFrame
-        from flyte.sandbox import orchestrator
-
-        @orchestrator
-        def process(df: DataFrame) -> DataFrame:
-            return df
-
-        assert isinstance(process, SandboxedTaskTemplate)
-        assert "df" in process.interface.inputs
-        assert "o0" in process.interface.outputs
-
     def test_orchestrator_with_file_types(self):
         """orchestrator_from_str() code string with File in inputs/output validates."""
         from flyte.io import File
