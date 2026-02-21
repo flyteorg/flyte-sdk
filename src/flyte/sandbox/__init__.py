@@ -73,8 +73,8 @@ Type restrictions:
 set comprehensions are not supported in code."""
 
 __all__ = [
-    "CodeTaskTemplate",
     "ORCHESTRATOR_SYNTAX_PROMPT",
+    "CodeTaskTemplate",
     "SandboxedConfig",
     "SandboxedTaskTemplate",
     "orchestrate_local",

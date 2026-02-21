@@ -19,13 +19,14 @@ def _classify_refs(functions: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
     explicit dict instead of scanning function globals.
     """
     from flyte._task import TaskTemplate
+    from flyte.remote._task import LazyEntity
 
     task_refs: Dict[str, Any] = {}
     trace_refs: Dict[str, Any] = {}
     durable_refs: Dict[str, Any] = {}
 
     for name, obj in functions.items():
-        if isinstance(obj, TaskTemplate):
+        if isinstance(obj, (TaskTemplate, LazyEntity)):
             task_refs[name] = obj
         elif hasattr(obj, "__wrapped__") and hasattr(obj, "aio"):
             # @trace or @syncify wrapped functions

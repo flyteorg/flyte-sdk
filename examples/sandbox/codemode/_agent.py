@@ -135,7 +135,8 @@ class CodeModeAgent:
         # literal braces (e.g. dict examples) that must survive formatting.
         restrictions = flyte.sandbox.ORCHESTRATOR_SYNTAX_PROMPT.replace("{", "{{").replace("}", "}}")
 
-        return textwrap.dedent("""\
+        return (
+            textwrap.dedent("""\
             You are a data analyst. Write Python code to analyze data and produce charts.
 
             Available functions:
@@ -162,7 +163,10 @@ class CodeModeAgent:
                     total = total + row["revenue"]
 
                 {{"charts": [chart1], "summary": "Total 2024 revenue: $" + str(total)}}
-        """).replace("{tools}", tools_block).replace("{restrictions}", restrictions)
+        """)
+            .replace("{tools}", tools_block)
+            .replace("{restrictions}", restrictions)
+        )
 
     # ------------------------------------------------------------------
     # Tool descriptions for the /api/tools sidebar
