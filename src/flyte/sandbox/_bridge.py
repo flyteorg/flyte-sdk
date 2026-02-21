@@ -1,8 +1,5 @@
 from __future__ import annotations
 
-import asyncio
-from concurrent.futures import ThreadPoolExecutor
-from functools import partial
 from typing import Any, Callable, Dict
 
 from flyte.io import DataFrame, Dir, File
@@ -108,35 +105,28 @@ class ExternalFunctionBridge:
         # Marshal any IO types in the initial inputs so Monty can hold them
         monty_inputs = {k: _to_monty(v) for k, v in inputs.items()}
 
-        loop = asyncio.get_running_loop()
+        progress = monty.start(inputs=monty_inputs)
 
-        with ThreadPoolExecutor() as pool:
+        while True:
+            if isinstance(progress, MontyComplete):
+                return _from_monty(progress.output)
+            elif isinstance(progress, MontySnapshot):
+                fn = ext_fns.get(progress.function_name)
+                if fn is None:
+                    raise RuntimeError(f"Sandboxed task called unknown external function: {progress.function_name}")
 
-            async def run_in_pool(func):
-                return await loop.run_in_executor(pool, func)
+                # Unmarshal IO handles before calling the external function
+                args = [_from_monty(a) for a in progress.args]
+                kwargs = {k: _from_monty(v) for k, v in progress.kwargs.items()}
 
-            progress = await run_in_pool(partial(monty.start, inputs=monty_inputs))
+                # Call the external function and await if async.
+                # Loop because TaskTemplate.aio() in local mode may return
+                # an unawaited coroutine from forward() for async functions.
+                result = fn(*args, **kwargs)
+                while inspect.iscoroutine(result):
+                    result = await result
 
-            while True:
-                if isinstance(progress, MontyComplete):
-                    return _from_monty(progress.output)
-                elif isinstance(progress, MontySnapshot):
-                    fn = ext_fns.get(progress.function_name)
-                    if fn is None:
-                        raise RuntimeError(f"Sandboxed task called unknown external function: {progress.function_name}")
-
-                    # Unmarshal IO handles before calling the external function
-                    args = [_from_monty(a) for a in progress.args]
-                    kwargs = {k: _from_monty(v) for k, v in progress.kwargs.items()}
-
-                    # Call the external function and await if async.
-                    # Loop because TaskTemplate.aio() in local mode may return
-                    # an unawaited coroutine from forward() for async functions.
-                    result = fn(*args, **kwargs)
-                    while inspect.iscoroutine(result):
-                        result = await result
-
-                    # Marshal IO types so Monty can hold the return value
-                    progress = await run_in_pool(partial(progress.resume, return_value=_to_monty(result)))
-                else:
-                    raise RuntimeError(f"Unexpected Monty progress state: {progress!r}")
+                # Marshal IO types so Monty can hold the return value
+                progress = progress.resume(return_value=_to_monty(result))
+            else:
+                raise RuntimeError(f"Unexpected Monty progress state: {progress!r}")
