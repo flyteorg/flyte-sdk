@@ -131,20 +131,22 @@ async def create_channel(
     # Configure gRPC-native retry via service config for transient failures
     if rpc_retries is not None and rpc_retries > 0:
         service_config = {
-            "methodConfig": [{
-                "name": [{}],
-                "retryPolicy": {
-                    "maxAttempts": rpc_retries + 1,
-                    "initialBackoff": "0.5s",
-                    "maxBackoff": "10s",
-                    "backoffMultiplier": 2,
-                    "retryableStatusCodes": ["UNAVAILABLE", "RESOURCE_EXHAUSTED", "INTERNAL"],
-                },
-            }]
+            "methodConfig": [
+                {
+                    "name": [{}],
+                    "retryPolicy": {
+                        "maxAttempts": rpc_retries + 1,
+                        "initialBackoff": "0.5s",
+                        "maxBackoff": "10s",
+                        "backoffMultiplier": 2,
+                        "retryableStatusCodes": ["UNAVAILABLE", "RESOURCE_EXHAUSTED", "INTERNAL"],
+                    },
+                }
+            ]
         }
         retry_option = ("grpc.service_config", json.dumps(service_config))
         if grpc_options:
-            grpc_options = list(grpc_options) + [retry_option]
+            grpc_options = [*list(grpc_options), retry_option]
         else:
             grpc_options = [retry_option]
 
