@@ -62,10 +62,10 @@ def pipeline(n: int) -> dict[str, int]:
 
 
 # --- orchestrator(): reusable task from a code string ----------------------
-# Instead of defining a @sandbox.task function, send a code string directly.
+# Instead of defining a @sandbox.orchestrator function, send a code string directly.
 # External tasks are provided via the ``tasks`` list.
 
-code_pipeline = flyte.sandbox.orchestrator(
+code_pipeline = flyte.sandbox.orchestrator_from_str(
     """
     partial = add(x, y)
     partial * 2
@@ -91,7 +91,7 @@ code_pipeline = flyte.sandbox.orchestrator(
 
 
 # --- Attach code-string tasks to an environment for ``flyte run`` ---------
-# ``orchestrator()`` creates standalone templates. Group them with
+# ``orchestrator_from_str()`` creates standalone templates. Group them with
 # ``from_task`` so they belong to a TaskEnvironment.
 
 sandbox_env = flyte.TaskEnvironment.from_task(

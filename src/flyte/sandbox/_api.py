@@ -1,6 +1,6 @@
 """Core public API for the sandbox module.
 
-Provides ``orchestrator``, ``orchestrate_local``, and ``task``.
+Provides ``orchestrator``, ``orchestrator_from_str``, and ``orchestrate_local``.
 """
 
 from __future__ import annotations
@@ -39,11 +39,11 @@ def _tasks_to_dict(tasks: List[Any]) -> Dict[str, Any]:
 
 
 @overload
-def task(_func: Callable, /) -> SandboxedTaskTemplate: ...
+def orchestrator(_func: Callable, /) -> SandboxedTaskTemplate: ...
 
 
 @overload
-def task(
+def orchestrator(
     *,
     timeout_ms: int = 30_000,
     max_memory: int = 50 * 1024 * 1024,
@@ -55,7 +55,7 @@ def task(
 ) -> Callable[[Callable], SandboxedTaskTemplate]: ...
 
 
-def task(
+def orchestrator(
     _func: Optional[Callable] = None,
     /,
     *,
@@ -73,11 +73,11 @@ def task(
 
     Can be used with or without arguments::
 
-        @sandbox.task
+        @sandbox.orchestrator
         def add(x: int, y: int) -> int:
             return x + y
 
-        @sandbox.task(timeout_ms=5000)
+        @sandbox.orchestrator(timeout_ms=5000)
         def multiply(x: int, y: int) -> int:
             return x * y
     """
@@ -122,7 +122,7 @@ def _orchestrator_impl(
     image: Optional[Any] = None,
     caller_module: str = "__main__",
 ) -> CodeTaskTemplate:
-    """Internal implementation — use ``orchestrator()`` or ``env.sandbox.orchestrator()``."""
+    """Internal implementation — use ``orchestrator_from_str()`` or ``env.sandbox.orchestrator()``."""
     from flyte._image import Image
 
     functions = _tasks_to_dict(tasks) if tasks else {}
@@ -157,7 +157,7 @@ def _orchestrator_impl(
     )
 
 
-def orchestrator(
+def orchestrator_from_str(
     source: str,
     *,
     inputs: Dict[str, type],
@@ -178,7 +178,7 @@ def orchestrator(
 
     The **last expression** in *source* becomes the return value::
 
-        pipeline = sandbox.orchestrator(
+        pipeline = sandbox.orchestrator_from_str(
             "add(x, y) * 2",
             inputs={"x": int, "y": int},
             output=int,

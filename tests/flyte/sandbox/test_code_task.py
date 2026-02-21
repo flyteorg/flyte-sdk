@@ -1,10 +1,10 @@
-"""Tests for flyte.sandbox.orchestrator(), flyte.sandbox.orchestrate_local(),
+"""Tests for flyte.sandbox.orchestrator_from_str(), flyte.sandbox.orchestrate_local(),
 and TaskEnvironment.sandbox.orchestrator().
 """
 
 import pytest
 
-from flyte.sandbox import orchestrator
+from flyte.sandbox import orchestrator_from_str
 from flyte.sandbox._code_task import (
     CodeTaskTemplate,
     _classify_refs,
@@ -77,9 +77,9 @@ class TestClassifyRefs:
 
     def test_task_template_classified(self):
         """TaskTemplate instances go into task_refs."""
-        from flyte.sandbox import task
+        from flyte.sandbox import orchestrator
 
-        @task
+        @orchestrator
         def add(x: int, y: int) -> int:
             return x + y
 
@@ -99,9 +99,9 @@ class TestClassifyRefs:
         assert refs["task_refs"] == {}
 
     def test_mixed_refs(self):
-        from flyte.sandbox import task
+        from flyte.sandbox import orchestrator
 
-        @task
+        @orchestrator
         def add(x: int, y: int) -> int:
             return x + y
 
@@ -114,55 +114,55 @@ class TestClassifyRefs:
 
 
 # ---------------------------------------------------------------------------
-# orchestrator() factory
+# orchestrator_from_str() factory
 # ---------------------------------------------------------------------------
 
 
 class TestOrchestrateFactory:
     def test_creates_code_task_template(self):
-        t = orchestrator("x + y", inputs={"x": int, "y": int}, output=int)
+        t = orchestrator_from_str("x + y", inputs={"x": int, "y": int}, output=int)
         assert isinstance(t, CodeTaskTemplate)
         assert isinstance(t, SandboxedTaskTemplate)
 
     def test_default_name(self):
-        t = orchestrator("x", inputs={"x": int}, output=int)
+        t = orchestrator_from_str("x", inputs={"x": int}, output=int)
         assert t.name == "sandboxed-code"
 
     def test_custom_name(self):
-        t = orchestrator("x", inputs={"x": int}, output=int, name="my-code")
+        t = orchestrator_from_str("x", inputs={"x": int}, output=int, name="my-code")
         assert t.name == "my-code"
 
     def test_interface_from_types(self):
-        t = orchestrator("x + y", inputs={"x": int, "y": int}, output=int)
+        t = orchestrator_from_str("x + y", inputs={"x": int, "y": int}, output=int)
         assert "x" in t.interface.inputs
         assert "y" in t.interface.inputs
         assert "o0" in t.interface.outputs
 
     def test_interface_no_output(self):
-        t = orchestrator("x + y", inputs={"x": int, "y": int})
+        t = orchestrator_from_str("x + y", inputs={"x": int, "y": int})
         assert t.interface.outputs == {}
 
     def test_source_code_populated(self):
-        t = orchestrator("x + y", inputs={"x": int, "y": int}, output=int)
+        t = orchestrator_from_str("x + y", inputs={"x": int, "y": int}, output=int)
         assert t._source_code != ""
         assert "x + y" in t._source_code
 
     def test_input_names_populated(self):
-        t = orchestrator("x + y", inputs={"x": int, "y": int}, output=int)
+        t = orchestrator_from_str("x + y", inputs={"x": int, "y": int}, output=int)
         assert t._input_names == ["x", "y"]
 
     def test_no_external_refs_pure(self):
-        t = orchestrator("x + y", inputs={"x": int, "y": int}, output=int)
+        t = orchestrator_from_str("x + y", inputs={"x": int, "y": int}, output=int)
         assert not t._has_external_refs
 
     def test_external_refs_with_tasks(self):
-        from flyte.sandbox import task
+        from flyte.sandbox import orchestrator
 
-        @task
+        @orchestrator
         def add(x: int, y: int) -> int:
             return x + y
 
-        t = orchestrator(
+        t = orchestrator_from_str(
             "add(x, y)",
             inputs={"x": int, "y": int},
             output=int,
@@ -172,34 +172,34 @@ class TestOrchestrateFactory:
         assert "add" in t._external_refs["task_refs"]
 
     def test_task_type(self):
-        t = orchestrator("x", inputs={"x": int}, output=int)
+        t = orchestrator_from_str("x", inputs={"x": int}, output=int)
         assert t.task_type == "sandboxed-python"
 
     def test_default_plugin_config(self):
-        t = orchestrator("x", inputs={"x": int}, output=int)
+        t = orchestrator_from_str("x", inputs={"x": int}, output=int)
         assert isinstance(t.plugin_config, SandboxedConfig)
         assert t.plugin_config.timeout_ms == 30_000
 
     def test_custom_timeout(self):
-        t = orchestrator("x", inputs={"x": int}, output=int, timeout_ms=5000)
+        t = orchestrator_from_str("x", inputs={"x": int}, output=int, timeout_ms=5000)
         assert t.plugin_config.timeout_ms == 5000
 
     def test_retries(self):
-        t = orchestrator("x", inputs={"x": int}, output=int, retries=3)
+        t = orchestrator_from_str("x", inputs={"x": int}, output=int, retries=3)
         assert t.retries.count == 3
 
     def test_forward_not_supported(self):
-        t = orchestrator("x", inputs={"x": int}, output=int)
+        t = orchestrator_from_str("x", inputs={"x": int}, output=int)
         with pytest.raises(NotImplementedError, match="does not support forward"):
             t.forward(x=1)
 
     def test_build_inputs(self):
-        t = orchestrator("x + y", inputs={"x": int, "y": int}, output=int)
+        t = orchestrator_from_str("x + y", inputs={"x": int, "y": int}, output=int)
         inputs = t._build_inputs(1, 2)
         assert inputs == {"x": 1, "y": 2}
 
     def test_build_inputs_kwargs(self):
-        t = orchestrator("x + y", inputs={"x": int, "y": int}, output=int)
+        t = orchestrator_from_str("x + y", inputs={"x": int, "y": int}, output=int)
         inputs = t._build_inputs(x=1, y=2)
         assert inputs == {"x": 1, "y": 2}
 
@@ -208,14 +208,14 @@ class TestOrchestrateFactory:
             pass
 
         with pytest.raises(TypeError, match="unsupported type"):
-            orchestrator("x", inputs={"x": Custom}, output=int)
+            orchestrator_from_str("x", inputs={"x": Custom}, output=int)
 
     def test_rejects_unsupported_output_type(self):
         class Custom:
             pass
 
         with pytest.raises(TypeError, match="unsupported type"):
-            orchestrator("x", inputs={"x": int}, output=Custom)
+            orchestrator_from_str("x", inputs={"x": int}, output=Custom)
 
 
 # ---------------------------------------------------------------------------
@@ -389,9 +389,9 @@ class TestEnvironmentSandboxOrchestrator:
     def test_code_string_mode(self):
         """env.sandbox.orchestrator with a code string creates CodeTaskTemplate."""
         import flyte
-        from flyte.sandbox import task
+        from flyte.sandbox import orchestrator
 
-        @task
+        @orchestrator
         def add(x: int, y: int) -> int:
             return x + y
 
@@ -538,9 +538,9 @@ class TestRunPurePythonFunctionDefs:
 
     @pytest.mark.asyncio
     async def test_with_external_task(self):
-        from flyte.sandbox import orchestrate_local, task
+        from flyte.sandbox import orchestrate_local, orchestrator
 
-        @task
+        @orchestrator
         def double(x: int) -> int:
             return x * 2
 
@@ -559,11 +559,11 @@ class TestRunPurePythonFunctionDefs:
 
 class TestSandboxIOTypes:
     def test_task_with_file_input_output(self):
-        """@sandbox.task with File input/output type annotations validates."""
+        """@sandbox.orchestrator with File input/output type annotations validates."""
         from flyte.io import File
-        from flyte.sandbox import task
+        from flyte.sandbox import orchestrator
 
-        @task
+        @orchestrator
         def process(f: File) -> File:
             return f
 
@@ -572,11 +572,11 @@ class TestSandboxIOTypes:
         assert "o0" in process.interface.outputs
 
     def test_task_with_dir_input_output(self):
-        """@sandbox.task with Dir input/output type annotations validates."""
+        """@sandbox.orchestrator with Dir input/output type annotations validates."""
         from flyte.io import Dir
-        from flyte.sandbox import task
+        from flyte.sandbox import orchestrator
 
-        @task
+        @orchestrator
         def process(d: Dir) -> Dir:
             return d
 
@@ -585,11 +585,11 @@ class TestSandboxIOTypes:
         assert "o0" in process.interface.outputs
 
     def test_task_with_dataframe_input_output(self):
-        """@sandbox.task with DataFrame input/output type annotations validates."""
+        """@sandbox.orchestrator with DataFrame input/output type annotations validates."""
         from flyte.io import DataFrame
-        from flyte.sandbox import task
+        from flyte.sandbox import orchestrator
 
-        @task
+        @orchestrator
         def process(df: DataFrame) -> DataFrame:
             return df
 
@@ -598,28 +598,28 @@ class TestSandboxIOTypes:
         assert "o0" in process.interface.outputs
 
     def test_orchestrator_with_file_types(self):
-        """orchestrator() code string with File in inputs/output validates."""
+        """orchestrator_from_str() code string with File in inputs/output validates."""
         from flyte.io import File
 
-        t = orchestrator("f", inputs={"f": File}, output=File)
+        t = orchestrator_from_str("f", inputs={"f": File}, output=File)
         assert isinstance(t, CodeTaskTemplate)
         assert "f" in t.interface.inputs
         assert "o0" in t.interface.outputs
 
     def test_orchestrator_with_dir_types(self):
-        """orchestrator() code string with Dir in inputs/output validates."""
+        """orchestrator_from_str() code string with Dir in inputs/output validates."""
         from flyte.io import Dir
 
-        t = orchestrator("d", inputs={"d": Dir}, output=Dir)
+        t = orchestrator_from_str("d", inputs={"d": Dir}, output=Dir)
         assert isinstance(t, CodeTaskTemplate)
         assert "d" in t.interface.inputs
         assert "o0" in t.interface.outputs
 
     def test_orchestrator_with_dataframe_types(self):
-        """orchestrator() code string with DataFrame in inputs/output validates."""
+        """orchestrator_from_str() code string with DataFrame in inputs/output validates."""
         from flyte.io import DataFrame
 
-        t = orchestrator("df", inputs={"df": DataFrame}, output=DataFrame)
+        t = orchestrator_from_str("df", inputs={"df": DataFrame}, output=DataFrame)
         assert isinstance(t, CodeTaskTemplate)
         assert "df" in t.interface.inputs
         assert "o0" in t.interface.outputs

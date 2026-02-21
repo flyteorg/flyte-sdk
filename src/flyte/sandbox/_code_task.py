@@ -49,7 +49,7 @@ class CodeTaskTemplate(SandboxedTaskTemplate):
 
     Unlike ``SandboxedTaskTemplate`` (which extracts source from a Python
     function), this class accepts pre-transformed source code and an explicit
-    dict of external functions.  It is constructed via :func:`flyte.sandbox.orchestrator`.
+    dict of external functions.  It is constructed via :func:`flyte.sandbox.orchestrator_from_str`.
     """
 
     # Init fields specific to CodeTaskTemplate

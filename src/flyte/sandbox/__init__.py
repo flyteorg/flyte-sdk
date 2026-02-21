@@ -12,7 +12,7 @@ Usage::
     import flyte.sandbox
 
     # Decorator approach (standalone)
-    @flyte.sandbox.task
+    @flyte.sandbox.orchestrator
     def add(x: int, y: int) -> int:
         return x + y
 
@@ -24,7 +24,7 @@ Usage::
         return add(x, y)
 
     # Create a reusable task from a code string
-    pipeline = flyte.sandbox.orchestrator(
+    pipeline = flyte.sandbox.orchestrator_from_str(
         "add(x, y) * 2",
         inputs={"x": int, "y": int},
         output=int,
@@ -38,16 +38,46 @@ Usage::
     )
 """
 
-from ._api import orchestrate_local, orchestrator, task
+from ._api import orchestrate_local, orchestrator, orchestrator_from_str
 from ._code_task import CodeTaskTemplate
 from ._config import SandboxedConfig
 from ._task import SandboxedTaskTemplate
 
+ORCHESTRATOR_SYNTAX_PROMPT = """\
+CRITICAL — Sandbox syntax restrictions (Monty runtime):
+- No imports allowed. All available functions are provided directly.
+- No subscript assignment: `d[key] = value` and `l[i] = value` are FORBIDDEN.
+- Reading subscripts is OK: `x = d[key]` and `x = l[i]` work fine.
+- Build lists with .append() and list literals, NOT by index assignment.
+- Build dicts ONLY as literals: {"k": v, ...}. Never mutate them after creation.
+- To aggregate data, use lists of tuples/dicts, not mutating a dict.
+- No `class` definitions.
+- No `with` statements.
+- No `try`/`except` blocks.
+- No walrus operator (`:=`).
+- No `yield` or `yield from` (generators).
+- No `global` or `nonlocal` declarations.
+- No set literals or set comprehensions.
+- No `del` statements.
+- No augmented assignment: `x += 1` is FORBIDDEN. Use `x = x + 1` instead.
+- No `assert` statements.
+- The last expression in your code is the return value.
+
+Type restrictions:
+- Allowed primitive types: int, float, str, bool, bytes, None.
+- Allowed collection types: list, dict, tuple (including generic forms like list[int], dict[str, float]).
+- Opaque IO handle types (pass-through only, cannot be inspected): File, Dir, DataFrame.
+- Optional[T] and Union of allowed types are permitted.
+- Custom classes, dataclasses, Pydantic models, and any other user-defined types are NOT allowed.
+- set and frozenset are allowed as function parameter/return types but set literals and \
+set comprehensions are not supported in code."""
+
 __all__ = [
     "CodeTaskTemplate",
+    "ORCHESTRATOR_SYNTAX_PROMPT",
     "SandboxedConfig",
     "SandboxedTaskTemplate",
     "orchestrate_local",
     "orchestrator",
-    "task",
+    "orchestrator_from_str",
 ]

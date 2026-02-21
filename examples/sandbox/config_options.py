@@ -24,7 +24,7 @@ import flyte.sandbox
 # or a longer one for complex computations.
 
 
-@flyte.sandbox.task(timeout_ms=5_000)
+@flyte.sandbox.orchestrator(timeout_ms=5_000)
 def quick_sum(numbers: List[int]) -> int:
     total = 0
     for n in numbers:
@@ -36,7 +36,7 @@ def quick_sum(numbers: List[int]) -> int:
 # Default is 50 MB. Increase for tasks that work with large data structures.
 
 
-@flyte.sandbox.task(max_memory=100 * 1024 * 1024)  # 100 MB
+@flyte.sandbox.orchestrator(max_memory=100 * 1024 * 1024)  # 100 MB
 def build_large_list(n: int) -> List[int]:
     result = []
     for i in range(n):
@@ -48,7 +48,7 @@ def build_large_list(n: int) -> List[int]:
 # Default is 256. Increase for deeply recursive computations.
 
 
-@flyte.sandbox.task(max_stack_depth=512)
+@flyte.sandbox.orchestrator(max_stack_depth=512)
 def deep_recursion(n: int) -> int:
     if n <= 1:
         return 1
@@ -59,7 +59,7 @@ def deep_recursion(n: int) -> int:
 # By default Monty validates types at the boundary. Disable for flexibility.
 
 
-@flyte.sandbox.task(type_check=False)
+@flyte.sandbox.orchestrator(type_check=False)
 def flexible(x: int, y: int) -> int:
     return x + y
 
@@ -68,7 +68,7 @@ def flexible(x: int, y: int) -> int:
 # Enable caching so repeated calls with the same inputs skip re-execution.
 
 
-@flyte.sandbox.task(cache="auto")
+@flyte.sandbox.orchestrator(cache="auto")
 def expensive_calc(x: int) -> int:
     # Imagine this is expensive — caching avoids redundant work.
     result = x
@@ -81,7 +81,7 @@ def expensive_calc(x: int) -> int:
 # Automatically retry on failure.
 
 
-@flyte.sandbox.task(retries=3)
+@flyte.sandbox.orchestrator(retries=3)
 def flaky_task(x: int) -> int:
     return x * 2
 
@@ -90,7 +90,7 @@ def flaky_task(x: int) -> int:
 # Override the auto-generated task name for clarity in the Flyte UI.
 
 
-@flyte.sandbox.task(name="my-adder")
+@flyte.sandbox.orchestrator(name="my-adder")
 def adder(x: int, y: int) -> int:
     return x + y
 
@@ -98,7 +98,7 @@ def adder(x: int, y: int) -> int:
 # --- Combining options --------------------------------------------------------
 
 
-@flyte.sandbox.task(
+@flyte.sandbox.orchestrator(
     timeout_ms=10_000,
     max_memory=25 * 1024 * 1024,
     cache="auto",
@@ -116,7 +116,7 @@ def robust_transform(values: List[int], factor: int) -> List[int]:
 # All configuration options work with ``async def`` functions too.
 
 
-@flyte.sandbox.task(timeout_ms=5_000, cache="auto")
+@flyte.sandbox.orchestrator(timeout_ms=5_000, cache="auto")
 async def async_sum(numbers: List[int]) -> int:
     total = 0
     for n in numbers:
@@ -124,10 +124,10 @@ async def async_sum(numbers: List[int]) -> int:
     return total
 
 
-# --- orchestrator() with configuration ----------------------------------------
-# The same options work with ``orchestrator()`` for code-string tasks.
+# --- orchestrator_from_str() with configuration -------------------------------
+# The same options work with ``orchestrator_from_str()`` for code-string tasks.
 
-configured_code_task = flyte.sandbox.orchestrator(
+configured_code_task = flyte.sandbox.orchestrator_from_str(
     "x * factor",
     inputs={"x": int, "factor": int},
     output=int,

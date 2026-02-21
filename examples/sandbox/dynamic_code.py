@@ -2,7 +2,7 @@
 Dynamically Generated Code
 ===========================
 
-Because ``flyte.sandbox.orchestrator()`` and
+Because ``flyte.sandbox.orchestrator_from_str()`` and
 ``flyte.sandbox.orchestrate_local()`` accept plain strings, the code
 can be generated at runtime — from templates, user input, or even LLM
 output.
@@ -59,7 +59,7 @@ def make_reducer(operation: str) -> flyte.sandbox.CodeTaskTemplate:
     else:
         raise ValueError(f"Unknown operation: {operation}")
 
-    return flyte.sandbox.orchestrator(
+    return flyte.sandbox.orchestrator_from_str(
         body,
         inputs={"values": list},
         output=int,
@@ -90,7 +90,7 @@ def make_formula_task(
         t = make_formula_task("a * b + c", ["a", "b", "c"])
         flyte.run(t, a=2, b=3, c=4)  # → 10
     """
-    return flyte.sandbox.orchestrator(
+    return flyte.sandbox.orchestrator_from_str(
         formula,
         inputs=dict.fromkeys(variables, float),
         output=float,
@@ -144,7 +144,7 @@ for i in range(1, len(mapped)):
     acc = acc {reduce_op} mapped[i]
 acc
 """
-    return flyte.sandbox.orchestrator(
+    return flyte.sandbox.orchestrator_from_str(
         code,
         inputs={"items": list, "factor": int},
         output=int,

@@ -131,20 +131,17 @@ class CodeModeAgent:
 
         tools_block = "\n\n".join(tool_lines)
 
+        # Escape braces for .format() — the ORCHESTRATOR_SYNTAX_PROMPT uses
+        # literal braces (e.g. dict examples) that must survive formatting.
+        restrictions = flyte.sandbox.ORCHESTRATOR_SYNTAX_PROMPT.replace("{", "{{").replace("}", "}}")
+
         return textwrap.dedent("""\
             You are a data analyst. Write Python code to analyze data and produce charts.
 
             Available functions:
         {tools}
 
-            CRITICAL — Sandbox syntax restrictions (Monty runtime):
-            - No imports.
-            - No subscript assignment: `d[key] = value` and `l[i] = value` are FORBIDDEN.
-            - Reading subscripts is OK: `x = d[key]` and `x = l[i]` work fine.
-            - Build lists with .append() and list literals, NOT by index assignment.
-            - Build dicts ONLY as literals: {{"k": v, ...}}. Never mutate them after creation.
-            - To aggregate data, use lists of tuples/dicts, not mutating a dict.
-            - The last expression in your code must be the return value.
+            {restrictions}
             - Return a dict: {{"charts": [<html strings from create_chart>], "summary": "<text>"}}
 
             Example — group sales by region (correct pattern):
@@ -165,7 +162,7 @@ class CodeModeAgent:
                     total = total + row["revenue"]
 
                 {{"charts": [chart1], "summary": "Total 2024 revenue: $" + str(total)}}
-        """).replace("{tools}", tools_block)
+        """).replace("{tools}", tools_block).replace("{restrictions}", restrictions)
 
     # ------------------------------------------------------------------
     # Tool descriptions for the /api/tools sidebar

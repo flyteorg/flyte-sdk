@@ -10,7 +10,7 @@ Both ``def`` and ``async def`` functions are supported — Monty natively
 handles ``await`` expressions.
 
 This example shows the basics: defining sandboxed tasks with the
-``@flyte.sandbox.task`` decorator and calling them locally with ``forward()``.
+``@flyte.sandbox.orchestrator`` decorator and calling them locally with ``forward()``.
 
 Install the optional dependency first::
 
@@ -23,16 +23,16 @@ import flyte
 import flyte.sandbox
 
 # --- Basic tasks -------------------------------------------------------------
-# Use ``@flyte.sandbox.task`` exactly like ``@env.task``, but the body
+# Use ``@flyte.sandbox.orchestrator`` exactly like ``@env.task``, but the body
 # runs inside Monty instead of a full container.
 
 
-@flyte.sandbox.task
+@flyte.sandbox.orchestrator
 def add(x: int, y: int) -> int:
     return x + y
 
 
-@flyte.sandbox.task
+@flyte.sandbox.orchestrator
 def greet(name: str) -> str:
     return "Hello, " + name + "!"
 
@@ -41,7 +41,7 @@ def greet(name: str) -> str:
 # Monty supports the same return conventions as regular Python.
 
 
-@flyte.sandbox.task
+@flyte.sandbox.orchestrator
 def early_return(x: int) -> str:
     if x < 0:
         return "negative"
@@ -54,7 +54,7 @@ def early_return(x: int) -> str:
 # list, dict, tuple, set, and their generic forms are all supported.
 
 
-@flyte.sandbox.task
+@flyte.sandbox.orchestrator
 def sum_list(numbers: List[int]) -> int:
     total = 0
     for n in numbers:
@@ -62,7 +62,7 @@ def sum_list(numbers: List[int]) -> int:
     return total
 
 
-@flyte.sandbox.task
+@flyte.sandbox.orchestrator
 def word_lengths(words: List[str]) -> Dict[str, int]:
     result = {}
     for w in words:
@@ -70,7 +70,7 @@ def word_lengths(words: List[str]) -> Dict[str, int]:
     return result
 
 
-@flyte.sandbox.task
+@flyte.sandbox.orchestrator
 def first_and_last(items: List[int]) -> tuple:
     return (items[0], items[len(items) - 1])
 
@@ -78,7 +78,7 @@ def first_and_last(items: List[int]) -> tuple:
 # --- Optional types ----------------------------------------------------------
 
 
-@flyte.sandbox.task
+@flyte.sandbox.orchestrator
 def maybe_double(x: int, flag: Optional[bool] = None) -> Optional[int]:
     if flag:
         return x * 2
@@ -88,7 +88,7 @@ def maybe_double(x: int, flag: Optional[bool] = None) -> Optional[int]:
 # --- Loops and conditionals --------------------------------------------------
 
 
-@flyte.sandbox.task
+@flyte.sandbox.orchestrator
 def fizzbuzz(n: int) -> List[str]:
     result = []
     for i in range(1, n + 1):
@@ -108,12 +108,12 @@ def fizzbuzz(n: int) -> List[str]:
 # natively, so ``await`` works inside the sandbox.
 
 
-@flyte.sandbox.task
+@flyte.sandbox.orchestrator
 async def async_add(x: int, y: int) -> int:
     return x + y
 
 
-@flyte.sandbox.task
+@flyte.sandbox.orchestrator
 async def async_transform(items: List[int]) -> List[int]:
     result = []
     for item in items:
@@ -122,7 +122,7 @@ async def async_transform(items: List[int]) -> List[int]:
 
 
 # --- Attach to an environment for ``flyte run`` -----------------------------
-# ``@flyte.sandbox.task`` creates standalone templates. ``flyte run``
+# ``@flyte.sandbox.orchestrator`` creates standalone templates. ``flyte run``
 # requires every task to belong to a TaskEnvironment.
 
 sandbox_env = flyte.TaskEnvironment.from_task(
