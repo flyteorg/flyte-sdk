@@ -40,7 +40,7 @@ env = flyte.TaskEnvironment(
     reusable=flyte.ReusePolicy(
         replicas=1,
         concurrency=10,
-    )
+    ),
 )
 
 # ---------------------------------------------------------------------------
