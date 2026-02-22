@@ -121,9 +121,8 @@ def train_loop(epochs: int = 10) -> float:
         if rank == 0:
             print(f"[rank {rank}] epoch {epoch} loss={final_loss:.4f}")
 
-    # No need to call destroy_process_group() — the elastic agent kills
-    # workers on failure. Calling it here would block rank 1 in a barrier
-    # with dead rank 0 for another collective timeout cycle.
+    # Ideally you should do this
+    torch.distributed.destroy_process_group()
     return final_loss
 
 

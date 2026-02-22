@@ -1,4 +1,6 @@
 import os
+import signal
+import threading
 from dataclasses import dataclass, field
 from typing import Any, Dict, Literal, Optional, Union
 
@@ -17,8 +19,6 @@ from flyteidl2.plugins.kubeflow.pytorch_pb2 import (
     ElasticConfig,
 )
 from google.protobuf.json_format import MessageToDict
-import signal
-
 from torch.distributed import run
 from torch.distributed.elastic.multiprocessing.errors import ChildFailedError
 from torch.distributed.launcher.api import LaunchConfig, elastic_launch
@@ -172,6 +172,79 @@ def _format_worker_failure(err: ChildFailedError) -> str:
     return "\n".join(lines)
 
 
+def _start_zombie_watchdog(nproc: int, check_interval: float = 10.0) -> threading.Event:
+    """Start a daemon thread that detects zombie worker processes and force-exits.
+
+    PyTorch's elastic agent has a known deadlock: when all worker processes die
+    from SIGABRT simultaneously (e.g. NCCL abort on collective timeout), the
+    agent's _poll() method calls multiprocessing.Event.set() which deadlocks in
+    Condition.notify() trying to acquire a shared semaphore that the dead workers
+    will never release.  See: torch/distributed/elastic/multiprocessing/api.py
+    comment on _worker_finished_event.
+
+    This watchdog periodically discovers child processes via /proc and counts
+    how many are zombies.  When at least ``nproc`` children are zombies, the
+    workers are all dead and the elastic agent is deadlocked.  We force-exit
+    with os._exit() since the deadlocked semaphore cannot be interrupted
+    cleanly.
+
+    Note: not all children are workers — Python's multiprocessing spawns a
+    ``resource_tracker`` process that stays alive.  We count zombie children
+    rather than requiring *all* children to be zombies.
+    """
+    stop = threading.Event()
+    my_pid = os.getpid()
+
+    def _count_zombie_children():
+        """Count direct child processes that are zombies."""
+        zombie_pids = []
+        try:
+            for entry in os.listdir("/proc"):
+                if not entry.isdigit():
+                    continue
+                pid = int(entry)
+                if pid == my_pid:
+                    continue
+                try:
+                    with open(f"/proc/{pid}/status") as f:
+                        ppid = None
+                        is_zombie = False
+                        for line in f:
+                            if line.startswith("PPid:"):
+                                ppid = int(line.split()[1])
+                            elif line.startswith("State:"):
+                                is_zombie = "Z" in line
+                            if ppid is not None and is_zombie:
+                                break
+                        if ppid == my_pid and is_zombie:
+                            zombie_pids.append(pid)
+                except (FileNotFoundError, ProcessLookupError, PermissionError):
+                    pass
+        except OSError:
+            pass
+        return zombie_pids
+
+    def _run():
+        while not stop.wait(check_interval):
+            zombie_pids = _count_zombie_children()
+            # Once we have at least nproc zombie children, all workers are dead.
+            # Other children (e.g. multiprocessing.resource_tracker) may still
+            # be alive — that's expected and shouldn't prevent detection.
+            if len(zombie_pids) >= nproc:
+                logger.error(
+                    "Zombie watchdog: %d worker processes are zombies (PIDs %s). "
+                    "This indicates a PyTorch elastic agent deadlock in "
+                    "multiprocessing.Event.set(). Force-exiting.",
+                    len(zombie_pids),
+                    zombie_pids,
+                )
+                os._exit(1)
+
+    t = threading.Thread(target=_run, daemon=True, name="zombie-watchdog")
+    t.start()
+    return stop
+
+
 @dataclass(kw_only=True)
 class TorchFunctionTask(AsyncFunctionTaskTemplate):
     """
@@ -259,6 +332,14 @@ class TorchFunctionTask(AsyncFunctionTaskTemplate):
             # subprocesses.  Running it in a thread pool (run_sync_with_loop)
             # would cause the "Failed to register signal handlers" warning
             # and leave orphaned workers on exit.
+            #
+            # A zombie watchdog runs in a daemon thread to detect a known
+            # PyTorch deadlock: when all workers die from SIGABRT (NCCL abort),
+            # the elastic agent deadlocks in multiprocessing.Event.set() →
+            # Condition.notify() trying to acquire a shared semaphore that dead
+            # workers will never release.  The watchdog force-exits when it
+            # detects all worker children are zombies.
+            watchdog_stop = _start_zombie_watchdog(nproc=self.plugin_config.nproc_per_node)
             try:
                 out = elastic_launch(config=config, entrypoint=launcher_entrypoint)(
                     tctx,
@@ -267,6 +348,8 @@ class TorchFunctionTask(AsyncFunctionTaskTemplate):
                 )
             except ChildFailedError as e:
                 raise RuntimeError(_format_worker_failure(e)) from e
+            finally:
+                watchdog_stop.set()
 
             # `out` is a dictionary of rank (not local rank) -> result
             # Rank 0 returns the result of the task function
