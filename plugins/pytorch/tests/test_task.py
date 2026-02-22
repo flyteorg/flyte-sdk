@@ -1,9 +1,8 @@
 import asyncio
 import os
 
-from cloudpickle import cloudpickle
-
 import flyte
+from cloudpickle import cloudpickle
 from flyte.models import SerializationContext
 
 from flyteplugins.pytorch.task import (

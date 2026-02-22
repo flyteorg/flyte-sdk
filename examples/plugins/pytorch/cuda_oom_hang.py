@@ -16,7 +16,7 @@ What happens:
        blocked in its final loss.backward() waiting for rank 1 in all-reduce
     8. Rank 0 hangs for NCCL_TIMEOUT (default 1800s = 30 minutes) before timing out
     9. The elastic agent restarts the group, and rank 1 OOMs again
-   10. Total hang: up to (max_restarts+1) × NCCL_TIMEOUT
+   10. Total hang: up to (max_restarts+1) * NCCL_TIMEOUT
 
 With the Flyte PyTorch plugin's NCCL timeout knobs:
     - nccl_collective_timeout_sec=60: collective timeout reduced from 600s to 60s
@@ -32,12 +32,12 @@ import torch
 import torch.distributed
 import torch.nn as nn
 import torch.optim as optim
+from flyteplugins.pytorch.task import Elastic
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DataLoader, DistributedSampler, TensorDataset
 
 import flyte
 from flyte._image import DIST_FOLDER, PythonWheels
-from flyteplugins.pytorch.task import Elastic
 
 image = (
     flyte.Image.from_debian_base(name="torch")
@@ -92,10 +92,10 @@ def train_loop(epochs: int = 10) -> float:
 
     for epoch in range(epochs):
         for batch_x, batch_y in loader:
-            batch_x, batch_y = batch_x.to(device), batch_y.to(device)
+            bx, by = batch_x.to(device), batch_y.to(device)
 
-            outputs = model(batch_x)
-            loss = criterion(outputs, batch_y)
+            outputs = model(bx)
+            loss = criterion(outputs, by)
             optimizer.zero_grad()
 
             # ---- OOM trigger ----
