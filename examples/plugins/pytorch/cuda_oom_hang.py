@@ -15,13 +15,15 @@ What happens:
     7. When rank 1 finishes training (one fewer backward call), rank 0 is still
        blocked in its final loss.backward() waiting for rank 1 in all-reduce
     8. Rank 0 hangs for NCCL_TIMEOUT (default 1800s = 30 minutes) before timing out
-    9. The elastic agent restarts the group (max_restarts=3), and rank 1 OOMs again
-   10. Total hang: up to max_restarts × NCCL_TIMEOUT ≈ 3 × 30 min = 90 minutes
+    9. The elastic agent restarts the group, and rank 1 OOMs again
+   10. Total hang: up to (max_restarts+1) × NCCL_TIMEOUT
 
-Root causes in the plugin:
-    - No NCCL timeout configuration — defaults to 30 min
-    - elastic_launch blocks the async event loop, so heartbeats/cancellation can't fire
-    - pre() (which would set env vars) is never called because execute() is overridden
+With the Flyte PyTorch plugin's NCCL timeout knobs:
+    - nccl_collective_timeout_sec=60: collective timeout reduced from 600s to 60s
+    - nccl_heartbeat_timeout_sec=60: heartbeat watchdog aborts ~60s after collective fires
+    - nccl_async_error_handling=True: stuck collectives abort asynchronously
+    - max_restarts=0: fail immediately on first OOM, no restart cycles
+    - Total failure time: ~2 min instead of 90 min
 """
 
 import typing
@@ -34,9 +36,14 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DataLoader, DistributedSampler, TensorDataset
 
 import flyte
+from flyte._image import DIST_FOLDER, PythonWheels
 from flyteplugins.pytorch.task import Elastic
 
-image = flyte.Image.from_debian_base(name="torch").with_pip_packages("flyteplugins-pytorch", "numpy", pre=True)
+image = (
+    flyte.Image.from_debian_base(name="torch")
+    .clone(addl_layer=PythonWheels(wheel_dir=DIST_FOLDER, package_name="flyteplugins-pytorch", pre=True))
+    .with_pip_packages("numpy")
+)
 
 torch_env = flyte.TaskEnvironment(
     name="torch_oom_env",
@@ -44,8 +51,11 @@ torch_env = flyte.TaskEnvironment(
     plugin_config=Elastic(
         nproc_per_node=2,
         nnodes=1,
-        max_restarts=3,
+        max_restarts=0,
         rdzv_configs={"timeout": 900, "join_timeout": 900},
+        nccl_heartbeat_timeout_sec=60,
+        nccl_async_error_handling=True,
+        nccl_collective_timeout_sec=60,
     ),
     image=image,
 )
@@ -111,9 +121,9 @@ def train_loop(epochs: int = 10) -> float:
         if rank == 0:
             print(f"[rank {rank}] epoch {epoch} loss={final_loss:.4f}")
 
-    # Rank 0 never reaches here — it's stuck in its final loss.backward()
-    # waiting for rank 1's all-reduce that will never come.
-    torch.distributed.destroy_process_group()
+    # No need to call destroy_process_group() — the elastic agent kills
+    # workers on failure. Calling it here would block rank 1 in a barrier
+    # with dead rank 0 for another collective timeout cycle.
     return final_loss
 
 

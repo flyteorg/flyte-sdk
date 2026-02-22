@@ -17,7 +17,10 @@ from flyteidl2.plugins.kubeflow.pytorch_pb2 import (
     ElasticConfig,
 )
 from google.protobuf.json_format import MessageToDict
+import signal
+
 from torch.distributed import run
+from torch.distributed.elastic.multiprocessing.errors import ChildFailedError
 from torch.distributed.launcher.api import LaunchConfig, elastic_launch
 
 
@@ -50,6 +53,16 @@ class Elastic:
     """
     Elastic defines the configuration for running a PyTorch elastic job using torch.distributed.
 
+    When a worker fails (e.g. CUDA OOM), the elastic agent detects the failure and
+    restarts all workers as a group. Each restart cycle has a cost determined by the
+    NCCL timeout settings below. The total worst-case time before the job fails is::
+
+        (max_restarts + 1) × (nccl_collective_timeout_sec + nccl_heartbeat_timeout_sec)
+
+    For example, with defaults (max_restarts=3, collective=600s, heartbeat=300s):
+    4 × 900s = 60 min. With aggressive settings (max_restarts=0, collective=60s,
+    heartbeat=60s): 1 × 120s = 2 min.
+
     Args:
         nnodes (Union[int, str]): Number of nodes to use. Can be a fixed int or a range
             string (e.g., "2:4" for elastic training).
@@ -57,17 +70,38 @@ class Elastic:
         rdzv_backend (literal): Rendezvous backend to use. Typically "c10d". Defaults to "c10d".
         run_policy (RunPolicy, optional): Run policy applied to the job execution.
             Defaults to None.
-        monitor_interval (int): Interval (in seconds) to monitor the job's state.
-            Defaults to 3.
-        max_restarts (int): Maximum number of worker group restarts before failing the job.
-            Defaults to 3.
+        monitor_interval (int): Interval (in seconds) the elastic agent polls worker
+            process health. Once a worker process exits, detection takes at most this
+            long. Defaults to 3.
+        max_restarts (int): Maximum number of worker group restarts before the elastic
+            agent gives up and raises ``ChildFailedError``. Each restart kills all
+            workers and relaunches the entire group. If the failure is deterministic
+            (e.g. model too large for GPU memory), restarts just repeat the same
+            failure — set to 0 to fail immediately. Use higher values for transient
+            failures (e.g. spot instance preemption, occasional OOM from variable
+            batch sizes). Defaults to 3.
         rdzv_configs (Dict[str, Any]): Rendezvous configuration key-value pairs.
             Defaults to {"timeout": 900, "join_timeout": 900}.
-        nccl_heartbeat_timeout_sec (Optional[int]): Timeout in seconds for the NCCL heartbeat
-            monitor. When a worker hits CUDA OOM and stops participating in collectives,
-            surviving workers detect the failure after this timeout and abort. Defaults to
-            300 (5 min) instead of PyTorch's 1800s (30 min). Set to None to use PyTorch
-            default.
+        nccl_heartbeat_timeout_sec (Optional[int]): Timeout in seconds for the NCCL
+            heartbeat monitor thread. After the collective timeout fires and the NCCL
+            watchdog aborts the communicator, the heartbeat monitor waits this long
+            before sending SIGABRT to kill the worker process. This is the second
+            phase of failure detection — it converts a stuck NCCL abort into a hard
+            process kill. Defaults to 300 (5 min) instead of PyTorch's 1800s (30 min).
+            Set to None to use PyTorch default.
+        nccl_async_error_handling (bool): When True, sets TORCH_NCCL_ASYNC_ERROR_HANDLING=1
+            so that NCCL aborts stuck collectives asynchronously instead of blocking
+            indefinitely. This causes the worker process to crash-exit on a stuck
+            collective, which the elastic agent detects within ``monitor_interval``
+            seconds (~3s by default) — much faster than waiting for the heartbeat
+            timeout. Defaults to False (PyTorch default behavior).
+        nccl_collective_timeout_sec (Optional[int]): Timeout in seconds for individual
+            NCCL collective operations (e.g. all-reduce inside loss.backward()). This
+            is the timeout passed to ``torch.distributed.init_process_group``. When a
+            worker desyncs (e.g. skips a collective after OOM), surviving workers block
+            in the collective for this long before the NCCL watchdog fires. This is the
+            first phase of failure detection. PyTorch default is 600s (10 min). Set to
+            None to use PyTorch default.
     """
 
     nnodes: Union[int, str]
@@ -78,6 +112,8 @@ class Elastic:
     max_restarts: int = 3
     rdzv_configs: Dict[str, Any] = field(default_factory=lambda: {"timeout": 900, "join_timeout": 900})
     nccl_heartbeat_timeout_sec: Optional[int] = 300
+    nccl_async_error_handling: bool = False
+    nccl_collective_timeout_sec: Optional[int] = None
 
 
 def launcher_entrypoint(tctx: TaskContext, fn: bytes, kwargs: dict):
@@ -89,8 +125,51 @@ def launcher_entrypoint(tctx: TaskContext, fn: bytes, kwargs: dict):
         root_dir=tctx.run_base_dir,
     )
 
+    # Override the default NCCL collective timeout before the user calls
+    # init_process_group().  We must patch both the constants module AND
+    # the distributed_c10d module because `from constants import
+    # default_pg_nccl_timeout` creates a separate name binding.
+    nccl_timeout = os.environ.get("FLYTE_NCCL_COLLECTIVE_TIMEOUT_SEC")
+    if nccl_timeout is not None:
+        from datetime import timedelta
+
+        import torch.distributed.constants
+        import torch.distributed.distributed_c10d
+
+        td = timedelta(seconds=int(nccl_timeout))
+        torch.distributed.constants.default_pg_nccl_timeout = td
+        torch.distributed.distributed_c10d.default_pg_nccl_timeout = td
+
     with internal_ctx().replace_task_context(tctx):
         return func(**kwargs)
+
+
+_SIGNAL_HINTS = {
+    -signal.SIGABRT: (
+        "Worker was killed by SIGABRT. This usually means an NCCL collective "
+        "timed out — a common symptom of CUDA OOM causing ranks to desync. "
+        "Check worker logs for 'CUDA out of memory' or 'collective operation timeout'."
+    ),
+    -signal.SIGKILL: (
+        "Worker was killed by SIGKILL (OOM killer or resource limit). "
+        "The process likely exceeded its memory limit. "
+        "Try reducing batch size or requesting more memory."
+    ),
+}
+
+
+def _format_worker_failure(err: ChildFailedError) -> str:
+    """Build a human-readable error message from a ChildFailedError."""
+    lines = ["PyTorch worker(s) failed:"]
+    for rank, failure in err.failures.items():
+        exitcode = failure.exitcode
+        hint = _SIGNAL_HINTS.get(exitcode, "")
+        lines.append(f"  rank {rank}: exitcode={exitcode} (pid {failure.pid})")
+        if hint:
+            lines.append(f"    -> {hint}")
+        if failure.message and "Signal" not in failure.message:
+            lines.append(f"    -> {failure.message}")
+    return "\n".join(lines)
 
 
 @dataclass(kw_only=True)
@@ -134,11 +213,25 @@ class TorchFunctionTask(AsyncFunctionTaskTemplate):
         ):
             os.environ["TORCH_NCCL_HEARTBEAT_TIMEOUT_SEC"] = str(self.plugin_config.nccl_heartbeat_timeout_sec)
 
+        # When enabled, NCCL aborts stuck collectives asynchronously instead of
+        # blocking.  The worker process crash-exits, letting the elastic agent
+        # detect the failure within monitor_interval (~3s) rather than waiting
+        # for the full heartbeat timeout.
+        if self.plugin_config.nccl_async_error_handling and "TORCH_NCCL_ASYNC_ERROR_HANDLING" not in os.environ:
+            os.environ["TORCH_NCCL_ASYNC_ERROR_HANDLING"] = "1"
+
+        # Propagate the collective timeout to worker subprocesses via env var.
+        # The launcher_entrypoint reads this and overrides the PyTorch default
+        # before user code calls init_process_group().
+        if (
+            self.plugin_config.nccl_collective_timeout_sec is not None
+            and "FLYTE_NCCL_COLLECTIVE_TIMEOUT_SEC" not in os.environ
+        ):
+            os.environ["FLYTE_NCCL_COLLECTIVE_TIMEOUT_SEC"] = str(self.plugin_config.nccl_collective_timeout_sec)
+
         return {}
 
     async def execute(self, *args: P.args, **kwargs: P.kwargs) -> R:
-        from flyte._utils.asyncify import run_sync_with_loop
-
         ctx = internal_ctx()
         tctx = ctx.data.task_context
 
@@ -161,14 +254,19 @@ class TorchFunctionTask(AsyncFunctionTaskTemplate):
                 monitor_interval=self.plugin_config.monitor_interval,
             )
 
-            def _launch():
-                return elastic_launch(config=config, entrypoint=launcher_entrypoint)(
+            # elastic_launch must run on the main thread so it can register
+            # signal handlers (SIGTERM/SIGINT) for cleaning up worker
+            # subprocesses.  Running it in a thread pool (run_sync_with_loop)
+            # would cause the "Failed to register signal handlers" warning
+            # and leave orphaned workers on exit.
+            try:
+                out = elastic_launch(config=config, entrypoint=launcher_entrypoint)(
                     tctx,
                     cloudpickle.dumps(self.func),
                     kwargs,
                 )
-
-            out = await run_sync_with_loop(_launch)
+            except ChildFailedError as e:
+                raise RuntimeError(_format_worker_failure(e)) from e
 
             # `out` is a dictionary of rank (not local rank) -> result
             # Rank 0 returns the result of the task function
