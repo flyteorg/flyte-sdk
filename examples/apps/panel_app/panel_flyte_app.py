@@ -29,7 +29,7 @@ app_env = AppEnvironment(
     ),
     port=8080,
     resources=flyte.Resources(cpu="2", memory="1Gi"),
-    scaling=Scaling(replicas=(1, 5)),
+    scaling=Scaling(replicas=(0, 5)),
     domain=Domain(subdomain="flyte2intro"),
     include=["explore.tcss"],
     requires_auth=False,
@@ -343,8 +343,8 @@ def _load_explore_css() -> str:
 
 class CustomExploreScreen(ExploreScreen):
     def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
-        """Disable the quit action - hides from footer and prevents it from running."""
-        if action == "quit_app":
+        """Disable the quit and palette actions."""
+        if action in ("quit_app", "command_palette"):
             return False
         return True
 
@@ -354,6 +354,7 @@ class CustomExploreTUIApp(App[None]):
 
     TITLE = "Runs list"
     CSS = _load_explore_css()
+    ENABLE_COMMAND_PALETTE = False
 
     def on_mount(self) -> None:
         self.push_screen(CustomExploreScreen())
@@ -381,7 +382,7 @@ EXAMPLES = {
 def create_panel_app():
     import panel as pn
 
-    pn.extension("codeeditor", "terminal")
+    pn.extension("codeeditor", "terminal", reconnect=True)
 
     # Example selector tabs
     example_selector = pn.widgets.Select(
@@ -455,7 +456,15 @@ def create_panel_app():
     textual_pane = pn.pane.Textual(
         flyte_tui_app,
         sizing_mode="stretch_both",
-        min_height=850,
+        min_height=800,
+        stylesheets=[
+            ":host { padding: 0 !important; margin: 0 !important; }",
+            ":host .xterm-viewport { overflow-y: hidden !important; width: 100% !important; }",
+            ":host .xterm-screen { width: 100% !important; }",
+            ":host .xterm-viewport::-webkit-scrollbar { display: none !important; width: 0 !important; }",
+            ":host .xterm { overflow: hidden !important; }",
+        ],
+        styles={"padding": "0", "margin": "0", "background": "#171020", "overflow": "hidden"},
     )
 
     def refresh_textual_app():
@@ -580,26 +589,54 @@ def create_panel_app():
         styles={"background": "#2d2d2d", "padding": "10px", "height": "100vh"},
     )
 
+    # Toggle button for maximizing/minimizing the right panel
+    is_maximized = pn.widgets.Toggle(
+        name="⛶",
+        value=False,
+        button_type="default",
+        width=40,
+        stylesheets=[
+            ":host .bk-btn { background-color: #7652a2 !important; color: #f7f5fd !important; "
+            "font-size: 16px !important; border: none !important; padding: 2px 8px !important; "
+            "margin-right: 10px !important; }"
+        ],
+    )
+
     right_panel = pn.Column(
+        pn.Row(
+            pn.Spacer(sizing_mode="stretch_width"),
+            is_maximized,
+            sizing_mode="stretch_width",
+            styles={"background": "#2d2d2d"},
+        ),
         textual_pane,
-        sizing_mode="stretch_both",
-        min_height=850,
+        sizing_mode="stretch_width",
         styles={"background": "#2d2d2d", "padding": "10px", "height": "100vh"},
     )
+
+    def update_layout(maximized):
+        if maximized:
+            left_panel.visible = False
+            is_maximized.name = "⛶"
+        else:
+            left_panel.visible = True
+            is_maximized.name = "⛶"
+
+    is_maximized.param.watch(lambda event: update_layout(event.new), "value")
 
     main_content = pn.Row(
         left_panel,
         right_panel,
-        sizing_mode="stretch_both",
+        sizing_mode="stretch_width",
         min_height=800,
     )
 
-    footer = pn.Row(
+    header = pn.Row(
         pn.pane.HTML(
             """
             <div style="display: flex; justify-content: center; align-items: center; gap: 20px; width: 100%;">
                 <span style="color: #d4d4d4; font-size: 14px;">
-                    Flyte + Union 2.0 is currently in invite-only beta.
+                    Try the Union engine for Flyte 2.0
                 </span>
                 <a href="https://www.union.ai/beta" target="_blank"
                    style="background-color: #171020; color: #f7f5fd; padding: 5px 10px;
@@ -620,8 +657,8 @@ def create_panel_app():
     )
 
     layout = pn.Column(
+        header,
         main_content,
-        footer,
         sizing_mode="stretch_both",
         styles={"height": "100vh"},
     )
@@ -674,9 +711,15 @@ def serve():
 
 
 if __name__ == "__main__":
+    import argparse
     from pathlib import Path
 
+    parser = argparse.ArgumentParser(description="Serve the panel app")
+    parser.add_argument("--mode", choices=["local", "remote"], default="remote", help="Serve mode")
+    args = parser.parse_args()
+
     flyte.init_from_config(root_dir=Path(__file__).parent)
-    app_handle = flyte.with_servecontext(mode="remote").serve(app_env)
-    app_handle.activate(wait=True)
+    app_handle = flyte.with_servecontext(mode=args.mode).serve(app_env)
     print(f"Panel app is ready at {app_handle.url}")
+    if args.mode == "local":
+        input("Press Enter to continue...")
