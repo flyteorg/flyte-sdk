@@ -147,9 +147,9 @@ def test_override_ref_task():
     )
     assert new_td is not td
     assert new_td is not None
-    assert new_td.pb2.metadata.short_name == "new_oomer"
     assert new_td.resources[0][0].value == "3"
     assert new_td.resources[0][1].value == "100Mi"
+    assert new_td.pb2.spec.short_name == "new_oomer"
     assert new_td.pb2.spec.task_template.metadata.retries.retries == 5
     assert new_td.pb2.spec.task_template.metadata.timeout.seconds == 100
     assert new_td.pb2.spec.task_template.security_context == get_security_context(secrets)
