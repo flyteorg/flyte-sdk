@@ -485,6 +485,15 @@ class AsyncFunctionTaskTemplate(TaskTemplate[P, R, F]):
             return self.func.__code__.co_filename
         return None
 
+    @property
+    def json_schema(self) -> Dict[str, Any]:
+        """JSON schema for the task inputs, following the Flyte standard.
+
+        Delegates to NativeInterface.json_schema, which uses the type engine to
+        produce a LiteralType per input and converts to JSON schema.
+        """
+        return self.interface.json_schema
+
     def forward(self, *args: P.args, **kwargs: P.kwargs) -> Coroutine[Any, Any, R] | R:
         # In local execution, we want to just call the function. Note we're not awaiting anything here.
         # If the function was a coroutine function, the coroutine is returned and the await that the caller has

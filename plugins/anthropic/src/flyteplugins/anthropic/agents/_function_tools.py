@@ -20,73 +20,6 @@ import anthropic
 
 logger = logging.getLogger(__name__)
 
-# Type mapping from Python types to JSON schema types
-TYPE_MAP: dict[type, str] = {
-    str: "string",
-    int: "integer",
-    float: "number",
-    bool: "boolean",
-    list: "array",
-    dict: "object",
-}
-
-
-def _python_type_to_json_schema(py_type: type) -> dict[str, typing.Any]:
-    """Convert a Python type hint to a JSON schema definition."""
-    origin = typing.get_origin(py_type)
-    args = typing.get_args(py_type)
-
-    # Handle Optional types (Union[X, None])
-    if origin is typing.Union:
-        non_none_args = [a for a in args if a is not type(None)]
-        if len(non_none_args) == 1:
-            return _python_type_to_json_schema(non_none_args[0])
-        return {"anyOf": [_python_type_to_json_schema(a) for a in non_none_args]}
-
-    # Handle list[X]
-    if origin is list:
-        if args:
-            return {"type": "array", "items": _python_type_to_json_schema(args[0])}
-        return {"type": "array"}
-
-    # Handle dict[K, V]
-    if origin is dict:
-        return {"type": "object"}
-
-    # Handle basic types
-    if py_type in TYPE_MAP:
-        return {"type": TYPE_MAP[py_type]}
-
-    # Default to string for unknown types
-    return {"type": "string"}
-
-
-def _get_function_schema(func: typing.Callable) -> dict[str, typing.Any]:
-    """Extract JSON schema from a function's type hints."""
-    sig = inspect.signature(func)
-    hints = typing.get_type_hints(func)
-
-    properties: dict[str, typing.Any] = {}
-    required: list[str] = []
-
-    for name, param in sig.parameters.items():
-        if name in ("self", "cls"):
-            continue
-
-        param_type = hints.get(name, str)
-        prop_schema = _python_type_to_json_schema(param_type)
-        properties[name] = prop_schema
-
-        # Check if parameter is required (no default value)
-        if param.default is inspect.Parameter.empty:
-            required.append(name)
-
-    return {
-        "type": "object",
-        "properties": properties,
-        "required": required,
-    }
-
 
 @dataclass
 class FunctionTool:
@@ -140,6 +73,10 @@ def function_tool(
     This function converts a Python function, @flyte.trace decorated function,
     or Flyte task into a FunctionTool that can be used with Claude's tool use API.
 
+    The input_schema is derived via the Flyte type engine, producing JSON schema
+    This ensures that Literal types, dataclasses, FlyteFile, and other Flyte-native
+    types are represented correctly.
+
     For @flyte.trace decorated functions, the tracing context is preserved
     automatically since functools.wraps maintains the original function's metadata.
 
@@ -170,6 +107,9 @@ def function_tool(
         task = func
         native_interface = func.interface
         report = func.report
+        # Use the task's already-built NativeInterface — goes through the type
+        # engine so Literal enums, dataclasses, FlyteFile etc. are all correct.
+        input_schema = func.json_schema
     else:
         # Regular callables and @flyte.trace decorated functions.
         # @flyte.trace uses functools.wraps, so __name__, __doc__ and type hints
@@ -178,10 +118,11 @@ def function_tool(
         task = None
         native_interface = None
         report = False
+        # Build a NativeInterface on the fly so the same type-engine path is used.
+        input_schema = NativeInterface.from_callable(actual_func).json_schema
 
     tool_name = name or actual_func.__name__
     tool_description = description or (actual_func.__doc__ or f"Execute {tool_name}")
-    input_schema = _get_function_schema(actual_func)
     is_async = inspect.iscoroutinefunction(actual_func)
 
     return FunctionTool(
