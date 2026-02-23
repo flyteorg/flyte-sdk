@@ -112,10 +112,10 @@ def adjust_sys_path(additional_paths: List[str] | None = None):
     if "." not in sys.path or os.getcwd() not in sys.path:
         sys.path.insert(0, ".")
         logger.info(f"Added {os.getcwd()} to sys.path")
-    for p in os.environ.get(FLYTE_SYS_PATH, "").split(":"):
-        if p and p not in sys.path:
-            sys.path.insert(0, p)
-            logger.info(f"Added {p} to sys.path")
+    entries = [p for p in os.environ.get(FLYTE_SYS_PATH, "").split(":") if p and p not in sys.path]
+    for p in reversed(entries):
+        sys.path.insert(0, p)
+        logger.info(f"Added {p} to sys.path")
     if additional_paths:
         for p in additional_paths:
             if p and p not in sys.path:
