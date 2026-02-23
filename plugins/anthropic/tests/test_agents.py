@@ -14,7 +14,7 @@ from flyteplugins.anthropic import Agent, function_tool, run_agent
 from flyteplugins.anthropic.agents._function_tools import FunctionTool
 
 # ---------------------------------------------------------------------------
-# literal_type_to_json_schema unit tests — mirrors Go test cases
+# literal_type_to_json_schema unit tests
 # ---------------------------------------------------------------------------
 
 
