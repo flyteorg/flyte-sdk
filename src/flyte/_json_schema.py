@@ -1,5 +1,4 @@
-"""Convert Flyte LiteralType (protobuf) to JSON schema.
-"""
+"""Convert Flyte LiteralType (protobuf) to JSON schema."""
 
 from __future__ import annotations
 
@@ -10,8 +9,7 @@ from google.protobuf.json_format import MessageToDict
 
 
 def literal_type_to_json_schema(lt: types_pb2.LiteralType) -> Dict[str, Any]:
-    """Convert a Flyte LiteralType protobuf to a JSON schema dict.
-    """
+    """Convert a Flyte LiteralType protobuf to a JSON schema dict."""
     if lt is None:
         return {"type": "null"}
 
@@ -76,8 +74,7 @@ def _simple_to_json_schema(lt: types_pb2.LiteralType) -> Dict[str, Any]:
 
 
 def _struct_to_json_schema(lt: types_pb2.LiteralType) -> Dict[str, Any]:
-    """Convert a STRUCT LiteralType to JSON schema.
-    """
+    """Convert a STRUCT LiteralType to JSON schema."""
     if lt.HasField("metadata"):
         schema = MessageToDict(lt.metadata)
         if schema:
@@ -94,7 +91,7 @@ def _blob_to_json_schema(blob: types_pb2.BlobType) -> Dict[str, Any]:
     """Convert a BlobType to JSON schema. Used for FlyteFile and FlyteDirectory."""
     uri_prop: Dict[str, Any] = {"type": "string", "default": ""}
 
-    format_prop: Dict[str, Any] = {"type": "string", "default": blob.format if blob.format else ""}
+    format_prop: Dict[str, Any] = {"type": "string", "default": blob.format or ""}
 
     dim = blob.dimensionality
     if dim == types_pb2.BlobType.BlobDimensionality.MULTIPART:
@@ -127,10 +124,7 @@ def _union_to_json_schema(union_type: types_pb2.UnionType) -> Dict[str, Any]:
     """
     # Separate null from non-null variants
     null_simple = types_pb2.SimpleType.NONE
-    non_null = [
-        v for v in union_type.variants
-        if not (v.HasField("simple") and v.simple == null_simple)
-    ]
+    non_null = [v for v in union_type.variants if not (v.HasField("simple") and v.simple == null_simple)]
 
     # Optional[X] — simplify to X's schema (no null variant needed for tool use)
     if len(non_null) == 1:

@@ -6,13 +6,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import flyte
 import pytest
-
 from flyte._json_schema import literal_type_to_json_schema
 from flyte.models import NativeInterface
 from flyte.types._type_engine import TypeEngine
+
 from flyteplugins.anthropic import Agent, function_tool, run_agent
 from flyteplugins.anthropic.agents._function_tools import FunctionTool
-
 
 # ---------------------------------------------------------------------------
 # literal_type_to_json_schema unit tests — mirrors Go test cases
