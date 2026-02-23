@@ -5,7 +5,6 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, Literal, Optional, Union
 
 import flyte
-import flyte.report
 from cloudpickle import cloudpickle
 from flyte._context import internal_ctx
 from flyte._logging import logger
@@ -102,6 +101,10 @@ class Elastic:
             in the collective for this long before the NCCL watchdog fires. This is the
             first phase of failure detection. PyTorch default is 600s (10 min). Set to
             None to use PyTorch default.
+        nccl_enable_monitoring (bool): When True, sets TORCH_NCCL_ENABLE_MONITORING=1
+            to activate NCCL's built-in monitoring thread. The monitoring thread
+            checks each worker's heartbeat counter and sends SIGABRT when it stalls,
+            which is what drives ``nccl_heartbeat_timeout_sec``. Defaults to True.
     """
 
     nnodes: Union[int, str]
@@ -114,6 +117,7 @@ class Elastic:
     nccl_heartbeat_timeout_sec: Optional[int] = 300
     nccl_async_error_handling: bool = False
     nccl_collective_timeout_sec: Optional[int] = None
+    nccl_enable_monitoring: bool = True
 
 
 def launcher_entrypoint(tctx: TaskContext, fn: bytes, kwargs: dict):
@@ -126,7 +130,7 @@ def launcher_entrypoint(tctx: TaskContext, fn: bytes, kwargs: dict):
     )
 
     # Override the default NCCL collective timeout before the user calls
-    # init_process_group().  We must patch both the constants module AND
+    # init_process_group(). We must patch both the constants module and
     # the distributed_c10d module because `from constants import
     # default_pg_nccl_timeout` creates a separate name binding.
     nccl_timeout = os.environ.get("FLYTE_NCCL_COLLECTIVE_TIMEOUT_SEC")
@@ -262,6 +266,11 @@ class TorchFunctionTask(AsyncFunctionTaskTemplate):
         self.min_nodes, self.max_nodes = run.parse_min_max_nnodes(str(self.plugin_config.nnodes))
 
     async def pre(self, *args: P.args, **kwargs: P.kwargs) -> Dict[str, Any]:
+        # Disable Python's stdout/stderr buffering so worker print() output is
+        # visible in logs even if the process crashes before flushing.
+        if "PYTHONUNBUFFERED" not in os.environ:
+            os.environ["PYTHONUNBUFFERED"] = "1"
+
         # If OMP_NUM_THREADS is not set, set it to 1 to avoid overloading the system.
         # Doing so to copy the default behavior of torchrun.
         # See https://github.com/pytorch/pytorch/blob/eea4ece256d74c6f25c1f4eab37b3f2f4aeefd4d/torch/distributed/run.py#L791
@@ -301,6 +310,14 @@ class TorchFunctionTask(AsyncFunctionTaskTemplate):
             and "FLYTE_NCCL_COLLECTIVE_TIMEOUT_SEC" not in os.environ
         ):
             os.environ["FLYTE_NCCL_COLLECTIVE_TIMEOUT_SEC"] = str(self.plugin_config.nccl_collective_timeout_sec)
+
+        # Enable NCCL's built-in monitoring thread. This is required for the
+        # heartbeat watchdog (nccl_heartbeat_timeout_sec) to fire: the monitoring
+        # thread checks each worker's heartbeat counter and sends SIGABRT when it
+        # stalls, converting stuck workers into dead ones. The zombie watchdog
+        # (_start_zombie_watchdog) then handles the downstream effect.
+        if self.plugin_config.nccl_enable_monitoring and "TORCH_NCCL_ENABLE_MONITORING" not in os.environ:
+            os.environ["TORCH_NCCL_ENABLE_MONITORING"] = "1"
 
         return {}
 

@@ -19,6 +19,7 @@ What happens:
    10. Total hang: up to (max_restarts+1) * NCCL_TIMEOUT
 
 With the Flyte PyTorch plugin's NCCL timeout knobs:
+    - nccl_enable_monitoring=True: activates NCCL's monitoring thread (enabled by default)
     - nccl_collective_timeout_sec=60: collective timeout reduced from 600s to 60s
     - nccl_heartbeat_timeout_sec=60: heartbeat watchdog aborts ~60s after collective fires
     - nccl_async_error_handling=True: stuck collectives abort asynchronously

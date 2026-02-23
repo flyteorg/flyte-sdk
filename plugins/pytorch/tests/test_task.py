@@ -5,11 +5,7 @@ import flyte
 from cloudpickle import cloudpickle
 from flyte.models import SerializationContext
 
-from flyteplugins.pytorch.task import (
-    Elastic,
-    RunPolicy,
-    TorchFunctionTask,
-)
+from flyteplugins.pytorch.task import Elastic, RunPolicy, TorchFunctionTask
 
 
 def test_torch_post_init():
@@ -100,6 +96,7 @@ def _make_task(
     nccl_heartbeat_timeout_sec=300,
     nccl_async_error_handling=False,
     nccl_collective_timeout_sec=None,
+    nccl_enable_monitoring=True,
 ):
     cfg = Elastic(
         nnodes=2,
@@ -107,6 +104,7 @@ def _make_task(
         nccl_heartbeat_timeout_sec=nccl_heartbeat_timeout_sec,
         nccl_async_error_handling=nccl_async_error_handling,
         nccl_collective_timeout_sec=nccl_collective_timeout_sec,
+        nccl_enable_monitoring=nccl_enable_monitoring,
     )
     return TorchFunctionTask(
         name="t",
@@ -116,6 +114,24 @@ def _make_task(
         resources=flyte.Resources(cpu=1, memory="1Gi"),
         plugin_config=cfg,
     )
+
+
+def test_pre_sets_pythonunbuffered(monkeypatch):
+    monkeypatch.delenv("PYTHONUNBUFFERED", raising=False)
+    monkeypatch.delenv("OMP_NUM_THREADS", raising=False)
+    monkeypatch.delenv("TORCH_NCCL_HEARTBEAT_TIMEOUT_SEC", raising=False)
+    task = _make_task()
+    asyncio.run(task.pre())
+    assert os.environ["PYTHONUNBUFFERED"] == "1"
+
+
+def test_pre_does_not_override_existing_pythonunbuffered(monkeypatch):
+    monkeypatch.setenv("PYTHONUNBUFFERED", "0")
+    monkeypatch.delenv("OMP_NUM_THREADS", raising=False)
+    monkeypatch.delenv("TORCH_NCCL_HEARTBEAT_TIMEOUT_SEC", raising=False)
+    task = _make_task()
+    asyncio.run(task.pre())
+    assert os.environ["PYTHONUNBUFFERED"] == "0"
 
 
 def test_pre_sets_nccl_heartbeat_env(monkeypatch):
@@ -229,6 +245,41 @@ def test_pre_does_not_override_existing_collective_timeout(monkeypatch):
     task = _make_task(nccl_collective_timeout_sec=60)
     asyncio.run(task.pre())
     assert os.environ["FLYTE_NCCL_COLLECTIVE_TIMEOUT_SEC"] == "120"
+
+
+# --- nccl_enable_monitoring tests ---
+
+
+def test_elastic_nccl_enable_monitoring_default():
+    e = Elastic(nnodes=2, nproc_per_node=1)
+    assert e.nccl_enable_monitoring is True
+
+
+def test_pre_sets_nccl_enable_monitoring_when_enabled(monkeypatch):
+    monkeypatch.delenv("TORCH_NCCL_ENABLE_MONITORING", raising=False)
+    monkeypatch.delenv("OMP_NUM_THREADS", raising=False)
+    monkeypatch.delenv("TORCH_NCCL_HEARTBEAT_TIMEOUT_SEC", raising=False)
+    task = _make_task(nccl_enable_monitoring=True)
+    asyncio.run(task.pre())
+    assert os.environ["TORCH_NCCL_ENABLE_MONITORING"] == "1"
+
+
+def test_pre_skips_nccl_enable_monitoring_when_disabled(monkeypatch):
+    monkeypatch.delenv("TORCH_NCCL_ENABLE_MONITORING", raising=False)
+    monkeypatch.delenv("OMP_NUM_THREADS", raising=False)
+    monkeypatch.delenv("TORCH_NCCL_HEARTBEAT_TIMEOUT_SEC", raising=False)
+    task = _make_task(nccl_enable_monitoring=False)
+    asyncio.run(task.pre())
+    assert "TORCH_NCCL_ENABLE_MONITORING" not in os.environ
+
+
+def test_pre_does_not_override_existing_nccl_enable_monitoring(monkeypatch):
+    monkeypatch.setenv("TORCH_NCCL_ENABLE_MONITORING", "0")
+    monkeypatch.delenv("OMP_NUM_THREADS", raising=False)
+    monkeypatch.delenv("TORCH_NCCL_HEARTBEAT_TIMEOUT_SEC", raising=False)
+    task = _make_task(nccl_enable_monitoring=True)
+    asyncio.run(task.pre())
+    assert os.environ["TORCH_NCCL_ENABLE_MONITORING"] == "0"
 
 
 def test_launcher_entrypoint_overrides_nccl_default(monkeypatch):
