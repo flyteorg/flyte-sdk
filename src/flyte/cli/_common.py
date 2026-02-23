@@ -430,11 +430,11 @@ def format(title: str, vals: Iterable[Any], of: OutputFormat = "table") -> Table
         case "json":
             if not vals:
                 return pretty_repr([])
-            return pretty_repr([dict(v) for v in vals])
+            return pretty_repr([v.to_dict() if hasattr(v, "to_dict") else dict(v) for v in vals])
         case "json-raw":
             if not vals:
                 return "[]"
-            return json.dumps([dict(v) for v in vals])
+            return json.dumps([v.to_dict() if hasattr(v, "to_dict") else dict(v) for v in vals])
 
     raise click.ClickException("Unknown output format. Supported formats are: table, table-simple, json.")
 

@@ -126,7 +126,8 @@ def ls_files(
     all_files.sort()
     hasher = hashlib.md5()
     for abspath in all_files:
-        relpath = os.path.relpath(abspath, source_path)
+        # Use POSIX-style path for hashing to ensure consistent hashes across platforms
+        relpath = pathlib.Path(abspath).relative_to(source_path).as_posix()
         _filehash_update(abspath, hasher)
         _pathhash_update(relpath, hasher)
 
@@ -159,7 +160,9 @@ def ls_relative_files(relative_paths: list[str], source_path: pathlib.Path) -> t
     all_files.sort()
     for p in all_files:
         _filehash_update(p, hasher)
-        _pathhash_update(p, hasher)
+        # Use POSIX-style path for hashing to ensure consistent hashes across platforms
+        rel_path = pathlib.Path(p).relative_to(source_path).as_posix()
+        _pathhash_update(rel_path, hasher)
 
     digest = hasher.hexdigest()
     return all_files, digest
