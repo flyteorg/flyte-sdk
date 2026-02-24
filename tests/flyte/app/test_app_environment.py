@@ -1209,6 +1209,8 @@ def test_app_environment_request_timeout_valid(request_timeout, expected_seconds
 @pytest.mark.parametrize(
     "request_timeout, expected_error",
     [
+        (-1, "request_timeout must be non-negative"),
+        (timedelta(seconds=-1), "request_timeout must be non-negative"),
         (3601, "request_timeout must not exceed 1 hour"),
         (timedelta(hours=1, seconds=1), "request_timeout must not exceed 1 hour"),
         (timedelta(hours=2), "request_timeout must not exceed 1 hour"),
@@ -1216,7 +1218,7 @@ def test_app_environment_request_timeout_valid(request_timeout, expected_seconds
 )
 def test_app_environment_request_timeout_exceeds_max(request_timeout, expected_error):
     """
-    GOAL: Validate that request_timeout rejects values exceeding 1 hour.
+    GOAL: Validate that request_timeout rejects negative values and values exceeding 1 hour.
 
     Tests that ValueError is raised with a clear message.
     """

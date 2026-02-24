@@ -77,6 +77,8 @@ class AppEnvironment(Environment):
             self.request_timeout = timedelta(seconds=self.request_timeout)
         elif not isinstance(self.request_timeout, timedelta):
             raise TypeError(f"Expected request_timeout to be of type int or timedelta, got {type(self.request_timeout)}")
+        if self.request_timeout < timedelta(0):
+            raise ValueError("request_timeout must be non-negative")
         if self.request_timeout > _MAX_REQUEST_TIMEOUT:
             raise ValueError("request_timeout must not exceed 1 hour")
 
