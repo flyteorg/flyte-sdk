@@ -58,15 +58,22 @@ def _clean_error_code(code: str) -> Tuple[str, str | None]:
     return code.strip(), None
 
 
-async def convert_inputs_to_native(inputs: Inputs, python_interface: NativeInterface) -> Dict[str, Any]:
-    literals = {named_literal.name: named_literal.value for named_literal in inputs.proto_inputs.literals}
+async def convert_inputs_to_native(
+    inputs: Inputs, python_interface: NativeInterface
+) -> Dict[str, Any]:
+    literals = {
+        named_literal.name: named_literal.value
+        for named_literal in inputs.proto_inputs.literals
+    }
     native_vals = await TypeEngine.literal_map_to_kwargs(
         literals_pb2.LiteralMap(literals=literals), python_interface.get_input_types()
     )
     return native_vals
 
 
-async def convert_upload_default_inputs(interface: NativeInterface) -> List[common_pb2.NamedParameter]:
+async def convert_upload_default_inputs(
+    interface: NativeInterface,
+) -> List[common_pb2.NamedParameter]:
     """
     Converts the default inputs of a NativeInterface to a list of NamedParameters for upload.
     This is used to upload default inputs to the Flyte backend.
@@ -82,11 +89,15 @@ async def convert_upload_default_inputs(interface: NativeInterface) -> List[comm
             literal_coros.append(TypeEngine.to_literal(default_value, input_type, lt))
             vars.append((input_name, lt))
 
-    literals: List[literals_pb2.Literal] = await asyncio.gather(*literal_coros, return_exceptions=True)
+    literals: List[literals_pb2.Literal] = await asyncio.gather(
+        *literal_coros, return_exceptions=True
+    )
     named_params = []
     for (name, lt), literal in zip(vars, literals):
         if isinstance(literal, Exception):
-            raise RuntimeError(f"Failed to convert default value for parameter '{name}'") from literal
+            raise RuntimeError(
+                f"Failed to convert default value for parameter '{name}'"
+            ) from literal
         param = interface_pb2.Parameter(
             var=interface_pb2.Variable(
                 type=lt,
@@ -111,7 +122,10 @@ def is_optional_type(tp) -> bool:
 
 
 async def convert_from_native_to_inputs(
-    interface: NativeInterface, *args, custom_context: Dict[str, str] | None = None, **kwargs
+    interface: NativeInterface,
+    *args,
+    custom_context: Dict[str, str] | None = None,
+    **kwargs,
 ) -> Inputs:
     kwargs = interface.convert_to_kwargs(*args, **kwargs)
 
@@ -126,10 +140,14 @@ async def convert_from_native_to_inputs(
     if tctx and tctx.custom_context:
         # Inside a task - read from TaskContext
         context_to_use = tctx.custom_context
-        context_kvs = [literals_pb2.KeyValuePair(key=k, value=v) for k, v in context_to_use.items()]
+        context_kvs = [
+            literals_pb2.KeyValuePair(key=k, value=v) for k, v in context_to_use.items()
+        ]
     elif custom_context:
         # Remote run initiation
-        context_kvs = [literals_pb2.KeyValuePair(key=k, value=v) for k, v in custom_context.items()]
+        context_kvs = [
+            literals_pb2.KeyValuePair(key=k, value=v) for k, v in custom_context.items()
+        ]
 
     if len(interface.inputs) == 0:
         # Handle context even for empty inputs
@@ -148,9 +166,16 @@ async def convert_from_native_to_inputs(
             or input_type is type(None)
         ):
             if default_value == NativeInterface.has_default:
-                if interface._remote_defaults is None or input_name not in interface._remote_defaults:
-                    raise ValueError(f"Input '{input_name}' has a default value but it is not set in the interface.")
-                already_converted_kwargs[input_name] = interface._remote_defaults[input_name]
+                if (
+                    interface._remote_defaults is None
+                    or input_name not in interface._remote_defaults
+                ):
+                    raise ValueError(
+                        f"Input '{input_name}' has a default value but it is not set in the interface."
+                    )
+                already_converted_kwargs[input_name] = interface._remote_defaults[
+                    input_name
+                ]
             elif input_type is None or input_type is type(None):
                 # If the type is 'None' or 'class<None>', we assume it's a placeholder for no type
                 kwargs[input_name] = None
@@ -172,13 +197,18 @@ async def convert_from_native_to_inputs(
     # Make sure we the interface, not literal_map or kwargs, because those may have a different order
     return Inputs(
         proto_inputs=common_pb2.Inputs(
-            literals=[common_pb2.NamedLiteral(name=k, value=literal_map.literals[k]) for k in interface.inputs.keys()],
+            literals=[
+                common_pb2.NamedLiteral(name=k, value=literal_map.literals[k])
+                for k in interface.inputs.keys()
+            ],
             context=context_kvs,
         )
     )
 
 
-async def convert_from_inputs_to_native(native_interface: NativeInterface, inputs: Inputs) -> Dict[str, Any]:
+async def convert_from_inputs_to_native(
+    native_interface: NativeInterface, inputs: Inputs
+) -> Dict[str, Any]:
     """
     Converts the inputs from a run definition proto to a native Python dictionary.
     :param native_interface: The native interface of the task.
@@ -188,13 +218,18 @@ async def convert_from_inputs_to_native(native_interface: NativeInterface, input
     if not inputs or not inputs.proto_inputs or not inputs.proto_inputs.literals:
         return {}
 
-    literals = {named_literal.name: named_literal.value for named_literal in inputs.proto_inputs.literals}
+    literals = {
+        named_literal.name: named_literal.value
+        for named_literal in inputs.proto_inputs.literals
+    }
     return await TypeEngine.literal_map_to_kwargs(
         literals_pb2.LiteralMap(literals=literals), native_interface.get_input_types()
     )
 
 
-async def convert_from_native_to_outputs(o: Any, interface: NativeInterface, task_name: str = "") -> Outputs:
+async def convert_from_native_to_outputs(
+    o: Any, interface: NativeInterface, task_name: str = ""
+) -> Outputs:
     # Always make it a tuple even if it's just one item to simplify logic below
     if not isinstance(o, tuple):
         o = (o,)
@@ -208,13 +243,15 @@ async def convert_from_native_to_outputs(o: Any, interface: NativeInterface, tas
                     task_name,
                 )
     else:
-        assert len(o) == len(interface.outputs), (
-            f"Received {len(o)} outputs but return annotation has {len(interface.outputs)} outputs specified. "
-        )
+        assert len(o) == len(
+            interface.outputs
+        ), f"Received {len(o)} outputs but return annotation has {len(interface.outputs)} outputs specified. "
     named = []
     for (output_name, python_type), v in zip(interface.outputs.items(), o):
         try:
-            lit = await TypeEngine.to_literal(v, python_type, TypeEngine.to_literal_type(python_type))
+            lit = await TypeEngine.to_literal(
+                v, python_type, TypeEngine.to_literal_type(python_type)
+            )
             named.append(common_pb2.NamedLiteral(name=output_name, value=lit))
         except TypeTransformerFailedError as e:
             raise flyte.errors.RuntimeDataValidationError(output_name, e, task_name)
@@ -222,9 +259,14 @@ async def convert_from_native_to_outputs(o: Any, interface: NativeInterface, tas
     return Outputs(proto_outputs=common_pb2.Outputs(literals=named))
 
 
-async def convert_outputs_to_native(interface: NativeInterface, outputs: Outputs) -> Union[Any, Tuple[Any, ...]]:
+async def convert_outputs_to_native(
+    interface: NativeInterface, outputs: Outputs
+) -> Union[Any, Tuple[Any, ...]]:
     lm = literals_pb2.LiteralMap(
-        literals={named_literal.name: named_literal.value for named_literal in outputs.proto_outputs.literals}
+        literals={
+            named_literal.name: named_literal.value
+            for named_literal in outputs.proto_outputs.literals
+        }
     )
     kwargs = await TypeEngine.literal_map_to_kwargs(lm, interface.outputs)
     if len(kwargs) == 0:
@@ -237,7 +279,9 @@ async def convert_outputs_to_native(interface: NativeInterface, outputs: Outputs
         return tuple(kwargs[k] for k in interface.outputs.keys())
 
 
-def convert_error_to_native(err: execution_pb2.ExecutionError | Exception | Error) -> Exception | None:
+def convert_error_to_native(
+    err: execution_pb2.ExecutionError | Exception | Error,
+) -> Exception | None:
     if not err:
         return None
 
@@ -250,27 +294,45 @@ def convert_error_to_native(err: execution_pb2.ExecutionError | Exception | Erro
     user_code, _server_code = _clean_error_code(err.code)
     match err.kind:
         case execution_pb2.ExecutionError.UNKNOWN:
-            return flyte.errors.RuntimeUnknownError(code=user_code, message=err.message, worker=err.worker)
+            return flyte.errors.RuntimeUnknownError(
+                code=user_code, message=err.message, worker=err.worker
+            )
         case execution_pb2.ExecutionError.USER:
             if "OOM" in err.code.upper():
-                return flyte.errors.OOMError(code=user_code, message=err.message, worker=err.worker)
+                return flyte.errors.OOMError(
+                    code=user_code, message=err.message, worker=err.worker
+                )
             elif "Interrupted" in err.code:
-                return flyte.errors.TaskInterruptedError(code=user_code, message=err.message, worker=err.worker)
+                return flyte.errors.TaskInterruptedError(
+                    code=user_code, message=err.message, worker=err.worker
+                )
             elif "PrimaryContainerNotFound" in err.code:
                 return flyte.errors.PrimaryContainerNotFoundError(
                     code=user_code, message=err.message, worker=err.worker
                 )
             elif "RetriesExhausted" in err.code:
-                return flyte.errors.RetriesExhaustedError(code=user_code, message=err.message, worker=err.worker)
+                return flyte.errors.RetriesExhaustedError(
+                    code=user_code, message=err.message, worker=err.worker
+                )
             elif "Unknown" in err.code:
-                return flyte.errors.RuntimeUnknownError(code=user_code, message=err.message, worker=err.worker)
+                return flyte.errors.RuntimeUnknownError(
+                    code=user_code, message=err.message, worker=err.worker
+                )
             elif "InvalidImageName" in err.code:
-                return flyte.errors.InvalidImageNameError(code=user_code, message=err.message, worker=err.worker)
+                return flyte.errors.InvalidImageNameError(
+                    code=user_code, message=err.message, worker=err.worker
+                )
             elif "ImagePullBackOff" in err.code:
-                return flyte.errors.ImagePullBackOffError(code=user_code, message=err.message, worker=err.worker)
-            return flyte.errors.RuntimeUserError(code=user_code, message=err.message, worker=err.worker)
+                return flyte.errors.ImagePullBackOffError(
+                    code=user_code, message=err.message, worker=err.worker
+                )
+            return flyte.errors.RuntimeUserError(
+                code=user_code, message=err.message, worker=err.worker
+            )
         case execution_pb2.ExecutionError.SYSTEM:
-            return flyte.errors.RuntimeSystemError(code=user_code, message=err.message, worker=err.worker)
+            return flyte.errors.RuntimeSystemError(
+                code=user_code, message=err.message, worker=err.worker
+            )
     return None
 
 
@@ -376,7 +438,9 @@ def generate_inputs_repr_for_literal(literal: literals_pb2.Literal) -> bytes:
     return literal.SerializeToString(deterministic=True)
 
 
-def generate_inputs_hash_for_named_literals(inputs: list[common_pb2.NamedLiteral]) -> str:
+def generate_inputs_hash_for_named_literals(
+    inputs: list[common_pb2.NamedLiteral],
+) -> str:
     """
     Generate a hash for the inputs using the new literal representation approach that respects
     hash values already present in literals. This is used to uniquely identify the inputs for a task
@@ -425,12 +489,16 @@ def generate_interface_hash(task_interface: interface_pb2.TypedInterface) -> str
     sorted_interface.CopyFrom(task_interface)
 
     if sorted_interface.inputs and sorted_interface.inputs.variables:
-        sorted_inputs = sorted(sorted_interface.inputs.variables, key=lambda entry: entry.key)
+        sorted_inputs = sorted(
+            sorted_interface.inputs.variables, key=lambda entry: entry.key
+        )
         del sorted_interface.inputs.variables[:]
         sorted_interface.inputs.variables.extend(sorted_inputs)
 
     if sorted_interface.outputs and sorted_interface.outputs.variables:
-        sorted_outputs = sorted(sorted_interface.outputs.variables, key=lambda entry: entry.key)
+        sorted_outputs = sorted(
+            sorted_interface.outputs.variables, key=lambda entry: entry.key
+        )
         del sorted_interface.outputs.variables[:]
         sorted_interface.outputs.variables.extend(sorted_outputs)
 
@@ -459,7 +527,11 @@ def generate_cache_key_hash(
     :return: A hexadecimal string representation of the cache key hash.
     """
     if ignored_input_vars:
-        filtered = [named_lit for named_lit in proto_inputs.literals if named_lit.name not in ignored_input_vars]
+        filtered = [
+            named_lit
+            for named_lit in proto_inputs.literals
+            if named_lit.name not in ignored_input_vars
+        ]
         final = common_pb2.Inputs(literals=filtered)
         final_inputs = generate_inputs_hash_from_proto(final)
     else:
