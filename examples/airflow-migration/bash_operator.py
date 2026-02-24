@@ -1,4 +1,4 @@
-# from flyteplugins.airflow.task import AirflowContainerTask
+from flyteplugins.airflow.task import AirflowContainerTask  # type: ignore
 from airflow import DAG
 from airflow.models.baseoperator import ExecutorSafeguard
 from airflow.operators.bash import BashOperator
@@ -21,25 +21,21 @@ import flyte
 
 env = flyte.TaskEnvironment(
     name="hello_airflow",
+    image=flyte.Image.from_debian_base().with_pip_packages("apache-airflow<3.0.0", "jsonpickle").with_local_v2()
 )
 
 
 @env.task
-async def fn(name: str) -> None:
+async def main(name: str) -> None:
     print("starting to run airflow task")
-    # ExecutorSafeguard stores a sentinel in a threading.local() dict. That dict
-    # is initialised on the main thread at import time, but Flyte runs tasks in a
-    # background async thread where the thread-local has no 'callers' key yet.
-    if not hasattr(ExecutorSafeguard._sentinel, "callers"):
-        ExecutorSafeguard._sentinel.callers = {}
     BashOperator(
         task_id='airflow',
         bash_command=f'echo "Hello {name}!"',
-    ).execute(context=airflow_context.Context())
+    )
     print("finished running airflow task")
 
 
 if __name__ == '__main__':
     flyte.init_from_config()
-    run = flyte.with_runcontext(mode="local", log_level="10").run(fn, name="Airflow")
+    run = flyte.with_runcontext(mode="remote", log_level="10").run(main, name="Airflow")
     print(run.url)

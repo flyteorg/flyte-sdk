@@ -158,6 +158,7 @@ def _flyte_operator(*args, **kwargs):
     try:
         if get_custom_context().get("GET_ORIGINAL_TASK", "False") == "True":
             # Return an original task when running in the connector.
+            print("Returning original Airflow task")
             return object.__new__(cls)
     except AssertionError:
         # This happens when the task is created in the dynamic workflow.
@@ -168,7 +169,8 @@ def _flyte_operator(*args, **kwargs):
     task_id = kwargs.get("task_id", cls.__name__)
     config = AirflowObj(module=cls.__module__, name=cls.__name__, parameters=kwargs)
 
-    return AirflowContainerTask(name=task_id, plugin_config=config, image=container_image).execute(**kwargs)
+    print(f"Creating AirflowContainerTask with config: {config}")
+    return AirflowContainerTask(name=task_id, plugin_config=config, image=container_image)()
 
 
 # Monkey patches the Airflow operator. Instead of creating an airflow task, it returns a Flyte task.
