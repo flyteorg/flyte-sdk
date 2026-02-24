@@ -486,8 +486,17 @@ def _recursive_discover(planned_envs: Dict[str, Environment], env: Environment) 
     """
     if env.name in planned_envs:
         if planned_envs[env.name] is not env:
-            # Raise error if different TaskEnvironment objects have the same name
-            raise ValueError(f"Duplicate environment name '{env.name}' found")
+            # Two distinct TaskEnvironment objects share the same name. This is
+            # most commonly caused by the same module being imported twice under
+            # different names — for example, when `flyte deploy` is run from the
+            # project root of a src-layout project without --root-dir, causing
+            # `my_module.envs` and `src.my_module.envs` to both be loaded.
+            raise ValueError(
+                f"Duplicate environment name '{env.name}' found. "
+                f"This is often caused by the same module being imported twice under different names. "
+                f"If your project uses a src/ layout, make sure to pass --root-dir pointing to your "
+                f"source root (e.g. --root-dir src) so modules are resolved consistently."
+            )
     # Add the environment to the existing envs
     planned_envs[env.name] = env
 
@@ -504,7 +513,13 @@ def plan_deploy(*envs: Environment, version: Optional[str] = None) -> List[Deplo
     visited_envs: Set[str] = set()
     for env in envs:
         if env.name in visited_envs:
-            raise ValueError(f"Duplicate environment name '{env.name}' found")
+            raise ValueError(
+                f"Duplicate environment name '{env.name}' found. "
+                f"Ensure each TaskEnvironment has a unique name. "
+                f"If your project uses a src/ layout, also check that --root-dir points to your "
+                f"source root (e.g. --root-dir src) to prevent the same module from being "
+                f"imported twice under different names."
+            )
         planned_envs = _recursive_discover({}, env)
         deployment_plans.append(DeploymentPlan(planned_envs, version=version))
         visited_envs.update(planned_envs.keys())
