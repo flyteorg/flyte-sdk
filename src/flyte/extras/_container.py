@@ -28,9 +28,7 @@ def _extract_path_command_key(cmd: str, input_data_dir: Optional[str]) -> Option
     import re
 
     input_data_dir = input_data_dir or ""
-    input_regex = (
-        rf"{re.escape(input_data_dir)}/([\w\-.]+)"  # captures file or dir names
-    )
+    input_regex = rf"{re.escape(input_data_dir)}/([\w\-.]+)"  # captures file or dir names
 
     match = re.search(input_regex, cmd)
     if match:
@@ -97,7 +95,6 @@ class ContainerTask(TaskTemplate):
             raise ValueError("All elements in the arguments list must be strings.")
         self._cmd = command
         self._args = arguments
-        self._network_mode = network_mode
         self._input_data_dir = input_data_dir
         if isinstance(input_data_dir, str):
             self._input_data_dir = pathlib.Path(input_data_dir)
@@ -109,9 +106,7 @@ class ContainerTask(TaskTemplate):
         self._outputs = outputs
         self.local_logs = local_logs
 
-    def _render_command_and_volume_binding(
-        self, cmd: str, **kwargs
-    ) -> Tuple[str, Dict[str, Dict[str, str]]]:
+    def _render_command_and_volume_binding(self, cmd: str, **kwargs) -> Tuple[str, Dict[str, Dict[str, str]]]:
         """
         We support template-style references to inputs, e.g., "{{.inputs.infile}}".
 
@@ -169,9 +164,7 @@ class ContainerTask(TaskTemplate):
         volume_bindings = {}
 
         for cmd in cmd_and_args:
-            command, volume_binding = self._render_command_and_volume_binding(
-                cmd, **kwargs
-            )
+            command, volume_binding = self._render_command_and_volume_binding(cmd, **kwargs)
             commands.append(command)
             volume_bindings.update(volume_binding)
 
@@ -237,9 +230,7 @@ class ContainerTask(TaskTemplate):
                         output_val = f.read()
                 else:
                     output_val = None
-                parsed = await self._convert_output_val_to_correct_type(
-                    output_path, output_val, output_type
-                )
+                parsed = await self._convert_output_val_to_correct_type(output_path, output_val, output_type)
                 output_items.append(parsed)
         # return a tuple so that each element is treated as a separate output.
         # this allows flyte to map the user-defined output types (dict) to individual values.
@@ -250,23 +241,15 @@ class ContainerTask(TaskTemplate):
         try:
             import docker
         except ImportError:
-            raise ImportError(
-                "Docker is not installed. Please install Docker by running `pip install docker`."
-            )
+            raise ImportError("Docker is not installed. Please install Docker by running `pip install docker`.")
 
         # Normalize the input and output directories
-        self._input_data_dir = (
-            os.path.normpath(self._input_data_dir) if self._input_data_dir else ""
-        )
-        self._output_data_dir = (
-            os.path.normpath(self._output_data_dir) if self._output_data_dir else ""
-        )
+        self._input_data_dir = os.path.normpath(self._input_data_dir) if self._input_data_dir else ""
+        self._output_data_dir = os.path.normpath(self._output_data_dir) if self._output_data_dir else ""
 
         output_directory = storage.get_random_local_directory()
         cmd_and_args = (self._cmd or []) + (self._args or [])
-        commands, volume_bindings = self._prepare_command_and_volumes(
-            cmd_and_args, **kwargs
-        )
+        commands, volume_bindings = self._prepare_command_and_volumes(cmd_and_args, **kwargs)
 
         # Mount any File/Dir inputs not already bound via command templates.
         # This covers script mode, where inputs aren't referenced in the command
@@ -285,9 +268,7 @@ class ContainerTask(TaskTemplate):
 
         client = docker.from_env()
         if isinstance(self._image, str):
-            raise AssertionError(
-                f"Only Image objects are supported, not strings. Got {self._image} instead."
-            )
+            raise AssertionError(f"Only Image objects are supported, not strings. Got {self._image} instead.")
         uri = self._image.uri
         self._pull_image_if_not_exists(client, uri)
         print(f"Command: {commands!r}")
@@ -315,9 +296,7 @@ class ContainerTask(TaskTemplate):
         container.remove()
         return output
 
-    def data_loading_config(
-        self, sctx: SerializationContext
-    ) -> tasks_pb2.DataLoadingConfig:
+    def data_loading_config(self, sctx: SerializationContext) -> tasks_pb2.DataLoadingConfig:
         literal_to_protobuf = {
             "JSON": tasks_pb2.DataLoadingConfig.JSON,
             "YAML": tasks_pb2.DataLoadingConfig.YAML,

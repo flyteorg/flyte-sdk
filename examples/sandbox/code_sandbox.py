@@ -28,7 +28,7 @@ import nest_asyncio
 
 import flyte
 import flyte.sandbox
-from flyte._image import PythonWheels, DIST_FOLDER
+from flyte._image import DIST_FOLDER, PythonWheels
 from flyte.io import File
 from flyte.sandbox import sandbox_environment
 
