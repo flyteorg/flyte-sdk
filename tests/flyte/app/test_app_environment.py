@@ -1238,3 +1238,26 @@ def test_app_environment_request_timeout_invalid_type():
             image="python:3.11",
             request_timeout=30.5,
         )
+
+
+def test_app_environment_clone_with_request_timeout():
+    """
+    GOAL: Validate that clone_with can override request_timeout.
+
+    Tests that:
+    - A cloned app inherits request_timeout from the original when not overridden
+    - A cloned app can override request_timeout with a new value
+    """
+    original = AppEnvironment(
+        name="original-app",
+        image="python:3.11",
+        request_timeout=30,
+    )
+
+    # Clone without overriding request_timeout - should inherit
+    cloned = original.clone_with(name="cloned-app")
+    assert cloned.request_timeout == timedelta(seconds=30)
+
+    # Clone with overriding request_timeout
+    cloned_override = original.clone_with(name="cloned-override", request_timeout=60)
+    assert cloned_override.request_timeout == timedelta(seconds=60)

@@ -341,6 +341,7 @@ class AppEnvironment(Environment):
         parameters = kwargs.pop("parameters", None)
         cluster_pool = kwargs.pop("cluster_pool", None)
         pod_template = kwargs.pop("pod_template", None)
+        request_timeout = kwargs.pop("request_timeout", None)
 
         if kwargs:
             raise TypeError(f"Unexpected keyword arguments: {list(kwargs.keys())}")
@@ -383,4 +384,6 @@ class AppEnvironment(Environment):
             kwargs["parameters"] = parameters
         if cluster_pool is not None:
             kwargs["cluster_pool"] = cluster_pool
+        if request_timeout is not None:
+            kwargs["request_timeout"] = request_timeout
         return replace(self, **kwargs)
