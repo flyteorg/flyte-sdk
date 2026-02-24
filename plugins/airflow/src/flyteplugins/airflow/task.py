@@ -2,20 +2,22 @@ import importlib
 import logging
 import typing
 from dataclasses import dataclass
-from typing import Any, Dict, Optional, Type
+from typing import Any, Dict, Optional, Type, List
 
 import airflow
-
+from pathlib import Path
 import airflow.models as airflow_models
 import airflow.sensors.base as airflow_sensors
 import jsonpickle
-from airflow.triggers.base as airflow_triggers
+import airflow.triggers.base as airflow_triggers
 import airflow.utils.context as airflow_context
 
-from flyte import logger
+import flyte
+from flyte import logger, get_custom_context
 from flyte._internal.resolvers.common import Resolver
 from flyte._task import TaskTemplate
 from flyte.extend import AsyncFunctionTaskTemplate, TaskPluginRegistry
+from flyte.models import SerializationContext, NativeInterface
 
 
 @dataclass
@@ -47,7 +49,7 @@ class AirflowTaskResolver(Resolver):
     def import_path(self) -> str:
         return "flyteplugins.airflow.task.AirflowTaskResolver"
 
-    def load_task(self, loader_args: typing.List[str]) -> TaskTemplate:
+    def load_task(self, loader_args: typing.List[str]) -> AsyncFunctionTaskTemplate:
         """
         This method is used to load an Airflow task.
         """
@@ -56,20 +58,21 @@ class AirflowTaskResolver(Resolver):
         task_def = getattr(task_module, task_name)
         return task_def(name=task_name, task_config=jsonpickle.decode(task_config))
 
-    def loader_args(self, task: TaskTemplate, root_dir: Path) -> List[str]:  # type:ignore
+    def loader_args(self, task: AsyncFunctionTaskTemplate, root_dir: Path) -> List[str]:  # type:ignore
         return [
             "task-module",
             task.__module__,
             "task-name",
             task.__class__.__name__,
             "task-config",
-            jsonpickle.encode(task.task_config),
+            jsonpickle.encode(task.plugin_config),
         ]
+
 
 airflow_task_resolver = AirflowTaskResolver()
 
 
-class AirflowContainerTask(AsyncFunctionTaskTemplate):
+class AirflowContainerTask(TaskTemplate):
     """
     This python container task is used to wrap an Airflow task. It is used to run an Airflow task in a container.
     The airflow task module, name and parameters are stored in the task config.
@@ -81,71 +84,47 @@ class AirflowContainerTask(AsyncFunctionTaskTemplate):
     def __init__(
         self,
         name: str,
-        task_config: AirflowObj,
+        plugin_config: AirflowObj,
         # inputs: Optional[Dict[str, Type]] = None,
         **kwargs,
     ):
         super().__init__(
             name=name,
-            plugin_config=task_config,
-            # interface=Interface(inputs=inputs or {}),
+            # plugin_config=plugin_config,
+            interface=NativeInterface(inputs={}, outputs={}),
             **kwargs,
         )
         self._task_resolver = airflow_task_resolver
+        self._plugin_config = plugin_config
 
     def execute(self, **kwargs) -> Any:
+        # ExecutorSafeguard stores a sentinel in a threading.local() dict. That
+        # dict is initialised on the main thread at import time, but tasks may
+        # run in a background thread where the thread-local has no 'callers' key.
+        from airflow.models.baseoperator import ExecutorSafeguard
+        if not hasattr(ExecutorSafeguard._sentinel, "callers"):
+            ExecutorSafeguard._sentinel.callers = {}
         logger.info("Executing Airflow task")
-        _get_airflow_instance(self.plugin_config).execute(context=airflow_context.Context())
-
-
-class AirflowTask(PythonTask[AirflowObj]):
-    """
-    This python task is used to wrap an Airflow task.
-    It is used to run an Airflow task in Flyte connector.
-    The airflow task module, name and parameters are stored in the task config.
-    We run the Airflow task in the connector.
-    """
-
-    _TASK_TYPE = "airflow"
-
-    def __init__(
-            self,
-            name: str,
-            task_config: Optional[AirflowObj],
-            inputs: Optional[Dict[str, Type]] = None,
-            **kwargs,
-    ):
-        super().__init__(
-            name=name,
-            task_config=task_config,
-            interface=Interface(inputs=inputs or {}),
-            task_type=self._TASK_TYPE,
-            **kwargs,
-        )
-
-    def get_custom(self, settings: SerializationSettings) -> Dict[str, Any]:
-        # Use jsonpickle to serialize the Airflow task config since the return value should be json serializable.
-        return {"task_config_pkl": jsonpickle.encode(self.task_config)}
+        _get_airflow_instance(self._plugin_config).execute(context=airflow_context.Context())
 
 
 def _get_airflow_instance(
-        airflow_obj: AirflowObj,
+    airflow_obj: AirflowObj,
 ) -> typing.Union[airflow_models.BaseOperator, airflow_sensors.BaseSensorOperator, airflow_triggers.BaseTrigger]:
     # Set the GET_ORIGINAL_TASK attribute to True so that obj_def will return the original
     # airflow task instead of the Flyte task.
-    ctx = FlyteContextManager.current_context()
-    ctx.user_space_params.builder().add_attr("GET_ORIGINAL_TASK", True).build()
+    with flyte.custom_context(GET_ORIGINAL_TASK="True"):
 
-    obj_module = importlib.import_module(name=airflow_obj.module)
-    obj_def = getattr(obj_module, airflow_obj.name)
-    if _is_deferrable(obj_def):
-        try:
-            return obj_def(**airflow_obj.parameters, deferrable=True)
-        except airflow.exceptions.AirflowException as e:
-            logger.debug(f"Failed to create operator {airflow_obj.name} with err: {e}.")
-            logger.debug(f"Airflow operator {airflow_obj.name} does not support deferring.")
+        obj_module = importlib.import_module(name=airflow_obj.module)
+        obj_def = getattr(obj_module, airflow_obj.name)
+        if _is_deferrable(obj_def):
+            try:
+                return obj_def(**airflow_obj.parameters, deferrable=True)
+            except airflow.exceptions.AirflowException as e:
+                logger.debug(f"Failed to create operator {airflow_obj.name} with err: {e}.")
+                logger.debug(f"Airflow operator {airflow_obj.name} does not support deferring.")
 
-    return obj_def(**airflow_obj.parameters)
+        return obj_def(**airflow_obj.parameters)
 
 
 def _is_deferrable(cls: Type) -> bool:
@@ -177,7 +156,7 @@ def _flyte_operator(*args, **kwargs):
     """
     cls = args[0]
     try:
-        if FlyteContextManager.current_context().user_space_params.get_original_task:
+        if get_custom_context().get("GET_ORIGINAL_TASK", "False") == "True":
             # Return an original task when running in the connector.
             return object.__new__(cls)
     except AssertionError:
@@ -189,10 +168,7 @@ def _flyte_operator(*args, **kwargs):
     task_id = kwargs.get("task_id", cls.__name__)
     config = AirflowObj(module=cls.__module__, name=cls.__name__, parameters=kwargs)
 
-    if not issubclass(cls, airflow_sensors.BaseSensorOperator) and not _is_deferrable(cls):
-        # Dataflow operators are not deferrable, so we run them in a container.
-        return AirflowContainerTask(name=task_id, task_config=config, container_image=container_image)()
-    return AirflowTask(name=task_id, task_config=config)()
+    return AirflowContainerTask(name=task_id, plugin_config=config, image=container_image).execute(**kwargs)
 
 
 # Monkey patches the Airflow operator. Instead of creating an airflow task, it returns a Flyte task.
