@@ -32,17 +32,18 @@ jobs:
           uv run python -m build --wheel --installer uv
       - name: Publish
         if: ${{ github.event_name == 'release' }}
-        working-directory: ${{ matrix.workdir }}
         env:
           TWINE_USERNAME: ${{ secrets.PYPI_USERNAME }}
           TWINE_PASSWORD: ${{ secrets.PYPI_PASSWORD }}
         run: |
           uv run python -m twine upload --verbose dist/*
       - name: Sleep until pypi is available
+        if: ${{ github.event_name == 'release' }}
         id: pypiwait
         run: |
-          # from 'refs/tags/v1.2.3 get 1.2.3' and make sure it's not an empty string
-          VERSION=$(echo $GITHUB_REF | sed 's|refs/tags/v||')
+          # from 'v1.2.3' get '1.2.3' and make sure it's not an empty string
+          VERSION="${{ github.ref_name }}"
+          VERSION="${VERSION#v}"
           if [ -z "$VERSION" ]
           then
             echo "No tagged version found, exiting"

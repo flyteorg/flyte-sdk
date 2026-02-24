@@ -21,6 +21,7 @@ from flyte._internal.runtime.task_serde import (
     _get_urun_container,
     get_proto_task,
     get_security_context,
+    lookup_image_in_cache,
     translate_task_to_wire,
 )
 from flyte._secret import Secret
@@ -360,3 +361,106 @@ def test_translate_task_to_wire_with_default_inputs(env_task_ctx):
     proto_task = translate_task_to_wire(task_template, context, default_inputs=default_inputs)
 
     assert proto_task.default_inputs == default_inputs
+
+
+def test_lookup_image_in_cache_with_cache():
+    """Test lookup_image_in_cache when image is found in cache"""
+    from flyte._internal.imagebuild.image_builder import ImageCache
+
+    # Create an image with no ref_name
+    image = flyte.Image.from_base("python:3.10")
+
+    # Create a cache with the environment
+    image_cache = ImageCache(image_lookup={"test_env": "cached-image:v1"})
+
+    context = SerializationContext(
+        project="test-project",
+        domain="test-domain",
+        version="test-version",
+        org="test-org",
+        input_path="/tmp/inputs",
+        output_path="/tmp/outputs",
+        image_cache=image_cache,
+        code_bundle=None,
+        root_dir=pathlib.Path.cwd(),
+    )
+
+    result = lookup_image_in_cache(context, "test_env", image)
+    assert result == "cached-image:v1"
+
+
+def test_lookup_image_in_cache_no_ref_name_no_cache():
+    """Test lookup_image_in_cache when ref_name is None and no cache exists"""
+    # Create an image with no ref_name and no layers
+    image = flyte.Image.from_base("python:3.10-slim")
+
+    context = SerializationContext(
+        project="test-project",
+        domain="test-domain",
+        version="test-version",
+        org="test-org",
+        input_path="/tmp/inputs",
+        output_path="/tmp/outputs",
+        image_cache=None,
+        code_bundle=None,
+        root_dir=pathlib.Path.cwd(),
+    )
+
+    # Should return image.uri since ref_name is None and no cache
+    result = lookup_image_in_cache(context, "test_env", image)
+    assert result == "python:3.10-slim"
+
+
+def test_lookup_image_in_cache_no_ref_name_no_layers():
+    """Test lookup_image_in_cache when ref_name is None and image has no layers"""
+    from flyte._internal.imagebuild.image_builder import ImageCache
+
+    # Create an image with no ref_name and no layers
+    image = flyte.Image.from_base("python:3.10-slim")
+
+    # Create empty cache
+    image_cache = ImageCache(image_lookup={})
+
+    context = SerializationContext(
+        project="test-project",
+        domain="test-domain",
+        version="test-version",
+        org="test-org",
+        input_path="/tmp/inputs",
+        output_path="/tmp/outputs",
+        image_cache=image_cache,
+        code_bundle=None,
+        root_dir=pathlib.Path.cwd(),
+    )
+
+    # Should return image.uri since ref_name is None and no layers
+    result = lookup_image_in_cache(context, "test_env", image)
+    assert result == "python:3.10-slim"
+
+
+def test_lookup_image_in_cache_with_ref_name_not_in_cache():
+    """Test lookup_image_in_cache when image has ref_name but not found in cache"""
+    from flyte._internal.imagebuild.image_builder import ImageCache
+
+    # Create an image with a ref_name
+    image = flyte.Image.from_ref_name("my-ref")
+
+    # Create cache without the environment
+    image_cache = ImageCache(image_lookup={})
+
+    context = SerializationContext(
+        project="test-project",
+        domain="test-domain",
+        version="test-version",
+        org="test-org",
+        input_path="/tmp/inputs",
+        output_path="/tmp/outputs",
+        image_cache=image_cache,
+        code_bundle=None,
+        root_dir=pathlib.Path.cwd(),
+    )
+
+    # Should raise RuntimeUserError because ref_name is not None
+    # and environment is not found in cache
+    with pytest.raises(flyte.errors.RuntimeUserError, match="Environment 'test_env' not found in image cache"):
+        lookup_image_in_cache(context, "test_env", image)

@@ -353,7 +353,7 @@ class TaskDetails(ToJSONMixin):
         pb2.CopyFrom(self.pb2)
 
         if short_name:
-            pb2.metadata.short_name = short_name
+            pb2.spec.short_name = short_name
 
         template = pb2.spec.task_template
         if secrets:

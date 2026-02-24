@@ -7,6 +7,7 @@ from flyte._resources import CPUBaseType, DeviceClass, Resources
 ACCELERATOR_DEVICE_MAP = {
     "A100": "nvidia-tesla-a100",
     "A100 80G": "nvidia-a100-80gb",
+    "H100": "nvidia-tesla-h100",
     "A10": "nvidia-a10",
     "A10G": "nvidia-a10g",
     "A100G": "nvidia-a100g",

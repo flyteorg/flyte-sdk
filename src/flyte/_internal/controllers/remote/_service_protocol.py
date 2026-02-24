@@ -1,8 +1,17 @@
 from __future__ import annotations
 
+import os
 from typing import AsyncIterator, Protocol
 
+from flyteidl2.actions import actions_service_pb2
 from flyteidl2.workflow import queue_service_pb2, state_service_pb2
+
+ACTIONS_SERVICE_CHECK_ENV_VAR = "_U_USE_ACTIONS"
+
+
+def use_actions_service() -> bool:
+    """Check if the unified ActionsService should be used instead of QueueService + StateService."""
+    return os.getenv(ACTIONS_SERVICE_CHECK_ENV_VAR) == "1"
 
 
 class StateService(Protocol):
@@ -14,6 +23,33 @@ class StateService(Protocol):
         self, req: state_service_pb2.WatchRequest, **kwargs
     ) -> AsyncIterator[state_service_pb2.WatchResponse]:
         """Watch for subrun updates"""
+
+
+class ActionsService(Protocol):
+    """
+    Interface for the unified actions service, which replaces both StateService and QueueService.
+    """
+
+    async def Enqueue(
+        self,
+        req: actions_service_pb2.EnqueueRequest,
+        **kwargs,
+    ) -> actions_service_pb2.EnqueueResponse:
+        """Enqueue an action for execution"""
+
+    async def WatchForUpdates(
+        self,
+        req: actions_service_pb2.WatchForUpdatesRequest,
+        **kwargs,
+    ) -> AsyncIterator[actions_service_pb2.WatchForUpdatesResponse]:
+        """Watch for action state updates"""
+
+    async def Abort(
+        self,
+        req: actions_service_pb2.AbortRequest,
+        **kwargs,
+    ) -> actions_service_pb2.AbortResponse:
+        """Abort an action"""
 
 
 class QueueService(Protocol):
@@ -48,3 +84,7 @@ class ClientSet(Protocol):
     @property
     def queue_service(self: ClientSet) -> QueueService:
         """Queue service"""
+
+    @property
+    def actions_service(self: ClientSet) -> ActionsService | None:
+        """Unified actions service (replaces QueueService + StateService when available)"""
