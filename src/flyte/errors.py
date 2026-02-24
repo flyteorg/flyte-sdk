@@ -302,7 +302,8 @@ class InvalidPackageError(RuntimeUserError):
         self.package_name = package_name
         self.original_error = original_error
         super().__init__(
+            "InvalidPackageError",
             f"Invalid system package detected: '{package_name}'. "
             f"This package does not exist in apt repositories. "
-            f"Error: {original_error}"
+            f"Error: {original_error}",
         )

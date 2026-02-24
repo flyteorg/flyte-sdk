@@ -72,7 +72,14 @@ class _Sandbox:
     cache: str = "auto"
 
     def _task_name(self) -> str:
-        return self.name or f"sandbox-{flyte.ctx().action.name}"
+        if self.name:
+            return self.name
+
+        tctx = flyte.ctx()
+        if tctx is not None:
+            return f"sandbox-{tctx.action.name}"
+
+        return "sandbox"
 
     def _create_image_spec(self) -> flyte.Image:
         spec_name = self.image_name or self._default_image_name()
@@ -104,6 +111,8 @@ class _Sandbox:
     async def _build(self) -> str:
         try:
             result = await flyte.build.aio(self._create_image_spec())
+            if result.uri is None:
+                raise RuntimeError("Image build succeeded but returned no URI.")
             return result.uri
         except Exception as e:
             error_msg = str(e)
@@ -202,7 +211,7 @@ class _Sandbox:
 
         # user code
         lines += ["", "# user code", ""]
-        lines.append(textwrap.dedent(self.code).strip())
+        lines.append(textwrap.dedent(self.code).strip())  # type: ignore
 
         # epilogue: write scalar outputs
         if scalar_outputs:
@@ -325,13 +334,15 @@ class _Sandbox:
         task_name = self._task_name()
         task = self._make_container_task(image, task_name)
         task.parent_env = weakref.ref(sandbox_environment)
-        task.parent_env_name = task_name  # If not set, the ContainerTask will default to using the sandbox_environment's image.
+        task.parent_env_name = (
+            task_name  # If not set, the ContainerTask will default to using the sandbox_environment's image.
+        )
 
         if self.code is not None:
-            script_content = self._generate_auto_script() if self.auto_io else self.code
+            script_content = self._generate_auto_script() if self.auto_io and self.code is not None else self.code
             script_path = Path(tempfile.gettempdir()) / f"{task_name}_generated.py"
             script_path.write_text(script_content)
-            script = await File.from_local(
+            script: File = await File.from_local(
                 str(script_path),
                 hash_method=hashlib.sha256(script_content.encode()).hexdigest(),
             )

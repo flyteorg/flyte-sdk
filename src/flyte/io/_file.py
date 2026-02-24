@@ -45,26 +45,6 @@ if typing.TYPE_CHECKING:
 T = TypeVar("T")
 
 
-def _extract_node_id(raw_data_path: str, run_name: str) -> Optional[str]:
-    """Extract the stable node ID from a raw data path URL.
-
-    The last path component follows the backend convention ``{run_name}-{node_id}-{attempt}``.
-    Parsing this gives the node ID, which is stable across retries unlike action.name.
-    Returns None if the format doesn't match so callers can fall back gracefully.
-    """
-    try:
-        last = raw_data_path.rstrip("/").split("/")[-1]
-        prefix = run_name + "-"
-        if last.startswith(prefix):
-            rest = last[len(prefix) :]  # "{node_id}-{attempt_index}"
-            node_id, _, attempt = rest.rpartition("-")
-            if node_id and attempt.isdigit():
-                return node_id
-    except Exception:
-        pass
-    return None
-
-
 class File(BaseModel, Generic[T], SerializableType):
     """
     A generic file class representing a file with a specified format.
@@ -309,26 +289,22 @@ class File(BaseModel, Generic[T], SerializableType):
         Create a File reference whose remote path is derived deterministically from *name*.
 
         Unlike :meth:`new_remote`, which generates a random path on every call, this method
-        produces the **same path** for the same *name* within a given task execution. That
-        makes it safe to call across retries: the first attempt uploads to the path and the
-        retry resolves to the identical path without re-uploading.
+        produces the same path for the same *name* within a given task execution. This makes
+        it safe across retries: the first attempt uploads to the path and subsequent retries
+        resolve to the identical location without re-uploading.
 
-        Example::
+        The path is optionally namespaced by the node ID extracted from the backend
+        raw-data path, which follows the convention:
 
-            @env.task
-            async def produce_report() -> File:
-                file = File.named_remote("report.csv")
-                async with file.open("wb") as f:
-                    await f.write(b"col1,col2\\n1,2\\n")
-                return file
+            {run_name}-{node_id}-{attempt_index}
+
+        If extraction fails, the function falls back to the run base directory alone.
 
         Args:
-            name: Filename to embed in the remote path. Must be a plain name such as
-                ``"data.csv"`` — do **not** include path separators.
+            name: Plain filename (e.g., "data.csv"). Must not contain path separators.
 
         Returns:
-            A :class:`File` instance whose ``path`` points to a deterministic location
-            stable across retries of the same task execution.
+            A :class:`File` instance whose path is stable across retries.
         """
         import fsspec
 
@@ -337,25 +313,34 @@ class File(BaseModel, Generic[T], SerializableType):
         if tctx is None:
             raise ValueError("File.named_remote() requires an active task execution context.")
 
-        # run_base_dir is stable across retries (workflow execution base, never changes).
-        #
-        # The raw_data_path last component encodes the node ID in the format
-        # "{run_name}-{node_id}-{attempt_index}". We try to extract the node ID for
-        # better per-node namespacing; if parsing fails we fall back to run_base_dir alone
-        # (callers embed a task-specific hash in `name` to prevent collisions).
-        node_id = _extract_node_id(ctx.raw_data.path, tctx.action.run_name)
+        node_id: Optional[str] = None
+
+        # Inline extraction of node ID from raw data path
+        raw_path = getattr(ctx.raw_data, "path", None)
+        if isinstance(raw_path, str):
+            last = raw_path.rstrip("/").rsplit("/", 1)[-1]
+            prefix = f"{tctx.action.run_name}-"
+
+            if last.startswith(prefix):
+                rest = last[len(prefix) :]  # "{node_id}-{attempt}"
+                node, _, attempt = rest.rpartition("-")
+                if node and attempt.isdigit():
+                    node_id = node
 
         base = tctx.run_base_dir
         protocol = get_protocol(base)
+
+        # Local filesystem
         if "file" in protocol:
             parent = Path(base) if node_id is None else Path(base) / node_id
-            parent.mkdir(exist_ok=True, parents=True)
+            parent.mkdir(parents=True, exist_ok=True)
             return cls(path=str((parent / name).absolute()))
 
+        # Remote filesystem
         fs = fsspec.filesystem(protocol)
         base = base.rstrip(fs.sep)
-        segments = [base, node_id, name] if node_id else [base, name]
-        return cls(path=fs.sep.join(segments))
+        parts = [base, node_id, name] if node_id else [base, name]
+        return cls(path=fs.sep.join(parts))
 
     @classmethod
     def from_existing_remote(cls, remote_path: str, file_cache_key: Optional[str] = None) -> File[T]:
