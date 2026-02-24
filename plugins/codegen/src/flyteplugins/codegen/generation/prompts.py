@@ -27,7 +27,8 @@ IMPORTANT: You must structure your response with:
 1. description: Brief explanation of what the code does
 2. language: The programming language used
 3. code: Complete executable code including all import statements and dependencies at the top
-4. system_packages: List of system packages needed (e.g., ["gcc", "build-essential", "curl"]). Leave empty if none needed.
+4. system_packages: List of system packages needed
+   (e.g., ["gcc", "build-essential", "curl"]). Leave empty if none needed.
 
 EXECUTION ENVIRONMENT:
 - /var/inputs and /var/outputs directories are PRE-CREATED by the runtime. NEVER delete, recreate, or modify them.

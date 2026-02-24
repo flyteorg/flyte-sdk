@@ -2,6 +2,7 @@ import logging
 from pathlib import Path
 from typing import Optional
 
+import aiofiles
 import flyte
 import pandas as pd
 import pandera.pandas as pa
@@ -49,7 +50,7 @@ async def extract_dataframe_context(
 
     # 1. Structural Context
     context_parts.append(f"## Data: {name}")
-    context_parts.append(f"Shape: {df.shape[0]:,} rows × {df.shape[1]} columns")
+    context_parts.append(f"Shape: {df.shape[0]:,} rows x {df.shape[1]} columns")
 
     # Include Pandera schema if provided (use Pandera's built-in formatter)
     if schema:
@@ -156,8 +157,13 @@ async def extract_file_context(file: File, name: str, max_sample_rows: int = 5) 
 
     # Try to read as text file
     try:
-        with open(local_path, "r", encoding="utf-8", errors="ignore") as f:
-            lines = f.readlines()[:max_sample_rows]
+        async with aiofiles.open(local_path, "r", encoding="utf-8", errors="ignore") as f:
+            lines = []
+            for _ in range(max_sample_rows):
+                line = await f.readline()
+                if not line:
+                    break
+                lines.append(line)
 
         context_parts = [
             f"## Data: {name}",
@@ -170,7 +176,7 @@ async def extract_file_context(file: File, name: str, max_sample_rows: int = 5) 
 
     except Exception:
         # Binary or unreadable file
-        file_size = Path(local_path).stat().st_size
+        file_size = Path(local_path).stat().st_size  # noqa: ASYNC240
         context_parts = [
             f"## Data: {name}",
             f"Type: Binary/Unknown ({file_ext})",
@@ -232,7 +238,7 @@ async def extract_data_context(
                 elif file_ext == ".json":
                     try:
                         df = pd.read_json(local_path, lines=True, nrows=10000)
-                    except:
+                    except Exception:
                         df = pd.read_json(local_path)
                 elif file_ext in [".xlsx", ".xls"]:
                     df = pd.read_excel(local_path, nrows=10000)

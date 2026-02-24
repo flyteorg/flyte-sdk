@@ -447,7 +447,8 @@ Solution code:
     test_prompt += f"""
 Test generation instructions:
 
-Generate comprehensive but concise tests that maximize coverage through multiple complementary cases using {test_framework}, not a single large test.
+Generate comprehensive but concise tests that maximize coverage through
+multiple complementary cases using {test_framework}, not a single large test.
 
 Requirements:
 1. Use {test_framework} framework
@@ -1003,9 +1004,13 @@ async def verify_test_fixes_applied(
         patches_section.append(f"### {patch.test_name}\n```python\n{patch.fixed_code}\n```")
     patches_text = "\n\n".join(patches_section) if patches_section else "(no patches returned)"
 
-    verify_prompt = f"""You are a CODE DIFF REVIEWER. Your job is to verify that specific code changes were actually made.
+    verify_prompt = f"""You are a CODE DIFF REVIEWER. \
+Your job is to verify that specific code changes were actually made.
 
-For each required fix below, check whether the EXACT code change described in "Required fix" is present in the patched function. Do NOT accept alternative approaches that "address the same issue" — the specific code transformation must be visible.
+For each required fix below, check whether the EXACT code change described
+in "Required fix" is present in the patched function. Do NOT accept
+alternative approaches that "address the same issue" — the specific
+code transformation must be visible.
 
 ═══════════════════════════════════════
 REQUIRED FIXES
@@ -1206,7 +1211,9 @@ async def diagnose_and_plan_environment_fix(
 
     logger.info(f"Number of failures: {len(diagnosis.failures)}")
     logger.info(
-        f"Breakdown: {error_type_counts['environment']} environment, {error_type_counts['test_error']} test_error, {error_type_counts['logic']} logic"
+        f"Breakdown: {error_type_counts['environment']} environment, "
+        f"{error_type_counts['test_error']} test_error, "
+        f"{error_type_counts['logic']} logic"
     )
 
     for i, failure in enumerate(diagnosis.failures, 1):

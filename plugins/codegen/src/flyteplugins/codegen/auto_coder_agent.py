@@ -55,7 +55,8 @@ class AutoCoderAgent:
         model: LLM model to use (required). Must support structured outputs.
             For LiteLLM mode (default): e.g. "gpt-4.1", "claude-sonnet-4-20250514".
             For Agent SDK mode: a Claude model ("sonnet", "opus", "haiku").
-        system_prompt: Optional system prompt to use for LLM. If not provided, a default prompt with structured output requirements is used.
+        system_prompt: Optional system prompt to use for LLM. If not provided,
+            a default prompt with structured output requirements is used.
         api_key: Optional environment variable name for LLM API key.
         api_base: Optional base URL for LLM API.
         litellm_params: Optional dict of additional parameters to pass to LiteLLM calls.
@@ -652,9 +653,12 @@ class _CodeGenSession:
                             "role": "user",
                             "content": (
                                 f"{self.last_error_message}\n\n"
-                                "CRITICAL: The previous code generation attempt did NOT apply all the required fixes.\n"
-                                "You MUST apply EVERY SINGLE fix listed above. Do not skip any fix.\n"
-                                "Apply each fix EXACTLY as specified - find the old code and replace it with the new code."
+                                "CRITICAL: The previous code generation attempt did NOT "
+                                "apply all the required fixes.\n"
+                                "You MUST apply EVERY SINGLE fix listed above. "
+                                "Do not skip any fix.\n"
+                                "Apply each fix EXACTLY as specified "
+                                "- find the old code and replace it with the new code."
                             ),
                         }
                     )
@@ -719,7 +723,10 @@ class _CodeGenSession:
                 missing_msg += "\n\nYou successfully applied these fixes:\n"
                 for fix in verification.applied_fixes:
                     missing_msg += f"- {fix}\n"
-                missing_msg += "\nYou MUST now apply the MISSING fixes listed above. Do NOT regenerate the entire solution - just apply the missing fixes to your previous code."
+                missing_msg += (
+                    "\nYou MUST now apply the MISSING fixes listed above. "
+                    "Do NOT regenerate the entire solution - just apply the missing fixes to your previous code."
+                )
                 self.last_error_message = (self.last_error_message or "") + missing_msg
             else:
                 logger.error(f"Failed to apply all fixes after {max_attempts} attempts. Proceeding anyway...")
@@ -992,9 +999,15 @@ class _CodeGenSession:
 
                 forceful = ""
                 if fix_attempt == 2:
-                    forceful = "\n\nCRITICAL: The previous test fix attempt did NOT apply all the required fixes. You MUST apply EVERY SINGLE fix listed above. Do not skip any fix."
+                    forceful = (
+                        "\n\nCRITICAL: The previous test fix attempt did NOT apply all the required fixes. "
+                        "You MUST apply EVERY SINGLE fix listed above. Do not skip any fix."
+                    )
                 elif fix_attempt >= 3:
-                    forceful = "\n\nFINAL ATTEMPT: You have failed to apply the required test fixes twice. This is your last chance. Apply EVERY fix listed above WITHOUT EXCEPTION."
+                    forceful = (
+                        "\n\nFINAL ATTEMPT: You have failed to apply the required test fixes twice. "
+                        "This is your last chance. Apply EVERY fix listed above WITHOUT EXCEPTION."
+                    )
 
                 for failure in diagnosis.failures:
                     failure.suggested_fix = f"{failure.suggested_fix}\n\n{missing_msg}{forceful}"

@@ -47,7 +47,7 @@ def _classify_bash_command(cmd: str) -> str:
 
     prog = tokens[0]
 
-    if prog in ("pytest",) or "pytest" in tokens:
+    if prog == "pytest" or "pytest" in tokens:
         return "pytest"
 
     # Allow safe workspace ops
@@ -118,7 +118,7 @@ async def code_gen_eval_agent_sdk(
 
     _task_hash = hashlib.sha256(name.encode()).hexdigest()[:8]
     workspace = Path(f"/tmp/codegen-{_task_hash}")
-    workspace.mkdir(parents=True, exist_ok=True)
+    workspace.mkdir(parents=True, exist_ok=True)  # noqa: ASYNC240
 
     tool_calls: list[str] = []
 
@@ -134,17 +134,10 @@ async def code_gen_eval_agent_sdk(
 
     # Convert inputs/outputs to type-name dicts for prompt building
     inputs_for_prompt = (
-        {k: t.__name__ if hasattr(t, "__name__") else str(t) for k, t in inputs.items()}
-        if inputs
-        else None
+        {k: t.__name__ if hasattr(t, "__name__") else str(t) for k, t in inputs.items()} if inputs else None
     )
     outputs_for_prompt = (
-        {
-            k: t.__name__ if hasattr(t, "__name__") else str(t)
-            for k, t in outputs.items()
-        }
-        if outputs
-        else None
+        {k: t.__name__ if hasattr(t, "__name__") else str(t) for k, t in outputs.items()} if outputs else None
     )
 
     def _build_tool_detail(tool_name: str, raw_input: dict) -> str:
@@ -250,9 +243,7 @@ async def code_gen_eval_agent_sdk(
         """
         restored: list[str] = []
         for filename in _CHECKPOINT_FILES:
-            logger.info(
-                f"Checking for checkpoint file in remote: {_task_hash}-{filename}"
-            )
+            logger.info(f"Checking for checkpoint file in remote: {_task_hash}-{filename}")
             remote = File.named_remote(f"{_task_hash}-{filename}")
             logger.info(f"Path: {remote.path}, exists: {await remote.exists()}")
 
@@ -281,17 +272,13 @@ async def code_gen_eval_agent_sdk(
             await remote_result.download(str(workspace / "result"))
 
         if exit_code_val == 0:
-            logger.info(
-                "Tests already passed from prior run. Skipping agent execution and returning cached results."
-            )
+            logger.info("Tests already passed from prior run. Skipping agent execution and returning cached results.")
             return {
                 "continue": False,
                 "stopReason": "Tests already passed from prior run.",
             }
 
-        existing = [
-            f for f in ("solution.py", "tests.py", "packages.txt") if f in restored
-        ]
+        existing = [f for f in ("solution.py", "tests.py", "packages.txt") if f in restored]
         ctx = f"Existing workspace files: {', '.join(existing)}."
 
         logger.info(f"Restored workspace from checkpoints: {ctx}")
@@ -345,15 +332,15 @@ async def code_gen_eval_agent_sdk(
                         "hookSpecificOutput": {
                             "hookEventName": "PreToolUse",
                             "permissionDecision": "deny",
-                            "permissionDecisionReason": "File already exists from a previous attempt. Use the existing file content.",
+                            "permissionDecisionReason": (
+                                "File already exists from a previous attempt. Use the existing file content."
+                            ),
                         }
                     }
 
         # Sandbox runs as a Flyte container task, cached by Flyte's task cache.
         if tool_name == "Bash" and action == "pytest":
-            has_required_files = (workspace / "solution.py").exists() and (
-                workspace / "tests.py"
-            ).exists()
+            has_required_files = (workspace / "solution.py").exists() and (workspace / "tests.py").exists()
             if has_required_files:
                 try:
                     test_output, exit_code = await _run_tests_in_sandbox()
@@ -365,9 +352,7 @@ async def code_gen_eval_agent_sdk(
                     try:
                         await File.from_local(
                             str(workspace / "exit_code"),
-                            remote_destination=File.named_remote(
-                                f"{_task_hash}-exit_code"
-                            ).path,
+                            remote_destination=File.named_remote(f"{_task_hash}-exit_code").path,
                         )
                     except Exception as e:
                         logger.warning(f"Failed to checkpoint exit_code: {e}")
@@ -375,9 +360,7 @@ async def code_gen_eval_agent_sdk(
                     try:
                         await File.from_local(
                             str(workspace / "result"),
-                            remote_destination=File.named_remote(
-                                f"{_task_hash}-result"
-                            ).path,
+                            remote_destination=File.named_remote(f"{_task_hash}-result").path,
                         )
                     except Exception as e:
                         logger.warning(f"Failed to checkpoint result: {e}")
@@ -427,20 +410,14 @@ async def code_gen_eval_agent_sdk(
         """
         filename = Path(file_path).name if file_path else ""
         local = workspace / filename
-        if (
-            tool_name in ("Write", "Edit")
-            and filename in _CHECKPOINT_FILES
-            and local.exists()
-        ):
+        if tool_name in ("Write", "Edit") and filename in _CHECKPOINT_FILES and local.exists():
             try:
                 remote_path = File.named_remote(f"{_task_hash}-{filename}").path
                 await File.from_local(
                     str(local),
                     remote_destination=remote_path,
                 )
-                logger.info(
-                    f"Checkpointed {filename} to named remote {remote_path} after {tool_name} tool use."
-                )
+                logger.info(f"Checkpointed {filename} to named remote {remote_path} after {tool_name} tool use.")
             except Exception as e:
                 logger.warning(f"Failed to checkpoint {filename}: {e}")
         return {}
@@ -457,9 +434,7 @@ async def code_gen_eval_agent_sdk(
         tool_name = input_data.get("tool_name", "unknown")
         raw_input = input_data.get("tool_input") or {}
         detail = _build_tool_detail(tool_name, raw_input)
-        file_path = (
-            raw_input.get("file_path", "") if tool_name in ("Write", "Edit") else ""
-        )
+        file_path = raw_input.get("file_path", "") if tool_name in ("Write", "Edit") else ""
 
         await trace_post_tool_use(tool_name, detail, file_path)
         return {}
@@ -574,9 +549,7 @@ The solution code lives at /var/inputs/solution.py inside the sandbox.
 {base_prompt}"""
 
     if generated_schemas:
-        user_query += (
-            "\n\nDATA SCHEMAS (Pandera validation schemas for your input data):\n"
-        )
+        user_query += "\n\nDATA SCHEMAS (Pandera validation schemas for your input data):\n"
         for schema_name, schema_code in generated_schemas.items():
             user_query += f"\n--- {schema_name} ---\n```python\n{schema_code}\n```\n"
 
@@ -596,7 +569,7 @@ The solution code lives at /var/inputs/solution.py inside the sandbox.
             file_path = input_data.get("file_path", "")
             if file_path:
                 try:
-                    Path(file_path).resolve().relative_to(workspace.resolve())
+                    Path(file_path).resolve().relative_to(workspace.resolve())  # noqa: ASYNC240
                 except ValueError:
                     return PermissionResultDeny(
                         message=(
@@ -638,10 +611,8 @@ The solution code lives at /var/inputs/solution.py inside the sandbox.
                     logger.debug(f"Agent content: {content}")
 
         # Log what files the agent created
-        existing_files = list(workspace.iterdir()) if workspace.exists() else []
-        logger.info(
-            f"Agent output directory contents: {[f.name for f in existing_files]}"
-        )
+        existing_files = list(workspace.iterdir()) if workspace.exists() else []  # noqa: ASYNC240
+        logger.info(f"Agent output directory contents: {[f.name for f in existing_files]}")
 
         # Read outputs
         solution_file = workspace / "solution.py"
@@ -665,9 +636,7 @@ The solution code lives at /var/inputs/solution.py inside the sandbox.
 
         # Test-execution files are created by _run_tests_in_sandbox, not the agent
         test_output = result_file.read_text() if result_file.exists() else ""
-        exit_code_text = (
-            exit_code_file.read_text().strip() if exit_code_file.exists() else ""
-        )
+        exit_code_text = exit_code_file.read_text().strip() if exit_code_file.exists() else ""
         exit_code = int(exit_code_text) if exit_code_text else -1
 
         success = exit_code == 0

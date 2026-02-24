@@ -22,9 +22,7 @@ from flyte.sandbox import sandbox_environment
 
 from flyteplugins.codegen import AutoCoderAgent
 
-logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logging.getLogger("flyteplugins.codegen.auto_coder_agent").setLevel(logging.INFO)
 
 
@@ -44,9 +42,7 @@ env = flyte.TaskEnvironment(
             ),
         )
         .with_apt_packages("git")
-        .with_pip_packages(
-            "git+https://github.com/flyteorg/flyte-sdk.git@86f88fece16d956e28667d3f0d8d49108c8cdd68"
-        )
+        .with_pip_packages("git+https://github.com/flyteorg/flyte-sdk.git@86f88fece16d956e28667d3f0d8d49108c8cdd68")
     ),
     depends_on=[sandbox_environment],
 )
@@ -80,9 +76,7 @@ def prepare_sales_data() -> list[list[str]]:
 
 
 @env.task
-async def generate_and_run(
-    prompt: str, csv_data: str, description: str, index: int
-) -> dict[str, float | int]:
+async def generate_and_run(prompt: str, csv_data: str, description: str, index: int) -> dict[str, float | int]:
     """Generate code and run for a single CSV format."""
     # Create temp CSV file
     csv_file = Path(tempfile.gettempdir()) / f"sales_data_{index}.csv"

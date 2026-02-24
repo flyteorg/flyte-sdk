@@ -10,9 +10,7 @@ from flyte.sandbox import sandbox_environment
 
 from flyteplugins.codegen import AutoCoderAgent
 
-logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logging.getLogger("flyteplugins.codegen.auto_coder_agent").setLevel(logging.INFO)
 
 env = flyte.TaskEnvironment(
@@ -31,9 +29,7 @@ env = flyte.TaskEnvironment(
             ),
         )
         .with_apt_packages("git")
-        .with_pip_packages(
-            "git+https://github.com/flyteorg/flyte-sdk.git@86f88fece16d956e28667d3f0d8d49108c8cdd68"
-        )
+        .with_pip_packages("git+https://github.com/flyteorg/flyte-sdk.git@86f88fece16d956e28667d3f0d8d49108c8cdd68")
     ),
     depends_on=[sandbox_environment],
 )
@@ -106,9 +102,7 @@ async def generate_and_run_with_agent(
     print(f"{len(result.detected_packages)} packages detected")
 
     # Run generated code on the original data
-    total_revenue, total_units, transaction_count = await result.run.aio(
-        name=f"run_sales_agent_{index}"
-    )
+    total_revenue, total_units, transaction_count = await result.run.aio(name=f"run_sales_agent_{index}")
 
     print(f"[{description}] Success!")
     print(f"  - Total revenue: ${total_revenue:.2f}")
@@ -143,9 +137,7 @@ Return JSON with: total_revenue (float), total_units (int), transaction_count (i
     sales_data = prepare_sales_data()
 
     tasks = [
-        generate_and_run_with_agent(
-            prompt=prompt, csv_data=csv_data, description=desc, index=i
-        )
+        generate_and_run_with_agent(prompt=prompt, csv_data=csv_data, description=desc, index=i)
         for i, (csv_data, desc) in enumerate(sales_data)
     ]
 

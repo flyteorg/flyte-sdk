@@ -45,9 +45,7 @@ env = flyte.TaskEnvironment(
             ),
         )
         .with_apt_packages("git")
-        .with_pip_packages(
-            "git+https://github.com/flyteorg/flyte-sdk.git@86f88fece16d956e28667d3f0d8d49108c8cdd68"
-        )
+        .with_pip_packages("git+https://github.com/flyteorg/flyte-sdk.git@86f88fece16d956e28667d3f0d8d49108c8cdd68")
     ).with_pip_packages("pyarrow"),
     depends_on=[sandbox_environment],
 )

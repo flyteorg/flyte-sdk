@@ -215,14 +215,16 @@ class TestFailure(BaseModel):
 
     test_name: str = Field(description="Name of the failing test")
     error_message: str = Field(
-        description="The exact final error message from test output (e.g., 'RecursionError: maximum recursion depth exceeded')"
+        description="The exact final error message from test output "
+        "(e.g., 'RecursionError: maximum recursion depth exceeded')"
     )
     expected_behavior: str = Field(description="What this test expected to happen")
     actual_behavior: str = Field(description="What actually happened when the code ran")
     root_cause: str = Field(description="Why the test failed (quote the exact code that's wrong)")
     suggested_fix: str = Field(description="Specific code changes using format: Replace `current code` with `new code`")
     error_type: Literal["environment", "logic", "test_error"] = Field(
-        description="Type of error: 'environment' (missing packages/dependencies), 'logic' (bug in solution code), or 'test_error' (bug in test code)"
+        description="Type of error: 'environment' (missing packages/dependencies), "
+        "'logic' (bug in solution code), or 'test_error' (bug in test code)"
     )
 
 

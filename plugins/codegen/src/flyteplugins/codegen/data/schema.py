@@ -123,10 +123,21 @@ Determine:
 3. Parameters needed for the check
 
 Examples:
-- "quantity must be positive" → column_name: "quantity", check_type: "greater_than", parameters: {{"value": 0}}, explanation: "quantity must be greater than 0"
-- "price between 0 and 1000" → column_name: "price", check_type: "between", parameters: {{"min": 0, "max": 1000}}, explanation: "price must be between 0 and 1000"
-- "date in YYYY-MM-DD format" → column_name: "date", check_type: "regex", parameters: {{"pattern": "\\\\d{{4}}-\\\\d{{2}}-\\\\d{{2}}"}}, explanation: "date must match YYYY-MM-DD format"
-- "product must be Widget A or B" → column_name: "product", check_type: "isin", parameters: {{"values": ["Widget A", "Widget B"]}}, explanation: "product must be one of the allowed values"
+- "quantity must be positive" →
+  column_name: "quantity", check_type: "greater_than",
+  parameters: {{"value": 0}}, explanation: "quantity must be greater than 0"
+- "price between 0 and 1000" →
+  column_name: "price", check_type: "between",
+  parameters: {{"min": 0, "max": 1000}},
+  explanation: "price must be between 0 and 1000"
+- "date in YYYY-MM-DD format" →
+  column_name: "date", check_type: "regex",
+  parameters: {{"pattern": "\\\\d{{4}}-\\\\d{{2}}-\\\\d{{2}}"}},
+  explanation: "date must match YYYY-MM-DD format"
+- "product must be Widget A or B" →
+  column_name: "product", check_type: "isin",
+  parameters: {{"values": ["Widget A", "Widget B"]}},
+  explanation: "product must be one of the allowed values"
 
 If constraint is unclear or doesn't apply to a specific column, use check_type: 'none'."""
 
@@ -215,7 +226,7 @@ def apply_parsed_constraint(
         if not isinstance(existing_checks, list):
             existing_checks = [existing_checks]
 
-        schema = schema.update_column(col_name, checks=existing_checks + [check])
+        schema = schema.update_column(col_name, checks=[*existing_checks, check])
 
         logger.info(f"Applied constraint to '{col_name}': {parsed.explanation}")
 
