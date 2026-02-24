@@ -114,6 +114,23 @@ class Controller(Protocol):
         """
         ...
 
+    async def register_event(self, event: Any):
+        """
+        Register an event that can be awaited. This is used to register events that can pause execution
+        until an external signal is received.
+        :param event: Event object to register
+        :return:
+        """
+        ...
+
+    async def wait_for_event(self, event: Any) -> Any:
+        """
+        Wait for an event to be signaled. This will block until the event receives data.
+        :param event: Event object to wait for
+        :return: The payload associated with the event when it is signaled
+        """
+        ...
+
     async def stop(self):
         """
         Stops the engine and should be called when the engine is no longer needed.

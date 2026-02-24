@@ -574,3 +574,24 @@ class RemoteController(Controller):
         task_call_seq = self.generate_task_call_sequence(_task, current_action_id)
         async with self._parent_action_semaphore[unique_action_name(current_action_id)]:
             return await self._submit_task_ref(task_call_seq, _task, *args, **kwargs)
+
+    async def register_event(self, event: Any):
+        """
+        Register an event that can be awaited.
+
+        TODO: Implement remote event registration
+
+        :param event: Event object to register
+        """
+        raise NotImplementedError("Remote event registration is not yet implemented")
+
+    async def wait_for_event(self, event: Any) -> Any:
+        """
+        Wait for an event to be signaled.
+
+        TODO: Implement remote event waiting
+
+        :param event: Event object to wait for
+        :return: The payload associated with the event when it is signaled
+        """
+        raise NotImplementedError("Remote event waiting is not yet implemented")

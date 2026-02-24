@@ -4,19 +4,21 @@ import json
 from typing import Any, Awaitable, Callable, ClassVar
 
 from rich.text import Text
-from textual import events
+from textual import events, on
 from textual.app import App, ComposeResult
 from textual.binding import Binding, BindingType
-from textual.containers import Horizontal, VerticalScroll
+from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.message import Message
 from textual.reactive import reactive
-from textual.widgets import Footer, Header, RichLog, Static, TabbedContent, TabPane, Tree
+from textual.widgets import Button, Footer, Header, Input, Markdown, RichLog, Static, TabbedContent, TabPane, Tree
 from textual.widgets.tree import TreeNode
 from textual.worker import Worker, WorkerState
 
-from ._tracker import ActionNode, ActionStatus, ActionTracker
+from ._tracker import ActionNode, ActionStatus, ActionTracker, PendingEvent
 
 _STATUS_ICON = {
     ActionStatus.RUNNING: ("●", "dodger_blue1"),
+    ActionStatus.PAUSED: ("⏸", "yellow"),
     ActionStatus.SUCCEEDED: ("✓", "green"),
     ActionStatus.FAILED: ("✗", "red"),
 }
@@ -145,6 +147,108 @@ class _DetailBox(Static):
         super().__init__(*args, **kwargs)
 
 
+class EventInputPanel(Vertical):
+    """Interactive panel shown when a task is paused waiting for an event."""
+
+    DEFAULT_CSS = """
+    EventInputPanel {
+        height: auto;
+        padding: 1;
+    }
+    EventInputPanel .event-prompt {
+        margin-bottom: 1;
+    }
+    EventInputPanel .event-description {
+        color: $text-muted;
+        margin-bottom: 1;
+    }
+    EventInputPanel .event-buttons {
+        height: auto;
+        layout: horizontal;
+    }
+    EventInputPanel .event-buttons Button {
+        margin-right: 1;
+    }
+    EventInputPanel .event-input-row {
+        height: auto;
+        layout: horizontal;
+    }
+    EventInputPanel .event-input-row Input {
+        width: 1fr;
+        margin-right: 1;
+    }
+    EventInputPanel .event-validation-error {
+        color: red;
+        height: auto;
+    }
+    """
+
+    class Submitted(Message):
+        """Posted when the user submits a value for a pending event."""
+
+        def __init__(self, action_id: str, value: Any) -> None:
+            super().__init__()
+            self.action_id = action_id
+            self.value = value
+
+    def __init__(self, pending: PendingEvent, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._pending = pending
+
+    def compose(self) -> ComposeResult:
+        pe = self._pending
+        if pe.description:
+            yield Static(pe.description, classes="event-description")
+
+        if pe.prompt_type == "markdown":
+            yield Markdown(pe.prompt, classes="event-prompt")
+        else:
+            yield Static(pe.prompt, classes="event-prompt")
+
+        if pe.data_type is bool:
+            with Horizontal(classes="event-buttons"):
+                yield Button("Yes", id="event-yes", variant="success")
+                yield Button("No", id="event-no", variant="error")
+        else:
+            type_name = pe.data_type.__name__
+            with Horizontal(classes="event-input-row"):
+                yield Input(placeholder=f"Enter a {type_name} value...", id="event-input")
+                yield Button("Submit", id="event-submit", variant="primary")
+            yield Static("", id="event-validation-error", classes="event-validation-error")
+
+    @on(Button.Pressed, "#event-yes")
+    def _on_yes(self) -> None:
+        self.post_message(self.Submitted(self._pending.action_id, True))
+
+    @on(Button.Pressed, "#event-no")
+    def _on_no(self) -> None:
+        self.post_message(self.Submitted(self._pending.action_id, False))
+
+    @on(Button.Pressed, "#event-submit")
+    def _on_submit(self) -> None:
+        self._try_submit()
+
+    @on(Input.Submitted, "#event-input")
+    def _on_input_submitted(self) -> None:
+        self._try_submit()
+
+    def _try_submit(self) -> None:
+        inp = self.query_one("#event-input", Input)
+        err_label = self.query_one("#event-validation-error", Static)
+        raw = inp.value.strip()
+        if not raw:
+            err_label.update("Value cannot be empty.")
+            return
+        try:
+            value = self._pending.data_type(raw)
+        except (ValueError, TypeError):
+            type_name = self._pending.data_type.__name__
+            err_label.update(f"Please enter a valid {type_name}.")
+            return
+        err_label.update("")
+        self.post_message(self.Submitted(self._pending.action_id, value))
+
+
 class DetailPanel(VerticalScroll):
     """Right panel: separate boxes for task details, inputs, outputs.
 
@@ -157,9 +261,11 @@ class DetailPanel(VerticalScroll):
     def __init__(self, tracker: ActionTracker, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._tracker = tracker
+        self._current_event_action_id: str | None = None
 
     def compose(self) -> ComposeResult:
         yield _DetailBox(id="box-task-details")
+        yield _DetailBox(id="box-event")
         yield _DetailBox(id="box-report")
         yield _DetailBox(id="box-log-links")
         yield _DetailBox(id="box-inputs")
@@ -175,9 +281,18 @@ class DetailPanel(VerticalScroll):
     def refresh_detail(self) -> None:
         self._render_detail()
 
+    def _hide_event_box(self, event_box: _DetailBox) -> None:
+        """Remove any mounted EventInputPanel and hide the event box."""
+        event_box.display = False
+        if self._current_event_action_id is not None:
+            for child in event_box.query(EventInputPanel):
+                child.remove()
+            self._current_event_action_id = None
+
     def _render_detail(self) -> None:
         try:
             task_box = self.query_one("#box-task-details", _DetailBox)
+            event_box = self.query_one("#box-event", _DetailBox)
             report_box = self.query_one("#box-report", _DetailBox)
             log_links_box = self.query_one("#box-log-links", _DetailBox)
             inputs_box = self.query_one("#box-inputs", _DetailBox)
@@ -190,6 +305,7 @@ class DetailPanel(VerticalScroll):
         if aid is None:
             task_box.update("Select an action to view details.")
             task_box.border_title = "Task Details"
+            self._hide_event_box(event_box)
             report_box.display = False
             log_links_box.display = False
             inputs_box.update("")
@@ -202,6 +318,7 @@ class DetailPanel(VerticalScroll):
         node = self._tracker.get_action(aid)
         if node is None:
             task_box.update(f"Action {aid} not found.")
+            self._hide_event_box(event_box)
             report_box.display = False
             log_links_box.display = False
             inputs_box.update("")
@@ -219,6 +336,7 @@ class DetailPanel(VerticalScroll):
             if elapsed:
                 details.append(f"duration:   {elapsed}")
             task_box.update("\n".join(details))
+            self._hide_event_box(event_box)
             report_box.display = False
             log_links_box.display = False
             inputs_box.display = False
@@ -239,6 +357,32 @@ class DetailPanel(VerticalScroll):
             cache_str += " (cache hit)"
         details.append(f"cache:      {cache_str}")
         task_box.update("\n".join(details))
+
+        # -- Event box (only when paused) --
+        if node.status == ActionStatus.PAUSED:
+            pe = self._tracker.get_pending_event(aid)
+            if pe is not None and self._current_event_action_id != aid:
+                # Remove any old event panel and mount a new one
+                self._hide_event_box(event_box)
+                event_box.border_title = f"Event: {pe.event_name}"
+                event_box.display = True
+                event_box.mount(EventInputPanel(pe))
+                self._current_event_action_id = aid
+            elif pe is not None:
+                # Already showing the right panel, just make sure it's visible
+                event_box.display = True
+            else:
+                self._hide_event_box(event_box)
+            # Hide other detail boxes when paused
+            report_box.display = False
+            log_links_box.display = False
+            inputs_box.display = False
+            context_box.display = False
+            outputs_box.display = False
+            return
+
+        # Not paused — hide event box
+        self._hide_event_box(event_box)
 
         # -- Report box (only when available) --
         if node.has_report and node.output_path:
@@ -363,10 +507,24 @@ class FlyteTUIApp(App[None]):
         height: auto;
         color: {_FLYTE_PURPLE_LIGHT};
     }}
+    EventInputPanel {{
+        color: {_FLYTE_PURPLE_LIGHT};
+    }}
+    EventInputPanel Button {{
+        margin-right: 1;
+    }}
+    EventInputPanel Input {{
+        width: 1fr;
+        margin-right: 1;
+    }}
+    EventInputPanel .event-validation-error {{
+        color: red;
+    }}
     """
 
     BINDINGS: ClassVar[list[BindingType]] = [
         Binding("q", "quit", "Quit"),
+        Binding("ctrl+q", "quit", "Quit", priority=True, show=False),
         Binding("d", "show_details", "Details"),
         Binding("l", "show_logs", "Logs"),
     ]
@@ -429,11 +587,34 @@ class FlyteTUIApp(App[None]):
         detail = self.query_one("#detail-panel", DetailPanel)
         detail.action_id = event.node.data
 
+    @on(EventInputPanel.Submitted)
+    def _on_event_submitted(self, event: EventInputPanel.Submitted) -> None:
+        self._tracker.resolve_event(event.action_id, event.value)
+
     def on_worker_state_changed(self, event: Worker.StateChanged) -> None:
         if event.state == WorkerState.SUCCESS:
             self.sub_title = "completed"
         elif event.state == WorkerState.ERROR:
             self.sub_title = "failed"
+
+    def action_quit(self) -> None:
+        # Cancel all pending events so blocked threads don't hang
+        for pe in self._tracker.get_all_pending_events():
+            pe.set_result(None)
+        self.exit()
+        # The execution worker may be blocked on synchronous calls (via
+        # syncify) that Textual's worker cancellation cannot interrupt.
+        # Schedule a hard exit as a safety net so the terminal is not
+        # left in a broken state.
+        import os
+        import threading
+        import time
+
+        def _force_exit() -> None:
+            time.sleep(2)
+            os._exit(0)
+
+        threading.Thread(target=_force_exit, daemon=True).start()
 
     def action_show_details(self) -> None:
         self.query_one("#right-tabs", TabbedContent).active = "tab-details"
