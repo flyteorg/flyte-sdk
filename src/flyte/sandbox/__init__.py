@@ -42,30 +42,85 @@
     default (``block_network=True``), preventing outbound calls from untrusted
     code.  Used via ``flyte.sandbox.create()``.
 
-    Code sandboxes support:
+    Three execution modes are supported:
 
-    - **Arbitrary pip packages** — install any Python dependency at runtime
-    - **System packages** — apt packages, compilers, native libs
-    - **Code mode** — run a Python snippet with typed inputs/outputs
-    - **Command mode** — run any shell command (e.g. ``pytest``, a binary)
+    - Code mode — provide Python source that runs with automatic input/output wiring.
+    - Verbatim mode — run a script that manages its own I/O via /var/inputs and /var/outputs.
+    - Command mode — execute an arbitrary command or entrypoint.
 
-    Example — code mode::
+    Examples
+    --------
 
-        sandbox = flyte.sandbox.create(
-            name="compute",
-            code=\"\"\"
-                import argparse, pathlib
-                parser = argparse.ArgumentParser()
-                parser.add_argument("--x", type=int)
-                args = parser.parse_args()
-                pathlib.Path("/var/outputs/result").write_text(str(args.x * 2))
-            \"\"\",
-            inputs={"x": int},
-            outputs={"result": int},
+    Code mode
+    ~~~~~~~~~
+
+    Provide Python code that uses inputs as variables and assigns
+    outputs as Python values.
+
+        _stats_code = \"""
+        import numpy as np
+        nums = np.array([float(v) for v in values.split(",")])
+        mean = float(np.mean(nums))
+        std  = float(np.std(nums))
+
+        window_end = dt + delta
+        \"""
+
+        stats_sandbox = flyte.sandbox.create(
+            name="numpy-stats",
+            code=_stats_code,
+            inputs={
+                "values": str,
+                "dt": datetime.datetime,
+                "delta": datetime.timedelta,
+            },
+            outputs={
+                "mean": float,
+                "std": float,
+                "window_end": datetime.datetime,
+            },
+            packages=["numpy"],
         )
-        (result,) = await sandbox.run.aio(x=21)   # returns (42,)
 
-    Example — command mode::
+        mean, std, window_end = await stats_sandbox.run.aio(
+            values="1,2,3,4,5",
+            dt=datetime.datetime(2024, 1, 1),
+            delta=datetime.timedelta(days=1),
+        )
+
+
+    Verbatim mode
+    ~~~~~~~~~~~~~
+
+    Run a script that explicitly reads inputs from /var/inputs and
+    writes outputs to /var/outputs.
+
+        _etl_script = \"\"\"\
+        import json, pathlib
+
+        payload = json.loads(
+            pathlib.Path("/var/inputs/payload").read_text()
+        )
+        total = sum(payload["values"])
+
+        out = pathlib.Path("/var/outputs")
+        out.mkdir(parents=True, exist_ok=True)
+        (out / "total").write_text(str(total))
+        \"\"\"
+
+        etl_sandbox = flyte.sandbox.create(
+            name="etl-script",
+            code=_etl_script,
+            inputs={"payload": File},
+            outputs={"total": int},
+            auto_io=False,
+        )
+
+
+    Command mode
+    ~~~~~~~~~~~~
+
+    Execute an arbitrary command inside the sandbox environment.
 
         sandbox = flyte.sandbox.create(
             name="test-runner",
@@ -73,6 +128,16 @@
             inputs={"tests.py": File},
             outputs={"exit_code": str},
         )
+
+    Notes
+    -----
+
+    • Inputs are materialized under /var/inputs.
+    • Outputs must be written to /var/outputs.
+    • In code mode, inputs are available as Python variables and
+    scalar outputs are captured automatically.
+    • Additional Python dependencies can be specified via the
+    `packages` argument.
 """
 
 from ._api import orchestrate_local, orchestrator_from_str

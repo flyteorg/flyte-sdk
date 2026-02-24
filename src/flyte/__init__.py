@@ -118,7 +118,6 @@ __all__ = [
     "logger",
     "map",
     "run",
-    "sandbox",
     "serve",
     "trace",
     "version",

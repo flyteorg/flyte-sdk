@@ -13,7 +13,7 @@ Three modes:
   local variables, and writes scalar outputs automatically. No boilerplate.
 - **Verbatim mode** (``code=``, ``auto_io=False``): run a complete Python script as-is.
   No CLI args injected — the script handles all I/O itself.
-- **Command mode** (``command=``): run any shell command (pytest, non-Python code, etc.).
+- **Command mode** (``command=``): run any shell command (pytest, binary, non-Python code, etc.).
 
 Security defaults:
 - ``block_network=True`` (default) — the container has *no network interface*
@@ -45,7 +45,6 @@ sum_sandbox = flyte.sandbox.create(
     code="total = sum(range(n + 1)) if conditional else 0",
     inputs={"n": int, "conditional": bool},
     outputs={"total": int},
-    auto_io=True,
 )
 
 # Example 2 — code mode (auto-inject): third-party packages (numpy)
@@ -71,10 +70,9 @@ stats_sandbox = flyte.sandbox.create(
     },
     outputs={"mean": float, "std": float, "window_end": datetime.datetime},
     packages=["numpy"],
-    auto_io=True,
 )
 
-# Example 3 — script mode: complete Python script, full control
+# Example 3 — verbatim mode: complete Python script, full control
 #
 # The user handles all I/O themselves — Flyte just runs ``python script.py``
 # with no injected CLI args. File inputs are bind-mounted at /var/inputs/<name>.
@@ -85,7 +83,6 @@ import json, pathlib
 payload = json.loads(pathlib.Path("/var/inputs/payload").read_text())
 total = sum(payload["values"])
 
-pathlib.Path("/var/outputs").mkdir(parents=True, exist_ok=True)
 pathlib.Path("/var/outputs/total").write_text(str(total))
 """
 
@@ -94,6 +91,7 @@ etl_sandbox = flyte.sandbox.create(
     code=_etl_script,
     inputs={"payload": File},
     outputs={"total": int},
+    auto_io=False,
 )
 
 # Example 4 — command mode: shell pipeline
@@ -196,7 +194,7 @@ def run_pipeline_sync() -> dict:
 if __name__ == "__main__":
     flyte.init_from_config()
 
-    run_async = flyte.with_runcontext(mode="local").run(run_pipeline)
+    run_async = flyte.with_runcontext(mode="remote").run(run_pipeline)
     run_sync = flyte.with_runcontext(mode="remote").run(run_pipeline_sync)
 
     print("Async run URL:", run_async.url)

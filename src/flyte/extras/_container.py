@@ -252,7 +252,7 @@ class ContainerTask(TaskTemplate):
         commands, volume_bindings = self._prepare_command_and_volumes(cmd_and_args, **kwargs)
 
         # Mount any File/Dir inputs not already bound via command templates.
-        # This covers script mode, where inputs aren't referenced in the command
+        # This covers verbatim mode in sandbox, where inputs aren't referenced in the command
         # string but the container expects them at /var/inputs/<name>.
         for k, v in kwargs.items():
             if isinstance(v, (File, Dir)):
@@ -311,6 +311,8 @@ class ContainerTask(TaskTemplate):
         )
 
     def config(self, sctx: SerializationContext) -> Dict[str, str]:
+        """Return the configuration for the container task, including network settings.
+        This is for remote execution."""
         if self._block_network:
             return {"network_mode": "none"}
         return {}

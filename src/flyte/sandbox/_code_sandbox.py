@@ -8,15 +8,13 @@ import textwrap
 import weakref
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Optional
+from typing import Any, Optional
 
 import flyte
 from flyte.errors import InvalidPackageError
+from flyte.extras._container import ContainerTask
 from flyte.io import Dir, File
 from flyte.syncify import syncify
-
-if TYPE_CHECKING:
-    from flyte.extras._container import ContainerTask
 
 logger = logging.getLogger(__name__)
 
@@ -210,7 +208,6 @@ class _Sandbox:
         if scalar_outputs:
             lines += ["", "# auto-generated output writing", ""]
             lines.append("_out_ = _pl_.Path('/var/outputs')")
-            lines.append("_out_.mkdir(parents=True, exist_ok=True)")
             for name, typ in scalar_outputs.items():
                 if issubclass(typ, datetime.datetime):
                     lines.append(f"(_out_ / '{name}').write_text({name}.isoformat())")
@@ -219,9 +216,7 @@ class _Sandbox:
 
         return "\n".join(lines) + "\n"
 
-    def _make_container_task(self, image: str, task_name: str) -> "ContainerTask":
-        from flyte.extras._container import ContainerTask
-
+    def _make_container_task(self, image: str, task_name: str) -> ContainerTask:
         extra_kwargs: dict[str, Any] = {}
         if self.timeout is not None:
             extra_kwargs["timeout"] = self.timeout
@@ -330,7 +325,7 @@ class _Sandbox:
         task_name = self._task_name()
         task = self._make_container_task(image, task_name)
         task.parent_env = weakref.ref(sandbox_environment)
-        task.parent_env_name = task_name
+        task.parent_env_name = task_name  # If not set, the ContainerTask will default to using the sandbox_environment's image.
 
         if self.code is not None:
             script_content = self._generate_auto_script() if self.auto_io else self.code

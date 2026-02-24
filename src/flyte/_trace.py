@@ -110,7 +110,6 @@ def trace(func: Callable[..., T]) -> Callable[..., T]:
                         yield item
                 elif info.error:
                     raise info.error
-                return
             start_time = time.time()
 
             # Create a new context with the trace's action ID and mark as in_trace
