@@ -6,6 +6,7 @@ focusing on container_cmd, container_args, and Parameter handling.
 """
 
 import pathlib
+from datetime import timedelta
 
 import pytest
 
@@ -1171,3 +1172,69 @@ def test_app_environment_decorators_with_async_functions():
     assert app._server == async_server
     assert app._on_shutdown is not None
     assert app._on_shutdown == async_shutdown
+
+
+@pytest.mark.parametrize(
+    "request_timeout, expected_seconds",
+    [
+        (None, None),
+        (30, 30),
+        (3600, 3600),
+        (timedelta(minutes=5), 300),
+        (timedelta(hours=1), 3600),
+    ],
+)
+def test_app_environment_request_timeout_valid(request_timeout, expected_seconds):
+    """
+    GOAL: Validate that request_timeout accepts int, timedelta, and None, and normalizes int to timedelta.
+
+    Tests that:
+    - None is preserved as None
+    - int values are converted to timedelta(seconds=N)
+    - timedelta values are preserved
+    - Values up to 1 hour are accepted
+    """
+    app_env = AppEnvironment(
+        name="timeout-app",
+        image="python:3.11",
+        request_timeout=request_timeout,
+    )
+    if expected_seconds is None:
+        assert app_env.request_timeout is None
+    else:
+        assert isinstance(app_env.request_timeout, timedelta)
+        assert app_env.request_timeout.total_seconds() == expected_seconds
+
+
+@pytest.mark.parametrize(
+    "request_timeout, expected_error",
+    [
+        (3601, "request_timeout must not exceed 1 hour"),
+        (timedelta(hours=1, seconds=1), "request_timeout must not exceed 1 hour"),
+        (timedelta(hours=2), "request_timeout must not exceed 1 hour"),
+    ],
+)
+def test_app_environment_request_timeout_exceeds_max(request_timeout, expected_error):
+    """
+    GOAL: Validate that request_timeout rejects values exceeding 1 hour.
+
+    Tests that ValueError is raised with a clear message.
+    """
+    with pytest.raises(ValueError, match=expected_error):
+        AppEnvironment(
+            name="timeout-app",
+            image="python:3.11",
+            request_timeout=request_timeout,
+        )
+
+
+def test_app_environment_request_timeout_invalid_type():
+    """
+    GOAL: Validate that request_timeout rejects invalid types.
+    """
+    with pytest.raises(TypeError, match="Expected request_timeout to be of type int or timedelta"):
+        AppEnvironment(
+            name="timeout-app",
+            image="python:3.11",
+            request_timeout=30.5,
+        )

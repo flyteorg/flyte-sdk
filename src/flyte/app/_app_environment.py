@@ -5,6 +5,7 @@ import os
 import re
 import shlex
 from dataclasses import dataclass, field, replace
+from datetime import timedelta
 from typing import Any, Callable, List, Literal, Optional, Union
 
 import rich.repr
@@ -16,6 +17,7 @@ from flyte.models import SerializationContext
 
 APP_NAME_RE = re.compile(r"[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*")
 INVALID_APP_PORTS = [8012, 8022, 8112, 9090, 9091]
+_MAX_REQUEST_TIMEOUT = timedelta(hours=1)
 INTERNAL_APP_ENDPOINT_PATTERN_ENV_VAR = "INTERNAL_APP_ENDPOINT_PATTERN"
 
 
@@ -34,6 +36,7 @@ class AppEnvironment(Environment):
     :param include: Files to include in the environment to run the app.
     :param parameters: Parameters to pass to the app environment.
     :param cluster_pool: Cluster pool to use for the app environment.
+    :param request_timeout: Optional timeout for requests to the application. Can be an int (seconds) or timedelta. Must not exceed 1 hour.
     :param name: Name of the app environment
     :param image: Docker image to use for the environment. If set to "auto", will use the default image.
     :param resources: Resources to allocate for the environment.
@@ -60,10 +63,22 @@ class AppEnvironment(Environment):
     # queue / cluster_pool
     cluster_pool: str = "default"
 
+    request_timeout: int | timedelta | None = None
+
     # private field
     _server: Callable[[], None] | None = field(init=False, default=None)
     _on_startup: Callable[[], None] | None = field(init=False, default=None)
     _on_shutdown: Callable[[], None] | None = field(init=False, default=None)
+
+    def _validate_request_timeout(self):
+        if self.request_timeout is None:
+            return
+        if isinstance(self.request_timeout, int):
+            self.request_timeout = timedelta(seconds=self.request_timeout)
+        elif not isinstance(self.request_timeout, timedelta):
+            raise TypeError(f"Expected request_timeout to be of type int or timedelta, got {type(self.request_timeout)}")
+        if self.request_timeout > _MAX_REQUEST_TIMEOUT:
+            raise ValueError("request_timeout must not exceed 1 hour")
 
     def _validate_name(self):
         if not APP_NAME_RE.fullmatch(self.name):
@@ -136,6 +151,7 @@ class AppEnvironment(Environment):
                 raise TypeError(f"Expected links to be of type List[Link], got {type(link)}")
 
         self._validate_name()
+        self._validate_request_timeout()
 
         # get instantiated file to keep track of app root directory
         self._app_filename = self._get_app_filename()
