@@ -1,40 +1,82 @@
-"""Sandboxed tasks powered by Monty (Pydantic's Rust-based sandboxed Python interpreter).
+"""Sandbox utilities for running isolated code inside Flyte tasks.
 
 .. warning:: Experimental feature: alpha — APIs may change without notice.
 
-Sandboxed tasks are:
-- **Side-effect free**: No filesystem, network, or OS access
-- **Super fast**: Microsecond startup for pure Python
-- **Multiplexable**: Many tasks run safely on the same Python process
+``flyte.sandbox`` provides two distinct sandboxing approaches:
 
-Usage::
+---
 
-    import flyte
-    import flyte.sandbox
+**1. Orchestration sandbox** — powered by Monty
+    Runs pure Python *orchestration logic* (control flow, routing, aggregation)
+    with zero overhead. The Monty runtime enforces strong restrictions:
+    no imports, no IO, no network access, microsecond startup.  Used via
+    ``@env.sandbox.orchestrator`` or ``flyte.sandbox.orchestrator_from_str()``.
 
-    # Environment-based approach (preferred for ``flyte run``)
-    env = flyte.TaskEnvironment(name="my-env")
+    Sandboxed orchestrators are:
 
-    @env.sandbox.orchestrator
-    def my_orchestrator(x: int, y: int) -> int:
-        return add(x, y)
+    - **Side-effect free**: No filesystem, network, or OS access
+    - **Microsecond startup**: No container spin-up — runs in the same process
+    - **Multiplexable**: Many orchestrators run safely on the same Python process
 
-    # Create a reusable task from a code string
-    pipeline = flyte.sandbox.orchestrator_from_str(
-        "add(x, y) * 2",
-        inputs={"x": int, "y": int},
-        output=int,
-        tasks=[add],
-    )
+    Example::
 
-    # One-shot execution of a code string (local only)
-    result = await flyte.sandbox.orchestrate_local(
-        "x + y",
-        inputs={"x": 1, "y": 2},
-    )
+        env = flyte.TaskEnvironment(name="my-env")
+
+        @env.sandbox.orchestrator
+        def route(x: int, y: int) -> int:
+            return add(x, y)   # calls a worker task
+
+        pipeline = flyte.sandbox.orchestrator_from_str(
+            "add(x, y) * 2",
+            inputs={"x": int, "y": int},
+            output=int,
+            tasks=[add],
+        )
+
+---
+
+**2. Code sandbox** — arbitrary code in an isolated container
+    Runs arbitrary Python scripts or shell commands inside an ephemeral Docker
+    container. The image is built on demand from declared ``packages`` and
+    ``system_packages``, executed once, then discarded. Network is blocked by
+    default (``block_network=True``), preventing outbound calls from untrusted
+    code.  Used via ``flyte.sandbox.create()``.
+
+    Code sandboxes support:
+
+    - **Arbitrary pip packages** — install any Python dependency at runtime
+    - **System packages** — apt packages, compilers, native libs
+    - **Code mode** — run a Python snippet with typed inputs/outputs
+    - **Command mode** — run any shell command (e.g. ``pytest``, a binary)
+
+    Example — code mode::
+
+        sandbox = flyte.sandbox.create(
+            name="compute",
+            code=\"\"\"
+                import argparse, pathlib
+                parser = argparse.ArgumentParser()
+                parser.add_argument("--x", type=int)
+                args = parser.parse_args()
+                pathlib.Path("/var/outputs/result").write_text(str(args.x * 2))
+            \"\"\",
+            inputs={"x": int},
+            outputs={"result": int},
+        )
+        (result,) = await sandbox.run.aio(x=21)   # returns (42,)
+
+    Example — command mode::
+
+        sandbox = flyte.sandbox.create(
+            name="test-runner",
+            command=["/bin/bash", "-c", "pytest /var/inputs/tests.py -q"],
+            inputs={"tests.py": File},
+            outputs={"exit_code": str},
+        )
 """
 
 from ._api import orchestrate_local, orchestrator_from_str
+from ._code_sandbox import ImageConfig, create, sandbox_environment
 from ._code_task import CodeTaskTemplate
 from ._config import SandboxedConfig
 from ._task import SandboxedTaskTemplate
@@ -71,8 +113,11 @@ set comprehensions are not supported in code."""
 __all__ = [
     "ORCHESTRATOR_SYNTAX_PROMPT",
     "CodeTaskTemplate",
+    "ImageConfig",
     "SandboxedConfig",
     "SandboxedTaskTemplate",
+    "create",
     "orchestrate_local",
     "orchestrator_from_str",
+    "sandbox_environment",
 ]

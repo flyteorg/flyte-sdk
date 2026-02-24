@@ -45,7 +45,7 @@ def trace(func: Callable[..., T]) -> Callable[..., T]:
             info, ok = await controller.get_action_outputs(iface, func, *args, **kwargs)
             if ok:
                 logger.info(f"Found existing trace info for {func}, {info}")
-                if info.output:
+                if info.output is not None:
                     return info.output
                 elif info.error:
                     raise info.error
@@ -105,11 +105,12 @@ def trace(func: Callable[..., T]) -> Callable[..., T]:
             iface = NativeInterface.from_callable(func)
             info, ok = await controller.get_action_outputs(iface, func, *args, **kwargs)
             if ok:
-                if info.output:
+                if info.output is not None:
                     for item in info.output:
                         yield item
                 elif info.error:
                     raise info.error
+                return
             start_time = time.time()
 
             # Create a new context with the trace's action ID and mark as in_trace

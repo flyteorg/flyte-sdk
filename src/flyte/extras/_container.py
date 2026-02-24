@@ -68,6 +68,7 @@ class ContainerTask(TaskTemplate):
         output_data_dir: str | pathlib.Path = "/var/outputs",
         metadata_format: MetadataFormat = "JSON",
         local_logs: bool = True,
+        block_network: bool = True,
         **kwargs,
     ):
         super().__init__(
@@ -77,6 +78,7 @@ class ContainerTask(TaskTemplate):
             interface=NativeInterface({k: (v, None) for k, v in inputs.items()} if inputs else {}, outputs or {}),
             **kwargs,
         )
+        self._block_network = block_network
         self._image = image
         if isinstance(image, str):
             if image == "auto":
@@ -245,6 +247,17 @@ class ContainerTask(TaskTemplate):
         output_directory = storage.get_random_local_directory()
         cmd_and_args = (self._cmd or []) + (self._args or [])
         commands, volume_bindings = self._prepare_command_and_volumes(cmd_and_args, **kwargs)
+
+        # Mount any File/Dir inputs not already bound via command templates.
+        # This covers script mode, where inputs aren't referenced in the command
+        # string but the container expects them at /var/inputs/<name>.
+        for k, v in kwargs.items():
+            if isinstance(v, (File, Dir)):
+                local_path = v.path
+                if local_path not in volume_bindings:
+                    remote_path = os.path.join(str(self._input_data_dir), k)
+                    volume_bindings[local_path] = {"bind": remote_path, "mode": "rw"}
+
         volume_bindings[str(output_directory)] = {"bind": self._output_data_dir, "mode": "rw"}
 
         client = docker.from_env()
@@ -254,7 +267,14 @@ class ContainerTask(TaskTemplate):
         self._pull_image_if_not_exists(client, uri)
         print(f"Command: {commands!r}")
 
-        container = client.containers.run(uri, command=commands, remove=True, volumes=volume_bindings, detach=True)
+        run_kwargs: Dict[str, Any] = {
+            "remove": True,
+            "volumes": volume_bindings,
+            "detach": True,
+        }
+        if self._block_network:
+            run_kwargs["network_mode"] = "none"
+        container = client.containers.run(uri, command=commands, **run_kwargs)
 
         # Wait for the container to finish the task
         # TODO: Add a 'timeout' parameter to control the max wait time for the container to finish the task.
@@ -281,6 +301,11 @@ class ContainerTask(TaskTemplate):
             enabled=True,
             format=literal_to_protobuf.get(self._metadata_format, "JSON"),
         )
+
+    def config(self, sctx: SerializationContext) -> Dict[str, str]:
+        if self._block_network:
+            return {"network_mode": "none"}
+        return {}
 
     def container_args(self, sctx: SerializationContext) -> List[str]:
         return self._cmd + (self._args or [])

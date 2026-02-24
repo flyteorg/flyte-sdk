@@ -45,6 +45,26 @@ if typing.TYPE_CHECKING:
 T = TypeVar("T")
 
 
+def _extract_node_id(raw_data_path: str, run_name: str) -> Optional[str]:
+    """Extract the stable node ID from a raw data path URL.
+
+    The last path component follows the backend convention ``{run_name}-{node_id}-{attempt}``.
+    Parsing this gives the node ID, which is stable across retries unlike action.name.
+    Returns None if the format doesn't match so callers can fall back gracefully.
+    """
+    try:
+        last = raw_data_path.rstrip("/").split("/")[-1]
+        prefix = run_name + "-"
+        if last.startswith(prefix):
+            rest = last[len(prefix) :]  # "{node_id}-{attempt_index}"
+            node_id, _, attempt = rest.rpartition("-")
+            if node_id and attempt.isdigit():
+                return node_id
+    except Exception:
+        pass
+    return None
+
+
 class File(BaseModel, Generic[T], SerializableType):
     """
     A generic file class representing a file with a specified format.
@@ -281,6 +301,61 @@ class File(BaseModel, Generic[T], SerializableType):
         return cls(
             path=ctx.raw_data.get_random_remote_path(file_name=file_name), hash=known_cache_key, hash_method=method
         )
+
+    @classmethod
+    @requires_initialization
+    def named_remote(cls, name: str) -> File[T]:
+        """
+        Create a File reference whose remote path is derived deterministically from *name*.
+
+        Unlike :meth:`new_remote`, which generates a random path on every call, this method
+        produces the **same path** for the same *name* within a given task execution. That
+        makes it safe to call across retries: the first attempt uploads to the path and the
+        retry resolves to the identical path without re-uploading.
+
+        Example::
+
+            @env.task
+            async def produce_report() -> File:
+                file = File.named_remote("report.csv")
+                async with file.open("wb") as f:
+                    await f.write(b"col1,col2\\n1,2\\n")
+                return file
+
+        Args:
+            name: Filename to embed in the remote path. Must be a plain name such as
+                ``"data.csv"`` — do **not** include path separators.
+
+        Returns:
+            A :class:`File` instance whose ``path`` points to a deterministic location
+            stable across retries of the same task execution.
+        """
+        import fsspec
+
+        ctx = internal_ctx()
+        tctx = ctx.data.task_context
+        if tctx is None:
+            raise ValueError("File.named_remote() requires an active task execution context.")
+
+        # run_base_dir is stable across retries (workflow execution base, never changes).
+        #
+        # The raw_data_path last component encodes the node ID in the format
+        # "{run_name}-{node_id}-{attempt_index}". We try to extract the node ID for
+        # better per-node namespacing; if parsing fails we fall back to run_base_dir alone
+        # (callers embed a task-specific hash in `name` to prevent collisions).
+        node_id = _extract_node_id(ctx.raw_data.path, tctx.action.run_name)
+
+        base = tctx.run_base_dir
+        protocol = get_protocol(base)
+        if "file" in protocol:
+            parent = Path(base) if node_id is None else Path(base) / node_id
+            parent.mkdir(exist_ok=True, parents=True)
+            return cls(path=str((parent / name).absolute()))
+
+        fs = fsspec.filesystem(protocol)
+        base = base.rstrip(fs.sep)
+        segments = [base, node_id, name] if node_id else [base, name]
+        return cls(path=fs.sep.join(segments))
 
     @classmethod
     def from_existing_remote(cls, remote_path: str, file_cache_key: Optional[str] = None) -> File[T]:
