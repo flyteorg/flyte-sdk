@@ -2,7 +2,6 @@ import logging
 import pathlib
 
 import flyte
-
 from my_module.workflows.b import process_list
 
 if __name__ == "__main__":
