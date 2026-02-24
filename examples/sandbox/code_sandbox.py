@@ -3,8 +3,10 @@ Code Sandbox — Running Arbitrary Code in Isolated Containers
 ============================================================
 
 ``flyte.sandbox.create()`` runs arbitrary Python code or shell commands inside
-an ephemeral Docker container. The container is built on demand from the
-declared ``packages`` / ``system_packages``, executed once, and discarded.
+an ephemeral, **stateless** Docker container. The container is built on demand
+from the declared ``packages`` / ``system_packages``, executed once, and
+discarded. Each invocation starts from a clean slate — no filesystem state,
+environment variables, or side effects carry over between runs.
 
 Three modes:
 
@@ -12,7 +14,7 @@ Three modes:
   Flyte auto-generates an argparse preamble so declared inputs are available as
   local variables, and writes scalar outputs automatically. No boilerplate.
 - **Verbatim mode** (``code=``, ``auto_io=False``): run a complete Python script as-is.
-  No CLI args injected — the script handles all I/O itself.
+  CLI args are forwarded but the script handles all I/O itself.
 - **Command mode** (``command=``): run any shell command (pytest, binary, non-Python code, etc.).
 
 Security defaults:

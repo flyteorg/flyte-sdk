@@ -13,14 +13,14 @@ from typing import Any, Optional
 import flyte
 from flyte.errors import InvalidPackageError
 from flyte.extras._container import ContainerTask
-from flyte.io import Dir, File
+from flyte.io import File
 from flyte.syncify import syncify
 
 logger = logging.getLogger(__name__)
 
 # Types that can be declared as sandbox inputs or outputs.
 # Anything outside this set is rejected at create() time.
-_SUPPORTED_TYPES: frozenset[type] = frozenset({int, float, str, bool, datetime.datetime, datetime.timedelta, File, Dir})
+_SUPPORTED_TYPES: frozenset[type] = frozenset({int, float, str, bool, datetime.datetime, datetime.timedelta, File})
 
 sandbox_environment = flyte.TaskEnvironment(
     name="sandbox-runtime",
@@ -130,12 +130,12 @@ class _Sandbox:
         2. Executes the user's code verbatim with those names in scope.
         3. Writes each declared scalar output variable to ``/var/outputs/<name>``.
 
-        File / Dir inputs are injected as path strings.
-        File / Dir outputs must be written by user code to ``/var/outputs/<name>``.
+        File inputs are injected as path strings.
+        File outputs must be written by user code to ``/var/outputs/<name>``.
         """
-        scalar_inputs = {k: v for k, v in self.inputs.items() if v not in (File, Dir)}
-        io_inputs = {k: v for k, v in self.inputs.items() if v in (File, Dir)}
-        scalar_outputs = {k: v for k, v in self.outputs.items() if v not in (File, Dir)}
+        scalar_inputs = {k: v for k, v in self.inputs.items() if v is not File}
+        io_inputs = {k: v for k, v in self.inputs.items() if v is File}
+        scalar_outputs = {k: v for k, v in self.outputs.items() if v is not File}
 
         lines: list[str] = ["import argparse as _ap_", "import pathlib as _pl_"]
 
@@ -237,37 +237,14 @@ class _Sandbox:
         resources = self.resources or flyte.Resources(cpu=1, memory="1Gi")
 
         if self.code is not None:
-            if not self.auto_io:
-                # Verbatim mode: run the Python script as-is with no injected CLI args.
-                # The user is fully responsible for reading inputs and writing outputs.
-                bash_cmd = (
-                    "set -o pipefail && python $1; "
-                    "_exit=$?; mkdir -p /var/outputs; echo $_exit > /var/outputs/exit_code"
-                )
-                return ContainerTask(
-                    name=task_name,
-                    image=image,
-                    input_data_dir="/var/inputs",
-                    output_data_dir="/var/outputs",
-                    inputs={**self.inputs, "_script": File},
-                    outputs=dict(self.outputs),
-                    command=["/bin/bash", "-c", bash_cmd],
-                    arguments=["/bin/bash", "/var/inputs/_script"],
-                    resources=resources,
-                    block_network=self.block_network,
-                    retries=self.retries,
-                    cache=self.cache,
-                    **extra_kwargs,
-                )
-
-            # Auto-inject mode: generate CLI args for inputs; the generated script
-            # parses them via argparse and writes scalar outputs automatically.
+            # Build CLI args for declared inputs.  Both auto-IO and verbatim
+            # modes forward these so the script can parse them with argparse.
             cli_args = []
             arguments = ["/bin/bash", "/var/inputs/_script"]
             positional_index = 2
 
             for arg_name, arg_type in self.inputs.items():
-                if arg_type in (File, Dir):
+                if arg_type is File:
                     cli_args.extend([f"--{arg_name}", f"${positional_index}"])
                     arguments.append(f"/var/inputs/{arg_name}")
                     positional_index += 1
@@ -384,6 +361,10 @@ def create(
 ) -> _Sandbox:
     """Create a stateless Python code sandbox.
 
+    The sandbox is **stateless** — each invocation runs in a fresh, ephemeral
+    container. No filesystem state, environment variables or side effects
+    carry over between runs.
+
     Three modes, mutually exclusive:
 
     - **Auto-IO mode** (``code`` provided, ``auto_io=True``, default): write
@@ -391,9 +372,9 @@ def create(
       declared inputs are available as local variables, and writes declared
       scalar outputs to ``/var/outputs/`` automatically. No boilerplate needed.
     - **Verbatim mode** (``code`` provided, ``auto_io=False``): run an
-      arbitrary Python script as-is. No CLI args are injected — the script
-      handles all I/O itself (reading from ``/var/inputs/``, writing to
-      ``/var/outputs/<name>`` manually).
+      arbitrary Python script as-is. CLI args for declared inputs are still
+      forwarded, but the script handles all I/O itself (reading from
+      ``/var/inputs/``, writing to ``/var/outputs/<name>`` manually).
     - **Command mode** (``command`` provided): run any shell command directly,
       e.g. a compiled binary or a shell pipeline.
 
@@ -441,7 +422,7 @@ def create(
 
             - Primitive: ``int``, ``float``, ``str``, ``bool``
             - Date/time: ``datetime.datetime``, ``datetime.timedelta``
-            - IO handles: ``flyte.io.File``, ``flyte.io.Dir``
+            - IO handles: ``flyte.io.File``
               (bind-mounted at ``/var/inputs/<name>``; available as a path
               string in auto-IO mode)
 
@@ -449,8 +430,8 @@ def create(
 
             - Primitive: ``int``, ``float``, ``str``, ``bool``
             - Date/time: ``datetime.datetime`` (ISO-8601), ``datetime.timedelta``
-            - IO handles: ``flyte.io.File``, ``flyte.io.Dir``
-              (user code must write the file/dir to ``/var/outputs/<name>``)
+            - IO handles: ``flyte.io.File``
+              (user code must write the file to ``/var/outputs/<name>``)
 
         command: Entrypoint command (command mode). Mutually exclusive with ``code``.
         arguments: Arguments forwarded to ``command`` (command mode only).
