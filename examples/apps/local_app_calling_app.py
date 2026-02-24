@@ -73,6 +73,7 @@ app2_env = FastAPIAppEnvironment(
 @app2.get("/")
 async def square_plus_one(x: int) -> dict[str, int]:
     """Call app1 to square x, then add one."""
+    print(f"app1 endpoint {app1_env.endpoint}\n", flush=True)
     async with httpx.AsyncClient() as client:
         response = await client.get(app1_env.endpoint, params={"x": x})
         response.raise_for_status()

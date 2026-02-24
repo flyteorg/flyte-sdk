@@ -256,6 +256,8 @@ class PydanticWrappingTransformer(TypeTransformer[T]):
             return [self._convert_value_from_pydantic(v, args[0]) for v in value]
         elif isinstance(value, dict) and origin is dict and len(args) >= 2:
             return {k: self._convert_value_from_pydantic(v, args[1]) for k, v in value.items()}
+        elif isinstance(value, (list, tuple)) and (origin is tuple or origin is Tuple) and args:
+            return tuple(self._convert_value_from_pydantic(v, t) for v, t in zip(value, args))
 
         return value
 
@@ -611,8 +613,13 @@ class TypedDictTransformer(PydanticWrappingTransformer[dict]):
             return _model_cache[t]
 
         # Get field names and types from the TypedDict
-        annotations = getattr(t, "__annotations__", {})
-        required_keys: frozenset[str] = getattr(t, "__required_keys__", frozenset())
+        # Use get_type_hints(include_extras=True) to preserve NotRequired/Required wrappers,
+        # which we need to detect optional fields. We can't rely on __required_keys__ because
+        # it is wrong when `from __future__ import annotations` is used (all fields appear required).
+        try:
+            annotations_with_extras = typing.get_type_hints(t, include_extras=True)
+        except Exception:
+            annotations_with_extras = getattr(t, "__annotations__", {})
 
         field_definitions: Dict[str, Any] = {}
 
@@ -621,11 +628,18 @@ class TypedDictTransformer(PydanticWrappingTransformer[dict]):
 
         model_name = f"{self._WRAPPER_PREFIX}{t.__name__}"
 
-        # Create a placeholder in the cache before processing fields to handle self-referential types
-        # We'll update it after the model is created
-        _model_cache[t] = None  # type: ignore
+        # Use the model name as a placeholder in the cache before processing fields.
+        # For self-referential types (e.g. TreeNode with children: List[TreeNode]),
+        # the recursive call to _create_wrapper_model will return this string, which
+        # becomes a forward reference (e.g. List["TypedDictWrapper_TreeNode"]) that
+        # Pydantic resolves via model_rebuild() after model creation.
+        _model_cache[t] = model_name  # type: ignore
 
-        for field_name, field_type in annotations.items():
+        for field_name, field_type in annotations_with_extras.items():
+            # Check if the field is NotRequired before unwrapping
+            origin = get_origin(field_type)
+            is_not_required = origin is NotRequired
+
             # Unwrap NotRequired and Required type hints to get the inner type
             # These are only used by TypedDict to mark optional/required fields
             # and should not be passed to Pydantic
@@ -635,14 +649,19 @@ class TypedDictTransformer(PydanticWrappingTransformer[dict]):
             # This is necessary because isinstance() doesn't work with TypedDict on Python < 3.12
             pydantic_type = self._convert_field_type_for_pydantic(inner_type, _model_cache)
 
-            if field_name in required_keys:
-                field_definitions[field_name] = (pydantic_type, ...)
-            else:
+            if is_not_required:
                 # Optional fields get a default of None
                 field_definitions[field_name] = (typing.Optional[pydantic_type], None)
+            else:
+                field_definitions[field_name] = (pydantic_type, ...)
 
         model = create_model(model_name, **field_definitions)
         _model_cache[t] = model
+
+        # Rebuild to resolve any forward references from self-referential types
+        rebuild_ns = {f"{self._WRAPPER_PREFIX}{k.__name__}": v for k, v in _model_cache.items() if isinstance(v, type)}
+        model.model_rebuild(_types_namespace=rebuild_ns)
+
         return model
 
     def _convert_field_type_for_pydantic(self, field_type: Type, _model_cache: Dict[Type, Type[BaseModel]]) -> Type:
@@ -701,7 +720,10 @@ class TypedDictTransformer(PydanticWrappingTransformer[dict]):
 
     def _value_to_model(self, python_val: dict, model_class: Type[BaseModel], python_type: Type) -> BaseModel:
         """Convert a TypedDict to a Pydantic model instance."""
-        annotations = getattr(python_type, "__annotations__", {})
+        try:
+            annotations = typing.get_type_hints(python_type)
+        except Exception:
+            annotations = getattr(python_type, "__annotations__", {})
 
         # Convert nested values that might be TypedDicts, dataclasses, or Pydantic models
         # to a format Pydantic can validate (dicts)
@@ -714,19 +736,24 @@ class TypedDictTransformer(PydanticWrappingTransformer[dict]):
 
     def _model_to_value(self, model_instance: BaseModel, expected_type: Type) -> dict:
         """Convert a Pydantic model instance back to a TypedDict."""
-        annotations = getattr(expected_type, "__annotations__", {})
-        required_keys: frozenset[str] = getattr(expected_type, "__required_keys__", frozenset())
+        try:
+            annotations_with_extras = typing.get_type_hints(expected_type, include_extras=True)
+        except Exception:
+            annotations_with_extras = getattr(expected_type, "__annotations__", {})
         result = {}
-        for name, field_type in annotations.items():
+        for name, field_type in annotations_with_extras.items():
             if hasattr(model_instance, name):
                 value = getattr(model_instance, name)
                 # Skip NotRequired fields when value is None
                 # This ensures that optional fields not provided in the input
                 # are absent from the output dict (not set to None)
-                if name not in required_keys and value is None:
+                origin = get_origin(field_type)
+                if origin is NotRequired and value is None:
                     continue
+                # Unwrap NotRequired/Required before converting
+                inner_type = self._unwrap_typeddict_field_type(field_type)
                 # Recursively convert nested values
-                converted_value = self._convert_value_from_pydantic(value, field_type)
+                converted_value = self._convert_value_from_pydantic(value, inner_type)
                 result[name] = converted_value
         return result
 

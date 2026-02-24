@@ -18,22 +18,24 @@ def literal_types_match(downstream: LiteralType, upstream: LiteralType) -> bool:
     if downstream == upstream:
         return True
 
-    if downstream.collection_type:
-        if not upstream.collection_type:
+    # Use HasField to check protobuf oneof/message fields, since accessing an unset
+    # sub-message field returns a default instance that is truthy in some protobuf libs.
+    if downstream.HasField("collection_type"):
+        if not upstream.HasField("collection_type"):
             return False
         return literal_types_match(downstream.collection_type, upstream.collection_type)
 
-    if downstream.map_value_type:
-        if not upstream.map_value_type:
+    if downstream.HasField("map_value_type"):
+        if not upstream.HasField("map_value_type"):
             return False
         return literal_types_match(downstream.map_value_type, upstream.map_value_type)
 
     # Handle enum types
-    if downstream.enum_type and upstream.enum_type:
+    if downstream.HasField("enum_type") and upstream.HasField("enum_type"):
         return _enum_types_match(downstream.enum_type, upstream.enum_type)
 
     # Handle union types
-    if downstream.union_type and upstream.union_type:
+    if downstream.HasField("union_type") and upstream.HasField("union_type"):
         return _union_types_match(downstream.union_type, upstream.union_type)
 
     # If none of the above conditions are met, the types are not castable

@@ -108,7 +108,7 @@ def test_base_image_with_layers_unnamed():
 def test_base_image_with_layers():
     raw_base_image = (
         Image.from_base("myregistry.com/myimage:v123")
-        .clone(registry="other_registry", name="myclone")
+        .clone(registry="other_registry", name="myclone", extendable=True)
         .with_apt_packages("vim")
     )
     assert raw_base_image.uri == "other_registry/myclone:a95ad60ad5a34dd40c304b81cf9a15ae"
@@ -272,3 +272,92 @@ def test_layer_unhashable_type_error_message():
 
     valid_apt = AptPackages(packages=("vim", "curl"))
     assert valid_apt.packages == ("vim", "curl")
+
+
+def test_extendable_default():
+    """Test that from_debian_base creates extendable images by default."""
+    img = Image.from_debian_base(registry="localhost", name="test-image")
+    assert img.extendable is True
+
+
+def test_extendable_true():
+    """Test that images can be marked as extendable."""
+    img = Image.from_debian_base(registry="localhost", name="test-image").clone(extendable=True)
+    assert img.extendable is True
+
+
+def test_extendable_defaults_to_false_on_clone():
+    """Test that cloning defaults to extendable=False."""
+    # Start with extendable=True (from_debian_base default)
+    img1 = Image.from_debian_base(registry="localhost", name="test-image")
+    assert img1.extendable is True
+
+    # Clone without specifying extendable - should default to False
+    img2 = img1.clone(name="cloned-image")
+    assert img2.extendable is True
+
+    # Clone with extendable=True to keep it extendable
+    img3 = img1.clone(name="still-extendable", extendable=True)
+    assert img3.extendable is True
+
+    # Clone without specifying extendable - should default to False (not preserve True)
+    img4 = img3.clone(name="another-clone", extendable=False)
+    assert img4.extendable is False
+
+    # Must explicitly set extendable=True to keep it extendable
+    img5 = img3.clone(name="explicitly-extendable", extendable=True)
+    assert img5.extendable is True
+
+
+def test_extendable_can_change_on_clone():
+    """Test that extendable value can be explicitly changed when cloning."""
+    img1 = Image.from_debian_base(registry="localhost", name="test-image")
+    assert img1.extendable is True
+
+    # Explicitly make it non-extendable
+    img2 = img1.clone(name="non-extendable", extendable=False)
+    assert img2.extendable is False
+
+    # Make it extendable again
+    img3 = img2.clone(name="extendable-again", extendable=True)
+    assert img3.extendable is True
+
+
+def test_extendable_allows_layers():
+    """Test that extendable images can have layers added."""
+    img = Image.from_debian_base(registry="localhost", name="test-image")
+    assert img.extendable is True
+
+    # Should not raise any errors
+    img2 = img.with_pip_packages("numpy", "pandas")
+    assert len(img2._layers) > len(img._layers)
+
+    img3 = img2.with_apt_packages("vim")
+    assert len(img3._layers) > len(img2._layers)
+
+
+def test_from_debian_base_is_extendable_by_default():
+    """Test that images created with from_debian_base are extendable by default."""
+    img = Image.from_debian_base(registry="localhost", name="test-image")
+    assert img.extendable is True
+
+    # Should be able to add layers
+    img2 = img.with_pip_packages("numpy")
+    assert len(img2._layers) > len(img._layers)
+
+
+def test_from_dockerfile_is_not_extendable():
+    """Test that images created with from_dockerfile are not extendable by default."""
+    import tempfile
+    from pathlib import Path
+
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".Dockerfile", delete=False) as f:
+        f.write("FROM python:3.12-slim\n")
+        f.write("RUN echo 'test'\n")
+        dockerfile_path = Path(f.name)
+
+    try:
+        img = Image.from_dockerfile(file=dockerfile_path, registry="localhost", name="test-image")
+        assert img.extendable is False
+    finally:
+        dockerfile_path.unlink()

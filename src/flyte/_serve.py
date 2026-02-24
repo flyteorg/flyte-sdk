@@ -42,10 +42,7 @@ if TYPE_CHECKING:
 
 ServeMode = Literal["local", "remote"]
 
-# Module-level registry for local app endpoints so AppEnvironment.endpoint
-# can resolve them when running locally.
 _LOCAL_HOST: str = "localhost"
-_LOCAL_APP_ENDPOINTS: dict[str, str] = {}
 _LOCAL_DEACTIVATE_TIMEOUT: float = 6.0
 _LOCAL_IS_ACTIVE_TOTAL_TIMEOUT: float = 60.0
 _LOCAL_IS_ACTIVE_RESPONSE_TIMEOUT: float = 2.0
@@ -67,6 +64,9 @@ class AppHandle(Protocol):
 
     @property
     def name(self) -> str: ...
+
+    @property
+    def url(self) -> str: ...
 
     @property
     def endpoint(self) -> str: ...
@@ -290,8 +290,6 @@ class _LocalApp:
                     pass
             if wait:
                 self._thread.join(timeout=deactivate_timeout)
-        # Remove from the local endpoint registry
-        _LOCAL_APP_ENDPOINTS.pop(self._app_env.name, None)
         # Unregister from the global active-apps set.
         _ACTIVE_LOCAL_APPS.discard(self)
         return self
@@ -447,6 +445,8 @@ class _Serve:
         for k, v in self._env_vars.items():
             os.environ[k] = v
 
+        os.environ["_RUN_MODE"] = "local"
+
         if app_env._server is not None:
             # Use the @app_env.server decorator function - run in a background thread
             return self._serve_local_with_server_func(app_env, _LOCAL_HOST, port, materialized_parameters)
@@ -540,9 +540,6 @@ class _Serve:
         thread.start()
         local_app._thread = thread
 
-        # Register the endpoint so AppEnvironment.endpoint can resolve it
-        _LOCAL_APP_ENDPOINTS[app_env.name] = local_app.endpoint
-
         return local_app
 
     def _serve_local_with_command(
@@ -571,9 +568,6 @@ class _Serve:
         process = subprocess.Popen(cmd, env=os.environ.copy(), start_new_session=True)
 
         local_app = _LocalApp(app_env=app_env, _serve_obj=self, host=host, port=port, process=process)
-
-        # Register the endpoint so AppEnvironment.endpoint can resolve it
-        _LOCAL_APP_ENDPOINTS[app_env.name] = local_app.endpoint
 
         return local_app
 

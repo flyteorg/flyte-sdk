@@ -62,8 +62,8 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 # Create virtual environment
 uv venv && source .venv/bin/activate
 
-# Install Flyte 2 (beta)
-uv pip install --prerelease=allow flyte
+# Install Flyte 2
+uv pip install flyte
 ```
 
 ### Your First Workflow
@@ -72,7 +72,7 @@ uv pip install --prerelease=allow flyte
 # hello.py
 # /// script
 # requires-python = ">=3.10"
-# dependencies = ["flyte>=2.0.0b0"]
+# dependencies = ["flyte>=2.0.0"]
 # ///
 
 import flyte
@@ -103,7 +103,7 @@ if __name__ == "__main__":
 
 ```bash
 # Run locally, execute remotely
-uv run --prerelease=allow hello.py
+uv run hello.py
 ```
 
 ## 🏗️ Core Concepts

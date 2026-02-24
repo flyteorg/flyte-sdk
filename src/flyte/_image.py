@@ -441,6 +441,7 @@ class Image:
     name: Optional[str] = field(default=None)
     platform: Tuple[Architecture, ...] = field(default=("linux/amd64",))
     python_version: Tuple[int, int] = field(default_factory=_detect_python_version)
+    extendable: bool = field(default=False)
     # Refer to the image_refs (name:image-uri) set in CLI or config
     _ref_name: Optional[str] = field(default=None)
 
@@ -513,6 +514,7 @@ class Image:
             name=_DEFAULT_IMAGE_NAME,
             python_version=python_version,
             platform=("linux/amd64", "linux/arm64") if platform is None else platform,
+            extendable=True,
         )
         labels_and_user = _DockerLines(
             (
@@ -586,7 +588,7 @@ class Image:
         )
 
         if registry or name:
-            return base_image.clone(registry=registry, name=name, registry_secret=registry_secret)
+            return base_image.clone(registry=registry, name=name, registry_secret=registry_secret, extendable=True)
 
         return base_image
 
@@ -689,6 +691,7 @@ class Image:
         base_image: Optional[str] = None,
         python_version: Optional[Tuple[int, int]] = None,
         addl_layer: Optional[Layer] = None,
+        extendable: Optional[bool] = None,
     ) -> Image:
         """
         Use this method to clone the current image and change the registry and name
@@ -696,12 +699,22 @@ class Image:
         :param registry: Registry to use for the image
         :param registry_secret: Secret to use to pull/push the private image.
         :param name: Name of the image
+        :param base_image: Base image to use for the image
         :param python_version: Python version for the image, if not specified, will use the current Python version
         :param addl_layer: Additional layer to add to the image. This will be added to the end of the layers.
+        :param extendable: Whether the image is extendable by other images. If True, the image can be used as a base
+         image for other images, and additional layers can be added on top of it. If False, the image cannot be
+          used as a base image for other images, and additional layers cannot be added on top of it. If None (default),
+          defaults to False for safety.
         :return:
         """
         from flyte import Secret
 
+        if addl_layer and not self.extendable:
+            raise ValueError(
+                "Cannot add additional layers to a non-extendable image. "
+                "Please create the image with extendable=True in the clone() call."
+            )
         if addl_layer and self.dockerfile:
             # We don't know how to inspect dockerfiles to know what kind it is (OS, python version, uv vs poetry, etc)
             # so there's no guarantee any of the layering logic will work.
@@ -725,6 +738,7 @@ class Image:
             name=name,
             platform=self.platform,
             python_version=python_version or self.python_version,
+            extendable=extendable if extendable is not None else self.extendable,
             _layers=new_layers,
             _image_registry_secret=Secret(key=registry_secret) if isinstance(registry_secret, str) else registry_secret,
             _ref_name=self._ref_name,
@@ -757,6 +771,7 @@ class Image:
             "dockerfile": file,
             "registry": registry,
             "name": name,
+            "extendable": False,  # Dockerfile-based images cannot have additional layers
         }
         if platform:
             kwargs["platform"] = platform

@@ -63,18 +63,20 @@ def test_annotate_extraction_dataframe():
     from flyte.io._dataframe.dataframe import extract_cols_and_format
 
     xyz = typing.Annotated[pl.DataFrame, "myformat"]
-    a, b, c, d = extract_cols_and_format(xyz)
+    a, b, c, d, e = extract_cols_and_format(xyz)
     assert a is pl.DataFrame
     assert b is None
     assert c == "myformat"
     assert d is None
+    assert e is None
 
     # Without annotation, extract_cols_and_format returns empty string
-    a, b, c, d = extract_cols_and_format(pl.DataFrame)
+    a, b, c, d, e = extract_cols_and_format(pl.DataFrame)
     assert a is pl.DataFrame
     assert b is None
     assert c == ""  # No format annotation
     assert d is None
+    assert e is None
 
 
 def test_annotate_extraction_lazyframe():
@@ -82,18 +84,20 @@ def test_annotate_extraction_lazyframe():
     from flyte.io._dataframe.dataframe import extract_cols_and_format
 
     xyz = typing.Annotated[pl.LazyFrame, "myformat"]
-    a, b, c, d = extract_cols_and_format(xyz)
+    a, b, c, d, e = extract_cols_and_format(xyz)
     assert a is pl.LazyFrame
     assert b is None
     assert c == "myformat"
     assert d is None
+    assert e is None
 
     # Without annotation, extract_cols_and_format returns empty string
-    a, b, c, d = extract_cols_and_format(pl.LazyFrame)
+    a, b, c, d, e = extract_cols_and_format(pl.LazyFrame)
     assert a is pl.LazyFrame
     assert b is None
     assert c == ""  # No format annotation
     assert d is None
+    assert e is None
 
 
 def test_retrieving_encoder():

@@ -13,7 +13,7 @@ from flyte._logging import logger
 from flyte.config import _internal
 from flyte.config._reader import ConfigFile, get_config_file, read_file_if_exists
 
-_all__ = ["ConfigFile", "PlatformConfig", "TaskConfig", "ImageConfig"]
+__all__ = ["ConfigFile", "ImageConfig", "PlatformConfig", "TaskConfig"]
 
 if TYPE_CHECKING:
     from flyte.remote._client.auth import AuthType
