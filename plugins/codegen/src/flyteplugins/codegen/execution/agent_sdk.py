@@ -60,6 +60,7 @@ def _classify_bash_command(cmd: str) -> str:
 
 async def code_gen_eval_agent_sdk(
     name: str,
+    model: str,
     prompt: str,
     schema: Optional[str] = None,
     constraints: Optional[list[str]] = None,
@@ -80,13 +81,14 @@ async def code_gen_eval_agent_sdk(
     max_turns: int = 50,
     language: str = "python",
 ) -> CodeGenEvalResult:
-    """Generate code using Claude Agent SDK.
+    """Generate single-file Python code using Claude Agent SDK.
 
-    Runs an autonomous Claude agent that generates code, writes tests,
-    builds sandbox images, and iterates until tests pass.
+    Runs an autonomous Claude agent that generates a single Python script,
+    writes tests, builds sandbox images, and iterates until tests pass.
 
     Args:
         name: Unique name for this task. Used for workspace isolation, sandbox image names, etc.
+        model: Claude model to use (e.g. "sonnet", "opus", "haiku").
         prompt: Task description
         schema: Optional external schema definition (e.g., target database schema)
         constraints: Optional constraints
@@ -606,6 +608,7 @@ The solution code lives at /var/inputs/solution.py inside the sandbox.
 
     try:
         options = ClaudeAgentOptions(
+            model=model,
             system_prompt=system_prompt,
             allowed_tools=["Bash", "Read", "Write", "Edit"],
             cwd=str(workspace),

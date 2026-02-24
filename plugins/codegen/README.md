@@ -21,7 +21,7 @@ from flyte.io import File
 from flyte.sandbox import sandbox_environment
 from flyteplugins.codegen import AutoCoderAgent
 
-agent = AutoCoderAgent(name="summarize-sales", resources=flyte.Resources(cpu=1, memory="1Gi"))
+agent = AutoCoderAgent(model="gpt-4.1", name="summarize-sales", resources=flyte.Resources(cpu=1, memory="1Gi"))
 
 env = flyte.TaskEnvironment(
     name="my-env",
@@ -52,7 +52,7 @@ Uses structured-output LLM calls to generate code, detect packages, build sandbo
 agent = AutoCoderAgent(
     name="my-task",
     model="gpt-4.1",           # Any LiteLLM-compatible model
-    max_retries=10,            # LLM-driven retry loop
+    max_iterations=10,         # Generate-test-fix iterations
 )
 
 result = await agent.generate.aio(
@@ -96,7 +96,7 @@ prompt + samples
     +-- test error ----------> fix test expectations
     |
     v
-  (repeat up to max_retries)
+  (repeat up to max_iterations)
 ```
 
 ### 2. Agent SDK
@@ -154,11 +154,11 @@ result = await agent.generate.aio(prompt="...")
 | `base_packages`       | `list[str]`       | `None`         | Always-install pip packages                                   |
 | `resources`           | `flyte.Resources` | `None`         | Resources for sandbox execution (default: cpu=1, 1Gi)         |
 | `image_config`        | `ImageConfig`     | `None`         | Registry, registry_secret, python_version                     |
-| `max_retries`         | `int`             | `10`           | Max retry iterations (LiteLLM mode)                           |
+| `max_iterations`      | `int`             | `10`           | Max generate-test-fix iterations (LiteLLM mode)               |
 | `max_sample_rows`     | `int`             | `100`          | Rows to sample from data for context                          |
 | `skip_tests`          | `bool`            | `False`        | Skip test generation and execution (LiteLLM mode only)        |
 | `network_access`      | `bool`            | `False`        | Allow generated code to access the network inside the sandbox |
-| `retries`             | `int`             | `0`            | Number of retries for sandboxes                           |
+| `sandbox_retries`     | `int`             | `0`            | Flyte task-level retries for each sandbox execution           |
 | `timeout`             | `int`             | `None`         | Timeout in seconds for sandboxes                          |
 | `env_vars`            | `dict[str, str]`  | `None`         | Environment variables to pass to sandboxes                |
 | `secrets`             | `list`            | `None`         | `flyte.Secret` objects to make available to sandboxes      |
@@ -236,8 +236,6 @@ total_revenue, total_units, transaction_count = await result.run.aio()
 total_revenue, total_units, transaction_count = result.run(threshold=0.5)
 ```
 
-Requires `samples` to have been passed to `generate()`.
-
 ## Data handling
 
 When you pass `samples`, the plugin automatically:
@@ -268,6 +266,7 @@ print(result.generated_schemas)  # {"orders": "DataFrameSchema(...)", "products"
 
 ```python
 agent = AutoCoderAgent(
+    model="gpt-4.1",
     name="my-task",
     image_config=ImageConfig(
         registry="my-registry.io",
@@ -371,7 +370,7 @@ User calls agent.generate(prompt, samples, outputs, ...)
 │  ├─ execute_tests()                     │  │  │  ├─ safe (ls, cat, ...) → allow
 │  ├─ diagnose_error() (if failed)        │  │  │  └─ denied (apt, pip, curl, ...) → block
 │  ├─ fix code/tests/env                  │  │  ├─ PostToolUseFailure: trace errors
-│  └─ repeat until pass or max_retries    │  │  └─ Stop: trace summary
+│  └─ repeat until pass or max_iterations  │  │  └─ Stop: trace summary
 │                                         │  ├─ Agent writes solution.py, tests.py, packages.txt
 │                                         │  ├─ pytest intercepted → sandbox execution
 │                                         │  └─ Agent iterates until tests pass

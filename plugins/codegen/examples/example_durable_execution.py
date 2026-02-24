@@ -1,6 +1,6 @@
 """Example: Durable execution with mid-pipeline failure and cached recovery (LLM approach).
 
-Demonstrates how Flyte's caching makes retries resume from the failure point
+Demonstrates how Flyte's caching and replay logs make retries resume from the failure point
 rather than restarting from scratch:
 
 1. agent.generate() runs the full LLM pipeline — internally it builds sandbox
@@ -15,18 +15,18 @@ rather than restarting from scratch:
 
 4. Flyte retries the task. On retry:
    - agent.generate() re-executes, but the internal sandboxes
-     (image build, test execution) hit cache — completing in seconds instead
-     of minutes.
+     (image build, test execution) hit cache and the traces replay
+     — the agent completes in seconds instead of minutes.
    - result.run() re-executes, but its sandbox also hits cache —
      returning the previous result instantly.
-   - The pipeline effectively "resumes" past the failure point without
-     re-doing any expensive sandbox work.
+   - The pipeline effectively "resumes" past the failure point **without
+     re-doing any expensive LLM calls or sandbox work**.
 
 Key config:
-- cache="auto" on AutoCoderAgent → flows to all internal sandboxes
-- cache="auto" on result.run() → execution sandbox is also cached
-- retries=2 on the outer Flyte task → Flyte retries on failure
-- retries=2 on the agent → sandboxes themselves retry on infra errors
+- cache="auto" on AutoCoderAgent: flows to all internal sandboxes
+- cache="auto" on result.run(): execution sandbox is also cached
+- retries=2 on the outer Flyte task: Flyte retries on failure
+- sandbox_retries=2 on the agent: sandboxes themselves retry on infra errors
 """
 
 import logging
@@ -59,26 +59,22 @@ env = flyte.TaskEnvironment(
                 pre=True,
             ),
         )
-        .clone(
-            addl_layer=PythonWheels(
-                wheel_dir=Path(__file__).parent.parent.parent / "dist",
-                package_name="flyte",
-                pre=True,
-            ),
-            name="durable-execution",
+        .with_apt_packages("git")
+        .with_pip_packages(
+            "git+https://github.com/flyteorg/flyte-sdk.git@86f88fece16d956e28667d3f0d8d49108c8cdd68"
         )
     ),
     depends_on=[sandbox_environment],
 )
 
 # cache="auto" flows to every sandbox created during generate().
-# retries=2 means each sandbox retries on transient infra errors.
+# sandbox_retries=2 means each sandbox retries on transient infra errors.
 agent = AutoCoderAgent(
     name="durable-csv-processor",
     model="gpt-4.1",
-    max_retries=5,
+    max_iterations=5,
     resources=flyte.Resources(cpu=1, memory="512Mi"),
-    retries=2,
+    sandbox_retries=2,
     timeout=600,
     cache="auto",
 )

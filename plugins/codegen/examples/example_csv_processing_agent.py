@@ -32,7 +32,7 @@ env = flyte.TaskEnvironment(
         )
         .with_apt_packages("git")
         .with_pip_packages(
-            "git+https://github.com/flyteorg/flyte-sdk.git@bc446803e1d5d8baee479dddc72e720746a93d54"
+            "git+https://github.com/flyteorg/flyte-sdk.git@86f88fece16d956e28667d3f0d8d49108c8cdd68"
         )
     ),
     depends_on=[sandbox_environment],

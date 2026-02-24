@@ -43,13 +43,18 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class AutoCoderAgent:
-    """Agent for LLM-driven code generation with automatic testing and iteration.
+    """Agent for single-file Python code generation with automatic testing and iteration.
+
+    Generates a single Python script, builds a sandbox image with the required
+    dependencies, runs pytest-based tests, and iterates until tests pass.
 
     Uses Sandbox internally for isolated code execution.
 
     Args:
         name: Name for the agent (used in image naming and logging).
-        model: Name of the LLM model to use.
+        model: LLM model to use (required). Must support structured outputs.
+            For LiteLLM mode (default): e.g. "gpt-4.1", "claude-sonnet-4-20250514".
+            For Agent SDK mode: a Claude model ("sonnet", "opus", "haiku").
         system_prompt: Optional system prompt to use for LLM. If not provided, a default prompt with structured output requirements is used.
         api_key: Optional environment variable name for LLM API key.
         api_base: Optional base URL for LLM API.
@@ -57,12 +62,12 @@ class AutoCoderAgent:
         base_packages: Optional list of base packages to install in the sandbox.
         resources: Optional resources for sandbox execution (default: cpu=1, 1Gi).
         image_config: Optional image configuration for sandbox execution.
-        max_retries: Optional maximum number of retries for code generation. Defaults to 10.
+        max_iterations: Maximum number of generate-test-fix iterations. Defaults to 10.
         max_sample_rows: Optional maximum number of rows to use for sample data. Defaults to 100.
         skip_tests: Optional flag to skip testing. Defaults to False.
         block_network: Allow generated code to access the network inside the sandbox.
             Defaults to False (network disabled for safety).
-        retries: Number of retries for sandboxes. Defaults to 0.
+        sandbox_retries: Number of Flyte task-level retries for each sandbox execution. Defaults to 0.
         timeout: Timeout in seconds for sandboxes. Defaults to None.
         env_vars: Environment variables to pass to sandboxes.
         secrets: flyte.Secret objects to make available to sandboxes.
@@ -96,8 +101,8 @@ class AutoCoderAgent:
             return await result.run.aio()
     """
 
+    model: str
     name: str = "auto-coder"
-    model: str = "gpt-4.1"
     system_prompt: Optional[str] = None
     api_key: Optional[str] = None
     api_base: Optional[str] = None
@@ -105,11 +110,11 @@ class AutoCoderAgent:
     base_packages: Optional[list[str]] = None
     resources: Optional[flyte.Resources] = None
     image_config: Optional[ImageConfig] = None
-    max_retries: int = 10
+    max_iterations: int = 10
     max_sample_rows: int = 100
     skip_tests: bool = False
     block_network: bool = True
-    retries: int = 0
+    sandbox_retries: int = 0
     timeout: Optional[int] = None
     env_vars: Optional[dict[str, str]] = None
     secrets: Optional[list] = None
@@ -248,6 +253,7 @@ class AutoCoderAgent:
             logger.info("Using Claude Agent SDK approach")
             return await code_gen_eval_agent_sdk(
                 name=self.name,
+                model=self.model,
                 prompt=prompt,
                 schema=schema,
                 constraints=constraints,
@@ -260,7 +266,7 @@ class AutoCoderAgent:
                 resources=self.resources,
                 image_config=self.image_config,
                 block_network=self.block_network,
-                retries=self.retries,
+                retries=self.sandbox_retries,
                 timeout=self.timeout,
                 env_vars=self.env_vars,
                 secrets=self.secrets,
@@ -269,7 +275,7 @@ class AutoCoderAgent:
             )
 
         logger.info(
-            f"Starting code generation: language={language}, model={self.model}, max_retries={self.max_retries}"
+            f"Starting code generation: language={language}, model={self.model}, max_iterations={self.max_iterations}"
         )
 
         # LiteLLM setup
@@ -372,12 +378,13 @@ class _CodeGenSession:
     ):
         # Agent reference (immutable config)
         self.agent = agent
+        self.name = agent.name
         self.model = agent.model
-        self.max_retries = 1 if skip_tests else agent.max_retries
+        self.max_iterations = 1 if skip_tests else agent.max_iterations
         self.skip_tests = skip_tests
         self.block_network = block_network
         self.resources = agent.resources
-        self.retries = agent.retries
+        self.sandbox_retries = agent.sandbox_retries
         self.timeout = agent.timeout
         self.env_vars = agent.env_vars
         self.secrets = agent.secrets
@@ -487,10 +494,10 @@ class _CodeGenSession:
 
     async def run(self) -> CodeGenEvalResult:
         """Execute the full retry loop."""
-        for attempt in range(1, self.max_retries + 1):
+        for attempt in range(1, self.max_iterations + 1):
             logger.info(
                 f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-                f"[ITERATION] Starting attempt {attempt}/{self.max_retries}\n"
+                f"[ITERATION] Starting attempt {attempt}/{self.max_iterations}\n"
                 f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
             )
             try:
@@ -508,7 +515,7 @@ class _CodeGenSession:
                     attempt=attempt,
                     error=f"Attempt {attempt} failed: {self.last_error}",
                 )
-                if attempt == self.max_retries:
+                if attempt == self.max_iterations:
                     return self.last_result
                 self.needs_new_code = True
                 if self.tests is None:
@@ -518,8 +525,8 @@ class _CodeGenSession:
             success=False,
             test_output="",
             exit_code=-1,
-            attempt=self.max_retries,
-            error=f"All {self.max_retries} attempts failed: {self.last_error}",
+            attempt=self.max_iterations,
+            error=f"All {self.max_iterations} attempts failed: {self.last_error}",
         )
 
     async def _attempt(self, attempt: int) -> Optional[CodeGenEvalResult]:
@@ -598,7 +605,7 @@ class _CodeGenSession:
             name=self.name,
             resources=self.resources,
             block_network=self.block_network,
-            retries=self.retries,
+            retries=self.sandbox_retries,
             timeout=self.timeout,
             env_vars=self.env_vars,
             secrets=self.secrets,
@@ -1061,7 +1068,7 @@ class _CodeGenSession:
             error=error_msg,
         )
 
-        if attempt == self.max_retries:
+        if attempt == self.max_iterations:
             return self.last_result
 
         # Set flags for next iteration

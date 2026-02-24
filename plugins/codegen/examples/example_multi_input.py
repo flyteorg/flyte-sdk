@@ -22,6 +22,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(level
 logging.getLogger("flyteplugins.codegen.auto_coder_agent").setLevel(logging.INFO)
 
 agent = AutoCoderAgent(
+    model="gpt-4.1",
     name="multi-input-join",
     image_config=ImageConfig(python_version=(3, 11)),
     api_key="OPENAI_API_KEY",

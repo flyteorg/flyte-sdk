@@ -24,6 +24,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(level
 logging.getLogger("flyteplugins.codegen.auto_coder_agent").setLevel(logging.INFO)
 
 agent = AutoCoderAgent(
+    model="gpt-4.1",
     name="sensor-analysis",
     base_packages=["numpy"],
     max_sample_rows=30,
@@ -44,13 +45,9 @@ env = flyte.TaskEnvironment(
                 pre=True,
             ),
         )
-        .clone(
-            addl_layer=PythonWheels(
-                wheel_dir=Path(__file__).parent.parent.parent / "dist",
-                package_name="flyte",
-                pre=True,
-            ),
-            name="dataframe-analysis",
+        .with_apt_packages("git")
+        .with_pip_packages(
+            "git+https://github.com/flyteorg/flyte-sdk.git@86f88fece16d956e28667d3f0d8d49108c8cdd68"
         )
     ).with_pip_packages("pyarrow"),
     depends_on=[sandbox_environment],

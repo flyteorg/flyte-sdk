@@ -1,15 +1,16 @@
 """Example: Durable execution with mid-pipeline failure and cached recovery (Agent SDK).
 
-Same pattern as example_durable_execution.py but using the Agent SDK path
-(use_agent_sdk=True). The Agent SDK autonomously generates, tests, and fixes
-code — all sandboxes created during this process are cached.
+Same pattern as example_durable_execution.py, but using the Agent SDK path (use_agent_sdk=True).
+The Agent SDK autonomously generates, tests, and fixes code — all sandboxes created during
+this process are cached, and traces can be replayed on retries if called in the same sequence.
+The plugin checkpoints all intermediate artifacts (generated code, test code, test results,
+detected packages, etc.), so on retry the agent can resume by loading these checkpoints
+into the local workspace rather than regenerating everything.
 
 On retry after a mid-pipeline failure:
-- The agent re-runs, but sandbox image builds and test executions hit cache
+- The agent re-runs, but traces replay and sandbox image builds and test executions hit cache
 - The execution `Sandbox` from result.run() also hits cache
 - The retry effectively resumes from the failure point
-
-See example_durable_execution.py for detailed comments on the caching mechanism.
 """
 
 import logging
@@ -43,13 +44,9 @@ env = flyte.TaskEnvironment(
                 pre=True,
             ),
         )
-        .clone(
-            addl_layer=PythonWheels(
-                wheel_dir=Path(__file__).parent.parent.parent / "dist",
-                package_name="flyte",
-                pre=True,
-            ),
-            name="durable-execution-agent",
+        .with_apt_packages("git")
+        .with_pip_packages(
+            "git+https://github.com/flyteorg/flyte-sdk.git@86f88fece16d956e28667d3f0d8d49108c8cdd68"
         )
     ),
     depends_on=[sandbox_environment],
@@ -59,10 +56,11 @@ env = flyte.TaskEnvironment(
 # When the agent runs pytest, the PreToolUse hook intercepts it and runs tests
 # in a sandbox — that task gets cache="auto".
 agent = AutoCoderAgent(
+    model="claude-sonnet-4-5-20250929",
     name="durable-csv-agent",
     use_agent_sdk=True,
     resources=flyte.Resources(cpu=1, memory="512Mi"),
-    retries=2,
+    sandbox_retries=2,
     timeout=600,
     cache="auto",
 )

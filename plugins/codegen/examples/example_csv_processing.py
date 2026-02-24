@@ -6,7 +6,7 @@ Demonstrates:
 - Multiple typed outputs (float, int)
 - Custom model selection
 - litellm_params for LLM tuning (temperature, max_tokens)
-- max_retries for controlling retry budget
+- max_iterations for controlling iteration budget
 - resources for sandbox execution
 """
 
@@ -45,7 +45,7 @@ env = flyte.TaskEnvironment(
         )
         .with_apt_packages("git")
         .with_pip_packages(
-            "git+https://github.com/flyteorg/flyte-sdk.git@bc446803e1d5d8baee479dddc72e720746a93d54"
+            "git+https://github.com/flyteorg/flyte-sdk.git@86f88fece16d956e28667d3f0d8d49108c8cdd68"
         )
     ),
     depends_on=[sandbox_environment],
@@ -92,7 +92,7 @@ async def generate_and_run(
     agent = AutoCoderAgent(
         name=f"sales-data-{index}",
         model="gpt-4.1",
-        max_retries=5,
+        max_iterations=5,
         resources=flyte.Resources(cpu=1, memory="512Mi"),
         litellm_params={"temperature": 0.2, "max_tokens": 4096},
     )

@@ -24,7 +24,7 @@ logging.getLogger("flyteplugins.codegen.auto_coder_agent").setLevel(logging.INFO
 agent = AutoCoderAgent(
     name="csv-sync",
     model="gpt-4.1",
-    max_retries=5,
+    max_iterations=5,
     resources=flyte.Resources(cpu=1, memory="512Mi"),
     litellm_params={"temperature": 0.2, "max_tokens": 4096},
 )
@@ -44,13 +44,9 @@ env = flyte.TaskEnvironment(
                 pre=True,
             ),
         )
-        .clone(
-            addl_layer=PythonWheels(
-                wheel_dir=Path(__file__).parent.parent.parent / "dist",
-                package_name="flyte",
-                pre=True,
-            ),
-            name="csv-sync",
+        .with_apt_packages("git")
+        .with_pip_packages(
+            "git+https://github.com/flyteorg/flyte-sdk.git@86f88fece16d956e28667d3f0d8d49108c8cdd68"
         )
     ),
     depends_on=[sandbox_environment],

@@ -163,11 +163,11 @@ class CodeGenEvalResult(BaseModel):
         cache: str = "auto",
         **overrides,
     ) -> Any:
-        """Run generated code using sample data as defaults (one-off execution).
+        """Run generated code in an isolated sandbox (one-off execution).
 
-        This is a convenience method for running the code immediately with the
-        samples provided during generate(). Override any sample by passing it
-        as a keyword argument. Use as_task() for reusable execution.
+        If samples were provided during generate(), they are used as defaults.
+        Override any input by passing it as a keyword argument. If no samples
+        exist, all declared inputs must be provided via ``**overrides``.
 
         Args:
             name: Name for the sandbox
@@ -177,16 +177,13 @@ class CodeGenEvalResult(BaseModel):
             env_vars: Environment variables to pass to the sandbox.
             secrets: flyte.Secret objects to make available.
             cache: CacheRequest: "auto", "override", or "disable". Defaults to "auto".
-            **overrides: Optional values to override sample defaults
+            **overrides: Input values. Merged on top of sample defaults (if any).
 
         Returns:
             Tuple of typed outputs.
         """
         if not self.success:
             raise ValueError("Cannot run failed code generation")
-
-        if not self.original_samples:
-            raise ValueError("No samples available. Use as_task() for manual data passing.")
 
         if not self.image:
             raise ValueError("No image available - code generation did not build an image")
@@ -205,7 +202,7 @@ class CodeGenEvalResult(BaseModel):
             cache=cache,
         )
 
-        run_data = {**self.original_samples, **overrides}
+        run_data = {**(self.original_samples or {}), **overrides}
         return await sandbox.run.aio(image=self.image, **run_data)
 
 
