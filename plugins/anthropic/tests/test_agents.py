@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import flyte
 import pytest
 from flyte._json_schema import literal_type_to_json_schema
+from flyte.io import DataFrame, Dir, File
 from flyte.models import NativeInterface
 from flyte.types._type_engine import TypeEngine
 
@@ -105,6 +106,66 @@ def test_json_schema_enum_from_literal():
     enum_type = literal_to_enum(Literal["celsius", "fahrenheit"])
     schema = _schema(enum_type)
     assert schema == {"type": "string", "enum": ["celsius", "fahrenheit"]}
+
+
+# ---------------------------------------------------------------------------
+# File, Dir, DataFrame JSON schema tests
+# ---------------------------------------------------------------------------
+
+
+def test_json_schema_file():
+    schema = _schema(File)
+    assert schema["type"] == "object"
+    assert schema["format"] == "blob"
+    assert schema["properties"]["uri"] == {"type": "string", "default": ""}
+    assert schema["properties"]["dimensionality"]["default"] == "SINGLE"
+
+
+def test_json_schema_dir():
+    schema = _schema(Dir)
+    assert schema["type"] == "object"
+    assert schema["format"] == "blob"
+    assert schema["properties"]["uri"] == {"type": "string", "default": ""}
+    assert schema["properties"]["dimensionality"]["default"] == "MULTIPART"
+
+
+def test_json_schema_dataframe():
+    schema = _schema(DataFrame)
+    assert schema["type"] == "object"
+    assert schema["format"] == "structured-dataset"
+    assert "uri" in schema["properties"]
+    assert "format" in schema["properties"]
+
+
+def test_json_schema_optional_file():
+    # Optional[File] should simplify to just the File schema
+    schema = _schema(Optional[File])
+    assert schema["type"] == "object"
+    assert schema["format"] == "blob"
+
+
+def test_native_interface_json_schema_with_file_and_dir():
+    def process(input_file: File, output_dir: Dir) -> str:
+        """Process a file and write to a directory."""
+        return "done"
+
+    schema = NativeInterface.from_callable(process).json_schema
+    assert schema["properties"]["input_file"]["format"] == "blob"
+    assert schema["properties"]["input_file"]["properties"]["dimensionality"]["default"] == "SINGLE"
+    assert schema["properties"]["output_dir"]["format"] == "blob"
+    assert schema["properties"]["output_dir"]["properties"]["dimensionality"]["default"] == "MULTIPART"
+    assert set(schema["required"]) == {"input_file", "output_dir"}
+
+
+def test_native_interface_json_schema_with_dataframe():
+    def analyze(data: DataFrame, label: str) -> str:
+        """Analyze a dataframe."""
+        return label
+
+    schema = NativeInterface.from_callable(analyze).json_schema
+    assert schema["properties"]["data"]["format"] == "structured-dataset"
+    assert schema["properties"]["label"] == {"type": "string"}
+    assert set(schema["required"]) == {"data", "label"}
 
 
 # ---------------------------------------------------------------------------
