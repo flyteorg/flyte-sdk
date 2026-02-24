@@ -47,7 +47,7 @@ class TestCreateValidation:
 
     def test_defaults(self):
         sb = create(name="my-sandbox")
-        assert sb.script_mode is True
+        assert sb.auto_io is True
         assert sb.block_network is True
         assert sb.retries == 0
         assert sb.timeout is None
@@ -190,7 +190,7 @@ class TestCreateImageSpec:
 
 class TestMakeContainerTaskCodeMode:
     def _make(self, **kwargs) -> ContainerTask:
-        sb = create(name="test-sb", code="print('hello')", script_mode=False, **kwargs)
+        sb = create(name="test-sb", code="print('hello')", **kwargs)
         return sb._make_container_task(image="myimage:latest", task_name="test-sb")
 
     def test_returns_container_task(self):
@@ -343,28 +343,28 @@ class TestGenerateAutoScript:
 
 
 # ---------------------------------------------------------------------------
-# script_mode — make_container_task differences
+# auto_io — make_container_task differences
 # ---------------------------------------------------------------------------
 
 
-class TestScriptMode:
-    def _make_script(self, **kwargs) -> ContainerTask:
-        # script_mode=True is the default, but explicit for clarity
-        sb = create(name="t", code="import sys; print(sys.argv)", script_mode=True, **kwargs)
+class TestAutoIO:
+    def _make_verbatim(self, **kwargs) -> ContainerTask:
+        sb = create(name="t", code="import sys; print(sys.argv)", auto_io=False, **kwargs)
         return sb._make_container_task("img:latest", "t")
 
     def _make_auto(self, **kwargs) -> ContainerTask:
-        sb = create(name="t", code="result = 1", script_mode=False, **kwargs)
+        # auto_io=True is the default
+        sb = create(name="t", code="result = 1", **kwargs)
         return sb._make_container_task("img:latest", "t")
 
-    def test_script_mode_no_cli_args_in_bash(self):
-        task = self._make_script(inputs={"x": int})
+    def test_verbatim_no_cli_args_in_bash(self):
+        task = self._make_verbatim(inputs={"x": int})
         bash_cmd = task._cmd[-1]
         # No template substitution injected
         assert "{{.inputs" not in bash_cmd
 
-    def test_script_mode_bash_cmd_is_simple(self):
-        task = self._make_script()
+    def test_verbatim_bash_cmd_is_simple(self):
+        task = self._make_verbatim()
         bash_cmd = task._cmd[-1]
         assert "python $1" in bash_cmd
 
@@ -386,23 +386,18 @@ class TestScriptMode:
 
 class TestRunScriptContent:
     def test_auto_mode_generates_preamble(self):
-        sb = create(
-            name="t",
-            code="result = n * 2",
-            inputs={"n": int},
-            outputs={"result": int},
-            script_mode=False,
-        )
+        # auto_io=True is the default
+        sb = create(name="t", code="result = n * 2", inputs={"n": int}, outputs={"result": int})
         generated = sb._generate_auto_script()
         assert "_parser" in generated
         assert "n = _args.n" in generated
         assert "write_text" in generated
 
-    def test_script_mode_uses_code_verbatim(self):
+    def test_verbatim_uses_code_as_is(self):
         raw = "import sys\nprint(sys.argv)"
-        sb = create(name="t", code=raw)  # script_mode=True is the default
+        sb = create(name="t", code=raw, auto_io=False)
         assert sb.code == raw
-        assert sb.script_mode is True
+        assert sb.auto_io is False
 
 
 # ---------------------------------------------------------------------------
@@ -465,25 +460,25 @@ class TestSupportedTypes:
 
     @pytest.mark.parametrize("t", SUPPORTED_SCALAR_TYPES)
     def test_scalar_input_type_accepted(self, t):
-        sb = create(name="t", code="pass", inputs={"val": t}, script_mode=False)
+        sb = create(name="t", code="pass", inputs={"val": t}, auto_io=True)
         task = sb._make_container_task("img:latest", "t")
         assert isinstance(task, ContainerTask)
 
     @pytest.mark.parametrize("t", SUPPORTED_IO_TYPES)
     def test_io_input_type_accepted(self, t):
-        sb = create(name="t", code="pass", inputs={"val": t}, script_mode=False)
+        sb = create(name="t", code="pass", inputs={"val": t}, auto_io=True)
         task = sb._make_container_task("img:latest", "t")
         assert isinstance(task, ContainerTask)
 
     @pytest.mark.parametrize("t", SUPPORTED_SCALAR_TYPES)
     def test_scalar_output_type_accepted(self, t):
-        sb = create(name="t", code="pass", outputs={"out": t}, script_mode=False)
+        sb = create(name="t", code="pass", outputs={"out": t}, auto_io=True)
         task = sb._make_container_task("img:latest", "t")
         assert isinstance(task, ContainerTask)
 
     @pytest.mark.parametrize("t", SUPPORTED_IO_TYPES)
     def test_io_output_type_accepted(self, t):
-        sb = create(name="t", code="pass", outputs={"out": t}, script_mode=False)
+        sb = create(name="t", code="pass", outputs={"out": t}, auto_io=True)
         task = sb._make_container_task("img:latest", "t")
         assert isinstance(task, ContainerTask)
 

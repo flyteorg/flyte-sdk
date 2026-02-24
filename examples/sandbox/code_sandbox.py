@@ -8,12 +8,12 @@ declared ``packages`` / ``system_packages``, executed once, and discarded.
 
 Three modes:
 
-- **Script mode** (``code=``, ``script_mode=True``, default): run an arbitrary Python
-  script as-is. No CLI args injected — the script handles all I/O itself.
-- **Code mode** (``code=``, ``script_mode=False``): write just the business logic. Flyte
-  auto-generates an argparse preamble so declared inputs are available as
+- **Auto-IO mode** (``code=``, ``auto_io=True``, default): write just the business logic.
+  Flyte auto-generates an argparse preamble so declared inputs are available as
   local variables, and writes scalar outputs automatically. No boilerplate.
-- **Command mode** (``command=``): run any shell command (pytest, a binary…).
+- **Verbatim mode** (``code=``, ``auto_io=False``): run a complete Python script as-is.
+  No CLI args injected — the script handles all I/O itself.
+- **Command mode** (``command=``): run any shell command (pytest, non-Python code, etc.).
 
 Security defaults:
 - ``block_network=True`` (default) — the container has *no network interface*
@@ -45,7 +45,7 @@ sum_sandbox = flyte.sandbox.create(
     code="total = sum(range(n + 1)) if conditional else 0",
     inputs={"n": int, "conditional": bool},
     outputs={"total": int},
-    script_mode=False,
+    auto_io=True,
 )
 
 # Example 2 — code mode (auto-inject): third-party packages (numpy)
@@ -71,7 +71,7 @@ stats_sandbox = flyte.sandbox.create(
     },
     outputs={"mean": float, "std": float, "window_end": datetime.datetime},
     packages=["numpy"],
-    script_mode=False,
+    auto_io=True,
 )
 
 # Example 3 — script mode: complete Python script, full control

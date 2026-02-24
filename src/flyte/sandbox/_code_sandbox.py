@@ -61,8 +61,8 @@ class _Sandbox:
     image_name: Optional[str] = None
     image: Optional[str] = None  # If provided, skip build and use this image directly
 
-    # Code mode behaviour
-    script_mode: bool = True  # True = run code as-is; False = auto-inject I/O
+    # Python code behaviour
+    auto_io: bool = True  # True = auto-inject typed I/O; False = verbatim Python script
 
     # Runtime
     resources: Optional[flyte.Resources] = None
@@ -233,8 +233,8 @@ class _Sandbox:
         resources = self.resources or flyte.Resources(cpu=1, memory="1Gi")
 
         if self.code is not None:
-            if self.script_mode:
-                # Script mode: run the Python script as-is with no injected CLI args.
+            if not self.auto_io:
+                # Verbatim mode: run the Python script as-is with no injected CLI args.
                 # The user is fully responsible for reading inputs and writing outputs.
                 bash_cmd = (
                     "set -o pipefail && python $1; "
@@ -333,7 +333,7 @@ class _Sandbox:
         task.parent_env_name = task_name
 
         if self.code is not None:
-            script_content = self.code if self.script_mode else self._generate_auto_script()
+            script_content = self._generate_auto_script() if self.auto_io else self.code
             script_path = Path(tempfile.gettempdir()) / f"{task_name}_generated.py"
             script_path.write_text(script_content)
             script = await File.from_local(
@@ -368,7 +368,7 @@ def create(
     image_config: Optional[ImageConfig] = None,
     image_name: Optional[str] = None,
     image: Optional[str] = None,
-    script_mode: bool = True,
+    auto_io: bool = True,
     block_network: bool = True,
     retries: int = 0,
     timeout: Optional[int] = None,
@@ -376,24 +376,34 @@ def create(
     secrets: Optional[list] = None,
     cache: str = "auto",
 ) -> _Sandbox:
-    """Create a stateless code sandbox.
+    """Create a stateless Python code sandbox.
 
     Three modes, mutually exclusive:
 
-    - **Script mode** (``code`` provided, ``script_mode=True``, default): run
-      an arbitrary Python script as-is. No CLI args are injected — the script
-      handles all I/O itself (reading from ``/var/inputs/``, environment
-      variables, etc.) and writes outputs to ``/var/outputs/<name>`` manually.
-    - **Code mode** (``code`` provided, ``script_mode=False``): write just the
-      business logic. Flyte auto-generates an argparse preamble so declared
-      inputs are available as local variables, and writes declared scalar
-      outputs to ``/var/outputs/`` automatically. No boilerplate needed.
+    - **Auto-IO mode** (``code`` provided, ``auto_io=True``, default): write
+      just the business logic. Flyte auto-generates an argparse preamble so
+      declared inputs are available as local variables, and writes declared
+      scalar outputs to ``/var/outputs/`` automatically. No boilerplate needed.
+    - **Verbatim mode** (``code`` provided, ``auto_io=False``): run an
+      arbitrary Python script as-is. No CLI args are injected — the script
+      handles all I/O itself (reading from ``/var/inputs/``, writing to
+      ``/var/outputs/<name>`` manually).
     - **Command mode** (``command`` provided): run any shell command directly,
-      e.g. a pytest invocation or a compiled binary.
+      e.g. a compiled binary or a shell pipeline.
 
     Call ``.run()`` on the returned sandbox to build the image and execute.
 
-    Example — script mode (complete Python script, full control)::
+    Example — auto-IO mode (default, no boilerplate)::
+
+        sandbox = flyte.sandbox.create(
+            name="double",
+            code="result = x * 2",
+            inputs={"x": int},
+            outputs={"result": int},
+        )
+        result = await sandbox.run.aio(x=21)  # returns 42
+
+    Example — verbatim mode (complete Python script, full control)::
 
         sandbox = flyte.sandbox.create(
             name="etl",
@@ -404,18 +414,8 @@ def create(
             \"\"\",
             inputs={"payload": File},
             outputs={"total": int},
+            auto_io=False,
         )
-
-    Example — code mode (auto-inject, no argparse needed)::
-
-        sandbox = flyte.sandbox.create(
-            name="double",
-            code="result = x * 2",
-            inputs={"x": int},
-            outputs={"result": int},
-            script_mode=False,
-        )
-        result = await sandbox.run.aio(x=21)  # returns 42
 
     Example — command mode::
 
@@ -429,15 +429,15 @@ def create(
 
     Args:
         name: Sandbox name. Derives task and image names.
-        code: Python source to run (code or script mode). Mutually exclusive
-            with ``command``.
+        code: Python source to run (auto-IO or verbatim mode). Mutually
+            exclusive with ``command``.
         inputs: Input type declarations. Supported types:
 
             - Primitive: ``int``, ``float``, ``str``, ``bool``
             - Date/time: ``datetime.datetime``, ``datetime.timedelta``
             - IO handles: ``flyte.io.File``, ``flyte.io.Dir``
               (bind-mounted at ``/var/inputs/<name>``; available as a path
-              string in auto-inject mode)
+              string in auto-IO mode)
 
         outputs: Output type declarations. Supported types:
 
@@ -455,12 +455,11 @@ def create(
         image_config: Registry and Python version settings.
         image_name: Explicit image name, overrides the auto-generated one.
         image: Pre-built image URI. Skips the build step if provided.
-        script_mode: When ``True`` (default), ``code`` is run verbatim as a
-            complete Python script with no injected CLI args — the script
-            handles all I/O itself. When ``False``, Flyte wraps ``code`` with
-            an auto-generated argparse preamble and output-writing epilogue so
-            inputs are available as local variables and scalar outputs are
-            collected automatically.
+        auto_io: When ``True`` (default), Flyte wraps ``code`` with an
+            auto-generated argparse preamble and output-writing epilogue so
+            declared inputs are available as local variables and scalar outputs
+            are collected automatically — no boilerplate needed. When
+            ``False``, ``code`` is run verbatim and must handle all I/O itself.
         block_network: Block all outbound network access inside the container.
             Defaults to ``True`` (``--network none``).
         retries: Number of task retries on failure.
@@ -499,7 +498,7 @@ def create(
         image_config=image_config,
         image_name=image_name,
         image=image,
-        script_mode=script_mode,
+        auto_io=auto_io,
         block_network=block_network,
         retries=retries,
         timeout=timeout,
