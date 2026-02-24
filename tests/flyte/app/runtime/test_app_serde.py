@@ -6,6 +6,7 @@ into protobuf IDL format without using mocks.
 """
 
 import pathlib
+from datetime import timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -1114,3 +1115,108 @@ async def test_materialize_parameters_preserves_other_parameter_properties():
     assert result[0].env_var == "MODEL_PATH"
     assert result[0].mount == "/mnt/model"
     assert result[0].download is True
+
+
+def test_translate_app_env_to_idl_with_request_timeout_int():
+    """
+    GOAL: Verify that request_timeout (int) is serialized into TimeoutConfig on the Spec.
+
+    Tests that:
+    - An int request_timeout is serialized as a Duration with correct seconds
+    - The timeouts field is populated on the Spec
+    """
+    app_env = AppEnvironment(
+        name="timeout-app",
+        image=Image.from_base("python:3.11"),
+        request_timeout=30,
+    )
+
+    ctx = SerializationContext(
+        org="test-org",
+        project="test-project",
+        domain="test-domain",
+        version="v1",
+        root_dir=pathlib.Path.cwd(),
+    )
+
+    app_idl = translate_app_env_to_idl(app_env, ctx)
+
+    assert app_idl.spec.HasField("timeouts")
+    assert app_idl.spec.timeouts.request_timeout.seconds == 30
+    assert app_idl.spec.timeouts.request_timeout.nanos == 0
+
+
+def test_translate_app_env_to_idl_with_request_timeout_timedelta():
+    """
+    GOAL: Verify that request_timeout (timedelta) is serialized into TimeoutConfig on the Spec.
+
+    Tests that:
+    - A timedelta request_timeout is serialized as a Duration with correct seconds
+    """
+    app_env = AppEnvironment(
+        name="timeout-app",
+        image=Image.from_base("python:3.11"),
+        request_timeout=timedelta(minutes=5),
+    )
+
+    ctx = SerializationContext(
+        org="test-org",
+        project="test-project",
+        domain="test-domain",
+        version="v1",
+        root_dir=pathlib.Path.cwd(),
+    )
+
+    app_idl = translate_app_env_to_idl(app_env, ctx)
+
+    assert app_idl.spec.HasField("timeouts")
+    assert app_idl.spec.timeouts.request_timeout.seconds == 300
+    assert app_idl.spec.timeouts.request_timeout.nanos == 0
+
+
+def test_translate_app_env_to_idl_without_request_timeout():
+    """
+    GOAL: Verify that when request_timeout is None, the timeouts field is not set on the Spec.
+    """
+    app_env = AppEnvironment(
+        name="no-timeout-app",
+        image=Image.from_base("python:3.11"),
+        request_timeout=None,
+    )
+
+    ctx = SerializationContext(
+        org="test-org",
+        project="test-project",
+        domain="test-domain",
+        version="v1",
+        root_dir=pathlib.Path.cwd(),
+    )
+
+    app_idl = translate_app_env_to_idl(app_env, ctx)
+
+    assert not app_idl.spec.HasField("timeouts")
+
+
+def test_translate_app_env_to_idl_with_request_timeout_zero():
+    """
+    GOAL: Verify that request_timeout=0 is serialized (not silently dropped).
+    """
+    app_env = AppEnvironment(
+        name="zero-timeout-app",
+        image=Image.from_base("python:3.11"),
+        request_timeout=0,
+    )
+
+    ctx = SerializationContext(
+        org="test-org",
+        project="test-project",
+        domain="test-domain",
+        version="v1",
+        root_dir=pathlib.Path.cwd(),
+    )
+
+    app_idl = translate_app_env_to_idl(app_env, ctx)
+
+    assert app_idl.spec.HasField("timeouts")
+    assert app_idl.spec.timeouts.request_timeout.seconds == 0
+    assert app_idl.spec.timeouts.request_timeout.nanos == 0

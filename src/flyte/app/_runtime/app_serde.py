@@ -368,6 +368,13 @@ async def translate_app_env_to_idl(
         short_description=app_env.description,
     )
 
+    # Build timeout config
+    timeout_config = None
+    if app_env.request_timeout is not None:
+        timeout_dur = Duration()
+        timeout_dur.FromTimedelta(app_env.request_timeout)
+        timeout_config = app_definition_pb2.TimeoutConfig(request_timeout=timeout_dur)
+
     # Build the full App IDL
     return app_definition_pb2.App(
         metadata=app_definition_pb2.Meta(
@@ -395,5 +402,6 @@ async def translate_app_env_to_idl(
             container=container,
             pod=pod,
             inputs=await translate_parameters(parameters),
+            timeouts=timeout_config,
         ),
     )
