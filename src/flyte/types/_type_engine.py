@@ -629,16 +629,11 @@ class PydanticTransformer(TypeTransformer[BaseModel]):
         1. TypeEngine.get_transformer returns PydanticTransformer (tag matches "Pydantic Transformer")
         2. from_binary_idl / to_python_value can deserialize via model_validate
         """
-        if literal_type.simple == SimpleType.STRUCT and literal_type.HasField(
-            "metadata"
-        ):
+        if literal_type.simple == SimpleType.STRUCT and literal_type.HasField("metadata"):
             # Only claim types that have the Pydantic Transformer structure tag.
             # This tag is set by UnionTransformer when wrapping Pydantic models in a union,
             # and distinguishes them from dataclass types which share the same LiteralType shape.
-            if (
-                literal_type.HasField("structure")
-                and literal_type.structure.tag == self.name
-            ):
+            if literal_type.HasField("structure") and literal_type.structure.tag == self.name:
                 metadata = _MessageToDict(literal_type.metadata)
                 if TITLE in metadata:
                     return _create_pydantic_model_from_schema(metadata)

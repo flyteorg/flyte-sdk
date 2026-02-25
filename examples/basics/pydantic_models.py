@@ -5,20 +5,18 @@ Enum, nested BaseModel, and combinations thereof.
 """
 
 from enum import Enum
-from typing import Dict, List, Optional, Literal
+from pathlib import Path
+from typing import Dict, List, Literal, Optional
 
 from pydantic import BaseModel
 
 import flyte
 from flyte._image import PythonWheels
-from pathlib import Path
 
 env = flyte.TaskEnvironment(
     name="ex-pydantic-models",
     image=flyte.Image.from_debian_base().clone(
-        addl_layer=PythonWheels(
-            wheel_dir=Path(__file__).parent.parent.parent / "dist", package_name="flyte"
-        ),
+        addl_layer=PythonWheels(wheel_dir=Path(__file__).parent.parent.parent / "dist", package_name="flyte"),
         name="ex-pydantic-models-image",
     ),
 )
@@ -119,9 +117,7 @@ def run_pipeline(num_lines: int) -> ProcessingResult:
         weights=[0.6, 0.4],
         metadata={"team": "infra", "env": "staging"},
         limits={"cpu": 4, "memory": 8192},
-        retry=RetryPolicy(
-            max_retries=5, backoff_seconds=2.0, retryable_codes=[429, 502]
-        ),
+        retry=RetryPolicy(max_retries=5, backoff_seconds=2.0, retryable_codes=[429, 502]),
         fallback_retry=RetryPolicy(max_retries=1),
         extra_retries=[
             RetryPolicy(max_retries=2, backoff_seconds=0.5),
