@@ -450,6 +450,25 @@ async def test_function_tool_execute_flyte_task():
     assert result == 12
 
 
+@pytest.mark.asyncio
+async def test_function_tool_execute_async_flyte_task_uses_aio():
+    """Verify task.aio() is called (not self.func) for async Flyte tasks."""
+    env = flyte.TaskEnvironment("test-exec-aio-path")
+
+    @env.task
+    async def add_async(a: int, b: int) -> int:
+        """Add two numbers."""
+        return a + b
+
+    tool = function_tool(add_async)
+
+    with patch.object(tool.task, "aio", new_callable=AsyncMock, return_value=99) as mock_aio:
+        result = await tool.execute(a=10, b=20)
+
+    mock_aio.assert_called_once_with(a=10, b=20)
+    assert result == 99
+
+
 # ---------------------------------------------------------------------------
 # Helpers for run_agent mock tests
 # ---------------------------------------------------------------------------

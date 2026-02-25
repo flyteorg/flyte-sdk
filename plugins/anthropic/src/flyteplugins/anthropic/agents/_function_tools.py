@@ -55,8 +55,7 @@ class FunctionTool:
         """
         if self.task is not None:
             if self.is_async:
-                return await self.task(**kwargs)
-            return await asyncio.to_thread(self.task, **kwargs)
+                return await self.task.aio(**kwargs)
         if self.is_async:
             return await self.func(**kwargs)
         return await asyncio.to_thread(self.func, **kwargs)
