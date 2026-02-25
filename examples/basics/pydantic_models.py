@@ -10,7 +10,7 @@ from typing import Literal, Optional
 from pydantic import BaseModel
 
 import flyte
-from flyte._image import PythonWheels, DIST_FOLDER
+from flyte._image import DIST_FOLDER, PythonWheels
 
 env = flyte.TaskEnvironment(
     name="ex-pydantic-models",
