@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import pathlib
+import os
+import sys
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set, Tuple
+from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
 
 import cloudpickle
 import rich.repr
@@ -347,22 +348,16 @@ def _update_interface_inputs_and_outputs_docstring(
     return updated_interface
 
 
-async def _build_image_bg(env_name: str, image: Image) -> Tuple[str, str, Optional[Any]]:
+async def _build_image_bg(env_name: str, image: Image) -> Tuple[str, str]:
     """
-    Build the image in the background and return the environment name, the built image URI,
-    and the RunIdentifierData (if built by the remote image builder).
+    Build the image in the background and return the environment name and the built image URI.
     """
     from ._build import build
-    from ._internal.imagebuild.image_builder import RunIdentifierData
 
     status.step(f"Building image {image.name} for environment {env_name}")
     result = await build.aio(image)
     assert result.uri is not None, "Image build result URI is None, make sure to wait for the build to complete"
-    run_id_data = None
-    if result.remote_run:
-        run_id = result.remote_run.pb2.action.id.run
-        run_id_data = RunIdentifierData(org=run_id.org, project=run_id.project, domain=run_id.domain, name=run_id.name)
-    return env_name, result.uri, run_id_data
+    return env_name, result.uri
 
 
 async def _build_images(deployment: DeploymentPlan, image_refs: Dict[str, str] | None = None) -> ImageCache:
@@ -377,8 +372,7 @@ async def _build_images(deployment: DeploymentPlan, image_refs: Dict[str, str] |
         image_refs = {}
 
     images = []
-    image_identifier_map: Dict[str, str] = {}
-    build_run_ids: Dict[str, Any] = {}
+    image_identifier_map = {}
     for env_name, env in deployment.envs.items():
         if env.image and not isinstance(env.image, str):
             if env.image._ref_name is not None:
@@ -409,15 +403,13 @@ async def _build_images(deployment: DeploymentPlan, image_refs: Dict[str, str] |
     if images:
         with status.group(f"Building {len(images)} image{'s' if len(images) > 1 else ''}..."):
             final_images = await asyncio.gather(*images)
-        for env_name, image_uri, run_id_data in final_images:
+        for env_name, image_uri in final_images:
             status.success(f"Built image for environment {env_name}: {image_uri}")
             image_identifier_map[env_name] = image_uri
-            if run_id_data is not None:
-                build_run_ids[env_name] = run_id_data
     else:
         final_images = []
 
-    return ImageCache(image_lookup=image_identifier_map, build_run_ids=build_run_ids)
+    return ImageCache(image_lookup=image_identifier_map)
 
 
 async def _deploy_task_env(context: DeploymentContext) -> DeployedTaskEnvironment:
@@ -448,22 +440,10 @@ async def apply(deployment_plan: DeploymentPlan, copy_style: CopyFiles, dryrun: 
 
     cfg = get_init_config()
 
-    # Resolve any CodeBundleLayer layers before building images
-    from flyte._image import resolve_code_bundle_layer
-
-    for env_name, env in deployment_plan.envs.items():
-        if isinstance(env.image, Image):
-            env.image = resolve_code_bundle_layer(env.image, copy_style, pathlib.Path(cfg.root_dir))
-
     image_cache = await _build_images(deployment_plan, cfg.images)
 
     if copy_style == "none" and not deployment_plan.version:
         raise flyte.errors.DeploymentError("Version must be set when copy_style is none")
-    elif copy_style == "none":
-        code_bundle = None
-        # safe because we would've caught None's above
-        assert deployment_plan.version is not None
-        version = deployment_plan.version
     else:
         # if this is an AppEnvironment.include, skip code bundling here and build a code bundle at the
         # app._deploy._deploy_app function
@@ -501,6 +481,20 @@ async def apply(deployment_plan: DeploymentPlan, copy_style: CopyFiles, dryrun: 
     return Deployment(envs)
 
 
+def _find_env_module(env: Environment):
+    """Scan sys.modules to find the module that contains this env as a top-level variable."""
+    for module in list(sys.modules.values()):
+        if module is None:
+            continue
+        try:
+            # search for at least one value inside this module that is the same object as env and return it
+            if any(v is env for v in vars(module).values()):
+                return module
+        except TypeError:
+            continue
+    return None
+
+
 def _recursive_discover(planned_envs: Dict[str, Environment], env: Environment) -> Dict[str, Environment]:
     """
     Recursively deploy the environment and its dependencies, if not already deployed (present in env_tasks) and
@@ -508,17 +502,29 @@ def _recursive_discover(planned_envs: Dict[str, Environment], env: Environment) 
     """
     if env.name in planned_envs:
         if planned_envs[env.name] is not env:
-            # Two distinct TaskEnvironment objects share the same name. This is
-            # most commonly caused by the same module being imported twice under
-            # different names — for example, when `flyte deploy` is run from the
-            # project root of a src-layout project without --root-dir, causing
-            # `my_module.envs` and `src.my_module.envs` to both be loaded.
-            raise ValueError(
-                f"Duplicate environment name '{env.name}' found. "
-                f"This is often caused by the same module being imported twice under different names. "
-                f"If your project uses a src/ layout, make sure to pass --root-dir pointing to your "
-                f"source root (e.g. --root-dir src) so modules are resolved consistently."
-            )
+            existing_env = planned_envs[env.name]
+            existing_module = _find_env_module(existing_env)
+            new_module = _find_env_module(env)
+            existing_file = getattr(existing_module, "__file__", None)
+            new_file = getattr(new_module, "__file__", None)
+
+            if existing_file and new_file and os.path.samefile(existing_file, new_file):
+                # Same file, different module names — classic dual-import caused by
+                # the module being loaded twice under different names (e.g.
+                # `my_module.envs` and `src.my_module.envs`).
+                raise ValueError(
+                    f"Environment '{env.name}' is defined in '{existing_file}' but was imported "
+                    f"twice under different module names ('{existing_module.__name__}' and "
+                    f"'{new_module.__name__}'). This is usually caused by running `flyte deploy` "
+                    f"from the project root of a src/ layout project without --root-dir. "
+                    f"Try adding --root-dir src (or your source root directory)."
+                )
+            else:
+                # if the environment names were incorrectly declared
+                raise ValueError(
+                    f"Duplicate environment name '{env.name}' found. "
+                    f"Each TaskEnvironment must have a unique name."
+                )
     # Add the environment to the existing envs
     planned_envs[env.name] = env
 
@@ -532,19 +538,32 @@ def plan_deploy(*envs: Environment, version: Optional[str] = None) -> List[Deplo
     if envs is None:
         return [DeploymentPlan({})]
     deployment_plans = []
-    visited_envs: Set[str] = set()
+    visited_envs: Dict[str, Environment] = {}
     for env in envs:
         if env.name in visited_envs:
-            raise ValueError(
-                f"Duplicate environment name '{env.name}' found. "
-                f"Ensure each TaskEnvironment has a unique name. "
-                f"If your project uses a src/ layout, also check that --root-dir points to your "
-                f"source root (e.g. --root-dir src) to prevent the same module from being "
-                f"imported twice under different names."
-            )
+            existing_env = visited_envs[env.name]
+            existing_module = _find_env_module(existing_env)
+            new_module = _find_env_module(env)
+            existing_file = getattr(existing_module, "__file__", None)
+            new_file = getattr(new_module, "__file__", None)
+            # Same file getting loaded as different module names such as `my_module.envs` and `src.my_module.envs`
+            if existing_file and new_file and os.path.samefile(existing_file, new_file):
+                raise ValueError(
+                    f"Environment '{env.name}' is defined in '{existing_file}' but was imported "
+                    f"twice under different module names ('{existing_module.__name__}' and "
+                    f"'{new_module.__name__}'). This is usually caused by running `flyte deploy` "
+                    f"from the project root of a src/ layout project without --root-dir. "
+                    f"Try adding --root-dir src (or your source root directory)."
+                )
+            else:
+                # if the environment names were incorrectly declared
+                raise ValueError(
+                    f"Duplicate environment name '{env.name}' found. "
+                    f"Each TaskEnvironment must have a unique name."
+                )
         planned_envs = _recursive_discover({}, env)
         deployment_plans.append(DeploymentPlan(planned_envs, version=version))
-        visited_envs.update(planned_envs.keys())
+        visited_envs.update(planned_envs)
     return deployment_plans
 
 
