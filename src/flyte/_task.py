@@ -452,7 +452,7 @@ class TaskTemplate(Generic[P, R, F]):
             env_vars=env_vars,
             secrets=secrets,
             max_inline_io_bytes=max_inline_io_bytes,
-            pod_template=pod_template,
+            pod_template=pod_template or self.pod_template,
             interruptible=interruptible,
             queue=queue or self.queue,
             links=links or self.links,
