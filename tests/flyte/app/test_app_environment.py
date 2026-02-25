@@ -1175,7 +1175,7 @@ def test_app_environment_decorators_with_async_functions():
 
 
 @pytest.mark.parametrize(
-    "timeout_val, expected_seconds",
+    "request_timeout_val, expected_seconds",
     [
         (None, None),
         (30, 30),
@@ -1184,7 +1184,7 @@ def test_app_environment_decorators_with_async_functions():
         (timedelta(hours=1), 3600),
     ],
 )
-def test_timeouts_request_valid(timeout_val, expected_seconds):
+def test_timeouts_request_valid(request_timeout_val, expected_seconds):
     """
     GOAL: Validate that Timeouts.request accepts int, timedelta, and None, and normalizes int to timedelta.
 
@@ -1197,7 +1197,7 @@ def test_timeouts_request_valid(timeout_val, expected_seconds):
     app_env = AppEnvironment(
         name="timeout-app",
         image="python:3.11",
-        timeouts=Timeouts(request=timeout_val),
+        timeouts=Timeouts(request=request_timeout_val),
     )
     if expected_seconds is None:
         assert app_env.timeouts.request is None
@@ -1207,7 +1207,7 @@ def test_timeouts_request_valid(timeout_val, expected_seconds):
 
 
 @pytest.mark.parametrize(
-    "timeout_val, expected_error",
+    "request_timeout_val, expected_error",
     [
         (-1, "request timeout must be non-negative"),
         (timedelta(seconds=-1), "request timeout must be non-negative"),
@@ -1216,7 +1216,7 @@ def test_timeouts_request_valid(timeout_val, expected_seconds):
         (timedelta(hours=2), "request timeout must not exceed 1 hour"),
     ],
 )
-def test_timeouts_request_invalid(timeout_val, expected_error):
+def test_timeouts_request_invalid(request_timeout_val, expected_error):
     """
     GOAL: Validate that Timeouts.request rejects negative values and values exceeding 1 hour.
 
@@ -1226,7 +1226,7 @@ def test_timeouts_request_invalid(timeout_val, expected_error):
         AppEnvironment(
             name="timeout-app",
             image="python:3.11",
-            timeouts=Timeouts(request=timeout_val),
+            timeouts=Timeouts(request=request_timeout_val),
         )
 
 
