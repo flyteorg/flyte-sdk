@@ -5,8 +5,7 @@ Enum, nested BaseModel, and combinations thereof.
 """
 
 from enum import Enum
-from pathlib import Path
-from typing import Dict, List, Literal, Optional
+from typing import Literal, Optional
 
 from pydantic import BaseModel
 
@@ -30,7 +29,7 @@ class BatchMode(str, Enum):
 class RetryPolicy(BaseModel):
     max_retries: int = 3
     backoff_seconds: float = 1.0
-    retryable_codes: List[int] = [429, 500, 503]
+    retryable_codes: list[int] = [429, 500, 503]
 
 
 class BatchConfig(BaseModel):
@@ -48,12 +47,12 @@ class BatchConfig(BaseModel):
     description: Optional[str] = None
 
     # list
-    tags: List[str] = []
-    weights: List[float] = []
+    tags: list[str] = []
+    weights: list[float] = []
 
     # dict
-    metadata: Dict[str, str] = {}
-    limits: Dict[str, int] = {}
+    metadata: dict[str, str] = {}
+    limits: dict = {}
 
     # nested model
     retry: RetryPolicy = RetryPolicy()
@@ -62,10 +61,10 @@ class BatchConfig(BaseModel):
     fallback_retry: Optional[RetryPolicy] = None
 
     # list of nested models
-    extra_retries: List[RetryPolicy] = []
+    extra_retries: list[RetryPolicy] = []
 
     # dict with nested model values
-    per_stage_retry: Dict[str, RetryPolicy] = {}
+    per_stage_retry: dict[str, RetryPolicy] = {}
 
     # Literal
     mode: Literal["fast", "slow"] = "fast"
@@ -79,7 +78,7 @@ class ProcessingResult(BaseModel):
 
 @env.task
 def process_data(
-    input_lines: List[str],
+    input_lines: list[str],
     batch_config: Optional[BatchConfig] = None,
 ) -> ProcessingResult:
     """Process input lines using the given batch configuration.
