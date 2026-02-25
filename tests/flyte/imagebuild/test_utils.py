@@ -185,7 +185,11 @@ def test_copy_files_to_context_basic():
         (src_dir / "lib").mkdir()
         (src_dir / "lib" / "helper.py").write_text("def h(): pass")
 
-        # --- Case 1: absolute directory goes under _flyte_abs_context ---
+        # Create a .git directory with some contents
+        (src_dir / ".git").mkdir()
+        (src_dir / ".git" / "HEAD").write_text("ref: refs/heads/main")
+        (src_dir / ".git" / "config").write_text("[core]\n\tbare = false")
+
         dst = copy_files_to_context(src_dir, context_dir)
         assert "_flyte_abs_context" in str(dst)
         assert (dst / "app.py").exists()
@@ -193,9 +197,5 @@ def test_copy_files_to_context_basic():
         assert (dst / "lib" / "helper.py").exists()
         assert (dst / "lib" / "helper.py").read_text() == "def h(): pass"
 
-        # # --- Case 2: absolute single file ---
-        # single_file = src_dir / "app.py"
-        # dst2 = copy_files_to_context(single_file, context_dir, ignore_patterns=[])
-        # assert "_flyte_abs_context" in str(dst2)
-        # assert dst2.exists()
-        # assert dst2.read_text() == "print('app')"
+        # --- .git/ should NOT be copied ---
+        assert not (dst / ".git").exists(), ".git directory should be ignored"
