@@ -121,9 +121,7 @@ class Timeouts:
         if isinstance(self.request, int):
             self.request = timedelta(seconds=self.request)
         elif not isinstance(self.request, timedelta):
-            raise TypeError(
-                f"Expected request to be of type int or timedelta, got {type(self.request)}"
-            )
+            raise TypeError(f"Expected request to be of type int or timedelta, got {type(self.request)}")
         if self.request < timedelta(0):
             raise ValueError("request timeout must be non-negative")
         if self.request > _MAX_REQUEST_TIMEOUT:
