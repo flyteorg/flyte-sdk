@@ -4,7 +4,10 @@ import time
 
 import flyte
 
-env = flyte.TaskEnvironment("stress_fanout")
+env = flyte.TaskEnvironment(
+    name="stress_fanout",
+    resources=flyte.Resources(cpu="350m", memory="300Mi"),
+)
 
 
 @env.task
@@ -113,6 +116,6 @@ async def main(
 
 if __name__ == "__main__":
     flyte.init_from_config()
-    run = flyte.with_runcontext("local").run(main, fanout_per_layer=[1, 1, 2], sleep_sec=1.0, jitter_sec=0.5)
+    run = flyte.with_runcontext("local").run(main, fanout_per_layer=[70, 70, 1], sleep_sec=1.0, jitter_sec=0.5)
     print(run.outputs)
     # print(run.url)
