@@ -19,6 +19,7 @@ from flyte.errors import CodeBundleError
 from flyte.models import CodeBundle
 
 from ._ignore import GitIgnore, Ignore, StandardIgnore
+from ._include import FlyteInclude
 from ._packaging import create_bundle, list_files_to_bundle, list_relative_files_to_bundle, print_ls_tree
 from ._utils import CopyFiles, hash_file
 
@@ -140,6 +141,20 @@ async def build_code_bundle(
     """
     status.step("Bundling code...")
     logger.debug("Building code bundle.")
+
+    # Allowlist mode: when .flyteinclude is present, delegate entirely to
+    # build_code_bundle_from_relative_paths — no ignore filtering applied.
+    flyte_include = FlyteInclude(from_dir)
+    if flyte_include.has_patterns:
+        logger.info(f"Using .flyteinclude allowlist mode ({len(flyte_include.patterns)} patterns)")
+        return await build_code_bundle_from_relative_paths(
+            tuple(flyte_include.patterns),
+            from_dir=from_dir,
+            extract_dir=extract_dir,
+            dryrun=dryrun,
+            copy_bundle_to=copy_bundle_to,
+        )
+
     from flyte.remote import upload_file
 
     if not ignore:
