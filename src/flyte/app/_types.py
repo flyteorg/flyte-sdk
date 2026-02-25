@@ -123,7 +123,7 @@ class Timeouts:
         if self.request < timedelta(0):
             raise ValueError("request timeout must be non-negative")
         if self.request > _MAX_REQUEST_TIMEOUT:
-            raise ValueError("request timeout must not exceed 1 hour")
+            raise ValueError(f"request timeout must not exceed {_MAX_REQUEST_TIMEOUT}")
 
 
 @rich.repr.auto

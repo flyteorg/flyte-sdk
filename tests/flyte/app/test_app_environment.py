@@ -1211,9 +1211,9 @@ def test_timeouts_request_valid(request_timeout_val, expected_seconds):
     [
         (-1, "request timeout must be non-negative"),
         (timedelta(seconds=-1), "request timeout must be non-negative"),
-        (3601, "request timeout must not exceed 1 hour"),
-        (timedelta(hours=1, seconds=1), "request timeout must not exceed 1 hour"),
-        (timedelta(hours=2), "request timeout must not exceed 1 hour"),
+        (3601, "request timeout must not exceed"),
+        (timedelta(hours=1, seconds=1), "request timeout must not exceed"),
+        (timedelta(hours=2), "request timeout must not exceed"),
     ],
 )
 def test_timeouts_request_invalid(request_timeout_val, expected_error):
