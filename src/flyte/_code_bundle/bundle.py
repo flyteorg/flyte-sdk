@@ -138,6 +138,9 @@ async def build_code_bundle(
 
     :return: The code bundle, which contains the path where the code was zipped to.
     """
+    if copy_style == "none":
+        raise ValueError("If copy_style is 'none', just don't make a code bundle")
+
     status.step("Bundling code...")
     logger.debug("Building code bundle.")
     from flyte.remote import upload_file
@@ -146,7 +149,6 @@ async def build_code_bundle(
         ignore = (StandardIgnore, GitIgnore)
 
     logger.debug(f"Finding files to bundle, ignoring as configured by: {ignore}")
-    breakpoint()
     files, digest = list_files_to_bundle(from_dir, True, *ignore, copy_style=copy_style)
     if len(files) == 0:
         raise CodeBundleError(
