@@ -522,8 +522,7 @@ def _recursive_discover(planned_envs: Dict[str, Environment], env: Environment) 
             else:
                 # if the environment names were incorrectly declared
                 raise ValueError(
-                    f"Duplicate environment name '{env.name}' found. "
-                    f"Each TaskEnvironment must have a unique name."
+                    f"Duplicate environment name '{env.name}' found. Each TaskEnvironment must have a unique name."
                 )
     # Add the environment to the existing envs
     planned_envs[env.name] = env
@@ -558,8 +557,7 @@ def plan_deploy(*envs: Environment, version: Optional[str] = None) -> List[Deplo
             else:
                 # if the environment names were incorrectly declared
                 raise ValueError(
-                    f"Duplicate environment name '{env.name}' found. "
-                    f"Each TaskEnvironment must have a unique name."
+                    f"Duplicate environment name '{env.name}' found. Each TaskEnvironment must have a unique name."
                 )
         planned_envs = _recursive_discover({}, env)
         deployment_plans.append(DeploymentPlan(planned_envs, version=version))
