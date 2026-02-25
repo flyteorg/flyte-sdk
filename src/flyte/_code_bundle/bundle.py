@@ -146,6 +146,7 @@ async def build_code_bundle(
         ignore = (StandardIgnore, GitIgnore)
 
     logger.debug(f"Finding files to bundle, ignoring as configured by: {ignore}")
+    breakpoint()
     files, digest = list_files_to_bundle(from_dir, True, *ignore, copy_style=copy_style)
     if len(files) == 0:
         raise CodeBundleError(

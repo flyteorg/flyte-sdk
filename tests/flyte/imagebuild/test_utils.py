@@ -170,3 +170,32 @@ def test_copy_files_to_context_ignores_egg_info():
         # Verify .egg-info directories are NOT copied
         assert not (dst_path / "seeds.egg-info").exists(), "seeds.egg-info should be ignored"
         assert not (dst_path / "subdir" / "nested.egg-info").exists(), "nested.egg-info should be ignored"
+
+
+def test_copy_files_to_context_basic():
+    """Test copy behavior for absolute dirs and single files."""
+    with tempfile.TemporaryDirectory() as tmp:
+        src_dir = Path(tmp) / "project"
+        context_dir = Path(tmp) / "context"
+        src_dir.mkdir()
+        context_dir.mkdir()
+
+        # Create some source files
+        (src_dir / "app.py").write_text("print('app')")
+        (src_dir / "lib").mkdir()
+        (src_dir / "lib" / "helper.py").write_text("def h(): pass")
+
+        # --- Case 1: absolute directory goes under _flyte_abs_context ---
+        dst = copy_files_to_context(src_dir, context_dir)
+        assert "_flyte_abs_context" in str(dst)
+        assert (dst / "app.py").exists()
+        assert (dst / "app.py").read_text() == "print('app')"
+        assert (dst / "lib" / "helper.py").exists()
+        assert (dst / "lib" / "helper.py").read_text() == "def h(): pass"
+
+        # # --- Case 2: absolute single file ---
+        # single_file = src_dir / "app.py"
+        # dst2 = copy_files_to_context(single_file, context_dir, ignore_patterns=[])
+        # assert "_flyte_abs_context" in str(dst2)
+        # assert dst2.exists()
+        # assert dst2.read_text() == "print('app')"

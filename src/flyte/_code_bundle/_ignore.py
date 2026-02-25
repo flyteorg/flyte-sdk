@@ -141,6 +141,7 @@ class GitIgnore(Ignore):
 
 
 STANDARD_IGNORE_PATTERNS = [
+    ".git",
     "*.pyc",
     "**/*.pyc",
     "__pycache__",
