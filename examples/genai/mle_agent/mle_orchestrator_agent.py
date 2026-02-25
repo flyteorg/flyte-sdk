@@ -592,7 +592,7 @@ async def mle_orchestrator_agent(
     data: File,
     feature_columns: list[str],
     target_column: str,
-    max_iter: int = 3,
+    max_iter: int = 5,
 ) -> str:
     """MLE agent that builds orchestration code using pre-defined tools.
 
@@ -614,8 +614,20 @@ async def mle_orchestrator_agent(
     """
     code = await write_pipeline_code(prompt, TOOLS)
 
-    for attempt in range(max_iter):
-        tab = flyte.report.get_tab(f"Attempt {attempt + 1}")
+    for attempt in range(1, max_iter + 1):
+        tab = flyte.report.get_tab(f"Attempt {attempt}")
+
+        if attempt == 1:
+            # 🔥 python code error
+            code = f"1234 / 0\n\n{code}\n"  # division by zero
+
+        if attempt == 2:
+            # 🔥 monty sandbox error: try to use imports
+            code = f"import os\nos._exit(1)\n\n{code}\n"  # exit with error
+
+        if attempt == 3:
+            # 🔥 monty sandbox error: try to use network
+            code = f"import httpx\nhttpx.get('https://www.google.com')\n\n{code}\n"  # network access
         
         try:
             tab.replace(await _build_report(code, attempt, error=None))
@@ -677,7 +689,7 @@ if __name__ == "__main__":
             data=data_file,
             feature_columns=["feature1", "feature2"],
             target_column="target",
-            max_iter=3,
+            max_iter=5,
         )
         print(f"View at: {run.url}")
         run.wait()

@@ -9,8 +9,10 @@ The agent takes a user prompt, data, and max_iter budget and outputs
 the code that fulfills the prompt.
 """
 
+import json
 import os
 import re
+from dataclasses import asdict
 
 import flyte
 import flyte.errors
@@ -68,6 +70,22 @@ def _extract_code(text: str) -> str:
     return text.strip()
 
 
+def _extract_resources(text: str) -> str:
+    """Extract resources from text."""
+    match = re.search(r"```json\s*\n(.*?)```", text, re.DOTALL)
+    if match:
+        return match.group(1).strip()
+    return "{}"
+
+
+def _extract_python_dependencies(text: str) -> list[str]:
+    """Extract Python dependencies from text."""
+    match = re.search(r"```json\s*\n(.*?)```", text, re.DOTALL)
+    if match:
+        return json.loads(match.group(1).strip())
+    return []
+
+
 SYSTEM_PROMPT = """\
 You are an expert ML engineer. Write Python code to process data and train models.
 
@@ -101,80 +119,101 @@ with open('/var/outputs/model', 'wb') as f:
 ```
 """
 
-SYSTEM_PROMPT_WITH_TESTS = """\
-You are an expert ML engineer. Write Python code with unit tests to process data and train models.
+SYSTEM_PROMPT_PROVISION_SANDBOX_RESOURCES = """\
+You are an expert ML engineer. Provision sandbox resources for this dataset.
 
 IMPORTANT: Your code will run in an isolated sandbox with the following constraints:
-- The input data is available as a pandas DataFrame in the variable `data`
+- The input data is available as a pandas DataFrame in the file at `/var/inputs/data`
 - You must save your output to a file at `/var/outputs/model`
 - You have access to: pandas, numpy, scikit-learn
 - You cannot use any network calls or external APIs
 
-Based on the previous error, rewrite the code and include simple unit tests.
-
-Return TWO code blocks:
-1. First block: the main code (labeled ```python)
-2. Second block: the test code (labeled ```python test)
-
-The test code should:
-- Import the necessary modules
-- Define test functions that verify the logic works correctly
-- Use assert statements for validation
+The output should be a json string in the format of:
+```json
+{{
+    "cpu": int,  # number of CPUs
+    "memory": str (e.g. "10Mi", "1Gi", "2Gi", etc.)
+}}
+```
 """
 
+SYSTEM_PROMPT_GET_PYTHON_DEPENDENCIES = """\
+You are an expert ML engineer. Get Python dependencies from this code. Make sure
+to use your knowledge of the actual python package names, since that might be
+different from the import names. Ignore built-in Python packages, only include
+third-party packages on PyPI.
+
+The output should be a list of Python dependencies in the format of:
+```json
+[
+    "pandas",
+    "numpy",
+    "scikit-learn",
+]
+```
+"""
 
 @flyte.trace
 async def write_code(
     prompt: str,
     previous_code: str = "",
-    error_msg: str = "",
+    error: str = "",
     model: str = "claude-sonnet-4-20250514",
 ) -> str:
     """Generate code using the LLM."""
     messages = [{"role": "user", "content": prompt}]
     if previous_code:
         messages.append({"role": "user", "content": f"Previous code that failed: {previous_code}"})
-    if error_msg:
-        messages.append({"role": "user", "content": f"Error encountered: {error_msg}"})
+    if error:
+        messages.append({"role": "user", "content": f"Error encountered: {error}"})
     raw = await _call_llm(model, SYSTEM_PROMPT, messages)
     return _extract_code(raw)
 
 
 @flyte.trace
-async def write_code_with_tests(
-    prompt: str,
-    previous_code: str = "",
+async def adjust_sandbox_resources(
+    dataset_stats: str,
+    previous_resources: str = "",
     error: str = "",
     model: str = "claude-sonnet-4-20250514",
-) -> tuple[str, str]:
-    """Generate code with tests based on a previous error."""
-    user_content = f"""\
-Previous code that failed:
-```python
-{previous_code}
-```
-
-Error encountered:
-```
-{error}
-```
-
-User request: {prompt}
-
-Please fix the code and add tests to prevent this error.
-"""
-    messages = [{"role": "user", "content": user_content}]
-    raw = await _call_llm(model, SYSTEM_PROMPT_WITH_TESTS, messages)
-
-    code_blocks = re.findall(r"```(?:python(?: test)?)\s*\n(.*?)```", raw, re.DOTALL)
-    if len(code_blocks) >= 2:
-        return code_blocks[0].strip(), code_blocks[1].strip()
-    elif len(code_blocks) == 1:
-        return code_blocks[0].strip(), ""
-    return _extract_code(raw), ""
+) -> str:
+    """Provision sandbox resources."""
+    messages = [{"role": "user", "content": f"Provision sandbox resources for this dataset: {dataset_stats}"}]
+    if previous_resources:
+        messages.append({"role": "user", "content": f"Previous resources: {previous_resources}"})
+    if error:
+        messages.append({"role": "user", "content": f"Error encountered: {error}"})
+    raw = await _call_llm(model, SYSTEM_PROMPT_PROVISION_SANDBOX_RESOURCES, messages)
+    return _extract_resources(raw)
 
 
-async def _build_report(code: str, tests: str) -> str:
+async def get_python_dependencies(
+    code: str,
+    model: str = "claude-sonnet-4-20250514",
+) -> list[str]:
+    """Get Python dependencies from code."""
+    messages = [{"role": "user", "content": f"Get Python dependencies from this code: {code}"}]
+    raw = await _call_llm(model, SYSTEM_PROMPT_GET_PYTHON_DEPENDENCIES, messages)
+    return _extract_python_dependencies(raw)
+
+
+@flyte.trace
+async def get_data_stats(data: File) -> str:
+    """Get file-level statistics for resource provisioning without loading the file."""
+    import flyte.storage as storage
+
+    fs = storage.get_underlying_filesystem(path=data.path)
+    info = fs.info(data.path)
+
+    stats = {
+        "size_bytes": info.get("size", 0),
+        "path": data.path,
+        "name": data.name,
+    }
+    return json.dumps(stats, indent=2)
+
+
+async def _build_report(code: str) -> str:
     return f"""
     <!DOCTYPE html>
     <html lang="en">
@@ -189,18 +228,40 @@ async def _build_report(code: str, tests: str) -> str:
 
     <body>
         <pre><code class="language-python">{code}</code></pre>
-        <pre><code class="language-python">{tests}</code></pre>
     </body>
     </html>
     """
 
 
-@agent_env.task(retries=3, report=True)
-async def tool_builder_agent(
+@agent_env.task
+async def deploy_sandbox_task(code: str, resources_str: str, dependencies: list[str]) -> str:
+    flyte.init_in_cluster()
+
+    sandbox = flyte.sandbox.create(
+        name="mle-sandbox-training",
+        code=code,
+        inputs={"data": File},
+        outputs={"model": File},
+        packages=dependencies,
+        resources=flyte.Resources(**json.loads(resources_str)),
+        auto_io=False,
+        block_network=True,
+    )
+    image = sandbox.image or await sandbox._build.aio()
+    task_name = sandbox._task_name()
+    task = sandbox._make_container_task(image, task_name)
+    env = flyte.TaskEnvironment.from_task("mle-sandbox-training", task)
+    v = flyte.deploy(env)
+    print("Deployed environment:", v[0].summary_repr())
+    return v[0].summary_repr()
+
+
+@agent_env.task(retries=0, report=True)
+async def mle_tool_builder_agent(
     prompt: str,
     data: File,
-    max_iter: int = 3,
-) -> tuple[str, File]:
+    max_iter: int = 10,
+) -> tuple[str, str, list[str], str]:
     """MLE agent that builds its own tools via code sandbox.
 
     This agent:
@@ -217,11 +278,26 @@ async def tool_builder_agent(
     Returns:
         The final working code that was executed
     """
-    code, tests = await write_code_with_tests(prompt)
-    
-    for attempt in range(max_iter):
+    code = await write_code(prompt)
+
+    # 🔥 the first attempt will OOM, so the agent will provision more resources
+    resources_str = ""
+    resources = flyte.Resources(cpu=1, memory="10Mi")
+
+    for attempt in range(1, max_iter + 1):
+        if attempt == 2:
+            # 🔥 on the second attempt, introduce a bug in the code, which the
+            # agent should fix.
+            code = f"1234 / 0\n\n{code}\n"  # division by zero
+
+        dependencies = await get_python_dependencies(code)
+        if attempt == 3:
+            # 🔥 on the third attempt, remove all dependencies, which the agent
+            # should be able to fix by adding them back.
+            dependencies = []
+
         tab = flyte.report.get_tab(f"Attempt {attempt}")
-        tab.replace(await _build_report(code, tests))
+        tab.replace(await _build_report(code))
         await flyte.report.flush.aio()
 
         sandbox = flyte.sandbox.create(
@@ -229,18 +305,33 @@ async def tool_builder_agent(
             code=code,
             inputs={"data": File},
             outputs={"model": File},
-            packages=["pandas", "numpy", "scikit-learn", "joblib"],
+            packages=dependencies,
+            resources=resources,
             auto_io=False,
             block_network=True,
         )
 
         try:
-            model_file = await sandbox.run.aio(data=data)
-            return code, model_file
-        except flyte.errors.RuntimeUserError as exc:
+            await sandbox.run.aio(data=data)
+            break
+        except flyte.errors.OOMError as exc:
             error = str(exc)
             if attempt < max_iter - 1:
-                code, tests = await write_code_with_tests(
+                resources_str = await adjust_sandbox_resources(
+                    dataset_stats=await get_data_stats(data),
+                    previous_resources=str(asdict(resources)),
+                    error=error,
+                )
+                resources = flyte.Resources(**json.loads(resources_str))
+            else:
+                raise RuntimeError(
+                    f"Failed to run code after {max_iter} attempts. "
+                    f"Last error: {error}"
+                ) from exc
+        except Exception as exc:
+            error = str(exc)
+            if attempt < max_iter - 1:
+                code = await write_code(
                     prompt=prompt,
                     previous_code=code,
                     error=error,
@@ -251,32 +342,38 @@ async def tool_builder_agent(
                     f"Last error: {error}"
                 ) from exc
 
-    return code
+    await flyte.report.replace.aio(await _build_report(code))
+    await flyte.report.flush.aio()
+    deploy_summary = await deploy_sandbox_task(code, resources_str, dependencies)
+    return code, resources_str, dependencies, deploy_summary
 
 
 if __name__ == "__main__":
+    import asyncio
     import tempfile
 
     flyte.init_from_config()
 
     with tempfile.NamedTemporaryFile(mode="w", suffix=".csv", delete=False) as f:
         f.write("feature1,feature2,target\n")
-        for i in range(100):
+        for i in range(10_000):
             f.write(f"{i},{i*2},{i*3}\n")
         data_path = f.name
 
     async def main():
         data_file = await File.from_local(data_path)
         run = flyte.run(
-            tool_builder_agent,
-            prompt="Train a linear regression model to predict 'target' from 'feature1' and 'feature2' from this csv file using pandas.",
+            mle_tool_builder_agent,
+            prompt=(
+                "Train a linear regression model to predict 'target' from 'feature1' "
+                "and 'feature2' from this csv file using pandas."
+            ),
             data=data_file,
-            max_iter=3,
+            max_iter=10,
         )
         print(f"View at: {run.url}")
         run.wait()
-        print(f"Result: {run.outputs()}")
 
-    import asyncio
+        print(f"Result: {run.outputs()}")
 
     asyncio.run(main())
