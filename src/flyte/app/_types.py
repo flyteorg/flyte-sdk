@@ -106,9 +106,13 @@ _MAX_REQUEST_TIMEOUT = timedelta(hours=1)
 @rich.repr.auto
 @dataclass
 class Timeouts:
-    """Timeout configuration for the application."""
+    """Timeout configuration for the application.
 
-    """Timeout for requests to the application. Can be an int (seconds) or timedelta. Must not exceed 1 hour."""
+    Attributes:
+        request: Timeout for requests to the application. Can be an int
+            (seconds) or timedelta. Must not exceed 1 hour.
+    """
+
     request: int | timedelta | None = None
 
     def __post_init__(self):
@@ -123,7 +127,7 @@ class Timeouts:
         if self.request < timedelta(0):
             raise ValueError("request timeout must be non-negative")
         if self.request > _MAX_REQUEST_TIMEOUT:
-            raise ValueError(f"request timeout must not exceed {_MAX_REQUEST_TIMEOUT}")
+            raise ValueError("request timeout must not exceed 1 hour (3600 seconds)")
 
 
 @rich.repr.auto
