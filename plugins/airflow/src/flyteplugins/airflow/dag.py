@@ -124,6 +124,14 @@ class FlyteDAG:
             for task in root_snapshot:
                 task()  # _call_as_synchronous=True → submit_sync → blocks until done
 
+        # Register all operator tasks with the DAG's TaskEnvironment so that
+        # they get parent_env / parent_env_name (required for serialization and
+        # image lookup) and appear in env.tasks (required for deployment).
+        # from_task validates image consistency across tasks and returns a new
+        # env; we reassign `env` so the orchestrator task (env.task below)
+        # ends up in the same environment.
+        env = flyte.TaskEnvironment.from_task(env.name, *self._tasks.values())
+
         # Find the first call frame outside this module so the Flyte task is
         # registered under the user's module, not dag.py.  The
         # DefaultTaskResolver records (module, name) at submission time and
