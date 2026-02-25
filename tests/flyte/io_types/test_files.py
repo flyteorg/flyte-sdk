@@ -165,6 +165,26 @@ async def test_from_local_with_local_files():
         assert content == test_content
 
 
+def test_from_local_sync_with_local_files():
+    flyte.init()
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        local_path = os.path.join(temp_dir, "source.txt")
+        remote_path = os.path.join(temp_dir, "destination.txt")
+
+        test_content = "correct test content"
+        with open(local_path, "w") as f:
+            f.write(test_content)
+
+        result = File.from_local_sync(local_path, remote_path)
+
+        assert result.path == remote_path
+        with result.open_sync() as f:
+            content = f.read()
+        content = content.decode("utf-8")
+        assert content == test_content
+
+
 @pytest.mark.sandbox
 @pytest.mark.asyncio
 async def test_from_local_to_s3(ctx_with_test_local_s3_stack_raw_data_path):
