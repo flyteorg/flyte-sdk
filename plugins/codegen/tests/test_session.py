@@ -1,11 +1,6 @@
 """Tests for _CodeGenSession internals in flyteplugins.codegen.auto_coder_agent."""
 
-from unittest.mock import MagicMock, patch
-
-import pytest
-
 from flyteplugins.codegen.core.types import CodePlan, CodeSolution
-
 
 # ---------------------------------------------------------------------------
 # _CodeGenSession helpers
@@ -18,25 +13,25 @@ def _make_session(**overrides):
 
     agent = AutoCoderAgent(model="test-model")
 
-    defaults = dict(
-        agent=agent,
-        language="python",
-        prompt="test prompt",
-        schema=None,
-        constraints=None,
-        inputs=None,
-        outputs=None,
-        base_packages=["pytest"],
-        extracted_data_context=None,
-        sample_files=None,
-        schemas_as_code={},
-        base_messages=[{"role": "user", "content": "test"}],
-        plan=CodePlan(description="test plan", approach="test approach"),
-        skip_tests=False,
-        block_network=True,
-        initial_input_tokens=0,
-        initial_output_tokens=0,
-    )
+    defaults = {
+        "agent": agent,
+        "language": "python",
+        "prompt": "test prompt",
+        "schema": None,
+        "constraints": None,
+        "inputs": None,
+        "outputs": None,
+        "base_packages": ["pytest"],
+        "extracted_data_context": None,
+        "sample_files": None,
+        "schemas_as_code": {},
+        "base_messages": [{"role": "user", "content": "test"}],
+        "plan": CodePlan(description="test plan", approach="test approach"),
+        "skip_tests": False,
+        "block_network": True,
+        "initial_input_tokens": 0,
+        "initial_output_tokens": 0,
+    }
     defaults.update(overrides)
     return _CodeGenSession(**defaults)
 

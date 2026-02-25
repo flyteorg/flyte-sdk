@@ -1,6 +1,6 @@
 """Tests for flyteplugins.codegen.data.extraction."""
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pandas as pd
 import pytest
@@ -10,7 +10,6 @@ from flyteplugins.codegen.data.extraction import (
     extract_file_context,
     is_dataframe,
 )
-
 
 # ---------------------------------------------------------------------------
 # is_dataframe
@@ -70,7 +69,6 @@ class TestExtractDataframeContext:
 
     @pytest.mark.asyncio
     async def test_with_schema(self):
-        import pandera.pandas as pa
 
         from flyteplugins.codegen.data.schema import infer_conservative_schema
 

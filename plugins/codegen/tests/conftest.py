@@ -2,16 +2,14 @@
 
 import sys
 from pathlib import Path
-from types import SimpleNamespace
 from unittest.mock import MagicMock
-
-import pytest
 
 # ---------------------------------------------------------------------------
 # Patch missing flyte.sandbox.ImageConfig before any plugin module is imported.
 # ImageConfig comes from a separate PR that may not be merged locally yet.
 # ---------------------------------------------------------------------------
 import flyte.sandbox as _sandbox_mod
+import pytest
 
 if not hasattr(_sandbox_mod, "ImageConfig"):
     _sandbox_mod.ImageConfig = type("ImageConfig", (), {})

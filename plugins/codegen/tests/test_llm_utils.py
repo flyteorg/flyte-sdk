@@ -1,7 +1,5 @@
 """Tests for pure utility functions in flyteplugins.codegen.generation.llm."""
 
-import pytest
-
 from flyteplugins.codegen.core.types import TestFunctionPatch
 from flyteplugins.codegen.generation.llm import (
     _strip_parametrize_suffix,
@@ -10,7 +8,6 @@ from flyteplugins.codegen.generation.llm import (
     filter_stdlib,
     strip_code_fences,
 )
-
 
 # ---------------------------------------------------------------------------
 # strip_code_fences

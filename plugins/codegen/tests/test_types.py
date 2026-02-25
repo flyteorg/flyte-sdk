@@ -11,7 +11,6 @@ from flyteplugins.codegen.core.types import (
     TestFailure,
 )
 
-
 # ---------------------------------------------------------------------------
 # CodeSolution
 # ---------------------------------------------------------------------------
@@ -171,7 +170,7 @@ class TestRun:
         mock_flyte.sandbox.create.return_value = mock_sandbox
         mock_flyte.Resources = MagicMock
 
-        result = CodeGenEvalResult(
+        CodeGenEvalResult(
             solution=CodeSolution(code="pass"),
             success=True,
             output="ok",

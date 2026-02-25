@@ -4,7 +4,6 @@ from unittest.mock import MagicMock
 
 import pandas as pd
 import pandera.pandas as pa
-import pytest
 
 from flyteplugins.codegen.core.types import _ConstraintParameters, _ConstraintParse
 from flyteplugins.codegen.data.schema import (
@@ -13,7 +12,6 @@ from flyteplugins.codegen.data.schema import (
     infer_conservative_schema,
     schema_to_script,
 )
-
 
 # ---------------------------------------------------------------------------
 # infer_conservative_schema

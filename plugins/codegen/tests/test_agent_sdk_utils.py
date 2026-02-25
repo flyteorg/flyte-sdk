@@ -1,7 +1,5 @@
 """Tests for agent SDK utility functions in flyteplugins.codegen.execution.agent_sdk."""
 
-import pytest
-
 from flyteplugins.codegen.execution.agent_sdk import _classify_bash_command
 
 
@@ -45,8 +43,24 @@ class TestClassifyBashCommand:
 
     def test_safe_prefixes(self):
         """Test all defined safe prefixes."""
-        safe_cmds = ["ls", "pwd", "cat", "head", "tail", "grep", "wc", "mkdir", "touch", "rm", "mv", "cp", "echo",
-                     "sed", "awk", "find"]
+        safe_cmds = [
+            "ls",
+            "pwd",
+            "cat",
+            "head",
+            "tail",
+            "grep",
+            "wc",
+            "mkdir",
+            "touch",
+            "rm",
+            "mv",
+            "cp",
+            "echo",
+            "sed",
+            "awk",
+            "find",
+        ]
         for cmd in safe_cmds:
             assert _classify_bash_command(cmd) == "allow", f"{cmd} should be allowed"
 
