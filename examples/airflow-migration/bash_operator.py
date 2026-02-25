@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from flyteplugins.airflow.task import AirflowContainerTask  # triggers DAG + operator patches  # type: ignore
 from airflow import DAG
 from airflow.operators.bash import BashOperator
@@ -16,18 +18,18 @@ with DAG(
 ) as dag:
     t1 = BashOperator(
         task_id='say_hello',
-        bash_command='echo "Hello Airflow!"',
+        bash_command='echo "Hello Airflow1!"',
     )
     t2 = BashOperator(
         task_id='say_goodbye',
-        bash_command='echo "Goodbye Airflow!"',
+        bash_command='echo "Goodbye Airflow2!"',
     )
     # t1 >> t2  # t2 runs after t1
 
 
 if __name__ == '__main__':
-    flyte.init_from_config()
+    flyte.init_from_config(root_dir=Path("/Users/kevin/git/flyte-sdk"))
     # dag.run() is a convenience wrapper — equivalent to:
-    run = flyte.with_runcontext(mode="local", log_level="10").run(dag)
+    run = flyte.with_runcontext(mode="remote", log_level="10").run(dag)
     # run = dag.run(mode="local", log_level="10")
     print(run.url)

@@ -205,6 +205,7 @@ def _flyte_operator(*args, **kwargs):
 
     print(f"Creating AirflowContainerTask with config: {config}")
     task = AirflowContainerTask(name=task_id, plugin_config=config, image=container_image)
+    flyte.TaskEnvironment.from_task(task_id, task)
 
     # ── Case 1: inside a ``with DAG(...) as dag:`` block ────────────────────
     # Register the task with the active FlyteDAG collector so it can be wired

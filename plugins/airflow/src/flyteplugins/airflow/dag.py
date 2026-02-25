@@ -14,7 +14,7 @@ Usage
     with DAG(dag_id="my_dag", flyte_env=env) as dag:
         t1 = BashOperator(task_id="step1", bash_command='echo step1')
         t2 = BashOperator(task_id="step2", bash_command='echo step2')
-        t1 >> t2          # optional: explicit dependency
+        t1 >> t2 # optional: explicit dependency
 
     if __name__ == "__main__":
         flyte.init_from_config()
@@ -26,7 +26,7 @@ Notes
 - ``flyte_env`` is an optional kwarg accepted by the patched DAG. If omitted a
   default ``TaskEnvironment(name=dag_id)`` is created.
 - Operator dependency arrows (``>>``, ``<<``) update the execution order.
-  If no explicit dependencies are declared the operators run in definition order.
+  If no explicit dependencies are declared, the operators run in definition order.
 - ``dag.run(**kwargs)`` is a convenience wrapper around
   ``flyte.with_runcontext(**kwargs).run(dag.flyte_task)``.
 """
@@ -35,7 +35,7 @@ from __future__ import annotations
 
 import logging
 from collections import defaultdict
-from typing import TYPE_CHECKING, Dict, List, Optional
+from typing import TYPE_CHECKING, Dict, List, Optional, Set
 
 import airflow.models.dag as _airflow_dag_module
 
@@ -124,10 +124,34 @@ class FlyteDAG:
             for task in root_snapshot:
                 task()  # _call_as_synchronous=True → submit_sync → blocks until done
 
+        # Find the first call frame outside this module so the Flyte task is
+        # registered under the user's module, not dag.py.  The
+        # DefaultTaskResolver records (module, name) at submission time and
+        # on the remote worker it imports that module — which re-runs the
+        # DAG definition and re-injects the task — before calling
+        # getattr(module, task_name).
+        import inspect
+        import sys as _sys
+
+        _caller_module_name = __name__
+        _caller_module = None
+        for _fi in inspect.stack():
+            _mod = _fi.frame.f_globals.get("__name__", "")
+            if _mod and _mod != __name__:
+                _caller_module_name = _mod
+                _caller_module = _sys.modules.get(_caller_module_name)
+                break
+
         _dag_entry.__name__ = f"dag_{self.dag_id}"
         _dag_entry.__qualname__ = f"dag_{self.dag_id}"
+        _dag_entry.__module__ = _caller_module_name
 
         self.flyte_task = env.task(_dag_entry)
+
+        # Inject the task into the caller's module so DefaultTaskResolver
+        # can find it via getattr(module, task_name) on both local and remote.
+        if _caller_module is not None:
+            setattr(_caller_module, _dag_entry.__name__, self.flyte_task)
 
 
 # ---------------------------------------------------------------------------
