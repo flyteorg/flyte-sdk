@@ -124,13 +124,25 @@ class FlyteDAG:
             for task in root_snapshot:
                 task()  # _call_as_synchronous=True → submit_sync → blocks until done
 
+        # Operator tasks are created without an image (image=None).  Resolve
+        # the env's image to an Image object (mirroring TaskTemplate.__post_init__)
+        # and assign it to each task that has no explicit image, so that
+        # from_task sees a consistent set of images and the tasks can be
+        # serialized correctly when submitted as sub-tasks during remote execution.
+        _env_image = env.image
+        if _env_image == "auto":
+            _env_image = flyte.Image.from_debian_base()
+        elif isinstance(_env_image, str):
+            _env_image = flyte.Image.from_base(_env_image)
+
+        for _op_task in self._tasks.values():
+            if _op_task.image is None:
+                _op_task.image = _env_image
+
         # Register all operator tasks with the DAG's TaskEnvironment so that
         # they get parent_env / parent_env_name (required for serialization and
         # image lookup) and appear in env.tasks (required for deployment).
-        # from_task validates image consistency across tasks and returns a new
-        # env; we reassign `env` so the orchestrator task (env.task below)
-        # ends up in the same environment.
-        env = flyte.TaskEnvironment.from_task(env.name, *self._tasks.values())
+        env = env.from_task(env.name, *self._tasks.values())
 
         # Find the first call frame outside this module so the Flyte task is
         # registered under the user's module, not dag.py.  The

@@ -12,7 +12,6 @@ bigquery_task = BigQueryTask(
 )
 
 bigquery_env = flyte.TaskEnvironment.from_task("bigquery_env", bigquery_task)
-
 env = flyte.TaskEnvironment(
     name="bigquery_example_env",
     image=flyte.Image.from_debian_base().with_pip_packages("flyteplugins-bigquery"),
