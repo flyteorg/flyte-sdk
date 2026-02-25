@@ -24,7 +24,8 @@ Usage
 Notes
 -----
 - ``flyte_env`` is an optional kwarg accepted by the patched DAG. If omitted a
-  default ``TaskEnvironment(name=dag_id)`` is created.
+  default ``TaskEnvironment`` is created using the dag_id as the name and a
+  Debian-base image with ``apache-airflow<3.0.0`` and ``jsonpickle`` installed.
 - Operator dependency arrows (``>>``, ``<<``) update the execution order.
   If no explicit dependencies are declared, the operators run in definition order.
 - ``dag.run(**kwargs)`` is a convenience wrapper around
@@ -96,7 +97,12 @@ class FlyteDAG:
 
         env = self.env
         if env is None:
-            env = flyte.TaskEnvironment(name=self.dag_id)
+            env = flyte.TaskEnvironment(
+                name=self.dag_id,
+                image=flyte.Image.from_debian_base().with_pip_packages(
+                    "apache-airflow<3.0.0", "jsonpickle"
+                ).with_local_v2(),
+            )
 
         # Build downstream map from the upstream map.
         downstream: Dict[str, List[str]] = defaultdict(list)
@@ -120,9 +126,11 @@ class FlyteDAG:
         # Snapshot to avoid capturing mutable references in the closure.
         root_snapshot = list(root_tasks)
 
-        def _dag_entry() -> None:
-            for task in root_snapshot:
-                task()  # _call_as_synchronous=True → submit_sync → blocks until done
+        async def _dag_entry() -> None:
+            import asyncio
+            # Root tasks run in parallel; each task's execute() chains its
+            # downstream tasks (set via >>) after it completes.
+            await asyncio.gather(*[t.aio() for t in root_snapshot])
 
         # Operator tasks are created without an image (image=None).  Resolve
         # the env's image to an Image object (mirroring TaskTemplate.__post_init__)
