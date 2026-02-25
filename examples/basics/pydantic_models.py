@@ -11,12 +11,12 @@ from typing import Dict, List, Literal, Optional
 from pydantic import BaseModel
 
 import flyte
-from flyte._image import PythonWheels
+from flyte._image import PythonWheels, DIST_FOLDER
 
 env = flyte.TaskEnvironment(
     name="ex-pydantic-models",
     image=flyte.Image.from_debian_base().clone(
-        addl_layer=PythonWheels(wheel_dir=Path(__file__).parent.parent.parent / "dist", package_name="flyte"),
+        addl_layer=PythonWheels(wheel_dir=DIST_FOLDER, package_name="flyte"),
         name="ex-pydantic-models-image",
     ),
 )
