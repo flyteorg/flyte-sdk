@@ -206,26 +206,30 @@ def test_get_scaling_metric_none():
 
 def test_get_scaling_metric_concurrency():
     """
-    GOAL: Document bug in Concurrency metric serialization.
+    GOAL: Verify Concurrency metric is correctly serialized to protobuf.
 
-    The implementation uses 'val' field but protobuf expects 'target_value'.
+    Tests that Scaling.Concurrency.val is mapped to ScalingMetric.concurrency.target_value.
     """
     metric = Scaling.Concurrency(val=10)
-    # Note: Implementation currently has a bug - uses 'val' instead of 'target_value'
-    with pytest.raises(ValueError, match='has no "val" field'):
-        _get_scaling_metric(metric)
+    result = _get_scaling_metric(metric)
+
+    assert result is not None
+    assert result.HasField("concurrency")
+    assert result.concurrency.target_value == 10
 
 
 def test_get_scaling_metric_request_rate():
     """
-    GOAL: Document bug in RequestRate metric serialization.
+    GOAL: Verify RequestRate metric is correctly serialized to protobuf.
 
-    The implementation uses 'val' field but protobuf expects 'target_value'.
+    Tests that Scaling.RequestRate.val is mapped to ScalingMetric.request_rate.target_value.
     """
     metric = Scaling.RequestRate(val=100)
-    # Note: Implementation currently has a bug - uses 'val' instead of 'target_value'
-    with pytest.raises(ValueError, match='has no "val" field'):
-        _get_scaling_metric(metric)
+    result = _get_scaling_metric(metric)
+
+    assert result is not None
+    assert result.HasField("request_rate")
+    assert result.request_rate.target_value == 100
 
 
 def test_get_proto_container_basic():
