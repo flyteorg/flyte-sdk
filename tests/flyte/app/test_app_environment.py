@@ -1263,3 +1263,7 @@ def test_app_environment_clone_with_request_timeout():
     # Clone with overriding request_timeout
     cloned_override = original.clone_with(name="cloned-override", request_timeout=60)
     assert cloned_override.request_timeout == timedelta(seconds=60)
+
+    # Clone explicitly clearing request_timeout to None
+    cloned_cleared = original.clone_with(name="cloned-cleared", request_timeout=None)
+    assert cloned_cleared.request_timeout is None

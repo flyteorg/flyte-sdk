@@ -18,6 +18,7 @@ from flyte.models import SerializationContext
 APP_NAME_RE = re.compile(r"[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*")
 INVALID_APP_PORTS = [8012, 8022, 8112, 9090, 9091]
 _MAX_REQUEST_TIMEOUT = timedelta(hours=1)
+_UNSET = object()
 INTERNAL_APP_ENDPOINT_PATTERN_ENV_VAR = "INTERNAL_APP_ENDPOINT_PATTERN"
 
 
@@ -343,7 +344,7 @@ class AppEnvironment(Environment):
         parameters = kwargs.pop("parameters", None)
         cluster_pool = kwargs.pop("cluster_pool", None)
         pod_template = kwargs.pop("pod_template", None)
-        request_timeout = kwargs.pop("request_timeout", None)
+        request_timeout = kwargs.pop("request_timeout", _UNSET)
 
         if kwargs:
             raise TypeError(f"Unexpected keyword arguments: {list(kwargs.keys())}")
@@ -386,6 +387,6 @@ class AppEnvironment(Environment):
             kwargs["parameters"] = parameters
         if cluster_pool is not None:
             kwargs["cluster_pool"] = cluster_pool
-        if request_timeout is not None:
+        if request_timeout is not _UNSET:
             kwargs["request_timeout"] = request_timeout
         return replace(self, **kwargs)
