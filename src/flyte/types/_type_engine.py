@@ -1038,8 +1038,13 @@ class EnumTransformer(TypeTransformer[enum.Enum]):
         raise ValueError(f"Enum transformer cannot reverse {literal_type}")
 
     def assert_type(self, t: Type[enum.Enum], v: T):
-        val = v.value if isinstance(v, enum.Enum) else v
-        if val not in [t_item.value for t_item in t]:
+        if isinstance(v, enum.Enum):
+            if not isinstance(v, t):
+                raise TypeTransformerFailedError(f"Value {v} is not in Enum {t}")
+            return
+        # For string inputs (e.g. from the CLI), accept enum names since the transformer
+        # serializes regular enums by name (get_literal_type returns names, not values).
+        if v not in [t_item.name for t_item in t] and v not in [t_item.value for t_item in t]:
             raise TypeTransformerFailedError(f"Value {v} is not in Enum {t}")
 
 
