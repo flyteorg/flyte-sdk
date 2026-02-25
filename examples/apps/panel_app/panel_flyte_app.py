@@ -28,8 +28,8 @@ app_env = AppEnvironment(
         "joblib",
     ),
     port=8080,
-    resources=flyte.Resources(cpu="2", memory="1Gi"),
-    scaling=Scaling(replicas=(0, 5)),
+    resources=flyte.Resources(cpu="1", memory="1Gi"),
+    scaling=Scaling(replicas=(1, 5), metric=Scaling.RequestRate(5)),
     domain=Domain(subdomain="flyte2intro"),
     include=["explore.tcss"],
     requires_auth=False,
@@ -712,13 +712,14 @@ def serve():
 
 if __name__ == "__main__":
     import argparse
+    import logging
     from pathlib import Path
 
     parser = argparse.ArgumentParser(description="Serve the panel app")
     parser.add_argument("--mode", choices=["local", "remote"], default="remote", help="Serve mode")
     args = parser.parse_args()
 
-    flyte.init_from_config(root_dir=Path(__file__).parent)
+    flyte.init_from_config(root_dir=Path(__file__).parent, log_level=logging.DEBUG)
     app_handle = flyte.with_servecontext(mode=args.mode).serve(app_env)
     print(f"Panel app is ready at {app_handle.url}")
     if args.mode == "local":
