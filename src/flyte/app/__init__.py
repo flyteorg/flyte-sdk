@@ -2,7 +2,7 @@ from flyte.app._app_environment import AppEnvironment
 from flyte.app._connector_environment import ConnectorEnvironment
 from flyte.app._context import ctx
 from flyte.app._parameter import AppEndpoint, Parameter, RunOutput, get_parameter
-from flyte.app._types import Domain, Link, Port, Scaling
+from flyte.app._types import Domain, Link, Port, Scaling, Timeouts
 
 __all__ = [
     "AppEndpoint",
@@ -14,6 +14,7 @@ __all__ = [
     "Port",
     "RunOutput",
     "Scaling",
+    "Timeouts",
     "ctx",
     "get_parameter",
 ]

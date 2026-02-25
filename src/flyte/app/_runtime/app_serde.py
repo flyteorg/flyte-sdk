@@ -370,9 +370,9 @@ async def translate_app_env_to_idl(
 
     # Build timeout config
     timeout_config = None
-    if app_env.request_timeout is not None:
+    if app_env.timeouts.request is not None:
         timeout_dur = Duration()
-        timeout_dur.FromTimedelta(app_env.request_timeout)
+        timeout_dur.FromTimedelta(app_env.timeouts.request)
         timeout_config = app_definition_pb2.TimeoutConfig(request_timeout=timeout_dur)
 
     # Build the full App IDL

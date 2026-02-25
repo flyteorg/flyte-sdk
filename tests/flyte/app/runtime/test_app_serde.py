@@ -26,7 +26,7 @@ from flyte.app._runtime.app_serde import (
     get_proto_container,
     translate_app_env_to_idl,
 )
-from flyte.app._types import Domain, Port, Scaling
+from flyte.app._types import Domain, Port, Scaling, Timeouts
 from flyte.models import CodeBundle, SerializationContext
 
 
@@ -1119,16 +1119,16 @@ async def test_materialize_parameters_preserves_other_parameter_properties():
 
 def test_translate_app_env_to_idl_with_request_timeout_int():
     """
-    GOAL: Verify that request_timeout (int) is serialized into TimeoutConfig on the Spec.
+    GOAL: Verify that Timeouts.request (int) is serialized into TimeoutConfig on the Spec.
 
     Tests that:
-    - An int request_timeout is serialized as a Duration with correct seconds
+    - An int request is serialized as a Duration with correct seconds
     - The timeouts field is populated on the Spec
     """
     app_env = AppEnvironment(
         name="timeout-app",
         image=Image.from_base("python:3.11"),
-        request_timeout=30,
+        timeouts=Timeouts(request=30),
     )
 
     ctx = SerializationContext(
@@ -1148,15 +1148,15 @@ def test_translate_app_env_to_idl_with_request_timeout_int():
 
 def test_translate_app_env_to_idl_with_request_timeout_timedelta():
     """
-    GOAL: Verify that request_timeout (timedelta) is serialized into TimeoutConfig on the Spec.
+    GOAL: Verify that Timeouts.request (timedelta) is serialized into TimeoutConfig on the Spec.
 
     Tests that:
-    - A timedelta request_timeout is serialized as a Duration with correct seconds
+    - A timedelta request is serialized as a Duration with correct seconds
     """
     app_env = AppEnvironment(
         name="timeout-app",
         image=Image.from_base("python:3.11"),
-        request_timeout=timedelta(minutes=5),
+        timeouts=Timeouts(request=timedelta(minutes=5)),
     )
 
     ctx = SerializationContext(
@@ -1176,12 +1176,11 @@ def test_translate_app_env_to_idl_with_request_timeout_timedelta():
 
 def test_translate_app_env_to_idl_without_request_timeout():
     """
-    GOAL: Verify that when request_timeout is None, the timeouts field is not set on the Spec.
+    GOAL: Verify that when Timeouts.request is None, the timeouts field is not set on the Spec.
     """
     app_env = AppEnvironment(
         name="no-timeout-app",
         image=Image.from_base("python:3.11"),
-        request_timeout=None,
     )
 
     ctx = SerializationContext(
@@ -1199,12 +1198,12 @@ def test_translate_app_env_to_idl_without_request_timeout():
 
 def test_translate_app_env_to_idl_with_request_timeout_zero():
     """
-    GOAL: Verify that request_timeout=0 is serialized (not silently dropped).
+    GOAL: Verify that Timeouts.request=0 is serialized (not silently dropped).
     """
     app_env = AppEnvironment(
         name="zero-timeout-app",
         image=Image.from_base("python:3.11"),
-        request_timeout=0,
+        timeouts=Timeouts(request=0),
     )
 
     ctx = SerializationContext(
