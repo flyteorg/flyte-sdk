@@ -17,6 +17,7 @@ def fn(x: int) -> int:  # type annotations are recommended.
 # tasks can also call other tasks, which will be manifested in different containers.
 @env.task
 def main(x_list: list[int]) -> float:
+    fn(x=2)
     x_len = len(x_list)
     if x_len < 10:
         raise ValueError(f"x_list doesn't have a larger enough sample size, found: {x_len}")
@@ -28,7 +29,7 @@ def main(x_list: list[int]) -> float:
 
 if __name__ == "__main__":
     flyte.init_from_config()  # establish remote connection from within your script.
-    run = flyte.run(main, x_list=list(range(10)))  # run remotely inline and pass data.
+    run = flyte.with_runcontext(mode="local").run(main, x_list=list(range(10)))  # run remotely inline and pass data.
 
     # print various attributes of the run.
     print(run.name)

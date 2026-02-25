@@ -1,5 +1,7 @@
 import importlib
 import logging
+import os
+import threading
 import typing
 from dataclasses import dataclass
 from typing import Any, Dict, Optional, Type, List
@@ -14,10 +16,19 @@ import airflow.utils.context as airflow_context
 
 import flyte
 from flyte import logger, get_custom_context
+from flyte._context import internal_ctx, root_context_var
+from flyte._internal.controllers import get_controller
+from flyte._internal.controllers._local_controller import _TaskRunner
 from flyte._internal.resolvers.common import Resolver
 from flyte._task import TaskTemplate
 from flyte.extend import AsyncFunctionTaskTemplate, TaskPluginRegistry
 from flyte.models import SerializationContext, NativeInterface
+
+# Per-thread _TaskRunner instances used by _flyte_operator for sync blocking submission.
+_airflow_runners: Dict[str, _TaskRunner] = {}
+
+# Import dag module to apply DAG monkey-patches when this module is imported.
+from flyteplugins.airflow import dag as _dag_module  # noqa: E402
 
 
 @dataclass
@@ -96,8 +107,27 @@ class AirflowContainerTask(TaskTemplate):
         )
         self._task_resolver = airflow_task_resolver
         self._plugin_config = plugin_config
+        self._call_as_synchronous = True
+        self._downstream_flyte_tasks: List["AirflowContainerTask"] = []
 
-    def execute(self, **kwargs) -> Any:
+    # ------------------------------------------------------------------
+    # Airflow dependency-arrow support (>> / <<)
+    # Records the dependency in the active FlyteDAG if one is being built.
+    # ------------------------------------------------------------------
+
+    def __rshift__(self, other: "AirflowContainerTask") -> "AirflowContainerTask":
+        """``self >> other`` — other runs after self."""
+        if _dag_module._current_flyte_dag is not None:
+            _dag_module._current_flyte_dag.set_dependency(self.name, other.name)
+        return other
+
+    def __lshift__(self, other: "AirflowContainerTask") -> "AirflowContainerTask":
+        """``self << other`` — self runs after other."""
+        if _dag_module._current_flyte_dag is not None:
+            _dag_module._current_flyte_dag.set_dependency(other.name, self.name)
+        return other
+
+    async def execute(self, **kwargs) -> Any:
         # ExecutorSafeguard stores a sentinel in a threading.local() dict. That
         # dict is initialised on the main thread at import time, but tasks may
         # run in a background thread where the thread-local has no 'callers' key.
@@ -106,6 +136,10 @@ class AirflowContainerTask(TaskTemplate):
             ExecutorSafeguard._sentinel.callers = {}
         logger.info("Executing Airflow task")
         _get_airflow_instance(self._plugin_config).execute(context=airflow_context.Context())
+        # Trigger downstream tasks in parallel after this operator completes.
+        if self._downstream_flyte_tasks:
+            import asyncio
+            await asyncio.gather(*[t.aio() for t in self._downstream_flyte_tasks])
 
 
 def _get_airflow_instance(
@@ -170,9 +204,23 @@ def _flyte_operator(*args, **kwargs):
     config = AirflowObj(module=cls.__module__, name=cls.__name__, parameters=kwargs)
 
     print(f"Creating AirflowContainerTask with config: {config}")
-    return AirflowContainerTask(name=task_id, plugin_config=config, image=container_image)()
+    task = AirflowContainerTask(name=task_id, plugin_config=config, image=container_image)
+
+    # ── Case 1: inside a ``with DAG(...) as dag:`` block ────────────────────
+    # Register the task with the active FlyteDAG collector so it can be wired
+    # into the Flyte workflow when the DAG context exits.  Do NOT execute yet.
+    if _dag_module._current_flyte_dag is not None:
+        _dag_module._current_flyte_dag.add_task(task_id, task)
+        return task
+
+    # ── Case 2: inside a Flyte task execution ───────────────────────────────
+    # The dag workflow function is executing; submit the operator as a sub-task.
+    if internal_ctx().is_task_context():
+        return task()
+
+    # ── Case 3: outside any context (e.g. serialization / import scan) ──────
+    return task
 
 
 # Monkey patches the Airflow operator. Instead of creating an airflow task, it returns a Flyte task.
 airflow_models.BaseOperator.__new__ = _flyte_operator
-
