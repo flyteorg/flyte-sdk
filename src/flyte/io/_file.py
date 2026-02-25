@@ -720,7 +720,8 @@ class File(BaseModel, Generic[T], SerializableType):
             file.lazy_uploader = _lazy_uploader
             return file
 
-        remote_path = remote_destination or ctx.raw_data.get_random_remote_path()
+        fname = Path(local_path).name
+        remote_path = remote_destination or ctx.raw_data.get_random_remote_path(fname)
         protocol = get_protocol(remote_path)
         filename = Path(local_path).name
 
