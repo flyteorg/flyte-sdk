@@ -218,9 +218,9 @@ def _get_scaling_metric(
         return None
 
     if isinstance(metric, Scaling.Concurrency):
-        return app_definition_pb2.ScalingMetric(concurrency=app_definition_pb2.Concurrency(val=metric.val))
+        return app_definition_pb2.ScalingMetric(concurrency=app_definition_pb2.Concurrency(target_value=metric.val))
     elif isinstance(metric, Scaling.RequestRate):
-        return app_definition_pb2.ScalingMetric(request_rate=app_definition_pb2.RequestRate(val=metric.val))
+        return app_definition_pb2.ScalingMetric(request_rate=app_definition_pb2.RequestRate(target_value=metric.val))
 
     return None
 
