@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import os
+import sys
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Dict, List, Optional, Set, Tuple
+from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
 
 import cloudpickle
 import rich.repr
@@ -479,6 +481,20 @@ async def apply(deployment_plan: DeploymentPlan, copy_style: CopyFiles, dryrun: 
     return Deployment(envs)
 
 
+def _find_env_module(env: Environment):
+    """Scan sys.modules to find the module that contains this env as a top-level variable."""
+    for module in list(sys.modules.values()):
+        if module is None:
+            continue
+        try:
+            # search for at least one value inside this module that is the same object as env and return it
+            if any(v is env for v in vars(module).values()):
+                return module
+        except TypeError:
+            continue
+    return None
+
+
 def _recursive_discover(planned_envs: Dict[str, Environment], env: Environment) -> Dict[str, Environment]:
     """
     Recursively deploy the environment and its dependencies, if not already deployed (present in env_tasks) and
@@ -486,17 +502,29 @@ def _recursive_discover(planned_envs: Dict[str, Environment], env: Environment) 
     """
     if env.name in planned_envs:
         if planned_envs[env.name] is not env:
-            # Two distinct TaskEnvironment objects share the same name. This is
-            # most commonly caused by the same module being imported twice under
-            # different names — for example, when `flyte deploy` is run from the
-            # project root of a src-layout project without --root-dir, causing
-            # `my_module.envs` and `src.my_module.envs` to both be loaded.
-            raise ValueError(
-                f"Duplicate environment name '{env.name}' found. "
-                f"This is often caused by the same module being imported twice under different names. "
-                f"If your project uses a src/ layout, make sure to pass --root-dir pointing to your "
-                f"source root (e.g. --root-dir src) so modules are resolved consistently."
-            )
+            existing_env = planned_envs[env.name]
+            existing_module = _find_env_module(existing_env)
+            new_module = _find_env_module(env)
+            existing_file = getattr(existing_module, "__file__", None)
+            new_file = getattr(new_module, "__file__", None)
+
+            if existing_file and new_file and os.path.samefile(existing_file, new_file):
+                # Same file, different module names — classic dual-import caused by
+                # the module being loaded twice under different names (e.g.
+                # `my_module.envs` and `src.my_module.envs`).
+                raise ValueError(
+                    f"Environment '{env.name}' is defined in '{existing_file}' but was imported "
+                    f"twice under different module names ('{existing_module.__name__}' and "
+                    f"'{new_module.__name__}'). This is usually caused by running `flyte deploy` "
+                    f"from the project root of a src/ layout project without --root-dir. "
+                    f"Try adding --root-dir src (or your source root directory)."
+                )
+            else:
+                # if the environment names were incorrectly declared
+                raise ValueError(
+                    f"Duplicate environment name '{env.name}' found. "
+                    f"Each TaskEnvironment must have a unique name."
+                )
     # Add the environment to the existing envs
     planned_envs[env.name] = env
 
@@ -510,19 +538,32 @@ def plan_deploy(*envs: Environment, version: Optional[str] = None) -> List[Deplo
     if envs is None:
         return [DeploymentPlan({})]
     deployment_plans = []
-    visited_envs: Set[str] = set()
+    visited_envs: Dict[str, Environment] = {}
     for env in envs:
         if env.name in visited_envs:
-            raise ValueError(
-                f"Duplicate environment name '{env.name}' found. "
-                f"Ensure each TaskEnvironment has a unique name. "
-                f"If your project uses a src/ layout, also check that --root-dir points to your "
-                f"source root (e.g. --root-dir src) to prevent the same module from being "
-                f"imported twice under different names."
-            )
+            existing_env = visited_envs[env.name]
+            existing_module = _find_env_module(existing_env)
+            new_module = _find_env_module(env)
+            existing_file = getattr(existing_module, "__file__", None)
+            new_file = getattr(new_module, "__file__", None)
+            # Same file getting loaded as different module names such as `my_module.envs` and `src.my_module.envs`
+            if existing_file and new_file and os.path.samefile(existing_file, new_file):
+                raise ValueError(
+                    f"Environment '{env.name}' is defined in '{existing_file}' but was imported "
+                    f"twice under different module names ('{existing_module.__name__}' and "
+                    f"'{new_module.__name__}'). This is usually caused by running `flyte deploy` "
+                    f"from the project root of a src/ layout project without --root-dir. "
+                    f"Try adding --root-dir src (or your source root directory)."
+                )
+            else:
+                # if the environment names were incorrectly declared
+                raise ValueError(
+                    f"Duplicate environment name '{env.name}' found. "
+                    f"Each TaskEnvironment must have a unique name."
+                )
         planned_envs = _recursive_discover({}, env)
         deployment_plans.append(DeploymentPlan(planned_envs, version=version))
-        visited_envs.update(planned_envs.keys())
+        visited_envs.update(planned_envs)
     return deployment_plans
 
 
