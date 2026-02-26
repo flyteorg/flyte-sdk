@@ -44,6 +44,7 @@ jobs:
           - polars
           - snowflake
           - wandb
+          - hitl
         python-version: ["3.12"]
       fail-fast: false
     defaults:
