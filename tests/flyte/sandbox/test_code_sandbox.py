@@ -535,7 +535,7 @@ class TestAsTask:
             outputs={"result": int},
         )
         with patch.object(File, "from_local", mock_file):
-            task = sb.as_task(image="myimage:latest")
+            sb.as_task(image="myimage:latest")
         # Verify script was uploaded (from_local was called)
         mock_file.assert_called_once()
 
