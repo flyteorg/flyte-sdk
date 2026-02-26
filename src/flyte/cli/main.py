@@ -210,7 +210,9 @@ def main(
 
     log_level = _verbosity_to_loglevel(verbose)
     if log_level is not None or log_format != "console" or reset_root_logger:
-        initialize_logger(log_level=log_level, log_format=log_format, enable_rich=True, reset_root_logger=reset_root_logger)
+        initialize_logger(
+            log_level=log_level, log_format=log_format, enable_rich=True, reset_root_logger=reset_root_logger
+        )
 
     cfg = config.auto(config_file=config_file)
     if cfg.source:
