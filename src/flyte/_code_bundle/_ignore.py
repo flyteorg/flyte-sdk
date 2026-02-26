@@ -93,20 +93,24 @@ class GitIgnore(Ignore):
                 processed_files.append(root_ignore)
                 seen.add(root_ignore)
 
-        # Check subdirectories of self.root for both .gitignore and .flyteignore
-        subdir_ignores = []
-        for ignore_file in [".gitignore", ".flyteignore"]:
-            for subdir_ignore in self.root.rglob(ignore_file):
-                if (
-                    subdir_ignore.is_file()
-                    and subdir_ignore not in seen
-                    and not self._is_under_standard_ignored_dir(subdir_ignore)
-                ):
-                    subdir_ignores.append(subdir_ignore)
-                    seen.add(subdir_ignore)
+        # Single os.walk instead of two rglob calls
+        # Pre-compute simple dir names for fast pruning
+        _standard_ignored_dirs = {p for p in STANDARD_IGNORE_PATTERNS if "/" not in p and "*" not in p}
 
-        # Sort subdirectory files by path for consistent ordering
-        processed_files.extend(sorted(subdir_ignores))
+        ignore_names = {".gitignore", ".flyteignore"}
+        subdir_ignores = []
+        for dirpath, dirnames, filenames in os.walk(self.root, topdown=True):
+            # Prune standard-ignored directories — never descend into them
+            dirnames[:] = [d for d in dirnames if d not in _standard_ignored_dirs]
+
+            for fname in filenames:
+                if fname in ignore_names:
+                    p = Path(dirpath) / fname
+                    if p not in seen:
+                        subdir_ignores.append(p)
+                        seen.add(p)
+
+        processed_files.extend(subdir_ignores)
 
         # Log all ignore files being used
         if processed_files:
