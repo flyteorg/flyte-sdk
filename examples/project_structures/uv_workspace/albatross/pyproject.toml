@@ -2,14 +2,13 @@
 name = "albatross"
 version = "0.1.0"
 requires-python = ">=3.12"
-dependencies = ["bird-feeder"]
+dependencies = ["bird-feeder", "seeds", "flyte"]
 
 [tool.uv.sources]
-bird-feeder = { workspace = true }
 seeds = { workspace = true }
 
 [tool.uv.workspace]
-members = ["packages/*"]
+members = ["packages/seeds"]
 
 [build-system]
 requires = ["uv_build>=0.9.3,<0.10.0"]

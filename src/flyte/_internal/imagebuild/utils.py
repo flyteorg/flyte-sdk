@@ -1,3 +1,4 @@
+import os
 import re
 import shutil
 import subprocess
@@ -54,7 +55,7 @@ def copy_files_to_context(src: Path, context_path: Path, ignore_patterns: list[s
         dst_path.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy(src, dst_path)
 
-    return dst_path
+    return Path(os.path.normpath(dst_path))
 
 
 def get_and_list_dockerignore(image: Image) -> List[str]:

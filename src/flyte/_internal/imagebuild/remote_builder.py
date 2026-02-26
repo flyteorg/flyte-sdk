@@ -320,6 +320,7 @@ def _get_layers_proto(image: Image, context_path: Path) -> "image_definition_pb2
             # Keep track of the directory containing the pyproject.toml file
             # this is what should be passed to the UVProject image definition proto as 'pyproject'
             pyproject_dir_dst = pyproject_dst.parent
+            pyproject_dir_dsts = [pyproject_dir_dst]
 
             # Copy uv.lock itself (if provided)
             uvlock_dst = copy_files_to_context(layer.uvlock, context_path) if layer.uvlock is not None else None
@@ -331,15 +332,14 @@ def _get_layers_proto(image: Image, context_path: Path) -> "image_definition_pb2
                         pip_options.extra_args += " --no-install-project"
                     else:
                         pip_options.extra_args = "--no-install-project"
-                    # Copy any editable dependencies to the context
-                    # We use the docker ignore patterns to avoid copying the editable dependencies to the context.
+                    # Copy the editable dependencies defined under the [tool.uv.sources] in pyproject.toml
                     standard_ignore_patterns = STANDARD_IGNORE_PATTERNS.copy()
                     for editable_dep in get_uv_project_editable_dependencies(layer.pyproject.parent):
-                        copy_files_to_context(
-                            editable_dep,
+                        pyproject_dir_dsts.append(copy_files_to_context(
+                            editable_dep / "pyproject.toml",
                             context_path,
                             ignore_patterns=[*standard_ignore_patterns, *docker_ignore_patterns],
-                        )
+                        ))
                 case "install_project":
                     # Copy the entire project
                     pyproject_dir_dst = copy_files_to_context(
@@ -356,6 +356,9 @@ def _get_layers_proto(image: Image, context_path: Path) -> "image_definition_pb2
                     uvlock=str(uvlock_dst.relative_to(context_path)) if uvlock_dst else None,
                     options=pip_options,
                     secret_mounts=secret_mounts,
+                    # Source dir should be the common parent directory of all the pyproject.toml files
+                    # we copied for this UV project layer.
+                    source_dir=str(Path(os.path.commonpath(pyproject_dir_dsts)).relative_to(context_path)),
                 )
             )
             layers.append(uv_layer)
