@@ -4,9 +4,9 @@ import subprocess
 import tarfile as _tarfile
 from abc import ABC, abstractmethod
 from fnmatch import fnmatch
+from functools import cached_property
 from pathlib import Path
 from shutil import which
-from functools import cached_property
 from typing import List, Optional, Type
 
 from flyte._logging import logger
