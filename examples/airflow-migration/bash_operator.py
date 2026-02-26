@@ -5,15 +5,10 @@ from airflow import DAG
 from airflow.operators.bash import BashOperator
 import flyte
 
-env = flyte.TaskEnvironment(
-    name="hello_airflow",
-    image=flyte.Image.from_debian_base().with_pip_packages("apache-airflow<3.0.0", "jsonpickle").with_local_v2()
-)
 # Standard Airflow DAG definition — no Flyte-specific changes needed inside the block.
 # Pass flyte_env so the generated workflow task uses the right container image.
 with DAG(
     dag_id='simple_bash_operator_example',
-    flyte_env=env,
 ) as dag:
     t1 = BashOperator(
         task_id='say_hello',
