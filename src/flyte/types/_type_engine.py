@@ -620,6 +620,46 @@ class PydanticTransformer(TypeTransformer[BaseModel]):
         python_val = expected_python_type.model_validate(dict_obj, strict=False, context={"deserialize": True})
         return python_val
 
+    def guess_python_type(self, literal_type: LiteralType) -> Type[BaseModel]:
+        """
+        Guess the Python type from a Flyte LiteralType that was produced by the PydanticTransformer.
+
+        This is used when the original Pydantic model class is not available.
+        We create a dynamic Pydantic BaseModel from the JSON schema metadata so that:
+        1. TypeEngine.get_transformer returns PydanticTransformer (tag matches "Pydantic Transformer")
+        2. from_binary_idl / to_python_value can deserialize via model_validate
+        """
+        if literal_type.simple == SimpleType.STRUCT and literal_type.HasField("metadata"):
+            # Only claim types that have the Pydantic Transformer structure tag.
+            # This tag is set by UnionTransformer when wrapping Pydantic models in a union,
+            # and distinguishes them from dataclass types which share the same LiteralType shape.
+            if literal_type.HasField("structure") and literal_type.structure.tag == self.name:
+                metadata = _MessageToDict(literal_type.metadata)
+                if TITLE in metadata:
+                    return _create_pydantic_model_from_schema(metadata)
+        raise ValueError(f"PydanticTransformer cannot reverse {literal_type}")
+
+
+def _create_pydantic_model_from_schema(schema: dict) -> Type:
+    """Create a dynamic Pydantic BaseModel from a JSON schema dict.
+
+    Reuses ``_get_element_type`` so that all JSON-schema constructs handled by the
+    dataclass path (arrays, dicts, nested objects, ``$ref``, ``anyOf``, enums, …)
+    are also covered here.
+    """
+    from pydantic import ConfigDict, create_model
+
+    title = schema.get(TITLE, "DynamicModel")
+    properties = schema.get("properties", {})
+
+    fields: dict[str, typing.Any] = {}
+    for name, prop in properties.items():
+        python_type = _get_element_type(prop, schema)
+        default: typing.Any = prop.get("default", ...)
+        fields[name] = (python_type, default)
+
+    return create_model(title, __config__=ConfigDict(extra="allow"), **fields)
+
 
 class PydanticSchemaPlugin(BasePlugin):
     """This allows us to generate proper schemas for Pydantic models."""
