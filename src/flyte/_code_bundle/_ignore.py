@@ -6,6 +6,7 @@ from abc import ABC, abstractmethod
 from fnmatch import fnmatch
 from pathlib import Path
 from shutil import which
+from functools import cached_property
 from typing import List, Optional, Type
 
 from flyte._logging import logger
@@ -36,10 +37,22 @@ class GitIgnore(Ignore):
     def __init__(self, root: Path):
         super().__init__(root)
         self.has_git = which("git") is not None
-        self.git_root = self._get_git_root()
-        self.ignore_file_paths = self._find_ignore_files()
-        self.ignored_files = self._list_ignored_files()
-        self.ignored_dirs = self._list_ignored_dirs()
+
+    @cached_property
+    def git_root(self) -> Optional[Path]:
+        return self._get_git_root()
+
+    @cached_property
+    def ignore_file_paths(self) -> List[Path]:
+        return self._find_ignore_files()
+
+    @cached_property
+    def ignored_files(self) -> set[str]:
+        return self._list_ignored_files()
+
+    @cached_property
+    def ignored_dirs(self) -> set[str]:
+        return self._list_ignored_dirs()
 
     def _get_git_root(self) -> Optional[Path]:
         """Get the git repository root directory"""
