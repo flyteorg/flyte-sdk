@@ -2,13 +2,15 @@
 
 import datetime
 from typing import ClassVar
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
 import flyte
 import flyte.sandbox
 from flyte.extras._container import ContainerTask
-from flyte.io import Dir, File
+from flyte.io import File
+from flyte.models import NativeInterface
 from flyte.sandbox._code_sandbox import ImageConfig, _Sandbox, create
 
 # ---------------------------------------------------------------------------
@@ -48,7 +50,6 @@ class TestCreateValidation:
     def test_defaults(self):
         sb = create(name="my-sandbox")
         assert sb.auto_io is True
-        assert sb.block_network is True
         assert sb.retries == 0
         assert sb.timeout is None
         assert sb.env_vars is None
@@ -75,14 +76,6 @@ class TestCreateValidation:
         )
         assert sb.inputs == {"x": int, "y": str}
         assert sb.outputs == {"result": float}
-
-    def test_block_network_default_true(self):
-        sb = create(name="sb", code="pass")
-        assert sb.block_network is True
-
-    def test_block_network_can_be_disabled(self):
-        sb = create(name="sb", code="pass", block_network=False)
-        assert sb.block_network is False
 
     def test_image_skips_build(self):
         sb = create(name="sb", code="pass", image="myregistry/myimage:latest")
@@ -211,21 +204,10 @@ class TestMakeContainerTaskCodeMode:
         assert "x" in task._inputs
         assert "y" in task._inputs
 
-    def test_block_network_passed(self):
-        task = self._make(block_network=True)
-        assert task._block_network is True
-
-        task_no_block = self._make(block_network=False)
-        assert task_no_block._block_network is False
-
     def test_file_input_uses_path_argument(self):
         task = self._make(inputs={"data": File})
         # File inputs should appear in arguments list as /var/inputs/<name>
         assert any("/var/inputs/data" in arg for arg in (task._args or []))
-
-    def test_dir_input_uses_path_argument(self):
-        task = self._make(inputs={"dataset": Dir})
-        assert any("/var/inputs/dataset" in arg for arg in (task._args or []))
 
     def test_scalar_input_uses_template_syntax(self):
         task = self._make(inputs={"count": int})
@@ -244,20 +226,6 @@ class TestMakeContainerTaskCodeMode:
         res = flyte.Resources(cpu=4, memory="8Gi")
         task = self._make(resources=res)
         assert task.resources is res
-
-    def test_config_returns_network_none_when_block_network(self):
-        from flyte.models import SerializationContext
-
-        task = self._make(block_network=True)
-        sctx = SerializationContext(project="p", domain="d", version="v", org="o")
-        assert task.config(sctx) == {"network_mode": "none"}
-
-    def test_config_returns_empty_when_network_allowed(self):
-        from flyte.models import SerializationContext
-
-        task = self._make(block_network=False)
-        sctx = SerializationContext(project="p", domain="d", version="v", org="o")
-        assert task.config(sctx) == {}
 
 
 # ---------------------------------------------------------------------------
@@ -299,14 +267,10 @@ class TestGenerateAutoScript:
         assert "_parser.add_argument('--data', type=str)" in script
         assert "data = _args.data" in script
 
-    def test_dir_input_as_str(self):
-        script = self._script("pass", inputs={"dataset": Dir})
-        assert "_parser.add_argument('--dataset', type=str)" in script
-
     def test_int_output_epilogue(self):
         script = self._script("result = 42", outputs={"result": int})
         assert "(_out_ / 'result').write_text(str(result))" in script
-        assert "_out_.mkdir" in script
+        assert "_out_ = _pl_.Path('/var/outputs')" in script
 
     def test_datetime_output_uses_isoformat(self):
         import datetime
@@ -357,11 +321,11 @@ class TestAutoIO:
         sb = create(name="t", code="result = 1", **kwargs)
         return sb._make_container_task("img:latest", "t")
 
-    def test_verbatim_no_cli_args_in_bash(self):
+    def test_verbatim_forwards_cli_args(self):
+        # Verbatim mode now forwards CLI args so scripts can use argparse
         task = self._make_verbatim(inputs={"x": int})
         bash_cmd = task._cmd[-1]
-        # No template substitution injected
-        assert "{{.inputs" not in bash_cmd
+        assert "{{.inputs.x}}" in bash_cmd
 
     def test_verbatim_bash_cmd_is_simple(self):
         task = self._make_verbatim()
@@ -435,10 +399,6 @@ class TestMakeContainerTaskCommandMode:
         task = sb._make_container_task("img:latest", "cmd-args")
         assert task._args == ["--tb=short", "/var/inputs/tests.py"]
 
-    def test_block_network_default_true(self):
-        task = self._make()
-        assert task._block_network is True
-
 
 # ---------------------------------------------------------------------------
 # Supported input/output types
@@ -456,7 +416,7 @@ class TestSupportedTypes:
         datetime.datetime,
         datetime.timedelta,
     ]
-    SUPPORTED_IO_TYPES: ClassVar[list[type]] = [File, Dir]
+    SUPPORTED_IO_TYPES: ClassVar[list[type]] = [File]
 
     @pytest.mark.parametrize("t", SUPPORTED_SCALAR_TYPES)
     def test_scalar_input_type_accepted(self, t):
@@ -484,6 +444,129 @@ class TestSupportedTypes:
 
 
 # ---------------------------------------------------------------------------
+# _Sandbox.as_task
+# ---------------------------------------------------------------------------
+
+
+class TestAsTask:
+    """Tests for the public as_task() method."""
+
+    @pytest.fixture()
+    def mock_file(self):
+        """A mock File object returned by File.from_local."""
+        mock = AsyncMock()
+        mock.return_value = File(path="s3://bucket/script.py")
+        return mock
+
+    def test_as_task_returns_container_task(self, mock_file):
+        sb = create(
+            name="test-as-task",
+            code="result = 1",
+            inputs={"x": int},
+            outputs={"result": int},
+        )
+        with patch.object(File, "from_local", mock_file):
+            task = sb.as_task(image="myimage:latest")
+        assert isinstance(task, ContainerTask)
+
+    def test_as_task_sets_script_default(self, mock_file):
+        sb = create(
+            name="test-as-task",
+            code="result = 1",
+            inputs={"x": int},
+            outputs={"result": int},
+        )
+        with patch.object(File, "from_local", mock_file):
+            task = sb.as_task(image="myimage:latest")
+        # _script should have a File default, not None
+        script_type, script_default = task.interface.inputs["_script"]
+        assert script_type is File
+        assert isinstance(script_default, File)
+
+    def test_as_task_script_not_required(self, mock_file):
+        sb = create(
+            name="test-as-task",
+            code="result = 1",
+            inputs={"x": int},
+            outputs={"result": int},
+        )
+        with patch.object(File, "from_local", mock_file):
+            task = sb.as_task(image="myimage:latest")
+        # _script has a default, so it should NOT be in required_inputs
+        assert "_script" not in task.interface.required_inputs()
+
+    def test_as_task_user_inputs_still_required(self, mock_file):
+        sb = create(
+            name="test-as-task",
+            code="result = x",
+            inputs={"x": int},
+            outputs={"result": int},
+        )
+        with patch.object(File, "from_local", mock_file):
+            task = sb.as_task(image="myimage:latest")
+        # User-declared inputs should still be present (with None default from ContainerTask)
+        assert "x" in task.interface.inputs
+
+    def test_as_task_preserves_outputs(self, mock_file):
+        sb = create(name="test-as-task", code="result = 1", outputs={"result": int})
+        with patch.object(File, "from_local", mock_file):
+            task = sb.as_task(image="myimage:latest")
+        assert "result" in task.interface.outputs
+
+    def test_as_task_does_not_set_parent_env(self, mock_file):
+        sb = create(name="test-as-task", code="pass")
+        with patch.object(File, "from_local", mock_file):
+            task = sb.as_task(image="myimage:latest")
+        # as_task() returns a clean task with no parent_env,
+        # so it can be passed to TaskEnvironment.from_task() for deployment.
+        assert task.parent_env is None
+
+    def test_as_task_command_mode_no_script_default(self):
+        sb = create(name="test-cmd", command=["/bin/bash", "-c", "echo hi"])
+        task = sb.as_task(image="myimage:latest")
+        # Command mode has no _script input at all
+        assert "_script" not in task.interface.inputs
+
+    def test_as_task_auto_io_generates_preamble(self, mock_file):
+        sb = create(
+            name="test-as-task",
+            code="result = n * 2",
+            inputs={"n": int},
+            outputs={"result": int},
+        )
+        with patch.object(File, "from_local", mock_file):
+            task = sb.as_task(image="myimage:latest")
+        # Verify script was uploaded (from_local was called)
+        mock_file.assert_called_once()
+
+    def test_as_task_verbatim_mode(self, mock_file):
+        raw_code = "import sys; print(sys.argv)"
+        sb = create(name="test-as-task", code=raw_code, auto_io=False)
+        with patch.object(File, "from_local", mock_file):
+            task = sb.as_task(image="myimage:latest")
+        assert isinstance(task, ContainerTask)
+        mock_file.assert_called_once()
+
+    def test_as_task_interface_is_native_interface(self, mock_file):
+        sb = create(
+            name="test-as-task",
+            code="result = 1",
+            inputs={"x": int},
+            outputs={"result": int},
+        )
+        with patch.object(File, "from_local", mock_file):
+            task = sb.as_task(image="myimage:latest")
+        assert isinstance(task.interface, NativeInterface)
+
+    def test_as_task_with_pre_built_image_skips_build(self, mock_file):
+        sb = create(name="test-as-task", code="pass", image="prebuilt:latest")
+        with patch.object(File, "from_local", mock_file):
+            task = sb.as_task()
+        # Should use the pre-built image, not trigger a build
+        assert isinstance(task, ContainerTask)
+
+
+# ---------------------------------------------------------------------------
 # Public API via flyte.sandbox
 # ---------------------------------------------------------------------------
 
@@ -499,3 +582,8 @@ class TestPublicAPI:
     def test_create_returns_sandbox_instance(self):
         sb = flyte.sandbox.create(name="public-api-test", code="pass")
         assert isinstance(sb, _Sandbox)
+
+    def test_as_task_is_public(self):
+        sb = flyte.sandbox.create(name="test", code="pass")
+        assert hasattr(sb, "as_task")
+        assert callable(sb.as_task)

@@ -17,9 +17,6 @@ Three modes:
   CLI args are forwarded but the script handles all I/O itself.
 - **Command mode** (``command=``): run any shell command (pytest, binary, non-Python code, etc.).
 
-Security defaults:
-- ``block_network=True`` (default) — the container has *no network interface*
-  (``--network none``), preventing any outbound calls from untrusted code.
 """
 
 import asyncio
@@ -30,11 +27,28 @@ import nest_asyncio
 
 import flyte
 import flyte.sandbox
-from flyte._image import DIST_FOLDER, PythonWheels
+from flyte._image import PythonWheels
 from flyte.io import File
 from flyte.sandbox import sandbox_environment
 
 nest_asyncio.apply()
+
+
+env = flyte.TaskEnvironment(
+    name="sandbox-demo",
+    image=(
+        flyte.Image.from_debian_base()
+        .clone(
+            addl_layer=PythonWheels(
+                wheel_dir=Path(__file__).parent.parent.parent / "dist",
+                package_name="flyte",
+            ),
+            name="sandbox-demo-image",
+        )
+        .with_pip_packages("nest-asyncio")
+    ),
+    depends_on=[sandbox_environment],
+)
 
 
 # Example 1 — code mode (auto-inject): pure Python, no boilerplate
@@ -109,18 +123,39 @@ linecount_sandbox = flyte.sandbox.create(
     outputs={"line_count": str},
 )
 
-env = flyte.TaskEnvironment(
-    name="sandbox-demo",
-    image=(
-        flyte.Image.from_debian_base()
-        .clone(
-            addl_layer=PythonWheels(wheel_dir=DIST_FOLDER, package_name="flyte"),
-            name="sandbox-demo-image",
-        )
-        .with_pip_packages("nest-asyncio")
-    ),
-    depends_on=[sandbox_environment],
-)
+
+# Example 5 — as_task() + deploy: build a deployable sandbox task
+#
+# Use ``as_task()`` to get a ContainerTask with ``_script`` pre-filled as a
+# default.
+
+
+@env.task
+async def deploy_sandbox_task() -> str:
+    """Deploy a sandbox task using as_task().
+
+    Builds the image, creates a ContainerTask with ``_script`` pre-filled as a
+    default value, and deploys it. Retriggers from the UI only need user inputs.
+    """
+    flyte.init_in_cluster()
+
+    sandbox = flyte.sandbox.create(
+        name="deployable-sandbox",
+        code="""\
+import json, pathlib
+data = json.loads(pathlib.Path(payload).read_text())
+total = sum(data["values"])
+""",
+        inputs={"payload": File},
+        outputs={"total": int},
+        resources=flyte.Resources(cpu=1, memory="512Mi"),
+    )
+    task = await sandbox.as_task.aio()
+    deploy_env = flyte.TaskEnvironment.from_task("deployable-sandbox", task)
+    v = flyte.deploy(deploy_env)
+
+    print("Deployed environment:", v[0].summary_repr())
+    return v[0].summary_repr()
 
 
 @env.task
@@ -160,6 +195,9 @@ async def run_pipeline() -> dict:
     data_file = await create_text_file()
     line_count = await linecount_sandbox.run.aio(data_file=data_file)
 
+    # Deploy a sandbox task
+    deployment_summary = await deploy_sandbox_task()
+
     return {
         "sum_1_to_10": total,
         "mean": round(mean, 4),
@@ -167,6 +205,7 @@ async def run_pipeline() -> dict:
         "window_end": window_end.isoformat(),
         "etl_sum_1_to_10": etl_total,
         "line_count": line_count,
+        "deployment_summary": deployment_summary,
     }
 
 
@@ -183,6 +222,8 @@ def run_pipeline_sync() -> dict:
     etl_total = etl_sandbox.run(payload=payload)
     data_file = asyncio.run(create_text_file())
     line_count = linecount_sandbox.run(data_file=data_file)
+    deployment_summary = asyncio.run(deploy_sandbox_task())
+
     return {
         "sum_1_to_10": total,
         "mean": round(mean, 4),
@@ -190,6 +231,7 @@ def run_pipeline_sync() -> dict:
         "window_end": window_end.isoformat(),
         "etl_sum_1_to_10": etl_total,
         "line_count": line_count,
+        "deployment_summary": deployment_summary,
     }
 
 

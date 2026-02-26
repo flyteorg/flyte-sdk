@@ -14,6 +14,7 @@ import flyte
 from flyte.errors import InvalidPackageError
 from flyte.extras._container import ContainerTask
 from flyte.io import File
+from flyte.models import NativeInterface
 from flyte.syncify import syncify
 
 logger = logging.getLogger(__name__)
@@ -64,7 +65,6 @@ class _Sandbox:
 
     # Runtime
     resources: Optional[flyte.Resources] = None
-    block_network: bool = True
     retries: int = 0
     timeout: Optional[int] = None
     env_vars: Optional[dict[str, str]] = None
@@ -258,7 +258,7 @@ class _Sandbox:
             python_cmd = f"python $1 {python_args}" if python_args else "python $1"
             bash_cmd = (
                 f"set -o pipefail && {python_cmd}; "
-                f"_exit=$?; mkdir -p /var/outputs; echo $_exit > /var/outputs/exit_code"
+                f"_exit=$?; echo $_exit > /var/outputs/exit_code"
             )
 
             return ContainerTask(
@@ -271,7 +271,6 @@ class _Sandbox:
                 command=["/bin/bash", "-c", bash_cmd],
                 arguments=arguments,
                 resources=resources,
-                block_network=self.block_network,
                 retries=self.retries,
                 cache=self.cache,
                 **extra_kwargs,
@@ -288,11 +287,46 @@ class _Sandbox:
                 command=self.command or [],
                 arguments=self.arguments or [],
                 resources=resources,
-                block_network=self.block_network,
                 retries=self.retries,
                 cache=self.cache,
                 **extra_kwargs,
             )
+
+    @syncify
+    async def as_task(self, image: Optional[str] = None) -> ContainerTask:
+        """Build the image (if needed) and return a deployable ContainerTask.
+
+        The returned task has ``_script`` as an optional input with a pre-filled
+        default, so retriggers from the UI only require user-declared inputs.
+
+        Args:
+            image: Pre-built image URI. If ``None``, the image is built automatically.
+
+        Returns:
+            A :class:`ContainerTask` ready to execute or deploy.
+        """
+        if image is None:
+            image = self.image or await self._build.aio()
+
+        task_name = self._task_name()
+        task = self._make_container_task(image, task_name)
+
+        if self.code is not None:
+            # Upload script to blob storage and set as default for _script
+            script_content = self._generate_auto_script() if self.auto_io else self.code
+            script_path = Path(tempfile.gettempdir()) / f"{task_name}_generated.py"
+            script_path.write_text(script_content)
+            script_file: File = await File.from_local(
+                str(script_path),
+                hash_method=hashlib.sha256(script_content.encode()).hexdigest(),
+            )
+
+            # Replace interface: set script_file as default for _script
+            new_inputs = dict(task.interface.inputs)
+            new_inputs["_script"] = (File, script_file)
+            task.interface = NativeInterface(new_inputs, dict(task.interface.outputs))
+
+        return task
 
     @syncify
     async def run(self, image: Optional[str] = None, **kwargs) -> Any:
@@ -305,25 +339,14 @@ class _Sandbox:
         Returns:
             Tuple of typed outputs.
         """
-        if image is None:
-            image = self.image or await self._build.aio()
-
-        task_name = self._task_name()
-        task = self._make_container_task(image, task_name)
+        task = await self.as_task.aio(image=image)
         task.parent_env = weakref.ref(sandbox_environment)
-        task.parent_env_name = (
-            task_name  # If not set, the ContainerTask will default to using the sandbox_environment's image.
-        )
+        task.parent_env_name = self._task_name()
 
         if self.code is not None:
-            script_content = self._generate_auto_script() if self.auto_io and self.code is not None else self.code
-            script_path = Path(tempfile.gettempdir()) / f"{task_name}_generated.py"
-            script_path.write_text(script_content)
-            script: File = await File.from_local(
-                str(script_path),
-                hash_method=hashlib.sha256(script_content.encode()).hexdigest(),
-            )
-            return await task(_script=script, **kwargs)
+            # Extract the uploaded script from the interface default
+            script_file = task.interface.inputs["_script"][1]
+            return await task(_script=script_file, **kwargs)
 
         return await task(**kwargs)
 
@@ -352,7 +375,6 @@ def create(
     image_name: Optional[str] = None,
     image: Optional[str] = None,
     auto_io: bool = True,
-    block_network: bool = True,
     retries: int = 0,
     timeout: Optional[int] = None,
     env_vars: Optional[dict[str, str]] = None,
@@ -447,8 +469,6 @@ def create(
             declared inputs are available as local variables and scalar outputs
             are collected automatically — no boilerplate needed. When
             ``False``, ``code`` is run verbatim and must handle all I/O itself.
-        block_network: Block all outbound network access inside the container.
-            Defaults to ``True`` (``--network none``).
         retries: Number of task retries on failure.
         timeout: Task timeout in seconds.
         env_vars: Environment variables available inside the container.
@@ -486,7 +506,6 @@ def create(
         image_name=image_name,
         image=image,
         auto_io=auto_io,
-        block_network=block_network,
         retries=retries,
         timeout=timeout,
         env_vars=env_vars,

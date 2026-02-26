@@ -103,9 +103,7 @@
         )
         total = sum(payload["values"])
 
-        out = pathlib.Path("/var/outputs")
-        out.mkdir(parents=True, exist_ok=True)
-        (out / "total").write_text(str(total))
+        pathlib.Path("/var/outputs/total").write_text(str(total))
         \"\"\"
 
         etl_sandbox = flyte.sandbox.create(
