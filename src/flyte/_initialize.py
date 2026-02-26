@@ -244,6 +244,7 @@ async def init(
             root_dir = Path.cwd()
         # We will inject the root_dir into the sys,path for module resolution
         sys.path.append(str(root_dir))
+        logger.info(f"Flyte root directory set to {root_dir}")
 
         _init_config = _InitConfig(
             root_dir=root_dir,

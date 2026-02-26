@@ -373,23 +373,9 @@ class TaskPerFileGroup(common.ObjectsPerFileGroup):
         return {k: v for k, v in module.__dict__.items() if isinstance(v, TaskTemplate)}
 
     def list_commands(self, ctx):
-        common.initialize_config(
-            ctx,
-            self.run_args.project,
-            self.run_args.domain,
-            self.run_args.root_dir,
-            sync_local_sys_paths=not self.run_args.no_sync_local_sys_paths,
-        )
         return super().list_commands(ctx)
 
     def get_command(self, ctx, obj_name):
-        common.initialize_config(
-            ctx,
-            self.run_args.project,
-            self.run_args.domain,
-            self.run_args.root_dir,
-            sync_local_sys_paths=not self.run_args.no_sync_local_sys_paths,
-        )
         return super().get_command(ctx, obj_name)
 
     def _get_command_for_obj(self, ctx: click.Context, obj_name: str, obj: Any) -> click.Command:
