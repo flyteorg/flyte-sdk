@@ -28,7 +28,6 @@ def _make_session(**overrides):
         "base_messages": [{"role": "user", "content": "test"}],
         "plan": CodePlan(description="test plan", approach="test approach"),
         "skip_tests": False,
-        "block_network": True,
         "initial_input_tokens": 0,
         "initial_output_tokens": 0,
     }

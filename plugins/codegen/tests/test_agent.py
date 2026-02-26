@@ -26,7 +26,6 @@ class TestAutoCoderAgentConstruction:
         assert agent.resources is None
         assert agent.image_config is None
         assert agent.skip_tests is False
-        assert agent.block_network is True
         assert agent.timeout is None
         assert agent.env_vars is None
         assert agent.secrets is None
@@ -56,7 +55,6 @@ class TestAutoCoderAgentConstruction:
             max_iterations=5,
             sandbox_retries=2,
             skip_tests=True,
-            block_network=False,
             base_packages=["pandas", "numpy"],
             cache="disable",
             use_agent_sdk=True,
@@ -67,7 +65,6 @@ class TestAutoCoderAgentConstruction:
         assert agent.max_iterations == 5
         assert agent.sandbox_retries == 2
         assert agent.skip_tests is True
-        assert agent.block_network is False
         assert agent.base_packages == ["pandas", "numpy"]
         assert agent.cache == "disable"
         assert agent.use_agent_sdk is True

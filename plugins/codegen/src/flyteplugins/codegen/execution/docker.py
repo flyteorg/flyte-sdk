@@ -135,7 +135,6 @@ async def run_tests(
     image: str,
     name: str,
     resources: Optional[flyte.Resources] = None,
-    block_network: bool = True,
     retries: int = 0,
     timeout: Optional[int] = None,
     env_vars: Optional[dict[str, str]] = None,
@@ -151,7 +150,6 @@ async def run_tests(
         image: Pre-built image URI.
         name: Base name for the container task.
         resources: CPU / memory resources for the container.
-        block_network: Block outbound network inside the container. Defaults to ``True``.
         retries: Number of task retries on failure.
         timeout: Task timeout in seconds.
         env_vars: Environment variables available inside the container.
@@ -177,7 +175,6 @@ async def run_tests(
         inputs={"solution.py": File, "test_solution.py": File},
         outputs={"exit_code": str, "result": str},
         resources=resources,
-        block_network=block_network,
         retries=retries,
         timeout=timeout,
         env_vars=env_vars,

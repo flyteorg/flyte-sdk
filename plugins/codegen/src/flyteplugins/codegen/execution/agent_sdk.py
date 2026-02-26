@@ -72,7 +72,6 @@ async def code_gen_eval_agent_sdk(
     base_packages: Optional[list[str]] = None,
     resources: Optional[flyte.Resources] = None,
     image_config: Optional[ImageConfig] = None,
-    block_network: bool = True,
     retries: int = 0,
     timeout: Optional[int] = None,
     env_vars: Optional[dict[str, str]] = None,
@@ -100,7 +99,6 @@ async def code_gen_eval_agent_sdk(
         base_packages: Optional base packages to always include
         resources: Optional resources for sandbox execution
         image_config: Optional image configuration (registry, python_version, etc.)
-        block_network: Allow generated code to access the network inside the sandbox
         retries: Number of retries for sandbox execution (agent iterations)
         timeout: Timeout for sandbox execution in seconds
         env_vars: Optional environment variables to set in the sandbox
@@ -186,7 +184,6 @@ async def code_gen_eval_agent_sdk(
             image=built_image,
             name=f"sandbox-{name}",
             resources=resources,
-            block_network=block_network,
             retries=retries,
             timeout=timeout,
             env_vars=env_vars,

@@ -66,8 +66,6 @@ class AutoCoderAgent:
         max_iterations: Maximum number of generate-test-fix iterations. Defaults to 10.
         max_sample_rows: Optional maximum number of rows to use for sample data. Defaults to 100.
         skip_tests: Optional flag to skip testing. Defaults to False.
-        block_network: Allow generated code to access the network inside the sandbox.
-            Defaults to False (network disabled for safety).
         sandbox_retries: Number of Flyte task-level retries for each sandbox execution. Defaults to 0.
         timeout: Timeout in seconds for sandboxes. Defaults to None.
         env_vars: Environment variables to pass to sandboxes.
@@ -114,7 +112,6 @@ class AutoCoderAgent:
     max_iterations: int = 10
     max_sample_rows: int = 100
     skip_tests: bool = False
-    block_network: bool = True
     sandbox_retries: int = 0
     timeout: Optional[int] = None
     env_vars: Optional[dict[str, str]] = None
@@ -266,7 +263,6 @@ class AutoCoderAgent:
                 base_packages=self.base_packages,
                 resources=self.resources,
                 image_config=self.image_config,
-                block_network=self.block_network,
                 retries=self.sandbox_retries,
                 timeout=self.timeout,
                 env_vars=self.env_vars,
@@ -342,7 +338,6 @@ class AutoCoderAgent:
             base_messages=base_messages,
             plan=plan,
             skip_tests=self.skip_tests,
-            block_network=self.block_network,
             initial_input_tokens=(schema_input_tokens + in_tok) if samples else in_tok,
             initial_output_tokens=((schema_output_tokens + out_tok) if samples else out_tok),
         )
@@ -373,7 +368,6 @@ class _CodeGenSession:
         base_messages: list[dict[str, str]],
         plan: CodePlan,
         skip_tests: bool,
-        block_network: bool,
         initial_input_tokens: int,
         initial_output_tokens: int,
     ):
@@ -383,7 +377,6 @@ class _CodeGenSession:
         self.model = agent.model
         self.max_iterations = 1 if skip_tests else agent.max_iterations
         self.skip_tests = skip_tests
-        self.block_network = block_network
         self.resources = agent.resources
         self.sandbox_retries = agent.sandbox_retries
         self.timeout = agent.timeout
@@ -605,7 +598,6 @@ class _CodeGenSession:
             image=self.current_image,
             name=self.name,
             resources=self.resources,
-            block_network=self.block_network,
             retries=self.sandbox_retries,
             timeout=self.timeout,
             env_vars=self.env_vars,
