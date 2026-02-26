@@ -2,7 +2,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-from flyte._code_bundle._ignore import GitIgnore, IgnoreGroup, StandardIgnore, STANDARD_IGNORE_PATTERNS
+from flyte._code_bundle._ignore import GitIgnore, IgnoreGroup, StandardIgnore
 
 
 def test_ignore_group_list_ignored():

@@ -30,6 +30,37 @@ class Ignore(ABC):
         pass
 
 
+STANDARD_IGNORE_PATTERNS = [
+    ".git",
+    "*.pyc",
+    "**/*.pyc",
+    "__pycache__",
+    "**/__pycache__",
+    ".cache",
+    ".cache/*",
+    ".ruff_cache",
+    "**/.ruff_cache",
+    ".mypy_cache",
+    "**/.mypy_cache",
+    ".pytest_cache",
+    "**/.pytest_cache",
+    ".venv",
+    "**/.venv",
+    ".idea",
+    "**/.idea",
+    "venv",
+    "env",
+    "*.log",
+    ".env",
+    "*.egg-info",
+    "**/*.egg-info",
+    "*.egg",
+    "dist",
+    "build",
+    "*.whl",
+]
+
+
 class GitIgnore(Ignore):
     """Uses git cli (if available) to list all ignored files and compare with those."""
 
@@ -65,9 +96,11 @@ class GitIgnore(Ignore):
         except ValueError:
             return False
         for part in rel_path.parts[:-1]:  # exclude the filename itself
-            for pattern in STANDARD_IGNORE_PATTERNS:
-                if fnmatch(part, pattern):
-                    return True
+            # Skip patterns containing "/" — they can never match a single directory component.
+            # e.g. for a path "project/.venv/.gitignore", parts are ("project", ".venv"),
+            # and ".venv" matches the ".venv" pattern, so we return True.
+            if any(fnmatch(part, p) for p in STANDARD_IGNORE_PATTERNS if "/" not in p):
+                return True
         return False
 
     def _find_ignore_files(self) -> List[Path]:
@@ -95,7 +128,11 @@ class GitIgnore(Ignore):
         subdir_ignores = []
         for ignore_file in [".gitignore", ".flyteignore"]:
             for subdir_ignore in self.root.rglob(ignore_file):
-                if subdir_ignore.is_file() and subdir_ignore not in seen and not self._is_under_standard_ignored_dir(subdir_ignore):
+                if (
+                    subdir_ignore.is_file()
+                    and subdir_ignore not in seen
+                    and not self._is_under_standard_ignored_dir(subdir_ignore)
+                ):
                     subdir_ignores.append(subdir_ignore)
                     seen.add(subdir_ignore)
 
@@ -150,37 +187,6 @@ class GitIgnore(Ignore):
             if os.path.isdir(os.path.join(self.root, path)) and self.ignored_dirs:
                 return rel_path.as_posix() + "/" in self.ignored_dirs
         return False
-
-
-STANDARD_IGNORE_PATTERNS = [
-    ".git",
-    "*.pyc",
-    "**/*.pyc",
-    "__pycache__",
-    "**/__pycache__",
-    ".cache",
-    ".cache/*",
-    ".ruff_cache",
-    "**/.ruff_cache",
-    ".mypy_cache",
-    "**/.mypy_cache",
-    ".pytest_cache",
-    "**/.pytest_cache",
-    ".venv",
-    "**/.venv",
-    ".idea",
-    "**/.idea",
-    "venv",
-    "env",
-    "*.log",
-    ".env",
-    "*.egg-info",
-    "**/*.egg-info",
-    "*.egg",
-    "dist",
-    "build",
-    "*.whl",
-]
 
 
 class StandardIgnore(Ignore):

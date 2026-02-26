@@ -16,7 +16,7 @@ def fn(x: int) -> int:  # type annotations are recommended.
 
 # tasks can also call other tasks, which will be manifested in different containers.
 @env.task
-def main(x_list: list[int]) -> float:
+def main(x_list: list[int] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]) -> float:
     x_len = len(x_list)
     if x_len < 10:
         raise ValueError(f"x_list doesn't have a larger enough sample size, found: {x_len}")
