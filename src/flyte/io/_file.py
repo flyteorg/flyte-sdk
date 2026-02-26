@@ -283,6 +283,66 @@ class File(BaseModel, Generic[T], SerializableType):
         )
 
     @classmethod
+    @requires_initialization
+    def named_remote(cls, name: str) -> File[T]:
+        """
+        Create a File reference whose remote path is derived deterministically from *name*.
+
+        Unlike :meth:`new_remote`, which generates a random path on every call, this method
+        produces the same path for the same *name* within a given task execution. This makes
+        it safe across retries: the first attempt uploads to the path and subsequent retries
+        resolve to the identical location without re-uploading.
+
+        The path is optionally namespaced by the node ID extracted from the backend
+        raw-data path, which follows the convention:
+
+            {run_name}-{node_id}-{attempt_index}
+
+        If extraction fails, the function falls back to the run base directory alone.
+
+        Args:
+            name: Plain filename (e.g., "data.csv"). Must not contain path separators.
+
+        Returns:
+            A :class:`File` instance whose path is stable across retries.
+        """
+        import fsspec
+
+        ctx = internal_ctx()
+        tctx = ctx.data.task_context
+        if tctx is None:
+            raise ValueError("File.named_remote() requires an active task execution context.")
+
+        node_id: Optional[str] = None
+
+        # Inline extraction of node ID from raw data path
+        raw_path = getattr(ctx.raw_data, "path", None)
+        if isinstance(raw_path, str):
+            last = raw_path.rstrip("/").rsplit("/", 1)[-1]
+            prefix = f"{tctx.action.run_name}-"
+
+            if last.startswith(prefix):
+                rest = last[len(prefix) :]  # "{node_id}-{attempt}"
+                node, _, attempt = rest.rpartition("-")
+                if node and attempt.isdigit():
+                    node_id = node
+
+        base = tctx.run_base_dir
+        protocol = get_protocol(base)
+
+        # Local filesystem
+        if "file" in protocol:
+            parent = Path(base) if node_id is None else Path(base) / node_id
+            parent.mkdir(parents=True, exist_ok=True)
+            return cls(path=str((parent / name).absolute()))
+
+        # Remote filesystem
+        fs = fsspec.filesystem(protocol)
+        base = base.rstrip(fs.sep)
+        parts = [base, node_id, name] if node_id else [base, name]
+        return cls(path=fs.sep.join(parts))
+
+    @classmethod
     def from_existing_remote(cls, remote_path: str, file_cache_key: Optional[str] = None) -> File[T]:
         """
         Create a File reference from an existing remote file.
