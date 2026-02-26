@@ -244,7 +244,6 @@ async def init(
             root_dir = Path.cwd()
         # We will inject the root_dir into the sys,path for module resolution
         sys.path.append(str(root_dir))
-        logger.info(f"Flyte root directory set to {root_dir}")
 
         _init_config = _InitConfig(
             root_dir=root_dir,
@@ -260,6 +259,8 @@ async def init(
             sync_local_sys_paths=sync_local_sys_paths,
             local_persistence=local_persistence,
         )
+
+        logger.info(f"Flyte initialized with config: {_init_config}")
 
 
 @syncify
