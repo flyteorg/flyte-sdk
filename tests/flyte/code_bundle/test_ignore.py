@@ -2,7 +2,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-from flyte._code_bundle._ignore import GitIgnore, IgnoreGroup, StandardIgnore
+from flyte._code_bundle._ignore import GitIgnore, IgnoreGroup, StandardIgnore, STANDARD_IGNORE_PATTERNS
 
 
 def test_ignore_group_list_ignored():
@@ -443,3 +443,27 @@ def test_gitignore_with_git_root_and_working_dir():
         # Test files that should NOT be ignored
         assert not git_ignore.is_ignored(examples_dir / "main.py"), "main.py should NOT be ignored"
         assert not git_ignore.is_ignored(examples_dir / "public.txt"), "public.txt should NOT be ignored"
+
+
+def test_is_under_standard_ignored_dir():
+    """Test that _is_under_standard_ignored_dir correctly identifies paths inside standard-ignored dirs"""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        root_path = Path(tmpdir).resolve()
+        subprocess.run(["git", "init"], cwd=root_path, capture_output=True, check=True)
+
+        git_ignore = GitIgnore(root_path)
+
+        # Paths inside standard-ignored dirs should return True
+        assert git_ignore._is_under_standard_ignored_dir(root_path / ".venv" / ".gitignore")
+        assert git_ignore._is_under_standard_ignored_dir(root_path / "__pycache__" / ".gitignore")
+        assert git_ignore._is_under_standard_ignored_dir(root_path / ".ruff_cache" / ".gitignore")
+        assert git_ignore._is_under_standard_ignored_dir(root_path / ".mypy_cache" / ".gitignore")
+        # Nested: multiple levels deep inside a standard-ignored dir
+        assert git_ignore._is_under_standard_ignored_dir(root_path / ".venv" / "lib" / "site-packages" / ".gitignore")
+
+        # Paths NOT inside standard-ignored dirs should return False
+        assert not git_ignore._is_under_standard_ignored_dir(root_path / "src" / ".gitignore")
+        # The root itself is not "under" a standard-ignored dir
+        assert not git_ignore._is_under_standard_ignored_dir(root_path / ".gitignore")
+        # Path outside root should return False (ValueError branch)
+        assert not git_ignore._is_under_standard_ignored_dir(root_path.parent / "outside" / ".gitignore")

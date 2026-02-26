@@ -58,6 +58,18 @@ class GitIgnore(Ignore):
             pass
         return None
 
+    def _is_under_standard_ignored_dir(self, path: Path) -> bool:
+        """Return True if a path is nested inside a directory matched by STANDARD_IGNORE_PATTERNS."""
+        try:
+            rel_path = path.relative_to(self.root)
+        except ValueError:
+            return False
+        for part in rel_path.parts[:-1]:  # exclude the filename itself
+            for pattern in STANDARD_IGNORE_PATTERNS:
+                if fnmatch(part, pattern):
+                    return True
+        return False
+
     def _find_ignore_files(self) -> List[Path]:
         """Find all .gitignore and .flyteignore files in git root, self.root, and subdirectories.
         This runs once during initialization to avoid redundant file system searches.
@@ -83,7 +95,7 @@ class GitIgnore(Ignore):
         subdir_ignores = []
         for ignore_file in [".gitignore", ".flyteignore"]:
             for subdir_ignore in self.root.rglob(ignore_file):
-                if subdir_ignore.is_file() and subdir_ignore not in seen:
+                if subdir_ignore.is_file() and subdir_ignore not in seen and not self._is_under_standard_ignored_dir(subdir_ignore):
                     subdir_ignores.append(subdir_ignore)
                     seen.add(subdir_ignore)
 
@@ -148,6 +160,10 @@ STANDARD_IGNORE_PATTERNS = [
     "**/__pycache__",
     ".cache",
     ".cache/*",
+    ".ruff_cache",
+    "**/.ruff_cache",
+    ".mypy_cache",
+    "**/.mypy_cache",
     ".pytest_cache",
     "**/.pytest_cache",
     ".venv",
