@@ -445,30 +445,6 @@ def test_gitignore_with_git_root_and_working_dir():
         assert not git_ignore.is_ignored(examples_dir / "public.txt"), "public.txt should NOT be ignored"
 
 
-def test_is_under_standard_ignored_dir():
-    """Test that _is_under_standard_ignored_dir correctly identifies paths inside standard-ignored dirs"""
-    with tempfile.TemporaryDirectory() as tmpdir:
-        root_path = Path(tmpdir).resolve()
-        subprocess.run(["git", "init"], cwd=root_path, capture_output=True, check=True)
-
-        git_ignore = GitIgnore(root_path)
-
-        # Paths inside standard-ignored dirs should return True
-        assert git_ignore._is_under_standard_ignored_dir(root_path / ".venv" / ".gitignore")
-        assert git_ignore._is_under_standard_ignored_dir(root_path / "__pycache__" / ".gitignore")
-        assert git_ignore._is_under_standard_ignored_dir(root_path / ".ruff_cache" / ".gitignore")
-        assert git_ignore._is_under_standard_ignored_dir(root_path / ".mypy_cache" / ".gitignore")
-        # Nested: multiple levels deep inside a standard-ignored dir
-        assert git_ignore._is_under_standard_ignored_dir(root_path / ".venv" / "lib" / "site-packages" / ".gitignore")
-
-        # Paths NOT inside standard-ignored dirs should return False
-        assert not git_ignore._is_under_standard_ignored_dir(root_path / "src" / ".gitignore")
-        # The root itself is not "under" a standard-ignored dir
-        assert not git_ignore._is_under_standard_ignored_dir(root_path / ".gitignore")
-        # Path outside root should return False (ValueError branch)
-        assert not git_ignore._is_under_standard_ignored_dir(root_path.parent / "outside" / ".gitignore")
-
-
 def test_find_ignore_files_skips_standard_ignored_dirs():
     """Test that _find_ignore_files discovers ignore files in subdirectories but skips standard-ignored dirs."""
     with tempfile.TemporaryDirectory() as tmpdir:

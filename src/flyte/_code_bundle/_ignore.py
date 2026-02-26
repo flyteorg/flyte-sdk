@@ -58,20 +58,6 @@ class GitIgnore(Ignore):
             pass
         return None
 
-    def _is_under_standard_ignored_dir(self, path: Path) -> bool:
-        """Return True if a path is nested inside a directory matched by STANDARD_IGNORE_PATTERNS."""
-        try:
-            rel_path = path.relative_to(self.root)
-        except ValueError:
-            return False
-        for part in rel_path.parts[:-1]:  # exclude the filename itself
-            # Skip patterns containing "/" — they can never match a single directory component.
-            # e.g. for a path "project/.venv/.gitignore", parts are ("project", ".venv"),
-            # and ".venv" matches the ".venv" pattern, so we return True.
-            if any(fnmatch(part, p) for p in STANDARD_IGNORE_PATTERNS if "/" not in p):
-                return True
-        return False
-
     def _find_ignore_files(self) -> List[Path]:
         """Find all .gitignore and .flyteignore files in git root, self.root, and subdirectories.
         This runs once during initialization to avoid redundant file system searches.
@@ -93,8 +79,6 @@ class GitIgnore(Ignore):
                 processed_files.append(root_ignore)
                 seen.add(root_ignore)
 
-        # Single os.walk instead of two rglob calls
-        # Pre-compute simple dir names for fast pruning
         _standard_ignored_dirs = {p for p in STANDARD_IGNORE_PATTERNS if "/" not in p and "*" not in p}
 
         ignore_names = {".gitignore", ".flyteignore"}
