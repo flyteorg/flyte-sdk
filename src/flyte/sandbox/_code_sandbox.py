@@ -256,7 +256,13 @@ class _Sandbox:
 
             python_args = " ".join(cli_args)
             python_cmd = f"python $1 {python_args}" if python_args else "python $1"
-            bash_cmd = f"set -o pipefail && {python_cmd}; _exit=$?; echo $_exit > /var/outputs/exit_code"
+            bash_cmd = (
+                "set -o pipefail && "
+                "echo '--- script ---' && cat \"$1\" && "
+                "echo '--- running ---' && "
+                f"{python_cmd}; "
+                "_exit=$?; echo $_exit > /var/outputs/exit_code"
+            )
 
             return ContainerTask(
                 name=task_name,

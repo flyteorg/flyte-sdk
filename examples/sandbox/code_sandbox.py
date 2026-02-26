@@ -61,6 +61,7 @@ sum_sandbox = flyte.sandbox.create(
     code="total = sum(range(n + 1)) if conditional else 0",
     inputs={"n": int, "conditional": bool},
     outputs={"total": int},
+    cache="disable",
 )
 
 # Example 2 — code mode (auto-inject): third-party packages (numpy)
@@ -86,6 +87,7 @@ stats_sandbox = flyte.sandbox.create(
     },
     outputs={"mean": float, "std": float, "window_end": datetime.datetime},
     packages=["numpy"],
+    cache="disable",
 )
 
 # Example 3 — verbatim mode: complete Python script, full control
