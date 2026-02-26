@@ -18,7 +18,7 @@ def test_image_cache_serialization_round_trip():
 
     # Deserialize back into an ImageCache object
     # This should also save the serialized form into the object for downstream tasks to get it.
-    restored_cache = ImageCache.from_transport("H4sIAAAAAAAC/53MSw6DIBAA0LvMuqK0pB8uQ6YjMQZwCAMxqfHu7cbEdQ/w3gZzwsm7yBxaBrsBFaTgRiZxEucEFu7GPMzL6KcZrmoMRXkqqknnUWqnFSb88IKrKOLUvz0SL73UfNODjVi9VLic1ym3P9OfPMZ9/wKPjjm1ugAAAA==")
+    restored_cache = ImageCache.from_transport(serialized)
 
     # Check that the deserialized data matches the original
     assert restored_cache.image_lookup == original_data["image_lookup"]

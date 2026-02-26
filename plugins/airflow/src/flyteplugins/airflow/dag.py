@@ -87,11 +87,14 @@ class FlyteDAG:
     # ------------------------------------------------------------------
 
     def build(self) -> None:
-        """Annotate each task with its downstream tasks and create a Flyte
-        workflow task whose entry function calls only the root tasks.
+        """Create a Flyte workflow task whose entry function runs all
+        operator tasks in dependency order.
 
-        Each root task's execute() will trigger its downstream tasks in
-        parallel via asyncio.gather, propagating the chain automatically.
+        The entry function captures the full dependency graph in its closure
+        and orchestrates execution directly, starting from root tasks and
+        chaining downstream tasks after each completes.  This ensures
+        correct ordering in both local and remote execution (where sub-tasks
+        are resolved independently and lose their in-memory references).
         """
         import flyte
 
@@ -126,11 +129,23 @@ class FlyteDAG:
         # Snapshot to avoid capturing mutable references in the closure.
         root_snapshot = list(root_tasks)
 
+        # Capture the full dependency graph so _dag_entry can orchestrate
+        # all tasks itself.  In remote execution each sub-task is resolved
+        # independently and loses its _downstream_flyte_tasks references,
+        # so the entry function must drive the execution order.
+        all_tasks = dict(self._tasks)
+        downstream_snapshot = dict(downstream)
+
         async def _dag_entry() -> None:
             import asyncio
-            # Root tasks run in parallel; each task's execute() chains its
-            # downstream tasks (set via >>) after it completes.
-            await asyncio.gather(*[t.aio() for t in root_snapshot])
+
+            async def _run_chain(task):
+                await task.aio()
+                ds = downstream_snapshot.get(task.name, [])
+                if ds:
+                    await asyncio.gather(*[_run_chain(all_tasks[d]) for d in ds])
+
+            await asyncio.gather(*[_run_chain(t) for t in root_snapshot])
 
         # Operator tasks are created without an image (image=None).  Resolve
         # the env's image to an Image object (mirroring TaskTemplate.__post_init__)

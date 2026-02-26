@@ -136,10 +136,6 @@ class AirflowContainerTask(TaskTemplate):
             ExecutorSafeguard._sentinel.callers = {}
         logger.info("Executing Airflow task")
         _get_airflow_instance(self._plugin_config).execute(context=airflow_context.Context())
-        # Trigger downstream tasks in parallel after this operator completes.
-        if self._downstream_flyte_tasks:
-            import asyncio
-            await asyncio.gather(*[t.aio() for t in self._downstream_flyte_tasks])
 
 
 def _get_airflow_instance(
