@@ -30,37 +30,6 @@ class Ignore(ABC):
         pass
 
 
-STANDARD_IGNORE_PATTERNS = [
-    ".git",
-    "*.pyc",
-    "**/*.pyc",
-    "__pycache__",
-    "**/__pycache__",
-    ".cache",
-    ".cache/*",
-    ".ruff_cache",
-    "**/.ruff_cache",
-    ".mypy_cache",
-    "**/.mypy_cache",
-    ".pytest_cache",
-    "**/.pytest_cache",
-    ".venv",
-    "**/.venv",
-    ".idea",
-    "**/.idea",
-    "venv",
-    "env",
-    "*.log",
-    ".env",
-    "*.egg-info",
-    "**/*.egg-info",
-    "*.egg",
-    "dist",
-    "build",
-    "*.whl",
-]
-
-
 class GitIgnore(Ignore):
     """Uses git cli (if available) to list all ignored files and compare with those."""
 
@@ -187,6 +156,37 @@ class GitIgnore(Ignore):
             if os.path.isdir(os.path.join(self.root, path)) and self.ignored_dirs:
                 return rel_path.as_posix() + "/" in self.ignored_dirs
         return False
+
+
+STANDARD_IGNORE_PATTERNS = [
+    ".git",
+    "*.pyc",
+    "**/*.pyc",
+    "__pycache__",
+    "**/__pycache__",
+    ".cache",
+    ".cache/*",
+    ".ruff_cache",
+    "**/.ruff_cache",
+    ".mypy_cache",
+    "**/.mypy_cache",
+    ".pytest_cache",
+    "**/.pytest_cache",
+    ".venv",
+    "**/.venv",
+    ".idea",
+    "**/.idea",
+    "venv",
+    "env",
+    "*.log",
+    ".env",
+    "*.egg-info",
+    "**/*.egg-info",
+    "*.egg",
+    "dist",
+    "build",
+    "*.whl",
+]
 
 
 class StandardIgnore(Ignore):
