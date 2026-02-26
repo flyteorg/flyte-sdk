@@ -274,6 +274,9 @@ def _get_urun_container(
 
     img_uri = lookup_image_in_cache(serialize_context, env_name, img) if img else None
 
+    config_dict = task_template.config(serialize_context)
+    config = [literals_pb2.KeyValuePair(key=k, value=v) for k, v in config_dict.items()] if config_dict else None
+
     return tasks_pb2.Container(
         image=img_uri,
         command=[],
@@ -281,7 +284,7 @@ def _get_urun_container(
         resources=resources,
         env=env,
         data_config=task_template.data_loading_config(serialize_context),
-        config=task_template.config(serialize_context),
+        config=config,
     )
 
 
