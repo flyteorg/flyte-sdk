@@ -335,11 +335,13 @@ def _get_layers_proto(image: Image, context_path: Path) -> "image_definition_pb2
                     # Copy the editable dependencies defined under the [tool.uv.sources] in pyproject.toml
                     standard_ignore_patterns = STANDARD_IGNORE_PATTERNS.copy()
                     for editable_dep in get_uv_project_editable_dependencies(layer.pyproject.parent):
-                        pyproject_dir_dsts.append(copy_files_to_context(
-                            editable_dep / "pyproject.toml",
-                            context_path,
-                            ignore_patterns=[*standard_ignore_patterns, *docker_ignore_patterns],
-                        ))
+                        pyproject_dir_dsts.append(
+                            copy_files_to_context(
+                                editable_dep / "pyproject.toml",
+                                context_path,
+                                ignore_patterns=[*standard_ignore_patterns, *docker_ignore_patterns],
+                            )
+                        )
                 case "install_project":
                     # Copy the entire project
                     pyproject_dir_dst = copy_files_to_context(

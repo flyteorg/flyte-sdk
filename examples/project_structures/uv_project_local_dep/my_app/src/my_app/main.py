@@ -1,8 +1,9 @@
 import logging
 import pathlib
 
-import flyte
 from my_lib.math_utils import calculate_mean, linear_function
+
+import flyte
 
 UV_PROJECT_ROOT = pathlib.Path(__file__).parent.parent.parent  # my_app
 
