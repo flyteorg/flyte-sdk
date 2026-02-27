@@ -32,13 +32,17 @@ Notes
 
 from __future__ import annotations
 
+import inspect
 import logging
+import sys as _sys
 from collections import defaultdict
-from typing import TYPE_CHECKING, Dict, List, Optional, Set
+from typing import TYPE_CHECKING, Dict, List, Optional, Set, Tuple
 
 import airflow.models.dag as _airflow_dag_module
 
 if TYPE_CHECKING:
+    import types
+
     from flyteplugins.airflow.task import AirflowFunctionTask, AirflowRawContainerTask
 
     AirflowTask = AirflowFunctionTask | AirflowRawContainerTask
@@ -86,6 +90,56 @@ class FlyteDAG:
     # Flyte task construction
     # ------------------------------------------------------------------
 
+    def _build_downstream_map(self) -> Dict[str, List[str]]:
+        """Invert ``self._upstream`` to get downstream adjacency lists."""
+        downstream: Dict[str, List[str]] = defaultdict(list)
+        for tid, upstreams in self._upstream.items():
+            for up in upstreams:
+                downstream[up].append(tid)
+        return downstream
+
+    def _find_caller_module(self) -> Tuple[str, Optional["types.ModuleType"]]:
+        """Walk the call stack to find the first frame outside this module.
+
+        The Flyte task must be registered under the *user's* module so that
+        ``DefaultTaskResolver`` can locate it via ``getattr(module, name)``
+        on the remote worker (which re-imports the module and re-runs the
+        DAG definition).
+        """
+        for fi in inspect.stack():
+            mod = fi.frame.f_globals.get("__name__", "")
+            if mod and mod != __name__:
+                return mod, _sys.modules.get(mod)
+        return __name__, None
+
+    def _create_dag_entry(
+        self,
+        all_tasks: Dict[str, "AirflowTask"],
+        downstream_map: Dict[str, List[str]],
+        root_tasks: List["AirflowTask"],
+    ):
+        """Build the async entry function that orchestrates task execution."""
+        # Snapshot to avoid capturing mutable references in the closure.
+        root_snapshot = list(root_tasks)
+        downstream_snapshot = dict(downstream_map)
+
+        async def _dag_entry() -> None:
+            import asyncio
+
+            async def _run_chain(task):
+                await task.aio()
+                ds = downstream_snapshot.get(task.name, [])
+                if ds:
+                    await asyncio.gather(*[_run_chain(all_tasks[d]) for d in ds])
+
+            await asyncio.gather(*[_run_chain(t) for t in root_snapshot])
+
+        caller_module_name, caller_module = self._find_caller_module()
+        _dag_entry.__name__ = f"dag_{self.dag_id}"
+        _dag_entry.__qualname__ = f"dag_{self.dag_id}"
+        _dag_entry.__module__ = caller_module_name
+        return _dag_entry, caller_module
+
     def build(self) -> None:
         """Create a Flyte workflow task whose entry function runs all
         operator tasks in dependency order.
@@ -105,15 +159,10 @@ class FlyteDAG:
                     "apache-airflow<3.0.0", "jsonpickle"
                 ).with_local_v2(),
             )
-        env = self.env
 
-        # Build the downstream map from the upstream map.
-        downstream: Dict[str, List[str]] = defaultdict(list)
-        for tid, upstreams in self._upstream.items():
-            for up in upstreams:
-                downstream[up].append(tid)
+        downstream = self._build_downstream_map()
 
-        # Annotate each AirflowContainerTask with its downstream tasks.
+        # Annotate each task with its downstream tasks.
         for tid, task in self._tasks.items():
             task._downstream_flyte_tasks = [
                 self._tasks[d] for d in downstream[tid] if d in self._tasks
@@ -126,65 +175,24 @@ class FlyteDAG:
             if len(ups) == 0
         ]
 
-        # Snapshot to avoid capturing mutable references in the closure.
-        root_snapshot = list(root_tasks)
+        _dag_entry, caller_module = self._create_dag_entry(
+            all_tasks=dict(self._tasks),
+            downstream_map=downstream,
+            root_tasks=root_tasks,
+        )
 
-        # Capture the full dependency graph so _dag_entry can orchestrate
-        # all tasks itself.  In remote execution each sub-task is resolved
-        # independently and loses its _downstream_flyte_tasks references,
-        # so the entry function must drive the execution order.
-        all_tasks = dict(self._tasks)
-        downstream_snapshot = dict(downstream)
-
-        async def _dag_entry() -> None:
-            import asyncio
-
-            async def _run_chain(task):
-                await task.aio()
-                ds = downstream_snapshot.get(task.name, [])
-                if ds:
-                    await asyncio.gather(*[_run_chain(all_tasks[d]) for d in ds])
-
-            await asyncio.gather(*[_run_chain(t) for t in root_snapshot])
-
+        # Set image and register operator tasks with the DAG's TaskEnvironment.
         for _op_task in self._tasks.values():
             if _op_task.image is None:
                 _op_task.image = self.env.image
-
-        # Register all operator tasks with the DAG's TaskEnvironment so that
-        # they get parent_env / parent_env_name (required for serialization and
-        # image lookup) and appear in env.tasks (required for deployment).
-        for _op_task in self._tasks.values():
             self.env.add_dependency(flyte.TaskEnvironment.from_task(_op_task.name, _op_task))
-
-        # Find the first call frame outside this module so the Flyte task is
-        # registered under the user's module, not dag.py.  The
-        # DefaultTaskResolver records (module, name) at submission time and
-        # on the remote worker it imports that module — which re-runs the
-        # DAG definition and re-injects the task — before calling
-        # getattr(module, task_name).
-        import inspect
-        import sys as _sys
-
-        _caller_module_name = __name__
-        _caller_module = None
-        for _fi in inspect.stack():
-            _mod = _fi.frame.f_globals.get("__name__", "")
-            if _mod and _mod != __name__:
-                _caller_module_name = _mod
-                _caller_module = _sys.modules.get(_caller_module_name)
-                break
-
-        _dag_entry.__name__ = f"dag_{self.dag_id}"
-        _dag_entry.__qualname__ = f"dag_{self.dag_id}"
-        _dag_entry.__module__ = _caller_module_name
 
         self.flyte_task = self.env.task(_dag_entry)
 
         # Inject the task into the caller's module so DefaultTaskResolver
         # can find it via getattr(module, task_name) on both local and remote.
-        if _caller_module is not None:
-            setattr(_caller_module, _dag_entry.__name__, self.flyte_task)
+        if caller_module is not None:
+            setattr(caller_module, _dag_entry.__name__, self.flyte_task)
 
 
 # ---------------------------------------------------------------------------
