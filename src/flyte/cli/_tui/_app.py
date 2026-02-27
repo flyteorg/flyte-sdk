@@ -9,7 +9,7 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding, BindingType
 from textual.containers import Horizontal, VerticalScroll
 from textual.reactive import reactive
-from textual.widgets import Footer, Header, Label, RichLog, Static, TabbedContent, TabPane, Tree
+from textual.widgets import Footer, Header, RichLog, Static, TabbedContent, TabPane, Tree
 from textual.widgets.tree import TreeNode
 from textual.worker import Worker, WorkerState
 
