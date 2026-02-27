@@ -10,7 +10,7 @@ from flyte.io import File
 env = flyte.TaskEnvironment(name="mnist-training-example")
 
 
-@env.task
+@env.task(cache="auto")
 async def load_mnist_data() -> File:
     """Download MNIST using torchvision and persist tensors for downstream tasks."""
     train_dataset = datasets.MNIST(

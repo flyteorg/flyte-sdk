@@ -211,14 +211,6 @@ def create_panel_app():
         ],
     )
 
-    def on_example_change(event):
-        selected = event.new
-        example = EXAMPLES[selected]
-        code_editor.value = _load_example_script(example["script"])
-        example_description.object = f"*{example['description']}*"
-
-    example_selector.param.watch(on_example_change, "value")
-
     output_area = pn.pane.Str(
         "Run the code to see the results here.",
         styles={
@@ -238,6 +230,15 @@ def create_panel_app():
             ":host::-webkit-scrollbar-thumb:hover { background: #555 !important; }",
         ],
     )
+
+    def on_example_change(event):
+        selected = event.new
+        example = EXAMPLES[selected]
+        code_editor.value = _load_example_script(example["script"])
+        example_description.object = f"*{example['description']}*"
+        output_area.object = "Run the code to see the results here."
+
+    example_selector.param.watch(on_example_change, "value")
 
     flyte_tui_app = CustomExploreTUIApp()
     textual_pane = pn.pane.Textual(
