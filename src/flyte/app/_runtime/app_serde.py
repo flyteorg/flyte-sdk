@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import replace
-from typing import List, Optional, Union
+from typing import Dict, List, Optional, Union
 
 from flyteidl2.app import app_definition_pb2
 from flyteidl2.common import runtime_version_pb2
@@ -83,6 +83,43 @@ def _sanitize_resource_name(resource: tasks_pb2.Resources.ResourceEntry) -> str:
     return tasks_pb2.Resources.ResourceName.Name(resource.name).lower().replace("_", "-")
 
 
+def _get_mig_resources_from_extended_resources(
+    extended_resources: Optional[tasks_pb2.ExtendedResources],
+    device_quantity: Optional[int] = None,
+    mig_resource_prefix: Optional[str] = None,
+) -> Dict[str, str]:
+    """
+    Generate MIG-specific resources from GPUAccelerator partition info.
+
+    When a GPU has a partition_size specified, generate a custom resource name
+    for that partition instead of using the generic GPU resource.
+
+    :param extended_resources: The extended resources containing GPU accelerator info
+    :param mig_resource_prefix: Custom MIG resource prefix (defaults to "nvidia.com/mig")
+    :param device_quantity: The quantity of GPUs/partitions requested
+    :return: Dict mapping MIG resource name to quantity (e.g., {"nvidia.com/mig-1g. 5gb": "1"})
+    """
+    mig_resources: Dict[str, str] = {}
+
+    if extended_resources is None or not extended_resources.gpu_accelerator:
+        return mig_resources
+
+    gpu_accel = extended_resources.gpu_accelerator
+    partition = gpu_accel.partition_size
+
+    if not partition:
+        return mig_resources
+
+    # Default to "nvidia.com/mig" if not specified
+    prefix = mig_resource_prefix if mig_resource_prefix is not None else "nvidia.com/mig"
+    resource_name = f"{prefix}-{partition}"
+
+    quantity = device_quantity if device_quantity is not None else 1
+    mig_resources[resource_name] = str(quantity)
+
+    return mig_resources
+
+
 def _serialized_pod_spec(
     app_env: AppEnvironment,
     pod_template: flyte.PodTemplate,
@@ -147,15 +184,27 @@ def _serialized_pod_spec(
 
             limits, requests = {}, {}
             resources = get_proto_resources(app_env.resources)
+            extended_resources = get_proto_extended_resources(app_env.resources)
             if resources:
                 for resource in resources.limits:
                     limits[_sanitize_resource_name(resource)] = resource.value
                 for resource in resources.requests:
                     requests[_sanitize_resource_name(resource)] = resource.value
 
+                # Add MIG resources if GPU partitions are specified
+                mig_prefix = app_env.resources.gpu_partition_resource_prefix if app_env.resources else None
+                # Get device quantity from resources
+                device = app_env.resources.get_device() if app_env.resources else None
+                device_quantity = device.quantity if device else None
+                mig_resources = _get_mig_resources_from_extended_resources(
+                    extended_resources, device_quantity, mig_prefix
+                )
+                requests.update(mig_resources)
+                limits.update(mig_resources)
+
                 resource_requirements = V1ResourceRequirements(limits=limits, requests=requests)
 
-                if limits or requests:
+                if limits or requests or mig_resources:
                     container.resources = resource_requirements
 
             if app_env.env_vars:

@@ -378,6 +378,9 @@ class Resources:
     :param disk: The amount of disk to allocate to the task. This is a string of the form "10GiB".
     :param shm: The amount of shared memory to allocate to the task. This is a string of the form "10GiB" or "auto".
         If "auto", then the shared memory will be set to max amount of shared memory available on the node.
+    :param gpu_partition_resource_prefix: Optional override for the GPU partition (MIG) resource name prefix.
+        Defaults to "nvidia.com/mig" when a GPU partition is specified. Only applies when GPU partition is requested.
+        For example, set to "custom.company.com/mig" to override the resource name prefix.
     """
 
     cpu: Union[CPUBaseType, Tuple[CPUBaseType, CPUBaseType], None] = None
@@ -385,6 +388,7 @@ class Resources:
     gpu: Union[Accelerators, int, Device, None] = None
     disk: Union[str, None] = None
     shm: Union[str, Literal["auto"], None] = None
+    gpu_partition_resource_prefix: Optional[str] = None
 
     def __post_init__(self):
         if isinstance(self.cpu, tuple):
