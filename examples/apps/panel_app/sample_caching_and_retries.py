@@ -9,10 +9,10 @@ env = flyte.TaskEnvironment(name="caching-retries-example")
 @env.task(retries=10)
 def flaky_lookup(user_id: int) -> str:
     # Fail sometimes to demonstrate automatic retries.
-    if random.random() < 0.75:
-        msg = f"Transient upstream error for user {user_id}"
-        print(msg)
-        raise RuntimeError(msg)
+    # if random.random() < 0.5:
+    #     msg = f"Transient upstream error for user {user_id}"
+    #     print(msg)
+    #     raise RuntimeError(msg)
     return f"user-{user_id}"
 
 
@@ -30,3 +30,9 @@ def cached_compute(user: str) -> dict[str, str]:
 def main(user_id: int) -> dict[str, str]:
     # Re-running with the same inputs reuses cached results when available.
     return cached_compute(user=flaky_lookup(user_id=user_id))
+
+
+if __name__ == "__main__":
+    flyte.init()
+    run = flyte.with_runcontext(mode="local", disable_run_cache=True).run(main, user_id=1)
+    print(run.outputs())
