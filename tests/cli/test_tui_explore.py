@@ -114,7 +114,6 @@ def test_run_detail_screen_tracker_extended_fields():
 
 def test_run_detail_screen_tracker_disable_run_cache():
     """Verify disable_run_cache is rebuilt from DB when loading RunDetailScreen."""
-    from flyte.cli._tui._tracker import ActionStatus
 
     RunStore.initialize_sync()
     RunStore.record_start_sync(
