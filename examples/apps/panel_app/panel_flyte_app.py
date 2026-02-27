@@ -38,9 +38,9 @@ app_env = AppEnvironment(
         "langchain-google-genai",
     ),
     port=8080,
-    resources=flyte.Resources(cpu="1", memory="1Gi"),
+    resources=flyte.Resources(cpu="1", memory="1Gi", disk="32Gi"),
     scaling=Scaling(
-        replicas=(0, 5),
+        replicas=(1, 5),
         metric=Scaling.RequestRate(10),
         scaledown_after=300,
     ),
@@ -128,7 +128,7 @@ EXAMPLES = {
     "Caching and Retries": {
         "script": "sample_caching_and_retries.py",
         "description": "An example showing caching and retries.",
-        "run_kwargs": {"user_id": 123},
+        "run_kwargs": {"user_id": 1234},
     },
     "PBJ Sandwich Dummy Agent": {
         "script": "sample_pbj_agent.py",
@@ -309,6 +309,7 @@ def create_panel_app():
             run_kwargs = selected_config["run_kwargs"]
             runcontext_kwargs = {"mode": "local", "env_vars": env_vars}
             if selected_example == "Caching and Retries" and disable_cache_toggle.value:
+                output_area.object = "🔄 Disabling run cache..."
                 runcontext_kwargs["disable_run_cache"] = True
 
             run = flyte.with_runcontext(**runcontext_kwargs).run(
