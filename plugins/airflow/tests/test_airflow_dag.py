@@ -2,11 +2,11 @@
 Tests for the Airflow DAG monkey-patch in flyteplugins.airflow.dag.
 """
 
-import flyteplugins.airflow.task  # noqa: F401 — triggers DAG + operator monkey-patches
-import pytest
-
 import flyte
+import pytest
 from flyte._image import Image
+
+import flyteplugins.airflow.task  # noqa: F401 — triggers DAG + operator monkey-patches
 
 
 @pytest.fixture(autouse=True)
