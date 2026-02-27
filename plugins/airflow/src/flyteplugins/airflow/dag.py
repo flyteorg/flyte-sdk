@@ -215,6 +215,7 @@ class _FlyteDAG(_airflow_dag_module.DAG, TaskTemplate):
                 return getattr(ft, name)
         return super().__getattribute__(name)
 
+
 _original_dag_init = _airflow_dag_module.DAG.__init__
 _original_dag_enter = _airflow_dag_module.DAG.__enter__
 _original_dag_exit = _airflow_dag_module.DAG.__exit__
