@@ -236,10 +236,10 @@ def create_panel_app():
         value=False,
         visible=False,
         button_type="default",
-        width=150,
+        width=100,
         stylesheets=[
-            ":host .bk-btn { background-color: #171020 !important; color: #f7f5fd !important; font-size: 14px !important; "
-            "border: 1px solid #7652a2 !important; line-height: 28px !important; }",
+            ":host .bk-btn { background-color: #171020 !important; color: #f7f5fd !important; font-size: 12px !important; "
+            "border: 1px solid #7652a2 !important; line-height: 26px !important; }",
             ":host .bk-active { background-color: #7652a2 !important; color: #f7f5fd !important; }",
         ],
     )
