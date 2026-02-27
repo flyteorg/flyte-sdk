@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import functools
 import weakref
 from dataclasses import dataclass, field, replace
 from inspect import iscoroutinefunction
@@ -42,6 +41,7 @@ from .models import MAX_INLINE_IO_BYTES, NativeInterface, SerializationContext
 
 if TYPE_CHECKING:
     from flyteidl2.core.tasks_pb2 import DataLoadingConfig
+
     from ._internal.resolvers.common import Resolver
     from ._task_environment import TaskEnvironment
 
@@ -150,6 +150,7 @@ class TaskTemplate(Generic[P, R, F]):
             self.short_name = self.name
 
         from ._internal.resolvers.default import DefaultTaskResolver
+
         self.resolver = self.resolver or DefaultTaskResolver()
 
     def __getstate__(self):

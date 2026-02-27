@@ -116,14 +116,14 @@ class _AirflowTaskMixin:
 
     def __rshift__(self, other: "AirflowPythonFunctionTask") -> "AirflowPythonFunctionTask":
         """``self >> other`` — other runs after self."""
-        if _dag_module._state["current_flyte_dag"] is not None:
-            _dag_module._state["current_flyte_dag"].set_dependency(self.name, other.name)
+        if _dag_module._state[_dag_module._CURRENT_FLYTE_DAG] is not None:
+            _dag_module._state[_dag_module._CURRENT_FLYTE_DAG].set_dependency(self.name, other.name)
         return other
 
     def __lshift__(self, other: "AirflowPythonFunctionTask") -> "AirflowPythonFunctionTask":
         """``self << other`` — self runs after other."""
-        if _dag_module._state["current_flyte_dag"] is not None:
-            _dag_module._state["current_flyte_dag"].set_dependency(other.name, self.name)
+        if _dag_module._state[_dag_module._CURRENT_FLYTE_DAG] is not None:
+            _dag_module._state[_dag_module._CURRENT_FLYTE_DAG].set_dependency(other.name, self.name)
         return other
 
     @staticmethod
@@ -258,8 +258,8 @@ def _flyte_operator(*args, **kwargs):
         raise ValueError(f"Unsupported Airflow operator: {cls.__name__}")
 
     # Case 1: inside a ``with DAG(...) as dag:`` block — register with FlyteDAG.
-    if _dag_module._state["current_flyte_dag"] is not None:
-        _dag_module._state["current_flyte_dag"].add_task(task_id, task)
+    if _dag_module._state[_dag_module._CURRENT_FLYTE_DAG] is not None:
+        _dag_module._state[_dag_module._CURRENT_FLYTE_DAG].add_task(task_id, task)
         return task
 
     # Case 2: inside a Flyte task execution — submit the operator as a sub-task.

@@ -53,9 +53,11 @@ log = logging.getLogger(__name__)
 # Module-level state
 # ---------------------------------------------------------------------------
 
+_CURRENT_FLYTE_DAG = "current_flyte_dag"
+
 #: Mutable container for the active FlyteDAG (set inside a ``with DAG(...)`` block).
 #: Using a dict avoids ``global`` statements in the patch functions.
-_state: Dict[str, Optional["FlyteDAG"]] = {"current_flyte_dag": None}
+_state: Dict[str, Optional["FlyteDAG"]] = {_CURRENT_FLYTE_DAG: None}
 
 
 # ---------------------------------------------------------------------------
@@ -204,20 +206,20 @@ def _patched_dag_init(self, *args, **kwargs) -> None:  # type: ignore[override]
 
 
 def _patched_dag_enter(self):  # type: ignore[override]
-    _state["current_flyte_dag"] = FlyteDAG(dag_id=self.dag_id, env=getattr(self, "_flyte_env", None))
+    _state[_CURRENT_FLYTE_DAG] = FlyteDAG(dag_id=self.dag_id, env=getattr(self, "_flyte_env", None))
     return _original_dag_enter(self)
 
 
 def _patched_dag_exit(self, exc_type, exc_val, exc_tb):  # type: ignore[override]
     try:
-        if exc_type is None and _state["current_flyte_dag"] is not None:
-            flyte_dag = _state["current_flyte_dag"]
+        if exc_type is None and _state[_CURRENT_FLYTE_DAG] is not None:
+            flyte_dag = _state[_CURRENT_FLYTE_DAG]
             flyte_dag.build()
             # Attach the Flyte task and a convenience run() to the DAG object.
             self.flyte_task = flyte_dag.flyte_task
             self.run = _make_run(flyte_dag.flyte_task)
     finally:
-        _state["current_flyte_dag"] = None
+        _state[_CURRENT_FLYTE_DAG] = None
 
     return _original_dag_exit(self, exc_type, exc_val, exc_tb)
 
