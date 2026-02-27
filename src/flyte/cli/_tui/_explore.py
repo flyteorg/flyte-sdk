@@ -79,6 +79,11 @@ def _compute_runs_table_column_widths(total_width: int) -> list[int]:
 class RunsTable(DataTable):
     """Table of all persisted runs."""
 
+    BINDINGS: ClassVar[list[BindingType]] = [
+        Binding("down,j", "cursor_down", "Cursor Down", show=False),
+        Binding("up,k", "cursor_up", "Cursor Up", show=False),
+    ]
+
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self.sort_key: str = "start_time"
