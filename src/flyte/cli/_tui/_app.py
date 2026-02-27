@@ -87,6 +87,11 @@ class ActionTreeWidget(Tree[str]):
     The first real action becomes the visible top-level node.
     """
 
+    BINDINGS: ClassVar[list[BindingType]] = [
+        Binding("j", "cursor_down", "Cursor Down", show=False),
+        Binding("k", "cursor_up", "Cursor Up", show=False),
+    ]
+
     def __init__(self, tracker: ActionTracker, **kwargs: Any) -> None:
         super().__init__("Actions", **kwargs)
         self.show_root = False

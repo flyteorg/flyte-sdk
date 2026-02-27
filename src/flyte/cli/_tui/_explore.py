@@ -53,6 +53,11 @@ _SORTABLE_COLUMNS = [
 class RunsTable(DataTable):
     """Table of all persisted runs."""
 
+    BINDINGS: ClassVar[list[BindingType]] = [
+        Binding("j", "cursor_down", "Cursor Down", show=False),
+        Binding("k", "cursor_up", "Cursor Up", show=False),
+    ]
+
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self.sort_key: str = "start_time"
