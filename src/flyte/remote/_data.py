@@ -170,6 +170,13 @@ async def _upload_single_file(
         else:
             raise RuntimeSystemError(e.code().value, f"Failed to get signed url for {fp}: {e.details()}")
     except Exception as e:
+        logger.error(f"Error Type: {type(e).__name__}")
+        logger.error(f"Error Message: {e}")
+
+        logger.error("\n--- Full Stack Trace ---")
+        import traceback
+
+        traceback.print_exc()
         raise RuntimeSystemError(type(e).__name__, f"Failed to get signed url for {fp}.") from e
     logger.debug(f"Uploading to [link={resp.signed_url}]signed url[/link] for [link=file://{fp}]{fp}[/link]")
     extra_headers = get_extra_headers_for_protocol(resp.native_url)
