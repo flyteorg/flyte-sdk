@@ -43,9 +43,9 @@ import airflow.models.dag as _airflow_dag_module
 if TYPE_CHECKING:
     import types
 
-    from flyteplugins.airflow.task import AirflowFunctionTask, AirflowRawContainerTask
+    from flyteplugins.airflow.task import AirflowPythonFunctionTask, AirflowShellTask
 
-    AirflowTask = AirflowFunctionTask | AirflowRawContainerTask
+    AirflowTask = AirflowPythonFunctionTask | AirflowShellTask
 
 log = logging.getLogger(__name__)
 
@@ -53,13 +53,15 @@ log = logging.getLogger(__name__)
 # Module-level state
 # ---------------------------------------------------------------------------
 
-#: Set when the code is inside a ``with DAG(...) as dag:`` block.
-_current_flyte_dag: Optional["FlyteDAG"] = None
+#: Mutable container for the active FlyteDAG (set inside a ``with DAG(...)`` block).
+#: Using a dict avoids ``global`` statements in the patch functions.
+_state: Dict[str, Optional["FlyteDAG"]] = {"current_flyte_dag": None}
 
 
 # ---------------------------------------------------------------------------
-# FlyteDAG – collects operators and builds the Flyte workflow task
+# FlyteDAG - collects operators and builds the Flyte workflow task
 # ---------------------------------------------------------------------------
+
 
 class FlyteDAG:
     """Collects Airflow operators during a DAG definition and converts them
@@ -155,25 +157,15 @@ class FlyteDAG:
         if self.env is None:
             self.env = flyte.TaskEnvironment(
                 name=self.dag_id,
-                image=flyte.Image.from_debian_base().with_pip_packages(
-                    "apache-airflow<3.0.0", "jsonpickle"
-                ).with_local_v2(),
+                image=flyte.Image.from_debian_base()
+                .with_pip_packages("apache-airflow<3.0.0", "jsonpickle")
+                .with_local_v2(),
             )
 
         downstream = self._build_downstream_map()
 
-        # Annotate each task with its downstream tasks.
-        for tid, task in self._tasks.items():
-            task._downstream_flyte_tasks = [
-                self._tasks[d] for d in downstream[tid] if d in self._tasks
-            ]
-
         # Root tasks: those with no upstream dependencies.
-        root_tasks = [
-            self._tasks[tid]
-            for tid, ups in self._upstream.items()
-            if len(ups) == 0
-        ]
+        root_tasks = [self._tasks[tid] for tid, ups in self._upstream.items() if len(ups) == 0]
 
         _dag_entry, caller_module = self._create_dag_entry(
             all_tasks=dict(self._tasks),
@@ -212,22 +204,20 @@ def _patched_dag_init(self, *args, **kwargs) -> None:  # type: ignore[override]
 
 
 def _patched_dag_enter(self):  # type: ignore[override]
-    global _current_flyte_dag
-    _current_flyte_dag = FlyteDAG(dag_id=self.dag_id, env=getattr(self, "_flyte_env", None))
+    _state["current_flyte_dag"] = FlyteDAG(dag_id=self.dag_id, env=getattr(self, "_flyte_env", None))
     return _original_dag_enter(self)
 
 
 def _patched_dag_exit(self, exc_type, exc_val, exc_tb):  # type: ignore[override]
-    global _current_flyte_dag
     try:
-        if exc_type is None and _current_flyte_dag is not None:
-            flyte_dag = _current_flyte_dag
+        if exc_type is None and _state["current_flyte_dag"] is not None:
+            flyte_dag = _state["current_flyte_dag"]
             flyte_dag.build()
             # Attach the Flyte task and a convenience run() to the DAG object.
             self.flyte_task = flyte_dag.flyte_task
             self.run = _make_run(flyte_dag.flyte_task)
     finally:
-        _current_flyte_dag = None
+        _state["current_flyte_dag"] = None
 
     return _original_dag_exit(self, exc_type, exc_val, exc_tb)
 

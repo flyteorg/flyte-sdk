@@ -1,19 +1,11 @@
 import importlib
-import logging
 import typing
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, List, Optional
 
-import airflow.models as airflow_models
-import airflow.sensors.base as airflow_sensors
-import airflow.triggers.base as airflow_triggers
-import airflow.utils.context as airflow_context
-import jsonpickle
-from airflow.operators.bash import BashOperator
-from airflow.operators.python import PythonOperator
-
 import flyte
+import jsonpickle
 from flyte import get_custom_context, logger
 from flyte._context import internal_ctx
 from flyte._internal.resolvers.common import Resolver
@@ -22,13 +14,20 @@ from flyte._task import TaskTemplate
 from flyte.extend import AsyncFunctionTaskTemplate
 from flyte.models import NativeInterface, SerializationContext
 
-# Import dag module to apply DAG monkey-patches when this module is imported.
-from flyteplugins.airflow import dag as _dag_module  # noqa: E402
+import airflow.models as airflow_models
+import airflow.sensors.base as airflow_sensors
+import airflow.triggers.base as airflow_triggers
+import airflow.utils.context as airflow_context
+from airflow.operators.bash import BashOperator
+from airflow.operators.python import PythonOperator
 
+# Import dag module to apply DAG monkey-patches when this module is imported.
+from flyteplugins.airflow import dag as _dag_module
 
 # ---------------------------------------------------------------------------
 # Data models
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class AirflowTaskMetadata:
@@ -53,8 +52,9 @@ class AirflowTaskMetadata:
 # Resolver
 # ---------------------------------------------------------------------------
 
-class AirflowTaskResolver(Resolver):
-    """Resolves an AirflowFunctionTask on the remote worker.
+
+class AirflowPythonTaskResolver(Resolver):
+    """Resolves an AirflowPythonFunctionTask on the remote worker.
 
     The resolver records the Airflow operator metadata and the wrapped Python
     callable so that the task can be reconstructed from loader args alone.
@@ -62,23 +62,25 @@ class AirflowTaskResolver(Resolver):
 
     @property
     def import_path(self) -> str:
-        return "flyteplugins.airflow.task.AirflowTaskResolver"
+        return "flyteplugins.airflow.task.AirflowPythonTaskResolver"
 
     def load_task(self, loader_args: typing.List[str]) -> AsyncFunctionTaskTemplate:
-        _, airflow_task_module, _, airflow_task_name, _, airflow_task_parameters, _, func_module, _, func_name = loader_args
+        _, airflow_task_module, _, airflow_task_name, _, airflow_task_parameters, _, func_module, _, func_name = (
+            loader_args
+        )
         func_module = importlib.import_module(name=func_module)
         func_def = getattr(func_module, func_name)
-        return AirflowFunctionTask(
+        return AirflowPythonFunctionTask(
             name=airflow_task_name,
             airflow_task_metadata=AirflowTaskMetadata(
                 module=airflow_task_module,
                 name=airflow_task_name,
-                parameters=jsonpickle.decode(airflow_task_parameters)
+                parameters=jsonpickle.decode(airflow_task_parameters),
             ),
             func=func_def,
         )
 
-    def loader_args(self, task: "AirflowFunctionTask", root_dir: Path) -> List[str]:  # type:ignore
+    def loader_args(self, task: "AirflowPythonFunctionTask", root_dir: Path) -> List[str]:  # type:ignore
         entity_module_name, _ = extract_obj_module(task.func, root_dir)
         return [
             "airflow-task-module",
@@ -90,13 +92,14 @@ class AirflowTaskResolver(Resolver):
             "airflow-func-module",
             entity_module_name,
             "airflow-func-name",
-            task.func.__name__
+            task.func.__name__,
         ]
 
 
 # ---------------------------------------------------------------------------
 # Shared task behaviour (mixin)
 # ---------------------------------------------------------------------------
+
 
 class _AirflowTaskMixin:
     """Shared behaviour for both raw-container and function Airflow tasks.
@@ -106,23 +109,21 @@ class _AirflowTaskMixin:
     """
 
     def _init_airflow_mixin(self) -> None:
-        self.resolver = AirflowTaskResolver()
         self._call_as_synchronous = True
-        self._downstream_flyte_tasks: List["AirflowFunctionTask"] = []
 
     # Airflow dependency-arrow support (>> / <<)
     # Records the dependency in the active FlyteDAG if one is being built.
 
-    def __rshift__(self, other: "AirflowFunctionTask") -> "AirflowFunctionTask":
+    def __rshift__(self, other: "AirflowPythonFunctionTask") -> "AirflowPythonFunctionTask":
         """``self >> other`` — other runs after self."""
-        if _dag_module._current_flyte_dag is not None:
-            _dag_module._current_flyte_dag.set_dependency(self.name, other.name)
+        if _dag_module._state["current_flyte_dag"] is not None:
+            _dag_module._state["current_flyte_dag"].set_dependency(self.name, other.name)
         return other
 
-    def __lshift__(self, other: "AirflowFunctionTask") -> "AirflowFunctionTask":
+    def __lshift__(self, other: "AirflowPythonFunctionTask") -> "AirflowPythonFunctionTask":
         """``self << other`` — self runs after other."""
-        if _dag_module._current_flyte_dag is not None:
-            _dag_module._current_flyte_dag.set_dependency(other.name, self.name)
+        if _dag_module._state["current_flyte_dag"] is not None:
+            _dag_module._state["current_flyte_dag"].set_dependency(other.name, self.name)
         return other
 
     @staticmethod
@@ -134,6 +135,7 @@ class _AirflowTaskMixin:
         on a background thread where the thread-local has no ``callers`` key.
         """
         from airflow.models.baseoperator import ExecutorSafeguard
+
         if not hasattr(ExecutorSafeguard._sentinel, "callers"):
             ExecutorSafeguard._sentinel.callers = {}
 
@@ -142,7 +144,8 @@ class _AirflowTaskMixin:
 # Task classes
 # ---------------------------------------------------------------------------
 
-class AirflowRawContainerTask(_AirflowTaskMixin, TaskTemplate):
+
+class AirflowShellTask(_AirflowTaskMixin, TaskTemplate):
     """Wraps an Airflow BashOperator as a Flyte raw-container task."""
 
     def __init__(
@@ -166,11 +169,11 @@ class AirflowRawContainerTask(_AirflowTaskMixin, TaskTemplate):
 
     async def execute(self, **kwargs) -> Any:
         self._patch_executor_safeguard()
-        logger.info("Executing Airflow task")
-        return _get_airflow_instance(self._airflow_task_metadata).execute(context=airflow_context.Context())
+        logger.info("Executing Airflow bash operator")
+        _get_airflow_instance(self._airflow_task_metadata).execute(context=airflow_context.Context())
 
 
-class AirflowFunctionTask(_AirflowTaskMixin, AsyncFunctionTaskTemplate):
+class AirflowPythonFunctionTask(_AirflowTaskMixin, AsyncFunctionTaskTemplate):
     """Wraps an Airflow PythonOperator as a Flyte function task.
 
     The airflow task module, name, and parameters are stored in the task
@@ -194,18 +197,19 @@ class AirflowFunctionTask(_AirflowTaskMixin, AsyncFunctionTaskTemplate):
             **kwargs,
         )
         self._init_airflow_mixin()
+        self.resolver = AirflowPythonTaskResolver()
         self.airflow_task_metadata = airflow_task_metadata
 
     async def execute(self, **kwargs) -> Any:
-        self._patch_executor_safeguard()
-        logger.info("Executing Airflow task")
+        logger.info("Executing Airflow python task")
         self.airflow_task_metadata.parameters["python_callable"] = self.func
-        return _get_airflow_instance(self.airflow_task_metadata).execute(context=airflow_context.Context())
+        _get_airflow_instance(self.airflow_task_metadata).execute(context=airflow_context.Context())
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _get_airflow_instance(
     airflow_task_metadata: AirflowTaskMetadata,
@@ -223,6 +227,7 @@ def _get_airflow_instance(
 # Operator intercept (monkey-patch)
 # ---------------------------------------------------------------------------
 
+
 def _flyte_operator(*args, **kwargs):
     """Intercept Airflow operator construction and return a Flyte task instead.
 
@@ -232,13 +237,9 @@ def _flyte_operator(*args, **kwargs):
     serialization.
     """
     cls = args[0]
-    try:
-        if get_custom_context().get("GET_ORIGINAL_TASK", "False") == "True":
-            logger.debug("Returning original Airflow task")
-            return object.__new__(cls)
-    except AssertionError:
-        # This happens when the task is created in the dynamic workflow.
-        logging.debug("failed to get the attribute GET_ORIGINAL_TASK from user space params")
+    if get_custom_context().get("GET_ORIGINAL_TASK", "False") == "True":
+        logger.debug("Returning original Airflow task")
+        return object.__new__(cls)
 
     container_image = kwargs.pop("container_image", None)
     task_id = kwargs.get("task_id", cls.__name__)
@@ -246,17 +247,19 @@ def _flyte_operator(*args, **kwargs):
 
     if cls == BashOperator:
         command = kwargs.get("bash_command", "")
-        task = AirflowRawContainerTask(name=task_id, airflow_task_metadata=airflow_task_metadata, command=command)
+        task = AirflowShellTask(name=task_id, airflow_task_metadata=airflow_task_metadata, command=command)
     elif cls == PythonOperator:
         func = kwargs.get("python_callable", None)
         kwargs.pop("python_callable", None)
-        task = AirflowFunctionTask(name=task_id, airflow_task_metadata=airflow_task_metadata, func=func, image=container_image)
+        task = AirflowPythonFunctionTask(
+            name=task_id, airflow_task_metadata=airflow_task_metadata, func=func, image=container_image
+        )
     else:
         raise ValueError(f"Unsupported Airflow operator: {cls.__name__}")
 
     # Case 1: inside a ``with DAG(...) as dag:`` block — register with FlyteDAG.
-    if _dag_module._current_flyte_dag is not None:
-        _dag_module._current_flyte_dag.add_task(task_id, task)
+    if _dag_module._state["current_flyte_dag"] is not None:
+        _dag_module._state["current_flyte_dag"].add_task(task_id, task)
         return task
 
     # Case 2: inside a Flyte task execution — submit the operator as a sub-task.
