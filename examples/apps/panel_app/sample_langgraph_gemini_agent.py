@@ -1,9 +1,7 @@
 import os
 from datetime import datetime, timezone
-from typing import Any
-from typing import Annotated, Sequence, TypedDict
+from typing import Annotated, Any, Sequence, TypedDict
 
-import flyte
 import requests
 from langchain_core.messages import BaseMessage, ToolMessage
 from langchain_core.runnables import RunnableConfig
@@ -11,6 +9,8 @@ from langchain_core.tools import tool
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langgraph.graph import END, StateGraph
 from langgraph.graph.message import add_messages
+
+import flyte
 
 env = flyte.TaskEnvironment(
     name="langgraph-gemini-agent",
@@ -74,12 +74,8 @@ async def get_weather_forecast(location: str, date: str) -> str:
     if not times or not temperatures:
         return f"No hourly forecast data returned for {location} on {date}."
 
-    hourly_lines = [
-        f"{ts}: {temp}C" for ts, temp in zip(times, temperatures, strict=False)
-    ]
-    return f"Weather forecast for {location} on {date} (UTC):\n" + "\n".join(
-        hourly_lines
-    )
+    hourly_lines = [f"{ts}: {temp}C" for ts, temp in zip(times, temperatures, strict=False)]
+    return f"Weather forecast for {location} on {date} (UTC):\n" + "\n".join(hourly_lines)
 
 
 TOOLS = [get_weather_forecast]
@@ -89,9 +85,7 @@ TOOLS_BY_NAME = {t.name: t for t in TOOLS}
 def _create_model() -> ChatGoogleGenerativeAI:
     api_key = os.getenv("GOOGLE_GEMINI_API_KEY")
     if not api_key:
-        raise RuntimeError(
-            "GOOGLE_GEMINI_API_KEY is not set. Set it in your environment before running this example."
-        )
+        raise RuntimeError("GOOGLE_GEMINI_API_KEY is not set. Set it in your environment before running this example.")
     llm = ChatGoogleGenerativeAI(
         model="gemini-2.5-flash",
         temperature=0.2,
@@ -110,9 +104,7 @@ def call_model(state: AgentState, config: RunnableConfig) -> dict:
 async def call_tool(state: AgentState) -> dict:
     outputs = []
     for tool_call in state["messages"][-1].tool_calls:
-        tool_result = await TOOLS_BY_NAME[tool_call["name"]].ainvoke(
-            tool_call["args"]
-        )
+        tool_result = await TOOLS_BY_NAME[tool_call["name"]].ainvoke(tool_call["args"])
         outputs.append(
             ToolMessage(
                 content=tool_result,

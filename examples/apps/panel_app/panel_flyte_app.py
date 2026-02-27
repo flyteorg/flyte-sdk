@@ -138,9 +138,7 @@ EXAMPLES = {
     "LangGraph Gemini Agent": {
         "script": "sample_langgraph_gemini_agent.py",
         "description": "A LangGraph ReAct-style agent using Google Gemini tool calling.",
-        "run_kwargs": {
-            "prompt": "What is the weather forecast in Berlin tomorrow, and should I bring a jacket?"
-        },
+        "run_kwargs": {"prompt": "What is the weather forecast in Berlin tomorrow, and should I bring a jacket?"},
         "env_vars": ["GOOGLE_GEMINI_API_KEY"],
     },
     "Distributed Random Forest": {
