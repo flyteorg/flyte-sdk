@@ -660,13 +660,8 @@ class _Runner:
         if isinstance(task, (LazyEntity, TaskDetails)) and self._mode != "remote":
             raise ValueError("Remote task can only be run in remote mode.")
 
-        # Allow objects (e.g. Airflow DAGs wrapped by flyteplugins) that expose a
-        # .flyte_task attribute to be passed directly to run().
-        if not isinstance(task, TaskTemplate) and not isinstance(task, (LazyEntity, TaskDetails)):
-            if hasattr(task, "flyte_task") and isinstance(task.flyte_task, TaskTemplate):
-                task = task.flyte_task
-            else:
-                raise TypeError(f"On Flyte tasks can be run, not generic functions or methods '{type(task)}'.")
+        if not isinstance(task, (TaskTemplate, LazyEntity, TaskDetails)):
+            raise TypeError(f"Only Flyte tasks can be run, not '{type(task)}'.")
 
         # Set the run mode in the context variable so that offloaded types (files, directories, dataframes)
         # can check the mode for controlling auto-uploading behavior (only enabled in remote mode).

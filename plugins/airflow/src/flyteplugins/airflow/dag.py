@@ -38,6 +38,8 @@ import sys as _sys
 from collections import defaultdict
 from typing import TYPE_CHECKING, Dict, List, Optional, Set, Tuple
 
+from flyte._task import TaskTemplate
+
 import airflow.models.dag as _airflow_dag_module
 
 if TYPE_CHECKING:
@@ -190,8 +192,28 @@ class FlyteDAG:
 
 
 # ---------------------------------------------------------------------------
-# DAG monkey-patch helpers
+# Proxy class — makes DAG instances pass isinstance(dag, TaskTemplate)
 # ---------------------------------------------------------------------------
+
+
+# All names defined on TaskTemplate (fields, methods, properties) that should
+# be proxied to the underlying flyte_task rather than resolved on the DAG.
+_TASK_TEMPLATE_NAMES = frozenset(name for name in dir(TaskTemplate) if not name.startswith("_")) | frozenset(
+    TaskTemplate.__dataclass_fields__.keys()
+)
+
+
+class _FlyteDAG(_airflow_dag_module.DAG, TaskTemplate):
+    """Makes an Airflow DAG pass ``isinstance(dag, TaskTemplate)`` by proxying
+    TaskTemplate attribute access to the attached ``flyte_task``.
+    """
+
+    def __getattribute__(self, name):
+        if name in _TASK_TEMPLATE_NAMES:
+            ft = object.__getattribute__(self, "__dict__").get("flyte_task")
+            if ft is not None:
+                return getattr(ft, name)
+        return super().__getattribute__(name)
 
 _original_dag_init = _airflow_dag_module.DAG.__init__
 _original_dag_enter = _airflow_dag_module.DAG.__enter__
@@ -215,9 +237,11 @@ def _patched_dag_exit(self, exc_type, exc_val, exc_tb):  # type: ignore[override
         if exc_type is None and _state[_CURRENT_FLYTE_DAG] is not None:
             flyte_dag = _state[_CURRENT_FLYTE_DAG]
             flyte_dag.build()
-            # Attach the Flyte task and a convenience run() to the DAG object.
+            # Attach the Flyte task and a convenience run() to the DAG object,
+            # then swap __class__ so the DAG passes isinstance(dag, TaskTemplate).
             self.flyte_task = flyte_dag.flyte_task
             self.run = _make_run(flyte_dag.flyte_task)
+            self.__class__ = _FlyteDAG
     finally:
         _state[_CURRENT_FLYTE_DAG] = None
 
@@ -233,10 +257,6 @@ def _make_run(flyte_task):
 
     return run
 
-
-# ---------------------------------------------------------------------------
-# Apply patches
-# ---------------------------------------------------------------------------
 
 _airflow_dag_module.DAG.__init__ = _patched_dag_init
 _airflow_dag_module.DAG.__enter__ = _patched_dag_enter
