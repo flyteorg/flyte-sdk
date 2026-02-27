@@ -438,8 +438,8 @@ def test_lookup_image_in_cache_no_ref_name_no_layers():
     assert result == "python:3.10-slim"
 
 
-def test_get_proto_task_sets_image_build_url_tag():
-    """image-build-url tag is set in TaskMetadata when a build URL exists in the cache."""
+def test_get_proto_task_sets_image_build_url():
+    """image_build_url is set in TaskMetadata when a build URL exists in the cache."""
     from flyte._internal.imagebuild.image_builder import ImageCache
 
     env = flyte.TaskEnvironment(name="test_env_build_url", image="python:3.10")
@@ -462,11 +462,11 @@ def test_get_proto_task_sets_image_build_url_tag():
 
     proto_task = get_proto_task(task_with_build_url, context)
 
-    assert proto_task.metadata.tags["image-build-url"] == "https://console.union.ai/runs/abc123"
+    assert proto_task.metadata.image_build_url == "https://console.union.ai/runs/abc123"
 
 
-def test_get_proto_task_no_tag_without_build_url():
-    """image-build-url tag is absent when no build URL is in the cache."""
+def test_get_proto_task_no_image_build_url_without_cache():
+    """image_build_url is empty when no image cache is present."""
     env = flyte.TaskEnvironment(name="test_env_no_build_url", image="python:3.10")
 
     @env.task()
@@ -483,11 +483,11 @@ def test_get_proto_task_no_tag_without_build_url():
 
     proto_task = get_proto_task(task_without_build_url, context)
 
-    assert "image-build-url" not in proto_task.metadata.tags
+    assert proto_task.metadata.image_build_url == ""
 
 
-def test_get_proto_task_no_tag_when_env_not_in_build_run_urls():
-    """image-build-url tag is absent when the task's env is not in build_run_urls."""
+def test_get_proto_task_no_image_build_url_when_env_not_in_build_run_urls():
+    """image_build_url is empty when the task's env is not in build_run_urls."""
     from flyte._internal.imagebuild.image_builder import ImageCache
 
     env = flyte.TaskEnvironment(name="test_env_missing_url", image="python:3.10")
@@ -496,7 +496,6 @@ def test_get_proto_task_no_tag_when_env_not_in_build_run_urls():
     async def task_env_not_in_urls(x: int) -> int:
         return x
 
-    # Cache has no entry for this env's build URL
     cache = ImageCache(
         image_lookup={"test_env_missing_url": "registry/my-image:sha256abc"},
         build_run_urls={},
@@ -511,7 +510,7 @@ def test_get_proto_task_no_tag_when_env_not_in_build_run_urls():
 
     proto_task = get_proto_task(task_env_not_in_urls, context)
 
-    assert "image-build-url" not in proto_task.metadata.tags
+    assert proto_task.metadata.image_build_url == ""
 
 
 def test_lookup_image_in_cache_with_ref_name_not_in_cache():
