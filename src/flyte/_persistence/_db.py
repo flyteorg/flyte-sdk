@@ -56,6 +56,7 @@ _RUNS_INDEXES = [
 
 _RUNS_MIGRATIONS = [
     "ALTER TABLE runs ADD COLUMN has_report INTEGER DEFAULT 0",
+    "ALTER TABLE runs ADD COLUMN disable_run_cache INTEGER DEFAULT 0",
     "ALTER TABLE runs ADD COLUMN context TEXT",
     "ALTER TABLE runs ADD COLUMN group_name TEXT",
     "ALTER TABLE runs ADD COLUMN log_links TEXT",

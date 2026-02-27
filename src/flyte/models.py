@@ -229,6 +229,7 @@ class TaskContext:
     mode: Literal["local", "remote", "hybrid"] = "remote"
     interactive_mode: bool = False
     custom_context: Dict[str, str] = field(default_factory=dict)
+    disable_run_cache: bool = False
 
     def replace(self, **kwargs) -> TaskContext:
         if "data" in kwargs:

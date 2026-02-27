@@ -146,6 +146,33 @@ async def test_context_generator(outer_task_ctx):
     await simulate_gen_task(outer_task_ctx)
 
 
+def test_task_context_disable_run_cache_default():
+    """TaskContext.disable_run_cache defaults to False."""
+    task_ctx = TaskContext(
+        action=ActionID(name="test"),
+        run_base_dir="test",
+        output_path="test",
+        raw_data_path=RawDataPath(path=""),
+        version="",
+        report=Report("test"),
+    )
+    assert task_ctx.disable_run_cache is False
+
+
+def test_task_context_disable_run_cache_explicit():
+    """TaskContext.disable_run_cache can be set to True."""
+    task_ctx = TaskContext(
+        action=ActionID(name="test"),
+        run_base_dir="test",
+        output_path="test",
+        raw_data_path=RawDataPath(path=""),
+        version="",
+        report=Report("test"),
+        disable_run_cache=True,
+    )
+    assert task_ctx.disable_run_cache is True
+
+
 def test_has_raw_data_with_task_context():
     """Test has_raw_data returns True when raw_data_path is set in task_context"""
     ctx = internal_ctx()
