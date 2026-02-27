@@ -171,8 +171,8 @@ def create_panel_app():
         name="Select an example",
         groups={
             "Basics": ["Hello World", "Async Python", "Caching and Retries"],
-            "Agents": ["PBJ Sandwich Dummy Agent", "LangGraph Gemini Agent"],
-            "ML": ["Distributed Random Forest", "MNIST Training"],
+            "AI Agents": ["PBJ Sandwich Dummy Agent", "LangGraph Gemini Agent"],
+            "Machine Learning": ["Distributed Random Forest", "MNIST Training"],
         },
         value="Hello World",
         stylesheets=[
@@ -231,12 +231,32 @@ def create_panel_app():
         ],
     )
 
+    disable_cache_toggle = pn.widgets.Toggle(
+        name="disable cache",
+        value=False,
+        visible=False,
+        button_type="default",
+        width=150,
+        stylesheets=[
+            ":host .bk-btn { background-color: #171020 !important; color: #f7f5fd !important; font-size: 14px !important; "
+            "border: 1px solid #7652a2 !important; line-height: 28px !important; }",
+            ":host .bk-active { background-color: #7652a2 !important; color: #f7f5fd !important; }",
+        ],
+    )
+
+    def update_disable_cache_toggle(selected_example: str):
+        is_caching_example = selected_example == "Caching and Retries"
+        disable_cache_toggle.visible = is_caching_example
+        if not is_caching_example:
+            disable_cache_toggle.value = False
+
     def on_example_change(event):
         selected = event.new
         example = EXAMPLES[selected]
         code_editor.value = _load_example_script(example["script"])
         example_description.object = f"*{example['description']}*"
         output_area.object = "Run the code to see the results here."
+        update_disable_cache_toggle(selected)
 
     example_selector.param.watch(on_example_change, "value")
 
@@ -287,7 +307,11 @@ def create_panel_app():
                     env_vars[env_var] = os.getenv(env_var)
 
             run_kwargs = selected_config["run_kwargs"]
-            run = flyte.with_runcontext(mode="local", env_vars=env_vars).run(
+            runcontext_kwargs = {"mode": "local", "env_vars": env_vars}
+            if selected_example == "Caching and Retries" and disable_cache_toggle.value:
+                runcontext_kwargs["disable_run_cache"] = True
+
+            run = flyte.with_runcontext(**runcontext_kwargs).run(
                 module.main,
                 **run_kwargs,
             )
@@ -343,6 +367,7 @@ def create_panel_app():
 
     button_row = pn.Row(
         run_kwargs_display,
+        disable_cache_toggle,
         play_button,
         sizing_mode="stretch_width",
         align="end",
@@ -359,7 +384,7 @@ def create_panel_app():
             "<a href='https://www.union.ai/docs/v2/flyte/' target='_blank'>Flyte 2</a> is a type-safe, "
             "distributed orchestrator for agents, AI, ML, and data workloads.<br>This demo walks you through how "
             "Flyte 2 works with code you can run in the browser without having to install anything. Select an example "
-            "below and run it to see it in action.",
+            "below and `▶ Run` it to see it in action. Explore runs with the TUI on the right 👉.",
             styles={"color": "white", "font-size": "16px"},
             stylesheets=[
                 ":host p { margin-top: 0 !important; margin-bottom: 5px !important; }",
