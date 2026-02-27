@@ -136,6 +136,11 @@ def get_proto_task(
     elif sql is None:
         container = _get_urun_container(serialize_context, task)
 
+    tags: typing.Dict[str, str] = {}
+    if task.parent_env_name and serialize_context.image_cache:
+        if url := serialize_context.image_cache.build_run_urls.get(task.parent_env_name):
+            tags["image-build-url"] = url
+
     log_links = []
     if task.links and task_context:
         action = task_context.action
@@ -194,6 +199,7 @@ def get_proto_task(
             generates_deck=wrappers_pb2.BoolValue(value=task.report),
             debuggable=task.debuggable,
             log_links=log_links,
+            tags=tags,
         ),
         interface=transform_native_to_typed_interface(task.native_interface),
         custom=custom if len(custom) > 0 else None,
