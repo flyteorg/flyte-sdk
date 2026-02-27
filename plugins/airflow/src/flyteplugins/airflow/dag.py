@@ -18,18 +18,16 @@ Usage
 
     if __name__ == "__main__":
         flyte.init_from_config()
-        run = dag.run(mode="local")
+        run = flyte.with_runcontext(mode="remote", log_level="10").run(dag)
         print(run.url)
 
 Notes
 -----
 - ``flyte_env`` is an optional kwarg accepted by the patched DAG. If omitted a
   default ``TaskEnvironment`` is created using the dag_id as the name and a
-  Debian-base image with ``apache-airflow<3.0.0`` and ``jsonpickle`` installed.
+  Debian-base image with ``flyteplugins-airflow`` and ``jsonpickle`` installed.
 - Operator dependency arrows (``>>``, ``<<``) update the execution order.
   If no explicit dependencies are declared, the operators run in definition order.
-- ``dag.run(**kwargs)`` is a convenience wrapper around
-  ``flyte.with_runcontext(**kwargs).run(dag.flyte_task)``.
 """
 
 from __future__ import annotations
@@ -41,7 +39,9 @@ from typing import TYPE_CHECKING, Dict, List, Optional, Set
 import airflow.models.dag as _airflow_dag_module
 
 if TYPE_CHECKING:
-    from flyteplugins.airflow.task import AirflowContainerTask
+    from flyteplugins.airflow.task import AirflowFunctionTask, AirflowRawContainerTask
+
+    AirflowTask = AirflowFunctionTask | AirflowRawContainerTask
 
 log = logging.getLogger(__name__)
 
@@ -65,7 +65,7 @@ class FlyteDAG:
         self.dag_id = dag_id
         self.env = env
         # Ordered dict preserves insertion (creation) order as the default.
-        self._tasks: Dict[str, "AirflowContainerTask"] = {}
+        self._tasks: Dict[str, "AirflowTask"] = {}
         # task_id -> set of upstream task_ids
         self._upstream: Dict[str, Set[str]] = defaultdict(set)
 
@@ -73,7 +73,7 @@ class FlyteDAG:
     # Registration (called by _flyte_operator during DAG definition)
     # ------------------------------------------------------------------
 
-    def add_task(self, task_id: str, task: "AirflowContainerTask") -> None:
+    def add_task(self, task_id: str, task: "AirflowTask") -> None:
         self._tasks[task_id] = task
         # Ensure a dependency entry exists even with no upstream tasks.
         _ = self._upstream[task_id]
@@ -98,16 +98,16 @@ class FlyteDAG:
         """
         import flyte
 
-        env = self.env
-        if env is None:
-            env = flyte.TaskEnvironment(
+        if self.env is None:
+            self.env = flyte.TaskEnvironment(
                 name=self.dag_id,
                 image=flyte.Image.from_debian_base().with_pip_packages(
                     "apache-airflow<3.0.0", "jsonpickle"
                 ).with_local_v2(),
             )
+        env = self.env
 
-        # Build downstream map from the upstream map.
+        # Build the downstream map from the upstream map.
         downstream: Dict[str, List[str]] = defaultdict(list)
         for tid, upstreams in self._upstream.items():
             for up in upstreams:
@@ -147,25 +147,15 @@ class FlyteDAG:
 
             await asyncio.gather(*[_run_chain(t) for t in root_snapshot])
 
-        # Operator tasks are created without an image (image=None).  Resolve
-        # the env's image to an Image object (mirroring TaskTemplate.__post_init__)
-        # and assign it to each task that has no explicit image, so that
-        # from_task sees a consistent set of images and the tasks can be
-        # serialized correctly when submitted as sub-tasks during remote execution.
-        _env_image = env.image
-        if _env_image == "auto":
-            _env_image = flyte.Image.from_debian_base()
-        elif isinstance(_env_image, str):
-            _env_image = flyte.Image.from_base(_env_image)
-
         for _op_task in self._tasks.values():
             if _op_task.image is None:
-                _op_task.image = _env_image
+                _op_task.image = self.env.image
 
         # Register all operator tasks with the DAG's TaskEnvironment so that
         # they get parent_env / parent_env_name (required for serialization and
         # image lookup) and appear in env.tasks (required for deployment).
-        env = env.from_task(env.name, *self._tasks.values())
+        for _op_task in self._tasks.values():
+            self.env.add_dependency(flyte.TaskEnvironment.from_task(_op_task.name, _op_task))
 
         # Find the first call frame outside this module so the Flyte task is
         # registered under the user's module, not dag.py.  The
@@ -189,7 +179,7 @@ class FlyteDAG:
         _dag_entry.__qualname__ = f"dag_{self.dag_id}"
         _dag_entry.__module__ = _caller_module_name
 
-        self.flyte_task = env.task(_dag_entry)
+        self.flyte_task = self.env.task(_dag_entry)
 
         # Inject the task into the caller's module so DefaultTaskResolver
         # can find it via getattr(module, task_name) on both local and remote.

@@ -23,7 +23,7 @@ def test_flyte_env_image_preserved_after_dag_build():
     environment from the operator tasks' images (all None), silently discarding
     the user-supplied image.
     """
-    from flyteplugins.airflow.task import AirflowContainerTask  # applies patches
+    from flyteplugins.airflow.task import AirflowFunctionTask  # applies patches
     from airflow import DAG
     from airflow.operators.bash import BashOperator
 
@@ -51,7 +51,7 @@ def test_flyte_env_image_preserved_after_dag_build():
 
 def test_operator_tasks_registered_in_env(monkeypatch):
     """Operator tasks must appear in env.tasks so they are included in deployment."""
-    from flyteplugins.airflow.task import AirflowContainerTask  # applies patches
+    from flyteplugins.airflow.task import AirflowFunctionTask  # applies patches
     from airflow import DAG
     from airflow.operators.bash import BashOperator
 
@@ -75,7 +75,7 @@ def test_operator_tasks_registered_in_env(monkeypatch):
 def test_default_env_created_when_flyte_env_omitted():
     """When flyte_env is not supplied, a default TaskEnvironment is created using
     the dag_id as the name and a Debian-base image with airflow packages."""
-    from flyteplugins.airflow.task import AirflowContainerTask  # applies patches
+    from flyteplugins.airflow.task import AirflowFunctionTask  # applies patches
     from airflow import DAG
     from airflow.operators.bash import BashOperator
 

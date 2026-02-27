@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from flyteplugins.airflow.task import AirflowContainerTask  # triggers DAG + operator patches  # type: ignore
+from flyteplugins.airflow.task import AirflowFunctionTask  # triggers DAG + operator patches  # type: ignore
 from airflow import DAG
 from airflow.operators.bash import BashOperator
 from airflow.operators.python import PythonOperator
@@ -14,7 +14,7 @@ def hello_python():
 # Standard Airflow DAG definition — no Flyte-specific changes needed inside the block.
 # Pass flyte_env so the generated workflow task uses the right container image.
 with DAG(
-    dag_id='simple_bash_operator_example',
+    dag_id='simple_airflow_workflow',
 ) as dag:
     t1 = BashOperator(
         task_id='say_hello',
@@ -32,6 +32,6 @@ with DAG(
 
 
 if __name__ == '__main__':
-    flyte.init_from_config(root_dir=Path("/Users/kevin/git/flyte-sdk"))
+    flyte.init_from_config(root_dir=Path(__file__).parent.parent.parent)
     run = flyte.with_runcontext(mode="remote", log_level="10").run(dag)
     print(run.url)
