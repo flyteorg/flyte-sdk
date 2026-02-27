@@ -110,6 +110,24 @@ def test_run_detail_screen_tracker_extended_fields():
     assert node.status == ActionStatus.SUCCEEDED
 
 
+def test_run_detail_screen_rebuilds_attempt_history():
+    RunStore.initialize_sync()
+    RunStore.record_start_sync(run_name="run-attempts", action_name="a0", task_name="retry_task")
+    RunStore.record_attempt_start_sync(run_name="run-attempts", action_name="a0", attempt_num=1)
+    RunStore.record_attempt_failure_sync(run_name="run-attempts", action_name="a0", attempt_num=1, error="boom")
+    RunStore.record_attempt_start_sync(run_name="run-attempts", action_name="a0", attempt_num=2)
+    RunStore.record_attempt_complete_sync(run_name="run-attempts", action_name="a0", attempt_num=2, outputs="ok")
+    RunStore.record_complete_sync(run_name="run-attempts", action_name="a0", outputs="ok")
+
+    from flyte.cli._tui._explore import RunDetailScreen
+
+    screen = RunDetailScreen("run-attempts")
+    node = screen._tracker.get_action("a0")
+    assert node is not None
+    assert node.attempt_count == 2
+    assert len(node.attempts) == 2
+
+
 def test_fmt_duration():
     from flyte.cli._tui._explore import _fmt_duration
 
@@ -124,3 +142,29 @@ def test_fmt_time():
     assert _fmt_time(None) == ""
     result = _fmt_time(1700000000.0)
     assert "2023" in result  # Nov 14, 2023
+
+
+def test_fmt_attempts():
+    from flyte.cli._tui._explore import _fmt_attempts
+
+    assert _fmt_attempts(1) == "x1"
+    assert _fmt_attempts(3) == "x3"
+
+
+def test_next_attempt_num():
+    from flyte.cli._tui._app import _next_attempt_num
+
+    attempts = [1, 2, 3]
+    assert _next_attempt_num(None, attempts, +1) == 3
+    assert _next_attempt_num(3, attempts, -1) == 2
+    assert _next_attempt_num(2, attempts, +1) == 3
+    assert _next_attempt_num(1, attempts, -1) == 1
+
+
+def test_compute_runs_table_column_widths():
+    from flyte.cli._tui._explore import _compute_runs_table_column_widths
+
+    widths = _compute_runs_table_column_widths(120)
+    assert len(widths) == 7
+    assert sum(widths) >= 112  # total_width - borders/separators
+    assert widths[4] >= 19  # start time column stays readable

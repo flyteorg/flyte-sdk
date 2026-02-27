@@ -215,3 +215,36 @@ def test_extended_fields():
     assert action.group_name == "my-group"
     assert "console" in action.log_links
     assert '"x": 1' in action.inputs
+
+
+def test_attempt_history_fields():
+    RunStore.initialize_sync()
+    RunStore.record_start_sync(run_name="run-1", action_name="a1", task_name="retry_task")
+    RunStore.record_attempt_start_sync(run_name="run-1", action_name="a1", attempt_num=1)
+    RunStore.record_attempt_failure_sync(run_name="run-1", action_name="a1", attempt_num=1, error="transient")
+    RunStore.record_attempt_start_sync(run_name="run-1", action_name="a1", attempt_num=2)
+    RunStore.record_attempt_complete_sync(run_name="run-1", action_name="a1", attempt_num=2, outputs="ok")
+    RunStore.record_complete_sync(run_name="run-1", action_name="a1", outputs="ok")
+
+    action = RunStore.get_action_sync("run-1", "a1")
+    assert action is not None
+    assert action.attempt_count == 2
+    assert action.attempts_json is not None
+    assert '"attempt_num": 1' in action.attempts_json
+    assert '"attempt_num": 2' in action.attempts_json
+
+
+def test_list_runs_includes_attempt_summary():
+    RunStore.initialize_sync()
+    RunStore.record_start_sync(run_name="run-1", action_name="a0", task_name="root")
+    RunStore.record_start_sync(run_name="run-1", action_name="a1", task_name="child", parent_id="a0")
+
+    RunStore.record_attempt_start_sync(run_name="run-1", action_name="a1", attempt_num=1)
+    RunStore.record_attempt_failure_sync(run_name="run-1", action_name="a1", attempt_num=1, error="boom")
+    RunStore.record_attempt_start_sync(run_name="run-1", action_name="a1", attempt_num=2)
+    RunStore.record_attempt_complete_sync(run_name="run-1", action_name="a1", attempt_num=2, outputs="ok")
+
+    runs = RunStore.list_runs_sync()
+    assert len(runs) == 1
+    assert runs[0].max_attempts_used == 2
+    assert runs[0].retried_actions == 1

@@ -23,6 +23,13 @@ from flyte.remote._task import TaskDetails
 
 R = TypeVar("R")
 
+# Local retry backoff defaults for task errors during local runs. Do not
+# expose these to the user since RetryStrategy only supports a count of retries.
+# This is because currently the backend implements the underlying retry strategy,
+# and does not allow for custom backoff strategies.
+_MIN_BACKOFF_ON_ERR_SEC = 0.5
+_BACKOFF_MULTIPLIER = 2.0
+
 
 class _TaskRunner:
     """A task runner that runs an asyncio event loop on a background thread."""
@@ -179,18 +186,45 @@ class LocalController:
         )
 
         if out is None:
-            out, err = await direct_dispatch(
-                _task,
-                controller=self,
-                action=sub_action_id,
-                raw_data_path=sub_action_raw_data_path,
-                inputs=inputs,
-                version=cache_version,
-                checkpoints=tctx.checkpoints,
-                code_bundle=tctx.code_bundle,
-                output_path=sub_action_output_path,
-                run_base_dir=tctx.run_base_dir,
-            )
+            retries = _task.retries.count if hasattr(_task.retries, "count") else int(_task.retries)
+            max_attempts = retries + 1
+            err = None
+            for attempt_num in range(1, max_attempts + 1):
+                self._recorder.record_attempt_start(
+                    action_id=sub_action_id.name,
+                    attempt_num=attempt_num,
+                )
+                out, err = await direct_dispatch(
+                    _task,
+                    controller=self,
+                    action=sub_action_id,
+                    raw_data_path=sub_action_raw_data_path,
+                    inputs=inputs,
+                    version=cache_version,
+                    checkpoints=tctx.checkpoints,
+                    code_bundle=tctx.code_bundle,
+                    output_path=sub_action_output_path,
+                    run_base_dir=tctx.run_base_dir,
+                )
+                if not err:
+                    self._recorder.record_attempt_complete(
+                        action_id=sub_action_id.name,
+                        attempt_num=attempt_num,
+                        outputs=out,
+                    )
+                    break
+                self._recorder.record_attempt_failure(
+                    action_id=sub_action_id.name,
+                    attempt_num=attempt_num,
+                    error=str(err),
+                )
+                if attempt_num < max_attempts:
+                    backoff = _MIN_BACKOFF_ON_ERR_SEC * (_BACKOFF_MULTIPLIER ** (attempt_num - 1))
+                    logger.warning(
+                        f"Task '{_task.name}' action '{sub_action_id.name}' failed on attempt "
+                        f"{attempt_num}/{max_attempts}; retrying in {backoff:.2f}s..."
+                    )
+                    await asyncio.sleep(backoff)
 
             if err:
                 self._recorder.record_failure(action_id=sub_action_id.name, error=str(err))
