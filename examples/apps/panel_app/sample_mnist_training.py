@@ -1,13 +1,14 @@
-import flyte
 import torch
 from torch import nn
 from torch.utils.data import DataLoader, TensorDataset
 from torchvision import datasets
 from torchvision.transforms import ToTensor
 
+import flyte
 from flyte.io import File
 
 env = flyte.TaskEnvironment(name="mnist-training-example")
+
 
 @env.task
 async def load_mnist_data() -> File:

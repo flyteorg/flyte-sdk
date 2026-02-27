@@ -22,7 +22,7 @@ def cached_compute(user: str) -> dict[str, str]:
     return {
         "user": user,
         "email": f"{user}@example.com",
-        "phone": f"+1234567890",
+        "phone": "+1234567890",
     }
 
 
