@@ -70,9 +70,7 @@ async def _prefetch_shard(
 
     Overlaps next-shard I/O with current-shard processing so the consumer
     is never stalled waiting for network reads. The queue's ``maxsize`` is a
-    memory safety bound, not a back-pressure mechanism — the consumer drains
-    one record at a time. A ``_PREFETCH_SENTINEL`` is always pushed at the
-    end (even on error) so the consumer knows to stop draining.
+    memory safety bound.
     """
     try:
         async for record in shard.iter_records(on_error=on_error):
