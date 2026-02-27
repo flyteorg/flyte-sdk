@@ -100,6 +100,34 @@ class Scaling:
         return self.replicas
 
 
+_MAX_REQUEST_TIMEOUT = timedelta(hours=1)
+
+
+@rich.repr.auto
+@dataclass
+class Timeouts:
+    """Timeout configuration for the application.
+
+    Attributes:
+        request: Timeout for requests to the application. Can be an int
+            (seconds) or timedelta. Must not exceed 1 hour.
+    """
+
+    request: int | timedelta | None = None
+
+    def __post_init__(self):
+        if self.request is None:
+            return
+        if isinstance(self.request, int):
+            self.request = timedelta(seconds=self.request)
+        elif not isinstance(self.request, timedelta):
+            raise TypeError(f"Expected request to be of type int or timedelta, got {type(self.request)}")
+        if self.request < timedelta(0):
+            raise ValueError("request timeout must be non-negative")
+        if self.request > _MAX_REQUEST_TIMEOUT:
+            raise ValueError("request timeout must not exceed 1 hour (3600 seconds)")
+
+
 @rich.repr.auto
 @dataclass
 class Domain:

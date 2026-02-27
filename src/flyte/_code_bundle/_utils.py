@@ -187,15 +187,16 @@ EXCLUDE_DIRS = {".git"}
 
 def list_all_files(source_path: pathlib.Path, deref_symlinks, ignore_group: Optional[IgnoreGroup] = None) -> List[str]:
     all_files = []
+    source_path_str = str(source_path.absolute())
 
     # This is needed to prevent infinite recursion when walking with followlinks
     visited_inodes = set()
-    for root, dirnames, files in os.walk(source_path, topdown=True, followlinks=deref_symlinks):
+    for root, dirnames, files in os.walk(source_path_str, topdown=True, followlinks=deref_symlinks):
         dirnames[:] = [d for d in dirnames if d not in EXCLUDE_DIRS]
 
         # Filter out ignored directories to avoid walking into them
         if ignore_group:
-            dirnames[:] = [d for d in dirnames if not ignore_group.is_ignored((pathlib.Path(root) / d).absolute())]
+            dirnames[:] = [d for d in dirnames if not ignore_group.is_ignored(pathlib.Path(os.path.join(root, d)))]
 
         if deref_symlinks:
             inode = os.stat(root).st_ino
@@ -206,7 +207,7 @@ def list_all_files(source_path: pathlib.Path, deref_symlinks, ignore_group: Opti
         ff = []
         files.sort()
         for fname in files:
-            abspath = (pathlib.Path(root) / fname).absolute()
+            abspath = os.path.join(root, fname)
             # Only consider files that exist (e.g. disregard symlinks that point to non-existent files)
             if not os.path.exists(abspath):
                 logger.info(f"Skipping non-existent file {abspath}")
@@ -216,10 +217,10 @@ def list_all_files(source_path: pathlib.Path, deref_symlinks, ignore_group: Opti
                 logger.info(f"Skip socket file {abspath}")
                 continue
             if ignore_group:
-                if ignore_group.is_ignored(abspath):
+                if ignore_group.is_ignored(pathlib.Path(abspath)):
                     continue
 
-            ff.append(str(abspath))
+            ff.append(abspath)
         all_files.extend(ff)
 
         # Remove directories that we've already visited from dirnames

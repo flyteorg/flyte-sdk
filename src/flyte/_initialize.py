@@ -260,6 +260,8 @@ async def init(
             local_persistence=local_persistence,
         )
 
+        logger.info(f"Flyte initialized with config: {_init_config}")
+
 
 @syncify
 async def init_from_config(

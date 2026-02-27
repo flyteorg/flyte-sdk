@@ -443,3 +443,55 @@ def test_gitignore_with_git_root_and_working_dir():
         # Test files that should NOT be ignored
         assert not git_ignore.is_ignored(examples_dir / "main.py"), "main.py should NOT be ignored"
         assert not git_ignore.is_ignored(examples_dir / "public.txt"), "public.txt should NOT be ignored"
+
+
+def test_find_ignore_files_skips_standard_ignored_dirs():
+    """Test that _find_ignore_files discovers ignore files in subdirectories but skips standard-ignored dirs."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        root_path = Path(tmpdir).resolve()
+
+        # Initialize a git repo
+        subprocess.run(["git", "init"], cwd=root_path, capture_output=True, check=True)
+
+        # Create root ignore files
+        (root_path / ".gitignore").write_text("*.pyc\n")
+        (root_path / ".flyteignore").write_text("*.log\n")
+
+        # Create a subdirectory with ignore files (should be found)
+        (root_path / "src").mkdir()
+        (root_path / "src" / ".gitignore").write_text("*.tmp\n")
+        (root_path / "src" / ".flyteignore").write_text("*.cache\n")
+
+        # Create standard-ignored directories with ignore files (should be skipped)
+        (root_path / ".venv").mkdir()
+        (root_path / ".venv" / ".gitignore").write_text("should be skipped\n")
+
+        (root_path / "__pycache__").mkdir()
+        (root_path / "__pycache__" / ".gitignore").write_text("should be skipped\n")
+
+        (root_path / "node_modules").mkdir()  # not in standard patterns but .git is
+        (root_path / ".git_internal_test").mkdir()  # should NOT be pruned (not exact match)
+
+        # Nested standard-ignored dir
+        (root_path / "src" / ".mypy_cache").mkdir()
+        (root_path / "src" / ".mypy_cache" / ".gitignore").write_text("should be skipped\n")
+
+        subprocess.run(["git", "add", ".gitignore", ".flyteignore"], cwd=root_path, capture_output=True, check=True)
+
+        git_ignore = GitIgnore(root_path)
+        found = git_ignore.ignore_file_paths
+
+        found_strs = {str(f) for f in found}
+
+        # Root ignore files should be found
+        assert str(root_path / ".gitignore") in found_strs
+        assert str(root_path / ".flyteignore") in found_strs
+
+        # Subdirectory ignore files should be found
+        assert str(root_path / "src" / ".gitignore") in found_strs
+        assert str(root_path / "src" / ".flyteignore") in found_strs
+
+        # Standard-ignored directory ignore files should NOT be found
+        assert str(root_path / ".venv" / ".gitignore") not in found_strs
+        assert str(root_path / "__pycache__" / ".gitignore") not in found_strs
+        assert str(root_path / "src" / ".mypy_cache" / ".gitignore") not in found_strs

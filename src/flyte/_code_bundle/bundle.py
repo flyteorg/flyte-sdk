@@ -138,6 +138,9 @@ async def build_code_bundle(
 
     :return: The code bundle, which contains the path where the code was zipped to.
     """
+    if copy_style == "none":
+        raise ValueError("If copy_style is 'none', just don't make a code bundle")
+
     status.step("Bundling code...")
     logger.debug("Building code bundle.")
     from flyte.remote import upload_file
