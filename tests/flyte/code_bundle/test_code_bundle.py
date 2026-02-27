@@ -538,3 +538,23 @@ def test_create_bundle_with_windows_style_input_paths():
         # Verify expected entries
         assert "main.py" in member_names
         assert "subdir/module.py" in member_names
+
+
+def test_list_all_files_returns_strings():
+    """Test that list_all_files returns string paths (not pathlib.Path objects)."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        test_dir = pathlib.Path(tmpdir)
+
+        # Create test files
+        (test_dir / "main.py").write_text("print('hello')")
+        src_dir = test_dir / "src"
+        src_dir.mkdir()
+        (src_dir / "app.py").write_text("import os")
+
+        files = list_all_files(test_dir, deref_symlinks=False)
+
+        assert len(files) == 2
+        for f in files:
+            assert isinstance(f, str), f"Expected str, got {type(f)}: {f}"
+            # Paths should be absolute
+            assert os.path.isabs(f), f"Expected absolute path, got: {f}"
