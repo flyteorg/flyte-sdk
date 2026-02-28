@@ -29,6 +29,8 @@ def _elapsed(node: ActionNode) -> str:
 
 
 def _cache_icon(node: ActionNode) -> str:
+    if node.disable_run_cache:
+        return "-"  # run-level override: don't show cache status
     if node.cache_hit:
         return " $"  # cache hit
     if node.cache_enabled:
@@ -318,9 +320,14 @@ class DetailPanel(VerticalScroll):
         elapsed = _elapsed(node)
         if elapsed:
             details.append(f"duration:   {elapsed}")
-        cache_str = "enabled" if node.cache_enabled else "disabled"
-        if node.cache_hit:
-            cache_str += " (cache hit)"
+        if node.disable_run_cache:
+            cache_str = "disabled (run override)"
+        elif node.cache_enabled:
+            cache_str = "enabled"
+            if node.cache_hit:
+                cache_str += " (cache hit)"
+        else:
+            cache_str = "disabled"
         details.append(f"cache:      {cache_str}")
         task_box.update("\n".join(details))
 

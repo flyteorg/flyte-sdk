@@ -22,6 +22,7 @@ class RunRecord:
     output_path: str | None = None
     cache_enabled: bool = False
     cache_hit: bool = False
+    disable_run_cache: bool = False
     has_report: bool = False
     context: str | None = None
     group_name: str | None = None
@@ -62,6 +63,7 @@ class RunStore:
         output_path: str | None = None,
         cache_enabled: bool = False,
         cache_hit: bool = False,
+        disable_run_cache: bool = False,
         has_report: bool = False,
         context: dict | None = None,
         group_name: str | None = None,
@@ -77,9 +79,9 @@ class RunStore:
             conn.execute(
                 """INSERT OR REPLACE INTO runs
                    (run_name, action_name, task_name, status, inputs, start_time,
-                    parent_id, short_name, output_path, cache_enabled, cache_hit,
+                    parent_id, short_name, output_path, cache_enabled, cache_hit, disable_run_cache,
                     has_report, context, group_name, log_links, attempt_count, attempts_json)
-                   VALUES (?, ?, ?, 'running', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                   VALUES (?, ?, ?, 'running', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     run_name,
                     action_name,
@@ -91,6 +93,7 @@ class RunStore:
                     output_path,
                     int(cache_enabled),
                     int(cache_hit),
+                    int(disable_run_cache),
                     int(has_report),
                     context_json,
                     group_name,
@@ -300,9 +303,11 @@ class RunStore:
         )
         records: list[RunRecord] = []
         for row in cursor.fetchall():
-            base = RunStore._row_to_record(row[:20])
-            base.max_attempts_used = int(row[20] or 1)
-            base.retried_actions = int(row[21] or 0)
+            # r.* columns, then max_attempts_used, retried_actions
+            base_cols = len(row) - 2
+            base = RunStore._row_to_record(row[:base_cols])
+            base.max_attempts_used = int(row[base_cols] or 1)
+            base.retried_actions = int(row[base_cols + 1] or 0)
             records.append(base)
         return records
 
@@ -371,6 +376,7 @@ class RunStore:
             output_path=row[11],
             cache_enabled=bool(row[12]),
             cache_hit=bool(row[13]),
+            disable_run_cache=bool(row[20]) if len(row) > 20 else False,
             has_report=bool(row[14]),
             context=row[15],
             group_name=row[16],

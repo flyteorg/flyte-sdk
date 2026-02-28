@@ -143,6 +143,32 @@ def test_cache_fields():
     assert action.cache_hit is True
 
 
+def test_disable_run_cache_field():
+    """Verify disable_run_cache is persisted and round-tripped."""
+    RunStore.initialize_sync()
+    RunStore.record_start_sync(
+        run_name="run-1",
+        action_name="a0",
+        task_name="t1",
+        cache_enabled=True,
+        cache_hit=False,
+        disable_run_cache=True,
+    )
+    action = RunStore.get_action_sync("run-1", "a0")
+    assert action is not None
+    assert action.disable_run_cache is True
+
+    # Default when not set should be False
+    RunStore.record_start_sync(
+        run_name="run-2",
+        action_name="a0",
+        task_name="t2",
+    )
+    action2 = RunStore.get_action_sync("run-2", "a0")
+    assert action2 is not None
+    assert action2.disable_run_cache is False
+
+
 def test_inputs_stored_as_json():
     RunStore.initialize_sync()
     RunStore.record_start_sync(

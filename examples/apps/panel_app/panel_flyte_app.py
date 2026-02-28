@@ -5,10 +5,15 @@ application using the @app_env.server decorator pattern. The app has:
 - Left side: A read-only code editor with a "Play" button to run the code locally
 - Right side: The ExploreTUIApp for browsing Flyte entities
 
+Create the Gemini API key:
+    flyte create secret GOOGLE_GEMINI_API_KEY
+
 Usage (CLI):
     flyte serve --local examples/apps/panel_app/panel_flyte_app.py app_env
 """
 
+import importlib.util
+import os
 from pathlib import Path
 
 from textual.app import App
@@ -23,309 +28,58 @@ app_env = AppEnvironment(
         "panel",
         "textual",
         "scikit-learn",
+        "torch",
+        "torchvision",
         "pandas",
         "pyarrow",
         "joblib",
+        "langgraph",
+        "langchain-core",
+        "langchain-google-genai",
     ),
     port=8080,
-    resources=flyte.Resources(cpu="2", memory="1Gi"),
-    scaling=Scaling(replicas=(0, 5)),
+    resources=flyte.Resources(cpu="1", memory="1Gi", disk="32Gi"),
+    scaling=Scaling(
+        replicas=(1, 5),
+        metric=Scaling.RequestRate(10),
+        scaledown_after=300,
+    ),
+    secrets=[flyte.Secret(key="GOOGLE_GEMINI_API_KEY")],
     domain=Domain(subdomain="flyte2intro"),
-    include=["explore.tcss"],
+    include=[
+        "explore.tcss",
+        "sample_hello_world.py",
+        "sample_async.py",
+        "sample_caching_and_retries.py",
+        "sample_pbj_agent.py",
+        "sample_distributed_random_forest.py",
+        "sample_mnist_training.py",
+        "sample_langgraph_gemini_agent.py",
+    ],
     requires_auth=False,
 )
 
-SAMPLE_CODE_HELLO_WORLD = """import flyte
+EXAMPLES_DIR = Path(__file__).parent
 
-# TaskEnvironments provide a simple way of grouping configuration used by tasks
-env = flyte.TaskEnvironment(
-    name="hello_world",
-    resources=flyte.Resources(memory="250Mi"),
-)
 
+def _example_script_path(script_name: str) -> Path:
+    return EXAMPLES_DIR / script_name
 
-# use TaskEnvironments to define tasks, which are regular Python functions.
-@env.task
-def fn(x: int) -> int:  # type annotations are recommended.
-    slope, intercept = 2, 5
-    return slope * x + intercept
 
+def _load_example_script(script_name: str) -> str:
+    return _example_script_path(script_name).read_text()
 
-# tasks can also call other tasks, which will be manifested in different containers.
-@env.task
-def main(x_list: list[int]) -> float:
-    x_len = len(x_list)
-    if x_len < 10:
-        raise ValueError(
-            f"x_list doesn't have a larger enough sample size, found: {x_len}"
-        )
 
-    y_list = list(flyte.map(fn, x_list))  # flyte.map is like Python map, but runs in parallel.
-    y_mean = sum(y_list) / len(y_list)
-    return y_mean
-"""
+def _load_example_module(script_name: str):
+    script_path = _example_script_path(script_name)
+    module_name = f"panel_example_{script_path.stem}"
+    spec = importlib.util.spec_from_file_location(module_name, script_path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"Unable to load module from {script_path}")
 
-SAMPLE_CODE_PBJ_AGENT = """import asyncio
-from typing import Any, Callable, Dict, List, Union
-
-import flyte
-
-agent_env = flyte.TaskEnvironment(
-    "agent",
-    resources=flyte.Resources(memory="250Mi"),
-)
-
-
-# --- Dummy PBJ agent that creates a plan ---
-@agent_env.task
-async def get_plan(goal: str) -> List[Dict[str, Union[str, List[str]]]]:
-    # Each step has a name, function ID, and dependencies
-    return [
-        {"id": "get_bread", "deps": []},
-        {"id": "get_peanut_butter", "deps": []},
-        {"id": "get_jelly", "deps": []},
-        {"id": "spread_peanut_butter", "deps": ["get_bread", "get_peanut_butter"]},
-        {"id": "spread_jelly", "deps": ["get_bread", "get_jelly"]},
-        {"id": "assemble_sandwich", "deps": ["spread_peanut_butter", "spread_jelly"]},
-        {"id": "eat", "deps": ["assemble_sandwich"]},
-    ]
-
-
-# --- Step function definitions ---
-@agent_env.task
-async def get_bread(context: Dict[str, str]) -> str:
-    return "bread"
-
-
-@agent_env.task
-async def get_peanut_butter(context: Dict[str, str]) -> str:
-    return "peanut butter"
-
-
-@agent_env.task
-async def get_jelly(context: Dict[str, str]) -> str:
-    return "jelly"
-
-
-@agent_env.task
-async def spread_peanut_butter(context: Dict[str, str]) -> str:
-    return f"{context['get_bread']} with {context['get_peanut_butter']}"
-
-
-@agent_env.task
-async def spread_jelly(context: Dict[str, str]) -> str:
-    return f"{context['get_bread']} with {context['get_jelly']}"
-
-
-@agent_env.task
-async def assemble_sandwich(context: Dict[str, str]) -> str:
-    return f"{context['spread_peanut_butter']} and {context['spread_jelly']} combined"
-
-
-@agent_env.task
-async def eat(context: Dict[str, Any]) -> str:
-    return f"Ate: {context['assemble_sandwich']} 😋"
-
-
-# --- Registry of step functions ---
-STEP_FUNCTIONS: Dict[str, Any | Callable[[Dict[str, Any]], Any]] = {
-    "get_bread": get_bread,
-    "get_peanut_butter": get_peanut_butter,
-    "get_jelly": get_jelly,
-    "spread_peanut_butter": spread_peanut_butter,
-    "spread_jelly": spread_jelly,
-    "assemble_sandwich": assemble_sandwich,
-    "eat": eat,
-}
-
-
-# --- Executor that respects dependencies ---
-@agent_env.task
-async def execute_plan(plan: List[Dict[str, Union[str, List[str]]]]) -> Dict[str, str]:
-    step_funcs = STEP_FUNCTIONS
-    results = {}
-    remaining = {step["id"]: step for step in plan}
-
-    i = 0
-    while remaining:
-        with flyte.group(f"step-set-{i}"):
-            print(f"{results}")
-            # Find all steps that are ready to run (no unmet dependencies)
-            ready = [step_id for step_id, step in remaining.items() if all(dep in results for dep in step["deps"])]
-
-            # Run all ready steps concurrently
-            tasks = {step_id: asyncio.create_task(step_funcs[step_id](results)) for step_id in ready}
-
-            for step_id, task in tasks.items():
-                result = await task
-                print(f"✅ {step_id}: {result}")
-                results[step_id] = result
-                del remaining[step_id]
-            i = i + 1
-
-    return results
-
-
-# --- Main async driver ---
-@agent_env.task
-async def main(goal: str = "Make a peanut butter and jelly sandwich") -> Dict[str, str]:
-    plan = await get_plan(goal)
-    print(f"📋 Plan with dependencies:\\n{plan}")
-    results = await execute_plan(plan)
-    print("\\n🏁 Final Result:")
-    return results
-"""
-
-
-SAMPLE_CODE_DISTRIBUTED_RANDOM_FOREST = """import asyncio
-import tempfile
-
-import joblib
-import pandas as pd
-from sklearn.datasets import make_classification
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.metrics import accuracy_score
-from sklearn.tree import DecisionTreeClassifier
-
-import flyte
-import flyte.errors
-from flyte.io import Dir, File
-
-env = flyte.TaskEnvironment(
-    name="distributed_random_forest",
-    resources=flyte.Resources(cpu=1, memory="250Mi"),
-)
-
-N_FEATURES = 10
-
-
-@env.task
-async def create_dataset(n_estimators: int) -> Dir:
-    '''Create a synthetic dataset.'''
-
-    temp_dir = tempfile.mkdtemp()
-
-    for i in range(n_estimators):
-        print(f"Creating dataset {i}")
-        X, y = make_classification(
-            n_samples=1_000,
-            n_classes=2,
-            n_features=N_FEATURES,
-            n_informative=5,
-            n_redundant=3,
-            n_clusters_per_class=1,
-        )
-        dataset = pd.DataFrame(X, columns=[f"feature_{i}" for i in range(N_FEATURES)])
-        dataset["target"] = y
-        dataset.to_parquet(f"{temp_dir}/dataset_{i}.parquet")
-        del X, y, dataset
-
-    return await Dir.from_local(temp_dir)
-
-
-async def get_partition(dataset_dir: Dir, dataset_index: int) -> pd.DataFrame:
-    '''Helper function to get a partition of the dataset.'''
-
-    async for file in dataset_dir.walk():
-        if file.name == f"dataset_{dataset_index}.parquet":
-            local_path = await file.download()
-
-    return pd.read_parquet(local_path)
-
-
-@env.task
-async def train_decision_tree(dataset_dir: Dir, dataset_index: int) -> File:
-    '''Train a decision tree on a subset of the dataset.'''
-
-    print(f"Training decision tree on partition {dataset_index}")
-    dataset = await get_partition(dataset_dir, dataset_index)
-    y = dataset["target"]
-    X = dataset.drop(columns=["target"])
-    model = DecisionTreeClassifier()
-    model.fit(X, y)
-
-    temp_dir = tempfile.mkdtemp()
-    fp = f"{temp_dir}/decision_tree_{dataset_index}.joblib"
-    joblib.dump(model, fp)
-    return await File.from_local(fp)
-
-
-async def load_decision_tree(file: File) -> DecisionTreeClassifier:
-    local_path = await file.download()
-    return joblib.load(local_path)
-
-
-def random_forest_from_decision_trees(decision_trees: list[DecisionTreeClassifier]) -> RandomForestClassifier:
-    '''Helper function that reconstitutes a random forest model from a list of decision trees.'''
-
-    rf = RandomForestClassifier(n_estimators=len(decision_trees))
-    rf.estimators_ = decision_trees
-    rf.classes_ = decision_trees[0].classes_
-    rf.n_classes_ = decision_trees[0].n_classes_
-    rf.n_features_in_ = decision_trees[0].n_features_in_
-    rf.n_outputs_ = decision_trees[0].n_outputs_
-    rf.feature_names_in_ = [f"feature_{i}" for i in range(N_FEATURES)]
-    return rf
-
-
-@env.task
-async def train_distributed_random_forest(dataset_dir: Dir, n_estimators: int) -> File:
-    '''Train a distributed random forest on the dataset.
-
-    Random forest is an ensemble of decision trees that have been trained
-    on subsets of a dataset. Here we implement distributed random forest where
-    the full dataset cannot be loaded into memory. We therefore load partitions
-    of the data into its own task and train decision tree on each partition.
-
-    After training, we reconstitute the random forest from the collection
-    of trained decision tree models.
-    '''
-
-    decision_tree_files: list[File] = []
-
-    with flyte.group(f"parallel-training-{n_estimators}-decision-trees"):
-        for i in range(n_estimators):
-            decision_tree_files.append(train_decision_tree(dataset_dir, i))
-
-        decision_tree_files = await asyncio.gather(*decision_tree_files)
-
-    decision_trees = await asyncio.gather(*[load_decision_tree(file) for file in decision_tree_files])
-
-    random_forest = random_forest_from_decision_trees(decision_trees)
-    temp_dir = tempfile.mkdtemp()
-    fp = f"{temp_dir}/random_forest.joblib"
-    joblib.dump(random_forest, fp)
-    return await File.from_local(fp)
-
-
-@env.task
-async def evaluate_random_forest(
-    random_forest: File,
-    dataset_dir: Dir,
-    dataset_index: int,
-) -> float:
-    '''Evaluate the random forest one partition of the dataset.'''
-
-    with random_forest.open_sync() as f:
-        random_forest = joblib.load(f)
-
-    data_partition = await get_partition(dataset_dir, dataset_index)
-    y = data_partition["target"]
-    X = data_partition.drop(columns=["target"])
-
-    predictions = random_forest.predict(X)
-    accuracy = accuracy_score(y, predictions)
-    print(f"Accuracy: {accuracy}")
-    return accuracy
-
-
-@env.task
-async def main(n_estimators: int = 8) -> tuple[File, float]:
-    dataset = await create_dataset(n_estimators=n_estimators)
-    random_forest = await train_distributed_random_forest(dataset, n_estimators)
-    accuracy = await evaluate_random_forest(random_forest, dataset, 0)
-    return random_forest, accuracy
-"""
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def _load_explore_css() -> str:
@@ -362,19 +116,40 @@ class CustomExploreTUIApp(App[None]):
 
 EXAMPLES = {
     "Hello World": {
-        "code": SAMPLE_CODE_HELLO_WORLD,
-        "description": "A simple example showing tasks, parallel mapping, and basic orchestration.",
+        "script": "sample_hello_world.py",
+        "description": "A simple example showing tasks, parallel mapping, conditionals, and basic orchestration.",
         "run_kwargs": {"x_list": list(range(1, 11))},
     },
-    "PBJ Sandwich Agent": {
-        "code": SAMPLE_CODE_PBJ_AGENT,
+    "Async Python": {
+        "script": "sample_async.py",
+        "description": "An example showing a map-reduce pattern with asynchronous tasks and parallel execution.",
+        "run_kwargs": {"count": 10},
+    },
+    "Caching and Retries": {
+        "script": "sample_caching_and_retries.py",
+        "description": "An example showing caching and retries.",
+        "run_kwargs": {"user_id": 1234},
+    },
+    "PBJ Sandwich Dummy Agent": {
+        "script": "sample_pbj_agent.py",
         "description": "An async agent that plans and executes steps with dependencies to make a sandwich.",
         "run_kwargs": {"goal": "Make a peanut butter and jelly sandwich"},
     },
+    "LangGraph Gemini Agent": {
+        "script": "sample_langgraph_gemini_agent.py",
+        "description": "A LangGraph ReAct-style agent using Google Gemini tool calling.",
+        "run_kwargs": {"prompt": "What is the weather forecast in Berlin tomorrow, and should I bring a jacket?"},
+        "env_vars": ["GOOGLE_GEMINI_API_KEY"],
+    },
     "Distributed Random Forest": {
-        "code": SAMPLE_CODE_DISTRIBUTED_RANDOM_FOREST,
+        "script": "sample_distributed_random_forest.py",
         "description": "A simple distributed random forest training implementation.",
         "run_kwargs": {"n_estimators": 8},
+    },
+    "MNIST Training": {
+        "script": "sample_mnist_training.py",
+        "description": "Train a simple classifier on MNIST-style handwritten digits.",
+        "run_kwargs": {"sample_size": 1000, "test_size": 0.2},
     },
 }
 
@@ -382,19 +157,31 @@ EXAMPLES = {
 def create_panel_app():
     import panel as pn
 
-    pn.extension("codeeditor", "terminal", reconnect=True)
+    pn.extension(
+        "codeeditor",
+        "terminal",
+        reconnect=True,
+        notifications=True,
+        disconnect_notification=True,
+        ready_notification=True,
+    )
 
     # Example selector tabs
     example_selector = pn.widgets.Select(
         name="Select an example",
         groups={
-            "Basics": ["Hello World"],
-            "Advanced": ["PBJ Sandwich Agent", "Distributed Random Forest"],
+            "Basics": ["Hello World", "Async Python", "Caching and Retries"],
+            "AI Agents": ["PBJ Sandwich Dummy Agent", "LangGraph Gemini Agent"],
+            "Machine Learning": ["Distributed Random Forest", "MNIST Training"],
         },
         value="Hello World",
         stylesheets=[
             ":host .bk-input { background-color: #171020 !important; color: #f7f5fd !important; font-size: 14px "
-            "!important; border: 1px solid #7652a2 !important; }",
+            "!important; border: 1px solid #7652a2 !important; background-image: url('data:image/svg+xml,%3Csvg "
+            "xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 12 12%27%3E%3Cpath d=%27M2 4l4 4 4-4%27 "
+            "fill=%27none%27 stroke=%27%237652a2%27 stroke-width=%271.5%27 stroke-linecap=%27round%27 "
+            "stroke-linejoin=%27round%27/%3E%3C/svg%3E') !important; background-repeat: no-repeat !important; "
+            "background-position: right 10px center !important; background-size: 12px 12px !important; }",
             ":host label { color: white !important; margin-bottom: 5px !important; }",
         ],
     )
@@ -405,7 +192,7 @@ def create_panel_app():
     )
 
     code_editor = pn.widgets.CodeEditor(
-        value=SAMPLE_CODE_HELLO_WORLD,
+        value=_load_example_script(EXAMPLES["Hello World"]["script"]),
         language="python",
         theme="dracula",
         readonly=True,
@@ -423,14 +210,6 @@ def create_panel_app():
             ":host .ace_scrollbar::-webkit-scrollbar-thumb:hover { background: #555 !important; }",
         ],
     )
-
-    def on_example_change(event):
-        selected = event.new
-        example = EXAMPLES[selected]
-        code_editor.value = example["code"]
-        example_description.object = f"*{example['description']}*"
-
-    example_selector.param.watch(on_example_change, "value")
 
     output_area = pn.pane.Str(
         "Run the code to see the results here.",
@@ -451,6 +230,35 @@ def create_panel_app():
             ":host::-webkit-scrollbar-thumb:hover { background: #555 !important; }",
         ],
     )
+
+    disable_cache_toggle = pn.widgets.Toggle(
+        name="disable cache",
+        value=False,
+        visible=False,
+        button_type="default",
+        width=100,
+        stylesheets=[
+            ":host .bk-btn { background-color: #171020 !important; color: #f7f5fd !important; font-size: 12px !important; "
+            "border: 1px solid #7652a2 !important; line-height: 26px !important; }",
+            ":host .bk-active { background-color: #7652a2 !important; color: #f7f5fd !important; }",
+        ],
+    )
+
+    def update_disable_cache_toggle(selected_example: str):
+        is_caching_example = selected_example == "Caching and Retries"
+        disable_cache_toggle.visible = is_caching_example
+        if not is_caching_example:
+            disable_cache_toggle.value = False
+
+    def on_example_change(event):
+        selected = event.new
+        example = EXAMPLES[selected]
+        code_editor.value = _load_example_script(example["script"])
+        example_description.object = f"*{example['description']}*"
+        output_area.object = "Run the code to see the results here."
+        update_disable_cache_toggle(selected)
+
+    example_selector.param.watch(on_example_change, "value")
 
     flyte_tui_app = CustomExploreTUIApp()
     textual_pane = pn.pane.Textual(
@@ -473,7 +281,7 @@ def create_panel_app():
         def _do_refresh():
             import time
 
-            time.sleep(0.25)
+            time.sleep(0.5)
             if flyte_tui_app._running:
                 flyte_tui_app.call_from_thread(lambda: flyte_tui_app.screen.query_one("#runs-table").populate())
 
@@ -481,31 +289,40 @@ def create_panel_app():
         thread.start()
 
     def run_code(event):
-        output_area.object = "Running code locally...\n"
+        output_area.object = "▶️ Running code locally...\n"
         try:
-            namespace = {}
-            exec(code_editor.value, namespace)
+            selected_example = example_selector.value
+            selected_config = EXAMPLES[selected_example]
+            module = _load_example_module(selected_config["script"])
 
-            if "main" in namespace:
-                flyte.init(local_persistence=True)
-
-                # Get the run kwargs for the selected example
-                selected_example = example_selector.value
-                run_kwargs = EXAMPLES[selected_example]["run_kwargs"]
-
-                run = flyte.with_runcontext(mode="local").run(
-                    namespace["main"],
-                    **run_kwargs,
-                )
-                result = run.outputs()
-                output_area.object = (
-                    f"✅ Run completed!\nResult: {result}\nSee the 'Explore Runs' pane on the right for more details."
-                )
-
-                # Refresh the Textual app to show the new run
-                refresh_textual_app()
-            else:
+            if not hasattr(module, "main"):
                 output_area.object = "Error: Could not find 'main' task in the code."
+                return
+
+            flyte.init(local_persistence=True)
+            env_vars = None
+            if "env_vars" in selected_config:
+                env_vars = {}
+                for env_var in selected_config["env_vars"]:
+                    env_vars[env_var] = os.getenv(env_var)
+
+            run_kwargs = selected_config["run_kwargs"]
+            runcontext_kwargs = {"mode": "local", "env_vars": env_vars}
+            if selected_example == "Caching and Retries" and disable_cache_toggle.value:
+                output_area.object = "🔄 Disabling run cache..."
+                runcontext_kwargs["disable_run_cache"] = True
+
+            run = flyte.with_runcontext(**runcontext_kwargs).run(
+                module.main,
+                **run_kwargs,
+            )
+            result = run.outputs()
+            output_area.object = (
+                f"✅ Run completed!\nResult: {result}\nSee the 'Explore Runs' pane on the right for more details."
+            )
+
+            # Refresh the Textual app to show the new run
+            refresh_textual_app()
         except Exception as e:
             output_area.object = f"Error: {e}"
 
@@ -551,6 +368,7 @@ def create_panel_app():
 
     button_row = pn.Row(
         run_kwargs_display,
+        disable_cache_toggle,
         play_button,
         sizing_mode="stretch_width",
         align="end",
@@ -564,10 +382,15 @@ def create_panel_app():
             stylesheets=[":host h2 { margin-top: 0 !important; margin-bottom: 5px !important; }"],
         ),
         pn.pane.Markdown(
-            "Flyte 2 is a type-safe, distributed orchestrator of agents, AI, ML, and more — "
-            "in pure Python, with sync and async support. Run an example below to see it in action.",
+            "<a href='https://www.union.ai/docs/v2/flyte/' target='_blank'>Flyte 2</a> is a type-safe, "
+            "distributed orchestrator for agents, AI, ML, and data workloads.<br>This demo walks you through how "
+            "Flyte 2 works with code you can run in the browser without having to install anything. Select an example "
+            "below and `▶ Run` it to see it in action. Explore runs with the TUI on the right 👉.",
             styles={"color": "white", "font-size": "16px"},
-            stylesheets=[":host p { margin-top: 0 !important; margin-bottom: 5px !important; }"],
+            stylesheets=[
+                ":host p { margin-top: 0 !important; margin-bottom: 5px !important; }",
+                ":host a, :host a:visited { color: #a082c4 !important; }",
+            ],
         ),
         example_selector,
         example_description,
@@ -636,13 +459,13 @@ def create_panel_app():
             """
             <div style="display: flex; justify-content: center; align-items: center; gap: 20px; width: 100%;">
                 <span style="color: #d4d4d4; font-size: 14px;">
-                    Try the Union engine for Flyte 2.0
+                    Flyte 2 available now for local execution - cloud execution coming to OSS soon.
                 </span>
-                <a href="https://www.union.ai/beta" target="_blank"
+                <a href="https://www.union.ai/try-flyte-2" target="_blank"
                    style="background-color: #171020; color: #f7f5fd; padding: 5px 10px;
                           border-radius: 5px; text-decoration: none; font-weight: bold;
                           font-size: 14px; transition: background-color 0.2s; border: 1px solid #f7f5fd;">
-                    Register now ↗
+                    Join Flyte 2 production trial ↗
                 </a>
             </div>
             """,
@@ -712,13 +535,14 @@ def serve():
 
 if __name__ == "__main__":
     import argparse
+    import logging
     from pathlib import Path
 
     parser = argparse.ArgumentParser(description="Serve the panel app")
     parser.add_argument("--mode", choices=["local", "remote"], default="remote", help="Serve mode")
     args = parser.parse_args()
 
-    flyte.init_from_config(root_dir=Path(__file__).parent)
+    flyte.init_from_config(root_dir=Path(__file__).parent, log_level=logging.DEBUG)
     app_handle = flyte.with_servecontext(mode=args.mode).serve(app_env)
     print(f"Panel app is ready at {app_handle.url}")
     if args.mode == "local":
