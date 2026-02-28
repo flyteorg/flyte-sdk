@@ -557,6 +557,7 @@ class _Runner:
             report=Report(name=action.name),
             mode="local",
             custom_context=self._custom_context,
+            disable_run_cache=self._disable_run_cache,
         )
 
         if self._tracker is not None:

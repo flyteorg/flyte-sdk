@@ -157,6 +157,57 @@ def test_tracker_records_cache_disabled():
 
 
 # ---------------------------------------------------------------------------
+# disable_run_cache
+# ---------------------------------------------------------------------------
+
+
+def test_tracker_records_disable_run_cache():
+    """When disable_run_cache=True, node should have disable_run_cache=True."""
+    flyte.init_from_config(None)
+    tracker = ActionTracker()
+    flyte.with_runcontext(mode="local", _tracker=tracker, disable_run_cache=True).run(add, a=1, b=2)
+
+    _, _, nodes = tracker.snapshot()
+    node = next(iter(nodes.values()))
+    assert node.disable_run_cache is True
+
+
+def test_disable_run_cache_bypasses_local_cache():
+    """With disable_run_cache=True, task executes even when cache would have a hit."""
+    flyte.init_from_config(None)
+
+    # Create env with cached task
+    cache_env = flyte.TaskEnvironment(name="cache_test", cache=flyte.Cache("auto", version_override="v1"))
+
+    @cache_env.task
+    def cached_add(a: int, b: int) -> int:
+        return a + b
+
+    tracker = ActionTracker()
+
+    # First run: populate cache
+    flyte.with_runcontext(mode="local", _tracker=tracker).run(cached_add, a=5, b=7)
+    first_node = next(iter(tracker.snapshot()[2].values()))
+    assert first_node.cache_enabled is True
+    assert first_node.cache_hit is False  # First run is a miss
+
+    # Second run: cache hit (same inputs)
+    tracker2 = ActionTracker()
+    flyte.with_runcontext(mode="local", _tracker=tracker2).run(cached_add, a=5, b=7)
+    second_node = next(iter(tracker2.snapshot()[2].values()))
+    assert second_node.cache_enabled is True
+    assert second_node.cache_hit is True
+    assert second_node.disable_run_cache is False
+
+    # Third run with disable_run_cache=True: should NOT show cache hit
+    tracker3 = ActionTracker()
+    flyte.with_runcontext(mode="local", _tracker=tracker3, disable_run_cache=True).run(cached_add, a=5, b=7)
+    third_node = next(iter(tracker3.snapshot()[2].values()))
+    assert third_node.disable_run_cache is True
+    assert third_node.cache_hit is False  # TUI never shows cache hit when disabled
+
+
+# ---------------------------------------------------------------------------
 # Unique action IDs
 # ---------------------------------------------------------------------------
 

@@ -141,6 +141,9 @@ async def convert_and_run(
     # Extract context from inputs
     custom_context = inputs.context if inputs else {}
 
+    parent_tctx = ctx.data.task_context
+    disable_run_cache = parent_tctx.disable_run_cache if parent_tctx else False
+
     tctx = TaskContext(
         action=action,
         checkpoints=checkpoints,
@@ -152,9 +155,10 @@ async def convert_and_run(
         raw_data_path=raw_data_path,
         compiled_image_cache=image_cache,
         report=flyte.report.Report(name=action.name),
-        mode="remote" if not ctx.data.task_context else ctx.data.task_context.mode,
+        mode="remote" if not parent_tctx else parent_tctx.mode,
         interactive_mode=interactive_mode,
         custom_context=custom_context,
+        disable_run_cache=disable_run_cache,
     )
 
     with ctx.replace_task_context(tctx):
