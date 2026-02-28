@@ -1,5 +1,5 @@
 """
-Batch Inference with GPUSaturator
+Batch Inference with TokenBatcher
 ==================================
 
 Demonstrates how to maximize GPU utilization when running large-scale batch
@@ -7,18 +7,18 @@ inference with vLLM inside reusable containers.
 
 The pattern:
 1. A **GPU worker** loads the vLLM model **once per process** (via
-   ``alru_cache``) and creates a single :class:`~flyte.extras.GPUSaturator`
+   ``alru_cache``) and creates a single :class:`~flyte.extras.TokenBatcher`
    that lives for the lifetime of the container.
 2. Every invocation of ``infer_batch`` — which may run concurrently thanks
-   to ``ReusePolicy(concurrency=10)`` — shares the same model and saturator.
+   to ``ReusePolicy(concurrency=10)`` — shares the same model and batcher.
    Records from all concurrent calls are batched together, keeping the GPU
    busy.
 3. A **driver** task fans out many ``infer_batch`` calls across replicas.
 
 Key Flyte concepts:
 - ``flyte.ReusePolicy`` for persistent GPU workers with multiple replicas
-- ``alru_cache`` for process-level singletons (model + saturator)
-- ``flyte.extras.GPUSaturator`` for batched inference across concurrent calls
+- ``alru_cache`` for process-level singletons (model + batcher)
+- ``flyte.extras.TokenBatcher`` for batched inference across concurrent calls
 - ``asyncio.create_task`` for concurrent fan-out
 
 Usage::
@@ -37,11 +37,11 @@ import httpx
 from async_lru import alru_cache
 
 import flyte
-from flyte.extras import GPUSaturator
+from flyte.extras import TokenBatcher
 
 logger = logging.getLogger(__name__)
 
-image = flyte.Image.from_debian_base().with_pip_packages("vllm")
+image = flyte.Image.from_debian_base().with_pip_packages("vllm", "unionai-reuse")
 
 gpu_env = flyte.TaskEnvironment(
     name="gpu_worker",
@@ -90,7 +90,7 @@ async def get_inference_fn():
     from vllm import LLM, SamplingParams
 
     llm = LLM(
-        model="meta-llama/Llama-3.1-8B-Instruct",
+        model="Qwen/Qwen2.5-7B-Instruct",
         gpu_memory_utilization=0.9,
         max_model_len=4096,
     )
@@ -106,27 +106,27 @@ async def get_inference_fn():
 
 
 @alru_cache(maxsize=1)
-async def get_saturator() -> GPUSaturator[Prompt, str]:
-    """Create a single GPUSaturator per process.
+async def get_batcher() -> TokenBatcher[Prompt, str]:
+    """Create a single TokenBatcher per process.
 
-    The saturator is started once and shared across all concurrent
+    The batcher is started once and shared across all concurrent
     ``infer_batch`` invocations on this replica.
     """
     inference_fn = await get_inference_fn()
-    saturator = GPUSaturator[Prompt, str](
+    batcher = TokenBatcher[Prompt, str](
         inference_fn=inference_fn,
         target_batch_tokens=32_000,
         max_batch_size=256,
         batch_timeout_s=0.05,
         max_queue_size=5_000,
     )
-    await saturator.start()
-    logger.info("GPUSaturator started")
-    return saturator
+    await batcher.start()
+    logger.info("TokenBatcher started")
+    return batcher
 
 
 # ---------------------------------------------------------------------------
-# GPU worker — each call shares the process-level saturator
+# GPU worker — each call shares the process-level batcher
 # ---------------------------------------------------------------------------
 
 
@@ -135,11 +135,11 @@ async def infer_batch(
     jsonl_url: str,
     task_id: str,
 ) -> list[str]:
-    """Stream a JSONL file and submit each record to the shared saturator.
+    """Stream a JSONL file and submit each record to the shared batcher.
 
     Multiple ``infer_batch`` calls run concurrently on the same replica
     (``concurrency=10``).  All of them feed into the same
-    :class:`GPUSaturator`, which assembles token-budgeted batches across
+    :class:`TokenBatcher`, which assembles token-budgeted batches across
     every concurrent caller — maximizing GPU utilization.
 
     Args:
@@ -149,7 +149,7 @@ async def infer_batch(
     Returns:
         List of generated outputs, one per JSONL line.
     """
-    saturator = await get_saturator()
+    batcher = await get_batcher()
 
     futures: list[asyncio.Future[str]] = []
     async with httpx.AsyncClient() as client:
@@ -170,17 +170,17 @@ async def infer_batch(
                         index=idx,
                         text=data["prompt"],
                     )
-                    future = await saturator.submit(record)
+                    future = await batcher.submit(record)
                     futures.append(future)
                     idx += 1
 
     results = await asyncio.gather(*futures)
     logger.info(
-        "[%s] completed %d records | GPU util: %.1f%% | Batches: %d",
+        "[%s] completed %d records | utilization: %.1f%% | Batches: %d",
         task_id,
         len(results),
-        saturator.stats.gpu_utilization * 100,
-        saturator.stats.total_batches,
+        batcher.stats.utilization * 100,
+        batcher.stats.total_batches,
     )
     return list(results)
 
@@ -200,7 +200,7 @@ async def main(
     Each URL becomes a separate ``infer_batch`` call.  With
     ``ReusePolicy(replicas=2, concurrency=10)``, up to 20 calls run
     concurrently across 2 GPU replicas, all sharing their replica's
-    model and saturator.
+    model and batcher.
 
     Args:
         jsonl_urls: Remote JSONL file URLs (one per logical task).
