@@ -147,6 +147,7 @@ class ExploreScreen(Screen):
         table = self.query_one("#runs-table", RunsTable)
         table.cursor_type = "row"
         table.populate()
+        table.focus()
 
     def _repopulate(self) -> None:
         table = self.query_one("#runs-table", RunsTable)
