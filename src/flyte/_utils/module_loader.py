@@ -6,6 +6,7 @@ from types import ModuleType
 from typing import List, Tuple
 
 import flyte.errors
+from flyte._code_bundle._ignore import GitIgnore, IgnoreGroup, StandardIgnore
 from flyte._constants import FLYTE_SYS_PATH
 from flyte._logging import logger
 
@@ -34,8 +35,18 @@ def load_python_modules(
 
     elif path.is_dir():
         # Directory case - find all Python files
-        pattern = "**/*.py" if recursive else "*.py"
-        python_files = list(path.glob(pattern))
+        if recursive:
+            ignore = IgnoreGroup(root_dir.resolve(), StandardIgnore, GitIgnore)
+            python_files = []
+            for dirpath, dirnames, filenames in os.walk(path.resolve(), topdown=True):
+                dirnames[:] = [d for d in dirnames if not ignore.is_ignored(Path(os.path.join(dirpath, d)))]
+                for f in filenames:
+                    if f.endswith(".py"):
+                        file_path = Path(dirpath) / f
+                        if not ignore.is_ignored(file_path):
+                            python_files.append(file_path)
+        else:
+            python_files = list(path.glob("*.py"))
 
         # Filter out __init__.py files
         python_files = [f for f in python_files if f.name != "__init__.py"]
