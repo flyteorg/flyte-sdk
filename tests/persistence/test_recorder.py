@@ -135,6 +135,26 @@ class TestBothBackends:
         assert action.status == "failed"
         assert action.error == "boom"
 
+    def test_record_attempt_calls_both(self):
+        tracker = _make_tracker()
+        RunStore.initialize_sync()
+        r = RunRecorder(tracker=tracker, persist=True, run_name="run-1")
+
+        RunStore.record_start_sync(run_name="run-1", action_name="a1", task_name="t")
+        r.record_attempt_start(action_id="a1", attempt_num=1)
+        r.record_attempt_failure(action_id="a1", attempt_num=1, error="retry me")
+        r.record_attempt_start(action_id="a1", attempt_num=2)
+        r.record_attempt_complete(action_id="a1", attempt_num=2, outputs="ok")
+
+        tracker.record_attempt_start.assert_any_call(action_id="a1", attempt_num=1)
+        tracker.record_attempt_failure.assert_any_call(action_id="a1", attempt_num=1, error="retry me")
+        tracker.record_attempt_complete.assert_any_call(action_id="a1", attempt_num=2, outputs="ok")
+
+        action = RunStore.get_action_sync("run-1", "a1")
+        assert action is not None
+        assert action.attempt_count == 2
+        assert action.attempts_json is not None
+
 
 class TestTrackerOnly:
     def test_no_persistence_calls(self):

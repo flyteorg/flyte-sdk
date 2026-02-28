@@ -8,6 +8,7 @@ from rich.text import Text
 from textual.app import App, ComposeResult
 from textual.binding import Binding, BindingType
 from textual.containers import Horizontal
+from textual.events import Resize
 from textual.screen import Screen
 from textual.widgets import DataTable, Footer, Header, Input, Label, Select, TabbedContent, TabPane
 
@@ -41,6 +42,10 @@ def _fmt_time(ts: float | None) -> str:
     return datetime.datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M:%S")
 
 
+def _fmt_attempts(max_attempts_used: int) -> str:
+    return f"x{max_attempts_used}"
+
+
 _SORTABLE_COLUMNS = [
     ("start_time", "Start Time"),
     ("run_name", "Run Name"),
@@ -48,6 +53,27 @@ _SORTABLE_COLUMNS = [
     ("status", "Status"),
     ("duration", "Duration"),
 ]
+
+
+def _compute_runs_table_column_widths(total_width: int) -> list[int]:
+    # Account for table borders / separators and keep a sensible floor.
+    available = max(total_width - 8, 80)
+    min_widths = [12, 12, 10, 10, 19, 12, 16]  # run, task, status, duration, start, attempts, error
+    weights = [16, 18, 10, 10, 18, 12, 16]
+
+    base = [max((available * w) // 100, minimum) for w, minimum in zip(weights, min_widths)]
+    width_sum = sum(base)
+    if width_sum < available:
+        extra = available - width_sum
+        # Prefer giving extra space to task/run/error columns.
+        growth_order = [1, 0, 6, 4, 5, 2, 3]
+        i = 0
+        while extra > 0:
+            target = growth_order[i % len(growth_order)]
+            base[target] += 1
+            extra -= 1
+            i += 1
+    return base
 
 
 class RunsTable(DataTable):
@@ -70,14 +96,16 @@ class RunsTable(DataTable):
         from flyte._persistence._run_store import RunStore
 
         self.clear(columns=True)
-        self.add_columns(
-            self._header_label("run_name", "Run Name"),
-            self._header_label("task_name", "Task"),
-            self._header_label("status", "Status"),
-            self._header_label("duration", "Duration"),
-            self._header_label("start_time", "Start Time"),
-            "Error",
+        run_w, task_w, status_w, duration_w, start_w, attempts_w, error_w = _compute_runs_table_column_widths(
+            self.size.width
         )
+        self.add_column(self._header_label("run_name", "Run Name"), width=run_w)
+        self.add_column(self._header_label("task_name", "Task"), width=task_w)
+        self.add_column(self._header_label("status", "Status"), width=status_w)
+        self.add_column(self._header_label("duration", "Duration"), width=duration_w)
+        self.add_column(self._header_label("start_time", "Start Time"), width=start_w)
+        self.add_column("Attempts", width=attempts_w)
+        self.add_column("Error", width=error_w)
         runs = RunStore.list_runs_sync(
             order_by=self.sort_key,
             ascending=self.sort_ascending,
@@ -93,6 +121,7 @@ class RunsTable(DataTable):
                 status_text,
                 _fmt_duration(r.start_time, r.end_time),
                 _fmt_time(r.start_time),
+                _fmt_attempts(r.max_attempts_used),
                 error_text,
                 key=r.run_name,
             )
@@ -215,6 +244,9 @@ class ExploreScreen(Screen):
         run_name = str(event.row_key.value)
         self.app.push_screen(RunDetailScreen(run_name))
 
+    def on_resize(self, event: Resize) -> None:
+        self._repopulate()
+
 
 class RunDetailScreen(Screen):
     """Detail screen for a single run, reconstructing the ActionTracker from DB records."""
@@ -223,6 +255,8 @@ class RunDetailScreen(Screen):
         Binding("q", "go_back", "Back"),
         Binding("escape", "go_back", "Back"),
         Binding("d", "show_details", "Details"),
+        Binding("[", "previous_attempt", "Prev Attempt"),
+        Binding("]", "next_attempt", "Next Attempt"),
     ]
 
     def __init__(self, run_name: str, **kwargs: Any) -> None:
@@ -240,6 +274,7 @@ class RunDetailScreen(Screen):
             inputs = json.loads(r.inputs) if r.inputs else None
             context = json.loads(r.context) if r.context else None
             log_links = json.loads(r.log_links) if r.log_links else None
+            attempts = json.loads(r.attempts_json) if r.attempts_json else None
 
             self._tracker.record_start(
                 action_id=r.action_name,
@@ -254,6 +289,8 @@ class RunDetailScreen(Screen):
                 context=context,
                 group=r.group_name,
                 log_links=log_links,
+                attempt_count=r.attempt_count,
+                attempts=attempts,
             )
             if r.status == "succeeded":
                 self._tracker.record_complete(action_id=r.action_name, outputs=r.outputs)
@@ -285,6 +322,16 @@ class RunDetailScreen(Screen):
 
     def action_show_details(self) -> None:
         self.query_one("#right-tabs", TabbedContent).active = "tab-details"
+
+    def action_previous_attempt(self) -> None:
+        self.query_one("#right-tabs", TabbedContent).active = "tab-details"
+        detail = self.query_one("#detail-panel", DetailPanel)
+        detail.select_previous_attempt()
+
+    def action_next_attempt(self) -> None:
+        self.query_one("#right-tabs", TabbedContent).active = "tab-details"
+        detail = self.query_one("#detail-panel", DetailPanel)
+        detail.select_next_attempt()
 
 
 class ExploreTUIApp(App[None]):

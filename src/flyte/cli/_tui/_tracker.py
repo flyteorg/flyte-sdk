@@ -31,6 +31,9 @@ class ActionNode:
     context: dict | None = None
     group: str | None = None
     log_links: list[tuple[str, str]] | None = None
+    attempt_count: int = 0
+    attempts: list[dict[str, Any]] = field(default_factory=list)
+    selected_attempt: int | None = None
     start_time: float = field(default_factory=time.monotonic)
     end_time: float | None = None
 
@@ -85,8 +88,14 @@ class ActionTracker:
         context: dict | None = None,
         group: str | None = None,
         log_links: list[tuple[str, str]] | None = None,
+        attempt_count: int = 0,
+        attempts: list[dict[str, Any]] | None = None,
     ) -> None:
         with self._lock:
+            initial_attempts = [_safe_json(a) for a in (attempts or []) if isinstance(a, dict)]
+            selected_attempt = None
+            if initial_attempts:
+                selected_attempt = max(int(a.get("attempt_num", 0)) for a in initial_attempts)
             node = ActionNode(
                 action_id=action_id,
                 task_name=task_name,
@@ -101,6 +110,9 @@ class ActionTracker:
                 context=_safe_json(context) if context else None,
                 group=group,
                 log_links=log_links,
+                attempt_count=max(attempt_count, len(initial_attempts)),
+                attempts=initial_attempts,
+                selected_attempt=selected_attempt,
             )
             self._nodes[action_id] = node
 
@@ -122,6 +134,58 @@ class ActionTracker:
                     self._root_ids.append(action_id)
             else:
                 self._children.setdefault(parent_id, []).append(action_id)
+            self._version += 1
+
+    def _get_or_create_attempt(self, node: ActionNode, attempt_num: int) -> dict[str, Any]:
+        for attempt in node.attempts:
+            if int(attempt.get("attempt_num", -1)) == attempt_num:
+                return attempt
+        attempt = {"attempt_num": attempt_num}
+        node.attempts.append(attempt)
+        node.attempts.sort(key=lambda a: int(a.get("attempt_num", 0)))
+        return attempt
+
+    def record_attempt_start(self, *, action_id: str, attempt_num: int) -> None:
+        with self._lock:
+            node = self._nodes.get(action_id)
+            if node is None:
+                return
+            attempt = self._get_or_create_attempt(node, attempt_num)
+            attempt["status"] = ActionStatus.RUNNING.value
+            attempt["start_time"] = time.monotonic()
+            attempt["end_time"] = None
+            attempt["outputs"] = None
+            attempt["error"] = None
+            node.attempt_count = max(node.attempt_count, attempt_num, len(node.attempts))
+            node.selected_attempt = attempt_num
+            self._version += 1
+
+    def record_attempt_complete(self, *, action_id: str, attempt_num: int, outputs: Any = None) -> None:
+        with self._lock:
+            node = self._nodes.get(action_id)
+            if node is None:
+                return
+            attempt = self._get_or_create_attempt(node, attempt_num)
+            attempt["status"] = ActionStatus.SUCCEEDED.value
+            attempt["end_time"] = time.monotonic()
+            attempt["outputs"] = outputs
+            attempt["error"] = None
+            node.attempt_count = max(node.attempt_count, attempt_num, len(node.attempts))
+            node.selected_attempt = attempt_num
+            self._version += 1
+
+    def record_attempt_failure(self, *, action_id: str, attempt_num: int, error: str) -> None:
+        with self._lock:
+            node = self._nodes.get(action_id)
+            if node is None:
+                return
+            attempt = self._get_or_create_attempt(node, attempt_num)
+            attempt["status"] = ActionStatus.FAILED.value
+            attempt["end_time"] = time.monotonic()
+            attempt["outputs"] = None
+            attempt["error"] = error
+            node.attempt_count = max(node.attempt_count, attempt_num, len(node.attempts))
+            node.selected_attempt = attempt_num
             self._version += 1
 
     def record_complete(self, *, action_id: str, outputs: Any = None) -> None:

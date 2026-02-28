@@ -26,6 +26,10 @@ class RunRecord:
     context: str | None = None
     group_name: str | None = None
     log_links: str | None = None
+    attempt_count: int = 0
+    attempts_json: str | None = None
+    max_attempts_used: int = 1
+    retried_actions: int = 0
 
 
 def _json_or_none(obj) -> str | None:
@@ -62,6 +66,8 @@ class RunStore:
         context: dict | None = None,
         group_name: str | None = None,
         log_links: list[tuple[str, str]] | None = None,
+        attempt_count: int = 0,
+        attempts_json: str | None = None,
     ) -> None:
         inputs_json = _json_or_none(inputs)
         context_json = _json_or_none(context)
@@ -72,8 +78,8 @@ class RunStore:
                 """INSERT OR REPLACE INTO runs
                    (run_name, action_name, task_name, status, inputs, start_time,
                     parent_id, short_name, output_path, cache_enabled, cache_hit,
-                    has_report, context, group_name, log_links)
-                   VALUES (?, ?, ?, 'running', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    has_report, context, group_name, log_links, attempt_count, attempts_json)
+                   VALUES (?, ?, ?, 'running', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     run_name,
                     action_name,
@@ -89,9 +95,112 @@ class RunStore:
                     context_json,
                     group_name,
                     log_links_json,
+                    attempt_count,
+                    attempts_json,
                 ),
             )
             conn.commit()
+
+    @staticmethod
+    def _load_attempts_json(raw: str | None) -> list[dict]:
+        if not raw:
+            return []
+        try:
+            parsed = json.loads(raw)
+            if isinstance(parsed, list):
+                return [item for item in parsed if isinstance(item, dict)]
+        except json.JSONDecodeError:
+            pass
+        return []
+
+    @staticmethod
+    def _update_attempt_sync(
+        run_name: str,
+        action_name: str,
+        attempt_num: int,
+        *,
+        status: str,
+        outputs: str | None = None,
+        error: str | None = None,
+        end_time: float | None = None,
+    ) -> None:
+        with LocalDB._write_lock:
+            conn = LocalDB.get_sync()
+            row = conn.execute(
+                "SELECT attempts_json, attempt_count FROM runs WHERE run_name=? AND action_name=?",
+                (run_name, action_name),
+            ).fetchone()
+            attempts = RunStore._load_attempts_json(row[0] if row else None)
+            existing_count = int(row[1] or 0) if row else 0
+            now = time.time()
+
+            record = next((a for a in attempts if int(a.get("attempt_num", -1)) == attempt_num), None)
+            if record is None:
+                record = {
+                    "attempt_num": attempt_num,
+                    "start_time": now,
+                }
+                attempts.append(record)
+            record["status"] = status
+            record["attempt_num"] = attempt_num
+            record["outputs"] = outputs
+            record["error"] = error
+            if status == "running":
+                record["start_time"] = record.get("start_time", now)
+                record["end_time"] = None
+            else:
+                record["end_time"] = end_time if end_time is not None else now
+
+            attempts.sort(key=lambda a: int(a.get("attempt_num", 0)))
+            attempt_count = max(existing_count, attempt_num, len(attempts))
+            conn.execute(
+                "UPDATE runs SET attempt_count=?, attempts_json=? WHERE run_name=? AND action_name=?",
+                (attempt_count, json.dumps(attempts, default=repr), run_name, action_name),
+            )
+            conn.commit()
+
+    @staticmethod
+    def record_attempt_start_sync(
+        run_name: str,
+        action_name: str,
+        attempt_num: int,
+    ) -> None:
+        RunStore._update_attempt_sync(
+            run_name=run_name,
+            action_name=action_name,
+            attempt_num=attempt_num,
+            status="running",
+        )
+
+    @staticmethod
+    def record_attempt_complete_sync(
+        run_name: str,
+        action_name: str,
+        attempt_num: int,
+        outputs: str | None = None,
+    ) -> None:
+        RunStore._update_attempt_sync(
+            run_name=run_name,
+            action_name=action_name,
+            attempt_num=attempt_num,
+            status="succeeded",
+            outputs=outputs,
+        )
+
+    @staticmethod
+    def record_attempt_failure_sync(
+        run_name: str,
+        action_name: str,
+        attempt_num: int,
+        error: str | None = None,
+    ) -> None:
+        RunStore._update_attempt_sync(
+            run_name=run_name,
+            action_name=action_name,
+            attempt_num=attempt_num,
+            status="failed",
+            error=error,
+        )
 
     @staticmethod
     def record_complete_sync(
@@ -158,10 +267,44 @@ class RunStore:
 
         conn = LocalDB.get_sync()
         cursor = conn.execute(
-            f"SELECT * FROM runs WHERE {where} ORDER BY {sql_order} {direction}",
+            f"""
+            SELECT
+                r.*,
+                COALESCE(
+                    (
+                        SELECT MAX(
+                            CASE
+                                WHEN COALESCE(sr.attempt_count, 0) > 0 THEN sr.attempt_count
+                                ELSE 1
+                            END
+                        )
+                        FROM runs sr
+                        WHERE sr.run_name = r.run_name
+                    ),
+                    1
+                ) AS max_attempts_used,
+                COALESCE(
+                    (
+                        SELECT COUNT(*)
+                        FROM runs sr
+                        WHERE sr.run_name = r.run_name
+                          AND COALESCE(sr.attempt_count, 0) > 1
+                    ),
+                    0
+                ) AS retried_actions
+            FROM runs r
+            WHERE {where}
+            ORDER BY {sql_order} {direction}
+            """,
             params,
         )
-        return [RunStore._row_to_record(row) for row in cursor.fetchall()]
+        records: list[RunRecord] = []
+        for row in cursor.fetchall():
+            base = RunStore._row_to_record(row[:20])
+            base.max_attempts_used = int(row[20] or 1)
+            base.retried_actions = int(row[21] or 0)
+            records.append(base)
+        return records
 
     @staticmethod
     def list_actions_for_run_sync(run_name: str) -> list[RunRecord]:
@@ -232,4 +375,6 @@ class RunStore:
             context=row[15],
             group_name=row[16],
             log_links=row[17],
+            attempt_count=int(row[18] or 0),
+            attempts_json=row[19],
         )

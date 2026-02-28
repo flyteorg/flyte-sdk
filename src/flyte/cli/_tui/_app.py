@@ -58,7 +58,8 @@ def _label(node: ActionNode, children_map: dict[str, list[str]] | None = None) -
         cache = _cache_icon(node)
         elapsed = _elapsed(node)
         suffix = f" ({elapsed})" if elapsed else ""
-        label.append(f"{cache} {_display_name(node)}{suffix}")
+        attempts_suffix = f" [x{node.attempt_count}]" if node.attempt_count > 1 else ""
+        label.append(f"{cache} {_display_name(node)}{attempts_suffix}{suffix}")
     return label
 
 
@@ -71,6 +72,20 @@ def _pretty_json(obj: Any) -> str:
         return json.dumps(obj, indent=2, default=repr)
     except (TypeError, ValueError):
         return repr(obj)
+
+
+def _next_attempt_num(current: int | None, attempt_numbers: list[int], direction: int) -> int | None:
+    """Return the next attempt number in the requested direction.
+
+    direction: -1 for previous, +1 for next.
+    """
+    if not attempt_numbers:
+        return None
+    if current is None or current not in attempt_numbers:
+        return attempt_numbers[-1]
+    idx = attempt_numbers.index(current)
+    next_idx = max(0, min(len(attempt_numbers) - 1, idx + direction))
+    return attempt_numbers[next_idx]
 
 
 class _LogViewer(RichLog):
@@ -157,8 +172,10 @@ class DetailPanel(VerticalScroll):
     def __init__(self, tracker: ActionTracker, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._tracker = tracker
+        self._selected_attempts_by_action: dict[str, int] = {}
 
     def compose(self) -> ComposeResult:
+        yield _DetailBox(id="box-attempt-controls")
         yield _DetailBox(id="box-task-details")
         yield _DetailBox(id="box-report")
         yield _DetailBox(id="box-log-links")
@@ -175,8 +192,39 @@ class DetailPanel(VerticalScroll):
     def refresh_detail(self) -> None:
         self._render_detail()
 
+    def _attempt_numbers_for_action(self, action_id: str) -> list[int]:
+        node = self._tracker.get_action(action_id)
+        if node is None or not node.attempts:
+            return []
+        return sorted(int(a.get("attempt_num", 0)) for a in node.attempts)
+
+    def select_previous_attempt(self) -> bool:
+        if self.action_id is None:
+            return False
+        attempt_numbers = self._attempt_numbers_for_action(self.action_id)
+        current = self._selected_attempts_by_action.get(self.action_id)
+        nxt = _next_attempt_num(current, attempt_numbers, -1)
+        if nxt is None or nxt == current:
+            return False
+        self._selected_attempts_by_action[self.action_id] = nxt
+        self._render_detail()
+        return True
+
+    def select_next_attempt(self) -> bool:
+        if self.action_id is None:
+            return False
+        attempt_numbers = self._attempt_numbers_for_action(self.action_id)
+        current = self._selected_attempts_by_action.get(self.action_id)
+        nxt = _next_attempt_num(current, attempt_numbers, +1)
+        if nxt is None or nxt == current:
+            return False
+        self._selected_attempts_by_action[self.action_id] = nxt
+        self._render_detail()
+        return True
+
     def _render_detail(self) -> None:
         try:
+            attempt_box = self.query_one("#box-attempt-controls", _DetailBox)
             task_box = self.query_one("#box-task-details", _DetailBox)
             report_box = self.query_one("#box-report", _DetailBox)
             log_links_box = self.query_one("#box-log-links", _DetailBox)
@@ -188,6 +236,7 @@ class DetailPanel(VerticalScroll):
 
         aid = self.action_id
         if aid is None:
+            attempt_box.display = False
             task_box.update("Select an action to view details.")
             task_box.border_title = "Task Details"
             report_box.display = False
@@ -201,6 +250,7 @@ class DetailPanel(VerticalScroll):
 
         node = self._tracker.get_action(aid)
         if node is None:
+            attempt_box.display = False
             task_box.update(f"Action {aid} not found.")
             report_box.display = False
             log_links_box.display = False
@@ -208,6 +258,35 @@ class DetailPanel(VerticalScroll):
             context_box.display = False
             outputs_box.update("")
             return
+
+        attempt_box.display = bool(node.attempts)
+        selected_attempt: dict[str, Any] | None = None
+        if node.attempts:
+            sorted_attempts = sorted(node.attempts, key=lambda a: int(a.get("attempt_num", 0)))
+            attempt_numbers = [int(a.get("attempt_num", 0)) for a in sorted_attempts]
+
+            default_attempt_num = self._selected_attempts_by_action.get(aid)
+            if default_attempt_num is None:
+                default_attempt_num = node.selected_attempt
+            if default_attempt_num is None and node.attempts:
+                default_attempt_num = int(node.attempts[-1].get("attempt_num", 0))
+            if default_attempt_num is not None:
+                self._selected_attempts_by_action[aid] = default_attempt_num
+                selected_attempt = next(
+                    (a for a in node.attempts if int(a.get("attempt_num", -1)) == default_attempt_num),
+                    None,
+                )
+            else:
+                fallback_attempt = int(node.attempts[-1].get("attempt_num", 1))
+                self._selected_attempts_by_action[aid] = fallback_attempt
+                selected_attempt = next(
+                    (a for a in node.attempts if int(a.get("attempt_num", -1)) == fallback_attempt),
+                    None,
+                )
+            current_num = int((selected_attempt or sorted_attempts[-1]).get("attempt_num", 1))
+            total_num = len(attempt_numbers)
+            attempt_box.border_title = "Attempts"
+            attempt_box.update(f"[ {current_num}/{total_num} ]")
 
         # -- Task Details box --
         if _is_group_node(node):
@@ -224,6 +303,7 @@ class DetailPanel(VerticalScroll):
             inputs_box.display = False
             context_box.display = False
             outputs_box.display = False
+            attempt_box.display = False
             return
 
         task_box.border_title = "Task Details"
@@ -231,6 +311,10 @@ class DetailPanel(VerticalScroll):
         details.append(f"task name:  {node.task_name}")
         details.append(f"action id:  {node.action_id}")
         details.append(f"status:     {node.status.value}")
+        if node.attempt_count > 0:
+            details.append(f"attempts:   {node.attempt_count}")
+            if selected_attempt is not None:
+                details.append(f"viewing:    attempt {selected_attempt['attempt_num']}")
         elapsed = _elapsed(node)
         if elapsed:
             details.append(f"duration:   {elapsed}")
@@ -276,13 +360,16 @@ class DetailPanel(VerticalScroll):
 
         # -- Outputs / Error box --
         outputs_box.display = True
-        if node.error:
+        attempt_error = selected_attempt.get("error") if selected_attempt else None
+        attempt_outputs = selected_attempt.get("outputs") if selected_attempt else None
+
+        if attempt_error or node.error:
             outputs_box.border_title = "Error"
             error_parts: list[str] = []
             if node.output_path:
                 error_parts.append(f"path: {node.output_path}")
                 error_parts.append("")
-            error_parts.append(node.error)
+            error_parts.append(attempt_error or node.error or "")
             outputs_box.update("\n".join(error_parts))
         else:
             outputs_box.border_title = "Outputs"
@@ -290,7 +377,7 @@ class DetailPanel(VerticalScroll):
             if node.output_path:
                 output_parts.append(f"path: {node.output_path}")
                 output_parts.append("")
-            output_parts.append(_pretty_json(node.outputs))
+            output_parts.append(_pretty_json(attempt_outputs if selected_attempt else node.outputs))
             outputs_box.update("\n".join(output_parts))
 
 
@@ -369,6 +456,8 @@ class FlyteTUIApp(App[None]):
         Binding("q", "quit", "Quit"),
         Binding("d", "show_details", "Details"),
         Binding("l", "show_logs", "Logs"),
+        Binding("[", "previous_attempt", "Prev Attempt"),
+        Binding("]", "next_attempt", "Next Attempt"),
     ]
 
     def __init__(
@@ -440,3 +529,13 @@ class FlyteTUIApp(App[None]):
 
     def action_show_logs(self) -> None:
         self.query_one("#right-tabs", TabbedContent).active = "tab-logs"
+
+    def action_previous_attempt(self) -> None:
+        self.query_one("#right-tabs", TabbedContent).active = "tab-details"
+        detail = self.query_one("#detail-panel", DetailPanel)
+        detail.select_previous_attempt()
+
+    def action_next_attempt(self) -> None:
+        self.query_one("#right-tabs", TabbedContent).active = "tab-details"
+        detail = self.query_one("#detail-panel", DetailPanel)
+        detail.select_next_attempt()
