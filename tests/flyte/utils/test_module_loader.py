@@ -77,7 +77,7 @@ def test_load_python_modules_skips_venv(temp_project):
     sys.path.insert(0, str(temp_project))
     try:
         with patch("importlib.import_module", side_effect=fake_import):
-            modules, failed = load_python_modules(packages, root_dir=temp_project, recursive=True)
+            modules, _ = load_python_modules(packages, root_dir=temp_project, recursive=True)
 
         assert len(modules) == 2
         module_names = set(imported_modules)
@@ -107,7 +107,7 @@ def test_load_python_modules_skips_venv_with_relative_paths(temp_project):
     sys.path.insert(0, str(temp_project))
     try:
         with patch("importlib.import_module", side_effect=fake_import):
-            modules, failed = load_python_modules(Path("packages"), root_dir=Path.cwd(), recursive=True)
+            modules, _ = load_python_modules(Path("packages"), root_dir=Path.cwd(), recursive=True)
 
         assert len(modules) == 2
         module_names = set(imported_modules)
