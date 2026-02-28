@@ -10,14 +10,22 @@ This package provides various utilities that make it possible to build highly cu
                    This module provides a few utilities that make it possible to bring determinism to
                    workflows that need to access time related functions. This determinism persists
                    across crashes and restarts making the process durable.
+
+3. GPUSaturator: Maximize GPU utilization by batching work from many concurrent producers through a
+                 single async inference function.  Useful for large-scale batch inference with
+                 reusable containers.
 """
 
 from flyte.durable._time import durable_sleep, durable_time
 
 from ._container import ContainerTask
+from ._gpu_saturator import BatchStats, GPUSaturator, TokenEstimator
 
 __all__ = [
+    "BatchStats",
     "ContainerTask",
+    "GPUSaturator",
+    "TokenEstimator",
     "durable_sleep",
     "durable_time",
 ]
