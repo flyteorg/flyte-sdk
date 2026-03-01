@@ -79,6 +79,11 @@ def _compute_runs_table_column_widths(total_width: int) -> list[int]:
 class RunsTable(DataTable):
     """Table of all persisted runs."""
 
+    BINDINGS: ClassVar[list[BindingType]] = [
+        Binding("j", "cursor_down", "Cursor Down", show=False),
+        Binding("k", "cursor_up", "Cursor Up", show=False),
+    ]
+
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self.sort_key: str = "start_time"
@@ -171,6 +176,7 @@ class ExploreScreen(Screen):
         table = self.query_one("#runs-table", RunsTable)
         table.cursor_type = "row"
         table.populate()
+        table.focus()
 
     def _repopulate(self) -> None:
         table = self.query_one("#runs-table", RunsTable)
