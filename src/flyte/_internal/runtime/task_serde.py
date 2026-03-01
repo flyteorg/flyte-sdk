@@ -135,11 +135,6 @@ def get_proto_task(
         extra_config[_PRIMARY_CONTAINER_NAME_FIELD] = task.pod_template.primary_container_name
     elif sql is None:
         container = _get_urun_container(serialize_context, task)
-
-    image_build_url = None
-    if task.parent_env_name and serialize_context.image_cache:
-        image_build_url = serialize_context.image_cache.build_run_urls.get(task.parent_env_name)
-
     log_links = []
     if task.links and task_context:
         action = task_context.action
