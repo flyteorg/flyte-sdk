@@ -13,7 +13,8 @@ The pattern:
    to ``ReusePolicy(concurrency=10)`` — shares the same model and batcher.
    Records from all concurrent calls are batched together, keeping the GPU
    busy.
-3. A **driver** task fans out many ``infer_batch`` calls across replicas.
+3. A **driver** task fetches problems from the HuggingFace ``gsm8k`` math
+   dataset and fans them out across GPU replicas.
 
 Key Flyte concepts:
 - ``flyte.ReusePolicy`` for persistent GPU workers with multiple replicas
@@ -29,7 +30,6 @@ Usage::
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 from dataclasses import dataclass
 
@@ -59,6 +59,10 @@ driver_env = flyte.TaskEnvironment(
     image=image,
     depends_on=[gpu_env],
 )
+
+# HuggingFace Datasets API endpoint for gsm8k (math word problems).
+# Public, no auth needed.  Each row has a "question" and "answer" field.
+GSM8K_URL = "https://datasets-server.huggingface.co/rows?dataset=openai/gsm8k&config=main&split=test&offset={offset}&length={length}"
 
 
 # ---------------------------------------------------------------------------
@@ -132,10 +136,10 @@ async def get_batcher() -> TokenBatcher[Prompt, str]:
 
 @gpu_env.task
 async def infer_batch(
-    jsonl_url: str,
+    prompts: list[str],
     task_id: str,
 ) -> list[str]:
-    """Stream a JSONL file and submit each record to the shared batcher.
+    """Submit prompts to the shared batcher and return completions.
 
     Multiple ``infer_batch`` calls run concurrently on the same replica
     (``concurrency=10``).  All of them feed into the same
@@ -143,36 +147,19 @@ async def infer_batch(
     every concurrent caller — maximizing GPU utilization.
 
     Args:
-        jsonl_url: URL of a JSONL file where each line has a ``"prompt"`` field.
+        prompts: List of prompt strings to generate completions for.
         task_id: Identifier for this logical task.
 
     Returns:
-        List of generated outputs, one per JSONL line.
+        List of generated outputs, one per prompt.
     """
     batcher = await get_batcher()
 
     futures: list[asyncio.Future[str]] = []
-    async with httpx.AsyncClient() as client:
-        async with client.stream("GET", jsonl_url) as resp:
-            resp.raise_for_status()
-            idx = 0
-            buffer = ""
-            async for chunk in resp.aiter_bytes():
-                buffer += chunk.decode("utf-8", errors="replace")
-                while "\n" in buffer:
-                    line, buffer = buffer.split("\n", 1)
-                    line = line.strip()
-                    if not line:
-                        continue
-                    data = json.loads(line)
-                    record = Prompt(
-                        task_id=task_id,
-                        index=idx,
-                        text=data["prompt"],
-                    )
-                    future = await batcher.submit(record)
-                    futures.append(future)
-                    idx += 1
+    for idx, text in enumerate(prompts):
+        record = Prompt(task_id=task_id, index=idx, text=text)
+        future = await batcher.submit(record)
+        futures.append(future)
 
     results = await asyncio.gather(*futures)
     logger.info(
@@ -186,40 +173,64 @@ async def infer_batch(
 
 
 # ---------------------------------------------------------------------------
-# Orchestrator — fans out many infer_batch calls across GPU replicas
+# Orchestrator — fetches data and fans out across GPU replicas
 # ---------------------------------------------------------------------------
+
+
+async def fetch_gsm8k_questions(n: int = 100) -> list[str]:
+    """Fetch math word problems from the HuggingFace gsm8k dataset.
+
+    Uses the HuggingFace Datasets Server API (public, no auth required).
+
+    Args:
+        n: Number of questions to fetch (max 100 per request).
+
+    Returns:
+        List of question strings.
+    """
+    async with httpx.AsyncClient() as client:
+        resp = await client.get(
+            GSM8K_URL.format(offset=0, length=min(n, 100)),
+            timeout=30,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+    return [row["row"]["question"] for row in data["rows"]]
 
 
 @driver_env.task
 async def main(
-    jsonl_urls: list[str] | None = None,
-    task_ids: list[str] | None = None,
+    num_questions: int = 60,
+    chunk_size: int = 20,
 ) -> dict[str, list[str]]:
-    """Launch GPU workers and feed them JSONL data.
+    """Fetch gsm8k math problems and solve them with batched LLM inference.
 
-    Each URL becomes a separate ``infer_batch`` call.  With
-    ``ReusePolicy(replicas=2, concurrency=10)``, up to 20 calls run
-    concurrently across 2 GPU replicas, all sharing their replica's
-    model and batcher.
+    Downloads questions from the HuggingFace ``openai/gsm8k`` dataset,
+    splits them into chunks, and fans each chunk out as a separate
+    ``infer_batch`` call.  With ``ReusePolicy(replicas=2, concurrency=10)``,
+    up to 20 calls run concurrently across 2 GPU replicas, all sharing
+    their replica's model and batcher.
 
     Args:
-        jsonl_urls: Remote JSONL file URLs (one per logical task).
-            Each line must have a ``"prompt"`` field.
-        task_ids: Identifiers for each URL (same length as *jsonl_urls*).
+        num_questions: Total questions to fetch from gsm8k (max 100).
+        chunk_size: Number of questions per ``infer_batch`` call.
 
     Returns:
-        Mapping from task_id to list of generated outputs.
+        Mapping from task_id to list of generated answers.
     """
-    if jsonl_urls is None:
-        jsonl_urls = [
-            "https://storage.example.com/prompts_001.jsonl",
-            "https://storage.example.com/prompts_002.jsonl",
-            "https://storage.example.com/prompts_003.jsonl",
-        ]
-    if task_ids is None:
-        task_ids = [f"task_{i:03d}" for i in range(len(jsonl_urls))]
+    questions = await fetch_gsm8k_questions(num_questions)
+    logger.info("Fetched %d questions from gsm8k", len(questions))
 
-    all_results = await asyncio.gather(*(infer_batch(url, tid) for url, tid in zip(jsonl_urls, task_ids)))
+    # Split into chunks → one infer_batch call per chunk
+    chunks = [
+        questions[i : i + chunk_size]
+        for i in range(0, len(questions), chunk_size)
+    ]
+    task_ids = [f"gsm8k_{i:03d}" for i in range(len(chunks))]
+
+    all_results = await asyncio.gather(
+        *(infer_batch(chunk, tid) for chunk, tid in zip(chunks, task_ids))
+    )
     return dict(zip(task_ids, all_results))
 
 
