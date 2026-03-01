@@ -189,31 +189,38 @@ async def infer_batch(
 # ---------------------------------------------------------------------------
 
 
-async def fetch_gsm8k_questions(n: int = 100) -> list[str]:
+async def fetch_gsm8k_questions(n: int = 500) -> list[str]:
     """Fetch math word problems from the HuggingFace gsm8k dataset.
 
     Uses the HuggingFace Datasets Server API (public, no auth required).
+    Paginates automatically when more than 100 questions are requested.
 
     Args:
-        n: Number of questions to fetch (max 100 per request).
+        n: Number of questions to fetch.
 
     Returns:
         List of question strings.
     """
+    questions: list[str] = []
     async with httpx.AsyncClient() as client:
-        resp = await client.get(
-            GSM8K_URL.format(offset=0, length=min(n, 100)),
-            timeout=30,
-        )
-        resp.raise_for_status()
-        data = resp.json()
-    return [row["row"]["question"] for row in data["rows"]]
+        offset = 0
+        while offset < n:
+            length = min(n - offset, 100)
+            resp = await client.get(
+                GSM8K_URL.format(offset=offset, length=length),
+                timeout=30,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            questions.extend(row["row"]["question"] for row in data["rows"])
+            offset += length
+    return questions
 
 
 @driver_env.task
 async def main(
-    num_questions: int = 60,
-    chunk_size: int = 20,
+    num_questions: int = 500,
+    chunk_size: int = 50,
 ) -> dict[str, list[str]]:
     """Fetch gsm8k math problems and solve them with batched LLM inference.
 
@@ -224,7 +231,7 @@ async def main(
     their replica's model and batcher.
 
     Args:
-        num_questions: Total questions to fetch from gsm8k (max 100).
+        num_questions: Total questions to fetch from gsm8k.
         chunk_size: Number of questions per ``infer_batch`` call.
 
     Returns:
