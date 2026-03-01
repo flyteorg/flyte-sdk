@@ -42,6 +42,7 @@ from .models import MAX_INLINE_IO_BYTES, NativeInterface, SerializationContext
 if TYPE_CHECKING:
     from flyteidl2.core.tasks_pb2 import DataLoadingConfig
 
+    from ._internal.resolvers.common import Resolver
     from ._task_environment import TaskEnvironment
 
 P = ParamSpec("P")  # capture the function's parameters
@@ -111,6 +112,7 @@ class TaskTemplate(Generic[P, R, F]):
     report: bool = False
     queue: Optional[str] = None
     debuggable: bool = False
+    resolver: Optional[Resolver] = None
 
     parent_env: Optional[weakref.ReferenceType[TaskEnvironment]] = None
     parent_env_name: Optional[str] = None
@@ -146,6 +148,10 @@ class TaskTemplate(Generic[P, R, F]):
         if self.short_name == "":
             # If short_name is not set, use the name of the task
             self.short_name = self.name
+
+        from ._internal.resolvers.default import DefaultTaskResolver
+
+        self.resolver = self.resolver or DefaultTaskResolver()
 
     def __getstate__(self):
         """
@@ -564,7 +570,7 @@ class AsyncFunctionTaskTemplate(TaskTemplate[P, R, F]):
                     "SerializationError",
                     "Root dir is required for default task resolver when no code bundle is provided.",
                 )
-            _task_resolver = DefaultTaskResolver()
+            _task_resolver = self.resolver or DefaultTaskResolver()
             args = [
                 *args,
                 *[

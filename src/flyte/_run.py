@@ -660,8 +660,8 @@ class _Runner:
         if isinstance(task, (LazyEntity, TaskDetails)) and self._mode != "remote":
             raise ValueError("Remote task can only be run in remote mode.")
 
-        if not isinstance(task, TaskTemplate) and not isinstance(task, (LazyEntity, TaskDetails)):
-            raise TypeError(f"On Flyte tasks can be run, not generic functions or methods '{type(task)}'.")
+        if not isinstance(task, (TaskTemplate, LazyEntity, TaskDetails)):
+            raise TypeError(f"Only Flyte tasks can be run, not '{type(task)}'.")
 
         # Set the run mode in the context variable so that offloaded types (files, directories, dataframes)
         # can check the mode for controlling auto-uploading behavior (only enabled in remote mode).
