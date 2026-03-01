@@ -22,6 +22,12 @@ Key Flyte concepts:
 - ``flyte.extras.TokenBatcher`` for batched inference across concurrent calls
 - ``asyncio.create_task`` for concurrent fan-out
 
+Startup optimizations:
+- **hf-transfer** — Rust-based parallel downloader for 5-10x faster
+  HuggingFace model downloads (enabled via ``HF_HUB_ENABLE_HF_TRANSFER``).
+- **FlashInfer** — High-performance attention backend for vLLM, faster
+  than the default FlashAttention for decode-heavy workloads.
+
 Usage::
 
     flyte run batch_inference_saturate.py main
@@ -41,7 +47,13 @@ from flyte.extras import TokenBatcher
 
 logger = logging.getLogger(__name__)
 
-image = flyte.Image.from_debian_base().with_pip_packages("vllm", "unionai-reuse")
+image = (
+    flyte.Image.from_debian_base()
+    .with_pip_packages("vllm", "hf-transfer", "unionai-reuse")
+    .with_pip_packages("flashinfer-python==0.6.4", "flashinfer-cubin==0.6.4")
+    .with_pip_packages("flashinfer-jit-cache", index_url="https://flashinfer.ai/whl/cu129")
+    .with_env_vars({"HF_HUB_ENABLE_HF_TRANSFER": "1"})
+)
 
 gpu_env = flyte.TaskEnvironment(
     name="gpu_worker",
@@ -222,15 +234,10 @@ async def main(
     logger.info("Fetched %d questions from gsm8k", len(questions))
 
     # Split into chunks → one infer_batch call per chunk
-    chunks = [
-        questions[i : i + chunk_size]
-        for i in range(0, len(questions), chunk_size)
-    ]
+    chunks = [questions[i : i + chunk_size] for i in range(0, len(questions), chunk_size)]
     task_ids = [f"gsm8k_{i:03d}" for i in range(len(chunks))]
 
-    all_results = await asyncio.gather(
-        *(infer_batch(chunk, tid) for chunk, tid in zip(chunks, task_ids))
-    )
+    all_results = await asyncio.gather(*(infer_batch(chunk, tid) for chunk, tid in zip(chunks, task_ids)))
     return dict(zip(task_ids, all_results))
 
 
