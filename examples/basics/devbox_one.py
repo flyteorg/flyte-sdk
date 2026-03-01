@@ -1,12 +1,20 @@
 import asyncio
 import logging
+from pathlib import Path
 from typing import List
 
 import flyte
+from flyte._image import PythonWheels
+
+controller_dist_folder = Path("/Users/ytong/go/src/github.com/flyteorg/sdk-rust/rs_controller/dist")
+wheel_layer = PythonWheels(wheel_dir=controller_dist_folder, package_name="flyte_controller_base")
+base = flyte.Image.from_debian_base()
+rs_controller_image = base.clone(addl_layer=wheel_layer)
 
 env = flyte.TaskEnvironment(
     name="hello_world",
     resources=flyte.Resources(cpu=1, memory="1Gi"),
+    image=rs_controller_image,
 )
 
 

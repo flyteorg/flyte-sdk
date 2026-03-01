@@ -4,7 +4,9 @@ import concurrent.futures
 import os
 import pathlib
 import threading
-from typing import Any, Callable, Tuple, TypeVar
+from typing import Any, Callable, Protocol, Tuple, TypeVar
+
+from flyteidl2.task import task_definition_pb2
 
 import flyte.errors
 from flyte._cache.cache import VersionParameters, cache_from_request
@@ -29,6 +31,17 @@ R = TypeVar("R")
 # and does not allow for custom backoff strategies.
 _MIN_BACKOFF_ON_ERR_SEC = 0.5
 _BACKOFF_MULTIPLIER = 2.0
+
+
+class ControllerProtocol(Protocol):
+    async def submit(self, _task: "TaskTemplate", *args, **kwargs) -> Any: ...
+    def submit_sync(self, _task: "TaskTemplate", *args, **kwargs) -> concurrent.futures.Future: ...
+    async def finalize_parent_action(self, action: "ActionID"): ...
+    async def get_action_outputs(
+        self, _interface: "NativeInterface", _func: Callable, *args, **kwargs
+    ) -> Tuple["TraceInfo", bool]: ...
+    async def record_trace(self, info: "TraceInfo"): ...
+    async def submit_task_ref(self, _task: "task_definition_pb2.TaskDetails", *args, **kwargs) -> Any: ...
 
 
 class _TaskRunner:
@@ -77,7 +90,7 @@ class _TaskRunner:
         return fut
 
 
-class LocalController:
+class LocalController(ControllerProtocol):
     def __init__(self):
         logger.debug("LocalController init")
         self._runner_map: dict[str, _TaskRunner] = {}
