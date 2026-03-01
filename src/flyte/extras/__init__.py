@@ -17,8 +17,6 @@ This package provides various utilities that make it possible to build highly cu
                    LLM inference with reusable containers.
 """
 
-from flyte.durable._time import durable_sleep, durable_time
-
 from ._container import ContainerTask
 from ._dynamic_batcher import (
     BatchStats,
@@ -37,6 +35,4 @@ __all__ = [
     "Prompt",
     "TokenBatcher",
     "TokenEstimator",
-    "durable_sleep",
-    "durable_time",
 ]
