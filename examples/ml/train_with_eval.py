@@ -367,7 +367,7 @@ if __name__ == "__main__":
     # The eval cron will discover this path by reading the training run's inputs.
     result = flyte.run(
         train,
-        checkpoint_dir="s3://bert-trainium-aws/training-run-001/checkpoints",
+        checkpoint_dir="s3://lightning/training-run-001/checkpoints",
     )
     print(f"Training run: {result.url}")
     print("Eval workflow will fire via Flyte trigger.")
