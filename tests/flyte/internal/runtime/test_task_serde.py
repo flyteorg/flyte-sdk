@@ -438,6 +438,81 @@ def test_lookup_image_in_cache_no_ref_name_no_layers():
     assert result == "python:3.10-slim"
 
 
+def test_get_proto_task_sets_image_build_url():
+    """image_build_url is set in TaskMetadata when a build URL exists in the cache."""
+    from flyte._internal.imagebuild.image_builder import ImageCache
+
+    env = flyte.TaskEnvironment(name="test_env_build_url", image="python:3.10")
+
+    @env.task()
+    async def task_with_build_url(x: int) -> int:
+        return x
+
+    cache = ImageCache(
+        image_lookup={"test_env_build_url": "registry/my-image:sha256abc"},
+        build_run_urls={"test_env_build_url": "https://console.union.ai/runs/abc123"},
+    )
+    context = SerializationContext(
+        project="test-project",
+        domain="test-domain",
+        version="test-version",
+        image_cache=cache,
+        root_dir=pathlib.Path.cwd(),
+    )
+
+    proto_task = get_proto_task(task_with_build_url, context)
+
+    assert proto_task.metadata.image_build_url == "https://console.union.ai/runs/abc123"
+
+
+def test_get_proto_task_no_image_build_url_without_cache():
+    """image_build_url is empty when no image cache is present."""
+    env = flyte.TaskEnvironment(name="test_env_no_build_url", image="python:3.10")
+
+    @env.task()
+    async def task_without_build_url(x: int) -> int:
+        return x
+
+    context = SerializationContext(
+        project="test-project",
+        domain="test-domain",
+        version="test-version",
+        image_cache=None,
+        root_dir=pathlib.Path.cwd(),
+    )
+
+    proto_task = get_proto_task(task_without_build_url, context)
+
+    assert proto_task.metadata.image_build_url == ""
+
+
+def test_get_proto_task_no_image_build_url_when_env_not_in_build_run_urls():
+    """image_build_url is empty when the task's env is not in build_run_urls."""
+    from flyte._internal.imagebuild.image_builder import ImageCache
+
+    env = flyte.TaskEnvironment(name="test_env_missing_url", image="python:3.10")
+
+    @env.task()
+    async def task_env_not_in_urls(x: int) -> int:
+        return x
+
+    cache = ImageCache(
+        image_lookup={"test_env_missing_url": "registry/my-image:sha256abc"},
+        build_run_urls={},
+    )
+    context = SerializationContext(
+        project="test-project",
+        domain="test-domain",
+        version="test-version",
+        image_cache=cache,
+        root_dir=pathlib.Path.cwd(),
+    )
+
+    proto_task = get_proto_task(task_env_not_in_urls, context)
+
+    assert proto_task.metadata.image_build_url == ""
+
+
 def test_lookup_image_in_cache_with_ref_name_not_in_cache():
     """Test lookup_image_in_cache when image has ref_name but not found in cache"""
     from flyte._internal.imagebuild.image_builder import ImageCache

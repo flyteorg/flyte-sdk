@@ -56,7 +56,7 @@ async def test_task1_remote_union_sync(
         computed_version="v1",
         tgz="test.tgz",
     )
-    mock_build_image_bg.return_value = (env.name, "image_name")
+    mock_build_image_bg.return_value = (env.name, "image_name", None)
 
     await _init_for_testing(
         client=mock_client,

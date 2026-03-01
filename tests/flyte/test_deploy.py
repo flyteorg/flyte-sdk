@@ -2,11 +2,21 @@ from __future__ import annotations
 
 import inspect
 from dataclasses import replace
-from unittest.mock import Mock
+from unittest.mock import AsyncMock, Mock, patch
+
+import pytest
 
 import flyte
-from flyte._deploy import _get_documentation_entity, _update_interface_inputs_and_outputs_docstring
+from flyte._build import ImageBuild
+from flyte._deploy import (
+    DeploymentPlan,
+    _build_image_bg,
+    _build_images,
+    _get_documentation_entity,
+    _update_interface_inputs_and_outputs_docstring,
+)
 from flyte._docstring import Docstring
+from flyte._internal.imagebuild.image_builder import ImageCache
 from flyte._internal.runtime.types_serde import transform_native_to_typed_interface
 from flyte.models import NativeInterface
 
@@ -181,3 +191,74 @@ def test_update_interface_mismatched_names():
     result_inputs = {entry.key: entry.value for entry in result.inputs.variables}
     assert result_inputs["x"].description == ""
     assert result_inputs["y"].description == ""
+
+
+# ---------------------------------------------------------------------------
+# _build_image_bg and _build_images tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_build_image_bg_captures_remote_run_url():
+    """Build URL is extracted from remote_run.url when using the remote builder."""
+    image = flyte.Image.from_base("python:3.10")
+    mock_run = Mock()
+    mock_run.url = "https://console.union.ai/runs/abc123"
+    mock_result = ImageBuild(uri="registry/my-image:sha256abc", remote_run=mock_run)
+
+    with patch("flyte._build.build") as mock_build:
+        mock_build.aio = AsyncMock(return_value=mock_result)
+        env_name, uri, build_url = await _build_image_bg("my-env", image)
+
+    assert env_name == "my-env"
+    assert uri == "registry/my-image:sha256abc"
+    assert build_url == "https://console.union.ai/runs/abc123"
+
+
+@pytest.mark.asyncio
+async def test_build_image_bg_no_url_for_local_build():
+    """Build URL is None when using the local builder (remote_run is None)."""
+    image = flyte.Image.from_base("python:3.10")
+    mock_result = ImageBuild(uri="registry/my-image:sha256abc", remote_run=None)
+
+    with patch("flyte._build.build") as mock_build:
+        mock_build.aio = AsyncMock(return_value=mock_result)
+        _env_name, _uri, build_url = await _build_image_bg("my-env", image)
+
+    assert build_url is None
+
+
+@pytest.mark.asyncio
+async def test_build_images_stores_build_run_urls_in_cache():
+    """build_run_urls in ImageCache is populated when remote builder provides a URL."""
+    image = flyte.Image.from_base("python:3.10")
+    env = flyte.TaskEnvironment(name="my-env", image=image)
+    plan = DeploymentPlan(envs={"my-env": env})
+
+    mock_run = Mock()
+    mock_run.url = "https://console.union.ai/runs/abc123"
+    mock_result = ImageBuild(uri="registry/my-image:sha256abc", remote_run=mock_run)
+
+    with patch("flyte._build.build") as mock_build:
+        mock_build.aio = AsyncMock(return_value=mock_result)
+        cache: ImageCache = await _build_images(plan)
+
+    assert cache.image_lookup["my-env"] == "registry/my-image:sha256abc"
+    assert cache.build_run_urls["my-env"] == "https://console.union.ai/runs/abc123"
+
+
+@pytest.mark.asyncio
+async def test_build_images_no_build_run_urls_for_local_build():
+    """build_run_urls in ImageCache is empty when local builder is used."""
+    image = flyte.Image.from_base("python:3.10")
+    env = flyte.TaskEnvironment(name="my-env", image=image)
+    plan = DeploymentPlan(envs={"my-env": env})
+
+    mock_result = ImageBuild(uri="registry/my-image:sha256abc", remote_run=None)
+
+    with patch("flyte._build.build") as mock_build:
+        mock_build.aio = AsyncMock(return_value=mock_result)
+        cache: ImageCache = await _build_images(plan)
+
+    assert cache.image_lookup["my-env"] == "registry/my-image:sha256abc"
+    assert cache.build_run_urls == {}
