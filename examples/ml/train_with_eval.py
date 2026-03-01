@@ -239,7 +239,7 @@ def train(checkpoint_dir: str, max_epochs: int = 20) -> str | None:
     return "Training completed!"
 
 
-@eval_env.task(triggers=flyte.Trigger.minutely(trigger_time_input_key="trigger_time"))
+@eval_env.task(triggers=flyte.Trigger.daily(trigger_time_input_key="trigger_time"))
 def run_eval(
     trigger_time: datetime,
     convergence_threshold: float = 0.05,
