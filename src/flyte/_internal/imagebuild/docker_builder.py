@@ -162,12 +162,14 @@ RUN uv venv $$VIRTUALENV --python=$PYTHON_VERSION && uv run --python=$$UV_PYTHON
 # Adds nvidia just in case it exists
 ENV PATH="$$PATH:/usr/local/nvidia/bin:/usr/local/cuda/bin" \
    LD_LIBRARY_PATH="/usr/local/nvidia/lib64"
+   
+   
+WORKDIR /root
 """)
 
 # This gets added on to the end of the dockerfile
 DOCKER_FILE_BASE_FOOTER = Template("""\
 ENV _F_IMG_ID=$F_IMG_ID
-WORKDIR /root
 SHELL ["/bin/bash", "-c"]
 """)
 
