@@ -8,6 +8,9 @@ application using the @app_env.server decorator pattern. The app has:
 Create the Gemini API key:
     flyte create secret GOOGLE_GEMINI_API_KEY
 
+Create the Reo client ID:
+    flyte create secret REO_CLIENT_ID
+
 Usage (CLI):
     flyte serve --local examples/apps/panel_app/panel_flyte_app.py app_env
 """
@@ -44,10 +47,14 @@ app_env = AppEnvironment(
         metric=Scaling.RequestRate(3),
         scaledown_after=300,  # 5 minutes
     ),
-    secrets=[flyte.Secret(key="GOOGLE_GEMINI_API_KEY")],
+    secrets=[
+        flyte.Secret(key="GOOGLE_GEMINI_API_KEY"),
+        flyte.Secret(key="REO_CLIENT_ID"),
+    ],
     domain=Domain(subdomain="flyte2intro"),
     include=[
         "explore.tcss",
+        "template.html",
         "sample_hello_world.py",
         "sample_async.py",
         "sample_caching_and_retries.py",
@@ -93,6 +100,10 @@ def _load_explore_css() -> str:
         if path.exists():
             return path.read_text()
     return ""  # Fallback to empty CSS if not found
+
+
+def _load_template_html() -> str:
+    return (Path(__file__).parent / "template.html").read_text()
 
 
 class CustomExploreScreen(ExploreScreen):
@@ -489,14 +500,7 @@ def create_panel_app():
         styles={"height": "100vh"},
     )
 
-    template = """
-{% extends base %}
-
-{% block contents %}
-{{ embed(roots.main) }}
-{% endblock %}
-"""
-
+    template = _load_template_html().replace("{{client_id}}", os.getenv("REO_CLIENT_ID"))
     tmpl = pn.Template(template)
     tmpl.add_panel("main", layout)
     tmpl.add_variable(
