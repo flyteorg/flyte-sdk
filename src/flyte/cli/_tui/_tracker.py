@@ -28,6 +28,7 @@ class ActionNode:
     has_report: bool = False
     cache_enabled: bool = False
     cache_hit: bool = False
+    disable_run_cache: bool = False
     context: dict | None = None
     group: str | None = None
     log_links: list[tuple[str, str]] | None = None
@@ -85,6 +86,7 @@ class ActionTracker:
         has_report: bool = False,
         cache_enabled: bool = False,
         cache_hit: bool = False,
+        disable_run_cache: bool = False,
         context: dict | None = None,
         group: str | None = None,
         log_links: list[tuple[str, str]] | None = None,
@@ -107,6 +109,7 @@ class ActionTracker:
                 has_report=has_report,
                 cache_enabled=cache_enabled,
                 cache_hit=cache_hit,
+                disable_run_cache=disable_run_cache,
                 context=_safe_json(context) if context else None,
                 group=group,
                 log_links=log_links,

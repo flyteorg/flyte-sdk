@@ -129,7 +129,8 @@ class LocalController:
         out = None
         cache_hit = False
         # We only get output from cache if the cache behavior is set to auto
-        if task_cache.behavior == "auto":
+        # and run cache is not disabled
+        if task_cache.behavior == "auto" and not tctx.disable_run_cache:
             out = await LocalTaskCache.get(cache_key)
             if out is not None:
                 cache_hit = True
@@ -170,6 +171,9 @@ class LocalController:
                     )
                     rendered_links.append((link.name, uri))
 
+        # When run cache is disabled, never report cache hit to the TUI
+        effective_cache_hit = cache_hit if not tctx.disable_run_cache else False
+
         self._recorder.record_start(
             action_id=sub_action_id.name,
             task_name=_task.name,
@@ -179,7 +183,8 @@ class LocalController:
             output_path=sub_action_output_path,
             has_report=_task.report,
             cache_enabled=cache_enabled,
-            cache_hit=cache_hit,
+            cache_hit=effective_cache_hit,
+            disable_run_cache=tctx.disable_run_cache,
             context=tctx.custom_context or None,
             group=tctx.group_data.name if tctx.group_data else None,
             log_links=rendered_links,
@@ -234,8 +239,8 @@ class LocalController:
                 else:
                     raise flyte.errors.RuntimeSystemError("BadError", "Unknown error")
 
-            # store into cache
-            if cache_enabled and out is not None:
+            # store into cache (skip when run cache is disabled)
+            if cache_enabled and out is not None and not tctx.disable_run_cache:
                 await LocalTaskCache.set(cache_key, out)
 
         self._recorder.record_complete(action_id=sub_action_id.name, outputs=out)

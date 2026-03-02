@@ -87,6 +87,7 @@ def test_run_detail_screen_tracker_extended_fields():
         has_report=True,
         cache_enabled=True,
         cache_hit=True,
+        disable_run_cache=False,
         context={"env": "staging"},
         group_name="grp1",
         log_links=[("logs", "http://example.com/logs")],
@@ -104,10 +105,35 @@ def test_run_detail_screen_tracker_extended_fields():
     assert node.has_report is True
     assert node.cache_enabled is True
     assert node.cache_hit is True
+    assert node.disable_run_cache is False
     assert node.context == {"env": "staging"}
     assert node.group == "grp1"
     assert node.log_links == [["logs", "http://example.com/logs"]]
     assert node.status == ActionStatus.SUCCEEDED
+
+
+def test_run_detail_screen_tracker_disable_run_cache():
+    """Verify disable_run_cache is rebuilt from DB when loading RunDetailScreen."""
+
+    RunStore.initialize_sync()
+    RunStore.record_start_sync(
+        run_name="run-disabled-cache",
+        action_name="a0",
+        task_name="cached_task",
+        cache_enabled=True,
+        cache_hit=True,
+        disable_run_cache=True,
+    )
+    RunStore.record_complete_sync(run_name="run-disabled-cache", action_name="a0", outputs="ok")
+
+    from flyte.cli._tui._explore import RunDetailScreen
+
+    screen = RunDetailScreen("run-disabled-cache")
+    tracker = screen._tracker
+
+    node = tracker.get_action("a0")
+    assert node is not None
+    assert node.disable_run_cache is True
 
 
 def test_run_detail_screen_rebuilds_attempt_history():
@@ -159,6 +185,66 @@ def test_next_attempt_num():
     assert _next_attempt_num(3, attempts, -1) == 2
     assert _next_attempt_num(2, attempts, +1) == 3
     assert _next_attempt_num(1, attempts, -1) == 1
+
+
+def test_cache_icon_without_disable_run_cache():
+    """_cache_icon returns cache status when disable_run_cache is False."""
+    from flyte.cli._tui._app import _cache_icon
+    from flyte.cli._tui._tracker import ActionNode, ActionStatus
+
+    # cache_hit -> " $"
+    node_hit = ActionNode(
+        action_id="a1",
+        task_name="t",
+        parent_id=None,
+        status=ActionStatus.SUCCEEDED,
+        cache_enabled=True,
+        cache_hit=True,
+        disable_run_cache=False,
+    )
+    assert _cache_icon(node_hit) == " $"
+
+    # cache_enabled but miss -> " ~"
+    node_miss = ActionNode(
+        action_id="a1",
+        task_name="t",
+        parent_id=None,
+        status=ActionStatus.SUCCEEDED,
+        cache_enabled=True,
+        cache_hit=False,
+        disable_run_cache=False,
+    )
+    assert _cache_icon(node_miss) == " ~"
+
+    # no cache -> ""
+    node_no_cache = ActionNode(
+        action_id="a1",
+        task_name="t",
+        parent_id=None,
+        status=ActionStatus.SUCCEEDED,
+        cache_enabled=False,
+        cache_hit=False,
+        disable_run_cache=False,
+    )
+    assert _cache_icon(node_no_cache) == ""
+
+
+def test_cache_icon_with_disable_run_cache():
+    """_cache_icon returns '-' when disable_run_cache is True (run-level override)."""
+    from flyte.cli._tui._app import _cache_icon
+    from flyte.cli._tui._tracker import ActionNode, ActionStatus
+
+    # Even with cache_hit=True, disable_run_cache overrides to "-"
+    node = ActionNode(
+        action_id="a1",
+        task_name="t",
+        parent_id=None,
+        status=ActionStatus.SUCCEEDED,
+        cache_enabled=True,
+        cache_hit=True,
+        disable_run_cache=True,
+    )
+    assert _cache_icon(node) == "-"
 
 
 def test_compute_runs_table_column_widths():

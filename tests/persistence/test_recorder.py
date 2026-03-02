@@ -102,6 +102,29 @@ class TestBothBackends:
         assert action.task_name == "my_task"
         assert action.group_name == "grp"
 
+    def test_record_start_with_disable_run_cache(self):
+        """Verify disable_run_cache is passed to both tracker and persistence."""
+        tracker = _make_tracker()
+        RunStore.initialize_sync()
+        r = RunRecorder(tracker=tracker, persist=True, run_name="run-1")
+
+        r.record_start(
+            action_id="a1",
+            task_name="my_task",
+            parent_id=None,
+            short_name="mt",
+            disable_run_cache=True,
+            cache_enabled=True,
+            cache_hit=True,  # Would show hit, but disable_run_cache overrides
+        )
+
+        call_kwargs = tracker.record_start.call_args.kwargs
+        assert call_kwargs["disable_run_cache"] is True
+
+        action = RunStore.get_action_sync("run-1", "a1")
+        assert action is not None
+        assert action.disable_run_cache is True
+
     def test_record_complete_calls_both(self):
         tracker = _make_tracker()
         RunStore.initialize_sync()

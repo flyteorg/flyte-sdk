@@ -286,6 +286,7 @@ class RunDetailScreen(Screen):
                 has_report=r.has_report,
                 cache_enabled=r.cache_enabled,
                 cache_hit=r.cache_hit,
+                disable_run_cache=r.disable_run_cache,
                 context=context,
                 group=r.group_name,
                 log_links=log_links,
