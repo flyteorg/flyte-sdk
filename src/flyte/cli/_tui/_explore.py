@@ -10,7 +10,7 @@ from textual.binding import Binding, BindingType
 from textual.containers import Horizontal
 from textual.events import Resize
 from textual.screen import Screen
-from textual.widgets import DataTable, Footer, Header, Input, Label, Select, TabbedContent, TabPane
+from textual.widgets import DataTable, Footer, Header, Input, Label, OptionList, Select, TabbedContent, TabPane
 
 from ._app import (
     _FLYTE_PURPLE,
@@ -74,6 +74,33 @@ def _compute_runs_table_column_widths(total_width: int) -> list[int]:
             extra -= 1
             i += 1
     return base
+
+
+class StatusSelect(Select):
+    "Status dropdown menu supporting vim keys j/k navigation"
+
+    BINDINGS: ClassVar[list[BindingType]] = [
+        Binding("down,j", "cursor_down", "Cursor Down", show=False),
+        Binding("up,k", "cursor_up", "Cursor Up", show=False),
+    ]
+
+    def __init__(self, *args, **kwargs):
+        # set `type_to_search=False` to prevent
+        # keys j and k being consumed as search inputs
+        kwargs.setdefault("type_to_search", False)
+        super().__init__(*args, **kwargs)
+
+    def action_cursor_down(self) -> None:
+        if self.expanded:
+            self.query_one(OptionList).action_cursor_down()
+        else:
+            self.action_show_overlay()
+
+    def action_cursor_up(self) -> None:
+        if self.expanded:
+            self.query_one(OptionList).action_cursor_up()
+        else:
+            self.action_show_overlay()
 
 
 class RunsTable(DataTable):
@@ -158,7 +185,7 @@ class ExploreScreen(Screen):
         yield Header()
         with Horizontal(id="filter-bar"):
             yield Label("Status:")
-            yield Select(
+            yield StatusSelect(
                 [("All", "all"), ("Running", "running"), ("Succeeded", "succeeded"), ("Failed", "failed")],
                 value="all",
                 id="status-filter",
