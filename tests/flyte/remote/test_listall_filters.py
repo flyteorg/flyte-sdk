@@ -3,6 +3,7 @@ Tests for the new project/domain/created_at/updated_at filter parameters
 added to Run.listall() and Action.listall(), and for the TimeFilter/time_filtering
 helpers in _common.
 """
+
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -10,7 +11,6 @@ import pytest
 from flyteidl2.common import list_pb2
 
 from flyte.remote._common import TimeFilter, time_filtering
-
 
 # ---------------------------------------------------------------------------
 # TimeFilter / time_filtering unit tests
@@ -167,18 +167,14 @@ class TestRunListallFilters:
         assert req.project_id.domain == "staging"
 
     def test_both_project_and_domain_override(self, mock_client, mock_init_config):
-        call_args = self._call_listall(
-            mock_client, mock_init_config, project="proj-x", domain="dev"
-        )
+        call_args = self._call_listall(mock_client, mock_init_config, project="proj-x", domain="dev")
         req = call_args[0][0]
         assert req.project_id.name == "proj-x"
         assert req.project_id.domain == "dev"
 
     def test_created_at_filter_is_sent(self, mock_client, mock_init_config):
         after = datetime(2024, 1, 1, tzinfo=timezone.utc)
-        call_args = self._call_listall(
-            mock_client, mock_init_config, created_at=TimeFilter(after=after)
-        )
+        call_args = self._call_listall(mock_client, mock_init_config, created_at=TimeFilter(after=after))
         filters = list(call_args[0][0].request.filters)
         fields = [f.field for f in filters]
         assert "created_at" in fields
@@ -188,9 +184,7 @@ class TestRunListallFilters:
 
     def test_updated_at_filter_is_sent(self, mock_client, mock_init_config):
         before = datetime(2024, 6, 1, tzinfo=timezone.utc)
-        call_args = self._call_listall(
-            mock_client, mock_init_config, updated_at=TimeFilter(before=before)
-        )
+        call_args = self._call_listall(mock_client, mock_init_config, updated_at=TimeFilter(before=before))
         filters = list(call_args[0][0].request.filters)
         fields = [f.field for f in filters]
         assert "updated_at" in fields
@@ -261,9 +255,7 @@ class TestActionListallFilters:
 
     def test_created_at_filter_is_sent(self, mock_client_action, mock_init_config):
         after = datetime(2024, 3, 1, tzinfo=timezone.utc)
-        call_args = self._call_listall(
-            mock_client_action, mock_init_config, created_at=TimeFilter(after=after)
-        )
+        call_args = self._call_listall(mock_client_action, mock_init_config, created_at=TimeFilter(after=after))
         filters = list(call_args[0][0].request.filters)
         fields = [f.field for f in filters]
         assert "created_at" in fields
@@ -273,9 +265,7 @@ class TestActionListallFilters:
 
     def test_updated_at_filter_is_sent(self, mock_client_action, mock_init_config):
         before = datetime(2024, 9, 1, tzinfo=timezone.utc)
-        call_args = self._call_listall(
-            mock_client_action, mock_init_config, updated_at=TimeFilter(before=before)
-        )
+        call_args = self._call_listall(mock_client_action, mock_init_config, updated_at=TimeFilter(before=before))
         filters = list(call_args[0][0].request.filters)
         fields = [f.field for f in filters]
         assert "updated_at" in fields
