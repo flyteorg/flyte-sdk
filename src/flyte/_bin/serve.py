@@ -262,6 +262,7 @@ async def _serve(
 @click.option("--tgz", required=False)
 @click.option("--pkl", required=False)
 @click.option("--dest", required=False)
+@click.option("--raw-data-path", "-r", required=False)
 @click.option("--project", envvar=PROJECT_NAME, required=False)
 @click.option("--domain", envvar=DOMAIN_NAME, required=False)
 @click.option("--org", envvar=ORG_NAME, required=False)
@@ -277,6 +278,7 @@ def main(
     tgz: str,
     pkl: str,
     dest: str,
+    raw_data_path: str | None = None,
     command: tuple[str, ...] | None = None,
     project: str | None = None,
     domain: str | None = None,
@@ -327,6 +329,12 @@ def main(
         json.dump(serializable_parameters, f)
 
     os.environ[RUNTIME_PARAMETERS_FILE] = parameters_file
+
+    if raw_data_path:
+        from flyte.app._context import set_raw_data_path
+
+        set_raw_data_path(raw_data_path)
+        logger.info(f"Set raw_data_path in AppContext: {raw_data_path}")
 
     if app_env and app_env._server is not None:
         asyncio.run(_serve(app_env, materialized_parameters))
