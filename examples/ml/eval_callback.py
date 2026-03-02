@@ -1,42 +1,35 @@
 """
-Distributed Training with Fully Decoupled Periodic Evaluation
-=============================================================
+Distributed Training with Callback-Driven Evaluation on Checkpoints
+===================================================================
 
-This example demonstrates a pattern for distributed training with
-periodic, independent evaluation of the latest checkpoint.
+This example demonstrates a pattern for distributed training where
+evaluation is triggered directly from a Lightning checkpoint callback,
+rather than via an independent Flyte trigger.
 
-Why two workflows?
-- Eval is much slower than training and must not block the training loop.
-- If training fails, eval naturally stops on the next cron tick (no checkpoint
-  to evaluate) and disables itself.
-- If the model converges, eval writes a stop signal that training polls for.
-
-How eval finds training:
-1. The eval trigger receives the training run name as an input,
-   set when the trigger is created after training starts.
-2. Eval lists checkpoint files in that directory using ``Dir.from_existing_remote``,
-   and reads/writes coordination files alongside them:
-   - ``stop_signal.json`` — written by eval when converged, polled by training
-   - ``eval/{checkpoint_name}.json`` — written by eval to track already-evaluated checkpoints
-
-Evaluation discovers and monitors training, while training remains unaware of evaluation.
+How it works:
+- Training saves checkpoints to a remote directory via ``ModelCheckpoint``.
+- ``EvalOnCheckpointCallback`` detects each new checkpoint and launches
+  the eval task as a separate Flyte run.
+- The eval task checks if training is still alive via
+  ``flyte.remote.Run.get`` — if training has failed, completed, or been
+  aborted, eval returns early.
+- If the model converges, eval writes ``stop_signal.json`` which training
+  polls for via ``StopSignalCallback``.
 """
 
 import json
-import re
-from datetime import datetime
+from datetime import datetime, timezone
 
 import lightning as L
 import torch
 import torch.distributed as dist
 from flyteplugins.pytorch.task import Elastic
+from lightning.pytorch.callbacks import ModelCheckpoint
 from torch import nn, optim
 from torch.utils.data import DataLoader, IterableDataset
 
 import flyte
-import flyte.remote
-from flyte.io import Dir, File
-from flyte.models import ActionPhase, NativeInterface
+from flyte.io import File
 
 image = flyte.Image.from_debian_base(name="lightning-eval").with_pip_packages(
     "lightning==2.6.1", "flyteplugins-pytorch==2.0.2"
@@ -53,7 +46,7 @@ train_env = flyte.TaskEnvironment(
     image=image,
 )
 
-# Single-GPU eval on a cheaper instance, runs independently via Flyte trigger
+# Single-GPU eval on a cheaper instance
 eval_env = flyte.TaskEnvironment(
     name="eval",
     resources=flyte.Resources(cpu=2, memory="4Gi", gpu="T4:1"),
@@ -194,19 +187,63 @@ class TrainingLoggingCallback(L.Callback):
         log_rank0("[train] Training finished")
 
 
+class EvalModelCheckpoint(ModelCheckpoint):
+    """ModelCheckpoint that launches an eval task after each save.
+
+    Subclasses ``ModelCheckpoint`` so that eval is triggered *after* the
+    checkpoint is written.  ``flyte.run()`` submits a separate, independent
+    and returns immediately (fire-and-forget).
+    """
+
+    def __init__(self, *args, checkpoint_dir: str, training_run_name: str, **kwargs):
+        super().__init__(*args, dirpath=checkpoint_dir, **kwargs)
+        self.checkpoint_dir = checkpoint_dir
+        self.training_run_name = training_run_name
+        self._last_submitted_path = None
+
+    def _remove_checkpoint(self, trainer, filepath):
+        pass
+
+    def on_train_epoch_end(self, trainer, pl_module):
+        # Save the checkpoint first
+        super().on_train_epoch_end(trainer, pl_module)
+
+        # Launch eval on global rank 0 if a new checkpoint was saved
+        if trainer.is_global_zero:
+            current_path = self.best_model_path
+            if current_path and current_path != self._last_submitted_path:
+                self._last_submitted_path = current_path
+                try:
+                    result = flyte.run(
+                        run_eval,
+                        training_run_name=self.training_run_name,
+                        checkpoint_path=current_path,
+                        checkpoint_dir=self.checkpoint_dir,
+                    )
+                    log_rank0(f"[eval-callback] Eval run submitted: {result.url}")
+                except Exception as e:
+                    log_rank0(f"[eval-callback] Failed to launch eval: {e}")
+
+
 @train_env.task
 def train(checkpoint_dir: str, max_epochs: int = 20) -> str | None:
+    flyte.init_in_cluster()  # this is for eval
+
     model = SimpleModel()
     data = SyntheticDataModule()
 
+    training_run_name = flyte.ctx().action.run_name
+
     log_rank0("[train] Task started")
     log_rank0(f"[train] checkpoint_dir={checkpoint_dir}")
+    log_rank0(f"[train] training_run_name={training_run_name}")
     log_rank0(f"[train] max_epochs={max_epochs}")
 
-    checkpoint_callback = L.pytorch.callbacks.ModelCheckpoint(
-        dirpath=checkpoint_dir,
-        filename="{epoch}-{step}",
-        save_top_k=-1,
+    checkpoint_callback = EvalModelCheckpoint(
+        checkpoint_dir=checkpoint_dir,
+        training_run_name=training_run_name,
+        save_top_k=1,
+        filename="latest-{epoch}-{step}",
         every_n_epochs=1,
     )
 
@@ -219,9 +256,9 @@ def train(checkpoint_dir: str, max_epochs: int = 20) -> str | None:
         strategy="ddp",
         num_nodes=2,
         callbacks=[
+            logging_callback,
             checkpoint_callback,
             stop_signal_callback,
-            logging_callback,
         ],
         enable_progress_bar=False,
         limit_train_batches=2000,
@@ -235,79 +272,31 @@ def train(checkpoint_dir: str, max_epochs: int = 20) -> str | None:
     return "Training completed!"
 
 
-@eval_env.task(
-    triggers=flyte.Trigger.minutely(
-        name="lightning-eval", trigger_time_input_key="trigger_time"
-    )
-)
+@eval_env.task
 def run_eval(
-    trigger_time: datetime,
     training_run_name: str,
+    checkpoint_path: str,
+    checkpoint_dir: str,
     convergence_threshold: float = 0.05,
 ) -> str:
-    """Periodic evaluation of the latest training checkpoint.
+    """Evaluates a specific checkpoint.
 
-    Receives the training run name as a fixed trigger input, looks up the
-    run to read its ``checkpoint_dir`` and evaluates the latest checkpoint.
+    Launched by ``EvalOnCheckpointCallback`` inside the training task.
     """
-    print(f"[eval] Triggered at {trigger_time.isoformat()}")
-    print(f"[eval] Training run: {training_run_name}")
-
-    # 1. Look up the training run and check its status
-    training_run = flyte.remote.Run.get(name=training_run_name)
-
-    if training_run.phase.is_terminal:
-        print(
-            f"[eval] Training run has reached a terminal state — "
-            f"deactivating eval trigger."
-        )
-        flyte.remote.Trigger.update(
-            name="lightning-eval", task_name=f"{eval_env.name}.run_eval", active=False
-        )
-        return "training_failed"
-    elif training_run.phase != ActionPhase.RUNNING:
-        print(f"[eval] Training run is still initializing.")
-        return "training_initializing"
-
-    # 2. Read the checkpoint_dir from the training run's inputs
-    inputs = training_run.inputs()
-    checkpoint_dir = inputs["checkpoint_dir"]
-    print(f"[eval] Checkpoint dir from training inputs: {checkpoint_dir}")
-
-    # 3. List checkpoint files uploaded by ModelCheckpoint
-    ckpt_dir = Dir.from_existing_remote(checkpoint_dir)
-    if not ckpt_dir.exists_sync():
-        print(
-            "[eval] Checkpoint directory does not exist yet — training may not have written one."
-        )
-        return "no_checkpoint"
-
-    ckpt_files = [f for f in ckpt_dir.list_files_sync() if f.path.endswith(".ckpt")]
-    if not ckpt_files:
-        print("[eval] No checkpoint files found yet.")
-        return "no_checkpoint"
-
-    def extract_step(path: str) -> int:
-        m = re.search(r"step=(\d+)", path)
-        return int(m.group(1)) if m else -1
-
-    latest_ckpt = max(ckpt_files, key=lambda f: extract_step(f.path))
-    checkpoint_path = latest_ckpt.path
     checkpoint_name = checkpoint_path.split("/")[-1]
+    print(f"[eval] Evaluating checkpoint: {checkpoint_name}")
 
-    print(f"[eval] Latest checkpoint: {checkpoint_path}")
-
+    # Check if already evaluated
     record_path = f"{checkpoint_dir}/eval/{checkpoint_name}.json"
     record_file = File.from_existing_remote(record_path)
-
     if record_file.exists_sync():
         print("[eval] Already evaluated — skipping.")
         return f"already_evaluated_{checkpoint_name}"
 
-    # 5. Load checkpoint and run evaluation on GPU
+    # Load checkpoint and run evaluation on GPU
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    local_ckpt = latest_ckpt.download_sync()
+    local_ckpt = File.from_existing_remote(checkpoint_path).download_sync()
     ckpt = torch.load(local_ckpt, weights_only=True, map_location=device)
 
     model = SimpleModel()
@@ -325,34 +314,34 @@ def run_eval(
         preds = model(x_val)
         val_loss = nn.functional.mse_loss(preds, y_val).item()
 
-    print(f"[eval] checkpoint={checkpoint_path}  val_loss={val_loss:.4f}")
+    print(f"[eval] checkpoint={checkpoint_name}  val_loss={val_loss:.4f}")
 
+    now = datetime.now(timezone.utc).isoformat()
     _write_json_to_remote(
         record_path,
         {
             "checkpoint": checkpoint_path,
             "val_loss": val_loss,
-            "evaluated_at": trigger_time.isoformat(),
+            "evaluated_at": now,
             "run_id": training_run_name,
             "converged": val_loss < convergence_threshold,
         },
     )
 
-    # 7. If converged, write stop signal
+    # If converged, write stop signal
     if val_loss < convergence_threshold:
         print(
             f"[eval] Converged! val_loss={val_loss:.4f} < {convergence_threshold}. "
             f"Writing stop signal."
         )
 
-        stop_path = f"{checkpoint_dir}/stop_signal.json"
         _write_json_to_remote(
-            stop_path,
+            f"{checkpoint_dir}/stop_signal.json",
             {
                 "reason": "converged",
                 "checkpoint": checkpoint_path,
                 "val_loss": val_loss,
-                "signaled_at": trigger_time.isoformat(),
+                "signaled_at": now,
             },
         )
 
@@ -365,14 +354,8 @@ if __name__ == "__main__":
     flyte.init_from_config()
 
     result = flyte.run(
-        train, checkpoint_dir="s3://lightning/training-run-001/checkpoints"
+        train, checkpoint_dir="s3://bert-trainium-aws/training-run-002/checkpoints"
     )
-    print(f"Training run URL: {result.url}")
-
-    inputs = dict(run_eval.interface.inputs)
-    inputs["training_run_name"] = (str, result.name)
-    run_eval.interface = NativeInterface(inputs, dict(run_eval.interface.outputs))
+    print(f"Training run: {result.url}")
 
     flyte.deploy(eval_env)
-
-    print("Eval workflow will fire via Flyte trigger.")
