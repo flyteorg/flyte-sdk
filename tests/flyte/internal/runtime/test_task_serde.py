@@ -312,6 +312,37 @@ def env_task_ctx():
     return env, task_template, context
 
 
+def test_container_args_include_root_dir_when_copy_style_none():
+    """When code_bundle is None (copy-style none), --root-dir must be passed so the runtime can find modules."""
+    env = flyte.TaskEnvironment(
+        name="test_env",
+        image="python:3.10",
+        resources=flyte.Resources(cpu="1", memory="2Gi"),
+    )
+
+    @env.task()
+    async def my_task(x: int) -> int:
+        return x + 1
+
+    root_dir = pathlib.Path.cwd()
+    context = SerializationContext(
+        project="test-project",
+        domain="test-domain",
+        version="v1",
+        org="test-org",
+        input_path="/tmp/inputs",
+        output_path="/tmp/outputs",
+        image_cache=None,
+        code_bundle=None,
+        root_dir=root_dir,
+    )
+
+    args = my_task.container_args(context)
+    assert "--root-dir" in args
+    root_dir_idx = args.index("--root-dir")
+    assert args[root_dir_idx + 1] == str(root_dir)
+
+
 def test_translate_task_to_wire(env_task_ctx):
     _env, task_template, context = env_task_ctx
     # Generate proto task

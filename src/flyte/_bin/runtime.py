@@ -53,6 +53,9 @@ def _pass_through():
 @click.option("--pkl", required=False)
 @click.option("--dest", required=False)
 @click.option("--resolver", required=False)
+@click.option(
+    "--root-dir", required=False, help="Root directory for code when copy-style is none (path relative to CWD)"
+)
 @click.argument(
     "resolver-args",
     type=click.UNPROCESSED,
@@ -80,6 +83,7 @@ def main(
     pkl: str,
     dest: str,
     resolver: str,
+    root_dir: str | None,
     resolver_args: List[str],
 ):
     sys.path.insert(0, ".")
@@ -123,6 +127,11 @@ def main(
     bundle = None
     if tgz or pkl:
         bundle = CodeBundle(tgz=tgz, pkl=pkl, destination=dest, computed_version=version)
+
+    # When copy-style is none, code is baked into the image. Add root_dir to sys.path so
+    # the resolver can find modules (e.g. flyte_export when code is at src/flyte_export).
+    if bundle is None and root_dir:
+        utils.adjust_sys_path([root_dir])
 
     controller_kwargs = init_in_cluster(org=org, project=project, domain=domain)
     # Controller is created with the same kwargs as init, so that it can be used to run tasks

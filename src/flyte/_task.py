@@ -564,6 +564,10 @@ class AsyncFunctionTaskTemplate(TaskTemplate[P, R, F]):
                     "SerializationError",
                     "Root dir is required for default task resolver when no code bundle is provided.",
                 )
+            # When copy-style is none, no code bundle is deployed. Pass root_dir so the runtime
+            # can add it to sys.path and find modules baked into the image.
+            if not serialize_context.code_bundle:
+                args = [*args, "--root-dir", str(serialize_context.root_dir)]
             _task_resolver = DefaultTaskResolver()
             args = [
                 *args,
