@@ -1,6 +1,6 @@
+import flyte
 import random
 
-import flyte
 
 env = flyte.TaskEnvironment(name="caching-retries-example")
 
@@ -9,10 +9,9 @@ env = flyte.TaskEnvironment(name="caching-retries-example")
 @env.task(retries=10)
 def flaky_lookup(user_id: int) -> str:
     # Fail sometimes to demonstrate automatic retries.
-    # if random.random() < 0.5:
-    #     msg = f"Transient upstream error for user {user_id}"
-    #     print(msg)
-    #     raise RuntimeError(msg)
+    if random.random() < 0.5:
+        msg = f"Transient upstream error for user {user_id}"
+        raise RuntimeError(msg)
     return f"user-{user_id}"
 
 

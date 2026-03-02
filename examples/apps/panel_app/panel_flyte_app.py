@@ -40,9 +40,9 @@ app_env = AppEnvironment(
     port=8080,
     resources=flyte.Resources(cpu="1", memory="1Gi", disk="32Gi"),
     scaling=Scaling(
-        replicas=(1, 5),
-        metric=Scaling.RequestRate(10),
-        scaledown_after=300,
+        replicas=(0, 5),
+        metric=Scaling.RequestRate(3),
+        scaledown_after=300,  # 5 minutes
     ),
     secrets=[flyte.Secret(key="GOOGLE_GEMINI_API_KEY")],
     domain=Domain(subdomain="flyte2intro"),
@@ -127,7 +127,10 @@ EXAMPLES = {
     },
     "Caching and Retries": {
         "script": "sample_caching_and_retries.py",
-        "description": "An example showing caching and retries.",
+        "description": (
+            "Run the task twice to see the cached result, then run it again with the `disable cache` toggle to ignore "
+            "the cache."
+        ),
         "run_kwargs": {"user_id": 1234},
     },
     "PBJ Sandwich Dummy Agent": {
@@ -137,18 +140,18 @@ EXAMPLES = {
     },
     "LangGraph Gemini Agent": {
         "script": "sample_langgraph_gemini_agent.py",
-        "description": "A LangGraph ReAct-style agent using Google Gemini tool calling.",
+        "description": "A LangGraph ReAct-style agent using Google Gemini tool calling to get the weather forecast.",
         "run_kwargs": {"prompt": "What is the weather forecast in Berlin tomorrow, and should I bring a jacket?"},
         "env_vars": ["GOOGLE_GEMINI_API_KEY"],
     },
     "Distributed Random Forest": {
         "script": "sample_distributed_random_forest.py",
-        "description": "A simple distributed random forest training implementation.",
+        "description": "A simple distributed random forest training implementation with scikit-learn.",
         "run_kwargs": {"n_estimators": 8},
     },
     "MNIST Training": {
         "script": "sample_mnist_training.py",
-        "description": "Train a simple classifier on MNIST-style handwritten digits.",
+        "description": "Train a simple classifier on MNIST-style handwritten digits with pytorch.",
         "run_kwargs": {"sample_size": 1000, "test_size": 0.2},
     },
 }
@@ -238,8 +241,8 @@ def create_panel_app():
         button_type="default",
         width=100,
         stylesheets=[
-            ":host .bk-btn { background-color: #171020 !important; color: #f7f5fd !important; font-size: 12px !important; "
-            "border: 1px solid #7652a2 !important; line-height: 26px !important; }",
+            ":host .bk-btn { background-color: #171020 !important; color: #f7f5fd !important; "
+            "font-size: 12px !important; border: 1px solid #7652a2 !important; line-height: 26px !important; }",
             ":host .bk-active { background-color: #7652a2 !important; color: #f7f5fd !important; }",
         ],
     )
