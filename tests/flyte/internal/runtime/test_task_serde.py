@@ -340,7 +340,8 @@ def test_container_args_include_root_dir_when_copy_style_none():
     args = my_task.container_args(context)
     assert "--root-dir" in args
     root_dir_idx = args.index("--root-dir")
-    assert args[root_dir_idx + 1] == str(root_dir)
+    # When root_dir is cwd, we pass "." (path.relative_to(cwd)) so it works in the container
+    assert args[root_dir_idx + 1] == "."
 
 
 def test_translate_task_to_wire(env_task_ctx):

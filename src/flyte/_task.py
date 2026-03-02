@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import pathlib
 import weakref
 from dataclasses import dataclass, field, replace
 from inspect import iscoroutinefunction
@@ -566,8 +567,16 @@ class AsyncFunctionTaskTemplate(TaskTemplate[P, R, F]):
                 )
             # When copy-style is none, no code bundle is deployed. Pass root_dir so the runtime
             # can add it to sys.path and find modules baked into the image.
+            # Use path relative to cwd when possible: the CLI resolves root_dir to absolute paths,
+            # but the container has a different filesystem. A path like "src" works when cwd is the
+            # project root; an absolute path like /Users/xyz/project/src would not exist in the container.
             if not serialize_context.code_bundle:
-                args = [*args, "--root-dir", str(serialize_context.root_dir)]
+                root_dir_path = pathlib.Path(serialize_context.root_dir)
+                try:
+                    container_root_dir = str(root_dir_path.relative_to(pathlib.Path.cwd()))
+                except ValueError:
+                    container_root_dir = str(serialize_context.root_dir)
+                args = [*args, "--root-dir", container_root_dir]
             _task_resolver = DefaultTaskResolver()
             args = [
                 *args,
