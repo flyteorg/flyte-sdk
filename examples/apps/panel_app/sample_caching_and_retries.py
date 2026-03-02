@@ -1,6 +1,6 @@
-import flyte
 import random
 
+import flyte
 
 env = flyte.TaskEnvironment(name="caching-retries-example")
 
