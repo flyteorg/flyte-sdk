@@ -7,7 +7,7 @@ from pathlib import Path
 import flyte._deployer as deployer
 from flyte import Image
 from flyte._code_bundle.bundle import build_code_bundle_from_relative_paths
-from flyte._initialize import ensure_client
+from flyte._initialize import ensure_client, get_client
 from flyte._logging import logger
 from flyte._status import status
 from flyte.models import SerializationContext
@@ -80,6 +80,8 @@ async def _deploy_app(
     Deploy the given app.
     """
     import flyte.errors
+    from flyteidl2.auth import identity_pb2 as auth_identity_pb2
+    from flyteidl2.common import identifier_pb2, identity_pb2 as common_identity_pb2
     from flyte.app._runtime import translate_app_env_to_idl
     from flyte.remote import App
 
@@ -123,6 +125,20 @@ async def _deploy_app(
         if dryrun:
             return app_idl
         ensure_client()
+
+        # Populate creator with the current authenticated user's identity.
+        # The server requires this field on app creation.
+        try:
+            user_info = await get_client().identity_service.UserInfo(auth_identity_pb2.UserInfoRequest())
+            creator = common_identity_pb2.EnrichedIdentity(
+                user=common_identity_pb2.User(
+                    id=identifier_pb2.UserIdentifier(subject=user_info.subject),
+                ),
+            )
+            app_idl.spec.creator.CopyFrom(creator)
+        except Exception as exc:
+            logger.warning(f"Could not fetch user identity for app creator field: {exc}")
+
         msg = f"Deploying app {app.name}, with image {image_uri} version {serialization_context.version}"
         if app_idl.spec.HasField("container") and app_idl.spec.container.args:
             msg += f" with args {app_idl.spec.container.args}"
