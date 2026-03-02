@@ -258,7 +258,9 @@ async def test_build_images_stores_build_run_urls_in_cache():
         cache: ImageCache = await _build_images(plan)
 
     assert cache.image_lookup["my-env"] == "registry/my-image:sha256abc"
-    assert cache.build_run_ids["my-env"] == RunIdentifierData(org="my-org", project="my-project", domain="development", name="abc123")
+    assert cache.build_run_ids["my-env"] == RunIdentifierData(
+        org="my-org", project="my-project", domain="development", name="abc123"
+    )
 
 
 @pytest.mark.asyncio

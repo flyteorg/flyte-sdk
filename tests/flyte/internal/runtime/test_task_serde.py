@@ -450,7 +450,11 @@ def test_get_proto_task_sets_image_build_url():
 
     cache = ImageCache(
         image_lookup={"test_env_build_url": "registry/my-image:sha256abc"},
-        build_run_ids={"test_env_build_url": RunIdentifierData(org="my-org", project="my-project", domain="development", name="abc123")},
+        build_run_ids={
+            "test_env_build_url": RunIdentifierData(
+                org="my-org", project="my-project", domain="development", name="abc123"
+            )
+        },
     )
     context = SerializationContext(
         project="test-project",
