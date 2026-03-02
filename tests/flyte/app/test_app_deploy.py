@@ -5,7 +5,6 @@ from flyteidl2.app import app_definition_pb2
 from flyteidl2.auth import identity_pb2
 
 from flyte.app._deploy import _deploy_app
-from flyte.app._app_environment import AppEnvironment
 from flyte.models import SerializationContext
 
 
@@ -86,9 +85,7 @@ class TestDeployAppCreator:
             mock_create.aio.assert_called_once_with(mock_app_idl)
 
     @pytest.mark.asyncio
-    async def test_deploy_app_continues_if_user_info_fails(
-        self, mock_serialization_context, mock_app_idl
-    ):
+    async def test_deploy_app_continues_if_user_info_fails(self, mock_serialization_context, mock_app_idl):
         """Test that _deploy_app continues even if fetching user info fails."""
         mock_identity_service = AsyncMock()
         mock_identity_service.UserInfo = AsyncMock(side_effect=Exception("auth error"))

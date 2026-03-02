@@ -79,9 +79,11 @@ async def _deploy_app(
     """
     Deploy the given app.
     """
-    import flyte.errors
     from flyteidl2.auth import identity_pb2 as auth_identity_pb2
-    from flyteidl2.common import identifier_pb2, identity_pb2 as common_identity_pb2
+    from flyteidl2.common import identifier_pb2
+    from flyteidl2.common import identity_pb2 as common_identity_pb2
+
+    import flyte.errors
     from flyte.app._runtime import translate_app_env_to_idl
     from flyte.remote import App
 
