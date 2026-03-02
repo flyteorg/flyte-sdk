@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Dict, List, Optional, Set, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set, Tuple
 
 import cloudpickle
 import rich.repr
@@ -346,18 +346,22 @@ def _update_interface_inputs_and_outputs_docstring(
     return updated_interface
 
 
-async def _build_image_bg(env_name: str, image: Image) -> Tuple[str, str, Optional[str]]:
+async def _build_image_bg(env_name: str, image: Image) -> Tuple[str, str, Optional[Any]]:
     """
     Build the image in the background and return the environment name, the built image URI,
-    and the build run URL (if built by the remote image builder).
+    and the RunIdentifierData (if built by the remote image builder).
     """
     from ._build import build
+    from ._internal.imagebuild.image_builder import RunIdentifierData
 
     status.step(f"Building image {image.name} for environment {env_name}")
     result = await build.aio(image)
     assert result.uri is not None, "Image build result URI is None, make sure to wait for the build to complete"
-    build_url = result.remote_run.url if result.remote_run else None
-    return env_name, result.uri, build_url
+    run_id_data = None
+    if result.remote_run:
+        run_id = result.remote_run.pb2.action.id.run
+        run_id_data = RunIdentifierData(org=run_id.org, project=run_id.project, domain=run_id.domain, name=run_id.name)
+    return env_name, result.uri, run_id_data
 
 
 async def _build_images(deployment: DeploymentPlan, image_refs: Dict[str, str] | None = None) -> ImageCache:
@@ -373,7 +377,7 @@ async def _build_images(deployment: DeploymentPlan, image_refs: Dict[str, str] |
 
     images = []
     image_identifier_map: Dict[str, str] = {}
-    build_run_urls: Dict[str, str] = {}
+    build_run_ids: Dict[str, Any] = {}
     for env_name, env in deployment.envs.items():
         if env.image and not isinstance(env.image, str):
             if env.image._ref_name is not None:
@@ -404,15 +408,15 @@ async def _build_images(deployment: DeploymentPlan, image_refs: Dict[str, str] |
     if images:
         with status.group(f"Building {len(images)} image{'s' if len(images) > 1 else ''}..."):
             final_images = await asyncio.gather(*images)
-        for env_name, image_uri, build_url in final_images:
+        for env_name, image_uri, run_id_data in final_images:
             status.success(f"Built image for environment {env_name}: {image_uri}")
             image_identifier_map[env_name] = image_uri
-            if build_url is not None:
-                build_run_urls[env_name] = build_url
+            if run_id_data is not None:
+                build_run_ids[env_name] = run_id_data
     else:
         final_images = []
 
-    return ImageCache(image_lookup=image_identifier_map, build_run_urls=build_run_urls)
+    return ImageCache(image_lookup=image_identifier_map, build_run_ids=build_run_ids)
 
 
 async def _deploy_task_env(context: DeploymentContext) -> DeployedTaskEnvironment:

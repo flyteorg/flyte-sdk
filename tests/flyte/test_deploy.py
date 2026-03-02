@@ -200,19 +200,26 @@ def test_update_interface_mismatched_names():
 
 @pytest.mark.asyncio
 async def test_build_image_bg_captures_remote_run_url():
-    """Build URL is extracted from remote_run.url when using the remote builder."""
+    """RunIdentifierData is extracted from remote_run when using the remote builder."""
+    from flyte._internal.imagebuild.image_builder import RunIdentifierData
+
     image = flyte.Image.from_base("python:3.10")
+    mock_run_id = Mock()
+    mock_run_id.org = "my-org"
+    mock_run_id.project = "my-project"
+    mock_run_id.domain = "development"
+    mock_run_id.name = "abc123"
     mock_run = Mock()
-    mock_run.url = "https://console.union.ai/runs/abc123"
+    mock_run.pb2.action.id.run = mock_run_id
     mock_result = ImageBuild(uri="registry/my-image:sha256abc", remote_run=mock_run)
 
     with patch("flyte._build.build") as mock_build:
         mock_build.aio = AsyncMock(return_value=mock_result)
-        env_name, uri, build_url = await _build_image_bg("my-env", image)
+        env_name, uri, run_id_data = await _build_image_bg("my-env", image)
 
     assert env_name == "my-env"
     assert uri == "registry/my-image:sha256abc"
-    assert build_url == "https://console.union.ai/runs/abc123"
+    assert run_id_data == RunIdentifierData(org="my-org", project="my-project", domain="development", name="abc123")
 
 
 @pytest.mark.asyncio
@@ -230,13 +237,20 @@ async def test_build_image_bg_no_url_for_local_build():
 
 @pytest.mark.asyncio
 async def test_build_images_stores_build_run_urls_in_cache():
-    """build_run_urls in ImageCache is populated when remote builder provides a URL."""
+    """build_run_ids in ImageCache is populated when remote builder provides a run identifier."""
+    from flyte._internal.imagebuild.image_builder import RunIdentifierData
+
     image = flyte.Image.from_base("python:3.10")
     env = flyte.TaskEnvironment(name="my-env", image=image)
     plan = DeploymentPlan(envs={"my-env": env})
 
+    mock_run_id = Mock()
+    mock_run_id.org = "my-org"
+    mock_run_id.project = "my-project"
+    mock_run_id.domain = "development"
+    mock_run_id.name = "abc123"
     mock_run = Mock()
-    mock_run.url = "https://console.union.ai/runs/abc123"
+    mock_run.pb2.action.id.run = mock_run_id
     mock_result = ImageBuild(uri="registry/my-image:sha256abc", remote_run=mock_run)
 
     with patch("flyte._build.build") as mock_build:
@@ -244,12 +258,12 @@ async def test_build_images_stores_build_run_urls_in_cache():
         cache: ImageCache = await _build_images(plan)
 
     assert cache.image_lookup["my-env"] == "registry/my-image:sha256abc"
-    assert cache.build_run_urls["my-env"] == "https://console.union.ai/runs/abc123"
+    assert cache.build_run_ids["my-env"] == RunIdentifierData(org="my-org", project="my-project", domain="development", name="abc123")
 
 
 @pytest.mark.asyncio
 async def test_build_images_no_build_run_urls_for_local_build():
-    """build_run_urls in ImageCache is empty when local builder is used."""
+    """build_run_ids in ImageCache is empty when local builder is used."""
     image = flyte.Image.from_base("python:3.10")
     env = flyte.TaskEnvironment(name="my-env", image=image)
     plan = DeploymentPlan(envs={"my-env": env})
@@ -261,4 +275,4 @@ async def test_build_images_no_build_run_urls_for_local_build():
         cache: ImageCache = await _build_images(plan)
 
     assert cache.image_lookup["my-env"] == "registry/my-image:sha256abc"
-    assert cache.build_run_urls == {}
+    assert cache.build_run_ids == {}
