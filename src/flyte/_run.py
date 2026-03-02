@@ -201,14 +201,14 @@ class _Runner:
                 image_cache = cached_value.image_cache
             else:
                 # Resolve any CodeBundleLayer layers before building images
-                env = cast(Environment, obj.parent_env())
+                parent_env = cast(Environment, obj.parent_env())
                 from flyte._image import Image, resolve_code_bundle_layer
 
-                if isinstance(env.image, Image):
-                    env.image = resolve_code_bundle_layer(env.image, self._copy_files, pathlib.Path(cfg.root_dir))
+                if isinstance(parent_env.image, Image):
+                    parent_env.image = resolve_code_bundle_layer(parent_env.image, self._copy_files, pathlib.Path(cfg.root_dir))
 
                 if not self._dry_run:
-                    image_cache = await build_images.aio(cast(Environment, obj.parent_env()))
+                    image_cache = await build_images.aio(parent_env)
                 else:
                     image_cache = None
 
