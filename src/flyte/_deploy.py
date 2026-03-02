@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import pathlib
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Dict, List, Optional, Set, Tuple
 
@@ -437,6 +438,13 @@ async def apply(deployment_plan: DeploymentPlan, copy_style: CopyFiles, dryrun: 
     from ._deployer import DeploymentContext, get_deployer
 
     cfg = get_init_config()
+
+    # Resolve any CodeBundleLayer layers before building images
+    from flyte._image import resolve_code_bundle_layer
+
+    for env_name, env in deployment_plan.envs.items():
+        if isinstance(env.image, Image):
+            env.image = resolve_code_bundle_layer(env.image, copy_style, pathlib.Path(cfg.root_dir))
 
     image_cache = await _build_images(deployment_plan, cfg.images)
 

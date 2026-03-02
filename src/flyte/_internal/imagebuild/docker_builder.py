@@ -15,6 +15,7 @@ from flyte import Secret
 from flyte._code_bundle._ignore import STANDARD_IGNORE_PATTERNS
 from flyte._image import (
     AptPackages,
+    CodeBundleLayer,
     Commands,
     CopyConfig,
     DockerIgnore,
@@ -545,6 +546,12 @@ async def _process_layer(
         case _DockerLines():
             # Only for internal use
             dockerfile = await _DockerLinesHandler.handle(layer, context_path, dockerfile)
+
+        case CodeBundleLayer():
+            raise RuntimeError(
+                "CodeBundleLayer layer was not resolved before building. "
+                "Call resolve_code_bundle_layer() before building images."
+            )
 
         case _:
             raise NotImplementedError(f"Layer type {type(layer)} not supported")
